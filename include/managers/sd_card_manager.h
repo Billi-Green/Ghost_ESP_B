@@ -34,4 +34,11 @@ esp_err_t sd_card_create_directory(const char *path);
 bool sd_card_exists(const char *path);
 esp_err_t sd_card_setup_directory_structure();
 
+// New functions for SD card pin configuration
+esp_err_t sd_card_set_mmc_pins(int clk, int cmd, int d0, int d1, int d2, int d3);
+esp_err_t sd_card_set_spi_pins(int cs, int clk, int miso, int mosi);
+esp_err_t sd_card_save_config();
+esp_err_t sd_card_load_config();
+void sd_card_print_config();
+
 #endif // SD_CARD_MANAGER_H

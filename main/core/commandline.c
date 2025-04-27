@@ -9,6 +9,7 @@
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "managers/sd_card_manager.h"
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
 #include <esp_timer.h>
@@ -20,9 +21,12 @@
 #include <sys/socket.h>
 #include <vendor/dial_client.h>
 #include "esp_wifi.h"
+#include "managers/default_portal.h"
 
 static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
+
+#define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
 void command_init() { command_list_head = NULL; }
 
@@ -82,7 +86,12 @@ CommandFunction find_command(const char *name) {
 }
 
 void cmd_wifi_scan_start(int argc, char **argv) {
-    wifi_manager_start_scan();
+    if (argc > 1) {
+        int seconds = atoi(argv[1]);
+        wifi_manager_start_scan_with_time(seconds);
+    } else {
+        wifi_manager_start_scan();
+    }
     wifi_manager_print_scan_results_with_oui();
 }
 
@@ -152,9 +161,7 @@ void handle_stop_spam(int argc, char **argv) {
 }
 
 void handle_sta_scan(int argc, char **argv) {
-    wifi_manager_start_monitor_mode(wifi_stations_sniffer_callback);
-    printf("Started Station Scan...\n");
-    TERMINAL_VIEW_ADD_TEXT("Started Station Scan...\n");
+    wifi_manager_start_station_scan();
 }
 
 void handle_attack_cmd(int argc, char **argv) {
@@ -238,124 +245,99 @@ void handle_dial_command(int argc, char **argv) {
 }
 
 void handle_wifi_connection(int argc, char **argv) {
-    if (argc < 2) {
-        printf("Usage: %s \"<SSID>\" \"<PASSWORD>\"\n", argv[0]);
-        TERMINAL_VIEW_ADD_TEXT("Usage: %s \"<SSID>\" \"<PASSWORD>\"\n", argv[0]);
-        return;
-    }
-
-    char ssid_buffer[128] = {0};
-    char password_buffer[128] = {0};
-    const char *ssid = NULL;
-    const char *password = "";
-    
-    // Handle SSID - could be spread across multiple arguments if it contains spaces
-    int i = 1;
-    if (argv[1][0] == '"') {
-        // SSID is in quotes, need to concatenate until closing quote
-        char *dest = ssid_buffer;
-        bool found_end_quote = false;
-        
-        // Skip the opening quote
-        strncpy(dest, &argv[1][1], sizeof(ssid_buffer) - 1);
-        dest += strlen(&argv[1][1]);
-        
-        // Check if the closing quote is in the same argument
-        if (argv[1][strlen(argv[1])-1] == '"') {
-            ssid_buffer[strlen(ssid_buffer)-1] = '\0'; // Remove closing quote
-            found_end_quote = true;
-        }
-        
-        // If not found in first arg, look in subsequent args
-        i = 2;
-        while (!found_end_quote && i < argc) {
-            *dest++ = ' '; // Add space between arguments
-            
-            if (strchr(argv[i], '"')) {
-                // This argument contains the closing quote
-                size_t len = strchr(argv[i], '"') - argv[i];
-                strncpy(dest, argv[i], len);
-                dest[len] = '\0';
-                found_end_quote = true;
-            } else {
-                // This argument is part of the SSID
-                strncpy(dest, argv[i], sizeof(ssid_buffer) - (dest - ssid_buffer) - 1);
-                dest += strlen(argv[i]);
-            }
-            i++;
-        }
-        
-        if (!found_end_quote) {
-            printf("Error: Missing closing quote for SSID\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: Missing closing quote for SSID\n");
+    const char *ssid;
+    const char *password;
+    if (argc == 1) {
+        // No args: use saved NVS credentials
+        ssid = settings_get_sta_ssid(&G_Settings);
+        password = settings_get_sta_password(&G_Settings);
+        if (ssid == NULL || strlen(ssid) == 0) {
+            printf("No saved SSID. Usage: %s \"<SSID>\" [\"<PASSWORD>\"]\n", argv[0]);
+            TERMINAL_VIEW_ADD_TEXT("No saved SSID. Usage: %s \"<SSID>\" [\"<PASSWORD>\"]\n", argv[0]);
             return;
         }
-        
-        ssid = ssid_buffer;
+        printf("Connecting using saved credentials: %s\n", ssid);
+        TERMINAL_VIEW_ADD_TEXT("Connecting using saved credentials: %s\n", ssid);
     } else {
-        // SSID is a single argument without quotes
-        ssid = argv[1];
-        i = 2;
-    }
-    
-    // Handle password if provided
-    if (i < argc) {
-        if (argv[i][0] == '"') {
-            // Password is in quotes
-            char *dest = password_buffer;
-            bool found_end_quote = false;
-            
-            // Skip the opening quote
-            strncpy(dest, &argv[i][1], sizeof(password_buffer) - 1);
-            dest += strlen(&argv[i][1]);
-            
-            // Check if the closing quote is in the same argument
-            if (argv[i][strlen(argv[i])-1] == '"') {
-                password_buffer[strlen(password_buffer)-1] = '\0'; // Remove closing quote
-                found_end_quote = true;
+        char ssid_buffer[128] = {0};
+        char password_buffer[128] = {0};
+        int i = 1;
+        // SSID parsing
+        if (argv[1][0] == '"') {
+            char *dest = ssid_buffer;
+            bool found_end = false;
+            strncpy(dest, &argv[1][1], sizeof(ssid_buffer) - 1);
+            dest += strlen(&argv[1][1]);
+            if (argv[1][strlen(argv[1]) - 1] == '"') {
+                ssid_buffer[strlen(ssid_buffer) - 1] = '\0';
+                found_end = true;
             }
-            
-            // If not found in first arg, look in subsequent args
-            i++;
-            while (!found_end_quote && i < argc) {
-                *dest++ = ' '; // Add space between arguments
-                
+            i = 2;
+            while (!found_end && i < argc) {
+                *dest++ = ' ';
                 if (strchr(argv[i], '"')) {
-                    // This argument contains the closing quote
                     size_t len = strchr(argv[i], '"') - argv[i];
                     strncpy(dest, argv[i], len);
                     dest[len] = '\0';
-                    found_end_quote = true;
+                    found_end = true;
                 } else {
-                    // This argument is part of the password
-                    strncpy(dest, argv[i], sizeof(password_buffer) - (dest - password_buffer) - 1);
+                    strncpy(dest, argv[i], sizeof(ssid_buffer) - (dest - ssid_buffer) - 1);
                     dest += strlen(argv[i]);
                 }
                 i++;
             }
-            
-            if (!found_end_quote) {
-                printf("Error: Missing closing quote for password\n");
-                TERMINAL_VIEW_ADD_TEXT("Error: Missing closing quote for password\n");
+            if (!found_end) {
+                printf("Error: Missing closing quote for SSID\n");
+                TERMINAL_VIEW_ADD_TEXT("Error: Missing closing quote for SSID\n");
                 return;
             }
-            
-            password = password_buffer;
+            ssid = ssid_buffer;
         } else {
-            // Password is a single argument without quotes
-            password = argv[i];
+            ssid = argv[1];
+            i = 2;
         }
+        // Password parsing
+        if (i < argc) {
+            if (argv[i][0] == '"') {
+                char *dest = password_buffer;
+                bool found_end = false;
+                strncpy(dest, &argv[i][1], sizeof(password_buffer) - 1);
+                dest += strlen(&argv[i][1]);
+                if (argv[i][strlen(argv[i]) - 1] == '"') {
+                    password_buffer[strlen(password_buffer) - 1] = '\0';
+                    found_end = true;
+                }
+                i++;
+                while (!found_end && i < argc) {
+                    *dest++ = ' ';
+                    if (strchr(argv[i], '"')) {
+                        size_t len = strchr(argv[i], '"') - argv[i];
+                        strncpy(dest, argv[i], len);
+                        dest[len] = '\0';
+                        found_end = true;
+                    } else {
+                        strncpy(dest, argv[i], sizeof(password_buffer) - (dest - password_buffer) - 1);
+                        dest += strlen(argv[i]);
+                    }
+                    i++;
+                }
+                if (!found_end) {
+                    printf("Error: Missing closing quote for password\n");
+                    TERMINAL_VIEW_ADD_TEXT("Error: Missing closing quote for password\n");
+                    return;
+                }
+                password = password_buffer;
+            } else {
+                password = argv[i];
+            }
+        } else {
+            password = "";
+        }
+        // Save provided credentials to NVS
+        settings_set_sta_ssid(&G_Settings, ssid);
+        settings_set_sta_password(&G_Settings, password);
+        settings_save(&G_Settings);
     }
-
-    if (strlen(ssid) == 0) {
-        printf("SSID cannot be empty\n");
-        TERMINAL_VIEW_ADD_TEXT("SSID cannot be empty\n");
-        return;
-    }
-
-    printf("Connecting to SSID: %s\n", ssid);
-    TERMINAL_VIEW_ADD_TEXT("Connecting to SSID: %s\n", ssid);
-
     wifi_manager_connect_wifi(ssid, password);
 
     if (VisualizerHandle == NULL) {
@@ -418,74 +400,42 @@ void handle_ble_scan_cmd(int argc, char **argv) {
 #endif
 
 void handle_start_portal(int argc, char **argv) {
-
-    const char *URLorFilePath = settings_get_portal_url(&G_Settings);
-    const char *SSID = settings_get_portal_ssid(&G_Settings);
-    const char *Password = settings_get_portal_password(&G_Settings);
-    const char *AP_SSID = settings_get_portal_ap_ssid(&G_Settings);
-    const char *Domain = settings_get_portal_domain(&G_Settings);
-    bool offlinemode = settings_get_portal_offline_mode(&G_Settings);
-
-    const char *url = URLorFilePath;
-    const char *ssid = SSID;
-    const char *password = Password;
-    const char *ap_ssid = AP_SSID;
-    const char *domain = Domain;
-
-    if (argc == 6) {
-        url = (argv[1] && argv[1][0] != '\0') ? argv[1] : url;
-        ssid = (argv[2] && argv[2][0] != '\0') ? argv[2] : ssid;
-        password = (argv[3] && argv[3][0] != '\0') ? argv[3] : password;
-        ap_ssid = (argv[4] && argv[4][0] != '\0') ? argv[4] : ap_ssid;
-        domain = (argv[5] && argv[5][0] != '\0') ? argv[5] : domain;
-    } else if (argc == 4) {
-        url = (argv[1] && argv[1][0] != '\0') ? argv[1] : url;
-        ap_ssid = (argv[2] && argv[2][0] != '\0') ? argv[2] : ap_ssid;
-        domain = (argv[3] && argv[3][0] != '\0') ? argv[3] : domain;
-    } else if (argc != 1) {
-        printf("Error: Incorrect number of arguments.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Incorrect number of arguments.\n");
-        printf("Usage: %s <URL> <SSID> <Password> <AP_ssid> <DOMAIN>\n", argv[0]);
-        TERMINAL_VIEW_ADD_TEXT("Usage: %s <URL> <SSID> <Password> <AP_ssid> <DOMAIN>\n", argv[0]);
-        printf("or\n");
-        TERMINAL_VIEW_ADD_TEXT("or\n");
-        printf("Usage: %s <filepath> <APSSID> <Domain>\n", argv[0]);
-        TERMINAL_VIEW_ADD_TEXT("Usage: %s <filepath> <APSSID> <Domain>\n", argv[0]);
+    if (argc < 3 || argc > 4) { // Accept 3 or 4 arguments
+        printf("Usage: %s <FilePath> <AP_SSID> [PSK]\n", argv[0]);
+        TERMINAL_VIEW_ADD_TEXT("Usage: %s <FilePath> <AP_SSID> [PSK]\n", argv[0]);
+        TERMINAL_VIEW_ADD_TEXT("PSK is optional for an open AP.\n");
         return;
     }
-
-    if (url == NULL || url[0] == '\0') {
-        printf("Error: URL or File Path cannot be empty.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: URL or File Path cannot be empty.\n");
+    const char *url = argv[1];
+    const char *ap_ssid = argv[2];
+    const char *psk = (argc == 4) ? argv[3] : ""; // Set PSK to empty if not provided
+    if (strlen(url) >= MAX_PORTAL_PATH_LEN) {
+        printf("Error: Provided Path is too long.\n");
+        TERMINAL_VIEW_ADD_TEXT("Error: Path too long.\n");
         return;
     }
+    char final_url_or_path[MAX_PORTAL_PATH_LEN];
+    strcpy(final_url_or_path, url);
 
-    if (ap_ssid == NULL || ap_ssid[0] == '\0') {
-        printf("Error: AP SSID cannot be empty.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: AP SSID cannot be empty.\n");
-        return;
+    // Only prepend /mnt/ if it's not the default portal and doesn't already start with /mnt/
+    if (strcmp(url, "default") != 0 && strncmp(final_url_or_path, "/mnt/", 5) != 0) {
+        const char *prefix = "/mnt/";
+        size_t prefix_len = strlen(prefix);
+        size_t current_len = strlen(final_url_or_path);
+        if (current_len + prefix_len >= MAX_PORTAL_PATH_LEN) {
+            printf("Error: Path too long after prepending %s.\n", prefix);
+            TERMINAL_VIEW_ADD_TEXT("Error: Path too long.\n");
+            return;
+        }
+        memmove(final_url_or_path + prefix_len, final_url_or_path, current_len + 1);
+        memcpy(final_url_or_path, prefix, prefix_len);
+        printf("Prepended %s to path: %s\n", prefix, final_url_or_path);
+        TERMINAL_VIEW_ADD_TEXT("Prepended %s: %s\n", prefix, final_url_or_path);
     }
-
-    if (domain == NULL || domain[0] == '\0') {
-        printf("Error: Domain cannot be empty.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Domain cannot be empty.\n");
-        return;
-    }
-
-    if (ssid && ssid[0] != '\0' && password && password[0] != '\0' && !offlinemode) {
-        printf("Starting portal with SSID: %s, Password: %s, AP_SSID: %s, Domain: "
-               "%s\n",
-               ssid, password, ap_ssid, domain);
-        TERMINAL_VIEW_ADD_TEXT("Starting portal with SSID: %s, Password: %s, "
-                               "AP_SSID: %s, Domain: %s\n",
-                               ssid, password, ap_ssid, domain);
-        wifi_manager_start_evil_portal(url, ssid, password, ap_ssid, domain);
-    } else if (offlinemode) {
-        printf("Starting portal in offline mode with AP_SSID: %s, Domain: %s\n", ap_ssid, domain);
-        TERMINAL_VIEW_ADD_TEXT("Starting portal in offline mode with AP_SSID: %s, Domain: %s\n",
-                               ap_ssid, domain);
-        wifi_manager_start_evil_portal(url, NULL, NULL, ap_ssid, domain);
-    }
+    const char *domain = settings_get_portal_domain(&G_Settings);
+    printf("Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, psk, domain ? domain : "(default)");
+    TERMINAL_VIEW_ADD_TEXT("Starting portal...\nAP: %s\nPSK: %s\nDomain: %s\n", ap_ssid, (strlen(psk) > 0 ? psk : "<Open>"), domain ? domain : "(default)");
+    wifi_manager_start_evil_portal(final_url_or_path, NULL, psk, ap_ssid, domain);
 }
 
 bool ip_str_to_bytes(const char *ip_str, uint8_t *ip_bytes) {
@@ -886,16 +836,16 @@ void handle_help(int argc, char **argv) {
 
     printf("scanap\n");
     printf("    Description: Start a Wi-Fi access point (AP) scan.\n");
-    printf("    Usage: scanap\n\n");
+    printf("    Usage: scanap [seconds]\n\n");
     TERMINAL_VIEW_ADD_TEXT("scanap\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Start a Wi-Fi access point (AP) scan.\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: scanap\n\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: scanap [seconds]\n\n");
 
     printf("scansta\n");
-    printf("    Description: Start scanning for Wi-Fi stations.\n");
+    printf("    Description: Start scanning for Wi-Fi stations (hops channels).\n");
     printf("    Usage: scansta\n\n");
     TERMINAL_VIEW_ADD_TEXT("scansta\n");
-    TERMINAL_VIEW_ADD_TEXT("    Description: Start scanning for Wi-Fi stations.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Start scanning for Wi-Fi stations (hops channels).\n");
     TERMINAL_VIEW_ADD_TEXT("    Usage: scansta\n\n");
 
     printf("stopscan\n");
@@ -974,27 +924,18 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("        -a  : AP selection index (must be a valid number)\n\n");
 
     printf("startportal\n");
-    printf("    Description: Start a portal with specified SSID and password.\n");
-    printf("    Usage: startportal <URL> <SSID> <Password> <AP_ssid> <Domain>\n");
-    printf("    Arguments:\n");
-    printf("        <URL>       : URL for the portal\n");
-    printf("        <SSID>      : Wi-Fi SSID for the portal\n");
-    printf("        <Password>  : Wi-Fi password for the portal\n");
-    printf("        <AP_ssid>   : SSID for the access point\n\n");
-    printf("        <Domain>    : Custom Domain to Spoof In Address Bar\n\n");
-    printf("  OR \n\n");
-    printf("Offline Usage: startportal <FilePath> <AP_ssid> <Domain>\n");
+    printf("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
+    printf("                 /mnt/ prefix is added automatically to file paths if missing.\n");
+    printf("    Usage: startportal [FilePath] [AP_SSID] [PSK]\n");
+    printf("           PSK is optional for an open network.\n");
+    printf("    Use 'default' as the file path for the default Evil Portal.");
     TERMINAL_VIEW_ADD_TEXT("startportal\n");
-    TERMINAL_VIEW_ADD_TEXT("    Description: Start a portal with specified SSID and password.\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: startportal <URL> <SSID> <Password> <AP_ssid> <Domain>\n");
-    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        <URL>       : URL for the portal\n");
-    TERMINAL_VIEW_ADD_TEXT("        <SSID>      : Wi-Fi SSID for the portal\n");
-    TERMINAL_VIEW_ADD_TEXT("        <Password>  : Wi-Fi password for the portal\n");
-    TERMINAL_VIEW_ADD_TEXT("        <AP_ssid>   : SSID for the access point\n\n");
-    TERMINAL_VIEW_ADD_TEXT("        <Domain>    : Custom Domain to Spoof In Address Bar\n\n");
-    TERMINAL_VIEW_ADD_TEXT("  OR \n\n");
-    TERMINAL_VIEW_ADD_TEXT("Offline Usage: startportal <FilePath> <AP_ssid> <Domain>\n");
+    TERMINAL_VIEW_ADD_TEXT("    Desc: Start Evil Portal.\n");
+    TERMINAL_VIEW_ADD_TEXT("          Use 'default' as the file path for the default Evil Portal.\n");
+    TERMINAL_VIEW_ADD_TEXT("          /mnt/ added to paths automatically.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: startportal [FilePath] [AP_SSID] [PSK]\n");
+    TERMINAL_VIEW_ADD_TEXT("           PSK is optional for an open network.\n");
+
 
     printf("stopportal\n");
     printf("    Description: Stop Evil Portal\n");
@@ -1017,7 +958,7 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Description: Handle BLE scanning with various modes.\n");
     TERMINAL_VIEW_ADD_TEXT("    Usage: blescan [OPTION]\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -f   : Start 'Find the Flippers' mode\n");
+    printf("        -f   : Start 'Find the Flippers' mode\n");
     TERMINAL_VIEW_ADD_TEXT("        -ds  : Start BLE spam detector\n");
     TERMINAL_VIEW_ADD_TEXT("        -a   : Start AirTag scanner\n");
     TERMINAL_VIEW_ADD_TEXT("        -r   : Scan for raw BLE packets\n");
@@ -1048,11 +989,11 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("        -stop   : Stops the active capture\n\n");
 
     printf("connect\n");
-    printf("    Description: Connects to Specific WiFi Network\n");
-    printf("    Usage: connect <SSID> <Password>\n");
+    printf("    Description: Connects to Specific WiFi Network and saves credentials.\n");
+    printf("    Usage: connect <SSID> [Password]\n");
     TERMINAL_VIEW_ADD_TEXT("connect\n");
-    TERMINAL_VIEW_ADD_TEXT("    Description: Connects to Specific WiFi Network\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: connect <SSID> <Password>\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Connects to Specific WiFi Network and saves credentials.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: connect <SSID> [Password]\n");
 
     printf("dialconnect\n");
     printf("    Description: Cast a Random Youtube Video on all Smart TV's on "
@@ -1087,6 +1028,17 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
     TERMINAL_VIEW_ADD_TEXT("        -s  : Stop BLE wardriving\n\n");
 
+    printf("pineap\n");
+    printf("    Description: Start/Stop detecting WiFi Pineapples.\n");
+    printf("    Usage: pineap [-s]\n");
+    printf("    Arguments:\n");
+    printf("        -s  : Stop PineAP detection\n\n");
+    TERMINAL_VIEW_ADD_TEXT("pineap\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Start/Stop detecting WiFi Pineapples.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: pineap [-s]\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s  : Stop PineAP detection\n\n");
+
     printf("Port Scanner\n");
     printf("    Description: Scan ports on local subnet or specific IP\n");
     printf("    Usage: scanports local [-C/-A/start_port-end_port]\n");
@@ -1103,6 +1055,13 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("        -C  : Scan common ports only\n");
     TERMINAL_VIEW_ADD_TEXT("        -A  : Scan all ports (1-65535)\n");
     TERMINAL_VIEW_ADD_TEXT("        start_port-end_port : Custom port range (e.g. 80-443)\n\n");
+
+    printf("congestion\n");
+    printf("    Description: Display Wi-Fi channel congestion chart.\n");
+    printf("    Usage: congestion\n\n");
+    TERMINAL_VIEW_ADD_TEXT("congestion\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Display Wi-Fi channel congestion chart.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: congestion\n\n");
 
     printf("apcred\n");
     printf("    Description: Change or reset the GhostNet AP credentials\n");
@@ -1136,6 +1095,58 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Description: Change RGB LED pins\n");
     TERMINAL_VIEW_ADD_TEXT("    Usage: setrgbpins <red> <green> <blue>\n");
     TERMINAL_VIEW_ADD_TEXT("           (use same value for all pins for single-pin LED strips)\n\n");
+
+    // SD Card Commands Help Text
+    printf("\n-- SD Card Pin Configuration --\n");
+    printf("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
+    printf("These commands configure pins for the *active* mode.\n");
+    printf("Changing the mode requires recompiling firmware.\n");
+    TERMINAL_VIEW_ADD_TEXT("\n-- SD Card Pin Configuration --\n");
+    TERMINAL_VIEW_ADD_TEXT("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
+    TERMINAL_VIEW_ADD_TEXT("These commands configure pins for the *active* mode.\n");
+    TERMINAL_VIEW_ADD_TEXT("Changing the mode requires recompiling firmware.\n");
+
+    printf("sd_config\n");
+    printf("    Description: Show the currently configured GPIO pins for both SDMMC and SPI modes.\n");
+    printf("    Usage: sd_config\n\n");
+    TERMINAL_VIEW_ADD_TEXT("sd_config\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Show current SD GPIO pin configuration.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: sd_config\n\n");
+
+    printf("sd_pins_mmc\n");
+    printf("    Description: Set GPIO pins for SDMMC mode (1 or 4 bit). Requires restart/reinit.\n");
+    printf("                 Only effective if firmware compiled for SDMMC mode.\n");
+    printf("    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
+    printf("    Example: sd_pins_mmc 19 18 20 21 22 23\n\n");
+    TERMINAL_VIEW_ADD_TEXT("sd_pins_mmc\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Set GPIO pins for SDMMC mode. Requires restart.\n");
+    TERMINAL_VIEW_ADD_TEXT("                 Only effective if firmware compiled for SDMMC.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n\n");
+
+    printf("sd_pins_spi\n");
+    printf("    Description: Set GPIO pins for SPI mode. Requires restart/reinit.\n");
+    printf("                 Only effective if firmware compiled for SPI mode.\n");
+    printf("    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
+    printf("    Example: sd_pins_spi 5 18 19 23\n\n");
+    TERMINAL_VIEW_ADD_TEXT("sd_pins_spi\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Set GPIO pins for SPI mode. Requires restart.\n");
+    TERMINAL_VIEW_ADD_TEXT("                 Only effective if firmware compiled for SPI.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n\n");
+
+    printf("sd_save_config\n");
+    printf("    Description: Save the current SD pin configuration (both modes) to the SD card.\n");
+    printf("                 Requires SD card to be mounted.\n");
+    printf("    Usage: sd_save_config\n\n");
+    TERMINAL_VIEW_ADD_TEXT("sd_save_config\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Save current SD pin config to SD card.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: sd_save_config\n\n");
+
+    printf("scanall\n");
+    printf("    Description: Perform combined AP and Station scan, display results.\n");
+    printf("    Usage: scanall [seconds]\n\n");
+    TERMINAL_VIEW_ADD_TEXT("scanall\n");
+    TERMINAL_VIEW_ADD_TEXT("    Desc: Combined AP/STA scan & display.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: scanall [seconds]\n\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -1445,6 +1456,184 @@ void handle_setrgb(int argc, char **argv) {
     }
 }
 
+void handle_sd_config(int argc, char **argv) {
+  sd_card_print_config();
+}
+
+void handle_sd_pins_mmc(int argc, char **argv) {
+  if (argc != 7) {
+    printf("Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
+    printf("Sets pins for SDMMC mode (only effective if compiled for MMC).\n");
+    printf("Example: sd_pins_mmc 19 18 20 21 22 23\n");
+    return;
+  }
+  
+  int clk = atoi(argv[1]);
+  int cmd = atoi(argv[2]);
+  int d0 = atoi(argv[3]);
+  int d1 = atoi(argv[4]);
+  int d2 = atoi(argv[5]);
+  int d3 = atoi(argv[6]);
+  
+  if (clk < 0 || cmd < 0 || d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0 ||
+      clk > 40 || cmd > 40 || d0 > 40 || d1 > 40 || d2 > 40 || d3 > 40) {
+    printf("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    return;
+  }
+  
+  sd_card_set_mmc_pins(clk, cmd, d0, d1, d2, d3);
+}
+
+void handle_sd_pins_spi(int argc, char **argv) {
+  if (argc != 5) {
+    printf("Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
+    printf("Sets pins for SPI mode (only effective if compiled for SPI).\n");
+    printf("Example: sd_pins_spi 5 18 19 23\n");
+    return;
+  }
+  
+  int cs = atoi(argv[1]);
+  int clk = atoi(argv[2]);
+  int miso = atoi(argv[3]);
+  int mosi = atoi(argv[4]);
+  
+  if (cs < 0 || clk < 0 || miso < 0 || mosi < 0 ||
+      cs > 40 || clk > 40 || miso > 40 || mosi > 40) {
+    printf("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    return;
+  }
+  
+  sd_card_set_spi_pins(cs, clk, miso, mosi);
+}
+
+void handle_sd_save_config(int argc, char **argv) {
+  sd_card_save_config();
+}
+
+void handle_congestion_cmd(int argc, char **argv) {
+    wifi_manager_start_scan();
+
+    uint16_t ap_count = 0;
+    wifi_ap_record_t *ap_records = NULL;
+
+    wifi_manager_get_scan_results_data(&ap_count, &ap_records);
+
+    if (ap_count == 0 || ap_records == NULL) {
+        printf("No APs found during scan.\n");
+        TERMINAL_VIEW_ADD_TEXT("No APs found during scan.\n");
+        return;
+    }
+
+    int channel_counts[14] = {0};
+    int max_count = 0;
+    for (int i = 0; i < ap_count; i++) {
+        if (ap_records[i].primary >= 1 && ap_records[i].primary <= 14) { 
+            int channel_index = ap_records[i].primary - 1;
+            channel_counts[channel_index]++;
+            if (channel_counts[channel_index] > max_count) {
+                max_count = channel_counts[channel_index];
+            }
+        }
+    }
+
+    printf("\nChannel Congestion:\n\n");
+    TERMINAL_VIEW_ADD_TEXT("\nChannel Congestion:\n\n");
+    const char* header = "┌──┬───────┬────────────┐\n";
+    const char* separator = "├──┼───────┼────────────┤\n";
+    const char* row_format = "│%-2d│ %-5d │ %s │\n";
+    const char* footer = "└──┴───────┴────────────┘\n";
+
+    printf("%s", header);
+    TERMINAL_VIEW_ADD_TEXT("%s", header);
+    printf("│CH│ Count │ Bar        │\n");
+    TERMINAL_VIEW_ADD_TEXT("│CH│ Count │ Bar        │\n");
+    printf("%s", separator);
+    TERMINAL_VIEW_ADD_TEXT("%s", separator);
+
+    const int max_bar_length = 10;
+    char display_bar[max_bar_length * 4]; // Generous buffer: 3 bytes/block + 1 space/pad + null
+
+    for (int i = 0; i < 14; i++) {
+        if (channel_counts[i] > 0) {
+            int bar_length = 0;
+            if (max_count > 0) { // Avoid division by zero
+                 bar_length = (int)(((float)channel_counts[i] / max_count) * max_bar_length);
+                 if (bar_length == 0) bar_length = 1; // Ensure at least one bar if count > 0
+            }
+            
+            // Build the display string with blocks and padding spaces
+            char *ptr = display_bar;
+
+            // Add block characters
+            for (int j = 0; j < bar_length; ++j) {
+                memcpy(ptr, "█", 3); // Copy 3 bytes for UTF-8 block
+                ptr += 3;
+            }
+
+            // Add padding spaces to fill up to max_bar_length visual columns
+            int spaces_needed = max_bar_length - bar_length;
+            for (int j = 0; j < spaces_needed; ++j) {
+                 *ptr++ = ' ';
+            }
+            *ptr = '\0'; // Null-terminate
+
+            printf(row_format, i + 1, channel_counts[i], display_bar);
+            TERMINAL_VIEW_ADD_TEXT(row_format, i + 1, channel_counts[i], display_bar);
+        }
+    }
+    printf("%s", footer);
+    TERMINAL_VIEW_ADD_TEXT("%s", footer);
+}
+
+// Forward declaration for the new print function
+void wifi_manager_scanall_chart();
+
+void handle_scanall(int argc, char **argv) {
+    int total_seconds = 10; // Default total duration: 10 seconds
+    if (argc > 1) {
+        char *endptr;
+        long sec = strtol(argv[1], &endptr, 10);
+        if (*endptr == '\0' && sec > 0) {
+            total_seconds = (int)sec;
+        } else {
+            printf("Invalid duration: '%s'. Using default %d seconds.\n", argv[1], total_seconds);
+            TERMINAL_VIEW_ADD_TEXT("Invalid duration: '%s'. Using default %d seconds.\n", argv[1], total_seconds);
+        }
+    }
+
+    int ap_scan_seconds = total_seconds / 2;
+    int sta_scan_seconds = total_seconds - ap_scan_seconds; // Use remaining time
+
+    printf("Starting combined scan (%d sec AP, %d sec STA)...\n", ap_scan_seconds, sta_scan_seconds);
+    TERMINAL_VIEW_ADD_TEXT("Starting combined scan (%ds AP, %ds STA)...\n", ap_scan_seconds, sta_scan_seconds);
+
+    // 1. Perform AP Scan
+    printf("--- Starting AP Scan (%d seconds) ---\n", ap_scan_seconds);
+    TERMINAL_VIEW_ADD_TEXT("--- Starting AP Scan (%ds) ---\n", ap_scan_seconds);
+    wifi_manager_start_scan_with_time(ap_scan_seconds);
+    // Results are now in scanned_aps and ap_count
+
+    // 2. Perform Station Scan
+    printf("--- Starting Station Scan (%d seconds) ---\n", sta_scan_seconds);
+    TERMINAL_VIEW_ADD_TEXT("--- Starting STA Scan (%ds) ---\n", sta_scan_seconds);
+    station_count = 0; // Reset station list before new scan
+    wifi_manager_start_station_scan(); // Starts monitor mode + channel hopping
+    printf("Station scan running for %d seconds...\n", sta_scan_seconds);
+    TERMINAL_VIEW_ADD_TEXT("Station scan running for %ds...\n", sta_scan_seconds);
+    vTaskDelay(pdMS_TO_TICKS(sta_scan_seconds * 1000));
+    wifi_manager_stop_monitor_mode(); // Stops monitor mode + channel hopping
+    // Results are now in station_ap_list and station_count
+
+    printf("--- Scan Complete ---\n");
+    TERMINAL_VIEW_ADD_TEXT("--- Scan Complete ---\n");
+
+    // 3. Print Combined Results
+    wifi_manager_scanall_chart();
+
+    // Ensure AP mode is restored if it was stopped
+    ap_manager_start_services(); // Restore AP for WebUI
+}
+
 void register_commands() {
     register_command("help", handle_help);
     register_command("scanap", cmd_wifi_scan_start);
@@ -1469,6 +1658,7 @@ void register_commands() {
     register_command("startwd", handle_startwd);
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
+    register_command("congestion", handle_congestion_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
@@ -1480,6 +1670,12 @@ void register_commands() {
     register_command("apcred", handle_apcred);
     register_command("rgbmode", handle_rgb_mode);
     register_command("setrgbpins", handle_setrgb);
+    // SD Card Pin configuration commands
+    register_command("sd_config", handle_sd_config);
+    register_command("sd_pins_mmc", handle_sd_pins_mmc);
+    register_command("sd_pins_spi", handle_sd_pins_spi);
+    register_command("sd_save_config", handle_sd_save_config);
+    register_command("scanall", handle_scanall);
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }

@@ -75,6 +75,8 @@ typedef struct {
   int gps_rx_pin;
   uint32_t display_timeout_ms; // Display timeout in milliseconds
   bool rts_enabled;
+  char sta_ssid[65];     // New field for Station SSID (Max 64 + null)
+  char sta_password[65]; // New field for Station Password (Max 64 + null)
 } FSettings;
 
 // Function declarations
@@ -153,6 +155,12 @@ PrinterAlignment settings_get_printer_alignment(const FSettings *settings);
 
 void settings_set_display_timeout(FSettings *settings, uint32_t timeout_ms);
 uint32_t settings_get_display_timeout(const FSettings *settings);
+
+// Station Mode Credentials
+void settings_set_sta_ssid(FSettings *settings, const char *ssid);
+const char *settings_get_sta_ssid(const FSettings *settings);
+void settings_set_sta_password(FSettings *settings, const char *password);
+const char *settings_get_sta_password(const FSettings *settings);
 
 static nvs_handle_t nvsHandle;
 

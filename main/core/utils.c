@@ -107,3 +107,36 @@ int get_next_csv_file_index(const char *base_name) {
   closedir(dir);
   return max_index + 1;
 }
+
+int get_next_file_index(const char *dir_path, const char *base_name,
+                          const char *extension) {
+  int max_index = -1;
+
+  DIR *dir = opendir(dir_path);
+  if (!dir) {
+    ESP_LOGE(TAG, "Failed to open directory %s", dir_path);
+    // If directory doesn't exist, first file will be index 0
+    return 0; 
+  }
+
+  struct dirent *entry;
+  char format_string[64];
+  snprintf(format_string, sizeof(format_string), "%s_%%d.%s", base_name, extension);
+
+  while ((entry = readdir(dir)) != NULL) {
+    // Check if the filename starts with the base name
+    if (strncmp(entry->d_name, base_name, strlen(base_name)) == 0) {
+      int index;
+      // Try to parse the index from the filename
+      if (sscanf(entry->d_name, format_string, &index) == 1) {
+        if (index > max_index) {
+          max_index = index;
+        }
+      }
+    }
+  }
+
+  closedir(dir);
+  // Return the next index (max found + 1). If none found, max_index is -1, so returns 0.
+  return max_index + 1;
+}

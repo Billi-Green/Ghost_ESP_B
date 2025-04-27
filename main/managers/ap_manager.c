@@ -1043,6 +1043,13 @@ static esp_err_t http_get_handler(httpd_req_t *req) {
                     const char *expected_username = settings_get_ap_ssid(settings);
                     const char *expected_password = settings_get_ap_password(settings);
 
+                    // use "GhostNet" if settings are empty or invalid (should fix the issue reported about not being able to login)
+                    if (expected_username == NULL || strlen(expected_username) == 0) {
+                        expected_username = "GhostNet";
+                    }
+                    if (expected_password == NULL || strlen(expected_password) < 8) {
+                        expected_password = "GhostNet";
+                    }
 
                     char expected_creds[128];
                     snprintf(expected_creds, sizeof(expected_creds), "%s:%s",

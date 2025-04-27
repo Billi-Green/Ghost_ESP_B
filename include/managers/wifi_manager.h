@@ -53,14 +53,13 @@ typedef struct {
   unsigned order : 1;
 } wifi_ieee80211_frame_ctrl_t;
 
-typedef struct {
-  wifi_ieee80211_frame_ctrl_t frame_ctrl; // Frame control field
-  uint16_t duration_id;                   // Duration/ID field
-  uint8_t addr1[6];  // Address 1 (Destination MAC or BSSID)
-  uint8_t addr2[6];  // Address 2 (Source MAC)
-  uint8_t addr3[6];  // Address 3 (BSSID or Destination MAC)
-  uint16_t seq_ctrl; // Sequence control field
-  uint8_t addr4[6];  // Optional address 4 (used in certain cases)
+typedef struct __attribute__((packed)) {
+    uint16_t frame_ctrl;  // 2 bytes (raw Frame Control field)
+    uint16_t duration_id;                    // 2 bytes
+    uint8_t  addr1[6];
+    uint8_t  addr2[6];
+    uint8_t  addr3[6];
+    uint16_t seq_ctrl;
 } wifi_ieee80211_hdr_t;
 
 typedef struct {
@@ -118,6 +117,12 @@ void wifi_manager_stop_scan();
 // Print the scan results with BSSID to company mapping
 void wifi_manager_print_scan_results_with_oui();
 
+// Function to provide access to the last scan results
+void wifi_manager_get_scan_results_data(uint16_t *count, wifi_ap_record_t **aps);
+
+// Select an access point from the scan results based on index
+void wifi_manager_select_ap(int index);
+
 // broadcast ap beacon with optional ssid
 esp_err_t wifi_manager_broadcast_ap(const char *ssid);
 
@@ -137,9 +142,10 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback);
 
 void wifi_manager_list_stations();
 
-void wifi_manager_start_deauth();
+// Start station scanning with channel hopping
+void wifi_manager_start_station_scan();
 
-void wifi_manager_select_ap(int index);
+void wifi_manager_start_deauth();
 
 void wifi_manager_stop_deauth();
 
@@ -240,5 +246,9 @@ static const uint16_t COMMON_PORTS[] = {
     55443  // Alt HTTP
 };
 #define NUM_PORTS (sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]))
+
+void wifi_manager_start_scan_with_time(int seconds);
+
+void wifi_manager_scanall_chart(void);
 
 #endif // WIFI_MANAGER_H

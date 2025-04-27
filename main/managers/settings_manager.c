@@ -37,6 +37,8 @@ static const char *NVS_ACCENT_COLOR = "sel_ac";
 static const char *NVS_GPS_RX_PIN = "gps_rx_pin";
 static const char *NVS_DISPLAY_TIMEOUT_KEY = "disp_timeout";
 static const char *NVS_ENABLE_RTS_KEY = "rts_enable";
+static const char *NVS_STA_SSID_KEY = "sta_ssid";
+static const char *NVS_STA_PASSWORD_KEY = "sta_password";
 
 static const char *TAG = "SettingsManager";
 
@@ -85,7 +87,7 @@ void settings_set_defaults(FSettings *settings) {
   // Evil Portal defaults
   strcpy(settings->portal_url, "/default/path");
   strcpy(settings->portal_ssid, "EvilPortal");
-  strcpy(settings->portal_password, "EvilPortalPass");
+  strcpy(settings->portal_password, "");
   strcpy(settings->portal_ap_ssid, "EvilAP");
   strcpy(settings->portal_domain, "portal.local");
   settings->portal_offline_mode = false;
@@ -101,6 +103,8 @@ void settings_set_defaults(FSettings *settings) {
   settings->gps_rx_pin = 0;
   settings->display_timeout_ms = 10000; // Default 10 seconds
   settings->rts_enabled = false;
+  strcpy(settings->sta_ssid, ""); // Default empty station SSID
+  strcpy(settings->sta_password, ""); // Default empty station password
 }
 
 void settings_load(FSettings *settings) {
@@ -264,6 +268,24 @@ void settings_load(FSettings *settings) {
     settings->rts_enabled = false;
   }
 
+  // Load Station SSID
+  str_size = sizeof(settings->sta_ssid);
+  err = nvs_get_str(nvsHandle, NVS_STA_SSID_KEY, settings->sta_ssid, &str_size);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    printf("Failed to load STA SSID: %s\n", esp_err_to_name(err));
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    strcpy(settings->sta_ssid, ""); // Ensure it's empty if not found
+  }
+
+  // Load Station Password
+  str_size = sizeof(settings->sta_password);
+  err = nvs_get_str(nvsHandle, NVS_STA_PASSWORD_KEY, settings->sta_password, &str_size);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    printf("Failed to load STA Password: %s\n", esp_err_to_name(err));
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    strcpy(settings->sta_password, ""); // Ensure it's empty if not found
+  }
+
   printf("Settings loaded from NVS.\n");
 }
 
@@ -422,6 +444,18 @@ void settings_save(const FSettings *settings) {
                     settings->display_timeout_ms);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to save Display Timeout");
+  }
+
+  // Save Station SSID
+  err = nvs_set_str(nvsHandle, NVS_STA_SSID_KEY, settings->sta_ssid);
+  if (err != ESP_OK) {
+    printf("Failed to save STA SSID\n");
+  }
+
+  // Save Station Password
+  err = nvs_set_str(nvsHandle, NVS_STA_PASSWORD_KEY, settings->sta_password);
+  if (err != ESP_OK) {
+    printf("Failed to save STA Password\n");
   }
 
   if (settings_get_rgb_mode(&G_Settings) == 0) {
@@ -668,4 +702,23 @@ void settings_set_display_timeout(FSettings *settings, uint32_t timeout_ms) {
 
 uint32_t settings_get_display_timeout(const FSettings *settings) {
   return settings->display_timeout_ms;
+}
+
+// Station Mode Credentials Implementation
+void settings_set_sta_ssid(FSettings *settings, const char *ssid) {
+  strncpy(settings->sta_ssid, ssid, sizeof(settings->sta_ssid) - 1);
+  settings->sta_ssid[sizeof(settings->sta_ssid) - 1] = '\0';
+}
+
+const char *settings_get_sta_ssid(const FSettings *settings) {
+  return settings->sta_ssid;
+}
+
+void settings_set_sta_password(FSettings *settings, const char *password) {
+  strncpy(settings->sta_password, password, sizeof(settings->sta_password) - 1);
+  settings->sta_password[sizeof(settings->sta_password) - 1] = '\0';
+}
+
+const char *settings_get_sta_password(const FSettings *settings) {
+  return settings->sta_password;
 }

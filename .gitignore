@@ -10,3 +10,9 @@ build
 /managed_components
 .clang-tidy
 checks.json
+sdkconfig
+sdkconfig.defaults
+banned_words.json
+/logs
+sdkconfig.old
+dependencies.lock

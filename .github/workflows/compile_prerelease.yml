@@ -1,7 +1,16 @@
-name: Compile Prerelease
+name: Compile and Create Pre-release
 
 on:
   workflow_dispatch:
+    inputs:
+      buildType:
+        description: "Select the build type"
+        required: true
+        type: choice
+        options:
+          - "prerelease" # Focus on pre-release creation as requested
+          - "all"        # Kept for potential future use, but upload logic focuses on pre-release
+        default: "prerelease"
 
 jobs:
   build:
@@ -11,336 +20,166 @@ jobs:
     strategy:
       matrix:
         target:
-          - { name: "esp32-generic", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.default.esp32", zip_name: "esp32-generic.zip" }
-          - { name: "esp32s2-generic", idf_target: "esp32s2", sdkconfig_file: "configs/sdkconfig.default.esp32s2", zip_name: "esp32s2-generic.zip"}
-          - { name: "esp32s3-generic", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.default.esp32s3", zip_name: "esp32s3-generic.zip" }
-          - { name: "esp32c3-generic", idf_target: "esp32c3", sdkconfig_file: "configs/sdkconfig.default.esp32c3", zip_name: "esp32c3-generic.zip" }
-          - { name: "esp32c6-generic", idf_target: "esp32c6", sdkconfig_file: "configs/sdkconfig.default.esp32c6", zip_name: "esp32c6-generic.zip" }
-          - { name: "Awok V5", idf_target: "esp32s2", sdkconfig_file: "configs/sdkconfig.default.esp32s2", zip_name: "esp32v5_awok.zip"}
-
-          # Ghost board (LED on, special pin and LED count)
-          - { name: "ghostboard", idf_target: "esp32c6", sdkconfig_file: "configs/sdkconfig.ghostboard", zip_name: "ghostboard.zip"}
-          
-          # Screen-supported builds
-          - { name: "MarauderV4_FlipperHub", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.marauderv4", zip_name: "MarauderV4_FlipperHub.zip"}
-          - { name: "MarauderV6&AwokDual", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.marauderv6", zip_name: "MarauderV6_AwokDual.zip"}
-          - { name: "AwokMini", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.awokmini", zip_name: "AwokMini.zip"}
-          - { name: "ESP32-S3-Cardputer", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.cardputer", zip_name: "ESP32-S3-Cardputer.zip"}
-          #- { name: "LillyGoTWatch_S3", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.S3TWatch", zip_name: "lillygos3watch.zip"}
-
-          # CYD (Cheap Yellow Display) with touch screen
-          - { name: "CYD2USB", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.CYD2USB", zip_name: "CYD2USB.zip"}
-          - { name: "CYDMicroUSB", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.CYDMicroUSB", zip_name: "CYDMicroUSB.zip"}
-          - { name: "CYDDualUSB", idf_target: "esp32",  sdkconfig_file: "configs/sdkconfig.CYDDualUSB", zip_name: "CYDDualUSB.zip"}
-          - { name: "CYD2USB2.4_Inch", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.CYD2USB2.4Inch", zip_name: "CYD2USB2.4Inch.zip"}
-
-          # 7-inch boards
-          - { name: "Waveshare_LCD", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.waveshare7inch", zip_name: "Waveshare_LCD.zip"}
-          - { name: "Crowtech_LCD", idf_target: "esp32s3",  sdkconfig_file: "configs/sdkconfig.crowtech7inch", zip_name: "Crowtech_LCD.zip"}
+          # Keep your existing build matrix
+          - { name: "esp32-generic", idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.default.esp32",      zip_name: "esp32-generic.zip" }
+          - { name: "esp32s2-generic", idf_target: "esp32s2", sdkconfig_file: "configs/sdkconfig.default.esp32s2",    zip_name: "esp32s2-generic.zip" }
+          - { name: "esp32s3-generic", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.default.esp32s3",    zip_name: "esp32s3-generic.zip" }
+          - { name: "esp32c3-generic", idf_target: "esp32c3", sdkconfig_file: "configs/sdkconfig.default.esp32c3",    zip_name: "esp32c3-generic.zip" }
+          - { name: "esp32c6-generic", idf_target: "esp32c6", sdkconfig_file: "configs/sdkconfig.default.esp32c6",    zip_name: "esp32c6-generic.zip" }
+          - { name: "Awok V5",         idf_target: "esp32s2", sdkconfig_file: "configs/sdkconfig.default.esp32s2",    zip_name: "esp32v5_awok.zip" }
+          - { name: "ghostboard",      idf_target: "esp32c6", sdkconfig_file: "configs/sdkconfig.ghostboard",         zip_name: "ghostboard.zip" }
+          - { name: "MarauderV4_FlipperHub", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.marauderv4",     zip_name: "MarauderV4_FlipperHub.zip" }
+          - { name: "MarauderV6&AwokDual",   idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.marauderv6",     zip_name: "MarauderV6_AwokDual.zip" }
+          - { name: "AwokMini",        idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.awokmini",           zip_name: "AwokMini.zip" }
+          - { name: "ESP32-S3-Cardputer", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.cardputer",       zip_name: "ESP32-S3-Cardputer.zip" }
+          - { name: "CYD2USB",         idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.CYD2USB",            zip_name: "CYD2USB.zip" }
+          - { name: "CYDMicroUSB",     idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.CYDMicroUSB",        zip_name: "CYDMicroUSB.zip" }
+          - { name: "CYDDualUSB",      idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.CYDDualUSB",         zip_name: "CYDDualUSB.zip" }
+          - { name: "CYD2USB2.4_Inch", idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.CYD2USB2.4Inch",     zip_name: "CYD2USB2.4Inch.zip" }
+          - { name: "CYD2USB2.4_Inch_C", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.CYD2USB2.4Inch_C_Varient", zip_name: "CYD2USB2.4Inch_C.zip" }
+          - { name: "Waveshare_LCD",   idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.waveshare7inch",     zip_name: "Waveshare_LCD.zip" }
+          - { name: "Crowtech_LCD",    idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.crowtech7inch",      zip_name: "Crowtech_LCD.zip" }
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
-      - name: Install ESP-IDF
+      - name: Install ESP-IDF Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y wget git flex bison gperf python3-pip python3-setuptools cmake ninja-build ccache libffi-dev libssl-dev dfu-util
-          git clone -b v5.3.1 --depth 1 https://github.com/espressif/esp-idf.git ~/esp-idf
-          ~/esp-idf/install.sh
-      - name: Apply Custom SDK Config
+
+      - name: Install ESP-IDF v5.3.1
         run: |
-          cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
-      - name: Set up ESP-IDF and Target
+          git clone -b v5.3.1 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
+          ~/esp-idf/install.sh esp32,esp32s2,esp32s3,esp32c3,esp32c6 # Specify all targets needed
+
+      - name: Apply Custom SDK Config
+        run: cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
+
+      - name: Set up ESP-IDF Environment
         run: |
           . ~/esp-idf/export.sh
           export IDF_TARGET=${{ matrix.target.idf_target }}
           echo "IDF_TARGET=${{ matrix.target.idf_target }}" >> $GITHUB_ENV
+          echo "Using IDF_TARGET: ${{ matrix.target.idf_target }}"
+
       - name: Clean and Build Project
         env:
           SDKCONFIG_DEFAULTS: "sdkconfig.defaults"
         run: |
           . ~/esp-idf/export.sh
           idf.py clean
-          idf.py build
-      - name: Download Bootloader
+          idf.py build || {
+            echo "Build failed for ${{ matrix.target.name }}"
+            exit 1
+          }
+
+      - name: Download Custom Bootloader
         run: |
           BOOTLOADER_URL="https://cdn.spookytools.com/bootloaders/${{ matrix.target.idf_target }}.bin"
-          BOOTLOADER_PATH="build/bootloader.bin"
+          BOOTLOADER_PATH="build/bootloader/bootloader.bin" # Correct path for bootloader binary
           echo "Downloading bootloader from $BOOTLOADER_URL..."
-          curl -L -o "$BOOTLOADER_PATH" "$BOOTLOADER_URL"
-          if [ ! -f "$BOOTLOADER_PATH" ]; then
-            echo "Error: Bootloader could not be downloaded."
+          curl -f -L -o "$BOOTLOADER_PATH" "$BOOTLOADER_URL" || {
+            echo "Error: Bootloader download failed from $BOOTLOADER_URL."
+            # Optional: Fallback to default if needed, or just fail
+            # echo "Falling back to default bootloader build..."
+            # cd build/bootloader && ninja && cd ../.. || exit 1
             exit 1
-          else
-            echo "Bootloader downloaded successfully."
+          }
+          if [ ! -f "$BOOTLOADER_PATH" ]; then
+            echo "Error: Bootloader file not found at $BOOTLOADER_PATH after download."
+            exit 1
           fi
+          echo "Bootloader downloaded successfully to $BOOTLOADER_PATH."
+
       - name: Package Artifacts into ZIP
         run: |
-          ARTIFACT_DIR="packaged_artifacts"
+          ARTIFACT_DIR="packaged_artifacts_${{ matrix.target.name }}" # Unique dir per target
           ZIP_FILE="${{ matrix.target.zip_name }}"
           mkdir -p "$ARTIFACT_DIR"
-          cp build/partition_table/partition-table.bin "$ARTIFACT_DIR/"
-          cp build/*.bin "$ARTIFACT_DIR/"
-          echo "Packaging into zip: $ZIP_FILE"
-          cd "$ARTIFACT_DIR"
-          zip "../$ZIP_FILE" ./*
-          cd ..
-          echo "Zip file $ZIP_FILE created."
+          # Copy partition table
+          cp build/partition_table/partition-table.bin "$ARTIFACT_DIR/partitions.bin" || { echo "Failed to copy partition table"; exit 1; }
+          # Copy bootloader
+          cp build/bootloader/bootloader.bin "$ARTIFACT_DIR/bootloader.bin" || { echo "Failed to copy bootloader"; exit 1; }
+           # Copy app binary
+          cp build/*.bin "$ARTIFACT_DIR/firmware.bin" || { echo "Failed to copy app binary"; exit 1; }
+
+          echo "Contents of $ARTIFACT_DIR:"
+          ls -l "$ARTIFACT_DIR"
+
+          # Create the zip file from the artifact directory
+          zip -j "$ZIP_FILE" "$ARTIFACT_DIR"/* || { echo "Failed to create ZIP $ZIP_FILE"; exit 1; }
+
+          echo "Created ZIP:"
           ls -lh "$ZIP_FILE"
-      - name: Upload Build Artifacts to GitHub
-        uses: actions/upload-artifact@v3
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target.zip_name }}
+          name: build_${{ matrix.target.name }} # Unique artifact name per build
           path: ${{ matrix.target.zip_name }}
 
-  upload_all:
-    name: Upload All to Cloudflare R2 and GitHub Release
+  upload_prerelease:
+    name: Create Pre-release and Upload Artifacts
     needs: build
+    # Only run this job if the buildType input was 'prerelease'
+    if: github.event.inputs.buildType == 'prerelease'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # This ensures we have all commit history
+          fetch-depth: 0 # Needed for gh release create
 
-      - name: Download All Artifacts
-        uses: actions/download-artifact@v3
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: all_artifacts
+          path: all_build_artifacts # Download all artifacts to this directory
 
-      - name: Verify and Flatten Artifacts
+      - name: Verify and Prepare Artifacts for Upload
         run: |
-          echo "Checking and flattening artifacts..."
-          mkdir -p flat_artifacts
-          if [ -d "all_artifacts" ] && [ "$(ls -A all_artifacts)" ]; then
-            find all_artifacts -type f -exec cp {} flat_artifacts/ \;
-            echo "Flattened artifacts:"
-            ls -lh flat_artifacts
+          mkdir -p release_assets
+          # Find all .zip files directly within the downloaded artifact directories and copy them
+          find all_build_artifacts/build_* -maxdepth 1 -name '*.zip' -exec cp {} release_assets/ \;
+          echo "Prepared release assets:"
+          ls -lh release_assets
+
+      - name: Generate Pre-release Tag and Title
+        id: pre_release_info
+        run: |
+          TAG_NAME="prerelease-$(date +'%Y%m%d-%H%M%S')-${GITHUB_SHA::7}" # Add short SHA for uniqueness
+          TITLE="Pre-release $(date +'%Y-%m-%d %H:%M:%S')"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_title=$TITLE" >> $GITHUB_OUTPUT
+          echo "Generated Tag: $TAG_NAME"
+          echo "Generated Title: $TITLE"
+
+      - name: Create GitHub Pre-Release and Upload Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.pre_release_info.outputs.tag_name }}
+          TITLE: ${{ steps.pre_release_info.outputs.release_title }}
+        run: |
+          echo "Creating pre-release with tag $TAG and title '$TITLE'"
+          # Check if there are assets to upload
+          if [ -z "$(ls -A release_assets/*.zip 2>/dev/null)" ]; then
+             echo "No ZIP files found in release_assets. Creating pre-release without assets."
+             gh release create "$TAG" \
+               --repo "$GITHUB_REPOSITORY" \
+               --title "$TITLE" \
+               --notes "Automated pre-release build (no assets generated or found)." \
+               --prerelease
           else
-            echo "No artifacts found or directory is empty."
-            exit 1
+             echo "Uploading assets from release_assets:"
+             ls -l release_assets/*.zip
+             gh release create "$TAG" \
+               --repo "$GITHUB_REPOSITORY" \
+               --title "$TITLE" \
+               --notes "Automated pre-release build." \
+               --prerelease \
+               release_assets/*.zip # Upload all zip files found
           fi
-      - name: Install rclone
-        run: |
-          curl -fsSL https://rclone.org/install.sh | sudo bash
-      - name: Configure rclone for Cloudflare R2
-        env:
-          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
-          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
-        run: |
-          mkdir -p ~/.config/rclone
-          cat <<EOF > ~/.config/rclone/rclone.conf
-          [cloudflare_r2]
-          type = s3
-          provider = Cloudflare
-          access_key_id = $R2_ACCESS_KEY
-          secret_access_key = $R2_SECRET_KEY
-          endpoint = https://fb5f7d31bedfe4f3538ddfa6db491962.r2.cloudflarestorage.com
-          EOF
-      - name: Upload All Artifacts to Cloudflare R2
-        env:
-          R2_BUCKET: "spooksapi"
-          R2_PATH: "GhostESPBins/prerelease"
-        run: |
-          echo "Uploading artifacts to Cloudflare R2..."
-          for file in flat_artifacts/*; do
-            if [ -f "$file" ]; then
-              echo "Uploading $file..."
-              rclone copy "$file" "cloudflare_r2:${R2_BUCKET}/${R2_PATH}" --progress --s3-no-check-bucket
-            else
-              echo "Skipping $file as it is not a valid file."
-            fi
-          done
-          echo "All artifacts uploaded successfully."
-      - name: Get the Latest Release ID (Including Pre-releases)
-        id: get_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          latest_release=$(curl -s \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" | jq '[.[] | select(.draft == false)] | .[0]')
-          release_id=$(echo "$latest_release" | jq -r '.id')
-          echo "Latest release ID (including pre-releases) is $release_id"
-          echo "::set-output name=release_id::$release_id"
-      - name: Upload Artifacts to Latest Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for file in flat_artifacts/*; do
-            if [ -f "$file" ] && [ -s "$file" ]; then
-              echo "Uploading $file to GitHub Release..."
-              curl -X POST \
-                -H "Authorization: token $GITHUB_TOKEN" \
-                -H "Content-Type: application/zip" \
-                --data-binary @"$file" \
-                "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.get_release.outputs.release_id }}/assets?name=$(basename $file)"
-            else
-              echo "Skipping $file as it is either empty or not a valid file."
-            fi
-          done
-          
-      - name: Get Commit History
-        id: get_commits
-        run: |
-          # Get the last 10 commits regardless of release history
-          commits=$(git log --pretty=format:"- %s" -n 10)
-          
-          # Escape newlines and quotes for JSON
-          commits="${commits//'%'/'%25'}"
-          commits="${commits//$'\n'/'\\n'}"
-          commits="${commits//$'\r'/'%0D'}"
-          commits="${commits//'"'/'\"'}"
-          
-          echo "commits=$commits" >> $GITHUB_OUTPUT
-
-      - name: Notify Discord of Successful Upload
-        if: success()
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          # Get current date in different formats
-          BUILD_DATE=$(date -u +"%Y-%m-%d")
-          BUILD_VERSION=$(date -u +"%Y%m%d")
-          
-          payload=$(cat <<EOF
-          {
-            "embeds": [
-              {
-                "title": "🚀 GhostESP Prerelease Build - $BUILD_DATE",
-                "description": "A new prerelease build has been uploaded to Cloudflare R2 and GitHub Release.\n\n**Version:** Pre-$BUILD_VERSION\n\n**Changes since last prerelease:**\n${{ steps.get_commits.outputs.commits }}\n\n**Flash your device:**\n🔗 [Flash using GhostESP Web Flasher](https://flasher.ghostesp.net)",
-                "color": 16750848,
-                "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-                "footer": {
-                  "text": "GhostESP Prerelease Build $BUILD_VERSION"
-                }
-              }
-            ]
-          }
-          EOF
-          )
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d "$payload" \
-            "$DISCORD_WEBHOOK_URL"
-      - name: Generate Boards JSON
-        run: |
-          cat > boards.json << 'EOF'
-          {
-            "boards": {
-              "ESP32": {
-                "generic": {
-                  "name": "ESP32 Generic",
-                  "zip_file": "esp32-generic.zip",
-                  "chip_type": "ESP32"
-                },
-                "marauderv4": {
-                  "name": "MarauderV4 FlipperHub",
-                  "zip_file": "MarauderV4_FlipperHub.zip",
-                  "chip_type": "ESP32"
-                },
-                "marauderv6": {
-                  "name": "MarauderV6 & AwokDual",
-                  "zip_file": "MarauderV6_AwokDual.zip",
-                  "chip_type": "ESP32"
-                },
-                "awokmini": {
-                  "name": "AwokMini",
-                  "zip_file": "AwokMini.zip",
-                  "chip_type": "ESP32"
-                },
-                "cyd2usb": {
-                  "name": "CYD2USB",
-                  "zip_file": "CYD2USB.zip",
-                  "chip_type": "ESP32"
-                },
-                "cydmicrousb": {
-                  "name": "CYDMicroUSB",
-                  "zip_file": "CYDMicroUSB.zip",
-                  "chip_type": "ESP32"
-                },
-                "cyddualusb": {
-                  "name": "CYDDualUSB",
-                  "zip_file": "CYDDualUSB.zip",
-                  "chip_type": "ESP32"
-                },
-                "cyd2usb24inch": {
-                  "name": "CYD2USB 2.4 Inch",
-                  "zip_file": "CYD2USB2.4Inch.zip",
-                  "chip_type": "ESP32"
-                }
-              },
-              "ESP32S2": {
-                "generic": {
-                  "name": "ESP32-S2 Generic",
-                  "zip_file": "esp32s2-generic.zip",
-                  "chip_type": "ESP32-S2"
-                },
-                "awokv5": {
-                  "name": "Awok V5",
-                  "zip_file": "esp32v5_awok.zip",
-                  "chip_type": "ESP32-S2"
-                }
-              },
-              "ESP32S3": {
-                "generic": {
-                  "name": "ESP32-S3 Generic",
-                  "zip_file": "esp32s3-generic.zip",
-                  "chip_type": "ESP32-S3"
-                },
-                "cardputer": {
-                  "name": "ESP32-S3-Cardputer",
-                  "zip_file": "ESP32-S3-Cardputer.zip",
-                  "chip_type": "ESP32-S3"
-                },
-                "waveshare": {
-                  "name": "Waveshare LCD",
-                  "zip_file": "Waveshare_LCD.zip",
-                  "chip_type": "ESP32-S3"
-                },
-                "crowtech": {
-                  "name": "Crowtech LCD",
-                  "zip_file": "Crowtech_LCD.zip",
-                  "chip_type": "ESP32-S3"
-                }
-              },
-              "ESP32C3": {
-                "generic": {
-                  "name": "ESP32-C3 Generic",
-                  "zip_file": "esp32c3-generic.zip",
-                  "chip_type": "ESP32-C3"
-                },
-              "ESP32C6": {
-                "generic": {
-                  "name": "ESP32-C6 Generic",
-                  "zip_file": "esp32c6-generic.zip",
-                  "chip_type": "ESP32-C6"
-                },
-                "ghostboard": {
-                  "name": "GhostBoard",
-                  "zip_file": "ghostboard.zip",
-                  "chip_type": "ESP32-C6"
-                }
-              }
-            },
-            "version": "${{ github.sha }}",
-            "build_date": "$(date -u +"%Y-%m-%d")",
-            "build_number": "$(date -u +"%Y%m%d")"
-          }
-          EOF
-          echo "Generated boards.json with target information"
-      - name: Upload boards.json to Cloudflare R2
-        env:
-          R2_BUCKET: "spooksapi"
-          R2_PATH: "GhostESPBins/prerelease"
-        run: |
-          echo "Uploading boards.json to Cloudflare R2..."
-          rclone copy "boards.json" "cloudflare_r2:${R2_BUCKET}/${R2_PATH}" --progress --s3-no-check-bucket
+          echo "Pre-release creation attempted."

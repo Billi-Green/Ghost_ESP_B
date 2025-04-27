@@ -1,5 +1,46 @@
 # Ghost ESP Changelog
 
+## Revival v1.4.9
+
+### ❤️ New Stuff
+
+- Basic changeable SD Card pin out through webUI and serial command line (requires existing sd support to be enabled in your board's build)
+- Added default evil portal html directly in the firmware (credit to @breaching and @bigbrodude6119 for the tiny but great html file)
+- Basic congestion command to quickly see channel usage
+- Added scanall command to scan aps and stations together
+
+### 🤏 Tweaks and Improvements
+
+- Simplified the evil-portal command line arguments.
+  - eg. ```startportal <google.html> (or <default>) <EVILAP> <PSK>```
+- Save credentials in flash when using connect command
+- Captive portal now supports Android devices
+- Simplified the evil-portal command line arguments.
+- set LWIP_MAX_SOCKETS to 16 instead of 10
+- Save captured evil-portal credentials to SD card if available
+- Added support for scanning aps for a specific amount of time eg. ```scanap 10```
+- Connect command now uses saved credentials from flash when no arguments are provided
+- Added channel hopping to station scan
+- Include BSSID in scanap output
+
+### 🐛 Bug Fixes
+
+- Use "GhostNet" as fallback default webUI credentials if G_Settings fields are not set or invalid
+- Fix webUI not using evilportal command line arguments
+- Fix evil‑portal local file serving 
+- Correctly parse station/AP MACs and ignore broadcast/multicast in Station Scan
+- Fix station scanning using wrong frame bit fields and offsetting the mac addresses
+
+----------------------
+
+OK, we back. - 22 April 2025
+
+-----------------------
+
+Rest in Peace, GhostESP - 22 April 2025
+
+______________________
+
 ## 1.4.7
 
 ### ❤️ New Stuff

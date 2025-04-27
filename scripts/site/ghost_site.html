@@ -920,11 +920,106 @@
                 padding: 10px 15px;
             }
         }
+
+        .pin-config-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 15px;
+            margin-bottom: 15px; /* Add space before action buttons */
+        }
+
+        .pin-group {
+            flex: 1;
+            min-width: calc(50% - 10px); /* Aim for two groups side-by-side */
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .settings-section h3 { /* Style h3 within settings sections */
+            text-align: left;
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 1.2rem; /* Match h2 slightly smaller */
+            color: var(--primary-color);
+            font-weight: 500;
+        }
+
+        .pin-input {
+            /* Mimic .input-group structure where possible */
+            margin-bottom: 15px; /* Spacing similar to input-group */
+            display: flex;
+            align-items: center;
+            justify-content: space-between; /* Align label and input */
+        }
+
+        .pin-input label {
+            /* Reuse label styles */
+            display: block;
+            margin-bottom: 0; /* Remove bottom margin as it's flex */
+            font-size: 16px;
+            color: var(--primary-color);
+            font-weight: 500;
+            margin-right: 10px; /* Space between label and input */
+            flex-shrink: 0;
+        }
+
+        .pin-input input {
+            /* Reuse input styles */
+            width: auto; /* Adjust width as needed */
+            flex-grow: 1; /* Allow input to take remaining space */
+            max-width: 100px; /* Limit input width */
+            padding: 8px 10px;
+            font-family: inherit;
+            font-size: 14px;
+            background-color: var(--gradient-2);
+            border: 2px solid var(--gradient-2);
+            color: var(--text-color);
+            border-radius: 6px;
+            margin-top: 0; /* Remove top margin */
+            box-sizing: border-box;
+            transition: border-color 0.3s, background-color 0.3s;
+        }
+        
+        .pin-input input:focus {
+            /* Reuse focus styles */
+             border-color: var(--primary-color);
+            background-color: #1a0d00;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.1);
+            transform: translateY(-1px);
+        }
+
+        /* Button adjustments within pin-group and action-buttons */
+        .settings-section .pin-group button,
+        .settings-section .action-buttons button {
+            margin: 10px 0 0 0; /* Adjust margin */
+            padding: 8px 15px; /* Use small padding */
+            font-size: 0.9em; /* Use small font size */
+            border-width: 1px;
+            display: inline-block; /* Make buttons inline */
+            width: auto; /* Auto width */
+            min-width: auto;
+        }
+        
+        .settings-section .pin-group button {
+             margin-top: 15px; /* Add space above the group buttons */
+        }
+
+        .settings-section .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: flex-start; /* Align action buttons */
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 107, 0, 0.2); /* Add a separator */
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Ghost ESP vA1.4.7</h1>
+        <h1>GhostESP v1.4.9</h1>
         <!-- Tab Navigation -->
         <div class="tab">
             <button class="tablinks active" onclick="openTab(event, 'Settings')" id="defaultTab">Settings</button>
@@ -1007,55 +1102,24 @@
                 <div class="settings-section" id="evil-portal-section">
                     <h2>Evil Portal Settings</h2>
                     <div class="input-group">
-                        <label for="portal_offline_mode">Offline Mode 
+                        <label for="portal_url">File Path
                             <span class="tooltip">?
-                                <span class="tooltiptext">Toggle offline mode for the Evil Portal.</span>
+                                <span class="tooltiptext">Set as 'default' for the default embedded Evil Portal.</span>
                             </span>
                         </label>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="portal_offline_mode">
-                            <span class="slider"></span>
-                        </label>
+                        <input type="text" id="portal_url" placeholder="Enter file path">
                     </div>
                     <div class="input-group">
-                        <label for="portal_url">Website URL or File Path 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the URL or file path for the Evil Portal.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="portal_url" placeholder="Enter URL">
+                        <label for="portal_ap_ssid">Portal AP SSID</label>
+                        <input type="text" id="portal_ap_ssid" placeholder="Enter AP SSID">
                     </div>
                     <div class="input-group">
-                        <label for="portal_ssid">WiFi SSID 
+                        <label for="portal_password">Portal AP PSK
                             <span class="tooltip">?
-                                <span class="tooltiptext">Enter the SSID for the WiFi network used by the Evil Portal.</span>
+                                <span class="tooltiptext">Leave blank for an open portal.</span>
                             </span>
                         </label>
-                        <input type="text" id="portal_ssid" placeholder="Enter WiFi SSID">
-                    </div>
-                    <div class="input-group">
-                        <label for="portal_password">WiFi Password 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the password for the WiFi network used by the Evil Portal.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="portal_password" placeholder="Enter WiFi Password">
-                    </div>
-                    <div class="input-group">
-                        <label for="portal_ap_ssid">Evil Portal AP SSID 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the SSID for the Access Point of the Evil Portal.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="portal_ap_ssid" placeholder="Enter Evil Portal AP SSID">
-                    </div>
-                    <div class="input-group">
-                        <label for="portal_domain">Portal Domain 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the domain name for the Evil Portal.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="portal_domain" placeholder="Enter Domain">
+                        <input type="text" id="portal_password" placeholder="Enter AP PSK">
                     </div>
                     <button onclick="startevilportal()">Start Evil Portal</button>
                 </div>
@@ -1212,6 +1276,75 @@
                         <input type="number" id="display_timeout" min="1000" max="60000" step="1000" placeholder="1000 - 60000 ms" required>
                     </div>
                 </div>
+                
+                <!-- SD Card Configuration Section (Moved Here) -->
+                <section class="settings-section" id="sd-card-config">
+                    <h2>SD Card Pin Configuration</h2>
+                    <p></p>
+                    <p style="font-size: 0.9em; color: var(--text-secondary); margin-top: 5px;">
+                        <strong>Note:</strong> The SD Card communication mode (SDMMC or SPI) is determined by the firmware's compile-time configuration (sdkconfig).
+                        This section allows setting the GPIO pins for *both* modes, but only the pins corresponding to the *compiled mode* will be used.
+                        Changing the actual mode requires recompiling and flashing new firmware.
+                        Setting pins for an inactive mode will have no effect.
+                    </p>
+                    
+                    <div class="pin-config-container">
+                        <div class="pin-group">
+                            <h3>MMC Mode (4-bit/1-bit)</h3>
+                            <div class="pin-input">
+                                <label for="mmc-clk">CLK:</label>
+                                <input type="number" id="mmc-clk" min="0" max="40" placeholder="19">
+                            </div>
+                            <div class="pin-input">
+                                <label for="mmc-cmd">CMD:</label>
+                                <input type="number" id="mmc-cmd" min="0" max="40" placeholder="18">
+                            </div>
+                            <div class="pin-input">
+                                <label for="mmc-d0">D0:</label>
+                                <input type="number" id="mmc-d0" min="0" max="40" placeholder="20">
+                            </div>
+                            <div class="pin-input">
+                                <label for="mmc-d1">D1:</label>
+                                <input type="number" id="mmc-d1" min="0" max="40" placeholder="21">
+                            </div>
+                            <div class="pin-input">
+                                <label for="mmc-d2">D2:</label>
+                                <input type="number" id="mmc-d2" min="0" max="40" placeholder="22">
+                            </div>
+                            <div class="pin-input">
+                                <label for="mmc-d3">D3:</label>
+                                <input type="number" id="mmc-d3" min="0" max="40" placeholder="23">
+                            </div>
+                            <button class="update-mmc-btn small">Update MMC Pins</button> 
+                        </div>
+                        
+                        <div class="pin-group">
+                            <h3>SPI Mode</h3>
+                            <div class="pin-input">
+                                <label for="spi-cs">CS:</label>
+                                <input type="number" id="spi-cs" min="0" max="40" placeholder="5">
+                            </div>
+                            <div class="pin-input">
+                                <label for="spi-clk">CLK:</label>
+                                <input type="number" id="spi-clk" min="0" max="40" placeholder="18">
+                            </div>
+                            <div class="pin-input">
+                                <label for="spi-miso">MISO:</label>
+                                <input type="number" id="spi-miso" min="0" max="40" placeholder="19">
+                            </div>
+                            <div class="pin-input">
+                                <label for="spi-mosi">MOSI:</label>
+                                <input type="number" id="spi-mosi" min="0" max="40" placeholder="23">
+                            </div>
+                            <button class="update-spi-btn small">Update SPI Pins</button>
+                        </div>
+                    </div>
+                    
+                    <div class="action-buttons">
+                        <button class="save-config-btn small">Save Configuration</button>
+                        <button class="refresh-config-btn small">Refresh Current Values</button>
+                    </div>
+                </section>
             </div>
             <button onclick="saveSettings()">Save Settings</button>
         </div>
@@ -1274,16 +1407,12 @@
                             <code>-a</code>: AP selection index (must be a valid number)
                         </li>
                         <li>
-                            <strong>startportal</strong>: Start a portal with specified parameters.<br>
-                            <strong>Usage:</strong> <code>startportal &lt;URL&gt; &lt;SSID&gt; &lt;Password&gt; &lt;AP_ssid&gt; &lt;Domain&gt;</code><br>
+                            <strong>startportal</strong>: Start an Evil Portal.<br>
+                            <strong>Usage:</strong> <code>startportal &lt;FilePath&gt; &lt;AP_SSID&gt; &lt;PSK&gt;</code><br>
                             <strong>Arguments:</strong><br>
-                            <code>&lt;URL&gt;</code>: URL for the portal<br>
-                            <code>&lt;SSID&gt;</code>: Wi-Fi SSID for the portal<br>
-                            <code>&lt;Password&gt;</code>: Wi-Fi password for the portal<br>
-                            <code>&lt;AP_ssid&gt;</code>: SSID for the access point<br>
-                            <code>&lt;Domain&gt;</code>: Custom domain to spoof in address bar<br>
-                            <em>OR</em><br>
-                            <strong>Offline Usage:</strong> <code>startportal &lt;FilePath&gt; &lt;AP_ssid&gt; &lt;Domain&gt;</code>
+                            <code>&lt;FilePath&gt;</code>: Local file path (e.g., index.html)<br>
+                            <code>&lt;AP_SSID&gt;</code>: SSID for the access point<br>
+                            <code>&lt;PSK&gt;</code>: PSK for the access point
                         </li>
                         <li>
                             <strong>stopportal</strong>: Stop the Evil Portal.<br>
@@ -1403,6 +1532,8 @@
                 </div>
             </div>
         </div>
+
+        <!-- Additional sections can be added here -->
     </div>
     <!-- JavaScript for Interactivity -->
     <script>
@@ -1660,11 +1791,8 @@
 
                     // Evil Portal Settings
                     document.getElementById('portal_url').value = data.portal_url;
-                    document.getElementById('portal_ssid').value = data.portal_ssid;
-                    document.getElementById('portal_password').value = data.portal_password;
                     document.getElementById('portal_ap_ssid').value = data.portal_ap_ssid;
-                    document.getElementById('portal_domain').value = data.portal_domain;
-                    document.getElementById('portal_offline_mode').checked = data.portal_offline_mode;
+                    document.getElementById('portal_password').value = data.portal_password;
 
                     // Power Printer Settings
                     document.getElementById('printer_ip').value = data.printer_ip;
@@ -1705,11 +1833,8 @@
 
                 // Evil Portal Settings
                 portal_url: document.getElementById('portal_url').value,
-                portal_ssid: document.getElementById('portal_ssid').value,
-                portal_password: document.getElementById('portal_password').value,
                 portal_ap_ssid: document.getElementById('portal_ap_ssid').value,
-                portal_domain: document.getElementById('portal_domain').value,
-                portal_offline_mode: document.getElementById('portal_offline_mode').checked,
+                portal_password: document.getElementById('portal_password').value,
 
                 // Power Printer Settings
                 printer_ip: document.getElementById('printer_ip').value,
@@ -1762,33 +1887,22 @@
 
         // Function to send Evil Portal command to the ESP32
         function startevilportal() {
-            const PortalURL = document.getElementById('portal_url').value;
-            let PortalSSID = document.getElementById('portal_ssid').value;
-            let PortalPassword = document.getElementById('portal_password').value;
-            let PortalAPSSID = document.getElementById('portal_ap_ssid').value;
-            let PortalDomain = document.getElementById('portal_domain').value;
-
-            // Validate inputs
+            let filePath = document.getElementById('portal_url').value.trim();
+            const apSsid = document.getElementById('portal_ap_ssid').value.trim();
+            const psk = document.getElementById('portal_password').value.trim();
             const errors = [];
-            if (PortalURL === '') errors.push('Please enter a Portal URL or File Path.');
-            if (PortalSSID === '') errors.push('Please enter a Portal SSID.');
-            if (PortalPassword === '') errors.push('Please enter a Portal Password.');
-            if (PortalAPSSID === '') errors.push('Please enter a Portal AP SSID.');
-            if (PortalDomain === '') errors.push('Please enter a Portal Domain.');
-
+            if (!apSsid) errors.push('Please enter an AP SSID.');
             if (errors.length > 0) {
                 alert('Please correct the following errors:\n' + errors.join('\n'));
                 return;
             }
-
-            // Wrap parameters in double quotes if they contain spaces
-            PortalSSID = wrapInQuotesIfNeeded(PortalSSID);
-            PortalPassword = wrapInQuotesIfNeeded(PortalPassword);
-            PortalAPSSID = wrapInQuotesIfNeeded(PortalAPSSID);
-            PortalDomain = wrapInQuotesIfNeeded(PortalDomain);
-
-            const command = `startportal`;
-
+            if (!filePath) {
+                filePath = 'default';
+            }
+            const finalPath = wrapInQuotesIfNeeded(filePath);
+            const finalSsid = wrapInQuotesIfNeeded(apSsid);
+            const finalPsk = wrapInQuotesIfNeeded(psk); 
+            const command = `startportal ${finalPath} ${finalSsid} ${finalPsk}`;
             fetch('/api/command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1796,12 +1910,12 @@
             })
             .then(response => {
                 if (response.ok) {
-                    alert('Evil Portal Executed Successfully... You Are now Disconnected From GhostNet');
+                    alert('Evil Portal executed successfully.');
                 } else {
-                    alert('Error Sending Evil Portal Command...');
+                    alert('Error sending Evil Portal command.');
                 }
             })
-            .catch(error => console.error('Error Sending Evil Portal Command...', error));
+            .catch(error => console.error('Error sending Evil Portal command:', error));
         }
 
         // Function to validate settings before saving
@@ -2012,6 +2126,161 @@
 
         // Start polling for terminal updates
         updateTerminal();
+
+        // SD Card Configuration Functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get current SD card configuration on page load
+            fetchSdCardConfig();
+            
+            // Update MMC pins button click handler
+            document.querySelector('.update-mmc-btn').addEventListener('click', function() {
+                const clk = document.getElementById('mmc-clk').value;
+                const cmd = document.getElementById('mmc-cmd').value;
+                const d0 = document.getElementById('mmc-d0').value;
+                const d1 = document.getElementById('mmc-d1').value;
+                const d2 = document.getElementById('mmc-d2').value;
+                const d3 = document.getElementById('mmc-d3').value;
+                
+                if (!clk || !cmd || !d0 || !d1 || !d2 || !d3) {
+                    showNotification('Please fill in all MMC pin fields', 'error');
+                    return;
+                }
+                
+                const command = `sd_pins_mmc ${clk} ${cmd} ${d0} ${d1} ${d2} ${d3}`;
+                sendCommand(command, function(response) {
+                    showNotification('MMC pins updated successfully', 'success');
+                });
+            });
+            
+            // Update SPI pins button click handler
+            document.querySelector('.update-spi-btn').addEventListener('click', function() {
+                const cs = document.getElementById('spi-cs').value;
+                const clk = document.getElementById('spi-clk').value;
+                const miso = document.getElementById('spi-miso').value;
+                const mosi = document.getElementById('spi-mosi').value;
+                
+                if (!cs || !clk || !miso || !mosi) {
+                    showNotification('Please fill in all SPI pin fields', 'error');
+                    return;
+                }
+                
+                const command = `sd_pins_spi ${cs} ${clk} ${miso} ${mosi}`;
+                sendCommand(command, function(response) {
+                    showNotification('SPI pins updated successfully', 'success');
+                });
+            });
+            
+            // Save configuration button click handler
+            document.querySelector('.save-config-btn').addEventListener('click', function() {
+                const command = 'sd_save_config';
+                sendCommand(command, function(response) {
+                    showNotification('SD card configuration saved', 'success');
+                });
+            });
+            
+            // Refresh current values button click handler
+            document.querySelector('.refresh-config-btn').addEventListener('click', function() {
+                fetchSdCardConfig();
+            });
+            
+            // Function to fetch current SD card configuration
+            function fetchSdCardConfig() {
+                const command = 'sd_config';
+                sendCommand(command, function(response) {
+                    // Parse the response to extract pin values
+                    parseSdConfigResponse(response);
+                });
+            }
+            
+            // Function to parse SD card configuration response
+            function parseSdConfigResponse(response) {
+                const lines = response.split('\n');
+                let mode = '';
+                
+                lines.forEach(line => {
+                    if (line.includes('MMC Mode:')) {
+                        mode = 'mmc';
+                    } else if (line.includes('SPI Mode:')) {
+                        mode = 'spi';
+                    } else if (line.trim() !== '') {
+                        const match = line.match(/(\w+):\s+GPIO(\d+)/);
+                        if (match) {
+                            const pin = match[1].toLowerCase();
+                            const value = match[2];
+                            
+                            if (mode === 'mmc') {
+                                if (pin === 'clk') document.getElementById('mmc-clk').value = value;
+                                else if (pin === 'cmd') document.getElementById('mmc-cmd').value = value;
+                                else if (pin === 'd0') document.getElementById('mmc-d0').value = value;
+                                else if (pin === 'd1') document.getElementById('mmc-d1').value = value;
+                                else if (pin === 'd2') document.getElementById('mmc-d2').value = value;
+                                else if (pin === 'd3') document.getElementById('mmc-d3').value = value;
+                            } else if (mode === 'spi') {
+                                if (pin === 'cs') document.getElementById('spi-cs').value = value;
+                                else if (pin === 'clk') document.getElementById('spi-clk').value = value;
+                                else if (pin === 'miso') document.getElementById('spi-miso').value = value;
+                                else if (pin === 'mosi') document.getElementById('spi-mosi').value = value;
+                            }
+                        }
+                    }
+                });
+                
+                showNotification('SD card configuration loaded', 'success');
+            }
+            
+            // Utility function to send commands to the ESP32
+            function sendCommand(command, callback) {
+                fetch('/api/command', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ command: command })
+                })
+                .then(response => response.text())
+                .then(data => {
+                    if (callback) callback(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showNotification('Command failed: ' + error, 'error');
+                });
+            }
+            
+            // Utility function to show notifications
+            function showNotification(message, type) {
+                // Check if notification container exists, if not create one
+                let notifContainer = document.getElementById('notification-container');
+                if (!notifContainer) {
+                    notifContainer = document.createElement('div');
+                    notifContainer.id = 'notification-container';
+                    notifContainer.style.position = 'fixed';
+                    notifContainer.style.bottom = '20px';
+                    notifContainer.style.right = '20px';
+                    notifContainer.style.zIndex = '9999';
+                    document.body.appendChild(notifContainer);
+                }
+                
+                const notification = document.createElement('div');
+                notification.textContent = message;
+                notification.style.background = type === 'error' ? '#ff3860' : '#23d160';
+                notification.style.color = '#fff';
+                notification.style.padding = '12px 20px';
+                notification.style.borderRadius = '4px';
+                notification.style.marginTop = '10px';
+                notification.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+                
+                notifContainer.appendChild(notification);
+                
+                setTimeout(() => {
+                    notification.style.opacity = '0';
+                    notification.style.transition = 'opacity 0.5s ease';
+                    setTimeout(() => {
+                        notifContainer.removeChild(notification);
+                    }, 500);
+                }, 3000);
+            }
+        });
     </script>
 </body>
 </html>

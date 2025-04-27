@@ -34,6 +34,10 @@ int get_query_param_value(const char *query, const char *key, char *value,
 
 int get_next_pcap_file_index(const char *base_name);
 
+int get_next_csv_file_index(const char *base_name);
+
+int get_next_file_index(const char *dir_path, const char *base_name, const char *extension);
+
 #define WRAP_MESSAGE(msg) wrap_message(msg, __FILE__, __LINE__)
 
 #endif // SERIAL_MANAGER_H
