@@ -58,7 +58,7 @@ A compact, keyboard-integrated board designed for portability.
 Base models with different levels of compatibility:
 
 - **ESP32** (standard model)
-- **ESP32-S2**
+- **ESP32-S2** (includes the Flipper WiFi Devboard)
 - **ESP32-S3**
 - **ESP32-C3**
 - **ESP32-C6**
@@ -98,6 +98,7 @@ Base models with different levels of compatibility:
 - **Marauder V6** and **Awok variants**: No SD card support.
 - Some features, like BLE spam, may be missing in alpha releases.
 - Cache-clearing may be required when using the web flasher.
+- ESP32S2 Boards do not support bluetooth functionality due to lack of hardware.
 
 ## 👥 Support & Community
 
