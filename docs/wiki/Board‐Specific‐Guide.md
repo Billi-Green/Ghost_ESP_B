@@ -77,7 +77,7 @@ Base models with different levels of compatibility:
 
 - SD card compatibility varies across models:
   - Full support: **CYD boards** and **Cardputer**
-  - Not supported: **Marauder V6**, **Awok Dual Touch**, and **Awok Mini**
+  - Not supported: **Marauder V6**, **Awok Dual Touch**, **Generic ESP32-Wroom** chips, and **Awok Mini**
 - Standby mode available for non-touch displays.
 - Touchscreen support is actively developed, with fixes available for **Marauder V6**.
 
@@ -90,12 +90,12 @@ Base models with different levels of compatibility:
 ## SD Card Compatibility
 
 - Fully supported on **CYD boards** and **Cardputer**.
-- Not supported on **Marauder V6** and **Awok** variants.
+- Not supported on **Marauder V6**,**Awok** variants, and **Generic ESP32** builds.
 - For latest compatibility updates, check [Discord](https://discord.gg/5cyNmUMgwh) announcements.
 
 ## ⚠️ Known Limitations
 
-- **Marauder V6** and **Awok variants**: No SD card support.
+- **Marauder V6**, **Awok variants**, and **Generic ESP32** builds: No SD card support.
 - Some features, like BLE spam, may be missing in alpha releases.
 - Cache-clearing may be required when using the web flasher.
 - ESP32S2 Boards do not support bluetooth functionality due to lack of hardware.
