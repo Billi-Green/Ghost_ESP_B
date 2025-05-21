@@ -1108,23 +1108,27 @@ void wifi_manager_init(void) {
 
     // configure country based on chip: full dual-band on C5, 2.4GHz only on others
 #if CONFIG_IDF_TARGET_ESP32C5
-    // enable all 2.4 GHz (ch1-14) and 5 GHz (ch36-165) channels manually on ESP32-C5
-    wifi_country_t country = {
-        .cc     = "JP",
-        .schan  = 1,
-        .nchan  = 165,
-        .policy = WIFI_COUNTRY_POLICY_MANUAL
-    };
+    wifi_country_t current_country;
+    esp_err_t get_country_err = esp_wifi_get_country(&current_country);
+    if (get_country_err == ESP_OK) {
+        ESP_LOGI(TAG, "ESP32-C5 Current Country: CC='%s', schan=%d, nchan=%d, policy=%s",
+                 current_country.cc, current_country.schan, current_country.nchan,
+                 current_country.policy == WIFI_COUNTRY_POLICY_AUTO ? "AUTO" : "MANUAL");
+    } else {
+        ESP_LOGW(TAG, "ESP32-C5: Failed to get current country config: %s", esp_err_to_name(get_country_err));
+    }
 #else
-    // enable all 2.4 GHz channels (1-14) manually
-    wifi_country_t country = {
+    // enable all 2.4 GHz channels (1-14) manually for other targets
+    wifi_country_t country_to_set = {
         .cc     = "JP",
         .schan  = 1,
         .nchan  = 14,
         .policy = WIFI_COUNTRY_POLICY_MANUAL
     };
+    ESP_LOGI(TAG, "Setting country for non-C5 target: CC='%s', schan=%d, nchan=%d, policy=MANUAL",
+             country_to_set.cc, country_to_set.schan, country_to_set.nchan);
+    ESP_ERROR_CHECK(esp_wifi_set_country(&country_to_set));
 #endif
-    ESP_ERROR_CHECK(esp_wifi_set_country(&country));
 
     // Create the WiFi event group
     wifi_event_group = xEventGroupCreate();
@@ -2491,7 +2495,7 @@ void wifi_manager_print_scan_results_with_oui() {
         {
             int ch = scanned_aps[i].primary;
             const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
-            printf("     Band: %s,\n", band_str);
+            printf("      Band: %s,\n", band_str);
         }
 #endif
         printf("     Company: %s\n", company_str);
@@ -2509,7 +2513,7 @@ void wifi_manager_print_scan_results_with_oui() {
         {
             int ch = scanned_aps[i].primary;
             const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
-            TERMINAL_VIEW_ADD_TEXT("     Band: %s,\n", band_str);
+            TERMINAL_VIEW_ADD_TEXT("      Band: %s,\n", band_str);
         }
 #endif
         TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);

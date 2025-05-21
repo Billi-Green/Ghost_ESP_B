@@ -1660,14 +1660,33 @@ void handle_congestion_cmd(int argc, char **argv) {
         return;
     }
 
-    int channel_counts[14] = {0};
+    int unique_count = 0;
+    int *channels = malloc(ap_count * sizeof(int));
+    int *counts = malloc(ap_count * sizeof(int));
     int max_count = 0;
     for (int i = 0; i < ap_count; i++) {
-        if (ap_records[i].primary >= 1 && ap_records[i].primary <= 14) { 
-            int channel_index = ap_records[i].primary - 1;
-            channel_counts[channel_index]++;
-            if (channel_counts[channel_index] > max_count) {
-                max_count = channel_counts[channel_index];
+        int ch = ap_records[i].primary;
+        if (ch <= 0) continue;
+        int idx = -1;
+        for (int j = 0; j < unique_count; j++) {
+            if (channels[j] == ch) { idx = j; break; }
+        }
+        if (idx >= 0) {
+            counts[idx]++;
+        } else {
+            channels[unique_count] = ch;
+            counts[unique_count] = 1;
+            idx = unique_count++;
+        }
+        if (counts[idx] > max_count) {
+            max_count = counts[idx];
+        }
+    }
+    for (int i = 0; i < unique_count - 1; i++) {
+        for (int j = i + 1; j < unique_count; j++) {
+            if (channels[i] > channels[j]) {
+                int tmp_ch = channels[i]; channels[i] = channels[j]; channels[j] = tmp_ch;
+                int tmp_cnt = counts[i]; counts[i] = counts[j]; counts[j] = tmp_cnt;
             }
         }
     }
@@ -1689,33 +1708,28 @@ void handle_congestion_cmd(int argc, char **argv) {
     const int max_bar_length = 10;
     char display_bar[max_bar_length * 4]; // Generous buffer: 3 bytes/block + 1 space/pad + null
 
-    for (int i = 0; i < 14; i++) {
-        if (channel_counts[i] > 0) {
-            int bar_length = 0;
-            if (max_count > 0) { // Avoid division by zero
-                 bar_length = (int)(((float)channel_counts[i] / max_count) * max_bar_length);
-                 if (bar_length == 0) bar_length = 1; // Ensure at least one bar if count > 0
-            }
-            
-            // Build the display string with blocks and padding spaces
-            char *ptr = display_bar;
-
-            // Add block characters
-            for (int j = 0; j < bar_length; ++j) {
-                *ptr++ = '#';
-            }
-
-            // Add padding spaces to fill up to max_bar_length visual columns
-            int spaces_needed = max_bar_length - bar_length;
-            for (int j = 0; j < spaces_needed; ++j) {
-                 *ptr++ = ' ';
-            }
-            *ptr = '\0'; // Null-terminate
-
-            printf(row_format, i + 1, channel_counts[i], display_bar);
-            TERMINAL_VIEW_ADD_TEXT(row_format, i + 1, channel_counts[i], display_bar);
+    for (int i = 0; i < unique_count; i++) {
+        int ch = channels[i];
+        int cnt = counts[i];
+        int bar_length = 0;
+        if (max_count > 0) {
+            bar_length = (int)(((float)cnt / max_count) * max_bar_length);
+            if (bar_length == 0 && cnt > 0) bar_length = 1;
         }
+        char *ptr = display_bar;
+        for (int j = 0; j < bar_length; ++j) {
+            *ptr++ = '#';
+        }
+        int spaces_needed = max_bar_length - bar_length;
+        for (int j = 0; j < spaces_needed; ++j) {
+            *ptr++ = ' ';
+        }
+        *ptr = '\0';
+        printf(row_format, ch, cnt, display_bar);
+        TERMINAL_VIEW_ADD_TEXT(row_format, ch, cnt, display_bar);
     }
+    free(channels);
+    free(counts);
     printf("%s", footer);
     TERMINAL_VIEW_ADD_TEXT("%s", footer);
 }

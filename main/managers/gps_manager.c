@@ -62,6 +62,7 @@ void gps_manager_init(GPSManager *manager) {
 
     // Reset connection logged state
     gps_connection_logged = false;
+    gps_timeout_detected = false;
 
     nmea_parser_config_t config = NMEA_PARSER_CONFIG_DEFAULT();
     uint8_t current_rx_pin = settings_get_gps_rx_pin(&G_Settings);

@@ -72,6 +72,7 @@
   - Label APs with blank SSID fields as "Hidden"
   - Make congestion command ASCII-only for compatibility
   - Change display EP option to start default EP with a default SSID "FreeWiFi"
+  - Update congestion to work with dualband channels
 
 - Power
   - Suspend LVGL, status bar update timer, and misc tasks when backlight is off
@@ -110,6 +111,7 @@
   - Don't check for csv file before flushing buffer over UART
   - Actually open a CSV file for wardriving when an SD card is present
   - Fix CSV file timestamp to reflect GPS date/time on SD card close
+  - Reset GPS timeout flag on initialization
 
 ## Revival v1.4.9
 
