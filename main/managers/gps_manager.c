@@ -72,7 +72,8 @@ void gps_manager_init(GPSManager *manager) {
 
 #ifdef CONFIG_HAS_GPS // need to verify we have gps enabled
     current_rx_pin = CONFIG_GPS_UART_RX_PIN;
-#endif   
+#endif  
+ 
     if (custom_gps_pin > 0) { // if a custom pin was set this will be > 0. If its zero we can assume no custom pin was set.
     current_rx_pin=custom_gps_pin;
     }
