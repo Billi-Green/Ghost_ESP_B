@@ -2547,7 +2547,9 @@ void wifi_manager_print_scan_results_with_oui() {
             }
         }
 #endif
-        printf("     Company: %s\n", company_str);
+        if (strcmp(company_str, "Unknown") != 0) {
+            printf("     Company: %s\n", company_str);
+        }
 
         TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
                                "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
@@ -2617,7 +2619,9 @@ void wifi_manager_print_scan_results_with_oui() {
             TERMINAL_VIEW_ADD_TEXT("     Security: %s\n      PMF: %s,\n", auth_str, pmf_str);
         }
 #endif
-        TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+        if (strcmp(company_str, "Unknown") != 0) {
+            TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+        }
     }
 }
 

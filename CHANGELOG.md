@@ -48,7 +48,8 @@
   - Station scan now uses discovered AP channels for scanning
   - ESP32C5 shows band in AP scan results
   - ESP32C6 and ESP32C5 show Security and if PMF is required in AP scan results
-
+  - If company is unknown, it won't be shown in AP scan results
+  
 - Display
 
   - Performance Optimizations
