@@ -6,6 +6,8 @@
 1. What are the default credentials to the web interface?
     - User: `GhostNet`
     - Pass: `GhostNet`
+1. How do I access the web interface?
+    - Just type in `ghostesp.local` or `192.168.4.1` into your browsers address bar after connecting to the GhostNet AP
 1. Why dont the default credentials work to log into the web interface?
     - The web credentials are identical to the SSID, and network password you've set. If you've changed these values your web credentials will also change.
 1. How do I flash my board?
@@ -19,3 +21,6 @@
     - This is a limitation of the ESP32 - The wifi chip can only be in AP mode or Client mode but not both simultaneously.
 1. Im not seeing any output when connecting via serial
     - The ghost esp firmware is silent unless a command is running. Try running the help command to check if youve made a proper connection.
+1. Why wont my SD card work?
+    - "generic" builds of the software do not include SD card support by default.
+    - If you arent using a generic build ensure your SD card is formatted as fat32

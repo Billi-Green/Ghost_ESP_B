@@ -115,11 +115,12 @@ After flashing, you have several control options to configure and interact with 
 ### Control Options
 
 1. **Web Interface**
+   - Connect to the `GhostNet` AP with the password `GhostNet`
    - Open a browser and connect to either `ghostesp.local` or `192.168.4.1` to access device settings.
    - Use the auto-updating configuration panel to manage settings, Evil Portal controls, and device info.
 
 1. **Qt6 Control App**
-   - Download and install the Qt6-based desktop application for more advanced control options.
+   - [Download and install](../../scripts/control%20app/) the Qt6-based desktop application for more advanced control options.
    - Offers access to advanced features, customizable settings, and an improved interface for interacting with GhostESP.
 
 1. **Serial Command Line**
@@ -130,6 +131,7 @@ After flashing, you have several control options to configure and interact with 
 
 1. **Flipper Zero App**
    - Control GhostESP directly from the Flipper Zero.
+   - Now available directly from the offical flipper app store!
    - Ensure you have the latest `.fap` version on your Flipper Zero for full functionality and access to features like Evil Portal, Wi-Fi control, and more.
 
 ## Common Installation Issues
