@@ -64,29 +64,40 @@ void gps_manager_init(GPSManager *manager) {
     gps_connection_logged = false;
     gps_timeout_detected = false;
 
+
+
     nmea_parser_config_t config = NMEA_PARSER_CONFIG_DEFAULT();
-    uint8_t current_rx_pin = settings_get_gps_rx_pin(&G_Settings);
+    uint8_t current_rx_pin=0; 
+    uint8_t custom_gps_pin=settings_get_gps_rx_pin(&G_Settings); //load custom pin from NVS settings
 
-    if (current_rx_pin != 0) {
-        printf("GPS RX: IO%d\n", current_rx_pin);
-        TERMINAL_VIEW_ADD_TEXT("GPS RX: IO%d\n", current_rx_pin);
-
-        // Only disable UART1 which we use for GPS
-        periph_module_disable(PERIPH_UART1_MODULE);
-
-        gpio_reset_pin(current_rx_pin);
-        vTaskDelay(pdMS_TO_TICKS(10));
-
-        periph_module_enable(PERIPH_UART1_MODULE);
-
-        gpio_set_direction(current_rx_pin, GPIO_MODE_INPUT);
-        gpio_set_pull_mode(current_rx_pin, GPIO_FLOATING);
-
-        config.uart.rx_pin = current_rx_pin;
-        config.uart.uart_port = UART_NUM_1; // Explicitly set UART1 for GPS
+#ifdef CONFIG_HAS_GPS // need to verify we have gps enabled
+    current_rx_pin = CONFIG_GPS_UART_RX_PIN;
+#endif  
+ 
+    if (custom_gps_pin > 0) { // if a custom pin was set this will be > 0. If its zero we can assume no custom pin was set.
+    current_rx_pin=custom_gps_pin;
     }
 
-#ifdef CONFIG_IS_GHOST_BOARD
+    printf("GPS RX: IO%d\n", current_rx_pin);
+    TERMINAL_VIEW_ADD_TEXT("GPS RX: IO%d\n", current_rx_pin);
+
+        // Only disable UART1 which we use for GPS
+    periph_module_disable(PERIPH_UART1_MODULE);
+
+    gpio_reset_pin(current_rx_pin);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    periph_module_enable(PERIPH_UART1_MODULE);
+
+    gpio_set_direction(current_rx_pin, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(current_rx_pin, GPIO_FLOATING);
+
+
+    config.uart.rx_pin = current_rx_pin; //set uart pin for uart init
+    config.uart.uart_port = UART_NUM_1; // Explicitly set UART1 for GPS
+    
+
+#ifdef CONFIG_IS_GHOST_BOARD // always want ghost board to be using pin 2
     config.uart.rx_pin = 2;
 #endif
 

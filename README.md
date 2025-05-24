@@ -116,7 +116,7 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - DevKitC-ESP32
 
-- DevKitC-ESP32-S2
+- DevKitC-ESP32-S2 (lacks bluetooth hardware)
 
 - DevKitC-ESP32-C3
 
@@ -178,7 +178,7 @@ Special thanks to:
 
 ## Legal Disclaimer
 
-Ghost ESP is intended solely for educational and ethical security research. Unauthorized or malicious use is illegal. Always obtain proper permissions before conducting any network tests.
+Ghost ESP is intended solely for educational and ethical security research. Unauthorized or malicious use is illegal. Be sure to familiarize your local laws, and always obtain proper permissions before conducting any network tests.
 
 ---
 
