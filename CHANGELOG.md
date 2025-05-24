@@ -87,13 +87,15 @@
 
 - WebUI
   - Changed color theme to black and white
+  - Improve loading 
 
 ### Bug Fixes
 
 - General
   - Fixed NVS persistence issues for AP credentials by ensuring a single shared NVS handle and settings instance.
   - Addressed unaligned memory access warning in ICMP ping logic by using an aligned buffer for checksum calculation.
-
+  - Restart mDNS service with AP
+  
 - Display
   - Fixed an issue where an option would be duplicated and freeze the device.
   - Skip first touch event while backlight is dimmed so tap only wakes the screen without registering input

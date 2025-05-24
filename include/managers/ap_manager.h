@@ -19,7 +19,7 @@ void ap_manager_stop_services();
 // only indeded to be used after ap_manager_init has been called once
 esp_err_t ap_manager_start_services();
 
-// reload server configuration (stops, resets, and restarts server)
+// reload server configuration and mDNS (stops, resets, and restarts server and mDNS)
 esp_err_t ap_manager_reload_config(void);
 
 // get current server status

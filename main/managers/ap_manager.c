@@ -39,6 +39,8 @@ static esp_err_t stop_http_server(void);
 static void reset_server_config(void);
 static bool is_server_running(void);
 static bool is_config_loaded(void);
+static esp_err_t setup_mdns(void);
+static esp_err_t teardown_mdns(void);
 
 #define MAX_LOG_BUFFER_SIZE (8 * 1024)  // Increase to 32KB
 #define LOG_CHUNK_SIZE (MAX_LOG_BUFFER_SIZE / 4)  // Size to remove when buffer is full
@@ -612,59 +614,9 @@ esp_err_t ap_manager_init(void) {
         esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
     // Initialize mDNS
-    ret = mdns_init();
+    ret = setup_mdns();
     if (ret != ESP_OK) {
-        return ret;
-    }
-
-    mdns_freed = false;
-
-    ret = mdns_hostname_set("ghostesp");
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_hostname_set failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-    ret = mdns_instance_name_set("GhostESP Web Interface");
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_instance_name_set failed: %s\n", esp_err_to_name(ret));
-    }
-
-    char ip_str[16];
-    snprintf(ip_str, sizeof(ip_str), "192.168.4.1");
-
-    mdns_txt_item_t serviceTxtData[] = {{"ip", ip_str}};
-
-    ret = mdns_service_add("GhostESP", "_http", "_tcp", 80, serviceTxtData, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_service_add failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = mdns_service_txt_set("_http", "_tcp", serviceTxtData, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-
-    char ip_txt[20];
-    snprintf(ip_txt, sizeof(ip_txt), "192.168.4.1");
-    mdns_txt_item_t ip_data[] = {{"ipv4", ip_txt}};
-    ret = mdns_service_txt_set("_http", "_tcp", ip_data, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s\n", esp_err_to_name(ret));
-    }
-
-    ret = mdns_hostname_set("ghostesp");
-    if (ret != ESP_OK) {
-        printf("mdns_hostname_set failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-
-    printf("mDNS hostname set to ghostesp.local\n");
-
-    ret = mdns_service_add(NULL, "_http", "_http", 80, NULL, 0);
-    if (ret != ESP_OK) {
-        printf("mDNS service add failed: %s\n", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to setup mDNS");
         return ret;
     }
 
@@ -715,10 +667,7 @@ void ap_manager_deinit(void) {
         netif = NULL;
     }
     
-    if (!mdns_freed) {
-        mdns_free();
-        mdns_freed = true;
-    }
+    teardown_mdns();
     
     if (log_mutex) {
         vSemaphoreDelete(log_mutex);
@@ -790,9 +739,9 @@ esp_err_t ap_manager_start_services() {
     }
 
     // Start mDNS
-    ret = mdns_init();
+    ret = setup_mdns();
     if (ret != ESP_OK) {
-        printf("mDNS init failed\n");
+        ESP_LOGE(TAG, "Failed to setup mDNS");
         return ret;
     }
 
@@ -852,10 +801,7 @@ void ap_manager_stop_services() {
 
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    if (!mdns_freed) {
-        mdns_free();
-        mdns_freed = true;
-    }
+    teardown_mdns();
 }
 
 // Handler for GET requests (serves the HTML page)
@@ -1432,7 +1378,7 @@ static bool is_config_loaded(void) {
 }
 
 esp_err_t ap_manager_reload_config(void) {
-    ESP_LOGI(TAG, "Reloading server configuration");
+    ESP_LOGI(TAG, "Reloading server configuration and mDNS");
     
     esp_err_t ret = stop_http_server();
     if (ret != ESP_OK) {
@@ -1440,11 +1386,18 @@ esp_err_t ap_manager_reload_config(void) {
         return ret;
     }
     
+    teardown_mdns();
     reset_server_config();
     
     ret = load_server_config();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to reload config: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ret = setup_mdns();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to setup mDNS after reload: %s", esp_err_to_name(ret));
         return ret;
     }
     
@@ -1454,7 +1407,7 @@ esp_err_t ap_manager_reload_config(void) {
         return ret;
     }
     
-    ESP_LOGI(TAG, "Server configuration reloaded successfully");
+    ESP_LOGI(TAG, "Server configuration and mDNS reloaded successfully");
     return ESP_OK;
 }
 
@@ -1462,4 +1415,67 @@ void ap_manager_get_status(bool *server_running, bool *config_loaded_status, int
     if (server_running) *server_running = is_server_running();
     if (config_loaded_status) *config_loaded_status = is_config_loaded();
     if (handler_count_status) *handler_count_status = handler_count;
+}
+
+static esp_err_t setup_mdns(void) {
+    esp_err_t ret = mdns_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    mdns_freed = false;
+
+    ret = mdns_hostname_set("ghostesp");
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_hostname_set failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = mdns_instance_name_set("GhostESP Web Interface");
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_instance_name_set failed: %s", esp_err_to_name(ret));
+    }
+
+    char ip_str[16];
+    snprintf(ip_str, sizeof(ip_str), "192.168.4.1");
+    mdns_txt_item_t serviceTxtData[] = {{"ip", ip_str}};
+
+    ret = mdns_service_add("GhostESP", "_http", "_tcp", 80, serviceTxtData, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_service_add failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = mdns_service_txt_set("_http", "_tcp", serviceTxtData, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    char ip_txt[20];
+    snprintf(ip_txt, sizeof(ip_txt), "192.168.4.1");
+    mdns_txt_item_t ip_data[] = {{"ipv4", ip_txt}};
+    ret = mdns_service_txt_set("_http", "_tcp", ip_data, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s", esp_err_to_name(ret));
+    }
+
+    ret = mdns_service_add(NULL, "_http", "_http", 80, NULL, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mDNS service add failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "mDNS setup completed successfully");
+    return ESP_OK;
+}
+
+static esp_err_t teardown_mdns(void) {
+    if (!mdns_freed) {
+        mdns_free();
+        mdns_freed = true;
+        ESP_LOGI(TAG, "mDNS teardown completed");
+    }
+    return ESP_OK;
 }
