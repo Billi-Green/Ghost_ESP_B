@@ -7,24 +7,24 @@
     <style>
         /* CSS Variables for Colors and Fonts */
         :root {
-            --background-color: #0a0a0f;
-            --surface-color: #12121a;
-            --primary-color: #ff6b00;
-            --secondary-color: #3e1900;
-            --accent-color: #9c27b0;
+            --background-color: #000000;
+            --surface-color: #0a0a0a;
+            --primary-color: #ffffff;
+            --secondary-color: #1a1a1a;
+            --accent-color: #ffffff;
             --text-primary: #ffffff;
             --text-secondary: rgba(255, 255, 255, 0.7);
-            --gradient-1: linear-gradient(135deg, #ff6b00, #9c27b0);
-            --gradient-2: linear-gradient(45deg, #cc5500, #ff6b00);
-            --card-bg: rgba(18, 18, 26, 0.8);
-            --border-color: #ff6b00;
+            --gradient-1: linear-gradient(135deg, #ffffff, #dddddd);
+            --gradient-2: linear-gradient(45deg, #111111, #050505);
+            --card-bg: rgba(5, 5, 5, 0.85);
+            --border-color: #ffffff;
             --tooltip-bg: #000000;
             --tooltip-text: #ffffff;
-            --input-bg: rgba(30, 30, 30, 0.6);
-            --input-border: #ff6b00;
-            --font-display: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
-            --font-body: 'Inter', sans-serif;
+            --input-bg: rgba(20, 20, 20, 0.7);
+            --input-border: #ffffff;
+            --font-display: 'Courier New', monospace;
+            --font-mono: 'Courier New', monospace;
+            --font-body: 'Courier New', sans-serif;
         }
 
         /* Reset Styles */
@@ -62,11 +62,11 @@
             width: 100%;
             height: 100%;
             background: 
-                radial-gradient(circle at 20% 20%, rgba(156, 39, 176, 0.15), transparent 40%),
-                radial-gradient(circle at 80% 80%, rgba(255, 107, 0, 0.15), transparent 40%),
-                radial-gradient(circle at 50% 50%, rgba(156, 39, 176, 0.1), transparent 60%),
-                repeating-linear-gradient(45deg, rgba(156, 39, 176, 0.03) 0px, rgba(156, 39, 176, 0.03) 1px, transparent 1px, transparent 10px),
-                repeating-linear-gradient(-45deg, rgba(255, 107, 0, 0.03) 0px, rgba(255, 107, 0, 0.03) 1px, transparent 1px, transparent 10px);
+                radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.05), transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.05), transparent 40%),
+                radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.03), transparent 60%),
+                repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.01) 0px, rgba(255, 255, 255, 0.01) 1px, transparent 1px, transparent 10px),
+                repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.01) 0px, rgba(255, 255, 255, 0.01) 1px, transparent 1px, transparent 10px);
             z-index: -1;
             pointer-events: none;
         }
@@ -91,11 +91,11 @@
         }
 
         h1 {
-            font-size: 2.5rem;
+            font-size: 1.8rem; /* Reduced for mobile to prevent wrapping */
             background: var(--gradient-1);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-top: 3rem;
+            margin-top: 2rem;
         }
 
         input::-webkit-outer-spin-button,
@@ -125,8 +125,8 @@
             padding: 15px 0;
             margin: 0 2px;
             font-size: 18px;
-            color: var(--primary-color);
-            background-color: #311f13;
+            color: var(--text-secondary);
+            background-color: var(--surface-color);
             transition: background-color 0.3s, color 0.3s;
         }
 
@@ -140,8 +140,8 @@
 
         .tab button:hover,
         .tab button.active {
-            background-color: var(--accent-tone);
-            color: #ffffff;
+            background-color: var(--primary-color);
+            color: var(--background-color);
         }
 
         /* Tab Content */
@@ -167,7 +167,7 @@
         }
 
         .breadcrumb-item {
-            color: var(--primary-color-faded);
+            color: var(--text-secondary);
             cursor: pointer;
             margin-right: 8px;
             position: relative;
@@ -220,8 +220,13 @@
         }
 
         .file-explorer li:hover:has(.file-name.folder) {
-            background-color: var(--accent-color);
+            background-color: var(--primary-color);
             cursor: pointer;
+        }
+
+        .file-explorer li:hover:has(.file-name.folder) .file-name,
+        .file-explorer li:hover:has(.file-name.folder)::before {
+            color: var(--background-color);
         }
 
         .file-explorer li:first-child {
@@ -380,7 +385,7 @@
             font-size: 16px;
             background-color: var(--gradient-2);
             border: 2px solid var(--gradient-2);
-            color: var(--text-color);
+            color: var(--text-primary);
             border-radius: 6px;
             margin-top: 4px;
             box-sizing: border-box;
@@ -393,7 +398,7 @@
         select:focus,
         textarea:focus {
             border-color: var(--primary-color);
-            background-color: #1a0d00;
+            background-color: #080808;
             outline: none;
         }
 
@@ -414,7 +419,7 @@
         .slider {
             position: absolute;
             cursor: pointer;
-            background-color: var(--accent-color);
+            background-color: var(--surface-color);
             border-radius: 34px;
             top: 0;
             left: 0;
@@ -516,7 +521,7 @@
             font-size: 16px;
             background-color: var(--input-bg);
             border: 2px solid var(--input-border);
-            color: var(--text-color);
+            color: var(--text-primary);
             border-radius: 6px;
             appearance: none;
             cursor: pointer;
@@ -528,7 +533,7 @@
 
         .select-wrapper select:focus {
             border-color: var(--primary-color);
-            background-color: #1a0d00;
+            background-color: #080808;
             outline: none;
         }
 
@@ -640,8 +645,9 @@
         }
 
         .dropzone.dragover {
-            background-color: var(--accent-color);
+            background-color: var(--primary-color);
             border-color: #ffffff;
+            color: var(--background-color);
         }
 
         /* Help List Styling */
@@ -724,6 +730,7 @@
             padding: 12px 15px;
             transition: all 0.3s ease;
             background: rgba(0, 0, 0, 0.3);
+            color: var(--text-primary); /* Added to ensure text color is primary */
         }
 
         input:focus,
@@ -731,7 +738,7 @@
         textarea:focus {
             outline: none;
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.1);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
             transform: translateY(-1px);
         }
 
@@ -868,7 +875,7 @@
         .terminal-input-container input:focus {
             outline: none;
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 2px rgba(255, 107, 0, 0.2);
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2);
             background-color: rgba(0, 0, 0, 0.7);
         }
 
@@ -877,14 +884,15 @@
             margin: 0;
             padding: 12px 20px;
             font-size: 14px;
-            background: rgba(255, 107, 0, 0.1);
+            background: rgba(255, 255, 255, 0.1);
             transition: all 0.3s ease;
         }
 
         .terminal-input-container button:hover {
             background: var(--primary-color);
+            color: var(--background-color);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3);
+            box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
         }
 
         @media (max-width: 768px) {
@@ -975,7 +983,7 @@
             font-size: 14px;
             background-color: var(--gradient-2);
             border: 2px solid var(--gradient-2);
-            color: var(--text-color);
+            color: var(--text-primary);
             border-radius: 6px;
             margin-top: 0; /* Remove top margin */
             box-sizing: border-box;
@@ -985,9 +993,9 @@
         .pin-input input:focus {
             /* Reuse focus styles */
              border-color: var(--primary-color);
-            background-color: #1a0d00;
+            background-color: #080808;
             outline: none;
-            box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.1);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
             transform: translateY(-1px);
         }
 
@@ -1013,13 +1021,13 @@
             margin-top: 20px;
             justify-content: flex-start; /* Align action buttons */
             padding-top: 15px;
-            border-top: 1px solid rgba(255, 107, 0, 0.2); /* Add a separator */
+            border-top: 1px solid rgba(255, 255, 255, 0.2); /* Add a separator */
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>GhostESP v1.4.9</h1>
+        <h1>GhostESP: Revival v1.5</h1>
         <!-- Tab Navigation -->
         <div class="tab">
             <button class="tablinks active" onclick="openTab(event, 'Settings')" id="defaultTab">Settings</button>

@@ -98,6 +98,8 @@ LV_IMG_DECLARE(rave);
 LV_IMG_DECLARE(GESPFlappyghost);
 LV_IMG_DECLARE(ghost);
 LV_IMG_DECLARE(GESPAppGallery);
+LV_IMG_DECLARE(clock_icon);
+LV_IMG_DECLARE(settings_icon);
 
 joystick_t joysticks[5];
 

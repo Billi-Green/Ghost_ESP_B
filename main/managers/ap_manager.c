@@ -33,6 +33,15 @@ static esp_err_t api_logs_handler(httpd_req_t *req);
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
                           void *event_data);
 
+static esp_err_t load_server_config(void);
+static esp_err_t start_http_server(void);
+static esp_err_t stop_http_server(void);
+static void reset_server_config(void);
+static bool is_server_running(void);
+static bool is_config_loaded(void);
+static esp_err_t setup_mdns(void);
+static esp_err_t teardown_mdns(void);
+
 #define MAX_LOG_BUFFER_SIZE (8 * 1024)  // Increase to 32KB
 #define LOG_CHUNK_SIZE (MAX_LOG_BUFFER_SIZE / 4)  // Size to remove when buffer is full
 #define MAX_FILE_SIZE (5 * 1024 * 1024) // 5 MB
@@ -48,6 +57,11 @@ static const char *TAG = "AP_MANAGER";
 static httpd_handle_t server = NULL;
 static esp_netif_t *netif = NULL;
 static bool mdns_freed = false;
+
+static httpd_config_t server_config;
+static httpd_uri_t uri_handlers[10];
+static int handler_count = 0;
+static bool config_loaded = false;
 
 static esp_err_t scan_directory(const char *base_path, cJSON *json_array) {
     DIR *dir = opendir(base_path);
@@ -600,169 +614,24 @@ esp_err_t ap_manager_init(void) {
         esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
     // Initialize mDNS
-    ret = mdns_init();
+    ret = setup_mdns();
     if (ret != ESP_OK) {
-        return ret;
-    }
-
-    mdns_freed = false;
-
-    ret = mdns_hostname_set("ghostesp");
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_hostname_set failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-    ret = mdns_instance_name_set("GhostESP Web Interface");
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_instance_name_set failed: %s\n", esp_err_to_name(ret));
-    }
-
-    char ip_str[16];
-    snprintf(ip_str, sizeof(ip_str), "192.168.4.1");
-
-    mdns_txt_item_t serviceTxtData[] = {{"ip", ip_str}};
-
-    ret = mdns_service_add("GhostESP", "_http", "_tcp", 80, serviceTxtData, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_service_add failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = mdns_service_txt_set("_http", "_tcp", serviceTxtData, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-
-    char ip_txt[20];
-    snprintf(ip_txt, sizeof(ip_txt), "192.168.4.1");
-    mdns_txt_item_t ip_data[] = {{"ipv4", ip_txt}};
-    ret = mdns_service_txt_set("_http", "_tcp", ip_data, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s\n", esp_err_to_name(ret));
-    }
-
-    FSettings *settings = &G_Settings;
-
-    ret = mdns_hostname_set("ghostesp");
-    if (ret != ESP_OK) {
-        printf("mdns_hostname_set failed: %s\n", esp_err_to_name(ret));
-        return ret;
-    }
-
-    printf("mDNS hostname set to ghostesp.local\n");
-
-    ret = mdns_service_add(NULL, "_http", "_http", 80, NULL, 0);
-    if (ret != ESP_OK) {
-        printf("mDNS service add failed: %s\n", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to setup mDNS");
         return ret;
     }
 
     // Start HTTP server
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.server_port = 80;
-    config.ctrl_port = 32768; // Control port (use default)
-    config.max_uri_handlers = 30;
-
-    ret = httpd_start(&server, &config);
+    ret = load_server_config();
     if (ret != ESP_OK) {
-        printf("Error starting HTTP server!\n");
+        printf("Error loading server config\n");
         return ret;
     }
 
-    // Register URI handlers
-    httpd_uri_t uri_get = {
-        .uri = "/", .method = HTTP_GET, .handler = http_get_handler, .user_ctx = NULL};
-
-    httpd_uri_t uri_post_settings = {.uri = "/api/settings",
-                                     .method = HTTP_POST,
-                                     .handler = api_settings_handler,
-                                     .user_ctx = NULL};
-
-    httpd_uri_t uri_get_settings = {.uri = "/api/settings",
-                                    .method = HTTP_GET,
-                                    .handler = api_settings_get_handler,
-                                    .user_ctx = NULL};
-
-    httpd_uri_t uri_sd_card_get = {.uri = "/api/sdcard",
-                                   .method = HTTP_GET,
-                                   .handler = api_sd_card_get_handler,
-                                   .user_ctx = NULL};
-
-    httpd_uri_t uri_sd_card_post = {.uri = "/api/sdcard/download",
-                                    .method = HTTP_POST,
-                                    .handler = api_sd_card_post_handler,
-                                    .user_ctx = NULL};
-
-    httpd_uri_t uri_sd_card_post_upload = {.uri = "/api/sdcard/upload",
-                                           .method = HTTP_POST,
-                                           .handler = api_sd_card_upload_handler,
-                                           .user_ctx = NULL};
-
-    httpd_uri_t uri_post_command = {.uri = "/api/command",
-                                    .method = HTTP_POST,
-                                    .handler = api_command_handler,
-                                    .user_ctx = NULL};
-
-    httpd_uri_t uri_get_logs = {.uri = "/api/logs",
-                                .method = HTTP_GET,
-                                .handler = api_logs_handler,
-                                .user_ctx = NULL};
-
-    httpd_uri_t uri_delete_command = {.uri = "/api/sdcard",
-                                      .method = HTTP_DELETE,
-                                      .handler = api_sd_card_delete_file_handler,
-                                      .user_ctx = NULL};
-
-    ret = httpd_register_uri_handler(server, &uri_delete_command);
+    ret = start_http_server();
     if (ret != ESP_OK) {
-        printf("Error registering URI\n");
+        printf("Error starting HTTP server\n");
+        return ret;
     }
-
-    ret = httpd_register_uri_handler(server, &uri_sd_card_post_upload);
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_sd_card_post);
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_sd_card_get);
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_get_settings);
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_post_settings);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-    ret = httpd_register_uri_handler(server, &uri_get);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_post_command);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_get_logs);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    printf("HTTP server started\n");
 
     esp_wifi_set_ps(WIFI_PS_NONE);
 
@@ -785,18 +654,27 @@ esp_err_t ap_manager_init(void) {
 
 // Deinitialize and stop the servers
 void ap_manager_deinit(void) {
-    if (server) {
-        httpd_stop(server);
-        server = NULL;
-    }
+    ESP_LOGI(TAG, "Deinitializing AP Manager");
+    
+    stop_http_server();
+    reset_server_config();
+    
     esp_wifi_stop();
     esp_wifi_deinit();
+    
     if (netif) {
         esp_netif_destroy(netif);
         netif = NULL;
     }
-    mdns_free();
-    printf("AP Manager deinitialized\n");
+    
+    teardown_mdns();
+    
+    if (log_mutex) {
+        vSemaphoreDelete(log_mutex);
+        log_mutex = NULL;
+    }
+    
+    ESP_LOGI(TAG, "AP Manager deinitialized successfully");
 }
 
 void ap_manager_add_log(const char *log_message) {
@@ -861,115 +739,24 @@ esp_err_t ap_manager_start_services() {
     }
 
     // Start mDNS
-    ret = mdns_init();
+    ret = setup_mdns();
     if (ret != ESP_OK) {
-        printf("mDNS init failed\n");
+        ESP_LOGE(TAG, "Failed to setup mDNS");
         return ret;
     }
 
     // Start HTTPD server
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.server_port = 80;
-    config.max_uri_handlers = 30;
-
-    ret = httpd_start(&server, &config);
+    ret = load_server_config();
     if (ret != ESP_OK) {
-        printf("HTTP server start failed\n");
+        printf("Error loading server config\n");
         return ret;
     }
 
-    httpd_uri_t uri_get = {
-        .uri = "/", .method = HTTP_GET, .handler = http_get_handler, .user_ctx = NULL};
-
-    httpd_uri_t uri_post_settings = {.uri = "/api/settings",
-                                     .method = HTTP_POST,
-                                     .handler = api_settings_handler,
-                                     .user_ctx = NULL};
-
-    httpd_uri_t uri_get_settings = {.uri = "/api/settings",
-                                    .method = HTTP_GET,
-                                    .handler = api_settings_get_handler,
-                                    .user_ctx = NULL};
-
-    httpd_uri_t uri_sd_card_get = {.uri = "/api/sdcard",
-                                   .method = HTTP_GET,
-                                   .handler = api_sd_card_get_handler,
-                                   .user_ctx = NULL};
-
-    httpd_uri_t uri_sd_card_post = {.uri = "/api/sdcard/download",
-                                    .method = HTTP_POST,
-                                    .handler = api_sd_card_post_handler,
-                                    .user_ctx = NULL};
-
-    httpd_uri_t uri_sd_card_post_upload = {.uri = "/api/sdcard/upload",
-                                           .method = HTTP_POST,
-                                           .handler = api_sd_card_upload_handler,
-                                           .user_ctx = NULL};
-
-    httpd_uri_t uri_delete_command = {.uri = "/api/sdcard",
-                                      .method = HTTP_DELETE,
-                                      .handler = api_sd_card_delete_file_handler,
-                                      .user_ctx = NULL};
-
-    httpd_uri_t uri_post_command = {.uri = "/api/command",
-                                    .method = HTTP_POST,
-                                    .handler = api_command_handler,
-                                    .user_ctx = NULL};
-
-    httpd_uri_t uri_get_logs = {.uri = "/api/logs",
-                                .method = HTTP_GET,
-                                .handler = api_logs_handler,
-                                .user_ctx = NULL};
-
-    ret = httpd_register_uri_handler(server, &uri_delete_command);
+    ret = start_http_server();
     if (ret != ESP_OK) {
-        printf("Error registering URI\n");
+        printf("Error starting HTTP server\n");
+        return ret;
     }
-
-    ret = httpd_register_uri_handler(server, &uri_sd_card_post_upload);
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_sd_card_post);
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_sd_card_get);
-    if (ret != ESP_OK) {
-        printf("Error registering URI\n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_get_settings);
-    if (ret != ESP_OK) {
-        printf("Error registering URI \n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_post_settings);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI \n");
-    }
-    ret = httpd_register_uri_handler(server, &uri_get);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI \n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_post_command);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI \n");
-    }
-
-    ret = httpd_register_uri_handler(server, &uri_get_logs);
-
-    if (ret != ESP_OK) {
-        printf("Error registering URI \n");
-    }
-
-    printf("HTTP server started\n");
 
     return ESP_OK;
 }
@@ -978,10 +765,24 @@ void ap_manager_stop_services() {
     wifi_mode_t wifi_mode;
     esp_err_t err = esp_wifi_get_mode(&wifi_mode);
 
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler));
-    ESP_ERROR_CHECK(
-        esp_event_handler_unregister(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &event_handler));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler));
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister WIFI_EVENT handler: %s", esp_err_to_name(err_reg));
+        }
+    }
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister IP_EVENT_AP_STAIPASSIGNED handler: %s", esp_err_to_name(err_reg));
+        }
+    }
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister IP_EVENT_STA_GOT_IP handler: %s", esp_err_to_name(err_reg));
+        }
+    }
 
     if (err == ESP_OK) {
         if (wifi_mode == WIFI_MODE_AP || wifi_mode == WIFI_MODE_STA ||
@@ -993,17 +794,14 @@ void ap_manager_stop_services() {
         printf("Failed to get Wi-Fi mode, error: %d\n", err);
     }
 
-    if (server) {
-        httpd_stop(server);
-        server = NULL;
+    esp_err_t ret = stop_http_server();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to stop HTTP server: %s", esp_err_to_name(ret));
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    if (!mdns_freed) {
-        mdns_free();
-        mdns_freed = true;
-    }
+    teardown_mdns();
 }
 
 // Handler for GET requests (serves the HTML page)
@@ -1465,4 +1263,219 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         }
     }
+}
+
+static esp_err_t load_server_config(void) {
+    if (config_loaded) {
+        ESP_LOGW(TAG, "Server config already loaded");
+        return ESP_OK;
+    }
+
+    if (server != NULL) {
+        ESP_LOGE(TAG, "Cannot load config while server is running");
+        return ESP_FAIL;
+    }
+
+    server_config = (httpd_config_t)HTTPD_DEFAULT_CONFIG();
+    server_config.server_port = 80;
+    server_config.ctrl_port = 32768;
+    server_config.max_uri_handlers = 60;
+    server_config.stack_size = 8192;
+    server_config.recv_wait_timeout = 10;
+    server_config.send_wait_timeout = 10;
+
+    handler_count = 0;
+
+#define ADD_URI_HANDLER(uri_path, method_type, handler_func) do { \
+    if (handler_count >= sizeof(uri_handlers)/sizeof(uri_handlers[0])) { \
+        ESP_LOGE(TAG, "Too many URI handlers, cannot add: %s", uri_path); \
+        return ESP_FAIL; \
+    } \
+    uri_handlers[handler_count++] = (httpd_uri_t){ \
+        .uri = uri_path, \
+        .method = method_type, \
+        .handler = handler_func, \
+        .user_ctx = NULL \
+    }; \
+} while(0)
+
+    ADD_URI_HANDLER("/", HTTP_GET, http_get_handler);
+    ADD_URI_HANDLER("/api/settings", HTTP_POST, api_settings_handler);
+    ADD_URI_HANDLER("/api/settings", HTTP_GET, api_settings_get_handler);
+    ADD_URI_HANDLER("/api/sdcard", HTTP_GET, api_sd_card_get_handler);
+    ADD_URI_HANDLER("/api/sdcard/download", HTTP_POST, api_sd_card_post_handler);
+    ADD_URI_HANDLER("/api/sdcard/upload", HTTP_POST, api_sd_card_upload_handler);
+    ADD_URI_HANDLER("/api/sdcard", HTTP_DELETE, api_sd_card_delete_file_handler);
+    ADD_URI_HANDLER("/api/command", HTTP_POST, api_command_handler);
+    ADD_URI_HANDLER("/api/logs", HTTP_GET, api_logs_handler);
+    ADD_URI_HANDLER("/api/clear_logs", HTTP_POST, api_clear_logs_handler);
+
+#undef ADD_URI_HANDLER
+
+    config_loaded = true;
+    ESP_LOGI(TAG, "Server configuration loaded successfully with %d handlers", handler_count);
+    return ESP_OK;
+}
+
+static esp_err_t start_http_server(void) {
+    if (!config_loaded) {
+        ESP_LOGE(TAG, "Server config not loaded");
+        return ESP_FAIL;
+    }
+
+    if (server != NULL) {
+        ESP_LOGW(TAG, "HTTP server already running");
+        return ESP_OK;
+    }
+
+    esp_err_t ret = httpd_start(&server, &server_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    for (int i = 0; i < handler_count; i++) {
+        ret = httpd_register_uri_handler(server, &uri_handlers[i]);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to register URI handler %d: %s", i, esp_err_to_name(ret));
+            httpd_stop(server);
+            server = NULL;
+            return ret;
+        }
+    }
+
+    ESP_LOGI(TAG, "HTTP server started successfully on port %d", server_config.server_port);
+    return ESP_OK;
+}
+
+static esp_err_t stop_http_server(void) {
+    if (server) {
+        esp_err_t ret = httpd_stop(server);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to stop HTTP server: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        server = NULL;
+        ESP_LOGI(TAG, "HTTP server stopped");
+    }
+    return ESP_OK;
+}
+
+static void reset_server_config(void) {
+    config_loaded = false;
+    handler_count = 0;
+    memset(&server_config, 0, sizeof(server_config));
+    memset(uri_handlers, 0, sizeof(uri_handlers));
+    ESP_LOGI(TAG, "Server configuration reset");
+}
+
+static bool is_server_running(void) {
+    return server != NULL;
+}
+
+static bool is_config_loaded(void) {
+    return config_loaded;
+}
+
+esp_err_t ap_manager_reload_config(void) {
+    ESP_LOGI(TAG, "Reloading server configuration and mDNS");
+    
+    esp_err_t ret = stop_http_server();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to stop server before reload: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    teardown_mdns();
+    reset_server_config();
+    
+    ret = load_server_config();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to reload config: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ret = setup_mdns();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to setup mDNS after reload: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ret = start_http_server();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to restart server after reload: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "Server configuration and mDNS reloaded successfully");
+    return ESP_OK;
+}
+
+void ap_manager_get_status(bool *server_running, bool *config_loaded_status, int *handler_count_status) {
+    if (server_running) *server_running = is_server_running();
+    if (config_loaded_status) *config_loaded_status = is_config_loaded();
+    if (handler_count_status) *handler_count_status = handler_count;
+}
+
+static esp_err_t setup_mdns(void) {
+    esp_err_t ret = mdns_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    mdns_freed = false;
+
+    ret = mdns_hostname_set("ghostesp");
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_hostname_set failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = mdns_instance_name_set("GhostESP Web Interface");
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_instance_name_set failed: %s", esp_err_to_name(ret));
+    }
+
+    char ip_str[16];
+    snprintf(ip_str, sizeof(ip_str), "192.168.4.1");
+    mdns_txt_item_t serviceTxtData[] = {{"ip", ip_str}};
+
+    ret = mdns_service_add("GhostESP", "_http", "_tcp", 80, serviceTxtData, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_service_add failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = mdns_service_txt_set("_http", "_tcp", serviceTxtData, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    char ip_txt[20];
+    snprintf(ip_txt, sizeof(ip_txt), "192.168.4.1");
+    mdns_txt_item_t ip_data[] = {{"ipv4", ip_txt}};
+    ret = mdns_service_txt_set("_http", "_tcp", ip_data, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s", esp_err_to_name(ret));
+    }
+
+    ret = mdns_service_add(NULL, "_http", "_http", 80, NULL, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mDNS service add failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "mDNS setup completed successfully");
+    return ESP_OK;
+}
+
+static esp_err_t teardown_mdns(void) {
+    if (!mdns_freed) {
+        mdns_free();
+        mdns_freed = true;
+        ESP_LOGI(TAG, "mDNS teardown completed");
+    }
+    return ESP_OK;
 }

@@ -4,11 +4,19 @@
 #include "lvgl.h"
 #include "managers/views/app_gallery_screen.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include "managers/views/clock_screen.h"
+#include "managers/views/settings_screen.h"
 
 static const char *TAG = "MainMenu";
 
 lv_obj_t *menu_container;
 static int selected_item_index = 0;
+static int touch_start_x;
+static int touch_start_y;
+static bool touch_started = false;
+static const int SWIPE_THRESHOLD = 50;
+static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
 
 typedef struct {
   const char *name;
@@ -21,18 +29,36 @@ static menu_item_t menu_items[] = {
     {"BLE", &bluetooth},
     {"WiFi", &wifi},
     {"GPS", &Map},
-    {"Apps", &GESPAppGallery}
+    {"Apps", &GESPAppGallery},
+    {"Clock", &clock_icon},
+    {"Settings", &settings_icon}
 };
 
 static int num_items = sizeof(menu_items) / sizeof(menu_items[0]);
 lv_obj_t *current_item_obj = NULL;
 
 static void init_menu_colors(void) {
-    // Initialize colors at runtime
-    menu_items[0].border_color = lv_color_hex(0x1976D2);
-    menu_items[1].border_color = lv_color_hex(0xD32F2F);
-    menu_items[2].border_color = lv_color_hex(0x388E3C);
-    menu_items[3].border_color = lv_color_hex(0x7B1FA2);
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    const uint32_t palettes[15][6] = {
+        {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
+        {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
+        {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
+        {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
+        {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
+        {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
+        {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
+        {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
+        {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
+        {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
+        {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
+        {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
+        {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
+        {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
+        {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
+    };
+    for (int i = 0; i < 6; i++) {
+        menu_items[i].border_color = lv_color_hex(palettes[theme][i]);
+    }
 }
 
 // Animation callback wrapper
@@ -72,8 +98,11 @@ static void update_menu_item(bool slide_left) {
     lv_obj_set_size(icon, icon_size, icon_size);
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
     lv_img_set_antialias(icon, false); // Prevent scaling artifacts
-    lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0); // Keep recoloring for main menu
-    lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+    // Only recolor non-clock icons
+    if (selected_item_index != 4) { 
+        lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0);
+        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+    }
     lv_obj_set_style_clip_corner(icon, false, 0); // Prevent clipping
 
     // Calculate centered position with offsets
@@ -111,27 +140,31 @@ static void update_menu_item(bool slide_left) {
 /**
  * @brief Combined handler for menu item events.
  */
- static void menu_item_event_handler(InputEvent *event) {
-  if (event->type == INPUT_TYPE_TOUCH) {
-      lv_indev_data_t *data = &event->data.touch_data;
-      int half_screen = LV_HOR_RES / 2;
-      int center_area_width = LV_HOR_RES / 3;
-
-      if (data->point.x > (LV_HOR_RES - center_area_width)/2 && 
-          data->point.x < (LV_HOR_RES + center_area_width)/2) {
-          handle_menu_item_selection(selected_item_index);
-      }
-      else if (data->point.x < half_screen) {
-          select_menu_item(selected_item_index - 1, true);
-      }
-      else {
-          select_menu_item(selected_item_index + 1, false);
-      }
-  } 
-  else if (event->type == INPUT_TYPE_JOYSTICK) {
-      int button = event->data.joystick_index;
-      handle_hardware_button_press(button);
-  }
+static void menu_item_event_handler(InputEvent *event) {
+    if (event->type == INPUT_TYPE_TOUCH) {
+        lv_indev_data_t *data = &event->data.touch_data;
+        if (data->state == LV_INDEV_STATE_PR) {
+            touch_started = true;
+            touch_start_x = data->point.x;
+            touch_start_y = data->point.y;
+        } else if (data->state == LV_INDEV_STATE_REL && touch_started) {
+            int dx = data->point.x - touch_start_x;
+            int dy = data->point.y - touch_start_y;
+            touch_started = false;
+            if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) { // Swipe detected
+                if (dx < 0) {
+                    select_menu_item(selected_item_index + 1, true);
+                } else {
+                    select_menu_item(selected_item_index - 1, false);
+                }
+            } else if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) { // Tap detected
+                handle_menu_item_selection(selected_item_index);
+            }
+        }
+    } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        int button = event->data.joystick_index;
+        handle_hardware_button_press(button);
+    }
 }
 
 /**
@@ -166,6 +199,8 @@ static void handle_menu_item_selection(int item_index) {
         case 1: printf("Wi-Fi selected\n"); SelectedMenuType = OT_Wifi; display_manager_switch_view(&options_menu_view); break;
         case 2: printf("GPS selected\n"); SelectedMenuType = OT_GPS; display_manager_switch_view(&options_menu_view); break;
         case 3: printf("Apps View Selected\n"); display_manager_switch_view(&apps_menu_view); break;
+        case 4: printf("Clock selected\n"); display_manager_switch_view(&clock_view); break;
+        case 5: printf("Settings selected\n"); display_manager_switch_view(&settings_screen_view); break;
         default: printf("Unknown menu item selected\n"); break;
     }
 }
@@ -185,7 +220,6 @@ void main_menu_create(void) {
     lv_obj_set_scrollbar_mode(menu_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_align(menu_container, LV_ALIGN_CENTER, 0, 0);
 
-    selected_item_index = 0;
     update_menu_item(false);
 
     display_manager_add_status_bar(LV_HOR_RES > 128 ? "Main Menu" : "");

@@ -11,6 +11,16 @@
 
 static const char *TAG = "DIALManager";
 
+// Default name for DIAL device in bind session
+static char g_dial_device_name[64] = "Flipper_0";
+// Set the device name used in DIAL bind session
+void dial_manager_set_device_name(const char *name) {
+  if (name && *name) {
+    strncpy(g_dial_device_name, name, sizeof(g_dial_device_name) - 1);
+    g_dial_device_name[sizeof(g_dial_device_name) - 1] = '\0';
+  }
+}
+
 typedef struct {
   char *buffer;
   int buffer_len;
@@ -238,32 +248,63 @@ esp_err_t send_command(const char *command, const char *video_id,
     goto cleanup;
   }
 
-  char url_params[1024];
-  snprintf(url_params, sizeof(url_params),
+  size_t url_params_len = snprintf(NULL, 0,
+           "CVER=1&RID=1&SID=%s&VER=8&gsessionid=%s&loungeIdToken=%s",
+           encoded_SID, encoded_gsession, encoded_loungeIdToken) + 1;
+  char *url_params = malloc(url_params_len);
+  if (!url_params) {
+    ESP_LOGE(TAG, "Failed to allocate memory for URL parameters");
+    goto cleanup;
+  }
+  snprintf(url_params, url_params_len,
            "CVER=1&RID=1&SID=%s&VER=8&gsessionid=%s&loungeIdToken=%s",
            encoded_SID, encoded_gsession, encoded_loungeIdToken);
-
   ESP_LOGI(TAG, "Query Parameters: %s", url_params);
 
-  char body_params[1024];
-
+  size_t body_params_len = 0;
+  char *body_params = NULL;
   if (strcmp(command, "setVideo") == 0) {
-    snprintf(body_params, sizeof(body_params),
-             "count=1&req0__sc=%s&req0_videoId=%s&req0_currentTime=0&req0_"
-             "currentIndex=0&req0_videoIds=%s",
+    body_params_len = snprintf(NULL, 0,
+             "count=1&req0__sc=%s&req0_videoId=%s&req0_currentTime=0&req0_currentIndex=0&req0_videoIds=%s",
+             encoded_command, encoded_video_id, encoded_video_id) + 1;
+    body_params = malloc(body_params_len);
+    if (!body_params) {
+      ESP_LOGE(TAG, "Failed to allocate memory for body parameters");
+      free(url_params);
+      goto cleanup;
+    }
+    snprintf(body_params, body_params_len,
+             "count=1&req0__sc=%s&req0_videoId=%s&req0_currentTime=0&req0_currentIndex=0&req0_videoIds=%s",
              encoded_command, encoded_video_id, encoded_video_id);
   } else if (strcmp(command, "addVideo") == 0) {
-    snprintf(body_params, sizeof(body_params),
+    body_params_len = snprintf(NULL, 0,
+             "count=1&req0__sc=%s&req0_videoId=%s", encoded_command,
+             encoded_video_id) + 1;
+    body_params = malloc(body_params_len);
+    if (!body_params) {
+      ESP_LOGE(TAG, "Failed to allocate memory for body parameters");
+      free(url_params);
+      goto cleanup;
+    }
+    snprintf(body_params, body_params_len,
              "count=1&req0__sc=%s&req0_videoId=%s", encoded_command,
              encoded_video_id);
   } else if (strcmp(command, "play") == 0 || strcmp(command, "pause") == 0) {
-    snprintf(body_params, sizeof(body_params), "count=1&req0__sc=%s",
+    body_params_len = snprintf(NULL, 0, "count=1&req0__sc=%s",
+             encoded_command) + 1;
+    body_params = malloc(body_params_len);
+    if (!body_params) {
+      ESP_LOGE(TAG, "Failed to allocate memory for body parameters");
+      free(url_params);
+      goto cleanup;
+    }
+    snprintf(body_params, body_params_len, "count=1&req0__sc=%s",
              encoded_command);
   } else {
     ESP_LOGE(TAG, "Unsupported command: %s", command);
+    free(url_params);
     goto cleanup;
   }
-
   ESP_LOGI(TAG, "Body Parameters: %s", body_params);
 
   response_buffer_t resp_buf = {
@@ -284,20 +325,28 @@ esp_err_t send_command(const char *command, const char *video_id,
   };
   esp_http_client_handle_t client = esp_http_client_init(&config);
 
-  // Set the full URL with parameters
-  char full_url[1524];
-  snprintf(full_url, sizeof(full_url), "%s?%s", config.url, url_params);
+  // Set the request body
+  esp_http_client_set_post_field(client, body_params, strlen(body_params));
+
+  // Dynamically allocate buffer for full_url
+  size_t full_url_len = strlen(config.url) + 1 + strlen(url_params) + 1; // base + '?' + params + '\0'
+  char *full_url = malloc(full_url_len);
+  if (full_url == NULL) {
+    ESP_LOGE(TAG, "Failed to allocate memory for full_url");
+    esp_http_client_cleanup(client);
+    return ESP_FAIL;
+  }
+  snprintf(full_url, full_url_len, "%s?%s", config.url, url_params);
   esp_http_client_set_url(client, full_url);
 
   ESP_LOGI(TAG, "Full URL: %s", full_url);
+  ESP_LOGI(TAG, "POST Body: %s", body_params);
 
   // Set HTTP method, headers, and post data
   esp_http_client_set_method(client, HTTP_METHOD_POST);
   esp_http_client_set_header(client, "Content-Type",
                              "application/x-www-form-urlencoded");
   esp_http_client_set_header(client, "Origin", "https://www.youtube.com");
-
-  esp_http_client_set_post_field(client, body_params, strlen(body_params));
 
   // Perform the HTTP request
   esp_err_t err = esp_http_client_perform(client);
@@ -320,7 +369,10 @@ cleanup:
   if (resp_buf.buffer) {
     free(resp_buf.buffer);
   }
+  free(url_params);
+  free(body_params);
   esp_http_client_cleanup(client);
+  free(full_url); // Free allocated memory
 
   return ESP_OK;
 }
@@ -344,7 +396,7 @@ esp_err_t bind_session_id(Device *device) {
   char *encoded_loungeIdToken = url_encode(device->YoutubeToken);
   char *encoded_UUID = url_encode(device->UUID);
   char *encoded_zx = url_encode(zx);
-  char *encoded_name = url_encode("Flipper_0");
+  char *encoded_name = url_encode(g_dial_device_name);
 
   if (!encoded_loungeIdToken || !encoded_UUID || !encoded_zx || !encoded_name) {
     ESP_LOGE(TAG, "Failed to URL-encode parameters.");
@@ -356,15 +408,25 @@ esp_err_t bind_session_id(Device *device) {
     return ESP_FAIL;
   }
 
-  char url_params[1048];
-  snprintf(
-      url_params, sizeof(url_params),
+  size_t url_params_len = snprintf(NULL, 0,
+      "device=REMOTE_CONTROL&mdx-version=3&ui=1&v=2&name=%s"
+      "&app=youtube-desktop&loungeIdToken=%s&id=%s&VER=8&CVER=1&zx=%s&RID=%i",
+      encoded_name, encoded_loungeIdToken, encoded_UUID, encoded_zx, 1) + 1;
+  char *url_params = malloc(url_params_len);
+  if (!url_params) {
+    ESP_LOGE(TAG, "Failed to allocate memory for URL parameters");
+    free(encoded_loungeIdToken);
+    free(encoded_UUID);
+    free(encoded_zx);
+    free(encoded_name);
+    free(zx);
+    return ESP_ERR_NO_MEM;
+  }
+  snprintf(url_params, url_params_len,
       "device=REMOTE_CONTROL&mdx-version=3&ui=1&v=2&name=%s"
       "&app=youtube-desktop&loungeIdToken=%s&id=%s&VER=8&CVER=1&zx=%s&RID=%i",
       encoded_name, encoded_loungeIdToken, encoded_UUID, encoded_zx, 1);
-
-  ESP_LOGI(TAG, "Constructed URL: %s?%s",
-           "https://www.youtube.com/api/lounge/bc/bind", url_params);
+  ESP_LOGI(TAG, "Constructed URL: %s?%s", "https://www.youtube.com/api/lounge/bc/bind", url_params);
 
   response_buffer_t resp_buf = {
       .buffer = malloc(1524), .buffer_len = 0, .buffer_size = 1524};
@@ -393,8 +455,21 @@ esp_err_t bind_session_id(Device *device) {
   esp_http_client_set_header(client, "Content-Type", "application/json");
   esp_http_client_set_header(client, "Origin", "https://www.youtube.com");
 
-  char full_url[4096];
-  snprintf(full_url, sizeof(full_url), "%s?%s", config.url, url_params);
+  size_t full_url_len = strlen(config.url) + 1 + strlen(url_params) + 1;
+  char *full_url = malloc(full_url_len);
+  if (!full_url) {
+    ESP_LOGE(TAG, "Failed to allocate memory for full URL");
+    free(url_params);
+    esp_http_client_cleanup(client);
+    free(resp_buf.buffer);
+    free(encoded_loungeIdToken);
+    free(encoded_UUID);
+    free(encoded_zx);
+    free(encoded_name);
+    free(zx);
+    return ESP_ERR_NO_MEM;
+  }
+  snprintf(full_url, full_url_len, "%s?%s", config.url, url_params);
   esp_http_client_set_url(client, full_url);
 
   const char *json_data = "{\"count\": 0}";
@@ -454,6 +529,8 @@ esp_err_t bind_session_id(Device *device) {
   free(zx);
   esp_http_client_cleanup(client);
   free(resp_buf.buffer);
+  free(url_params);
+  free(full_url);
   return ESP_OK;
 }
 

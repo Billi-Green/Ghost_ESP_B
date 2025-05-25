@@ -39,8 +39,19 @@ static const char *NVS_DISPLAY_TIMEOUT_KEY = "disp_timeout";
 static const char *NVS_ENABLE_RTS_KEY = "rts_enable";
 static const char *NVS_STA_SSID_KEY = "sta_ssid";
 static const char *NVS_STA_PASSWORD_KEY = "sta_password";
+static const char *NVS_RGB_DATA_PIN_KEY = "rgb_data_pin";
+static const char *NVS_RGB_RED_PIN_KEY = "rgb_red_pin";
+static const char *NVS_RGB_GREEN_PIN_KEY = "rgb_green_pin";
+static const char *NVS_RGB_BLUE_PIN_KEY = "rgb_blue_pin";
+static const char *NVS_THIRD_CTRL_KEY = "third_ctrl";
+static const char *NVS_MENU_THEME_KEY = "menu_theme";
+static const char *NVS_TERMINAL_TEXT_COLOR_KEY = "term_color";
+static const char *NVS_INVERT_COLORS_KEY = "invert_colors";
 
 static const char *TAG = "SettingsManager";
+
+static nvs_handle_t nvsHandle;
+FSettings G_Settings;
 
 void settings_init(FSettings *settings) {
   settings_set_defaults(settings);
@@ -80,6 +91,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->rgb_mode = RGB_MODE_NORMAL;
   settings->channel_delay = 1.0f;
   settings->broadcast_speed = 5;
+  settings->menu_theme = 0;
   strcpy(settings->ap_ssid, "GhostNet");
   strcpy(settings->ap_password, "GhostNet");
   settings->rgb_speed = 15;
@@ -105,12 +117,20 @@ void settings_set_defaults(FSettings *settings) {
   settings->rts_enabled = false;
   strcpy(settings->sta_ssid, ""); // Default empty station SSID
   strcpy(settings->sta_password, ""); // Default empty station password
+  settings->rgb_data_pin = -1;
+  settings->rgb_red_pin = -1;
+  settings->rgb_green_pin = -1;
+  settings->rgb_blue_pin = -1;
+  settings->third_control_enabled = false;
+  settings->terminal_text_color = 0x00FF00;
+  settings->invert_colors = false;
 }
 
 void settings_load(FSettings *settings) {
   esp_err_t err;
   uint8_t value_u8;
   uint16_t value_u16;
+  uint32_t value_u32;
   float value_float;
   size_t str_size;
 
@@ -268,6 +288,14 @@ void settings_load(FSettings *settings) {
     settings->rts_enabled = false;
   }
 
+  uint8_t thirdenabledvalue;
+  err = nvs_get_u8(nvsHandle, NVS_THIRD_CTRL_KEY, &thirdenabledvalue);
+  if (err == ESP_OK) {
+    settings->third_control_enabled = thirdenabledvalue;
+  } else {
+    settings->third_control_enabled = false;
+  }
+
   // Load Station SSID
   str_size = sizeof(settings->sta_ssid);
   err = nvs_get_str(nvsHandle, NVS_STA_SSID_KEY, settings->sta_ssid, &str_size);
@@ -287,6 +315,45 @@ void settings_load(FSettings *settings) {
   }
 
   printf("Settings loaded from NVS.\n");
+  int32_t tmp;
+  err = nvs_get_i32(nvsHandle, NVS_RGB_DATA_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->rgb_data_pin = tmp;
+  } else {
+    settings->rgb_data_pin = -1;
+  }
+  err = nvs_get_i32(nvsHandle, NVS_RGB_RED_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->rgb_red_pin = tmp;
+  } else {
+    settings->rgb_red_pin = -1;
+  }
+  err = nvs_get_i32(nvsHandle, NVS_RGB_GREEN_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->rgb_green_pin = tmp;
+  } else {
+    settings->rgb_green_pin = -1;
+  }
+  err = nvs_get_i32(nvsHandle, NVS_RGB_BLUE_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->rgb_blue_pin = tmp;
+  } else {
+    settings->rgb_blue_pin = -1;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_MENU_THEME_KEY, &value_u8);
+  if (err == ESP_OK) settings->menu_theme = value_u8;
+  err = nvs_get_u32(nvsHandle, NVS_TERMINAL_TEXT_COLOR_KEY, &value_u32);
+  if (err == ESP_OK) {
+    settings->terminal_text_color = value_u32;
+  }
+  uint8_t invert_val;
+  err = nvs_get_u8(nvsHandle, NVS_INVERT_COLORS_KEY, &invert_val);
+  if (err == ESP_OK) {
+    settings->invert_colors = invert_val;
+  } else {
+    settings->invert_colors = false;
+  }
 }
 
 static void update_rainbow_effect(const FSettings *settings) {
@@ -359,6 +426,12 @@ void settings_save(const FSettings *settings) {
   err = nvs_set_u8(nvsHandle, NVS_ENABLE_RTS_KEY, settings->rts_enabled);
   if (err != ESP_OK) {
     printf("Failed to save RTS Enabled\n");
+  }
+
+  // Save Third Control Enabled
+  err = nvs_set_u8(nvsHandle, NVS_THIRD_CTRL_KEY, settings->third_control_enabled);
+  if (err != ESP_OK) {
+    printf("Failed to save Third Control Enabled\n");
   }
 
   // Save Evil Portal settings
@@ -458,6 +531,23 @@ void settings_save(const FSettings *settings) {
     printf("Failed to save STA Password\n");
   }
 
+  err = nvs_set_i32(nvsHandle, NVS_RGB_DATA_PIN_KEY, settings->rgb_data_pin);
+  if (err != ESP_OK) {
+    printf("Failed to save RGB data pin\n");
+  }
+  err = nvs_set_i32(nvsHandle, NVS_RGB_RED_PIN_KEY, settings->rgb_red_pin);
+  if (err != ESP_OK) {
+    printf("Failed to save RGB red pin\n");
+  }
+  err = nvs_set_i32(nvsHandle, NVS_RGB_GREEN_PIN_KEY, settings->rgb_green_pin);
+  if (err != ESP_OK) {
+    printf("Failed to save RGB green pin\n");
+  }
+  err = nvs_set_i32(nvsHandle, NVS_RGB_BLUE_PIN_KEY, settings->rgb_blue_pin);
+  if (err != ESP_OK) {
+    printf("Failed to save RGB blue pin\n");
+  }
+
   if (settings_get_rgb_mode(&G_Settings) == 0) {
     if (rgb_effect_task_handle != NULL) {
       vTaskDelete(rgb_effect_task_handle);
@@ -501,6 +591,15 @@ void settings_save(const FSettings *settings) {
   } else {
     ESP_LOGI(TAG, "Settings saved to NVS successfully");
   }
+
+  err = nvs_set_u8(nvsHandle, NVS_MENU_THEME_KEY, settings->menu_theme);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save menu_theme: %s", esp_err_to_name(err));
+  err = nvs_set_u8(nvsHandle, NVS_INVERT_COLORS_KEY, settings->invert_colors);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save invert_colors: %s", esp_err_to_name(err));
+  err = nvs_set_u32(nvsHandle, NVS_TERMINAL_TEXT_COLOR_KEY, settings->terminal_text_color);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save terminal_text_color: %s", esp_err_to_name(err));
+  err = nvs_commit(nvsHandle);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
 }
 
 // Core Settings Getters and Setters
@@ -721,4 +820,56 @@ void settings_set_sta_password(FSettings *settings, const char *password) {
 
 const char *settings_get_sta_password(const FSettings *settings) {
   return settings->sta_password;
+}
+
+void settings_set_rgb_data_pin(FSettings *settings, int32_t pin) {
+  settings->rgb_data_pin = pin;
+}
+
+int32_t settings_get_rgb_data_pin(const FSettings *settings) {
+  return settings->rgb_data_pin;
+}
+
+void settings_set_rgb_separate_pins(FSettings *settings, int32_t red, int32_t green, int32_t blue) {
+  settings->rgb_red_pin = red;
+  settings->rgb_green_pin = green;
+  settings->rgb_blue_pin = blue;
+}
+
+void settings_get_rgb_separate_pins(const FSettings *settings, int32_t *red, int32_t *green, int32_t *blue) {
+  if (red) *red = settings->rgb_red_pin;
+  if (green) *green = settings->rgb_green_pin;
+  if (blue) *blue = settings->rgb_blue_pin;
+}
+
+void settings_set_thirds_control_enabled(FSettings *settings, bool enabled) {
+  settings->third_control_enabled = enabled;
+}
+
+bool settings_get_thirds_control_enabled(const FSettings *settings) {
+  return settings->third_control_enabled;
+}
+
+void settings_set_menu_theme(FSettings *settings, uint8_t theme) {
+  settings->menu_theme = theme;
+}
+
+uint8_t settings_get_menu_theme(const FSettings *settings) {
+  return settings->menu_theme;
+}
+
+void settings_set_terminal_text_color(FSettings *settings, uint32_t color) {
+  settings->terminal_text_color = color;
+}
+
+uint32_t settings_get_terminal_text_color(const FSettings *settings) {
+  return settings->terminal_text_color;
+}
+
+void settings_set_invert_colors(FSettings *settings, bool enabled) {
+  settings->invert_colors = enabled;
+}
+
+bool settings_get_invert_colors(const FSettings *settings) {
+  return settings->invert_colors;
 }

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "ff.h"
 
 static const char *GPS_TAG = "GPS";
 static const char *CSV_TAG = "CSV";
@@ -23,7 +24,7 @@ static bool is_valid_date(const gps_date_t *date);
 static FILE *csv_file = NULL;
 static char csv_buffer[BUFFER_SIZE];
 static size_t buffer_offset = 0;
-
+static char csv_file_path[GPS_MAX_FILE_NAME_LENGTH];
 static bool gps_connection_logged = false;
 
 esp_err_t csv_write_header(FILE *f) {
@@ -78,7 +79,10 @@ esp_err_t csv_file_open(const char *base_file_name) {
 
     if (sd_card_exists("/mnt/ghostesp/gps")) {
         get_next_csv_file_name(file_name, base_file_name);
+        strncpy(csv_file_path, file_name, GPS_MAX_FILE_NAME_LENGTH);
         csv_file = fopen(file_name, "w");
+    } else {
+        csv_file = NULL;
     }
 
     esp_err_t ret = csv_write_header(csv_file);
@@ -90,8 +94,13 @@ esp_err_t csv_file_open(const char *base_file_name) {
         return ret;
     }
 
-    printf("Storage: Created new log file: %s\n", file_name);
-    TERMINAL_VIEW_ADD_TEXT("Storage: Created new log file: %s\n", file_name);
+    if (csv_file) {
+        printf("Streaming CSV buffer to SD card\n");
+        TERMINAL_VIEW_ADD_TEXT("Streaming CSV buffer to SD card\n");
+    } else {
+        printf("Streaming CSV buffer over UART\n");
+        TERMINAL_VIEW_ADD_TEXT("Streaming CSV buffer over UART\n");
+    }
     return ESP_OK;
 }
 
@@ -99,7 +108,6 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     if (!data)
         return ESP_ERR_INVALID_ARG;
 
-    // Get GPS data from the global handle
     gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
     if (!gps)
         return ESP_ERR_INVALID_STATE;
@@ -115,7 +123,7 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
              gps_get_absolute_year(gps->date.year), gps->date.month, gps->date.day, gps->tim.hour,
              gps->tim.minute, gps->tim.second, gps->tim.thousand);
 
-    char data_line[CSV_BUFFER_SIZE];
+    static char data_line[CSV_BUFFER_SIZE];
     int len;
 
     if (data->ble_data.is_ble_device) {
@@ -143,7 +151,7 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     }
 
     // Check if buffer needs flushing
-    if (buffer_offset + len >= BUFFER_SIZE && csv_file != NULL) {
+    if (buffer_offset + len >= BUFFER_SIZE) {
         esp_err_t err = csv_flush_buffer_to_file();
         if (err != ESP_OK) {
             return err;
@@ -173,8 +181,8 @@ esp_err_t csv_flush_buffer_to_file() {
     }
 
     if (csv_file == NULL) {
-        printf("Storage:\nStarting new file.\n");
-        TERMINAL_VIEW_ADD_TEXT("Storage:\nStarting new file.\n");
+        printf("Streaming CSV buffer over UART\n");
+        TERMINAL_VIEW_ADD_TEXT("Streaming CSV buffer over UART\n");
         const char *mark_begin = "[BUF/BEGIN]";
         const char *mark_close = "[BUF/CLOSE]";
 
@@ -210,6 +218,19 @@ void csv_file_close() {
         }
         fclose(csv_file);
         csv_file = NULL;
+        if (csv_file_path[0] != '\0') {
+            gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
+            const char *mount = "/mnt";
+            const char *rel_path = csv_file_path + strlen(mount);
+            if (*rel_path == '/') rel_path++;
+            FILINFO finfo;
+            if (f_stat(rel_path, &finfo) == FR_OK) {
+                uint16_t year = gps_get_absolute_year(gps->date.year);
+                finfo.fdate = ((year - 1980) << 9) | (gps->date.month << 5) | gps->date.day;
+                finfo.ftime = (gps->tim.hour << 11) | (gps->tim.minute << 5) | (gps->tim.second / 2);
+                f_utime(rel_path, &finfo);
+            }
+        }
         printf("CSV file closed.\n");
         TERMINAL_VIEW_ADD_TEXT("CSV file closed.\n");
     }
@@ -307,8 +328,8 @@ static void format_coordinates(double lat, double lon, char *lat_str, char *lon_
     int lon_deg = (int)fabs(lon);
     double lon_min = (fabs(lon) - lon_deg) * 60;
 
-    sprintf(lat_str, "%d°%.4f'%c", lat_deg, lat_min, lat >= 0 ? 'N' : 'S');
-    sprintf(lon_str, "%d°%.4f'%c", lon_deg, lon_min, lon >= 0 ? 'E' : 'W');
+    sprintf(lat_str, "%ddeg %.4f'%c", lat_deg, lat_min, lat >= 0 ? 'N' : 'S');
+    sprintf(lon_str, "%ddeg %.4f'%c", lon_deg, lon_min, lon >= 0 ? 'E' : 'W');
 }
 
 float get_accuracy_percentage(float hdop) {

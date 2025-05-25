@@ -66,10 +66,13 @@ bool axp202_is_charging(void) {
     return false;
   }
 
-  bool charging = IS_BIT_SET(reg, 6);
-  printf("INFO [%s]: Charging status: %s\n", __func__,
-         charging ? "Charging" : "Not Charging");
-  return !charging; // for some reason this bool needs to be flipped
+  bool charging_bit_set = IS_BIT_SET(reg, 6);
+  // On this specific AXP variant/hardware, bit 6 of REG 0x01 seems to be inverted.
+  // 0 = Charging, 1 = Not Charging. Therefore, we return the inverse.
+  bool is_actually_charging = !charging_bit_set; 
+  printf("INFO [%s]: Charging status: %s (Register Bit 6: %d)\n", __func__,
+         is_actually_charging ? "Charging" : "Not Charging", charging_bit_set);
+  return is_actually_charging; 
 }
 
 esp_err_t axp2101_init(void) {

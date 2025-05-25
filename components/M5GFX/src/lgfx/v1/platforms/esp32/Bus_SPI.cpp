@@ -64,17 +64,34 @@ Contributors:
 
 #if defined (SOC_GDMA_SUPPORTED)  // for C3/C6/S3
  #include <soc/gdma_channel.h>
- #include <soc/gdma_reg.h>
- #include <soc/gdma_struct.h>
- #if !defined DMA_OUT_LINK_CH0_REG
-  #define DMA_OUT_LINK_CH0_REG       GDMA_OUT_LINK_CH0_REG
-  #define DMA_OUTFIFO_STATUS_CH0_REG GDMA_OUTFIFO_STATUS_CH0_REG
-  #define DMA_OUTLINK_START_CH0      GDMA_OUTLINK_START_CH0
-  #if defined (GDMA_OUTFIFO_EMPTY_L3_CH0)
-   #define DMA_OUTFIFO_EMPTY_CH0      GDMA_OUTFIFO_EMPTY_L3_CH0
-  #else
-   #define DMA_OUTFIFO_EMPTY_CH0      GDMA_OUTFIFO_EMPTY_CH0
+ #if __has_include(<soc/gdma_reg.h>)
+  #include <soc/gdma_reg.h>
+ #elif __has_include(<soc/axi_dma_reg.h>) // ESP32P4
+  #include <soc/axi_dma_reg.h>
+ #endif
+ #if __has_include(<soc/gdma_struct.h>)
+  #include <soc/gdma_struct.h>
+ #elif __has_include(<soc/axi_dma_struct.h>) // ESP32P4
+  #include <soc/axi_dma_struct.h>
+ #endif
+ #if defined AXI_DMA_OUT_LINK1_CH0_REG
+  #define DMA_OUT_LINK_CH0_REG       AXI_DMA_OUT_LINK1_CH0_REG
+  #define DMA_OUTFIFO_STATUS_CH0_REG AXI_DMA_OUTFIFO_STATUS_CH0_REG
+  #define DMA_OUTLINK_START_CH0      AXI_DMA_OUTLINK_START_CH0
+  #define DMA_OUTFIFO_EMPTY_CH0      AXI_DMA_OUTFIFO_L3_EMPTY_CH0
+  #define SIZE_OF_DMA_OUT_CH (sizeof(axi_dma_out_reg_t))
+ #else
+  #if !defined DMA_OUT_LINK_CH0_REG
+   #define DMA_OUT_LINK_CH0_REG       GDMA_OUT_LINK_CH0_REG
+   #define DMA_OUTFIFO_STATUS_CH0_REG GDMA_OUTFIFO_STATUS_CH0_REG
+   #define DMA_OUTLINK_START_CH0      GDMA_OUTLINK_START_CH0
+   #if defined (GDMA_OUTFIFO_EMPTY_L3_CH0)
+    #define DMA_OUTFIFO_EMPTY_CH0      GDMA_OUTFIFO_EMPTY_L3_CH0
+   #else
+    #define DMA_OUTFIFO_EMPTY_CH0      GDMA_OUTFIFO_EMPTY_CH0
+   #endif
   #endif
+  #define SIZE_OF_DMA_OUT_CH (sizeof(GDMA.channel[0]))
  #endif
 #endif
 
@@ -152,8 +169,8 @@ namespace lgfx
 
     if (assigned_dma_ch >= 0)
     { // DMAチャンネルが特定できたらそれを使用する;
-      _spi_dma_out_link_reg  = reg(DMA_OUT_LINK_CH0_REG       + assigned_dma_ch * sizeof(GDMA.channel[0]));
-      _spi_dma_outstatus_reg = reg(DMA_OUTFIFO_STATUS_CH0_REG + assigned_dma_ch * sizeof(GDMA.channel[0]));
+      _spi_dma_out_link_reg  = reg(DMA_OUT_LINK_CH0_REG       + assigned_dma_ch * SIZE_OF_DMA_OUT_CH);
+      _spi_dma_outstatus_reg = reg(DMA_OUTFIFO_STATUS_CH0_REG + assigned_dma_ch * SIZE_OF_DMA_OUT_CH);
     }
 #elif defined ( CONFIG_IDF_TARGET_ESP32 ) || !defined ( CONFIG_IDF_TARGET )
 
@@ -538,7 +555,14 @@ namespace lgfx
       length <<= 3;
       dc_control(dc);
       set_write_len(length);
+#if defined ( CONFIG_IDF_TARGET_ESP32P4 )
+// P4のペリフェラルレジスタへのmemcpyはうまく動作しないので処理を分岐する
+      for (int i = 0; i < aligned_len >> 2; ++i) {
+        spi_w0_reg[i] = ((uint32_t*)data)[i];
+      }
+#else
       memcpy((void*)spi_w0_reg, data, aligned_len);
+#endif
       exec_spi();
       return;
     }
@@ -632,7 +656,10 @@ label_start:
     dc_control(dc);
     set_write_len(len << 3);
 
-    memcpy((void*)spi_w0_reg, regbuf, (len + 3) & (~3));
+    for (int i = 0; i < (len + 3) >> 2; ++i) {
+      spi_w0_reg[i] = regbuf[i];
+    }
+
     exec_spi();
     if (0 == (length -= len)) return;
 
@@ -640,7 +667,10 @@ label_start:
     memcpy(regbuf, data, limit);
     wait_spi();
     set_write_len(limit << 3);
-    memcpy((void*)spi_w0_reg, regbuf, limit);
+    for (int i = 0; i < limit >> 2; ++i) {
+      spi_w0_reg[i] = regbuf[i];
+    }
+
     exec_spi();
     if (0 == (length -= limit)) return;
 
@@ -649,7 +679,9 @@ label_start:
       data += limit;
       memcpy(regbuf, data, limit);
       wait_spi();
-      memcpy((void*)spi_w0_reg, regbuf, limit);
+      for (int i = 0; i < limit >> 2; ++i) {
+        spi_w0_reg[i] = regbuf[i];
+      }
       exec_spi();
     } while (0 != (length -= limit));
 

@@ -24,21 +24,27 @@ void splash_create(void) {
 
   img = lv_img_create(splash_screen);
   lv_img_set_src(img, &Ghost_ESP);
-  lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_align(img, LV_ALIGN_CENTER, 0, -20);
 
   if (LV_VER_RES < 140) {
     lv_img_set_zoom(img, 128);
   }
 
+  lv_obj_t *label1 = lv_label_create(splash_screen);
+  lv_label_set_text(label1, "GhostESP: Revival");
+  lv_obj_set_style_text_color(label1, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_align_to(label1, img, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+  lv_obj_t *label2 = lv_label_create(splash_screen);
+  lv_label_set_text(label2, "v1.5");
+  lv_obj_set_style_text_color(label2, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_align_to(label2, label1, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
+
   lv_anim_t fade_anim;
   lv_anim_init(&fade_anim);
 
   lv_anim_set_var(&fade_anim, img);
-  lv_anim_set_values(&fade_anim, LV_OPA_0, LV_OPA_100);
-  lv_anim_set_time(&fade_anim, 100);
-  lv_anim_set_playback_delay(&fade_anim, 0);
-  lv_anim_set_playback_time(&fade_anim, 100);
-  lv_anim_set_repeat_count(&fade_anim, 2);
+  lv_anim_set_values(&fade_anim, LV_OPA_100, LV_OPA_100);
+  lv_anim_set_time(&fade_anim, 2000);
   lv_anim_set_exec_cb(&fade_anim, fade_anim_cb);
   lv_anim_set_ready_cb(&fade_anim, fade_out_cb);
   lv_anim_start(&fade_anim);

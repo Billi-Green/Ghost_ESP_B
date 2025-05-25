@@ -19,3 +19,6 @@ extern "C" void m5gfx_write_pixels(int32_t x1, int32_t y1, int32_t x2, int32_t y
     display.pushPixels(color_p, (x2 - x1 + 1) * (y2 - y1 + 1));
     display.endWrite();
 }
+
+extern "C" int get_m5gfx_width() { return display.width(); }
+extern "C" int get_m5gfx_height() { return display.height(); }

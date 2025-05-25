@@ -11,7 +11,10 @@
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/options_screen.h"
 #include "managers/views/terminal_screen.h"
+#include "managers/views/clock_screen.h"
 #include <stdlib.h>
+#include "esp_wifi.h"
+#include "esp_pm.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -56,11 +59,19 @@ lv_obj_t *battery_label = NULL;
 lv_obj_t *mainlabel = NULL;
 
 bool display_manager_init_success = false;
+static bool status_timer_initialized = false;
+static TaskHandle_t lvgl_task_handle = NULL;
+static TaskHandle_t input_task_handle = NULL;
+static lv_timer_t *status_update_timer = NULL;
 
 #define FADE_DURATION_MS 10
-#define DEFAULT_DISPLAY_TIMEOUT_MS 10000
+#define DEFAULT_DISPLAY_TIMEOUT_MS 30000
 
 uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT_MS;
+
+static uint16_t original_beacon_interval = 100;
+
+#define BACKLIGHT_SLEEP_POLL_MS 50  // Poll slower when dimmed
 
 void set_display_timeout(uint32_t timeout_ms) {
   display_timeout_ms = timeout_ms;
@@ -80,8 +91,24 @@ void m5stack_lvgl_render_callback(lv_disp_drv_t *drv, const lv_area_t *area,
 
   lv_disp_flush_ready(drv);
 }
-
 #endif
+
+static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
+                            lv_color_t *color_p) {
+    if (settings_get_invert_colors(&G_Settings)) {
+        int w = area->x2 - area->x1 + 1;
+        int h = area->y2 - area->y1 + 1;
+        int cnt = w * h;
+        for (int i = 0; i < cnt; i++) {
+            color_p[i].full = ~color_p[i].full;
+        }
+    }
+#ifdef CONFIG_USE_CARDPUTER
+    m5stack_lvgl_render_callback(drv, area, color_p);
+#else
+    disp_driver_flush(drv, area, color_p);
+#endif
+}
 
 void fade_out_cb(void *obj, int32_t v) {
   if (obj) {
@@ -192,85 +219,116 @@ lv_color_t hex_to_lv_color(const char *hex_str) {
 
 void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   int batteryPercentage) {
-// Update visibility of status icons
-if (sd_card_mounted) {
-lv_obj_clear_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
-} else {
-lv_obj_add_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
-}
+  // Update visibility of status icons
+  if (sd_card_mounted) {
+    lv_obj_clear_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
+  }
 
-if (bt_enabled) {
-lv_obj_clear_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
-} else {
-lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
-}
+  if (bt_enabled) {
+    lv_obj_clear_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+  }
 
-if (wifi_enabled) {
-lv_obj_clear_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
-} else {
-lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
-}
+  if (wifi_enabled) {
+    lv_obj_clear_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
+  }
 
-// Update battery icon and percentage
-const char *battery_symbol;
+  // Update battery icon and percentage
+  const char *battery_symbol;
 #ifdef CONFIG_HAS_BATTERY
-if (axp202_is_charging()) {
-battery_symbol = LV_SYMBOL_CHARGE;
-} else {
-battery_symbol = (batteryPercentage > 75) ? LV_SYMBOL_BATTERY_FULL :
-(batteryPercentage > 50) ? LV_SYMBOL_BATTERY_3 :
-(batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
-(batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
-}
+  if (axp202_is_charging()) {
+    battery_symbol = LV_SYMBOL_CHARGE;
+  } else {
+    battery_symbol = (batteryPercentage > 75) ? LV_SYMBOL_BATTERY_FULL :
+                     (batteryPercentage > 50) ? LV_SYMBOL_BATTERY_3 :
+                     (batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
+                     (batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
+  }
 #else
-battery_symbol = LV_SYMBOL_BATTERY_FULL; // Default for non-battery configs
+  battery_symbol = LV_SYMBOL_BATTERY_FULL;
 #endif
-lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
+  lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
 
-// Invalidate the status bar to ensure redraw
-lv_obj_invalidate(status_bar);
+  lv_obj_invalidate(status_bar);
 }
 
+static void status_update_cb(lv_timer_t *timer) {
+  if (!status_bar || !lv_obj_is_valid(status_bar)) return;
+  bool HasBluetooth;
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+  HasBluetooth = true;
+#else
+  HasBluetooth = false;
+#endif
+#ifdef CONFIG_HAS_BATTERY
+  uint8_t power_level;
+  axp2101_get_power_level(&power_level);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, power_level);
+#else
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, 100);
+#endif
+}
+
+static const uint32_t theme_palettes[15][6] = {
+    {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
+    {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
+    {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
+    {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
+    {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
+    {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
+    {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
+    {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
+    {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
+    {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
+    {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
+    {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
+    {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
+    {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
+    {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
+};
 
 void display_manager_add_status_bar(const char *CurrentMenuName) {
   status_bar = lv_obj_create(lv_scr_act());
   lv_obj_set_size(status_bar, LV_HOR_RES, 20);
   lv_obj_align(status_bar, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x333333), LV_PART_MAIN); // Dark gray background
+  lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x333333), LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(status_bar, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_border_side(status_bar, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
-  lv_obj_set_style_border_width(status_bar, 1, LV_PART_MAIN); // Thinner border
-  lv_obj_set_style_border_color(
-      status_bar, hex_to_lv_color(settings_get_accent_color_str(&G_Settings)),
-      LV_PART_MAIN);
+  lv_obj_set_style_border_width(status_bar, 1, LV_PART_MAIN);
+  {
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palettes[theme][0]), LV_PART_MAIN);
+  }
   lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_radius(status_bar, 0, LV_PART_MAIN);
 
-  // Left container for menu name
   lv_obj_t *left_container = lv_obj_create(status_bar);
   lv_obj_remove_style_all(left_container);
   lv_obj_set_size(left_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(left_container, LV_FLEX_FLOW_ROW);
-  lv_obj_align(left_container, LV_ALIGN_LEFT_MID, 5, 0); // 5px padding from left
+  lv_obj_align(left_container, LV_ALIGN_LEFT_MID, 5, 0);
 
-  // Right container for status icons
   lv_obj_t *right_container = lv_obj_create(status_bar);
   lv_obj_remove_style_all(right_container);
   lv_obj_set_size(right_container, LV_SIZE_CONTENT, 20);
   lv_obj_set_flex_flow(right_container, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(right_container, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(right_container, 5, 0); // 5px spacing between icons
-  lv_obj_align(right_container, LV_ALIGN_RIGHT_MID, -5, 0); // 5px padding from right
+  lv_obj_set_style_pad_column(right_container, 5, 0);
+  lv_obj_align(right_container, LV_ALIGN_RIGHT_MID, -5, 0);
 
-  // Menu name (left-aligned)
   mainlabel = lv_label_create(left_container);
   lv_label_set_text(mainlabel, CurrentMenuName);
-  lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0); // Lighter gray
+  lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
   lv_obj_set_style_text_font(mainlabel, &lv_font_montserrat_14, 0);
 
-  // Pre-create all status labels in right container (hidden by default)
   sd_label = lv_label_create(right_container);
   lv_label_set_text(sd_label, LV_SYMBOL_SD_CARD);
-  lv_obj_set_style_text_color(sd_label, lv_color_hex(0xCCCCCC), 0); // Light gray
+  lv_obj_set_style_text_color(sd_label, lv_color_hex(0xCCCCCC), 0);
   lv_obj_set_style_text_font(sd_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
 
@@ -287,11 +345,10 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
 
   battery_label = lv_label_create(right_container);
-  lv_label_set_text(battery_label, ""); // Set dynamically in update_status_bar
+  lv_label_set_text(battery_label, "");
   lv_obj_set_style_text_color(battery_label, lv_color_hex(0xCCCCCC), 0);
   lv_obj_set_style_text_font(battery_label, &lv_font_montserrat_12, 0);
 
-  // Initial status update
   bool HasBluetooth;
 #ifndef CONFIG_IDF_TARGET_ESP32S2
   HasBluetooth = true;
@@ -308,9 +365,22 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
 #else
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, 100);
 #endif
+  if (!status_timer_initialized) {
+    status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
+    status_timer_initialized = true;
+  }
 }
 
 void display_manager_init(void) {
+  esp_pm_config_esp32_t pm_cfg = {
+      .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+      .min_freq_mhz = 80,
+      .light_sleep_enable = true,
+  };
+  esp_err_t pm_err = esp_pm_configure(&pm_cfg);
+  if (pm_err != ESP_OK) {
+    ESP_LOGW(TAG, "PM configure failed: %s", esp_err_to_name(pm_err));
+  }
 #ifndef CONFIG_JC3248W535EN_LCD
   lv_init();
 #ifdef CONFIG_USE_CARDPUTER
@@ -332,20 +402,25 @@ void display_manager_init(void) {
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
 #endif
 
+  /* Determine display resolution */
+#ifdef CONFIG_USE_CARDPUTER
+  int width = get_m5gfx_width();
+  int height = get_m5gfx_height();
+#else
+  int width = CONFIG_TFT_WIDTH;
+  int height = CONFIG_TFT_HEIGHT;
+#endif
+
   static lv_disp_draw_buf_t disp_buf;
-  lv_disp_draw_buf_init(&disp_buf, buf1, buf2, CONFIG_TFT_WIDTH * 5);
+  lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);
 
   /* Initialize the display */
   static lv_disp_drv_t disp_drv;
   lv_disp_drv_init(&disp_drv);
-  disp_drv.hor_res = CONFIG_TFT_WIDTH;
-  disp_drv.ver_res = CONFIG_TFT_HEIGHT;
+  disp_drv.hor_res = width;
+  disp_drv.ver_res = height;
 
-#ifdef CONFIG_USE_CARDPUTER
-  disp_drv.flush_cb = m5stack_lvgl_render_callback;
-#else
-  disp_drv.flush_cb = disp_driver_flush;
-#endif
+  disp_drv.flush_cb = invert_flush_cb;
   disp_drv.draw_buf = &disp_buf;
   lv_disp_drv_register(&disp_drv);
 #elif defined(CONFIG_JC3248W535EN_LCD)
@@ -397,13 +472,13 @@ void display_manager_init(void) {
   display_manager_init_success = true;
 
 #ifndef CONFIG_JC3248W535EN_LCD // JC3248W535EN has its own lvgl task
-  xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
-              RENDERING_TASK_PRIORITY, NULL);
+xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
+            RENDERING_TASK_PRIORITY, &lvgl_task_handle);
 #endif
-  if (xTaskCreate(hardware_input_task, "RawInput", 2048, NULL,
-                  HARDWARE_INPUT_TASK_PRIORITY, NULL) != pdPASS) {
+if (xTaskCreate(hardware_input_task, "RawInput", 2048, NULL,
+                HARDWARE_INPUT_TASK_PRIORITY, &input_task_handle) != pdPASS) {
     printf("Failed to create RawInput task\n");
-  }
+}
 }
 
 bool display_manager_register_view(View *view) {
@@ -485,6 +560,36 @@ void set_backlight_brightness(uint8_t percentage) {
   }
 
   gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage);
+  if (percentage == 0) {
+    if (status_update_timer) lv_timer_pause(status_update_timer);
+    if (lvgl_task_handle) vTaskSuspend(lvgl_task_handle);
+    if (rainbow_timer) lv_timer_pause(rainbow_timer);
+    if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
+    if (clock_timer) lv_timer_pause(clock_timer);
+    {
+      wifi_config_t cfg;
+      if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+        original_beacon_interval = cfg.ap.beacon_interval;
+        cfg.ap.beacon_interval = 1000;
+        esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+      }
+      esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+    }
+  } else {
+    if (status_update_timer) lv_timer_resume(status_update_timer);
+    if (lvgl_task_handle) vTaskResume(lvgl_task_handle);
+    if (rainbow_timer) lv_timer_resume(rainbow_timer);
+    if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
+    if (clock_timer) lv_timer_resume(clock_timer);
+    {
+      esp_wifi_set_ps(WIFI_PS_NONE);
+      wifi_config_t cfg;
+      if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+        cfg.ap.beacon_interval = original_beacon_interval;
+        esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+      }
+    }
+  }
 }
 
 void hardware_input_task(void *pvParameters) {
@@ -496,7 +601,7 @@ void hardware_input_task(void *pvParameters) {
   bool touch_active = false;
   int screen_width = LV_HOR_RES;
   int screen_height = LV_VER_RES;
-  TickType_t last_touch_time = 0;
+  TickType_t last_touch_time = xTaskGetTickCount();
   bool is_backlight_dimmed = false;
 
   while (1) {
@@ -510,12 +615,16 @@ void hardware_input_task(void *pvParameters) {
 
         if (key_value != 0 && !touch_active) {
           touch_active = true;
+          last_touch_time = xTaskGetTickCount();
           InputEvent event;
           event.type = INPUT_TYPE_JOYSTICK;
 
           printf("Unhandled key value: %d\n", key_value);
 
           switch (key_value) {
+          case 0x29: // ESC key HID code
+            event.data.joystick_index = 2;
+            break;
           case 180:
             event.data.joystick_index = 1;
             break;
@@ -552,6 +661,7 @@ void hardware_input_task(void *pvParameters) {
     for (int i = 0; i < 5; i++) {
       if (joysticks[i].pin >= 0) {
         if (joystick_just_pressed(&joysticks[i])) {
+          last_touch_time = xTaskGetTickCount();
           InputEvent event;
           event.type = INPUT_TYPE_JOYSTICK;
           event.data.joystick_index = i;
@@ -573,47 +683,50 @@ void hardware_input_task(void *pvParameters) {
 #endif
 
     if (touch_data.state == LV_INDEV_STATE_PR && !touch_active) {
-      touch_active = true;
-
-#ifdef CONFIG_HAS_BATTERY
+      bool skip_event = false;
       last_touch_time = xTaskGetTickCount();
       if (is_backlight_dimmed) {
         set_backlight_brightness(1);
         is_backlight_dimmed = false;
+        skip_event = true;
+        vTaskDelay(pdMS_TO_TICKS(100));
       }
-#endif
-
+      if (!skip_event) {
+        touch_active = true;
+        InputEvent event;
+        event.type = INPUT_TYPE_TOUCH;
+        event.data.touch_data.point.x = touch_data.point.x;
+        event.data.touch_data.point.y = touch_data.point.y;
+        event.data.touch_data.state = touch_data.state;
+        if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+          printf("Failed to send touch input to queue\n");
+        }
+      }
+    } else if (touch_data.state == LV_INDEV_STATE_REL && touch_active) {
+      last_touch_time = xTaskGetTickCount();
       InputEvent event;
       event.type = INPUT_TYPE_TOUCH;
-      event.data.touch_data.point.x = touch_data.point.x;
-      event.data.touch_data.point.y = touch_data.point.y;
-      event.data.touch_data.state = touch_data.state;
-
+      event.data.touch_data = touch_data;
       if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
         printf("Failed to send touch input to queue\n");
       }
-    } else if (touch_data.state == LV_INDEV_STATE_REL && touch_active) {
       touch_active = false;
     }
 
-#ifdef CONFIG_HAS_BATTERY
-    uint32_t current_timeout = G_Settings.display_timeout_ms;
-    if ((xTaskGetTickCount() - last_touch_time >
-             pdMS_TO_TICKS(current_timeout) &&
-         touch_data.state == LV_INDEV_STATE_REL)) {
+#endif
+
+    uint32_t current_timeout = G_Settings.display_timeout_ms > 0 ? G_Settings.display_timeout_ms : DEFAULT_DISPLAY_TIMEOUT_MS;
+    if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
       ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
-               last_touch_time, current_timeout);
-      if (!is_backlight_dimmed) {
-        ESP_LOGI(TAG, "Display timeout reached, dimming backlight");
-        set_backlight_brightness(0);
-        is_backlight_dimmed = true;
-      }
+               (unsigned long)last_touch_time, (unsigned long)current_timeout);
+      ESP_LOGI(TAG, "Display timeout reached, dimming backlight");
+      set_backlight_brightness(0);
+      is_backlight_dimmed = true;
     }
-#endif
 
-#endif
-
-    vTaskDelay(tick_interval);
+    // When backlight is off (dimmed), poll less frequently to save power
+    TickType_t delay = (is_backlight_dimmed ? pdMS_TO_TICKS(BACKLIGHT_SLEEP_POLL_MS) : tick_interval);
+    vTaskDelay(delay);
   }
 
   vTaskDelete(NULL);

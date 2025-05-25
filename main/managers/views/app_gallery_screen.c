@@ -26,6 +26,11 @@ static app_item_t app_items[] = {
 static int num_apps = sizeof(app_items) / sizeof(app_items[0]);
 static lv_obj_t *current_app_obj = NULL;
 lv_obj_t *back_button = NULL;
+static int touch_start_x;
+static int touch_start_y;
+static bool touch_started = false;
+static const int SWIPE_THRESHOLD = 50;
+static const int TAP_THRESHOLD = 10;
 
 // Animation callback wrapper
 static void anim_set_x(void *obj, int32_t v) {
@@ -97,6 +102,10 @@ static void anim_set_x(void *obj, int32_t v) {
     lv_anim_set_values(&a, start_x, 0);
     lv_anim_set_exec_cb(&a, anim_set_x);
     lv_anim_start(&a);
+
+    if (back_button) {
+        lv_obj_move_foreground(back_button);
+    }
 }
 
 /**
@@ -134,7 +143,9 @@ static void anim_set_x(void *obj, int32_t v) {
 
     selected_app_index = 0;
     update_app_item(false);
-
+    if (back_button) {
+        lv_obj_move_foreground(back_button);
+    }
     display_manager_add_status_bar(LV_VER_RES > 320 ? "Apps Menu" : "Apps");
 }
 
@@ -192,29 +203,29 @@ static void handle_apps_button_press(int button) {
  void apps_menu_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
-        int half_screen = LV_HOR_RES / 2;
-        int center_area_width = LV_HOR_RES / 3;
-
-        if (back_button) {
-            lv_area_t back_area;
-            lv_obj_get_coords(back_button, &back_area);
-            if (data->point.x >= back_area.x1 && data->point.x <= back_area.x2 &&
-                data->point.y >= back_area.y1 && data->point.y <= back_area.y2) {
-                printf("Back button touched in apps menu\n");
-                display_manager_switch_view(&main_menu_view);
-                return;
+        if (data->state == LV_INDEV_STATE_PR) {
+            touch_started = true;
+            touch_start_x = data->point.x;
+            touch_start_y = data->point.y;
+        } else if (data->state == LV_INDEV_STATE_REL && touch_started) {
+            touch_started = false;
+            if (back_button) {
+                lv_area_t back_area;
+                lv_obj_get_coords(back_button, &back_area);
+                if (data->point.x >= back_area.x1 && data->point.x <= back_area.x2 &&
+                    data->point.y >= back_area.y1 && data->point.y <= back_area.y2) {
+                    display_manager_switch_view(&main_menu_view);
+                    return;
+                }
             }
-        }
-
-        if (data->point.x > (LV_HOR_RES - center_area_width)/2 && 
-            data->point.x < (LV_HOR_RES + center_area_width)/2) {
-            handle_app_item_selection(selected_app_index);
-        }
-        else if (data->point.x < half_screen) {
-            select_app_item(selected_app_index - 1, true);
-        }
-        else {
-            select_app_item(selected_app_index + 1, false);
+            int dx = data->point.x - touch_start_x;
+            int dy = data->point.y - touch_start_y;
+            if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) {
+                if (dx < 0) select_app_item(selected_app_index + 1, true);
+                else select_app_item(selected_app_index - 1, false);
+            } else if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
+                handle_app_item_selection(selected_app_index);
+            }
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
         handle_apps_button_press(event->data.joystick_index);

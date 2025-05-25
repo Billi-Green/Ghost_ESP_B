@@ -30,7 +30,7 @@ jobs:
           - { name: "ghostboard",      idf_target: "esp32c6", sdkconfig_file: "configs/sdkconfig.ghostboard",         zip_name: "ghostboard.zip" }
           - { name: "MarauderV4_FlipperHub", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.marauderv4",     zip_name: "MarauderV4_FlipperHub.zip" }
           - { name: "MarauderV6&AwokDual",   idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.marauderv6",     zip_name: "MarauderV6_AwokDual.zip" }
-          - { name: "AwokMini",        idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.awokmini",           zip_name: "AwokMini.zip" }
+          - { name: "AwokMini",        idf_target: "esp32s2",   sdkconfig_file: "configs/sdkconfig.awokmini",           zip_name: "AwokMini.zip" }
           - { name: "ESP32-S3-Cardputer", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.cardputer",       zip_name: "ESP32-S3-Cardputer.zip" }
           - { name: "CYD2USB",         idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.CYD2USB",            zip_name: "CYD2USB.zip" }
           - { name: "CYDMicroUSB",     idf_target: "esp32",   sdkconfig_file: "configs/sdkconfig.CYDMicroUSB",        zip_name: "CYDMicroUSB.zip" }
@@ -164,13 +164,21 @@ jobs:
           TITLE: ${{ steps.pre_release_info.outputs.release_title }}
         run: |
           echo "Creating pre-release with tag $TAG and title '$TITLE'"
+          cat > release_notes.md <<'EOF'
+          Automated pre-release build for tag $TAG.
+
+          See https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG for details
+
+          You can flash the bins with https://espressoflash.com/
+
+          EOF
           # Check if there are assets to upload
           if [ -z "$(ls -A release_assets/*.zip 2>/dev/null)" ]; then
              echo "No ZIP files found in release_assets. Creating pre-release without assets."
              gh release create "$TAG" \
                --repo "$GITHUB_REPOSITORY" \
                --title "$TITLE" \
-               --notes "Automated pre-release build (no assets generated or found)." \
+               --notes-file release_notes.md \
                --prerelease
           else
              echo "Uploading assets from release_assets:"
@@ -178,7 +186,7 @@ jobs:
              gh release create "$TAG" \
                --repo "$GITHUB_REPOSITORY" \
                --title "$TITLE" \
-               --notes "Automated pre-release build." \
+               --notes-file release_notes.md \
                --prerelease \
                release_assets/*.zip # Upload all zip files found
           fi

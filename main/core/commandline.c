@@ -22,9 +22,18 @@
 #include <vendor/dial_client.h>
 #include "esp_wifi.h"
 #include "managers/default_portal.h"
+#include <time.h>
 
 static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
+
+// Forward declarations for command handlers
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_list_airtags_cmd(int argc, char **argv);
+void handle_select_airtag(int argc, char **argv);
+void handle_spoof_airtag(int argc, char **argv);
+void handle_stop_spoof(int argc, char **argv);
+#endif
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -117,7 +126,14 @@ void handle_list(int argc, char **argv) {
         printf("Listed Stations...\n");
         TERMINAL_VIEW_ADD_TEXT("Listed Stations...\n");
         return;
-    } else {
+    }
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    else if (argc > 1 && strcmp(argv[1], "-airtags") == 0) {
+        ble_list_airtags();
+        return;
+    }
+#endif
+    else {
         printf("Usage: list -a (for Wi-Fi scan results)\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: list -a (for Wi-Fi scan results)\n");
     }
@@ -166,43 +182,62 @@ void handle_sta_scan(int argc, char **argv) {
 
 void handle_attack_cmd(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-d") == 0) {
-        printf("Deauth Attack Starting...\n");
-        TERMINAL_VIEW_ADD_TEXT("Deauth Attack Starting...\n");
-        wifi_manager_start_deauth();
+        printf("Deauthentication starting...\n");
+        TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
+        wifi_manager_deauth_station();
         return;
     } else {
-        printf("Usage: attack -d (for deauthing access points)\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (for deauthing access points)\n");
+        printf("Usage: attack -d (for deauthing access points or selected station)\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (for deauthing access points or selected station)\n");
     }
 }
 
 void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_deauth();
+    wifi_manager_stop_deauth_station();
     printf("Deauthing Stopped....\n");
     TERMINAL_VIEW_ADD_TEXT("Deauthing Stopped....\n");
 }
 
 void handle_select_cmd(int argc, char **argv) {
     if (argc != 3) {
-        printf("Usage: select -a <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: select -a <number>\n");
+        printf("Usage: select -a <number> or select -s <number>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: select -a <number> or select -s <number>\n");
         return;
     }
 
     if (strcmp(argv[1], "-a") == 0) {
         char *endptr;
-
         int num = (int)strtol(argv[2], &endptr, 10);
-
         if (*endptr == '\0') {
             wifi_manager_select_ap(num);
         } else {
             printf("Error: is not a valid number.\n");
             TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
         }
+    } else if (strcmp(argv[1], "-s") == 0) {
+        char *endptr;
+        int num = (int)strtol(argv[2], &endptr, 10);
+        if (*endptr == '\0') {
+            wifi_manager_select_station(num);
+        } else {
+            printf("Error: is not a valid number.\n");
+            TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
+        }
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    } else if (strcmp(argv[1], "-airtag") == 0) {
+        char *endptr;
+        int num = (int)strtol(argv[2], &endptr, 10);
+        if (*endptr == '\0') {
+            ble_select_airtag(num);
+        } else {
+            printf("Error: '%s' is not a valid number.\n", argv[2]);
+            TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", argv[2]);
+        }
+#endif
     } else {
-        printf("Invalid option. Usage: select -a <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Invalid option. Usage: select -a <number>\n");
+        printf("Invalid option. Usage: select -a <number> or select -s <number>\n");
+        TERMINAL_VIEW_ADD_TEXT("Invalid option. Usage: select -a <number> or select -s <number>\n");
     }
 }
 
@@ -236,11 +271,24 @@ void handle_stop_flipper(int argc, char **argv) {
     csv_file_close();                  // Close any open CSV files
     gps_manager_deinit(&g_gpsManager); // Clean up GPS if active
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
+    wifi_manager_stop_deauth_station();
+    wifi_manager_stop_deauth();
+    wifi_manager_stop_dhcpstarve();
     printf("Stopped activities.\nClosed files.\n");
     TERMINAL_VIEW_ADD_TEXT("Stopped activities.\nClosed files.\n");
 }
 
 void handle_dial_command(int argc, char **argv) {
+    // Usage: dial [device_name]
+    if (argc > 2) {
+        printf("Usage: %s [device_name]\n", argv[0]);
+        TERMINAL_VIEW_ADD_TEXT("Usage: %s [device_name]\n", argv[0]);
+        return;
+    }
+    // If a device name is provided, set it before discovery
+    if (argc == 2) {
+        dial_manager_set_device_name(argv[1]);
+    }
     xTaskCreate(&discover_task, "discover_task", 10240, NULL, 5, NULL);
 }
 
@@ -752,14 +800,38 @@ void handle_startwd(int argc, char **argv) {
     if (stop_flag) {
         gps_manager_deinit(&g_gpsManager);
         wifi_manager_stop_monitor_mode();
+        csv_flush_buffer_to_file();
+        csv_file_close();
         printf("Wardriving stopped.\n");
         TERMINAL_VIEW_ADD_TEXT("Wardriving stopped.\n");
     } else {
         gps_manager_init(&g_gpsManager);
+        if (sd_card_exists("/mnt/ghostesp/gps")) {
+            esp_err_t err = csv_file_open("wardriving");
+            if (err != ESP_OK) {
+                printf("Failed to open CSV for wardriving\n");
+                TERMINAL_VIEW_ADD_TEXT("Failed to open CSV for wardriving\n");
+            }
+        }
         wifi_manager_start_monitor_mode(wardriving_scan_callback);
         printf("Wardriving started.\n");
         TERMINAL_VIEW_ADD_TEXT("Wardriving started.\n");
     }
+}
+
+void handle_timezone_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: timezone <TZ_STRING>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: timezone <TZ_STRING>\n");
+        return;
+    }
+    const char *tz = argv[1];
+    settings_set_timezone_str(&G_Settings, tz);
+    settings_save(&G_Settings);
+    setenv("TZ", tz, 1);
+    tzset();
+    printf("Timezone set to: %s\n", tz);
+    TERMINAL_VIEW_ADD_TEXT("Timezone set to: %s\n", tz);
 }
 
 void handle_scan_ports(int argc, char **argv) {
@@ -868,16 +940,18 @@ void handle_help(int argc, char **argv) {
 
     printf("list\n");
     printf("    Description: List Wi-Fi scan results or connected stations.\n");
-    printf("    Usage: list -a | list -s\n");
+    printf("    Usage: list -a | list -s | list -airtags\n");
     printf("    Arguments:\n");
     printf("        -a  : Show access points from Wi-Fi scan\n");
-    printf("        -s  : List connected stations\n\n");
+    printf("        -s  : List connected stations\n");
+    printf("        -airtags: List discovered AirTags\n\n");
     TERMINAL_VIEW_ADD_TEXT("list\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: List Wi-Fi scan results or connected stations.\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: list -a | list -s\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: list -a | list -s | list -airtags\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
     TERMINAL_VIEW_ADD_TEXT("        -a  : Show access points from Wi-Fi scan\n");
-    TERMINAL_VIEW_ADD_TEXT("        -s  : List connected stations\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s  : List connected stations\n");
+    TERMINAL_VIEW_ADD_TEXT("        -airtags: List discovered AirTags\n\n");
 
     printf("beaconspam\n");
     printf("    Description: Start beacon spam with different modes.\n");
@@ -911,17 +985,21 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Usage: stopdeauth\n\n");
 
     printf("select\n");
-    printf("    Description: Select an access point by index from the scan "
+    printf("    Description: Select an access point, station, or AirTag by index from the scan "
            "results.\n");
-    printf("    Usage: select -a <number>\n");
+    printf("    Usage: select -a <num> | select -s <num> | select -airtag <num>\n");
     printf("    Arguments:\n");
-    printf("        -a  : AP selection index (must be a valid number)\n\n");
+    printf("        -a      : AP selection index\n");
+    printf("        -s      : Station selection index\n");
+    printf("        -airtag : AirTag selection index\n\n");
     TERMINAL_VIEW_ADD_TEXT("select\n");
-    TERMINAL_VIEW_ADD_TEXT("    Description: Select an access point by index "
+    TERMINAL_VIEW_ADD_TEXT("    Description: Select an access point, station, or AirTag by index "
                            "from the scan results.\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: select -a <number>\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: select -a <num> | select -s <num> | select -airtag <num>\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -a  : AP selection index (must be a valid number)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        -a      : AP selection index\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s      : Station selection index\n");
+    TERMINAL_VIEW_ADD_TEXT("        -airtag : AirTag selection index\n\n");
 
     printf("startportal\n");
     printf("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
@@ -1147,6 +1225,59 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("scanall\n");
     TERMINAL_VIEW_ADD_TEXT("    Desc: Combined AP/STA scan & display.\n");
     TERMINAL_VIEW_ADD_TEXT("    Usage: scanall [seconds]\n\n");
+
+    printf("timezone\n");
+    printf("    Description: Set the display timezone for the clock view.\n");
+    printf("    Usage: timezone <TZ_STRING>\n\n");
+    TERMINAL_VIEW_ADD_TEXT("timezone\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Set the display timezone for the clock view.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: timezone <TZ_STRING>\n\n");
+
+    printf("beaconadd\n");
+    printf("    Description: Add an SSID to the beacon spam list.\n");
+    printf("    Usage: beaconadd <SSID>\n\n");
+    TERMINAL_VIEW_ADD_TEXT("beaconadd\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Add an SSID to the beacon spam list.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: beaconadd <SSID>\n\n");
+
+    printf("beaconremove\n");
+    printf("    Description: Remove an SSID from the beacon spam list.\n");
+    printf("    Usage: beaconremove <SSID>\n\n");
+    TERMINAL_VIEW_ADD_TEXT("beaconremove\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Remove an SSID from the beacon spam list.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: beaconremove <SSID>\n\n");
+
+    printf("beaconclear\n");
+    printf("    Description: Clear the beacon spam list.\n");
+    printf("    Usage: beaconclear\n\n");
+    TERMINAL_VIEW_ADD_TEXT("beaconclear\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Clear the beacon spam list.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: beaconclear\n\n");
+
+    printf("beaconshow\n");
+    printf("    Description: Show the current beacon spam list.\n");
+    printf("    Usage: beaconshow\n\n");
+    TERMINAL_VIEW_ADD_TEXT("beaconshow\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Show the current beacon spam list.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: beaconshow\n\n");
+
+    printf("beaconspamlist\n");
+    printf("    Description: Start beacon spamming using the beacon spam list.\n");
+    printf("    Usage: beaconspamlist\n\n");
+    TERMINAL_VIEW_ADD_TEXT("beaconspamlist\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Start beacon spamming using the beacon spam list.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: beaconspamlist\n\n");
+
+    printf("dhcpstarve\n");
+    printf("    Description: DHCP starvation flood attack\n");
+    printf("    Usage: dhcpstarve start [threads]\n");
+    printf("           dhcpstarve stop\n");
+    printf("           dhcpstarve display\n\n");
+    TERMINAL_VIEW_ADD_TEXT("dhcpstarve\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: DHCP starvation flood attack\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: dhcpstarve start [threads]\n");
+    TERMINAL_VIEW_ADD_TEXT("           dhcpstarve stop\n");
+    TERMINAL_VIEW_ADD_TEXT("           dhcpstarve display\n\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -1373,8 +1504,11 @@ void handle_rgb_mode(int argc, char **argv) {
         printf("Strobe mode activated\n");
         TERMINAL_VIEW_ADD_TEXT("Strobe mode activated\n");
     } else if (strcasecmp(argv[1], "off") == 0) {
-        rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
-        led_strip_refresh(rgb_manager.strip);
+        rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
+        if (!rgb_manager.is_separate_pins) {
+            led_strip_clear(rgb_manager.strip);
+            led_strip_refresh(rgb_manager.strip);
+        }
         printf("RGB disabled\n");
         TERMINAL_VIEW_ADD_TEXT("RGB disabled\n");
     } else {
@@ -1430,28 +1564,30 @@ void handle_setrgb(int argc, char **argv) {
         printf("           (use same value for all pins for single-pin LED strips)\n\n");
         return;
     }
-    
     gpio_num_t red_pin = (gpio_num_t)atoi(argv[1]);
     gpio_num_t green_pin = (gpio_num_t)atoi(argv[2]);
     gpio_num_t blue_pin = (gpio_num_t)atoi(argv[3]);
 
-    // Handle single-pin mode if all values match
-    if(red_pin == green_pin && green_pin == blue_pin) {
+    esp_err_t ret;
+    if (red_pin == green_pin && green_pin == blue_pin) {
         rgb_manager_deinit(&rgb_manager);
-        esp_err_t ret = rgb_manager_init(&rgb_manager, red_pin, 1,  // Use single pin mode
-                                        LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
-                                        GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC); // NC for separate pins
-        if(ret == ESP_OK) {
-            printf("Single-pin RGB configured on GPIO %d!\n", red_pin);
+        ret = rgb_manager_init(&rgb_manager, red_pin, 1, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
+                                GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+        if (ret == ESP_OK) {
+            settings_set_rgb_data_pin(&G_Settings, red_pin);
+            settings_set_rgb_separate_pins(&G_Settings, -1, -1, -1);
+            settings_save(&G_Settings);
+            printf("Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
         }
     } else {
-        // Original separate pin logic
         rgb_manager_deinit(&rgb_manager);
-        esp_err_t ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1,
-                                        LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
-                                        red_pin, green_pin, blue_pin);
-        if(ret == ESP_OK) {
-            printf("RGB pins updated successfully!\n");
+        ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
+                               red_pin, green_pin, blue_pin);
+        if (ret == ESP_OK) {
+            settings_set_rgb_data_pin(&G_Settings, -1);
+            settings_set_rgb_separate_pins(&G_Settings, red_pin, green_pin, blue_pin);
+            settings_save(&G_Settings);
+            printf("RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
         }
     }
 }
@@ -1524,63 +1660,76 @@ void handle_congestion_cmd(int argc, char **argv) {
         return;
     }
 
-    int channel_counts[14] = {0};
+    int unique_count = 0;
+    int *channels = malloc(ap_count * sizeof(int));
+    int *counts = malloc(ap_count * sizeof(int));
     int max_count = 0;
     for (int i = 0; i < ap_count; i++) {
-        if (ap_records[i].primary >= 1 && ap_records[i].primary <= 14) { 
-            int channel_index = ap_records[i].primary - 1;
-            channel_counts[channel_index]++;
-            if (channel_counts[channel_index] > max_count) {
-                max_count = channel_counts[channel_index];
+        int ch = ap_records[i].primary;
+        if (ch <= 0) continue;
+        int idx = -1;
+        for (int j = 0; j < unique_count; j++) {
+            if (channels[j] == ch) { idx = j; break; }
+        }
+        if (idx >= 0) {
+            counts[idx]++;
+        } else {
+            channels[unique_count] = ch;
+            counts[unique_count] = 1;
+            idx = unique_count++;
+        }
+        if (counts[idx] > max_count) {
+            max_count = counts[idx];
+        }
+    }
+    for (int i = 0; i < unique_count - 1; i++) {
+        for (int j = i + 1; j < unique_count; j++) {
+            if (channels[i] > channels[j]) {
+                int tmp_ch = channels[i]; channels[i] = channels[j]; channels[j] = tmp_ch;
+                int tmp_cnt = counts[i]; counts[i] = counts[j]; counts[j] = tmp_cnt;
             }
         }
     }
 
     printf("\nChannel Congestion:\n\n");
     TERMINAL_VIEW_ADD_TEXT("\nChannel Congestion:\n\n");
-    const char* header = "┌──┬───────┬────────────┐\n";
-    const char* separator = "├──┼───────┼────────────┤\n";
-    const char* row_format = "│%-2d│ %-5d │ %s │\n";
-    const char* footer = "└──┴───────┴────────────┘\n";
+    const char* header = "+----+-------+------------+\n";
+    const char* separator = "+----+-------+------------+\n";
+    const char* row_format = "| %2d | %5d | %s |\n";
+    const char* footer = "+----+-------+------------+\n";
 
     printf("%s", header);
     TERMINAL_VIEW_ADD_TEXT("%s", header);
-    printf("│CH│ Count │ Bar        │\n");
-    TERMINAL_VIEW_ADD_TEXT("│CH│ Count │ Bar        │\n");
+    printf("| CH | Count | Bar        |\n");
+    TERMINAL_VIEW_ADD_TEXT("| CH | Count | Bar        |\n");
     printf("%s", separator);
     TERMINAL_VIEW_ADD_TEXT("%s", separator);
 
     const int max_bar_length = 10;
     char display_bar[max_bar_length * 4]; // Generous buffer: 3 bytes/block + 1 space/pad + null
 
-    for (int i = 0; i < 14; i++) {
-        if (channel_counts[i] > 0) {
-            int bar_length = 0;
-            if (max_count > 0) { // Avoid division by zero
-                 bar_length = (int)(((float)channel_counts[i] / max_count) * max_bar_length);
-                 if (bar_length == 0) bar_length = 1; // Ensure at least one bar if count > 0
-            }
-            
-            // Build the display string with blocks and padding spaces
-            char *ptr = display_bar;
-
-            // Add block characters
-            for (int j = 0; j < bar_length; ++j) {
-                memcpy(ptr, "█", 3); // Copy 3 bytes for UTF-8 block
-                ptr += 3;
-            }
-
-            // Add padding spaces to fill up to max_bar_length visual columns
-            int spaces_needed = max_bar_length - bar_length;
-            for (int j = 0; j < spaces_needed; ++j) {
-                 *ptr++ = ' ';
-            }
-            *ptr = '\0'; // Null-terminate
-
-            printf(row_format, i + 1, channel_counts[i], display_bar);
-            TERMINAL_VIEW_ADD_TEXT(row_format, i + 1, channel_counts[i], display_bar);
+    for (int i = 0; i < unique_count; i++) {
+        int ch = channels[i];
+        int cnt = counts[i];
+        int bar_length = 0;
+        if (max_count > 0) {
+            bar_length = (int)(((float)cnt / max_count) * max_bar_length);
+            if (bar_length == 0 && cnt > 0) bar_length = 1;
         }
+        char *ptr = display_bar;
+        for (int j = 0; j < bar_length; ++j) {
+            *ptr++ = '#';
+        }
+        int spaces_needed = max_bar_length - bar_length;
+        for (int j = 0; j < spaces_needed; ++j) {
+            *ptr++ = ' ';
+        }
+        *ptr = '\0';
+        printf(row_format, ch, cnt, display_bar);
+        TERMINAL_VIEW_ADD_TEXT(row_format, ch, cnt, display_bar);
     }
+    free(channels);
+    free(counts);
     printf("%s", footer);
     TERMINAL_VIEW_ADD_TEXT("%s", footer);
 }
@@ -1634,6 +1783,116 @@ void handle_scanall(int argc, char **argv) {
     ap_manager_start_services(); // Restore AP for WebUI
 }
 
+// Helper function to simplify calling list airtags
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_list_airtags_cmd(int argc, char **argv) {
+    ble_list_airtags();
+}
+#endif
+
+// Select AirTag handler
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_select_airtag(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: selectairtag <number>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: selectairtag <number>\n");
+        return;
+    }
+
+    char *endptr;
+    int num = (int)strtol(argv[1], &endptr, 10);
+    if (*endptr == '\0') {
+        ble_select_airtag(num);
+    } else {
+        printf("Error: '%s' is not a valid number.\n", argv[1]);
+        TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", argv[1]);
+    }
+}
+#endif
+
+// Spoof AirTag handler
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_spoof_airtag(int argc, char **argv) {
+    ble_start_spoofing_selected_airtag();
+}
+#endif
+
+// Stop Spoof handler
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_stop_spoof(int argc, char **argv) {
+    ble_stop_spoofing();
+}
+#endif
+
+// Handlers for Flipper commands
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_list_flippers_cmd(int argc, char **argv) {
+    ble_list_flippers();
+}
+
+void handle_select_flipper_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: selectflipper <index>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: selectflipper <index>\n");
+        return;
+    }
+    char *endptr;
+    int num = (int)strtol(argv[1], &endptr, 10);
+    if (*endptr == '\0') {
+        ble_select_flipper(num);
+    } else {
+        printf("Error: '%s' is not a valid number.\n", argv[1]);
+        TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", argv[1]);
+    }
+}
+#endif
+
+// New beacon list command handlers
+void handle_beaconadd(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: beaconadd <SSID>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: beaconadd <SSID>\n");
+        return;
+    }
+    wifi_manager_add_beacon_ssid(argv[1]);
+}
+
+void handle_beaconremove(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: beaconremove <SSID>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: beaconremove <SSID>\n");
+        return;
+    }
+    wifi_manager_remove_beacon_ssid(argv[1]);
+}
+
+void handle_beaconclear(int argc, char **argv) {
+    wifi_manager_clear_beacon_list();
+}
+
+void handle_beaconshow(int argc, char **argv) {
+    wifi_manager_show_beacon_list();
+}
+
+void handle_beaconspamlist(int argc, char **argv) {
+    wifi_manager_start_beacon_list();
+}
+
+void handle_dhcpstarve_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        wifi_manager_dhcpstarve_help();
+    } else if (strcmp(argv[1], "start") == 0) {
+        int thr = (argc >= 3) ? atoi(argv[2]) : 1;
+        wifi_manager_start_dhcpstarve(thr);
+    } else if (strcmp(argv[1], "stop") == 0) {
+        wifi_manager_stop_dhcpstarve();
+    } else if (strcmp(argv[1], "display") == 0) {
+        wifi_manager_dhcpstarve_display();
+    } else {
+        wifi_manager_dhcpstarve_help();
+    }
+}
+
 void register_commands() {
     register_command("help", handle_help);
     register_command("scanap", cmd_wifi_scan_start);
@@ -1643,6 +1902,12 @@ void register_commands() {
     register_command("attack", handle_attack_cmd);
     register_command("list", handle_list);
     register_command("beaconspam", handle_beaconspam);
+    // Register new beacon list commands
+    register_command("beaconadd", handle_beaconadd);
+    register_command("beaconremove", handle_beaconremove);
+    register_command("beaconclear", handle_beaconclear);
+    register_command("beaconshow", handle_beaconshow);
+    register_command("beaconspamlist", handle_beaconspamlist);
     register_command("stopspam", handle_stop_spam);
     register_command("stopdeauth", handle_stop_deauth);
     register_command("select", handle_select_cmd);
@@ -1662,6 +1927,11 @@ void register_commands() {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
+    // AirTag Commands
+    register_command("listairtags", handle_list_airtags_cmd);
+    register_command("selectairtag", handle_select_airtag);
+    register_command("spoofairtag", handle_spoof_airtag);
+    register_command("stopspoof", handle_stop_spoof);
 #endif
 #ifdef DEBUG
     register_command("crash", handle_crash); // For Debugging
@@ -1676,6 +1946,12 @@ void register_commands() {
     register_command("sd_pins_spi", handle_sd_pins_spi);
     register_command("sd_save_config", handle_sd_save_config);
     register_command("scanall", handle_scanall);
+    register_command("timezone", handle_timezone_cmd);
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    register_command("listflippers", handle_list_flippers_cmd);
+    register_command("selectflipper", handle_select_flipper_cmd);
+#endif
+    register_command("dhcpstarve", handle_dhcpstarve_cmd);
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }

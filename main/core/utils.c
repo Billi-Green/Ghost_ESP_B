@@ -86,9 +86,9 @@ int get_next_csv_file_index(const char *base_name) {
   char path[128];
   int max_index = -1;
 
-  DIR *dir = opendir("/mnt/ghostesp/wardriving");
+  DIR *dir = opendir("/mnt/ghostesp/gps");
   if (!dir) {
-    ESP_LOGE(TAG, "Failed to open directory /mnt/ghostesp/wardriving");
+    ESP_LOGE(TAG, "Failed to open directory /mnt/ghostesp/gps");
     return -1;
   }
 

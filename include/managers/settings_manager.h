@@ -77,6 +77,16 @@ typedef struct {
   bool rts_enabled;
   char sta_ssid[65];     // New field for Station SSID (Max 64 + null)
   char sta_password[65]; // New field for Station Password (Max 64 + null)
+
+  // Add RGB pin configuration fields
+  int32_t rgb_data_pin; // Single-pin LED data pin, -1 if not used
+  int32_t rgb_red_pin;  // Separate-pin RGB: red pin, -1 if not used
+  int32_t rgb_green_pin; // Separate-pin RGB: green pin, -1 if not used
+  int32_t rgb_blue_pin;  // Separate-pin RGB: blue pin, -1 if not used
+  bool third_control_enabled;  // Enable third-screen tap control
+  uint32_t terminal_text_color; // Terminal text color in 0xRRGGBB
+  uint8_t menu_theme;  // Theme for main menu colors (0=Default)
+  bool invert_colors; // Invert screen colors
 } FSettings;
 
 // Function declarations
@@ -162,8 +172,22 @@ const char *settings_get_sta_ssid(const FSettings *settings);
 void settings_set_sta_password(FSettings *settings, const char *password);
 const char *settings_get_sta_password(const FSettings *settings);
 
-static nvs_handle_t nvsHandle;
+// Functions to get/set RGB pin configuration
+void settings_set_rgb_data_pin(FSettings *settings, int32_t pin);
+int32_t settings_get_rgb_data_pin(const FSettings *settings);
+void settings_set_rgb_separate_pins(FSettings *settings, int32_t red, int32_t green, int32_t blue);
+void settings_get_rgb_separate_pins(const FSettings *settings, int32_t *red, int32_t *green, int32_t *blue);
+void settings_set_thirds_control_enabled(FSettings *settings, bool enabled);
+bool settings_get_thirds_control_enabled(const FSettings *settings);
 
-FSettings G_Settings;
+void settings_set_menu_theme(FSettings *settings, uint8_t theme);
+uint8_t settings_get_menu_theme(const FSettings *settings);
+
+void settings_set_terminal_text_color(FSettings *settings, uint32_t color);
+uint32_t settings_get_terminal_text_color(const FSettings *settings);
+void settings_set_invert_colors(FSettings *settings, bool enabled);
+bool settings_get_invert_colors(const FSettings *settings);
+
+extern FSettings G_Settings;
 
 #endif // SETTINGS_MANAGER_H

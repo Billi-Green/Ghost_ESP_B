@@ -6,6 +6,7 @@
 #include "managers/ap_manager.h"
 
 extern View terminal_view;
+extern lv_timer_t *terminal_update_timer;
 
 void terminal_view_add_text(const char *text);
 

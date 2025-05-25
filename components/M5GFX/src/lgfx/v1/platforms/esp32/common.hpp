@@ -110,11 +110,14 @@ namespace lgfx
   static inline bool heap_capable_dma(const void* ptr) { return esp_ptr_dma_capable(ptr); }
 
   /// 引数のポインタが組込RAMか判定する  true=内部RAM / false=外部RAMやROM等;
+  static inline bool isEmbeddedMemory(const void* ptr) { return esp_ptr_in_dram(ptr); }
+/*
 #if defined ( CONFIG_IDF_TARGET_ESP32S3 )
   static inline bool isEmbeddedMemory(const void* ptr) { return (((uintptr_t)ptr & 0x3FF80000u) == 0x3FC80000u); }
 #else
   static inline bool isEmbeddedMemory(const void* ptr) { return (((uintptr_t)ptr & 0x3FF80000u) == 0x3FF00000u); }
 #endif
+*/
 
   enum pin_mode_t
   { output
@@ -129,7 +132,11 @@ namespace lgfx
     pinMode(pin, mode);
   }
 
-#if defined ( CONFIG_IDF_TARGET_ESP32C3 ) || defined ( CONFIG_IDF_TARGET_ESP32C6 )
+#if defined ( CONFIG_IDF_TARGET_ESP32P4 )
+  static inline volatile uint32_t* get_gpio_hi_reg(int_fast8_t pin) { return (pin & 32) ? &GPIO.out1_w1ts.val : &GPIO.out_w1ts.val; }
+  static inline volatile uint32_t* get_gpio_lo_reg(int_fast8_t pin) { return (pin & 32) ? &GPIO.out1_w1tc.val : &GPIO.out_w1tc.val; }
+  static inline bool gpio_in(int_fast8_t pin) { return ((pin & 32) ? GPIO.in1.val : GPIO.in.val) & (1 << (pin & 31)); }
+#elif defined ( CONFIG_IDF_TARGET_ESP32C3 ) || defined ( CONFIG_IDF_TARGET_ESP32C6 )
   static inline volatile uint32_t* get_gpio_hi_reg(int_fast8_t pin) { return &GPIO.out_w1ts.val; }
   static inline volatile uint32_t* get_gpio_lo_reg(int_fast8_t pin) { return &GPIO.out_w1tc.val; }
   static inline bool gpio_in(int_fast8_t pin) { return GPIO.in.val & (1 << (pin & 31)); }
@@ -164,6 +171,9 @@ namespace lgfx
  #if defined (_SD_H_)
    #define LGFX_FILESYSTEM_SD SD
  #endif
+ #if defined (_SDMMC_H_)
+   #define LGFX_FILESYSTEM_SDMMC SDMMC
+ #endif
  #if defined (_LITTLEFS_H_) || defined (__LITTLEFS_H) || defined (_LiffleFS_H_)
    #define LGFX_FILESYSTEM_LITTLEFS LittleFS
  #endif
@@ -176,6 +186,7 @@ namespace lgfx
 
  #if defined (FS_H) \
   || defined (LGFX_FILESYSTEM_SD) \
+  || defined (LGFX_FILESYSTEM_SDMMC) \
   || defined (LGFX_FILESYSTEM_LITTLEFS) \
   || defined (LGFX_FILESYSTEM_SPIFFS) \
   || defined (LGFX_FILESYSTEM_FFAT)
@@ -186,9 +197,9 @@ namespace lgfx
       need_transaction = true;
     }
     int read(uint8_t *buf, uint32_t len) override { return _fp->read(buf, len); }
-    void skip(int32_t offset) override { _fp->seek(offset, SeekCur); }
-    bool seek(uint32_t offset) override { return _fp->seek(offset, SeekSet); }
-    bool seek(uint32_t offset, SeekMode mode) { return _fp->seek(offset, mode); }
+    void skip(int32_t offset) override { _fp->seek(offset, fs::SeekCur); }
+    bool seek(uint32_t offset) override { return _fp->seek(offset, fs::SeekSet); }
+    bool seek(uint32_t offset, fs::SeekMode mode) { return _fp->seek(offset, mode); }
     void close(void) override { if (_fp) _fp->close(); }
     int32_t tell(void) override { return _fp->position(); }
 protected:
@@ -217,6 +228,12 @@ protected:
   #if defined (LGFX_FILESYSTEM_SD)
   template <>
   struct DataWrapperT<fs::SDFS> : public DataWrapperT<fs::FS> {
+    DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::FS>(fs, fp) {}
+  };
+  #endif
+  #if defined (LGFX_FILESYSTEM_SDMMC)
+  template <>
+  struct DataWrapperT<fs::SDMMCFS> : public DataWrapperT<fs::FS> {
     DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::FS>(fs, fp) {}
   };
   #endif

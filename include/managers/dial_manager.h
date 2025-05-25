@@ -33,4 +33,7 @@ void explore_network(DIALManager *manager);
 
 char *get_dial_application_url(const char *location_url);
 
+// Set the device name used in DIAL bind session
+void dial_manager_set_device_name(const char *name);
+
 #endif // DIAL_MANAGER_H

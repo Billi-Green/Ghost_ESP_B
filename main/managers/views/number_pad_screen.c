@@ -46,10 +46,24 @@ static void submit_number() {
         vTaskDelay(pdMS_TO_TICKS(10));
         
         char command[64];
-        if (current_mode == NP_MODE_AP) {
-            snprintf(command, sizeof(command), "select -a %s", input_buffer);
-        } else {
-            snprintf(command, sizeof(command), "select -a %s", input_buffer);
+        switch (current_mode) {
+            case NP_MODE_AP:
+                snprintf(command, sizeof(command), "select -a %s", input_buffer);
+                break;
+            case NP_MODE_STA:
+                snprintf(command, sizeof(command), "select -s %s", input_buffer);
+                break;
+            case NP_MODE_AIRTAG:
+                snprintf(command, sizeof(command), "selectairtag %s", input_buffer);
+                break;
+            case NP_MODE_LAN:
+                snprintf(command, sizeof(command), "select -a %s", input_buffer);
+                break;
+            case NP_MODE_FLIPPER:
+                snprintf(command, sizeof(command), "selectflipper %s", input_buffer);
+                break;
+            default:
+                snprintf(command, sizeof(command), "select -a %s", input_buffer);
         }
         simulateCommand(command);
         
@@ -124,7 +138,18 @@ static void number_pad_create() {
         lv_obj_set_style_bg_color(label, lv_color_hex(0x121212), 0); // Match root background
     }
     
-    const char *title = (current_mode == NP_MODE_AP) ? "Select AP" : "Select LAN";
+    const char *title;
+    if (current_mode == NP_MODE_AP) {
+        title = "Select AP";
+    } else if (current_mode == NP_MODE_STA) {
+        title = "Select Station";
+    } else if (current_mode == NP_MODE_AIRTAG) {
+        title = "Select AirTag";
+    } else if (current_mode == NP_MODE_FLIPPER) {
+        title = "Select Flipper";
+    } else {
+        title = "Select LAN";
+    }
     display_manager_add_status_bar(title);
 }
 
@@ -192,6 +217,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
     } 
     else if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
+        if (data->state != LV_INDEV_STATE_PR) return;
         int screen_width = LV_HOR_RES;
         int screen_height = LV_VER_RES;
         

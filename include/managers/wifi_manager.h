@@ -10,6 +10,7 @@
 #define BEACON_INTERVAL 0x0064 // 100 Time Units (TU)
 #define CAPABILITY_INFO 0x0411 // Capability information (ESS)
 #define MAX_STATIONS 50
+#define BEACON_LIST_MAX 16
 
 typedef struct {
   uint8_t station_mac[6]; // MAC address of the station (client)
@@ -122,6 +123,15 @@ void wifi_manager_get_scan_results_data(uint16_t *count, wifi_ap_record_t **aps)
 
 // Select an access point from the scan results based on index
 void wifi_manager_select_ap(int index);
+
+// Select a station from the station list based on index
+void wifi_manager_select_station(int index);
+
+// Deauthenticate the selected station or fallback to global deauth if none selected
+void wifi_manager_deauth_station(void);
+
+// Stop station deauth background task and restart AP if running, return true if stopped
+bool wifi_manager_stop_deauth_station(void);
 
 // broadcast ap beacon with optional ssid
 esp_err_t wifi_manager_broadcast_ap(const char *ssid);
@@ -250,5 +260,18 @@ static const uint16_t COMMON_PORTS[] = {
 void wifi_manager_start_scan_with_time(int seconds);
 
 void wifi_manager_scanall_chart(void);
+
+// Functions to manage a custom beacon SSID list
+void wifi_manager_add_beacon_ssid(const char *ssid);
+void wifi_manager_remove_beacon_ssid(const char *ssid);
+void wifi_manager_clear_beacon_list(void);
+void wifi_manager_show_beacon_list(void);
+void wifi_manager_start_beacon_list(void);
+
+// Add DHCP starvation attack functions
+void wifi_manager_start_dhcpstarve(int threads);
+void wifi_manager_stop_dhcpstarve(void);
+void wifi_manager_dhcpstarve_display(void);
+void wifi_manager_dhcpstarve_help(void);
 
 #endif // WIFI_MANAGER_H

@@ -22,6 +22,7 @@ static void handle_menu_item_selection(int item_index);
 void handle_hardware_button_press(int ButtonPressed);
 
 extern View main_menu_view;
+extern View clock_view;
 
 extern lv_timer_t *time_update_timer;
 

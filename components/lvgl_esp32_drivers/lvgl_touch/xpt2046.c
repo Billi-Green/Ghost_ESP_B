@@ -47,6 +47,8 @@ static xpt2046_touch_detect_t xpt2048_is_touch_detected();
 int16_t avg_buf_x[XPT2046_AVG];
 int16_t avg_buf_y[XPT2046_AVG];
 uint8_t avg_last;
+static int rawX_min = 0xFFFF, rawX_max = 0;
+static int rawY_min = 0xFFFF, rawY_max = 0;
 
 /**********************
  *      MACROS
@@ -109,6 +111,11 @@ bool xpt2046_read(lv_indev_drv_t * drv, lv_indev_data_t * data)
         y = xpt2046_cmd(CMD_Y_READ);
         ESP_LOGV(TAG, "P(%d,%d)", x, y);
 
+        if (x < rawX_min) rawX_min = x;
+        if (x > rawX_max) rawX_max = x;
+        if (y < rawY_min) rawY_min = y;
+        if (y > rawY_max) rawY_max = y;
+
 #ifndef CONFIG_USE_BIT_BANG_TOUCH
         /*Normalize Data back to 12-bits*/
         x = x >> 4;
@@ -119,8 +126,7 @@ bool xpt2046_read(lv_indev_drv_t * drv, lv_indev_data_t * data)
         xpt2046_corr(&x, &y);
         xpt2046_avg(&x, &y);
         last_x = x;
-        last_y = LV_VER_RES - y;
-
+        last_y = y;
         ESP_LOGV(TAG, "x = %d, y = %d", x, y);
     }
     else

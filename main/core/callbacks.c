@@ -568,7 +568,8 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         longitude = gps->longitude;
     }
 
-    wardriving_data_t wardriving_data;
+    wardriving_data_t wardriving_data = {0};
+    wardriving_data.ble_data.is_ble_device = false;  // ensure Wi-Fi entry
     strncpy(wardriving_data.ssid, ssid, sizeof(wardriving_data.ssid) - 1);
     wardriving_data.ssid[sizeof(wardriving_data.ssid) - 1] = '\0'; // Null-terminate
     snprintf(wardriving_data.bssid, sizeof(wardriving_data.bssid), "%02x:%02x:%02x:%02x:%02x:%02x",
