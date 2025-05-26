@@ -171,19 +171,19 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_AP_START:
-            printf("AP started\n");
+            printf("WiFi_manager: AP started\n");
             break;
         case WIFI_EVENT_AP_STOP:
-            printf("AP stopped\n");
+            printf("WiFi_manager: AP stopped\n");
             break;
         case WIFI_EVENT_AP_STACONNECTED:
             ap_connection_count++;
-            printf("Station connected to AP\n");
+            printf("WiFi_manager: Station connected to AP\n");
             esp_wifi_set_ps(WIFI_PS_NONE);
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
             if (ap_connection_count > 0) ap_connection_count--;
-            printf("Station disconnected from AP\n");
+            printf("WiFi_manager: Station disconnected from AP\n");
             login_done = false;
             if (ap_connection_count == 0) esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
             break;

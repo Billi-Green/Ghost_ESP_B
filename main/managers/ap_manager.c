@@ -1202,16 +1202,16 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_AP_START:
-            printf("AP started\n");
+            printf("AP_manager: AP started\n");
             break;
         case WIFI_EVENT_AP_STOP:
-            printf("AP stopped\n");
+            printf("AP_manager: AP stopped\n");
             break;
         case WIFI_EVENT_AP_STACONNECTED:
-            printf("Device connected to AP\n");
+            printf("AP_manager: Device connected to AP\n");
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
-            printf("Device disconnected from AP\n");
+            printf("AP_manager: Device disconnected from AP\n");
 
             break;
         case WIFI_EVENT_STA_START: {
