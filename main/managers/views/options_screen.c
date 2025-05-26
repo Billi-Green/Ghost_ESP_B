@@ -261,8 +261,8 @@ void options_menu_create() {
 static void select_option_item(int index) {
     printf("select_option_item called with index: %d, num_items: %d\n", index, num_items);
 
-    if (index < 0) index = 0;
-    if (index >= num_items) index = num_items - 1;
+    if (index < 0) index = num_items - 1; // if we hit the top of the menu wrap to the bottom
+    if (index >= num_items) index = 0; // if we hit the bottom of the menu wrap to the top
 
     printf("Adjusted index: %d\n", index);
 
