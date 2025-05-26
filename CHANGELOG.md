@@ -1,5 +1,10 @@
 # Ghost ESP Changelog
 
+## Revival v1.5.1
+
+- 'setcountry' command to set country code for esp32c5
+
+
 ## Revival v1.5
 
 ### Added
