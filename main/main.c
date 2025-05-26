@@ -21,9 +21,12 @@
 #endif
 
 int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) { return 0; }
-
+static const char *TAG = "Main.c";
 void app_main(void) {
+    ESP_LOGI(TAG, "Initializing Serial Manager");
     serial_manager_init();
+
+    ESP_LOGI(TAG, "Initializing Wifi Manager");
     wifi_manager_init();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     // ble_init();
@@ -37,13 +40,16 @@ void app_main(void) {
 #ifdef CONFIG_WITH_ETHERNET
 
 #endif
-
+    ESP_LOGI(TAG, "Initializing Commands");
     command_init();
 
+    ESP_LOGI(TAG, "Registering Commands");
     register_commands();
 
+    ESP_LOGI(TAG, "Initializing Settings");
     settings_init(&G_Settings);
 
+    ESP_LOGI(TAG, "Initializing AP Manager");
     ap_manager_init();
 
 #ifdef CONFIG_WITH_SCREEN
@@ -64,8 +70,9 @@ void app_main(void) {
 
     printf("Joystick GPIO Setup Successfully...\n");
 #endif
-
+    ESP_LOGI(TAG, "Initializing display manager");
     display_manager_init();
+    ESP_LOGI(TAG, "Presenting splash screen");
     display_manager_switch_view(&splash_view);
     if (settings_get_rgb_mode(&G_Settings) != 0) {
         if (rainbow_timer == NULL) {
@@ -107,5 +114,6 @@ void app_main(void) {
         }
     }
 
+    ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)")
     printf("Ghost ESP Ready ;)\n");
 }
