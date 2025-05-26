@@ -114,6 +114,6 @@ void app_main(void) {
         }
     }
 
-    ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)")
+    ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)");
     printf("Ghost ESP Ready ;)\n");
 }
