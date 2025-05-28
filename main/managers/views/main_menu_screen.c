@@ -205,36 +205,35 @@ static void select_menu_item(int index, bool slide_left) {
 
 static void handle_menu_item_selection(int item_index) {
     if (strcmp(menu_items[item_index].name, "BLE")==0) { 
-        printf("BLE selected\n"); SelectedMenuType = OT_Bluetooth; display_manager_switch_view(&options_menu_view);
+        printf("BLE selected\n");
+        SelectedMenuType = OT_Bluetooth;
+        display_manager_switch_view(&options_menu_view);
     }
     else if (strcmp(menu_items[item_index].name, "WiFi")==0) {
-        printf("Wi-Fi selected\n"); SelectedMenuType = OT_Wifi; display_manager_switch_view(&options_menu_view);
+        printf("Wi-Fi selected\n");
+        SelectedMenuType = OT_Wifi;
+        display_manager_switch_view(&options_menu_view);
     }
     else if (strcmp(menu_items[item_index].name, "GPS")==0) {
-        printf("GPS selected\n"); SelectedMenuType = OT_GPS; display_manager_switch_view(&options_menu_view);
+        printf("GPS selected\n");
+        SelectedMenuType = OT_GPS;
+        display_manager_switch_view(&options_menu_view);
     }
     else if (strcmp(menu_items[item_index].name, "Apps")==0) {
-        printf("Apps View Selected\n"); display_manager_switch_view(&apps_menu_view);
+        printf("Apps View Selected\n");
+        display_manager_switch_view(&apps_menu_view);
     }
     else if (strcmp(menu_items[item_index].name, "Clock")==0) {
-        printf("Clock selected\n"); display_manager_switch_view(&clock_view);
+        printf("Clock selected\n");
+        display_manager_switch_view(&clock_view);
     }
     else if (strcmp(menu_items[item_index].name, "Settings")==0){
-        printf("Settings selected\n"); display_manager_switch_view(&settings_screen_view);
+        printf("Settings selected\n");
+        display_manager_switch_view(&settings_screen_view);
     }
     else {
         printf("Unknown menu item selected\n");
     }
-    /*
-        switch (hash(menu_items[selected_item_index].name)) {
-        case ble: 
-        case wifi: printf("Wi-Fi selected\n"); SelectedMenuType = OT_Wifi; display_manager_switch_view(&options_menu_view); break;
-        case gps: printf("GPS selected\n"); SelectedMenuType = OT_GPS; display_manager_switch_view(&options_menu_view); break;
-        case apps: printf("Apps View Selected\n"); display_manager_switch_view(&apps_menu_view); break;
-        case clock: printf("Clock selected\n"); display_manager_switch_view(&clock_view); break;
-        case settings: printf("Settings selected\n"); display_manager_switch_view(&settings_screen_view); break;
-        default: printf("Unknown menu item selected\n"); break;
-    }*/
 }
 
 /**
