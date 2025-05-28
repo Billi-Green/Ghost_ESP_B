@@ -19,3 +19,8 @@ dependencies.lock
 dependencies.lock
 sdkconfig.default
 idf55.ps1
+/scripts/site/node_modules
+scripts/site/entry.js
+scripts/site/package-lock.json
+scripts/site/package.json
+scripts/site/rollup.config.mjs

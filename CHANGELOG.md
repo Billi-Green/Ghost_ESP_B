@@ -2,10 +2,12 @@
 
 ## Revival v1.5.1
 
+- add default sd pins for default configs
 - 'setcountry' command to set country code for esp32c5
 - backlight dimming fix for cardputer - @tototo31
 - handle button presses correctly on cardputer - @tototo31
 - fix inputs not waking screen on cardputer - @tototo31
+- added warning that webui will disconnect you from the web interface when running wifi commands
 
 ## Revival v1.5
 
