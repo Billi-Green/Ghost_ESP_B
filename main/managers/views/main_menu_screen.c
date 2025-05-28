@@ -21,23 +21,24 @@ static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
 typedef struct {
   const char *name;
   const lv_img_dsc_t *icon;
+  const int palette_index; // pick a color 0-5 to assign the menu item
   lv_color_t border_color;
 } menu_item_t;
 
 // Define colors as compile-time constants
 menu_item_t menu_items[] = {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    {"BLE", &bluetooth},
+    {"BLE", &bluetooth, 0},
 #endif
-    {"WiFi", &wifi}, // applies to all boards
+    {"WiFi", &wifi, 1}, // applies to all boards
 #ifdef CONFIG_HAS_GPS
-    {"GPS", &Map},
+    {"GPS", &Map, 2},
 #endif
-    {"Apps", &GESPAppGallery}, // applies to all boards
+    {"Apps", &GESPAppGallery, 3}, // applies to all boards
 #ifdef CONFIG_HAS_RTC_CLOCK
-    {"Clock", &clock_icon},
+    {"Clock", &clock_icon, 4},
 #endif
-    {"Settings", &settings_icon} // applies to all boards
+    {"Settings", &settings_icon, 5} // applies to all boards
 };
 
 static int num_items = sizeof(menu_items) / sizeof(menu_items[0]);
@@ -66,7 +67,7 @@ static void init_menu_colors(void) {
     for (int i = 0; i < num_items; i++) { 
         // bug here - we used to assume that the index of each menu item never changes. By removing options we dont need their index can change
         // perhaps this could be fixed by adding an enabled bool for each menu item, and only drawing the menu icon if enabled
-        menu_items[i].border_color = lv_color_hex(palettes[theme][i]);
+        menu_items[i].border_color = lv_color_hex(palettes[theme][menu_items[i].palette_index]);
     }
 }
 
