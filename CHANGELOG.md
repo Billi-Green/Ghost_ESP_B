@@ -2,16 +2,25 @@
 
 ## Revival v1.5.1
 
+### Added
+
 - add default sd pins for default configs
 - 'setcountry' command to set country code for esp32c5
+
+### Changed
+
 - backlight dimming fix for cardputer - @tototo31
 - handle button presses correctly on cardputer - @tototo31
 - fix inputs not waking screen on cardputer - @tototo31
-- added warning that webui will disconnect you from the web interface when running wifi commands
 - bump M5GFX to 0.2.9
+- wrap menu items once you hit the top or bottom of the screen - @tototo31
+
+### Bug Fixes
+
+- added warning that webui will disconnect you from the web interface when running wifi commands
 - disable menu items in main menu if the device does not support them - @tototo31
 - hide touch interface on non-touch devices - @tototo31
-- wrap menu items once you hit the top or bottom of the screen - @tototo31
+- fix cardputer settings menu crash
 
 ## Revival v1.5
 
