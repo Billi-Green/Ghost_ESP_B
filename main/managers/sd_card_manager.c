@@ -308,23 +308,37 @@ esp_err_t sd_card_init(void) {
   int dmabus = SPI_DMA_CH_AUTO;
 #endif
 
+  bool bus_init_success = false;
+
 #if defined(CONFIG_IDF_TARGET_ESP32)
-  ret = spi_bus_initialize(SPI3_HOST, &bus_config, dmabus);
-  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-    printf("Failed to initialize SPI3 bus: %s\n", esp_err_to_name(ret));
-    return ret;
+  {
+    esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
+    if (bus_ret == ESP_OK) {
+      bus_init_success = true;
+    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
+      printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(bus_ret));
+      return bus_ret;
+    }
   }
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
-  ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
-  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-    printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(ret));
-    return ret;
+  {
+    esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
+    if (bus_ret == ESP_OK) {
+      bus_init_success = true;
+    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
+      printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(bus_ret));
+      return bus_ret;
+    }
   }
 #else
-  ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
-  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-    printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(ret));
-    return ret;
+  {
+    esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
+    if (bus_ret == ESP_OK) {
+      bus_init_success = true;
+    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
+      printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(bus_ret));
+      return bus_ret;
+    }
   }
 #endif
 
@@ -336,7 +350,7 @@ esp_err_t sd_card_init(void) {
   sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
   slot_config.gpio_cs = sd_card_manager.spi_cs_pin;
 #if defined(CONFIG_IDF_TARGET_ESP32)
-  slot_config.host_id = SPI3_HOST;
+  slot_config.host_id = SPI2_HOST;
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
   slot_config.host_id = SPI2_HOST;
 #else
@@ -347,7 +361,9 @@ esp_err_t sd_card_init(void) {
                                 &sd_card_manager.card);
   if (ret != ESP_OK) {
     printf("Failed to mount filesystem: %s\n", esp_err_to_name(ret));
-    spi_bus_free(host.slot);
+    if (bus_init_success) {
+      spi_bus_free(host.slot);
+    }
     return ret;
   }
 

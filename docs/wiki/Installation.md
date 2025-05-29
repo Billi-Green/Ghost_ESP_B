@@ -85,11 +85,13 @@ This method is suitable for boards equipped with either a Micro USB or USB-C por
 ## Flipper Zero Method
 
 1. **Download Required Files**
-   - Obtain the latest GhostESP `.fap` file from [this link](https://cdn.ghostesp.net/assets/ghost_esp.fap).
+   - Download the latest GhostESP `.fap` file from the [flipper app store](https://lab.flipper.net/apps)!
+      - or Obtain the latest GhostESP `.fap` file from [this link](https://github.com/jaylikesbunda/ghost_esp_app/releases/latest) and manually upload it to your flipper.
    - Download the latest firmware files from the [GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases) page for the GhostESP project.
 
 1. **Prepare the Firmware Files**
    - Extract the downloaded firmware files using [7-Zip](https://www.7-zip.org/download.html) or a similar tool.
+   - Use the firmware file that aligns with the ESP chip your board uses! ex. Flipper zero dev board is esp32s2 generic.
 
 1. **Transfer Files to Flipper Zero**
    - Ensure you have [qFlipper](https://flipperzero.one/update) installed on your PC.
@@ -98,13 +100,21 @@ This method is suitable for boards equipped with either a Micro USB or USB-C por
      **Important**: Do not place the files in the `assets` or other folders to ensure correct functionality.
 
 1. **Connect the Board to Flipper Zero**
-   - Enter **bootloader mode** on your ESP32 as described in the [Web Flasher Method](#web-flasher-method).
    - Connect your ESP32 to the Flipper Zero using the GPIO header.
+   - Enter **bootloader mode** on your ESP32 as described in the [Web Flasher Method](#web-flasher-method).
 
 1. **Flashing Process**
    - Open the ESP flasher app on your Flipper Zero.
    - Select **Manual Flash** to flash each firmware component:
-     - Choose the appropriate `bootloader.bin`, `partitions.bin`, and `GhostESP.bin` files.
+      - Choose the appropriate `bootloader.bin`, `partitions.bin`, and `GhostESP.bin` files.
+      - **Important Offsets:**
+         - For **ESP32-S2** and similar boards, use the following offsets:
+            - `bootloader.bin` at `0x1000`
+            - `partitions.bin` at `0x8000`
+            - `firmware.bin` at `0x10000`
+         - For **ESP32-S3, C3 or C6** boards, the bootloader offset changes to:
+            - `bootloader.bin` at `0x0`
+            - Continue using `0x8000` for `partitions.bin` and `0x10000` for `firmware.bin`.
    - Initiate the flash process and wait until it completes.
    - Reset your ESP32 after completion to finalize the installation.
 

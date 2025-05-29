@@ -1892,6 +1892,32 @@ void handle_dhcpstarve_cmd(int argc, char **argv) {
         wifi_manager_dhcpstarve_help();
     }
 }
+#if CONFIG_IDF_TARGET_ESP32C5
+void handle_setcountry(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: setcountry <CC>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: setcountry <CC>\n");
+        return;
+    }
+    wifi_country_t country = {
+        .schan = 1,
+        .nchan = 14,
+        .policy = WIFI_COUNTRY_POLICY_AUTO,
+        .wifi_5g_channel_mask = 0
+    };
+    strncpy(country.cc, argv[1], sizeof(country.cc) - 1);
+    country.cc[sizeof(country.cc) - 1] = '\0';
+    esp_err_t err = esp_wifi_set_country(&country);
+    if (err == ESP_OK) {
+        printf("country set to %s\n", country.cc);
+        TERMINAL_VIEW_ADD_TEXT("country set to %s\n", country.cc);
+    } else {
+        printf("failed to set country: %s\n", esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("failed to set country: %s\n", esp_err_to_name(err));
+    }
+}
+#endif
+
 
 void register_commands() {
     register_command("help", handle_help);
@@ -1952,6 +1978,10 @@ void register_commands() {
     register_command("selectflipper", handle_select_flipper_cmd);
 #endif
     register_command("dhcpstarve", handle_dhcpstarve_cmd);
+#if CONFIG_IDF_TARGET_ESP32C5
+    register_command("setcountry", handle_setcountry);
+#endif
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }
+

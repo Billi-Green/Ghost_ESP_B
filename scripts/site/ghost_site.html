@@ -1027,7 +1027,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>GhostESP: Revival v1.5</h1>
+        <h1>GhostESP: Revival 1.5.1</h1>
         <!-- Tab Navigation -->
         <div class="tab">
             <button class="tablinks active" onclick="openTab(event, 'Settings')" id="defaultTab">Settings</button>
@@ -1533,6 +1533,9 @@
         <div id="Terminal" class="tabcontent">
             <div class="settings-section terminal-container">
                 <h2>Device Terminal</h2>
+                <p style="text-align: center; color: var(--text-secondary); margin-bottom: 10px;">
+                    <strong>Note:</strong> Running Wi-Fi commands (e.g., <code>scanap</code>, <code>connect</code>, <code>startportal</code>) will disconnect you from this web interface.
+                </p>
                 <div id="terminalOutput" class="terminal-output"></div>
                 <div class="terminal-input-container">
                     <input type="text" id="terminalInput" placeholder="Enter command...">

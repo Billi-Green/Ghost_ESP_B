@@ -125,7 +125,6 @@ static void change_setting(int idx, bool inc) {
     lv_obj_set_width(label, lv_obj_get_width(btn));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_invalidate(lv_scr_act());
-    populate_menu(menu_stack[menu_stack_top].items, menu_stack[menu_stack_top].count);
 }
 
 static void setting_row_cb(lv_event_t *e) {
@@ -169,7 +168,6 @@ static void setting_row_cb(lv_event_t *e) {
     lv_obj_set_width(label, lv_obj_get_width(btn));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_invalidate(lv_scr_act());
-    populate_menu(menu_stack[menu_stack_top].items, menu_stack[menu_stack_top].count);
 }
 
 static void back_button_cb(lv_event_t *e) {
@@ -222,30 +220,19 @@ static void event_handler(InputEvent *ev) {
         }
     } else if (ev->type == INPUT_TYPE_JOYSTICK) {
         int b = ev->data.joystick_index;
-        // Up arrow -> previous setting
-        if (b == 1) {
-            lv_obj_clear_state(setting_btns[selected_setting], LV_STATE_FOCUSED);
-            selected_setting = (selected_setting + 6 - 1) % 6;
-            lv_obj_add_state(setting_btns[selected_setting], LV_STATE_FOCUSED);
-            lv_obj_scroll_to_view(setting_btns[selected_setting], LV_ANIM_OFF);
-        }
-        // Down arrow -> next setting
-        else if (b == 4) {
-            lv_obj_clear_state(setting_btns[selected_setting], LV_STATE_FOCUSED);
-            selected_setting = (selected_setting + 1) % 6;
-            lv_obj_add_state(setting_btns[selected_setting], LV_STATE_FOCUSED);
-            lv_obj_scroll_to_view(setting_btns[selected_setting], LV_ANIM_OFF);
-        }
-        // Left arrow -> decrement value of selected setting
-        else if (b == 0) {
-            change_setting(selected_setting, false);
-        }
-        // Right arrow -> increment value of selected setting
-        else if (b == 3) {
-            change_setting(selected_setting, true);
-        }
-        // Back -> exit settings
-        else if (b == 2) {
+        if (b == 2) { // up/esc: move focus up
+            lv_obj_clear_state(menu_buttons[selected_menu_idx], LV_STATE_FOCUSED);
+            selected_menu_idx = (selected_menu_idx + menu_button_count - 1) % menu_button_count;
+            lv_obj_add_state(menu_buttons[selected_menu_idx], LV_STATE_FOCUSED);
+            lv_obj_scroll_to_view(menu_buttons[selected_menu_idx], LV_ANIM_OFF);
+        } else if (b == 4) { // down: move focus down
+            lv_obj_clear_state(menu_buttons[selected_menu_idx], LV_STATE_FOCUSED);
+            selected_menu_idx = (selected_menu_idx + 1) % menu_button_count;
+            lv_obj_add_state(menu_buttons[selected_menu_idx], LV_STATE_FOCUSED);
+            lv_obj_scroll_to_view(menu_buttons[selected_menu_idx], LV_ANIM_OFF);
+        } else if (b == 1 || b == 3) { // enter/right: activate
+            lv_event_send(menu_buttons[selected_menu_idx], LV_EVENT_CLICKED, NULL);
+        } else if (b == 0) { // left: go back
             lv_event_send(back_btn, LV_EVENT_CLICKED, NULL);
         }
     }

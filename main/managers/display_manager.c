@@ -275,22 +275,23 @@ static void status_update_cb(lv_timer_t *timer) {
 }
 
 static const uint32_t theme_palettes[15][6] = {
-    {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
-    {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
-    {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
-    {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
-    {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
-    {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
-    {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
-    {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
-    {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
-    {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
-    {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
-    {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
-    {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
-    {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
-    {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
-};
+// bluetooth colors,wifi colors,GPS colors,Apps colors,Clock Colors,Settings colors
+        {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800}, // default
+        {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC}, // Pastel
+        {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F}, // Dark
+        {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF}, // Bright
+        {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36}, // Solarized
+        {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888}, // Monochrome
+        {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63}, // Rose Red
+        {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0}, // Purple
+        {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3}, // Blue
+        {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500}, // Orange
+        {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00}, // Neon
+        {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080}, // Cyberpunk
+        {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B}, // Ocean
+        {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854}, // Sunset
+        {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}  // Forest
+  };
 
 void display_manager_add_status_bar(const char *CurrentMenuName) {
   status_bar = lv_obj_create(lv_scr_act());
@@ -558,11 +559,13 @@ void set_backlight_brightness(uint8_t percentage) {
   if (percentage > 1) {
     percentage = 1;
   }
-
+  gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT); // probably should be a part of the init process
   gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage);
   if (percentage == 0) {
     if (status_update_timer) lv_timer_pause(status_update_timer);
+#ifndef CONFIG_USE_CARDPUTER // cant pause this task handler on the cardputer or the LCD will go unresponsive
     if (lvgl_task_handle) vTaskSuspend(lvgl_task_handle);
+#endif
     if (rainbow_timer) lv_timer_pause(rainbow_timer);
     if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
     if (clock_timer) lv_timer_pause(clock_timer);
@@ -590,6 +593,7 @@ void set_backlight_brightness(uint8_t percentage) {
       }
     }
   }
+  
 }
 
 void hardware_input_task(void *pvParameters) {
@@ -619,25 +623,31 @@ void hardware_input_task(void *pvParameters) {
           InputEvent event;
           event.type = INPUT_TYPE_JOYSTICK;
 
-          printf("Unhandled key value: %d\n", key_value);
+          printf("Input key value: %d\n", key_value);
 
           switch (key_value) {
           case 0x29: // ESC key HID code
+            printf("Esc key\n");
             event.data.joystick_index = 2;
             break;
-          case 180:
+          case 180: //enter key
+            printf("Enter key\n");
             event.data.joystick_index = 1;
             break;
-          case 39:
+          case 39: //left arrow
+            printf("Left key\n");
             event.data.joystick_index = 0;
-            break;
-          case 158:
+           break;
+          case 158: //up arrow
+            printf("Up key\n");
             event.data.joystick_index = 2;
             break;
-          case 30:
+          case 30: //right arrow
+            printf("Right key\n");
             event.data.joystick_index = 3;
             break;
-          case 56:
+          case 56: // down arrow
+            printf("Down key\n");
             event.data.joystick_index = 4;
             break;
           default:
@@ -715,6 +725,7 @@ void hardware_input_task(void *pvParameters) {
 
 #endif
 
+    // backlight dim logic
     uint32_t current_timeout = G_Settings.display_timeout_ms > 0 ? G_Settings.display_timeout_ms : DEFAULT_DISPLAY_TIMEOUT_MS;
     if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
       ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
@@ -723,12 +734,20 @@ void hardware_input_task(void *pvParameters) {
       set_backlight_brightness(0);
       is_backlight_dimmed = true;
     }
-
+    else if (is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time < pdMS_TO_TICKS(current_timeout)))
+    {
+      ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
+              (unsigned long)last_touch_time, (unsigned long)current_timeout);
+      ESP_LOGI(TAG, "Input detected, waking backlight");
+      set_backlight_brightness(1);
+      is_backlight_dimmed = false;
+    }
+     //end backlight dim logic
     // When backlight is off (dimmed), poll less frequently to save power
     TickType_t delay = (is_backlight_dimmed ? pdMS_TO_TICKS(BACKLIGHT_SLEEP_POLL_MS) : tick_interval);
     vTaskDelay(delay);
   }
-
+  
   vTaskDelete(NULL);
 }
 
