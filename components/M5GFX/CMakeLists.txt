@@ -18,7 +18,7 @@ file(GLOB SRCS
 set(COMPONENT_SRCS ${SRCS})
 
 if (IDF_VERSION_MAJOR GREATER_EQUAL 5)
-    set(COMPONENT_REQUIRES nvs_flash efuse driver esp_timer esp_lcd)
+    set(COMPONENT_REQUIRES nvs_flash efuse driver esp_timer esp_lcd esp_mm)
 elseif ((IDF_VERSION_MAJOR EQUAL 4) AND (IDF_VERSION_MINOR GREATER 3) OR IDF_VERSION_MAJOR GREATER 4)
     set(COMPONENT_REQUIRES nvs_flash efuse esp_lcd)
 else()
@@ -30,8 +30,5 @@ endif()
 
 
 message(STATUS "M5GFX use components = ${COMPONENT_REQUIRES}")
-if(NOT IDF_TARGET STREQUAL "esp32c5" AND NOT IDF_TARGET STREQUAL "esp32c6")
-    register_component()
-else()
-    message(STATUS "Skipping M5GFX component for esp32c5 target")
-endif()
+
+register_component()
