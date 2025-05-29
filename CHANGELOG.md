@@ -21,6 +21,7 @@
 - disable menu items in main menu if the device does not support them - @tototo31
 - hide touch interface on non-touch devices - @tototo31
 - fix cardputer settings menu crash
+- update pineap detection to work with ESP32C5
 
 ## Revival v1.5
 

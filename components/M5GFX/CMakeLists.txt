@@ -1,3 +1,8 @@
+if("${IDF_TARGET}" STREQUAL "esp32c5" OR "${IDF_TARGET}" STREQUAL "esp32c6")
+    message(STATUS "Explicitly excluding M5GFX component for ${IDF_TARGET}")
+    return()
+endif()
+
 set(COMPONENT_ADD_INCLUDEDIRS
     src
     )
