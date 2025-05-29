@@ -203,38 +203,41 @@ static void select_menu_item(int index, bool slide_left) {
 /**
  * @brief Handles the selection of menu items.
  */
-
 static void handle_menu_item_selection(int item_index) {
-    if (strcmp(menu_items[item_index].name, "BLE")==0) { 
-        printf("BLE selected\n");
-        SelectedMenuType = OT_Bluetooth;
-        display_manager_switch_view(&options_menu_view);
+    typedef struct {
+        const char *name;
+        EOptionsMenuType type;
+        View *view;
+    } menu_action_t;
+
+    static const menu_action_t menu_actions[] = {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        {"BLE", OT_Bluetooth, &options_menu_view},
+#endif
+        {"WiFi", OT_Wifi, &options_menu_view},
+#ifdef CONFIG_HAS_GPS
+        {"GPS", OT_GPS, &options_menu_view},
+#endif
+        {"Apps", 0, &apps_menu_view},
+#ifdef CONFIG_HAS_RTC_CLOCK
+        {"Clock", 0, &clock_view},
+#endif
+        {"Settings", OT_Settings, &settings_screen_view}
+    };
+
+    const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
+    const char *name = menu_items[item_index].name;
+    for (int i = 0; i < num_actions; ++i) {
+        if (strcmp(name, menu_actions[i].name) == 0) {
+            printf("%s selected\n", menu_actions[i].name);
+            if (menu_actions[i].view == &options_menu_view) {
+                SelectedMenuType = menu_actions[i].type;
+            }
+            display_manager_switch_view(menu_actions[i].view);
+            return;
+        }
     }
-    else if (strcmp(menu_items[item_index].name, "WiFi")==0) {
-        printf("Wi-Fi selected\n");
-        SelectedMenuType = OT_Wifi;
-        display_manager_switch_view(&options_menu_view);
-    }
-    else if (strcmp(menu_items[item_index].name, "GPS")==0) {
-        printf("GPS selected\n");
-        SelectedMenuType = OT_GPS;
-        display_manager_switch_view(&options_menu_view);
-    }
-    else if (strcmp(menu_items[item_index].name, "Apps")==0) {
-        printf("Apps View Selected\n");
-        display_manager_switch_view(&apps_menu_view);
-    }
-    else if (strcmp(menu_items[item_index].name, "Clock")==0) {
-        printf("Clock selected\n");
-        display_manager_switch_view(&clock_view);
-    }
-    else if (strcmp(menu_items[item_index].name, "Settings")==0){
-        printf("Settings selected\n");
-        display_manager_switch_view(&settings_screen_view);
-    }
-    else {
-        printf("Unknown menu item selected\n");
-    }
+    printf("Unknown menu item selected: %s\n", name);
 }
 
 /**
