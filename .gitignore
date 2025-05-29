@@ -24,3 +24,4 @@ scripts/site/entry.js
 scripts/site/package-lock.json
 scripts/site/package.json
 scripts/site/rollup.config.mjs
+/.cache
