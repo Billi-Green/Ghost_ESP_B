@@ -7,7 +7,13 @@
 
 ### Changed
 
+- Enable Cardputer's LED in config - @tototo31
+
 ### Bug Fixes
+
+- Display
+  - Fix blank bootup screen on cardputer and show flappy ghost icon out of necessity - @tototo31
+  - Removed touch controls from settings menu on non-touch devices - @tototo31
 
 - WiFi
   - preserve STA mode in ap_manager init and start_services
