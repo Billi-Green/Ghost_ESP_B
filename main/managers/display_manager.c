@@ -13,6 +13,8 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/views/clock_screen.h"
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_pm.h"
 
@@ -621,7 +623,7 @@ void hardware_input_task(void *pvParameters) {
           touch_active = true;
           last_touch_time = xTaskGetTickCount();
           InputEvent event;
-          event.type = INPUT_TYPE_JOYSTICK;
+          // event.type will be set inside the switch for specific keys
 
           char strChar[2] = {0};
           sprintf(strChar, "%c", key_value);
@@ -631,33 +633,40 @@ void hardware_input_task(void *pvParameters) {
           switch (key_value) {
           case 0x29: // ESC key HID code
             printf("Esc key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 2;
             break;
           case 40: //enter key
             printf("Enter key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 1;
             break;
           case 44: //left arrow
             printf("Left key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 0;
            break;
           case 59: //up arrow
             printf("Up key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 2;
             break;
           case 47: //right arrow
             printf("Right key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 3;
             break;
           case 46: // down arrow
             printf("Down key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 4;
             break;
           default:
-            printf("Unhandled key value: %d\n", key_value);
-            continue;
+            printf("Keyboard key: %c (value %d)\n", key_value, key_value);
+            event.type = INPUT_TYPE_KEYBOARD;
+            event.data.key_value = key_value;
+            break;
           }
-
           if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
             printf("Failed to send button input to queue\n");
           }
