@@ -1,5 +1,19 @@
 # Ghost ESP Changelog
 
+
+## Revival v1.6
+
+### Added
+
+### Changed
+
+### Bug Fixes
+
+- WiFi
+  - preserve STA mode in ap_manager init and start_services
+
+
+
 ## Revival v1.5.1
 
 ### Added
