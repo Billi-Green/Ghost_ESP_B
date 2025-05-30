@@ -24,11 +24,12 @@ void splash_create(void) {
 
   img = lv_img_create(splash_screen);
   lv_img_set_src(img, &Ghost_ESP);
+  lv_img_set_size_mode(img, LV_IMG_SIZE_MODE_REAL);
+  if (LV_VER_RES < 140) {
+    lv_img_set_zoom(img, 1);
+  }
   lv_obj_align(img, LV_ALIGN_CENTER, 0, -20);
 
-  if (LV_VER_RES < 140) {
-    lv_img_set_zoom(img, 128);
-  }
 
   lv_obj_t *label1 = lv_label_create(splash_screen);
   lv_label_set_text(label1, "GhostESP: Revival");
@@ -48,6 +49,8 @@ void splash_create(void) {
   lv_anim_set_exec_cb(&fade_anim, fade_anim_cb);
   lv_anim_set_ready_cb(&fade_anim, fade_out_cb);
   lv_anim_start(&fade_anim);
+  
+
 }
 
 static void fade_anim_cb(void *var, int32_t opacity) {
