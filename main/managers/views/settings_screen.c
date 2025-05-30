@@ -233,7 +233,7 @@ static void event_handler(InputEvent *ev) {
         } else if (b == 1 || b == 3) { // enter/right: activate
             lv_event_send(menu_buttons[selected_menu_idx], LV_EVENT_CLICKED, NULL);
         } else if (b == 0) { // left: go back
-            lv_event_send(back_btn, LV_EVENT_CLICKED, NULL);
+            back_button_cb(LV_EVENT_CLICKED);
         }
     }
 }
@@ -270,8 +270,14 @@ void settings_screen_create(void) {
     bool is_small = (screen_w <= 240 || screen_h <= 240);
     int button_height = is_small ? 40 : 60;
     const int STATUS_BAR_H = 20;
-    const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
+    //const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
+    //int list_h = screen_h - STATUS_BAR_H - BUTTON_AREA_HEIGHT;
+#ifdef CONFIG_USE_TOUCHSCREEN
+    const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2; // set size of touch navigation buttons
     int list_h = screen_h - STATUS_BAR_H - BUTTON_AREA_HEIGHT;
+#else
+    int list_h = screen_h - STATUS_BAR_H;
+#endif
 
     menu_container = lv_list_create(root_container);
     lv_obj_set_size(menu_container, screen_w, list_h);
@@ -287,7 +293,7 @@ void settings_screen_create(void) {
     menu_stack[0].items = root_menu;
     menu_stack[0].count = sizeof(root_menu)/sizeof(root_menu[0]);
     populate_menu(menu_stack[0].items, menu_stack[0].count);
-
+#ifdef CONFIG_USE_TOUCHSCREEN
     // Scroll up
     scroll_up_btn = lv_btn_create(root_container);
     lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
@@ -327,7 +333,7 @@ void settings_screen_create(void) {
     lv_obj_t *bl = lv_label_create(back_btn);
     lv_label_set_text(bl, LV_SYMBOL_LEFT " Back");
     lv_obj_center(bl);
-
+#endif
     display_manager_add_status_bar("Settings");
 }
 
