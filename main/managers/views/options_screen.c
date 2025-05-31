@@ -259,17 +259,17 @@ void options_menu_create() {
 }
 
 static void select_option_item(int index) {
-    printf("select_option_item called with index: %d, num_items: %d\n", index, num_items);
+    ESP_LOGD(TAG, "select_option_item called with index: %d, num_items: %d\n", index, num_items);
 
     if (index < 0) index = num_items - 1; // if we hit the top of the menu wrap to the bottom
     if (index >= num_items) index = 0; // if we hit the bottom of the menu wrap to the top
 
-    printf("Adjusted index: %d\n", index);
+    ESP_LOGD(TAG, "Adjusted index: %d\n", index);
 
     int previous_index = selected_item_index;
     selected_item_index = index;
 
-    printf("Previous index: %d, New selected index: %d\n", previous_index, selected_item_index);
+    ESP_LOGD(TAG, "Previous index: %d, New selected index: %d\n", previous_index, selected_item_index);
 
     if (previous_index != selected_item_index) {
         lv_obj_t *previous_item = lv_obj_get_child(menu_container, previous_index);
@@ -301,7 +301,7 @@ static void select_option_item(int index) {
         }
         lv_obj_scroll_to_view(current_item, LV_ANIM_OFF);
     } else {
-        printf("Error: Current item not found for index %d\n", selected_item_index);
+        ESP_LOGE(TAG, "Error: Current item not found for index %d\n", selected_item_index);
     }
 }
 
@@ -810,7 +810,7 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else {
-        printf("Unhandled Option selected: %s\n", Selected_Option);
+        ESP_LOGW(TAG, "Unhandled Option selected: %s\n", Selected_Option);
         
     }
 
