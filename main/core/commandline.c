@@ -181,22 +181,29 @@ void handle_sta_scan(int argc, char **argv) {
 }
 
 void handle_attack_cmd(int argc, char **argv) {
-    if (argc > 1 && strcmp(argv[1], "-d") == 0) {
-        printf("Deauthentication starting...\n");
-        TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
-        wifi_manager_deauth_station();
-        return;
-    } else {
-        printf("Usage: attack -d (for deauthing access points or selected station)\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (for deauthing access points or selected station)\n");
+    if (argc > 1) {
+        if (strcmp(argv[1], "-d") == 0) {
+            printf("Deauthentication starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
+            wifi_manager_deauth_station();
+            return;
+        } else if (strcmp(argv[1], "-e") == 0) {
+            printf("EAPOL Logoff attack starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack starting...\n");
+            wifi_manager_start_eapollogoff_attack();
+            return;
+        }
     }
+    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
 }
 
 void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_deauth();
     wifi_manager_stop_deauth_station();
-    printf("Deauthing Stopped....\n");
-    TERMINAL_VIEW_ADD_TEXT("Deauthing Stopped....\n");
+    wifi_manager_stop_eapollogoff_attack();
+    printf("Deauth/EAPOL attacks stopped...\n");
+    TERMINAL_VIEW_ADD_TEXT("Deauth/EAPOL attacks stopped...\n");
 }
 
 void handle_select_cmd(int argc, char **argv) {
@@ -274,6 +281,7 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_deauth();
     wifi_manager_stop_dhcpstarve();
+    wifi_manager_stop_eapollogoff_attack();
     printf("Stopped activities.\nClosed files.\n");
     TERMINAL_VIEW_ADD_TEXT("Stopped activities.\nClosed files.\n");
 }
@@ -929,14 +937,18 @@ void handle_help(int argc, char **argv) {
 
     printf("attack\n");
     printf("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    printf("    Usage: attack -d\n");
+    printf("    Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
     printf("    Arguments:\n");
-    printf("        -d  : Start deauth attack\n\n");
+    printf("        -d  : Start deauth attack\n");
+    printf("        -e  : Start EAPOL logoff attack\n");
+    printf("\n");
     TERMINAL_VIEW_ADD_TEXT("attack\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -d  : Start deauth attack\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        -d  : Start deauth attack\n");
+    TERMINAL_VIEW_ADD_TEXT("        -e  : Start EAPOL logoff attack\n");
+    TERMINAL_VIEW_ADD_TEXT("\n");
 
     printf("list\n");
     printf("    Description: List Wi-Fi scan results or connected stations.\n");

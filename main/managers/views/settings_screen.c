@@ -233,7 +233,7 @@ static void event_handler(InputEvent *ev) {
         } else if (b == 1 || b == 3) { // enter/right: activate
             lv_event_send(menu_buttons[selected_menu_idx], LV_EVENT_CLICKED, NULL);
         } else if (b == 0) { // left: go back
-            back_button_cb(LV_EVENT_CLICKED);
+            if (back_btn) lv_event_send(back_btn, LV_EVENT_CLICKED, NULL);
         }
     }
 }

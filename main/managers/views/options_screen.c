@@ -90,6 +90,7 @@ static const char *wifi_options[] = {"Scan Access Points",
                                      "Capture Beacon",
                                      "Capture Raw",
                                      "Capture Eapol",
+                                     "Start EAPOL Logoff",
                                      "Capture WPS",
                                      "Capture PWN",
                                      "TV Cast (Dial Connect)",
@@ -544,6 +545,12 @@ void option_event_cb(lv_event_t *e) {
     else if (strcmp(Selected_Option, "Capture Eapol") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("capture -eapol");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Start EAPOL Logoff") == 0) {
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("attack -e");
         view_switched = true;
     }
 

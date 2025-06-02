@@ -274,4 +274,9 @@ void wifi_manager_stop_dhcpstarve(void);
 void wifi_manager_dhcpstarve_display(void);
 void wifi_manager_dhcpstarve_help(void);
 
+void wifi_manager_start_eapollogoff_attack(void);
+void wifi_manager_stop_eapollogoff_attack(void);
+void wifi_manager_eapollogoff_display(void);
+void wifi_manager_eapollogoff_help(void);
+
 #endif // WIFI_MANAGER_H

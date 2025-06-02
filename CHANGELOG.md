@@ -5,6 +5,9 @@
 
 ### Added
 
+- Attacks
+  - EAPOL Logoff Attack
+
 ### Changed
 
 - Enable Cardputer's LED in config - @tototo31
