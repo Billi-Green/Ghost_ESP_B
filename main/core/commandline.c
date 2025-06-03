@@ -192,18 +192,40 @@ void handle_attack_cmd(int argc, char **argv) {
             TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack starting...\n");
             wifi_manager_start_eapollogoff_attack();
             return;
+        } else if (strcmp(argv[1], "-s") == 0) {
+            printf("SAE flood attack starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("SAE flood attack starting...\n");
+            wifi_manager_start_sae_flood();
+            return;
         }
     }
-    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
+    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+}
+
+void handle_sae_flood_cmd(int argc, char **argv) {
+    printf("Starting SAE flood attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Starting SAE flood attack...\n");
+    wifi_manager_start_sae_flood();
+}
+
+void handle_stop_sae_flood_cmd(int argc, char **argv) {
+    printf("Stopping SAE flood attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Stopping SAE flood attack...\n");
+    wifi_manager_stop_sae_flood();
+}
+
+void handle_sae_flood_help_cmd(int argc, char **argv) {
+    wifi_manager_sae_flood_help();
 }
 
 void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_deauth();
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_eapollogoff_attack();
-    printf("Deauth/EAPOL attacks stopped...\n");
-    TERMINAL_VIEW_ADD_TEXT("Deauth/EAPOL attacks stopped...\n");
+    wifi_manager_stop_sae_flood();
+    printf("Deauth/EAPOL/SAE attacks stopped...\n");
+    TERMINAL_VIEW_ADD_TEXT("Deauth/EAPOL/SAE attacks stopped...\n");
 }
 
 void handle_select_cmd(int argc, char **argv) {
@@ -282,6 +304,7 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth();
     wifi_manager_stop_dhcpstarve();
     wifi_manager_stop_eapollogoff_attack();
+    wifi_manager_stop_sae_flood();
     printf("Stopped activities.\nClosed files.\n");
     TERMINAL_VIEW_ADD_TEXT("Stopped activities.\nClosed files.\n");
 }
@@ -937,17 +960,19 @@ void handle_help(int argc, char **argv) {
 
     printf("attack\n");
     printf("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    printf("    Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
+    printf("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
     printf("    Arguments:\n");
     printf("        -d  : Start deauth attack\n");
     printf("        -e  : Start EAPOL logoff attack\n");
+    printf("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n");
     printf("\n");
     TERMINAL_VIEW_ADD_TEXT("attack\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d (deauth) | attack -e (EAPOL logoff)\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
     TERMINAL_VIEW_ADD_TEXT("        -d  : Start deauth attack\n");
     TERMINAL_VIEW_ADD_TEXT("        -e  : Start EAPOL logoff attack\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n");
     TERMINAL_VIEW_ADD_TEXT("\n");
 
     printf("list\n");
@@ -1290,6 +1315,27 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Usage: dhcpstarve start [threads]\n");
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve stop\n");
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve display\n\n");
+
+    printf("saeflood\n");
+    printf("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+    printf("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("saeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+
+    printf("stopsaeflood\n");
+    printf("    Description: Stop SAE flood attack\n");
+    printf("    Usage: stopsaeflood\n\n");
+    TERMINAL_VIEW_ADD_TEXT("stopsaeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Stop SAE flood attack\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: stopsaeflood\n\n");
+
+    printf("saefloodhelp\n");
+    printf("    Description: Show detailed SAE flood attack help\n");
+    printf("    Usage: saefloodhelp\n\n");
+    TERMINAL_VIEW_ADD_TEXT("saefloodhelp\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Show detailed SAE flood attack help\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: saefloodhelp\n\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -1990,10 +2036,15 @@ void register_commands() {
     register_command("selectflipper", handle_select_flipper_cmd);
 #endif
     register_command("dhcpstarve", handle_dhcpstarve_cmd);
+    // SAE Handshake Flooding Attack Commands
+    register_command("saeflood", handle_sae_flood_cmd);
+    register_command("stopsaeflood", handle_stop_sae_flood_cmd);
+    register_command("saefloodhelp", handle_sae_flood_help_cmd);
 #if CONFIG_IDF_TARGET_ESP32C5
     register_command("setcountry", handle_setcountry);
 #endif
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }
+
 
