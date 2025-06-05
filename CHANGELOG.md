@@ -5,12 +5,26 @@
 
 ### Added
 
+- Attacks
+  - EAPOL Logoff Attack
+  - SAE Flood Attack
+
+- Commands
+  - Allow selection of multiple APs (eg. select -a 2,3,4)
+  TODO - add comma to display numpad
+
 ### Changed
 
 - Cardputer
   - Enable Cardputer's LED in config - @tototo31
   - Get cardputer keys working - @tototo31
   - Use backtick key to return to main menu 
+
+- Attacks
+  - Deauth Attack now supports targeting multiple APs
+
+- RGB
+  - Enable Cardputer's LED in config - @tototo31
 
 ### Bug Fixes
 

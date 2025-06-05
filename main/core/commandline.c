@@ -181,39 +181,97 @@ void handle_sta_scan(int argc, char **argv) {
 }
 
 void handle_attack_cmd(int argc, char **argv) {
-    if (argc > 1 && strcmp(argv[1], "-d") == 0) {
-        printf("Deauthentication starting...\n");
-        TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
-        wifi_manager_deauth_station();
-        return;
-    } else {
-        printf("Usage: attack -d (for deauthing access points or selected station)\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (for deauthing access points or selected station)\n");
+    if (argc > 1) {
+        if (strcmp(argv[1], "-d") == 0) {
+            printf("Deauthentication starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
+            wifi_manager_deauth_station();
+            return;
+        } else if (strcmp(argv[1], "-e") == 0) {
+            printf("EAPOL Logoff attack starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack starting...\n");
+            wifi_manager_start_eapollogoff_attack();
+            return;
+        } else if (strcmp(argv[1], "-s") == 0) {
+            printf("SAE flood attack starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("SAE flood attack starting...\n");
+            wifi_manager_start_sae_flood();
+            return;
+        }
     }
+    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+}
+
+void handle_sae_flood_cmd(int argc, char **argv) {
+    printf("Starting SAE flood attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Starting SAE flood attack...\n");
+    wifi_manager_start_sae_flood();
+}
+
+void handle_stop_sae_flood_cmd(int argc, char **argv) {
+    printf("Stopping SAE flood attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Stopping SAE flood attack...\n");
+    wifi_manager_stop_sae_flood();
+}
+
+void handle_sae_flood_help_cmd(int argc, char **argv) {
+    wifi_manager_sae_flood_help();
 }
 
 void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_deauth();
     wifi_manager_stop_deauth_station();
-    printf("Deauthing Stopped....\n");
-    TERMINAL_VIEW_ADD_TEXT("Deauthing Stopped....\n");
+    wifi_manager_stop_eapollogoff_attack();
+    wifi_manager_stop_sae_flood();
+    printf("Deauth/EAPOL/SAE attacks stopped...\n");
+    TERMINAL_VIEW_ADD_TEXT("Deauth/EAPOL/SAE attacks stopped...\n");
 }
 
 void handle_select_cmd(int argc, char **argv) {
     if (argc != 3) {
-        printf("Usage: select -a <number> or select -s <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: select -a <number> or select -s <number>\n");
+        printf("Usage: select -a <number[,number,...]> or select -s <number>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: select -a <number[,number,...]> or select -s <number>\n");
         return;
     }
 
     if (strcmp(argv[1], "-a") == 0) {
-        char *endptr;
-        int num = (int)strtol(argv[2], &endptr, 10);
-        if (*endptr == '\0') {
-            wifi_manager_select_ap(num);
+        char *input = argv[2];
+        char *comma = strchr(input, ',');
+        
+        if (comma == NULL) {
+            char *endptr;
+            int num = (int)strtol(input, &endptr, 10);
+            if (*endptr == '\0') {
+                wifi_manager_select_ap(num);
+            } else {
+                printf("Error: is not a valid number.\n");
+                TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
+            }
         } else {
-            printf("Error: is not a valid number.\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
+            int indices[32];
+            int count = 0;
+            char *token = strtok(input, ",");
+            
+            while (token != NULL && count < 32) {
+                char *endptr;
+                int num = (int)strtol(token, &endptr, 10);
+                if (*endptr == '\0') {
+                    indices[count++] = num;
+                } else {
+                    printf("Error: '%s' is not a valid number.\n", token);
+                    TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", token);
+                    return;
+                }
+                token = strtok(NULL, ",");
+            }
+            
+            if (count > 0) {
+                wifi_manager_select_multiple_aps(indices, count);
+            } else {
+                printf("Error: No valid indices found.\n");
+                TERMINAL_VIEW_ADD_TEXT("Error: No valid indices found.\n");
+            }
         }
     } else if (strcmp(argv[1], "-s") == 0) {
         char *endptr;
@@ -236,8 +294,8 @@ void handle_select_cmd(int argc, char **argv) {
         }
 #endif
     } else {
-        printf("Invalid option. Usage: select -a <number> or select -s <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Invalid option. Usage: select -a <number> or select -s <number>\n");
+        printf("Invalid option. Usage: select -a <number[,number,...]> or select -s <number>\n");
+        TERMINAL_VIEW_ADD_TEXT("Invalid option. Usage: select -a <number[,number,...]> or select -s <number>\n");
     }
 }
 
@@ -274,6 +332,8 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_deauth();
     wifi_manager_stop_dhcpstarve();
+    wifi_manager_stop_eapollogoff_attack();
+    wifi_manager_stop_sae_flood();
     printf("Stopped activities.\nClosed files.\n");
     TERMINAL_VIEW_ADD_TEXT("Stopped activities.\nClosed files.\n");
 }
@@ -929,14 +989,22 @@ void handle_help(int argc, char **argv) {
 
     printf("attack\n");
     printf("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    printf("    Usage: attack -d\n");
+    printf("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
+    printf("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
     printf("    Arguments:\n");
-    printf("        -d  : Start deauth attack\n\n");
+    printf("        -d  : Start deauth attack (supports multiple APs)\n");
+    printf("        -e  : Start EAPOL logoff attack\n");
+    printf("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n");
+    printf("\n");
     TERMINAL_VIEW_ADD_TEXT("attack\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d\n");
+    TERMINAL_VIEW_ADD_TEXT("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -d  : Start deauth attack\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        -d  : Start deauth attack (supports multiple APs)\n");
+    TERMINAL_VIEW_ADD_TEXT("        -e  : Start EAPOL logoff attack\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n");
+    TERMINAL_VIEW_ADD_TEXT("\n");
 
     printf("list\n");
     printf("    Description: List Wi-Fi scan results or connected stations.\n");
@@ -985,21 +1053,27 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Usage: stopdeauth\n\n");
 
     printf("select\n");
-    printf("    Description: Select an access point, station, or AirTag by index from the scan "
+    printf("    Description: Select access point(s), station, or AirTag by index from the scan "
            "results.\n");
-    printf("    Usage: select -a <num> | select -s <num> | select -airtag <num>\n");
+    printf("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
     printf("    Arguments:\n");
-    printf("        -a      : AP selection index\n");
+    printf("        -a      : AP selection index (supports multiple: 1,3,5)\n");
     printf("        -s      : Station selection index\n");
-    printf("        -airtag : AirTag selection index\n\n");
+    printf("        -airtag : AirTag selection index\n");
+    printf("    Examples:\n");
+    printf("        select -a 4      : Select single AP at index 4\n");
+    printf("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
     TERMINAL_VIEW_ADD_TEXT("select\n");
-    TERMINAL_VIEW_ADD_TEXT("    Description: Select an access point, station, or AirTag by index "
+    TERMINAL_VIEW_ADD_TEXT("    Description: Select access point(s), station, or AirTag by index "
                            "from the scan results.\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: select -a <num> | select -s <num> | select -airtag <num>\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -a      : AP selection index\n");
+    TERMINAL_VIEW_ADD_TEXT("        -a      : AP selection index (supports multiple: 1,3,5)\n");
     TERMINAL_VIEW_ADD_TEXT("        -s      : Station selection index\n");
-    TERMINAL_VIEW_ADD_TEXT("        -airtag : AirTag selection index\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        -airtag : AirTag selection index\n");
+    TERMINAL_VIEW_ADD_TEXT("    Examples:\n");
+    TERMINAL_VIEW_ADD_TEXT("        select -a 4      : Select single AP at index 4\n");
+    TERMINAL_VIEW_ADD_TEXT("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
 
     printf("startportal\n");
     printf("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
@@ -1278,6 +1352,27 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Usage: dhcpstarve start [threads]\n");
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve stop\n");
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve display\n\n");
+
+    printf("saeflood\n");
+    printf("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+    printf("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("saeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+
+    printf("stopsaeflood\n");
+    printf("    Description: Stop SAE flood attack\n");
+    printf("    Usage: stopsaeflood\n\n");
+    TERMINAL_VIEW_ADD_TEXT("stopsaeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Stop SAE flood attack\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: stopsaeflood\n\n");
+
+    printf("saefloodhelp\n");
+    printf("    Description: Show detailed SAE flood attack help\n");
+    printf("    Usage: saefloodhelp\n\n");
+    TERMINAL_VIEW_ADD_TEXT("saefloodhelp\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Show detailed SAE flood attack help\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: saefloodhelp\n\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -1978,10 +2073,15 @@ void register_commands() {
     register_command("selectflipper", handle_select_flipper_cmd);
 #endif
     register_command("dhcpstarve", handle_dhcpstarve_cmd);
+    // SAE Handshake Flooding Attack Commands
+    register_command("saeflood", handle_sae_flood_cmd);
+    register_command("stopsaeflood", handle_stop_sae_flood_cmd);
+    register_command("saefloodhelp", handle_sae_flood_help_cmd);
 #if CONFIG_IDF_TARGET_ESP32C5
     register_command("setcountry", handle_setcountry);
 #endif
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }
+
 
