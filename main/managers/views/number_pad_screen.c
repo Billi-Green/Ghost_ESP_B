@@ -95,7 +95,7 @@ static void number_pad_create() {
     
 
     const lv_font_t *font = (screen_height >= 240) ? &lv_font_montserrat_16 : &lv_font_montserrat_12;
-    int padding = (screen_height >= 240) ? 10 : 5;
+    int padding = 10;
     int display_height = (screen_height >= 240) ? 40 : 30;
 
     // Number display area
@@ -193,14 +193,17 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
         }
 
         if (is_numeric){
+            ESP_LOGI(TAG, "adding number to screen");
             add_digit(options[option_index][0]);
             update_display();
         }
         else if(strcmp(key_str, "*") == 0){ //delete key maps to star - dirty fix
+            ESP_LOGI(TAG, "Removing last number");
             remove_digit();
             update_display();
         }
         else if(strcmp(key_str, "`") == 0){ // escape key
+            ESP_LOGI(TAG, "Escaping to previous screen");
             display_manager_switch_view(&options_menu_view);
             return;
         }
