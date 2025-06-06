@@ -24,6 +24,78 @@ typedef struct {
 } Point2D_t;
 
 typedef struct {
+    uint8_t value;
+    uint8_t x_1;
+    uint8_t x_2;
+} Chart_t;
+
+const Chart_t X_map_chart[7] = {{1, 0, 1},   {2, 2, 3},  {4, 4, 5},
+                                {8, 6, 7},   {16, 8, 9}, {32, 10, 11},
+                                {64, 12, 13}};
+
+typedef struct {
+    const char value_first;
+    const char value_second;
+} KeyValue_t;
+
+const KeyValue_t _key_value_map[4][14] = {{{'`', '~'},
+                                           {'1', '!'},
+                                           {'2', '@'},
+                                           {'3', '#'},
+                                           {'4', '$'},
+                                           {'5', '%'},
+                                           {'6', '^'},
+                                           {'7', '&'},
+                                           {'8', '*'},
+                                           {'9', '('},
+                                           {'0', ')'},
+                                           {'-', '_'},
+                                           {'=', '+'},
+                                           {KEY_BACKSPACE, KEY_BACKSPACE}},
+                                          {{KEY_TAB, KEY_TAB},
+                                           {'q', 'Q'},
+                                           {'w', 'W'},
+                                           {'e', 'E'},
+                                           {'r', 'R'},
+                                           {'t', 'T'},
+                                           {'y', 'Y'},
+                                           {'u', 'U'},
+                                           {'i', 'I'},
+                                           {'o', 'O'},
+                                           {'p', 'P'},
+                                           {'[', '{'},
+                                           {']', '}'},
+                                           {'\\', '|'}},
+                                          {{KEY_FN, KEY_FN},
+                                           {KEY_LEFT_SHIFT, KEY_LEFT_SHIFT},
+                                           {'a', 'A'},
+                                           {'s', 'S'},
+                                           {'d', 'D'},
+                                           {'f', 'F'},
+                                           {'g', 'G'},
+                                           {'h', 'H'},
+                                           {'j', 'J'},
+                                           {'k', 'K'},
+                                           {'l', 'L'},
+                                           {';', ':'},
+                                           {'\'', '\"'},
+                                           {KEY_ENTER, KEY_ENTER}},
+                                          {{KEY_LEFT_CTRL, KEY_LEFT_CTRL},
+                                           {KEY_OPT, KEY_OPT},
+                                           {KEY_LEFT_ALT, KEY_LEFT_ALT},
+                                           {'z', 'Z'},
+                                           {'x', 'X'},
+                                           {'c', 'C'},
+                                           {'v', 'V'},
+                                           {'b', 'B'},
+                                           {'n', 'N'},
+                                           {'m', 'M'},
+                                           {',', '<'},
+                                           {'.', '>'},
+                                           {'/', '?'},
+                                           {' ', ' '}}};
+
+typedef struct {
   bool tab;
   bool fn;
   bool shift;

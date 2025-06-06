@@ -1,5 +1,42 @@
 # Ghost ESP Changelog
 
+
+## Revival v1.6
+
+### Added
+
+- Attacks
+  - EAPOL Logoff Attack
+  - SAE Flood Attack
+
+- Commands
+  - Allow selection of multiple APs (eg. select -a 2,3,4)
+  TODO - add comma to display numpad
+
+### Changed
+
+- Cardputer
+  - Enable Cardputer's LED in config - @tototo31
+  - Get cardputer keys working - @tototo31
+  - Use backtick key to return to main menu 
+
+- Attacks
+  - Deauth Attack now supports targeting multiple APs
+
+- RGB
+  - Enable Cardputer's LED in config - @tototo31
+
+### Bug Fixes
+
+- Display
+  - Fix blank bootup screen on cardputer and show flappy ghost icon out of necessity - @tototo31
+  - Removed touch controls from settings menu on non-touch devices - @tototo31
+
+- WiFi
+  - preserve STA mode in ap_manager init and start_services
+
+
+
 ## Revival v1.5.1
 
 ### Added

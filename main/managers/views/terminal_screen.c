@@ -336,6 +336,12 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       ESP_LOGW(TAG, "Joystick button 4: Scroll down");
       scroll_terminal_down();
     }
+  } else if (event->type == INPUT_TYPE_KEYBOARD) {
+    uint8_t key = event->data.key_value;
+    if (key == 27 || key == '`') {
+      stop_all_operations();
+      return;
+    }
   }
 }
 

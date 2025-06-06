@@ -4,6 +4,7 @@
 #include "lvgl.h"
 #include "managers/joystick_manager.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef void *QueueHandle_tt;
 typedef void *SemaphoreHandle_tt; // Because Circular Includes are fun :)
@@ -11,13 +12,14 @@ typedef void *SemaphoreHandle_tt; // Because Circular Includes are fun :)
 static lv_timer_t *rainbow_timer = NULL;
 static uint16_t rainbow_hue = 0;
 
-typedef enum { INPUT_TYPE_JOYSTICK, INPUT_TYPE_TOUCH } InputType;
+typedef enum { INPUT_TYPE_JOYSTICK, INPUT_TYPE_TOUCH, INPUT_TYPE_KEYBOARD } InputType;
 
 typedef struct {
   InputType type;
   union {
     int joystick_index;         // Used for joystick inputs
     lv_indev_data_t touch_data; // Used for touchscreen inputs
+    uint8_t key_value;          // Used for keyboard inputs
   } data;
 } InputEvent;
 
