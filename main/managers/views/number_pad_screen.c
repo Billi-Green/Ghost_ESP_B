@@ -207,6 +207,11 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
             display_manager_switch_view(&options_menu_view);
             return;
         }
+        else if(strcmp(key_str, "=") == 0){ //set = as a submit key for this menu since okay is tied up at a higher level
+            ESP_LOGI(TAG, "Submitting Number");
+            submit_number();
+            return;
+        }
 
     }
     else if (event->type == INPUT_TYPE_JOYSTICK) {
