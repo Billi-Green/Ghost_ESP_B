@@ -94,7 +94,7 @@ void keyboard_update_key_list(Keyboard_t* keyboard) {
         if (input_value) {
             for (int j = 0; j < 7; j++) {
                 if (input_value & (1 << j)) {
-                    coor.x = (i > 3) ? j + 1 : j;
+                    coor.x  = (i > 3) ? X_map_chart[j].x_1 : X_map_chart[j].x_2;
                     coor.y = (i > 3) ? (i - 4) : i;
 
                     coor.y = -coor.y + 3;  // Adjust Y coordinate to match picture
@@ -222,11 +222,9 @@ static void keys_state_reset(KeysState_t* keys_state) {
 }
 
 static uint8_t get_key_value(const Point2D_t* keyCoor, bool shift, bool ctrl, bool is_caps_locked) {
-    uint8_t base_value = _kb_asciimap[keyCoor->x + keyCoor->y * 14];
-
-    
+    uint8_t base_value = _key_value_map[keyCoor->y][keyCoor->x].value_first;
     if (shift || (is_caps_locked && (base_value >= 'a' && base_value <= 'z'))) {
-        base_value |= SHIFT;
+        base_value = _key_value_map[keyCoor->y][keyCoor->x].value_second;
     }
 
 

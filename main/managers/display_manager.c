@@ -13,6 +13,8 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/views/clock_screen.h"
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_pm.h"
 
@@ -201,7 +203,7 @@ lv_color_t hex_to_lv_color(const char *hex_str) {
   }
 
   if (strlen(hex_str) != 6) {
-    printf("Invalid hex color format. Expected 6 characters.\n");
+    ESP_LOGE(TAG, "Invalid hex color format. Expected 6 characters.\n");
     return lv_color_white();
   }
 
@@ -427,20 +429,20 @@ void display_manager_init(void) {
 #elif defined(CONFIG_JC3248W535EN_LCD)
   esp_err_t ret = lcd_axs15231b_init();
   if (ret != ESP_OK) {
-    printf("LCD initialization failed");
+    ESP_LOGE(TAG, "LCD initialization failed");
     return;
   }
 #else
 
   esp_err_t ret = lcd_st7262_init();
   if (ret != ESP_OK) {
-    printf("LCD initialization failed");
+    ESP_LOGE(TAG, "LCD initialization failed");
     return;
   }
 
   ret = lcd_st7262_lvgl_init();
   if (ret != ESP_OK) {
-    printf("LVGL initialization failed");
+    ESP_LOGE(TAG, "LVGL initialization failed");
     return;
   }
 
@@ -448,13 +450,13 @@ void display_manager_init(void) {
 
   dm.mutex = xSemaphoreCreateMutex();
   if (dm.mutex == NULL) {
-    printf("Failed to create mutex\n");
+    ESP_LOGE(TAG, "Failed to create mutex\n");
     return;
   }
 
   input_queue = xQueueCreate(10, sizeof(InputEvent));
   if (input_queue == NULL) {
-    printf("Failed to create input queue\n");
+    ESP_LOGE(TAG, "Failed to create input queue\n");
     return;
   }
 
@@ -478,7 +480,7 @@ xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
 #endif
 if (xTaskCreate(hardware_input_task, "RawInput", 2048, NULL,
                 HARDWARE_INPUT_TASK_PRIORITY, &input_task_handle) != pdPASS) {
-    printf("Failed to create RawInput task\n");
+    ESP_LOGE(TAG, "Failed to create RawInput task\n");
 }
 }
 
@@ -498,7 +500,7 @@ void display_manager_switch_view(View *view) {
 #endif
 
   if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-    printf("Switching view from %s to %s\n",
+    ESP_LOGI(TAG, "Switching view from %s to %s\n",
            dm.current_view ? dm.current_view->name : "NULL", view->name);
 
     if (dm.current_view && dm.current_view->root) {
@@ -525,7 +527,7 @@ void display_manager_switch_view(View *view) {
 
     xSemaphoreGive(dm.mutex);
   } else {
-    printf("Failed to acquire mutex for switching view\n");
+    ESP_LOGE(TAG, "Failed to acquire mutex for switching view\n");
   }
 
 #ifdef CONFIG_JC3248W535EN_LCD
@@ -607,61 +609,100 @@ void hardware_input_task(void *pvParameters) {
   int screen_height = LV_VER_RES;
   TickType_t last_touch_time = xTaskGetTickCount();
   bool is_backlight_dimmed = false;
+#ifdef CONFIG_USE_CARDPUTER
+  uint8_t shift_count_before_caps =75; // num of cycles before capslock gets turned on
+  uint8_t shift_count = 0;
+  bool caps_latch = false; // var for tracking if caps was just toggled
+#endif
 
   while (1) {
 #ifdef CONFIG_USE_CARDPUTER
     keyboard_update_key_list(&gkeyboard);
     keyboard_update_keys_state(&gkeyboard);
+
+      if (!keyboard_is_key_pressed(&gkeyboard,129) && caps_latch){ // caps lock latch so it doesnt continuously flip on and off
+        caps_latch = false;
+        shift_count = 0;
+      }
+
     if (gkeyboard.key_list_buffer_len > 0) {
+
       for (size_t i = 0; i < gkeyboard.key_list_buffer_len; ++i) {
         Point2D_t key_pos = gkeyboard.key_list_buffer[i];
         uint8_t key_value = keyboard_get_key(&gkeyboard, key_pos);
-
+        keyboard_update_keys_state(&gkeyboard);
         if (key_value != 0 && !touch_active) {
           touch_active = true;
           last_touch_time = xTaskGetTickCount();
           InputEvent event;
-          event.type = INPUT_TYPE_JOYSTICK;
+          // event.type will be set inside the switch for specific keys
 
-          printf("Input key value: %d\n", key_value);
+          if (shift_count > shift_count_before_caps && !caps_latch){ // toggle caps if weve been holding shift long enough without intteruption
+            gkeyboard.is_caps_locked = !gkeyboard.is_caps_locked;
+            caps_latch = true;
+            ESP_LOGW(TAG, "Capslock toggled %s\n", gkeyboard.is_caps_locked ? "on" : "off");
+            shift_count = 0;
+          }
+
 
           switch (key_value) {
           case 0x29: // ESC key HID code
-            printf("Esc key\n");
+            ESP_LOGI(TAG, "Esc key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 2;
             break;
-          case 180: //enter key
-            printf("Enter key\n");
+          case 40: //enter key
+            ESP_LOGI(TAG, "Enter key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 1;
             break;
-          case 39: //left arrow
-            printf("Left key\n");
+          case 44: //left arrow
+            ESP_LOGI(TAG, "Left key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 0;
            break;
-          case 158: //up arrow
-            printf("Up key\n");
+          case 59: //up arrow
+            ESP_LOGI(TAG, "Up key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 2;
             break;
-          case 30: //right arrow
-            printf("Right key\n");
+          case 47: //right arrow
+            ESP_LOGI(TAG, "Right key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 3;
             break;
-          case 56: // down arrow
-            printf("Down key\n");
+          case 46: // down arrow
+            ESP_LOGI(TAG, "Down key\n");
+            event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = 4;
             break;
-          default:
-            printf("Unhandled key value: %d\n", key_value);
+          case 129: //shift - keyboard library already handled caps for letters
+            if(!keyboard_is_change(&gkeyboard)){
+              shift_count += 1;
+            }
             continue;
+          case 255: //fn - fn key actions
+            continue;
+          case 128: //ctrl - ctrl key actions
+            continue;
+          case 130: // alt - alt key actions
+            continue;
+          default:
+            ESP_LOGI(TAG, "Keyboard key: %c (value: %d) (CAPS: %s)\n", key_value, key_value, gkeyboard.is_caps_locked ? "on" : "off" );
+            shift_count = 0; // restart caps timer wheen a key gets pressed
+            event.type = INPUT_TYPE_KEYBOARD;
+            event.data.key_value = key_value;
+            break;
           }
-
           if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            printf("Failed to send button input to queue\n");
+            ESP_LOGE(TAG, "Failed to send button input to queue\n");
           }
-
           vTaskDelay(pdMS_TO_TICKS(300));
+
         } else if (touch_active) {
+
           touch_active = false;
+          
         }
       }
     }
@@ -677,7 +718,7 @@ void hardware_input_task(void *pvParameters) {
           event.data.joystick_index = i;
 
           if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            printf("Failed to send joystick input to queue\n");
+            ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
           }
         }
       }
@@ -709,7 +750,7 @@ void hardware_input_task(void *pvParameters) {
         event.data.touch_data.point.y = touch_data.point.y;
         event.data.touch_data.state = touch_data.state;
         if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-          printf("Failed to send touch input to queue\n");
+          ESP_LOGE(TAG, "Failed to send touch input to queue\n");
         }
       }
     } else if (touch_data.state == LV_INDEV_STATE_REL && touch_active) {
@@ -718,7 +759,7 @@ void hardware_input_task(void *pvParameters) {
       event.type = INPUT_TYPE_TOUCH;
       event.data.touch_data = touch_data;
       if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-        printf("Failed to send touch input to queue\n");
+        ESP_LOGE(TAG, "Failed to send touch input to queue\n");
       }
       touch_active = false;
     }
@@ -769,12 +810,12 @@ void processEvent() {
         view_name = current->name;
         input_callback = current->input_callback;
       } else {
-        printf("[WARNING] Current view is NULL in input_processing_task\n");
+        ESP_LOGW(TAG, "Current view is NULL in input_processing_task\n");
       }
 
       xSemaphoreGive(dm.mutex);
 
-      printf("[INFO] Input event type: %d, Current view: %s\n", event.type,
+      ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type,
              view_name);
 
       if (input_callback) {

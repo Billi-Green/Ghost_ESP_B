@@ -11,6 +11,8 @@
 #include "managers/wifi_manager.h"
 #include "managers/settings_manager.h"
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 
 EOptionsMenuType SelectedMenuType = OT_Wifi;
 int selected_item_index = 0;
@@ -416,6 +418,12 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     handle_option_directly(selected_option);
                 }
             }
+        }
+    } else if (event->type == INPUT_TYPE_KEYBOARD) {
+        uint8_t key = event->data.key_value;
+        if (key == 27 || key == '`') {
+            display_manager_switch_view(&main_menu_view);
+            return;
         }
     }
 }
