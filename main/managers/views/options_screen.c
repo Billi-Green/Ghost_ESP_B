@@ -13,6 +13,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "esp_log.h"
+
+static const char *TAG = "optionsScreen";
+
 
 EOptionsMenuType SelectedMenuType = OT_Wifi;
 int selected_item_index = 0;
@@ -420,10 +424,26 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
         }
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
-        uint8_t key = event->data.key_value;
-        if (key == 27 || key == '`') {
+        uint8_t keyValue = event->data.key_value;
+
+        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) { // Left / up
+            ESP_LOGI(TAG, "Left/Up button pressed\n");
+            select_option_item(selected_item_index - 1);
+        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) { // Right / down
+            ESP_LOGI(TAG, "Right/Down button pressed\n");
+            select_option_item(selected_item_index + 1);
+        } else if (keyValue == 40) { // Select
+            ESP_LOGI(TAG, "Enter button pressed\n");
+            lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+            if (selected_obj) {
+                const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                if (selected_option) {
+                    handle_option_directly(selected_option);
+                }
+            }
+        } else if (keyValue == 29 || keyValue == '`') { // esc
+            ESP_LOGI(TAG, "Esc button pressed\n");
             display_manager_switch_view(&main_menu_view);
-            return;
         }
     }
 }
