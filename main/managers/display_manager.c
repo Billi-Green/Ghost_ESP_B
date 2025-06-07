@@ -646,38 +646,38 @@ void hardware_input_task(void *pvParameters) {
 
 
           switch (key_value) {
-          case 0x29: // ESC key HID code
-            ESP_LOGI(TAG, "Esc key\n");
-            event.type = INPUT_TYPE_JOYSTICK;
-            event.data.joystick_index = 2;
-            break;
-          case 40: //enter key
-            ESP_LOGI(TAG, "Enter key\n");
-            event.type = INPUT_TYPE_JOYSTICK;
-            event.data.joystick_index = 1;
-            break;
-          case 44: //left arrow
-            ESP_LOGI(TAG, "Left key\n");
-            event.type = INPUT_TYPE_JOYSTICK;
-            event.data.joystick_index = 0;
-           break;
-          case 59: //up arrow
-            ESP_LOGI(TAG, "Up key\n");
-            event.type = INPUT_TYPE_JOYSTICK;
-            event.data.joystick_index = 2;
-            break;
-          case 47: //right arrow
-            ESP_LOGI(TAG, "Right key\n");
-            event.type = INPUT_TYPE_JOYSTICK;
-            event.data.joystick_index = 3;
-            break;
-          case 46: // down arrow
-            ESP_LOGI(TAG, "Down key\n");
-            event.type = INPUT_TYPE_JOYSTICK;
-            event.data.joystick_index = 4;
-            break;
+          // case 0x29: // ESC key HID code
+          //   ESP_LOGI(TAG, "Esc key\n");
+          //   event.type = INPUT_TYPE_JOYSTICK;
+          //   event.data.joystick_index = 2;
+          //   break;
+          // case 40: //enter key
+          //   ESP_LOGI(TAG, "Enter key\n");
+          //   event.type = INPUT_TYPE_JOYSTICK;
+          //   event.data.joystick_index = 1;
+          //   break;
+          // case 44: //left arrow
+          //   ESP_LOGI(TAG, "Left key\n");
+          //   event.type = INPUT_TYPE_JOYSTICK;
+          //   event.data.joystick_index = 0;
+          //  break;
+          // case 59: //up arrow
+          //   ESP_LOGI(TAG, "Up key\n");
+          //   event.type = INPUT_TYPE_JOYSTICK;
+          //   event.data.joystick_index = 2;
+          //   break;
+          // case 47: //right arrow
+          //   ESP_LOGI(TAG, "Right key\n");
+          //   event.type = INPUT_TYPE_JOYSTICK;
+          //   event.data.joystick_index = 3;
+          //   break;
+          // case 46: // down arrow
+          //   ESP_LOGI(TAG, "Down key\n");
+          //   event.type = INPUT_TYPE_JOYSTICK;
+          //   event.data.joystick_index = 4;
+          //   break;
           case 129: //shift - keyboard library already handled caps for letters
-            if(!keyboard_is_change(&gkeyboard)){
+            if(!keyboard_is_change(&gkeyboard)){ // if shift is held down increment the counter for capslocks
               shift_count += 1;
             }
             continue;
