@@ -152,6 +152,7 @@ static void update_menu_item(bool slide_left) {
  */
 static void menu_item_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
+        ESP_LOGI(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
             touch_started = true;
@@ -172,9 +173,11 @@ static void menu_item_event_handler(InputEvent *event) {
             }
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        ESP_LOGI(TAG, "Joystick event");
         int button = event->data.joystick_index;
         handle_hardware_button_press(button);
     } else if (event->type == INPUT_TYPE_KEYBOARD){ //dummy for handling keyboard input
+        ESP_LOGW(TAG, "keyboard event; unhandled");
         return;
     }
 }

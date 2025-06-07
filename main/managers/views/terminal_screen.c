@@ -283,6 +283,7 @@ void terminal_view_add_text(const char *text) {
 
 void terminal_view_hardwareinput_callback(InputEvent *event) {
   if (event->type == INPUT_TYPE_TOUCH) {
+    ESP_LOGW(TAG, "Touch event");
     if (event->data.touch_data.state != LV_INDEV_STATE_PR) {
       return;
     }
@@ -325,6 +326,7 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       }
     }
   } else if (event->type == INPUT_TYPE_JOYSTICK) {
+    ESP_LOGI(TAG, "Joystick event");
     int button = event->data.joystick_index;
     if (button == 1) {
       ESP_LOGW(TAG, "Joystick button 1: Stop all operations");
@@ -337,6 +339,7 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_down();
     }
   } else if (event->type == INPUT_TYPE_KEYBOARD) {
+    ESP_LOGW(TAG, "keyboard event");
     uint8_t key = event->data.key_value;
     if (key == 27 || key == '`') {
       stop_all_operations();

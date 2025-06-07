@@ -29,10 +29,10 @@ static void digital_clock_cb(lv_timer_t *timer) {
 
 static void clock_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH && event->data.touch_data.state == LV_INDEV_STATE_REL) {
-        ESP_LOGW(TAG, "Touch input type");
+        ESP_LOGI(TAG, "Touch input type");
         display_manager_switch_view(&main_menu_view);
     } else if (event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 2) {
-        ESP_LOGW(TAG, "Joystick input type");
+        ESP_LOGI(TAG, "Joystick input type");
         display_manager_switch_view(&main_menu_view);
     } else if (event->type == INPUT_TYPE_KEYBOARD){
         ESP_LOGW(TAG, "keyboard input type; unhandled");

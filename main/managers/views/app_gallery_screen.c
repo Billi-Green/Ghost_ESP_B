@@ -4,6 +4,9 @@
 #include "managers/views/music_visualizer.h"
 #include <stdio.h>
 #include <string.h>
+#include "esp_log.h"
+
+static const char *TAG = "AppGalleryScreen";
 
 lv_obj_t *apps_container;
 static int selected_app_index = 0;
@@ -201,7 +204,8 @@ static void handle_apps_button_press(int button) {
  * @brief Combined handler for app menu events
  */
  void apps_menu_event_handler(InputEvent *event) {
-    if (event->type == INPUT_TYPE_TOUCH) {
+    if (event->type == INPUT_TYPE_TOUCH) {\
+        ESP_LOGW(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
             touch_started = true;
@@ -228,9 +232,11 @@ static void handle_apps_button_press(int button) {
             }
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        ESP_LOGI(TAG, "Joystick event");
         handle_apps_button_press(event->data.joystick_index);
     } else if (event->type == INPUT_TYPE_KEYBOARD) { // dummy for handling keyboard input
-      return;
+        ESP_LOGW(TAG, "keyboard event; unhandled");
+        return;
     }
 }
 
