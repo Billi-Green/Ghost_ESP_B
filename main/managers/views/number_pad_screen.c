@@ -7,6 +7,10 @@
 #include "managers/views/options_screen.h"
 #include <stdio.h>
 #include <string.h>
+#include "esp_log.h"
+
+static const char *TAG = "number_pad_screen";
+
 
 static ENumberPadMode current_mode = NP_MODE_AP;
 static lv_obj_t *root = NULL;
@@ -91,7 +95,7 @@ static void number_pad_create() {
     
 
     const lv_font_t *font = (screen_height >= 240) ? &lv_font_montserrat_16 : &lv_font_montserrat_12;
-    int padding = (screen_height >= 240) ? 10 : 5;
+    int padding = 10;
     int display_height = (screen_height >= 240) ? 40 : 30;
 
     // Number display area
@@ -169,7 +173,48 @@ static void number_pad_destroy() {
 static void handle_hardware_button_press_number_pad(InputEvent *event) {
     const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "DEL", "OK", "BACK"};
     
-    if (event->type == INPUT_TYPE_JOYSTICK) {
+    if (event->type == INPUT_TYPE_KEYBOARD){
+        int key_value = event->data.key_value;
+        bool is_numeric = false;
+        int option_index;
+        char *key_str[1];
+        ESP_LOGD(TAG, "Keyboard event: %c pressed", key_value);
+        sprintf(key_str, "%c", key_value); // convert keyvalue to str for comparisons
+
+
+        for (int i = 0; i < sizeof(options)/sizeof(options[0]); i++){
+            ESP_LOGD(TAG, "Checking key pressed value: %s against %s", key_str, options[i]);
+            if (strcmp(key_str, options[i]) == 0){
+                ESP_LOGI(TAG, "Number key %c pressed", key_value);
+                is_numeric = true;
+                option_index=i;
+                break;
+            }
+        }
+
+        if (is_numeric){
+            ESP_LOGI(TAG, "adding number to screen");
+            add_digit(options[option_index][0]);
+            update_display();
+        }
+        else if(strcmp(key_str, "*") == 0){ //delete key maps to star - dirty fix
+            ESP_LOGI(TAG, "Removing last number");
+            remove_digit();
+            update_display();
+        }
+        else if(strcmp(key_str, "`") == 0){ // escape key
+            ESP_LOGI(TAG, "Escaping to previous screen");
+            display_manager_switch_view(&options_menu_view);
+            return;
+        }
+        else if(strcmp(key_str, "=") == 0){ //set = as a submit key for this menu since okay is tied up at a higher level
+            ESP_LOGI(TAG, "Submitting Number");
+            submit_number();
+            return;
+        }
+
+    }
+    else if (event->type == INPUT_TYPE_JOYSTICK) {
         int button = event->data.joystick_index;
         int prev_cursor_pos = cursor_pos;
         
