@@ -28,7 +28,11 @@
 #define MIN_SSIDS_FOR_DETECTION 2 // Minimum SSIDs needed to flag as PineAP
 #define MAX_PINEAP_NETWORKS 20
 #define MAX_SSIDS_PER_BSSID 10
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define MAX_WIFI_CHANNEL 165
+#else
 #define MAX_WIFI_CHANNEL 13
+#endif
 #define CHANNEL_HOP_INTERVAL_MS 200
 #define RECENT_SSID_COUNT 5
 #define LOG_DELAY_MS 5000
@@ -111,8 +115,12 @@ static void channel_hop_timer_callback(void *arg) {
     if (!pineap_detection_active)
         return;
 
-    current_channel = (current_channel % MAX_WIFI_CHANNEL) + 1;
-    esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
+    uint8_t start = current_channel;
+    do {
+        current_channel = (current_channel % MAX_WIFI_CHANNEL) + 1;
+        if (esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
+            break;
+    } while (current_channel != start);
 }
 
 static esp_err_t start_channel_hopping(void) {

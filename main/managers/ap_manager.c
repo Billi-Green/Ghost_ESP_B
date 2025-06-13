@@ -542,7 +542,7 @@ esp_err_t ap_manager_init(void) {
         return ret;
     }
 
-    ret = esp_wifi_set_mode(WIFI_MODE_AP);
+    ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (ret != ESP_OK) {
         printf("esp_wifi_set_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
@@ -725,7 +725,7 @@ esp_err_t ap_manager_start_services() {
     esp_err_t ret;
 
     // Set Wi-Fi mode to AP
-    ret = esp_wifi_set_mode(WIFI_MODE_AP);
+    ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (ret != ESP_OK) {
         printf("WiFi mode set failed\n");
         return ret;

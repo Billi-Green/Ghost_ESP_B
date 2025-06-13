@@ -21,17 +21,24 @@ static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
 typedef struct {
   const char *name;
   const lv_img_dsc_t *icon;
+  const int palette_index; // pick a color 0-5 to assign the menu item
   lv_color_t border_color;
 } menu_item_t;
 
 // Define colors as compile-time constants
-static menu_item_t menu_items[] = {
-    {"BLE", &bluetooth},
-    {"WiFi", &wifi},
-    {"GPS", &Map},
-    {"Apps", &GESPAppGallery},
-    {"Clock", &clock_icon},
-    {"Settings", &settings_icon}
+menu_item_t menu_items[] = {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    {"BLE", &bluetooth, 0},
+#endif
+    {"WiFi", &wifi, 1}, // applies to all boards
+#ifdef CONFIG_HAS_GPS
+    {"GPS", &Map, 2},
+#endif
+    {"Apps", &GESPAppGallery, 3}, // applies to all boards
+#ifdef CONFIG_HAS_RTC_CLOCK
+    {"Clock", &clock_icon, 4},
+#endif
+    {"Settings", &settings_icon, 5} // applies to all boards
 };
 
 static int num_items = sizeof(menu_items) / sizeof(menu_items[0]);
@@ -39,25 +46,28 @@ lv_obj_t *current_item_obj = NULL;
 
 static void init_menu_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    const uint32_t palettes[15][6] = {
-        {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
-        {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
-        {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
-        {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
-        {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
-        {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
-        {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
-        {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
-        {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
-        {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
-        {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
-        {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
-        {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
-        {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
-        {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
+    const uint32_t palettes[15][6] = { // if more menu items are added this will need to expand, or reuse colors
+// bluetooth colors,wifi colors,GPS colors,Apps colors,Clock Colors,Settings colors
+        {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800}, // default
+        {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC}, // Pastel
+        {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F}, // Dark
+        {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF}, // Bright
+        {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36}, // Solarized
+        {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888}, // Monochrome
+        {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63}, // Rose Red
+        {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0}, // Purple
+        {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3}, // Blue
+        {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500}, // Orange
+        {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00}, // Neon
+        {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080}, // Cyberpunk
+        {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B}, // Ocean
+        {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854}, // Sunset
+        {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}  // Forest
     };
-    for (int i = 0; i < 6; i++) {
-        menu_items[i].border_color = lv_color_hex(palettes[theme][i]);
+    for (int i = 0; i < num_items; i++) { 
+        // bug here - we used to assume that the index of each menu item never changes. By removing options we dont need their index can change
+        // perhaps this could be fixed by adding an enabled bool for each menu item, and only drawing the menu icon if enabled
+        menu_items[i].border_color = lv_color_hex(palettes[theme][menu_items[i].palette_index]);
     }
 }
 
@@ -99,7 +109,7 @@ static void update_menu_item(bool slide_left) {
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
     lv_img_set_antialias(icon, false); // Prevent scaling artifacts
     // Only recolor non-clock icons
-    if (selected_item_index != 4) { 
+    if (strcmp(menu_items[selected_item_index].name,"Clock")) { 
         lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
     }
@@ -194,15 +204,40 @@ static void select_menu_item(int index, bool slide_left) {
  * @brief Handles the selection of menu items.
  */
 static void handle_menu_item_selection(int item_index) {
-    switch (item_index) {
-        case 0: printf("BLE selected\n"); SelectedMenuType = OT_Bluetooth; display_manager_switch_view(&options_menu_view); break;
-        case 1: printf("Wi-Fi selected\n"); SelectedMenuType = OT_Wifi; display_manager_switch_view(&options_menu_view); break;
-        case 2: printf("GPS selected\n"); SelectedMenuType = OT_GPS; display_manager_switch_view(&options_menu_view); break;
-        case 3: printf("Apps View Selected\n"); display_manager_switch_view(&apps_menu_view); break;
-        case 4: printf("Clock selected\n"); display_manager_switch_view(&clock_view); break;
-        case 5: printf("Settings selected\n"); display_manager_switch_view(&settings_screen_view); break;
-        default: printf("Unknown menu item selected\n"); break;
+    typedef struct {
+        const char *name;
+        EOptionsMenuType type;
+        View *view;
+    } menu_action_t;
+
+    static const menu_action_t menu_actions[] = {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        {"BLE", OT_Bluetooth, &options_menu_view},
+#endif
+        {"WiFi", OT_Wifi, &options_menu_view},
+#ifdef CONFIG_HAS_GPS
+        {"GPS", OT_GPS, &options_menu_view},
+#endif
+        {"Apps", 0, &apps_menu_view},
+#ifdef CONFIG_HAS_RTC_CLOCK
+        {"Clock", 0, &clock_view},
+#endif
+        {"Settings", OT_Settings, &settings_screen_view}
+    };
+
+    const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
+    const char *name = menu_items[item_index].name;
+    for (int i = 0; i < num_actions; ++i) {
+        if (strcmp(name, menu_actions[i].name) == 0) {
+            printf("%s selected\n", menu_actions[i].name);
+            if (menu_actions[i].view == &options_menu_view) {
+                SelectedMenuType = menu_actions[i].type;
+            }
+            display_manager_switch_view(menu_actions[i].view);
+            return;
+        }
     }
+    printf("Unknown menu item selected: %s\n", name);
 }
 
 /**
