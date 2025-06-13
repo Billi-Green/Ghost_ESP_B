@@ -19,6 +19,11 @@
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
 #include "vendor/m5/m5gfx_wrapper.h"
+#include <esp_adc/adc_oneshot.h>
+#include <esp_adc/adc_cali.h>
+#include <esp_adc/adc_cali_scheme.h>
+#include <soc/adc_channel.h>
+#include <soc/soc_caps.h>
 #endif
 
 #ifdef CONFIG_HAS_BATTERY
@@ -109,6 +114,131 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
     disp_driver_flush(drv, area, color_p);
 #endif
 }
+
+#ifdef CONFIG_USE_CARDPUTER
+
+#define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
+#define _batAdcUnit ADC_UNIT_1
+#define _batAdcAtten ADC_ATTEN_DB_12
+bool adcInit = false;
+adc_oneshot_unit_handle_t handle = NULL;
+adc_cali_handle_t cali_handle = NULL;
+
+adc_cali_curve_fitting_config_t cali_config = {
+  .unit_id = _batAdcUnit,
+  .atten = ADC_ATTEN_DB_12,
+  .bitwidth = ADC_BITWIDTH_DEFAULT,
+  };
+
+static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle)
+{
+    adc_cali_handle_t handle = NULL;
+    esp_err_t ret = ESP_FAIL;
+    bool calibrated = false;
+
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    if (!calibrated) {
+        ESP_LOGD(TAG, "calibration scheme version is %s", "Curve Fitting");
+        adc_cali_curve_fitting_config_t cali_config = {
+            .unit_id = unit,
+            .chan = channel,
+            .atten = atten,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        ret = adc_cali_create_scheme_curve_fitting(&cali_config, &handle);
+        if (ret == ESP_OK) {
+            calibrated = true;
+        }
+    }
+#endif
+
+#if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+    if (!calibrated) {
+        ESP_LOGD(TAG, "calibration scheme version is %s", "Line Fitting");
+        adc_cali_line_fitting_config_t cali_config = {
+            .unit_id = unit,
+            .atten = atten,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        ret = adc_cali_create_scheme_line_fitting(&cali_config, &handle);
+        if (ret == ESP_OK) {
+            calibrated = true;
+        }
+    }
+#endif
+
+    *out_handle = handle;
+    if (ret == ESP_OK) {
+        ESP_LOGD(TAG, "Calibration Success");
+    } else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated) {
+        ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
+    } else {
+        ESP_LOGE(TAG, "Invalid arg or no memory");
+    }
+
+    return calibrated;
+}
+
+void initAdc(){
+
+  const adc_oneshot_unit_init_cfg_t init_config = { //create adc
+    .unit_id = _batAdcUnit, // selects tthe adc
+  };
+
+  const adc_oneshot_chan_cfg_t config = { // config
+    .bitwidth = ADC_BITWIDTH_DEFAULT,
+    .atten = _batAdcAtten,
+  };
+
+  ESP_LOGI(TAG, "Create new ADC oneshot unit");
+  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &handle));
+
+  ESP_LOGI(TAG, "Configure adc channel");
+  ESP_ERROR_CHECK(adc_oneshot_config_channel(handle, _batAdcCh, &config));
+
+  adcInit=true;
+  ESP_LOGI(TAG, "ADC Init completes");
+}
+
+bool _isCharging = false;
+int getBattery() {
+    uint8_t percent;
+    static uint32_t lastVolt = 5000;
+    static unsigned long lastTime = 0;
+
+    if(!adcInit){
+      ESP_LOGI(TAG, "INIT ADC");
+      initAdc();
+    }
+
+    static int BASE_VOLATAGE = 3600;
+    int raw=0;
+    ESP_ERROR_CHECK(adc_oneshot_read(handle, _batAdcCh, &raw));
+    ESP_LOGD(TAG, "Raw adc reading:%d", raw);
+
+    int volt=0;
+    bool do_calibration1_chan0 = adc_calibration_init(_batAdcUnit, _batAdcCh, _batAdcAtten, &cali_handle);
+
+    if (do_calibration1_chan0){
+    adc_cali_raw_to_voltage(cali_handle, raw, &volt);
+    ESP_LOGI(TAG, "Raw ADC to voltage - Raw: %d - Voltage: %dmv \n", raw, volt);
+    }
+
+    //is charging logic
+    if (xTaskGetTickCount() - lastTime > 30000) {
+        if (lastVolt < volt) _isCharging = true;
+        else _isCharging = false;
+        lastTime = xTaskGetTickCount();
+        lastVolt = volt;
+    }
+    float mv = volt * 2; // x2 since the voltage divider gives us 1/2 vbatt
+    percent = (mv - 3300) * 100 / (float)(4150 - 3350);
+
+    return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
+}
+bool isCharging() { return _isCharging; }
+
+#endif
 
 void fade_out_cb(void *obj, int32_t v) {
   if (obj) {
@@ -240,17 +370,20 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
 
   // Update battery icon and percentage
   const char *battery_symbol;
+
+  battery_symbol = (batteryPercentage > 75) ? LV_SYMBOL_BATTERY_FULL :
+                  (batteryPercentage > 50) ? LV_SYMBOL_BATTERY_3 :
+                  (batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
+                  (batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
+
 #ifdef CONFIG_HAS_BATTERY
   if (axp202_is_charging()) {
     battery_symbol = LV_SYMBOL_CHARGE;
-  } else {
-    battery_symbol = (batteryPercentage > 75) ? LV_SYMBOL_BATTERY_FULL :
-                     (batteryPercentage > 50) ? LV_SYMBOL_BATTERY_3 :
-                     (batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
-                     (batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
   }
-#else
-  battery_symbol = LV_SYMBOL_BATTERY_FULL;
+#elif CONFIG_USE_CARDPUTER
+  if (isCharging()) {
+    battery_symbol = LV_SYMBOL_CHARGE;
+  }
 #endif
   lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
 
@@ -269,8 +402,12 @@ static void status_update_cb(lv_timer_t *timer) {
   uint8_t power_level;
   axp2101_get_power_level(&power_level);
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, power_level);
+#elif CONFIG_USE_CARDPUTER
+  uint8_t power_level = getBattery();
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
+                    isCharging() ? power_level : power_level);
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, 100);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
 #endif
 }
 
@@ -362,8 +499,12 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   bool is_charging = axp202_is_charging();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     is_charging ? power_level : power_level);
+#elif CONFIG_USE_CARDPUTER
+  uint8_t power_level = getBattery();
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
+                    isCharging() ? power_level : power_level);
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, 100);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
 #endif
   if (!status_timer_initialized) {
     status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
