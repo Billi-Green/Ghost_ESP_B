@@ -2,11 +2,14 @@
 #include "managers/views/flappy_ghost_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
 
 static const char *TAG = "AppGalleryScreen";
+
+static const char *TAG = "app_gallery_screen";
 
 lv_obj_t *apps_container;
 static int selected_app_index = 0;
@@ -85,7 +88,7 @@ static void anim_set_x(void *obj, int32_t v) {
     // Debug output
     lv_coord_t img_width = app_items[selected_app_index].icon->header.w;
     lv_coord_t img_height = app_items[selected_app_index].icon->header.h;
-    printf("Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
+    ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
            btn_size, btn_size, icon_size, icon_size, img_width, img_height, x_pos, y_pos);
 
     if (LV_HOR_RES > 150) {
@@ -180,7 +183,7 @@ static void select_app_item(int index, bool slide_left) {
  * @brief Handles the selection of app items
  */
 static void handle_app_item_selection(int item_index) {
-    printf("Launching app: %s (index %d)\n", app_items[item_index].name, item_index);
+    ESP_LOGI(TAG, "Launching app: %s (index %d)\n", app_items[item_index].name, item_index);
     display_manager_switch_view(app_items[item_index].view);
 }
 
@@ -189,13 +192,16 @@ static void handle_app_item_selection(int item_index) {
  */
 static void handle_apps_button_press(int button) {
     if (button == 0) { // Left
+        ESP_LOGD(TAG, "Left button pressed\n");
         select_app_item(selected_app_index - 1, true);
     } else if (button == 3) { // Right
+        ESP_LOGD(TAG, "Right button pressed\n");
         select_app_item(selected_app_index + 1, false);
     } else if (button == 1) { // Select
+        ESP_LOGD(TAG, "Select button pressed\n");
         handle_app_item_selection(selected_app_index);
     } else if (button == 2) { // Back
-        printf("Back button pressed\n");
+        ESP_LOGD(TAG, "Back button pressed\n");
         display_manager_switch_view(&main_menu_view);
     }
 }

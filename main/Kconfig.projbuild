@@ -148,6 +148,19 @@ menu "Ghost ESP Options"
             help
                 Enable configuration for Ghost board.
 
+        config HAS_INFRARED
+            bool "Enable Infrared Support"
+            default n
+            help
+                Enable infrared hardware and UI support.
+
+        config INFRARED_LED_PIN
+            int "Infrared LED Pin"
+            default 0
+            depends on HAS_INFRARED
+            help
+                Set the GPIO pin used for IR LED transmission and indication.
+
     endmenu
     
     menu "GPS Configuration"

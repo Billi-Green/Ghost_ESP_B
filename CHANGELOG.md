@@ -5,6 +5,20 @@
 
 ### Added
 
+- IR Support
+  - Uses FlipperZero formatted IR files
+  - Universal Library IR Transmit
+  - Signals File IR Transmit
+  - IR Protocol Encoders:
+    - NEC
+    - Kaseikyo
+    - Pioneer
+    - RCA
+    - Samsung
+    - SIRC
+    - RC5
+    - RC6
+
 - Attacks
   - EAPOL Logoff Attack
   - SAE Flood Attack
@@ -35,6 +49,8 @@
 - WiFi
   - preserve STA mode in ap_manager init and start_services
 
+- Commands
+  - Add setcountry command to the help command (C5 only)
 
 
 ## Revival v1.5.1

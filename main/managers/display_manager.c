@@ -645,6 +645,8 @@ void hardware_input_task(void *pvParameters) {
           }
 
 
+          ESP_LOGI(TAG, "Input key value: %d\n", key_value);
+
           switch (key_value) {
           case 129: //shift - keyboard library already handled caps for letters
             if(!keyboard_is_change(&gkeyboard)){ // if shift is held down increment the counter for capslocks

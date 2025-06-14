@@ -44,6 +44,7 @@ GhostESP comes packed with various features for wireless network exploration and
 - **General BLE Scanning**
   - Detect BLE devices
   - Monitor BLE advertisements
+  - BLE Wardriving with GPS Logging
 
 - **Specialized Detection**
   - AirTag detection mode

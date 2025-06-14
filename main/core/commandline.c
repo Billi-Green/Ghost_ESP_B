@@ -1373,6 +1373,19 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("saefloodhelp\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Show detailed SAE flood attack help\n");
     TERMINAL_VIEW_ADD_TEXT("    Usage: saefloodhelp\n\n");
+
+#if CONFIG_IDF_TARGET_ESP32C5
+    printf("setcountry\n");
+    printf("    Description: Set the Wi-Fi country code.\n");
+    printf("    Usage: setcountry <CC>\n");
+    printf("    Arguments:\n");
+    printf("        <CC> : Two-letter ISO country code (e.g., US, GB, JP)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("setcountry\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Set the Wi-Fi country code.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: setcountry <CC>\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        <CC> : Two-letter ISO country code (e.g., US, GB, JP)\n\n");
+#endif
 }
 
 void handle_capture(int argc, char **argv) {

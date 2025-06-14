@@ -620,6 +620,30 @@ esp_err_t sd_card_setup_directory_structure() {
     printf("Directory %s already exists\n", evil_portal_dir);
   }
 
+  const char *infrared_dir = "/mnt/ghostesp/infrared";
+  if (!sd_card_exists(infrared_dir)) {
+    printf("Creating directory: %s\n", infrared_dir);
+    esp_err_t ret = sd_card_create_directory(infrared_dir);
+    if (ret != ESP_OK) {
+      printf("Failed to create directory %s: %s\n", infrared_dir, esp_err_to_name(ret));
+      return ret;
+    }
+  } else {
+    printf("Directory %s already exists\n", infrared_dir);
+  }
+
+  const char *remotes_dir = "/mnt/ghostesp/infrared/remotes";
+  if (!sd_card_exists(remotes_dir)) {
+    printf("Creating directory: %s\n", remotes_dir);
+    esp_err_t ret = sd_card_create_directory(remotes_dir);
+    if (ret != ESP_OK) {
+      printf("Failed to create directory %s: %s\n", remotes_dir, esp_err_to_name(ret));
+      return ret;
+    }
+  } else {
+    printf("Directory %s already exists\n", remotes_dir);
+  }
+
   printf("Directory structure successfully set up.\n");
   return ESP_OK;
 }

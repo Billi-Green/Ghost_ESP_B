@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include "managers/views/clock_screen.h"
 #include "managers/views/settings_screen.h"
+#if CONFIG_HAS_INFRARED
+#include "managers/views/infrared_view.h"
+#endif
 
 static const char *TAG = "MainMenu";
 
@@ -33,6 +36,9 @@ menu_item_t menu_items[] = {
     {"WiFi", &wifi, 1}, // applies to all boards
 #ifdef CONFIG_HAS_GPS
     {"GPS", &Map, 2},
+#endif
+#if CONFIG_HAS_INFRARED
+    {"Infrared", &infrared, 0}, // main infrared icon
 #endif
     {"Apps", &GESPAppGallery, 3}, // applies to all boards
 #ifdef CONFIG_HAS_RTC_CLOCK
@@ -125,7 +131,7 @@ static void update_menu_item(bool slide_left) {
     // Debug output
     lv_coord_t img_width = menu_items[selected_item_index].icon->header.w;
     lv_coord_t img_height = menu_items[selected_item_index].icon->header.h;
-    printf("Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
+    ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
            btn_size, btn_size, icon_size, icon_size, img_width, img_height, x_pos, y_pos);
 
     if (LV_HOR_RES > 150) {
@@ -244,6 +250,9 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_GPS
         {"GPS", OT_GPS, &options_menu_view},
 #endif
+#if CONFIG_HAS_INFRARED
+        {"Infrared", 0, &infrared_view},
+#endif
         {"Apps", 0, &apps_menu_view},
 #ifdef CONFIG_HAS_RTC_CLOCK
         {"Clock", 0, &clock_view},
@@ -255,7 +264,7 @@ static void handle_menu_item_selection(int item_index) {
     const char *name = menu_items[item_index].name;
     for (int i = 0; i < num_actions; ++i) {
         if (strcmp(name, menu_actions[i].name) == 0) {
-            printf("%s selected\n", menu_actions[i].name);
+            ESP_LOGI(TAG, "%s selected\n", menu_actions[i].name);
             if (menu_actions[i].view == &options_menu_view) {
                 SelectedMenuType = menu_actions[i].type;
             }
@@ -263,7 +272,7 @@ static void handle_menu_item_selection(int item_index) {
             return;
         }
     }
-    printf("Unknown menu item selected: %s\n", name);
+    ESP_LOGW(TAG, "Unknown menu item selected: %s\n", name);
 }
 
 /**

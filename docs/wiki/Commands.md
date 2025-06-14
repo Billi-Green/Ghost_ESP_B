@@ -77,5 +77,7 @@ Not available on ESP32-S2:
 - `help` - Show complete command list
 - `stop` - Stop all running operations
 - `reboot` - Restart device
+- `setcountry` - command for setting the country code
+- `timezone` - for setting a timezone
 
 > Remember to check your hardware compatibility before using commands
