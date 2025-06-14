@@ -5,6 +5,20 @@
 
 ### Added
 
+- IR Support
+  - Uses FlipperZero formatted IR files
+  - Universal Library IR Transmit
+  - Signals File IR Transmit
+  - IR Protocol Encoders:
+    - NEC
+    - Kaseikyo
+    - Pioneer
+    - RCA
+    - Samsung
+    - SIRC
+    - RC5
+    - RC6
+
 - Attacks
   - EAPOL Logoff Attack
   - SAE Flood Attack
