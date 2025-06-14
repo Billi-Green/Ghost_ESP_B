@@ -1,4 +1,6 @@
 file(GLOB_RECURSE app_sources "${CMAKE_SOURCE_DIR}/main/*.c")
+# Explicitly include infrared view implementation
+list(APPEND app_sources "${CMAKE_SOURCE_DIR}/main/managers/views/infrared_view.c")
 file(GLOB_RECURSE image_sources "${CMAKE_SOURCE_DIR}/main/vendor/images/*.c")
 file(GLOB_RECURSE axs15231b_sources "${CMAKE_SOURCE_DIR}/components/axs15231b/*.c")
 

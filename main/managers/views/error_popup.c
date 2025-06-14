@@ -3,6 +3,10 @@
 #include "freertos/task.h"
 #include <stdlib.h>
 #include <string.h>
+#include "esp_log.h"
+
+static const char *TAG = "error_popup";
+
 
 static lv_obj_t *error_popup_root = NULL;
 static lv_obj_t *error_popup_label = NULL;
@@ -34,6 +38,9 @@ void error_popup_destroy(void) {
 }
 
 void error_popup_create(const char *message) {
+
+    ESP_LOGE(TAG, "Error popup called with message: %s", message);
+
     // Initialize mutex if not already done
     if (!popup_mutex) {
         popup_mutex = xSemaphoreCreateMutex();

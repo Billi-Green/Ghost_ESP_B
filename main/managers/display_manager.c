@@ -645,6 +645,8 @@ void hardware_input_task(void *pvParameters) {
           }
 
 
+          ESP_LOGI(TAG, "Input key value: %d\n", key_value);
+
           switch (key_value) {
           case 0x29: // ESC key HID code
             ESP_LOGI(TAG, "Esc key\n");
