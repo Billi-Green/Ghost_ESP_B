@@ -15,6 +15,11 @@ void infrared_encoder_samsung_reset(InfraredCommonEncoder* encoder, const Infrar
 InfraredStatus infrared_encoder_samsung_encode_repeat(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level);
 void infrared_encoder_sirc_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message);
 InfraredStatus infrared_encoder_sirc_encode_repeat(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level);
+// Forward declarations for newly added protocols
+void infrared_encoder_rc5_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message);
+InfraredStatus infrared_encoder_rc5_encode(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level);
+void infrared_encoder_rc6_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message);
+InfraredStatus infrared_encoder_rc6_encode_manchester(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level);
 
 
 const InfraredCommonProtocolSpec infrared_protocol_nec = {
@@ -155,6 +160,54 @@ const InfraredCommonProtocolSpec infrared_protocol_sirc = {
     .encode_repeat = infrared_encoder_sirc_encode_repeat,
     .carrier_frequency = INFRARED_SIRC_CARRIER_FREQUENCY,
     .duty_cycle = INFRARED_SIRC_DUTY_CYCLE
+};
+
+const InfraredCommonProtocolSpec infrared_protocol_rc5 = {
+    .timings = {
+        .preamble_mark = INFRARED_RC5_PREAMBLE_MARK,
+        .preamble_space = INFRARED_RC5_PREAMBLE_SPACE,
+        .bit1_mark = INFRARED_RC5_BIT,
+        .bit1_space = INFRARED_RC5_BIT,
+        .bit0_mark = INFRARED_RC5_BIT,
+        .bit0_space = INFRARED_RC5_BIT,
+        .preamble_tolerance = INFRARED_RC5_PREAMBLE_TOLERANCE,
+        .bit_tolerance = INFRARED_RC5_BIT_TOLERANCE,
+        .silence_time = INFRARED_RC5_SILENCE,
+        .min_split_time = INFRARED_RC5_MIN_SPLIT_TIME,
+        .repeat_mark = 0,
+        .repeat_space = 0,
+    },
+    .manchester_start_from_space = false,
+    .databit_len = {14, 0, 0, 0},
+    .reset = infrared_encoder_rc5_reset,
+    .encode = infrared_common_encode_manchester,
+    .encode_repeat = NULL,
+    .carrier_frequency = INFRARED_RC5_CARRIER_FREQUENCY,
+    .duty_cycle = INFRARED_RC5_DUTY_CYCLE,
+};
+
+const InfraredCommonProtocolSpec infrared_protocol_rc6 = {
+    .timings = {
+        .preamble_mark = INFRARED_RC6_PREAMBLE_MARK,
+        .preamble_space = INFRARED_RC6_PREAMBLE_SPACE,
+        .bit1_mark = INFRARED_RC6_BIT,
+        .bit1_space = INFRARED_RC6_BIT,
+        .bit0_mark = INFRARED_RC6_BIT,
+        .bit0_space = INFRARED_RC6_BIT,
+        .preamble_tolerance = INFRARED_RC6_PREAMBLE_TOLERANCE,
+        .bit_tolerance = INFRARED_RC6_BIT_TOLERANCE,
+        .silence_time = INFRARED_RC6_SILENCE,
+        .min_split_time = INFRARED_RC6_MIN_SPLIT_TIME,
+        .repeat_mark = 0,
+        .repeat_space = 0,
+    },
+    .manchester_start_from_space = false,
+    .databit_len = {20, 0, 0, 0},
+    .reset = infrared_encoder_rc6_reset,
+    .encode = infrared_encoder_rc6_encode_manchester,
+    .encode_repeat = NULL,
+    .carrier_frequency = INFRARED_RC6_CARRIER_FREQUENCY,
+    .duty_cycle = INFRARED_RC6_DUTY_CYCLE,
 };
 
 // TODO: definitions for other protocol specs 

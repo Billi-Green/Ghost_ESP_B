@@ -10,5 +10,7 @@ extern const InfraredCommonProtocolSpec infrared_protocol_rca;
 extern const InfraredCommonProtocolSpec infrared_protocol_samsung;
 extern const InfraredCommonProtocolSpec infrared_protocol_sirc;
 // TODO: extern declarations for other protocols
+extern const InfraredCommonProtocolSpec infrared_protocol_rc5;
+extern const InfraredCommonProtocolSpec infrared_protocol_rc6;
 
 #endif // INFRARED_PROTOCOLS_H 

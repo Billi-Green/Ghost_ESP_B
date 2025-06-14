@@ -35,8 +35,8 @@ InfraredStatus infrared_encoder_nec_encode_repeat(InfraredCommonEncoder* encoder
 // Kaseikyo
 void infrared_encoder_kaseikyo_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message) {
     infrared_common_encoder_reset(encoder);
-    uint32_t addr_le = __builtin_bswap32(message->address);
-    uint32_t cmd_le = __builtin_bswap32(message->command);
+    uint32_t addr_le = message->address;
+    uint32_t cmd_le = message->command;
     uint8_t id = (addr_le >> 24) & 0x03;
     uint16_t vendor_id = (addr_le >> 8) & 0xFFFF;
     uint8_t genre1 = (addr_le >> 4) & 0x0F;
@@ -122,4 +122,47 @@ void infrared_encoder_sirc_reset(InfraredCommonEncoder* encoder, const InfraredM
 InfraredStatus infrared_encoder_sirc_encode_repeat(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level) {
     // SIRC repeats by re-sending the whole frame
     return InfraredStatusDone;
+}
+
+// RC5 protocol encoder
+void infrared_encoder_rc5_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message) {
+    infrared_common_encoder_reset(encoder);
+    uint16_t word = 0;
+    word |= (1 << 13); // start bit 1
+    word |= (1 << 12); // start bit 2
+    uint8_t addr = message->address & 0x1F;
+    word |= (uint16_t)addr << 6; // address 5 bits
+    uint8_t cmd = message->command & 0x3F;
+    word |= cmd; // command 6 bits
+    encoder->data[0] = ~(word & 0xFF);
+    encoder->data[1] = ~((word >> 8) & 0xFF);
+    encoder->bits_to_encode = encoder->protocol->databit_len[0];
+    encoder->bits_encoded = 0;
+}
+InfraredStatus infrared_encoder_rc5_encode(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level) {
+    return infrared_common_encode_manchester(encoder, duration, level);
+}
+
+// RC6 protocol encoder
+void infrared_encoder_rc6_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message) {
+    infrared_common_encoder_reset(encoder);
+    // build RC6 mode 0 frame: start bit + mode bits + address + command
+    uint32_t bits = 0;
+    // start bit at bit position databit_len-1
+    bits |= 1U << (encoder->protocol->databit_len[0] - 1);
+    // mode bits (0) follow automatically
+    uint8_t address = message->address & 0x1F;
+    bits |= (uint32_t)address << (encoder->protocol->databit_len[0] - 1 - 5);
+    uint8_t command = message->command & 0x3F;
+    bits |= (uint32_t)command;
+    // write bits into encoder data LSB first
+    size_t byte_count = (encoder->protocol->databit_len[0] + 7) / 8;
+    for (size_t i = 0; i < byte_count; i++) {
+        encoder->data[i] = (bits >> (8 * i)) & 0xFF;
+    }
+    encoder->bits_to_encode = encoder->protocol->databit_len[0];
+    encoder->bits_encoded = 0;
+}
+InfraredStatus infrared_encoder_rc6_encode_manchester(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level) {
+    return infrared_common_encode_manchester(encoder, duration, level);
 } 

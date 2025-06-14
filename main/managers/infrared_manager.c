@@ -359,12 +359,12 @@ static bool parse_ir_file(const char *buf, const char *path, infrared_signal_t *
             if (strcmp(key, "protocol") == 0) {
                 strncpy(current.payload.message.protocol, value, sizeof(current.payload.message.protocol) - 1);
             } else if (strcmp(key, "address") == 0) {
-                uint32_t addr = 0; const char *p2 = value; char *endptr;
-                while (*p2) { while (*p2 && isspace((unsigned char)*p2)) p2++; if (!*p2) break; unsigned long b = strtoul(p2, &endptr, 16); addr = (addr << 8) | (uint32_t)(b & 0xFF); p2 = endptr; }
+                uint32_t addr = 0; const char *p2 = value; char *endptr; uint8_t shift = 0;
+                while (*p2) { while (*p2 && isspace((unsigned char)*p2)) p2++; if (!*p2) break; unsigned long b = strtoul(p2, &endptr, 16); addr |= (uint32_t)(b & 0xFF) << shift; shift += 8; p2 = endptr; }
                 current.payload.message.address = addr;
             } else if (strcmp(key, "command") == 0) {
-                uint32_t cmd = 0; const char *p2 = value; char *endptr;
-                while (*p2) { while (*p2 && isspace((unsigned char)*p2)) p2++; if (!*p2) break; unsigned long b = strtoul(p2, &endptr, 16); cmd = (cmd << 8) | (uint32_t)(b & 0xFF); p2 = endptr; }
+                uint32_t cmd = 0; const char *p2 = value; char *endptr; uint8_t shift = 0;
+                while (*p2) { while (*p2 && isspace((unsigned char)*p2)) p2++; if (!*p2) break; unsigned long b = strtoul(p2, &endptr, 16); cmd |= (uint32_t)(b & 0xFF) << shift; shift += 8; p2 = endptr; }
                 current.payload.message.command = cmd;
             }
         }
@@ -432,15 +432,20 @@ static const InfraredCommonProtocolSpec* infrared_manager_get_protocol_spec(cons
     if (strcasecmp(name, "samsung32") == 0) return &infrared_protocol_samsung;
     if (strcasecmp(name, "samsung") == 0) return &infrared_protocol_samsung;
     if (strcasecmp(name, "sirc") == 0) return &infrared_protocol_sirc;
+    if (strcasecmp(name, "rc5") == 0) return &infrared_protocol_rc5;
+    if (strcasecmp(name, "rc6") == 0) return &infrared_protocol_rc6;
     return NULL;
 }
 
 static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float duty) {
     size_t item_count = (count + 1) / 2;
-    printf("send_rmt: count=%zu, item_count=%zu, freq=%" PRIu32 ", duty=%.2f\n", count, item_count, freq, duty);
-    rmt_symbol_word_t *symbols = heap_caps_malloc(item_count * sizeof(rmt_symbol_word_t), MALLOC_CAP_DMA);
+    size_t block_symbols = item_count;
+    if (block_symbols < 48) block_symbols = 48;
+    if (block_symbols % 2 != 0) block_symbols++;
+    ESP_LOGI(TAG_IR_MANAGER, "send_rmt: count=%zu, item_count=%zu, block_symbols=%zu, freq=%" PRIu32 ", duty=%.2f", count, item_count, block_symbols, freq, duty);
+    rmt_symbol_word_t *symbols = heap_caps_malloc(block_symbols * sizeof(rmt_symbol_word_t), MALLOC_CAP_DMA);
     if (!symbols) {
-        printf("send_rmt: failed to allocate symbols\n");
+        ESP_LOGE(TAG_IR_MANAGER, "send_rmt: failed to allocate symbols");
         return false;
     }
     for (size_t i = 0; i < item_count; i++) {
@@ -452,7 +457,7 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
     rmt_tx_channel_config_t tx_chan_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .gpio_num = CONFIG_INFRARED_LED_PIN,
-        .mem_block_symbols = item_count,
+        .mem_block_symbols = block_symbols,
         .resolution_hz = 1000000,
         .trans_queue_depth = 1,
         .flags = {
@@ -463,16 +468,16 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
     rmt_channel_handle_t tx_chan = NULL;
     esp_err_t err = rmt_new_tx_channel(&tx_chan_config, &tx_chan);
     if (err != ESP_OK) {
-        printf("send_rmt: rmt_new_tx_channel failed: %s\n", esp_err_to_name(err));
+        ESP_LOGE(TAG_IR_MANAGER, "send_rmt: rmt_new_tx_channel failed: %s", esp_err_to_name(err));
         heap_caps_free(symbols);
         return false;
     }
-    printf("send_rmt: channel created\n");
+    ESP_LOGI(TAG_IR_MANAGER, "send_rmt: channel created");
     err = rmt_enable(tx_chan);
     if (err != ESP_OK) {
-        printf("send_rmt: rmt_enable failed: %s\n", esp_err_to_name(err));
+        ESP_LOGE(TAG_IR_MANAGER, "send_rmt: rmt_enable failed: %s", esp_err_to_name(err));
     } else {
-        printf("send_rmt: channel enabled\n");
+        ESP_LOGI(TAG_IR_MANAGER, "send_rmt: channel enabled");
         rmt_carrier_config_t carrier_cfg = {
             .frequency_hz = freq,
             .duty_cycle = duty,
@@ -480,31 +485,31 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
         };
         err = rmt_apply_carrier(tx_chan, &carrier_cfg);
         if (err != ESP_OK) {
-            printf("send_rmt: rmt_apply_carrier failed: %s\n", esp_err_to_name(err));
+            ESP_LOGE(TAG_IR_MANAGER, "send_rmt: rmt_apply_carrier failed: %s", esp_err_to_name(err));
         } else {
-            printf("send_rmt: carrier applied\n");
+            ESP_LOGI(TAG_IR_MANAGER, "send_rmt: carrier applied");
         }
         rmt_copy_encoder_config_t copy_config = {};
         rmt_encoder_handle_t copy_encoder = NULL;
         err = rmt_new_copy_encoder(&copy_config, &copy_encoder);
         if (err != ESP_OK) {
-            printf("send_rmt: rmt_new_copy_encoder failed: %s\n", esp_err_to_name(err));
+            ESP_LOGE(TAG_IR_MANAGER, "send_rmt: rmt_new_copy_encoder failed: %s", esp_err_to_name(err));
         } else {
-            printf("send_rmt: copy encoder created\n");
+            ESP_LOGI(TAG_IR_MANAGER, "send_rmt: copy encoder created");
             err = rmt_transmit(tx_chan, copy_encoder, symbols, item_count * sizeof(rmt_symbol_word_t), &(rmt_transmit_config_t){.loop_count = 0});
             rmt_del_encoder(copy_encoder);
             if (err != ESP_OK) {
-                printf("send_rmt: rmt_transmit failed: %s\n", esp_err_to_name(err));
+                ESP_LOGE(TAG_IR_MANAGER, "send_rmt: rmt_transmit failed: %s", esp_err_to_name(err));
             } else {
-                printf("send_rmt: transmit OK\n");
+                ESP_LOGI(TAG_IR_MANAGER, "send_rmt: transmit OK");
                 err = rmt_tx_wait_all_done(tx_chan, pdMS_TO_TICKS(1000));
                 if (err != ESP_OK) {
-                    printf("send_rmt: wait_all_done failed: %s\n", esp_err_to_name(err));
+                    ESP_LOGE(TAG_IR_MANAGER, "send_rmt: wait_all_done failed: %s", esp_err_to_name(err));
                 } else {
-                    printf("send_rmt: wait_all_done OK\n");
+                    ESP_LOGI(TAG_IR_MANAGER, "send_rmt: wait_all_done OK");
                     err = rmt_disable(tx_chan);
                     if (err != ESP_OK) {
-                        printf("send_rmt: rmt_disable failed: %s\n", esp_err_to_name(err));
+                        ESP_LOGE(TAG_IR_MANAGER, "send_rmt: rmt_disable failed: %s", esp_err_to_name(err));
                     }
                 }
             }
