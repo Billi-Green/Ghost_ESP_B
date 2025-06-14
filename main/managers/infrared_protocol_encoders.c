@@ -32,6 +32,18 @@ InfraredStatus infrared_encoder_nec_encode_repeat(InfraredCommonEncoder* encoder
     }
 }
 
+// NEC Extended
+void infrared_encoder_necext_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message) {
+    infrared_common_encoder_reset(encoder);
+    uint16_t address = message->address & 0xFFFF;
+    uint8_t command = message->command & 0xFF;
+    encoder->data[0] = address & 0xFF;
+    encoder->data[1] = (address >> 8) & 0xFF;
+    encoder->data[2] = command;
+    encoder->data[3] = ~command;
+    encoder->bits_to_encode = encoder->protocol->databit_len[0];
+}
+
 // Kaseikyo
 void infrared_encoder_kaseikyo_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message) {
     infrared_common_encoder_reset(encoder);

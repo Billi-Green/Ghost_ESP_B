@@ -57,4 +57,7 @@ bool infrared_manager_transmit(const infrared_signal_t *signal);
 bool infrared_manager_start_background_task(TaskFunction_t fn, void *arg);
 void infrared_manager_stop_background_task(void);
 
+// Async enqueue of a parsed IR signal for background transmit
+bool infrared_manager_enqueue_signal(const infrared_signal_t *signal);
+
 #endif // INFRARED_MANAGER_H 

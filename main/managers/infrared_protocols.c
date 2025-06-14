@@ -20,6 +20,7 @@ void infrared_encoder_rc5_reset(InfraredCommonEncoder* encoder, const InfraredMe
 InfraredStatus infrared_encoder_rc5_encode(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level);
 void infrared_encoder_rc6_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message);
 InfraredStatus infrared_encoder_rc6_encode_manchester(InfraredCommonEncoder* encoder, uint32_t* duration, bool* level);
+void infrared_encoder_necext_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message);
 
 
 const InfraredCommonProtocolSpec infrared_protocol_nec = {
@@ -40,6 +41,30 @@ const InfraredCommonProtocolSpec infrared_protocol_nec = {
     .manchester_start_from_space = false,
     .databit_len = {32, 0, 0, 0},
     .reset = infrared_encoder_nec_reset,
+    .encode = infrared_common_encode_pdwm,
+    .encode_repeat = infrared_encoder_nec_encode_repeat,
+    .carrier_frequency = INFRARED_NEC_CARRIER_FREQUENCY,
+    .duty_cycle = INFRARED_NEC_DUTY_CYCLE
+};
+
+const InfraredCommonProtocolSpec infrared_protocol_necext = {
+    .timings = {
+        .preamble_mark = INFRARED_NEC_PREAMBLE_MARK,
+        .preamble_space = INFRARED_NEC_PREAMBLE_SPACE,
+        .bit1_mark = INFRARED_NEC_BIT1_MARK,
+        .bit1_space = INFRARED_NEC_BIT1_SPACE,
+        .bit0_mark = INFRARED_NEC_BIT0_MARK,
+        .bit0_space = INFRARED_NEC_BIT0_SPACE,
+        .preamble_tolerance = INFRARED_NEC_PREAMBLE_TOLERANCE,
+        .bit_tolerance = INFRARED_NEC_BIT_TOLERANCE,
+        .silence_time = INFRARED_NEC_SILENCE,
+        .min_split_time = INFRARED_NEC_MIN_SPLIT_TIME,
+        .repeat_mark = INFRARED_NEC_REPEAT_MARK,
+        .repeat_space = INFRARED_NEC_REPEAT_SPACE,
+    },
+    .manchester_start_from_space = false,
+    .databit_len = {32, 0, 0, 0},
+    .reset = infrared_encoder_necext_reset,
     .encode = infrared_common_encode_pdwm,
     .encode_repeat = infrared_encoder_nec_encode_repeat,
     .carrier_frequency = INFRARED_NEC_CARRIER_FREQUENCY,

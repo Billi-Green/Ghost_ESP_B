@@ -22,12 +22,6 @@
 #include "managers/infrared_timings.h"
 #include "managers/infrared_protocols.h"
 
-// Static task allocation to minimize heap usage
-#define INFRARED_MANAGER_TASK_STACK_SIZE 512
-static StaticTask_t infraredTaskTCB;
-static StackType_t infraredTaskStack[INFRARED_MANAGER_TASK_STACK_SIZE];
-static TaskHandle_t infraredTaskHandle = NULL;
-
 static const char *TAG_IR_MANAGER = "infrared_manager";
 
 bool infrared_manager_init(void) {
@@ -426,6 +420,7 @@ void infrared_manager_free_list(infrared_signal_t *signals, size_t count) {
 
 static const InfraredCommonProtocolSpec* infrared_manager_get_protocol_spec(const char* name) {
     if (strcasecmp(name, "nec") == 0) return &infrared_protocol_nec;
+    if (strcasecmp(name, "necext") == 0) return &infrared_protocol_necext;
     if (strcasecmp(name, "kaseikyo") == 0) return &infrared_protocol_kaseikyo;
     if (strcasecmp(name, "pioneer") == 0) return &infrared_protocol_pioneer;
     if (strcasecmp(name, "rca") == 0) return &infrared_protocol_rca;
@@ -522,7 +517,7 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
 
 bool infrared_manager_transmit(const infrared_signal_t *signal) {
     if (!signal) return false;
-    ESP_LOGI(TAG_IR_MANAGER, "transmitting IR signal (name: %s)", signal->name);
+    printf("transmitting IR signal (name: %s)\n", signal->name);
     gpio_set_level(CONFIG_INFRARED_LED_PIN, 1);
     rgb_manager_set_color(&rgb_manager, -1, 255, 0, 255, false);
     bool ok = false;
@@ -579,7 +574,7 @@ bool infrared_manager_transmit(const infrared_signal_t *signal) {
     }
     gpio_set_level(CONFIG_INFRARED_LED_PIN, 0);
     rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
-    ESP_LOGI(TAG_IR_MANAGER, "ir signal transmission complete");
+    printf("ir signal transmission complete (name: %s, status: %s)\n", signal->name, ok ? "OK" : "FAIL");
     return ok;
 }
 
@@ -599,38 +594,4 @@ bool infrared_manager_bruteforce(const char *path, uint32_t delay_ms) {
     infrared_manager_free_list(signals, count);
     ESP_LOGI(TAG_IR_MANAGER, "IR brute force complete for file: %s", path);
     return true;
-}
-
-// Start a background FreeRTOS task (statically allocated) to run fn(arg)
-bool infrared_manager_start_background_task(TaskFunction_t fn, void *arg) {
-    if(infraredTaskHandle) {
-        ESP_LOGW(TAG_IR_MANAGER, "background IR task already running");
-        return false;
-    }
-    infraredTaskHandle = xTaskCreateStatic(
-        fn,
-        "IR_BKG",
-        INFRARED_MANAGER_TASK_STACK_SIZE,
-        arg,
-        tskIDLE_PRIORITY + 1,
-        infraredTaskStack,
-        &infraredTaskTCB
-    );
-    if (infraredTaskHandle) {
-        ESP_LOGI(TAG_IR_MANAGER, "background IR task 'IR_BKG' started");
-    } else {
-        ESP_LOGE(TAG_IR_MANAGER, "failed to start background IR task 'IR_BKG'");
-    }
-    return (infraredTaskHandle != NULL);
-}
-
-// Stop the background task if running
-void infrared_manager_stop_background_task(void) {
-    if(infraredTaskHandle) {
-        vTaskDelete(infraredTaskHandle);
-        infraredTaskHandle = NULL;
-        ESP_LOGI(TAG_IR_MANAGER, "background IR task stopped");
-    } else {
-        ESP_LOGW(TAG_IR_MANAGER, "background IR task not running, cannot stop");
-    }
 } 

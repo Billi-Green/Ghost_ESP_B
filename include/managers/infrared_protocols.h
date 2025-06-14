@@ -12,5 +12,6 @@ extern const InfraredCommonProtocolSpec infrared_protocol_sirc;
 // TODO: extern declarations for other protocols
 extern const InfraredCommonProtocolSpec infrared_protocol_rc5;
 extern const InfraredCommonProtocolSpec infrared_protocol_rc6;
+extern const InfraredCommonProtocolSpec infrared_protocol_necext;
 
 #endif // INFRARED_PROTOCOLS_H 
