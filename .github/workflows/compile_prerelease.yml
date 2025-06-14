@@ -52,9 +52,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wget git flex bison gperf python3-pip python3-setuptools cmake ninja-build ccache libffi-dev libssl-dev dfu-util
 
-      - name: Install ESP-IDF v5.3.1
+      - name: Install ESP-IDF v5.4.1
         run: |
-          git clone -b v5.3.1 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
+          git clone -b v5.4.1 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
           ~/esp-idf/install.sh esp32,esp32s2,esp32s3,esp32c3,esp32c6 # Specify all targets needed
 
       - name: Apply Custom SDK Config
