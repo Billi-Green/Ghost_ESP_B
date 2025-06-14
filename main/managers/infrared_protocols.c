@@ -187,6 +187,50 @@ const InfraredCommonProtocolSpec infrared_protocol_sirc = {
     .duty_cycle = INFRARED_SIRC_DUTY_CYCLE
 };
 
+const InfraredCommonProtocolSpec infrared_protocol_sirc15 = {
+    .timings = {
+        .preamble_mark = INFRARED_SIRC_PREAMBLE_MARK,
+        .preamble_space = INFRARED_SIRC_PREAMBLE_SPACE,
+        .bit1_mark = INFRARED_SIRC_BIT1_MARK,
+        .bit1_space = INFRARED_SIRC_BIT1_SPACE,
+        .bit0_mark = INFRARED_SIRC_BIT0_MARK,
+        .bit0_space = INFRARED_SIRC_BIT0_SPACE,
+        .preamble_tolerance = INFRARED_SIRC_PREAMBLE_TOLERANCE,
+        .bit_tolerance = INFRARED_SIRC_BIT_TOLERANCE,
+        .silence_time = INFRARED_SIRC_SILENCE,
+        .min_split_time = INFRARED_SIRC_MIN_SPLIT_TIME,
+    },
+    .manchester_start_from_space = false,
+    .databit_len = {15, 0, 0, 0},
+    .reset = infrared_encoder_sirc_reset,
+    .encode = infrared_common_encode_pdwm,
+    .encode_repeat = infrared_encoder_sirc_encode_repeat,
+    .carrier_frequency = INFRARED_SIRC_CARRIER_FREQUENCY,
+    .duty_cycle = INFRARED_SIRC_DUTY_CYCLE
+};
+
+const InfraredCommonProtocolSpec infrared_protocol_sirc20 = {
+    .timings = {
+        .preamble_mark = INFRARED_SIRC_PREAMBLE_MARK,
+        .preamble_space = INFRARED_SIRC_PREAMBLE_SPACE,
+        .bit1_mark = INFRARED_SIRC_BIT1_MARK,
+        .bit1_space = INFRARED_SIRC_BIT1_SPACE,
+        .bit0_mark = INFRARED_SIRC_BIT0_MARK,
+        .bit0_space = INFRARED_SIRC_BIT0_SPACE,
+        .preamble_tolerance = INFRARED_SIRC_PREAMBLE_TOLERANCE,
+        .bit_tolerance = INFRARED_SIRC_BIT_TOLERANCE,
+        .silence_time = INFRARED_SIRC_SILENCE,
+        .min_split_time = INFRARED_SIRC_MIN_SPLIT_TIME,
+    },
+    .manchester_start_from_space = false,
+    .databit_len = {20, 0, 0, 0},
+    .reset = infrared_encoder_sirc_reset,
+    .encode = infrared_common_encode_pdwm,
+    .encode_repeat = infrared_encoder_sirc_encode_repeat,
+    .carrier_frequency = INFRARED_SIRC_CARRIER_FREQUENCY,
+    .duty_cycle = INFRARED_SIRC_DUTY_CYCLE
+};
+
 const InfraredCommonProtocolSpec infrared_protocol_rc5 = {
     .timings = {
         .preamble_mark = INFRARED_RC5_PREAMBLE_MARK,

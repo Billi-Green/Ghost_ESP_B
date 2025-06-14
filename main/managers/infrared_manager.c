@@ -427,6 +427,8 @@ static const InfraredCommonProtocolSpec* infrared_manager_get_protocol_spec(cons
     if (strcasecmp(name, "samsung32") == 0) return &infrared_protocol_samsung;
     if (strcasecmp(name, "samsung") == 0) return &infrared_protocol_samsung;
     if (strcasecmp(name, "sirc") == 0) return &infrared_protocol_sirc;
+    if (strcasecmp(name, "sirc15") == 0) return &infrared_protocol_sirc15;
+    if (strcasecmp(name, "sirc20") == 0) return &infrared_protocol_sirc20;
     if (strcasecmp(name, "rc5") == 0) return &infrared_protocol_rc5;
     if (strcasecmp(name, "rc6") == 0) return &infrared_protocol_rc6;
     return NULL;

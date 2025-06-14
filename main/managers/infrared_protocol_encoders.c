@@ -125,9 +125,13 @@ InfraredStatus infrared_encoder_samsung_encode_repeat(InfraredCommonEncoder* enc
 void infrared_encoder_sirc_reset(InfraredCommonEncoder* encoder, const InfraredMessage* message) {
     infrared_common_encoder_reset(encoder);
     uint8_t cmd = message->command & 0x7F;
-    uint8_t addr = message->address & 0x1F;
-    uint16_t data = cmd | (addr << 7);
-    memcpy(encoder->data, &data, 2);
+    uint32_t data = 0;
+    uint8_t addr_bits = encoder->protocol->databit_len[0] - 7;
+    uint32_t addr_mask = (1 << addr_bits) - 1;
+    uint32_t addr = message->address & addr_mask;
+    data = cmd | (addr << 7);
+    size_t byte_count = (encoder->protocol->databit_len[0] + 7) / 8;
+    memcpy(encoder->data, &data, byte_count);
     encoder->bits_to_encode = encoder->protocol->databit_len[0];
 }
 
