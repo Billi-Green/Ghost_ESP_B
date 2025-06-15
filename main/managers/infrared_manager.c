@@ -240,6 +240,14 @@ static bool read_file_binary(const char *path, uint8_t **buf, size_t *buf_len) {
     return true;
 }
 
+static void free_signal_array(infrared_signal_t *list, size_t count) {
+    if (!list) return;
+    for (size_t i = 0; i < count; i++) {
+        infrared_manager_free_signal(&list[i]);
+    }
+    free(list);
+}
+
 static bool parse_tlv_list(const uint8_t *buf, size_t buf_len, infrared_signal_t **signals, size_t *count){
     size_t idx = 0;
     if (buf_len >= 4 && buf[0] == 'R' && buf[1] == 'F' && buf[2] == 'I' && buf[3] == 'L') {
@@ -273,7 +281,7 @@ static bool parse_tlv_list(const uint8_t *buf, size_t buf_len, infrared_signal_t
             if(t==6){uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2;char v[sl+1];memcpy(v,&buf[idx],sl);v[sl]='\0';idx+=sl;
                 ESP_LOGI(TAG_IR_MANAGER, "read string value: %s", v);
                 if(strcmp(k,"name")==0){
-                    if(in){if(lc==lp){size_t nc=lp?lp*2:4;infrared_signal_t*tmp=realloc(list,nc*sizeof(infrared_signal_t));if(!tmp) return false;list=tmp;lp=nc;}list[lc++]=cur;}
+                    if(in){if(lc==lp){size_t nc=lp?lp*2:4;infrared_signal_t*tmp=realloc(list,nc*sizeof(infrared_signal_t));if(!tmp){free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;}list=tmp;lp=nc;}list[lc++]=cur;}
                     memset(&cur,0,sizeof(cur));in=true;strncpy(cur.name,v,sizeof(cur.name)-1);
                 } else if(strcmp(k,"type")==0){cur.is_raw=(strcmp(v,"raw")==0);} else if(strcmp(k,"protocol")==0){strncpy(cur.payload.message.protocol,v,sizeof(cur.payload.message.protocol)-1);} }
             else if(t==1&&strcmp(k,"frequency")==0){uint32_t w=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);float f;memcpy(&f,&w,4);cur.payload.raw.frequency=(uint32_t)f;idx+=4;
@@ -288,10 +296,12 @@ static bool parse_tlv_list(const uint8_t *buf, size_t buf_len, infrared_signal_t
             else if(t==2&&(strcmp(k,"address")==0||strcmp(k,"command")==0)){uint32_t v=0;for(uint32_t i=0;i<ct;i++){v=(v<<8)|buf[idx++];}if(strcmp(k,"address")==0)cur.payload.message.address=v;else cur.payload.message.command=v;
                 ESP_LOGI(TAG_IR_MANAGER, "read address/command: %lu", v);
             }
-            else{if(t==6){for(uint32_t i=0;i<ct;i++){uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2+sl;}}else if(t==1||t==7){idx+=ct*4;}else if(t==2){idx+=ct;}else return false;}
+            else{if(t==6){for(uint32_t i=0;i<ct;i++){uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2+sl;}}else if(t==1||t==7){idx+=ct*4;}else if(t==2){idx+=ct;}else{free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;}}
         }
-        if(in){if(lc==lp){size_t nc=lp?lp*2:4;infrared_signal_t*tmp=realloc(list,nc*sizeof(infrared_signal_t));if(!tmp) return false;list=tmp;lp=nc;}list[lc++]=cur;}
+        if(in){if(lc==lp){size_t nc=lp?lp*2:4;infrared_signal_t*tmp=realloc(list,nc*sizeof(infrared_signal_t));if(!tmp){free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;}list=tmp;lp=nc;}list[lc++]=cur;}
         if (lc == 0) {
+            free_signal_array(list,lc);
+            infrared_manager_free_signal(&cur);
             return false;
         }
         *signals = list;
@@ -328,7 +338,7 @@ static bool parse_ir_file(const char *buf, const char *path, infrared_signal_t *
                 if (list_count == list_capacity) {
                     size_t new_cap = list_capacity ? list_capacity * 2 : 4;
                     infrared_signal_t *tmp = realloc(list, new_cap * sizeof(infrared_signal_t));
-                    if (!tmp) { free(list); free(dup); return false; }
+                    if (!tmp) { free_signal_array(list, list_count); infrared_manager_free_signal(&current); free(dup); return false; }
                     list = tmp; list_capacity = new_cap;
                 }
                 list[list_count++] = current;
@@ -346,7 +356,7 @@ static bool parse_ir_file(const char *buf, const char *path, infrared_signal_t *
                 size_t data_count = 0; const char *p2 = value;
                 while (*p2) { while (*p2 && isspace((unsigned char)*p2)) p2++; if (!*p2) break; data_count++; while (*p2 && !isspace((unsigned char)*p2)) p2++; }
                 uint32_t *timings = malloc(sizeof(uint32_t) * data_count);
-                if (!timings) { free(list); free(dup); return false; }
+                if (!timings) { free_signal_array(list, list_count); infrared_manager_free_signal(&current); free(dup); return false; }
                 size_t idx2 = 0; p2 = value; char *endptr;
                 while (*p2) { while (*p2 && isspace((unsigned char)*p2)) p2++; if (!*p2) break; unsigned long v = strtoul(p2, &endptr, 10); timings[idx2++] = (uint32_t)v; p2 = endptr; }
                 current.payload.raw.timings = timings; current.payload.raw.timings_size = data_count;
@@ -370,13 +380,13 @@ static bool parse_ir_file(const char *buf, const char *path, infrared_signal_t *
         if (list_count == list_capacity) {
             size_t new_cap = list_capacity ? list_capacity * 2 : 4;
             infrared_signal_t *tmp = realloc(list, new_cap * sizeof(infrared_signal_t));
-            if (!tmp) { free(list); free(dup); return false; }
+            if (!tmp) { free_signal_array(list, list_count); infrared_manager_free_signal(&current); free(dup); return false; }
             list = tmp; list_capacity = new_cap;
         }
         list[list_count++] = current;
     }
     free(dup);
-    if (list_count == 0) { free(list); return false; }
+    if (list_count == 0) { free_signal_array(list, list_count); infrared_manager_free_signal(&current); return false; }
     *signals = list; *count = list_count;
     return true;
 }
