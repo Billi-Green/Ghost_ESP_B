@@ -38,6 +38,7 @@ jobs:
           - { name: "CYD2USB2.4_Inch_C", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.CYD2USB2.4Inch_C_Varient", zip_name: "CYD2USB2.4Inch_C.zip" }
           - { name: "Waveshare_LCD",   idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.waveshare7inch",     zip_name: "Waveshare_LCD.zip" }
           - { name: "Crowtech_LCD",    idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.crowtech7inch",      zip_name: "Crowtech_LCD.zip" }
+          - { name: "Flipper_JCMK_GPS", idf_target: "esp32s2", sdkconfig_file: "configs/sdkconfig.flipper.jcmk_gps",    zip_name: "Flipper_JCMK_GPS.zip" }
 
     steps:
       - uses: actions/checkout@v4
