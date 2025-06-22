@@ -1329,6 +1329,10 @@ static esp_err_t start_http_server(void) {
     }
 
     esp_err_t ret = httpd_start(&server, &server_config);
+    if (ret == ESP_ERR_HTTPD_TASK && server_config.stack_size > 4096) {
+        server_config.stack_size = 4096;
+        ret = httpd_start(&server, &server_config);
+    }
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(ret));
         return ret;
