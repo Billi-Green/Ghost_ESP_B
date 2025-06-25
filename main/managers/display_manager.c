@@ -322,7 +322,7 @@ void fade_out_ready_cb(lv_anim_t *anim) {
     dm.current_view = new_view;
 
     if (new_view->get_hardwareinput_callback) {
-      new_view->input_callback(&dm.current_view->input_callback);
+      new_view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
     }
 
     new_view->create();
@@ -663,7 +663,7 @@ void display_manager_switch_view(View *view) {
       dm.current_view = view;
 
       if (view->get_hardwareinput_callback) {
-        view->input_callback(&dm.current_view->input_callback);
+        view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
       }
 
       view->create();

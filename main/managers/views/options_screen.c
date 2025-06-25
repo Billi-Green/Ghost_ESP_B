@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "managers/views/keyboard_screen.h"
 
 static const char *TAG = "optionsScreen";
 
@@ -48,6 +49,7 @@ static lv_obj_t *back_btn = NULL;
 
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
+static void wifi_connect_kb_cb(const char *text);
 
 // Add scroll functions
 static void scroll_options_up(lv_event_t *e) {
@@ -109,6 +111,7 @@ static const char *wifi_options[] = {"Scan Access Points",
                                      "Channel Congestion",
                                      "Start DHCP-Starve",
                                      "Stop DHCP-Starve",
+                                     "Connect to WiFi",
                                      "Connect to saved WiFi",
                                      "Go Back",
                                      NULL};
@@ -839,6 +842,13 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Connect to WiFi") == 0) {
+        keyboard_view_set_submit_callback(wifi_connect_kb_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("\"SSID\" \"PASSWORD\"");
+        view_switched = true;
+    }
+
     else if (strcmp(Selected_Option, "Connect to saved WiFi") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("connect");
@@ -899,4 +909,27 @@ back_btn = NULL; // Clear back button reference
 scroll_up_btn = NULL; // Clear scroll button references
 scroll_down_btn = NULL;
 display_manager_switch_view(&main_menu_view);
+}
+
+static void wifi_connect_kb_cb(const char *text){
+    const char *p=text;
+    while(*p && *p!='\"') p++;
+    if(!*p){error_popup_create("format: \"SSID\" \"PASSWORD\""); return;}
+    p++; const char *start=p;
+    while(*p && *p!='\"') p++;
+    if(!*p){error_popup_create("format: \"SSID\" \"PASSWORD\""); return;}
+    size_t len=p-start; if(len==0||len>=64){error_popup_create("ssid too long"); return;}
+    char ssid[64]={0}; memcpy(ssid,start,len); ssid[len]='\0';
+    p++; while(*p==' '){p++;}
+    char pass[64]={0};
+    if(*p=='\"'){
+        p++; start=p; while(*p && *p!='\"') p++; if(!*p){error_popup_create("format: \"SSID\" \"PASSWORD\""); return;}
+        len=p-start; if(len>=64){error_popup_create("pass too long"); return;}
+        memcpy(pass,start,len); pass[len]='\0';
+    }
+    char cmd[256];
+    snprintf(cmd,sizeof(cmd),"connect \"%s\" \"%s\"",ssid,pass);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
 }
