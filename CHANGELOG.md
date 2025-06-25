@@ -5,7 +5,7 @@
 
 ### Added
 
-- IR Support
+- IR Support (enabled on LilyGo S3TWatch and Cardputer)
   - Uses FlipperZero formatted IR files stored in sdcard: infrared/remotes or /universals
   - Universal Library IR Transmit
   - Signals File IR Transmit
@@ -20,7 +20,7 @@
     - RC6
 
 - Display
-  - Add keyboard view
+  - Added keyboard view
 
 - Attacks
   - EAPOL Logoff Attack

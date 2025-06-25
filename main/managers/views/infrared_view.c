@@ -446,18 +446,80 @@ static void ir_select_item(int index) {
 }
 
 void infrared_view_input_cb(InputEvent *event) {
-    if(event->type == INPUT_TYPE_JOYSTICK) {
+    if (event->type == INPUT_TYPE_TOUCH) {
+        lv_indev_data_t *data = &event->data.touch_data;
+        
+        if (data->state == LV_INDEV_STATE_PR) {
+            #ifdef CONFIG_USE_TOUCHSCREEN
+            if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) {
+                lv_area_t area;
+                lv_obj_get_coords(ir_scroll_up_btn, &area);
+                if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
+                    data->point.y >= area.y1 && data->point.y <= area.y2) {
+                    ir_select_item(selected_ir_index - 1);
+                    return;
+                }
+            }
+            
+            if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) {
+                lv_area_t area;
+                lv_obj_get_coords(ir_scroll_down_btn, &area);
+                if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
+                    data->point.y >= area.y1 && data->point.y <= area.y2) {
+                    ir_select_item(selected_ir_index + 1);
+                    return;
+                }
+            }
+            
+            if (ir_back_btn && lv_obj_is_valid(ir_back_btn)) {
+                lv_area_t area;
+                lv_obj_get_coords(ir_back_btn, &area);
+                if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
+                    data->point.y >= area.y1 && data->point.y <= area.y2) {
+                    back_event_cb(NULL);
+                    return;
+                }
+            }
+            #endif
+            
+            for (int i = 0; i < num_ir_items; i++) {
+                lv_obj_t *btn = lv_obj_get_child(list, i);
+                if (btn) {
+                    lv_area_t btn_area;
+                    lv_obj_get_coords(btn, &btn_area);
+                    if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
+                        data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
+                        ir_select_item(i);
+                        
+                        if (!showing_commands) {
+                            if (has_remotes_option && i == 0) {
+                                remotes_event_cb(NULL);
+                            } else if (has_universals_option && i == (has_remotes_option ? 1 : 0)) {
+                                universals_event_cb(NULL);
+                            } else {
+                                int file_idx = i - ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0));
+                                file_event_open(file_idx);
+                            }
+                        } else {
+                            command_event_execute(i);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    } else if(event->type == INPUT_TYPE_JOYSTICK) {
         uint8_t idx = event->data.joystick_index;
-        if(idx == 0) { // left => back
+        if(idx == 0) {
             ESP_LOGI(TAG, "joystick left pressed, going back");
             back_event_cb(NULL);
-        } else if(idx == 2) { // up
+        } else if(idx == 2) {
             ESP_LOGI(TAG, "joystick up pressed, selecting previous item");
             ir_select_item(selected_ir_index - 1);
-        } else if(idx == 4) { // down
+        } else if(idx == 4) {
             ESP_LOGI(TAG, "joystick down pressed, selecting next item");
             ir_select_item(selected_ir_index + 1);
-        } else if(idx == 1) { // enter
+        } else if(idx == 1) {
             if (!showing_commands) {
                 if (has_remotes_option && selected_ir_index == 0) {
                     ESP_LOGI(TAG, "joystick enter pressed on Remotes, opening remotes directory");
@@ -478,13 +540,13 @@ void infrared_view_input_cb(InputEvent *event) {
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         uint8_t keyValue = event->data.key_value;
 
-        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) { // Left / up
+        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) {
             ESP_LOGI(TAG, "Keyboard Left/Up button pressed\n");
             ir_select_item(selected_ir_index - 1);
-        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) { // Right / down
+        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) {
             ESP_LOGI(TAG, "Keyboard Right/Down button pressed\n");
             ir_select_item(selected_ir_index + 1);
-        } else if (keyValue == 40) { // Select
+        } else if (keyValue == 40) {
             ESP_LOGI(TAG, "Keyboard Enter button pressed\n");
             if (!showing_commands) {
                 if (has_remotes_option && selected_ir_index == 0) {
@@ -502,7 +564,7 @@ void infrared_view_input_cb(InputEvent *event) {
                 ESP_LOGI(TAG, "Keyboard Enter pressed, executing selected command at index %d", selected_ir_index);
                 command_event_execute(selected_ir_index);
             }
-        } else if (keyValue == 29 || keyValue == '`') { // esc
+        } else if (keyValue == 29 || keyValue == '`') {
             ESP_LOGI(TAG, "Keyboard Esc button pressed\n");
             back_event_cb(NULL);
         }
