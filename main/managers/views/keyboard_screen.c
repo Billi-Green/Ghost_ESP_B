@@ -154,17 +154,31 @@ static void recreate_keyboard_buttons() {
         int total_key_width = screen_width - (padding * 2);
         int current_row_length = max_row_lengths[r];
         int key_width = total_key_width / current_row_length;
-        int key_x = padding;
+        const char *(*current_keys)[10] = is_symbols_mode ? symbols : keys;
+        const int *row_lens = is_symbols_mode ? symbols_row_lengths : row_lengths;
+        int actual_len = row_lens[r];
+        int special_count = 0;
+        if (!is_symbols_mode) {
+            for (int i = 0; i < actual_len; i++) {
+                const char *txt = keys[r][i];
+                if (strcmp(txt, "SHIFT") == 0 || strcmp(txt, "DEL") == 0 || strcmp(txt, " ") == 0) {
+                    special_count++;
+                }
+            }
+        }
+        int extra_space = special_count * (key_width / 2);
+        int total_keys_width = actual_len * key_width + extra_space;
+        int blank_space = total_key_width - total_keys_width;
+        int key_x = padding + blank_space / 2;
         
         for (int c = 0; c < current_row_length; c++) {
             int current_key_width = key_width;
-            const char *(*current_keys)[10] = is_symbols_mode ? symbols : keys;
-            const int *current_row_lengths = is_symbols_mode ? symbols_row_lengths : row_lengths;
             
-            // adjust for wider buttons only in alphabet mode
-            if (!is_symbols_mode && c < row_lengths[r]) {
-                if (strcmp(keys[r][c], "SHIFT") == 0 || strcmp(keys[r][c], "DEL") == 0 || strcmp(keys[r][c], " ") == 0) {
-                    current_key_width = key_width * 1.5;
+            // adjust for wider SHIFT and DEL buttons
+            if (!is_symbols_mode && c < row_lens[r]) {
+                const char *txt = keys[r][c];
+                if (strcmp(txt, "SHIFT") == 0 || strcmp(txt, "DEL") == 0 || strcmp(txt, " ") == 0) {
+                    current_key_width += key_width / 2;
                 }
             }
             
@@ -180,7 +194,7 @@ static void recreate_keyboard_buttons() {
             lv_obj_set_style_radius(key_btn, 3, 0);
 
             lv_obj_t *key_label = lv_label_create(key_btn);
-            if (c < current_row_lengths[r]) {
+            if (c < row_lens[r]) {
                 const char* key_text = current_keys[r][c];
                 if (!is_symbols_mode && strlen(key_text) == 1) {
                     char new_text[2];
@@ -252,28 +266,30 @@ static void keyboard_create() {
         int current_row_length = max_row_lengths[r];
         int key_width = total_key_width / current_row_length;
         
-        // special handling for rows with SHIFT and DEL
-        bool has_shift_del = false;
-        int shift_pos = -1, del_pos = -1;
-        for (int check_c = 0; check_c < row_lengths[r]; check_c++) {
-            if (strcmp(keys[r][check_c], "SHIFT") == 0) {
-                has_shift_del = true;
-                shift_pos = check_c;
-            }
-            if (strcmp(keys[r][check_c], "DEL") == 0) {
-                del_pos = check_c;
+        const int *row_lens = is_symbols_mode ? symbols_row_lengths : row_lengths;
+        int actual_len = row_lens[r];
+        int special_count = 0;
+        if (!is_symbols_mode) {
+            for (int i = 0; i < actual_len; i++) {
+                const char *txt = keys[r][i];
+                if (strcmp(txt, "SHIFT") == 0 || strcmp(txt, "DEL") == 0 || strcmp(txt, " ") == 0) {
+                    special_count++;
+                }
             }
         }
-        
-        int key_x = padding;
+        int extra_space = special_count * (key_width / 2);
+        int total_keys_width = actual_len * key_width + extra_space;
+        int blank_space = total_key_width - total_keys_width;
+        int key_x = padding + blank_space / 2;
         
         for (int c = 0; c < current_row_length; c++) {
             int current_key_width = key_width;
             
             // adjust for wider SHIFT and DEL buttons
-            if (!is_symbols_mode && c < row_lengths[r]) {
-                if (strcmp(keys[r][c], "SHIFT") == 0 || strcmp(keys[r][c], "DEL") == 0 || strcmp(keys[r][c], " ") == 0) {
-                    current_key_width = key_width * 1.5;
+            if (!is_symbols_mode && c < row_lens[r]) {
+                const char *txt = keys[r][c];
+                if (strcmp(txt, "SHIFT") == 0 || strcmp(txt, "DEL") == 0 || strcmp(txt, " ") == 0) {
+                    current_key_width += key_width / 2;
                 }
             }
             
@@ -289,7 +305,7 @@ static void keyboard_create() {
             lv_obj_set_style_radius(key_btn, 3, 0);
 
             lv_obj_t *key_label = lv_label_create(key_btn);
-            if (c < row_lengths[r]) {
+            if (c < row_lens[r]) {
                 lv_label_set_text(key_label, keys[r][c]);
             } else {
                 lv_label_set_text(key_label, "");
