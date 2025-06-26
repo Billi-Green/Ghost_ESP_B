@@ -197,7 +197,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
             add_digit(options[option_index][0]);
             update_display();
         }
-        else if(key_value == 8){ //delete key maps to star - dirty fix
+        else if(key_value == 8){
             ESP_LOGI(TAG, "Removing last number");
             remove_digit();
             update_display();
