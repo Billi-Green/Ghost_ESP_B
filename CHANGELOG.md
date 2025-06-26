@@ -21,7 +21,8 @@
 
 - Display
   - Added keyboard view
-
+  - Connect to WiFi command with keyboard view
+  
 - Attacks
   - EAPOL Logoff Attack
   - SAE Flood Attack (WPA3)
