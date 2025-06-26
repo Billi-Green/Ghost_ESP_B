@@ -216,7 +216,7 @@ static void handle_keyboard_interactions(int keyValue){
     } else if (keyValue == 47 || keyValue == '/') { // Right
         ESP_LOGI(TAG, "Right button pressed\n");
         select_app_item(selected_app_index + 1, false);
-    } else if (keyValue == 40) { // Select
+    } else if (keyValue == 13) { // Select
         ESP_LOGI(TAG, "Enter button pressed\n");
         handle_app_item_selection(selected_app_index);
     } else if (keyValue == 29 || keyValue == '`') { // esc
@@ -261,7 +261,7 @@ static void handle_keyboard_interactions(int keyValue){
         ESP_LOGI(TAG, "Joystick event");
         handle_apps_button_press(event->data.joystick_index);
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
-        ESP_LOGW(TAG, "keyboard event; unhandled");
+        ESP_LOGW(TAG, "keyboard event");
         handle_keyboard_interactions(event->data.key_value);
     }
 }

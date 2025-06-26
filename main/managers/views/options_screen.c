@@ -436,7 +436,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
         } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) { // Right / down
             ESP_LOGI(TAG, "Right/Down button pressed\n");
             select_option_item(selected_item_index + 1);
-        } else if (keyValue == 40) { // Select
+        } else if (keyValue == 13) { // Select
             ESP_LOGI(TAG, "Enter button pressed\n");
             lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
             if (selected_obj) {

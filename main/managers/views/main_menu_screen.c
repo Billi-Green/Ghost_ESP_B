@@ -164,7 +164,7 @@ void handle_keyboard_interactions(int keyValue){
     } else if (keyValue == 47 || keyValue == '/') { // Right
         ESP_LOGI(TAG, "Right button pressed\n");
         select_menu_item(selected_item_index + 1, false);
-    } else if (keyValue == 40) { // Select
+    } else if (keyValue == 13) { // Select
         ESP_LOGI(TAG, "Enter button pressed\n");
         handle_menu_item_selection(selected_item_index);
     } else if (keyValue == 29 || keyValue == '`') { // esc
