@@ -24,6 +24,14 @@
 #include "managers/default_portal.h"
 #include <time.h>
 
+#if !defined(MAX_WIFI_CHANNEL)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define MAX_WIFI_CHANNEL 165
+#else
+#define MAX_WIFI_CHANNEL 13
+#endif
+#endif
+
 static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
 
@@ -1389,10 +1397,16 @@ void handle_help(int argc, char **argv) {
 
     printf("listenprobes\n");
     printf("    Description: Listen for and log probe requests.\n");
-    printf("    Usage: listenprobes [stop]\n\n");
+    printf("    Usage: listenprobes [channel] [stop]\n");
+    printf("    Arguments:\n");
+    printf("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+    printf("        stop      : Stop probe request listening\n\n");
     TERMINAL_VIEW_ADD_TEXT("listenprobes\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Listen for and log probe requests.\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: listenprobes [stop]\n\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: listenprobes [channel] [stop]\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+    TERMINAL_VIEW_ADD_TEXT("        stop      : Stop probe request listening\n\n");
 
     printf("webauth\\n");
     printf("    Description: Enable or disable web UI authentication.\\n");
@@ -2050,10 +2064,27 @@ void handle_listen_probes_cmd(int argc, char **argv) {
         return;
     }
 
-    printf("Starting to listen for probe requests...\n");
-    TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests...\n");
+    uint8_t channel = 0;
+    bool channel_hopping = true;
 
-    // Check SD card and enable PCAP to SD only if available
+    if (argc > 1) {
+        char *endptr;
+        long ch = strtol(argv[1], &endptr, 10);
+        if (*endptr == '\0' && ch >= 1 && ch <= MAX_WIFI_CHANNEL) {
+            channel = (uint8_t)ch;
+            channel_hopping = false;
+            printf("Starting to listen for probe requests on channel %d...\n", channel);
+            TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests on channel %d...\n", channel);
+        } else {
+            printf("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            TERMINAL_VIEW_ADD_TEXT("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            return;
+        }
+    } else {
+        printf("Starting to listen for probe requests (channel hopping)...\n");
+        TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests (channel hopping)...\n");
+    }
+
     bool sd_available = sd_card_exists("/mnt/ghostesp/pcaps");
     g_listen_probes_save_to_sd = sd_available;
     if (sd_available) {
@@ -2068,7 +2099,12 @@ void handle_listen_probes_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("SD card not available; probe PCAP disabled.\n");
     }
 
-    wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+    if (channel_hopping) {
+        wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+    } else {
+        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+    }
 }
 
 void handle_web_auth_cmd(int argc, char **argv) {
