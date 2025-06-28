@@ -197,7 +197,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
             add_digit(options[option_index][0]);
             update_display();
         }
-        else if(strcmp(key_str, "*") == 0){ //delete key maps to star - dirty fix
+        else if(key_value == 8){
             ESP_LOGI(TAG, "Removing last number");
             remove_digit();
             update_display();
@@ -234,7 +234,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
             } else if (cursor_pos >= 10) {
                 cursor_pos = cursor_pos - 10;
             }
-        } else if (key_value == 40){ //enter key
+        } else if (key_value == 13){ //enter key
             if (strcmp(options[cursor_pos], "DEL") == 0) {
                 remove_digit();
                 update_display();

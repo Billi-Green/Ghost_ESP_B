@@ -214,7 +214,7 @@ static void event_handler(InputEvent *ev) {
             } else {
                 move_focus(true);
             }
-        } else if (keyValue == 40) { // Select
+        } else if (keyValue == 13) { // Select
             ESP_LOGI(TAG, "Enter button pressed\n");
             if (item->submenu) {
                 if (menu_stack_top < 9) {
