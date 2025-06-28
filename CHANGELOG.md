@@ -1,6 +1,5 @@
 # Ghost ESP Changelog
 
-
 ## Revival v1.6
 
 ### Added
@@ -25,40 +24,43 @@
   
 - Attacks
   - EAPOL Logoff Attack
-  - SAE Flood Attack (WPA3)
-  - Probe Request Capture
+  - SAE Flood Attack (WPA3 only)
+  - Probe request capture
 
 - Commands
-  - Allow selection of multiple APs (eg. select -a 2,3,4)
-  TODO - add comma to display numpad
-  - webauthcommand to enable/disable web authentication
+  - 'webauth on/off' command to enable/disable webui authentication
 
 - Cardputer
   - Add keyboard event handling functionality - @tototo31
   - Enable Cardputer's LED in config - @tototo31
+  - Get cardputer keys working - @tototo31
 
 ### Changed
 
+- Display
+  - Removed touch controls from settings menu on non-touch devices - @tototo31
+
 - Cardputer
-  - Enable Cardputer's LED in config - @tototo31
   - Use backtick key to return to main menu
 
 - Attacks
   - Deauth Attack now supports targeting multiple APs
+
+- Commands
+  - Allow selection of multiple APs (eg. select -a 2,3,4)
+  
 
 
 ### Bug Fixes
 
 - Display
   - Fix blank bootup screen on cardputer and show flappy ghost icon out of necessity - @tototo31
-  - Removed touch controls from settings menu on non-touch devices - @tototo31
 
 - WiFi
   - preserve STA mode in ap_manager init and start_services
 
 - Cardputer
   - Get cardputer battery status working - @tototo31
-  - Get cardputer keys working - @tototo31
 
 
 
