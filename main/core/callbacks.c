@@ -11,6 +11,7 @@
 #include <string.h>
 #include <time.h>
 #include "esp_rom_sys.h"  // Contains esp_rom_printf
+#include <esp_timer.h>  // For esp_timer_get_time
 
 #define STORE_STR_ATTR __attribute__((section(".rodata.str")))
 #define STORE_DATA_ATTR __attribute__((section(".rodata.data")))
@@ -36,6 +37,7 @@
 #define CHANNEL_HOP_INTERVAL_MS 200
 #define RECENT_SSID_COUNT 5
 #define LOG_DELAY_MS 5000
+#define PROBE_DEDUPE_TIMEOUT_MS 1000
 static pineap_network_t pineap_networks[MAX_PINEAP_NETWORKS];
 static int pineap_network_count = 0;
 static bool pineap_detection_active = false;
@@ -933,3 +935,76 @@ void ble_skimmer_scan_callback(struct ble_gap_event *event, void *arg) {
     }
 }
 #endif
+
+// Flag indicating whether to save probe PCAP data to SD (disable UART fallback if false)
+bool g_listen_probes_save_to_sd = false;
+
+static char last_probe_log[128] = {0};
+static uint64_t last_probe_log_time_ms = 0;
+
+void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) {
+        return;
+    }
+
+    wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    if (!is_probe_request(pkt)) {
+        return;
+    }
+
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    const uint8_t *payload = pkt->payload;
+
+    // Extract source and dest MAC and SSID as before...
+    char src_mac_str[18];
+    snprintf(src_mac_str, sizeof(src_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5]);
+    char dest_mac_str[18];
+    snprintf(dest_mac_str, sizeof(dest_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             hdr->addr1[0], hdr->addr1[1], hdr->addr1[2], hdr->addr1[3], hdr->addr1[4], hdr->addr1[5]);
+    int index = 24;
+    char ssid[33] = {0};
+    bool ssid_found = false;
+    if (pkt->rx_ctrl.sig_len > index) {
+        const uint8_t *body = payload + index;
+        int body_len = pkt->rx_ctrl.sig_len - index;
+        for (int i = 0; i < body_len - 1; i += 2 + body[i+1]) {
+            uint8_t tag_num = body[i];
+            uint8_t tag_len = body[i+1];
+            if (tag_num == 0 && tag_len < sizeof(ssid) && i + 2 + tag_len <= body_len) {
+                memcpy(ssid, &body[i+2], tag_len);
+                ssid[tag_len] = '\0';
+                if (tag_len == 0) strcpy(ssid, "Broadcast");
+                ssid_found = true;
+                break;
+            }
+        }
+        if (!ssid_found) strcpy(ssid, "Broadcast");
+    }
+
+    // Build log message
+    char log_msg[128];
+    snprintf(log_msg, sizeof(log_msg), "Probe Req: %s -> %s for %s", src_mac_str, dest_mac_str, ssid);
+
+    // Deduplicate: skip if same message within timeout
+    uint64_t now_ms = esp_timer_get_time() / 1000ULL;
+    if (strcmp(log_msg, last_probe_log) == 0 && (now_ms - last_probe_log_time_ms) < PROBE_DEDUPE_TIMEOUT_MS) {
+        return;
+    }
+    strcpy(last_probe_log, log_msg);
+    last_probe_log_time_ms = now_ms;
+
+    // Optionally save packet to SD if enabled
+    if (g_listen_probes_save_to_sd && pkt->rx_ctrl.sig_len > 0) {
+        esp_err_t ret = pcap_write_packet_to_buffer(payload, pkt->rx_ctrl.sig_len, PCAP_CAPTURE_WIFI);
+        if (ret != ESP_OK) {
+            ESP_LOGE("PROBE_LISTEN", "Failed to write packet to buffer");
+        }
+    }
+
+    // Print to console and display
+    printf("%s\n", log_msg);
+    TERMINAL_VIEW_ADD_TEXT(log_msg);
+    TERMINAL_VIEW_ADD_TEXT("\n");
+}

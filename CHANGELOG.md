@@ -26,6 +26,7 @@
 - Attacks
   - EAPOL Logoff Attack
   - SAE Flood Attack (WPA3)
+  - Probe Request Capture
 
 - Commands
   - Allow selection of multiple APs (eg. select -a 2,3,4)

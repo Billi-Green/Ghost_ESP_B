@@ -1386,6 +1386,13 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
     TERMINAL_VIEW_ADD_TEXT("        <CC> : Two-letter ISO country code (e.g., US, GB, JP)\n\n");
 #endif
+
+    printf("listenprobes\n");
+    printf("    Description: Listen for and log probe requests.\n");
+    printf("    Usage: listenprobes [stop]\n\n");
+    TERMINAL_VIEW_ADD_TEXT("listenprobes\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Listen for and log probe requests.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: listenprobes [stop]\n\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -2026,6 +2033,36 @@ void handle_setcountry(int argc, char **argv) {
 }
 #endif
 
+void handle_listen_probes_cmd(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "stop") == 0) {
+        wifi_manager_stop_monitor_mode();
+        pcap_file_close();
+        g_listen_probes_save_to_sd = false;
+        printf("Probe request listening stopped.\n");
+        TERMINAL_VIEW_ADD_TEXT("Probe request listening stopped.\n");
+        return;
+    }
+
+    printf("Starting to listen for probe requests...\n");
+    TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests...\n");
+
+    // Check SD card and enable PCAP to SD only if available
+    bool sd_available = sd_card_exists("/mnt/ghostesp/pcaps");
+    g_listen_probes_save_to_sd = sd_available;
+    if (sd_available) {
+        int err = pcap_file_open("probelisten", PCAP_CAPTURE_WIFI);
+        if (err != ESP_OK) {
+            printf("Warning: PCAP file open failed; probes will not be saved to SD card.\n");
+            TERMINAL_VIEW_ADD_TEXT("Warning: PCAP file open failed.\n");
+            g_listen_probes_save_to_sd = false;
+        }
+    } else {
+        printf("SD card not available; probe PCAP disabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("SD card not available; probe PCAP disabled.\n");
+    }
+
+    wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+}
 
 void register_commands() {
     register_command("help", handle_help);
@@ -2058,6 +2095,7 @@ void register_commands() {
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
     register_command("congestion", handle_congestion_cmd);
+    register_command("listenprobes", handle_listen_probes_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
