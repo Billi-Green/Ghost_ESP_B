@@ -1393,6 +1393,13 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("listenprobes\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Listen for and log probe requests.\n");
     TERMINAL_VIEW_ADD_TEXT("    Usage: listenprobes [stop]\n\n");
+
+    printf("webauth\\n");
+    printf("    Description: Enable or disable web UI authentication.\\n");
+    printf("    Usage: webauth <on|off>\\n\\n");
+    TERMINAL_VIEW_ADD_TEXT("webauth\\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Enable or disable web UI authentication.\\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: webauth <on|off>\\n\\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -2064,6 +2071,29 @@ void handle_listen_probes_cmd(int argc, char **argv) {
     wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
 }
 
+void handle_web_auth_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: webauth <on|off>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "on") == 0) {
+        settings_set_web_auth_enabled(&G_Settings, true);
+        settings_save(&G_Settings);
+        printf("Web authentication enabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("Web authentication enabled.\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        settings_set_web_auth_enabled(&G_Settings, false);
+        settings_save(&G_Settings);
+        printf("Web authentication disabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("Web authentication disabled.\n");
+    } else {
+        printf("Usage: webauth <on|off>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+    }
+}
+
 void register_commands() {
     register_command("help", handle_help);
     register_command("scanap", cmd_wifi_scan_start);
@@ -2131,6 +2161,7 @@ void register_commands() {
 #if CONFIG_IDF_TARGET_ESP32C5
     register_command("setcountry", handle_setcountry);
 #endif
+    register_command("webauth", handle_web_auth_cmd);
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }

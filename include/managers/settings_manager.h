@@ -87,6 +87,7 @@ typedef struct {
   uint32_t terminal_text_color; // Terminal text color in 0xRRGGBB
   uint8_t menu_theme;  // Theme for main menu colors (0=Default)
   bool invert_colors; // Invert screen colors
+  bool web_auth_enabled; // Add this line
 } FSettings;
 
 // Function declarations
@@ -187,6 +188,10 @@ void settings_set_terminal_text_color(FSettings *settings, uint32_t color);
 uint32_t settings_get_terminal_text_color(const FSettings *settings);
 void settings_set_invert_colors(FSettings *settings, bool enabled);
 bool settings_get_invert_colors(const FSettings *settings);
+
+// Getter and Setter for web auth
+void settings_set_web_auth_enabled(FSettings *settings, bool enabled);
+bool settings_get_web_auth_enabled(const FSettings *settings);
 
 extern FSettings G_Settings;
 
