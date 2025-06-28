@@ -546,7 +546,7 @@ void infrared_view_input_cb(InputEvent *event) {
         } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) {
             ESP_LOGI(TAG, "Keyboard Right/Down button pressed\n");
             ir_select_item(selected_ir_index + 1);
-        } else if (keyValue == 40) {
+        } else if (keyValue == 13) {
             ESP_LOGI(TAG, "Keyboard Enter button pressed\n");
             if (!showing_commands) {
                 if (has_remotes_option && selected_ir_index == 0) {
