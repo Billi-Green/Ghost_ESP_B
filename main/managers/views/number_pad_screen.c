@@ -122,13 +122,14 @@ static void number_pad_create() {
     lv_obj_set_style_outline_width(options_container, 0, 0);            // Remove outline
     
     // Options: 0-9, DEL, OK, BACK
-    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "DEL", "OK", "BACK"};
+    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", "DEL", "OK", "BACK"};
+    int option_count = sizeof(options) / sizeof(options[0]);
     int cols = 5;
     int rows = 3;
     int btn_width = (screen_width - 2 * padding) / cols;
     int btn_height = (screen_height - display_height - 2 * padding) / rows;
 
-    for (int i = 0; i < 13; i++) {
+    for (int i = 0; i < option_count; i++) {
         lv_obj_t *label = lv_label_create(options_container);
         lv_label_set_text(label, options[i]);
         lv_obj_set_style_text_font(label, font, 0);
@@ -171,7 +172,8 @@ static void number_pad_destroy() {
 }
 
 static void handle_hardware_button_press_number_pad(InputEvent *event) {
-    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "DEL", "OK", "BACK"};
+    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", "DEL", "OK", "BACK"};
+    int option_count = sizeof(options) / sizeof(options[0]);
     
     if (event->type == INPUT_TYPE_KEYBOARD){
         int key_value = event->data.key_value;
@@ -182,7 +184,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
         sprintf(key_str, "%c", key_value); // convert key_value to str for comparisons
         int prev_cursor_pos = cursor_pos;
 
-        for (int i = 0; i < sizeof(options)/sizeof(options[0]); i++){
+        for (int i = 0; i < option_count; i++){
             ESP_LOGD(TAG, "Checking key pressed value: %s against %s", key_str, options[i]);
             if (strcmp(key_str, options[i]) == 0){
                 ESP_LOGI(TAG, "Number key %c pressed", key_value);
@@ -214,11 +216,11 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
         }
         else if (key_value == 44 || key_value == ',') { // Left
             ESP_LOGI(TAG, "Left button pressed\n");
-            cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : 12;
+            cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : option_count - 1;
         } 
         else if ((key_value == 47 || key_value == '/') ) { // Right
             ESP_LOGI(TAG, "Right button pressed\n");
-            cursor_pos = (cursor_pos < 12) ? cursor_pos + 1 : 0;
+            cursor_pos = (cursor_pos < option_count - 1) ? cursor_pos + 1 : 0;
         }
         else if (key_value == 59 || key_value == ';'){ //up
             ESP_LOGI(TAG, "Up button pressed");
@@ -251,7 +253,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
         }
         if (prev_cursor_pos != cursor_pos) {
             lv_obj_t *options_container = lv_obj_get_child(root, 1);
-            for (int i = 0; i < 13; i++) {
+            for (int i = 0; i < option_count; i++) {
                 lv_obj_t *label = lv_obj_get_child(options_container, i);
                 lv_obj_set_style_text_color(label, (i == cursor_pos) ? lv_color_hex(0x00FF00) : lv_color_hex(0xFFFFFF), 0);
             }
@@ -263,9 +265,9 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
         
 
         if (button == 0) { // Left
-            cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : 12;
+            cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : option_count - 1;
         } else if (button == 3) { // Right
-            cursor_pos = (cursor_pos < 12) ? cursor_pos + 1 : 0;
+            cursor_pos = (cursor_pos < option_count - 1) ? cursor_pos + 1 : 0;
         } else if (button == 2) { // Up
             if (cursor_pos >= 5) {
                 cursor_pos -= 5;
@@ -297,7 +299,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
 
         if (prev_cursor_pos != cursor_pos) {
             lv_obj_t *options_container = lv_obj_get_child(root, 1);
-            for (int i = 0; i < 13; i++) {
+            for (int i = 0; i < option_count; i++) {
                 lv_obj_t *label = lv_obj_get_child(options_container, i);
                 lv_obj_set_style_text_color(label, (i == cursor_pos) ? lv_color_hex(0x00FF00) : lv_color_hex(0xFFFFFF), 0);
             }
@@ -317,7 +319,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
         
         if (x >= 0 && x < 5 && y >= 0 && y < 3) {
             int index = y * 5 + x;
-            if (index < 13) {
+            if (index < option_count) {
                 if (strcmp(options[index], "DEL") == 0) {
                     remove_digit();
                 } else if (strcmp(options[index], "OK") == 0) {
