@@ -312,7 +312,7 @@ esp_err_t sd_card_init(void) {
 
 #if defined(CONFIG_IDF_TARGET_ESP32)
   {
-    esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
+    esp_err_t bus_ret = spi_bus_initialize(SPI3_HOST, &bus_config, dmabus);
     if (bus_ret == ESP_OK) {
       bus_init_success = true;
     } else if (bus_ret != ESP_ERR_INVALID_STATE) {
@@ -350,7 +350,7 @@ esp_err_t sd_card_init(void) {
   sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
   slot_config.gpio_cs = sd_card_manager.spi_cs_pin;
 #if defined(CONFIG_IDF_TARGET_ESP32)
-  slot_config.host_id = SPI2_HOST;
+  slot_config.host_id = SPI3_HOST;
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
   slot_config.host_id = SPI2_HOST;
 #else
