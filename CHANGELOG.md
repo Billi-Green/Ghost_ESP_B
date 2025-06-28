@@ -26,10 +26,12 @@
 - Attacks
   - EAPOL Logoff Attack
   - SAE Flood Attack (WPA3)
+  - Probe Request Capture
 
 - Commands
   - Allow selection of multiple APs (eg. select -a 2,3,4)
   TODO - add comma to display numpad
+  - webauthcommand to enable/disable web authentication
 
 - Cardputer
   - Add keyboard event handling functionality - @tototo31

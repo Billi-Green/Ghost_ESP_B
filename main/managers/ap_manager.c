@@ -808,6 +808,12 @@ void ap_manager_stop_services() {
 static esp_err_t http_get_handler(httpd_req_t *req) {
     printf("Received HTTP GET request: %s\n", req->uri);
 
+    if (!settings_get_web_auth_enabled(&G_Settings)) {
+        httpd_resp_set_type(req, "text/html");
+        return httpd_resp_send(req, (const char *)ghost_site_html,
+                               ghost_site_html_size);
+    }
+
     char auth_buffer[128];
 
     size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
@@ -1114,6 +1120,11 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         settings_set_rts_enabled(settings, rts_enabled_bool->valueint != 0);
     }
 
+    cJSON *web_auth_enabled_bool = cJSON_GetObjectItem(root, "web_auth_enabled");
+    if (web_auth_enabled_bool) {
+        settings_set_web_auth_enabled(settings, web_auth_enabled_bool->valueint != 0);
+    }
+
     cJSON *gps_rx_pin = cJSON_GetObjectItem(root, "gps_rx_pin");
     if (gps_rx_pin) {
         settings_set_gps_rx_pin(settings, gps_rx_pin->valueint);
@@ -1169,6 +1180,7 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "gps_rx_pin", settings_get_gps_rx_pin(settings));
     cJSON_AddNumberToObject(root, "display_timeout", settings_get_display_timeout(settings));
     cJSON_AddNumberToObject(root, "rts_enabled_bool", settings_get_rts_enabled(settings));
+    cJSON_AddBoolToObject(root, "web_auth_enabled", settings_get_web_auth_enabled(settings));
 
     esp_netif_ip_info_t ip_info;
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");

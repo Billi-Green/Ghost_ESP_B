@@ -24,6 +24,14 @@
 #include "managers/default_portal.h"
 #include <time.h>
 
+#if !defined(MAX_WIFI_CHANNEL)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define MAX_WIFI_CHANNEL 165
+#else
+#define MAX_WIFI_CHANNEL 13
+#endif
+#endif
+
 static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
 
@@ -1386,6 +1394,26 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
     TERMINAL_VIEW_ADD_TEXT("        <CC> : Two-letter ISO country code (e.g., US, GB, JP)\n\n");
 #endif
+
+    printf("listenprobes\n");
+    printf("    Description: Listen for and log probe requests.\n");
+    printf("    Usage: listenprobes [channel] [stop]\n");
+    printf("    Arguments:\n");
+    printf("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+    printf("        stop      : Stop probe request listening\n\n");
+    TERMINAL_VIEW_ADD_TEXT("listenprobes\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Listen for and log probe requests.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: listenprobes [channel] [stop]\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+    TERMINAL_VIEW_ADD_TEXT("        stop      : Stop probe request listening\n\n");
+
+    printf("webauth\\n");
+    printf("    Description: Enable or disable web UI authentication.\\n");
+    printf("    Usage: webauth <on|off>\\n\\n");
+    TERMINAL_VIEW_ADD_TEXT("webauth\\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Enable or disable web UI authentication.\\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: webauth <on|off>\\n\\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -2026,6 +2054,81 @@ void handle_setcountry(int argc, char **argv) {
 }
 #endif
 
+void handle_listen_probes_cmd(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "stop") == 0) {
+        wifi_manager_stop_monitor_mode();
+        pcap_file_close();
+        g_listen_probes_save_to_sd = false;
+        printf("Probe request listening stopped.\n");
+        TERMINAL_VIEW_ADD_TEXT("Probe request listening stopped.\n");
+        return;
+    }
+
+    uint8_t channel = 0;
+    bool channel_hopping = true;
+
+    if (argc > 1) {
+        char *endptr;
+        long ch = strtol(argv[1], &endptr, 10);
+        if (*endptr == '\0' && ch >= 1 && ch <= MAX_WIFI_CHANNEL) {
+            channel = (uint8_t)ch;
+            channel_hopping = false;
+            printf("Starting to listen for probe requests on channel %d...\n", channel);
+            TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests on channel %d...\n", channel);
+        } else {
+            printf("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            TERMINAL_VIEW_ADD_TEXT("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            return;
+        }
+    } else {
+        printf("Starting to listen for probe requests (channel hopping)...\n");
+        TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests (channel hopping)...\n");
+    }
+
+    bool sd_available = sd_card_exists("/mnt/ghostesp/pcaps");
+    g_listen_probes_save_to_sd = sd_available;
+    if (sd_available) {
+        int err = pcap_file_open("probelisten", PCAP_CAPTURE_WIFI);
+        if (err != ESP_OK) {
+            printf("Warning: PCAP file open failed; probes will not be saved to SD card.\n");
+            TERMINAL_VIEW_ADD_TEXT("Warning: PCAP file open failed.\n");
+            g_listen_probes_save_to_sd = false;
+        }
+    } else {
+        printf("SD card not available; probe PCAP disabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("SD card not available; probe PCAP disabled.\n");
+    }
+
+    if (channel_hopping) {
+        wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+    } else {
+        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+    }
+}
+
+void handle_web_auth_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: webauth <on|off>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "on") == 0) {
+        settings_set_web_auth_enabled(&G_Settings, true);
+        settings_save(&G_Settings);
+        printf("Web authentication enabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("Web authentication enabled.\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        settings_set_web_auth_enabled(&G_Settings, false);
+        settings_save(&G_Settings);
+        printf("Web authentication disabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("Web authentication disabled.\n");
+    } else {
+        printf("Usage: webauth <on|off>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+    }
+}
 
 void register_commands() {
     register_command("help", handle_help);
@@ -2058,6 +2161,7 @@ void register_commands() {
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
     register_command("congestion", handle_congestion_cmd);
+    register_command("listenprobes", handle_listen_probes_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
@@ -2093,6 +2197,7 @@ void register_commands() {
 #if CONFIG_IDF_TARGET_ESP32C5
     register_command("setcountry", handle_setcountry);
 #endif
+    register_command("webauth", handle_web_auth_cmd);
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }

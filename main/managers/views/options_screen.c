@@ -99,6 +99,7 @@ static const char *wifi_options[] = {"Scan Access Points",
                                      "Capture Beacon",
                                      "Capture Raw",
                                      "Capture Eapol",
+                                     "Listen for Probes",
                                      "Start EAPOL Logoff",
                                      "Capture WPS",
                                      "Capture PWN",
@@ -125,7 +126,7 @@ static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS 
                                     "BLE Wardriving",   "Go Back",         NULL};
 
 static const char *settings_options[] = {"Set RGB Mode - Stealth", "Set RGB Mode - Normal",
-                                         "Set RGB Mode - Rainbow", "Go Back", NULL};
+                                         "Set RGB Mode - Rainbow", "Webauth On", "Webauth Off", "Go Back", NULL};
 
 
 static void up_down_event_cb(lv_event_t *e) {
@@ -580,6 +581,12 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Listen for Probes") == 0) {
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("listenprobes");
+        view_switched = true;
+    }
+
     else if (strcmp(Selected_Option, "Start EAPOL Logoff") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("attack -e");
@@ -726,6 +733,18 @@ void option_event_cb(lv_event_t *e) {
         simulateCommand("setsetting 1 3");
         vTaskDelay(pdMS_TO_TICKS(10));
         error_popup_create("Set RGB Mode Successfully...");
+        
+    }
+
+    else if (strcmp(Selected_Option, "Webauth On") == 0) {
+        simulateCommand("webauth on");
+        error_popup_create("Webauth Enabled.");
+        
+    }
+
+    else if (strcmp(Selected_Option, "Webauth Off") == 0) {
+        simulateCommand("webauth off");
+        error_popup_create("Webauth Disabled.");
         
     }
 

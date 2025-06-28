@@ -47,6 +47,7 @@ static const char *NVS_THIRD_CTRL_KEY = "third_ctrl";
 static const char *NVS_MENU_THEME_KEY = "menu_theme";
 static const char *NVS_TERMINAL_TEXT_COLOR_KEY = "term_color";
 static const char *NVS_INVERT_COLORS_KEY = "invert_colors";
+static const char *NVS_WEB_AUTH_KEY = "web_auth";
 
 static const char *TAG = "SettingsManager";
 
@@ -124,6 +125,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->third_control_enabled = false;
   settings->terminal_text_color = 0x00FF00;
   settings->invert_colors = false;
+  settings->web_auth_enabled = true;
 }
 
 void settings_load(FSettings *settings) {
@@ -347,12 +349,14 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->terminal_text_color = value_u32;
   }
-  uint8_t invert_val;
-  err = nvs_get_u8(nvsHandle, NVS_INVERT_COLORS_KEY, &invert_val);
+  err = nvs_get_u8(nvsHandle, NVS_INVERT_COLORS_KEY, &value_u8);
   if (err == ESP_OK) {
-    settings->invert_colors = invert_val;
-  } else {
-    settings->invert_colors = false;
+    settings->invert_colors = (value_u8 != 0);
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_WEB_AUTH_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->web_auth_enabled = (value_u8 != 0);
   }
 }
 
@@ -548,7 +552,7 @@ void settings_save(const FSettings *settings) {
     printf("Failed to save RGB blue pin\n");
   }
 
-  if (settings_get_rgb_mode(&G_Settings) == 0) {
+  if (settings_get_rgb_mode(settings) == 0) {
     if (rgb_effect_task_handle != NULL) {
       vTaskDelete(rgb_effect_task_handle);
       rgb_effect_task_handle = NULL;
@@ -562,7 +566,7 @@ void settings_save(const FSettings *settings) {
   }
 
 
-  update_rainbow_effect(&G_Settings);
+  update_rainbow_effect(settings);
 
   // Commit all changes
   err = nvs_commit(nvsHandle);
@@ -598,6 +602,8 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save invert_colors: %s", esp_err_to_name(err));
   err = nvs_set_u32(nvsHandle, NVS_TERMINAL_TEXT_COLOR_KEY, settings->terminal_text_color);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save terminal_text_color: %s", esp_err_to_name(err));
+  err = nvs_set_u8(nvsHandle, NVS_WEB_AUTH_KEY, settings->web_auth_enabled);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save web_auth_enabled: %s", esp_err_to_name(err));
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
 }
@@ -872,4 +878,12 @@ void settings_set_invert_colors(FSettings *settings, bool enabled) {
 
 bool settings_get_invert_colors(const FSettings *settings) {
   return settings->invert_colors;
+}
+
+void settings_set_web_auth_enabled(FSettings *settings, bool enabled) {
+  settings->web_auth_enabled = enabled;
+}
+
+bool settings_get_web_auth_enabled(const FSettings *settings) {
+  return settings->web_auth_enabled;
 }

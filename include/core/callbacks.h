@@ -51,6 +51,7 @@ void wifi_beacon_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_deauth_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_pwn_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_probe_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_raw_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
@@ -80,5 +81,8 @@ extern int detected_network_count;
 extern esp_timer_handle_t stop_timer;
 extern int should_store_wps;
 static uint8_t router_ip[4];
+
+// Controls whether probe listening writes PCAP data to SD (no UART fallback)
+extern bool g_listen_probes_save_to_sd;
 
 #endif
