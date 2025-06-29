@@ -21,7 +21,7 @@
 - Display
   - Added keyboard view
   - Connect to WiFi command with keyboard view
-  - Add S3TWatch virtual storage (4MB)
+  - Add S3TWatch virtual storage (4MB) acessable through webUI
 
 - Attacks
   - EAPOL Logoff Attack
