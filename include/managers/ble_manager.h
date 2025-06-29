@@ -53,5 +53,18 @@ void ble_select_airtag(int index);
 void ble_start_spoofing_selected_airtag(void);
 void ble_stop_spoofing(void);
 
+// spam advertisement types
+typedef enum {
+    BLE_SPAM_MICROSOFT,
+    BLE_SPAM_APPLE,
+    BLE_SPAM_SAMSUNG,
+    BLE_SPAM_GOOGLE,
+    BLE_SPAM_FLIPPERZERO,
+    BLE_SPAM_RANDOM
+} ble_spam_type_t;
+
+void ble_start_ble_spam(ble_spam_type_t type);
+void ble_stop_ble_spam(void);
+
 #endif
 #endif // BLE_MANAGER_H

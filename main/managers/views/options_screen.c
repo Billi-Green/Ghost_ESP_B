@@ -61,6 +61,8 @@ static const char *wifi_main_options[] = {
 static const char *bluetooth_options[] = {"Find Flippers", "List Flippers", "Select Flipper", "Start AirTag Scanner",
                                          "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing",
                                          "Raw BLE Scanner", "BLE Skimmer Detect",
+                                         "BLE Spam - Apple", "BLE Spam - Microsoft", "BLE Spam - Samsung", 
+                                         "BLE Spam - Google", "BLE Spam - Random", "Stop BLE Spam",
                                          NULL};
 
 static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
@@ -906,6 +908,66 @@ void option_event_cb(lv_event_t *e) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("connect");
         view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Apple") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -apple");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Microsoft") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -ms");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Samsung") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -samsung");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Google") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -google");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Random") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -random");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Stop BLE Spam") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -s");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
     }
 
     else {

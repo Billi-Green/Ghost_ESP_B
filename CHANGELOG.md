@@ -18,6 +18,12 @@
     - RC5
     - RC6
 
+- BLE Spam (not supported on ESP32S2)
+  - Apple
+  - Microsoft
+  - Samsung
+  - Google
+
 - Display
   - Added keyboard view
   - Connect to WiFi command with keyboard view

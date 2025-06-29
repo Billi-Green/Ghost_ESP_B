@@ -41,6 +41,7 @@ void handle_list_airtags_cmd(int argc, char **argv);
 void handle_select_airtag(int argc, char **argv);
 void handle_spoof_airtag(int argc, char **argv);
 void handle_stop_spoof(int argc, char **argv);
+void handle_ble_spam_cmd(int argc, char **argv);
 #endif
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
@@ -330,6 +331,7 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
+    ble_stop_ble_spam();
 #endif
     if (buffer_offset > 0) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
@@ -1123,6 +1125,27 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("        -a   : Start AirTag scanner\n");
     TERMINAL_VIEW_ADD_TEXT("        -r   : Scan for raw BLE packets\n");
     TERMINAL_VIEW_ADD_TEXT("        -s   : Stop BLE scanning\n\n");
+
+    printf("blespam\n");
+    printf("    Description: Start BLE advertisement spam attacks.\n");
+    printf("    Usage: blespam [OPTION]\n");
+    printf("    Arguments:\n");
+    printf("        -apple     : Apple device spam (AirPods, Apple TV, etc.)\n");
+    printf("        -ms        : Microsoft Swift Pair spam\n");
+    printf("        -samsung   : Samsung Galaxy Watch spam\n");
+    printf("        -google    : Google Fast Pair spam\n");
+    printf("        -random    : Random spam (cycles through all types)\n");
+    printf("        -s         : Stop BLE spam\n\n");
+    TERMINAL_VIEW_ADD_TEXT("blespam\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Start BLE advertisement spam attacks.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: blespam [OPTION]\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        -apple     : Apple device spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -ms        : Microsoft Swift Pair spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -samsung   : Samsung Galaxy Watch spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -google    : Google Fast Pair spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -random    : Random spam (all types)\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s         : Stop BLE spam\n\n");
 #endif
 
     printf("capture\n");
@@ -2198,8 +2221,56 @@ void register_commands() {
     register_command("setcountry", handle_setcountry);
 #endif
     register_command("webauth", handle_web_auth_cmd);
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    register_command("blespam", handle_ble_spam_cmd);
+#endif
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }
+
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_ble_spam_cmd(int argc, char **argv) {
+    if (argc > 1) {
+        if (strcmp(argv[1], "-apple") == 0) {
+            printf("starting apple ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Apple BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_APPLE);
+            return;
+        }
+        if (strcmp(argv[1], "-ms") == 0 || strcmp(argv[1], "-microsoft") == 0) {
+            printf("starting microsoft ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Microsoft BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_MICROSOFT);
+            return;
+        }
+        if (strcmp(argv[1], "-samsung") == 0) {
+            printf("starting samsung ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Samsung BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_SAMSUNG);
+            return;
+        }
+        if (strcmp(argv[1], "-google") == 0) {
+            printf("starting google ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Google BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_GOOGLE);
+            return;
+        }
+        if (strcmp(argv[1], "-random") == 0) {
+            printf("starting random ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Random BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_RANDOM);
+            return;
+        }
+        if (strcmp(argv[1], "-s") == 0) {
+            printf("stopping ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Stopping BLE spam...\n");
+            ble_stop_ble_spam();
+            return;
+        }
+    }
+    printf("usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+}
+#endif
 
 
