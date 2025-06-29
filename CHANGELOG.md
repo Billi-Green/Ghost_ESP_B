@@ -21,7 +21,8 @@
 - Display
   - Added keyboard view
   - Connect to WiFi command with keyboard view
-  
+  - Add S3TWatch virtual storage (4MB)
+
 - Attacks
   - EAPOL Logoff Attack
   - SAE Flood Attack (WPA3 only)
@@ -50,6 +51,8 @@
 - Commands
   - Allow selection of multiple APs (eg. select -a 2,3,4)
   
+- WebUI
+  - Refactor file explorer to be more user friendly
 
 
 ### Bug Fixes
@@ -65,7 +68,10 @@
   - Get cardputer battery status working - @tototo31
 
 - General
- - Fix SD Card init on CYD devices - @tototo31
+  - Fix SD Card init on CYD devices - @tototo31
+
+- WebUI
+  - Fix file explorer not opening folders, erroring on upload.
 
 
 ## Revival v1.5.1

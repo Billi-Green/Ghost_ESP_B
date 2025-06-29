@@ -40,5 +40,6 @@ esp_err_t sd_card_set_spi_pins(int cs, int clk, int miso, int mosi);
 esp_err_t sd_card_save_config();
 esp_err_t sd_card_load_config();
 void sd_card_print_config();
+bool sd_card_is_virtual_storage();
 
 #endif // SD_CARD_MANAGER_H

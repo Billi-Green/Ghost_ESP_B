@@ -202,87 +202,122 @@
         }
 
         .file-explorer li {
-            height: 30px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 10px 15px;
-            position: relative;
+            padding: 12px 15px;
             background-color: var(--tooltip-bg);
             border-left: 2px solid var(--border-color);
             border-right: 2px solid var(--border-color);
             border-top: 0.5px solid var(--accent-color);
             border-bottom: 0.5px solid var(--accent-color);
-            border-radius: var(--li-br-top) var(--li-br-top) var(--li-br-bottom) var(--li-br-bottom);
             transition: background-color 0.3s;
-            --li-br-top: 0;
-            --li-br-bottom: 0;
+            position: relative;
         }
 
-        .file-explorer li:hover:has(.file-name.folder) {
-            background-color: var(--primary-color);
+        .file-explorer li.folder-item {
             cursor: pointer;
         }
 
-        .file-explorer li:hover:has(.file-name.folder) .file-name,
-        .file-explorer li:hover:has(.file-name.folder)::before {
-            color: var(--background-color);
+        .file-explorer li.folder-item:is(:hover, :active),
+        .file-explorer li.file-item:is(:hover, :active) {
+            background-color: var(--primary-color);
+        }
+        
+        .file-explorer li.folder-item:is(:hover, :active) .file-info,
+        .file-explorer li.folder-item:is(:hover, :active) .folder-arrow,
+        .file-explorer li.file-item:is(:hover, :active) .file-info,
+        .file-explorer li.file-item:is(:hover, :active) .file-actions .more-options-btn {
+            color: var(--background-color) !important;
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--text-primary);
+        }
+
+        .file-icon {
+            font-size: 1.2em;
+        }
+
+        .folder-arrow {
+            color: var(--text-primary);
+            font-size: 1.4em;
+            font-weight: bold;
+        }
+
+        .file-actions {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .more-options-btn {
+            background: transparent !important;
+            border: none !important;
+            color: var(--text-primary) !important;
+            font-size: 1.8em !important;
+            padding: 0 8px !important;
+            line-height: 1 !important;
+            cursor: pointer !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+        }
+        
+        .file-explorer li.folder-item:hover .more-options-btn {
+            color: var(--background-color) !important;
+        }
+
+        .file-options-menu {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: calc(100% + 5px); /* Position below button */
+            background-color: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            z-index: 10;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            padding: 8px;
+            min-width: 120px;
+        }
+
+        .file-options-menu.show {
+            display: block;
+        }
+
+        .file-options-menu button {
+            display: block !important;
+            width: 100% !important;
+            text-align: left !important;
+            background: none !important;
+            border: none !important;
+            color: var(--text-primary) !important;
+            padding: 10px 15px !important;
+            margin: 0 !important;
+            border-radius: 4px !important;
+            font-size: 1em !important;
+            box-shadow: none !important;
+        }
+
+        .file-options-menu button:hover {
+            background-color: var(--primary-color) !important;
+            color: var(--background-color) !important;
+            transform: none !important;
         }
 
         .file-explorer li:first-child {
             border-top: 2px solid var(--border-color);
-            --li-br-top: 8px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
         }
 
         .file-explorer li:last-child {
             border-bottom: 2px solid var(--border-color);
-            --li-br-bottom: 8px;
-        }
-
-        .file-explorer li:before {
-            content: '';
-            position: absolute;
-            right: 15px;
-            top: 54%;
-            transform: translateY(-50%);
-            pointer-events: none;
-            color: var(--text-primary);
-            font-size: 14px;
-        }
-
-        .file-explorer li:has(.file-name.folder):before {
-            content: '\25B6';
-        }
-
-        .file-explorer li button {
-            margin: 0;
-        }
-
-        .file-explorer .file-name {
-            display: flex;
-            align-items: center;
-            cursor: default;
-            color: var(--text-primary);
-        }
-
-        .file-explorer .file-name.folder {
-            cursor: pointer;
-            color: var(--text-primary);
-        }
-
-        .file-explorer .file-name.folder::before {
-            content: '📁';
-            margin-right: 10px;
-        }
-
-        .file-explorer .file-name.file::before {
-            content: '📄';
-            margin-right: 10px;
-        }
-
-        .file-explorer .file-actions {
-            display: flex;
-            gap: 15px;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
         }
 
         /* Upload Section Styling */
@@ -687,6 +722,23 @@
             .select-wrapper::after {
                 font-size: 14px;
             }
+            
+            .file-explorer li {
+                flex-direction: column;
+                align-items: flex-start;
+                height: auto;
+                padding: 15px;
+                gap: 10px;
+            }
+
+            .file-explorer .file-actions {
+                width: 100%;
+                justify-content: flex-end;
+            }
+
+            .file-explorer li:has(.file-name.folder)::before {
+                top: 22px;
+            }
         }
 
         /* Settings Section Styles */
@@ -1022,6 +1074,34 @@
             justify-content: flex-start; /* Align action buttons */
             padding-top: 15px;
             border-top: 1px solid rgba(255, 255, 255, 0.2); /* Add a separator */
+        }
+
+        /* Storage Usage Bar */
+        #storage-usage-container {
+            margin-bottom: 20px;
+        }
+        
+        .storage-info-text {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            margin-bottom: 8px;
+            text-align: right;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 12px;
+            background-color: var(--surface-color);
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background-color: var(--primary-color);
+            border-radius: 6px;
+            transition: width 0.5s ease-in-out;
         }
     </style>
 </head>
@@ -1493,6 +1573,16 @@
                 <div class="settings-section">
                     <h2>SD Card File Explorer</h2>
                     
+                    <!-- Storage Usage Bar -->
+                    <div id="storage-usage-container" style="display: none;">
+                        <div class="storage-info-text">
+                            <span id="storage-used-text"></span> / <span id="storage-total-text"></span>
+                        </div>
+                        <div class="progress-bar">
+                            <div id="storage-used-bar" class="progress-bar-fill"></div>
+                        </div>
+                    </div>
+                    
                     <!-- Breadcrumb Navigation -->
                     <nav class="breadcrumb" id="breadcrumb">
                         <span class="breadcrumb-item" onclick="navigateToBreadcrumb(0)">Root</span>
@@ -1585,15 +1675,16 @@
                     body: formData
                 });
 
-                const result = await response.json();
+                const responseText = await response.text();
 
                 if (response.ok) {
                     alert('File uploaded successfully!');
-                    fetchSDCardData();
+                    fetchSDCardData(); // Refresh file list
                     statusElement.textContent = 'File uploaded successfully.';
-                    fileInput.value = '';
+                    fileInput.value = ''; // Clear the file input
+                    document.getElementById('upload-file-name').innerText = 'No files selected';
                 } else {
-                    throw new Error(result.message || 'Failed to upload the file.');
+                    throw new Error(responseText || 'Failed to upload the file.');
                 }
             } catch (error) {
                 console.error('Error uploading file:', error);
@@ -1616,7 +1707,12 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    sdCardData = data; // Store the entire structure
+                    // Update storage bar
+                    if (data.storage) {
+                        updateStorageBar(data.storage.used, data.storage.total);
+                    }
+
+                    sdCardData = data.files; // Store the entire structure
                     navigationStack = [ { name: "Root", type: "folder", children: sdCardData } ]; // Initialize stack with root
                     renderCurrentFolder();
                     statusElement.textContent = "SD card data loaded successfully.";
@@ -1629,7 +1725,31 @@
             }
         }
 
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
 
+        function updateStorageBar(used, total) {
+            const container = document.getElementById('storage-usage-container');
+            const usedBar = document.getElementById('storage-used-bar');
+            const usedText = document.getElementById('storage-used-text');
+            const totalText = document.getElementById('storage-total-text');
+
+            if (total > 0) {
+                const percentage = (used / total) * 100;
+                usedBar.style.width = percentage + '%';
+                usedText.textContent = formatBytes(used);
+                totalText.textContent = formatBytes(total);
+                container.style.display = 'block';
+            } else {
+                container.style.display = 'none';
+            }
+        }
 
         function getCurrentFolder() {
             return navigationStack[navigationStack.length - 1];
@@ -1651,40 +1771,77 @@
             currentFolder.children.forEach(item => {
                 const li = document.createElement("li");
 
+                const fileInfo = document.createElement('div');
+                fileInfo.classList.add('file-info');
+
+                const fileIcon = document.createElement('span');
+                fileIcon.classList.add('file-icon');
+                
                 const fileName = document.createElement("span");
                 fileName.classList.add("file-name");
                 fileName.textContent = item.name;
 
+                fileInfo.appendChild(fileIcon);
+                fileInfo.appendChild(fileName);
+                li.appendChild(fileInfo);
+
+                const actionContainer = document.createElement("div");
+                actionContainer.classList.add("file-actions");
+
                 if (item.type === "folder") {
-                    fileName.classList.add("folder");
-                    fileName.onclick = () => navigateIntoFolder(item);
+                    li.classList.add('folder-item');
+                    fileIcon.textContent = '📁';
+                    li.onclick = () => navigateIntoFolder(item);
+                    
+                    const arrow = document.createElement('span');
+                    arrow.classList.add('folder-arrow');
+                    arrow.innerHTML = '›';
+                    actionContainer.appendChild(arrow);
                 } else {
-                    fileName.classList.add("file");
-                }
+                    li.classList.add('file-item');
+                    fileIcon.textContent = '📄';
+                    
+                    const moreBtn = document.createElement("button");
+                    moreBtn.innerHTML = "⋮";
+                    moreBtn.classList.add("small", "more-options-btn");
 
-                li.appendChild(fileName);
-
-                if (item.type === "file") {
-                    const actionContainer = document.createElement("div");
-                    actionContainer.classList.add("file-actions");
+                    const menu = document.createElement('div');
+                    menu.classList.add('file-options-menu');
 
                     const downloadBtn = document.createElement("button");
                     downloadBtn.textContent = "Download";
                     downloadBtn.classList.add("small");
-                    downloadBtn.classList.add("download-button");
-                    downloadBtn.onclick = () => downloadFile(item.path);
-                    actionContainer.appendChild(downloadBtn);
+                    downloadBtn.onclick = (e) => { e.stopPropagation(); downloadFile(item.path); };
+                    menu.appendChild(downloadBtn);
 
                     const deleteBtn = document.createElement("button");
                     deleteBtn.textContent = "Delete";
                     deleteBtn.classList.add("small");
-                    deleteBtn.classList.add("delete-button");
-                    deleteBtn.onclick = () => deleteFile(item.name, item.path);
-                    actionContainer.appendChild(deleteBtn);
+                    deleteBtn.onclick = (e) => { e.stopPropagation(); deleteFile(item.name, item.path); };
+                    menu.appendChild(deleteBtn);
 
-                    li.appendChild(actionContainer);
+                    moreBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        // Close other menus
+                        document.querySelectorAll('.file-options-menu.show').forEach(m => {
+                            if (m !== menu) {
+                                m.classList.remove('show');
+                            }
+                        });
+                        menu.classList.toggle('show');
+                    };
+                    
+                    document.addEventListener('click', (e) => {
+                        if (!menu.contains(e.target) && !moreBtn.contains(e.target)) {
+                            menu.classList.remove('show');
+                        }
+                    });
+
+                    actionContainer.appendChild(moreBtn);
+                    actionContainer.appendChild(menu);
                 }
 
+                li.appendChild(actionContainer);
                 ul.appendChild(li);
             });
 

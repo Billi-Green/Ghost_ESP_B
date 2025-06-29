@@ -148,6 +148,12 @@ menu "Ghost ESP Options"
             help
                 Enable configuration for Ghost board.
 
+        config IS_S3TWATCH
+            bool "Enable S3TWatch Configuration"
+            default n
+            help
+                Enable configuration for S3TWatch with virtual flash storage.
+
         config HAS_INFRARED
             bool "Enable Infrared Support"
             default n

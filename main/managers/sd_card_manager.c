@@ -17,6 +17,10 @@
 #include <sys/unistd.h>
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_partition.h"
+#include "wear_levelling.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *SD_TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
@@ -37,6 +41,59 @@ sd_card_manager_t sd_card_manager = { // Change this based on board config
     .spi_mosi_pin = CONFIG_SD_SPI_MOSI_PIN
 #endif
 };
+
+#ifdef CONFIG_IS_S3TWATCH
+static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
+static bool s_virtual_storage_mounted = false;
+
+static esp_err_t mount_virtual_storage(void) {
+    if (s_virtual_storage_mounted) {
+        ESP_LOGI(SD_TAG, "Virtual storage already mounted");
+        return ESP_OK;
+    }
+
+    const esp_partition_t* storage_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, "storage");
+    if (!storage_partition) {
+        ESP_LOGE(SD_TAG, "Storage partition not found");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    ESP_LOGI(SD_TAG, "Found storage partition at offset 0x%lx with size %lu KB", 
+             (unsigned long)storage_partition->address, (unsigned long)(storage_partition->size / 1024));
+    
+    if (storage_partition->size < 64 * 1024) {
+        ESP_LOGE(SD_TAG, "Storage partition too small: %lu bytes", (unsigned long)storage_partition->size);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    esp_vfs_fat_mount_config_t mount_config = {
+        .format_if_mount_failed = true,
+        .max_files = 5,
+        .allocation_unit_size = 4 * 1024
+    };
+
+    esp_err_t ret = esp_vfs_fat_spiflash_mount_rw_wl("/mnt", "storage", &mount_config, &s_wl_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(SD_TAG, "Failed to mount virtual storage: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    s_virtual_storage_mounted = true;
+    ESP_LOGI(SD_TAG, "Virtual storage mounted successfully at /mnt");
+    return ESP_OK;
+}
+
+static void unmount_virtual_storage(void) {
+    if (!s_virtual_storage_mounted) {
+        return;
+    }
+
+    esp_vfs_fat_spiflash_unmount_rw_wl("/mnt", s_wl_handle);
+    s_virtual_storage_mounted = false;
+    s_wl_handle = WL_INVALID_HANDLE;
+    ESP_LOGI(SD_TAG, "Virtual storage unmounted");
+}
+#endif
 
 static void get_next_pcap_file_name(char *file_name_buffer,
                                     const char *base_name) {
@@ -108,6 +165,22 @@ static void sdmmc_card_print_info(const sdmmc_card_t *card) {
 
 esp_err_t sd_card_init(void) {
   esp_err_t ret = ESP_FAIL;
+
+#ifdef CONFIG_IS_S3TWATCH
+  ESP_LOGI(SD_TAG, "S3TWatch detected - attempting virtual storage mount");
+  
+  vTaskDelay(pdMS_TO_TICKS(100));
+  
+  ret = mount_virtual_storage();
+  if (ret == ESP_OK) {
+    sd_card_manager.is_initialized = true;
+    ESP_LOGI(SD_TAG, "Virtual storage initialized successfully");
+    sd_card_setup_directory_structure();
+    return ESP_OK;
+  } else {
+    ESP_LOGW(SD_TAG, "Virtual storage mount failed (%s), falling back to physical SD card", esp_err_to_name(ret));
+  }
+#endif
 
   // Load configuration from NVS first
   sd_card_load_config();
@@ -394,6 +467,14 @@ esp_err_t sd_card_init(void) {
 }
 
 void sd_card_unmount(void) {
+#ifdef CONFIG_IS_S3TWATCH
+  if (s_virtual_storage_mounted) {
+    unmount_virtual_storage();
+    sd_card_manager.is_initialized = false;
+    return;
+  }
+#endif
+
 #if SOC_SDMMC_HOST_SUPPORTED && SOC_SDMMC_USE_GPIO_MATRIX
   if (sd_card_manager.is_initialized) {
     esp_vfs_fat_sdmmc_unmount();
@@ -411,7 +492,7 @@ void sd_card_unmount(void) {
 
 esp_err_t sd_card_append_file(const char *path, const void *data, size_t size) {
   if (!sd_card_manager.is_initialized) {
-    printf("SD card is not initialized. Cannot append to file.\n");
+    printf("Storage is not initialized. Cannot append to file.\n");
     return ESP_FAIL;
   }
 
@@ -428,7 +509,7 @@ esp_err_t sd_card_append_file(const char *path, const void *data, size_t size) {
 
 esp_err_t sd_card_write_file(const char *path, const void *data, size_t size) {
   if (!sd_card_manager.is_initialized) {
-    printf("SD card is not initialized. Cannot write to file.\n");
+    printf("Storage is not initialized. Cannot write to file.\n");
     return ESP_FAIL;
   }
 
@@ -445,7 +526,7 @@ esp_err_t sd_card_write_file(const char *path, const void *data, size_t size) {
 
 esp_err_t sd_card_read_file(const char *path) {
   if (!sd_card_manager.is_initialized) {
-    printf("SD card is not initialized. Cannot read from file.\n");
+    printf("Storage is not initialized. Cannot read from file.\n");
     return ESP_FAIL;
   }
 
@@ -475,7 +556,7 @@ static bool has_full_permissions(const char *path) {
 
 esp_err_t sd_card_create_directory(const char *path) {
   if (!sd_card_manager.is_initialized) {
-    printf("SD card is not initialized. Cannot create directory.\n");
+    printf("Storage is not initialized. Cannot create directory.\n");
     return ESP_FAIL;
   }
 
@@ -534,6 +615,8 @@ esp_err_t sd_card_setup_directory_structure() {
   const char *gps_dir = "/mnt/ghostesp/gps";
   const char *games_dir = "/mnt/ghostesp/games";
   const char *evil_portal_dir = "/mnt/ghostesp/evil_portal";
+  const char *universals_dir = "/mnt/ghostesp/infrared/universals";
+
 
   if (!sd_card_exists(root_dir)) {
     printf("Creating directory: %s\n", root_dir);
@@ -642,6 +725,17 @@ esp_err_t sd_card_setup_directory_structure() {
     }
   } else {
     printf("Directory %s already exists\n", remotes_dir);
+  }
+
+  if (!sd_card_exists(universals_dir)) {
+    printf("Creating directory: %s\n", universals_dir);
+    esp_err_t ret = sd_card_create_directory(universals_dir);
+    if (ret != ESP_OK) {
+      printf("Failed to create directory %s: %s\n", universals_dir, esp_err_to_name(ret));
+      return ret;
+    }
+  } else {
+    printf("Directory %s already exists\n", universals_dir);
   }
 
   printf("Directory structure successfully set up.\n");
@@ -796,6 +890,21 @@ read_error:
 }
 
 void sd_card_print_config() {
+#ifdef CONFIG_IS_S3TWATCH
+  if (s_virtual_storage_mounted) {
+    printf("Storage Configuration: Virtual Flash Storage (S3TWatch)\n");
+    printf("Mount Point: /mnt\n");
+    printf("Storage Type: Internal Flash Partition (4MB)\n");
+    
+    const esp_partition_t* storage_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, "storage");
+    if (storage_partition) {
+      printf("Partition Size: %lu KB\n", (unsigned long)(storage_partition->size / 1024));
+      printf("Partition Offset: 0x%lx\n", (unsigned long)storage_partition->address);
+    }
+    return;
+  }
+#endif
+
   printf("SD Card Pin Configuration:\n");
   printf("MMC Mode:\n");
   printf("  CLK: GPIO%d\n", sd_card_manager.clkpin);
@@ -809,4 +918,12 @@ void sd_card_print_config() {
   printf("  CLK:  GPIO%d\n", sd_card_manager.spi_clk_pin);
   printf("  MISO: GPIO%d\n", sd_card_manager.spi_miso_pin);
   printf("  MOSI: GPIO%d\n", sd_card_manager.spi_mosi_pin);
+}
+
+bool sd_card_is_virtual_storage() {
+#ifdef CONFIG_IS_S3TWATCH
+  return s_virtual_storage_mounted;
+#else
+  return false;
+#endif
 }
