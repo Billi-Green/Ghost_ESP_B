@@ -63,7 +63,8 @@
 - Cardputer
   - Get cardputer battery status working - @tototo31
 
-
+- General
+ - Fix SD Card init on CYD devices - @tototo31
 
 
 ## Revival v1.5.1
