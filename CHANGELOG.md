@@ -72,6 +72,7 @@
 
 - Cardputer
   - Get cardputer battery status working - @tototo31
+  - Ignore the key press that wakes the display from sleep
 
 - General
   - Fix SD Card init on CYD devices - @tototo31

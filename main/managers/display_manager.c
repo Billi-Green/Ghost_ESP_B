@@ -785,42 +785,52 @@ void hardware_input_task(void *pvParameters) {
         uint8_t key_value = keyboard_get_key(&gkeyboard, key_pos);
         keyboard_update_keys_state(&gkeyboard);
         if (key_value != 0 && !touch_active) {
+          bool skip_event = false;
           touch_active = true;
           last_touch_time = xTaskGetTickCount();
-          InputEvent event;
-          // event.type will be set inside the switch for specific keys
-
-          if (shift_count > shift_count_before_caps && !caps_latch){ // toggle caps if weve been holding shift long enough without intteruption
-            gkeyboard.is_caps_locked = !gkeyboard.is_caps_locked;
-            caps_latch = true;
-            ESP_LOGW(TAG, "Capslock toggled %s\n", gkeyboard.is_caps_locked ? "on" : "off");
-            shift_count = 0;
+          if (is_backlight_dimmed) {
+            set_backlight_brightness(1);
+            is_backlight_dimmed = false;
+            skip_event = true;
+            vTaskDelay(pdMS_TO_TICKS(100));
           }
+          
+          if (!skip_event) {
+            InputEvent event;
+            // event.type will be set inside the switch for specific keys
 
-
-          ESP_LOGI(TAG, "Input key value: %d\n", key_value);
-
-          switch (key_value) {
-          case 129: //shift - keyboard library already handled caps for letters
-            if(!keyboard_is_change(&gkeyboard)){ // if shift is held down increment the counter for capslocks
-              shift_count += 1;
+            if (shift_count > shift_count_before_caps && !caps_latch){ // toggle caps if weve been holding shift long enough without intteruption
+              gkeyboard.is_caps_locked = !gkeyboard.is_caps_locked;
+              caps_latch = true;
+              ESP_LOGW(TAG, "Capslock toggled %s\n", gkeyboard.is_caps_locked ? "on" : "off");
+              shift_count = 0;
             }
-            continue;
-          case 255: //fn - fn key actions
-            continue;
-          case 128: //ctrl - ctrl key actions
-            continue;
-          case 130: // alt - alt key actions
-            continue;
-          default:
-            ESP_LOGI(TAG, "Keyboard key: %c (value: %d) (CAPS: %s)\n", key_value, key_value, gkeyboard.is_caps_locked ? "on" : "off" );
-            shift_count = 0; // restart caps timer wheen a key gets pressed
-            event.type = INPUT_TYPE_KEYBOARD;
-            event.data.key_value = key_value;
-            break;
-          }
-          if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to send button input to queue\n");
+
+
+            ESP_LOGI(TAG, "Input key value: %d\n", key_value);
+
+            switch (key_value) {
+            case 129: //shift - keyboard library already handled caps for letters
+              if(!keyboard_is_change(&gkeyboard)){ // if shift is held down increment the counter for capslocks
+                shift_count += 1;
+              }
+              continue;
+            case 255: //fn - fn key actions
+              continue;
+            case 128: //ctrl - ctrl key actions
+              continue;
+            case 130: // alt - alt key actions
+              continue;
+            default:
+              ESP_LOGI(TAG, "Keyboard key: %c (value: %d) (CAPS: %s)\n", key_value, key_value, gkeyboard.is_caps_locked ? "on" : "off" );
+              shift_count = 0; // restart caps timer wheen a key gets pressed
+              event.type = INPUT_TYPE_KEYBOARD;
+              event.data.key_value = key_value;
+              break;
+            }
+            if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+              ESP_LOGE(TAG, "Failed to send button input to queue\n");
+            }
           }
           vTaskDelay(pdMS_TO_TICKS(300));
 
