@@ -25,7 +25,7 @@
 - Attacks
   - EAPOL Logoff Attack
   - SAE Flood Attack (WPA3 only)
-  - Probe request capture
+  - Probe request listen
 
 - Commands
   - 'webauth on/off' command to enable/disable webui authentication
@@ -39,6 +39,7 @@
 
 - Display
   - Removed touch controls from settings menu on non-touch devices - @tototo31
+  - Refactor wifi menu into hierarchical sub-menus
 
 - Cardputer
   - Use backtick key to return to main menu
@@ -62,7 +63,8 @@
 - Cardputer
   - Get cardputer battery status working - @tototo31
 
-
+- General
+ - Fix SD Card init on CYD devices - @tototo31
 
 
 ## Revival v1.5.1
