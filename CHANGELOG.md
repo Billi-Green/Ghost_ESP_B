@@ -47,6 +47,7 @@
 - Display
   - Removed touch controls from settings menu on non-touch devices - @tototo31
   - Refactor wifi menu into hierarchical sub-menus
+  - Enable ESPIDF Power Management freq scaling on Cardputer and S3TWatch
 
 - Cardputer
   - Use backtick key to return to main menu
