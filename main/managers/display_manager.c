@@ -378,27 +378,25 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
     lv_obj_add_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_clear_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
-  }
+    // Update battery icon and percentage
+    const char *battery_symbol;
 
-
-  // Update battery icon and percentage
-  const char *battery_symbol;
-
-  battery_symbol = (batteryPercentage > 75) ? LV_SYMBOL_BATTERY_FULL :
+    battery_symbol = (batteryPercentage > 75) ? LV_SYMBOL_BATTERY_FULL :
                   (batteryPercentage > 50) ? LV_SYMBOL_BATTERY_3 :
                   (batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
                   (batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
 
 #ifdef CONFIG_HAS_BATTERY
-  if (axp202_is_charging()) {
-    battery_symbol = LV_SYMBOL_CHARGE;
-  }
+    if (axp202_is_charging()) {
+      battery_symbol = LV_SYMBOL_CHARGE;
+    }
 #elif CONFIG_USE_CARDPUTER
-  if (isCharging()) {
-    battery_symbol = LV_SYMBOL_CHARGE;
-  }
+    if (isCharging()) {
+      battery_symbol = LV_SYMBOL_CHARGE;
+    }
 #endif
-  lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
+    lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
+  }
 
   lv_obj_invalidate(status_bar);
 }
@@ -480,7 +478,6 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_align(right_container, LV_ALIGN_RIGHT_MID, -5, 0);
   // add sd status to right container
   sd_label = lv_label_create(right_container);
-  lv_obj_align(sd_label, LV_ALIGN_CENTER, 0, 0);
   lv_label_set_text(sd_label, LV_SYMBOL_SD_CARD);
   lv_obj_set_style_text_color(sd_label, lv_color_hex(0xCCCCCC), 0);
   lv_obj_set_style_text_font(sd_label, &lv_font_montserrat_12, 0);
