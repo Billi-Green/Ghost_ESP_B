@@ -3970,8 +3970,11 @@ void wifi_manager_start_sae_flood(void) {
     
     bool supports_wpa3 = false;
     if (selected_ap.authmode == WIFI_AUTH_WPA3_PSK || 
-        selected_ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK ||
-        selected_ap.authmode == WIFI_AUTH_WPA3_ENTERPRISE) {
+        selected_ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        || selected_ap.authmode == WIFI_AUTH_WPA3_ENTERPRISE
+#endif
+        ) {
         supports_wpa3 = true;
     }
 
