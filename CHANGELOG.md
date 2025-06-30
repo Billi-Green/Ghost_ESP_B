@@ -2,6 +2,10 @@
 
 ## Revival v1.6
 
+### TLDR
+
+Support for FlipperZero IR files, BLE Spam, WPA3 exclusive attacks, Deauth multiple APs at once, and more!
+
 ### Added
 
 - IR Support (enabled on LilyGo S3TWatch and Cardputer)
