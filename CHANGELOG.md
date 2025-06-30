@@ -5,7 +5,7 @@
 ### Added
 
 - IR Support (enabled on LilyGo S3TWatch and Cardputer)
-  - Uses FlipperZero formatted IR files stored in sdcard: infrared/remotes or /universals
+  - Uses FlipperZero formatted IR files stored in sdcard: /ghostesp/infrared/remotes or /ghostesp/infrared/universals
   - Universal Library IR Transmit
   - Signals File IR Transmit
   - IR Protocol Encoders:
