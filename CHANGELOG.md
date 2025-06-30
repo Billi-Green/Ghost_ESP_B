@@ -51,7 +51,7 @@ Support for FlipperZero IR files, BLE Spam, WPA3 exclusive attacks, Deauth multi
 - Display
   - Removed touch controls from settings menu on non-touch devices - @tototo31
   - Refactor wifi menu into hierarchical sub-menus
-  - Enable ESPIDF Power Management freq scaling on Cardputer and S3TWatch
+  - Enable ESPIDF Power Management freq scaling on Cardputer, S3TWatch 2.4Inch CYD, and Phantom
 
 - Cardputer
   - Use backtick key to return to main menu
