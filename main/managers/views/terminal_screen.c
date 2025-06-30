@@ -27,6 +27,7 @@ static bool is_stopping = false;
 #define BUTTON_PADDING 5
 
 static lv_obj_t *back_btn = NULL;
+static size_t current_text_length = 0; // track total characters to manage memory
 lv_timer_t *terminal_update_timer = NULL;
 
 static void scroll_terminal_up(void);
@@ -83,7 +84,28 @@ static void process_queued_messages(void) {
     lv_obj_set_style_text_font(item, &lv_font_montserrat_10, 0);
     last_item = item; // Keep track of the last added item
 
-    // Dequeue
+    // update total length counter and trigger cleanup if needed
+    current_text_length += strlen(msg);
+
+    if (current_text_length > CLEANUP_THRESHOLD) {
+        // aim to free at least CLEANUP_AMOUNT characters
+        size_t target_len = (current_text_length > CLEANUP_AMOUNT) ? current_text_length - CLEANUP_AMOUNT : 0;
+        while (current_text_length > target_len && lv_obj_get_child_cnt(terminal_page) > 0) {
+            lv_obj_t *oldest = lv_obj_get_child(terminal_page, 0); // first child is oldest
+            const char *old_text = lv_label_get_text(oldest);
+            if (old_text) {
+                size_t old_len = strlen(old_text);
+                if (current_text_length > old_len) {
+                    current_text_length -= old_len;
+                } else {
+                    current_text_length = 0;
+                }
+            }
+            lv_obj_del(oldest);
+        }
+    }
+
+    // dequeue
     message_queue.head = (message_queue.head + 1) % MAX_QUEUE_SIZE;
     message_queue.count--;
   }
@@ -239,6 +261,8 @@ void terminal_view_destroy(void) {
     back_btn = NULL;
   }
 
+  current_text_length = 0;
+ 
   is_stopping = false;
 }
 

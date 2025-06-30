@@ -50,6 +50,9 @@
 #define BEACON_LIST_MAX 16
 #define BEACON_SSID_MAX_LEN 32
 
+// limit how many ap records we keep to avoid memory bloat/crashes
+#define MAX_SCANNED_APS 100
+
 static char g_beacon_list[BEACON_LIST_MAX][BEACON_SSID_MAX_LEN+1];
 static int g_beacon_list_count = 0;
 
@@ -1309,6 +1312,13 @@ void wifi_manager_stop_scan() {
     // only print AP count once, no need for both "Initial" and "Actual"
     printf("Found %u access points\n", initial_ap_count);
     TERMINAL_VIEW_ADD_TEXT("Found %u access points\n", initial_ap_count);
+
+    // truncate to avoid excessive memory usage
+    if (initial_ap_count > MAX_SCANNED_APS) {
+        printf("too many aps (%u). truncating list to first %d\n", initial_ap_count, MAX_SCANNED_APS);
+        TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
+        initial_ap_count = MAX_SCANNED_APS;
+    }
 
     if (initial_ap_count > 0) {
         if (scanned_aps != NULL) {
@@ -3261,6 +3271,11 @@ void wifi_manager_start_station_scan() {
             if (err == ESP_OK) {
                  printf("Initial scan found %u access points\n", initial_ap_count);
                  TERMINAL_VIEW_ADD_TEXT("Initial scan found %u APs\n", initial_ap_count);
+                if (initial_ap_count > MAX_SCANNED_APS) {
+                    printf("too many aps (%u). truncating list to first %d\n", initial_ap_count, MAX_SCANNED_APS);
+                    TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
+                    initial_ap_count = MAX_SCANNED_APS;
+                }
                 if (initial_ap_count > 0) {
                     if (scanned_aps != NULL) {
                         free(scanned_aps);

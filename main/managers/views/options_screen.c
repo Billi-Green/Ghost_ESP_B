@@ -39,7 +39,7 @@ static const char *wifi_attacks_options[] = {
 
 static const char *wifi_capture_options[] = {
     "Capture Probe", "Capture Deauth", "Capture Beacon", "Capture Raw", "Capture Eapol",
-    "Capture WPS", "Capture PWN", "BLE Skimmer Detect", "Listen for Probes", NULL
+    "Capture WPS", "Capture PWN", "Listen for Probes", NULL
 };
 
 static const char *wifi_scanning_options[] = {

@@ -68,6 +68,7 @@
 - Display
   - Fix blank bootup screen on cardputer and show flappy ghost icon out of necessity - @tototo31
   - Fix status bar icons - @tototo31
+  - Added auto-cleanup of old terminal messages when text length exceeds threshold
 
 - WiFi
   - preserve STA mode in ap_manager init and start_services
@@ -78,6 +79,7 @@
 
 - General
   - Fix SD Card init on CYD devices - @tototo31
+  - Capped stored wifi scan results at 100 and auto-truncate lists to prevent memory bloat and crashes
 
 - WebUI
   - Fix file explorer not opening folders, erroring on upload.
