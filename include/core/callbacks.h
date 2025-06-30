@@ -6,10 +6,6 @@
 #include "vendor/GPS/MicroNMEA.h"
 #include <esp_timer.h>
 #include <time.h>
-// nimble
-#ifndef CONFIG_IDF_TARGET_ESP32S2
-#include "host/ble_gap.h"
-#endif
 
 #define MAX_PINEAP_NETWORKS 20
 #define MAX_SSIDS_PER_BSSID 10
@@ -55,8 +51,11 @@ void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_raw_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+#include "host/ble_gap.h"
 void ble_wardriving_callback(struct ble_gap_event *event, void *arg);
 void ble_skimmer_scan_callback(struct ble_gap_event *event, void *arg);
+#endif
 void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base,
                        int32_t event_id, void *event_data);
 void wifi_stations_sniffer_callback(void *buf,
