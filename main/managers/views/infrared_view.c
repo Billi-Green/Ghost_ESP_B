@@ -315,7 +315,12 @@ void infrared_view_create(void) {
     display_manager_add_status_bar("Infrared");
 
     const int STATUS_BAR_HEIGHT = 20;
-    int list_h = LV_VER_RES - STATUS_BAR_HEIGHT;
+#ifdef CONFIG_USE_TOUCHSCREEN
+    const int BUTTON_AREA_HEIGHT = IR_SCROLL_BTN_SIZE + IR_SCROLL_BTN_PADDING * 2;
+#else
+    const int BUTTON_AREA_HEIGHT = 0;
+#endif
+    int list_h = LV_VER_RES - STATUS_BAR_HEIGHT - BUTTON_AREA_HEIGHT;
     list = lv_list_create(root);
     lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_left(list, 0, LV_PART_MAIN);
