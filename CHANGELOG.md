@@ -57,6 +57,7 @@
 
 - Commands
   - Allow selection of multiple APs (eg. select -a 2,3,4)
+  - AP list now includes wifi channel
   
 - WebUI
   - Refactor file explorer to be more user friendly

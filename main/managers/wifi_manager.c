@@ -2695,12 +2695,14 @@ void wifi_manager_print_scan_results_with_oui() {
 
         printf("[%u] SSID: %s,\n"
                "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-               "     RSSI: %d,\n",
+               "     RSSI: %d,\n"
+               "     Channel: %d,\n",
                i, sanitized_ssid, 
                scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
                scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
                scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-               scanned_aps[i].rssi);
+               scanned_aps[i].rssi,
+               scanned_aps[i].primary);
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         {
@@ -2763,12 +2765,14 @@ void wifi_manager_print_scan_results_with_oui() {
 
         TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
                                "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-                               "     RSSI: %d,\n",
+                               "     RSSI: %d,\n"
+                               "     Channel: %d,\n",
                                i, sanitized_ssid, 
                                scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
                                scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
                                scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-                               scanned_aps[i].rssi);
+                               scanned_aps[i].rssi,
+                               scanned_aps[i].primary);
 
 #ifdef CONFIG_IDF_TARGET_ESP32C5
         {
