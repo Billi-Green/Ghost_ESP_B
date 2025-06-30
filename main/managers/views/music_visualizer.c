@@ -4,9 +4,13 @@
 #include <freertos/queue.h>
 #include <lvgl.h>
 #include <math.h>
+#include "esp_log.h"
 
 #define NUM_PARTICLES 5
 #define ANIMATION_INTERVAL_MS 5 // Approximately 30 FPS
+
+static const char *TAG = "MusicVisualizer";
+
 
 lv_timer_t *animation_timer = NULL;
 
@@ -31,11 +35,20 @@ int current_amplitudes[NUM_BARS] = {0};
 
 void handle_hardware_input_music_callback(InputEvent *event) {
   if (event->type == INPUT_TYPE_TOUCH) {
+    ESP_LOGI(TAG, "Touch event");
     display_manager_switch_view(&main_menu_view);
   } else if (event->type == INPUT_TYPE_JOYSTICK) {
+    ESP_LOGI(TAG, "Joystick event");
+
     int button = event->data.joystick_index;
     if (button == 1) {
       display_manager_switch_view(&main_menu_view);
+    }
+  } else if (event->type == INPUT_TYPE_KEYBOARD){ 
+    ESP_LOGW(TAG, "keyboard event");
+    uint8_t key = event->data.key_value;
+    if (key == 27 || key == '`'){
+    display_manager_switch_view(&main_menu_view);
     }
   }
 }

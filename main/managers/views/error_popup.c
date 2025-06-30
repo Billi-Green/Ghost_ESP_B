@@ -3,6 +3,10 @@
 #include "freertos/task.h"
 #include <stdlib.h>
 #include <string.h>
+#include "esp_log.h"
+
+static const char *TAG = "error_popup";
+
 
 static lv_obj_t *error_popup_root = NULL;
 static lv_obj_t *error_popup_label = NULL;
@@ -34,6 +38,9 @@ void error_popup_destroy(void) {
 }
 
 void error_popup_create(const char *message) {
+
+    ESP_LOGE(TAG, "Error popup called with message: %s", message);
+
     // Initialize mutex if not already done
     if (!popup_mutex) {
         popup_mutex = xSemaphoreCreateMutex();
@@ -67,6 +74,11 @@ void error_popup_create(const char *message) {
         popup_height = LV_VER_RES * 0.25;  // 25% height
         padding = 5;
         font_size = 8;
+    } else if (LV_HOR_RES == 240 && LV_VER_RES == 135) {
+        popup_width = LV_HOR_RES * 0.8;
+        popup_height = LV_VER_RES * 0.4;
+        padding = 10;
+        font_size = 12;
     } else {
         popup_width = LV_HOR_RES * 0.6;    // 60% width
         popup_height = LV_VER_RES * 0.15;  // 15% height
@@ -75,7 +87,11 @@ void error_popup_create(const char *message) {
     }
 
     lv_obj_set_size(error_popup_root, popup_width, popup_height);
-    lv_obj_align(error_popup_root, LV_ALIGN_TOP_MID, 0, 20);  // 20px from top
+    if (LV_HOR_RES == 240 && LV_VER_RES == 135) {
+        lv_obj_align(error_popup_root, LV_ALIGN_CENTER, 0, 0);
+    } else {
+        lv_obj_align(error_popup_root, LV_ALIGN_TOP_MID, 0, 20);
+    }
 
     // Improved styling
     lv_obj_set_style_bg_color(error_popup_root, lv_color_hex(0x323232), 0);  // Darker gray

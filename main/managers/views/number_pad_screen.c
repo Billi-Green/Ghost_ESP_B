@@ -7,6 +7,10 @@
 #include "managers/views/options_screen.h"
 #include <stdio.h>
 #include <string.h>
+#include "esp_log.h"
+
+static const char *TAG = "number_pad_screen";
+
 
 static ENumberPadMode current_mode = NP_MODE_AP;
 static lv_obj_t *root = NULL;
@@ -91,7 +95,7 @@ static void number_pad_create() {
     
 
     const lv_font_t *font = (screen_height >= 240) ? &lv_font_montserrat_16 : &lv_font_montserrat_12;
-    int padding = (screen_height >= 240) ? 10 : 5;
+    int padding = 10;
     int display_height = (screen_height >= 240) ? 40 : 30;
 
     // Number display area
@@ -118,13 +122,14 @@ static void number_pad_create() {
     lv_obj_set_style_outline_width(options_container, 0, 0);            // Remove outline
     
     // Options: 0-9, DEL, OK, BACK
-    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "DEL", "OK", "BACK"};
+    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", "DEL", "OK", "BACK"};
+    int option_count = sizeof(options) / sizeof(options[0]);
     int cols = 5;
     int rows = 3;
     int btn_width = (screen_width - 2 * padding) / cols;
     int btn_height = (screen_height - display_height - 2 * padding) / rows;
 
-    for (int i = 0; i < 13; i++) {
+    for (int i = 0; i < option_count; i++) {
         lv_obj_t *label = lv_label_create(options_container);
         lv_label_set_text(label, options[i]);
         lv_obj_set_style_text_font(label, font, 0);
@@ -167,17 +172,102 @@ static void number_pad_destroy() {
 }
 
 static void handle_hardware_button_press_number_pad(InputEvent *event) {
-    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "DEL", "OK", "BACK"};
+    const char *options[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", "DEL", "OK", "BACK"};
+    int option_count = sizeof(options) / sizeof(options[0]);
     
-    if (event->type == INPUT_TYPE_JOYSTICK) {
+    if (event->type == INPUT_TYPE_KEYBOARD){
+        int key_value = event->data.key_value;
+        bool is_numeric = false;
+        int option_index;
+        char key_str[2];
+        ESP_LOGI(TAG, "Keyboard event: %c pressed", key_value);
+        sprintf(key_str, "%c", key_value); // convert key_value to str for comparisons
+        int prev_cursor_pos = cursor_pos;
+
+        for (int i = 0; i < option_count; i++){
+            ESP_LOGD(TAG, "Checking key pressed value: %s against %s", key_str, options[i]);
+            if (strcmp(key_str, options[i]) == 0){
+                ESP_LOGI(TAG, "Number key %c pressed", key_value);
+                is_numeric = true;
+                option_index=i;
+                break;
+            }
+        }
+
+        if (is_numeric){
+            ESP_LOGI(TAG, "adding number to screen");
+            add_digit(options[option_index][0]);
+            update_display();
+        }
+        else if(key_value == 8){
+            ESP_LOGI(TAG, "Removing last number");
+            remove_digit();
+            update_display();
+        }
+        else if(strcmp(key_str, "`") == 0){ // escape key
+            ESP_LOGI(TAG, "Escaping to previous screen");
+            display_manager_switch_view(&options_menu_view);
+            return;
+        }
+        else if(strcmp(key_str, "=") == 0){ //set = as a submit key for this menu since okay is tied up at a higher level
+            ESP_LOGI(TAG, "Submitting Number");
+            submit_number();
+            return;
+        }
+        else if (key_value == 44 || key_value == ',') { // Left
+            ESP_LOGI(TAG, "Left button pressed\n");
+            cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : option_count - 1;
+        } 
+        else if ((key_value == 47 || key_value == '/') ) { // Right
+            ESP_LOGI(TAG, "Right button pressed\n");
+            cursor_pos = (cursor_pos < option_count - 1) ? cursor_pos + 1 : 0;
+        }
+        else if (key_value == 59 || key_value == ';'){ //up
+            ESP_LOGI(TAG, "Up button pressed");
+            if (cursor_pos >= 5) {
+                cursor_pos -= 5;
+            } else if (cursor_pos >= 0 && cursor_pos <= 4) {
+                cursor_pos = (cursor_pos == 0) ? 10 : (cursor_pos == 1) ? 11 : (cursor_pos == 2) ? 12 : cursor_pos + 5;
+            }
+        } else if (key_value == 46 || key_value == '.'){ //down
+            ESP_LOGI(TAG, "Down button pressed");
+            if (cursor_pos <= 7) {
+                cursor_pos += 5;
+            } else if (cursor_pos >= 10) {
+                cursor_pos = cursor_pos - 10;
+            }
+        } else if (key_value == 13){ //enter key
+            if (strcmp(options[cursor_pos], "DEL") == 0) {
+                remove_digit();
+                update_display();
+            } else if (strcmp(options[cursor_pos], "OK") == 0) {
+                submit_number();
+                return;
+            } else if (strcmp(options[cursor_pos], "BACK") == 0) {
+                display_manager_switch_view(&options_menu_view);
+                return;
+            } else {
+                add_digit(options[cursor_pos][0]);
+                update_display();
+            }
+        }
+        if (prev_cursor_pos != cursor_pos) {
+            lv_obj_t *options_container = lv_obj_get_child(root, 1);
+            for (int i = 0; i < option_count; i++) {
+                lv_obj_t *label = lv_obj_get_child(options_container, i);
+                lv_obj_set_style_text_color(label, (i == cursor_pos) ? lv_color_hex(0x00FF00) : lv_color_hex(0xFFFFFF), 0);
+            }
+        }
+    }
+    else if (event->type == INPUT_TYPE_JOYSTICK) {
         int button = event->data.joystick_index;
         int prev_cursor_pos = cursor_pos;
         
 
         if (button == 0) { // Left
-            cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : 12;
+            cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : option_count - 1;
         } else if (button == 3) { // Right
-            cursor_pos = (cursor_pos < 12) ? cursor_pos + 1 : 0;
+            cursor_pos = (cursor_pos < option_count - 1) ? cursor_pos + 1 : 0;
         } else if (button == 2) { // Up
             if (cursor_pos >= 5) {
                 cursor_pos -= 5;
@@ -209,7 +299,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
 
         if (prev_cursor_pos != cursor_pos) {
             lv_obj_t *options_container = lv_obj_get_child(root, 1);
-            for (int i = 0; i < 13; i++) {
+            for (int i = 0; i < option_count; i++) {
                 lv_obj_t *label = lv_obj_get_child(options_container, i);
                 lv_obj_set_style_text_color(label, (i == cursor_pos) ? lv_color_hex(0x00FF00) : lv_color_hex(0xFFFFFF), 0);
             }
@@ -229,7 +319,7 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
         
         if (x >= 0 && x < 5 && y >= 0 && y < 3) {
             int index = y * 5 + x;
-            if (index < 13) {
+            if (index < option_count) {
                 if (strcmp(options[index], "DEL") == 0) {
                     remove_digit();
                 } else if (strcmp(options[index], "OK") == 0) {

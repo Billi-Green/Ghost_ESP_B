@@ -16,6 +16,9 @@
 
 #define GAME_LOOP_INTERVAL_MS LV_VER_RES > 320 ? 10 : 25
 
+static const char *TAG = "FlappyGhost";
+
+
 typedef enum {
   SCREEN_SIZE_SMALL,
   SCREEN_SIZE_MEDIUM,
@@ -371,6 +374,7 @@ void flappy_bird_view_hardwareinput_callback(InputEvent *event) {
     lv_obj_t *game_over_label = lv_obj_get_child(game_over_container, -1);
 
     if (event->type == INPUT_TYPE_TOUCH) {
+      ESP_LOGI(TAG, "Touch event");
       int touch_x = event->data.touch_data.point.x;
       int touch_y = event->data.touch_data.point.y;
 
@@ -386,23 +390,32 @@ void flappy_bird_view_hardwareinput_callback(InputEvent *event) {
         flappy_bird_restart();
       }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
+      ESP_LOGI(TAG, "Joystick event");
       if (event->data.joystick_index == 1) {
         flappy_bird_restart();
       } else if (event->data.joystick_index == 0) {
         display_manager_switch_view(&main_menu_view);
       }
+    } else if (event->type == INPUT_TYPE_KEYBOARD) { // dummy for handling keyboard input during game over
+      ESP_LOGW(TAG, "keyboard event; unhandled");
+      return;
     }
     return;
   }
 
   if (event->type == INPUT_TYPE_JOYSTICK) {
     int button = event->data.joystick_index;
+    ESP_LOGI(TAG, "Joystick event");
     if (button == 1) {
       bird_velocity = settings.flap_strength;
     }
   } else if (event->type == INPUT_TYPE_TOUCH) {
+    ESP_LOGI(TAG, "Touch event");
     bird_velocity = settings.flap_strength;
-  }
+  } else if (event->type == INPUT_TYPE_KEYBOARD) { // dummy for handling keyboard input while playing
+      ESP_LOGW(TAG, "keyboard event; unhandled");
+      return;
+    }
 }
 
 // Function to retrieve the input callback

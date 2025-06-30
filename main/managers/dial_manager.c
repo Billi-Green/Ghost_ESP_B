@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "DIALManager";
 
@@ -941,9 +942,13 @@ esp_err_t check_app_status(DIALManager *manager, DIALAppType app,
   ESP_LOGI(TAG, "HTTP status code: %d", status_code);
 
   if (status_code == 200) {
-    char response_body[1024];
-    int content_len = esp_http_client_read(http_client, response_body,
-                                           sizeof(response_body) - 1);
+    char *response_body = malloc(1024);
+    if(!response_body){
+      ESP_LOGE(TAG, "malloc failed");
+      esp_http_client_cleanup(http_client);
+      return ESP_ERR_NO_MEM;
+    }
+    int content_len = esp_http_client_read(http_client, response_body, 1023);
     if (content_len >= 0) {
       response_body[content_len] = '\0'; // Null-terminate the response body
 
@@ -959,20 +964,24 @@ esp_err_t check_app_status(DIALManager *manager, DIALAppType app,
         if (screen_id) {
           strncpy(device->screenID, screen_id,
                   sizeof(device->screenID) - 1); // Store in device
-          free(screen_id);                       // Free allocated memory
+          free(screen_id);
+          free(response_body);
           esp_http_client_cleanup(http_client);
           return ESP_OK;
         }
+        free(response_body);
         esp_http_client_cleanup(http_client);
         return ESP_FAIL;
       } else {
         ESP_LOGW("DIALManager", "%s app is not running",
                  (app == APP_YOUTUBE) ? "YouTube" : "Netflix");
+        free(response_body);
         esp_http_client_cleanup(http_client);
         return ESP_ERR_NOT_FOUND;
       }
     } else {
       ESP_LOGE(TAG, "Failed to read HTTP response body");
+      free(response_body);
       esp_http_client_cleanup(http_client);
       return ESP_FAIL;
     }

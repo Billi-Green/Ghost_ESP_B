@@ -24,6 +24,14 @@
 #include "managers/default_portal.h"
 #include <time.h>
 
+#if !defined(MAX_WIFI_CHANNEL)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define MAX_WIFI_CHANNEL 165
+#else
+#define MAX_WIFI_CHANNEL 13
+#endif
+#endif
+
 static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
 
@@ -33,6 +41,7 @@ void handle_list_airtags_cmd(int argc, char **argv);
 void handle_select_airtag(int argc, char **argv);
 void handle_spoof_airtag(int argc, char **argv);
 void handle_stop_spoof(int argc, char **argv);
+void handle_ble_spam_cmd(int argc, char **argv);
 #endif
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
@@ -181,39 +190,97 @@ void handle_sta_scan(int argc, char **argv) {
 }
 
 void handle_attack_cmd(int argc, char **argv) {
-    if (argc > 1 && strcmp(argv[1], "-d") == 0) {
-        printf("Deauthentication starting...\n");
-        TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
-        wifi_manager_deauth_station();
-        return;
-    } else {
-        printf("Usage: attack -d (for deauthing access points or selected station)\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (for deauthing access points or selected station)\n");
+    if (argc > 1) {
+        if (strcmp(argv[1], "-d") == 0) {
+            printf("Deauthentication starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
+            wifi_manager_deauth_station();
+            return;
+        } else if (strcmp(argv[1], "-e") == 0) {
+            printf("EAPOL Logoff attack starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack starting...\n");
+            wifi_manager_start_eapollogoff_attack();
+            return;
+        } else if (strcmp(argv[1], "-s") == 0) {
+            printf("SAE flood attack starting...\n");
+            TERMINAL_VIEW_ADD_TEXT("SAE flood attack starting...\n");
+            wifi_manager_start_sae_flood();
+            return;
+        }
     }
+    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+}
+
+void handle_sae_flood_cmd(int argc, char **argv) {
+    printf("Starting SAE flood attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Starting SAE flood attack...\n");
+    wifi_manager_start_sae_flood();
+}
+
+void handle_stop_sae_flood_cmd(int argc, char **argv) {
+    printf("Stopping SAE flood attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Stopping SAE flood attack...\n");
+    wifi_manager_stop_sae_flood();
+}
+
+void handle_sae_flood_help_cmd(int argc, char **argv) {
+    wifi_manager_sae_flood_help();
 }
 
 void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_deauth();
     wifi_manager_stop_deauth_station();
-    printf("Deauthing Stopped....\n");
-    TERMINAL_VIEW_ADD_TEXT("Deauthing Stopped....\n");
+    wifi_manager_stop_eapollogoff_attack();
+    wifi_manager_stop_sae_flood();
+    printf("Deauth/EAPOL/SAE attacks stopped...\n");
+    TERMINAL_VIEW_ADD_TEXT("Deauth/EAPOL/SAE attacks stopped...\n");
 }
 
 void handle_select_cmd(int argc, char **argv) {
     if (argc != 3) {
-        printf("Usage: select -a <number> or select -s <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: select -a <number> or select -s <number>\n");
+        printf("Usage: select -a <number[,number,...]> or select -s <number>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: select -a <number[,number,...]> or select -s <number>\n");
         return;
     }
 
     if (strcmp(argv[1], "-a") == 0) {
-        char *endptr;
-        int num = (int)strtol(argv[2], &endptr, 10);
-        if (*endptr == '\0') {
-            wifi_manager_select_ap(num);
+        char *input = argv[2];
+        char *comma = strchr(input, ',');
+        
+        if (comma == NULL) {
+            char *endptr;
+            int num = (int)strtol(input, &endptr, 10);
+            if (*endptr == '\0') {
+                wifi_manager_select_ap(num);
+            } else {
+                printf("Error: is not a valid number.\n");
+                TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
+            }
         } else {
-            printf("Error: is not a valid number.\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
+            int indices[32];
+            int count = 0;
+            char *token = strtok(input, ",");
+            
+            while (token != NULL && count < 32) {
+                char *endptr;
+                int num = (int)strtol(token, &endptr, 10);
+                if (*endptr == '\0') {
+                    indices[count++] = num;
+                } else {
+                    printf("Error: '%s' is not a valid number.\n", token);
+                    TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", token);
+                    return;
+                }
+                token = strtok(NULL, ",");
+            }
+            
+            if (count > 0) {
+                wifi_manager_select_multiple_aps(indices, count);
+            } else {
+                printf("Error: No valid indices found.\n");
+                TERMINAL_VIEW_ADD_TEXT("Error: No valid indices found.\n");
+            }
         }
     } else if (strcmp(argv[1], "-s") == 0) {
         char *endptr;
@@ -236,8 +303,8 @@ void handle_select_cmd(int argc, char **argv) {
         }
 #endif
     } else {
-        printf("Invalid option. Usage: select -a <number> or select -s <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Invalid option. Usage: select -a <number> or select -s <number>\n");
+        printf("Invalid option. Usage: select -a <number[,number,...]> or select -s <number>\n");
+        TERMINAL_VIEW_ADD_TEXT("Invalid option. Usage: select -a <number[,number,...]> or select -s <number>\n");
     }
 }
 
@@ -264,6 +331,7 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
+    ble_stop_ble_spam();
 #endif
     if (buffer_offset > 0) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
@@ -274,6 +342,8 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_deauth();
     wifi_manager_stop_dhcpstarve();
+    wifi_manager_stop_eapollogoff_attack();
+    wifi_manager_stop_sae_flood();
     printf("Stopped activities.\nClosed files.\n");
     TERMINAL_VIEW_ADD_TEXT("Stopped activities.\nClosed files.\n");
 }
@@ -929,14 +999,22 @@ void handle_help(int argc, char **argv) {
 
     printf("attack\n");
     printf("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    printf("    Usage: attack -d\n");
+    printf("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
+    printf("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
     printf("    Arguments:\n");
-    printf("        -d  : Start deauth attack\n\n");
+    printf("        -d  : Start deauth attack (supports multiple APs)\n");
+    printf("        -e  : Start EAPOL logoff attack\n");
+    printf("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n");
+    printf("\n");
     TERMINAL_VIEW_ADD_TEXT("attack\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Launch an attack (e.g., deauthentication attack).\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d\n");
+    TERMINAL_VIEW_ADD_TEXT("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -d  : Start deauth attack\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        -d  : Start deauth attack (supports multiple APs)\n");
+    TERMINAL_VIEW_ADD_TEXT("        -e  : Start EAPOL logoff attack\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n");
+    TERMINAL_VIEW_ADD_TEXT("\n");
 
     printf("list\n");
     printf("    Description: List Wi-Fi scan results or connected stations.\n");
@@ -985,21 +1063,27 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Usage: stopdeauth\n\n");
 
     printf("select\n");
-    printf("    Description: Select an access point, station, or AirTag by index from the scan "
+    printf("    Description: Select access point(s), station, or AirTag by index from the scan "
            "results.\n");
-    printf("    Usage: select -a <num> | select -s <num> | select -airtag <num>\n");
+    printf("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
     printf("    Arguments:\n");
-    printf("        -a      : AP selection index\n");
+    printf("        -a      : AP selection index (supports multiple: 1,3,5)\n");
     printf("        -s      : Station selection index\n");
-    printf("        -airtag : AirTag selection index\n\n");
+    printf("        -airtag : AirTag selection index\n");
+    printf("    Examples:\n");
+    printf("        select -a 4      : Select single AP at index 4\n");
+    printf("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
     TERMINAL_VIEW_ADD_TEXT("select\n");
-    TERMINAL_VIEW_ADD_TEXT("    Description: Select an access point, station, or AirTag by index "
+    TERMINAL_VIEW_ADD_TEXT("    Description: Select access point(s), station, or AirTag by index "
                            "from the scan results.\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: select -a <num> | select -s <num> | select -airtag <num>\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -a      : AP selection index\n");
+    TERMINAL_VIEW_ADD_TEXT("        -a      : AP selection index (supports multiple: 1,3,5)\n");
     TERMINAL_VIEW_ADD_TEXT("        -s      : Station selection index\n");
-    TERMINAL_VIEW_ADD_TEXT("        -airtag : AirTag selection index\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        -airtag : AirTag selection index\n");
+    TERMINAL_VIEW_ADD_TEXT("    Examples:\n");
+    TERMINAL_VIEW_ADD_TEXT("        select -a 4      : Select single AP at index 4\n");
+    TERMINAL_VIEW_ADD_TEXT("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
 
     printf("startportal\n");
     printf("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
@@ -1041,6 +1125,27 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("        -a   : Start AirTag scanner\n");
     TERMINAL_VIEW_ADD_TEXT("        -r   : Scan for raw BLE packets\n");
     TERMINAL_VIEW_ADD_TEXT("        -s   : Stop BLE scanning\n\n");
+
+    printf("blespam\n");
+    printf("    Description: Start BLE advertisement spam attacks.\n");
+    printf("    Usage: blespam [OPTION]\n");
+    printf("    Arguments:\n");
+    printf("        -apple     : Apple device spam (AirPods, Apple TV, etc.)\n");
+    printf("        -ms        : Microsoft Swift Pair spam\n");
+    printf("        -samsung   : Samsung Galaxy Watch spam\n");
+    printf("        -google    : Google Fast Pair spam\n");
+    printf("        -random    : Random spam (cycles through all types)\n");
+    printf("        -s         : Stop BLE spam\n\n");
+    TERMINAL_VIEW_ADD_TEXT("blespam\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Start BLE advertisement spam attacks.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: blespam [OPTION]\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        -apple     : Apple device spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -ms        : Microsoft Swift Pair spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -samsung   : Samsung Galaxy Watch spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -google    : Google Fast Pair spam\n");
+    TERMINAL_VIEW_ADD_TEXT("        -random    : Random spam (all types)\n");
+    TERMINAL_VIEW_ADD_TEXT("        -s         : Stop BLE spam\n\n");
 #endif
 
     printf("capture\n");
@@ -1278,6 +1383,60 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Usage: dhcpstarve start [threads]\n");
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve stop\n");
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve display\n\n");
+
+    printf("saeflood\n");
+    printf("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+    printf("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("saeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+
+    printf("stopsaeflood\n");
+    printf("    Description: Stop SAE flood attack\n");
+    printf("    Usage: stopsaeflood\n\n");
+    TERMINAL_VIEW_ADD_TEXT("stopsaeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Stop SAE flood attack\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: stopsaeflood\n\n");
+
+    printf("saefloodhelp\n");
+    printf("    Description: Show detailed SAE flood attack help\n");
+    printf("    Usage: saefloodhelp\n\n");
+    TERMINAL_VIEW_ADD_TEXT("saefloodhelp\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Show detailed SAE flood attack help\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: saefloodhelp\n\n");
+
+#if CONFIG_IDF_TARGET_ESP32C5
+    printf("setcountry\n");
+    printf("    Description: Set the Wi-Fi country code.\n");
+    printf("    Usage: setcountry <CC>\n");
+    printf("    Arguments:\n");
+    printf("        <CC> : Two-letter ISO country code (e.g., US, GB, JP)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("setcountry\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Set the Wi-Fi country code.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: setcountry <CC>\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        <CC> : Two-letter ISO country code (e.g., US, GB, JP)\n\n");
+#endif
+
+    printf("listenprobes\n");
+    printf("    Description: Listen for and log probe requests.\n");
+    printf("    Usage: listenprobes [channel] [stop]\n");
+    printf("    Arguments:\n");
+    printf("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+    printf("        stop      : Stop probe request listening\n\n");
+    TERMINAL_VIEW_ADD_TEXT("listenprobes\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Listen for and log probe requests.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: listenprobes [channel] [stop]\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+    TERMINAL_VIEW_ADD_TEXT("        stop      : Stop probe request listening\n\n");
+
+    printf("webauth\\n");
+    printf("    Description: Enable or disable web UI authentication.\\n");
+    printf("    Usage: webauth <on|off>\\n\\n");
+    TERMINAL_VIEW_ADD_TEXT("webauth\\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Enable or disable web UI authentication.\\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: webauth <on|off>\\n\\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -1918,6 +2077,81 @@ void handle_setcountry(int argc, char **argv) {
 }
 #endif
 
+void handle_listen_probes_cmd(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "stop") == 0) {
+        wifi_manager_stop_monitor_mode();
+        pcap_file_close();
+        g_listen_probes_save_to_sd = false;
+        printf("Probe request listening stopped.\n");
+        TERMINAL_VIEW_ADD_TEXT("Probe request listening stopped.\n");
+        return;
+    }
+
+    uint8_t channel = 0;
+    bool channel_hopping = true;
+
+    if (argc > 1) {
+        char *endptr;
+        long ch = strtol(argv[1], &endptr, 10);
+        if (*endptr == '\0' && ch >= 1 && ch <= MAX_WIFI_CHANNEL) {
+            channel = (uint8_t)ch;
+            channel_hopping = false;
+            printf("Starting to listen for probe requests on channel %d...\n", channel);
+            TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests on channel %d...\n", channel);
+        } else {
+            printf("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            TERMINAL_VIEW_ADD_TEXT("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            return;
+        }
+    } else {
+        printf("Starting to listen for probe requests (channel hopping)...\n");
+        TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests (channel hopping)...\n");
+    }
+
+    bool sd_available = sd_card_exists("/mnt/ghostesp/pcaps");
+    g_listen_probes_save_to_sd = sd_available;
+    if (sd_available) {
+        int err = pcap_file_open("probelisten", PCAP_CAPTURE_WIFI);
+        if (err != ESP_OK) {
+            printf("Warning: PCAP file open failed; probes will not be saved to SD card.\n");
+            TERMINAL_VIEW_ADD_TEXT("Warning: PCAP file open failed.\n");
+            g_listen_probes_save_to_sd = false;
+        }
+    } else {
+        printf("SD card not available; probe PCAP disabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("SD card not available; probe PCAP disabled.\n");
+    }
+
+    if (channel_hopping) {
+        wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+    } else {
+        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        wifi_manager_start_monitor_mode(wifi_listen_probes_callback);
+    }
+}
+
+void handle_web_auth_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: webauth <on|off>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "on") == 0) {
+        settings_set_web_auth_enabled(&G_Settings, true);
+        settings_save(&G_Settings);
+        printf("Web authentication enabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("Web authentication enabled.\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        settings_set_web_auth_enabled(&G_Settings, false);
+        settings_save(&G_Settings);
+        printf("Web authentication disabled.\n");
+        TERMINAL_VIEW_ADD_TEXT("Web authentication disabled.\n");
+    } else {
+        printf("Usage: webauth <on|off>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+    }
+}
 
 void register_commands() {
     register_command("help", handle_help);
@@ -1950,6 +2184,7 @@ void register_commands() {
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
     register_command("congestion", handle_congestion_cmd);
+    register_command("listenprobes", handle_listen_probes_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
@@ -1978,10 +2213,64 @@ void register_commands() {
     register_command("selectflipper", handle_select_flipper_cmd);
 #endif
     register_command("dhcpstarve", handle_dhcpstarve_cmd);
+    // SAE Handshake Flooding Attack Commands
+    register_command("saeflood", handle_sae_flood_cmd);
+    register_command("stopsaeflood", handle_stop_sae_flood_cmd);
+    register_command("saefloodhelp", handle_sae_flood_help_cmd);
 #if CONFIG_IDF_TARGET_ESP32C5
     register_command("setcountry", handle_setcountry);
+#endif
+    register_command("webauth", handle_web_auth_cmd);
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    register_command("blespam", handle_ble_spam_cmd);
 #endif
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }
+
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+void handle_ble_spam_cmd(int argc, char **argv) {
+    if (argc > 1) {
+        if (strcmp(argv[1], "-apple") == 0) {
+            printf("starting apple ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Apple BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_APPLE);
+            return;
+        }
+        if (strcmp(argv[1], "-ms") == 0 || strcmp(argv[1], "-microsoft") == 0) {
+            printf("starting microsoft ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Microsoft BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_MICROSOFT);
+            return;
+        }
+        if (strcmp(argv[1], "-samsung") == 0) {
+            printf("starting samsung ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Samsung BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_SAMSUNG);
+            return;
+        }
+        if (strcmp(argv[1], "-google") == 0) {
+            printf("starting google ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Google BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_GOOGLE);
+            return;
+        }
+        if (strcmp(argv[1], "-random") == 0) {
+            printf("starting random ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting Random BLE spam...\n");
+            ble_start_ble_spam(BLE_SPAM_RANDOM);
+            return;
+        }
+        if (strcmp(argv[1], "-s") == 0) {
+            printf("stopping ble spam...\n");
+            TERMINAL_VIEW_ADD_TEXT("Stopping BLE spam...\n");
+            ble_stop_ble_spam();
+            return;
+        }
+    }
+    printf("usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+}
+#endif
+
 

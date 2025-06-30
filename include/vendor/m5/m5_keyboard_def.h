@@ -3,16 +3,16 @@
 
 #define SHIFT 0x80
 
-#define KEY_LEFT_CTRL  0x80
-#define KEY_LEFT_SHIFT 0x81
-#define KEY_LEFT_ALT   0x82
+#define KEY_LEFT_CTRL  0x80 // ASCII maps to euro
+#define KEY_LEFT_SHIFT 0x81 // ASCII maps to "unused"
+#define KEY_LEFT_ALT   0x82 // ASCII maps to "Single low-9 quotation mark"
 
-#define KEY_FN         0xff
-#define KEY_OPT         0x00
+#define KEY_FN         0xff // ASCII maps to "Latin small letter y with diaeresis"
+#define KEY_OPT         0x00 // ASCII maps to NULL
 
-#define KEY_BACKSPACE 0x2a
-#define KEY_TAB       0x2b
-#define KEY_ENTER     0x28
+#define KEY_BACKSPACE 0x08 // ASCII maps to "backspace"
+#define KEY_TAB       0x09 // ASCII maps to horizontal tab
+#define KEY_ENTER     0x0d // ASCII maps to Carriage Return
 
 #include <stdint.h>
 

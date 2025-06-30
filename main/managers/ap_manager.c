@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include "esp_vfs_fat.h"
 
 // Forward declarations
 static esp_err_t http_get_handler(httpd_req_t *req);
@@ -42,14 +44,14 @@ static bool is_config_loaded(void);
 static esp_err_t setup_mdns(void);
 static esp_err_t teardown_mdns(void);
 
-#define MAX_LOG_BUFFER_SIZE (8 * 1024)  // Increase to 32KB
+#define MAX_LOG_BUFFER_SIZE (8 * 1024)  // 8KB log buffer size
 #define LOG_CHUNK_SIZE (MAX_LOG_BUFFER_SIZE / 4)  // Size to remove when buffer is full
 #define MAX_FILE_SIZE (5 * 1024 * 1024) // 5 MB
 #define BUFFER_SIZE (1024)              // 1 KB buffer size for reading chunks
 #define MIN_(a, b) ((a) < (b) ? (a) : (b))
 #define SERIAL_BUFFER_SIZE 528          // Size of serial buffer
 
-static char log_buffer[MAX_LOG_BUFFER_SIZE];
+static char *log_buffer = NULL; // dynamically allocated at runtime
 static size_t log_buffer_index = 0;
 static SemaphoreHandle_t log_mutex = NULL;
 
@@ -135,13 +137,33 @@ static esp_err_t api_sd_card_get_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    cJSON *response_json = cJSON_CreateArray();
-    if (scan_directory(base_path, response_json) != ESP_OK) {
+    cJSON *response_json = cJSON_CreateObject();
+    if (!response_json) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\": \"Failed to create JSON object.\"}");
+        return ESP_FAIL;
+    }
+
+    uint64_t total_bytes = 0, free_bytes = 0;
+    esp_err_t ret = esp_vfs_fat_info(base_path, &total_bytes, &free_bytes);
+
+    if (ret == ESP_OK) {
+        cJSON *storage_info = cJSON_CreateObject();
+        cJSON_AddNumberToObject(storage_info, "total", total_bytes);
+        cJSON_AddNumberToObject(storage_info, "used", total_bytes - free_bytes);
+        cJSON_AddItemToObject(response_json, "storage", storage_info);
+    } else {
+        ESP_LOGW(TAG, "Could not get FATFS info (%s)", esp_err_to_name(ret));
+    }
+
+    cJSON *files_array = cJSON_CreateArray();
+    if (scan_directory(base_path, files_array) != ESP_OK) {
         cJSON_Delete(response_json);
         httpd_resp_set_status(req, "500 Internal Server Error");
         httpd_resp_sendstr(req, "{\"error\": \"Failed to scan SD card.\"}");
         return ESP_FAIL;
     }
+    cJSON_AddItemToObject(response_json, "files", files_array);
 
     char *response_string = cJSON_Print(response_json);
     if (!response_string) {
@@ -196,63 +218,56 @@ static esp_err_t api_sd_card_post_handler(httpd_req_t *req) {
     FILE *file = fopen(file_path, "rb");
     if (!file) {
         ESP_LOGE(TAG, "Failed to open file: %s", file_path);
+        cJSON_Delete(json);
         httpd_resp_set_status(req, "404 Not Found");
         httpd_resp_sendstr(req, "{\"error\": \"File not found.\"}");
         return ESP_FAIL;
     }
 
-    // Get file size
-    struct stat file_stat;
-    if (stat(file_path, &file_stat) != 0) {
-        ESP_LOGE(TAG, "Failed to get file stats: %s", file_path);
-        fclose(file);
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "{\"error\": \"Failed to get file size.\"}");
-        return ESP_FAIL;
-    }
-
-    size_t file_size = file_stat.st_size;
-
-    // Allocate memory for the buffer
-    char *file_buf = malloc(file_size);
-    if (!file_buf) {
-        ESP_LOGE(TAG, "Failed to allocate memory for file buffer.");
-        fclose(file);
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "{\"error\": \"Failed to allocate memory for file.\"}");
-        return ESP_FAIL;
-    }
-
-    // Read the file into the buffer
-    size_t bytes_read = fread(file_buf, 1, file_size, file);
-    fclose(file);
-
-    if (bytes_read != file_size) {
-        ESP_LOGE(TAG, "Failed to read entire file: %s", file_path);
-        free(file_buf);
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "{\"error\": \"Failed to read file.\"}");
-        return ESP_FAIL;
-    }
-
-    // Set response headers
+    // Set response headers for chunked transfer
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment");
 
-    // Send the file content
-    if (httpd_resp_send(req, file_buf, file_size) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send file.");
-        free(file_buf);
+    // Allocate a buffer for sending chunks
+    char *chunk_buf = malloc(BUFFER_SIZE);
+    if (!chunk_buf) {
+        ESP_LOGE(TAG, "Failed to allocate memory for chunk buffer.");
+        fclose(file);
+        cJSON_Delete(json);
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed.\"}");
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "File sent successfully: %s", file_path);
+    size_t bytes_read;
+    esp_err_t ret = ESP_OK;
+    while ((bytes_read = fread(chunk_buf, 1, BUFFER_SIZE, file)) > 0) {
+        if (httpd_resp_send_chunk(req, chunk_buf, bytes_read) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to send file chunk.");
+            ret = ESP_FAIL;
+            break;
+        }
+    }
 
-    // Free allocated memory
-    free(file_buf);
+    // Send final, zero-length chunk
+    if (ret == ESP_OK) {
+        if (httpd_resp_send_chunk(req, NULL, 0) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to send final chunk.");
+            ret = ESP_FAIL;
+        }
+    }
+
+    fclose(file);
+    free(chunk_buf);
     cJSON_Delete(json);
 
-    return ESP_OK;
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "File sent successfully: %s", file_path);
+    } else {
+        ESP_LOGE(TAG, "File download failed for: %s", file_path);
+    }
+
+    return ret;
 }
 
 #define MAX_PATH_LENGTH 512
@@ -328,10 +343,9 @@ esp_err_t api_sd_card_delete_file_handler(httpd_req_t *req) {
 static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Received file upload request.");
 
-    // 1. Retrieve 'path' query parameter
+    // Retrieve 'path' query parameter
     char path_param[MAX_PATH_LENGTH] = {0};
     if (get_query_param(req, "path", path_param, sizeof(path_param)) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get 'path' from query parameters.");
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_set_type(req, "application/json");
         httpd_resp_sendstr(req, "{\"error\": \"Missing or invalid 'path' query parameter.\"}");
@@ -339,175 +353,118 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
     }
     ESP_LOGI(TAG, "Upload path: %s", path_param);
 
-    // 2. Retrieve Content-Type header and boundary
-    char content_type[128] = {0};
-    if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) !=
-        ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get Content-Type header.");
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_sendstr(req, "{\"error\": \"Missing Content-Type header.\"}");
-        return ESP_FAIL;
-    }
-
-    const char *boundary_prefix = "boundary=";
-    char *boundary_start = strstr(content_type, boundary_prefix);
-    if (!boundary_start) {
-        ESP_LOGE(TAG, "Failed to parse boundary.");
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_sendstr(req, "{\"error\": \"Boundary missing.\"}");
-        return ESP_FAIL;
-    }
-    boundary_start += strlen(boundary_prefix);
-
-    // Allocate memory for the boundary
-    size_t boundary_len = strlen(boundary_start) + 3; // +3 for "--" and null terminator
-    char *boundary = malloc(boundary_len);
-    if (!boundary) {
-        ESP_LOGE(TAG, "Failed to allocate memory for boundary.");
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed.\"}");
-        return ESP_FAIL;
-    }
-    snprintf(boundary, boundary_len, "--%s", boundary_start);
-    ESP_LOGD(TAG, "Parsed boundary: %s", boundary);
-
-    // Allocate memory for the buffer
-    char *buf = malloc(BUFFER_SIZE + 1); // +1 for null-terminator
+    // Buffer for receiving data
+    char *buf = malloc(BUFFER_SIZE + 1);
     if (!buf) {
-        ESP_LOGE(TAG, "Failed to allocate memory for request buffer.");
-        free(boundary);
         httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed.\"}");
+        httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed for buffer.\"}");
         return ESP_FAIL;
     }
 
+    char *file_path = NULL;
     FILE *file = NULL;
-    char *file_path = malloc(MAX_PATH_LENGTH + 128); // Allocate heap memory for file_path
-    if (!file_path) {
-        ESP_LOGE(TAG, "Failed to allocate memory for file path.");
-        free(buf);
-        free(boundary);
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed.\"}");
-        return ESP_FAIL;
-    }
-
-    size_t total_received = 0;
     int received;
+    int total_received = 0;
+    bool headers_parsed = false;
+    char *body_start = NULL;
 
-    // 4. Process the multipart form-data
     while ((received = httpd_req_recv(req, buf, BUFFER_SIZE)) > 0) {
-        buf[received] = '\0'; // Null-terminate for string operations
+        buf[received] = '\0';
+        total_received += received;
 
-        char *boundary_ptr = strstr(buf, boundary);
-        if (boundary_ptr) {
-            char *headers_end = strstr(boundary_ptr, "\r\n\r\n");
-            if (!headers_end) {
-                ESP_LOGE(TAG, "Malformed part headers.");
-                free(buf);
-                free(boundary);
-                free(file_path);
-                if (file)
-                    fclose(file);
-                httpd_resp_set_status(req, "400 Bad Request");
-                httpd_resp_set_type(req, "application/json");
-                httpd_resp_sendstr(req, "{\"error\": \"Malformed part headers.\"}");
-                return ESP_FAIL;
-            }
-            headers_end += 4;
+        if (!headers_parsed) {
+            body_start = strstr(buf, "\r\n\r\n");
+            if (body_start) {
+                headers_parsed = true;
+                body_start += 4; // Move past the separator
 
-            if (strstr(boundary_ptr, "Content-Disposition: form-data; name=\"file\"")) {
-                char *filename_start = strstr(boundary_ptr, "filename=\"");
-                char original_filename[128] = {0};
+                // Extract filename from headers
+                char *filename_start = strstr(buf, "filename=\"");
                 if (filename_start) {
                     filename_start += strlen("filename=\"");
                     char *filename_end = strstr(filename_start, "\"");
-                    if (filename_end &&
-                        (filename_end - filename_start) < sizeof(original_filename)) {
+                    if (filename_end) {
+                        char original_filename[128] = {0};
                         strncpy(original_filename, filename_start, filename_end - filename_start);
-                        original_filename[filename_end - filename_start] = '\0';
-                        ESP_LOGI(TAG, "Original filename: %s", original_filename);
+
+                        // Allocate memory for the full file path
+                        file_path = malloc(strlen(path_param) + strlen(original_filename) + 2);
+                        if (!file_path) {
+                            free(buf);
+                            httpd_resp_set_status(req, "500 Internal Server Error");
+                            httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed for file path.\"}");
+                            return ESP_FAIL;
+                        }
+                        snprintf(file_path, MAX_PATH_LENGTH + 128, "%s/%s", path_param, original_filename);
+                        
+                        ESP_LOGI(TAG, "Writing to file: %s", file_path);
+                        file = fopen(file_path, "wb");
+                        if (!file) {
+                            free(buf);
+                            free(file_path);
+                            httpd_resp_set_status(req, "500 Internal Server Error");
+                            httpd_resp_sendstr(req, "{\"error\": \"Failed to open file for writing.\"}");
+                            return ESP_FAIL;
+                        }
+                        
+                        // Write the first part of the file data
+                        size_t data_len = received - (body_start - buf);
+                        if (data_len > 0) {
+                            fwrite(body_start, 1, data_len, file);
+                        }
                     }
                 }
-
-                if (strlen(original_filename) > 0) {
-                    snprintf(file_path, MAX_PATH_LENGTH + 128, "%s/%s", path_param,
-                             original_filename);
-                } else {
-                    snprintf(file_path, MAX_PATH_LENGTH + 128, "%s/received_file", path_param);
-                }
-
-                file = fopen(file_path, "wb");
-                if (!file) {
-                    ESP_LOGE(TAG, "Failed to open file for writing: %s", file_path);
-                    free(buf);
-                    free(boundary);
-                    free(file_path);
-                    httpd_resp_set_status(req, "500 Internal Server Error");
-                    httpd_resp_set_type(req, "application/json");
-                    httpd_resp_sendstr(req, "{\"error\": \"Failed to open file.\"}");
-                    return ESP_FAIL;
-                }
-                ESP_LOGI(TAG, "Opened file for writing: %s", file_path);
-
-                size_t data_len = received - (headers_end - buf);
-                if (data_len > 0 && fwrite(headers_end, 1, data_len, file) != data_len) {
-                    ESP_LOGE(TAG, "Failed to write file data.");
-                    fclose(file);
-                    free(buf);
-                    free(boundary);
-                    free(file_path);
-                    httpd_resp_set_status(req, "500 Internal Server Error");
-                    httpd_resp_set_type(req, "application/json");
-                    httpd_resp_sendstr(req, "{\"error\": \"Failed to write file data.\"}");
-                    return ESP_FAIL;
-                }
-                total_received += data_len;
             }
         } else if (file) {
-            if (fwrite(buf, 1, received, file) != received) {
-                ESP_LOGE(TAG, "Failed to write file data.");
-                fclose(file);
-                free(buf);
-                free(boundary);
-                free(file_path);
-                httpd_resp_set_status(req, "500 Internal Server Error");
-                httpd_resp_set_type(req, "application/json");
-                httpd_resp_sendstr(req, "{\"error\": \"Failed to write file data.\"}");
-                return ESP_FAIL;
-            }
-            total_received += received;
+            // Write subsequent chunks of file data
+            fwrite(buf, 1, received, file);
         }
     }
+    
+    free(buf);
+    if (file) {
+        fclose(file);
+        
+        // Post-process the file to remove the boundary
+        file = fopen(file_path, "r+b");
+        if (file) {
+            fseek(file, 0, SEEK_END);
+            long file_size = ftell(file);
+            fseek(file, 0, SEEK_SET);
+            
+            char *file_buf = malloc(file_size + 1);
+            if (file_buf) {
+                fread(file_buf, 1, file_size, file);
+                file_buf[file_size] = '\0';
+                
+                char *end_boundary = strstr(file_buf, "\r\n--");
+                if (end_boundary) {
+                    long new_size = end_boundary - file_buf;
+                    rewind(file);
+#ifdef _WIN32
+                    _chsize(_fileno(file), new_size);
+#else
+                    ftruncate(fileno(file), new_size);
+#endif
+                }
+                free(file_buf);
+            }
+            fclose(file);
+        }
+    }
+    free(file_path); // Free the allocated file_path
 
     if (received < 0) {
         ESP_LOGE(TAG, "Error receiving file data.");
-        free(buf);
-        free(boundary);
-        free(file_path);
-        if (file)
-            fclose(file);
         httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_set_type(req, "application/json");
         httpd_resp_sendstr(req, "{\"error\": \"Failed to receive file data.\"}");
         return ESP_FAIL;
     }
-
-    free(buf);
-    free(boundary);
-    free(file_path);
-    if (file)
-        fclose(file);
-
+    
+    ESP_LOGI(TAG, "File upload finished, total bytes: %d", total_received);
     httpd_resp_set_status(req, "200 OK");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"message\": \"File uploaded successfully.\"}");
-    ESP_LOGI(TAG, "File uploaded successfully: %zu bytes received.", total_received);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "File uploaded successfully.");
 
     return ESP_OK;
 }
@@ -542,7 +499,7 @@ esp_err_t ap_manager_init(void) {
         return ret;
     }
 
-    ret = esp_wifi_set_mode(WIFI_MODE_AP);
+    ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (ret != ESP_OK) {
         printf("esp_wifi_set_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
@@ -642,11 +599,23 @@ esp_err_t ap_manager_init(void) {
         printf("Failed to get IP address\n");
     }
 
-    // Initialize log mutex
+    // Initialize log buffer and mutex
+    log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
+    if(!log_buffer){
+        ESP_LOGE(TAG, "failed to alloc log buffer");
+        return ESP_ERR_NO_MEM;
+    }
+
     log_mutex = xSemaphoreCreateMutex();
     if (!log_mutex) {
         ESP_LOGE(TAG, "Failed to create log mutex");
+        free(log_buffer);
+        log_buffer = NULL;
         return ESP_FAIL;
+    }
+
+    if(log_buffer){
+        memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
     }
 
     return ESP_OK;
@@ -669,6 +638,11 @@ void ap_manager_deinit(void) {
     
     teardown_mdns();
     
+    if(log_buffer){
+        free(log_buffer);
+        log_buffer = NULL;
+    }
+
     if (log_mutex) {
         vSemaphoreDelete(log_mutex);
         log_mutex = NULL;
@@ -725,7 +699,7 @@ esp_err_t ap_manager_start_services() {
     esp_err_t ret;
 
     // Set Wi-Fi mode to AP
-    ret = esp_wifi_set_mode(WIFI_MODE_AP);
+    ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (ret != ESP_OK) {
         printf("WiFi mode set failed\n");
         return ret;
@@ -807,6 +781,12 @@ void ap_manager_stop_services() {
 // Handler for GET requests (serves the HTML page)
 static esp_err_t http_get_handler(httpd_req_t *req) {
     printf("Received HTTP GET request: %s\n", req->uri);
+
+    if (!settings_get_web_auth_enabled(&G_Settings)) {
+        httpd_resp_set_type(req, "text/html");
+        return httpd_resp_send(req, (const char *)ghost_site_html,
+                               ghost_site_html_size);
+    }
 
     char auth_buffer[128];
 
@@ -964,7 +944,7 @@ static esp_err_t api_clear_logs_handler(httpd_req_t *req) {
     }
     
     log_buffer_index = 0;
-    memset(log_buffer, 0, sizeof(log_buffer));
+    memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
     
     xSemaphoreGive(log_mutex);
     
@@ -1114,6 +1094,11 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         settings_set_rts_enabled(settings, rts_enabled_bool->valueint != 0);
     }
 
+    cJSON *web_auth_enabled_bool = cJSON_GetObjectItem(root, "web_auth_enabled");
+    if (web_auth_enabled_bool) {
+        settings_set_web_auth_enabled(settings, web_auth_enabled_bool->valueint != 0);
+    }
+
     cJSON *gps_rx_pin = cJSON_GetObjectItem(root, "gps_rx_pin");
     if (gps_rx_pin) {
         settings_set_gps_rx_pin(settings, gps_rx_pin->valueint);
@@ -1169,6 +1154,7 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "gps_rx_pin", settings_get_gps_rx_pin(settings));
     cJSON_AddNumberToObject(root, "display_timeout", settings_get_display_timeout(settings));
     cJSON_AddNumberToObject(root, "rts_enabled_bool", settings_get_rts_enabled(settings));
+    cJSON_AddBoolToObject(root, "web_auth_enabled", settings_get_web_auth_enabled(settings));
 
     esp_netif_ip_info_t ip_info;
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -1329,6 +1315,10 @@ static esp_err_t start_http_server(void) {
     }
 
     esp_err_t ret = httpd_start(&server, &server_config);
+    if (ret == ESP_ERR_HTTPD_TASK && server_config.stack_size > 4096) {
+        server_config.stack_size = 4096;
+        ret = httpd_start(&server, &server_config);
+    }
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(ret));
         return ret;

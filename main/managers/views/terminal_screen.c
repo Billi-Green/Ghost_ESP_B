@@ -27,6 +27,7 @@ static bool is_stopping = false;
 #define BUTTON_PADDING 5
 
 static lv_obj_t *back_btn = NULL;
+static size_t current_text_length = 0; // track total characters to manage memory
 lv_timer_t *terminal_update_timer = NULL;
 
 static void scroll_terminal_up(void);
@@ -83,7 +84,28 @@ static void process_queued_messages(void) {
     lv_obj_set_style_text_font(item, &lv_font_montserrat_10, 0);
     last_item = item; // Keep track of the last added item
 
-    // Dequeue
+    // update total length counter and trigger cleanup if needed
+    current_text_length += strlen(msg);
+
+    if (current_text_length > CLEANUP_THRESHOLD) {
+        // aim to free at least CLEANUP_AMOUNT characters
+        size_t target_len = (current_text_length > CLEANUP_AMOUNT) ? current_text_length - CLEANUP_AMOUNT : 0;
+        while (current_text_length > target_len && lv_obj_get_child_cnt(terminal_page) > 0) {
+            lv_obj_t *oldest = lv_obj_get_child(terminal_page, 0); // first child is oldest
+            const char *old_text = lv_label_get_text(oldest);
+            if (old_text) {
+                size_t old_len = strlen(old_text);
+                if (current_text_length > old_len) {
+                    current_text_length -= old_len;
+                } else {
+                    current_text_length = 0;
+                }
+            }
+            lv_obj_del(oldest);
+        }
+    }
+
+    // dequeue
     message_queue.head = (message_queue.head + 1) % MAX_QUEUE_SIZE;
     message_queue.count--;
   }
@@ -239,6 +261,8 @@ void terminal_view_destroy(void) {
     back_btn = NULL;
   }
 
+  current_text_length = 0;
+ 
   is_stopping = false;
 }
 
@@ -283,6 +307,7 @@ void terminal_view_add_text(const char *text) {
 
 void terminal_view_hardwareinput_callback(InputEvent *event) {
   if (event->type == INPUT_TYPE_TOUCH) {
+    ESP_LOGW(TAG, "Touch event");
     if (event->data.touch_data.state != LV_INDEV_STATE_PR) {
       return;
     }
@@ -325,6 +350,7 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       }
     }
   } else if (event->type == INPUT_TYPE_JOYSTICK) {
+    ESP_LOGI(TAG, "Joystick event");
     int button = event->data.joystick_index;
     if (button == 1) {
       ESP_LOGW(TAG, "Joystick button 1: Stop all operations");
@@ -336,8 +362,19 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       ESP_LOGW(TAG, "Joystick button 4: Scroll down");
       scroll_terminal_down();
     }
+  } else if (event->type == INPUT_TYPE_KEYBOARD) {
+    ESP_LOGI(TAG, "keyboard event");
+    uint8_t key = event->data.key_value;
+    if (key == 29 || key == '`') {
+      stop_all_operations();
+    } else if (key == 59 || key == ';') {// up arrow
+      scroll_terminal_up();
+    } else if (key == 46 || key == '.') {      //down arrow
+      scroll_terminal_down();
+    }
   }
 }
+
 
 
 void terminal_view_get_hardwareinput_callback(void **callback) {

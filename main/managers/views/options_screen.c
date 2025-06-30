@@ -10,7 +10,67 @@
 #include "managers/views/number_pad_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/settings_manager.h"
+#include "esp_log.h"
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "esp_log.h"
+#include "managers/views/keyboard_screen.h"
+
+static const char *TAG = "optionsScreen";
+
+typedef enum {
+    WIFI_MENU_MAIN,
+    WIFI_MENU_ATTACKS,
+    WIFI_MENU_CAPTURE,
+    WIFI_MENU_SCANNING,
+    WIFI_MENU_EVIL_PORTAL,
+    WIFI_MENU_CONNECTION,
+    WIFI_MENU_MISC
+} WifiMenuState;
+
+static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
+
+static const char *wifi_attacks_options[] = {
+    "Start Deauth Attack", "Beacon Spam - Random", "Beacon Spam - Rickroll",
+    "Beacon Spam - List", "Start EAPOL Logoff", "Start DHCP-Starve", "Stop DHCP-Starve",
+    NULL
+};
+
+static const char *wifi_capture_options[] = {
+    "Capture Probe", "Capture Deauth", "Capture Beacon", "Capture Raw", "Capture Eapol",
+    "Capture WPS", "Capture PWN", "Listen for Probes", NULL
+};
+
+static const char *wifi_scanning_options[] = {
+    "Scan Access Points", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
+    "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
+    "List Stations", "Select AP", "Select Station", "Select LAN", NULL
+};
+
+static const char *wifi_evil_portal_options[] = {"Start Evil Portal", "Stop Evil Portal", NULL};
+
+static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
+
+static const char *wifi_misc_options[] = {"TV Cast (Dial Connect)", "Power Printer", "TP Link Test", NULL};
+
+static const char *wifi_main_options[] = {
+    "Attacks", "Capture", "Scanning", "Evil Portal", "Connection", "Misc", NULL
+};
+
+static const char *bluetooth_options[] = {"Find Flippers", "List Flippers", "Select Flipper", "Start AirTag Scanner",
+                                         "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing",
+                                         "Raw BLE Scanner", "BLE Skimmer Detect",
+                                         "BLE Spam - Apple", "BLE Spam - Microsoft", "BLE Spam - Samsung", 
+                                         "BLE Spam - Google", "BLE Spam - Random", "Stop BLE Spam",
+                                         NULL};
+
+static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
+                                    "BLE Wardriving",   NULL};
+
+static const char *settings_options[] = {"Set RGB Mode - Stealth", "Set RGB Mode - Normal",
+                                         "Set RGB Mode - Rainbow", "Webauth On", "Webauth Off", NULL};
+
 
 EOptionsMenuType SelectedMenuType = OT_Wifi;
 int selected_item_index = 0;
@@ -39,8 +99,44 @@ static bool touch_on_scroll_btn = false; // Flag active between press and releas
 // Add button declaration for back button
 static lv_obj_t *back_btn = NULL;
 
+// shared styles for memory optimization
+static lv_style_t style_menu_item;
+static lv_style_t style_selected_item;
+static lv_style_t style_menu_label;
+static bool styles_initialized = false;
+
+// forward declaration for incremental builder callback
+static void menu_builder_cb(lv_timer_t *t);
+
+static lv_timer_t *menu_build_timer = NULL;
+static const char **current_options_list = NULL;
+static int build_item_index = 0;
+static int button_height_global = 0;
+static bool is_small_screen_global = false;
+
+static void init_shared_styles(void) {
+    if (styles_initialized) return;
+    
+    lv_style_init(&style_menu_item);
+    lv_style_set_bg_color(&style_menu_item, lv_color_hex(0x1E1E1E));
+    lv_style_set_bg_opa(&style_menu_item, LV_OPA_COVER);
+    lv_style_set_border_width(&style_menu_item, 0);
+    lv_style_set_radius(&style_menu_item, 0);
+    
+    lv_style_init(&style_selected_item);
+    lv_style_set_bg_opa(&style_selected_item, LV_OPA_COVER);
+    lv_style_set_radius(&style_selected_item, 0);
+    lv_style_set_bg_grad_dir(&style_selected_item, LV_GRAD_DIR_NONE);
+    
+    lv_style_init(&style_menu_label);
+    lv_style_set_text_color(&style_menu_label, lv_color_hex(0xFFFFFF));
+    
+    styles_initialized = true;
+}
+
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
+static void wifi_connect_kb_cb(const char *text);
 
 // Add scroll functions
 static void scroll_options_up(lv_event_t *e) {
@@ -69,53 +165,6 @@ const char *options_menu_type_to_string(EOptionsMenuType menuType) {
         return "Unknown";
     }
 }
-
-static const char *wifi_options[] = {"Scan Access Points",
-                                     "Select AP",
-                                     "List Access Points",
-                                     "Scan Stations",
-                                     "List Stations",
-                                     "Select Station",
-                                     "Scan LAN Devices",
-                                     "Select LAN",
-                                     "Scan All (AP & Station)",
-                                     "Start Deauth Attack",
-                                     "Beacon Spam - Random",
-                                     "Beacon Spam - Rickroll",
-                                     "Beacon Spam - List",
-                                     "Start Evil Portal",
-                                     "Stop Evil Portal",
-                                     "Capture Probe",
-                                     "Capture Deauth",
-                                     "Capture Beacon",
-                                     "Capture Raw",
-                                     "Capture Eapol",
-                                     "Capture WPS",
-                                     "Capture PWN",
-                                     "TV Cast (Dial Connect)",
-                                     "Power Printer",
-                                     "TP Link Test",
-                                     "PineAP Detection",
-                                     "Scan Open Ports",
-                                     "Reset AP Credentials",
-                                     "Channel Congestion",
-                                     "Start DHCP-Starve",
-                                     "Stop DHCP-Starve",
-                                     "Connect to saved WiFi",
-                                     "Go Back",
-                                     NULL};
-
-static const char *bluetooth_options[] = {"Find Flippers", "List Flippers", "Select Flipper", "Start AirTag Scanner",
-                                         "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing",
-                                         "Raw BLE Scanner", "BLE Skimmer Detect",
-                                         "Go Back", NULL};
-
-static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
-                                    "BLE Wardriving",   "Go Back",         NULL};
-
-static const char *settings_options[] = {"Set RGB Mode - Stealth", "Set RGB Mode - Normal",
-                                         "Set RGB Mode - Rainbow", "Go Back", NULL};
-
 
 static void up_down_event_cb(lv_event_t *e) {
 int direction = (int)(intptr_t)lv_event_get_user_data(e);
@@ -147,6 +196,8 @@ void options_menu_create() {
 
     bool is_small_screen = (screen_width <= 240 || screen_height <= 240);
 
+    init_shared_styles();
+
     display_manager_fill_screen(lv_color_hex(0x121212));
     lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
 
@@ -163,14 +214,13 @@ void options_menu_create() {
     // Calculate heights considering status bar (20px) and scroll buttons
     const int STATUS_BAR_HEIGHT = 20;
 #ifdef CONFIG_USE_TOUCHSCREEN
-    const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2; // set size of touch navigation buttons
+    const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
     int container_height = screen_height - STATUS_BAR_HEIGHT - BUTTON_AREA_HEIGHT;
 #else
     int container_height = screen_height - STATUS_BAR_HEIGHT;
 #endif
     menu_container = lv_list_create(root);
     lv_obj_set_style_radius(menu_container, 0, LV_PART_MAIN);
-    // Adjust size and position
     lv_obj_set_size(menu_container, screen_width, container_height); 
     lv_obj_align(menu_container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT); 
     lv_obj_set_style_bg_color(menu_container, lv_color_hex(0x121212), 0);
@@ -179,7 +229,17 @@ void options_menu_create() {
 
     const char **options = NULL;
     switch (SelectedMenuType) {
-    case OT_Wifi: options = wifi_options; break;
+    case OT_Wifi:
+        switch (current_wifi_menu_state) {
+            case WIFI_MENU_MAIN: options = wifi_main_options; break;
+            case WIFI_MENU_ATTACKS: options = wifi_attacks_options; break;
+            case WIFI_MENU_CAPTURE: options = wifi_capture_options; break;
+            case WIFI_MENU_SCANNING: options = wifi_scanning_options; break;
+            case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
+            case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
+            case WIFI_MENU_MISC: options = wifi_misc_options; break;
+        }
+        break;
     case OT_Bluetooth: options = bluetooth_options; break;
     case OT_GPS: options = gps_options; break;
     case OT_Settings: options = settings_options; break;
@@ -192,28 +252,14 @@ void options_menu_create() {
     }
 
     num_items = 0;
-    int button_height = is_small_screen ? 40 : 60;
-    for (int i = 0; options[i] != NULL; i++) {
-        lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, options[i]);
-        lv_obj_set_height(btn, button_height);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
+    int button_height = is_small_screen ? 35 : 50;
+    is_small_screen_global = is_small_screen;
+    button_height_global = button_height;
+    current_options_list = options;
+    build_item_index = 0;
+    ESP_LOGI(TAG, "starting incremental menu build");
+    menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
 
-        lv_obj_t *label = lv_obj_get_child(btn, 0);
-        if (label) {
-           lv_obj_set_style_text_font(label, is_small_screen ? &lv_font_montserrat_14 : &lv_font_montserrat_16, 0);
-           lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-        }
-
-        lv_obj_set_user_data(btn, (void *)options[i]);
-        lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)options[i]);
-
-        num_items++;
-    }
-
-    select_option_item(0);
     display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
 #ifdef CONFIG_USE_TOUCHSCREEN // only show touch buttons if on a touch screen device.
     // Create scroll buttons and back button
@@ -259,27 +305,26 @@ void options_menu_create() {
 }
 
 static void select_option_item(int index) {
-    printf("select_option_item called with index: %d, num_items: %d\n", index, num_items);
+    ESP_LOGD(TAG, "select_option_item called with index: %d, num_items: %d\n", index, num_items);
 
-    if (index < 0) index = num_items - 1; // if we hit the top of the menu wrap to the bottom
-    if (index >= num_items) index = 0; // if we hit the bottom of the menu wrap to the top
+    if (index < 0) index = num_items - 1;
+    if (index >= num_items) index = 0;
 
-    printf("Adjusted index: %d\n", index);
+    ESP_LOGD(TAG, "Adjusted index: %d\n", index);
 
     int previous_index = selected_item_index;
     selected_item_index = index;
 
-    printf("Previous index: %d, New selected index: %d\n", previous_index, selected_item_index);
+    ESP_LOGD(TAG, "Previous index: %d, New selected index: %d\n", previous_index, selected_item_index);
 
-    if (previous_index != selected_item_index) {
+    if (previous_index != selected_item_index && previous_index >= 0 && previous_index < num_items) {
         lv_obj_t *previous_item = lv_obj_get_child(menu_container, previous_index);
         if (previous_item) {
-            lv_obj_set_style_bg_color(previous_item, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-            lv_obj_set_style_bg_grad_color(previous_item, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-            lv_obj_set_style_bg_grad_dir(previous_item, LV_GRAD_DIR_NONE, LV_PART_MAIN);
-            lv_obj_set_style_radius(previous_item, 0, LV_PART_MAIN);
+            lv_obj_remove_style(previous_item, &style_selected_item, 0);
             lv_obj_t *prev_label = lv_obj_get_child(previous_item, 0);
-            if(prev_label) lv_obj_set_style_text_color(prev_label, lv_color_hex(0xFFFFFF), 0);
+            if(prev_label) {
+                lv_obj_set_style_text_color(prev_label, lv_color_hex(0xFFFFFF), 0);
+            }
         }
     }
 
@@ -287,11 +332,11 @@ static void select_option_item(int index) {
     if (current_item) {
         uint8_t theme = settings_get_menu_theme(&G_Settings);
         lv_color_t theme_bg = lv_color_hex(theme_palettes[theme][0]);
-        lv_obj_set_style_bg_color(current_item, theme_bg, LV_PART_MAIN);
-        lv_obj_set_style_bg_grad_color(current_item, theme_bg, LV_PART_MAIN);
-        lv_obj_set_style_bg_grad_dir(current_item, LV_GRAD_DIR_NONE, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(current_item, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_radius(current_item, 0, LV_PART_MAIN);
+        
+        lv_style_set_bg_color(&style_selected_item, theme_bg);
+        lv_style_set_bg_grad_color(&style_selected_item, theme_bg);
+        lv_obj_add_style(current_item, &style_selected_item, 0);
+        
         lv_obj_t *label = lv_obj_get_child(current_item, 0);
         if(label) {
             if(theme == 3)
@@ -301,7 +346,7 @@ static void select_option_item(int index) {
         }
         lv_obj_scroll_to_view(current_item, LV_ANIM_OFF);
     } else {
-        printf("Error: Current item not found for index %d\n", selected_item_index);
+        ESP_LOGE(TAG, "Error: Current item not found for index %d\n", selected_item_index);
     }
 }
 
@@ -416,6 +461,28 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 }
             }
         }
+    } else if (event->type == INPUT_TYPE_KEYBOARD) {
+        uint8_t keyValue = event->data.key_value;
+
+        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) { // Left / up
+            ESP_LOGI(TAG, "Left/Up button pressed\n");
+            select_option_item(selected_item_index - 1);
+        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) { // Right / down
+            ESP_LOGI(TAG, "Right/Down button pressed\n");
+            select_option_item(selected_item_index + 1);
+        } else if (keyValue == 13) { // Select
+            ESP_LOGI(TAG, "Enter button pressed\n");
+            lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+            if (selected_obj) {
+                const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                if (selected_option) {
+                    handle_option_directly(selected_option);
+                }
+            }
+        } else if (keyValue == 29 || keyValue == '`') { // esc
+            ESP_LOGI(TAG, "Esc button pressed\n");
+            back_event_cb(NULL);
+        }
     }
 }
 
@@ -440,6 +507,18 @@ void option_event_cb(lv_event_t *e) {
     last_option = Selected_Option;
     last_time_ms = now_ms;
 
+    if (SelectedMenuType == OT_Wifi) {
+        if (current_wifi_menu_state == WIFI_MENU_MAIN) {
+            if (strcmp(Selected_Option, "Attacks") == 0) current_wifi_menu_state = WIFI_MENU_ATTACKS;
+            else if (strcmp(Selected_Option, "Capture") == 0) current_wifi_menu_state = WIFI_MENU_CAPTURE;
+            else if (strcmp(Selected_Option, "Scanning") == 0) current_wifi_menu_state = WIFI_MENU_SCANNING;
+            else if (strcmp(Selected_Option, "Evil Portal") == 0) current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
+            else if (strcmp(Selected_Option, "Connection") == 0) current_wifi_menu_state = WIFI_MENU_CONNECTION;
+            else if (strcmp(Selected_Option, "Misc") == 0) current_wifi_menu_state = WIFI_MENU_MISC;
+            display_manager_switch_view(&options_menu_view);
+            return; // Explicitly return to avoid falling through
+        }
+    }
 
     if (strcmp(Selected_Option, "Scan Access Points") == 0) {
         display_manager_switch_view(&terminal_view);
@@ -544,6 +623,18 @@ void option_event_cb(lv_event_t *e) {
     else if (strcmp(Selected_Option, "Capture Eapol") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("capture -eapol");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Listen for Probes") == 0) {
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("listenprobes");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Start EAPOL Logoff") == 0) {
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("attack -e");
         view_switched = true;
     }
 
@@ -690,16 +781,19 @@ void option_event_cb(lv_event_t *e) {
         
     }
 
-    else if (strcmp(Selected_Option, "Go Back") == 0) {
-        selected_item_index = 0;
-        num_items = 0;
-        menu_container = NULL;
-        root = NULL;
+    else if (strcmp(Selected_Option, "Webauth On") == 0) {
+        simulateCommand("webauth on");
+        error_popup_create("Webauth Enabled.");
         
-        display_manager_switch_view(&main_menu_view);
-        view_switched = true; 
-        return; 
-    } else if (strcmp(Selected_Option, "Capture PWN") == 0) {
+    }
+
+    else if (strcmp(Selected_Option, "Webauth Off") == 0) {
+        simulateCommand("webauth off");
+        error_popup_create("Webauth Disabled.");
+        
+    }
+
+    else if (strcmp(Selected_Option, "Capture PWN") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("capture -pwn");
         view_switched = true;
@@ -803,14 +897,81 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Connect to WiFi") == 0) {
+        keyboard_view_set_submit_callback(wifi_connect_kb_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("\"SSID\" \"PASSWORD\"");
+        view_switched = true;
+    }
+
     else if (strcmp(Selected_Option, "Connect to saved WiFi") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("connect");
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "BLE Spam - Apple") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -apple");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Microsoft") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -ms");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Samsung") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -samsung");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Google") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -google");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "BLE Spam - Random") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -random");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Stop BLE Spam") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blespam -s");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
     else {
-        printf("Unhandled Option selected: %s\n", Selected_Option);
+        ESP_LOGW(TAG, "Unhandled Option selected: %s\n", Selected_Option);
         
     }
 
@@ -836,12 +997,24 @@ void options_menu_destroy(void) {
         lv_obj_clean(options_menu_view.root);
         lv_obj_del(options_menu_view.root);
         options_menu_view.root = NULL;
-        back_btn = NULL; // Ensure back button is cleared
-        scroll_up_btn = NULL; // Ensure scroll buttons are cleared
+        back_btn = NULL;
+        scroll_up_btn = NULL;
         scroll_down_btn = NULL;
 
         selected_item_index = 0;
         num_items = 0;
+    }
+    
+    if (menu_build_timer) {
+        lv_timer_del(menu_build_timer);
+        menu_build_timer = NULL;
+    }
+    
+    if (styles_initialized) {
+        lv_style_reset(&style_menu_item);
+        lv_style_reset(&style_selected_item);
+        lv_style_reset(&style_menu_label);
+        styles_initialized = false;
     }
 }
 
@@ -855,12 +1028,66 @@ View options_menu_view = {.root = NULL,
                           .get_hardwareinput_callback = get_options_menu_callback};
 
 static void back_event_cb(lv_event_t *e) {
-selected_item_index = 0;
-num_items = 0;
-menu_container = NULL;
-root = NULL;
-back_btn = NULL; // Clear back button reference
-scroll_up_btn = NULL; // Clear scroll button references
-scroll_down_btn = NULL;
-display_manager_switch_view(&main_menu_view);
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
+        current_wifi_menu_state = WIFI_MENU_MAIN;
+        display_manager_switch_view(&options_menu_view);
+    } else {
+        current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
+        display_manager_switch_view(&main_menu_view);
+    }
+}
+
+static void wifi_connect_kb_cb(const char *text){
+    const char *p=text;
+    while(*p && *p!='\"') p++;
+    if(!*p){error_popup_create("format: \"SSID\" \"PASSWORD\""); return;}
+    p++; const char *start=p;
+    while(*p && *p!='\"') p++;
+    if(!*p){error_popup_create("format: \"SSID\" \"PASSWORD\""); return;}
+    size_t len=p-start; if(len==0||len>=64){error_popup_create("ssid too long"); return;}
+    char ssid[64]={0}; memcpy(ssid,start,len); ssid[len]='\0';
+    p++; while(*p==' '){p++;}
+    char pass[64]={0};
+    if(*p=='\"'){
+        p++; start=p; while(*p && *p!='\"') p++; if(!*p){error_popup_create("format: \"SSID\" \"PASSWORD\""); return;}
+        len=p-start; if(len>=64){error_popup_create("pass too long"); return;}
+        memcpy(pass,start,len); pass[len]='\0';
+    }
+    char cmd[256];
+    snprintf(cmd,sizeof(cmd),"connect \"%s\" \"%s\"",ssid,pass);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+// build menu items in small batches so we don't starve the watchdog
+static void menu_builder_cb(lv_timer_t *t) {
+    const int BATCH = 1; // build 1 item per tick to keep task responsive
+    int built = 0;
+    while (current_options_list && current_options_list[build_item_index] && built < BATCH) {
+        const char *opt = current_options_list[build_item_index++];
+        lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
+        if (!btn) break;
+        lv_obj_set_height(btn, button_height_global);
+        lv_obj_add_style(btn, &style_menu_item, 0);
+        lv_obj_t *label = lv_obj_get_child(btn, 0);
+        if (label) {
+            lv_obj_set_style_text_font(label, is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14, 0);
+            lv_obj_add_style(label, &style_menu_label, 0);
+        }
+        lv_obj_set_user_data(btn, (void *)opt);
+        lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
+        num_items++;
+        built++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+        if (num_items == 1) { // highlight the first item on non-touch interfaces
+            select_option_item(0);
+        }
+#endif
+    }
+    if (!current_options_list || !current_options_list[build_item_index]) {
+        lv_timer_del(t);
+        menu_build_timer = NULL;
+        ESP_LOGI(TAG, "menu build finished, %d items", num_items);
+    }
 }

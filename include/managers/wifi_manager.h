@@ -17,16 +17,15 @@ typedef struct {
   uint8_t ap_bssid[6];    // BSSID (MAC address) of the access point
 } station_ap_pair_t;
 
-static station_ap_pair_t
-    station_ap_list[MAX_STATIONS]; // Array to store station-AP pairs
-static int station_count = 0;
-
+extern station_ap_pair_t station_ap_list[MAX_STATIONS];
+extern int station_count;
 extern wifi_ap_record_t *scanned_aps;
 extern wifi_ap_record_t selected_ap;
-
-static void *beacon_task_handle;
-static void *deauth_task_handle;
-static int beacon_task_running = 0;
+extern wifi_ap_record_t *selected_aps;
+extern int selected_ap_count;
+extern void *beacon_task_handle;
+extern void *deauth_task_handle;
+extern int beacon_task_running;
 
 typedef struct {
   uint8_t frame_control[2]; // Frame Control
@@ -107,7 +106,7 @@ typedef void (*wifi_promiscuous_cb_t_t)(void *buf,
                                         wifi_promiscuous_pkt_type_t type);
 
 // Initialize WiFiManager
-void wifi_manager_init();
+void wifi_manager_init(void);
 
 // Start scanning for available networks
 void wifi_manager_start_scan();
@@ -123,6 +122,12 @@ void wifi_manager_get_scan_results_data(uint16_t *count, wifi_ap_record_t **aps)
 
 // Select an access point from the scan results based on index
 void wifi_manager_select_ap(int index);
+
+// Select multiple access points from the scan results based on indices array
+void wifi_manager_select_multiple_aps(int *indices, int count);
+
+// Get access to the selected APs array for commands that support multiple APs
+void wifi_manager_get_selected_aps(wifi_ap_record_t **aps, int *count);
 
 // Select a station from the station list based on index
 void wifi_manager_select_station(int index);
@@ -193,69 +198,8 @@ void scan_ports_on_host(const char *target_ip, host_result_t *result);
 bool scan_ip_port_range(const char *target_ip, uint16_t start_port,
                         uint16_t end_port);
 
-static const uint16_t COMMON_PORTS[] = {
-    20,    // FTP Data
-    21,    // FTP Control
-    22,    // SSH
-    23,    // Telnet
-    25,    // SMTP
-    53,    // DNS
-    69,    // TFTP
-    80,    // HTTP
-    88,    // Kerberos
-    110,   // POP3
-    111,   // RPCBind
-    123,   // NTP
-    135,   // MSRPC
-    137,   // NetBIOS Name Service
-    138,   // NetBIOS Datagram Service
-    139,   // NetBIOS Session Service
-    143,   // IMAP
-    161,   // SNMP
-    389,   // LDAP
-    443,   // HTTPS
-    445,   // SMB
-    465,   // SMTPS
-    500,   // IKE (VPN)
-    514,   // Syslog
-    515,   // LPD/LPR Printer
-    587,   // SMTP (submission)
-    631,   // IPP (Printing)
-    636,   // LDAPS
-    993,   // IMAPS
-    995,   // POP3S
-    1080,  // SOCKS Proxy
-    1433,  // MSSQL
-    1434,  // MSSQL Browser
-    1521,  // Oracle DB
-    1701,  // L2TP
-    1723,  // PPTP
-    1883,  // MQTT
-    2049,  // NFS
-    2082,  // cPanel
-    2083,  // cPanel SSL
-    2086,  // WHM
-    2087,  // WHM SSL
-    2222,  // Alternative SSH
-    3306,  // MySQL
-    3389,  // RDP
-    5060,  // SIP
-    5222,  // XMPP
-    5432,  // PostgreSQL
-    5900,  // VNC
-    5901,  // VNC-1
-    5902,  // VNC-2
-    6379,  // Redis
-    8080,  // HTTP Proxy
-    8443,  // HTTPS Alt
-    8883,  // MQTT SSL
-    9100,  // Printer
-    27017, // MongoDB
-    32400, // Plex Media Server
-    51820, // Wireguard
-    55443  // Alt HTTP
-};
-#define NUM_PORTS (sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]))
+extern const uint16_t COMMON_PORTS[];
+extern const size_t NUM_PORTS;
 
 void wifi_manager_start_scan_with_time(int seconds);
 
@@ -273,5 +217,15 @@ void wifi_manager_start_dhcpstarve(int threads);
 void wifi_manager_stop_dhcpstarve(void);
 void wifi_manager_dhcpstarve_display(void);
 void wifi_manager_dhcpstarve_help(void);
+
+void wifi_manager_start_eapollogoff_attack(void);
+void wifi_manager_stop_eapollogoff_attack(void);
+void wifi_manager_eapollogoff_display(void);
+void wifi_manager_eapollogoff_help(void);
+
+// SAE Handshake Flooding Attack (ESP32-C5/C6 only)
+void wifi_manager_start_sae_flood(void);
+void wifi_manager_stop_sae_flood(void);
+void wifi_manager_sae_flood_help(void);
 
 #endif // WIFI_MANAGER_H

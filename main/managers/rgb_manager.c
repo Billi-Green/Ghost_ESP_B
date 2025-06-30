@@ -178,7 +178,7 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
 
     rgb_manager_set_color(rgb_manager, 1, 0, 0, 0, false);
 
-    printf("RGBManager initialized for separate R/G/B pins: %d, %d, %d\n",
+    ESP_LOGI(TAG, "RGBManager initialized for separate R/G/B pins: %d, %d, %d\n",
            red_pin, green_pin, blue_pin);
     return ESP_OK;
   } else {
@@ -205,14 +205,14 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
     esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config,
                                              &rgb_manager->strip);
     if (ret != ESP_OK) {
-      printf("Failed to initialize the LED strip\n");
+      ESP_LOGE(TAG, "Failed to initialize the LED strip\n");
       return ret;
     }
 
     // Clear the strip (turn off all LEDs)
     led_strip_clear(rgb_manager->strip);
 
-    printf("RGBManager initialized for pin %d with %d LEDs\n", pin, num_leds);
+    ESP_LOGI(TAG, "RGBManager initialized for pin %d with %d LEDs\n", pin, num_leds);
     return ESP_OK;
   }
 }
@@ -322,7 +322,7 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
         esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, i, adj_red,
                                             adj_green, adj_blue);
         if (ret != ESP_OK) {
-          printf("Failed to set LED %d color\n", i);
+          ESP_LOGE(TAG, "Failed to set LED %d color\n", i);
           return;
         }
       }
@@ -330,7 +330,7 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
       esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, 0, adj_red,
                                           adj_green, adj_blue);
       if (ret != ESP_OK) {
-        printf("Failed to set LED color\n");
+        ESP_LOGE(TAG, "Failed to set LED color\n");
         return;
       }
     }
@@ -568,11 +568,11 @@ esp_err_t rgb_manager_deinit(RGBManager_t *rgb_manager) {
     gpio_set_level(rgb_manager->red_pin, 0);
     gpio_set_level(rgb_manager->green_pin, 0);
     gpio_set_level(rgb_manager->blue_pin, 0);
-    printf("RGBManager deinitialized (separate pins)\n");
+    ESP_LOGI(TAG, "RGBManager deinitialized (separate pins)\n");
   } else {
     // Clear the LED strip and deinitialize
     led_strip_clear(rgb_manager->strip);
-    printf("RGBManager deinitialized (LED strip)\n");
+    ESP_LOGI(TAG, "RGBManager deinitialized (LED strip)\n");
   }
 
   return ESP_OK;

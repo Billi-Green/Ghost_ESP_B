@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include "managers/views/clock_screen.h"
 #include "managers/views/settings_screen.h"
+#if CONFIG_HAS_INFRARED
+#include "managers/views/infrared_view.h"
+#endif
 
 static const char *TAG = "MainMenu";
 
@@ -33,6 +36,9 @@ menu_item_t menu_items[] = {
     {"WiFi", &wifi, 1}, // applies to all boards
 #ifdef CONFIG_HAS_GPS
     {"GPS", &Map, 2},
+#endif
+#if CONFIG_HAS_INFRARED
+    {"Infrared", &infrared, 0}, // main infrared icon
 #endif
     {"Apps", &GESPAppGallery, 3}, // applies to all boards
 #ifdef CONFIG_HAS_RTC_CLOCK
@@ -125,7 +131,7 @@ static void update_menu_item(bool slide_left) {
     // Debug output
     lv_coord_t img_width = menu_items[selected_item_index].icon->header.w;
     lv_coord_t img_height = menu_items[selected_item_index].icon->header.h;
-    printf("Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
+    ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
            btn_size, btn_size, icon_size, icon_size, img_width, img_height, x_pos, y_pos);
 
     if (LV_HOR_RES > 150) {
@@ -146,12 +152,32 @@ static void update_menu_item(bool slide_left) {
     lv_anim_set_exec_cb(&a, anim_set_x);
     lv_anim_start(&a);
 }
+/**
+ *  @brief handles keyboard button presses
+ */
 
+void handle_keyboard_interactions(int keyValue){
+
+    if (keyValue == 44 || keyValue == ',') { // Left
+        ESP_LOGI(TAG, "Left button pressed\n");
+        select_menu_item(selected_item_index - 1, true);
+    } else if (keyValue == 47 || keyValue == '/') { // Right
+        ESP_LOGI(TAG, "Right button pressed\n");
+        select_menu_item(selected_item_index + 1, false);
+    } else if (keyValue == 13) { // Select
+        ESP_LOGI(TAG, "Enter button pressed\n");
+        handle_menu_item_selection(selected_item_index);
+    } else if (keyValue == 29 || keyValue == '`') { // esc
+        ESP_LOGI(TAG, "Esc button pressed\n");
+    }
+
+}
 /**
  * @brief Combined handler for menu item events.
  */
 static void menu_item_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
+        ESP_LOGI(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
             touch_started = true;
@@ -172,8 +198,12 @@ static void menu_item_event_handler(InputEvent *event) {
             }
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        ESP_LOGI(TAG, "Joystick event");
         int button = event->data.joystick_index;
         handle_hardware_button_press(button);
+    } else if (event->type == INPUT_TYPE_KEYBOARD) {
+        ESP_LOGI(TAG, "keyboard event");
+        handle_keyboard_interactions(event->data.key_value);
     }
 }
 
@@ -189,6 +219,8 @@ void handle_hardware_button_press(int ButtonPressed) {
         handle_menu_item_selection(selected_item_index);
     }
 }
+
+
 
 /**
  * @brief Selects a menu item and updates the display.
@@ -218,6 +250,9 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_GPS
         {"GPS", OT_GPS, &options_menu_view},
 #endif
+#if CONFIG_HAS_INFRARED
+        {"Infrared", 0, &infrared_view},
+#endif
         {"Apps", 0, &apps_menu_view},
 #ifdef CONFIG_HAS_RTC_CLOCK
         {"Clock", 0, &clock_view},
@@ -229,7 +264,7 @@ static void handle_menu_item_selection(int item_index) {
     const char *name = menu_items[item_index].name;
     for (int i = 0; i < num_actions; ++i) {
         if (strcmp(name, menu_actions[i].name) == 0) {
-            printf("%s selected\n", menu_actions[i].name);
+            ESP_LOGI(TAG, "%s selected\n", menu_actions[i].name);
             if (menu_actions[i].view == &options_menu_view) {
                 SelectedMenuType = menu_actions[i].type;
             }
@@ -237,7 +272,7 @@ static void handle_menu_item_selection(int item_index) {
             return;
         }
     }
-    printf("Unknown menu item selected: %s\n", name);
+    ESP_LOGW(TAG, "Unknown menu item selected: %s\n", name);
 }
 
 /**

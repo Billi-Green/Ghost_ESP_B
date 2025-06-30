@@ -148,6 +148,25 @@ menu "Ghost ESP Options"
             help
                 Enable configuration for Ghost board.
 
+        config IS_S3TWATCH
+            bool "Enable S3TWatch Configuration"
+            default n
+            help
+                Enable configuration for S3TWatch with virtual flash storage.
+
+        config HAS_INFRARED
+            bool "Enable Infrared Support"
+            default n
+            help
+                Enable infrared hardware and UI support.
+
+        config INFRARED_LED_PIN
+            int "Infrared LED Pin"
+            default 0
+            depends on HAS_INFRARED
+            help
+                Set the GPIO pin used for IR LED transmission and indication.
+
     endmenu
     
     menu "GPS Configuration"

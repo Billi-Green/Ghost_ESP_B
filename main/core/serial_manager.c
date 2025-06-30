@@ -178,5 +178,7 @@ void simulateCommand(const char *commandString) {
   SerialCommand command;
   strncpy(command.command, commandString, sizeof(command.command) - 1);
   command.command[sizeof(command.command) - 1] = '\0';
-  xQueueSend(commandQueue, &command, portMAX_DELAY);
+  if (xQueueSend(commandQueue, &command, 0) != pdTRUE) {
+    printf("simulateCommand queue full, command dropped: %s\n", commandString);
+  }
 }

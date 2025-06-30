@@ -1,5 +1,100 @@
 # Ghost ESP Changelog
 
+## Revival v1.6
+
+### TLDR
+
+Support for FlipperZero IR files, Better power consumption, BLE Spam, WPA3 SAE Flood, Deauth multiple APs at once, and more!
+
+### Added
+
+- IR Support (enabled on LilyGo S3TWatch and Cardputer)
+  - Uses FlipperZero formatted IR files stored in sdcard: /ghostesp/infrared/remotes or /ghostesp/infrared/universals
+  - Universal Library IR Transmit
+  - Signals File IR Transmit
+  - IR Protocol Encoders:
+    - NEC
+    - Kaseikyo
+    - Pioneer
+    - RCA
+    - Samsung
+    - SIRC
+    - RC5
+    - RC6
+
+- BLE Spam (not supported on ESP32S2)
+  - Apple
+  - Microsoft
+  - Samsung
+  - Google
+
+- Display
+  - Added keyboard view
+  - Connect to WiFi command with keyboard view
+  - Add S3TWatch virtual storage (4MB) acessable through webUI
+
+- Attacks
+  - EAPOL Logoff Attack
+  - SAE Flood Attack (WPA3 only)
+  - Probe request listen
+
+- Commands
+  - 'webauth on/off' command to enable/disable webui authentication
+
+- Cardputer
+  - Add keyboard event handling functionality - @tototo31
+  - Enable Cardputer's LED in config - @tototo31
+  - Get cardputer keys working - @tototo31
+
+### Changed
+
+- Display
+  - Removed touch controls from settings menu on non-touch devices - @tototo31
+  - Refactor wifi menu into hierarchical sub-menus
+  - Enable ESPIDF Power Management freq scaling on Cardputer, S3TWatch 2.4Inch CYD, and Phantom
+  - First item is no longer highlighted on menu lists for touch devices - @tototo31
+
+- Cardputer
+  - Use backtick key to return to main menu
+
+- Attacks
+  - Deauth Attack now supports targeting multiple APs
+
+- Commands
+  - Allow selection of multiple APs (eg. select -a 2,3,4)
+  - AP list now includes wifi channel
+  
+- WebUI
+  - Refactor file explorer to be more user friendly
+
+- Power
+  - Set min PM freq to 20MHz instead of 80MHz
+
+- General
+  - replaced several large static allocations with dynamic heap allocations
+
+### Bug Fixes
+
+- Display
+  - Fix blank bootup screen on cardputer and show flappy ghost icon out of necessity - @tototo31
+  - Fix status bar icons - @tototo31
+  - Added auto-cleanup of old terminal messages when text length exceeds threshold
+
+- WiFi
+  - preserve STA mode in ap_manager init and start_services
+
+- Cardputer
+  - Get cardputer battery status working - @tototo31
+  - Ignore the key press that wakes the display from sleep
+
+- General
+  - Fix SD Card init on CYD devices - @tototo31
+  - Capped stored wifi scan results at 100 and auto-truncate lists to prevent memory bloat and crashes
+
+- WebUI
+  - Fix file explorer not opening folders, erroring on upload.
+
+
 ## Revival v1.5.1
 
 ### Added

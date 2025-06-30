@@ -13,12 +13,19 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/views/clock_screen.h"
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_pm.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
 #include "vendor/m5/m5gfx_wrapper.h"
+#include <esp_adc/adc_oneshot.h>
+#include <esp_adc/adc_cali.h>
+#include <esp_adc/adc_cali_scheme.h>
+#include <soc/adc_channel.h>
+#include <soc/soc_caps.h>
 #endif
 
 #ifdef CONFIG_HAS_BATTERY
@@ -110,6 +117,135 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 #endif
 }
 
+#ifdef CONFIG_USE_CARDPUTER
+
+#define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
+#define _batAdcUnit ADC_UNIT_1
+#define _batAdcAtten ADC_ATTEN_DB_12
+bool adcInit = false;
+adc_oneshot_unit_handle_t handle = NULL;
+adc_cali_handle_t cali_handle = NULL;
+
+adc_cali_curve_fitting_config_t cali_config = {
+  .unit_id = _batAdcUnit,
+  .atten = ADC_ATTEN_DB_12,
+  .bitwidth = ADC_BITWIDTH_DEFAULT,
+  };
+
+static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle)
+{
+    adc_cali_handle_t handle = NULL;
+    esp_err_t ret = ESP_FAIL;
+    bool calibrated = false;
+
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    if (!calibrated) {
+        ESP_LOGD(TAG, "calibration scheme version is %s", "Curve Fitting");
+        adc_cali_curve_fitting_config_t cali_config = {
+            .unit_id = unit,
+            .chan = channel,
+            .atten = atten,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        ret = adc_cali_create_scheme_curve_fitting(&cali_config, &handle);
+        if (ret == ESP_OK) {
+            calibrated = true;
+        }
+    }
+#endif
+
+#if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+    if (!calibrated) {
+        ESP_LOGD(TAG, "calibration scheme version is %s", "Line Fitting");
+        adc_cali_line_fitting_config_t cali_config = {
+            .unit_id = unit,
+            .atten = atten,
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+        };
+        ret = adc_cali_create_scheme_line_fitting(&cali_config, &handle);
+        if (ret == ESP_OK) {
+            calibrated = true;
+        }
+    }
+#endif
+
+    *out_handle = handle;
+    if (ret == ESP_OK) {
+        ESP_LOGD(TAG, "Calibration Success");
+    } else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated) {
+        ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
+    } else {
+        ESP_LOGE(TAG, "Invalid arg or no memory");
+    }
+
+    return calibrated;
+}
+
+void initAdc(){
+
+  const adc_oneshot_unit_init_cfg_t init_config = { //create adc
+    .unit_id = _batAdcUnit, // selects tthe adc
+  };
+
+  const adc_oneshot_chan_cfg_t config = { // config
+    .bitwidth = ADC_BITWIDTH_DEFAULT,
+    .atten = _batAdcAtten,
+  };
+
+  ESP_LOGI(TAG, "Create new ADC oneshot unit");
+  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &handle));
+
+  ESP_LOGI(TAG, "Configure adc channel");
+  ESP_ERROR_CHECK(adc_oneshot_config_channel(handle, _batAdcCh, &config));
+
+  adcInit=true;
+  ESP_LOGI(TAG, "ADC Init completes");
+}
+
+bool _isCharging = false;
+int getBattery() {
+    uint8_t percent;
+    static int lastVolt = 0; // track previous voltage reading in mV
+
+    if(!adcInit){
+      ESP_LOGI(TAG, "INIT ADC");
+      initAdc();
+    }
+
+    static int BASE_VOLATAGE = 3600;
+    int raw=0;
+    ESP_ERROR_CHECK(adc_oneshot_read(handle, _batAdcCh, &raw));
+    ESP_LOGD(TAG, "Raw adc reading:%d", raw);
+
+    int volt=0;
+    bool do_calibration1_chan0 = adc_calibration_init(_batAdcUnit, _batAdcCh, _batAdcAtten, &cali_handle);
+
+    if (do_calibration1_chan0){
+    adc_cali_raw_to_voltage(cali_handle, raw, &volt);
+    ESP_LOGI(TAG, "Raw ADC to voltage - Raw: %d - Voltage: %dmv \n", raw, volt);
+    }
+
+    // improved charging detection logic: treat as charging when voltage rises beyond noise threshold
+    const int CHARGE_THRESHOLD_MV = 15; // ignore small ADC noise <15 mV
+    if (lastVolt == 0) {
+        lastVolt = volt; // first reading baseline
+    }
+    int diff = volt - lastVolt;
+    if (diff > CHARGE_THRESHOLD_MV) {
+        _isCharging = true;
+    } else if (diff < -CHARGE_THRESHOLD_MV) {
+        _isCharging = false;
+    }
+    lastVolt = volt;
+    float mv = volt * 2; // x2 since the voltage divider gives us 1/2 vbatt
+    percent = (mv - 3300) * 100 / (float)(4150 - 3350);
+
+    return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
+}
+bool isCharging() { return _isCharging; }
+
+#endif
+
 void fade_out_cb(void *obj, int32_t v) {
   if (obj) {
     lv_obj_set_style_opa(obj, v, LV_PART_MAIN);
@@ -186,7 +322,7 @@ void fade_out_ready_cb(lv_anim_t *anim) {
     dm.current_view = new_view;
 
     if (new_view->get_hardwareinput_callback) {
-      new_view->input_callback(&dm.current_view->input_callback);
+      new_view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
     }
 
     new_view->create();
@@ -201,7 +337,7 @@ lv_color_t hex_to_lv_color(const char *hex_str) {
   }
 
   if (strlen(hex_str) != 6) {
-    printf("Invalid hex color format. Expected 6 characters.\n");
+    ESP_LOGE(TAG, "Invalid hex color format. Expected 6 characters.\n");
     return lv_color_white();
   }
 
@@ -238,21 +374,29 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
     lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
   }
 
-  // Update battery icon and percentage
-  const char *battery_symbol;
-#ifdef CONFIG_HAS_BATTERY
-  if (axp202_is_charging()) {
-    battery_symbol = LV_SYMBOL_CHARGE;
+  if (batteryPercentage < 0){
+    lv_obj_add_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
   } else {
+    lv_obj_clear_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
+    // Update battery icon and percentage
+    const char *battery_symbol;
+
     battery_symbol = (batteryPercentage > 75) ? LV_SYMBOL_BATTERY_FULL :
-                     (batteryPercentage > 50) ? LV_SYMBOL_BATTERY_3 :
-                     (batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
-                     (batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
-  }
-#else
-  battery_symbol = LV_SYMBOL_BATTERY_FULL;
+                  (batteryPercentage > 50) ? LV_SYMBOL_BATTERY_3 :
+                  (batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
+                  (batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
+
+#ifdef CONFIG_HAS_BATTERY
+    if (axp202_is_charging()) {
+      battery_symbol = LV_SYMBOL_CHARGE;
+    }
+#elif CONFIG_USE_CARDPUTER
+    if (isCharging()) {
+      battery_symbol = LV_SYMBOL_CHARGE;
+    }
 #endif
-  lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
+    lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
+  }
 
   lv_obj_invalidate(status_bar);
 }
@@ -269,8 +413,12 @@ static void status_update_cb(lv_timer_t *timer) {
   uint8_t power_level;
   axp2101_get_power_level(&power_level);
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, power_level);
+#elif CONFIG_USE_CARDPUTER
+  uint8_t power_level = getBattery();
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
+                    isCharging() ? power_level : power_level);
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, 100);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
 #endif
 }
 
@@ -307,48 +455,51 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   }
   lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(status_bar, 0, LV_PART_MAIN);
-
+  
+  // create status bar left container
   lv_obj_t *left_container = lv_obj_create(status_bar);
   lv_obj_remove_style_all(left_container);
   lv_obj_set_size(left_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(left_container, LV_FLEX_FLOW_ROW);
   lv_obj_align(left_container, LV_ALIGN_LEFT_MID, 5, 0);
-
-  lv_obj_t *right_container = lv_obj_create(status_bar);
-  lv_obj_remove_style_all(right_container);
-  lv_obj_set_size(right_container, LV_SIZE_CONTENT, 20);
-  lv_obj_set_flex_flow(right_container, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(right_container, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(right_container, 5, 0);
-  lv_obj_align(right_container, LV_ALIGN_RIGHT_MID, -5, 0);
-
+  // fill left container
   mainlabel = lv_label_create(left_container);
   lv_label_set_text(mainlabel, CurrentMenuName);
   lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
   lv_obj_set_style_text_font(mainlabel, &lv_font_montserrat_14, 0);
 
+  // Create Status bar right container
+  lv_obj_t *right_container = lv_obj_create(status_bar);
+  lv_obj_remove_style_all(right_container);
+  lv_obj_set_size(right_container, lv_pct(50), 20);
+  lv_obj_set_flex_flow(right_container, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(right_container, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(right_container, 5, 0);
+  lv_obj_align(right_container, LV_ALIGN_RIGHT_MID, -5, 0);
+  // add sd status to right container
   sd_label = lv_label_create(right_container);
   lv_label_set_text(sd_label, LV_SYMBOL_SD_CARD);
   lv_obj_set_style_text_color(sd_label, lv_color_hex(0xCCCCCC), 0);
   lv_obj_set_style_text_font(sd_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
-
+  // add ble status to right container
   bt_label = lv_label_create(right_container);
   lv_label_set_text(bt_label, LV_SYMBOL_BLUETOOTH);
   lv_obj_set_style_text_color(bt_label, lv_color_hex(0xCCCCCC), 0);
   lv_obj_set_style_text_font(bt_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
-
+  // add wifi status to right container
   wifi_label = lv_label_create(right_container);
   lv_label_set_text(wifi_label, LV_SYMBOL_WIFI);
   lv_obj_set_style_text_color(wifi_label, lv_color_hex(0xCCCCCC), 0);
   lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
-
+  // add battery status to right container
   battery_label = lv_label_create(right_container);
   lv_label_set_text(battery_label, "");
   lv_obj_set_style_text_color(battery_label, lv_color_hex(0xCCCCCC), 0);
   lv_obj_set_style_text_font(battery_label, &lv_font_montserrat_12, 0);
+  lv_obj_add_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
 
   bool HasBluetooth;
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -363,8 +514,12 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   bool is_charging = axp202_is_charging();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     is_charging ? power_level : power_level);
+#elif CONFIG_USE_CARDPUTER
+  uint8_t power_level = getBattery();
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
+                    isCharging() ? power_level : power_level);
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, 100);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
 #endif
   if (!status_timer_initialized) {
     status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
@@ -375,7 +530,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
 void display_manager_init(void) {
   esp_pm_config_esp32_t pm_cfg = {
       .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .min_freq_mhz = 80,
+      .min_freq_mhz = 20,
       .light_sleep_enable = true,
   };
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
@@ -427,20 +582,20 @@ void display_manager_init(void) {
 #elif defined(CONFIG_JC3248W535EN_LCD)
   esp_err_t ret = lcd_axs15231b_init();
   if (ret != ESP_OK) {
-    printf("LCD initialization failed");
+    ESP_LOGE(TAG, "LCD initialization failed");
     return;
   }
 #else
 
   esp_err_t ret = lcd_st7262_init();
   if (ret != ESP_OK) {
-    printf("LCD initialization failed");
+    ESP_LOGE(TAG, "LCD initialization failed");
     return;
   }
 
   ret = lcd_st7262_lvgl_init();
   if (ret != ESP_OK) {
-    printf("LVGL initialization failed");
+    ESP_LOGE(TAG, "LVGL initialization failed");
     return;
   }
 
@@ -448,13 +603,13 @@ void display_manager_init(void) {
 
   dm.mutex = xSemaphoreCreateMutex();
   if (dm.mutex == NULL) {
-    printf("Failed to create mutex\n");
+    ESP_LOGE(TAG, "Failed to create mutex\n");
     return;
   }
 
   input_queue = xQueueCreate(10, sizeof(InputEvent));
   if (input_queue == NULL) {
-    printf("Failed to create input queue\n");
+    ESP_LOGE(TAG, "Failed to create input queue\n");
     return;
   }
 
@@ -478,7 +633,7 @@ xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
 #endif
 if (xTaskCreate(hardware_input_task, "RawInput", 2048, NULL,
                 HARDWARE_INPUT_TASK_PRIORITY, &input_task_handle) != pdPASS) {
-    printf("Failed to create RawInput task\n");
+    ESP_LOGE(TAG, "Failed to create RawInput task\n");
 }
 }
 
@@ -498,7 +653,7 @@ void display_manager_switch_view(View *view) {
 #endif
 
   if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-    printf("Switching view from %s to %s\n",
+    ESP_LOGI(TAG, "Switching view from %s to %s\n",
            dm.current_view ? dm.current_view->name : "NULL", view->name);
 
     if (dm.current_view && dm.current_view->root) {
@@ -516,7 +671,7 @@ void display_manager_switch_view(View *view) {
       dm.current_view = view;
 
       if (view->get_hardwareinput_callback) {
-        view->input_callback(&dm.current_view->input_callback);
+        view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
       }
 
       view->create();
@@ -525,7 +680,7 @@ void display_manager_switch_view(View *view) {
 
     xSemaphoreGive(dm.mutex);
   } else {
-    printf("Failed to acquire mutex for switching view\n");
+    ESP_LOGE(TAG, "Failed to acquire mutex for switching view\n");
   }
 
 #ifdef CONFIG_JC3248W535EN_LCD
@@ -607,61 +762,82 @@ void hardware_input_task(void *pvParameters) {
   int screen_height = LV_VER_RES;
   TickType_t last_touch_time = xTaskGetTickCount();
   bool is_backlight_dimmed = false;
+#ifdef CONFIG_USE_CARDPUTER
+  uint8_t shift_count_before_caps =75; // num of cycles before capslock gets turned on
+  uint8_t shift_count = 0;
+  bool caps_latch = false; // var for tracking if caps was just toggled
+#endif
 
   while (1) {
 #ifdef CONFIG_USE_CARDPUTER
     keyboard_update_key_list(&gkeyboard);
     keyboard_update_keys_state(&gkeyboard);
+
+      if (!keyboard_is_key_pressed(&gkeyboard,129) && caps_latch){ // caps lock latch so it doesnt continuously flip on and off
+        caps_latch = false;
+        shift_count = 0;
+      }
+
     if (gkeyboard.key_list_buffer_len > 0) {
+
       for (size_t i = 0; i < gkeyboard.key_list_buffer_len; ++i) {
         Point2D_t key_pos = gkeyboard.key_list_buffer[i];
         uint8_t key_value = keyboard_get_key(&gkeyboard, key_pos);
-
+        keyboard_update_keys_state(&gkeyboard);
         if (key_value != 0 && !touch_active) {
+          bool skip_event = false;
           touch_active = true;
           last_touch_time = xTaskGetTickCount();
-          InputEvent event;
-          event.type = INPUT_TYPE_JOYSTICK;
-
-          printf("Input key value: %d\n", key_value);
-
-          switch (key_value) {
-          case 0x29: // ESC key HID code
-            printf("Esc key\n");
-            event.data.joystick_index = 2;
-            break;
-          case 180: //enter key
-            printf("Enter key\n");
-            event.data.joystick_index = 1;
-            break;
-          case 39: //left arrow
-            printf("Left key\n");
-            event.data.joystick_index = 0;
-           break;
-          case 158: //up arrow
-            printf("Up key\n");
-            event.data.joystick_index = 2;
-            break;
-          case 30: //right arrow
-            printf("Right key\n");
-            event.data.joystick_index = 3;
-            break;
-          case 56: // down arrow
-            printf("Down key\n");
-            event.data.joystick_index = 4;
-            break;
-          default:
-            printf("Unhandled key value: %d\n", key_value);
-            continue;
+          if (is_backlight_dimmed) {
+            set_backlight_brightness(1);
+            is_backlight_dimmed = false;
+            skip_event = true;
+            vTaskDelay(pdMS_TO_TICKS(100));
           }
+          
+          if (!skip_event) {
+            InputEvent event;
+            // event.type will be set inside the switch for specific keys
 
-          if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            printf("Failed to send button input to queue\n");
+            if (shift_count > shift_count_before_caps && !caps_latch){ // toggle caps if weve been holding shift long enough without intteruption
+              gkeyboard.is_caps_locked = !gkeyboard.is_caps_locked;
+              caps_latch = true;
+              ESP_LOGW(TAG, "Capslock toggled %s\n", gkeyboard.is_caps_locked ? "on" : "off");
+              shift_count = 0;
+            }
+
+
+            ESP_LOGI(TAG, "Input key value: %d\n", key_value);
+
+            switch (key_value) {
+            case 129: //shift - keyboard library already handled caps for letters
+              if(!keyboard_is_change(&gkeyboard)){ // if shift is held down increment the counter for capslocks
+                shift_count += 1;
+              }
+              continue;
+            case 255: //fn - fn key actions
+              continue;
+            case 128: //ctrl - ctrl key actions
+              continue;
+            case 130: // alt - alt key actions
+              continue;
+            default:
+              ESP_LOGI(TAG, "Keyboard key: %c (value: %d) (CAPS: %s)\n", key_value, key_value, gkeyboard.is_caps_locked ? "on" : "off" );
+              shift_count = 0; // restart caps timer wheen a key gets pressed
+              event.type = INPUT_TYPE_KEYBOARD;
+              event.data.key_value = key_value;
+              break;
+            }
+            if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+              ESP_LOGE(TAG, "Failed to send button input to queue\n");
+            }
           }
-
           vTaskDelay(pdMS_TO_TICKS(300));
+
         } else if (touch_active) {
+
           touch_active = false;
+          
         }
       }
     }
@@ -677,7 +853,7 @@ void hardware_input_task(void *pvParameters) {
           event.data.joystick_index = i;
 
           if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            printf("Failed to send joystick input to queue\n");
+            ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
           }
         }
       }
@@ -709,7 +885,7 @@ void hardware_input_task(void *pvParameters) {
         event.data.touch_data.point.y = touch_data.point.y;
         event.data.touch_data.state = touch_data.state;
         if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-          printf("Failed to send touch input to queue\n");
+          ESP_LOGE(TAG, "Failed to send touch input to queue\n");
         }
       }
     } else if (touch_data.state == LV_INDEV_STATE_REL && touch_active) {
@@ -718,7 +894,7 @@ void hardware_input_task(void *pvParameters) {
       event.type = INPUT_TYPE_TOUCH;
       event.data.touch_data = touch_data;
       if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-        printf("Failed to send touch input to queue\n");
+        ESP_LOGE(TAG, "Failed to send touch input to queue\n");
       }
       touch_active = false;
     }
@@ -769,12 +945,12 @@ void processEvent() {
         view_name = current->name;
         input_callback = current->input_callback;
       } else {
-        printf("[WARNING] Current view is NULL in input_processing_task\n");
+        ESP_LOGW(TAG, "Current view is NULL in input_processing_task\n");
       }
 
       xSemaphoreGive(dm.mutex);
 
-      printf("[INFO] Input event type: %d, Current view: %s\n", event.type,
+      ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type,
              view_name);
 
       if (input_callback) {
