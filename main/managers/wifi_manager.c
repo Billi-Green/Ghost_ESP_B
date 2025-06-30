@@ -2156,7 +2156,10 @@ bool is_host_active(const char *ip_addr) {
     icmp->checksum = 0;
     icmp->id = 0xAFAF;
     icmp->seqno = htons(1);
-    icmp->checksum = calculate_checksum((uint16_t *)icmp, sizeof(icmp_packet_t));
+    
+    uint16_t aligned_buf[(sizeof(icmp_packet_t) + 1) / 2];
+    memcpy(aligned_buf, icmp, sizeof(icmp_packet_t));
+    icmp->checksum = calculate_checksum(aligned_buf, sizeof(icmp_packet_t));
 
     addr.sin_family = AF_INET;
     inet_pton(AF_INET, ip_addr, &addr.sin_addr.s_addr);
@@ -3967,8 +3970,11 @@ void wifi_manager_start_sae_flood(void) {
     
     bool supports_wpa3 = false;
     if (selected_ap.authmode == WIFI_AUTH_WPA3_PSK || 
-        selected_ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK ||
-        selected_ap.authmode == WIFI_AUTH_WPA3_ENTERPRISE) {
+        selected_ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        || selected_ap.authmode == WIFI_AUTH_WPA3_ENTERPRISE
+#endif
+        ) {
         supports_wpa3 = true;
     }
 

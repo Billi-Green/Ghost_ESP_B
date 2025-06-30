@@ -255,48 +255,103 @@ static bool parse_tlv_list(const uint8_t *buf, size_t buf_len, infrared_signal_t
         idx = 4;
     }
     ESP_LOGI(TAG_IR_MANAGER, "starting tlv parse at offset %zu, buffer length: %zu", idx, buf_len);
-    while(idx<buf_len){
+    while(idx < buf_len){
+        if(idx + 7 > buf_len) break;
         uint8_t tag=buf[idx++];
         uint16_t klen=buf[idx]|(buf[idx+1]<<8);idx+=2;
-        const char *key=(const char*)&buf[idx];idx+=klen;
+        if(idx + klen + 4 > buf_len) break;
+        char key[klen+1];
+        memcpy(key, &buf[idx], klen);
+        key[klen] = '\0';
+        idx += klen;
         ESP_LOGI(TAG_IR_MANAGER, "read top-level tag: %u, key: %s, klen: %u", tag, key, klen);
         uint32_t cnt=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);idx+=4;
         if(strcmp(key,"filetype")==0||strcmp(key,"version")==0){
             for(uint32_t i=0;i<cnt;i++){
-                if(tag==6){uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2+sl;}
-                else if(tag==0||tag==2) idx+=cnt;
-                else if(tag==1||tag==7) idx+=cnt*4;
-                else return false;
+                if(idx >= buf_len) break;
+                if(tag==6){
+                    if(idx + 2 > buf_len) break;
+                    uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2;
+                    if(idx + sl > buf_len) break;
+                    idx+=sl;
+                }
+                else if(tag==0||tag==2) {
+                    if(idx + cnt > buf_len) break;
+                    idx+=cnt;
+                    break;
+                }
+                else if(tag==1||tag==7) {
+                    if(idx + cnt*4 > buf_len) break;
+                    idx+=cnt*4;
+                    break;
+                }
+                else break;
             }
             continue;
         }
         infrared_signal_t *list=NULL;size_t lc=0,lp=0;
         infrared_signal_t cur;bool in=false;
-        while(idx<buf_len){
+        memset(&cur, 0, sizeof(cur));
+        while(idx < buf_len){
+            if(idx + 7 > buf_len) break;
             uint8_t t=buf[idx++];
             uint16_t kl=buf[idx]|(buf[idx+1]<<8);idx+=2;
+            if(idx + kl + 4 > buf_len) break;
             char k[kl+1];memcpy(k,&buf[idx],kl);k[kl]='\0';idx+=kl;
             ESP_LOGI(TAG_IR_MANAGER, "read inner tag: %u, key: %s, klen: %u", t, k, kl);
             uint32_t ct=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);idx+=4;
-            if(t==6){uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2;char v[sl+1];memcpy(v,&buf[idx],sl);v[sl]='\0';idx+=sl;
+            if(t==6){
+                if(idx + 2 > buf_len) break;
+                uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2;
+                if(idx + sl > buf_len) break;
+                char v[sl+1];memcpy(v,&buf[idx],sl);v[sl]='\0';idx+=sl;
                 ESP_LOGI(TAG_IR_MANAGER, "read string value: %s", v);
                 if(strcmp(k,"name")==0){
                     if(in){if(lc==lp){size_t nc=lp?lp*2:4;infrared_signal_t*tmp=realloc(list,nc*sizeof(infrared_signal_t));if(!tmp){free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;}list=tmp;lp=nc;}list[lc++]=cur;}
-                    memset(&cur,0,sizeof(cur));in=true;strncpy(cur.name,v,sizeof(cur.name)-1);
-                } else if(strcmp(k,"type")==0){cur.is_raw=(strcmp(v,"raw")==0);} else if(strcmp(k,"protocol")==0){strncpy(cur.payload.message.protocol,v,sizeof(cur.payload.message.protocol)-1);} }
-            else if(t==1&&strcmp(k,"frequency")==0){uint32_t w=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);float f;memcpy(&f,&w,4);cur.payload.raw.frequency=(uint32_t)f;idx+=4;
+                    memset(&cur,0,sizeof(cur));in=true;strncpy(cur.name,v,sizeof(cur.name)-1);cur.name[sizeof(cur.name)-1]='\0';
+                } else if(strcmp(k,"type")==0){cur.is_raw=(strcmp(v,"raw")==0);} else if(strcmp(k,"protocol")==0){strncpy(cur.payload.message.protocol,v,sizeof(cur.payload.message.protocol)-1);cur.payload.message.protocol[sizeof(cur.payload.message.protocol)-1]='\0';} 
+            }
+            else if(t==1&&strcmp(k,"frequency")==0){
+                if(idx + 4 > buf_len) break;
+                uint32_t w=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);float f;memcpy(&f,&w,4);cur.payload.raw.frequency=(uint32_t)f;idx+=4;
                 ESP_LOGI(TAG_IR_MANAGER, "read frequency: %lu", cur.payload.raw.frequency);
             }
-            else if(t==1&&strcmp(k,"duty_cycle")==0){uint32_t w=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);float f;memcpy(&f,&w,4);cur.payload.raw.duty_cycle=f;idx+=4;
+            else if(t==1&&strcmp(k,"duty_cycle")==0){
+                if(idx + 4 > buf_len) break;
+                uint32_t w=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);float f;memcpy(&f,&w,4);cur.payload.raw.duty_cycle=f;idx+=4;
                 ESP_LOGI(TAG_IR_MANAGER, "read duty cycle: %f", cur.payload.raw.duty_cycle);
             }
-            else if(t==7&&strcmp(k,"data")==0){uint32_t dct=ct;uint32_t*arr=malloc(dct*4);for(uint32_t i=0;i<dct;i++){arr[i]=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);idx+=4;}cur.payload.raw.timings=arr;cur.payload.raw.timings_size=dct;
+            else if(t==7&&strcmp(k,"data")==0){
+                if(idx + ct*4 > buf_len) break;
+                uint32_t dct=ct;uint32_t*arr=malloc(dct*4);
+                if(!arr){free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;}
+                for(uint32_t i=0;i<dct;i++){arr[i]=buf[idx]|(buf[idx+1]<<8)|(buf[idx+2]<<16)|(buf[idx+3]<<24);idx+=4;}cur.payload.raw.timings=arr;cur.payload.raw.timings_size=dct;
                 ESP_LOGI(TAG_IR_MANAGER, "read raw data with %lu timings", dct);
             }
-            else if(t==2&&(strcmp(k,"address")==0||strcmp(k,"command")==0)){uint32_t v=0;for(uint32_t i=0;i<ct;i++){v=(v<<8)|buf[idx++];}if(strcmp(k,"address")==0)cur.payload.message.address=v;else cur.payload.message.command=v;
+            else if(t==2&&(strcmp(k,"address")==0||strcmp(k,"command")==0)){
+                if(idx + ct > buf_len) break;
+                uint32_t v=0;for(uint32_t i=0;i<ct;i++){v=(v<<8)|buf[idx++];}if(strcmp(k,"address")==0)cur.payload.message.address=v;else cur.payload.message.command=v;
                 ESP_LOGI(TAG_IR_MANAGER, "read address/command: %lu", v);
             }
-            else{if(t==6){for(uint32_t i=0;i<ct;i++){uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2+sl;}}else if(t==1||t==7){idx+=ct*4;}else if(t==2){idx+=ct;}else{free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;}}
+            else{
+                if(t==6){
+                    for(uint32_t i=0;i<ct;i++){
+                        if(idx + 2 > buf_len) goto cleanup;
+                        uint16_t sl=buf[idx]|(buf[idx+1]<<8);idx+=2;
+                        if(idx + sl > buf_len) goto cleanup;
+                        idx+=sl;
+                    }
+                }else if(t==1||t==7){
+                    if(idx + ct*4 > buf_len) goto cleanup;
+                    idx+=ct*4;
+                }else if(t==2){
+                    if(idx + ct > buf_len) goto cleanup;
+                    idx+=ct;
+                }else{
+                    cleanup:
+                    free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;
+                }
+            }
         }
         if(in){if(lc==lp){size_t nc=lp?lp*2:4;infrared_signal_t*tmp=realloc(list,nc*sizeof(infrared_signal_t));if(!tmp){free_signal_array(list,lc);infrared_manager_free_signal(&cur);return false;}list=tmp;lp=nc;}list[lc++]=cur;}
         if (lc == 0) {
@@ -345,6 +400,7 @@ static bool parse_ir_file(const char *buf, const char *path, infrared_signal_t *
             }
             memset(&current, 0, sizeof(current)); in_block = true;
             strncpy(current.name, value, sizeof(current.name) - 1);
+            current.name[sizeof(current.name) - 1] = '\0';
         } else if (in_block && strcmp(key, "type") == 0) {
             current.is_raw = (strcmp(value, "raw") == 0);
         } else if (in_block && current.is_raw) {
@@ -364,6 +420,7 @@ static bool parse_ir_file(const char *buf, const char *path, infrared_signal_t *
         } else if (in_block && !current.is_raw) {
             if (strcmp(key, "protocol") == 0) {
                 strncpy(current.payload.message.protocol, value, sizeof(current.payload.message.protocol) - 1);
+                current.payload.message.protocol[sizeof(current.payload.message.protocol) - 1] = '\0';
             } else if (strcmp(key, "address") == 0) {
                 uint32_t addr = 0; const char *p2 = value; char *endptr; uint8_t shift = 0;
                 while (*p2) { while (*p2 && isspace((unsigned char)*p2)) p2++; if (!*p2) break; unsigned long b = strtoul(p2, &endptr, 16); addr |= (uint32_t)(b & 0xFF) << shift; shift += 8; p2 = endptr; }

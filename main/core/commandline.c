@@ -4,7 +4,9 @@
 #include "core/callbacks.h"
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
+#ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
+#endif
 #include "managers/dial_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
