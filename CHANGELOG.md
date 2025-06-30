@@ -4,7 +4,7 @@
 
 ### TLDR
 
-Support for FlipperZero IR files, BLE Spam, WPA3 exclusive attacks, Deauth multiple APs at once, and more!
+Support for FlipperZero IR files, Better power consumption, BLE Spam, WPA3 SAE Flood, Deauth multiple APs at once, and more!
 
 ### Added
 
@@ -52,6 +52,7 @@ Support for FlipperZero IR files, BLE Spam, WPA3 exclusive attacks, Deauth multi
   - Removed touch controls from settings menu on non-touch devices - @tototo31
   - Refactor wifi menu into hierarchical sub-menus
   - Enable ESPIDF Power Management freq scaling on Cardputer, S3TWatch 2.4Inch CYD, and Phantom
+  - First item is no longer highlighted on menu lists for touch devices - @tototo31
 
 - Cardputer
   - Use backtick key to return to main menu
