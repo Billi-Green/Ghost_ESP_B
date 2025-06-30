@@ -66,6 +66,8 @@ Support for FlipperZero IR files, BLE Spam, WPA3 exclusive attacks, Deauth multi
 - WebUI
   - Refactor file explorer to be more user friendly
 
+- Power
+  - Set min PM freq to 20MHz instead of 80MHz
 
 ### Bug Fixes
 

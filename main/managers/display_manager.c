@@ -530,7 +530,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
 void display_manager_init(void) {
   esp_pm_config_esp32_t pm_cfg = {
       .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .min_freq_mhz = 80,
+      .min_freq_mhz = 20,
       .light_sleep_enable = true,
   };
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
