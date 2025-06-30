@@ -1079,9 +1079,11 @@ static void menu_builder_cb(lv_timer_t *t) {
         lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
         num_items++;
         built++;
-        if (num_items == 1) {
+#ifndef CONFIG_USE_TOUCHSCREEN
+        if (num_items == 1) { // highlight the first item on non-touch interfaces
             select_option_item(0);
         }
+#endif
     }
     if (!current_options_list || !current_options_list[build_item_index]) {
         lv_timer_del(t);
