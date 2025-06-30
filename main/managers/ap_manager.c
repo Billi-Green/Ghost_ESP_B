@@ -44,14 +44,14 @@ static bool is_config_loaded(void);
 static esp_err_t setup_mdns(void);
 static esp_err_t teardown_mdns(void);
 
-#define MAX_LOG_BUFFER_SIZE (8 * 1024)  // Increase to 32KB
+#define MAX_LOG_BUFFER_SIZE (8 * 1024)  // 8KB log buffer size
 #define LOG_CHUNK_SIZE (MAX_LOG_BUFFER_SIZE / 4)  // Size to remove when buffer is full
 #define MAX_FILE_SIZE (5 * 1024 * 1024) // 5 MB
 #define BUFFER_SIZE (1024)              // 1 KB buffer size for reading chunks
 #define MIN_(a, b) ((a) < (b) ? (a) : (b))
 #define SERIAL_BUFFER_SIZE 528          // Size of serial buffer
 
-static char log_buffer[MAX_LOG_BUFFER_SIZE];
+static char *log_buffer = NULL; // dynamically allocated at runtime
 static size_t log_buffer_index = 0;
 static SemaphoreHandle_t log_mutex = NULL;
 
@@ -599,11 +599,23 @@ esp_err_t ap_manager_init(void) {
         printf("Failed to get IP address\n");
     }
 
-    // Initialize log mutex
+    // Initialize log buffer and mutex
+    log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
+    if(!log_buffer){
+        ESP_LOGE(TAG, "failed to alloc log buffer");
+        return ESP_ERR_NO_MEM;
+    }
+
     log_mutex = xSemaphoreCreateMutex();
     if (!log_mutex) {
         ESP_LOGE(TAG, "Failed to create log mutex");
+        free(log_buffer);
+        log_buffer = NULL;
         return ESP_FAIL;
+    }
+
+    if(log_buffer){
+        memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
     }
 
     return ESP_OK;
@@ -626,6 +638,11 @@ void ap_manager_deinit(void) {
     
     teardown_mdns();
     
+    if(log_buffer){
+        free(log_buffer);
+        log_buffer = NULL;
+    }
+
     if (log_mutex) {
         vSemaphoreDelete(log_mutex);
         log_mutex = NULL;
@@ -927,7 +944,7 @@ static esp_err_t api_clear_logs_handler(httpd_req_t *req) {
     }
     
     log_buffer_index = 0;
-    memset(log_buffer, 0, sizeof(log_buffer));
+    memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
     
     xSemaphoreGive(log_mutex);
     

@@ -931,12 +931,7 @@ void ble_init(void) {
         }
 
         // Configure and start the NimBLE host task
-        static StackType_t host_task_stack[4096];
-        static StaticTask_t host_task_buf;
-
-        xTaskCreateStatic(nimble_host_task, "nimble_host",
-                          sizeof(host_task_stack) / sizeof(StackType_t), NULL, 5, host_task_stack,
-                          &host_task_buf);
+        xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, NULL);
 
         ble_initialized = true;
         ESP_LOGI(TAG_BLE, "BLE initialized");

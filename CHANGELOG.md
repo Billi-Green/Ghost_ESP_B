@@ -70,6 +70,9 @@ Support for FlipperZero IR files, Better power consumption, BLE Spam, WPA3 SAE F
 - Power
   - Set min PM freq to 20MHz instead of 80MHz
 
+- General
+  - replaced several large static allocations with dynamic heap allocations
+
 ### Bug Fixes
 
 - Display
