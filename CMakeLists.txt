@@ -21,6 +21,11 @@ add_compile_definitions(LED_ORDER=0)     # 2 for RGB, 0 for GRB
 add_compile_definitions(DNS_SERVER_MAX_ITEMS=1)
 add_compile_definitions(MAX_WPS_NETWORKS=15)
 
+# define esp32s2 target macro globally for legacy guards
+if("${IDF_TARGET}" STREQUAL "esp32s2")
+    add_compile_definitions(CONFIG_IDF_TARGET_ESP32S2)
+endif()
+
 # Include project settings
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(Ghost_ESP_IDF)
