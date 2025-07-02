@@ -1,5 +1,10 @@
 # Ghost ESP Changelog
 
+## Revival 1.6.1
+
+- Hotfix for 'BLE stack not ready' on CYD devices.
+
+
 ## Revival v1.6
 
 ### TLDR
