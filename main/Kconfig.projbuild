@@ -77,6 +77,36 @@ menu "Ghost ESP Options"
         default n
         help
             Enable joystick input.
+    config L_BTN
+        int "Left button data pin"
+        default 0
+        depends on USE_JOYSTICK
+        help
+            Set the data pin for left button
+    config R_BTN
+        int "Right button data pin"
+        default 0
+        depends on USE_JOYSTICK
+        help
+            Set the data pin for right button
+    config U_BTN
+        int "Up button data pin"
+        default 0
+        depends on USE_JOYSTICK
+        help
+            Set the data pin for up button
+    config D_BTN
+        int "Down button data pin"
+        default 0
+        depends on USE_JOYSTICK
+        help
+            Set the data pin for down button
+    config C_BTN
+        int "Center button data pin"
+        default 0
+        depends on USE_JOYSTICK
+        help
+            Set the data pin for center button
     
     config USE_CARDPUTER
         bool "Enable Cardputer"

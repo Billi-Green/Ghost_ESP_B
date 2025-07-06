@@ -56,17 +56,18 @@ void app_main(void) {
 
 #ifdef CONFIG_USE_JOYSTICK
 
+/*
 #define L_BTN 13
 #define C_BTN 34
 #define U_BTN 36
 #define R_BTN 39
 #define D_BTN 35
-
-    joystick_init(&joysticks[0], L_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[1], C_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[2], U_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[3], R_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[4], D_BTN, HOLD_LIMIT, true);
+*/
+    joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);
 
     printf("Joystick GPIO Setup Successfully...\n");
 #endif
