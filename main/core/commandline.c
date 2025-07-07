@@ -2,6 +2,7 @@
 
 #include "core/commandline.h"
 #include "core/callbacks.h"
+#include "core/serial_manager.h"
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -12,6 +13,7 @@
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
 #include "managers/sd_card_manager.h"
+#include "core/esp_comm_manager.h"
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
 #include <esp_timer.h>
@@ -1433,12 +1435,67 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
     TERMINAL_VIEW_ADD_TEXT("        stop      : Stop probe request listening\n\n");
 
-    printf("webauth\\n");
-    printf("    Description: Enable or disable web UI authentication.\\n");
-    printf("    Usage: webauth <on|off>\\n\\n");
-    TERMINAL_VIEW_ADD_TEXT("webauth\\n");
-    TERMINAL_VIEW_ADD_TEXT("    Description: Enable or disable web UI authentication.\\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: webauth <on|off>\\n\\n");
+    printf("webauth\n");
+    printf("    Description: Enable/disable web authentication.\n");
+    printf("    Usage: webauth <enable|disable>\n\n");
+    TERMINAL_VIEW_ADD_TEXT("webauth\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Enable/disable web authentication.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: webauth <enable|disable>\n\n");
+
+    printf("commdiscovery\n");
+    printf("    Description: Check discovery status (auto-starts on boot).\n");
+    printf("    Usage: commdiscovery\n\n");
+    TERMINAL_VIEW_ADD_TEXT("commdiscovery\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Check discovery status (auto-starts on boot).\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: commdiscovery\n\n");
+
+    printf("commconnect\n");
+    printf("    Description: Connect to a discovered peer ESP32.\n");
+    printf("    Usage: commconnect <peer_name>\n");
+    printf("    Example: commconnect ESP_A1B2C3\n\n");
+    TERMINAL_VIEW_ADD_TEXT("commconnect\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Connect to a discovered peer ESP32.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: commconnect <peer_name>\n\n");
+
+    printf("commsend\n");
+    printf("    Description: Send a command to connected peer ESP32.\n");
+    printf("    Usage: commsend <command> [data]\n");
+    printf("    Example: commsend scanap\n");
+    printf("    Example: commsend hello world\n\n");
+    TERMINAL_VIEW_ADD_TEXT("commsend\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Send a command to connected peer ESP32.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: commsend <command> [data]\n\n");
+
+    printf("commstatus\n");
+    printf("    Description: Show communication status and connection state.\n");
+    printf("    Usage: commstatus\n\n");
+    TERMINAL_VIEW_ADD_TEXT("commstatus\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Show communication status and connection state.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: commstatus\n\n");
+
+    printf("commdisconnect\n");
+    printf("    Description: Disconnect from current peer.\n");
+    printf("    Usage: commdisconnect\n\n");
+    TERMINAL_VIEW_ADD_TEXT("commdisconnect\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Disconnect from current peer.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: commdisconnect\n\n");
+
+    printf("commsetpins\n");
+    printf("    Description: Change communication GPIO pins at runtime.\n");
+    printf("    Usage: commsetpins <tx_pin> <rx_pin>\n");
+    printf("    Example: commsetpins 4 5\n\n");
+    TERMINAL_VIEW_ADD_TEXT("commsetpins\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Change communication GPIO pins at runtime.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: commsetpins <tx_pin> <rx_pin>\n\n");
+
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    printf("blescan\n");
+    printf("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
+    printf("    Usage: blescan [seconds]\n\n");
+    TERMINAL_VIEW_ADD_TEXT("blescan\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: blescan [seconds]\n\n");
+#endif
 }
 
 void handle_capture(int argc, char **argv) {
@@ -2155,7 +2212,148 @@ void handle_web_auth_cmd(int argc, char **argv) {
     }
 }
 
+void handle_comm_discovery(int argc, char **argv) {
+    comm_state_t state = esp_comm_manager_get_state();
+    
+    if (state == COMM_STATE_SCANNING) {
+        printf("Already in discovery mode. Listening for peers...\n");
+        TERMINAL_VIEW_ADD_TEXT("Already in discovery mode. Listening for peers...\n");
+        return;
+    }
+    
+    if (esp_comm_manager_start_discovery()) {
+        printf("Started discovery mode. Listening for peers...\n");
+        TERMINAL_VIEW_ADD_TEXT("Started discovery mode. Listening for peers...\n");
+    } else {
+        printf("Failed to start discovery. Check if already connected.\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to start discovery. Check if already connected.\n");
+    }
+}
+
+void handle_comm_connect(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: commconnect <peer_name>\n");
+        printf("Example: commconnect ESP_A1B2C3\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: commconnect <peer_name>\n");
+        return;
+    }
+    
+    if (esp_comm_manager_connect_to_peer(argv[1])) {
+        printf("Attempting to connect to peer: %s\n", argv[1]);
+        TERMINAL_VIEW_ADD_TEXT("Attempting to connect to peer...\n");
+    } else {
+        printf("Failed to connect. Make sure you're in discovery mode first.\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to connect. Start discovery first.\n");
+    }
+}
+
+void handle_comm_send(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: commsend <command> [data]\n");
+        printf("Example: commsend hello world\n");
+        printf("Example: commsend scanap\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: commsend <command> [data]\n");
+        return;
+    }
+    
+    if (!esp_comm_manager_is_connected()) {
+        printf("Not connected to any peer. Use 'commdiscovery' and 'commconnect' first.\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected. Connect to a peer first.\n");
+        return;
+    }
+    
+    const char* data = (argc > 2) ? argv[2] : NULL;
+    if (esp_comm_manager_send_command(argv[1], data)) {
+        printf("Command sent: %s\n", argv[1]);
+        TERMINAL_VIEW_ADD_TEXT("Command sent successfully.\n");
+    } else {
+        printf("Failed to send command.\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send command.\n");
+    }
+}
+
+void handle_comm_status(int argc, char **argv) {
+    comm_state_t state = esp_comm_manager_get_state();
+    const char* state_str;
+    
+    switch(state) {
+        case COMM_STATE_IDLE: state_str = "IDLE"; break;
+        case COMM_STATE_SCANNING: state_str = "SCANNING"; break;
+        case COMM_STATE_HANDSHAKE: state_str = "HANDSHAKE"; break;
+        case COMM_STATE_CONNECTED: state_str = "CONNECTED"; break;
+        case COMM_STATE_ERROR: state_str = "ERROR"; break;
+        default: state_str = "UNKNOWN"; break;
+    }
+    
+    printf("Communication Status: %s\n", state_str);
+    if (esp_comm_manager_is_connected()) {
+        printf("Connected to peer. Ready to send commands.\n");
+        TERMINAL_VIEW_ADD_TEXT("Status: Connected\n");
+    } else {
+        printf("Not connected. Use 'commdiscovery' to find peers.\n");
+        TERMINAL_VIEW_ADD_TEXT("Status: Not connected\n");
+    }
+}
+
+void handle_comm_disconnect(int argc, char **argv) {
+    esp_comm_manager_disconnect();
+    printf("Disconnected from peer.\n");
+    TERMINAL_VIEW_ADD_TEXT("Disconnected from peer.\n");
+}
+
+void handle_comm_setpins(int argc, char **argv) {
+    if (argc != 3) {
+        printf("Usage: commsetpins <tx_pin> <rx_pin>\n");
+        printf("Example: commsetpins 4 5\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: commsetpins <tx_pin> <rx_pin>\n");
+        return;
+    }
+    
+    int tx_pin = atoi(argv[1]);
+    int rx_pin = atoi(argv[2]);
+    
+    if (tx_pin < 0 || tx_pin > 48 || rx_pin < 0 || rx_pin > 48) {
+        printf("Invalid pin numbers. Must be between 0-48.\n");
+        TERMINAL_VIEW_ADD_TEXT("Invalid pin numbers.\n");
+        return;
+    }
+    
+    if (esp_comm_manager_set_pins((gpio_num_t)tx_pin, (gpio_num_t)rx_pin)) {
+        printf("Communication pins changed to TX:%d RX:%d\n", tx_pin, rx_pin);
+        TERMINAL_VIEW_ADD_TEXT("Communication pins changed.\n");
+    } else {
+        printf("Failed to change pins. Make sure not connected or scanning.\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to change pins.\n");
+    }
+}
+
+static void comm_command_callback(const char* command, const char* data, void* user_data) {
+    printf("Received command from peer: %s", command);
+    if (data && strlen(data) > 0) {
+        printf(" with data: %s", data);
+    }
+    printf("\n");
+    
+    char output_text[256];
+    snprintf(output_text, sizeof(output_text), "Peer command: %s\n", command);
+    TERMINAL_VIEW_ADD_TEXT(output_text);
+    
+    char full_command[256];
+    if (data && strlen(data) > 0) {
+        snprintf(full_command, sizeof(full_command), "%s %s", command, data);
+    } else {
+        strncpy(full_command, command, sizeof(full_command) - 1);
+        full_command[sizeof(full_command) - 1] = '\0';
+    }
+    
+    printf("Executing received command: %s\n", full_command);
+    esp_comm_manager_set_remote_command_flag(true);
+    handle_serial_command(full_command);
+    esp_comm_manager_set_remote_command_flag(false);
+}
+
 void register_commands() {
+    command_init();
     register_command("help", handle_help);
     register_command("scanap", cmd_wifi_scan_start);
     register_command("scansta", handle_sta_scan);
@@ -2164,7 +2362,6 @@ void register_commands() {
     register_command("attack", handle_attack_cmd);
     register_command("list", handle_list);
     register_command("beaconspam", handle_beaconspam);
-    // Register new beacon list commands
     register_command("beaconadd", handle_beaconadd);
     register_command("beaconremove", handle_beaconremove);
     register_command("beaconclear", handle_beaconclear);
@@ -2187,23 +2384,29 @@ void register_commands() {
     register_command("scanports", handle_scan_ports);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
+    
+    register_command("commdiscovery", handle_comm_discovery);
+    register_command("commconnect", handle_comm_connect);
+    register_command("commsend", handle_comm_send);
+    register_command("commstatus", handle_comm_status);
+    register_command("commdisconnect", handle_comm_disconnect);
+    register_command("commsetpins", handle_comm_setpins);
+    
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
-    // AirTag Commands
     register_command("listairtags", handle_list_airtags_cmd);
     register_command("selectairtag", handle_select_airtag);
     register_command("spoofairtag", handle_spoof_airtag);
     register_command("stopspoof", handle_stop_spoof);
 #endif
 #ifdef DEBUG
-    register_command("crash", handle_crash); // For Debugging
+    register_command("crash", handle_crash);
 #endif
     register_command("pineap", handle_pineap_detection);
     register_command("apcred", handle_apcred);
     register_command("rgbmode", handle_rgb_mode);
     register_command("setrgbpins", handle_setrgb);
-    // SD Card Pin configuration commands
     register_command("sd_config", handle_sd_config);
     register_command("sd_pins_mmc", handle_sd_pins_mmc);
     register_command("sd_pins_spi", handle_sd_pins_spi);
@@ -2215,7 +2418,6 @@ void register_commands() {
     register_command("selectflipper", handle_select_flipper_cmd);
 #endif
     register_command("dhcpstarve", handle_dhcpstarve_cmd);
-    // SAE Handshake Flooding Attack Commands
     register_command("saeflood", handle_sae_flood_cmd);
     register_command("stopsaeflood", handle_stop_sae_flood_cmd);
     register_command("saefloodhelp", handle_sae_flood_help_cmd);
@@ -2226,6 +2428,9 @@ void register_commands() {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blespam", handle_ble_spam_cmd);
 #endif
+    
+    esp_comm_manager_set_command_callback(comm_command_callback, NULL);
+    
     printf("Registered Commands\n");
     TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
 }
@@ -2274,5 +2479,7 @@ void handle_ble_spam_cmd(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
 }
 #endif
+
+
 
 
