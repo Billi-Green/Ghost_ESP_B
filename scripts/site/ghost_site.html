@@ -1107,13 +1107,14 @@
 </head>
 <body>
     <div class="container">
-        <h1>GhostESP: Revival v1.6</h1>
+        <h1>GhostESP: Revival v1.7 dev</h1>
         <!-- Tab Navigation -->
         <div class="tab">
             <button class="tablinks active" onclick="openTab(event, 'Settings')" id="defaultTab">Settings</button>
             <button class="tablinks" onclick="openTab(event, 'Help')">Help</button>
             <button class="tablinks" onclick="openTab(event, 'SDCard')">SD Card</button>
             <button class="tablinks" onclick="openTab(event, 'Terminal')">Terminal</button>
+            <button class="tablinks" onclick="openTab(event, 'DualComm')">Dual Comm</button>
         </div>
         <!-- Settings Tab Content -->
         <div id="Settings" class="tabcontent show">
@@ -1634,6 +1635,50 @@
             </div>
         </div>
 
+        <!-- Dual Communication Tab Content -->
+        <div id="DualComm" class="tabcontent">
+            <div class="settings-grid">
+                <!-- Dual Communication Status & Controls -->
+                <div class="settings-section">
+                    <h2>Dual Communication Status</h2>
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: center; margin-bottom: 15px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <label style="margin: 0;">Connection State:</label>
+                            <span id="comm-state-display" style="font-weight: bold; color: var(--primary-color);">Unknown</span>
+                            <div id="comm-state-indicator" style="width: 12px; height: 12px; border-radius: 50%; background-color: #666;"></div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <button class="small" onclick="disconnectFromPeer()">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                        <button class="small" onclick="sendQuickCommand('scanap')">Scan APs</button>
+                        <button class="small" onclick="sendQuickCommand('scansta')">Scan STAs</button>
+                        <button class="small" onclick="sendQuickCommand('attack -d')">Deauth</button>
+                        <button class="small" onclick="sendQuickCommand('beaconspam -r')">Beacon Spam</button>
+                        <button class="small" onclick="sendQuickCommand('blescan -r')">BLE Scan</button>
+                        <button class="small" onclick="sendQuickCommand('stopscan')">Stop Scan</button>
+                        <button class="small" onclick="sendQuickCommand('stopdeauth')">Stop Deauth</button>
+                        <button class="small" onclick="sendQuickCommand('stopspam')">Stop Spam</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dual Communication Terminal -->
+            <div class="settings-section terminal-container">
+                <h2>Dual Communication Terminal</h2>
+                <p style="text-align: center; color: var(--text-secondary); margin-bottom: 10px;">
+                    <strong>Commands sent to connected peer device</strong> - Type commands like <code>scanap</code>, <code>attack -d</code>, <code>beaconspam -r</code>
+                </p>
+                <div id="commTerminalOutput" class="terminal-output"></div>
+                <div class="terminal-input-container">
+                    <input type="text" id="commTerminalInput" placeholder="Enter command to send to peer...">
+                    <button onclick="sendCommTerminalCommand()">Send</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Additional sections can be added here -->
     </div>
     <!-- JavaScript for Interactivity -->
@@ -1937,8 +1982,24 @@
             document.getElementById(tabName).classList.add("show");
             evt.currentTarget.classList.add("active");
 
+            // Handle tab-specific initialization
             if (tabName === "SDCard") {
                 fetchSDCardData();
+            } else if (tabName === "DualComm") {
+                // Initialize terminal content baseline to avoid showing historical logs
+                fetch('/api/logs')
+                    .then(response => response.text())
+                    .then(logs => {
+                        lastTerminalContent = logs;
+                    })
+                    .catch(error => console.error('Error initializing terminal baseline:', error));
+                
+                startCommStatusPolling();
+                addCommTerminalMessage('Dual Communication tab activated');
+                clearCommTerminal(); // Start with clean terminal
+            } else {
+                // Stop dual comm polling when switching away from the tab
+                stopCommStatusPolling();
             }
         }
 
@@ -2205,6 +2266,8 @@
         // Load settings on window load
         window.onload = function() {
             loadSettings();
+            // Initialize dual comm terminal with welcome message
+            addCommTerminalMessage('Dual Communication Terminal ready - Switch to Dual Comm tab to start using');
         };
 
         function sendTerminalCommand() {
@@ -2292,8 +2355,226 @@
             }
         });
 
+        // Add event listener for Enter key in dual communication terminal input
+        document.getElementById('commTerminalInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendCommTerminalCommand();
+            }
+        });
+
         // Start polling for terminal updates
         updateTerminal();
+
+        // Dual Communication JavaScript Functions
+        let commStatusInterval = null;
+        let commTerminalMessages = [];
+
+        // Function to update dual communication status
+        function updateCommStatus() {
+            fetch('/api/esp_comm/status')
+                .then(response => response.json())
+                .then(data => {
+                    const stateDisplay = document.getElementById('comm-state-display');
+                    const stateIndicator = document.getElementById('comm-state-indicator');
+
+                    // Update state display
+                    stateDisplay.textContent = data.state.charAt(0).toUpperCase() + data.state.slice(1);
+                    
+                    // Update state indicator color
+                    let indicatorColor = '#666'; // default gray
+                    switch (data.state) {
+                        case 'idle': indicatorColor = '#666'; break;
+                        case 'scanning': indicatorColor = '#ffa500'; break; // orange
+                        case 'handshake': indicatorColor = '#ffff00'; break; // yellow
+                        case 'connected': indicatorColor = '#00ff00'; break; // green
+                        case 'error': indicatorColor = '#ff0000'; break; // red
+                    }
+                    stateIndicator.style.backgroundColor = indicatorColor;
+                })
+                .catch(error => {
+                    console.error('Error fetching ESP comm status:', error);
+                    addCommTerminalMessage('Error: Failed to fetch status');
+                });
+        }
+
+
+
+        // Function to disconnect from peer
+        function disconnectFromPeer() {
+            addCommTerminalMessage('Disconnecting from peer...');
+            
+            const payload = { action: 'disconnect' };
+            
+            fetch('/api/esp_comm/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                addCommTerminalMessage(`Disconnect: ${data.message}`);
+                if (data.success) {
+                    addCommTerminalMessage('Disconnected successfully!');
+                } else {
+                    addCommTerminalMessage(`Failed to disconnect: ${data.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error disconnecting:', error);
+                addCommTerminalMessage('Error: Failed to disconnect');
+            });
+        }
+
+        // Function to send dual communication terminal command
+        function sendCommTerminalCommand() {
+            const input = document.getElementById('commTerminalInput');
+            const command = input.value.trim();
+            
+            if (!command) {
+                alert('Please enter a command');
+                return;
+            }
+
+            // Add command to terminal display
+            addCommTerminalMessage(`> ${command}`);
+
+            const payload = { 
+                command: command
+            };
+            
+            fetch('/api/esp_comm/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    addCommTerminalMessage('Command sent successfully');
+                    // Clear the input
+                    input.value = '';
+                } else {
+                    addCommTerminalMessage(`Failed: ${result.message}`);
+                    alert(`Failed to send command: ${result.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error sending command:', error);
+                addCommTerminalMessage('Error: Failed to send command');
+                alert('Error sending command');
+            });
+        }
+
+        // Function to send quick commands
+        function sendQuickCommand(command) {
+            // Add command to terminal display
+            addCommTerminalMessage(`> ${command}`);
+
+            const payload = { command: command };
+            
+            fetch('/api/esp_comm/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    addCommTerminalMessage('Command sent successfully');
+                } else {
+                    addCommTerminalMessage(`Failed: ${result.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error sending quick command:', error);
+                addCommTerminalMessage(`Error: Failed to send ${command}`);
+            });
+        }
+
+        // Function to add message to dual communication terminal
+        function addCommTerminalMessage(message) {
+            commTerminalMessages.push(message);
+            
+            // Keep only last 100 messages
+            if (commTerminalMessages.length > 100) {
+                commTerminalMessages = commTerminalMessages.slice(-100);
+            }
+            
+            updateCommTerminalDisplay();
+        }
+
+        // Function to update dual communication terminal display
+        function updateCommTerminalDisplay() {
+            const terminalOutput = document.getElementById('commTerminalOutput');
+            terminalOutput.textContent = commTerminalMessages.join('\n');
+            // Auto-scroll to bottom
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+        }
+
+        // Function to clear dual communication terminal
+        function clearCommTerminal() {
+            commTerminalMessages = [];
+            updateCommTerminalDisplay();
+            const terminalOutput = document.getElementById('commTerminalOutput');
+            terminalOutput.textContent = 'Dual Communication Terminal ready...';
+        }
+
+        // Function to start dual comm status polling
+        function startCommStatusPolling() {
+            if (commStatusInterval) {
+                clearInterval(commStatusInterval);
+            }
+            updateCommStatus(); // Initial update
+            commStatusInterval = setInterval(() => {
+                updateCommStatus();
+                updateCommLogFromTerminal();
+            }, 2000); // Update every 2 seconds
+        }
+
+        // Function to check terminal logs for dual comm responses
+        let lastTerminalContent = '';
+        function updateCommLogFromTerminal() {
+            fetch('/api/logs')
+                .then(response => response.text())
+                .then(logs => {
+                    if (logs !== lastTerminalContent) {
+                        // Find new ESP Comm responses
+                        const newContent = logs.substring(lastTerminalContent.length);
+                        const lines = newContent.split('\n');
+                        
+                        lines.forEach(line => {
+                            if (line.includes('ESP Comm Response:')) {
+                                // Extract the response part
+                                const responseText = line.replace(/^.*ESP Comm Response:\s*/, '').trim();
+                                if (responseText) {
+                                    addCommTerminalMessage(responseText);
+                                }
+                            } else if (line.includes('Discovered peer:')) {
+                                addCommTerminalMessage(line.trim());
+                            } else if (line.includes('Handshake complete')) {
+                                addCommTerminalMessage(line.trim());
+                            } else if (line.includes('Connecting to peer:')) {
+                                addCommTerminalMessage(line.trim());
+                            } else if (line.includes('Sent command:')) {
+                                addCommTerminalMessage(line.trim());
+                            }
+                        });
+                        
+                        lastTerminalContent = logs;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching terminal logs for dual comm:', error);
+                });
+        }
+
+        // Function to stop dual comm status polling
+        function stopCommStatusPolling() {
+            if (commStatusInterval) {
+                clearInterval(commStatusInterval);
+                commStatusInterval = null;
+            }
+        }
 
         // SD Card Configuration Functionality
         document.addEventListener('DOMContentLoaded', function() {

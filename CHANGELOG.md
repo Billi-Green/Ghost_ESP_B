@@ -1,5 +1,17 @@
 # Ghost ESP Changelog
 
+## Revival v1.7
+
+### Dual Chip Support
+
+- Support for connecting two ESP32 chips running GhostESP
+- WebUI Section to send commands to the connected peer
+
+### Bug Fixes
+
+- Add termianl_view_add_text logs to commands missing them
+
+
 ## Revival 1.6.1
 
 - Hotfix for 'BLE stack not ready' on CYD devices.

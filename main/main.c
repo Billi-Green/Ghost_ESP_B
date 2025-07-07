@@ -27,9 +27,6 @@ void app_main(void) {
     ESP_LOGI(TAG, "Initializing Serial Manager");
     serial_manager_init();
 
-    ESP_LOGI(TAG, "Initializing Comm Manager");
-    esp_comm_manager_init_with_defaults();
-
     ESP_LOGI(TAG, "Initializing Wifi Manager");
     wifi_manager_init();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -52,6 +49,9 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Initializing Settings");
     settings_init(&G_Settings);
+
+    ESP_LOGI(TAG, "Initializing Comm Manager");
+    esp_comm_manager_init_with_defaults();
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     ap_manager_init();

@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "managers/views/terminal_screen.h"
+#include "managers/ap_manager.h"
 
 #define COMM_BUFFER_SIZE 512
 #define COMM_PACKET_SIZE 128
@@ -93,6 +94,8 @@ typedef struct {
 } esp_comm_manager_t;
 
 static esp_comm_manager_t* s_comm_manager = NULL;
+static comm_command_callback_t s_pending_callback = NULL;
+static void* s_pending_callback_user_data = NULL;
 
 static uint8_t calculate_checksum(const uint8_t* data, size_t len) {
     uint8_t checksum = 0;
@@ -251,10 +254,16 @@ static void protocol_task(void* arg) {
                         strncpy(comm->peer.chip_name, (char*)packet.data + 6, 32);
                         comm->peer.chip_name[31] = '\0';
                         printf("I: Discovered peer: %s\n", comm->peer.chip_name);
+                        
+                        // Log to web UI
+                        char log_msg[64];
+                        snprintf(log_msg, sizeof(log_msg), "I: Discovered peer: %s\n", comm->peer.chip_name);
+                        ap_manager_add_log(log_msg);
 
                         // Auto-connect based on name comparison to avoid race conditions
                         if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
                             printf("I: Peer has smaller name, I will initiate connection.\n");
+                            ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
                             esp_comm_manager_connect_to_peer(comm->peer.chip_name);
                         }
                     }
@@ -271,6 +280,7 @@ static void protocol_task(void* arg) {
                             send_handshake_ack();
                             comm->state = COMM_STATE_CONNECTED;
                             printf("I: Handshake complete - slave role\n");
+                            ap_manager_add_log("I: Handshake complete - slave role\n");
                         }
                     }
                     break;
@@ -279,15 +289,18 @@ static void protocol_task(void* arg) {
                     if (comm->state == COMM_STATE_HANDSHAKE && comm->role == COMM_ROLE_MASTER) {
                         comm->state = COMM_STATE_CONNECTED;
                         printf("I: Handshake complete - master role\n");
+                        ap_manager_add_log("I: Handshake complete - master role\n");
                     }
                     break;
                     
                 case PACKET_TYPE_COMMAND:
                     if (comm->state == COMM_STATE_CONNECTED && comm->command_callback) {
-                        char command[32] = {0};
+                        char command[33] = {0};
                         char data[COMM_PACKET_SIZE - 32] = {0};
                         
                         strncpy(command, (char*)packet.data, 32);
+                        command[32] = '\0'; // Ensure null termination
+                        
                         if (packet.length > 32) {
                             strncpy(data, (char*)packet.data + 32, packet.length - 32);
                         }
@@ -312,7 +325,14 @@ static void protocol_task(void* arg) {
                         char response_data[COMM_PACKET_SIZE - 3];
                         memcpy(response_data, packet.data, packet.length);
                         response_data[packet.length] = '\0';
-                        printf("%s", response_data);
+                        
+                        // Send response to both console and web UI log
+                        printf("ESP Comm Response: %s\n", response_data);
+                        
+                        // Format response for web UI
+                        char log_message[COMM_PACKET_SIZE + 32];
+                        snprintf(log_message, sizeof(log_message), "ESP Comm Response: %s\n", response_data);
+                        ap_manager_add_log(log_message);
                     }
                     break;
                     
@@ -357,6 +377,9 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     s_comm_manager->parse_state = PARSE_STATE_IDLE;
     s_comm_manager->data_bytes_received = 0;
     s_comm_manager->parse_buffer_pos = 0;
+
+    s_comm_manager->command_callback = s_pending_callback;
+    s_comm_manager->callback_user_data = s_pending_callback_user_data;
 
     esp_read_mac(s_comm_manager->chip_id, ESP_MAC_WIFI_STA);
     snprintf(s_comm_manager->chip_name, sizeof(s_comm_manager->chip_name), 
@@ -453,6 +476,11 @@ bool esp_comm_manager_connect_to_peer(const char* peer_name) {
     send_handshake_request(peer_name);
     
     printf("I: Connecting to peer: %s\n", peer_name);
+    
+    // Log to web UI
+    char log_msg[64];
+    snprintf(log_msg, sizeof(log_msg), "I: Connecting to peer: %s\n", peer_name);
+    ap_manager_add_log(log_msg);
     return true;
 }
 
@@ -487,6 +515,11 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
     bool result = send_packet(&packet);
     if (result) {
         printf("I: Sent command: %s\n", command);
+        
+        // Log to web UI
+        char log_msg[64];
+        snprintf(log_msg, sizeof(log_msg), "I: Sent command: %s\n", command);
+        ap_manager_add_log(log_msg);
     }
     
     return result;
@@ -512,7 +545,7 @@ bool esp_comm_manager_send_response(const char* data) {
     if (data_len > max_data_len) {
         data_len = max_data_len;
     }
-    strncpy((char*)packet.data, data, data_len);
+    memcpy((char*)packet.data, data, data_len);
     packet.length = data_len;
     
     return send_packet(&packet);
@@ -530,6 +563,9 @@ void esp_comm_manager_set_command_callback(comm_command_callback_t callback, voi
     if (s_comm_manager) {
         s_comm_manager->command_callback = callback;
         s_comm_manager->callback_user_data = user_data;
+    } else {
+        s_pending_callback = callback;
+        s_pending_callback_user_data = user_data;
     }
 }
 

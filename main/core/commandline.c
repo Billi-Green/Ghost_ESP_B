@@ -2319,8 +2319,11 @@ void handle_comm_setpins(int argc, char **argv) {
     }
     
     if (esp_comm_manager_set_pins((gpio_num_t)tx_pin, (gpio_num_t)rx_pin)) {
-        printf("Communication pins changed to TX:%d RX:%d\n", tx_pin, rx_pin);
-        TERMINAL_VIEW_ADD_TEXT("Communication pins changed.\n");
+        settings_set_esp_comm_pins(&G_Settings, tx_pin, rx_pin);
+        settings_save(&G_Settings);
+        
+        printf("Communication pins changed to TX:%d RX:%d and saved to NVS\n", tx_pin, rx_pin);
+        TERMINAL_VIEW_ADD_TEXT("Communication pins changed and saved.\n");
     } else {
         printf("Failed to change pins. Make sure not connected or scanning.\n");
         TERMINAL_VIEW_ADD_TEXT("Failed to change pins.\n");

@@ -48,6 +48,8 @@ static const char *NVS_MENU_THEME_KEY = "menu_theme";
 static const char *NVS_TERMINAL_TEXT_COLOR_KEY = "term_color";
 static const char *NVS_INVERT_COLORS_KEY = "invert_colors";
 static const char *NVS_WEB_AUTH_KEY = "web_auth";
+static const char *NVS_ESP_COMM_TX_PIN_KEY = "esp_comm_tx";
+static const char *NVS_ESP_COMM_RX_PIN_KEY = "esp_comm_rx";
 
 static const char *TAG = "SettingsManager";
 
@@ -126,6 +128,8 @@ void settings_set_defaults(FSettings *settings) {
   settings->terminal_text_color = 0x00FF00;
   settings->invert_colors = false;
   settings->web_auth_enabled = true;
+  settings->esp_comm_tx_pin = 6;
+  settings->esp_comm_rx_pin = 7;
 }
 
 void settings_load(FSettings *settings) {
@@ -357,6 +361,20 @@ void settings_load(FSettings *settings) {
   err = nvs_get_u8(nvsHandle, NVS_WEB_AUTH_KEY, &value_u8);
   if (err == ESP_OK) {
     settings->web_auth_enabled = (value_u8 != 0);
+  }
+
+  err = nvs_get_i32(nvsHandle, NVS_ESP_COMM_TX_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->esp_comm_tx_pin = tmp;
+  } else {
+    settings->esp_comm_tx_pin = 6;
+  }
+  
+  err = nvs_get_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->esp_comm_rx_pin = tmp;
+  } else {
+    settings->esp_comm_rx_pin = 7;
   }
 }
 
@@ -604,6 +622,13 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save terminal_text_color: %s", esp_err_to_name(err));
   err = nvs_set_u8(nvsHandle, NVS_WEB_AUTH_KEY, settings->web_auth_enabled);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save web_auth_enabled: %s", esp_err_to_name(err));
+  
+  err = nvs_set_i32(nvsHandle, NVS_ESP_COMM_TX_PIN_KEY, settings->esp_comm_tx_pin);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save esp_comm_tx_pin: %s", esp_err_to_name(err));
+  
+  err = nvs_set_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, settings->esp_comm_rx_pin);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save esp_comm_rx_pin: %s", esp_err_to_name(err));
+  
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
 }
@@ -886,4 +911,14 @@ void settings_set_web_auth_enabled(FSettings *settings, bool enabled) {
 
 bool settings_get_web_auth_enabled(const FSettings *settings) {
   return settings->web_auth_enabled;
+}
+
+void settings_set_esp_comm_pins(FSettings *settings, int32_t tx_pin, int32_t rx_pin) {
+  settings->esp_comm_tx_pin = tx_pin;
+  settings->esp_comm_rx_pin = rx_pin;
+}
+
+void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int32_t *rx_pin) {
+  if (tx_pin) *tx_pin = settings->esp_comm_tx_pin;
+  if (rx_pin) *rx_pin = settings->esp_comm_rx_pin;
 }
