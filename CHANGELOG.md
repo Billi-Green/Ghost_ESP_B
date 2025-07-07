@@ -11,6 +11,7 @@
 
 - WebUI
   - Change from from Courier New to SF Mono if available
+  - Minor style tweaks
 
 ### Bug Fixes
 
