@@ -21,6 +21,9 @@
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
 #include "vendor/m5/m5gfx_wrapper.h"
+#endif
+
+#ifdef CONFIG_HAS_BATTERY_ADC
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
@@ -117,9 +120,15 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 #endif
 }
 
-#ifdef CONFIG_USE_CARDPUTER
+#ifdef CONFIG_HAS_BATTERY_ADC
 
+#ifdef CONFIG_USE_CARDPUTER
 #define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
+
+#elif CONFIG_USE_TDECK
+#define _batAdcCh ADC1_GPIO4_CHANNEL
+#endif
+
 #define _batAdcUnit ADC_UNIT_1
 #define _batAdcAtten ADC_ATTEN_DB_12
 bool adcInit = false;
@@ -390,7 +399,7 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
     if (axp202_is_charging()) {
       battery_symbol = LV_SYMBOL_CHARGE;
     }
-#elif CONFIG_USE_CARDPUTER
+#elif CONFIG_HAS_BATTERY_ADC
     if (isCharging()) {
       battery_symbol = LV_SYMBOL_CHARGE;
     }
@@ -413,7 +422,7 @@ static void status_update_cb(lv_timer_t *timer) {
   uint8_t power_level;
   axp2101_get_power_level(&power_level);
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, power_level);
-#elif CONFIG_USE_CARDPUTER
+#elif CONFIG_HAS_BATTERY_ADC
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     isCharging() ? power_level : power_level);
@@ -514,7 +523,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   bool is_charging = axp202_is_charging();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     is_charging ? power_level : power_level);
-#elif CONFIG_USE_CARDPUTER
+#elif CONFIG_BATTERY_ADC
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     isCharging() ? power_level : power_level);

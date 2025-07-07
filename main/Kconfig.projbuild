@@ -165,6 +165,19 @@ menu "Ghost ESP Options"
             default n
             help
                 Enable power saving features if you have a battery.
+
+        config HAS_BATTERY_ADC
+            bool "Enable battery ADC reading"
+            default n
+            help
+                Enable ADC battery readings
+                
+        config ADC_BATTERY_PIN
+            int "Pin for reading ADC measurements - Unused atm."
+            default -1
+            depends on HAS_BATTERY_ADC
+            help
+                Set ADC battery pin - Unused atm.
     
         config HAS_RTC_CLOCK
             bool "Enable RTC Clock"
