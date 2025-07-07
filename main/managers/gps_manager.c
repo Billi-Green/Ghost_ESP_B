@@ -95,6 +95,7 @@ void gps_manager_init(GPSManager *manager) {
 
     config.uart.rx_pin = current_rx_pin; //set uart pin for uart init
     config.uart.uart_port = UART_NUM_1; // Explicitly set UART1 for GPS
+    config.uart.baud_rate = CONFIG_GPS_UART_BAUD_RATE; // set gps baud rate to the build config
     
 
 #ifdef CONFIG_IS_GHOST_BOARD // always want ghost board to be using pin 2

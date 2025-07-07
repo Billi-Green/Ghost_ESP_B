@@ -232,7 +232,13 @@ menu "Ghost ESP Options"
         depends on HAS_GPS
         help
             Define the UART RX pin for GPS.
-
+    
+    config GPS_UART_BAUD_RATE
+        int "Set baud rate for gps serial"
+        default 9600
+        depends on HAS_GPS
+        help
+            Define the UART RX pin baud rate for GPS.
 
     config NMEA_PARSER_RING_BUFFER_SIZE
         int "NMEA Parser Ring Buffer Size"
