@@ -16,26 +16,27 @@ void terminal_view_create(void);
 void terminal_view_destroy(void);
 
 #ifdef CONFIG_WITH_SCREEN
-#define TERMINAL_VIEW_ADD_TEXT(fmt, ...)                                       \
-  do {                                                                         \
-    char buffer[350];                                                          \
-    snprintf(buffer, sizeof(buffer), fmt, ##__VA_ARGS__);                      \
-    if (esp_comm_manager_is_remote_command()) {                                \
-      esp_comm_manager_send_response(buffer);                                  \
-    }                                                                          \
-    terminal_view_add_text(buffer);                                            \
-    ap_manager_add_log(buffer);                                                \
-  } while (0)
+#define TERMINAL_VIEW_ADD_TEXT(fmt, ...)                                           \
+    do {                                                                           \
+        char buffer[512];                                                          \
+        snprintf(buffer, sizeof(buffer), fmt, ##__VA_ARGS__);                      \
+        if (esp_comm_manager_is_remote_command()) {                                \
+            esp_comm_manager_send_response((const uint8_t*)buffer, strlen(buffer)); \
+        }                                                                          \
+        terminal_view_add_text(buffer);                                            \
+    } while (0)
 #else
-#define TERMINAL_VIEW_ADD_TEXT(fmt, ...)                                       \
-  do {                                                                         \
-    char buffer[350];                                                          \
-    snprintf(buffer, sizeof(buffer), fmt, ##__VA_ARGS__);                      \
-    if (esp_comm_manager_is_remote_command()) {                                \
-      esp_comm_manager_send_response(buffer);                                  \
-    }                                                                          \
-    ap_manager_add_log(buffer);                                                \
-  } while (0)
+#define TERMINAL_VIEW_ADD_TEXT(fmt, ...)                                           \
+    do {                                                                           \
+        char buffer[512];                                                          \
+        snprintf(buffer, sizeof(buffer), fmt, ##__VA_ARGS__);                      \
+        if (esp_comm_manager_is_remote_command()) {                                \
+            esp_comm_manager_send_response((const uint8_t*)buffer, strlen(buffer)); \
+        }                                                                          \
+        ap_manager_add_log(buffer);                                                \
+    } while (0)
 #endif
+
+void terminal_screen_create(lv_obj_t* parent);
 
 #endif // TERMINAL_VIEW_H

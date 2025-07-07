@@ -41,7 +41,7 @@ comm_state_t esp_comm_manager_get_state(void);
 void esp_comm_manager_set_command_callback(comm_command_callback_t callback, void* user_data);
 void esp_comm_manager_disconnect(void);
 void esp_comm_manager_deinit(void);
-bool esp_comm_manager_send_response(const char* data);
+bool esp_comm_manager_send_response(const uint8_t* data, size_t length);
 void esp_comm_manager_set_remote_command_flag(bool is_remote);
 bool esp_comm_manager_is_remote_command(void);
 

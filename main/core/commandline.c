@@ -525,6 +525,7 @@ void handle_start_portal(int argc, char **argv) {
     if (argc < 3 || argc > 4) { // Accept 3 or 4 arguments
         printf("Usage: %s <FilePath> <AP_SSID> [PSK]\n", argv[0]);
         TERMINAL_VIEW_ADD_TEXT("Usage: %s <FilePath> <AP_SSID> [PSK]\n", argv[0]);
+        printf("PSK is optional for an open AP.\n");
         TERMINAL_VIEW_ADD_TEXT("PSK is optional for an open AP.\n");
         return;
     }
@@ -552,11 +553,13 @@ void handle_start_portal(int argc, char **argv) {
         memmove(final_url_or_path + prefix_len, final_url_or_path, current_len + 1);
         memcpy(final_url_or_path, prefix, prefix_len);
         printf("Prepended %s to path: %s\n", prefix, final_url_or_path);
-        TERMINAL_VIEW_ADD_TEXT("Prepended %s: %s\n", prefix, final_url_or_path);
+        TERMINAL_VIEW_ADD_TEXT("Prepended %s to path: %s\n", prefix, final_url_or_path);
     }
     const char *domain = settings_get_portal_domain(&G_Settings);
     printf("Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, psk, domain ? domain : "(default)");
-    TERMINAL_VIEW_ADD_TEXT("Starting portal...\nAP: %s\nPSK: %s\nDomain: %s\n", ap_ssid, (strlen(psk) > 0 ? psk : "<Open>"), domain ? domain : "(default)");
+    char log_buf[256];
+    snprintf(log_buf, sizeof(log_buf), "Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, (strlen(psk) > 0 ? psk : "<Open>"), domain ? domain : "(default)");
+    TERMINAL_VIEW_ADD_TEXT(log_buf);
     wifi_manager_start_evil_portal(final_url_or_path, NULL, psk, ap_ssid, domain);
 }
 
@@ -616,6 +619,7 @@ void handle_tp_link_test(int argc, char **argv) {
         isloop = true;
     } else if (strcmp(argv[1], "on") != 0 && strcmp(argv[1], "off") != 0) {
         printf("Invalid argument. Use 'on', 'off', or 'loop'.\n");
+        TERMINAL_VIEW_ADD_TEXT("Invalid argument. Use 'on', 'off', or 'loop'.\n");
         return;
     }
 
@@ -645,6 +649,7 @@ void handle_tp_link_test(int argc, char **argv) {
         size_t command_len = strlen(command);
         if (command_len >= sizeof(encrypted_command)) {
             printf("Command too large to encrypt\n");
+            TERMINAL_VIEW_ADD_TEXT("Command too large to encrypt\n");
             return;
         }
 
@@ -653,6 +658,9 @@ void handle_tp_link_test(int argc, char **argv) {
         int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (sock < 0) {
             printf("Failed to create socket: errno %d\n", errno);
+            char err_buf[64];
+            snprintf(err_buf, sizeof(err_buf), "Failed to create socket: errno %d\n", errno);
+            TERMINAL_VIEW_ADD_TEXT(err_buf);
             return;
         }
 
@@ -663,7 +671,9 @@ void handle_tp_link_test(int argc, char **argv) {
                          sizeof(dest_addr));
         if (err < 0) {
             printf("Error occurred during sending: errno %d\n", errno);
-            TERMINAL_VIEW_ADD_TEXT("Error occurred during sending: errno %d\n", errno);
+            char err_buf[64];
+            snprintf(err_buf, sizeof(err_buf), "Error occurred during sending: errno %d\n", errno);
+            TERMINAL_VIEW_ADD_TEXT(err_buf);
             close(sock);
             return;
         }
@@ -684,7 +694,9 @@ void handle_tp_link_test(int argc, char **argv) {
                 TERMINAL_VIEW_ADD_TEXT("No response from any device\n");
             } else {
                 printf("Error receiving response: errno %d\n", errno);
-                TERMINAL_VIEW_ADD_TEXT("Error receiving response: errno %d\n", errno);
+                char err_buf[64];
+                snprintf(err_buf, sizeof(err_buf), "Error receiving response: errno %d\n", errno);
+                TERMINAL_VIEW_ADD_TEXT(err_buf);
             }
         } else {
             recv_buf[len] = 0;
@@ -692,6 +704,9 @@ void handle_tp_link_test(int argc, char **argv) {
             decrypt_tp_link_response(recv_buf, decrypted_response, len);
             decrypted_response[len] = 0;
             printf("Response: %s\n", decrypted_response);
+            char resp_buf[140];
+            snprintf(resp_buf, sizeof(resp_buf), "Response: %s\n", decrypted_response);
+            TERMINAL_VIEW_ADD_TEXT(resp_buf);
         }
 
         close(sock);
@@ -911,8 +926,11 @@ void handle_timezone_cmd(int argc, char **argv) {
 void handle_scan_ports(int argc, char **argv) {
     if (argc < 2) {
         printf("Usage:\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage:\n");
         printf("scanports local [-C/-A/start_port-end_port]\n");
+        TERMINAL_VIEW_ADD_TEXT("scanports local [-C/-A/start_port-end_port]\n");
         printf("scanports [IP] [-C/-A/start_port-end_port]\n");
+        TERMINAL_VIEW_ADD_TEXT("scanports [IP] [-C/-A/start_port-end_port]\n");
         return;
     }
 
@@ -924,12 +942,14 @@ void handle_scan_ports(int argc, char **argv) {
     if (is_local) {
         if (argc < 3) {
             printf("Missing port argument for local scan\n");
+            TERMINAL_VIEW_ADD_TEXT("Missing port argument for local scan\n");
             return;
         }
         port_arg = argv[2];
     } else {
         if (argc < 3) {
             printf("Missing port argument for IP scan\n");
+            TERMINAL_VIEW_ADD_TEXT("Missing port argument for IP scan\n");
             return;
         }
         target_ip = argv[1];
@@ -946,8 +966,14 @@ void handle_scan_ports(int argc, char **argv) {
         scan_ports_on_host(target_ip, &result);
         if (result.num_open_ports > 0) {
             printf("Open ports on %s:\n", target_ip);
+            char open_buf[64];
+            snprintf(open_buf, sizeof(open_buf), "Open ports on %s:\n", target_ip);
+            TERMINAL_VIEW_ADD_TEXT(open_buf);
             for (int i = 0; i < result.num_open_ports; i++) {
                 printf("Port %d\n", result.open_ports[i]);
+                char port_buf[32];
+                snprintf(port_buf, sizeof(port_buf), "Port %d\n", result.open_ports[i]);
+                TERMINAL_VIEW_ADD_TEXT(port_buf);
             }
         }
     } else {
@@ -958,6 +984,7 @@ void handle_scan_ports(int argc, char **argv) {
         } else if (sscanf(port_arg, "%d-%d", &start_port, &end_port) != 2 || start_port < 1 ||
                    end_port > 65535 || start_port > end_port) {
             printf("Invalid port range\n");
+            TERMINAL_VIEW_ADD_TEXT("Invalid port range\n");
             return;
         }
         scan_ip_port_range(target_ip, start_port, end_port);
@@ -1779,7 +1806,9 @@ void handle_rgb_mode(int argc, char **argv) {
 void handle_setrgb(int argc, char **argv) {
     if (argc != 4) {
         printf("Usage: setrgbpins <red> <green> <blue>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: setrgbpins <red> <green> <blue>\n");
         printf("           (use same value for all pins for single-pin LED strips)\n\n");
+        TERMINAL_VIEW_ADD_TEXT("           (use same value for all pins for single-pin LED strips)\n\n");
         return;
     }
     gpio_num_t red_pin = (gpio_num_t)atoi(argv[1]);
@@ -1796,6 +1825,9 @@ void handle_setrgb(int argc, char **argv) {
             settings_set_rgb_separate_pins(&G_Settings, -1, -1, -1);
             settings_save(&G_Settings);
             printf("Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
+            char rgb_buf[64];
+            snprintf(rgb_buf, sizeof(rgb_buf), "Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
+            TERMINAL_VIEW_ADD_TEXT(rgb_buf);
         }
     } else {
         rgb_manager_deinit(&rgb_manager);
@@ -1806,6 +1838,9 @@ void handle_setrgb(int argc, char **argv) {
             settings_set_rgb_separate_pins(&G_Settings, red_pin, green_pin, blue_pin);
             settings_save(&G_Settings);
             printf("RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
+            char rgb_buf[64];
+            snprintf(rgb_buf, sizeof(rgb_buf), "RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
+            TERMINAL_VIEW_ADD_TEXT(rgb_buf);
         }
     }
 }
@@ -1817,8 +1852,11 @@ void handle_sd_config(int argc, char **argv) {
 void handle_sd_pins_mmc(int argc, char **argv) {
   if (argc != 7) {
     printf("Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
     printf("Sets pins for SDMMC mode (only effective if compiled for MMC).\n");
+    TERMINAL_VIEW_ADD_TEXT("Sets pins for SDMMC mode (only effective if compiled for MMC).\n");
     printf("Example: sd_pins_mmc 19 18 20 21 22 23\n");
+    TERMINAL_VIEW_ADD_TEXT("Example: sd_pins_mmc 19 18 20 21 22 23\n");
     return;
   }
   
@@ -1832,6 +1870,7 @@ void handle_sd_pins_mmc(int argc, char **argv) {
   if (clk < 0 || cmd < 0 || d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0 ||
       clk > 40 || cmd > 40 || d0 > 40 || d1 > 40 || d2 > 40 || d3 > 40) {
     printf("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    TERMINAL_VIEW_ADD_TEXT("Invalid GPIO pins. Pins must be between 0 and 40.\n");
     return;
   }
   
@@ -1841,8 +1880,11 @@ void handle_sd_pins_mmc(int argc, char **argv) {
 void handle_sd_pins_spi(int argc, char **argv) {
   if (argc != 5) {
     printf("Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
     printf("Sets pins for SPI mode (only effective if compiled for SPI).\n");
+    TERMINAL_VIEW_ADD_TEXT("Sets pins for SPI mode (only effective if compiled for SPI).\n");
     printf("Example: sd_pins_spi 5 18 19 23\n");
+    TERMINAL_VIEW_ADD_TEXT("Example: sd_pins_spi 5 18 19 23\n");
     return;
   }
   
@@ -1854,6 +1896,7 @@ void handle_sd_pins_spi(int argc, char **argv) {
   if (cs < 0 || clk < 0 || miso < 0 || mosi < 0 ||
       cs > 40 || clk > 40 || miso > 40 || mosi > 40) {
     printf("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    TERMINAL_VIEW_ADD_TEXT("Invalid GPIO pins. Pins must be between 0 and 40.\n");
     return;
   }
   
@@ -2262,9 +2305,32 @@ void handle_comm_send(int argc, char **argv) {
         return;
     }
     
-    const char* data = (argc > 2) ? argv[2] : NULL;
-    if (esp_comm_manager_send_command(argv[1], data)) {
-        printf("Command sent: %s\n", argv[1]);
+    char data_buffer[256] = {0};
+    if (argc > 2) {
+        int offset = 0;
+        for (int i = 2; i < argc; i++) {
+            int remaining = sizeof(data_buffer) - offset;
+            int written = snprintf(data_buffer + offset, remaining, "%s ", argv[i]);
+            if (written >= remaining) {
+                printf("W: Command data truncated.\n");
+                break;
+            }
+            offset += written;
+        }
+        if (offset > 0) {
+            data_buffer[offset - 1] = '\0'; // Remove trailing space
+        }
+    }
+
+    const char* command = argv[1];
+    const char* data = (argc > 2) ? data_buffer : NULL;
+
+    if (esp_comm_manager_send_command(command, data)) {
+        if (data && data[0] != '\0') {
+            printf("Command sent: %s %s\n", command, data);
+        } else {
+            printf("Command sent: %s\n", command);
+        }
         TERMINAL_VIEW_ADD_TEXT("Command sent successfully.\n");
     } else {
         printf("Failed to send command.\n");
@@ -2331,25 +2397,25 @@ void handle_comm_setpins(int argc, char **argv) {
 }
 
 static void comm_command_callback(const char* command, const char* data, void* user_data) {
-    printf("Received command from peer: %s", command);
+    char log_buf[512];
     if (data && strlen(data) > 0) {
-        printf(" with data: %s", data);
+        snprintf(log_buf, sizeof(log_buf), "Received command from peer: %s with data: %s\n", command, data);
+    } else {
+        snprintf(log_buf, sizeof(log_buf), "Received command from peer: %s\n", command);
     }
-    printf("\n");
-    
-    char output_text[256];
-    snprintf(output_text, sizeof(output_text), "Peer command: %s\n", command);
-    TERMINAL_VIEW_ADD_TEXT(output_text);
+    printf("%s", log_buf);
+    TERMINAL_VIEW_ADD_TEXT(log_buf);
     
     char full_command[256];
     if (data && strlen(data) > 0) {
         snprintf(full_command, sizeof(full_command), "%s %s", command, data);
     } else {
-        strncpy(full_command, command, sizeof(full_command) - 1);
-        full_command[sizeof(full_command) - 1] = '\0';
+        snprintf(full_command, sizeof(full_command), "%s", command);
     }
     
-    printf("Executing received command: %s\n", full_command);
+    snprintf(log_buf, sizeof(log_buf), "Executing received command: %s\n", full_command);
+    printf("%s", log_buf);
+    TERMINAL_VIEW_ADD_TEXT(log_buf);
     esp_comm_manager_set_remote_command_flag(true);
     handle_serial_command(full_command);
     esp_comm_manager_set_remote_command_flag(false);

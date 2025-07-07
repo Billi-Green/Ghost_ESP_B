@@ -21,7 +21,7 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/ap_manager.h"
 
-#define COMM_BUFFER_SIZE 512
+#define COMM_BUFFER_SIZE 256
 #define COMM_PACKET_SIZE 128
 #define DISCOVERY_INTERVAL_MS 2000
 #define HANDSHAKE_TIMEOUT_MS 5000
@@ -29,7 +29,7 @@
 
 #define DEFAULT_TX_PIN GPIO_NUM_6
 #define DEFAULT_RX_PIN GPIO_NUM_7
-#define DEFAULT_BAUD_RATE 115200
+#define DEFAULT_BAUD_RATE 921600
 
 static const char* TAG = "esp_comm_manager";
 
@@ -60,6 +60,11 @@ typedef struct {
 } __attribute__((packed)) comm_packet_t;
 
 typedef struct {
+    char command[33];
+    char data[COMM_PACKET_SIZE - 32];
+} comm_command_t;
+
+typedef struct {
     gpio_num_t tx_pin;
     gpio_num_t rx_pin;
     uint32_t baud_rate;
@@ -71,9 +76,11 @@ typedef struct {
     QueueHandle_t rx_byte_queue;
     QueueHandle_t rx_packet_queue;
     QueueHandle_t tx_queue;
+    QueueHandle_t command_queue;
     TaskHandle_t rx_task_handle;
     TaskHandle_t tx_task_handle;
     TaskHandle_t protocol_task_handle;
+    TaskHandle_t command_executor_task_handle;
     TimerHandle_t discovery_timer;
     TimerHandle_t ping_timer;
     
@@ -108,22 +115,37 @@ static uint8_t calculate_checksum(const uint8_t* data, size_t len) {
 static bool send_packet(const comm_packet_t* packet) {
     if (!s_comm_manager || !packet) return false;
 
-    uint8_t send_buffer[COMM_PACKET_SIZE];
-    send_buffer[0] = packet->start_byte;
-    send_buffer[1] = packet->type;
-    send_buffer[2] = packet->length;
-
-    memcpy(&send_buffer[3], packet->data, packet->length);
-
-    uint8_t checksum = calculate_checksum(send_buffer, 3 + packet->length);
-    send_buffer[3 + packet->length] = checksum;
-
-    size_t total_size = 4 + packet->length;
-    uart_write_bytes(UART_NUM_1, send_buffer, total_size);
-
-    // printf("Sent packet type: 0x%02x, length: %d, total size: %zu, checksum: 0x%02x\n", 
-    //          packet->type, packet->length, total_size, checksum);
+    if (xQueueSend(s_comm_manager->tx_queue, packet, pdMS_TO_TICKS(10)) != pdPASS) {
+        printf("W: TX queue full, dropped packet type 0x%02x\n", packet->type);
+        return false;
+    }
     return true;
+}
+
+static void tx_task(void* arg) {
+    esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
+    comm_packet_t packet;
+    uint8_t send_buffer[COMM_PACKET_SIZE];
+
+    while (1) {
+        if (xQueueReceive(comm->tx_queue, &packet, portMAX_DELAY) == pdPASS) {
+            send_buffer[0] = packet.start_byte;
+            send_buffer[1] = packet.type;
+            send_buffer[2] = packet.length;
+
+            memcpy(&send_buffer[3], packet.data, packet.length);
+
+            uint8_t checksum = calculate_checksum(send_buffer, 3 + packet.length);
+            send_buffer[3 + packet.length] = checksum;
+
+            size_t total_size = 4 + packet.length;
+            uart_write_bytes(UART_NUM_1, send_buffer, total_size);
+            
+            if (packet.type == PACKET_TYPE_RESPONSE) {
+                vTaskDelay(pdMS_TO_TICKS(5));
+            }
+        }
+    }
 }
 
 static void rx_task(void* arg) {
@@ -295,17 +317,27 @@ static void protocol_task(void* arg) {
                     
                 case PACKET_TYPE_COMMAND:
                     if (comm->state == COMM_STATE_CONNECTED && comm->command_callback) {
-                        char command[33] = {0};
-                        char data[COMM_PACKET_SIZE - 32] = {0};
+                        comm_command_t cmd_to_queue;
+                        memset(&cmd_to_queue, 0, sizeof(comm_command_t));
                         
-                        strncpy(command, (char*)packet.data, 32);
-                        command[32] = '\0'; // Ensure null termination
+                        strncpy(cmd_to_queue.command, (char*)packet.data, 32);
+                        cmd_to_queue.command[32] = '\0';
                         
-                        if (packet.length > 32) {
-                            strncpy(data, (char*)packet.data + 32, packet.length - 32);
+                        size_t cmd_len = strlen(cmd_to_queue.command);
+                        size_t data_start = cmd_len + 1;
+                        
+                        if (packet.length > data_start) {
+                            size_t data_len = packet.length - data_start;
+                            if (data_len > sizeof(cmd_to_queue.data) - 1) {
+                                data_len = sizeof(cmd_to_queue.data) - 1;
+                            }
+                            strncpy(cmd_to_queue.data, (char*)packet.data + data_start, data_len);
+                            cmd_to_queue.data[data_len] = '\0';
                         }
-                        
-                        comm->command_callback(command, data, comm->callback_user_data);
+
+                        if (xQueueSend(comm->command_queue, &cmd_to_queue, pdMS_TO_TICKS(10)) != pdPASS) {
+                            printf("W: Command queue full, dropped command: %s\n", cmd_to_queue.command);
+                        }
                     }
                     break;
                     
@@ -339,6 +371,19 @@ static void protocol_task(void* arg) {
                 default:
                     printf("W: Unknown packet type: 0x%02x\n", packet.type);
                     break;
+            }
+        }
+    }
+}
+
+static void command_executor_task(void* arg) {
+    esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
+    comm_command_t received_cmd;
+
+    while (1) {
+        if (xQueueReceive(comm->command_queue, &received_cmd, portMAX_DELAY) == pdPASS) {
+            if (comm->command_callback) {
+                comm->command_callback(received_cmd.command, received_cmd.data, comm->callback_user_data);
             }
         }
     }
@@ -401,11 +446,14 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     uart_set_pin(UART_NUM_1, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
     s_comm_manager->rx_byte_queue = xQueueCreate(256, sizeof(uint8_t));
-    s_comm_manager->rx_packet_queue = xQueueCreate(16, sizeof(comm_packet_t));
-    s_comm_manager->tx_queue = xQueueCreate(16, sizeof(comm_packet_t));
+    s_comm_manager->rx_packet_queue = xQueueCreate(64, sizeof(comm_packet_t));
+    s_comm_manager->tx_queue = xQueueCreate(32, sizeof(comm_packet_t));
+    s_comm_manager->command_queue = xQueueCreate(16, sizeof(comm_command_t));
 
-    xTaskCreate(rx_task, "comm_rx_task", 4096, s_comm_manager, 12, &s_comm_manager->rx_task_handle);
-    xTaskCreate(protocol_task, "comm_protocol_task", 8192, s_comm_manager, 10, &s_comm_manager->protocol_task_handle);
+    xTaskCreate(rx_task, "comm_rx_task", 2048, s_comm_manager, 12, &s_comm_manager->rx_task_handle);
+    xTaskCreate(tx_task, "comm_tx_task", 2048, s_comm_manager, 11, &s_comm_manager->tx_task_handle);
+    xTaskCreate(protocol_task, "comm_protocol_task", 3072, s_comm_manager, 10, &s_comm_manager->protocol_task_handle);
+    xTaskCreate(command_executor_task, "comm_cmd_exec_task", 8192, s_comm_manager, 9, &s_comm_manager->command_executor_task_handle);
     
     s_comm_manager->discovery_timer = xTimerCreate("discovery_timer", 
                                                    pdMS_TO_TICKS(DISCOVERY_INTERVAL_MS),
@@ -499,16 +547,22 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
     packet.start_byte = 0xAA;
     packet.type = PACKET_TYPE_COMMAND;
     
-    strncpy((char*)packet.data, command, 32);
-    packet.length = 32;
+    size_t cmd_len = strlen(command);
+    if (cmd_len > 32) {
+        cmd_len = 32;
+    }
+    
+    strncpy((char*)packet.data, command, cmd_len);
+    ((char*)packet.data)[cmd_len] = '\0';
+    packet.length = cmd_len + 1;
     
     if (data) {
         size_t data_len = strlen(data);
-        size_t max_data_len = COMM_PACKET_SIZE - 32 - 4; // Account for header
+        size_t max_data_len = COMM_PACKET_SIZE - packet.length - 4;
         if (data_len > max_data_len) {
             data_len = max_data_len;
         }
-        strncpy((char*)packet.data + 32, data, data_len);
+        strncpy((char*)packet.data + packet.length, data, data_len);
         packet.length += data_len;
     }
     
@@ -516,7 +570,6 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
     if (result) {
         printf("I: Sent command: %s\n", command);
         
-        // Log to web UI
         char log_msg[64];
         snprintf(log_msg, sizeof(log_msg), "I: Sent command: %s\n", command);
         ap_manager_add_log(log_msg);
@@ -525,7 +578,7 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
     return result;
 }
 
-bool esp_comm_manager_send_response(const char* data) {
+bool esp_comm_manager_send_response(const uint8_t* data, size_t length) {
     if (!s_comm_manager || !s_comm_manager->initialized || !data) {
         printf("E: Invalid parameters for send_response\n");
         return false;
@@ -540,7 +593,7 @@ bool esp_comm_manager_send_response(const char* data) {
     packet.start_byte = 0xAA;
     packet.type = PACKET_TYPE_RESPONSE;
     
-    size_t data_len = strlen(data);
+    size_t data_len = length;
     size_t max_data_len = COMM_PACKET_SIZE - 4; 
     if (data_len > max_data_len) {
         data_len = max_data_len;
@@ -599,8 +652,14 @@ void esp_comm_manager_deinit(void) {
     if (s_comm_manager->rx_task_handle) {
         vTaskDelete(s_comm_manager->rx_task_handle);
     }
+    if (s_comm_manager->tx_task_handle) {
+        vTaskDelete(s_comm_manager->tx_task_handle);
+    }
     if (s_comm_manager->protocol_task_handle) {
         vTaskDelete(s_comm_manager->protocol_task_handle);
+    }
+    if (s_comm_manager->command_executor_task_handle) {
+        vTaskDelete(s_comm_manager->command_executor_task_handle);
     }
     if (s_comm_manager->rx_byte_queue) {
         vQueueDelete(s_comm_manager->rx_byte_queue);
@@ -610,6 +669,9 @@ void esp_comm_manager_deinit(void) {
     }
     if (s_comm_manager->tx_queue) {
         vQueueDelete(s_comm_manager->tx_queue);
+    }
+    if (s_comm_manager->command_queue) {
+        vQueueDelete(s_comm_manager->command_queue);
     }
     
     free(s_comm_manager);
