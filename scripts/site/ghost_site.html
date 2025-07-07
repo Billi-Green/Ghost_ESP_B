@@ -7,24 +7,28 @@
     <style>
         /* CSS Variables for Colors and Fonts */
         :root {
-            --background-color: #000000;
+            --background-color: #0e0e0e;
             --surface-color: #0a0a0a;
             --primary-color: #ffffff;
             --secondary-color: #1a1a1a;
-            --accent-color: #ffffff;
-            --text-primary: #ffffff;
+            --accent-color: #ff6b9d;
+            --accent-blue: #4ecdc4;
+            --accent-pink: #ff6b9d;
+            --text-primary: #bdb8b8;
             --text-secondary: rgba(255, 255, 255, 0.7);
-            --gradient-1: linear-gradient(135deg, #ffffff, #dddddd);
+            --gradient-1: linear-gradient(135deg, #ff6b9d, #4ecdc4);
             --gradient-2: linear-gradient(45deg, #111111, #050505);
-            --card-bg: rgba(5, 5, 5, 0.85);
+            --gradient-accent: linear-gradient(135deg, #ff6b9d, #4ecdc4, #ffffff);
+            --card-bg: rgba(27, 27, 27, 0.85);
             --border-color: #ffffff;
+            --border-accent: linear-gradient(135deg, #ff6b9d, #4ecdc4);
             --tooltip-bg: #000000;
             --tooltip-text: #ffffff;
             --input-bg: rgba(20, 20, 20, 0.7);
-            --input-border: #ffffff;
-            --font-display: 'Courier New', monospace;
-            --font-mono: 'Courier New', monospace;
-            --font-body: 'Courier New', sans-serif;
+            --input-border: #ffffff00;
+            --font-display: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+            --font-mono: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+            --font-body: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
         }
 
         /* Reset Styles */
@@ -92,9 +96,10 @@
 
         h1 {
             font-size: 1.8rem; /* Reduced for mobile to prevent wrapping */
-            background: var(--gradient-1);
+            background: var(--text-primary);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin-top: 2rem;
         }
 
@@ -140,8 +145,9 @@
 
         .tab button:hover,
         .tab button.active {
-            background-color: var(--primary-color);
+            background: var(--gradient-1);
             color: var(--background-color);
+            box-shadow: 0 0 10px rgba(255, 107, 157, 0.3);
         }
 
         /* Tab Content */
@@ -372,7 +378,6 @@
 
         .settings-section {
             flex: 1 1 calc(50% - 20px);
-            background-color: var(--secondary-color);
             border: 2px solid var(--border-color);
             padding: 20px;
             border-radius: 30px;
@@ -419,7 +424,6 @@
             font-family: inherit;
             font-size: 16px;
             background-color: var(--gradient-2);
-            border: 2px solid var(--gradient-2);
             color: var(--text-primary);
             border-radius: 6px;
             margin-top: 4px;
@@ -432,7 +436,6 @@
         input[type="color"]:focus,
         select:focus,
         textarea:focus {
-            border-color: var(--primary-color);
             background-color: #080808;
             outline: none;
         }
@@ -743,7 +746,7 @@
 
         /* Settings Section Styles */
         .settings-section {
-            background: rgba(10, 10, 15, 0.8);
+            background: rgba(10, 10, 15, 0.0);
             border: 2px solid var(--border-color);
             border-radius: 12px;
             padding: 20px;
@@ -755,7 +758,7 @@
             color: var(--primary-color);
             font-size: 1.8rem;
             margin-bottom: 20px;
-            text-align: left;
+            text-align: center;
             background: none;
             -webkit-text-fill-color: var(--primary-color);
         }
@@ -778,7 +781,7 @@
         select,
         textarea {
             border-radius: 12px;
-            border: 2px solid var(--border-color);
+            border: none;
             padding: 12px 15px;
             transition: all 0.3s ease;
             background: rgba(0, 0, 0, 0.3);
@@ -789,8 +792,8 @@
         select:focus,
         textarea:focus {
             outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.5);
+            box-shadow: 0 0 0 2px rgba(255, 107, 157, 0.5);
             transform: translateY(-1px);
         }
 
@@ -981,6 +984,79 @@
             }
         }
 
+        /* Quick Commands Styling */
+        .quick-commands-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .command-category {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .category-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 15px;
+            background: rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            user-select: none;
+        }
+
+        .category-header:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .category-header span:first-child {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .category-arrow {
+            color: var(--text-secondary);
+            font-size: 0.8em;
+            transition: transform 0.3s ease;
+        }
+
+        .category-content {
+            display: none;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.1);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .category-content.show {
+            display: block;
+        }
+
+        .category-content button {
+            margin: 5px 5px 5px 0;
+            display: inline-block;
+        }
+
+        .category-header.expanded .category-arrow {
+            transform: rotate(180deg);
+        }
+
+        @media (max-width: 768px) {
+            .category-content {
+                padding: 10px;
+            }
+            
+            .category-content button {
+                margin: 3px 3px 3px 0;
+                font-size: 0.8em;
+                padding: 6px 12px;
+            }
+        }
+
         .pin-config-container {
             display: flex;
             flex-wrap: wrap;
@@ -998,7 +1074,7 @@
         }
 
         .settings-section h3 { /* Style h3 within settings sections */
-            text-align: left;
+            text-align: center;
             margin-top: 0;
             margin-bottom: 15px;
             font-size: 1.2rem; /* Match h2 slightly smaller */
@@ -1637,30 +1713,109 @@
 
         <!-- Dual Communication Tab Content -->
         <div id="DualComm" class="tabcontent">
-            <div class="settings-grid">
-                <!-- Dual Communication Status & Controls -->
-                <div class="settings-section">
-                    <h2>Dual Communication Status</h2>
-                    <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: center; margin-bottom: 15px;">
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <label style="margin: 0;">Connection State:</label>
-                            <span id="comm-state-display" style="font-weight: bold; color: var(--primary-color);">Unknown</span>
-                            <div id="comm-state-indicator" style="width: 12px; height: 12px; border-radius: 50%; background-color: #666;"></div>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <button class="small" onclick="disconnectFromPeer()">Disconnect</button>
-                        </div>
+            <!-- Connection State -->
+            <div class="settings-section">
+                <h2>Connection State</h2>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="comm-state-display" style="font-weight: bold; color: var(--primary-color); font-size: 1.2em;">Unknown</span>
+                        <div id="comm-state-indicator" style="width: 12px; height: 12px; border-radius: 50%; background-color: #666;"></div>
                     </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <button class="small" onclick="disconnectFromPeer()">Disconnect</button>
+                    </div>
+                </div>
+            </div>
 
-                    <div style="display: flex; gap: 5px; flex-wrap: wrap;">
-                        <button class="small" onclick="sendQuickCommand('scanap')">Scan APs</button>
-                        <button class="small" onclick="sendQuickCommand('scansta')">Scan STAs</button>
-                        <button class="small" onclick="sendQuickCommand('attack -d')">Deauth</button>
-                        <button class="small" onclick="sendQuickCommand('beaconspam -r')">Beacon Spam</button>
-                        <button class="small" onclick="sendQuickCommand('blescan -r')">BLE Scan</button>
-                        <button class="small" onclick="sendQuickCommand('stopscan')">Stop Scan</button>
-                        <button class="small" onclick="sendQuickCommand('stopdeauth')">Stop Deauth</button>
-                        <button class="small" onclick="sendQuickCommand('stopspam')">Stop Spam</button>
+            <div class="settings-grid">
+                <!-- Quick Commands -->
+                <div class="settings-section">
+                    <h2>Quick Commands</h2>
+
+                    <div class="quick-commands-container">
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('wifi-commands')">
+                                <span>WiFi Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="wifi-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('scanap')">Scan APs</button>
+                                <button class="small" onclick="sendQuickCommand('scansta')">Scan STAs</button>
+                                <button class="small" onclick="sendQuickCommand('list -a')">List APs</button>
+                                <button class="small" onclick="sendQuickCommand('list -s')">List STAs</button>
+                                <button class="small" onclick="sendQuickCommand('stopscan')">Stop Scan</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('attack-commands')">
+                                <span>Attack Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="attack-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('attack -d')">Deauth Attack</button>
+                                <button class="small" onclick="sendQuickCommand('beaconspam -r')">Random Beacon Spam</button>
+                                <button class="small" onclick="sendQuickCommand('beaconspam -rr')">Rickroll Spam</button>
+                                <button class="small" onclick="sendQuickCommand('beaconspam -l')">AP List Spam</button>
+                                <button class="small" onclick="sendQuickCommand('stopdeauth')">Stop Deauth</button>
+                                <button class="small" onclick="sendQuickCommand('stopspam')">Stop Spam</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('ble-commands')">
+                                <span>BLE Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="ble-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('blescan -r')">Raw BLE Scan</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -f')">Find Flippers</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -ds')">Spam Detector</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -a')">AirTag Scanner</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -s')">Stop BLE Scan</button>
+                                <button class="small" onclick="sendQuickCommand('blewardriving')">BLE Wardriving</button>
+                                <button class="small" onclick="sendQuickCommand('blewardriving -s')">Stop Wardriving</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('capture-commands')">
+                                <span>Capture Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="capture-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('capture -probe')">Capture Probes</button>
+                                <button class="small" onclick="sendQuickCommand('capture -beacon')">Capture Beacons</button>
+                                <button class="small" onclick="sendQuickCommand('capture -deauth')">Capture Deauth</button>
+                                <button class="small" onclick="sendQuickCommand('capture -raw')">Capture Raw</button>
+                                <button class="small" onclick="sendQuickCommand('capture -wps')">Capture WPS</button>
+                                <button class="small" onclick="sendQuickCommand('capture -pwn')">Capture Pwnagotchi</button>
+                                <button class="small" onclick="sendQuickCommand('capture -stop')">Stop Capture</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('network-commands')">
+                                <span>Network Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="network-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('scanports local -C')">Scan Local Ports</button>
+                                <button class="small" onclick="sendQuickCommand('scanports local -A')">Scan All Ports</button>
+                                <button class="small" onclick="sendQuickCommand('dialconnect')">Cast to TVs</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('system-commands')">
+                                <span>System Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="system-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('help')">Help</button>
+                                <button class="small" onclick="sendQuickCommand('stopportal')">Stop Portal</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2573,6 +2728,21 @@
             if (commStatusInterval) {
                 clearInterval(commStatusInterval);
                 commStatusInterval = null;
+            }
+        }
+
+        // Function to toggle command categories
+        function toggleCategory(categoryId) {
+            const content = document.getElementById(categoryId);
+            const header = content.previousElementSibling;
+            const arrow = header.querySelector('.category-arrow');
+            
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                header.classList.remove('expanded');
+            } else {
+                content.classList.add('show');
+                header.classList.add('expanded');
             }
         }
 

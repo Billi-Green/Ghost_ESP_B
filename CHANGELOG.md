@@ -7,6 +7,11 @@
 - Support for connecting two ESP32 chips running GhostESP
 - WebUI Section to send commands to the connected peer
 
+### Changed
+
+- WebUI
+  - Change from from Courier New to SF Mono if available
+
 ### Bug Fixes
 
 - Add termianl_view_add_text logs to commands missing them
