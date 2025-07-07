@@ -1160,6 +1160,12 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "rts_enabled_bool", settings_get_rts_enabled(settings));
     cJSON_AddBoolToObject(root, "web_auth_enabled", settings_get_web_auth_enabled(settings));
 
+    // Add ESP communication pin settings
+    int32_t tx_pin, rx_pin;
+    settings_get_esp_comm_pins(settings, &tx_pin, &rx_pin);
+    cJSON_AddNumberToObject(root, "esp_comm_tx_pin", tx_pin);
+    cJSON_AddNumberToObject(root, "esp_comm_rx_pin", rx_pin);
+
     esp_netif_ip_info_t ip_info;
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {

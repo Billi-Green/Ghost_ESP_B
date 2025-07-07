@@ -12,7 +12,8 @@
 - WebUI
   - Change from from Courier New to SF Mono if available
   - Minor style tweaks
-
+  - Update Help tab
+  
 ### Bug Fixes
 
 - Add termianl_view_add_text logs to commands missing them
