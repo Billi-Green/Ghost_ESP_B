@@ -32,6 +32,14 @@ void app_main(void) {
     // ble_init();
 #endif
 
+#ifdef CONFIG_USE_TDECK
+    ESP_LOGI(TAG, "TDECK: Delay for c3 boot");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP_LOGI(TAG, "TDECK: END DELAY for c3 boot");
+    gpio_set_direction(10, GPIO_MODE_OUTPUT);
+    gpio_set_level(10, 100); // set tdeck POWER_ON pin high to enable peripherals
+#endif
+
 #ifdef USB_MODULE
     wifi_manager_auto_deauth();
     return;
@@ -56,13 +64,6 @@ void app_main(void) {
 
 #ifdef CONFIG_USE_JOYSTICK
 
-/*
-#define L_BTN 13
-#define C_BTN 34
-#define U_BTN 36
-#define R_BTN 39
-#define D_BTN 35
-*/
     joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);
     joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);
     joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);

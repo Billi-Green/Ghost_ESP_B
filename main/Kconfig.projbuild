@@ -113,6 +113,12 @@ menu "Ghost ESP Options"
         default n
         help
             Enable Cardputer input.
+
+    config USE_TDECK
+        bool "Enable TDECK-plus"
+        default n
+        help
+            Enable tdeck logics.
     
     config USE_7_INCHER
         bool "Use 7-inch Display"
