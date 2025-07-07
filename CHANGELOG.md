@@ -7,6 +7,11 @@
 - Support for connecting two ESP32 chips running GhostESP
 - WebUI Section to send commands to the connected peer
 
+### Added
+
+- 'chipinfo' command to display chip information
+- 'apenable' command to enable/disable the Access Point
+
 ### Changed
 
 - WebUI

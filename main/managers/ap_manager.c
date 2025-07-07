@@ -477,6 +477,32 @@ esp_err_t ap_manager_init(void) {
     esp_err_t ret;
     wifi_mode_t mode;
 
+    // Check if AP is disabled in settings
+    if (!settings_get_ap_enabled(&G_Settings)) {
+        printf("Access Point disabled in settings, skipping AP initialization\n");
+        
+        // Initialize log buffer and mutex even when AP is disabled
+        log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
+        if(!log_buffer){
+            ESP_LOGE(TAG, "failed to alloc log buffer");
+            return ESP_ERR_NO_MEM;
+        }
+
+        log_mutex = xSemaphoreCreateMutex();
+        if (!log_mutex) {
+            ESP_LOGE(TAG, "Failed to create log mutex");
+            free(log_buffer);
+            log_buffer = NULL;
+            return ESP_FAIL;
+        }
+
+        if(log_buffer){
+            memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
+        }
+        
+        return ESP_OK;
+    }
+
     ret = esp_wifi_get_mode(&mode);
     if (ret == ESP_ERR_WIFI_NOT_INIT) {
         printf("Wi-Fi not initialized, initializing as Access Point...\n");
@@ -701,6 +727,12 @@ void ap_manager_add_log(const char *log_message) {
 
 esp_err_t ap_manager_start_services() {
     esp_err_t ret;
+
+    // Check if AP is disabled in settings
+    if (!settings_get_ap_enabled(&G_Settings)) {
+        printf("Access Point disabled in settings, skipping AP services\n");
+        return ESP_OK;
+    }
 
     // Set Wi-Fi mode to AP
     ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
@@ -1103,6 +1135,11 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         settings_set_web_auth_enabled(settings, web_auth_enabled_bool->valueint != 0);
     }
 
+    cJSON *ap_enabled_bool = cJSON_GetObjectItem(root, "ap_enabled");
+    if (ap_enabled_bool) {
+        settings_set_ap_enabled(settings, ap_enabled_bool->valueint != 0);
+    }
+
     cJSON *gps_rx_pin = cJSON_GetObjectItem(root, "gps_rx_pin");
     if (gps_rx_pin) {
         settings_set_gps_rx_pin(settings, gps_rx_pin->valueint);
@@ -1159,6 +1196,7 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "display_timeout", settings_get_display_timeout(settings));
     cJSON_AddNumberToObject(root, "rts_enabled_bool", settings_get_rts_enabled(settings));
     cJSON_AddBoolToObject(root, "web_auth_enabled", settings_get_web_auth_enabled(settings));
+    cJSON_AddBoolToObject(root, "ap_enabled", settings_get_ap_enabled(settings));
 
     // Add ESP communication pin settings
     int32_t tx_pin, rx_pin;
