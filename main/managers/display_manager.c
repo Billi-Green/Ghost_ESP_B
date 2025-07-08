@@ -49,6 +49,19 @@
 #include "vendor/drivers/axs15231b.h"
 #endif
 
+#ifdef CONFIG_USE_TDECK
+#include "lvgl_i2c/i2c_manager.h"
+
+#define LILYGO_KB_SLAVE_ADDRESS             0x55
+#define LILYGO_KB_BRIGHTNESS_CMD            0x01
+#define LILYGO_KB_ALT_B_BRIGHTNESS_CMD      0x02
+
+#define KB_I2C_SDA       18
+#define KB_I2C_SCL       8
+    
+#endif
+
+
 #ifndef CONFIG_TFT_WIDTH
 #define CONFIG_TFT_WIDTH 240
 #endif
@@ -776,8 +789,40 @@ void hardware_input_task(void *pvParameters) {
   uint8_t shift_count = 0;
   bool caps_latch = false; // var for tracking if caps was just toggled
 #endif
-
   while (1) {
+#ifdef CONFIG_USE_TDECK
+    uint8_t data[1];
+    gpio_set_direction(46, GPIO_MODE_INPUT); // probably should be a part of the init process
+    if (gpio_get_level(46)){
+    lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, &data, 1);
+    }
+    if (memcmp(data, "", 1) != 0){
+      
+      ESP_LOGI(TAG, "tdeck keyboard data is %s\n", data);
+
+      bool skip_event = false;
+      touch_active = true;
+      last_touch_time = xTaskGetTickCount();
+      if (is_backlight_dimmed) {
+        set_backlight_brightness(1);
+        is_backlight_dimmed = false;
+        skip_event = true;
+        vTaskDelay(pdMS_TO_TICKS(100));
+      }
+      if (!skip_event) {
+        InputEvent event;
+        event.type = INPUT_TYPE_KEYBOARD;
+        event.data.key_value = *data;
+        if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+          ESP_LOGE(TAG, "Failed to send button input to queue\n");
+        }
+      }
+
+    } 
+    else if (touch_active) {
+      touch_active = false;   
+    }
+#endif
 #ifdef CONFIG_USE_CARDPUTER
     keyboard_update_key_list(&gkeyboard);
     keyboard_update_keys_state(&gkeyboard);
