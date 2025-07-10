@@ -19,3 +19,17 @@ Identifying features:
 ![fake CYD ESP32-2432S024R front](../images/CYDs/fake_CYD_ESP32-2432S024R-front.jpg)
 
 ---
+
+## AITRIP CYD ESP32-2432S028
+
+Compatible firmware package: `CYDAITIP.zip`
+
+Identifying features:
+
+- Dual USB ports
+  - One type-c port
+  - One Micro Usb port
+- Boot and flash buttons on the top left
+- Off center RGB LED
+
+---
