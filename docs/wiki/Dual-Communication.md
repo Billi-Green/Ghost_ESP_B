@@ -13,8 +13,8 @@ Connect two ESP32 devices with wires to control one from the other. Since ESP32s
 
 Connect the devices with 3 wires:
 
-- **TX of Device A** → **RX of Device B** (GPIO 6 → GPIO 7 by default)
-- **RX of Device A** → **TX of Device B** (GPIO 7 → GPIO 6 by default)  
+- **TX of Device A** → **RX of Device B** (GPIO 6 → GPIO 7 by default, 17 → 16 on base ESP32 models)
+- **RX of Device A** → **TX of Device B** (GPIO 7 → GPIO 6 by default, 16 → 17 on base ESP32 models)  
 - **GND** → **GND**
 
 Both devices need Power.
@@ -50,7 +50,7 @@ Use the **Dual Comm** tab for:
 
 ## Changing Pins
 
-Default pins are TX: GPIO 6, RX: GPIO 7. To change them:
+Default pins are TX: GPIO 6, RX: GPIO 7 on base ESP32 models they are 17 and 16. To change them:
 
 ```bash
 commsetpins 4 5

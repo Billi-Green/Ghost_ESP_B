@@ -27,8 +27,13 @@
 #define HANDSHAKE_TIMEOUT_MS 5000
 #define COMMAND_TIMEOUT_MS 1000
 
+#if defined(CONFIG_IDF_TARGET_ESP32)
+#define DEFAULT_TX_PIN GPIO_NUM_17
+#define DEFAULT_RX_PIN GPIO_NUM_16
+#else
 #define DEFAULT_TX_PIN GPIO_NUM_6
 #define DEFAULT_RX_PIN GPIO_NUM_7
+#endif
 #define DEFAULT_BAUD_RATE 921600
 
 static const char* TAG = "esp_comm_manager";
@@ -216,6 +221,7 @@ static void rx_task(void* arg) {
                     break;
             }
         }
+        vTaskDelay(1);
     }
 }
 
@@ -453,7 +459,7 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     xTaskCreate(rx_task, "comm_rx_task", 2048, s_comm_manager, 12, &s_comm_manager->rx_task_handle);
     xTaskCreate(tx_task, "comm_tx_task", 2048, s_comm_manager, 11, &s_comm_manager->tx_task_handle);
     xTaskCreate(protocol_task, "comm_protocol_task", 3072, s_comm_manager, 10, &s_comm_manager->protocol_task_handle);
-    xTaskCreate(command_executor_task, "comm_cmd_exec_task", 8192, s_comm_manager, 9, &s_comm_manager->command_executor_task_handle);
+    xTaskCreate(command_executor_task, "comm_cmd_exec_task", 8192, s_comm_manager, 5, &s_comm_manager->command_executor_task_handle);
     
     s_comm_manager->discovery_timer = xTimerCreate("discovery_timer", 
                                                    pdMS_TO_TICKS(DISCOVERY_INTERVAL_MS),
