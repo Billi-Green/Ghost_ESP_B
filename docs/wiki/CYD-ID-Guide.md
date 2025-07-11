@@ -29,7 +29,7 @@ Identifying features:
 - Dual USB ports
   - One type-c port
   - One Micro Usb port
-- Boot and flash buttons on the top left
+- Boot and reset buttons on the top left
 - Off center RGB LED
 
 ![AITRIP CYD ESP32-2432S028 back](../images/CYDs/AITRIP_CYD_ESP32-2432S028-back.jpg)
