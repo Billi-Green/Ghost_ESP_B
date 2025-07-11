@@ -32,4 +32,8 @@ Identifying features:
 - Boot and flash buttons on the top left
 - Off center RGB LED
 
+![AITRIP CYD ESP32-2432S028 back](../images/CYDs/AITRIP_CYD_ESP32-2432S028-back.jpg)
+
+![AITRIP CYD ESP32-2432S028 front](../images/CYDs/AITRIP_CYD_ESP32-2432S028-front.jpg)
+
 ---
