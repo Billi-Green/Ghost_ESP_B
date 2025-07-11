@@ -817,10 +817,6 @@ void hardware_input_task(void *pvParameters) {
           ESP_LOGE(TAG, "Failed to send button input to queue\n");
         }
       }
-
-    } 
-    else if (touch_active) {
-      touch_active = false;   
     }
 #endif
 #ifdef CONFIG_USE_CARDPUTER
