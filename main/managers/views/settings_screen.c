@@ -1,3 +1,8 @@
+
+
+/* IMPORTANT: this file is no longer used is deprecated and will be removed in v1.8*/
+
+
 #include "managers/views/settings_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include <stdio.h>
@@ -45,6 +50,8 @@ typedef struct SettingsMenuItem {
 static void populate_menu(SettingsMenuItem *items, int count);
 static void pop_menu(void);
 static void menu_item_cb(lv_event_t *e);
+
+
 
 static SettingsMenuItem display_menu[] = {
     {"Display Timeout", 0, NULL, 0},
@@ -409,11 +416,11 @@ void get_settings_screen_callback(void **cb) {
 
 View settings_screen_view = {
     .root = NULL,
-    .create = settings_screen_create,
-    .destroy = settings_screen_destroy,
-    .input_callback = event_handler,
+    .create = NULL,
+    .destroy = NULL,
+    .input_callback = NULL,
     .name = "Settings",
-    .get_hardwareinput_callback = get_settings_screen_callback
+    .get_hardwareinput_callback = NULL
 };
 
 // Insert dynamic menu support functions

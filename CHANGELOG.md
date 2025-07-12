@@ -14,6 +14,9 @@
 
 ### Changed
 
+- Display
+  - Reuse options screen view for settings screen. Resolves #66 and #65
+
 - WebUI
   - Change from from Courier New to SF Mono if available
   - Minor style tweaks

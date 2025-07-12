@@ -19,6 +19,21 @@
 
 static const char *TAG = "optionsScreen";
 
+static const char *settings_categories[] = {"Display", "Config", NULL};
+
+typedef enum {
+    SETTINGS_CATEGORY_DISPLAY,
+    SETTINGS_CATEGORY_CONFIG,
+    SETTINGS_CATEGORY_COUNT
+} SettingsCategory;
+
+static int current_settings_category = -1;
+
+static int settings_category_indices[][8] = {
+    {1, 2, 5, -1}, // Display: Display Timeout, Menu Theme, Invert Colors
+    {0, 3, 4, 6, 7, -1}, // Config: RGB Mode, Third Control, Terminal Color, Web Auth, AP Enabled
+};
+
 typedef enum {
     WIFI_MENU_MAIN,
     WIFI_MENU_ATTACKS,
@@ -47,7 +62,7 @@ static const char *wifi_scanning_options[] = {
     "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
-
+static void switch_to_settings_category(int cat_idx);
 static const char *wifi_evil_portal_options[] = {"Start Evil Portal", "Stop Evil Portal", NULL};
 
 static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
@@ -68,9 +83,46 @@ static const char *bluetooth_options[] = {"Find Flippers", "List Flippers", "Sel
 static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
                                     "BLE Wardriving",   NULL};
 
-static const char *settings_options[] = {"Set RGB Mode - Stealth", "Set RGB Mode - Normal",
-                                         "Set RGB Mode - Rainbow", "Webauth On", "Webauth Off", NULL};
+static void load_current_settings_values(void);
 
+typedef struct {
+    const char *label;
+    int setting_type;
+    const char **value_options;
+    int value_count;
+    int current_value;
+} SettingsItem;
+
+static const char *rgb_mode_options[] = {"Normal", "Rainbow"};
+static const char *timeout_options[] = {"5s", "10s", "30s", "60s"};
+static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
+static const char *bool_options[] = {"Off", "On"};
+static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
+static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
+
+enum {
+    SETTING_RGB_MODE = 0,
+    SETTING_DISPLAY_TIMEOUT,
+    SETTING_MENU_THEME,
+    SETTING_THIRD_CONTROL,
+    SETTING_TERMINAL_COLOR,
+    SETTING_INVERT_COLORS,
+    SETTING_WEB_AUTH,
+    SETTING_AP_ENABLED
+};
+
+static SettingsItem settings_items[] = {
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 2, 0},
+    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 4, 1},
+    {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
+    {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
+    {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0},
+    {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0},
+    {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1},
+    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1}
+};
+
+static bool is_settings_mode = false;
 
 EOptionsMenuType SelectedMenuType = OT_Wifi;
 int selected_item_index = 0;
@@ -107,6 +159,7 @@ static bool styles_initialized = false;
 
 // forward declaration for incremental builder callback
 static void menu_builder_cb(lv_timer_t *t);
+static void change_setting_value(int setting_index, bool increment); // Forward Declaration
 
 static lv_timer_t *menu_build_timer = NULL;
 static const char **current_options_list = NULL;
@@ -191,6 +244,7 @@ static const uint32_t theme_palettes[15][6] = {
 
 void options_menu_create() {
     option_invoked = false;
+    current_settings_category = -1;
     int screen_width = LV_HOR_RES;
     int screen_height = LV_VER_RES;
 
@@ -211,7 +265,6 @@ void options_menu_create() {
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
 
-    // Calculate heights considering status bar (20px) and scroll buttons
     const int STATUS_BAR_HEIGHT = 20;
 #ifdef CONFIG_USE_TOUCHSCREEN
     const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
@@ -228,6 +281,8 @@ void options_menu_create() {
     lv_obj_set_style_border_width(menu_container, 0, 0);
 
     const char **options = NULL;
+    is_settings_mode = false;
+    
     switch (SelectedMenuType) {
     case OT_Wifi:
         switch (current_wifi_menu_state) {
@@ -242,66 +297,174 @@ void options_menu_create() {
         break;
     case OT_Bluetooth: options = bluetooth_options; break;
     case OT_GPS: options = gps_options; break;
-    case OT_Settings: options = settings_options; break;
+    case OT_Settings: 
+        is_settings_mode = true;
+        load_current_settings_values();
+        break;
     default: options = NULL; break;
     }
 
-    if (options == NULL) {
+    if (!is_settings_mode && options == NULL) {
         display_manager_switch_view(&main_menu_view);
         return;
     }
 
     num_items = 0;
-    int button_height = is_small_screen ? 35 : 50;
+    int button_height = is_small_screen ? 40 : 55;
     is_small_screen_global = is_small_screen;
     button_height_global = button_height;
-    current_options_list = options;
-    build_item_index = 0;
-    ESP_LOGI(TAG, "starting incremental menu build");
-    menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+    
+    if (is_settings_mode) {
+        if (current_settings_category < 0) {
+            current_options_list = settings_categories;
+            build_item_index = 0;
+            menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+        } else {
+            current_options_list = NULL;
+            build_item_index = 0;
+            menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+        }
+    } else {
+        current_options_list = options;
+        build_item_index = 0;
+        menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+    }
 
     display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
-#ifdef CONFIG_USE_TOUCHSCREEN // only show touch buttons if on a touch screen device.
-    // Create scroll buttons and back button
-    scroll_up_btn = lv_btn_create(root); // UP button on the LEFT
+#ifdef CONFIG_USE_TOUCHSCREEN
+    scroll_up_btn = lv_btn_create(root);
     lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
-    lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING); // Align left
+    lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
     lv_obj_set_style_bg_color(scroll_up_btn, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_up_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_up_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(scroll_up_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(scroll_up_btn, scroll_options_up, LV_EVENT_CLICKED, NULL);
     lv_obj_t *up_label = lv_label_create(scroll_up_btn);
-    lv_label_set_text(up_label, LV_SYMBOL_UP); // Keep UP symbol
+    lv_label_set_text(up_label, LV_SYMBOL_UP);
     lv_obj_center(up_label);
 
-    scroll_down_btn = lv_btn_create(root); // DOWN button on the RIGHT
+    scroll_down_btn = lv_btn_create(root);
     lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
-    lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING); // Align right
+    lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
     lv_obj_set_style_bg_color(scroll_down_btn, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_down_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_down_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(scroll_down_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(scroll_down_btn, scroll_options_down, LV_EVENT_CLICKED, NULL);
     lv_obj_t *down_label = lv_label_create(scroll_down_btn);
-    lv_label_set_text(down_label, LV_SYMBOL_DOWN); // Keep DOWN symbol
+    lv_label_set_text(down_label, LV_SYMBOL_DOWN);
     lv_obj_center(down_label);
 
-    // Create Back button
     back_btn = lv_btn_create(root);
-    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE); // Slightly wider
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING); // Align center bottom
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x555555), LV_PART_MAIN); // Different color
-    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN); // Slightly rounded rectangle
-    lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN); // Add horizontal padding
+    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x555555), LV_PART_MAIN);
+    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN);
     lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back"); // Back symbol and text
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
 #endif
     createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
+}
+
+static void load_current_settings_values(void) {
+    settings_items[0].current_value = settings_get_rgb_mode(&G_Settings);
+    
+    uint32_t timeout = settings_get_display_timeout(&G_Settings);
+    settings_items[1].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : 3;
+    
+    settings_items[2].current_value = settings_get_menu_theme(&G_Settings);
+    settings_items[3].current_value = settings_get_thirds_control_enabled(&G_Settings) ? 1 : 0;
+    
+    uint32_t term_color = settings_get_terminal_text_color(&G_Settings);
+    settings_items[4].current_value = 0;
+    for (int i = 0; i < 8; i++) {
+        if (term_color == textcolor_values[i]) {
+            settings_items[4].current_value = i;
+            break;
+        }
+    }
+    
+    settings_items[5].current_value = settings_get_invert_colors(&G_Settings) ? 1 : 0;
+    settings_items[6].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
+    settings_items[7].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
+}
+
+static void apply_setting_change(int setting_index, int new_value) {
+    SettingsItem *item = &settings_items[setting_index];
+    item->current_value = new_value;
+    
+    switch (item->setting_type) {
+        case SETTING_RGB_MODE:
+            settings_set_rgb_mode(&G_Settings, new_value);
+            break;
+        case SETTING_DISPLAY_TIMEOUT: {
+            uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : 60000;
+            settings_set_display_timeout(&G_Settings, timeout_ms);
+            break;
+        }
+        case SETTING_MENU_THEME:
+            settings_set_menu_theme(&G_Settings, new_value);
+            break;
+        case SETTING_THIRD_CONTROL:
+            settings_set_thirds_control_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_TERMINAL_COLOR:
+            settings_set_terminal_text_color(&G_Settings, textcolor_values[new_value]);
+            break;
+        case SETTING_INVERT_COLORS:
+            settings_set_invert_colors(&G_Settings, new_value == 1);
+            break;
+        case SETTING_WEB_AUTH:
+            settings_set_web_auth_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_AP_ENABLED:
+            settings_set_ap_enabled(&G_Settings, new_value == 1);
+            break;
+    }
+    
+    settings_save(&G_Settings);
+}
+
+static void change_current_row(bool increment)
+{
+    if (!menu_container) return;
+
+    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+    if (!sel) return;
+
+    int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+    change_setting_value(setting_idx, increment);
+}
+
+static void change_setting_value(int setting_index, bool increment) {
+    SettingsItem *item = &settings_items[setting_index];
+    int new_value = item->current_value;
+    
+    if (increment) {
+        new_value = (new_value + 1) % item->value_count;
+    } else {
+        new_value = (new_value + item->value_count - 1) % item->value_count;
+    }
+    
+    apply_setting_change(setting_index, new_value);
+    
+    lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
+    if (current_item) {
+        lv_obj_t *label = lv_obj_get_child(current_item, 0);
+        if (label) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%s %s: %s %s", 
+                    LV_SYMBOL_LEFT, item->label, 
+                    item->value_options[new_value], LV_SYMBOL_RIGHT);
+            lv_label_set_text(label, buf);
+        }
+    }
 }
 
 static void select_option_item(int index) {
@@ -354,10 +517,9 @@ void handle_hardware_button_press_options(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
-            // Press on scroll up button
+            // existing “press” logic unchanged…
             if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
-                lv_area_t area;
-                lv_obj_get_coords(scroll_up_btn, &area);
+                lv_area_t area; lv_obj_get_coords(scroll_up_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     scroll_options_up(NULL);
@@ -365,10 +527,8 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     return;
                 }
             }
-            // Press on scroll down button
             if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) {
-                lv_area_t area;
-                lv_obj_get_coords(scroll_down_btn, &area);
+                lv_area_t area; lv_obj_get_coords(scroll_down_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     scroll_options_down(NULL);
@@ -376,18 +536,15 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     return;
                 }
             }
-            // Press on back button
             if (back_btn && lv_obj_is_valid(back_btn)) {
-                lv_area_t area;
-                lv_obj_get_coords(back_btn, &area);
+                lv_area_t area; lv_obj_get_coords(back_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
-                    back_event_cb(NULL); // Trigger back action
-                    opt_touch_started = false; // Prevent further processing
+                    back_event_cb(NULL);
+                    opt_touch_started = false;
                     return;
                 }
             }
-            // Record touch start only once (ignore movement events)
             if (!opt_touch_started) {
                 opt_touch_started = true;
                 opt_touch_start_x = data->point.x;
@@ -395,51 +552,76 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
             return;
         }
+
         if (data->state == LV_INDEV_STATE_REL) {
-            // Only process if a touch start was registered
             if (!opt_touch_started) return;
+            opt_touch_started = false;
+
             int dx = data->point.x - opt_touch_start_x;
             int dy = data->point.y - opt_touch_start_y;
-            opt_touch_started = false;
+
+            // thirds‐control special behavior
             if (settings_get_thirds_control_enabled(&G_Settings)) {
                 int y = data->point.y;
                 int screen_h = LV_VER_RES;
                 if (y < screen_h/3) {
                     select_option_item(selected_item_index - 1);
-                } else if (y > (screen_h * 2)/3) {
+                } else if (y > (screen_h*2)/3) {
                     select_option_item(selected_item_index + 1);
                 } else {
-                    lv_obj_t *selected = lv_obj_get_child(menu_container, selected_item_index);
-                    if (selected) handle_option_directly((const char *)lv_obj_get_user_data(selected));
+                    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                    if (sel) handle_option_directly((const char*)lv_obj_get_user_data(sel));
                 }
                 return;
             }
-            // Define thresholds
-            int threshold_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
-            int threshold_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
-            // Vertical swipe -> scroll
-            if (abs(dy) > threshold_y) {
+
+            // vertical swipe = scroll
+            int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            if (abs(dy) > thr_y) {
                 lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                 return;
             }
-            // Horizontal swipe -> ignore selection
-            if (abs(dx) > threshold_x) return;
-            // Check tap within menu container bounds
-            lv_area_t container_area;
-            lv_obj_get_coords(menu_container, &container_area);
-            if (data->point.x < container_area.x1 || data->point.x > container_area.x2 ||
-                data->point.y < container_area.y1 || data->point.y > container_area.y2) {
+            // horizontal swipe = ignore
+            int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            if (abs(dx) > thr_x) return;
+
+            // now treat as tap inside the menu list
+            lv_area_t cont_area;
+            lv_obj_get_coords(menu_container, &cont_area);
+            if (data->point.x < cont_area.x1 || data->point.x > cont_area.x2 ||
+                data->point.y < cont_area.y1 || data->point.y > cont_area.y2) {
                 return;
             }
-            // Treat as tap -> select option
+
+            // find which button was tapped
             for (int i = 0; i < num_items; i++) {
                 lv_obj_t *btn = lv_obj_get_child(menu_container, i);
                 lv_area_t btn_area;
                 lv_obj_get_coords(btn, &btn_area);
                 if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
                     data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
+                    // highlight it
                     select_option_item(i);
-                    handle_option_directly((const char *)lv_obj_get_user_data(btn));
+
+                    if (is_settings_mode) {
+                        // **NEW**: if we're still at category-level, open submenu
+                        if (current_settings_category < 0) {
+                            switch_to_settings_category(i);
+                        } else {
+                            // leaf setting: change value
+                            int center_x = (btn_area.x1 + btn_area.x2) / 2;
+                            bool increment = data->point.x >= center_x;
+                            lv_obj_t *sel = lv_obj_get_child(menu_container, i);
+                            if (sel) {
+                                int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+                                change_setting_value(setting_idx, increment);
+                            }
+                        }
+                    } else {
+                        // non-settings menus
+                        const char *opt = (const char*)lv_obj_get_user_data(btn);
+                        handle_option_directly(opt);
+                    }
                     return;
                 }
             }
@@ -448,35 +630,83 @@ void handle_hardware_button_press_options(InputEvent *event) {
         return;
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
         int button = event->data.joystick_index;
+        ESP_LOGI(TAG, "Joystick index = %d", button);
         if (button == 2) {
             select_option_item(selected_item_index - 1);
         } else if (button == 4) {
             select_option_item(selected_item_index + 1);
-        } else if (button == 1) {
-            lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
-            if (selected_obj) {
-                const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
-                if (selected_option) {
-                    handle_option_directly(selected_option);
+        } else if (button == 1) { // Normal select button
+            if (is_settings_mode) {
+                if (current_settings_category < 0) {
+                    // Enter settings category
+                    switch_to_settings_category(selected_item_index);
+                } else {
+                    // Change setting value
+                    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                    if (sel) {
+                        int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+                        change_setting_value(setting_idx, true);
+                    }
+                }
+            } else {
+                // Non-settings menu selection
+                lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+                if (selected_obj) {
+                    const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                    if (selected_option) {
+                        handle_option_directly(selected_option);
+                    }
                 }
             }
+        } else if (button == 0 && is_settings_mode) { // Left (decrement) button for settings
+            change_current_row(false);
+        } else if (button == 3) { // Cardputer select button OR Right (increment) button for settings
+            if (is_settings_mode) {
+                if (current_settings_category < 0) {
+                    // Enter settings category (Cardputer specific)
+                    switch_to_settings_category(selected_item_index);
+                } else {
+                    // Change setting value (Cardputer specific or normal increment)
+                    change_current_row(true);
+                }
+            }
+            // For non-settings, button 3 doesn't have a defined action as per the problem description.
+            // If it were a general 'select' for non-settings, it would need similar logic to button 1's 'else' block.
         }
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         uint8_t keyValue = event->data.key_value;
 
         if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) { // Left / up
             ESP_LOGI(TAG, "Left/Up button pressed\n");
-            select_option_item(selected_item_index - 1);
+            if (is_settings_mode && (keyValue == 44 || keyValue == ',')) {
+                change_current_row(false);
+            } else {
+                select_option_item(selected_item_index - 1);
+            }
         } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) { // Right / down
             ESP_LOGI(TAG, "Right/Down button pressed\n");
-            select_option_item(selected_item_index + 1);
-        } else if (keyValue == 13) { // Select
+            if (is_settings_mode && (keyValue == 47 || keyValue == '/')) {
+                change_current_row(true);
+            } else {
+                select_option_item(selected_item_index + 1);
+            }
+        } else if (keyValue == 13) { // Select / centre press
             ESP_LOGI(TAG, "Enter button pressed\n");
-            lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
-            if (selected_obj) {
-                const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
-                if (selected_option) {
-                    handle_option_directly(selected_option);
+            if (is_settings_mode) {
+                if (current_settings_category < 0) {
+                    // We’re at the top level (“Display”, “Config”, …) → open submenu
+                    switch_to_settings_category(selected_item_index);
+                } else {
+                    // Inside a submenu → cycle the value
+                    change_current_row(true);
+                }
+            } else {
+                lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+                if (selected_obj) {
+                    const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                    if (selected_option) {
+                        handle_option_directly(selected_option);
+                    }
                 }
             }
         } else if (keyValue == 29 || keyValue == '`') { // esc
@@ -499,6 +729,21 @@ void option_event_cb(lv_event_t *e) {
         option_invoked = false; 
         return;
     }
+    
+    if (is_settings_mode) {
+        if (current_settings_category < 0) {
+            int cat_idx = (int)(intptr_t)lv_event_get_user_data(e);
+            switch_to_settings_category(cat_idx);
+            option_invoked = false;
+            return;
+        } else {
+            int setting_index = (int)(intptr_t)lv_event_get_user_data(e);
+            change_setting_value(setting_index, true);
+            option_invoked = false;
+            return;
+        }
+    }
+    
     const char *Selected_Option = (const char *)lv_event_get_user_data(e);
     if (Selected_Option == last_option && now_ms - last_time_ms < 200) {
         option_invoked = false; 
@@ -760,38 +1005,7 @@ void option_event_cb(lv_event_t *e) {
 #endif
     }
 
-    else if (strcmp(Selected_Option, "Set RGB Mode - Stealth") == 0) {
-        simulateCommand("setsetting 1 1");
-        vTaskDelay(pdMS_TO_TICKS(10));
-        error_popup_create("Set RGB Mode Successfully...");
-        
-    }
 
-    else if (strcmp(Selected_Option, "Set RGB Mode - Normal") == 0) {
-        simulateCommand("setsetting 1 2");
-        vTaskDelay(pdMS_TO_TICKS(10));
-        error_popup_create("Set RGB Mode Successfully...");
-        
-    }
-
-    else if (strcmp(Selected_Option, "Set RGB Mode - Rainbow") == 0) {
-        simulateCommand("setsetting 1 3");
-        vTaskDelay(pdMS_TO_TICKS(10));
-        error_popup_create("Set RGB Mode Successfully...");
-        
-    }
-
-    else if (strcmp(Selected_Option, "Webauth On") == 0) {
-        simulateCommand("webauth on");
-        error_popup_create("Webauth Enabled.");
-        
-    }
-
-    else if (strcmp(Selected_Option, "Webauth Off") == 0) {
-        simulateCommand("webauth off");
-        error_popup_create("Webauth Disabled.");
-        
-    }
 
     else if (strcmp(Selected_Option, "Capture PWN") == 0) {
         display_manager_switch_view(&terminal_view);
@@ -982,6 +1196,11 @@ void option_event_cb(lv_event_t *e) {
 }
 
 void handle_option_directly(const char *Selected_Option) {
+    if (is_settings_mode) {
+        int setting_index = (int)(intptr_t)Selected_Option;
+        change_setting_value(setting_index, true);
+        return;
+    }
     lv_event_t e;
     e.user_data = (void *)Selected_Option;
     option_event_cb(&e);
@@ -1003,6 +1222,7 @@ void options_menu_destroy(void) {
 
         selected_item_index = 0;
         num_items = 0;
+        current_settings_category = -1;
     }
     
     if (menu_build_timer) {
@@ -1016,6 +1236,8 @@ void options_menu_destroy(void) {
         lv_style_reset(&style_menu_label);
         styles_initialized = false;
     }
+    
+    is_settings_mode = false;
 }
 
 void get_options_menu_callback(void **callback) { *callback = options_menu_view.input_callback; }
@@ -1028,6 +1250,11 @@ View options_menu_view = {.root = NULL,
                           .get_hardwareinput_callback = get_options_menu_callback};
 
 static void back_event_cb(lv_event_t *e) {
+    if (is_settings_mode && current_settings_category >= 0) {
+        current_settings_category = -1;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
@@ -1035,6 +1262,20 @@ static void back_event_cb(lv_event_t *e) {
         current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
         display_manager_switch_view(&main_menu_view);
     }
+}
+
+static void switch_to_settings_category(int cat_idx) {
+    if (menu_build_timer) {
+        lv_timer_del(menu_build_timer);
+        menu_build_timer = NULL;
+    }
+    if (menu_container) {
+        lv_obj_clean(menu_container);
+    }
+    num_items = 0;
+    build_item_index = 0;
+    current_settings_category = cat_idx;
+    menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
 }
 
 static void wifi_connect_kb_cb(const char *text){
@@ -1062,32 +1303,121 @@ static void wifi_connect_kb_cb(const char *text){
 
 // build menu items in small batches so we don't starve the watchdog
 static void menu_builder_cb(lv_timer_t *t) {
-    const int BATCH = 1; // build 1 item per tick to keep task responsive
+    const int BATCH = 8;
     int built = 0;
-    while (current_options_list && current_options_list[build_item_index] && built < BATCH) {
-        const char *opt = current_options_list[build_item_index++];
-        lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
-        if (!btn) break;
-        lv_obj_set_height(btn, button_height_global);
-        lv_obj_add_style(btn, &style_menu_item, 0);
-        lv_obj_t *label = lv_obj_get_child(btn, 0);
-        if (label) {
-            lv_obj_set_style_text_font(label, is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14, 0);
-            lv_obj_add_style(label, &style_menu_label, 0);
-        }
-        lv_obj_set_user_data(btn, (void *)opt);
-        lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
-        num_items++;
-        built++;
+
+    if (is_settings_mode) {
+        // Top-level categories
+        if (current_settings_category < 0) {
+            while (settings_categories[build_item_index] && built < BATCH) {
+                const char *cat = settings_categories[build_item_index];
+                lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, cat);
+                if (!btn) break;
+                lv_obj_set_height(btn, button_height_global * 1.2);
+                lv_obj_add_style(btn, &style_menu_item, 0);
+                lv_obj_t *label = lv_obj_get_child(btn, 0);
+                if (label) {
+                    lv_obj_set_style_text_font(label,
+                        is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
+                        0);
+                    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+                    lv_obj_add_style(label, &style_menu_label, 0);
+                }
+                lv_obj_set_user_data(btn, (void *)(intptr_t)build_item_index);
+                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED,
+                                    (void *)(intptr_t)build_item_index);
+                num_items++;
+                built++;
+                build_item_index++;
 #ifndef CONFIG_USE_TOUCHSCREEN
-        if (num_items == 1) { // highlight the first item on non-touch interfaces
-            select_option_item(0);
-        }
+                if (num_items == 1) select_option_item(0);
 #endif
+            }
+            if (!settings_categories[build_item_index]) {
+                lv_timer_del(t);
+                menu_build_timer = NULL;
+            }
+        }
+        // Submenu of a category
+        else {
+            static bool cleaned = false;
+            if (!cleaned) {
+                lv_obj_clean(menu_container);
+                num_items       = 0;
+                cleaned         = true;
+            }
+
+            int *indices = settings_category_indices[current_settings_category];
+            while (indices[build_item_index] >= 0 && built < BATCH) {
+                int setting_idx = indices[build_item_index];
+                SettingsItem *item = &settings_items[setting_idx];
+
+                char buf[128];
+                snprintf(buf, sizeof(buf),
+                         "%s %s: %s %s",
+                         LV_SYMBOL_LEFT,
+                         item->label,
+                         item->value_options[item->current_value],
+                         LV_SYMBOL_RIGHT);
+
+                lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, buf);
+                if (!btn) break;
+                lv_obj_set_height(btn, button_height_global);
+                lv_obj_add_style(btn, &style_menu_item, 0);
+                lv_obj_t *label = lv_obj_get_child(btn, 0);
+                if (label) {
+                    lv_obj_set_style_text_font(label,
+                        is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
+                        0);
+                    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+                    lv_obj_add_style(label, &style_menu_label, 0);
+                }
+                lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
+                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED,
+                                    (void *)(intptr_t)setting_idx);
+
+                num_items++;
+                built++;
+                build_item_index++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+                if (num_items == 1) select_option_item(0);
+#endif
+            }
+
+            // When we hit the -1 terminator, we're done
+            if (indices[build_item_index] < 0) {
+                lv_timer_del(t);
+                menu_build_timer = NULL;
+                cleaned         = false;
+            }
+        }
     }
-    if (!current_options_list || !current_options_list[build_item_index]) {
-        lv_timer_del(t);
-        menu_build_timer = NULL;
-        ESP_LOGI(TAG, "menu build finished, %d items", num_items);
+    // The non‐settings menus (Wi-Fi, BLE, GPS, etc.) remain unchanged:
+    else {
+        while (current_options_list && current_options_list[build_item_index] && built < BATCH) {
+            const char *opt = current_options_list[build_item_index++];
+            lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
+            if (!btn) break;
+            lv_obj_set_height(btn, button_height_global);
+            lv_obj_add_style(btn, &style_menu_item, 0);
+            lv_obj_t *label = lv_obj_get_child(btn, 0);
+            if (label) {
+                lv_obj_set_style_text_font(label,
+                    is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
+                    0);
+                lv_obj_add_style(label, &style_menu_label, 0);
+            }
+            lv_obj_set_user_data(btn, (void *)opt);
+            lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
+            num_items++;
+            built++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+            if (num_items == 1) select_option_item(0);
+#endif
+        }
+        if (!current_options_list || !current_options_list[build_item_index]) {
+            lv_timer_del(t);
+            menu_build_timer = NULL;
+        }
     }
 }
