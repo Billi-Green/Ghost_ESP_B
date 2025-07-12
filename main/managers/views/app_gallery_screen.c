@@ -2,6 +2,7 @@
 #include "managers/views/flappy_ghost_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/views/terminal_screen.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -21,10 +22,12 @@ typedef struct {
 
 static const lv_color_t flap_color = LV_COLOR_MAKE(255, 215, 0);
 static const lv_color_t rave_color = LV_COLOR_MAKE(128, 0, 128);
+static const lv_color_t terminal_color = LV_COLOR_MAKE(0, 128, 0);
 
 static app_item_t app_items[] = {
     {"Flap", &GESPFlappyghost, flap_color, &flappy_bird_view},
     {"Rave", &rave, rave_color, &music_visualizer_view},
+    {"Terminal", &rave, terminal_color, &terminal_view},
 };
 
 static int num_apps = sizeof(app_items) / sizeof(app_items[0]);
