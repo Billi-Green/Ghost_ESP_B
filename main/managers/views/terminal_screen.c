@@ -197,7 +197,13 @@ static void stop_all_operations(void) {
   display_manager_switch_view(&options_menu_view);
   ESP_LOGI(TAG, "Stop all operations triggered");
 }
-
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+void text_box_click_cb(lv_event_t *e){
+  ESP_LOGI(TAG, "Text box clicked");
+  printf("Text box clicked\n");
+  // If using a hardware keyboard, we can ignore this click
+}
+#endif
 void terminal_view_create(void) {
   is_stopping = false;
   if (terminal_view.root != NULL) {
@@ -230,7 +236,7 @@ void terminal_view_create(void) {
   }
   int textarea_height = available_height;
 
-#ifdef CONFIG_USE_HW_KB
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
   int padding = 5;
   int textbox_height = 40;
   int textbox_width = LV_HOR_RES - 2 * padding;
@@ -269,13 +275,12 @@ void terminal_view_create(void) {
              lv_obj_get_x(back_btn), lv_obj_get_y(back_btn), 
              lv_obj_get_width(back_btn), lv_obj_get_height(back_btn));
   }
-#ifdef CONFIG_USE_HW_KB
   textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING; // Adjust textbox width if back button is present
-#endif
+  if (textbox_width < 40) textbox_width = 40; // Prevent negative or too small width
   // TODO: Add button for on screen keyboard
 #endif
 
-#ifdef CONFIG_USE_HW_KB
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
   // Create input text box at the bottom of the screen
 
     input_label = lv_label_create(terminal_view.root);
@@ -285,7 +290,9 @@ void terminal_view_create(void) {
     lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_pad_all(input_label, padding, 0);
     lv_obj_set_style_radius(input_label, 5, 0);
-    lv_obj_align(input_label, LV_ALIGN_BOTTOM_MID, 0, -padding);
+    lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -2*padding);
+    lv_obj_add_event_cb(input_label, text_box_click_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
     lv_label_set_long_mode(input_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_label_set_text(input_label, "Type Command...");
 #endif
@@ -381,6 +388,23 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
     int touch_x = event->data.touch_data.point.x;
     int touch_y = event->data.touch_data.point.y;
     ESP_LOGW(TAG, "Touch detected at x=%d, y=%d (screen: %dx%d)", touch_x, touch_y, LV_HOR_RES, LV_VER_RES);
+
+    if (input_label){
+      ESP_LOGI(TAG, "Input label exists, checking for click");
+      // Check if the touch is within the input label area
+      lv_obj_t *input_area = lv_obj_get_parent(input_label);
+      int input_x_min = lv_obj_get_x(input_label);
+      int input_x_max = input_x_min + lv_obj_get_width(input_label);
+      int input_y_min = lv_obj_get_y(input_label);
+      int input_y_max = input_y_min + lv_obj_get_height(input_label);
+
+      if (touch_x >= input_x_min && touch_x <= input_x_max &&
+          touch_y >= input_y_min && touch_y <= input_y_max) {
+        ESP_LOGI(TAG, "Input label clicked at x=%d, y=%d", touch_x, touch_y);
+        lv_event_send(input_label, LV_EVENT_CLICKED, NULL);
+        return;
+      }
+    }
 
     if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
       int button_y_min = LV_VER_RES - (BUTTON_SIZE + BUTTON_PADDING * 2);
