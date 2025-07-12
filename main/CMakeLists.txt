@@ -1,4 +1,7 @@
-file(GLOB_RECURSE app_sources "${CMAKE_SOURCE_DIR}/main/*.c")
+file(GLOB_RECURSE app_sources 
+    "${CMAKE_SOURCE_DIR}/main/*.c"
+    "${CMAKE_SOURCE_DIR}/main/core/esp_comm_manager.c"
+)
 # Explicitly include infrared view implementation
 list(APPEND app_sources "${CMAKE_SOURCE_DIR}/main/managers/views/infrared_view.c")
 file(GLOB_RECURSE image_sources "${CMAKE_SOURCE_DIR}/main/vendor/images/*.c")
@@ -30,5 +33,5 @@ if("${IDF_TARGET}" STREQUAL "esp32s2")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_IDF_TARGET_ESP32S2)
 endif()
 
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-incompatible-pointer-types)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-incompatible-pointer-types -Wno-unused-local-typedefs)
 

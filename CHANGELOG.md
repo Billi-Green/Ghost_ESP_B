@@ -1,5 +1,32 @@
 # Ghost ESP Changelog
 
+## Revival v1.7
+
+### Dual Chip Support
+
+- Support for connecting two ESP32 chips running GhostESP
+- WebUI Section to send commands to the connected peer
+
+### Added
+
+- 'chipinfo' command to display chip information
+- 'apenable' command to enable/disable the Access Point
+
+### Changed
+
+- Display
+  - Reuse options screen view for settings screen. Resolves #66 and #65
+
+- WebUI
+  - Change from from Courier New to SF Mono if available
+  - Minor style tweaks
+  - Update Help tab
+  
+### Bug Fixes
+
+- Add termianl_view_add_text logs to commands missing them
+- Reduce FatFS memory usage on S3TWatch and Cardputer
+
 ## Revival 1.6.1
 
 - Hotfix for 'BLE stack not ready' on CYD devices.
