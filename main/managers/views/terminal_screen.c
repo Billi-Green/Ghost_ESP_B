@@ -55,11 +55,13 @@ static MessageQueue message_queue = {.head = 0, .tail = 0, .count = 0};
 
 static void submit_text() {
     if (input_len > 0) {
-      terminal_view_add_text(input_buffer);
-      simulateCommand(input_buffer);
-      memset(input_buffer, 0, sizeof(input_buffer));
-      input_len = 0;
-      update_input_label();
+      char prompt_buf[sizeof(input_buffer) + 4]; // +4 for "> " and null terminator
+      snprintf(prompt_buf, sizeof(prompt_buf), "> %s", input_buffer); // format the prompt
+      terminal_view_add_text(prompt_buf); // add prompt before the command when printing to screen
+      simulateCommand(input_buffer); // execute the command
+      memset(input_buffer, 0, sizeof(input_buffer)); // clear the input buffer
+      input_len = 0; // reset input length
+      update_input_label(); // update the input label to show empty state
     }
 }
 
