@@ -71,7 +71,11 @@ static void anim_set_x(void *obj, int32_t v) {
 
     lv_obj_t *icon = lv_img_create(current_app_obj);
     lv_img_set_src(icon, app_items[selected_app_index].icon);
-    
+
+    if (strcmp(app_items[selected_app_index].name, "Terminal") == 0) { // Special case for terminal icon
+        lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0); // Recolor to match border
+        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+    }
 
     const int icon_size = 50;
     lv_obj_set_size(icon, icon_size, icon_size);
