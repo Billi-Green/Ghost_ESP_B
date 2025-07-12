@@ -56,8 +56,6 @@
 #define LILYGO_KB_BRIGHTNESS_CMD            0x01
 #define LILYGO_KB_ALT_B_BRIGHTNESS_CMD      0x02
 
-#define KB_I2C_SDA       18
-#define KB_I2C_SCL       8
     
 #endif
 
@@ -795,6 +793,8 @@ void hardware_input_task(void *pvParameters) {
     gpio_set_direction(46, GPIO_MODE_INPUT); // probably should be a part of the init process
     if (gpio_get_level(46)){
     lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, &data, 1);
+    } else {
+      data[0] = 0; // if the pin is low we assume no data is available
     }
     if (memcmp(data, "", 1) != 0){
       
