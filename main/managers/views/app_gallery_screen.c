@@ -27,7 +27,7 @@ static const lv_color_t terminal_color = LV_COLOR_MAKE(0, 128, 0);
 static app_item_t app_items[] = {
     {"Flap", &GESPFlappyghost, flap_color, &flappy_bird_view},
     {"Rave", &rave, rave_color, &music_visualizer_view},
-    {"Terminal", &rave, terminal_color, &terminal_view},
+    {"Terminal", &terminal_icon, terminal_color, &terminal_view},
 };
 
 static int num_apps = sizeof(app_items) / sizeof(app_items[0]);

@@ -103,6 +103,7 @@ LV_IMG_DECLARE(GESPAppGallery);
 LV_IMG_DECLARE(clock_icon);
 LV_IMG_DECLARE(settings_icon);
 LV_IMG_DECLARE(infrared);
+LV_IMG_DECLARE(terminal_icon);
 
 joystick_t joysticks[5];
 
