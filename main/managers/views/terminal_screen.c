@@ -27,13 +27,22 @@ static bool is_stopping = false;
 #define BUTTON_PADDING 5
 
 static lv_obj_t *back_btn = NULL;
+static lv_obj_t *input_label = NULL;
 static size_t current_text_length = 0; // track total characters to manage memory
 lv_timer_t *terminal_update_timer = NULL;
+
+static char input_buffer[128] = {0}; // keyboard input buffer
+static int input_len = 0; // input length counter
 
 static void scroll_terminal_up(void);
 static void scroll_terminal_down(void);
 static void stop_all_operations(void);
 
+// keyboard function predefs
+static void submit_text();
+static void add_char_to_buffer(char c);
+static void remove_char_from_buffer();
+static void update_input_label();
 
 typedef struct {
   char messages[MAX_QUEUE_SIZE][MAX_MESSAGE_SIZE];
@@ -44,6 +53,35 @@ typedef struct {
 
 static MessageQueue message_queue = {.head = 0, .tail = 0, .count = 0};
 
+static void submit_text() {
+    if (input_len > 0) {
+      terminal_view_add_text(input_buffer);
+      simulateCommand(input_buffer);
+      memset(input_buffer, 0, sizeof(input_buffer));
+      input_len = 0;
+      update_input_label();
+    }
+}
+
+static void add_char_to_buffer(char c) {
+  if (input_len < sizeof(input_buffer) - 1) {
+    input_buffer[input_len++] = c;
+    input_buffer[input_len] = '\0';
+    update_input_label();
+  }
+}
+
+static void remove_char_from_buffer() {
+  if (input_len > 0) {
+    input_buffer[--input_len] = '\0';
+    update_input_label();
+  }
+}
+static void update_input_label() {
+    if (input_label) {
+        lv_label_set_text(input_label, input_buffer);
+    }
+}
 
 static void queue_message(const char *text) {
   if (message_queue.count >= MAX_QUEUE_SIZE) {
@@ -181,14 +219,21 @@ void terminal_view_create(void) {
   lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
 
   // Define status bar height (as seen in display_manager.c)
-  const int STATUS_BAR_HEIGHT = 20; 
-  
+  const int STATUS_BAR_HEIGHT = 20;
+
   // Calculate available height, considering status bar and bottom buttons (if present)
   int available_height = LV_VER_RES - STATUS_BAR_HEIGHT;
   if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
       available_height -= (BUTTON_SIZE + BUTTON_PADDING * 2);
   }
   int textarea_height = available_height;
+
+#ifdef CONFIG_USE_HW_KB
+  int padding = 5;
+  int textbox_height = 40;
+  int textbox_width = LV_HOR_RES - 2 * padding;
+  textarea_height -= (textbox_height + padding * 2);
+#endif  
 
   terminal_page = lv_list_create(terminal_view.root);
   // Set position below status bar
@@ -203,8 +248,8 @@ void terminal_view_create(void) {
   lv_obj_set_style_border_width(terminal_view.root, 0, 0);
   lv_obj_set_style_radius(terminal_view.root, 0, 0);
   lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
-
-  if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE && CONFIG_USE_TOUCHSCREEN) {
+#ifdef CONFIG_USE_TOUCHSCREEN
+  if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
     back_btn = lv_btn_create(terminal_view.root);
     lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
     lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, BUTTON_PADDING, -BUTTON_PADDING);
@@ -222,6 +267,26 @@ void terminal_view_create(void) {
              lv_obj_get_x(back_btn), lv_obj_get_y(back_btn), 
              lv_obj_get_width(back_btn), lv_obj_get_height(back_btn));
   }
+#ifdef CONFIG_USE_HW_KB
+  textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING; // Adjust textbox width if back button is present
+#endif
+  // TODO: Add button for on screen keyboard
+#endif
+
+#ifdef CONFIG_USE_HW_KB
+  // Create input text box at the bottom of the screen
+
+    input_label = lv_label_create(terminal_view.root);
+    lv_obj_set_size(input_label, textbox_width, textbox_height - 2 * padding);
+    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_pad_all(input_label, padding, 0);
+    lv_obj_set_style_radius(input_label, 5, 0);
+    lv_obj_align(input_label, LV_ALIGN_BOTTOM_MID, 0, -padding);
+    lv_label_set_long_mode(input_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(input_label, "Type Command...");
+#endif
 
   display_manager_add_status_bar("Terminal");
 
@@ -371,12 +436,28 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_up();
     } else if (key == 46 || key == '.') {      //down arrow
       scroll_terminal_down();
+    } else if (key == 13){
+      ESP_LOGW(TAG, "Enter key pressed, submitting text");
+      submit_text();
+    } else if (key == 8 || key == 127) { // backspace
+      ESP_LOGW(TAG, "Backspace key pressed, removing last character");
+      remove_char_from_buffer();
+    } else if (key == 32) { // space
+      ESP_LOGW(TAG, "Space key pressed, adding space to input buffer");
+      add_char_to_buffer(' ');
+    } else if (key >= 32 && key <= 126) { // printable ASCII characters
+      ESP_LOGW(TAG, "Adding character '%c' to input buffer", (char)key);
+      add_char_to_buffer((char)key);
+    } else if (key == 0) {
+      ESP_LOGW(TAG, "Null character received, ignoring"); 
     }
     else {
+      ESP_LOGW(TAG, "Unhandled keyboard input: %d", key);
+      // Optionally handle other keys or log them
       char key_str[2];
       key_str[0] = (char)key;
       key_str[1] = '\0';
-      terminal_view_add_text(key_str);
+      terminal_view_add_text(key_str); // Add unhandled keys to terminal
     }
   }
 }
