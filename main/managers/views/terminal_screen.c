@@ -372,6 +372,12 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
     } else if (key == 46 || key == '.') {      //down arrow
       scroll_terminal_down();
     }
+    else {
+      char key_str[2];
+      key_str[0] = (char)key;
+      key_str[1] = '\0';
+      terminal_view_add_text(key_str);
+    }
   }
 }
 
