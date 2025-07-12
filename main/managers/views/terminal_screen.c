@@ -232,7 +232,7 @@ void terminal_view_create(void) {
   int padding = 5;
   int textbox_height = 40;
   int textbox_width = LV_HOR_RES - 2 * padding;
-  textarea_height -= (textbox_height + padding * 2);
+  textarea_height -= (textbox_height + padding); // only need 1x pad since the text box is at the bottom of the screen
 #endif  
 
   terminal_page = lv_list_create(terminal_view.root);
