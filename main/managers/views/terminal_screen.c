@@ -204,7 +204,7 @@ void terminal_view_create(void) {
   lv_obj_set_style_radius(terminal_view.root, 0, 0);
   lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
 
-  if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+  if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE && CONFIG_USE_TOUCHSCREEN) {
     back_btn = lv_btn_create(terminal_view.root);
     lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
     lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, BUTTON_PADDING, -BUTTON_PADDING);
