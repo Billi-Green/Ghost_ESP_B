@@ -41,6 +41,77 @@ The custom build workflow allows you to configure various options for your build
 - Debug options
 - Custom configurations
 
+---
+
+## Building Locally with ESP-IDF (`idf.py`)
+
+If you want to build GhostESP on your own computer using the ESP-IDF toolchain, follow these steps:
+
+### Prerequisites
+
+- [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html) installed and set up on your system (v4.4 or later recommended)
+- Python 3.7 or newer
+- Git
+
+### Step-by-Step Local Build
+
+1. **Clone the Repository**
+   ```sh
+   git clone https://github.com/<your-username>/Ghost_ESP.git
+   cd Ghost_ESP
+   ```
+
+2. **Copy the Appropriate sdkconfig Template**
+   - Choose the correct configuration file for your board from the `configs/` directory (for example, `sdkconfig.cyd`, `sdkconfig.s3`, etc.).
+   - Copy it to the project root as `sdkconfig`:
+     ```sh
+     cp configs/sdkconfig.<your_board> sdkconfig
+     cp configs/sdkconfig.<your_board> sdkconfig.defaults
+     ```
+     Replace `<your_board>` with the correct file for your hardware.
+
+3. **Set Up ESP-IDF Environment**
+   - Run the ESP-IDF export script for your shell:
+     - Bash:  
+       `source $IDF_PATH/export.sh`
+     - Windows CMD:  
+       `%IDF_PATH%\export.bat`
+     - Windows PowerShell:  
+       `%IDF_PATH%\export.ps1`
+
+4. **Configure the Project**
+   - Run:
+     ```sh
+     idf.py menuconfig
+     ```
+   - Use the menu to select your board, features, and custom options.
+
+5. **Build the Firmware**
+   ```sh
+   idf.py build
+   ```
+
+6. **Flash the Firmware**
+   - Connect your ESP32 device via USB.
+   - Run:
+     ```sh
+     idf.py -p /dev/ttyUSB0 flash
+     ```
+     Replace `/dev/ttyUSB0` with the correct port for your system.
+
+7. **Monitor Serial Output (Optional)**
+   ```sh
+   idf.py -p /dev/ttyUSB0 monitor
+   ```
+
+### Tips
+
+- If you encounter build errors, ensure your ESP-IDF version matches the project's requirements.
+- You can clean the build with `idf.py fullclean`.
+- For advanced customization, edit files in the `main/` and `include/` directories.
+
+---
+
 ## Troubleshooting
 
 If your build fails, check the following:
@@ -49,7 +120,7 @@ If your build fails, check the following:
 2. Review the workflow logs for any error messages
 3. Verify that you have selected compatible build options
 
-> **Note**: The build process may take several minutes to complete. You can monitor the progress in the Actions tab.
+> **Note**: The build process may take several minutes to complete. You can monitor the progress in the Actions tab or your terminal.
 
 ### Advanced Usage
 
