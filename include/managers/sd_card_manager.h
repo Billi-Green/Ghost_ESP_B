@@ -42,4 +42,7 @@ esp_err_t sd_card_load_config();
 void sd_card_print_config();
 bool sd_card_is_virtual_storage();
 
+// List evil portal directories from SD card
+int get_evil_portal_list(char portal_names[32][64]);
+
 #endif // SD_CARD_MANAGER_H

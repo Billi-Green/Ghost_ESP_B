@@ -1,5 +1,13 @@
 #include "managers/views/options_screen.h"
 #include "core/serial_manager.h"
+#include "core/commandline.h" // for get_evil_portal_list
+
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
+static char evil_portal_names[MAX_PORTALS][MAX_PORTAL_NAME];
+static const char *evil_portal_options[MAX_PORTALS + 1]; // +1 for NULL terminator
+
 #include "esp_timer.h"
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
@@ -15,6 +23,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
 
 static const char *TAG = "optionsScreen";
@@ -26,7 +35,8 @@ typedef enum {
     WIFI_MENU_SCANNING,
     WIFI_MENU_EVIL_PORTAL,
     WIFI_MENU_CONNECTION,
-    WIFI_MENU_MISC
+    WIFI_MENU_MISC,
+    WIFI_MENU_EVIL_PORTAL_SELECT // <-- Add this line
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -48,7 +58,9 @@ static const char *wifi_scanning_options[] = {
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
 
-static const char *wifi_evil_portal_options[] = {"Start Evil Portal", "Stop Evil Portal", NULL};
+static const char *wifi_evil_portal_options[] = {
+    "Start Evil Portal", "Stop Evil Portal", "Select Evil Portal", NULL
+};
 
 static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
 
@@ -238,6 +250,22 @@ void options_menu_create() {
             case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
             case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
+            case WIFI_MENU_EVIL_PORTAL_SELECT: // <-- Add this case
+            {
+                ESP_LOGI(TAG, "Populating evil portal selector...");
+                int count = get_evil_portal_list(evil_portal_names);
+                ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
+                if (count == 0) {
+                    evil_portal_options[0] = "default";
+                    evil_portal_options[1] = NULL;
+                    ESP_LOGI(TAG, "No portals found, using 'default'");
+                } else {
+                    for (int i = 0; i < count; ++i) evil_portal_options[i] = evil_portal_names[i];
+                    evil_portal_options[count] = NULL;
+                }
+                options = evil_portal_options;
+                break;
+            }
         }
         break;
     case OT_Bluetooth: options = bluetooth_options; break;
@@ -668,6 +696,20 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Select Evil Portal") == 0) {
+    current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
+    display_manager_switch_view(&options_menu_view);
+    return;
+}
+else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+    // Selected_Option is the portal name
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "startportal %s FreeWiFi", Selected_Option);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    return;
+}
+
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("startwd");
@@ -987,7 +1029,7 @@ void handle_option_directly(const char *Selected_Option) {
     option_event_cb(&e);
 }
 
-void options_menu_destroy(void) {
+void options_menu_destroy() {
     if (options_menu_view.root) {
         if (menu_container) {
             lv_obj_clean(menu_container);
@@ -1028,7 +1070,10 @@ View options_menu_view = {.root = NULL,
                           .get_hardwareinput_callback = get_options_menu_callback};
 
 static void back_event_cb(lv_event_t *e) {
-    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
+        display_manager_switch_view(&options_menu_view);
+    } else if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
     } else {

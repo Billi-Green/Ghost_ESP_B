@@ -539,8 +539,8 @@ void handle_start_portal(int argc, char **argv) {
     strcpy(final_url_or_path, url);
 
     // Only prepend /mnt/ if it's not the default portal and doesn't already start with /mnt/
-    if (strcmp(url, "default") != 0 && strncmp(final_url_or_path, "/mnt/", 5) != 0) {
-        const char *prefix = "/mnt/";
+    if (strcmp(url, "default") != 0 && strncmp(final_url_or_path, "/mnt/ghostesp/evil_portal/portals/", 5) != 0) {
+        const char *prefix = "/mnt/ghostesp/evil_portal/portals/";
         size_t prefix_len = strlen(prefix);
         size_t current_len = strlen(final_url_or_path);
         if (current_len + prefix_len >= MAX_PORTAL_PATH_LEN) {

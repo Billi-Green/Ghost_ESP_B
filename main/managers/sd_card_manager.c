@@ -927,3 +927,30 @@ bool sd_card_is_virtual_storage() {
   return false;
 #endif
 }
+
+#include <dirent.h>
+#include <string.h>
+
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
+int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]) {
+    const char *portal_dir = "/mnt/ghostesp/evil_portal/portals";
+    DIR *dir = opendir(portal_dir);
+    if (!dir) return 0;
+    struct dirent *entry;
+    int count = 0;
+    while ((entry = readdir(dir)) && count < MAX_PORTALS) {
+        // Only include regular files with .html extension
+        if (entry->d_type == DT_REG) {
+            const char *dot = strrchr(entry->d_name, '.');
+            if (dot && strcmp(dot, ".html") == 0) {
+                strncpy(portal_names[count], entry->d_name, MAX_PORTAL_NAME - 1);
+                portal_names[count][MAX_PORTAL_NAME - 1] = '\0';
+                count++;
+            }
+        }
+    }
+    closedir(dir);
+    return count;
+}
