@@ -79,7 +79,7 @@ static const char *wifi_scanning_options[] = {
 static void switch_to_settings_category(int cat_idx);
 
 static const char *wifi_evil_portal_options[] = {
-    "Start Evil Portal", "Stop Evil Portal", "Select Evil Portal", NULL
+    "Start Evil Portal", "Start Custom Evil Portal", "Stop Evil Portal", NULL
 };
 
 
@@ -949,7 +949,7 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
-    else if (strcmp(Selected_Option, "Select Evil Portal") == 0) {
+    else if (strcmp(Selected_Option, "Start Custom Evil Portal") == 0) {
         current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
         display_manager_switch_view(&options_menu_view);
         return;
