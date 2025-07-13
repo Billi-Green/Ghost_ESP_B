@@ -5,9 +5,12 @@
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
 
+static char selected_portal[MAX_PORTAL_NAME] = {0}; // <-- Move here
+
 static char evil_portal_names[MAX_PORTALS][MAX_PORTAL_NAME];
 static const char *evil_portal_options[MAX_PORTALS + 1]; // +1 for NULL terminator
 
+#include "managers/views/keyboard_screen.h"
 #include "esp_timer.h"
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
@@ -205,6 +208,8 @@ static void init_shared_styles(void) {
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
+
+static void evil_portal_ssid_cb(const char *ssid); // <--- Add this line
 
 // Add scroll functions
 static void scroll_options_up(lv_event_t *e) {
@@ -945,18 +950,19 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Select Evil Portal") == 0) {
-    current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
-    display_manager_switch_view(&options_menu_view);
-    return;
-}
-else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
-    // Selected_Option is the portal name
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "startportal %s FreeWiFi", Selected_Option);
-    display_manager_switch_view(&terminal_view);
-    simulateCommand(cmd);
-    return;
-}
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        // Prompt for SSID after selecting portal
+        strncpy(selected_portal, Selected_Option, MAX_PORTAL_NAME-1);
+        selected_portal[MAX_PORTAL_NAME-1] = '\0';
+        keyboard_view_set_submit_callback(evil_portal_ssid_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("SSID");
+        return;
+    }
 
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
         display_manager_switch_view(&terminal_view);
@@ -1330,6 +1336,16 @@ static void switch_to_settings_category(int cat_idx) {
     build_item_index = 0;
     current_settings_category = cat_idx;
     menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+}
+
+static void evil_portal_ssid_cb(const char *ssid) {
+    if (!ssid || !selected_portal[0]) return;
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "startportal %s %s", selected_portal, ssid);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL); // Clear callback after use
+    selected_portal[0] = '\0'; // Clear for safety
 }
 
 static void wifi_connect_kb_cb(const char *text){
