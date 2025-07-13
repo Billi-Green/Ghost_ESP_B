@@ -7,24 +7,28 @@
     <style>
         /* CSS Variables for Colors and Fonts */
         :root {
-            --background-color: #000000;
+            --background-color: #0e0e0e;
             --surface-color: #0a0a0a;
             --primary-color: #ffffff;
             --secondary-color: #1a1a1a;
-            --accent-color: #ffffff;
-            --text-primary: #ffffff;
+            --accent-color: #ff6b9d;
+            --accent-blue: #4ecdc4;
+            --accent-pink: #ff6b9d;
+            --text-primary: #bdb8b8;
             --text-secondary: rgba(255, 255, 255, 0.7);
-            --gradient-1: linear-gradient(135deg, #ffffff, #dddddd);
+            --gradient-1: linear-gradient(135deg, #ff6b9d, #4ecdc4);
             --gradient-2: linear-gradient(45deg, #111111, #050505);
-            --card-bg: rgba(5, 5, 5, 0.85);
+            --gradient-accent: linear-gradient(135deg, #ff6b9d, #4ecdc4, #ffffff);
+            --card-bg: rgba(27, 27, 27, 0.85);
             --border-color: #ffffff;
+            --border-accent: linear-gradient(135deg, #ff6b9d, #4ecdc4);
             --tooltip-bg: #000000;
             --tooltip-text: #ffffff;
             --input-bg: rgba(20, 20, 20, 0.7);
-            --input-border: #ffffff;
-            --font-display: 'Courier New', monospace;
-            --font-mono: 'Courier New', monospace;
-            --font-body: 'Courier New', sans-serif;
+            --input-border: #ffffff00;
+            --font-display: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+            --font-mono: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+            --font-body: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
         }
 
         /* Reset Styles */
@@ -92,9 +96,10 @@
 
         h1 {
             font-size: 1.8rem; /* Reduced for mobile to prevent wrapping */
-            background: var(--gradient-1);
+            background: var(--text-primary);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin-top: 2rem;
         }
 
@@ -140,8 +145,9 @@
 
         .tab button:hover,
         .tab button.active {
-            background-color: var(--primary-color);
+            background: var(--gradient-1);
             color: var(--background-color);
+            box-shadow: 0 0 10px rgba(255, 107, 157, 0.3);
         }
 
         /* Tab Content */
@@ -372,7 +378,6 @@
 
         .settings-section {
             flex: 1 1 calc(50% - 20px);
-            background-color: var(--secondary-color);
             border: 2px solid var(--border-color);
             padding: 20px;
             border-radius: 30px;
@@ -419,7 +424,6 @@
             font-family: inherit;
             font-size: 16px;
             background-color: var(--gradient-2);
-            border: 2px solid var(--gradient-2);
             color: var(--text-primary);
             border-radius: 6px;
             margin-top: 4px;
@@ -432,7 +436,6 @@
         input[type="color"]:focus,
         select:focus,
         textarea:focus {
-            border-color: var(--primary-color);
             background-color: #080808;
             outline: none;
         }
@@ -743,7 +746,7 @@
 
         /* Settings Section Styles */
         .settings-section {
-            background: rgba(10, 10, 15, 0.8);
+            background: rgba(10, 10, 15, 0.0);
             border: 2px solid var(--border-color);
             border-radius: 12px;
             padding: 20px;
@@ -755,7 +758,7 @@
             color: var(--primary-color);
             font-size: 1.8rem;
             margin-bottom: 20px;
-            text-align: left;
+            text-align: center;
             background: none;
             -webkit-text-fill-color: var(--primary-color);
         }
@@ -778,7 +781,7 @@
         select,
         textarea {
             border-radius: 12px;
-            border: 2px solid var(--border-color);
+            border: none;
             padding: 12px 15px;
             transition: all 0.3s ease;
             background: rgba(0, 0, 0, 0.3);
@@ -789,8 +792,8 @@
         select:focus,
         textarea:focus {
             outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.5);
+            box-shadow: 0 0 0 2px rgba(255, 107, 157, 0.5);
             transform: translateY(-1px);
         }
 
@@ -981,6 +984,79 @@
             }
         }
 
+        /* Quick Commands Styling */
+        .quick-commands-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .command-category {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .category-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 15px;
+            background: rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            user-select: none;
+        }
+
+        .category-header:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .category-header span:first-child {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .category-arrow {
+            color: var(--text-secondary);
+            font-size: 0.8em;
+            transition: transform 0.3s ease;
+        }
+
+        .category-content {
+            display: none;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.1);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .category-content.show {
+            display: block;
+        }
+
+        .category-content button {
+            margin: 5px 5px 5px 0;
+            display: inline-block;
+        }
+
+        .category-header.expanded .category-arrow {
+            transform: rotate(180deg);
+        }
+
+        @media (max-width: 768px) {
+            .category-content {
+                padding: 10px;
+            }
+            
+            .category-content button {
+                margin: 3px 3px 3px 0;
+                font-size: 0.8em;
+                padding: 6px 12px;
+            }
+        }
+
         .pin-config-container {
             display: flex;
             flex-wrap: wrap;
@@ -998,7 +1074,7 @@
         }
 
         .settings-section h3 { /* Style h3 within settings sections */
-            text-align: left;
+            text-align: center;
             margin-top: 0;
             margin-bottom: 15px;
             font-size: 1.2rem; /* Match h2 slightly smaller */
@@ -1107,13 +1183,14 @@
 </head>
 <body>
     <div class="container">
-        <h1>GhostESP: Revival v1.6</h1>
+        <h1>GhostESP: Revival v1.7 dev</h1>
         <!-- Tab Navigation -->
         <div class="tab">
             <button class="tablinks active" onclick="openTab(event, 'Settings')" id="defaultTab">Settings</button>
             <button class="tablinks" onclick="openTab(event, 'Help')">Help</button>
             <button class="tablinks" onclick="openTab(event, 'SDCard')">SD Card</button>
             <button class="tablinks" onclick="openTab(event, 'Terminal')">Terminal</button>
+            <button class="tablinks" onclick="openTab(event, 'DualComm')">Dual Comm</button>
         </div>
         <!-- Settings Tab Content -->
         <div id="Settings" class="tabcontent show">
@@ -1440,7 +1517,7 @@
         <div id="Help" class="tabcontent">
             <div class="settings-grid">
                 <div class="settings-section">
-                    <h2>ESP32 Commands</h2>
+                    <h2>Ghost ESP Commands</h2>
                     <ul class="help-list">
                         <li>
                             <strong>help</strong>: Display this help message.<br>
@@ -1448,10 +1525,10 @@
                         </li>
                         <li>
                             <strong>scanap</strong>: Start a Wi-Fi access point (AP) scan.<br>
-                            <strong>Usage:</strong> <code>scanap</code>
+                            <strong>Usage:</strong> <code>scanap [seconds]</code>
                         </li>
                         <li>
-                            <strong>scansta</strong>: Start scanning for Wi-Fi stations.<br>
+                            <strong>scansta</strong>: Start scanning for Wi-Fi stations (hops channels).<br>
                             <strong>Usage:</strong> <code>scansta</code>
                         </li>
                         <li>
@@ -1459,17 +1536,20 @@
                             <strong>Usage:</strong> <code>stopscan</code>
                         </li>
                         <li>
-                            <strong>attack</strong>: Launch an attack (e.g., deauthentication attack).<br>
-                            <strong>Usage:</strong> <code>attack -d</code><br>
+                            <strong>attack</strong>: Launch an attack (e.g., deauthentication attack). Supports multiple selected APs when using 'select -a 1,2,3'.<br>
+                            <strong>Usage:</strong> <code>attack -d | attack -e | attack -s</code><br>
                             <strong>Arguments:</strong><br>
-                            <code>-d</code>: Start deauth attack
+                            <code>-d</code>: Start deauth attack (supports multiple APs)<br>
+                            <code>-e</code>: Start EAPOL logoff attack<br>
+                            <code>-s</code>: Start SAE flood attack (ESP32-C5/C6 only)
                         </li>
                         <li>
                             <strong>list</strong>: List Wi-Fi scan results or connected stations.<br>
-                            <strong>Usage:</strong> <code>list -a | list -s</code><br>
+                            <strong>Usage:</strong> <code>list -a | list -s | list -airtags</code><br>
                             <strong>Arguments:</strong><br>
                             <code>-a</code>: Show access points from Wi-Fi scan<br>
-                            <code>-s</code>: List connected stations
+                            <code>-s</code>: List connected stations<br>
+                            <code>-airtags</code>: List discovered AirTags
                         </li>
                         <li>
                             <strong>beaconspam</strong>: Start beacon spam with different modes.<br>
@@ -1489,21 +1569,23 @@
                             <strong>Usage:</strong> <code>stopdeauth</code>
                         </li>
                         <li>
-                            <strong>select</strong>: Select an access point by index from scan results.<br>
-                            <strong>Usage:</strong> <code>select -a &lt;number&gt;</code><br>
+                            <strong>select</strong>: Select access point(s), station, or AirTag by index from the scan results.<br>
+                            <strong>Usage:</strong> <code>select -a &lt;num[,num,...]&gt; | select -s &lt;num&gt; | select -airtag &lt;num&gt;</code><br>
                             <strong>Arguments:</strong><br>
-                            <code>-a</code>: AP selection index (must be a valid number)
+                            <code>-a</code>: AP selection index (supports multiple: 1,3,5)<br>
+                            <code>-s</code>: Station selection index<br>
+                            <code>-airtag</code>: AirTag selection index<br>
+                            <strong>Examples:</strong><br>
+                            <code>select -a 4</code>: Select single AP at index 4<br>
+                            <code>select -a 1,3,5</code>: Select multiple APs at indices 1, 3, and 5
                         </li>
                         <li>
-                            <strong>startportal</strong>: Start an Evil Portal.<br>
-                            <strong>Usage:</strong> <code>startportal &lt;FilePath&gt; &lt;AP_SSID&gt; &lt;PSK&gt;</code><br>
-                            <strong>Arguments:</strong><br>
-                            <code>&lt;FilePath&gt;</code>: Local file path (e.g., index.html)<br>
-                            <code>&lt;AP_SSID&gt;</code>: SSID for the access point<br>
-                            <code>&lt;PSK&gt;</code>: PSK for the access point
+                            <strong>startportal</strong>: Start an Evil Portal using a local file or the default embedded page. /mnt/ prefix is added automatically to file paths if missing.<br>
+                            <strong>Usage:</strong> <code>startportal [FilePath] [AP_SSID] [PSK]</code><br>
+                            PSK is optional for an open network. Use 'default' as the file path for the default Evil Portal.
                         </li>
                         <li>
-                            <strong>stopportal</strong>: Stop the Evil Portal.<br>
+                            <strong>stopportal</strong>: Stop Evil Portal.<br>
                             <strong>Usage:</strong> <code>stopportal</code>
                         </li>
                         <li>
@@ -1517,28 +1599,39 @@
                             <code>-s</code>: Stop BLE scanning
                         </li>
                         <li>
-                            <strong>capture</strong>: Start a Wi-Fi capture (requires SD card or Flipper).<br>
+                            <strong>blespam</strong>: Start BLE advertisement spam attacks.<br>
+                            <strong>Usage:</strong> <code>blespam [OPTION]</code><br>
+                            <strong>Arguments:</strong><br>
+                            <code>-apple</code>: Apple device spam (AirPods, Apple TV, etc.)<br>
+                            <code>-ms</code>: Microsoft Swift Pair spam<br>
+                            <code>-samsung</code>: Samsung Galaxy Watch spam<br>
+                            <code>-google</code>: Google Fast Pair spam<br>
+                            <code>-random</code>: Random spam (cycles through all types)<br>
+                            <code>-s</code>: Stop BLE spam
+                        </li>
+                        <li>
+                            <strong>capture</strong>: Start a WiFi Capture (Requires SD Card or Flipper).<br>
                             <strong>Usage:</strong> <code>capture [OPTION]</code><br>
                             <strong>Arguments:</strong><br>
-                            <code>-probe</code>: Start capturing probe packets<br>
-                            <code>-beacon</code>: Start capturing beacon packets<br>
-                            <code>-deauth</code>: Start capturing deauth packets<br>
-                            <code>-raw</code>: Start capturing raw packets<br>
-                            <code>-wps</code>: Start capturing WPS packets and their auth type<br>
-                            <code>-pwn</code>: Start capturing Pwnagotchi packets<br>
-                            <code>-stop</code>: Stop the active capture
+                            <code>-probe</code>: Start Capturing Probe Packets<br>
+                            <code>-beacon</code>: Start Capturing Beacon Packets<br>
+                            <code>-deauth</code>: Start Capturing Deauth Packets<br>
+                            <code>-raw</code>: Start Capturing Raw Packets<br>
+                            <code>-wps</code>: Start Capturing WPS Packets and their Auth Type<br>
+                            <code>-pwn</code>: Start Capturing Pwnagotchi Packets<br>
+                            <code>-stop</code>: Stops the active capture
                         </li>
                         <li>
-                            <strong>connect</strong>: Connect to a specific Wi-Fi network.<br>
-                            <strong>Usage:</strong> <code>connect &lt;SSID&gt; &lt;Password&gt;</code>
+                            <strong>connect</strong>: Connects to Specific WiFi Network and saves credentials.<br>
+                            <strong>Usage:</strong> <code>connect &lt;SSID&gt; [Password]</code>
                         </li>
                         <li>
-                            <strong>dialconnect</strong>: Cast a random YouTube video on all smart TVs on LAN.<br>
+                            <strong>dialconnect</strong>: Cast a Random Youtube Video on all Smart TV's on your LAN (Requires You to Run Connect First).<br>
                             <strong>Usage:</strong> <code>dialconnect</code>
                         </li>
                         <li>
-                            <strong>powerprinter</strong>: Print custom text to a printer on LAN.<br>
-                            <strong>Usage:</strong> <code>powerprinter &lt;Printer IP&gt; &lt;Text&gt; &lt;FontSize&gt; &lt;Alignment&gt;</code><br>
+                            <strong>powerprinter</strong>: Print Custom Text to a Printer on your LAN (Requires You to Run Connect First).<br>
+                            <strong>Usage:</strong> <code>powerprinter &lt;Printer IP&gt; &lt;Text&gt; &lt;FontSize&gt; &lt;alignment&gt;</code><br>
                             <strong>Alignment options:</strong> CM = Center Middle, TL = Top Left, TR = Top Right, BR = Bottom Right, BL = Bottom Left
                         </li>
                         <li>
@@ -1546,6 +1639,12 @@
                             <strong>Usage:</strong> <code>blewardriving [-s]</code><br>
                             <strong>Arguments:</strong><br>
                             <code>-s</code>: Stop BLE wardriving
+                        </li>
+                        <li>
+                            <strong>pineap</strong>: Start/Stop detecting WiFi Pineapples.<br>
+                            <strong>Usage:</strong> <code>pineap [-s]</code><br>
+                            <strong>Arguments:</strong><br>
+                            <code>-s</code>: Stop PineAP detection
                         </li>
                         <li>
                             <strong>scanports</strong>: Scan ports on local subnet or specific IP.<br>
@@ -1557,9 +1656,136 @@
                             <code>start_port-end_port</code>: Custom port range (e.g. 80-443)
                         </li>
                         <li>
-                            <strong>setrgbpins</strong>: Change RGB LED pins configuration.<br>
+                            <strong>congestion</strong>: Display Wi-Fi channel congestion chart.<br>
+                            <strong>Usage:</strong> <code>congestion</code>
+                        </li>
+                        <li>
+                            <strong>apcred</strong>: Change or reset the GhostNet AP credentials.<br>
+                            <strong>Usage:</strong> <code>apcred &lt;ssid&gt; &lt;password&gt;</code><br>
+                            <code>apcred -r</code> (reset to defaults)<br>
+                            <strong>Arguments:</strong><br>
+                            <code>&lt;ssid&gt;</code>: New SSID for the AP<br>
+                            <code>&lt;password&gt;</code>: New password (min 8 characters)<br>
+                            <code>-r</code>: Reset to default (GhostNet/GhostNet)
+                        </li>
+                        <li>
+                            <strong>rgbmode</strong>: Control LED effects (rainbow, police, strobe, off).<br>
+                            <strong>Usage:</strong> <code>rgbmode &lt;rainbow|police|strobe|off|color&gt;</code>
+                        </li>
+                        <li>
+                            <strong>setrgbpins</strong>: Change RGB LED pins.<br>
                             <strong>Usage:</strong> <code>setrgbpins &lt;red&gt; &lt;green&gt; &lt;blue&gt;</code><br>
                             <strong>Note:</strong> Use same value for all pins for single-pin LED strips
+                        </li>
+                        <li>
+                            <strong>sd_config</strong>: Show the currently configured GPIO pins for both SDMMC and SPI modes.<br>
+                            <strong>Usage:</strong> <code>sd_config</code>
+                        </li>
+                        <li>
+                            <strong>sd_pins_mmc</strong>: Set GPIO pins for SDMMC mode (1 or 4 bit). Requires restart/reinit. Only effective if firmware compiled for SDMMC mode.<br>
+                            <strong>Usage:</strong> <code>sd_pins_mmc &lt;clk&gt; &lt;cmd&gt; &lt;d0&gt; &lt;d1&gt; &lt;d2&gt; &lt;d3&gt;</code><br>
+                            <strong>Example:</strong> <code>sd_pins_mmc 19 18 20 21 22 23</code>
+                        </li>
+                        <li>
+                            <strong>sd_pins_spi</strong>: Set GPIO pins for SPI mode. Requires restart/reinit. Only effective if firmware compiled for SPI mode.<br>
+                            <strong>Usage:</strong> <code>sd_pins_spi &lt;cs&gt; &lt;clk&gt; &lt;miso&gt; &lt;mosi&gt;</code><br>
+                            <strong>Example:</strong> <code>sd_pins_spi 5 18 19 23</code>
+                        </li>
+                        <li>
+                            <strong>sd_save_config</strong>: Save the current SD pin configuration (both modes) to the SD card. Requires SD card to be mounted.<br>
+                            <strong>Usage:</strong> <code>sd_save_config</code>
+                        </li>
+                        <li>
+                            <strong>scanall</strong>: Perform combined AP and Station scan, display results.<br>
+                            <strong>Usage:</strong> <code>scanall [seconds]</code>
+                        </li>
+                        <li>
+                            <strong>timezone</strong>: Set the display timezone for the clock view.<br>
+                            <strong>Usage:</strong> <code>timezone &lt;TZ_STRING&gt;</code>
+                        </li>
+                        <li>
+                            <strong>beaconadd</strong>: Add an SSID to the beacon spam list.<br>
+                            <strong>Usage:</strong> <code>beaconadd &lt;SSID&gt;</code>
+                        </li>
+                        <li>
+                            <strong>beaconremove</strong>: Remove an SSID from the beacon spam list.<br>
+                            <strong>Usage:</strong> <code>beaconremove &lt;SSID&gt;</code>
+                        </li>
+                        <li>
+                            <strong>beaconclear</strong>: Clear the beacon spam list.<br>
+                            <strong>Usage:</strong> <code>beaconclear</code>
+                        </li>
+                        <li>
+                            <strong>beaconshow</strong>: Show the current beacon spam list.<br>
+                            <strong>Usage:</strong> <code>beaconshow</code>
+                        </li>
+                        <li>
+                            <strong>beaconspamlist</strong>: Start beacon spamming using the beacon spam list.<br>
+                            <strong>Usage:</strong> <code>beaconspamlist</code>
+                        </li>
+                        <li>
+                            <strong>dhcpstarve</strong>: DHCP starvation flood attack.<br>
+                            <strong>Usage:</strong> <code>dhcpstarve start [threads]</code><br>
+                            <code>dhcpstarve stop</code><br>
+                            <code>dhcpstarve display</code>
+                        </li>
+                        <li>
+                            <strong>saeflood</strong>: SAE handshake flooding attack (ESP32-C5/C6 only).<br>
+                            <strong>Usage:</strong> <code>saeflood</code> (requires selected WPA3 AP)
+                        </li>
+                        <li>
+                            <strong>stopsaeflood</strong>: Stop SAE flood attack.<br>
+                            <strong>Usage:</strong> <code>stopsaeflood</code>
+                        </li>
+                        <li>
+                            <strong>saefloodhelp</strong>: Show detailed SAE flood attack help.<br>
+                            <strong>Usage:</strong> <code>saefloodhelp</code>
+                        </li>
+                        <li>
+                            <strong>setcountry</strong>: Set the Wi-Fi country code (ESP32-C5 only).<br>
+                            <strong>Usage:</strong> <code>setcountry &lt;CC&gt;</code><br>
+                            <strong>Arguments:</strong><br>
+                            <code>&lt;CC&gt;</code>: Two-letter ISO country code (e.g., US, GB, JP)
+                        </li>
+                        <li>
+                            <strong>listenprobes</strong>: Listen for and log probe requests.<br>
+                            <strong>Usage:</strong> <code>listenprobes [channel] [stop]</code><br>
+                            <strong>Arguments:</strong><br>
+                            <code>[channel]</code>: Listen on specific channel (1-165), omit for channel hopping<br>
+                            <code>stop</code>: Stop probe request listening
+                        </li>
+                        <li>
+                            <strong>webauth</strong>: Enable/disable web authentication.<br>
+                            <strong>Usage:</strong> <code>webauth &lt;enable|disable&gt;</code>
+                        </li>
+                        <li>
+                            <strong>commdiscovery</strong>: Check discovery status (auto-starts on boot).<br>
+                            <strong>Usage:</strong> <code>commdiscovery</code>
+                        </li>
+                        <li>
+                            <strong>commconnect</strong>: Connect to a discovered peer ESP32.<br>
+                            <strong>Usage:</strong> <code>commconnect &lt;peer_name&gt;</code><br>
+                            <strong>Example:</strong> <code>commconnect ESP_A1B2C3</code>
+                        </li>
+                        <li>
+                            <strong>commsend</strong>: Send a command to connected peer ESP32.<br>
+                            <strong>Usage:</strong> <code>commsend &lt;command&gt; [data]</code><br>
+                            <strong>Examples:</strong><br>
+                            <code>commsend scanap</code><br>
+                            <code>commsend hello world</code>
+                        </li>
+                        <li>
+                            <strong>commstatus</strong>: Show communication status and connection state.<br>
+                            <strong>Usage:</strong> <code>commstatus</code>
+                        </li>
+                        <li>
+                            <strong>commdisconnect</strong>: Disconnect from current peer.<br>
+                            <strong>Usage:</strong> <code>commdisconnect</code>
+                        </li>
+                        <li>
+                            <strong>commsetpins</strong>: Change communication GPIO pins at runtime.<br>
+                            <strong>Usage:</strong> <code>commsetpins &lt;tx_pin&gt; &lt;rx_pin&gt;</code><br>
+                            <strong>Example:</strong> <code>commsetpins 4 5</code>
                         </li>
                     </ul>
                 </div>
@@ -1630,6 +1856,155 @@
                 <div class="terminal-input-container">
                     <input type="text" id="terminalInput" placeholder="Enter command...">
                     <button onclick="sendTerminalCommand()">Send</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dual Communication Tab Content -->
+        <div id="DualComm" class="tabcontent">
+            <!-- Connection State -->
+            <div class="settings-section">
+                <h2>Connection State</h2>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="comm-state-display" style="font-weight: bold; color: var(--primary-color); font-size: 1.2em;">Unknown</span>
+                        <div id="comm-state-indicator" style="width: 12px; height: 12px; border-radius: 50%; background-color: #666;"></div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <button class="small" onclick="disconnectFromPeer()">Disconnect</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-grid">
+                <!-- Dual Communication Pin Configuration -->
+                <div class="settings-section">
+                    <h2>Pin Configuration</h2>
+                    <div class="pin-config-container">
+                        <div class="pin-group">
+                            <h3>UART Communication Pins</h3>
+                            <div class="pin-input">
+                                <label for="comm-tx-pin">TX Pin:</label>
+                                <input type="number" id="comm-tx-pin" min="0" max="48" placeholder="6">
+                            </div>
+                            <div class="pin-input">
+                                <label for="comm-rx-pin">RX Pin:</label>
+                                <input type="number" id="comm-rx-pin" min="0" max="48" placeholder="7">
+                            </div>
+                            <button class="update-comm-pins-btn small">Update Pins</button>
+                        </div>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="refresh-comm-pins-btn small">Refresh Current Values</button>
+                    </div>
+                    <p style="font-size: 0.9em; color: var(--text-secondary); margin-top: 10px;">
+                        <strong>Note:</strong> Changing pins will disconnect from any connected peer. Default pins are TX:6, RX:7.
+                        Make sure both devices use the same pin configuration for communication.
+                    </p>
+                </div>
+
+                <!-- Quick Commands -->
+                <div class="settings-section">
+                    <h2>Quick Commands</h2>
+
+                    <div class="quick-commands-container">
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('wifi-commands')">
+                                <span>WiFi Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="wifi-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('scanap')">Scan APs</button>
+                                <button class="small" onclick="sendQuickCommand('scansta')">Scan STAs</button>
+                                <button class="small" onclick="sendQuickCommand('list -a')">List APs</button>
+                                <button class="small" onclick="sendQuickCommand('list -s')">List STAs</button>
+                                <button class="small" onclick="sendQuickCommand('stopscan')">Stop Scan</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('attack-commands')">
+                                <span>Attack Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="attack-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('attack -d')">Deauth Attack</button>
+                                <button class="small" onclick="sendQuickCommand('beaconspam -r')">Random Beacon Spam</button>
+                                <button class="small" onclick="sendQuickCommand('beaconspam -rr')">Rickroll Spam</button>
+                                <button class="small" onclick="sendQuickCommand('beaconspam -l')">AP List Spam</button>
+                                <button class="small" onclick="sendQuickCommand('stopdeauth')">Stop Deauth</button>
+                                <button class="small" onclick="sendQuickCommand('stopspam')">Stop Spam</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('ble-commands')">
+                                <span>BLE Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="ble-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('blescan -r')">Raw BLE Scan</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -f')">Find Flippers</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -ds')">Spam Detector</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -a')">AirTag Scanner</button>
+                                <button class="small" onclick="sendQuickCommand('blescan -s')">Stop BLE Scan</button>
+                                <button class="small" onclick="sendQuickCommand('blewardriving')">BLE Wardriving</button>
+                                <button class="small" onclick="sendQuickCommand('blewardriving -s')">Stop Wardriving</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('capture-commands')">
+                                <span>Capture Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="capture-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('capture -probe')">Capture Probes</button>
+                                <button class="small" onclick="sendQuickCommand('capture -beacon')">Capture Beacons</button>
+                                <button class="small" onclick="sendQuickCommand('capture -deauth')">Capture Deauth</button>
+                                <button class="small" onclick="sendQuickCommand('capture -raw')">Capture Raw</button>
+                                <button class="small" onclick="sendQuickCommand('capture -wps')">Capture WPS</button>
+                                <button class="small" onclick="sendQuickCommand('capture -pwn')">Capture Pwnagotchi</button>
+                                <button class="small" onclick="sendQuickCommand('capture -stop')">Stop Capture</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('network-commands')">
+                                <span>Network Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="network-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('scanports local -C')">Scan Local Ports</button>
+                                <button class="small" onclick="sendQuickCommand('scanports local -A')">Scan All Ports</button>
+                                <button class="small" onclick="sendQuickCommand('dialconnect')">Cast to TVs</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('system-commands')">
+                                <span>System Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="system-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('help')">Help</button>
+                                <button class="small" onclick="sendQuickCommand('stopportal')">Stop Portal</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dual Communication Terminal -->
+            <div class="settings-section terminal-container">
+                <h2>Dual Communication Terminal</h2>
+                <p style="text-align: center; color: var(--text-secondary); margin-bottom: 10px;">
+                    <strong>Commands sent to connected peer device</strong> - Type commands like <code>scanap</code>, <code>attack -d</code>, <code>beaconspam -r</code>
+                </p>
+                <div id="commTerminalOutput" class="terminal-output"></div>
+                <div class="terminal-input-container">
+                    <input type="text" id="commTerminalInput" placeholder="Enter command to send to peer...">
+                    <button onclick="sendCommTerminalCommand()">Send</button>
                 </div>
             </div>
         </div>
@@ -1937,8 +2312,24 @@
             document.getElementById(tabName).classList.add("show");
             evt.currentTarget.classList.add("active");
 
+            // Handle tab-specific initialization
             if (tabName === "SDCard") {
                 fetchSDCardData();
+            } else if (tabName === "DualComm") {
+                // Initialize terminal content baseline to avoid showing historical logs
+                fetch('/api/logs')
+                    .then(response => response.text())
+                    .then(logs => {
+                        lastTerminalContent = logs;
+                    })
+                    .catch(error => console.error('Error initializing terminal baseline:', error));
+                
+                startCommStatusPolling();
+                addCommTerminalMessage('Dual Communication tab activated');
+                clearCommTerminal(); // Start with clean terminal
+            } else {
+                // Stop dual comm polling when switching away from the tab
+                stopCommStatusPolling();
             }
         }
 
@@ -1983,6 +2374,14 @@
 
                     // Display timeout setting
                     document.getElementById('display_timeout').value = data.display_timeout || DEFAULT_DISPLAY_TIMEOUT_MS;
+
+                    // Dual Communication Pin Settings
+                    if (data.esp_comm_tx_pin !== undefined) {
+                        document.getElementById('comm-tx-pin').value = data.esp_comm_tx_pin;
+                    }
+                    if (data.esp_comm_rx_pin !== undefined) {
+                        document.getElementById('comm-rx-pin').value = data.esp_comm_rx_pin;
+                    }
                 })
                 .catch(error => console.error('Error fetching settings:', error));
         }
@@ -2205,6 +2604,8 @@
         // Load settings on window load
         window.onload = function() {
             loadSettings();
+            // Initialize dual comm terminal with welcome message
+            addCommTerminalMessage('Dual Communication Terminal ready - Switch to Dual Comm tab to start using');
         };
 
         function sendTerminalCommand() {
@@ -2292,8 +2693,303 @@
             }
         });
 
+        // Add event listener for Enter key in dual communication terminal input
+        document.getElementById('commTerminalInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendCommTerminalCommand();
+            }
+        });
+
         // Start polling for terminal updates
         updateTerminal();
+
+        // Dual Communication JavaScript Functions
+        let commStatusInterval = null;
+        let commTerminalMessages = [];
+
+        // Function to update dual communication status
+        function updateCommStatus() {
+            fetch('/api/esp_comm/status')
+                .then(response => response.json())
+                .then(data => {
+                    const stateDisplay = document.getElementById('comm-state-display');
+                    const stateIndicator = document.getElementById('comm-state-indicator');
+
+                    // Update state display
+                    stateDisplay.textContent = data.state.charAt(0).toUpperCase() + data.state.slice(1);
+                    
+                    // Update state indicator color
+                    let indicatorColor = '#666'; // default gray
+                    switch (data.state) {
+                        case 'idle': indicatorColor = '#666'; break;
+                        case 'scanning': indicatorColor = '#ffa500'; break; // orange
+                        case 'handshake': indicatorColor = '#ffff00'; break; // yellow
+                        case 'connected': indicatorColor = '#00ff00'; break; // green
+                        case 'error': indicatorColor = '#ff0000'; break; // red
+                    }
+                    stateIndicator.style.backgroundColor = indicatorColor;
+                })
+                .catch(error => {
+                    console.error('Error fetching ESP comm status:', error);
+                    addCommTerminalMessage('Error: Failed to fetch status');
+                });
+        }
+
+
+
+        // Function to disconnect from peer
+        function disconnectFromPeer() {
+            addCommTerminalMessage('Disconnecting from peer...');
+            
+            const payload = { action: 'disconnect' };
+            
+            fetch('/api/esp_comm/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                addCommTerminalMessage(`Disconnect: ${data.message}`);
+                if (data.success) {
+                    addCommTerminalMessage('Disconnected successfully!');
+                } else {
+                    addCommTerminalMessage(`Failed to disconnect: ${data.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error disconnecting:', error);
+                addCommTerminalMessage('Error: Failed to disconnect');
+            });
+        }
+
+        // Function to send dual communication terminal command
+        function sendCommTerminalCommand() {
+            const input = document.getElementById('commTerminalInput');
+            const command = input.value.trim();
+            
+            if (!command) {
+                alert('Please enter a command');
+                return;
+            }
+
+            // Add command to terminal display
+            addCommTerminalMessage(`> ${command}`);
+
+            const payload = { 
+                command: command
+            };
+            
+            fetch('/api/esp_comm/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    addCommTerminalMessage('Command sent successfully');
+                    // Clear the input
+                    input.value = '';
+                } else {
+                    addCommTerminalMessage(`Failed: ${result.message}`);
+                    alert(`Failed to send command: ${result.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error sending command:', error);
+                addCommTerminalMessage('Error: Failed to send command');
+                alert('Error sending command');
+            });
+        }
+
+        // Function to send quick commands
+        function sendQuickCommand(command) {
+            // Add command to terminal display
+            addCommTerminalMessage(`> ${command}`);
+
+            const payload = { command: command };
+            
+            fetch('/api/esp_comm/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    addCommTerminalMessage('Command sent successfully');
+                } else {
+                    addCommTerminalMessage(`Failed: ${result.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error sending quick command:', error);
+                addCommTerminalMessage(`Error: Failed to send ${command}`);
+            });
+        }
+
+        // Function to add message to dual communication terminal
+        function addCommTerminalMessage(message) {
+            commTerminalMessages.push(message);
+            
+            // Keep only last 100 messages
+            if (commTerminalMessages.length > 100) {
+                commTerminalMessages = commTerminalMessages.slice(-100);
+            }
+            
+            updateCommTerminalDisplay();
+        }
+
+        // Function to update dual communication terminal display
+        function updateCommTerminalDisplay() {
+            const terminalOutput = document.getElementById('commTerminalOutput');
+            terminalOutput.textContent = commTerminalMessages.join('\n');
+            // Auto-scroll to bottom
+            terminalOutput.scrollTop = terminalOutput.scrollHeight;
+        }
+
+        // Function to clear dual communication terminal
+        function clearCommTerminal() {
+            commTerminalMessages = [];
+            updateCommTerminalDisplay();
+            const terminalOutput = document.getElementById('commTerminalOutput');
+            terminalOutput.textContent = 'Dual Communication Terminal ready...';
+        }
+
+        // Function to start dual comm status polling
+        function startCommStatusPolling() {
+            if (commStatusInterval) {
+                clearInterval(commStatusInterval);
+            }
+            updateCommStatus(); // Initial update
+            commStatusInterval = setInterval(() => {
+                updateCommStatus();
+                updateCommLogFromTerminal();
+            }, 2000); // Update every 2 seconds
+        }
+
+        // Function to check terminal logs for dual comm responses
+        let lastTerminalContent = '';
+        function updateCommLogFromTerminal() {
+            fetch('/api/logs')
+                .then(response => response.text())
+                .then(logs => {
+                    if (logs !== lastTerminalContent) {
+                        // Find new ESP Comm responses
+                        const newContent = logs.substring(lastTerminalContent.length);
+                        const lines = newContent.split('\n');
+                        
+                        lines.forEach(line => {
+                            if (line.includes('ESP Comm Response:')) {
+                                // Extract the response part
+                                const responseText = line.replace(/^.*ESP Comm Response:\s*/, '').trim();
+                                if (responseText) {
+                                    addCommTerminalMessage(responseText);
+                                }
+                            } else if (line.includes('Discovered peer:')) {
+                                addCommTerminalMessage(line.trim());
+                            } else if (line.includes('Handshake complete')) {
+                                addCommTerminalMessage(line.trim());
+                            } else if (line.includes('Connecting to peer:')) {
+                                addCommTerminalMessage(line.trim());
+                            } else if (line.includes('Sent command:')) {
+                                addCommTerminalMessage(line.trim());
+                            }
+                        });
+                        
+                        lastTerminalContent = logs;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching terminal logs for dual comm:', error);
+                });
+        }
+
+        // Function to stop dual comm status polling
+        function stopCommStatusPolling() {
+            if (commStatusInterval) {
+                clearInterval(commStatusInterval);
+                commStatusInterval = null;
+            }
+        }
+
+        // Function to toggle command categories
+        function toggleCategory(categoryId) {
+            const content = document.getElementById(categoryId);
+            const header = content.previousElementSibling;
+            const arrow = header.querySelector('.category-arrow');
+            
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                header.classList.remove('expanded');
+            } else {
+                content.classList.add('show');
+                header.classList.add('expanded');
+            }
+        }
+
+        // Dual Communication Pin Configuration Functionality
+        function updateCommPins() {
+            const txPin = document.getElementById('comm-tx-pin').value;
+            const rxPin = document.getElementById('comm-rx-pin').value;
+            
+            if (!txPin || !rxPin) {
+                alert('Please fill in both TX and RX pin fields');
+                return;
+            }
+            
+            if (txPin < 0 || txPin > 48 || rxPin < 0 || rxPin > 48) {
+                alert('Pin numbers must be between 0-48');
+                return;
+            }
+            
+            if (txPin === rxPin) {
+                alert('TX and RX pins cannot be the same');
+                return;
+            }
+            
+            const command = `commsetpins ${txPin} ${rxPin}`;
+            addCommTerminalMessage(`> ${command}`);
+            
+            fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: command })
+            })
+            .then(response => {
+                if (response.ok) {
+                    addCommTerminalMessage('Communication pins updated successfully');
+                    alert('Communication pins updated successfully!');
+                } else {
+                    addCommTerminalMessage('Failed to update communication pins');
+                    alert('Failed to update communication pins');
+                }
+            })
+            .catch(error => {
+                console.error('Error updating communication pins:', error);
+                addCommTerminalMessage('Error: Failed to update pins');
+                alert('Error updating communication pins');
+            });
+        }
+
+        function refreshCommPins() {
+            fetch('/api/settings')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.esp_comm_tx_pin !== undefined) {
+                        document.getElementById('comm-tx-pin').value = data.esp_comm_tx_pin;
+                    }
+                    if (data.esp_comm_rx_pin !== undefined) {
+                        document.getElementById('comm-rx-pin').value = data.esp_comm_rx_pin;
+                    }
+                    addCommTerminalMessage('Communication pin configuration refreshed');
+                })
+                .catch(error => {
+                    console.error('Error fetching communication pin configuration:', error);
+                    addCommTerminalMessage('Error: Failed to refresh pin configuration');
+                });
+        }
 
         // SD Card Configuration Functionality
         document.addEventListener('DOMContentLoaded', function() {
@@ -2350,6 +3046,18 @@
             document.querySelector('.refresh-config-btn').addEventListener('click', function() {
                 fetchSdCardConfig();
             });
+
+            // Dual Communication Pin Configuration Event Listeners
+            const updateCommPinsBtn = document.querySelector('.update-comm-pins-btn');
+            const refreshCommPinsBtn = document.querySelector('.refresh-comm-pins-btn');
+            
+            if (updateCommPinsBtn) {
+                updateCommPinsBtn.addEventListener('click', updateCommPins);
+            }
+            
+            if (refreshCommPinsBtn) {
+                refreshCommPinsBtn.addEventListener('click', refreshCommPins);
+            }
             
             // Function to fetch current SD card configuration
             function fetchSdCardConfig() {

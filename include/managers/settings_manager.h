@@ -87,7 +87,11 @@ typedef struct {
   uint32_t terminal_text_color; // Terminal text color in 0xRRGGBB
   uint8_t menu_theme;  // Theme for main menu colors (0=Default)
   bool invert_colors; // Invert screen colors
-  bool web_auth_enabled; // Add this line
+  bool web_auth_enabled;
+  
+  int32_t esp_comm_tx_pin; // ESP communication TX pin
+  int32_t esp_comm_rx_pin; // ESP communication RX pin
+  bool ap_enabled; // Enable/disable AP across reboots
 } FSettings;
 
 // Function declarations
@@ -192,6 +196,13 @@ bool settings_get_invert_colors(const FSettings *settings);
 // Getter and Setter for web auth
 void settings_set_web_auth_enabled(FSettings *settings, bool enabled);
 bool settings_get_web_auth_enabled(const FSettings *settings);
+
+void settings_set_esp_comm_pins(FSettings *settings, int32_t tx_pin, int32_t rx_pin);
+void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int32_t *rx_pin);
+
+// Getter and Setter for AP enabled state
+void settings_set_ap_enabled(FSettings *settings, bool enabled);
+bool settings_get_ap_enabled(const FSettings *settings);
 
 extern FSettings G_Settings;
 
