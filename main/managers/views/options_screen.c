@@ -613,6 +613,10 @@ void handle_hardware_button_press_options(InputEvent *event) {
 
             // vertical swipe = scroll
             int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            // Lower threshold for Evil Portal HTML list
+            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
+            }
             if (abs(dy) > thr_y) {
                 lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                 return;
