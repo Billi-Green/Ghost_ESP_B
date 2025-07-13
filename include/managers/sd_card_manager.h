@@ -6,6 +6,9 @@
 #include "esp_err.h"
 #include <stdbool.h>
 
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
 typedef struct {
   sdmmc_card_t *card;
   bool is_initialized;
@@ -43,6 +46,6 @@ void sd_card_print_config();
 bool sd_card_is_virtual_storage();
 
 // List evil portal directories from SD card
-int get_evil_portal_list(char portal_names[32][64]);
+int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]);
 
 #endif // SD_CARD_MANAGER_H

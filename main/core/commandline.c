@@ -11,7 +11,7 @@
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
-#include "managers/sd_card_manager.h"
+#include "managers/sd_card_manager.h" // Make sure this is included
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
 #include <esp_timer.h>
@@ -2280,32 +2280,20 @@ void handle_ble_spam_cmd(int argc, char **argv) {
 #endif
 
 void handle_listportals(int argc, char **argv) {
-    const char *portal_dir = "/mnt/ghostesp/evil_portal";
-    DIR *dir = opendir(portal_dir);
-    if (!dir) {
-        printf("Could not open %s\n", portal_dir);
-        TERMINAL_VIEW_ADD_TEXT("Could not open %s\n", portal_dir);
-        return;
-    }
-    printf("Available Evil Portals:\n");
-    TERMINAL_VIEW_ADD_TEXT("Available Evil Portals:\n");
-    struct dirent *entry;
-    int found = 0;
-    while ((entry = readdir(dir))) {
-        // List directories or .html files
-        if (
-            (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) ||
-            (entry->d_type == DT_REG && strstr(entry->d_name, ".html"))
-        ) {
-            printf("  %s\n", entry->d_name);
-            TERMINAL_VIEW_ADD_TEXT("  %s\n", entry->d_name);
-            found = 1;
-        }
-    }
-    closedir(dir);
-    if (!found) {
+    char portal_names[MAX_PORTALS][MAX_PORTAL_NAME];
+    int count = get_evil_portal_list(portal_names);
+
+    if (count <= 0) {
         printf("No portals found.\n");
         TERMINAL_VIEW_ADD_TEXT("No portals found.\n");
+        return;
+    }
+
+    printf("Available Evil Portals:\n");
+    TERMINAL_VIEW_ADD_TEXT("Available Evil Portals:\n");
+    for (int i = 0; i < count; ++i) {
+        printf("  %s\n", portal_names[i]);
+        TERMINAL_VIEW_ADD_TEXT("  %s\n", portal_names[i]);
     }
 }
 
