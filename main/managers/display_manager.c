@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_pm.h"
+#include <limits.h> // for UINT32_MAX
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -902,8 +903,15 @@ void hardware_input_task(void *pvParameters) {
 #endif
 
     // backlight dim logic
-    uint32_t current_timeout = G_Settings.display_timeout_ms > 0 ? G_Settings.display_timeout_ms : DEFAULT_DISPLAY_TIMEOUT_MS;
-    if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
+    uint32_t current_timeout = G_Settings.display_timeout_ms;
+
+    if (current_timeout == UINT32_MAX) { // "Never" timeout option
+        // Do not dim backlight if timeout is set to never
+        if (is_backlight_dimmed) {
+            set_backlight_brightness(1);
+            is_backlight_dimmed = false;
+        }
+    } else if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
       ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
                (unsigned long)last_touch_time, (unsigned long)current_timeout);
       ESP_LOGI(TAG, "Display timeout reached, dimming backlight");

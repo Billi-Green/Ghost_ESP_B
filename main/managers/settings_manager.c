@@ -117,7 +117,7 @@ void settings_set_defaults(FSettings *settings) {
   strcpy(settings->selected_hex_accent_color, "#ffffff");
   strcpy(settings->selected_timezone, "MST7MDT,M3.2.0,M11.1.0");
   settings->gps_rx_pin = 0;
-  settings->display_timeout_ms = 10000; // Default 10 seconds
+  settings->display_timeout_ms = UINT32_MAX; // Default to never timeout
   settings->rts_enabled = false;
   strcpy(settings->sta_ssid, ""); // Default empty station SSID
   strcpy(settings->sta_password, ""); // Default empty station password
@@ -285,7 +285,7 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->display_timeout_ms = timeout_value;
   } else {
-    settings->display_timeout_ms = 10000; // Default 10 seconds if not found
+    settings->display_timeout_ms = UINT32_MAX; // Default to never timeout if not found
   }
 
   uint8_t rtsenabledvalue;
@@ -838,7 +838,11 @@ PrinterAlignment settings_get_printer_alignment(const FSettings *settings) {
 void settings_set_display_timeout(FSettings *settings, uint32_t timeout_ms) {
   ESP_LOGI(TAG, "Setting display timeout from %lu to %lu ms",
            settings->display_timeout_ms, timeout_ms);
-  settings->display_timeout_ms = timeout_ms;
+  if (timeout_ms == 0) { // "Never" option
+      settings->display_timeout_ms = UINT32_MAX;
+  } else {
+      settings->display_timeout_ms = timeout_ms;
+  }
 }
 
 uint32_t settings_get_display_timeout(const FSettings *settings) {

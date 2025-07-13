@@ -9,8 +9,13 @@
 
 ### Added
 
-- 'chipinfo' command to display chip information
-- 'apenable' command to enable/disable the Access Point
+- Display
+  - Added 'Never' display timeout setting.
+
+- Commands
+  - 'chipinfo' command to display chip information
+  - 'apenable' command to enable/disable the Access Point
+
 
 ### Changed
 
