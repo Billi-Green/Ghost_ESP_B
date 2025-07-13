@@ -25,6 +25,7 @@
 #include "esp_wifi.h"
 #include "managers/default_portal.h"
 #include <time.h>
+#include <dirent.h>
 
 #if !defined(MAX_WIFI_CHANNEL)
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
@@ -2155,6 +2156,8 @@ void handle_web_auth_cmd(int argc, char **argv) {
     }
 }
 
+void handle_listportals(int argc, char **argv);
+
 void register_commands() {
     register_command("help", handle_help);
     register_command("scanap", cmd_wifi_scan_start);
@@ -2187,6 +2190,7 @@ void register_commands() {
     register_command("scanports", handle_scan_ports);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
+    register_command("listportals", handle_listportals);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
@@ -2274,5 +2278,35 @@ void handle_ble_spam_cmd(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
 }
 #endif
+
+void handle_listportals(int argc, char **argv) {
+    const char *portal_dir = "/mnt/ghostesp/evil_portal";
+    DIR *dir = opendir(portal_dir);
+    if (!dir) {
+        printf("Could not open %s\n", portal_dir);
+        TERMINAL_VIEW_ADD_TEXT("Could not open %s\n", portal_dir);
+        return;
+    }
+    printf("Available Evil Portals:\n");
+    TERMINAL_VIEW_ADD_TEXT("Available Evil Portals:\n");
+    struct dirent *entry;
+    int found = 0;
+    while ((entry = readdir(dir))) {
+        // List directories or .html files
+        if (
+            (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) ||
+            (entry->d_type == DT_REG && strstr(entry->d_name, ".html"))
+        ) {
+            printf("  %s\n", entry->d_name);
+            TERMINAL_VIEW_ADD_TEXT("  %s\n", entry->d_name);
+            found = 1;
+        }
+    }
+    closedir(dir);
+    if (!found) {
+        printf("No portals found.\n");
+        TERMINAL_VIEW_ADD_TEXT("No portals found.\n");
+    }
+}
 
 
