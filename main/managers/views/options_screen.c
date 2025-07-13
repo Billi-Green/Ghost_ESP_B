@@ -1296,24 +1296,26 @@ View options_menu_view = {.root = NULL,
 
 static void back_event_cb(lv_event_t *e) {
 
+    // If in Evil Portal select submenu, go back to Evil Portal menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
         current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
         display_manager_switch_view(&options_menu_view);
-    } else if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
-
+        return;
+    }
+    // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
+        current_wifi_menu_state = WIFI_MENU_MAIN;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    // If in a settings submenu, go back to category selection
     if (is_settings_mode && current_settings_category >= 0) {
         current_settings_category = -1;
         display_manager_switch_view(&options_menu_view);
         return;
     }
-    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
-
-        current_wifi_menu_state = WIFI_MENU_MAIN;
-        display_manager_switch_view(&options_menu_view);
-    } else {
-        current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
-        display_manager_switch_view(&main_menu_view);
-    }
+    // Otherwise, go back to main menu
+    display_manager_switch_view(&main_menu_view);
 }
 
 static void switch_to_settings_category(int cat_idx) {
