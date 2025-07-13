@@ -7,6 +7,7 @@
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "core/esp_comm_manager.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -48,6 +49,9 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Initializing Settings");
     settings_init(&G_Settings);
+
+    ESP_LOGI(TAG, "Initializing Comm Manager");
+    esp_comm_manager_init_with_defaults();
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     ap_manager_init();
