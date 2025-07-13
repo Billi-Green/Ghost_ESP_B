@@ -579,11 +579,13 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
             station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
             ssid_str, // Use SSID here
             ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
-        TERMINAL_VIEW_ADD_TEXT(
+        char station_log_buf[256];
+        snprintf(station_log_buf, sizeof(station_log_buf),
             "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
             station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
             ssid_str, // Use SSID here
             ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
+        TERMINAL_VIEW_ADD_TEXT(station_log_buf);
 
         // Add the station and the *specific AP BSSID* it was seen with to the list
         add_station_ap_pair(station_mac, ap_bssid);
@@ -3249,7 +3251,7 @@ void wifi_manager_start_station_scan() {
     // Ensure we have a list of APs to compare against first
     if (scanned_aps == NULL || ap_count == 0) {
         printf("No APs scanned previously. Performing initial scan...\n");
-        TERMINAL_VIEW_ADD_TEXT("Scanning APs first...\n");
+        TERMINAL_VIEW_ADD_TEXT("No APs scanned previously. Performing initial scan...\n");
 
         // Perform a synchronous scan
         ap_manager_stop_services(); // Stop other services that might interfere
@@ -3272,14 +3274,12 @@ void wifi_manager_start_station_scan() {
             uint16_t initial_ap_count = 0;
             err = esp_wifi_scan_get_ap_num(&initial_ap_count);
             if (err == ESP_OK) {
-                 printf("Initial scan found %u access points\n", initial_ap_count);
-                 TERMINAL_VIEW_ADD_TEXT("Initial scan found %u APs\n", initial_ap_count);
-                if (initial_ap_count > MAX_SCANNED_APS) {
-                    printf("too many aps (%u). truncating list to first %d\n", initial_ap_count, MAX_SCANNED_APS);
-                    TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
-                    initial_ap_count = MAX_SCANNED_APS;
-                }
-                if (initial_ap_count > 0) {
+                 char log_buf[128];
+                 snprintf(log_buf, sizeof(log_buf), "Initial scan found %u access points\n", initial_ap_count);
+                 printf("%s", log_buf);
+                 TERMINAL_VIEW_ADD_TEXT(log_buf);
+
+                 if (initial_ap_count > 0) {
                     if (scanned_aps != NULL) {
                         free(scanned_aps);
                         scanned_aps = NULL;
@@ -3301,19 +3301,25 @@ void wifi_manager_start_station_scan() {
 
                               // ---- ADD THIS BLOCK START ----
                               printf("--- Known AP BSSIDs for Station Scan ---\n");
+                              TERMINAL_VIEW_ADD_TEXT("--- Known AP BSSIDs for Station Scan ---\n");
                               for (int k = 0; k < ap_count; k++) {
-                                  printf("[%d] BSSID: %02X:%02X:%02X:%02X:%02X:%02X (SSID: %.*s)\n", k,
+                                  char bssid_log_buf[128];
+                                  snprintf(bssid_log_buf, sizeof(bssid_log_buf), "[%d] BSSID: %02X:%02X:%02X:%02X:%02X:%02X (SSID: %.*s)\n", k,
                                          scanned_aps[k].bssid[0], scanned_aps[k].bssid[1],
                                          scanned_aps[k].bssid[2], scanned_aps[k].bssid[3],
                                          scanned_aps[k].bssid[4], scanned_aps[k].bssid[5],
                                          32, scanned_aps[k].ssid); // Print SSID for context
+                                  printf("%s", bssid_log_buf);
+                                  TERMINAL_VIEW_ADD_TEXT(bssid_log_buf);
                               }
                               printf("----------------------------------------\n");
+                              TERMINAL_VIEW_ADD_TEXT("----------------------------------------\n");
                               // ---- ADD THIS BLOCK END ----
                          }
                      }
                  } else {
                       printf("Initial scan found no access points\n");
+                      TERMINAL_VIEW_ADD_TEXT("Initial scan found no access points\n");
                       ap_count = 0;
                  }
             } else {

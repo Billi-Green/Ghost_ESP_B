@@ -257,7 +257,7 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_RTC_CLOCK
         {"Clock", 0, &clock_view},
 #endif
-        {"Settings", OT_Settings, &settings_screen_view}
+        {"Settings", OT_Settings, &options_menu_view}
     };
 
     const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
