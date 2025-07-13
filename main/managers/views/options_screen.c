@@ -99,6 +99,38 @@ static bool touch_on_scroll_btn = false; // Flag active between press and releas
 // Add button declaration for back button
 static lv_obj_t *back_btn = NULL;
 
+// --- Add Bluetooth submenu arrays and state ---
+static const char *bluetooth_main_options[] = {
+    "AirTag", "Flipper", "Spam", "Raw", "Skimmer", NULL
+};
+static const char *bluetooth_airtag_options[] = {
+    "Start AirTag Scanner", "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing", NULL
+};
+static const char *bluetooth_flipper_options[] = {
+    "Find Flippers", "List Flippers", "Select Flipper", NULL
+};
+static const char *bluetooth_spam_options[] = {
+    "BLE Spam - Apple", "BLE Spam - Microsoft", "BLE Spam - Samsung",
+    "BLE Spam - Google", "BLE Spam - Random", "Stop BLE Spam", NULL
+};
+static const char *bluetooth_raw_options[] = {
+    "Raw BLE Scanner", NULL
+};
+static const char *bluetooth_skimmer_options[] = {
+    "BLE Skimmer Detect", NULL
+};
+
+typedef enum {
+    BLUETOOTH_MENU_MAIN,
+    BLUETOOTH_MENU_AIRTAG,
+    BLUETOOTH_MENU_FLIPPER,
+    BLUETOOTH_MENU_SPAM,
+    BLUETOOTH_MENU_RAW,
+    BLUETOOTH_MENU_SKIMMER
+} BluetoothMenuState;
+
+static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
+
 // shared styles for memory optimization
 static lv_style_t style_menu_item;
 static lv_style_t style_selected_item;
@@ -240,7 +272,16 @@ void options_menu_create() {
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
         }
         break;
-    case OT_Bluetooth: options = bluetooth_options; break;
+    case OT_Bluetooth:
+        switch (current_bluetooth_menu_state) {
+            case BLUETOOTH_MENU_MAIN: options = bluetooth_main_options; break;
+            case BLUETOOTH_MENU_AIRTAG: options = bluetooth_airtag_options; break;
+            case BLUETOOTH_MENU_FLIPPER: options = bluetooth_flipper_options; break;
+            case BLUETOOTH_MENU_SPAM: options = bluetooth_spam_options; break;
+            case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
+            case BLUETOOTH_MENU_SKIMMER: options = bluetooth_skimmer_options; break;
+        }
+        break;
     case OT_GPS: options = gps_options; break;
     case OT_Settings: options = settings_options; break;
     default: options = NULL; break;
@@ -500,12 +541,6 @@ void option_event_cb(lv_event_t *e) {
         return;
     }
     const char *Selected_Option = (const char *)lv_event_get_user_data(e);
-    if (Selected_Option == last_option && now_ms - last_time_ms < 200) {
-        option_invoked = false; 
-        return;
-    }
-    last_option = Selected_Option;
-    last_time_ms = now_ms;
 
     if (SelectedMenuType == OT_Wifi) {
         if (current_wifi_menu_state == WIFI_MENU_MAIN) {
@@ -517,6 +552,19 @@ void option_event_cb(lv_event_t *e) {
             else if (strcmp(Selected_Option, "Misc") == 0) current_wifi_menu_state = WIFI_MENU_MISC;
             display_manager_switch_view(&options_menu_view);
             return; // Explicitly return to avoid falling through
+        }
+    }
+
+    // --- Bluetooth submenu navigation ---
+    if (SelectedMenuType == OT_Bluetooth) {
+        if (current_bluetooth_menu_state == BLUETOOTH_MENU_MAIN) {
+            if (strcmp(Selected_Option, "AirTag") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_AIRTAG;
+            else if (strcmp(Selected_Option, "Flipper") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_FLIPPER;
+            else if (strcmp(Selected_Option, "Spam") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SPAM;
+            else if (strcmp(Selected_Option, "Raw") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_RAW;
+            else if (strcmp(Selected_Option, "Skimmer") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SKIMMER;
+            display_manager_switch_view(&options_menu_view);
+            return;
         }
     }
 
@@ -1031,8 +1079,12 @@ static void back_event_cb(lv_event_t *e) {
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
+    } else if (SelectedMenuType == OT_Bluetooth && current_bluetooth_menu_state != BLUETOOTH_MENU_MAIN) {
+        current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
+        display_manager_switch_view(&options_menu_view);
     } else {
         current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
+        current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN; // Reset for next time
         display_manager_switch_view(&main_menu_view);
     }
 }
