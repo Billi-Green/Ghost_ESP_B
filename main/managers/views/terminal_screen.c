@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Forward declaration for keyboard_view
+extern View keyboard_view;
+
 #include "lvgl.h"
 #include "managers/settings_manager.h"
 
@@ -201,6 +204,9 @@ static void stop_all_operations(void) {
 void text_box_click_cb(lv_event_t *e){
   ESP_LOGI(TAG, "Text box clicked");
   printf("Text box clicked\n");
+
+  display_manager_switch_view(&keyboard_view);
+
   // If using a hardware keyboard, we can ignore this click
 }
 #endif
