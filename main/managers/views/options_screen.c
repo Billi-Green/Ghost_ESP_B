@@ -211,15 +211,48 @@ static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
 
-static void evil_portal_ssid_cb(const char *ssid) {
-    if (!ssid || !selected_portal[0]) return;
-    const char *psk = "wifi";
-    if (strlen(psk) > 0 && strlen(psk) < 8) {
-        error_popup_create("Password must be at least 8 chars");
-        return;
+static void evil_portal_ssid_cb(const char *input) {
+    if (!input || !selected_portal[0]) return;
+    char ssid[64] = {0};
+    char pass[64] = {0};
+    const char *space = strchr(input, ' ');
+    if (space) {
+        size_t ssid_len = space - input;
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
+        const char *pw = space + 1;
+        size_t pass_len = strlen(pw);
+        if (pass_len > 0) {
+            if (pass_len < 8) {
+                error_popup_create("Password must be at least 8 chars");
+                return;
+            }
+            if (pass_len >= sizeof(pass)) {
+                error_popup_create("pass too long");
+                return;
+            }
+            memcpy(pass, pw, pass_len);
+            pass[pass_len] = '\0';
+        }
+    } else {
+        size_t ssid_len = strlen(input);
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
     }
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "startportal %s %s", selected_portal, ssid);
+    if (pass[0]) {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s %s", selected_portal, ssid, pass);
+    } else {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s", selected_portal, ssid);
+    }
     display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
