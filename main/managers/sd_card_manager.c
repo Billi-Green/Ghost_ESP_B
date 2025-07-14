@@ -615,6 +615,7 @@ esp_err_t sd_card_setup_directory_structure() {
   const char *gps_dir = "/mnt/ghostesp/gps";
   const char *games_dir = "/mnt/ghostesp/games";
   const char *evil_portal_dir = "/mnt/ghostesp/evil_portal";
+  const char *evil_portal_portals_dir = "/mnt/ghostesp/evil_portal/portals"; // <-- Add this line
   const char *universals_dir = "/mnt/ghostesp/infrared/universals";
 
 
@@ -701,6 +702,19 @@ esp_err_t sd_card_setup_directory_structure() {
     }
   } else {
     printf("Directory %s already exists\n", evil_portal_dir);
+  }
+
+  // Create evil_portal/portals directory
+  if (!sd_card_exists(evil_portal_portals_dir)) {
+    printf("Creating directory: %s\n", evil_portal_portals_dir);
+    esp_err_t ret = sd_card_create_directory(evil_portal_portals_dir);
+    if (ret != ESP_OK) {
+      printf("Failed to create directory %s: %s\n", evil_portal_portals_dir,
+             esp_err_to_name(ret));
+      return ret;
+    }
+  } else {
+    printf("Directory %s already exists\n", evil_portal_portals_dir);
   }
 
   const char *infrared_dir = "/mnt/ghostesp/infrared";
@@ -926,4 +940,31 @@ bool sd_card_is_virtual_storage() {
 #else
   return false;
 #endif
+}
+
+#include <dirent.h>
+#include <string.h>
+
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
+int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]) {
+    const char *portal_dir = "/mnt/ghostesp/evil_portal/portals";
+    DIR *dir = opendir(portal_dir);
+    if (!dir) return 0;
+    struct dirent *entry;
+    int count = 0;
+    while ((entry = readdir(dir)) && count < MAX_PORTALS) {
+        // Only include regular files with .html extension
+        if (entry->d_type == DT_REG) {
+            const char *dot = strrchr(entry->d_name, '.');
+            if (dot && strcmp(dot, ".html") == 0) {
+                strncpy(portal_names[count], entry->d_name, MAX_PORTAL_NAME - 1);
+                portal_names[count][MAX_PORTAL_NAME - 1] = '\0';
+                count++;
+            }
+        }
+    }
+    closedir(dir);
+    return count;
 }

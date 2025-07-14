@@ -17,6 +17,10 @@
 #include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_pm.h"
+#include "driver/ledc.h"
+#include <limits.h> // for UINT32_MAX
+#include "managers/ap_manager.h"
+#include "core/serial_manager.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -64,6 +68,8 @@ lv_obj_t *bt_label = NULL;
 lv_obj_t *sd_label = NULL;
 lv_obj_t *battery_label = NULL;
 lv_obj_t *mainlabel = NULL;
+
+View *display_manager_previous_view = NULL;
 
 bool display_manager_init_success = false;
 static bool status_timer_initialized = false;
@@ -354,7 +360,7 @@ lv_color_t hex_to_lv_color(const char *hex_str) {
 }
 
 void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
-  int batteryPercentage) {
+  int batteryPercentage, bool power_save_enabled) {
   // Update visibility of status icons
   if (sd_card_mounted) {
     lv_obj_clear_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
@@ -399,6 +405,28 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   }
 
   lv_obj_invalidate(status_bar);
+
+  // set status bar icon colors based on power save mode
+  if (power_save_enabled) {
+    lv_color_t orange_color = lv_color_hex(0xFFA500); // orange like apple uses
+    if (battery_label && lv_obj_is_valid(battery_label)) {
+      lv_obj_set_style_text_color(battery_label, orange_color, 0);
+    }
+  } else {
+    lv_color_t default_color = lv_color_hex(0xCCCCCC);
+    if (wifi_label && lv_obj_is_valid(wifi_label)) {
+      lv_obj_set_style_text_color(wifi_label, default_color, 0);
+    }
+    if (bt_label && lv_obj_is_valid(bt_label)) {
+      lv_obj_set_style_text_color(bt_label, default_color, 0);
+    }
+    if (sd_label && lv_obj_is_valid(sd_label)) {
+      lv_obj_set_style_text_color(sd_label, default_color, 0);
+    }
+    if (battery_label && lv_obj_is_valid(battery_label)) {
+      lv_obj_set_style_text_color(battery_label, default_color, 0);
+    }
+  }
 }
 
 static void status_update_cb(lv_timer_t *timer) {
@@ -412,13 +440,15 @@ static void status_update_cb(lv_timer_t *timer) {
 #ifdef CONFIG_HAS_BATTERY
   uint8_t power_level;
   axp2101_get_power_level(&power_level);
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, power_level);
+  bool is_charging = axp202_is_charging();
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
+                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #elif CONFIG_USE_CARDPUTER
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level);
+                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings));
 #endif
 }
 
@@ -513,13 +543,13 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   axp2101_get_power_level(&power_level);
   bool is_charging = axp202_is_charging();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    is_charging ? power_level : power_level);
+                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #elif CONFIG_USE_CARDPUTER
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level);
+                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings));
 #endif
   if (!status_timer_initialized) {
     status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
@@ -527,16 +557,51 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   }
 }
 
-void display_manager_init(void) {
+void apply_power_management_config(bool power_save_enabled) {
   esp_pm_config_esp32_t pm_cfg = {
-      .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+      .max_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
       .min_freq_mhz = 20,
       .light_sleep_enable = true,
   };
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
   if (pm_err != ESP_OK) {
-    ESP_LOGW(TAG, "PM configure failed: %s", esp_err_to_name(pm_err));
+    ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
   }
+
+  // control ap based on power save mode
+  if (power_save_enabled) {
+    ap_manager_stop_services();
+  } else {
+    ap_manager_start_services();
+  }
+}
+
+void display_manager_init(void) {
+  apply_power_management_config(settings_get_power_save_enabled(&G_Settings));
+
+  // Configure LEDC timer for backlight
+  ledc_timer_config_t ledc_timer = {
+      .speed_mode = LEDC_LOW_SPEED_MODE,
+      .duty_resolution = LEDC_TIMER_10_BIT,
+      .timer_num = LEDC_TIMER_0,
+      .freq_hz = 5000, // 5 kHz
+      .clk_cfg = LEDC_AUTO_CLK,
+  };
+  ledc_timer_config(&ledc_timer);
+
+  // Configure LEDC channel for backlight
+  ledc_channel_config_t ledc_channel = {
+      .speed_mode = LEDC_LOW_SPEED_MODE,
+      .channel = LEDC_CHANNEL_0,
+      .timer_sel = LEDC_TIMER_0,
+      .intr_type = LEDC_INTR_DISABLE,
+      .gpio_num = CONFIG_LV_DISP_PIN_BCKL,
+      .duty = 0, // Set initial duty to 0
+      .hpoint = 0,
+      .sleep_mode = LEDC_SLEEP_MODE_KEEP_ALIVE,
+  };
+  ledc_channel_config(&ledc_channel);
+
 #ifndef CONFIG_JC3248W535EN_LCD
   lv_init();
 #ifdef CONFIG_USE_CARDPUTER
@@ -627,6 +692,14 @@ void display_manager_init(void) {
 
   display_manager_init_success = true;
 
+  // for cardputer. if we don't do this the backlight will flicker on startup until it gets turned off and on again by software
+#if defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
+  // override any floating state and force it high
+  gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
+  gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
+  gpio_set_level(    CONFIG_LV_DISP_PIN_BCKL, 1);
+#endif
+
 #ifndef CONFIG_JC3248W535EN_LCD // JC3248W535EN has its own lvgl task
 xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
             RENDERING_TASK_PRIORITY, &lvgl_task_handle);
@@ -653,7 +726,7 @@ void display_manager_switch_view(View *view) {
 #endif
 
   if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-    ESP_LOGI(TAG, "Switching view from %s to %s\n",
+    ESP_LOGI(TAG, "Switching view from %s to %s",
            dm.current_view ? dm.current_view->name : "NULL", view->name);
 
     if (dm.current_view && dm.current_view->root) {
@@ -665,9 +738,10 @@ void display_manager_switch_view(View *view) {
         battery_label = NULL;
         status_bar = NULL;
       }
+      display_manager_previous_view = dm.current_view; // Store current view as previous
       display_manager_fade_out(dm.current_view->root, fade_out_ready_cb, view);
     } else {
-      dm.previous_view = dm.current_view;
+      display_manager_previous_view = dm.current_view; // Store current view as previous
       dm.current_view = view;
 
       if (view->get_hardwareinput_callback) {
@@ -710,45 +784,62 @@ void display_manager_fill_screen(lv_color_t color) {
 }
 
 void set_backlight_brightness(uint8_t percentage) {
-
-  if (percentage > 1) {
-    percentage = 1;
-  }
-  gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT); // probably should be a part of the init process
-  gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage);
-  if (percentage == 0) {
-    if (status_update_timer) lv_timer_pause(status_update_timer);
-#ifndef CONFIG_USE_CARDPUTER // cant pause this task handler on the cardputer or the LCD will go unresponsive
-    if (lvgl_task_handle) vTaskSuspend(lvgl_task_handle);
+    /* 
+     * If you’ve built with PWM support, do your existing LEDC duty code.
+     * Otherwise (i.e. switch mode), just treat >0 as “on” or 0 as “off.”
+     */
+#if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
+    // ————— PWM mode —————
+    if (percentage > 1) percentage = 1;
+    uint32_t duty = percentage * ((1 << LEDC_TIMER_10_BIT) - 1);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+#elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
+    // ————— switch mode —————
+    // make sure the pin is configured as a GPIO output
+    gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
+    gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage ? 1 : 0);
+#else
+# error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
 #endif
-    if (rainbow_timer) lv_timer_pause(rainbow_timer);
-    if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
-    if (clock_timer) lv_timer_pause(clock_timer);
-    {
-      wifi_config_t cfg;
-      if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
-        original_beacon_interval = cfg.ap.beacon_interval;
-        cfg.ap.beacon_interval = 1000;
-        esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
-      }
-      esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+
+    /* 
+     * The rest of your pause/resume logic stays exactly the same,
+     * so when you call set_backlight_brightness(0) everything
+     * (timers, Wi-Fi PS, tasks) still pauses as before.
+     */
+    if (percentage == 0) {
+        if (status_update_timer)   lv_timer_pause(status_update_timer);
+#ifndef CONFIG_USE_CARDPUTER
+        if (lvgl_task_handle)      vTaskSuspend(lvgl_task_handle);
+#endif
+        if (rainbow_timer)         lv_timer_pause(rainbow_timer);
+        if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
+        if (clock_timer)           lv_timer_pause(clock_timer);
+        {
+            wifi_config_t cfg;
+            if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                original_beacon_interval = cfg.ap.beacon_interval;
+                cfg.ap.beacon_interval = 1000;
+                esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+            }
+            esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+        }
+    } else {
+        if (status_update_timer)   lv_timer_resume(status_update_timer);
+        if (lvgl_task_handle)      vTaskResume(lvgl_task_handle);
+        if (rainbow_timer)         lv_timer_resume(rainbow_timer);
+        if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
+        if (clock_timer)           lv_timer_resume(clock_timer);
+        {
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            wifi_config_t cfg;
+            if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                cfg.ap.beacon_interval = original_beacon_interval;
+                esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+            }
+        }
     }
-  } else {
-    if (status_update_timer) lv_timer_resume(status_update_timer);
-    if (lvgl_task_handle) vTaskResume(lvgl_task_handle);
-    if (rainbow_timer) lv_timer_resume(rainbow_timer);
-    if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
-    if (clock_timer) lv_timer_resume(clock_timer);
-    {
-      esp_wifi_set_ps(WIFI_PS_NONE);
-      wifi_config_t cfg;
-      if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
-        cfg.ap.beacon_interval = original_beacon_interval;
-        esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
-      }
-    }
-  }
-  
 }
 
 void hardware_input_task(void *pvParameters) {
@@ -902,23 +993,27 @@ void hardware_input_task(void *pvParameters) {
 #endif
 
     // backlight dim logic
-    uint32_t current_timeout = G_Settings.display_timeout_ms > 0 ? G_Settings.display_timeout_ms : DEFAULT_DISPLAY_TIMEOUT_MS;
-    if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
-      ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
-               (unsigned long)last_touch_time, (unsigned long)current_timeout);
-      ESP_LOGI(TAG, "Display timeout reached, dimming backlight");
-      set_backlight_brightness(0);
-      is_backlight_dimmed = true;
+    uint32_t current_timeout = G_Settings.display_timeout_ms;
+
+    if (current_timeout != UINT32_MAX) { // Only apply dimming logic if timeout is not 'Never'
+      if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
+        ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
+                 (unsigned long)last_touch_time, (unsigned long)current_timeout);
+        ESP_LOGI(TAG, "Display timeout reached, dimming backlight");
+        set_backlight_brightness(0);
+        is_backlight_dimmed = true;
+      } else if (is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time < pdMS_TO_TICKS(current_timeout))) {
+        ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
+                (unsigned long)last_touch_time, (unsigned long)current_timeout);
+        ESP_LOGI(TAG, "Input detected, waking backlight");
+        set_backlight_brightness(1);
+        is_backlight_dimmed = false;
+      }
+    } else if (is_backlight_dimmed) { // If timeout is 'Never' and backlight is dimmed, set to full brightness
+        set_backlight_brightness(1);
+        is_backlight_dimmed = false;
     }
-    else if (is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time < pdMS_TO_TICKS(current_timeout)))
-    {
-      ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
-              (unsigned long)last_touch_time, (unsigned long)current_timeout);
-      ESP_LOGI(TAG, "Input detected, waking backlight");
-      set_backlight_brightness(1);
-      is_backlight_dimmed = false;
-    }
-     //end backlight dim logic
+    //end backlight dim logic
     // When backlight is off (dimmed), poll less frequently to save power
     TickType_t delay = (is_backlight_dimmed ? pdMS_TO_TICKS(BACKLIGHT_SLEEP_POLL_MS) : tick_interval);
     vTaskDelay(delay);
