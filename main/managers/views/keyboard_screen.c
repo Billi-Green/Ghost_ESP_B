@@ -78,9 +78,16 @@ static void remove_char_from_buffer() {
     }
 }
 
+static char placeholder[64] = "Enter text...";
+
+
 static void update_input_label() {
     if (input_label) {
-        lv_label_set_text(input_label, input_buffer);
+        if (input_len == 0) {
+            lv_label_set_text(input_label, placeholder);
+        } else {
+            lv_label_set_text(input_label, input_buffer);
+        }
     }
 }
 
@@ -434,11 +441,13 @@ void keyboard_view_set_submit_callback(KeyboardSubmitCallback cb){
 }
 
 void keyboard_view_set_placeholder(const char *text){
-    if(input_label){
-        lv_label_set_text(input_label, text);
+    if (text && strlen(text) < sizeof(placeholder)) {
+        strncpy(placeholder, text, sizeof(placeholder) - 1);
+        placeholder[sizeof(placeholder) - 1] = '\0';
     }
     memset(input_buffer, 0, sizeof(input_buffer));
     input_len = 0;
+    update_input_label();
 }
 
 View keyboard_view = {
@@ -448,4 +457,4 @@ View keyboard_view = {
     .input_callback = handle_hardware_button_press_keyboard,
     .name = "Keyboard Screen",
     .get_hardwareinput_callback = get_keyboard_callback
-}; 
+};
