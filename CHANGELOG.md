@@ -5,15 +5,17 @@
 ### Dual Chip Support
 
 - Support for connecting two ESP32 chips running GhostESP
-- WebUI Section to send commands to the connected peer
+  - WebUI Section to send commands to the connected peer
 
-- Config for 'AITRIP CYD' or ESP2432S028R a CYD device :shrug: - @tototo31
+
+- Config for 'AITRIP CYD' or ESP2432S028R a CYD device - @tototo31
 
 ### Added
 
 - Display
   - Added 'Never' display timeout setting.
   - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.
+  - Terminal App to use commands with the keyboard view - @tototo31
 
 - Commands
   - 'chipinfo' command to display chip information
