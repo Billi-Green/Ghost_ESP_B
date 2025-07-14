@@ -168,7 +168,7 @@ int handle_serial_command(const char *input) {
     free(input_copy);
     return ESP_OK;
   } else {
-    printf("Unknown command: %s\n", argv[0]);
+    handle_unknown_command(argv[0]);
     free(input_copy);
     return ESP_ERR_INVALID_ARG;
   }

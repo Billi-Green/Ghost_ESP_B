@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Forward declaration for keyboard_view
+extern View keyboard_view;
+
 #include "lvgl.h"
 #include "managers/settings_manager.h"
 
@@ -27,13 +30,22 @@ static bool is_stopping = false;
 #define BUTTON_PADDING 5
 
 static lv_obj_t *back_btn = NULL;
+static lv_obj_t *input_label = NULL;
 static size_t current_text_length = 0; // track total characters to manage memory
 lv_timer_t *terminal_update_timer = NULL;
+
+static char input_buffer[128] = {0}; // keyboard input buffer
+static int input_len = 0; // input length counter
 
 static void scroll_terminal_up(void);
 static void scroll_terminal_down(void);
 static void stop_all_operations(void);
 
+// keyboard function predefs
+static void submit_text();
+static void add_char_to_buffer(char c);
+static void remove_char_from_buffer();
+static void update_input_label();
 
 typedef struct {
   char messages[MAX_QUEUE_SIZE][MAX_MESSAGE_SIZE];
@@ -44,6 +56,37 @@ typedef struct {
 
 static MessageQueue message_queue = {.head = 0, .tail = 0, .count = 0};
 
+static void submit_text() {
+    if (input_len > 0) {
+      char prompt_buf[sizeof(input_buffer) + 4]; // +4 for "> " and null terminator
+      snprintf(prompt_buf, sizeof(prompt_buf), "> %s", input_buffer); // format the prompt
+      terminal_view_add_text(prompt_buf); // add prompt before the command when printing to screen
+      simulateCommand(input_buffer); // execute the command
+      memset(input_buffer, 0, sizeof(input_buffer)); // clear the input buffer
+      input_len = 0; // reset input length
+      update_input_label(); // update the input label to show empty state
+    }
+}
+
+static void add_char_to_buffer(char c) {
+  if (input_len < sizeof(input_buffer) - 1) {
+    input_buffer[input_len++] = c;
+    input_buffer[input_len] = '\0';
+    update_input_label();
+  }
+}
+
+static void remove_char_from_buffer() {
+  if (input_len > 0) {
+    input_buffer[--input_len] = '\0';
+    update_input_label();
+  }
+}
+static void update_input_label() {
+    if (input_label) {
+        lv_label_set_text(input_label, input_buffer);
+    }
+}
 
 static void queue_message(const char *text) {
   if (message_queue.count >= MAX_QUEUE_SIZE) {
@@ -154,10 +197,19 @@ static void stop_all_operations(void) {
   simulateCommand("gpsinfo -s");
   simulateCommand("blewardriving -s");
   simulateCommand("pineap -s");
-  display_manager_switch_view(&options_menu_view);
+  display_manager_switch_view(display_manager_previous_view);
   ESP_LOGI(TAG, "Stop all operations triggered");
 }
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+void text_box_click_cb(lv_event_t *e){
+  ESP_LOGI(TAG, "Text box clicked");
+  printf("Text box clicked\n");
 
+  display_manager_switch_view(&keyboard_view);
+
+  // If using a hardware keyboard, we can ignore this click
+}
+#endif
 void terminal_view_create(void) {
   is_stopping = false;
   if (terminal_view.root != NULL) {
@@ -181,14 +233,21 @@ void terminal_view_create(void) {
   lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
 
   // Define status bar height (as seen in display_manager.c)
-  const int STATUS_BAR_HEIGHT = 20; 
-  
+  const int STATUS_BAR_HEIGHT = 20;
+
   // Calculate available height, considering status bar and bottom buttons (if present)
   int available_height = LV_VER_RES - STATUS_BAR_HEIGHT;
   if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
       available_height -= (BUTTON_SIZE + BUTTON_PADDING * 2);
   }
   int textarea_height = available_height;
+
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+  int padding = 5;
+  int textbox_height = 40;
+  int textbox_width = LV_HOR_RES - 2 * padding;
+  textarea_height -= (textbox_height + padding); // only need 1x pad since the text box is at the bottom of the screen
+#endif  
 
   terminal_page = lv_list_create(terminal_view.root);
   // Set position below status bar
@@ -203,7 +262,7 @@ void terminal_view_create(void) {
   lv_obj_set_style_border_width(terminal_view.root, 0, 0);
   lv_obj_set_style_radius(terminal_view.root, 0, 0);
   lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
-
+#ifdef CONFIG_USE_TOUCHSCREEN
   if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
     back_btn = lv_btn_create(terminal_view.root);
     lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
@@ -222,6 +281,27 @@ void terminal_view_create(void) {
              lv_obj_get_x(back_btn), lv_obj_get_y(back_btn), 
              lv_obj_get_width(back_btn), lv_obj_get_height(back_btn));
   }
+  textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING; // Adjust textbox width if back button is present
+  if (textbox_width < 40) textbox_width = 40; // Prevent negative or too small width
+  // TODO: Add button for on screen keyboard
+#endif
+
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+  // Create input text box at the bottom of the screen
+
+    input_label = lv_label_create(terminal_view.root);
+    lv_obj_set_size(input_label, textbox_width, textbox_height - 2 * padding);
+    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_pad_all(input_label, padding, 0);
+    lv_obj_set_style_radius(input_label, 5, 0);
+    lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -2*padding);
+    lv_obj_add_event_cb(input_label, text_box_click_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_label_set_long_mode(input_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(input_label, "Type Command...");
+#endif
 
   display_manager_add_status_bar("Terminal");
 
@@ -315,6 +395,23 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
     int touch_y = event->data.touch_data.point.y;
     ESP_LOGW(TAG, "Touch detected at x=%d, y=%d (screen: %dx%d)", touch_x, touch_y, LV_HOR_RES, LV_VER_RES);
 
+    if (input_label){
+      ESP_LOGI(TAG, "Input label exists, checking for click");
+      // Check if the touch is within the input label area
+      lv_obj_t *input_area = lv_obj_get_parent(input_label);
+      int input_x_min = lv_obj_get_x(input_label);
+      int input_x_max = input_x_min + lv_obj_get_width(input_label);
+      int input_y_min = lv_obj_get_y(input_label);
+      int input_y_max = input_y_min + lv_obj_get_height(input_label);
+
+      if (touch_x >= input_x_min && touch_x <= input_x_max &&
+          touch_y >= input_y_min && touch_y <= input_y_max) {
+        ESP_LOGI(TAG, "Input label clicked at x=%d, y=%d", touch_x, touch_y);
+        lv_event_send(input_label, LV_EVENT_CLICKED, NULL);
+        return;
+      }
+    }
+
     if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
       int button_y_min = LV_VER_RES - (BUTTON_SIZE + BUTTON_PADDING * 2);
       int button_y_max = LV_VER_RES - BUTTON_PADDING;
@@ -371,6 +468,28 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_up();
     } else if (key == 46 || key == '.') {      //down arrow
       scroll_terminal_down();
+    } else if (key == 13){
+      ESP_LOGW(TAG, "Enter key pressed, submitting text");
+      submit_text();
+    } else if (key == 8 || key == 127) { // backspace
+      ESP_LOGW(TAG, "Backspace key pressed, removing last character");
+      remove_char_from_buffer();
+    } else if (key == 32) { // space
+      ESP_LOGW(TAG, "Space key pressed, adding space to input buffer");
+      add_char_to_buffer(' ');
+    } else if (key >= 32 && key <= 126) { // printable ASCII characters
+      ESP_LOGW(TAG, "Adding character '%c' to input buffer", (char)key);
+      add_char_to_buffer((char)key);
+    } else if (key == 0) {
+      ESP_LOGW(TAG, "Null character received, ignoring"); 
+    }
+    else {
+      ESP_LOGW(TAG, "Unhandled keyboard input: %d", key);
+      // Optionally handle other keys or log them
+      char key_str[2];
+      key_str[0] = (char)key;
+      key_str[1] = '\0';
+      terminal_view_add_text(key_str); // Add unhandled keys to terminal
     }
   }
 }

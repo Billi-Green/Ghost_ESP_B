@@ -110,6 +110,11 @@ CommandFunction find_command(const char *name) {
     return NULL;
 }
 
+void handle_unknown_command(const char *cmd) {
+    printf("Unknown command: %s\n", cmd);
+    TERMINAL_VIEW_ADD_TEXT("Unknown command: %s\n", cmd);
+}
+
 void cmd_wifi_scan_start(int argc, char **argv) {
     if (argc > 1) {
         int seconds = atoi(argv[1]);
