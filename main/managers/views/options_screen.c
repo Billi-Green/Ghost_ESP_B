@@ -30,8 +30,8 @@ typedef enum {
 static int current_settings_category = -1;
 
 static int settings_category_indices[][8] = {
-    {1, 2, 5, -1}, // Display: Display Timeout, Menu Theme, Invert Colors
-    {0, 3, 4, 6, 7, -1}, // Config: RGB Mode, Third Control, Terminal Color, Web Auth, AP Enabled
+    {1, 2, 5, 3, 4, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color
+    {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -94,7 +94,7 @@ typedef struct {
 } SettingsItem;
 
 static const char *rgb_mode_options[] = {"Normal", "Rainbow"};
-static const char *timeout_options[] = {"5s", "10s", "30s", "60s"};
+static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
 static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
 static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
@@ -108,18 +108,20 @@ enum {
     SETTING_TERMINAL_COLOR,
     SETTING_INVERT_COLORS,
     SETTING_WEB_AUTH,
-    SETTING_AP_ENABLED
+    SETTING_AP_ENABLED,
+    SETTING_POWER_SAVE
 };
 
 static SettingsItem settings_items[] = {
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 2, 0},
-    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 4, 1},
+    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1},
     {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
     {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0},
     {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0},
     {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1},
-    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1}
+    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1},
+    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0}
 };
 
 static bool is_settings_mode = false;
@@ -376,7 +378,7 @@ static void load_current_settings_values(void) {
     settings_items[0].current_value = settings_get_rgb_mode(&G_Settings);
     
     uint32_t timeout = settings_get_display_timeout(&G_Settings);
-    settings_items[1].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : 3;
+    settings_items[1].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : timeout < 60000 ? 3 : 4;
     
     settings_items[2].current_value = settings_get_menu_theme(&G_Settings);
     settings_items[3].current_value = settings_get_thirds_control_enabled(&G_Settings) ? 1 : 0;
@@ -393,6 +395,7 @@ static void load_current_settings_values(void) {
     settings_items[5].current_value = settings_get_invert_colors(&G_Settings) ? 1 : 0;
     settings_items[6].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
     settings_items[7].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
+    settings_items[8].current_value = settings_get_power_save_enabled(&G_Settings) ? 1 : 0;
 }
 
 static void apply_setting_change(int setting_index, int new_value) {
@@ -404,7 +407,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             settings_set_rgb_mode(&G_Settings, new_value);
             break;
         case SETTING_DISPLAY_TIMEOUT: {
-            uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : 60000;
+            uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : new_value == 3 ? 60000 : 0; // Handle "Never"
             settings_set_display_timeout(&G_Settings, timeout_ms);
             break;
         }
@@ -425,6 +428,10 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_AP_ENABLED:
             settings_set_ap_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_POWER_SAVE:
+            settings_set_power_save_enabled(&G_Settings, new_value == 1);
+            apply_power_management_config(new_value == 1);
             break;
     }
     
