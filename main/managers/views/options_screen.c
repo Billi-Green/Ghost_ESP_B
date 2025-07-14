@@ -551,6 +551,11 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_AP_ENABLED:
             settings_set_ap_enabled(&G_Settings, new_value == 1);
+            if (new_value == 1) {
+                ap_manager_start_services();
+            } else {
+                ap_manager_stop_services();
+            }
             break;
         case SETTING_POWER_SAVE:
             settings_set_power_save_enabled(&G_Settings, new_value == 1);
