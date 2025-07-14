@@ -31,7 +31,7 @@ static int current_settings_category = -1;
 
 static int settings_category_indices[][8] = {
     {1, 2, 5, -1}, // Display: Display Timeout, Menu Theme, Invert Colors
-    {0, 3, 4, 6, 7, -1}, // Config: RGB Mode, Third Control, Terminal Color, Web Auth, AP Enabled
+    {0, 3, 4, 6, 7, 8, -1}, // Config: RGB Mode, Third Control, Terminal Color, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -108,7 +108,8 @@ enum {
     SETTING_TERMINAL_COLOR,
     SETTING_INVERT_COLORS,
     SETTING_WEB_AUTH,
-    SETTING_AP_ENABLED
+    SETTING_AP_ENABLED,
+    SETTING_POWER_SAVE
 };
 
 static SettingsItem settings_items[] = {
@@ -119,7 +120,8 @@ static SettingsItem settings_items[] = {
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0},
     {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0},
     {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1},
-    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1}
+    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1},
+    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0}
 };
 
 static bool is_settings_mode = false;
@@ -393,6 +395,7 @@ static void load_current_settings_values(void) {
     settings_items[5].current_value = settings_get_invert_colors(&G_Settings) ? 1 : 0;
     settings_items[6].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
     settings_items[7].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
+    settings_items[8].current_value = settings_get_power_save_enabled(&G_Settings) ? 1 : 0;
 }
 
 static void apply_setting_change(int setting_index, int new_value) {
@@ -425,6 +428,10 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_AP_ENABLED:
             settings_set_ap_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_POWER_SAVE:
+            settings_set_power_save_enabled(&G_Settings, new_value == 1);
+            apply_power_management_config(new_value == 1);
             break;
     }
     

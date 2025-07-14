@@ -51,6 +51,7 @@ static const char *NVS_WEB_AUTH_KEY = "web_auth";
 static const char *NVS_ESP_COMM_TX_PIN_KEY = "esp_comm_tx";
 static const char *NVS_ESP_COMM_RX_PIN_KEY = "esp_comm_rx";
 static const char *NVS_AP_ENABLED_KEY = "ap_enabled";
+static const char *NVS_POWER_SAVE_KEY = "power_save";
 
 static const char *TAG = "SettingsManager";
 
@@ -132,6 +133,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->esp_comm_tx_pin = 6;
   settings->esp_comm_rx_pin = 7;
   settings->ap_enabled = true; // Default to enabled
+  settings->power_save_enabled = false;
 }
 
 void settings_load(FSettings *settings) {
@@ -370,6 +372,13 @@ void settings_load(FSettings *settings) {
     settings->ap_enabled = (value_u8 != 0);
   } else {
     settings->ap_enabled = true; // Default to enabled if not found
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_POWER_SAVE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->power_save_enabled = (value_u8 != 0);
+  } else {
+    settings->power_save_enabled = false; // Default to disabled if not found
   }
 
   err = nvs_get_i32(nvsHandle, NVS_ESP_COMM_TX_PIN_KEY, &tmp);
@@ -633,6 +642,8 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save web_auth_enabled: %s", esp_err_to_name(err));
   err = nvs_set_u8(nvsHandle, NVS_AP_ENABLED_KEY, settings->ap_enabled);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save ap_enabled: %s", esp_err_to_name(err));
+  err = nvs_set_u8(nvsHandle, NVS_POWER_SAVE_KEY, settings->power_save_enabled);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save power_save_enabled: %s", esp_err_to_name(err));
   
   err = nvs_set_i32(nvsHandle, NVS_ESP_COMM_TX_PIN_KEY, settings->esp_comm_tx_pin);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save esp_comm_tx_pin: %s", esp_err_to_name(err));
@@ -653,7 +664,7 @@ void settings_set_rts_enabled(FSettings *settings, bool enabled) {
   settings->rts_enabled = enabled;
 }
 
-bool settings_get_rts_enabled(FSettings *settings) {
+bool settings_get_rts_enabled(const FSettings *settings) {
   return settings->rts_enabled;
 }
 
@@ -934,6 +945,14 @@ void settings_set_ap_enabled(FSettings *settings, bool enabled) {
 
 bool settings_get_ap_enabled(const FSettings *settings) {
   return settings->ap_enabled;
+}
+
+void settings_set_power_save_enabled(FSettings *settings, bool enabled) {
+  settings->power_save_enabled = enabled;
+}
+
+bool settings_get_power_save_enabled(const FSettings *settings) {
+  return settings->power_save_enabled;
 }
 
 void settings_set_esp_comm_pins(FSettings *settings, int32_t tx_pin, int32_t rx_pin) {

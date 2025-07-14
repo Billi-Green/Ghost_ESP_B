@@ -17,7 +17,10 @@
 #include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_pm.h"
+#include "driver/ledc.h"
 #include <limits.h> // for UINT32_MAX
+#include "managers/ap_manager.h"
+#include "core/serial_manager.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -355,7 +358,7 @@ lv_color_t hex_to_lv_color(const char *hex_str) {
 }
 
 void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
-  int batteryPercentage) {
+  int batteryPercentage, bool power_save_enabled) {
   // Update visibility of status icons
   if (sd_card_mounted) {
     lv_obj_clear_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
@@ -400,6 +403,28 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   }
 
   lv_obj_invalidate(status_bar);
+
+  // set status bar icon colors based on power save mode
+  if (power_save_enabled) {
+    lv_color_t orange_color = lv_color_hex(0xFFA500); // orange like apple uses
+    if (battery_label && lv_obj_is_valid(battery_label)) {
+      lv_obj_set_style_text_color(battery_label, orange_color, 0);
+    }
+  } else {
+    lv_color_t default_color = lv_color_hex(0xCCCCCC);
+    if (wifi_label && lv_obj_is_valid(wifi_label)) {
+      lv_obj_set_style_text_color(wifi_label, default_color, 0);
+    }
+    if (bt_label && lv_obj_is_valid(bt_label)) {
+      lv_obj_set_style_text_color(bt_label, default_color, 0);
+    }
+    if (sd_label && lv_obj_is_valid(sd_label)) {
+      lv_obj_set_style_text_color(sd_label, default_color, 0);
+    }
+    if (battery_label && lv_obj_is_valid(battery_label)) {
+      lv_obj_set_style_text_color(battery_label, default_color, 0);
+    }
+  }
 }
 
 static void status_update_cb(lv_timer_t *timer) {
@@ -413,13 +438,15 @@ static void status_update_cb(lv_timer_t *timer) {
 #ifdef CONFIG_HAS_BATTERY
   uint8_t power_level;
   axp2101_get_power_level(&power_level);
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, power_level);
+  bool is_charging = axp202_is_charging();
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
+                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #elif CONFIG_USE_CARDPUTER
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level);
+                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings));
 #endif
 }
 
@@ -514,13 +541,13 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   axp2101_get_power_level(&power_level);
   bool is_charging = axp202_is_charging();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    is_charging ? power_level : power_level);
+                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #elif CONFIG_USE_CARDPUTER
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level);
+                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1);
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings));
 #endif
   if (!status_timer_initialized) {
     status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
@@ -528,16 +555,51 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   }
 }
 
-void display_manager_init(void) {
+void apply_power_management_config(bool power_save_enabled) {
   esp_pm_config_esp32_t pm_cfg = {
-      .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+      .max_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
       .min_freq_mhz = 20,
       .light_sleep_enable = true,
   };
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
   if (pm_err != ESP_OK) {
-    ESP_LOGW(TAG, "PM configure failed: %s", esp_err_to_name(pm_err));
+    ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
   }
+
+  // control ap based on power save mode
+  if (power_save_enabled) {
+    ap_manager_stop_services();
+  } else {
+    ap_manager_start_services();
+  }
+}
+
+void display_manager_init(void) {
+  apply_power_management_config(settings_get_power_save_enabled(&G_Settings));
+
+  // Configure LEDC timer for backlight
+  ledc_timer_config_t ledc_timer = {
+      .speed_mode = LEDC_LOW_SPEED_MODE,
+      .duty_resolution = LEDC_TIMER_10_BIT,
+      .timer_num = LEDC_TIMER_0,
+      .freq_hz = 5000, // 5 kHz
+      .clk_cfg = LEDC_AUTO_CLK,
+  };
+  ledc_timer_config(&ledc_timer);
+
+  // Configure LEDC channel for backlight
+  ledc_channel_config_t ledc_channel = {
+      .speed_mode = LEDC_LOW_SPEED_MODE,
+      .channel = LEDC_CHANNEL_0,
+      .timer_sel = LEDC_TIMER_0,
+      .intr_type = LEDC_INTR_DISABLE,
+      .gpio_num = CONFIG_LV_DISP_PIN_BCKL,
+      .duty = 0, // Set initial duty to 0
+      .hpoint = 0,
+      .sleep_mode = LEDC_SLEEP_MODE_KEEP_ALIVE,
+  };
+  ledc_channel_config(&ledc_channel);
+
 #ifndef CONFIG_JC3248W535EN_LCD
   lv_init();
 #ifdef CONFIG_USE_CARDPUTER
@@ -715,8 +777,17 @@ void set_backlight_brightness(uint8_t percentage) {
   if (percentage > 1) {
     percentage = 1;
   }
-  gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT); // probably should be a part of the init process
-  gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage);
+  
+  uint32_t duty_cycle = percentage * ((1 << LEDC_TIMER_10_BIT) - 1);
+  
+  if (settings_get_power_save_enabled(&G_Settings) && percentage == 1) {
+    duty_cycle = (uint32_t)(0.70 * ((1 << LEDC_TIMER_10_BIT) - 1)); // 70% brightness when power saving is on
+  }
+
+  // Configure LEDC for backlight control
+  ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty_cycle);
+  ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+  
   if (percentage == 0) {
     if (status_update_timer) lv_timer_pause(status_update_timer);
 #ifndef CONFIG_USE_CARDPUTER // cant pause this task handler on the cardputer or the LCD will go unresponsive
