@@ -7,15 +7,29 @@
 - Support for connecting two ESP32 chips running GhostESP
 - WebUI Section to send commands to the connected peer
 
+- Config for 'AITRIP CYD' or ESP2432S028R a CYD device :shrug: - @tototo31
+
 ### Added
 
-- 'chipinfo' command to display chip information
-- 'apenable' command to enable/disable the Access Point
+- Display
+  - Added 'Never' display timeout setting.
+  - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.
+
+- Commands
+  - 'chipinfo' command to display chip information
+  - 'apenable' command to enable/disable the Access Point
+
+-
+
+- Display
+  - Added option to select Custom Evil Portal html file from the SD Card - @tototo31
 
 ### Changed
 
 - Display
   - Reuse options screen view for settings screen. Resolves #66 and #65
+  - PWM backlight control using ledc on supported devices
+  - Moved 'Terminal Color' and 'Third Control' to the Display section in settings
 
 - WebUI
   - Change from from Courier New to SF Mono if available

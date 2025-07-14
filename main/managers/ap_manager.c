@@ -728,9 +728,11 @@ void ap_manager_add_log(const char *log_message) {
 esp_err_t ap_manager_start_services() {
     esp_err_t ret;
 
-    // Check if AP is disabled in settings
-    if (!settings_get_ap_enabled(&G_Settings)) {
-        printf("Access Point disabled in settings, skipping AP services\n");
+    // if ap is disabled or power saving is on, do not start ap services.
+    if (!settings_get_ap_enabled(&G_Settings) || settings_get_power_save_enabled(&G_Settings)) {
+        printf("ap services skipped: ap disabled or power saving mode is on\n");
+        // make sure services are stopped if they somehow started and conditions changed
+        ap_manager_stop_services();
         return ESP_OK;
     }
 
