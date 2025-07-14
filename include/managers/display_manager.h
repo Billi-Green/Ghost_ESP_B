@@ -47,6 +47,12 @@ typedef struct {
   SemaphoreHandle_tt mutex;
 } DisplayManager;
 
+extern View options_menu_view;
+extern View terminal_view;
+extern View number_pad_view;
+extern View keyboard_view;
+extern View *display_manager_previous_view;
+
 /* Function prototypes */
 
 /**

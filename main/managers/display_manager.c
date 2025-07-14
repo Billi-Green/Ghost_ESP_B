@@ -69,6 +69,8 @@ lv_obj_t *sd_label = NULL;
 lv_obj_t *battery_label = NULL;
 lv_obj_t *mainlabel = NULL;
 
+View *display_manager_previous_view = NULL;
+
 bool display_manager_init_success = false;
 static bool status_timer_initialized = false;
 static TaskHandle_t lvgl_task_handle = NULL;
@@ -724,7 +726,7 @@ void display_manager_switch_view(View *view) {
 #endif
 
   if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-    ESP_LOGI(TAG, "Switching view from %s to %s\n",
+    ESP_LOGI(TAG, "Switching view from %s to %s",
            dm.current_view ? dm.current_view->name : "NULL", view->name);
 
     if (dm.current_view && dm.current_view->root) {
@@ -736,9 +738,10 @@ void display_manager_switch_view(View *view) {
         battery_label = NULL;
         status_bar = NULL;
       }
+      display_manager_previous_view = dm.current_view; // Store current view as previous
       display_manager_fade_out(dm.current_view->root, fade_out_ready_cb, view);
     } else {
-      dm.previous_view = dm.current_view;
+      display_manager_previous_view = dm.current_view; // Store current view as previous
       dm.current_view = view;
 
       if (view->get_hardwareinput_callback) {

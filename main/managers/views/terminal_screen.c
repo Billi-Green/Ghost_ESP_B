@@ -197,7 +197,7 @@ static void stop_all_operations(void) {
   simulateCommand("gpsinfo -s");
   simulateCommand("blewardriving -s");
   simulateCommand("pineap -s");
-  display_manager_switch_view(&options_menu_view);
+  display_manager_switch_view(display_manager_previous_view);
   ESP_LOGI(TAG, "Stop all operations triggered");
 }
 #if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
