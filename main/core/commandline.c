@@ -27,6 +27,7 @@
 #include "esp_wifi.h"
 #include "managers/default_portal.h"
 #include <time.h>
+#include <dirent.h>
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
 
@@ -543,8 +544,8 @@ void handle_start_portal(int argc, char **argv) {
     strcpy(final_url_or_path, url);
 
     // Only prepend /mnt/ if it's not the default portal and doesn't already start with /mnt/
-    if (strcmp(url, "default") != 0 && strncmp(final_url_or_path, "/mnt/", 5) != 0) {
-        const char *prefix = "/mnt/";
+    if (strcmp(url, "default") != 0 && strncmp(final_url_or_path, "/mnt/ghostesp/evil_portal/portals/", 5) != 0) {
+        const char *prefix = "/mnt/ghostesp/evil_portal/portals/";
         size_t prefix_len = strlen(prefix);
         size_t current_len = strlen(final_url_or_path);
         if (current_len + prefix_len >= MAX_PORTAL_PATH_LEN) {
@@ -2283,6 +2284,9 @@ void handle_web_auth_cmd(int argc, char **argv) {
     }
 }
 
+
+void handle_listportals(int argc, char **argv);
+
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
     
@@ -2606,14 +2610,14 @@ void register_commands() {
     register_command("scanports", handle_scan_ports);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
-    
+    register_command("listportals", handle_listportals);
     register_command("commdiscovery", handle_comm_discovery);
     register_command("commconnect", handle_comm_connect);
     register_command("commsend", handle_comm_send);
     register_command("commstatus", handle_comm_status);
     register_command("commdisconnect", handle_comm_disconnect);
     register_command("commsetpins", handle_comm_setpins);
-    
+
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blescan", handle_ble_scan_cmd);
     register_command("blewardriving", handle_ble_wardriving);
@@ -2703,6 +2707,24 @@ void handle_ble_spam_cmd(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
 }
 #endif
+
+void handle_listportals(int argc, char **argv) {
+    char portal_names[MAX_PORTALS][MAX_PORTAL_NAME];
+    int count = get_evil_portal_list(portal_names);
+
+    if (count <= 0) {
+        printf("No portals found.\n");
+        TERMINAL_VIEW_ADD_TEXT("No portals found.\n");
+        return;
+    }
+
+    printf("Available Evil Portals:\n");
+    TERMINAL_VIEW_ADD_TEXT("Available Evil Portals:\n");
+    for (int i = 0; i < count; ++i) {
+        printf("  %s\n", portal_names[i]);
+        TERMINAL_VIEW_ADD_TEXT("  %s\n", portal_names[i]);
+    }
+}
 
 
 

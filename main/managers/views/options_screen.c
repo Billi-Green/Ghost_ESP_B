@@ -1,5 +1,16 @@
 #include "managers/views/options_screen.h"
 #include "core/serial_manager.h"
+#include "core/commandline.h" // for get_evil_portal_list
+
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
+static char selected_portal[MAX_PORTAL_NAME] = {0}; // <-- Move here
+
+static char evil_portal_names[MAX_PORTALS][MAX_PORTAL_NAME];
+static const char *evil_portal_options[MAX_PORTALS + 1]; // +1 for NULL terminator
+
+#include "managers/views/keyboard_screen.h"
 #include "esp_timer.h"
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
@@ -15,6 +26,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
 
 static const char *TAG = "optionsScreen";
@@ -41,7 +53,8 @@ typedef enum {
     WIFI_MENU_SCANNING,
     WIFI_MENU_EVIL_PORTAL,
     WIFI_MENU_CONNECTION,
-    WIFI_MENU_MISC
+    WIFI_MENU_MISC,
+    WIFI_MENU_EVIL_PORTAL_SELECT // <-- Add this line
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -62,8 +75,13 @@ static const char *wifi_scanning_options[] = {
     "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
+
 static void switch_to_settings_category(int cat_idx);
-static const char *wifi_evil_portal_options[] = {"Start Evil Portal", "Stop Evil Portal", NULL};
+
+static const char *wifi_evil_portal_options[] = {
+    "Start Evil Portal", "Start Custom Evil Portal", "Stop Evil Portal", NULL
+};
+
 
 static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
 
@@ -193,6 +211,54 @@ static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
 
+static void evil_portal_ssid_cb(const char *input) {
+    if (!input || !selected_portal[0]) return;
+    char ssid[64] = {0};
+    char pass[64] = {0};
+    const char *space = strchr(input, ' ');
+    if (space) {
+        size_t ssid_len = space - input;
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
+        const char *pw = space + 1;
+        size_t pass_len = strlen(pw);
+        if (pass_len > 0) {
+            if (pass_len < 8) {
+                error_popup_create("Password must be at least 8 chars");
+                return;
+            }
+            if (pass_len >= sizeof(pass)) {
+                error_popup_create("pass too long");
+                return;
+            }
+            memcpy(pass, pw, pass_len);
+            pass[pass_len] = '\0';
+        }
+    } else {
+        size_t ssid_len = strlen(input);
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
+    }
+    char cmd[256];
+    if (pass[0]) {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s %s", selected_portal, ssid, pass);
+    } else {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s", selected_portal, ssid);
+    }
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+    selected_portal[0] = '\0';
+}
+
 // Add scroll functions
 static void scroll_options_up(lv_event_t *e) {
     if (!menu_container) return;
@@ -295,6 +361,22 @@ void options_menu_create() {
             case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
             case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
+            case WIFI_MENU_EVIL_PORTAL_SELECT: // <-- Add this case
+            {
+                ESP_LOGI(TAG, "Populating evil portal selector...");
+                int count = get_evil_portal_list(evil_portal_names);
+                ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
+                if (count == 0) {
+                    evil_portal_options[0] = "default";
+                    evil_portal_options[1] = NULL;
+                    ESP_LOGI(TAG, "No portals found, using 'default'");
+                } else {
+                    for (int i = 0; i < count; ++i) evil_portal_options[i] = evil_portal_names[i];
+                    evil_portal_options[count] = NULL;
+                }
+                options = evil_portal_options;
+                break;
+            }
         }
         break;
     case OT_Bluetooth: options = bluetooth_options; break;
@@ -584,6 +666,10 @@ void handle_hardware_button_press_options(InputEvent *event) {
 
             // vertical swipe = scroll
             int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            // Lower threshold for Evil Portal HTML list
+            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
+            }
             if (abs(dy) > thr_y) {
                 lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                 return;
@@ -920,6 +1006,21 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Start Custom Evil Portal") == 0) {
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        // Prompt for SSID after selecting portal
+        strncpy(selected_portal, Selected_Option, MAX_PORTAL_NAME-1);
+        selected_portal[MAX_PORTAL_NAME-1] = '\0';
+        keyboard_view_set_submit_callback(evil_portal_ssid_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("SSID");
+        return;
+    }
+
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("startwd");
@@ -1213,7 +1314,7 @@ void handle_option_directly(const char *Selected_Option) {
     option_event_cb(&e);
 }
 
-void options_menu_destroy(void) {
+void options_menu_destroy() {
     if (options_menu_view.root) {
         if (menu_container) {
             lv_obj_clean(menu_container);
@@ -1257,18 +1358,27 @@ View options_menu_view = {.root = NULL,
                           .get_hardwareinput_callback = get_options_menu_callback};
 
 static void back_event_cb(lv_event_t *e) {
+
+    // If in Evil Portal select submenu, go back to Evil Portal menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
+        current_wifi_menu_state = WIFI_MENU_MAIN;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    // If in a settings submenu, go back to category selection
     if (is_settings_mode && current_settings_category >= 0) {
         current_settings_category = -1;
         display_manager_switch_view(&options_menu_view);
         return;
     }
-    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
-        current_wifi_menu_state = WIFI_MENU_MAIN;
-        display_manager_switch_view(&options_menu_view);
-    } else {
-        current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
-        display_manager_switch_view(&main_menu_view);
-    }
+    // Otherwise, go back to main menu
+    display_manager_switch_view(&main_menu_view);
 }
 
 static void switch_to_settings_category(int cat_idx) {
