@@ -7,6 +7,8 @@
 - Support for connecting two ESP32 chips running GhostESP
 - WebUI Section to send commands to the connected peer
 
+- Config for 'AITRIP CYD' or ESP2432S028R a CYD device :shrug: - @tototo31
+
 ### Added
 
 - Display
@@ -17,6 +19,7 @@
   - 'chipinfo' command to display chip information
   - 'apenable' command to enable/disable the Access Point
 
+-
 
 ### Changed
 
