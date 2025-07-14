@@ -86,6 +86,11 @@ static uint16_t original_beacon_interval = 100;
 
 #define BACKLIGHT_SLEEP_POLL_MS 50  // Poll slower when dimmed
 
+#ifdef CONFIG_IS_S3TWATCH
+#define WAKE_UP_PIN GPIO_NUM_16
+static SemaphoreHandle_t wake_up_sem = NULL;
+#endif
+
 void set_display_timeout(uint32_t timeout_ms) {
   display_timeout_ms = timeout_ms;
 }
@@ -103,6 +108,12 @@ void m5stack_lvgl_render_callback(lv_disp_drv_t *drv, const lv_area_t *area,
   m5gfx_write_pixels(x1, y1, x2, y2, (uint16_t *)color_p);
 
   lv_disp_flush_ready(drv);
+}
+#endif
+
+#ifdef CONFIG_IS_S3TWATCH
+static void IRAM_ATTR gpio_isr_handler(void* arg) {
+    xSemaphoreGiveFromISR(wake_up_sem, NULL);
 }
 #endif
 
@@ -714,6 +725,26 @@ void display_manager_init(void) {
 #endif
 #endif
 
+// initialize wake button interrupt
+#ifdef CONFIG_IS_S3TWATCH
+  wake_up_sem = xSemaphoreCreateBinary();
+  if (wake_up_sem != NULL) {
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << WAKE_UP_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,
+    };
+    gpio_config(&io_conf);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(WAKE_UP_PIN, gpio_isr_handler, (void*) WAKE_UP_PIN);
+  } else {
+    ESP_LOGE(TAG, "Failed to create wake_up_sem");
+  }
+#endif
+
   display_manager_init_success = true;
 
   // for cardputer. if we don't do this the backlight will flicker on startup until it gets turned off and on again by software
@@ -876,6 +907,7 @@ void hardware_input_task(void *pvParameters) {
   int screen_width = LV_HOR_RES;
   int screen_height = LV_VER_RES;
   TickType_t last_touch_time = xTaskGetTickCount();
+  bool was_woken_by_interrupt = false; // New flag for S3T-Watch
   bool is_backlight_dimmed = false;
 #ifdef CONFIG_USE_CARDPUTER
   uint8_t shift_count_before_caps =75; // num of cycles before capslock gets turned on
@@ -884,6 +916,17 @@ void hardware_input_task(void *pvParameters) {
 #endif
 
   while (1) {
+
+// Check for wake interrupt when dimmed
+#ifdef CONFIG_IS_S3TWATCH
+    if (is_backlight_dimmed && xSemaphoreTake(wake_up_sem, 0) == pdTRUE) {
+        set_backlight_brightness(1);
+        is_backlight_dimmed = false;
+        last_touch_time = xTaskGetTickCount(); // Reset inactivity timer
+        was_woken_by_interrupt = true; // Set flag
+    }
+#endif
+
 #ifdef CONFIG_USE_CARDPUTER
     keyboard_update_key_list(&gkeyboard);
     keyboard_update_keys_state(&gkeyboard);
@@ -904,6 +947,8 @@ void hardware_input_task(void *pvParameters) {
           touch_active = true;
           last_touch_time = xTaskGetTickCount();
           if (is_backlight_dimmed) {
+            // CARDPUTER wake logic is keypress-to-wake, which is desired.
+            // No changes needed here as it's separate from S3T-Watch touch logic.
             set_backlight_brightness(1);
             is_backlight_dimmed = false;
             skip_event = true;
@@ -986,11 +1031,21 @@ void hardware_input_task(void *pvParameters) {
     if (touch_data.state == LV_INDEV_STATE_PR && !touch_active) {
       bool skip_event = false;
       last_touch_time = xTaskGetTickCount();
+#ifdef CONFIG_IS_S3TWATCH
+      if (was_woken_by_interrupt) {
+        was_woken_by_interrupt = false; // Consume the flag
+        skip_event = true;
+        vTaskDelay(pdMS_TO_TICKS(100)); // Debounce period
+      } else
+#endif
       if (is_backlight_dimmed) {
+// Disable tap-to-wake, use button interrupt instead.
+#ifndef CONFIG_IS_S3TWATCH
         set_backlight_brightness(1);
         is_backlight_dimmed = false;
         skip_event = true;
         vTaskDelay(pdMS_TO_TICKS(100));
+#endif
       }
       if (!skip_event) {
         touch_active = true;
