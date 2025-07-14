@@ -92,6 +92,7 @@ typedef struct {
   int32_t esp_comm_tx_pin; // ESP communication TX pin
   int32_t esp_comm_rx_pin; // ESP communication RX pin
   bool ap_enabled; // Enable/disable AP across reboots
+  bool power_save_enabled;
 } FSettings;
 
 // Function declarations
@@ -115,7 +116,7 @@ void settings_set_flappy_ghost_name(FSettings *settings, const char *Name);
 const char *settings_get_flappy_ghost_name(const FSettings *settings);
 
 void settings_set_rts_enabled(FSettings *settings, bool enabled);
-bool settings_get_rts_enabled(FSettings *settings);
+bool settings_get_rts_enabled(const FSettings *settings);
 
 void settings_set_timezone_str(FSettings *settings, const char *Name);
 const char *settings_get_timezone_str(const FSettings *settings);
@@ -203,6 +204,10 @@ void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int3
 // Getter and Setter for AP enabled state
 void settings_set_ap_enabled(FSettings *settings, bool enabled);
 bool settings_get_ap_enabled(const FSettings *settings);
+
+// Getter and Setter for power save enabled state
+bool settings_get_power_save_enabled(const FSettings *settings);
+void settings_set_power_save_enabled(FSettings *settings, bool enabled);
 
 extern FSettings G_Settings;
 
