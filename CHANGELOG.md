@@ -32,7 +32,6 @@
   - Organise BLE menu into hierarchical sub-menus - @tototo31
 
 - WebUI
-  - Change from from Courier New to SF Mono if available
   - Minor style tweaks
   - Update Help tab
   
