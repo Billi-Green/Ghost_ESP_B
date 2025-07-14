@@ -780,10 +780,6 @@ void set_backlight_brightness(uint8_t percentage) {
   
   uint32_t duty_cycle = percentage * ((1 << LEDC_TIMER_10_BIT) - 1);
   
-  if (settings_get_power_save_enabled(&G_Settings) && percentage == 1) {
-    duty_cycle = (uint32_t)(0.70 * ((1 << LEDC_TIMER_10_BIT) - 1)); // 70% brightness when power saving is on
-  }
-
   // Configure LEDC for backlight control
   ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty_cycle);
   ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
@@ -976,28 +972,25 @@ void hardware_input_task(void *pvParameters) {
     // backlight dim logic
     uint32_t current_timeout = G_Settings.display_timeout_ms;
 
-    if (current_timeout == UINT32_MAX) { // "Never" timeout option
-        // Do not dim backlight if timeout is set to never
-        if (is_backlight_dimmed) {
-            set_backlight_brightness(1);
-            is_backlight_dimmed = false;
-        }
-    } else if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
-      ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
-               (unsigned long)last_touch_time, (unsigned long)current_timeout);
-      ESP_LOGI(TAG, "Display timeout reached, dimming backlight");
-      set_backlight_brightness(0);
-      is_backlight_dimmed = true;
+    if (current_timeout != UINT32_MAX) { // Only apply dimming logic if timeout is not 'Never'
+      if (!is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time > pdMS_TO_TICKS(current_timeout))) {
+        ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
+                 (unsigned long)last_touch_time, (unsigned long)current_timeout);
+        ESP_LOGI(TAG, "Display timeout reached, dimming backlight");
+        set_backlight_brightness(0);
+        is_backlight_dimmed = true;
+      } else if (is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time < pdMS_TO_TICKS(current_timeout))) {
+        ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
+                (unsigned long)last_touch_time, (unsigned long)current_timeout);
+        ESP_LOGI(TAG, "Input detected, waking backlight");
+        set_backlight_brightness(1);
+        is_backlight_dimmed = false;
+      }
+    } else if (is_backlight_dimmed) { // If timeout is 'Never' and backlight is dimmed, set to full brightness
+        set_backlight_brightness(1);
+        is_backlight_dimmed = false;
     }
-    else if (is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time < pdMS_TO_TICKS(current_timeout)))
-    {
-      ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
-              (unsigned long)last_touch_time, (unsigned long)current_timeout);
-      ESP_LOGI(TAG, "Input detected, waking backlight");
-      set_backlight_brightness(1);
-      is_backlight_dimmed = false;
-    }
-     //end backlight dim logic
+    //end backlight dim logic
     // When backlight is off (dimmed), poll less frequently to save power
     TickType_t delay = (is_backlight_dimmed ? pdMS_TO_TICKS(BACKLIGHT_SLEEP_POLL_MS) : tick_interval);
     vTaskDelay(delay);
