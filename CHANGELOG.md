@@ -22,7 +22,7 @@
 
 - Display
   - Reuse options screen view for settings screen. Resolves #66 and #65
-  - PWM backlight control using ledc
+  - PWM backlight control using ledc on supported devices
   - Moved 'Terminal Color' and 'Third Control' to the Display section in settings
 
 - WebUI
