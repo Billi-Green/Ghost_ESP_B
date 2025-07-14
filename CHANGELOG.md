@@ -21,6 +21,9 @@
 
 -
 
+- Display
+  - Added option to select Evil Portal html file from the SD Card - @tototo31
+
 ### Changed
 
 - Display
