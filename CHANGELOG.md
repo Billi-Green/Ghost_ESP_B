@@ -11,6 +11,7 @@
 
 - Display
   - Added 'Never' display timeout setting.
+  - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency.
 
 - Commands
   - 'chipinfo' command to display chip information
@@ -21,6 +22,8 @@
 
 - Display
   - Reuse options screen view for settings screen. Resolves #66 and #65
+  - PWM backlight control using ledc
+  - Moved Terminal Color and Third Control to the Display section in settings
 
 - WebUI
   - Change from from Courier New to SF Mono if available

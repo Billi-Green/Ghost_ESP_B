@@ -30,8 +30,8 @@ typedef enum {
 static int current_settings_category = -1;
 
 static int settings_category_indices[][8] = {
-    {1, 2, 5, -1}, // Display: Display Timeout, Menu Theme, Invert Colors
-    {0, 3, 4, 6, 7, 8, -1}, // Config: RGB Mode, Third Control, Terminal Color, Web Auth, AP Enabled, Power Saving Mode
+    {1, 2, 5, 3, 4, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color
+    {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
