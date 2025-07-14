@@ -2,6 +2,7 @@
 #include "managers/views/flappy_ghost_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/views/terminal_screen.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -21,10 +22,12 @@ typedef struct {
 
 static const lv_color_t flap_color = LV_COLOR_MAKE(255, 215, 0);
 static const lv_color_t rave_color = LV_COLOR_MAKE(128, 0, 128);
+static const lv_color_t terminal_color = LV_COLOR_MAKE(0, 128, 0);
 
 static app_item_t app_items[] = {
     {"Flap", &GESPFlappyghost, flap_color, &flappy_bird_view},
     {"Rave", &rave, rave_color, &music_visualizer_view},
+    {"Terminal", &terminal_icon, terminal_color, &terminal_view},
 };
 
 static int num_apps = sizeof(app_items) / sizeof(app_items[0]);
@@ -68,7 +71,11 @@ static void anim_set_x(void *obj, int32_t v) {
 
     lv_obj_t *icon = lv_img_create(current_app_obj);
     lv_img_set_src(icon, app_items[selected_app_index].icon);
-    
+
+    if (strcmp(app_items[selected_app_index].name, "Terminal") == 0) { // Special case for terminal icon
+        lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0); // Recolor to match border
+        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+    }
 
     const int icon_size = 50;
     lv_obj_set_size(icon, icon_size, icon_size);

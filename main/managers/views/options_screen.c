@@ -1,5 +1,16 @@
 #include "managers/views/options_screen.h"
 #include "core/serial_manager.h"
+#include "core/commandline.h" // for get_evil_portal_list
+
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
+static char selected_portal[MAX_PORTAL_NAME] = {0}; // <-- Move here
+
+static char evil_portal_names[MAX_PORTALS][MAX_PORTAL_NAME];
+static const char *evil_portal_options[MAX_PORTALS + 1]; // +1 for NULL terminator
+
+#include "managers/views/keyboard_screen.h"
 #include "esp_timer.h"
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
@@ -15,6 +26,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
 
 static const char *TAG = "optionsScreen";
@@ -30,8 +42,8 @@ typedef enum {
 static int current_settings_category = -1;
 
 static int settings_category_indices[][8] = {
-    {1, 2, 5, -1}, // Display: Display Timeout, Menu Theme, Invert Colors
-    {0, 3, 4, 6, 7, -1}, // Config: RGB Mode, Third Control, Terminal Color, Web Auth, AP Enabled
+    {1, 2, 5, 3, 4, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color
+    {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -41,7 +53,8 @@ typedef enum {
     WIFI_MENU_SCANNING,
     WIFI_MENU_EVIL_PORTAL,
     WIFI_MENU_CONNECTION,
-    WIFI_MENU_MISC
+    WIFI_MENU_MISC,
+    WIFI_MENU_EVIL_PORTAL_SELECT // <-- Add this line
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -62,8 +75,13 @@ static const char *wifi_scanning_options[] = {
     "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
+
 static void switch_to_settings_category(int cat_idx);
-static const char *wifi_evil_portal_options[] = {"Start Evil Portal", "Stop Evil Portal", NULL};
+
+static const char *wifi_evil_portal_options[] = {
+    "Start Evil Portal", "Start Custom Evil Portal", "Stop Evil Portal", NULL
+};
+
 
 static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
 
@@ -94,7 +112,7 @@ typedef struct {
 } SettingsItem;
 
 static const char *rgb_mode_options[] = {"Normal", "Rainbow"};
-static const char *timeout_options[] = {"5s", "10s", "30s", "60s"};
+static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
 static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
 static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
@@ -108,18 +126,20 @@ enum {
     SETTING_TERMINAL_COLOR,
     SETTING_INVERT_COLORS,
     SETTING_WEB_AUTH,
-    SETTING_AP_ENABLED
+    SETTING_AP_ENABLED,
+    SETTING_POWER_SAVE
 };
 
 static SettingsItem settings_items[] = {
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 2, 0},
-    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 4, 1},
+    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1},
     {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
     {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0},
     {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0},
     {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1},
-    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1}
+    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1},
+    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0}
 };
 
 static bool is_settings_mode = false;
@@ -223,6 +243,54 @@ static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
 
+static void evil_portal_ssid_cb(const char *input) {
+    if (!input || !selected_portal[0]) return;
+    char ssid[64] = {0};
+    char pass[64] = {0};
+    const char *space = strchr(input, ' ');
+    if (space) {
+        size_t ssid_len = space - input;
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
+        const char *pw = space + 1;
+        size_t pass_len = strlen(pw);
+        if (pass_len > 0) {
+            if (pass_len < 8) {
+                error_popup_create("Password must be at least 8 chars");
+                return;
+            }
+            if (pass_len >= sizeof(pass)) {
+                error_popup_create("pass too long");
+                return;
+            }
+            memcpy(pass, pw, pass_len);
+            pass[pass_len] = '\0';
+        }
+    } else {
+        size_t ssid_len = strlen(input);
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
+    }
+    char cmd[256];
+    if (pass[0]) {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s %s", selected_portal, ssid, pass);
+    } else {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s", selected_portal, ssid);
+    }
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+    selected_portal[0] = '\0';
+}
+
 // Add scroll functions
 static void scroll_options_up(lv_event_t *e) {
     if (!menu_container) return;
@@ -325,6 +393,22 @@ void options_menu_create() {
             case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
             case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
+            case WIFI_MENU_EVIL_PORTAL_SELECT: // <-- Add this case
+            {
+                ESP_LOGI(TAG, "Populating evil portal selector...");
+                int count = get_evil_portal_list(evil_portal_names);
+                ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
+                if (count == 0) {
+                    evil_portal_options[0] = "default";
+                    evil_portal_options[1] = NULL;
+                    ESP_LOGI(TAG, "No portals found, using 'default'");
+                } else {
+                    for (int i = 0; i < count; ++i) evil_portal_options[i] = evil_portal_names[i];
+                    evil_portal_options[count] = NULL;
+                }
+                options = evil_portal_options;
+                break;
+            }
         }
         break;
     case OT_Bluetooth:
@@ -417,7 +501,7 @@ static void load_current_settings_values(void) {
     settings_items[0].current_value = settings_get_rgb_mode(&G_Settings);
     
     uint32_t timeout = settings_get_display_timeout(&G_Settings);
-    settings_items[1].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : 3;
+    settings_items[1].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : timeout < 60000 ? 3 : 4;
     
     settings_items[2].current_value = settings_get_menu_theme(&G_Settings);
     settings_items[3].current_value = settings_get_thirds_control_enabled(&G_Settings) ? 1 : 0;
@@ -434,6 +518,7 @@ static void load_current_settings_values(void) {
     settings_items[5].current_value = settings_get_invert_colors(&G_Settings) ? 1 : 0;
     settings_items[6].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
     settings_items[7].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
+    settings_items[8].current_value = settings_get_power_save_enabled(&G_Settings) ? 1 : 0;
 }
 
 static void apply_setting_change(int setting_index, int new_value) {
@@ -445,7 +530,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             settings_set_rgb_mode(&G_Settings, new_value);
             break;
         case SETTING_DISPLAY_TIMEOUT: {
-            uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : 60000;
+            uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : new_value == 3 ? 60000 : 0; // Handle "Never"
             settings_set_display_timeout(&G_Settings, timeout_ms);
             break;
         }
@@ -466,6 +551,10 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_AP_ENABLED:
             settings_set_ap_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_POWER_SAVE:
+            settings_set_power_save_enabled(&G_Settings, new_value == 1);
+            apply_power_management_config(new_value == 1);
             break;
     }
     
@@ -618,6 +707,10 @@ void handle_hardware_button_press_options(InputEvent *event) {
 
             // vertical swipe = scroll
             int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            // Lower threshold for Evil Portal HTML list
+            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
+            }
             if (abs(dy) > thr_y) {
                 lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                 return;
@@ -961,6 +1054,21 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Start Custom Evil Portal") == 0) {
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        // Prompt for SSID after selecting portal
+        strncpy(selected_portal, Selected_Option, MAX_PORTAL_NAME-1);
+        selected_portal[MAX_PORTAL_NAME-1] = '\0';
+        keyboard_view_set_submit_callback(evil_portal_ssid_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("SSID");
+        return;
+    }
+
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
         display_manager_switch_view(&terminal_view);
         simulateCommand("startwd");
@@ -1254,7 +1362,7 @@ void handle_option_directly(const char *Selected_Option) {
     option_event_cb(&e);
 }
 
-void options_menu_destroy(void) {
+void options_menu_destroy() {
     if (options_menu_view.root) {
         if (menu_container) {
             lv_obj_clean(menu_container);
@@ -1298,11 +1406,14 @@ View options_menu_view = {.root = NULL,
                           .get_hardwareinput_callback = get_options_menu_callback};
 
 static void back_event_cb(lv_event_t *e) {
-    if (is_settings_mode && current_settings_category >= 0) {
-        current_settings_category = -1;
+
+    // If in Evil Portal select submenu, go back to Evil Portal menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
         display_manager_switch_view(&options_menu_view);
         return;
     }
+    // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
@@ -1313,7 +1424,16 @@ static void back_event_cb(lv_event_t *e) {
         current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
         current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN; // Reset for next time
         display_manager_switch_view(&main_menu_view);
+        return;
     }
+    // If in a settings submenu, go back to category selection
+    if (is_settings_mode && current_settings_category >= 0) {
+        current_settings_category = -1;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    // Otherwise, go back to main menu
+    display_manager_switch_view(&main_menu_view);
 }
 
 static void switch_to_settings_category(int cat_idx) {
