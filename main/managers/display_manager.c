@@ -690,6 +690,14 @@ void display_manager_init(void) {
 
   display_manager_init_success = true;
 
+  // for cardputer. if we don't do this the backlight will flicker on startup until it gets turned off and on again by software
+#if defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
+  // override any floating state and force it high
+  gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
+  gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
+  gpio_set_level(    CONFIG_LV_DISP_PIN_BCKL, 1);
+#endif
+
 #ifndef CONFIG_JC3248W535EN_LCD // JC3248W535EN has its own lvgl task
 xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
             RENDERING_TASK_PRIORITY, &lvgl_task_handle);
@@ -773,50 +781,62 @@ void display_manager_fill_screen(lv_color_t color) {
 }
 
 void set_backlight_brightness(uint8_t percentage) {
-
-  if (percentage > 1) {
-    percentage = 1;
-  }
-  
-  uint32_t duty_cycle = percentage * ((1 << LEDC_TIMER_10_BIT) - 1);
-  
-  // Configure LEDC for backlight control
-  ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty_cycle);
-  ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-  
-  if (percentage == 0) {
-    if (status_update_timer) lv_timer_pause(status_update_timer);
-#ifndef CONFIG_USE_CARDPUTER // cant pause this task handler on the cardputer or the LCD will go unresponsive
-    if (lvgl_task_handle) vTaskSuspend(lvgl_task_handle);
+    /* 
+     * If you’ve built with PWM support, do your existing LEDC duty code.
+     * Otherwise (i.e. switch mode), just treat >0 as “on” or 0 as “off.”
+     */
+#if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
+    // ————— PWM mode —————
+    if (percentage > 1) percentage = 1;
+    uint32_t duty = percentage * ((1 << LEDC_TIMER_10_BIT) - 1);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+#elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
+    // ————— switch mode —————
+    // make sure the pin is configured as a GPIO output
+    gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
+    gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage ? 1 : 0);
+#else
+# error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
 #endif
-    if (rainbow_timer) lv_timer_pause(rainbow_timer);
-    if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
-    if (clock_timer) lv_timer_pause(clock_timer);
-    {
-      wifi_config_t cfg;
-      if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
-        original_beacon_interval = cfg.ap.beacon_interval;
-        cfg.ap.beacon_interval = 1000;
-        esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
-      }
-      esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+
+    /* 
+     * The rest of your pause/resume logic stays exactly the same,
+     * so when you call set_backlight_brightness(0) everything
+     * (timers, Wi-Fi PS, tasks) still pauses as before.
+     */
+    if (percentage == 0) {
+        if (status_update_timer)   lv_timer_pause(status_update_timer);
+#ifndef CONFIG_USE_CARDPUTER
+        if (lvgl_task_handle)      vTaskSuspend(lvgl_task_handle);
+#endif
+        if (rainbow_timer)         lv_timer_pause(rainbow_timer);
+        if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
+        if (clock_timer)           lv_timer_pause(clock_timer);
+        {
+            wifi_config_t cfg;
+            if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                original_beacon_interval = cfg.ap.beacon_interval;
+                cfg.ap.beacon_interval = 1000;
+                esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+            }
+            esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+        }
+    } else {
+        if (status_update_timer)   lv_timer_resume(status_update_timer);
+        if (lvgl_task_handle)      vTaskResume(lvgl_task_handle);
+        if (rainbow_timer)         lv_timer_resume(rainbow_timer);
+        if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
+        if (clock_timer)           lv_timer_resume(clock_timer);
+        {
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            wifi_config_t cfg;
+            if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                cfg.ap.beacon_interval = original_beacon_interval;
+                esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+            }
+        }
     }
-  } else {
-    if (status_update_timer) lv_timer_resume(status_update_timer);
-    if (lvgl_task_handle) vTaskResume(lvgl_task_handle);
-    if (rainbow_timer) lv_timer_resume(rainbow_timer);
-    if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
-    if (clock_timer) lv_timer_resume(clock_timer);
-    {
-      esp_wifi_set_ps(WIFI_PS_NONE);
-      wifi_config_t cfg;
-      if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
-        cfg.ap.beacon_interval = original_beacon_interval;
-        esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
-      }
-    }
-  }
-  
 }
 
 void hardware_input_task(void *pvParameters) {
