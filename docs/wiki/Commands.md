@@ -2,17 +2,21 @@
 
 ## 🔍 Basic Network Scanning
 
-- `scanap` - Start scanning for all WiFi networks in range
+- `scanap [seconds]` - Start scanning for all WiFi networks in range (optional duration)
 - `list -a` - Show complete list of found WiFi networks with technical details (signal strength, security type, channels)
 - `scansta` - Find devices connected to WiFi networks around you
 - `list -s` - Show all discovered connected devices
 - `stopscan` - Stop any active scanning operation
-- `select -a <number>` - Target a specific network from the scan list (use the number shown in list -a)
+- `select -a <number[,number,...]>` - Target one or more networks from the scan list (use the number(s) shown in list -a)
+- `select -s <number>` - Target a specific station from the scan list
+- `select -airtag <number>` - Select an AirTag from the scan list
 
 ## ⚡ Attack Modes
 
 - `attack -d` - Start deauthentication (temporarily disconnects devices from selected network)
-- `stopdeauth` - Stop the deauthentication attack
+- `attack -e` - Start EAPOL logoff attack
+- `attack -s` - Start SAE flood attack (ESP32-C5/C6 only)
+- `stopdeauth` - Stop deauth attacks
 
 ## 📡 Network Generation
 
@@ -21,23 +25,31 @@
 - `beaconspam -l` - Clone all visible networks in the area
 - `beaconspam <name>` - Create a network with your chosen name
 - `stopspam` - Stop creating fake networks
+- `beaconadd <SSID>` - Add an SSID to the beacon spam list
+- `beaconremove <SSID>` - Remove an SSID from the beacon spam list
+- `beaconclear` - Clear the beacon spam list
+- `beaconshow` - Show the current beacon spam list
+- `beaconspamlist` - Start beacon spamming using the beacon spam list
 
 ## 🕸️ Evil Portal Creation
 
-- Online Mode (clones a real website):
- `startportal <website-url> <real-wifi-name> <wifi-password> <portal-name> <fake-domain>`
+- **Start Default Portal:**  
+  `startportal default <AP_SSID> [PSK]`  
+  Example:  
+  `startportal default FreeWiFi`  
+  (PSK is optional for open APs)
 
- For example:
- `startportal https://example.com MyWiFi password123 "Free WiFi" login.com`
+- **Start Custom Portal (Offline HTML):**  
+  `startportal <file-name.html> <AP_SSID> [PSK]`  
+  Example:  
+  `startportal myportal.html FreeWiFi`  
 
-- Offline Mode (uses local HTML file):
- `startportal <file-path> <portal-name> <fake-domain>`
+- **List Available Portals:**  
+  `listportals`  
+  (Shows all available HTML portals on the SD card)
 
- For example:
- `startportal index.html "Free WiFi" login.com`
-
-- Stop Portal:
- `stopportal`
+- **Stop Portal:**  
+  `stopportal`
 
 ## 💾 Network Capture (Requires SD Card/Flipper)
 
@@ -52,10 +64,10 @@
 
 ## 🌐 Network Connection & Tools
 
-- `connect <network> <password>` - Connect to a WiFi network
+- `connect <SSID> [Password]` - Connect to a WiFi network and save credentials
 - `dialconnect` - Find and interact with smart TVs on network
-- `powerprinter <ip> <text> <size> <position>` - Send text to network printers
- Positions: CM (center), TL (top-left), TR (top-right), BR (bottom-right), BL (bottom-left)
+- `powerprinter <ip> <text> <size> <position>` - Send text to network printers  
+  Positions: CM (center), TL (top-left), TR (top-right), BR (bottom-right), BL (bottom-left)
 
 ## 📱 Bluetooth Operations
 
@@ -66,18 +78,39 @@ Not available on ESP32-S2:
 - `blescan -a` - Scan for AirTags
 - `blescan -r` - View all Bluetooth traffic
 - `blescan -s` - Stop Bluetooth scanning
+- `blewardriving` - Start BLE wardriving with GPS logging
+- `blewardriving -s` - Stop BLE wardriving
+- `blespam -apple|-ms|-samsung|-google|-random|-s` - BLE spam attacks
 
 ## 📍 GPS Features
 
 - `startwd` - Begin recording networks with GPS location
 - `startwd -s` - Stop GPS recording
+- `gpsinfo` - Show live GPS info
 
 ## 🔧 System Commands
 
 - `help` - Show complete command list
 - `stop` - Stop all running operations
 - `reboot` - Restart device
-- `setcountry` - command for setting the country code
-- `timezone` - for setting a timezone
+- `setcountry <CC>` - Set the Wi-Fi country code (ESP32-C5 only)
+- `timezone <TZ_STRING>` - Set the display timezone for the clock view
+- `apcred <ssid> <password>` - Change GhostNet AP credentials
+- `apcred -r` - Reset AP credentials to default
+- `apenable <on|off>` - Enable or disable the Access Point across reboots
+- `chipinfo` - Show chip and memory info
+- `rgbmode <rainbow|police|strobe|off|color>` - Control LED effects
+- `setrgbpins <red> <green> <blue>` - Change RGB LED pins
+- `sd_config` - Show current SD GPIO pin configuration
+- `sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>` - Set SDMMC pins
+- `sd_pins_spi <cs> <clk> <miso> <mosi>` - Set SPI pins
+- `sd_save_config` - Save SD pin config to SD card
+
+## 🛠️ Utilities
+
+- `scanports local [-C/-A/start_port-end_port]` - Scan ports on local subnet
+- `scanports [IP] [-C/-A/start_port-end_port]` - Scan ports on a specific IP
+- `congestion` - Display Wi-Fi channel congestion chart
+- `listenprobes [channel] [stop]` - Listen for and log probe requests
 
 > Remember to check your hardware compatibility before using commands
