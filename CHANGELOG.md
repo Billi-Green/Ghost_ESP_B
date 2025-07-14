@@ -15,7 +15,7 @@
 - Display
   - Added 'Never' display timeout setting.
   - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.
-  - Terminal App to use commands with the keyboard view - @tototo31
+  - Terminal App to use commands with the keyboard - @tototo31
   - Added option to select Custom Evil Portal html file from the SD Card - @tototo31
 
 - Commands
