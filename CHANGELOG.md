@@ -30,6 +30,7 @@
   - PWM backlight control using ledc on supported devices
   - Moved 'Terminal Color' and 'Third Control' to the Display section in settings
   - Organise BLE menu into hierarchical sub-menus - @tototo31
+  - Color status bar icons based on their activity
 
 - WebUI
   - Minor style tweaks

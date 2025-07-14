@@ -360,7 +360,7 @@ lv_color_t hex_to_lv_color(const char *hex_str) {
 }
 
 void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
-  int batteryPercentage, bool power_save_enabled) {
+  int batteryPercentage, bool power_save_enabled, bool is_ap_active) {
   // Update visibility of status icons
   if (sd_card_mounted) {
     lv_obj_clear_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
@@ -415,7 +415,11 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   } else {
     lv_color_t default_color = lv_color_hex(0xCCCCCC);
     if (wifi_label && lv_obj_is_valid(wifi_label)) {
-      lv_obj_set_style_text_color(wifi_label, default_color, 0);
+        if (is_ap_active) {
+            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0); // Green for active AP
+        } else {
+            lv_obj_set_style_text_color(wifi_label, default_color, 0);
+        }
     }
     if (bt_label && lv_obj_is_valid(bt_label)) {
       lv_obj_set_style_text_color(bt_label, default_color, 0);
@@ -424,7 +428,21 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       lv_obj_set_style_text_color(sd_label, default_color, 0);
     }
     if (battery_label && lv_obj_is_valid(battery_label)) {
-      lv_obj_set_style_text_color(battery_label, default_color, 0);
+      lv_color_t battery_color = default_color;
+#ifdef CONFIG_HAS_BATTERY
+      if (axp202_is_charging()) {
+        battery_color = lv_color_hex(0x00FF00); // Green if charging
+      } else if (batteryPercentage <= 20) {
+        battery_color = lv_color_hex(0xFF0000); // Red if 20% or below
+      }
+#elif CONFIG_USE_CARDPUTER
+      if (isCharging()) {
+        battery_color = lv_color_hex(0x00FF00); // Green if charging
+      } else if (batteryPercentage <= 20) {
+        battery_color = lv_color_hex(0xFF0000); // Red if 20% or below
+      }
+#endif
+      lv_obj_set_style_text_color(battery_label, battery_color, 0);
     }
   }
 }
@@ -437,18 +455,21 @@ static void status_update_cb(lv_timer_t *timer) {
 #else
   HasBluetooth = false;
 #endif
+  bool server_running = false;
+  ap_manager_get_status(&server_running, NULL, NULL); // Get AP server status
+
 #ifdef CONFIG_HAS_BATTERY
   uint8_t power_level;
   axp2101_get_power_level(&power_level);
   bool is_charging = axp202_is_charging();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
+                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
 #elif CONFIG_USE_CARDPUTER
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
+                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings));
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings), server_running);
 #endif
 }
 
@@ -538,18 +559,21 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   HasBluetooth = false;
 #endif
 
+  bool server_running = false;
+  ap_manager_get_status(&server_running, NULL, NULL); // Get AP server status
+
 #ifdef CONFIG_HAS_BATTERY
   uint8_t power_level;
   axp2101_get_power_level(&power_level);
   bool is_charging = axp202_is_charging();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
+                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
 #elif CONFIG_USE_CARDPUTER
   uint8_t power_level = getBattery();
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings));
+                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
 #else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings));
+  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings), server_running);
 #endif
   if (!status_timer_initialized) {
     status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
