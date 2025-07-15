@@ -398,7 +398,7 @@ void options_menu_create() {
                 ESP_LOGI(TAG, "Populating evil portal selector...");
                 int count = get_evil_portal_list(evil_portal_names);
                 ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
-                if (count == 0) {
+                if (count <= 0) {
                     evil_portal_options[0] = "default";
                     evil_portal_options[1] = NULL;
                     ESP_LOGI(TAG, "No portals found, using 'default'");
