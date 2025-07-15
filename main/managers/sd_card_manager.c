@@ -22,7 +22,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-static const char *SD_TAG = "SD_Card_Manager";
+static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
 
 sd_card_manager_t sd_card_manager = { // Change this based on board config
@@ -382,7 +382,7 @@ esp_err_t sd_card_init(void) {
 #endif
 
   bool bus_init_success = false;
-
+#ifndef CONFIG_USE_TDECK // tdeck doesnt need this since the spi bus is already inited by display driver
 #if defined(CONFIG_IDF_TARGET_ESP32)
   {
     esp_err_t bus_ret = spi_bus_initialize(SPI3_HOST, &bus_config, dmabus);
@@ -413,6 +413,7 @@ esp_err_t sd_card_init(void) {
       return bus_ret;
     }
   }
+#endif
 #endif
 
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
@@ -484,7 +485,7 @@ void sd_card_unmount(void) {
 #else
   if (sd_card_manager.is_initialized) {
     esp_vfs_fat_sdcard_unmount("/mnt", sd_card_manager.card);
-    spi_bus_free(SPI2_HOST);
+    spi_bus_free(SPI2_HOST); // Free the bus if already initialized
     printf("SD card unmounted\n");
   }
 #endif
@@ -951,7 +952,11 @@ bool sd_card_is_virtual_storage() {
 int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]) {
     const char *portal_dir = "/mnt/ghostesp/evil_portal/portals";
     DIR *dir = opendir(portal_dir);
-    if (!dir) return 0;
+    if (!dir){
+        ESP_LOGW(TAG, "Failed to open directory: %s\n", portal_dir);
+        return -1; // Return -1 if directory cannot be opened
+    }
+    ESP_LOGI(TAG, "Listing portals in directory: %s\n", portal_dir);
     struct dirent *entry;
     int count = 0;
     while ((entry = readdir(dir)) && count < MAX_PORTALS) {
