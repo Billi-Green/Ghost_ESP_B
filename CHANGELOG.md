@@ -31,6 +31,7 @@
   - Moved 'Terminal Color' and 'Third Control' to the Display section in settings
   - Organise BLE menu into hierarchical sub-menus - @tototo31
   - Color status bar icons based on their activity
+  - S3TWatch: Disable tap-to-wake, use touch interrupt instead.
 
 - WebUI
   - Minor style tweaks
