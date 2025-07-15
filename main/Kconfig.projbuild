@@ -71,7 +71,6 @@ menu "Ghost ESP Options"
         default n
         help
             Enable touchscreen input.
-    
     config USE_JOYSTICK
         bool "Enable Joystick"
         default n
@@ -119,7 +118,6 @@ menu "Ghost ESP Options"
         default n
         help
             Enable tdeck logics.
-    
     config USE_7_INCHER
         bool "Use 7-inch Display"
         default n
@@ -159,6 +157,24 @@ menu "Ghost ESP Options"
     endmenu
 
     menu "Misc Options"
+
+        config USE_JOYSTICK
+            bool "Enable Joystick"
+            default n
+            help
+                Enable joystick input.
+    
+        config USE_CARDPUTER
+            bool "Enable Cardputer"
+            default n
+            help
+                Enable Cardputer input.
+        
+        config USE_HW_KB
+            bool "Enable Hardware Keyboard"
+            default n
+            help
+                Enable hardware keyboard input ui elements.
 
         config HAS_BATTERY
             bool "Enable power saving"

@@ -47,6 +47,12 @@ typedef struct {
   SemaphoreHandle_tt mutex;
 } DisplayManager;
 
+extern View options_menu_view;
+extern View terminal_view;
+extern View number_pad_view;
+extern View keyboard_view;
+extern View *display_manager_previous_view;
+
 /* Function prototypes */
 
 /**
@@ -64,6 +70,7 @@ bool display_manager_register_view(View *view);
  */
 void display_manager_switch_view(View *view);
 
+void apply_power_management_config(bool power_save_enabled);
 
 void rainbow_effect_cb(lv_timer_t *timer);
 
@@ -87,8 +94,7 @@ lv_color_t hex_to_lv_color(const char *hex_str);
 
 // Status Bar Functions
 
-void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
-                       int batteryPercentage);
+void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted, int batteryPercentage, bool power_save_enabled, bool is_ap_active);
 
 void display_manager_add_status_bar(const char *CurrentMenuName);
 
@@ -103,6 +109,7 @@ LV_IMG_DECLARE(GESPAppGallery);
 LV_IMG_DECLARE(clock_icon);
 LV_IMG_DECLARE(settings_icon);
 LV_IMG_DECLARE(infrared);
+LV_IMG_DECLARE(terminal_icon);
 
 joystick_t joysticks[5];
 
