@@ -865,6 +865,7 @@ void set_backlight_brightness(uint8_t percentage) {
      */
     if (percentage == 0) {
         if (status_update_timer)   lv_timer_pause(status_update_timer);
+        if (status_update_timer) lv_timer_set_period(status_update_timer, 5000);
 #ifndef CONFIG_USE_CARDPUTER
         if (lvgl_task_handle)      vTaskSuspend(lvgl_task_handle);
 #endif
@@ -882,6 +883,7 @@ void set_backlight_brightness(uint8_t percentage) {
         }
     } else {
         if (status_update_timer)   lv_timer_resume(status_update_timer);
+        if (status_update_timer) lv_timer_set_period(status_update_timer, 1000);
         if (lvgl_task_handle)      vTaskResume(lvgl_task_handle);
         if (rainbow_timer)         lv_timer_resume(rainbow_timer);
         if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
