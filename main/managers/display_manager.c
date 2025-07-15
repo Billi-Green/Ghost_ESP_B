@@ -1,5 +1,6 @@
 #include "managers/display_manager.h"
 #include "driver/gpio.h"
+#include "esp_sleep.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -30,6 +31,7 @@
 #include <esp_adc/adc_cali_scheme.h>
 #include <soc/adc_channel.h>
 #include <soc/soc_caps.h>
+#include <math.h>
 #endif
 
 #ifdef CONFIG_HAS_BATTERY
@@ -76,6 +78,9 @@ static bool status_timer_initialized = false;
 static TaskHandle_t lvgl_task_handle = NULL;
 static TaskHandle_t input_task_handle = NULL;
 static lv_timer_t *status_update_timer = NULL;
+static TickType_t last_dim_time = 0; // Initialize to 0
+static TickType_t last_touch_time;
+static bool is_backlight_dimmed;
 
 #define FADE_DURATION_MS 10
 #define DEFAULT_DISPLAY_TIMEOUT_MS 30000
@@ -112,7 +117,10 @@ void m5stack_lvgl_render_callback(lv_disp_drv_t *drv, const lv_area_t *area,
 #endif
 
 #ifdef CONFIG_IS_S3TWATCH
-static void IRAM_ATTR gpio_isr_handler(void* arg) {
+static void gpio_isr_handler(void* arg) {
+    if (xTaskGetTickCount() - last_dim_time < pdMS_TO_TICKS(1000)) {
+        return;
+    }
     xSemaphoreGiveFromISR(wake_up_sem, NULL);
 }
 #endif
@@ -139,122 +147,70 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 #define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
 #define _batAdcUnit ADC_UNIT_1
 #define _batAdcAtten ADC_ATTEN_DB_12
-bool adcInit = false;
-adc_oneshot_unit_handle_t handle = NULL;
-adc_cali_handle_t cali_handle = NULL;
-
-adc_cali_curve_fitting_config_t cali_config = {
-  .unit_id = _batAdcUnit,
-  .atten = ADC_ATTEN_DB_12,
-  .bitwidth = ADC_BITWIDTH_DEFAULT,
-  };
-
-static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle)
-{
-    adc_cali_handle_t handle = NULL;
-    esp_err_t ret = ESP_FAIL;
-    bool calibrated = false;
-
-#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
-    if (!calibrated) {
-        ESP_LOGD(TAG, "calibration scheme version is %s", "Curve Fitting");
-        adc_cali_curve_fitting_config_t cali_config = {
-            .unit_id = unit,
-            .chan = channel,
-            .atten = atten,
-            .bitwidth = ADC_BITWIDTH_DEFAULT,
-        };
-        ret = adc_cali_create_scheme_curve_fitting(&cali_config, &handle);
-        if (ret == ESP_OK) {
-            calibrated = true;
-        }
-    }
-#endif
-
-#if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
-    if (!calibrated) {
-        ESP_LOGD(TAG, "calibration scheme version is %s", "Line Fitting");
-        adc_cali_line_fitting_config_t cali_config = {
-            .unit_id = unit,
-            .atten = atten,
-            .bitwidth = ADC_BITWIDTH_DEFAULT,
-        };
-        ret = adc_cali_create_scheme_line_fitting(&cali_config, &handle);
-        if (ret == ESP_OK) {
-            calibrated = true;
-        }
-    }
-#endif
-
-    *out_handle = handle;
-    if (ret == ESP_OK) {
-        ESP_LOGD(TAG, "Calibration Success");
-    } else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated) {
-        ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
-    } else {
-        ESP_LOGE(TAG, "Invalid arg or no memory");
-    }
-
-    return calibrated;
-}
-
-void initAdc(){
-
-  const adc_oneshot_unit_init_cfg_t init_config = { //create adc
-    .unit_id = _batAdcUnit, // selects tthe adc
-  };
-
-  const adc_oneshot_chan_cfg_t config = { // config
-    .bitwidth = ADC_BITWIDTH_DEFAULT,
-    .atten = _batAdcAtten,
-  };
-
-  ESP_LOGI(TAG, "Create new ADC oneshot unit");
-  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &handle));
-
-  ESP_LOGI(TAG, "Configure adc channel");
-  ESP_ERROR_CHECK(adc_oneshot_config_channel(handle, _batAdcCh, &config));
-
-  adcInit=true;
-  ESP_LOGI(TAG, "ADC Init completes");
-}
-
 bool _isCharging = false;
+
+// track previous battery millivolt for charging detection
+static int last_mv = 0;
+
+// threshold to ignore ADC noise
+#define CHARGE_THRESH_MV 15
+
 int getBattery() {
     uint8_t percent;
-    static int lastVolt = 0; // track previous voltage reading in mV
+    static bool init_done = false;
+    static adc_oneshot_unit_handle_t handle = NULL;
+    static adc_cali_handle_t cali_handle = NULL;
 
-    if(!adcInit){
-      ESP_LOGI(TAG, "INIT ADC");
-      initAdc();
+    if (!init_done) {
+        const adc_oneshot_unit_init_cfg_t init_config = {
+            .unit_id = _batAdcUnit,
+        };
+        ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &handle));
+        const adc_oneshot_chan_cfg_t chan_cfg = {
+            .bitwidth = ADC_BITWIDTH_DEFAULT,
+            .atten = _batAdcAtten,
+        };
+        ESP_ERROR_CHECK(adc_oneshot_config_channel(handle, _batAdcCh, &chan_cfg));
+
+        adc_cali_curve_fitting_config_t cali_cfg = {
+            .unit_id = _batAdcUnit,
+            .atten   = _batAdcAtten,
+            .bitwidth= ADC_BITWIDTH_DEFAULT,
+        };
+        if (adc_cali_create_scheme_curve_fitting(&cali_cfg, &cali_handle) == ESP_OK) {
+            ESP_LOGI(TAG, "ADC calibration scheme ready");
+        } else {
+            ESP_LOGW(TAG, "ADC calibration not supported, skipping");
+        }
+        init_done = true;
     }
 
-    static int BASE_VOLATAGE = 3600;
-    int raw=0;
+    // raw ADC → calibrated millivolt
+    int raw = 0;
     ESP_ERROR_CHECK(adc_oneshot_read(handle, _batAdcCh, &raw));
-    ESP_LOGD(TAG, "Raw adc reading:%d", raw);
 
-    int volt=0;
-    bool do_calibration1_chan0 = adc_calibration_init(_batAdcUnit, _batAdcCh, _batAdcAtten, &cali_handle);
-
-    if (do_calibration1_chan0){
-    adc_cali_raw_to_voltage(cali_handle, raw, &volt);
-    ESP_LOGI(TAG, "Raw ADC to voltage - Raw: %d - Voltage: %dmv \n", raw, volt);
+    int mv = 0;
+    if (cali_handle) {
+        if (adc_cali_raw_to_voltage(cali_handle, raw, &mv) != ESP_OK) {
+            ESP_LOGE(TAG, "Calibration raw_to_voltage failed");
+            mv = raw;  // fallback to raw
+        }
+    } else {
+        // rough estimate if no calibration
+        mv = raw * 3300 / 4095;
     }
 
-    // improved charging detection logic: treat as charging when voltage rises beyond noise threshold
-    const int CHARGE_THRESHOLD_MV = 15; // ignore small ADC noise <15 mV
-    if (lastVolt == 0) {
-        lastVolt = volt; // first reading baseline
+    // —— charging detection by comparing to last reading ——
+    if (last_mv != 0) {
+        int diff = mv - last_mv;
+        if (diff >  CHARGE_THRESH_MV) _isCharging = true;
+        if (diff < -CHARGE_THRESH_MV) _isCharging = false;
     }
-    int diff = volt - lastVolt;
-    if (diff > CHARGE_THRESHOLD_MV) {
-        _isCharging = true;
-    } else if (diff < -CHARGE_THRESHOLD_MV) {
-        _isCharging = false;
-    }
-    lastVolt = volt;
-    float mv = volt * 2; // x2 since the voltage divider gives us 1/2 vbatt
+    last_mv = mv;
+
+    ESP_LOGI(TAG, "Battery ADC mV: %d", mv);
+
+    // percentage between 3300 and 4150 mV
     percent = (mv - 3300) * 100 / (float)(4150 - 3350);
 
     return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
@@ -730,22 +686,27 @@ void display_manager_init(void) {
   wake_up_sem = xSemaphoreCreateBinary();
   if (wake_up_sem != NULL) {
     gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << WAKE_UP_PIN),
+        .pin_bit_mask = 1ULL<<WAKE_UP_PIN,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE,
+        .intr_type = GPIO_INTR_DISABLE,  // no GPIO ISR here
     };
     gpio_config(&io_conf);
 
     gpio_install_isr_service(0);
-    gpio_isr_handler_add(WAKE_UP_PIN, gpio_isr_handler, (void*) WAKE_UP_PIN);
+    gpio_isr_handler_add(WAKE_UP_PIN, gpio_isr_handler, (void*)WAKE_UP_PIN);
+    // Wake from light‑sleep on *low‑level*, not edge
+    gpio_wakeup_enable(WAKE_UP_PIN, GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();  // light‑sleep only
   } else {
     ESP_LOGE(TAG, "Failed to create wake_up_sem");
   }
 #endif
 
   display_manager_init_success = true;
+  last_touch_time = xTaskGetTickCount();
+  is_backlight_dimmed = false;
 
   // for cardputer. if we don't do this the backlight will flicker on startup until it gets turned off and on again by software
 #if defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
@@ -756,10 +717,10 @@ void display_manager_init(void) {
 #endif
 
 #ifndef CONFIG_JC3248W535EN_LCD // JC3248W535EN has its own lvgl task
-xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
+xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL, 
             RENDERING_TASK_PRIORITY, &lvgl_task_handle);
 #endif
-if (xTaskCreate(hardware_input_task, "RawInput", 2048, NULL,
+if (xTaskCreate(hardware_input_task, "RawInput", 4096, NULL, 
                 HARDWARE_INPUT_TASK_PRIORITY, &input_task_handle) != pdPASS) {
     ESP_LOGE(TAG, "Failed to create RawInput task\n");
 }
@@ -840,8 +801,8 @@ void display_manager_fill_screen(lv_color_t color) {
 
 void set_backlight_brightness(uint8_t percentage) {
     /* 
-     * If you’ve built with PWM support, do your existing LEDC duty code.
-     * Otherwise (i.e. switch mode), just treat >0 as “on” or 0 as “off.”
+     * If you've built with PWM support, do your existing LEDC duty code.
+     * Otherwise (i.e. switch mode), just treat >0 as "on" or 0 as "off."
      */
 #if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
     // ————— PWM mode —————
@@ -864,8 +825,19 @@ void set_backlight_brightness(uint8_t percentage) {
      * (timers, Wi-Fi PS, tasks) still pauses as before.
      */
     if (percentage == 0) {
+        // 1) Disable every wake‑source (we'll re‑enable only the one we actually want)
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+        esp_sleep_disable_wifi_wakeup();
+        esp_sleep_disable_wifi_beacon_wakeup();
+
+#ifdef CONFIG_IS_S3TWATCH
+        // 2a) On S3T‑Watch: only GPIO button can wake us
+        gpio_wakeup_enable(WAKE_UP_PIN, GPIO_INTR_LOW_LEVEL);
+        esp_sleep_enable_gpio_wakeup();
+
+        // 3a) Pause all UI and drop into light‑sleep until that button is pressed
         if (status_update_timer)   lv_timer_pause(status_update_timer);
-        if (status_update_timer) lv_timer_set_period(status_update_timer, 5000);
+        if (status_update_timer)   lv_timer_set_period(status_update_timer, 5000);
 #ifndef CONFIG_USE_CARDPUTER
         if (lvgl_task_handle)      vTaskSuspend(lvgl_task_handle);
 #endif
@@ -881,9 +853,20 @@ void set_backlight_brightness(uint8_t percentage) {
             }
             esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
         }
+        esp_light_sleep_start();
+
+#else
+        // 2b) On Cardputer (or other devices without real GPIO wake):
+        //    we do *not* enter light‑sleep at all, we just turn the backlight off
+        //    and rely on our existing polling (touch or key scans) to call
+        //    set_backlight_brightness(1) when user input arrives.
+#endif
+
+        return;
     } else {
+        is_backlight_dimmed = false;     // <— also clear whenever we restore brightness
         if (status_update_timer)   lv_timer_resume(status_update_timer);
-        if (status_update_timer) lv_timer_set_period(status_update_timer, 1000);
+        if (status_update_timer)   lv_timer_set_period(status_update_timer, 1000);
         if (lvgl_task_handle)      vTaskResume(lvgl_task_handle);
         if (rainbow_timer)         lv_timer_resume(rainbow_timer);
         if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
@@ -908,9 +891,7 @@ void hardware_input_task(void *pvParameters) {
   bool touch_active = false;
   int screen_width = LV_HOR_RES;
   int screen_height = LV_VER_RES;
-  TickType_t last_touch_time = xTaskGetTickCount();
   bool was_woken_by_interrupt = false; // New flag for S3T-Watch
-  bool is_backlight_dimmed = false;
 #ifdef CONFIG_USE_CARDPUTER
   uint8_t shift_count_before_caps =75; // num of cycles before capslock gets turned on
   uint8_t shift_count = 0;
@@ -1083,6 +1064,7 @@ void hardware_input_task(void *pvParameters) {
         ESP_LOGI(TAG, "Display timeout reached, dimming backlight");
         set_backlight_brightness(0);
         is_backlight_dimmed = true;
+        last_dim_time = xTaskGetTickCount(); // Record dim time
       } else if (is_backlight_dimmed && (xTaskGetTickCount() - last_touch_time < pdMS_TO_TICKS(current_timeout))) {
         ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
                 (unsigned long)last_touch_time, (unsigned long)current_timeout);
@@ -1091,6 +1073,7 @@ void hardware_input_task(void *pvParameters) {
         is_backlight_dimmed = false;
       }
     } else if (is_backlight_dimmed) { // If timeout is 'Never' and backlight is dimmed, set to full brightness
+        ESP_LOGI(TAG, "Display timeout set to Never, waking backlight from dimmed state.");
         set_backlight_brightness(1);
         is_backlight_dimmed = false;
     }
