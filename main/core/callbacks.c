@@ -48,7 +48,7 @@ static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash);
 static void trim_trailing(char *str);
 static bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2);
 static bool is_beacon_packet(const wifi_promiscuous_pkt_t *pkt);
-static const char *SKIMMER_TAG STORE_STR_ATTR = "SKIMMER_DETECT";
+static const char SKIMMER_TAG[] STORE_STR_ATTR = "SKIMMER_DETECT";
 static const char *suspicious_names[] STORE_DATA_ATTR = {
     "HC-03", "HC-05", "HC-06",  "HC-08",    "BT-HC05", "JDY-31",
     "AT-09", "HM-10", "CC41-A", "MLT-BT05", "SPP-CA",  "FFD0"};
