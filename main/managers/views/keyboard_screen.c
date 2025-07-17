@@ -53,8 +53,8 @@ static void submit_text() {
         if (submit_callback) {
             submit_callback(input_buffer);
         } else {
-            display_manager_switch_view(&terminal_view);
-            vTaskDelay(pdMS_TO_TICKS(10));
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);            vTaskDelay(pdMS_TO_TICKS(10));
             simulateCommand(input_buffer);
         }
         memset(input_buffer, 0, sizeof(input_buffer));

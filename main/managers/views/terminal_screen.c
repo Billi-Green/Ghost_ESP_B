@@ -259,7 +259,7 @@ void terminal_view_create(void) {
   lv_obj_set_style_border_width(terminal_page, 0, 0);
   lv_obj_set_style_clip_corner(terminal_page, false, 0);
   lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_border_width(terminal_view.root, 0, 0);
+  lv_obj_set_style_border_width(terminal_view.root, 0,0 );
   lv_obj_set_style_radius(terminal_view.root, 0, 0);
   lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
 #ifdef CONFIG_USE_TOUCHSCREEN
@@ -314,37 +314,6 @@ void terminal_view_create(void) {
   }
 }
 
-void terminal_view_destroy(void) {
-  terminal_active = false;
-  is_stopping = true;
-  clear_message_queue();
-
-  // Stop and delete the timer
-  if (terminal_update_timer) {
-    lv_timer_del(terminal_update_timer);
-    terminal_update_timer = NULL;
-  }
-
-  vTaskDelay(pdMS_TO_TICKS(50));
-
-  if (terminal_mutex) {
-    if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
-      vSemaphoreDelete(terminal_mutex);
-      terminal_mutex = NULL;
-    }
-  }
-
-  if (terminal_view.root != NULL) {
-    lv_obj_del(terminal_view.root);
-    terminal_view.root = NULL;
-    terminal_page = NULL;
-    back_btn = NULL;
-  }
-
-  current_text_length = 0;
- 
-  is_stopping = false;
-}
 
 
 void terminal_view_add_text(const char *text) {
@@ -512,6 +481,8 @@ int custom_log_vprintf(const char *fmt, va_list args) {
   return len;
 }
 
+static View *terminal_return_view = NULL;
+
 View terminal_view = {
   .root = NULL,
   .create = terminal_view_create,
@@ -520,3 +491,45 @@ View terminal_view = {
   .name = "TerminalView",
   .get_hardwareinput_callback = terminal_view_get_hardwareinput_callback
 };
+
+void terminal_set_return_view(View *view) {
+    terminal_return_view = view;
+}
+void terminal_view_destroy(void) {
+  terminal_active = false;
+  is_stopping = true;
+  clear_message_queue();
+
+  // Stop and delete the timer
+  if (terminal_update_timer) {
+    lv_timer_del(terminal_update_timer);
+    terminal_update_timer = NULL;
+  }
+
+  // Delete all LVGL objects
+  if (terminal_view.root != NULL) {
+    lv_obj_del(terminal_view.root);
+    terminal_view.root = NULL;
+    terminal_page = NULL;
+    back_btn = NULL;
+    input_label = NULL;
+  }
+
+  current_text_length = 0;
+  input_len = 0;
+  input_buffer[0] = '\0';
+
+  // Optionally: do NOT delete the mutex unless you recreate it on create
+  // if (terminal_mutex) {
+  //   vSemaphoreDelete(terminal_mutex);
+  //   terminal_mutex = NULL;
+  // }
+
+  is_stopping = false;
+  if (terminal_return_view) {
+    display_manager_switch_view(terminal_return_view);
+    terminal_return_view = NULL; // Clear after use
+  } else {
+    display_manager_switch_view(&main_menu_view);
+  }
+}
