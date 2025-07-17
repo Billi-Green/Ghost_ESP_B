@@ -13,6 +13,7 @@
 #include "managers/views/options_screen.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/views/clock_screen.h"
+#include "managers/encoder_manager.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -81,6 +82,11 @@ static lv_timer_t *status_update_timer = NULL;
 static TickType_t last_dim_time = 0; // Initialize to 0
 static TickType_t last_touch_time;
 static bool is_backlight_dimmed;
+
+#ifdef CONFIG_USE_ENCODER
+static encoder_t g_encoder;
+static joystick_t enc_button; // we’ll treat the push‑switch like any other button
+#endif
 
 #define FADE_DURATION_MS 10
 #define DEFAULT_DISPLAY_TIMEOUT_MS 30000
@@ -681,27 +687,14 @@ void display_manager_init(void) {
 #endif
 #endif
 
-// initialize wake button interrupt
-#ifdef CONFIG_IS_S3TWATCH
-  wake_up_sem = xSemaphoreCreateBinary();
-  if (wake_up_sem != NULL) {
-    gpio_config_t io_conf = {
-        .pin_bit_mask = 1ULL<<WAKE_UP_PIN,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,  // no GPIO ISR here
-    };
-    gpio_config(&io_conf);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(WAKE_UP_PIN, gpio_isr_handler, (void*)WAKE_UP_PIN);
-    // Wake from light‑sleep on *low‑level*, not edge
-    gpio_wakeup_enable(WAKE_UP_PIN, GPIO_INTR_LOW_LEVEL);
-    esp_sleep_enable_gpio_wakeup();  // light‑sleep only
-  } else {
-    ESP_LOGE(TAG, "Failed to create wake_up_sem");
-  }
+#ifdef CONFIG_USE_ENCODER
+    encoder_init(&g_encoder,
+                 CONFIG_ENCODER_INA,
+                 CONFIG_ENCODER_INB,
+                 true,                       /* pull‑ups */
+                 ENCODER_LATCH_FOUR3);       /* detented knobs */
+    joystick_init(&enc_button, CONFIG_ENCODER_KEY,
+                  500 /*hold ms*/, true);
 #endif
 
   display_manager_init_success = true;
@@ -907,6 +900,42 @@ void hardware_input_task(void *pvParameters) {
         is_backlight_dimmed = false;
         last_touch_time = xTaskGetTickCount(); // Reset inactivity timer
         was_woken_by_interrupt = true; // Set flag
+    }
+#endif
+
+#ifdef CONFIG_USE_ENCODER
+    /* 1 kHz poll; cheap */
+    encoder_tick(&g_encoder);
+
+    /* direction events */
+    int8_t dir = encoder_get_direction(&g_encoder);
+    if (dir) {
+        // treat an encoder turn as “touch”
+        last_touch_time = xTaskGetTickCount();
+        if (is_backlight_dimmed) {
+          set_backlight_brightness(1);
+          is_backlight_dimmed = false;
+        }
+        InputEvent ev = {
+            .type = INPUT_TYPE_ENCODER,
+            .data.encoder = { .direction = dir, .button = false }
+        };
+        xQueueSend(input_queue, &ev, 0);
+    }
+
+    /* push‑switch -> treat like “button” */
+    if (joystick_just_pressed(&enc_button)) {
+        // treat an encoder click as “touch”
+        last_touch_time = xTaskGetTickCount();
+        if (is_backlight_dimmed) {
+          set_backlight_brightness(1);
+          is_backlight_dimmed = false;
+        }
+        InputEvent ev = {
+            .type = INPUT_TYPE_ENCODER,
+            .data.encoder = { .direction = 0, .button = true }
+        };
+        xQueueSend(input_queue, &ev, 0);
     }
 #endif
 

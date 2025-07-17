@@ -173,6 +173,33 @@ menu "Ghost ESP Options"
             help
                 Set the GPIO pin used for IR LED transmission and indication.
 
+        config USE_ENCODER
+            bool "Enable Encoder Input"
+            default n
+            help
+                Enable support for rotary encoder input.
+
+        config ENCODER_INA
+            int "Encoder INA Pin"
+            default 4
+            depends on USE_ENCODER
+            help
+                Set the GPIO pin for Encoder INA.
+
+        config ENCODER_INB
+            int "Encoder INB Pin"
+            default 5
+            depends on USE_ENCODER
+            help
+                Set the GPIO pin for Encoder INB.
+
+        config ENCODER_KEY
+            int "Encoder Key Pin"
+            default 0
+            depends on USE_ENCODER
+            help
+                Set the GPIO pin for the Encoder button.
+
     endmenu
     
     menu "GPS Configuration"

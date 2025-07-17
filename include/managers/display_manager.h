@@ -12,7 +12,12 @@ typedef void *SemaphoreHandle_tt; // Because Circular Includes are fun :)
 static lv_timer_t *rainbow_timer = NULL;
 static uint16_t rainbow_hue = 0;
 
-typedef enum { INPUT_TYPE_JOYSTICK, INPUT_TYPE_TOUCH, INPUT_TYPE_KEYBOARD } InputType;
+typedef enum {
+    INPUT_TYPE_TOUCH,
+    INPUT_TYPE_JOYSTICK,
+    INPUT_TYPE_KEYBOARD,
+    INPUT_TYPE_ENCODER          // --- new
+} InputType;
 
 typedef struct {
   InputType type;
@@ -20,6 +25,7 @@ typedef struct {
     int joystick_index;         // Used for joystick inputs
     lv_indev_data_t touch_data; // Used for touchscreen inputs
     uint8_t key_value;          // Used for keyboard inputs
+    struct { int8_t direction; bool button; } encoder; // Added for encoder input
   } data;
 } InputEvent;
 

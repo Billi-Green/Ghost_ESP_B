@@ -201,6 +201,15 @@ static void menu_item_event_handler(InputEvent *event) {
         ESP_LOGI(TAG, "Joystick event");
         int button = event->data.joystick_index;
         handle_hardware_button_press(button);
+    } else if (event->type == INPUT_TYPE_ENCODER) {
+        if (event->data.encoder.button) {
+            handle_menu_item_selection(selected_item_index);
+        } else {
+            if (event->data.encoder.direction > 0)
+                select_menu_item(selected_item_index + 1, false); // CW == right
+            else
+                select_menu_item(selected_item_index - 1, true);  // CCW == left
+        }
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         ESP_LOGI(TAG, "keyboard event");
         handle_keyboard_interactions(event->data.key_value);

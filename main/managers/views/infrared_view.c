@@ -37,6 +37,10 @@ static lv_obj_t *transmitting_popup = NULL;
 static TaskHandle_t universal_task_handle = NULL;
 static volatile bool universal_transmit_cancel = false;
 
+#ifdef CONFIG_USE_ENCODER
+static const char *IR_BACK_OPTION_MAGIC_STR = "__IR_BACK_OPTION__"; // Unique string for the back button
+#endif
+
 typedef struct {
     char path[256];
     char command[32];
@@ -71,6 +75,9 @@ static void file_event_cb(lv_event_t *e);
 static void command_event_cb(lv_event_t *e);
 static void remotes_event_cb(lv_event_t *e);
 static void universals_event_cb(lv_event_t *e);
+#ifdef CONFIG_USE_ENCODER
+static void add_encoder_back_btn(void);
+#endif
 
 static const char *TAG = "infrared_view";
 
@@ -294,6 +301,9 @@ static void back_event_cb(lv_event_t *e) {
         lv_obj_add_event_cb(universals_btn, universals_event_cb, LV_EVENT_CLICKED, NULL);
 
         num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
+#ifdef CONFIG_USE_ENCODER
+        add_encoder_back_btn();
+#endif
         selected_ir_index = 0;
         if (num_ir_items > 0) ir_select_item(0);
         return;
@@ -361,9 +371,16 @@ void infrared_view_create(void) {
     }
     lv_obj_add_event_cb(universals_btn, universals_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // initialize selection
+#ifdef CONFIG_USE_ENCODER
+    add_encoder_back_btn();
+#endif
+
+    // set num_ir_items after all buttons are added (including back button)
+    num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
+#ifdef CONFIG_USE_ENCODER
+    num_ir_items++; // account for encoder back button
+#endif
     selected_ir_index = 0;
-    num_ir_items = ir_file_count + (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
     if (num_ir_items > 0) ir_select_item(0);
 
     // Back button
@@ -525,6 +542,13 @@ void infrared_view_input_cb(InputEvent *event) {
             ESP_LOGI(TAG, "joystick down pressed, selecting next item");
             ir_select_item(selected_ir_index + 1);
         } else if(idx == 1) {
+            // Check if the selected item is the Back option
+            lv_obj_t *selected_obj = lv_obj_get_child(list, selected_ir_index);
+            if (selected_obj && lv_obj_get_user_data(selected_obj) == IR_BACK_OPTION_MAGIC_STR) {
+                ESP_LOGI(TAG, "Joystick Enter pressed on Back option");
+                back_event_cb(NULL);
+                return;
+            }
             if (!showing_commands) {
                 if (has_remotes_option && selected_ir_index == 0) {
                     ESP_LOGI(TAG, "joystick enter pressed on Remotes, opening remotes directory");
@@ -553,6 +577,13 @@ void infrared_view_input_cb(InputEvent *event) {
             ir_select_item(selected_ir_index + 1);
         } else if (keyValue == 13) {
             ESP_LOGI(TAG, "Keyboard Enter button pressed\n");
+            // Check if the selected item is the Back option
+            lv_obj_t *selected_obj = lv_obj_get_child(list, selected_ir_index);
+            if (selected_obj && lv_obj_get_user_data(selected_obj) == IR_BACK_OPTION_MAGIC_STR) {
+                ESP_LOGI(TAG, "Keyboard Enter pressed on Back option");
+                back_event_cb(NULL);
+                return;
+            }
             if (!showing_commands) {
                 if (has_remotes_option && selected_ir_index == 0) {
                     ESP_LOGI(TAG, "Keyboard Enter pressed on Remotes, opening remotes directory");
@@ -560,7 +591,8 @@ void infrared_view_input_cb(InputEvent *event) {
                 } else if (has_universals_option && selected_ir_index == (has_remotes_option ? 1 : 0)) {
                     ESP_LOGI(TAG, "Keyboard Enter pressed on Universals, opening universals directory");
                     universals_event_cb(NULL);
-                } else {
+                }
+                else {
                     int file_idx = selected_ir_index - ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0));
                     ESP_LOGI(TAG, "Keyboard Enter pressed, opening selected file at index %d", file_idx);
                     file_event_open(file_idx);
@@ -572,6 +604,34 @@ void infrared_view_input_cb(InputEvent *event) {
         } else if (keyValue == 29 || keyValue == '`') {
             ESP_LOGI(TAG, "Keyboard Esc button pressed\n");
             back_event_cb(NULL);
+        }
+    } else if (event->type == INPUT_TYPE_ENCODER) {
+        if (event->data.encoder.button) {
+            // Check if the selected item is the Back option
+            lv_obj_t *selected_obj = lv_obj_get_child(list, selected_ir_index);
+            if (selected_obj && lv_obj_get_user_data(selected_obj) == IR_BACK_OPTION_MAGIC_STR) {
+                ESP_LOGI(TAG, "Encoder button pressed on Back option");
+                back_event_cb(NULL);
+                return;
+            }
+            if (!showing_commands) {
+                if (has_remotes_option && selected_ir_index == 0) {
+                    remotes_event_cb(NULL);
+                } else if (has_universals_option && selected_ir_index == (has_remotes_option ? 1 : 0)) {
+                    universals_event_cb(NULL);
+                } else {
+                    int file_idx = selected_ir_index - ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0));
+                    file_event_open(file_idx);
+                }
+            } else {
+                command_event_execute(selected_ir_index);
+            }
+        } else {
+            if (event->data.encoder.direction > 0) {
+                ir_select_item(selected_ir_index + 1);
+            } else {
+                ir_select_item(selected_ir_index - 1);
+            }
         }
     }
 }
@@ -641,6 +701,9 @@ static void file_event_open(int idx) {
             }
             lv_obj_add_event_cb(btn, command_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
         }
+#ifdef CONFIG_USE_ENCODER
+        add_encoder_back_btn();
+#endif
         ir_select_item(0);
         return;
     }
@@ -689,6 +752,9 @@ static void file_event_open(int idx) {
         }
         lv_obj_add_event_cb(btn, command_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     }
+#ifdef CONFIG_USE_ENCODER
+    add_encoder_back_btn();
+#endif
     ir_select_item(0);
 }
 
@@ -793,8 +859,13 @@ static void remotes_event_cb(lv_event_t *e) {
         }
         closedir(d);
     }
+#ifdef CONFIG_USE_ENCODER
+    add_encoder_back_btn();
+#endif
     selected_ir_index = 0;
     num_ir_items = ir_file_count;
+#ifdef CONFIG_USE_ENCODER
+#endif
     if (ir_file_count > 0) ir_select_item(0);
 }
 
@@ -843,10 +914,36 @@ static void universals_event_cb(lv_event_t *e) {
         }
         closedir(d);
     }
+#ifdef CONFIG_ENCODER_INA
+    add_encoder_back_btn();
+#endif
     selected_ir_index = 0;
     num_ir_items = ir_file_count;
+#ifdef CONFIG_USE_ENCODER
+#endif
     if (ir_file_count > 0) ir_select_item(0);
 }
+
+#ifdef CONFIG_USE_ENCODER
+static void add_encoder_back_btn(void)
+{
+    lv_obj_t *btn = lv_list_add_btn(list, NULL, LV_SYMBOL_LEFT " Back");
+    lv_obj_set_width(btn, LV_HOR_RES);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+    if (lbl) {
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+    }
+    lv_obj_add_event_cb(btn, back_event_cb, LV_EVENT_CLICKED,
+                        (void *)IR_BACK_OPTION_MAGIC_STR);
+    lv_obj_set_user_data(btn, (void *)IR_BACK_OPTION_MAGIC_STR);
+    num_ir_items++;
+}
+#endif
 
 // provide hardware input callback registration
 static void get_infrared_view_callback(void **callback) {

@@ -569,6 +569,8 @@ static void apply_setting_change(int setting_index, int new_value) {
 static void change_current_row(bool increment)
 {
     if (!menu_container) return;
+    /* Only valid when we are IN a settings submenu (not at category level) */
+    if (current_settings_category < 0) return;
 
     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
     if (!sel) return;
@@ -652,7 +654,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
-            // existing “press” logic unchanged…
+            // existing "press" logic unchanged...
             if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
                 lv_area_t area; lv_obj_get_coords(scroll_up_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
@@ -695,7 +697,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
             int dx = data->point.x - opt_touch_start_x;
             int dy = data->point.y - opt_touch_start_y;
 
-            // thirds‐control special behavior
+            // thirds-control special behavior
             if (settings_get_thirds_control_enabled(&G_Settings)) {
                 int y = data->point.y;
                 int screen_h = LV_VER_RES;
@@ -779,7 +781,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 if (current_settings_category < 0) {
                     // Enter settings category
                     switch_to_settings_category(selected_item_index);
-                } else {
+                } else { // current_settings_category >= 0
                     // Change setting value
                     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
                     if (sel) {
@@ -797,17 +799,12 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     }
                 }
             }
-        } else if (button == 0 && is_settings_mode) { // Left (decrement) button for settings
+        } else if (button == 0 && is_settings_mode && current_settings_category >= 0) { // Left (decrement) button for settings
             change_current_row(false);
         } else if (button == 3) { // Cardputer select button OR Right (increment) button for settings
-            if (is_settings_mode) {
-                if (current_settings_category < 0) {
-                    // Enter settings category (Cardputer specific)
-                    switch_to_settings_category(selected_item_index);
-                } else {
-                    // Change setting value (Cardputer specific or normal increment)
-                    change_current_row(true);
-                }
+            if (is_settings_mode && current_settings_category >= 0) {
+                // Change setting value (Cardputer specific or normal increment)
+                change_current_row(true);
             }
             // For non-settings, button 3 doesn't have a defined action as per the problem description.
             // If it were a general 'select' for non-settings, it would need similar logic to button 1's 'else' block.
@@ -815,28 +812,20 @@ void handle_hardware_button_press_options(InputEvent *event) {
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         uint8_t keyValue = event->data.key_value;
 
-        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) { // Left / up
-            ESP_LOGI(TAG, "Left/Up button pressed\n");
-            if (is_settings_mode && (keyValue == 44 || keyValue == ',')) {
-                change_current_row(false);
-            } else {
-                select_option_item(selected_item_index - 1);
-            }
-        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) { // Right / down
-            ESP_LOGI(TAG, "Right/Down button pressed\n");
-            if (is_settings_mode && (keyValue == 47 || keyValue == '/')) {
-                change_current_row(true);
-            } else {
-                select_option_item(selected_item_index + 1);
-            }
+        if ((keyValue == 44 || keyValue == ',') && is_settings_mode && current_settings_category >= 0) { // Left / up
+            ESP_LOGI(TAG, "Left/Up button pressed");
+            change_current_row(false);
+        } else if ((keyValue == 47 || keyValue == '/') && is_settings_mode && current_settings_category >= 0) { // Right / down
+            ESP_LOGI(TAG, "Right/Down button pressed");
+            change_current_row(true);
         } else if (keyValue == 13) { // Select / centre press
-            ESP_LOGI(TAG, "Enter button pressed\n");
+            ESP_LOGI(TAG, "Enter button pressed");
             if (is_settings_mode) {
                 if (current_settings_category < 0) {
-                    // We’re at the top level (“Display”, “Config”, …) → open submenu
+                    // We're at the top level ("Display", "Config", ...) -> open submenu
                     switch_to_settings_category(selected_item_index);
-                } else {
-                    // Inside a submenu → cycle the value
+                } else { // current_settings_category >= 0
+                    // Inside a submenu -> cycle the value
                     change_current_row(true);
                 }
             } else {
@@ -849,8 +838,55 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 }
             }
         } else if (keyValue == 29 || keyValue == '`') { // esc
-            ESP_LOGI(TAG, "Esc button pressed\n");
+            ESP_LOGI(TAG, "Esc button pressed");
             back_event_cb(NULL);
+        }
+    } else if (event->type == INPUT_TYPE_ENCODER) {
+        if (event->data.encoder.button) {
+            // Encoder button press - treat as select/enter/cycle
+            if (is_settings_mode) {
+                if (current_settings_category < 0) {
+                    // Top level settings (category selection) - button *enters* category
+                    switch_to_settings_category(selected_item_index);
+                } else { // current_settings_category >= 0
+                    /* Inside a settings submenu:
+                     *  ─ encoder press on a normal row  → cycle the value
+                     *  ─ encoder press on “← Back”     → leave submenu        */
+                    lv_obj_t *sel = lv_obj_get_child(menu_container,
+                                                     selected_item_index);
+                    if (sel) {
+                        void *udata = lv_obj_get_user_data(sel);
+                        // back button is always the string literal pointer
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else if (is_settings_mode && current_settings_category >= 0) {
+                            // In settings submenu, always cycle value
+                            int setting_idx = (int)(intptr_t)udata;
+                            change_setting_value(setting_idx, true);
+                        } else {
+                            // For non-settings, treat as select
+                            const char *opt = (const char *)udata;
+                            handle_option_directly(opt);
+                        }
+                    }
+                }
+            } else {
+                // Non-settings menus: button selects the item
+                lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+                if (selected_obj) {
+                    const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                    if (selected_option) {
+                        handle_option_directly(selected_option);
+                    }
+                }
+            }
+        } else {
+            // Encoder direction change (rotation) - always navigate/select item
+            if (event->data.encoder.direction > 0) { // Clockwise (CW) - down/right
+                select_option_item(selected_item_index + 1);
+            } else { // Counter-clockwise (CCW) - up/left
+                select_option_item(selected_item_index - 1);
+            }
         }
     }
 }
@@ -870,20 +906,41 @@ void option_event_cb(lv_event_t *e) {
     }
     
     if (is_settings_mode) {
+        const char *udata = (const char *)lv_event_get_user_data(e);
+
+        /* ---------- settings ROOT ("Display", "Config") ---------- */
         if (current_settings_category < 0) {
-            int cat_idx = (int)(intptr_t)lv_event_get_user_data(e);
+            int cat_idx = (int)(intptr_t)udata;
             switch_to_settings_category(cat_idx);
             option_invoked = false;
             return;
-        } else {
-            int setting_index = (int)(intptr_t)lv_event_get_user_data(e);
-            change_setting_value(setting_index, true);
+        }
+
+        /* ---------- settings SUBMENU ---------- */
+        if (udata && strcmp(udata, "__BACK_OPTION__") == 0) {
+            back_event_cb(NULL);
             option_invoked = false;
             return;
         }
+
+        int setting_index = (int)(intptr_t)udata;
+        change_setting_value(setting_index, true);
+        option_invoked = false;
+        return;
     }
     
     const char *Selected_Option = (const char *)lv_event_get_user_data(e);
+
+    // Handle the "Back" option specifically
+    if (strcmp(Selected_Option, "__BACK_OPTION__") == 0) {
+        if (menu_build_timer) {
+            lv_timer_del(menu_build_timer);
+            menu_build_timer = NULL;
+        }
+        back_event_cb(NULL);
+        option_invoked = false;
+        return;
+    }
 
     if (SelectedMenuType == OT_Wifi) {
         if (current_wifi_menu_state == WIFI_MENU_MAIN) {
@@ -1390,15 +1447,10 @@ void options_menu_destroy() {
         lv_timer_del(menu_build_timer);
         menu_build_timer = NULL;
     }
-    
-    if (styles_initialized) {
-        lv_style_reset(&style_menu_item);
-        lv_style_reset(&style_selected_item);
-        lv_style_reset(&style_menu_label);
-        styles_initialized = false;
-    }
-    
     is_settings_mode = false;
+    /* Do NOT reset shared styles – they may still be referenced by
+       widgets that haven't been flushed/destroyed yet.  Leaving them
+       allocated is safe and only costs a few hundred bytes. */
 }
 
 void get_options_menu_callback(void **callback) { *callback = options_menu_view.input_callback; }
@@ -1442,6 +1494,31 @@ static void back_event_cb(lv_event_t *e) {
 }
 
 static void switch_to_settings_category(int cat_idx) {
+    /* -------------------------------------------------------------------- *
+     * SAFETY GUARD                                                         *
+     *                                                                      *
+     * The encoder can highlight the synthetic "← Back" row that is added   *
+     * to the end of the Settings root list when CONFIG_USE_ENCODER is set.*
+     * That row's index is **2**, but there are only two real categories    *
+     * (indices 0 and 1).                                                   *
+     *                                                                      *
+     * If we let that bogus index through, the very next LVGL tick in       *
+     * menu_builder_cb() dereferences                                        *
+     *     settings_category_indices[current_settings_category]             *
+     * which explodes with a LoadProhibited panic.                          *
+     *                                                                      *
+     * Instead, treat any out-of-range index exactly like a Back press and  *
+     * leave current_settings_category unchanged.                           *
+     * ------------------------------------------------------------------ */
+    if (cat_idx < 0 || cat_idx >= SETTINGS_CATEGORY_COUNT) {
+        ESP_LOGW(TAG,
+                 "switch_to_settings_category: index %d outside [0..%d]; "
+                 "interpreting as Back action",
+                 cat_idx, SETTINGS_CATEGORY_COUNT - 1);
+        back_event_cb(NULL);
+        return;
+    }
+
     if (menu_build_timer) {
         lv_timer_del(menu_build_timer);
         menu_build_timer = NULL;
@@ -1479,65 +1556,80 @@ static void wifi_connect_kb_cb(const char *text){
 }
 
 // build menu items in small batches so we don't starve the watchdog
-static void menu_builder_cb(lv_timer_t *t) {
+static void menu_builder_cb(lv_timer_t *t)
+{
+    /* If the view is gone, stop this timer immediately. ---------------- */
+    if (!menu_container || !lv_obj_is_valid(menu_container)) {
+        lv_timer_del(t);
+        menu_build_timer = NULL;
+        return;
+    }
     const int BATCH = 8;
-    int built = 0;
+    int built_this_tick = 0;
+    bool all_current_options_processed = false;
 
-    if (is_settings_mode) {
-        // Top-level categories
-        if (current_settings_category < 0) {
-            while (settings_categories[build_item_index] && built < BATCH) {
-                const char *cat = settings_categories[build_item_index];
-                lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, cat);
-                if (!btn) break;
-                lv_obj_set_height(btn, button_height_global * 1.2);
-                lv_obj_add_style(btn, &style_menu_item, 0);
-                lv_obj_t *label = lv_obj_get_child(btn, 0);
-                if (label) {
-                    lv_obj_set_style_text_font(label,
-                        is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                        0);
-                    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-                    lv_obj_add_style(label, &style_menu_label, 0);
+    // Check if the "Back" option has already been added in a prior tick for this menu
+    bool back_option_was_added_in_previous_tick = (bool)(intptr_t)t->user_data;
+
+    // Add regular menu items if the "Back" option hasn't been added yet
+    if (!back_option_was_added_in_previous_tick) {
+        if (is_settings_mode) {
+            if (current_settings_category < 0) { // Top-level categories (e.g., "Display", "Config")
+                while (settings_categories[build_item_index] != NULL && built_this_tick < BATCH) {
+                    const char *cat = settings_categories[build_item_index];
+                    lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, cat);
+                    if (!btn) break;
+                    lv_obj_set_height(btn, button_height_global * 1.2);
+                    lv_obj_add_style(btn, &style_menu_item, 0);
+                    lv_obj_t *label = lv_obj_get_child(btn, 0);
+                    if (label) {
+                        lv_obj_set_style_text_font(label,
+                            is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
+                            0);
+                        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+                        lv_obj_add_style(label, &style_menu_label, 0);
+                    }
+                    lv_obj_set_user_data(btn, (void *)(intptr_t)build_item_index);
+                    lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)build_item_index);
+                    num_items++;
+                    built_this_tick++;
+                    build_item_index++;
                 }
-                lv_obj_set_user_data(btn, (void *)(intptr_t)build_item_index);
-                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED,
-                                    (void *)(intptr_t)build_item_index);
-                num_items++;
-                built++;
-                build_item_index++;
-#ifndef CONFIG_USE_TOUCHSCREEN
-                if (num_items == 1) select_option_item(0);
-#endif
+                if (settings_categories[build_item_index] == NULL) { // End of categories list
+                    all_current_options_processed = true;
+                }
+            } else { // Submenu of a settings category (e.g., "RGB Mode", "Display Timeout")
+                int *indices = settings_category_indices[current_settings_category];
+                while (indices[build_item_index] >= 0 && built_this_tick < BATCH) {
+                    int setting_idx = indices[build_item_index];
+                    SettingsItem *item = &settings_items[setting_idx];
+                    char buf[128];
+                    snprintf(buf, sizeof(buf), "%s %s: %s %s", LV_SYMBOL_LEFT, item->label, item->value_options[item->current_value], LV_SYMBOL_RIGHT);
+                    lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, buf);
+                    if (!btn) break;
+                    lv_obj_set_height(btn, button_height_global);
+                    lv_obj_add_style(btn, &style_menu_item, 0);
+                    lv_obj_t *label = lv_obj_get_child(btn, 0);
+                    if (label) {
+                        lv_obj_set_style_text_font(label,
+                            is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
+                            0);
+                        lv_obj_add_style(label, &style_menu_label, 0);
+                    }
+                    lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
+                    lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)setting_idx);
+                    num_items++;
+                    built_this_tick++;
+                    build_item_index++;
+                }
+                if (indices[build_item_index] < 0) { // End of settings submenu list
+                    all_current_options_processed = true;
+                }
             }
-            if (!settings_categories[build_item_index]) {
-                lv_timer_del(t);
-                menu_build_timer = NULL;
-            }
-        }
-        // Submenu of a category
-        else {
-            static bool cleaned = false;
-            if (!cleaned) {
-                lv_obj_clean(menu_container);
-                num_items       = 0;
-                cleaned         = true;
-            }
-
-            int *indices = settings_category_indices[current_settings_category];
-            while (indices[build_item_index] >= 0 && built < BATCH) {
-                int setting_idx = indices[build_item_index];
-                SettingsItem *item = &settings_items[setting_idx];
-
-                char buf[128];
-                snprintf(buf, sizeof(buf),
-                         "%s %s: %s %s",
-                         LV_SYMBOL_LEFT,
-                         item->label,
-                         item->value_options[item->current_value],
-                         LV_SYMBOL_RIGHT);
-
-                lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, buf);
+        } else { // Non-settings menus (e.g., Wi-Fi Attacks, Bluetooth Main)
+            while (current_options_list != NULL && current_options_list[build_item_index] != NULL && built_this_tick < BATCH) {
+                const char *opt = current_options_list[build_item_index];
+                lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
                 if (!btn) break;
                 lv_obj_set_height(btn, button_height_global);
                 lv_obj_add_style(btn, &style_menu_item, 0);
@@ -1546,53 +1638,51 @@ static void menu_builder_cb(lv_timer_t *t) {
                     lv_obj_set_style_text_font(label,
                         is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
                         0);
-                    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
                     lv_obj_add_style(label, &style_menu_label, 0);
                 }
-                lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
-                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED,
-                                    (void *)(intptr_t)setting_idx);
-
+                lv_obj_set_user_data(btn, (void *)opt);
+                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
                 num_items++;
-                built++;
+                built_this_tick++;
                 build_item_index++;
-#ifndef CONFIG_USE_TOUCHSCREEN
-                if (num_items == 1) select_option_item(0);
-#endif
             }
-
-            // When we hit the -1 terminator, we're done
-            if (indices[build_item_index] < 0) {
-                lv_timer_del(t);
-                menu_build_timer = NULL;
-                cleaned         = false;
+            if (current_options_list == NULL || current_options_list[build_item_index] == NULL) { // End of regular options list
+                all_current_options_processed = true;
             }
         }
     }
-    // The non‐settings menus (Wi-Fi, BLE, GPS, etc.) remain unchanged:
-    else {
-        while (current_options_list && current_options_list[build_item_index] && built < BATCH) {
-            const char *opt = current_options_list[build_item_index++];
-            lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
-            if (!btn) break;
-            lv_obj_set_height(btn, button_height_global);
-            lv_obj_add_style(btn, &style_menu_item, 0);
-            lv_obj_t *label = lv_obj_get_child(btn, 0);
-            if (label) {
-                lv_obj_set_style_text_font(label,
-                    is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                    0);
-                lv_obj_add_style(label, &style_menu_label, 0);
+
+    // Now, handle adding the "Back" button and stopping the timer
+    if (all_current_options_processed) {
+#ifdef CONFIG_USE_ENCODER
+        if (!back_option_was_added_in_previous_tick) { // Add back button only once
+            lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
+            if (btn) {
+                lv_obj_set_height(btn, button_height_global);
+                lv_obj_add_style(btn, &style_menu_item, 0);
+                lv_obj_t *label = lv_obj_get_child(btn, 0);
+                if (label) {
+                    lv_obj_set_style_text_font(label, is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14, 0);
+                    if (is_settings_mode && current_settings_category < 0) {
+                        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+                    }
+                    lv_obj_add_style(label, &style_menu_label, 0);
+                }
+                lv_obj_set_user_data(btn, (void *)"__BACK_OPTION__");
+                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)"__BACK_OPTION__");
+                num_items++;
+                t->user_data = (void*)1; // Mark back option as added
             }
-            lv_obj_set_user_data(btn, (void *)opt);
-            lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
-            num_items++;
-            built++;
-#ifndef CONFIG_USE_TOUCHSCREEN
-            if (num_items == 1) select_option_item(0);
-#endif
         }
-        if (!current_options_list || !current_options_list[build_item_index]) {
+#endif
+        // Timer should stop if all options are processed AND (if encoder, the back option is now added, OR if no encoder)
+        if (
+#ifdef CONFIG_USE_ENCODER
+            (bool)(intptr_t)t->user_data
+#else
+            true // If no encoder, we stop as soon as regular options are done
+#endif
+        ) {
             lv_timer_del(t);
             menu_build_timer = NULL;
         }

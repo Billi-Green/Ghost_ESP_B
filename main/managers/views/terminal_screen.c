@@ -6,6 +6,7 @@
 #include "managers/views/main_menu_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/display_manager.h"
+#include "esp_timer.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,6 +34,8 @@ static lv_obj_t *back_btn = NULL;
 static lv_obj_t *input_label = NULL;
 static size_t current_text_length = 0; // track total characters to manage memory
 lv_timer_t *terminal_update_timer = NULL;
+static unsigned long createdTimeInMs = 0;
+#define ENCODER_DEBOUNCE_TIME_MS 500
 
 static char input_buffer[128] = {0}; // keyboard input buffer
 static int input_len = 0; // input length counter
@@ -312,6 +315,7 @@ void terminal_view_create(void) {
           ESP_LOGE(TAG, "Failed to create terminal update timer");
       }
   }
+  createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
 }
 
 void terminal_view_destroy(void) {
@@ -490,6 +494,25 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       key_str[0] = (char)key;
       key_str[1] = '\0';
       terminal_view_add_text(key_str); // Add unhandled keys to terminal
+    }
+  } else if (event->type == INPUT_TYPE_ENCODER) {
+    unsigned long now_ms = (unsigned long)(esp_timer_get_time() / 1000ULL);
+    if (event->data.encoder.button) {
+      if (now_ms - createdTimeInMs <= ENCODER_DEBOUNCE_TIME_MS) {
+        ESP_LOGD(TAG, "Encoder button press debounced");
+        return;
+      }
+      ESP_LOGW(TAG, "Encoder button pressed, stopping all operations");
+      stop_all_operations();
+      createdTimeInMs = now_ms; // Update last press time
+    } else {
+      if (event->data.encoder.direction > 0) {
+        ESP_LOGW(TAG, "Encoder CW, scrolling down");
+        scroll_terminal_down();
+      } else {
+        ESP_LOGW(TAG, "Encoder CCW, scrolling up");
+        scroll_terminal_up();
+      }
     }
   }
 }
