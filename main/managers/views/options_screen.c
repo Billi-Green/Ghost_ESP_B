@@ -1422,13 +1422,12 @@ static void back_event_cb(lv_event_t *e) {
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
-    } else if (SelectedMenuType == OT_Bluetooth && current_bluetooth_menu_state != BLUETOOTH_MENU_MAIN) {
+        return;
+    }
+    // If in a Bluetooth submenu (but not main), go back to main Bluetooth menu
+    if (SelectedMenuType == OT_Bluetooth && current_bluetooth_menu_state != BLUETOOTH_MENU_MAIN) {
         current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
-    } else {
-        current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
-        current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN; // Reset for next time
-        display_manager_switch_view(&main_menu_view);
         return;
     }
     // If in a settings submenu, go back to category selection
