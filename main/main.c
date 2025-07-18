@@ -38,6 +38,12 @@ void app_main(void) {
     return;
 #endif
 
+#ifdef CONFIG_USE_ENCODER
+    gpio_reset_pin(15);
+    gpio_set_direction(15, GPIO_MODE_OUTPUT);
+    gpio_set_level(15, 1);
+#endif
+
 #ifdef CONFIG_WITH_ETHERNET
 
 #endif
