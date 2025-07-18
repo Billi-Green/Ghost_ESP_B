@@ -696,7 +696,27 @@ void display_manager_init(void) {
     joystick_init(&enc_button, CONFIG_ENCODER_KEY,
                   500 /*hold ms*/, true);
 #endif
+// initialize wake button interrupt
+#ifdef CONFIG_IS_S3TWATCH
+  wake_up_sem = xSemaphoreCreateBinary();
+  if (wake_up_sem != NULL) {
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL<<WAKE_UP_PIN,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,  // no GPIO ISR here
+    };
+    gpio_config(&io_conf);
 
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(WAKE_UP_PIN, gpio_isr_handler, (void*)WAKE_UP_PIN);
+    // Wake from light‑sleep on *low‑level*, not edge
+    gpio_wakeup_enable(WAKE_UP_PIN, GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();  // light‑sleep only
+  } else {
+    ESP_LOGE(TAG, "Failed to create wake_up_sem");
+  }
   display_manager_init_success = true;
   last_touch_time = xTaskGetTickCount();
   is_backlight_dimmed = false;
