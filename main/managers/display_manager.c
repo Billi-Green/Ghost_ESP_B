@@ -717,6 +717,8 @@ void display_manager_init(void) {
   } else {
     ESP_LOGE(TAG, "Failed to create wake_up_sem");
   }
+#endif
+
   display_manager_init_success = true;
   last_touch_time = xTaskGetTickCount();
   is_backlight_dimmed = false;
