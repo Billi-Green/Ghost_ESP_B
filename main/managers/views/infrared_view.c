@@ -237,6 +237,9 @@ static void back_event_cb(lv_event_t *e) {
             }
             lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
         }
+#ifdef CONFIG_USE_ENCODER
+        add_encoder_back_btn();
+#endif
         if (num_ir_items > 0) ir_select_item(0);
         return;
     }
