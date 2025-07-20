@@ -13,6 +13,7 @@
 ### Added
 
 - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
+- Encoder friendly version of the keyboard view
 
 - Display
   - Added 'Never' display timeout setting.
