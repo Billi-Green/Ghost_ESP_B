@@ -994,12 +994,15 @@ void hardware_input_task(void *pvParameters) {
         if (is_backlight_dimmed) {
           set_backlight_brightness(1);
           is_backlight_dimmed = false;
+          // Don't send input event when waking from dimmed state
+        } else {
+          // Only send input event if display was already active
+          InputEvent ev = {
+              .type = INPUT_TYPE_ENCODER,
+              .data.encoder = { .direction = dir, .button = false }
+          };
+          xQueueSend(input_queue, &ev, 0);
         }
-        InputEvent ev = {
-            .type = INPUT_TYPE_ENCODER,
-            .data.encoder = { .direction = dir, .button = false }
-        };
-        xQueueSend(input_queue, &ev, 0);
     }
 
     /* push‑switch -> treat like “button” */
@@ -1009,12 +1012,15 @@ void hardware_input_task(void *pvParameters) {
         if (is_backlight_dimmed) {
           set_backlight_brightness(1);
           is_backlight_dimmed = false;
+          // Don't send input event when waking from dimmed state
+        } else {
+          // Only send input event if display was already active
+          InputEvent ev = {
+              .type = INPUT_TYPE_ENCODER,
+              .data.encoder = { .direction = 0, .button = true }
+          };
+          xQueueSend(input_queue, &ev, 0);
         }
-        InputEvent ev = {
-            .type = INPUT_TYPE_ENCODER,
-            .data.encoder = { .direction = 0, .button = true }
-        };
-        xQueueSend(input_queue, &ev, 0);
     }
 #endif
 

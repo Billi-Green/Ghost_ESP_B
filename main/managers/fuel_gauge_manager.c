@@ -16,7 +16,7 @@ static const char *TAG = "FuelGaugeManager";
 #define I2C_MASTER_RX_BUF_DISABLE 0
 #define I2C_MASTER_TIMEOUT_MS   1000
 
-// BQ27220 Register Addresses (corrected for BQ27220)
+// BQ27220 Register Addresses
 #define BQ27220_REG_VOLTAGE     0x08  // Voltage in mV
 #define BQ27220_REG_CURRENT     0x0C  // Current in mA
 #define BQ27220_REG_SOC         0x2C  // State of Charge (%)
