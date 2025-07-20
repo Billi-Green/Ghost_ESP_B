@@ -18,15 +18,14 @@
 
 ### Added
 
-- Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
-- Encoder friendly version of the keyboard view
-
 - Display
   - Added 'Never' display timeout setting.
   - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.
   - Terminal App to use commands with the keyboard - @tototo31
   - Added option to select Custom Evil Portal html file from the SD Card - @tototo31
   - Placeholder text for keyboard view - @tototo31
+  - Encoder friendly version of the keyboard view
+  - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
 
 - Commands
   - 'chipinfo' command to display chip information
