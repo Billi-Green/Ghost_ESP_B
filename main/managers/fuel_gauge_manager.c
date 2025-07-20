@@ -9,248 +9,117 @@
 
 static const char *TAG = "FuelGaugeManager";
 
-// BQ27220 I2C Configuration
+#define BQ27220_I2C_ADDRESS     CONFIG_BQ27220_I2C_ADDRESS
+#define BQ27220_REG_VOLTAGE     0x08
+#define BQ27220_REG_CURRENT     0x0C
+#define BQ27220_REG_SOC         0x2C
+#define BQ27220_REG_FLAGS       0x0A
+#define BQ27220_REG_CAPACITY    0x0E
+#define BQ27220_REG_REMAINING   0x10
+
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+#define I2C_MASTER_NUM          I2C_NUM_1
+#else
 #define I2C_MASTER_NUM          I2C_NUM_0
-#define I2C_MASTER_FREQ_HZ      100000
-#define I2C_MASTER_TX_BUF_DISABLE 0
-#define I2C_MASTER_RX_BUF_DISABLE 0
-#define I2C_MASTER_TIMEOUT_MS   1000
-
-// BQ27220 Register Addresses
-#define BQ27220_REG_VOLTAGE     0x08  // Voltage in mV
-#define BQ27220_REG_CURRENT     0x0C  // Current in mA
-#define BQ27220_REG_SOC         0x2C  // State of Charge (%)
-#define BQ27220_REG_CAPACITY    0x0E  // Full Charge Capacity in mAh
-#define BQ27220_REG_REMAINING   0x10  // Remaining Capacity in mAh
-#define BQ27220_REG_FLAGS       0x0A  // Battery status flags
-
-// BQ27220 Flags (from datasheet)
-#define BQ27220_FLAG_DSG        (1 << 0)   // Discharging flag
-#define BQ27220_FLAG_SOCF       (1 << 1)   // State of Charge Final flag
-#define BQ27220_FLAG_SOC1       (1 << 2)   // State of Charge 1 flag
-#define BQ27220_FLAG_CHG        (1 << 8)   // Charging flag
-#define BQ27220_FLAG_FC         (1 << 9)   // Full Charge flag
-#define BQ27220_FLAG_OTD        (1 << 14)  // Over Temperature Discharge
-#define BQ27220_FLAG_OTC        (1 << 15)  // Over Temperature Charge
-
-// BQ27220 Control Commands
-#define BQ27220_REG_CONTROL     0x00  // Control register
-#define BQ27220_CONTROL_DEVICE_TYPE 0x0001  // Device type command
-
-// Battery Configuration
-#define BATTERY_DESIGN_CAPACITY CONFIG_BQ27220_DESIGN_CAPACITY  // mAh from configuration
+#endif
+#define I2C_MASTER_TIMEOUT_MS   100
 
 static bool is_initialized = false;
+static bool i2c_initialized_by_us = false;
 static fuel_gauge_data_t last_data = {0};
-static TickType_t last_charging_time = 0;
-static const TickType_t CHARGING_HYSTERESIS_MS = pdMS_TO_TICKS(3000); // 3 second hysteresis
 
-/**
- * @brief Read 16-bit register from BQ27220
- */
-static esp_err_t bq27220_read_reg16(uint8_t reg, uint16_t *value) {
+static uint16_t bq27220_read_word(uint8_t reg) {
     uint8_t data[2] = {0};
-    esp_err_t ret;
-    
-    ret = i2c_master_write_read_device(I2C_MASTER_NUM, CONFIG_BQ27220_I2C_ADDRESS,
-                                       &reg, 1, data, 2, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
-    
-    if (ret == ESP_OK) {
-        *value = (data[1] << 8) | data[0];  // Little endian
-        ESP_LOGD(TAG, "Read reg 0x%02X: raw bytes [0x%02X, 0x%02X] = %d", 
-                 reg, data[0], data[1], *value);
-    } else {
-        ESP_LOGD(TAG, "Failed to read reg 0x%02X: %s", reg, esp_err_to_name(ret));
-        *value = 0;
+
+    esp_err_t ret = i2c_master_write_read_device(I2C_MASTER_NUM, BQ27220_I2C_ADDRESS,
+                                                 &reg, 1, data, 2,
+                                                 pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
+
+    if (ret != ESP_OK) {
+        return 0xFFFF;
     }
-    
-    return ret;
+
+    return (data[1] << 8) | data[0];
 }
 
-/**
- * @brief Initialize I2C for BQ27220
- */
-static esp_err_t bq27220_i2c_init(void) {
+static uint8_t bq27220_read_byte(uint8_t reg) {
+    uint8_t data = 0xFF;
+    esp_err_t ret = i2c_master_write_read_device(I2C_MASTER_NUM, BQ27220_I2C_ADDRESS,
+                                                 &reg, 1, &data, 1,
+                                                 pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
+    if (ret != ESP_OK) {
+        return 0xFF;
+    }
+    return data;
+}
+
+static esp_err_t fuel_gauge_i2c_init(void) {
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
         .sda_io_num = CONFIG_BQ27220_I2C_SDA_PIN,
         .scl_io_num = CONFIG_BQ27220_I2C_SCL_PIN,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+        .master.clk_speed = 100000,
+        .clk_flags = 0,
     };
-    
+
     esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C param config failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
         return ret;
     }
-    
-    ret = i2c_driver_install(I2C_MASTER_NUM, conf.mode, 
-                            I2C_MASTER_RX_BUF_DISABLE, 
-                            I2C_MASTER_TX_BUF_DISABLE, 0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C driver install failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    
-    ESP_LOGI(TAG, "I2C initialized - SDA: %d, SCL: %d", 
-             CONFIG_BQ27220_I2C_SDA_PIN, CONFIG_BQ27220_I2C_SCL_PIN);
-    
-    return ESP_OK;
-}
 
-/**
- * @brief Scan I2C bus for devices (debugging helper)
- */
-static void bq27220_scan_i2c_bus(void) {
-    ESP_LOGI(TAG, "Scanning I2C bus...");
-    int devices_found = 0;
-    
-    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
-        uint8_t dummy_reg = 0x00;
-        uint8_t dummy_data;
-        
-        esp_err_t ret = i2c_master_write_read_device(I2C_MASTER_NUM, addr,
-                                                     &dummy_reg, 1, &dummy_data, 1, 
-                                                     pdMS_TO_TICKS(50));
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Found device at address 0x%02X", addr);
-            devices_found++;
+    ret = i2c_driver_install(I2C_MASTER_NUM, I2C_MODE_MASTER, 0, 0, 0);
+    if (ret != ESP_OK) {
+        if (ret == ESP_ERR_INVALID_STATE) {
+            ESP_LOGI(TAG, "I2C driver already installed on port %d", I2C_MASTER_NUM);
+            return ESP_OK;
         }
+        ESP_LOGE(TAG, "Failed to install I2C driver: %s", esp_err_to_name(ret));
+        return ret;
     }
-    
-    if (devices_found == 0) {
-        ESP_LOGW(TAG, "No I2C devices found on the bus");
-    } else {
-        ESP_LOGI(TAG, "Found %d I2C device(s)", devices_found);
-    }
-}
 
-/**
- * @brief Test if device is present on I2C bus by attempting a simple read
- */
-static bool bq27220_device_present(void) {
-    uint8_t dummy_reg = BQ27220_REG_VOLTAGE;
-    uint8_t dummy_data[2];
-    
-    esp_err_t ret = i2c_master_write_read_device(I2C_MASTER_NUM, CONFIG_BQ27220_I2C_ADDRESS,
-                                                 &dummy_reg, 1, dummy_data, 2, 
-                                                 pdMS_TO_TICKS(100));
-    
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "BQ27220 device detected at address 0x%02X", CONFIG_BQ27220_I2C_ADDRESS);
-        return true;
-    } else {
-        ESP_LOGE(TAG, "No device found at address 0x%02X: %s", 
-                 CONFIG_BQ27220_I2C_ADDRESS, esp_err_to_name(ret));
-        
-        // Perform I2C bus scan for debugging
-        bq27220_scan_i2c_bus();
-        return false;
-    }
-}
-
-/**
- * @brief Check and configure design capacity if needed
- */
-static bool bq27220_configure_capacity(void) {
-    uint16_t current_capacity;
-    esp_err_t ret = bq27220_read_reg16(BQ27220_REG_CAPACITY, &current_capacity);
-    
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Could not read current design capacity");
-        return true; // Continue anyway
-    }
-    
-    ESP_LOGI(TAG, "Current design capacity: %d mAh", current_capacity);
-    
-    // If capacity is significantly different from expected, log a warning
-    if (current_capacity < (BATTERY_DESIGN_CAPACITY - 200) || 
-        current_capacity > (BATTERY_DESIGN_CAPACITY + 200)) {
-        ESP_LOGW(TAG, "Design capacity (%d mAh) differs from expected (%d mAh)", 
-                 current_capacity, BATTERY_DESIGN_CAPACITY);
-        ESP_LOGW(TAG, "Consider reconfiguring the fuel gauge with correct capacity");
-    }
-    
-    return true;
-}
-
-/**
- * @brief Test BQ27220 communication
- */
-static bool bq27220_test_communication(void) {
-    uint16_t voltage;
-    esp_err_t ret = bq27220_read_reg16(BQ27220_REG_VOLTAGE, &voltage);
-    
-    ESP_LOGI(TAG, "Communication test - I2C result: %s, voltage reading: %d mV", 
-             esp_err_to_name(ret), voltage);
-    
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "BQ27220 I2C communication failed: %s", esp_err_to_name(ret));
-        return false;
-    }
-    
-    // BQ27220 can report 0V when battery is deeply discharged or not connected
-    // Accept voltage range from 0 to 6000mV (reasonable for Li-ion batteries)
-    if (voltage > 6000) {
-        ESP_LOGW(TAG, "BQ27220 voltage reading seems high: %d mV, but continuing anyway", voltage);
-    }
-    
-    ESP_LOGI(TAG, "BQ27220 communication test passed, voltage: %d mV", voltage);
-    return true;
+    i2c_initialized_by_us = true;
+    ESP_LOGI(TAG, "I2C initialized successfully on port %d", I2C_MASTER_NUM);
+    return ESP_OK;
 }
 
 bool fuel_gauge_manager_init(void) {
     if (is_initialized) {
-        ESP_LOGW(TAG, "Fuel gauge manager already initialized");
         return true;
     }
-    
-    ESP_LOGI(TAG, "Initializing BQ27220 fuel gauge manager");
-    ESP_LOGI(TAG, "Configuration: Address=0x%02X, SDA=%d, SCL=%d", 
-             CONFIG_BQ27220_I2C_ADDRESS, CONFIG_BQ27220_I2C_SDA_PIN, CONFIG_BQ27220_I2C_SCL_PIN);
-    
-    // Validate configuration
-    if (CONFIG_BQ27220_I2C_SDA_PIN == CONFIG_BQ27220_I2C_SCL_PIN) {
-        ESP_LOGE(TAG, "Invalid I2C configuration: SDA and SCL pins cannot be the same");
-        return false;
-    }
-    
-    // Initialize I2C
-    esp_err_t ret = bq27220_i2c_init();
+
+    ESP_LOGI(TAG, "Initializing BQ27220 fuel gauge");
+    ESP_LOGI(TAG, "Configuration: Address=0x%02X, SDA=%d, SCL=%d, I2C_PORT=%d",
+             BQ27220_I2C_ADDRESS, CONFIG_BQ27220_I2C_SDA_PIN, CONFIG_BQ27220_I2C_SCL_PIN, I2C_MASTER_NUM);
+
+    esp_err_t ret = fuel_gauge_i2c_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C initialization failed");
+        ESP_LOGE(TAG, "Failed to initialize I2C");
         return false;
     }
-    
-    // Small delay to allow I2C bus to stabilize
+
     vTaskDelay(pdMS_TO_TICKS(100));
-    
-    // Test device presence first
-    if (!bq27220_device_present()) {
-        i2c_driver_delete(I2C_MASTER_NUM);
+
+    uint16_t voltage = bq27220_read_word(BQ27220_REG_VOLTAGE);
+
+    if (voltage == 0xFFFF) {
+        ESP_LOGE(TAG, "Failed to communicate with BQ27220 - check wiring and I2C config");
         return false;
     }
-    
-    // Test communication
-    if (!bq27220_test_communication()) {
-        i2c_driver_delete(I2C_MASTER_NUM);
-        return false;
+
+    if (voltage == 0) {
+        ESP_LOGW(TAG, "BQ27220 reports 0V - battery may be disconnected");
     }
-    
-    // Check and configure design capacity
-    if (!bq27220_configure_capacity()) {
-        ESP_LOGW(TAG, "Failed to configure design capacity, continuing anyway");
-    }
-    
-    // Initialize data structure
+
+    ESP_LOGI(TAG, "BQ27220 detected, voltage: %d mV", voltage);
+
     memset(&last_data, 0, sizeof(last_data));
     last_data.is_initialized = true;
-    
     is_initialized = true;
-    ESP_LOGI(TAG, "BQ27220 fuel gauge manager initialized successfully");
-    
+
+    ESP_LOGI(TAG, "BQ27220 fuel gauge initialized successfully");
     return true;
 }
 
@@ -258,160 +127,99 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     if (!is_initialized || !data) {
         return false;
     }
-    
-    uint16_t voltage, current_raw, soc, capacity, remaining, flags;
-    
-    // Read all registers with individual error checking
-    esp_err_t ret_voltage = bq27220_read_reg16(BQ27220_REG_VOLTAGE, &voltage);
-    vTaskDelay(pdMS_TO_TICKS(1)); // Small delay between reads
-    
-    esp_err_t ret_current = bq27220_read_reg16(BQ27220_REG_CURRENT, &current_raw);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    
-    esp_err_t ret_soc = bq27220_read_reg16(BQ27220_REG_SOC, &soc);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    
-    esp_err_t ret_capacity = bq27220_read_reg16(BQ27220_REG_CAPACITY, &capacity);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    
-    esp_err_t ret_remaining = bq27220_read_reg16(BQ27220_REG_REMAINING, &remaining);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    
-    esp_err_t ret_flags = bq27220_read_reg16(BQ27220_REG_FLAGS, &flags);
-    
-    if (ret_voltage != ESP_OK || ret_current != ESP_OK || ret_soc != ESP_OK ||
-        ret_capacity != ESP_OK || ret_remaining != ESP_OK || ret_flags != ESP_OK) {
-        
-        ESP_LOGE(TAG, "Failed to read BQ27220 registers - V:%s C:%s SOC:%s CAP:%s REM:%s F:%s",
-                 esp_err_to_name(ret_voltage), esp_err_to_name(ret_current),
-                 esp_err_to_name(ret_soc), esp_err_to_name(ret_capacity),
-                 esp_err_to_name(ret_remaining), esp_err_to_name(ret_flags));
-        
-        // If we have cached data, return it instead of failing completely
+
+    uint16_t voltage = bq27220_read_word(BQ27220_REG_VOLTAGE);
+    uint16_t current_raw = bq27220_read_word(BQ27220_REG_CURRENT);
+    uint8_t soc_byte = bq27220_read_byte(BQ27220_REG_SOC);
+    uint16_t flags = bq27220_read_word(BQ27220_REG_FLAGS);
+
+    // Count successful reads
+    int successful_reads = 0;
+    if (voltage != 0xFFFF) successful_reads++;
+    if (current_raw != 0xFFFF) successful_reads++;
+    if (soc_byte != 0xFF) successful_reads++;
+    if (flags != 0xFFFF) successful_reads++;
+
+    // If less than half reads successful, use cached data
+    if (successful_reads < 2) {
         if (last_data.is_initialized) {
-            ESP_LOGW(TAG, "Returning cached battery data due to I2C errors");
             memcpy(data, &last_data, sizeof(fuel_gauge_data_t));
             return true;
         }
-        
         return false;
     }
-    
+
     // Fill data structure
-    data->voltage_mv = voltage;
-    data->current_ma = (int16_t)current_raw;  // Signed value
-    data->percentage = (uint8_t)(soc > 100 ? 100 : soc);
-    data->capacity_mah = capacity;
-    data->remaining_capacity_mah = remaining;
-    
-    // Improved charging detection
-    // Check both the charging flag and current direction
-    bool chg_flag = (flags & BQ27220_FLAG_CHG) != 0;
-    bool positive_current = data->current_ma > 20;  // Lower threshold to 20mA for better detection
-    bool voltage_rising = false;
-    
-    // Check if voltage is rising (another indicator of charging)
-    if (last_data.is_initialized && last_data.voltage_mv > 0) {
-        voltage_rising = (voltage > last_data.voltage_mv + 5); // 5mV increase threshold
+    data->voltage_mv = (voltage != 0xFFFF) ? voltage : last_data.voltage_mv;
+    // BQ27220 current is signed 16-bit in 2's complement, positive = charging
+    data->current_ma = (current_raw != 0xFFFF) ? (int16_t)current_raw : last_data.current_ma;
+    // StateOfCharge: single-byte integer percent read directly
+    data->percentage = (soc_byte != 0xFF && soc_byte <= 100) ? soc_byte : last_data.percentage;
+
+    // BQ27220 charging detection using flags and current measurement
+    bool flag_valid = (flags != 0xFFFF);
+    bool current_valid = (current_raw != 0xFFFF);
+    bool charging = false;
+    if (flag_valid || current_valid) {
+        bool charging_flag = flag_valid && ((flags & 0x0100) != 0);
+        bool charging_current = current_valid && (data->current_ma > 0);
+        charging = charging_flag || charging_current;
+    } else {
+        // Fallback to last known state if no valid data
+        charging = last_data.is_charging;
     }
-    
-    data->is_charging = chg_flag || positive_current || voltage_rising;
-    
-    // Apply hysteresis to prevent flickering
-    TickType_t current_time = xTaskGetTickCount();
-    if (data->is_charging) {
-        last_charging_time = current_time;
-    } else if (last_charging_time > 0) {
-        // If we were charging recently, maintain charging status for hysteresis period
-        if ((current_time - last_charging_time) < CHARGING_HYSTERESIS_MS) {
-            data->is_charging = true;
-        } else {
-            last_charging_time = 0; // Reset after hysteresis period
-        }
-    }
-    
-    // Add more detailed logging for charging detection
-    ESP_LOGI(TAG, "Charging detection - CHG flag: %s, current: %dmA (positive: %s), voltage rising: %s, final: %s", 
-             chg_flag ? "YES" : "NO", data->current_ma, positive_current ? "YES" : "NO",
-             voltage_rising ? "YES" : "NO", data->is_charging ? "CHARGING" : "NOT CHARGING");
-    
+    data->is_charging = charging;
     data->is_initialized = true;
-    
-    // Update cached data
+
+    // Update cache
     memcpy(&last_data, data, sizeof(fuel_gauge_data_t));
-    
-    ESP_LOGD(TAG, "Battery: %d%%, %dmV, %dmA, %dmAh/%dmAh, flags:0x%04X, %s", 
+
+    ESP_LOGI(TAG, "Battery: %d%%, %dmV, %dmA, %s",
              data->percentage, data->voltage_mv, data->current_ma,
-             data->remaining_capacity_mah, data->capacity_mah, flags,
              data->is_charging ? "charging" : "discharging");
-    
+
     return true;
 }
 
 int fuel_gauge_manager_get_percentage(void) {
     fuel_gauge_data_t data;
-    
-    if (fuel_gauge_manager_get_data(&data)) {
-        return data.percentage;
-    }
-    
-    return -1;  // Error
+    return fuel_gauge_manager_get_data(&data) ? data.percentage : -1;
 }
 
 bool fuel_gauge_manager_is_charging(void) {
     fuel_gauge_data_t data;
-    
-    if (fuel_gauge_manager_get_data(&data)) {
-        return data.is_charging;
-    }
-    
-    return false;
+    return fuel_gauge_manager_get_data(&data) ? data.is_charging : false;
 }
 
 uint16_t fuel_gauge_manager_get_voltage_mv(void) {
     fuel_gauge_data_t data;
-    
-    if (fuel_gauge_manager_get_data(&data)) {
-        return data.voltage_mv;
-    }
-    
-    return 0;
+    return fuel_gauge_manager_get_data(&data) ? data.voltage_mv : 0;
 }
 
 void fuel_gauge_manager_deinit(void) {
     if (is_initialized) {
-        i2c_driver_delete(I2C_MASTER_NUM);
+        if (i2c_initialized_by_us) {
+            esp_err_t ret = i2c_driver_delete(I2C_MASTER_NUM);
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "I2C driver deleted successfully");
+            } else {
+                ESP_LOGW(TAG, "Failed to delete I2C driver: %s", esp_err_to_name(ret));
+            }
+            i2c_initialized_by_us = false;
+        }
         is_initialized = false;
         memset(&last_data, 0, sizeof(last_data));
-        ESP_LOGI(TAG, "Fuel gauge manager deinitialized");
+        ESP_LOGI(TAG, "Fuel gauge deinitialized");
     }
 }
 
-#else // CONFIG_USE_BQ27220_FUEL_GAUGE not defined
+#else
 
-// Stub implementations when fuel gauge is not enabled
-bool fuel_gauge_manager_init(void) {
-    return false;
-}
+bool fuel_gauge_manager_init(void) { return false; }
+bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) { return false; }
+int fuel_gauge_manager_get_percentage(void) { return -1; }
+bool fuel_gauge_manager_is_charging(void) { return false; }
+uint16_t fuel_gauge_manager_get_voltage_mv(void) { return 0; }
+void fuel_gauge_manager_deinit(void) {}
 
-bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
-    return false;
-}
-
-int fuel_gauge_manager_get_percentage(void) {
-    return -1;
-}
-
-bool fuel_gauge_manager_is_charging(void) {
-    return false;
-}
-
-uint16_t fuel_gauge_manager_get_voltage_mv(void) {
-    return 0;
-}
-
-void fuel_gauge_manager_deinit(void) {
-    // Nothing to do
-}
-
-#endif // CONFIG_USE_BQ27220_FUEL_GAUGE
+#endif
