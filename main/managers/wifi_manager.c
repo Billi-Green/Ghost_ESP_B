@@ -1,6 +1,7 @@
 // wifi_manager.c
 
 #include "managers/wifi_manager.h"
+#include "core/callbacks.h"  // For callback function declarations
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h" // Add include for heap stats
@@ -1139,6 +1140,27 @@ void wifi_manager_stop_evil_portal() {
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
+
+    // Set hardware-level promiscuous filter based on callback type
+    wifi_promiscuous_filter_t filter = {0};
+    
+    // Determine filter mask based on callback function
+    if (callback == wifi_beacon_scan_callback || callback == wifi_probe_scan_callback || 
+        callback == wifi_deauth_scan_callback || callback == wifi_pwn_scan_callback ||
+        callback == wifi_wps_detection_callback || callback == wifi_listen_probes_callback ||
+        callback == wifi_pineap_detector_callback || callback == wardriving_scan_callback) {
+        // Management frames only
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
+    } else if (callback == wifi_eapol_scan_callback) {
+        // Data frames only for EAPOL
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA;
+    } else {
+        // Default: capture all frame types (for raw capture, etc.)
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_ALL;
+    }
+    
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
+    ESP_LOGI("WIFI_MANAGER", "Set hardware filter mask: 0x%02X", filter.filter_mask);
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
 
