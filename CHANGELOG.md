@@ -2,13 +2,19 @@
 
 ## Revival v1.7
 
-### Dual Chip Support
+### Big Changes
+
+#### Dual Chip Support
 
 - Support for connecting two ESP32 chips running GhostESP
   - WebUI Section to send commands to the connected peer
 
-- Config for LilyGo TEmbed C1101
-- Config for 'AITRIP CYD' or ESP2432S028R a CYD device - @tototo31
+#### Up to 5X the battery life on supported devices with power saving mode
+
+#### Support for the LilyGo TEmbed C1101
+
+#### Support for 'AITRIP CYD' or ESP2432S028R, a CYD device - @tototo31
+
 
 ### Added
 
