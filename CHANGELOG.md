@@ -7,7 +7,7 @@
 - Support for connecting two ESP32 chips running GhostESP
   - WebUI Section to send commands to the connected peer
 
-
+- Config for LilyGo TEmbed C1101
 - Config for 'AITRIP CYD' or ESP2432S028R a CYD device - @tototo31
 
 ### Added
