@@ -812,13 +812,21 @@ void handle_hardware_button_press_options(InputEvent *event) {
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         uint8_t keyValue = event->data.key_value;
 
-        if ((keyValue == 44 || keyValue == ',') && is_settings_mode && current_settings_category >= 0) { // Left / up
+        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) {
             ESP_LOGI(TAG, "Left/Up button pressed");
-            change_current_row(false);
-        } else if ((keyValue == 47 || keyValue == '/') && is_settings_mode && current_settings_category >= 0) { // Right / down
+            if (is_settings_mode && (keyValue == 44 || keyValue == ',')) {
+                change_current_row(false);
+            } else {
+                select_option_item(selected_item_index - 1);
+            }
+        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) {
             ESP_LOGI(TAG, "Right/Down button pressed");
-            change_current_row(true);
-        } else if (keyValue == 13) { // Select / centre press
+            if (is_settings_mode && (keyValue == 47 || keyValue == '/')) {
+                change_current_row(true);
+            } else {
+                select_option_item(selected_item_index + 1);
+            }
+        } else if (keyValue == 13) {
             ESP_LOGI(TAG, "Enter button pressed");
             if (is_settings_mode) {
                 if (current_settings_category < 0) {
@@ -851,7 +859,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 } else { // current_settings_category >= 0
                     /* Inside a settings submenu:
                      *  ─ encoder press on a normal row  → cycle the value
-                     *  ─ encoder press on “← Back”     → leave submenu        */
+                     *  ─ encoder press on "← Back"     → leave submenu        */
                     lv_obj_t *sel = lv_obj_get_child(menu_container,
                                                      selected_item_index);
                     if (sel) {
@@ -1452,6 +1460,12 @@ void options_menu_destroy() {
         lv_timer_del(menu_build_timer);
         menu_build_timer = NULL;
     }
+    if (styles_initialized) {
+        lv_style_reset(&style_menu_item);
+        lv_style_reset(&style_selected_item);
+        lv_style_reset(&style_menu_label);
+        styles_initialized = false;
+    }
     is_settings_mode = false;
     /* Do NOT reset shared styles – they may still be referenced by
        widgets that haven't been flushed/destroyed yet.  Leaving them
@@ -1599,6 +1613,9 @@ static void menu_builder_cb(lv_timer_t *t)
                     num_items++;
                     built_this_tick++;
                     build_item_index++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+                    if (num_items == 1) select_option_item(0);
+#endif
                 }
                 if (settings_categories[build_item_index] == NULL) { // End of categories list
                     all_current_options_processed = true;
@@ -1626,6 +1643,9 @@ static void menu_builder_cb(lv_timer_t *t)
                     num_items++;
                     built_this_tick++;
                     build_item_index++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+                    if (num_items == 1) select_option_item(0);
+#endif
                 }
                 if (indices[build_item_index] < 0) { // End of settings submenu list
                     all_current_options_processed = true;
@@ -1650,6 +1670,9 @@ static void menu_builder_cb(lv_timer_t *t)
                 num_items++;
                 built_this_tick++;
                 build_item_index++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+                if (num_items == 1) select_option_item(0);
+#endif
             }
             if (current_options_list == NULL || current_options_list[build_item_index] == NULL) { // End of regular options list
                 all_current_options_processed = true;

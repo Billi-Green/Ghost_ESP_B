@@ -338,8 +338,8 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
     else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
         ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
         display_manager_switch_view(&main_menu_view);
-#endif
     }
+#endif
 }
 
 void get_number_pad_callback(void **callback) {
