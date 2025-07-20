@@ -89,7 +89,8 @@ static bool is_backlight_dimmed;
 
 #ifdef CONFIG_USE_ENCODER
 static encoder_t g_encoder;
-static joystick_t enc_button; // we’ll treat the push‑switch like any other button
+static joystick_t enc_button; // we'll treat the push‑switch like any other button
+static joystick_t exit_button; // IO6 exit button
 #endif
 
 #define FADE_DURATION_MS 10
@@ -496,6 +497,11 @@ static void status_update_cb(lv_timer_t *timer) {
   bool has_battery = get_battery_info(&power_level, &is_charging);
   
   int battery_percentage = has_battery ? power_level : -1;
+  
+  // Debug logging for battery status
+  ESP_LOGD(TAG, "Status update - Battery: %d%%, Charging: %s, Has battery: %s", 
+           battery_percentage, is_charging ? "YES" : "NO", has_battery ? "YES" : "NO");
+  
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
 }
@@ -598,7 +604,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
   if (!status_timer_initialized) {
-    status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
+    status_update_timer = lv_timer_create(status_update_cb, 500, NULL);
     status_timer_initialized = true;
   }
 }
@@ -752,6 +758,9 @@ void display_manager_init(void) {
                  ENCODER_LATCH_FOUR3);       /* detented knobs */
     joystick_init(&enc_button, CONFIG_ENCODER_KEY,
                   500 /*hold ms*/, true);
+    
+    // initialize IO6 exit button
+    joystick_init(&exit_button, 6, 500 /*hold ms*/, true);
 #endif
 // initialize wake button interrupt
 #ifdef CONFIG_IS_S3TWATCH
@@ -1018,6 +1027,23 @@ void hardware_input_task(void *pvParameters) {
           InputEvent ev = {
               .type = INPUT_TYPE_ENCODER,
               .data.encoder = { .direction = 0, .button = true }
+          };
+          xQueueSend(input_queue, &ev, 0);
+        }
+    }
+#endif
+
+#ifdef CONFIG_USE_ENCODER
+    // check IO6 exit button
+    if (joystick_just_pressed(&exit_button)) {
+        last_touch_time = xTaskGetTickCount();
+        if (is_backlight_dimmed) {
+          set_backlight_brightness(1);
+          is_backlight_dimmed = false;
+        } else {
+          InputEvent ev = {
+              .type = INPUT_TYPE_EXIT_BUTTON,
+              .data.exit_pressed = true
           };
           xQueueSend(input_queue, &ev, 0);
         }

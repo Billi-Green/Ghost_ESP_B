@@ -888,6 +888,11 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 select_option_item(selected_item_index - 1);
             }
         }
+#ifdef CONFIG_USE_ENCODER
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+        display_manager_switch_view(&main_menu_view);
+#endif
     }
 }
 

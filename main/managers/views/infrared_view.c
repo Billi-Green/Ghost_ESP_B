@@ -641,6 +641,9 @@ void infrared_view_input_cb(InputEvent *event) {
                 ir_select_item(selected_ir_index - 1);
             }
         }
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+        display_manager_switch_view(&main_menu_view);
 #endif
     }
 }

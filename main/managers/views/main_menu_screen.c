@@ -213,6 +213,11 @@ static void menu_item_event_handler(InputEvent *event) {
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         ESP_LOGI(TAG, "keyboard event");
         handle_keyboard_interactions(event->data.key_value);
+#ifdef CONFIG_USE_ENCODER
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        ESP_LOGI(TAG, "IO6 exit button pressed, staying on main menu");
+        // On main menu, the exit button doesn't do anything since we're already at the top level
+#endif
     }
 }
 

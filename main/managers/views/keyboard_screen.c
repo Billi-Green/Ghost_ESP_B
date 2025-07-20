@@ -2,6 +2,7 @@
 #include "core/serial_manager.h"
 #include "managers/views/options_screen.h"
 #include "managers/views/terminal_screen.h"
+#include "managers/views/main_menu_screen.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
@@ -429,6 +430,11 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
         } else if (c >= ' ' && c <= '~') {
             add_char_to_buffer(c);
         }
+#ifdef CONFIG_USE_ENCODER
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+        display_manager_switch_view(&main_menu_view);
+#endif
     }
 }
 

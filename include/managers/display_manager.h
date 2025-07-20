@@ -16,7 +16,8 @@ typedef enum {
     INPUT_TYPE_TOUCH,
     INPUT_TYPE_JOYSTICK,
     INPUT_TYPE_KEYBOARD,
-    INPUT_TYPE_ENCODER          // --- new
+    INPUT_TYPE_ENCODER,         // --- new
+    INPUT_TYPE_EXIT_BUTTON      // --- new for IO6 exit button
 } InputType;
 
 typedef struct {
@@ -26,6 +27,7 @@ typedef struct {
     lv_indev_data_t touch_data; // Used for touchscreen inputs
     uint8_t key_value;          // Used for keyboard inputs
     struct { int8_t direction; bool button; } encoder; // Added for encoder input
+    bool exit_pressed;          // Used for IO6 exit button
   } data;
 } InputEvent;
 
@@ -118,5 +120,7 @@ LV_IMG_DECLARE(infrared);
 LV_IMG_DECLARE(terminal_icon);
 
 joystick_t joysticks[5];
+#ifdef CONFIG_USE_ENCODER
+#endif
 
 #endif /* DISPLAY_MANAGER_H */

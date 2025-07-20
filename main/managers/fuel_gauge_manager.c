@@ -42,6 +42,8 @@ static const char *TAG = "FuelGaugeManager";
 
 static bool is_initialized = false;
 static fuel_gauge_data_t last_data = {0};
+static TickType_t last_charging_time = 0;
+static const TickType_t CHARGING_HYSTERESIS_MS = pdMS_TO_TICKS(3000); // 3 second hysteresis
 
 /**
  * @brief Read 16-bit register from BQ27220
@@ -261,10 +263,20 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     
     // Read all registers with individual error checking
     esp_err_t ret_voltage = bq27220_read_reg16(BQ27220_REG_VOLTAGE, &voltage);
+    vTaskDelay(pdMS_TO_TICKS(1)); // Small delay between reads
+    
     esp_err_t ret_current = bq27220_read_reg16(BQ27220_REG_CURRENT, &current_raw);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
     esp_err_t ret_soc = bq27220_read_reg16(BQ27220_REG_SOC, &soc);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
     esp_err_t ret_capacity = bq27220_read_reg16(BQ27220_REG_CAPACITY, &capacity);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
     esp_err_t ret_remaining = bq27220_read_reg16(BQ27220_REG_REMAINING, &remaining);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
     esp_err_t ret_flags = bq27220_read_reg16(BQ27220_REG_FLAGS, &flags);
     
     if (ret_voltage != ESP_OK || ret_current != ESP_OK || ret_soc != ESP_OK ||
@@ -274,6 +286,14 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
                  esp_err_to_name(ret_voltage), esp_err_to_name(ret_current),
                  esp_err_to_name(ret_soc), esp_err_to_name(ret_capacity),
                  esp_err_to_name(ret_remaining), esp_err_to_name(ret_flags));
+        
+        // If we have cached data, return it instead of failing completely
+        if (last_data.is_initialized) {
+            ESP_LOGW(TAG, "Returning cached battery data due to I2C errors");
+            memcpy(data, &last_data, sizeof(fuel_gauge_data_t));
+            return true;
+        }
+        
         return false;
     }
     
@@ -287,8 +307,33 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     // Improved charging detection
     // Check both the charging flag and current direction
     bool chg_flag = (flags & BQ27220_FLAG_CHG) != 0;
-    bool positive_current = data->current_ma > 50;  // Positive current indicates charging (>50mA threshold)
-    data->is_charging = chg_flag || positive_current;
+    bool positive_current = data->current_ma > 20;  // Lower threshold to 20mA for better detection
+    bool voltage_rising = false;
+    
+    // Check if voltage is rising (another indicator of charging)
+    if (last_data.is_initialized && last_data.voltage_mv > 0) {
+        voltage_rising = (voltage > last_data.voltage_mv + 5); // 5mV increase threshold
+    }
+    
+    data->is_charging = chg_flag || positive_current || voltage_rising;
+    
+    // Apply hysteresis to prevent flickering
+    TickType_t current_time = xTaskGetTickCount();
+    if (data->is_charging) {
+        last_charging_time = current_time;
+    } else if (last_charging_time > 0) {
+        // If we were charging recently, maintain charging status for hysteresis period
+        if ((current_time - last_charging_time) < CHARGING_HYSTERESIS_MS) {
+            data->is_charging = true;
+        } else {
+            last_charging_time = 0; // Reset after hysteresis period
+        }
+    }
+    
+    // Add more detailed logging for charging detection
+    ESP_LOGI(TAG, "Charging detection - CHG flag: %s, current: %dmA (positive: %s), voltage rising: %s, final: %s", 
+             chg_flag ? "YES" : "NO", data->current_ma, positive_current ? "YES" : "NO",
+             voltage_rising ? "YES" : "NO", data->is_charging ? "CHARGING" : "NOT CHARGING");
     
     data->is_initialized = true;
     

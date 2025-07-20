@@ -280,6 +280,11 @@ static void handle_keyboard_interactions(int keyValue){
                 select_app_item(selected_app_index - 1, false);
             }
         }
+#ifdef CONFIG_USE_ENCODER
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+        display_manager_switch_view(&main_menu_view);
+#endif
     }
 }
 

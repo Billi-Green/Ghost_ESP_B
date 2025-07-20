@@ -514,6 +514,12 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
         scroll_terminal_up();
       }
     }
+#ifdef CONFIG_USE_ENCODER
+  } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+    ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+    stop_all_operations();
+    display_manager_switch_view(&main_menu_view);
+#endif
   }
 }
 
