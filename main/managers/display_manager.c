@@ -39,6 +39,10 @@
 #include "vendor/drivers/axp2101.h"
 #endif
 
+#ifdef CONFIG_HAS_FUEL_GAUGE
+#include "managers/fuel_gauge_manager.h"
+#endif
+
 #ifdef CONFIG_HAS_RTC_CLOCK
 #include "vendor/drivers/pcf8563.h"
 #endif
@@ -225,6 +229,42 @@ bool isCharging() { return _isCharging; }
 
 #endif
 
+/**
+ * @brief Get battery information from available sources
+ * @param percentage Pointer to store battery percentage
+ * @param is_charging Pointer to store charging status
+ * @return true if battery data is available, false otherwise
+ */
+static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
+    if (!percentage || !is_charging) {
+        return false;
+    }
+
+#ifdef CONFIG_HAS_FUEL_GAUGE
+    // Try fuel gauge first (most accurate)
+    int fuel_percentage = fuel_gauge_manager_get_percentage();
+    if (fuel_percentage >= 0) {
+        *percentage = (uint8_t)fuel_percentage;
+        *is_charging = fuel_gauge_manager_is_charging();
+        return true;
+    }
+#endif
+
+#ifdef CONFIG_HAS_BATTERY
+    // Fallback to AXP2101
+    axp2101_get_power_level(percentage);
+    *is_charging = axp202_is_charging();
+    return true;
+#elif CONFIG_USE_CARDPUTER
+    // Fallback to Cardputer ADC
+    *percentage = getBattery();
+    *is_charging = isCharging();
+    return true;
+#endif
+
+    return false;
+}
+
 void fade_out_cb(void *obj, int32_t v) {
   if (obj) {
     lv_obj_set_style_opa(obj, v, LV_PART_MAIN);
@@ -365,15 +405,25 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
                   (batteryPercentage > 25) ? LV_SYMBOL_BATTERY_2 :
                   (batteryPercentage > 10) ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_EMPTY;
 
-#ifdef CONFIG_HAS_BATTERY
-    if (axp202_is_charging()) {
-      battery_symbol = LV_SYMBOL_CHARGE;
-    }
-#elif CONFIG_USE_CARDPUTER
-    if (isCharging()) {
-      battery_symbol = LV_SYMBOL_CHARGE;
-    }
+    // Check charging status from available sources
+    bool is_charging = false;
+#ifdef CONFIG_HAS_FUEL_GAUGE
+    // Try fuel gauge first (most accurate)
+    is_charging = fuel_gauge_manager_is_charging();
 #endif
+    
+    // Fallback to original logic if fuel gauge not available or failed
+    if (!is_charging) {
+#ifdef CONFIG_HAS_BATTERY
+      is_charging = axp202_is_charging();
+#elif CONFIG_USE_CARDPUTER
+      is_charging = isCharging();
+#endif
+    }
+    
+    if (is_charging) {
+      battery_symbol = LV_SYMBOL_CHARGE;
+    }
     lv_label_set_text_fmt(battery_label, "%s %d%%", battery_symbol, batteryPercentage);
   }
 
@@ -402,19 +452,28 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
     }
     if (battery_label && lv_obj_is_valid(battery_label)) {
       lv_color_t battery_color = default_color;
-#ifdef CONFIG_HAS_BATTERY
-      if (axp202_is_charging()) {
-        battery_color = lv_color_hex(0x00FF00); // Green if charging
-      } else if (batteryPercentage <= 20) {
-        battery_color = lv_color_hex(0xFF0000); // Red if 20% or below
-      }
-#elif CONFIG_USE_CARDPUTER
-      if (isCharging()) {
-        battery_color = lv_color_hex(0x00FF00); // Green if charging
-      } else if (batteryPercentage <= 20) {
-        battery_color = lv_color_hex(0xFF0000); // Red if 20% or below
-      }
+      
+      // Check charging status from available sources
+      bool is_charging = false;
+#ifdef CONFIG_HAS_FUEL_GAUGE
+      // Try fuel gauge first (most accurate)
+      is_charging = fuel_gauge_manager_is_charging();
 #endif
+      
+      // Fallback to original logic if fuel gauge not available or failed
+      if (!is_charging) {
+#ifdef CONFIG_HAS_BATTERY
+        is_charging = axp202_is_charging();
+#elif CONFIG_USE_CARDPUTER
+        is_charging = isCharging();
+#endif
+      }
+      
+      if (is_charging) {
+        battery_color = lv_color_hex(0x00FF00); // Green if charging
+      } else if (batteryPercentage <= 20) {
+        battery_color = lv_color_hex(0xFF0000); // Red if 20% or below
+      }
       lv_obj_set_style_text_color(battery_label, battery_color, 0);
     }
   }
@@ -431,19 +490,14 @@ static void status_update_cb(lv_timer_t *timer) {
   bool server_running = false;
   ap_manager_get_status(&server_running, NULL, NULL); // Get AP server status
 
-#ifdef CONFIG_HAS_BATTERY
-  uint8_t power_level;
-  axp2101_get_power_level(&power_level);
-  bool is_charging = axp202_is_charging();
+  // Get battery information from available sources
+  uint8_t power_level = 0;
+  bool is_charging = false;
+  bool has_battery = get_battery_info(&power_level, &is_charging);
+  
+  int battery_percentage = has_battery ? power_level : -1;
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
-#elif CONFIG_USE_CARDPUTER
-  uint8_t power_level = getBattery();
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
-#else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings), server_running);
-#endif
+                    battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
 }
 
 static const uint32_t theme_palettes[15][6] = {
@@ -535,19 +589,14 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   bool server_running = false;
   ap_manager_get_status(&server_running, NULL, NULL); // Get AP server status
 
-#ifdef CONFIG_HAS_BATTERY
-  uint8_t power_level;
-  axp2101_get_power_level(&power_level);
-  bool is_charging = axp202_is_charging();
+  // Get battery information from available sources
+  uint8_t power_level = 0;
+  bool is_charging = false;
+  bool has_battery = get_battery_info(&power_level, &is_charging);
+  
+  int battery_percentage = has_battery ? power_level : -1;
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    is_charging ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
-#elif CONFIG_USE_CARDPUTER
-  uint8_t power_level = getBattery();
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
-                    isCharging() ? power_level : power_level, settings_get_power_save_enabled(&G_Settings), server_running);
-#else
-  update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized, -1, settings_get_power_save_enabled(&G_Settings), server_running);
-#endif
+                    battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
   if (!status_timer_initialized) {
     status_update_timer = lv_timer_create(status_update_cb, 1000, NULL);
     status_timer_initialized = true;
@@ -685,6 +734,14 @@ void display_manager_init(void) {
 #ifdef CONFIG_HAS_RTC_CLOCK
   pcf8563_init(I2C_NUM_1, 0x51);
 #endif
+#endif
+
+#ifdef CONFIG_HAS_FUEL_GAUGE
+  if (fuel_gauge_manager_init()) {
+    ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
+  } else {
+    ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
+  }
 #endif
 
 #ifdef CONFIG_USE_ENCODER

@@ -12,6 +12,8 @@
 
 ### Added
 
+- Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
+
 - Display
   - Added 'Never' display timeout setting.
   - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.

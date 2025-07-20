@@ -545,6 +545,7 @@ void infrared_view_input_cb(InputEvent *event) {
             ESP_LOGI(TAG, "joystick down pressed, selecting next item");
             ir_select_item(selected_ir_index + 1);
         } else if(idx == 1) {
+#ifdef CONFIG_USE_ENCODER
             // Check if the selected item is the Back option
             lv_obj_t *selected_obj = lv_obj_get_child(list, selected_ir_index);
             if (selected_obj && lv_obj_get_user_data(selected_obj) == IR_BACK_OPTION_MAGIC_STR) {
@@ -552,6 +553,7 @@ void infrared_view_input_cb(InputEvent *event) {
                 back_event_cb(NULL);
                 return;
             }
+#endif
             if (!showing_commands) {
                 if (has_remotes_option && selected_ir_index == 0) {
                     ESP_LOGI(TAG, "joystick enter pressed on Remotes, opening remotes directory");
@@ -580,6 +582,7 @@ void infrared_view_input_cb(InputEvent *event) {
             ir_select_item(selected_ir_index + 1);
         } else if (keyValue == 13) {
             ESP_LOGI(TAG, "Keyboard Enter button pressed\n");
+#ifdef CONFIG_USE_ENCODER
             // Check if the selected item is the Back option
             lv_obj_t *selected_obj = lv_obj_get_child(list, selected_ir_index);
             if (selected_obj && lv_obj_get_user_data(selected_obj) == IR_BACK_OPTION_MAGIC_STR) {
@@ -587,6 +590,7 @@ void infrared_view_input_cb(InputEvent *event) {
                 back_event_cb(NULL);
                 return;
             }
+#endif
             if (!showing_commands) {
                 if (has_remotes_option && selected_ir_index == 0) {
                     ESP_LOGI(TAG, "Keyboard Enter pressed on Remotes, opening remotes directory");
@@ -608,6 +612,7 @@ void infrared_view_input_cb(InputEvent *event) {
             ESP_LOGI(TAG, "Keyboard Esc button pressed\n");
             back_event_cb(NULL);
         }
+#ifdef CONFIG_USE_ENCODER
     } else if (event->type == INPUT_TYPE_ENCODER) {
         if (event->data.encoder.button) {
             // Check if the selected item is the Back option
@@ -636,6 +641,7 @@ void infrared_view_input_cb(InputEvent *event) {
                 ir_select_item(selected_ir_index - 1);
             }
         }
+#endif
     }
 }
 

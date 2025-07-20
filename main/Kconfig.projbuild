@@ -135,6 +135,47 @@ menu "Ghost ESP Options"
             default n
             help
                 Enable power saving features if you have a battery.
+
+        config HAS_FUEL_GAUGE
+            bool "Enable Fuel Gauge Support"
+            default n
+            help
+                Enable fuel gauge support for accurate battery monitoring.
+
+        config USE_BQ27220_FUEL_GAUGE
+            bool "Use BQ27220 Fuel Gauge"
+            default n
+            depends on HAS_FUEL_GAUGE
+            help
+                Enable support for BQ27220 fuel gauge via I2C.
+
+        config BQ27220_I2C_ADDRESS
+            hex "BQ27220 I2C Address"
+            default 0x55
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                I2C address for BQ27220 fuel gauge (default 0x55).
+
+        config BQ27220_I2C_SDA_PIN
+            int "BQ27220 I2C SDA Pin"
+            default 8
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                GPIO pin for BQ27220 I2C SDA line.
+
+        config BQ27220_I2C_SCL_PIN
+            int "BQ27220 I2C SCL Pin"
+            default 18
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                GPIO pin for BQ27220 I2C SCL line.
+
+        config BQ27220_DESIGN_CAPACITY
+            int "Battery Design Capacity (mAh)"
+            default 1300
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                Design capacity of the battery in mAh (default 1300 for T-Embed CC1101).
     
         config HAS_RTC_CLOCK
             bool "Enable RTC Clock"
