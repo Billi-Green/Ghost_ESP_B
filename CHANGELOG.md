@@ -58,8 +58,6 @@
 
 - Commands
   - Add termianl_view_add_text logs to commands missing them
-
-- WebUI
   - Skip pcap flush if mutex is null
 
 - General
