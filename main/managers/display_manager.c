@@ -24,6 +24,7 @@
 #include <limits.h> // for UINT32_MAX
 #include "managers/ap_manager.h"
 #include "core/serial_manager.h"
+#include "managers/wifi_manager.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -440,8 +441,10 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   } else {
     lv_color_t default_color = lv_color_hex(0xCCCCCC);
     if (wifi_label && lv_obj_is_valid(wifi_label)) {
-        if (is_ap_active) {
-            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0); // Green for active AP
+        if (wifi_manager_is_evil_portal_active()) {
+            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
+        } else if (is_ap_active) {
+            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
         } else {
             lv_obj_set_style_text_color(wifi_label, default_color, 0);
         }

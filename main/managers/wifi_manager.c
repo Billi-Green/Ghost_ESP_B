@@ -1137,6 +1137,10 @@ void wifi_manager_stop_evil_portal() {
     ap_manager_init();
 }
 
+bool wifi_manager_is_evil_portal_active(void) {
+    return evilportal_server != NULL;
+}
+
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
