@@ -51,13 +51,20 @@
 
 ### Bug Fixes
 
-- Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
-- Skip pcap flush if mutex is null
-- Flush every packet to UART (Flipper) immediately when there's no sd card
-- Add termianl_view_add_text logs to commands missing them
-- Reduce FatFS memory usage on S3TWatch and Cardputer
-- Improve battery reading accuracy on Cardputer
-- Dynamically size error popup to content and center on screen
+- Display
+  - Dynamically size error popup to content and center on screen
+  - Reduce FatFS memory usage on S3TWatch and Cardputer
+  - Improve battery reading accuracy on Cardputer
+
+- Commands
+  - Add termianl_view_add_text logs to commands missing them
+
+- WebUI
+  - Skip pcap flush if mutex is null
+
+- General
+  - Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
+  - Flush every packet to UART (Flipper) immediately when there's no sd card
 
 
 ## Revival 1.6.1
