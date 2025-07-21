@@ -357,7 +357,7 @@ static void keyboard_create() {
     encoder_cont = lv_obj_create(root);
     lv_obj_remove_style_all(encoder_cont);
     lv_obj_set_size(encoder_cont, screen_width, display_height);
-    lv_obj_set_pos(encoder_cont, 0, status_bar_height + display_height);
+    lv_obj_set_pos(encoder_cont, 0, status_bar_height + display_height + padding);
     lv_obj_set_style_bg_opa(encoder_cont, LV_OPA_TRANSP, 0);
     // initialize encoder items and metrics
     encoder_items = encoder_alpha_items;
