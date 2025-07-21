@@ -12,6 +12,9 @@
 #include "managers/ble_manager.h"
 #endif
 #include <esp_log.h>
+#include "esp_sleep.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/gpio.h"
 
 #ifdef CONFIG_WITH_ETHERNET
@@ -65,6 +68,37 @@ void app_main(void) {
 #ifdef CONFIG_USE_ENCODER
     gpio_reset_pin(15);
     gpio_set_direction(15, GPIO_MODE_OUTPUT);
+    
+    // Check if we woke up from deep sleep
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    
+    switch (wakeup_reason) {
+        case ESP_SLEEP_WAKEUP_UNDEFINED:
+            ESP_LOGI("Main", "Normal startup (not from deep sleep), IO15 set high");
+            break;
+        case ESP_SLEEP_WAKEUP_EXT0:
+            ESP_LOGI("DeepSleep", "Woke up from deep sleep via EXT0 (IO6), pulling IO15 high");
+            gpio_set_level(15, 1);
+            break;
+        case ESP_SLEEP_WAKEUP_EXT1:
+            ESP_LOGI("DeepSleep", "Woke up from deep sleep via EXT1 (IO6), pulling IO15 high");
+            gpio_set_level(15, 1);
+            break;
+        case ESP_SLEEP_WAKEUP_TIMER:
+            ESP_LOGI("Main", "Woke up from deep sleep via timer, IO15 set high");
+            break;
+        case ESP_SLEEP_WAKEUP_TOUCHPAD:
+            ESP_LOGI("Main", "Woke up from deep sleep via touchpad, IO15 set high");
+            break;
+        case ESP_SLEEP_WAKEUP_ULP:
+            ESP_LOGI("Main", "Woke up from deep sleep via ULP, IO15 set high");
+            break;
+        default:
+            ESP_LOGI("Main", "Woke up from deep sleep via unknown cause (%d), IO15 set high", wakeup_reason);
+            break;
+    }
+    
+    // Always set IO15 high on startup
     gpio_set_level(15, 1);
 #endif
 

@@ -1,6 +1,7 @@
 #include "managers/display_manager.h"
 #include "driver/gpio.h"
 #include "esp_sleep.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -1047,6 +1048,67 @@ void hardware_input_task(void *pvParameters) {
           };
           xQueueSend(input_queue, &ev, 0);
         }
+    }
+    
+    // Check for 7-second hold to enter deep sleep
+    if (joystick_get_button_state(&exit_button) && exit_button.pressed) {
+        uint32_t elapsed = (esp_timer_get_time() / 1000) - exit_button.hold_init;
+        if (elapsed >= 7000 && !exit_button.deep_sleep_triggered) { // 7 seconds
+            ESP_LOGI("DeepSleep", "IO6 held for 7 seconds, preparing for deep sleep");
+            exit_button.deep_sleep_triggered = true;
+            
+            // Pull IO15 low before sleep
+            gpio_set_level(15, 0);
+            ESP_LOGI("DeepSleep", "IO15 pulled low");
+            
+            ESP_LOGI("DeepSleep", "Configuring wake-up source");
+            
+            // Disable all wake-up sources first
+            esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+            
+            // Temporarily disable the GPIO to avoid immediate wake-up
+            gpio_config_t io_conf = {
+                .pin_bit_mask = (1ULL << 6),
+                .mode = GPIO_MODE_DISABLE,  // Temporarily disable the GPIO
+                .pull_up_en = GPIO_PULLUP_DISABLE,
+                .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                .intr_type = GPIO_INTR_DISABLE
+            };
+            gpio_config(&io_conf);
+            
+            error_popup_create_persistent("SHUTTING DOWN");
+            // Wait a couple of seconds to ignore any button releases
+            ESP_LOGI("DeepSleep", "Waiting 4 seconds before sleep to ignore button release...");
+            vTaskDelay(pdMS_TO_TICKS(4000)); // 4 second delay
+            
+            // Re-enable the GPIO with proper configuration for wake-up
+            io_conf.mode = GPIO_MODE_INPUT;
+            io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+            gpio_config(&io_conf);
+            
+            // Configure IO6 as wake source for a new press using EXT0
+            esp_err_t ret = esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 0); // Wake on low level (button press)
+            if (ret != ESP_OK) {
+                ESP_LOGE("DeepSleep", "Failed to configure wake-up source: %s", esp_err_to_name(ret));
+                exit_button.deep_sleep_triggered = false;
+                gpio_set_level(15, 1); // Restore IO15 high
+                return;
+            }
+            ESP_LOGI("DeepSleep", "Wake-up source configured for new button press using EXT0");
+            
+            ESP_LOGI("DeepSleep", "Entering deep sleep now...");
+            vTaskDelay(pdMS_TO_TICKS(200)); // Give time for log to print
+            
+            // Final check of GPIO state before sleep
+            ESP_LOGI("DeepSleep", "Final GPIO6 state: %d", gpio_get_level(6));
+            ESP_LOGI("DeepSleep", "Final GPIO15 state: %d", gpio_get_level(15));
+            
+            // Enter deep sleep
+            esp_deep_sleep_start();
+        }
+    } else {
+        // Reset deep sleep trigger when button is released
+        exit_button.deep_sleep_triggered = false;
     }
 #endif
 
