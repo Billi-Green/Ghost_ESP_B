@@ -60,6 +60,7 @@
 - General
   - Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
   - Flush every packet to UART (Flipper) immediately when there's no sd card
+  - Miscellaneous refactoring for memory usage
 
 
 ## Revival 1.6.1
