@@ -437,7 +437,11 @@ esp_err_t sd_card_init(void) {
 #if defined(CONFIG_IDF_TARGET_ESP32)
   slot_config.host_id = SPI3_HOST;
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_ENCODER_INA)
+  slot_config.host_id = SPI3_HOST; // use spi3_host (vspi) for sd if encoder is active on esp32s3
+#else
   slot_config.host_id = SPI2_HOST;
+#endif
 #else
   slot_config.host_id = SPI2_HOST;
 #endif
