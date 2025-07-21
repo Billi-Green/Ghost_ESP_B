@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Forward declaration for keyboard_view
 extern View keyboard_view;
 
 #include "lvgl.h"
@@ -119,15 +118,13 @@ static void process_queued_messages(void) {
   while (message_queue.count > 0) {
     const char *msg = message_queue.messages[message_queue.head];
     
-    // Add text to LVGL list
     lv_obj_t *item = lv_list_add_text(terminal_page, msg);
     lv_label_set_long_mode(item, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
     lv_obj_set_style_text_color(item, lv_color_hex(settings_get_terminal_text_color(&G_Settings)), 0);
     lv_obj_set_style_text_font(item, &lv_font_montserrat_10, 0);
-    last_item = item; // Keep track of the last added item
+    last_item = item;
 
-    // update total length counter and trigger cleanup if needed
     current_text_length += strlen(msg);
 
     if (current_text_length > CLEANUP_THRESHOLD) {
@@ -161,12 +158,11 @@ static void process_queued_messages(void) {
   xSemaphoreGive(terminal_mutex);
 }
 
-// Wrapper callback for the LVGL timer
 static void process_queued_messages_callback(lv_timer_t * timer) {
     process_queued_messages();
 }
 
-int custom_log_vprintf(const char *fmt, va_list args);
+
 static int (*default_log_vprintf)(const char *, va_list) = NULL;
 
 static void scroll_terminal_up(void) {
@@ -188,15 +184,13 @@ static void scroll_terminal_down(void) {
 static void stop_all_operations(void) {
   terminal_active = false;
   is_stopping = true;
-  clear_message_queue();
+
+  // Send all stop commands
   simulateCommand("stop");
-  simulateCommand("stopspam");
-  simulateCommand("stopdeauth");
-  simulateCommand("capture -stop");
-  simulateCommand("stopportal");
-  simulateCommand("gpsinfo -s");
-  simulateCommand("blewardriving -s");
-  simulateCommand("pineap -s");
+
+  vTaskDelay(pdMS_TO_TICKS(20));
+
+  // Now, switch the view
   display_manager_switch_view(display_manager_previous_view);
   ESP_LOGI(TAG, "Stop all operations triggered");
 }
@@ -232,10 +226,8 @@ void terminal_view_create(void) {
   lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
 
-  // Define status bar height (as seen in display_manager.c)
   const int STATUS_BAR_HEIGHT = 20;
 
-  // Calculate available height, considering status bar and bottom buttons (if present)
   int available_height = LV_VER_RES - STATUS_BAR_HEIGHT;
   if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
       available_height -= (BUTTON_SIZE + BUTTON_PADDING * 2);
@@ -250,7 +242,6 @@ void terminal_view_create(void) {
 #endif  
 
   terminal_page = lv_list_create(terminal_view.root);
-  // Set position below status bar
   lv_obj_set_pos(terminal_page, 0, STATUS_BAR_HEIGHT); 
   lv_obj_set_size(terminal_page, LV_HOR_RES, textarea_height);
   lv_obj_set_style_bg_color(terminal_page, lv_color_black(), 0);
@@ -281,14 +272,11 @@ void terminal_view_create(void) {
              lv_obj_get_x(back_btn), lv_obj_get_y(back_btn), 
              lv_obj_get_width(back_btn), lv_obj_get_height(back_btn));
   }
-  textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING; // Adjust textbox width if back button is present
-  if (textbox_width < 40) textbox_width = 40; // Prevent negative or too small width
-  // TODO: Add button for on screen keyboard
+  textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING;
+  if (textbox_width < 40) textbox_width = 40;
 #endif
 
 #if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
-  // Create input text box at the bottom of the screen
-
     input_label = lv_label_create(terminal_view.root);
     lv_obj_set_size(input_label, textbox_width, textbox_height - 2 * padding);
     lv_obj_set_style_bg_color(input_label, lv_color_hex(0x1E1E1E), 0);
@@ -305,53 +293,65 @@ void terminal_view_create(void) {
 
   display_manager_add_status_bar("Terminal");
 
-  // Create and start the update timer
   if (!terminal_update_timer) { 
-      terminal_update_timer = lv_timer_create(process_queued_messages_callback, 50, NULL); // 50ms interval
+      terminal_update_timer = lv_timer_create(process_queued_messages_callback, 50, NULL);
       if (!terminal_update_timer) {
           ESP_LOGE(TAG, "Failed to create terminal update timer");
       }
   }
 }
 
+void terminal_view_destroy(void) {
+    terminal_active = false;
+    is_stopping = true;
+    clear_message_queue();
 
+    if (terminal_update_timer) {
+        lv_timer_del(terminal_update_timer);
+        terminal_update_timer = NULL;
+    }
 
-void terminal_view_add_text(const char *text) {
-  if (!text || is_stopping) return;
-  if (text[0] == '\0') return;
-
-  // If terminal is not active or ready, just queue the message
-  if (!terminal_active || !terminal_page || !terminal_mutex) {
-    // Need mutex to safely queue even if terminal inactive
-    if (!terminal_mutex) { // Create if absolutely needed, should ideally exist
-        ESP_LOGW(TAG, "Terminal mutex not yet created, creating temporarily");
-        terminal_mutex = xSemaphoreCreateMutex();
-        if (!terminal_mutex) {
-            ESP_LOGE(TAG, "Failed to create temporary mutex for queueing");
-            return; // Cannot queue safely
+    if (terminal_mutex) {
+        if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            if (terminal_view.root != NULL) {
+                lv_obj_del(terminal_view.root);
+                terminal_view.root = NULL;
+                terminal_page = NULL;
+                back_btn = NULL;
+                input_label = NULL;
+            }
+            vSemaphoreDelete(terminal_mutex);
+            terminal_mutex = NULL;
+        } else {
+            ESP_LOGE(TAG, "Failed to acquire terminal mutex during destroy. A leak may occur.");
+            terminal_view.root = NULL;
+            terminal_mutex = NULL;
         }
     }
-    if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        queue_message(text);
-        xSemaphoreGive(terminal_mutex);
-    } else {
-        ESP_LOGW(TAG, "Failed to get mutex for early queueing");
-        // Maybe drop message or handle error?
-    }
-    return;
+
+    // Reset state variables
+    current_text_length = 0;
+    input_len = 0;
+    input_buffer[0] = '\0';
+    is_stopping = false;
+}
+
+void terminal_view_add_text(const char *text) {
+  if (!text || is_stopping || text[0] == '\0') {
+      return;
   }
 
-  // Terminal is active, acquire mutex and queue message
-  if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
-    ESP_LOGW(TAG, "Failed to acquire terminal mutex in add_text");
-    // Consider alternative like trying to queue without mutex if desperate?
-    // For now, log and drop/ignore.
-    return;
+  if (!terminal_mutex) {
+      ESP_LOGW(TAG, "Attempted to add text while terminal is destroying. Ignoring.");
+      return;
   }
 
-  queue_message(text);
-  
-  xSemaphoreGive(terminal_mutex);
+  if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      queue_message(text);
+      xSemaphoreGive(terminal_mutex);
+  } else {
+      ESP_LOGW(TAG, "Failed to acquire terminal mutex in add_text");
+  }
 }
 
 void terminal_view_hardwareinput_callback(InputEvent *event) {
@@ -471,15 +471,6 @@ void terminal_view_get_hardwareinput_callback(void **callback) {
   }
 }
 
-int custom_log_vprintf(const char *fmt, va_list args) {
-  char buf[256];
-  int len = vsnprintf(buf, sizeof(buf), fmt, args);
-  if (len < 0) {
-    return len;
-  }
-  terminal_view_add_text(buf);
-  return len;
-}
 
 static View *terminal_return_view = NULL;
 
@@ -494,42 +485,4 @@ View terminal_view = {
 
 void terminal_set_return_view(View *view) {
     terminal_return_view = view;
-}
-void terminal_view_destroy(void) {
-  terminal_active = false;
-  is_stopping = true;
-  clear_message_queue();
-
-  // Stop and delete the timer
-  if (terminal_update_timer) {
-    lv_timer_del(terminal_update_timer);
-    terminal_update_timer = NULL;
-  }
-
-  // Delete all LVGL objects
-  if (terminal_view.root != NULL) {
-    lv_obj_del(terminal_view.root);
-    terminal_view.root = NULL;
-    terminal_page = NULL;
-    back_btn = NULL;
-    input_label = NULL;
-  }
-
-  current_text_length = 0;
-  input_len = 0;
-  input_buffer[0] = '\0';
-
-  // Optionally: do NOT delete the mutex unless you recreate it on create
-  // if (terminal_mutex) {
-  //   vSemaphoreDelete(terminal_mutex);
-  //   terminal_mutex = NULL;
-  // }
-
-  is_stopping = false;
-  if (terminal_return_view) {
-    display_manager_switch_view(terminal_return_view);
-    terminal_return_view = NULL; // Clear after use
-  } else {
-    display_manager_switch_view(&main_menu_view);
-  }
 }
