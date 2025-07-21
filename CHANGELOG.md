@@ -51,6 +51,7 @@
 
 ### Bug Fixes
 
+- Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
 - Skip pcap flush if mutex is null
 - Flush every packet to UART (Flipper) immediately when there's no sd card
 - Add termianl_view_add_text logs to commands missing them
