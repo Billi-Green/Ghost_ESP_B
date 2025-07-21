@@ -46,7 +46,8 @@ static void remove_digit() {
 
 static void submit_number() {
     if (input_pos > 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         vTaskDelay(pdMS_TO_TICKS(10));
         
         char command[64];
