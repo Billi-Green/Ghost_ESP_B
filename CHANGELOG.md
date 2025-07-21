@@ -2,13 +2,19 @@
 
 ## Revival v1.7
 
-### Dual Chip Support
+### Big Changes
+
+#### Dual Chip Support
 
 - Support for connecting two ESP32 chips running GhostESP
   - WebUI Section to send commands to the connected peer
 
+#### Up to 5X the battery life on supported devices with power saving mode
 
-- Config for 'AITRIP CYD' or ESP2432S028R a CYD device - @tototo31
+#### Support for the LilyGo TEmbed C1101
+
+#### Support for 'AITRIP CYD' or ESP2432S028R, a CYD device - @tototo31
+
 
 ### Added
 
@@ -18,6 +24,8 @@
   - Terminal App to use commands with the keyboard - @tototo31
   - Added option to select Custom Evil Portal html file from the SD Card - @tototo31
   - Placeholder text for keyboard view - @tototo31
+  - Encoder friendly version of the keyboard view
+  - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
 
 - Commands
   - 'chipinfo' command to display chip information
@@ -32,6 +40,7 @@
   - Organise BLE menu into hierarchical sub-menus - @tototo31
   - Color status bar icons based on their activity
   - S3TWatch: Disable tap-to-wake, use touch interrupt instead.
+  - Exiting a view now returns to the previous view instead of the main menu - @tototo31
 
 - WebUI
   - Minor style tweaks
@@ -46,6 +55,7 @@
 - Add termianl_view_add_text logs to commands missing them
 - Reduce FatFS memory usage on S3TWatch and Cardputer
 - Improve battery reading accuracy on Cardputer
+- Dynamically size error popup to content and center on screen
 
 
 ## Revival 1.6.1
