@@ -4,8 +4,8 @@
 
 ### Big Changes
 
-#### Support for connecting two ESP32 chips running GhostESP
-  - WebUI Section to send commands to the connected peer
+
+#### Support for connecting two ESP32 chips running GhostESP with a WebUI section for control
 
 #### Up to 5X the battery life on supported devices with power saving mode
 
@@ -51,11 +51,19 @@
 
 ### Bug Fixes
 
-- Flush every packet to UART (Flipper) immediately when there's no sd card
-- Add termianl_view_add_text logs to commands missing them
-- Reduce FatFS memory usage on S3TWatch and Cardputer
-- Improve battery reading accuracy on Cardputer
-- Dynamically size error popup to content and center on screen
+- Display
+  - Dynamically size error popup to content and center on screen
+  - Reduce FatFS memory usage on S3TWatch and Cardputer
+  - Improve battery reading accuracy on Cardputer
+
+- Commands
+  - Add termianl_view_add_text logs to commands missing them
+  - Skip pcap flush if mutex is null
+
+- General
+  - Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
+  - Flush every packet to UART (Flipper) immediately when there's no sd card
+  - Miscellaneous refactoring for memory usage
 
 
 ## Revival 1.6.1
