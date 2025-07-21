@@ -4,12 +4,12 @@
 
 ### Big Changes
 
-#### Dual Chip Support
-
-- Support for connecting two ESP32 chips running GhostESP
+#### Support for connecting two ESP32 chips running GhostESP
   - WebUI Section to send commands to the connected peer
 
 #### Up to 5X the battery life on supported devices with power saving mode
+
+#### Support for the LilyGo T-Deck - @tototo31
 
 #### Support for the LilyGo TEmbed C1101
 

@@ -99,12 +99,7 @@ static void unmount_virtual_storage(void) {
 }
 #endif
 
-static void get_next_pcap_file_name(char *file_name_buffer,
-                                    const char *base_name) {
-  int next_index = get_next_pcap_file_index(base_name);
-  snprintf(file_name_buffer, 128, "/mnt/ghostesp/pcaps/%s_%d.pcap", base_name,
-           next_index);
-}
+// Removed unused function get_next_pcap_file_name - it was defined but never used
 
 void list_files_recursive(const char *dirname, int level) {
   DIR *dir = opendir(dirname);
@@ -428,6 +423,7 @@ esp_err_t sd_card_init(void) {
   }
 #endif
 #endif
+#endif
 
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
       .format_if_mount_failed = false,
@@ -495,7 +491,7 @@ void sd_card_unmount(void) {
 
 #if SOC_SDMMC_HOST_SUPPORTED && SOC_SDMMC_USE_GPIO_MATRIX
   if (sd_card_manager.is_initialized) {
-    esp_vfs_fat_sdmmc_unmount();
+    esp_vfs_fat_sdcard_unmount("/mnt", sd_card_manager.card);
     printf("SD card unmounted\n");
     sd_card_manager.is_initialized = false;
   }
