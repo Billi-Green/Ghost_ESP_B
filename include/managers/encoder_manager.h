@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#define ENCODER_RPM_SMOOTHING_SIZE 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,6 +34,11 @@ typedef struct {
     int32_t position_ext_prev;   ///< last position returned
     uint32_t pos_time_ms;        ///< time of last latch (ms)
     uint32_t pos_time_prev_ms;   ///< previous latch time (ms)
+    uint64_t pos_time_us;
+    uint64_t pos_time_prev_us;
+    uint32_t rpm_time_diffs_us[ENCODER_RPM_SMOOTHING_SIZE];
+    uint8_t rpm_time_index;
+    uint8_t rpm_time_count;
     encoder_latch_mode_t mode;
 } encoder_t;
 

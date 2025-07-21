@@ -48,6 +48,12 @@ void encoder_init(encoder_t *enc,
     enc->position_ext = 0;
     enc->position_ext_prev = 0;
     enc->pos_time_ms = enc->pos_time_prev_ms = now_ms();
+    uint64_t now_us = esp_timer_get_time();
+    enc->pos_time_us = now_us;
+    enc->pos_time_prev_us = now_us;
+    enc->rpm_time_index = 0;
+    enc->rpm_time_count = 0;
+    for (int i = 0; i < ENCODER_RPM_SMOOTHING_SIZE; ++i) enc->rpm_time_diffs_us[i] = 0;
 }
 
 
@@ -70,13 +76,16 @@ void encoder_tick(encoder_t *enc)
         }
 
         if (latched) {
-            /* update external count and timestamps */
-            uint32_t now = now_ms();
-            enc->position_ext      = (enc->mode == ENCODER_LATCH_TWO03)
-                                     ? (enc->position >> 1)
-                                     : (enc->position >> 2);
-            enc->pos_time_prev_ms  = enc->pos_time_ms;
-            enc->pos_time_ms       = now;
+            uint64_t now_us = esp_timer_get_time();
+            uint32_t diff_us = (uint32_t)(now_us - enc->pos_time_us);
+            if (enc->rpm_time_count < ENCODER_RPM_SMOOTHING_SIZE) enc->rpm_time_count++;
+            enc->rpm_time_diffs_us[enc->rpm_time_index] = diff_us;
+            enc->rpm_time_index = (enc->rpm_time_index + 1) % ENCODER_RPM_SMOOTHING_SIZE;
+            enc->position_ext = (enc->mode == ENCODER_LATCH_TWO03) ? (enc->position >> 1) : (enc->position >> 2);
+            enc->pos_time_prev_us = enc->pos_time_us;
+            enc->pos_time_us = now_us;
+            enc->pos_time_prev_ms = (uint32_t)(enc->pos_time_prev_us / 1000);
+            enc->pos_time_ms = (uint32_t)(enc->pos_time_us / 1000);
         }
     }
 }
@@ -100,15 +109,17 @@ encoder_direction_t encoder_get_direction(encoder_t *enc)
 
 uint32_t encoder_get_millis_between_rotations(const encoder_t *enc)
 {
-    return enc->pos_time_ms - enc->pos_time_prev_ms;
+    return (uint32_t)((enc->pos_time_us - enc->pos_time_prev_us) / 1000);
 }
 
 /* crude RPM estimate identical to original formula (20 steps per rev) */
 uint32_t encoder_get_rpm(const encoder_t *enc)
 {
-    uint32_t time_between = encoder_get_millis_between_rotations(enc);
-    uint32_t time_since   = now_ms() - enc->pos_time_ms;
-    uint32_t t = (time_between > time_since) ? time_between : time_since;
-    if (t == 0) return 0;
-    return (uint32_t)(60000.0f / (t * 20.0f));
+    if (enc->rpm_time_count == 0) return 0;
+    uint64_t sum_us = 0;
+    for (uint8_t i = 0; i < enc->rpm_time_count; ++i) sum_us += enc->rpm_time_diffs_us[i];
+    uint32_t avg_diff_us = (uint32_t)(sum_us / enc->rpm_time_count);
+    if (avg_diff_us == 0) return 0;
+    float rpm = 60000000.0f / (avg_diff_us * 20.0f);
+    return (uint32_t)rpm;
 } 
