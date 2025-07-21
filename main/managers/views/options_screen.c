@@ -285,7 +285,8 @@ static void evil_portal_ssid_cb(const char *input) {
     } else {
         snprintf(cmd, sizeof(cmd), "startportal %s %s", selected_portal, ssid);
     }
-    display_manager_switch_view(&terminal_view);
+terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
     selected_portal[0] = '\0';
@@ -982,25 +983,29 @@ void option_event_cb(lv_event_t *e) {
     }
 
     if (strcmp(Selected_Option, "Scan Access Points") == 0) {
+        terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("scanap");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "List Access Points") == 0) {
+        terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("list -a");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan All (AP & Station)") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scanall");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start Deauth Attack") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         if (!scanned_aps) {
             TERMINAL_VIEW_ADD_TEXT("No APs scanned. Please run 'Scan Access Points' first.\\n");
             
@@ -1011,13 +1016,15 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Scan Stations") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scansta");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "List Stations") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("list -s");
         view_switched = true;
     }
@@ -1029,26 +1036,30 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - Random") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("beaconspam -r");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - Rickroll") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("beaconspam -rr");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan LAN Devices") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scanlocal");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - List") == 0) {
         if (scanned_aps) {
-            display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
             simulateCommand("beaconspam -l");
             view_switched = true;
         } else {
@@ -1058,73 +1069,85 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Capture Deauth") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -deauth");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Probe") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -probe");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Beacon") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -beacon");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Raw") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -raw");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Eapol") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -eapol");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Listen for Probes") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("listenprobes");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start EAPOL Logoff") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("attack -e");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture WPS") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -wps");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "TV Cast (Dial Connect)") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("dialconnect");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Power Printer") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("powerprinter");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start Evil Portal") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("startportal default FreeWiFi");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop Evil Portal") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("stopportal");
         view_switched = true;
     }
@@ -1145,20 +1168,23 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("startwd");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop Wardriving") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("startwd -s");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start AirTag Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -a");
         view_switched = true;
 #else
@@ -1169,7 +1195,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "Find Flippers") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -f");
         view_switched = true;
 #else
@@ -1178,7 +1205,8 @@ void option_event_cb(lv_event_t *e) {
 #endif
     } else if (strcmp(Selected_Option, "List Flippers") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("listflippers");
         view_switched = true;
 #else
@@ -1196,7 +1224,8 @@ void option_event_cb(lv_event_t *e) {
 #endif
     } else if (strcmp(Selected_Option, "List AirTags") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("listairtags");
         view_switched = true;
 #else
@@ -1216,7 +1245,8 @@ void option_event_cb(lv_event_t *e) {
 
      else if (strcmp(Selected_Option, "Spoof Selected AirTag") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("spoofairtag");
         view_switched = true;
 #else
@@ -1227,7 +1257,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "Stop Spoofing") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("stopspoof");
         view_switched = true;
 #else
@@ -1239,20 +1270,23 @@ void option_event_cb(lv_event_t *e) {
 
 
     else if (strcmp(Selected_Option, "Capture PWN") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -pwn");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "TP Link Test") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("tplinktest");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Raw BLE Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -r");
         view_switched = true;
 #else
@@ -1263,7 +1297,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Skimmer Detect") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -skimmer");
         view_switched = true;
 #else
@@ -1273,14 +1308,16 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "GPS Info") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("gpsinfo");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "BLE Wardriving") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blewardriving");
         view_switched = true;
 #else
@@ -1290,19 +1327,22 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "PineAP Detection") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("pineap");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan Open Ports") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scanports local -C");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Reset AP Credentials") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("apcred -r");
         view_switched = true;
     }
@@ -1325,19 +1365,22 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Channel Congestion") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("congestion");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start DHCP-Starve") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("dhcpstarve start");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop DHCP-Starve") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("dhcpstarve stop");
         view_switched = true;
     }
@@ -1350,14 +1393,16 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Connect to saved WiFi") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("connect");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "BLE Spam - Apple") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -apple");
         view_switched = true;
 #else
@@ -1367,7 +1412,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Microsoft") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -ms");
         view_switched = true;
 #else
@@ -1377,7 +1423,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Samsung") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -samsung");
         view_switched = true;
 #else
@@ -1387,7 +1434,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Google") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -google");
         view_switched = true;
 #else
@@ -1397,7 +1445,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Random") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -random");
         view_switched = true;
 #else
@@ -1407,7 +1456,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "Stop BLE Spam") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -s");
         view_switched = true;
 #else
@@ -1438,38 +1488,37 @@ void handle_option_directly(const char *Selected_Option) {
 }
 
 void options_menu_destroy() {
+    // Delete the root object (deletes all children recursively)
     if (options_menu_view.root) {
-        if (menu_container) {
-            lv_obj_clean(menu_container);
-            menu_container = NULL;
-        }
-
-        lv_obj_clean(options_menu_view.root);
         lv_obj_del(options_menu_view.root);
         options_menu_view.root = NULL;
-        back_btn = NULL;
-        scroll_up_btn = NULL;
-        scroll_down_btn = NULL;
-
-        selected_item_index = 0;
-        num_items = 0;
-        current_settings_category = -1;
     }
-    
+
+    // Set all pointers to NULL
+    menu_container = NULL;
+    back_btn = NULL;
+    scroll_up_btn = NULL;
+    scroll_down_btn = NULL;
+
+    // Reset state variables
+    selected_item_index = 0;
+    num_items = 0;
+    current_settings_category = -1;
+
+    // Delete and clear any timers
     if (menu_build_timer) {
         lv_timer_del(menu_build_timer);
         menu_build_timer = NULL;
     }
+    // Reset styles if needed
     if (styles_initialized) {
         lv_style_reset(&style_menu_item);
         lv_style_reset(&style_selected_item);
         lv_style_reset(&style_menu_label);
         styles_initialized = false;
     }
+
     is_settings_mode = false;
-    /* Do NOT reset shared styles – they may still be referenced by
-       widgets that haven't been flushed/destroyed yet.  Leaving them
-       allocated is safe and only costs a few hundred bytes. */
 }
 
 void get_options_menu_callback(void **callback) { *callback = options_menu_view.input_callback; }
@@ -1493,13 +1542,12 @@ static void back_event_cb(lv_event_t *e) {
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
-    } else if (SelectedMenuType == OT_Bluetooth && current_bluetooth_menu_state != BLUETOOTH_MENU_MAIN) {
+        return;
+    }
+    // If in a Bluetooth submenu (but not main), go back to main Bluetooth menu
+    if (SelectedMenuType == OT_Bluetooth && current_bluetooth_menu_state != BLUETOOTH_MENU_MAIN) {
         current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
-    } else {
-        current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
-        current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN; // Reset for next time
-        display_manager_switch_view(&main_menu_view);
         return;
     }
     // If in a settings submenu, go back to category selection
@@ -1569,7 +1617,8 @@ static void wifi_connect_kb_cb(const char *text){
     }
     char cmd[256];
     snprintf(cmd,sizeof(cmd),"connect \"%s\" \"%s\"",ssid,pass);
-    display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
 }

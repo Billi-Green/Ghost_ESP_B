@@ -165,13 +165,18 @@ static void anim_set_x(void *obj, int32_t v) {
  */
 void apps_menu_destroy(void) {
     if (apps_container) {
-        lv_obj_clean(apps_container);
-        lv_obj_del(apps_container);
+        lv_obj_del(apps_container); // This deletes all children recursively
         apps_container = NULL;
         apps_menu_view.root = NULL;
         current_app_obj = NULL;
         back_button = NULL;
     }
+    // Reset state variables for a clean re-create
+    selected_app_index = 0;
+    touch_started = false;
+    touch_start_x = 0;
+    touch_start_y = 0;
+    // If you add timers or other resources, clean them up here!
 }
 
 /**
