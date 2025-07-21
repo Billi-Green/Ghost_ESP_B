@@ -54,6 +54,7 @@
 - Add termianl_view_add_text logs to commands missing them
 - Reduce FatFS memory usage on S3TWatch and Cardputer
 - Improve battery reading accuracy on Cardputer
+- Dynamically size error popup to content and center on screen
 
 
 ## Revival 1.6.1
