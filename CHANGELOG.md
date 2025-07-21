@@ -51,6 +51,7 @@
 
 ### Bug Fixes
 
+- Skip pcap flush if mutex is null
 - Flush every packet to UART (Flipper) immediately when there's no sd card
 - Add termianl_view_add_text logs to commands missing them
 - Reduce FatFS memory usage on S3TWatch and Cardputer
