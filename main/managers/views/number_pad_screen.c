@@ -334,6 +334,37 @@ static void handle_hardware_button_press_number_pad(InputEvent *event) {
             }
         }
     }
+    else if (event->type == INPUT_TYPE_ENCODER) {
+        int prev_cursor_pos = cursor_pos;
+        if (event->data.encoder.button) {
+            if (strcmp(options[cursor_pos], "DEL") == 0) {
+                remove_digit();
+                update_display();
+            } else if (strcmp(options[cursor_pos], "OK") == 0) {
+                submit_number();
+                return;
+            } else if (strcmp(options[cursor_pos], "BACK") == 0) {
+                display_manager_switch_view(&options_menu_view);
+                return;
+            } else {
+                add_digit(options[cursor_pos][0]);
+                update_display();
+            }
+        } else {
+            if (event->data.encoder.direction > 0) {
+                cursor_pos = (cursor_pos < option_count - 1) ? cursor_pos + 1 : 0;
+            } else {
+                cursor_pos = (cursor_pos > 0) ? cursor_pos - 1 : option_count - 1;
+            }
+        }
+        if (prev_cursor_pos != cursor_pos) {
+            lv_obj_t *options_container = lv_obj_get_child(root, 1);
+            for (int i = 0; i < option_count; i++) {
+                lv_obj_t *label = lv_obj_get_child(options_container, i);
+                lv_obj_set_style_text_color(label, (i == cursor_pos) ? lv_color_hex(0x00FF00) : lv_color_hex(0xFFFFFF), 0);
+            }
+        }
+    }
 #ifdef CONFIG_USE_ENCODER
     else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
         ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
