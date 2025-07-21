@@ -32,6 +32,7 @@
   - Organise BLE menu into hierarchical sub-menus - @tototo31
   - Color status bar icons based on their activity
   - S3TWatch: Disable tap-to-wake, use touch interrupt instead.
+  - Exiting a view now returns to the previous view instead of the main menu - @tototo31
 
 - WebUI
   - Minor style tweaks
