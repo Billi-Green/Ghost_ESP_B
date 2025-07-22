@@ -190,7 +190,7 @@ static void update_menu_item(bool slide_left) {
     lv_anim_start(&fade_in);
 
     // Ensure the new item is fully opaque at the end
-    lv_obj_set_style_opa(current_item_obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(current_item_obj, LV_OPA_COVER, 0); // Always fully opaque
 }
 /**
  *  @brief handles keyboard button presses
