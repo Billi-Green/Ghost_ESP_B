@@ -258,8 +258,9 @@ bool isCharging() { return _isCharging; }
  * @return true if battery data is available, false otherwise
  */
 static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
+    bool result = false;
     if (!percentage || !is_charging) {
-        return false;
+        return result;
     }
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
@@ -268,23 +269,22 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
     if (fuel_percentage >= 0) {
         *percentage = (uint8_t)fuel_percentage;
         *is_charging = fuel_gauge_manager_is_charging();
-        return true;
+        result = true;
     }
-#endif
-
-#ifdef CONFIG_HAS_BATTERY
+#elif defined(CONFIG_HAS_BATTERY)
     // Fallback to AXP2101
     axp2101_get_power_level(percentage);
     *is_charging = axp202_is_charging();
-    return true;
-#elif CONFIG_USE_CARDPUTER
-    // Fallback to Cardputer ADC
-    *percentage = getBattery();
+    result = true;
+#elif defined(CONFIG_HAS_BATTERY_ADC)
+    // Fallback to ADC
+    *percentage = (uint8_t)getBattery();
     *is_charging = isCharging();
-    return true;
+    result = true;
 #endif
+    ESP_LOGI(TAG, "get_battery_info %d%%, Charging: %d", *percentage, *is_charging);
 
-    return false;
+    return result;
 }
 
 void fade_out_cb(void *obj, int32_t v) {
@@ -437,7 +437,7 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
     if (!is_charging) {
 #ifdef CONFIG_HAS_BATTERY
       is_charging = axp202_is_charging();
-#elif CONFIG_USE_CARDPUTER
+#elif CONFIG_HAS_BATTERY_ADC
       is_charging = isCharging();
 #endif
     }
@@ -487,7 +487,7 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       if (!is_charging) {
 #ifdef CONFIG_HAS_BATTERY
         is_charging = axp202_is_charging();
-#elif CONFIG_USE_CARDPUTER
+#elif CONFIG_HAS_BATTERY_ADC
         is_charging = isCharging();
 #endif
       }
