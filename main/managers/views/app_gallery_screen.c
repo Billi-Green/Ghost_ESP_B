@@ -222,7 +222,22 @@ static void handle_apps_button_press(int button) {
 
 static void handle_keyboard_interactions(int keyValue){
 
-    if (keyValue == 44 || keyValue == ',') { // Left
+    // Vim keybinds
+    if (keyValue == 'h') { // Vim left
+        ESP_LOGI(TAG, "Vim 'h' pressed (left)");
+        select_app_item(selected_app_index - 1, true);
+    } else if (keyValue == 'l') { // Vim right
+        ESP_LOGI(TAG, "Vim 'l' pressed (right)");
+        select_app_item(selected_app_index + 1, false);
+    } else if (keyValue == 'j' || keyValue == 13) { // Vim down or Enter (select)
+        ESP_LOGI(TAG, "Vim 'j' or Enter pressed (select)");
+        handle_app_item_selection(selected_app_index);
+    } else if (keyValue == 'k' || keyValue == 29 || keyValue == '`') { // Vim up or Esc (back)
+        ESP_LOGI(TAG, "Vim 'k' or Esc pressed (back)");
+        display_manager_switch_view(&main_menu_view);
+    }
+    // Existing keybinds
+    else if (keyValue == 44 || keyValue == ',') { // Left
         ESP_LOGI(TAG, "Left button pressed\n");
         select_app_item(selected_app_index - 1, true);
     } else if (keyValue == 47 || keyValue == '/') { // Right
@@ -235,7 +250,6 @@ static void handle_keyboard_interactions(int keyValue){
         ESP_LOGI(TAG, "Esc button pressed\n");
         display_manager_switch_view(&main_menu_view);
     }
-
 }
 
 /**
