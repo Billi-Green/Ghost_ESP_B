@@ -170,6 +170,8 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 #endif
 }
 
+void set_backlight_brightness(uint8_t percentage); // forward declaration
+
 #ifdef CONFIG_HAS_BATTERY_ADC
 
 #ifdef CONFIG_USE_CARDPUTER
@@ -822,13 +824,9 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
   last_touch_time = xTaskGetTickCount();
   is_backlight_dimmed = false;
 
-  // for cardputer. if we don't do this the backlight will flicker on startup until it gets turned off and on again by software
-#if defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
-  // override any floating state and force it high
-  gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
-  gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
-  gpio_set_level(    CONFIG_LV_DISP_PIN_BCKL, 1);
-#endif
+  // override any floating state and force it on
+  set_backlight_brightness(100);
+
 
 #ifndef CONFIG_JC3248W535EN_LCD // JC3248W535EN has its own lvgl task
 xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
@@ -906,24 +904,22 @@ void display_manager_fill_screen(lv_color_t color) {
 }
 
 void set_backlight_brightness(uint8_t percentage) {
-    /*
-     * If you've built with PWM support, do your existing LEDC duty code.
-     * Otherwise (i.e. switch mode), just treat >0 as "on" or 0 as "off."
-     */
 #if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
-    // ----- PWM mode -----
-    if (percentage > 1) percentage = 1;
-    uint32_t duty = percentage * ((1 << LEDC_TIMER_10_BIT) - 1);
+    if (percentage > 100) percentage = 100;
+    uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
     // ----- switch mode -----
     // make sure the pin is configured as a GPIO output
+    if (percentage > 1) percentage = 1;
     gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
     gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage ? 1 : 0);
 #else
 # error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
 #endif
+
+    ESP_LOGI(TAG, "set_backlight_brightness: %d%%", percentage);
 
 #ifdef CONFIG_USE_TDECK
     // Synchronize keyboard backlight with screen backlight
@@ -1025,7 +1021,7 @@ void hardware_input_task(void *pvParameters) {
       touch_active = true;
       last_touch_time = xTaskGetTickCount();
       if (is_backlight_dimmed) {
-        set_backlight_brightness(1);
+        set_backlight_brightness(100);
         is_backlight_dimmed = false;
         skip_event = true;
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -1044,7 +1040,7 @@ void hardware_input_task(void *pvParameters) {
 // Check for wake interrupt when dimmed
 #ifdef CONFIG_IS_S3TWATCH
     if (is_backlight_dimmed && xSemaphoreTake(wake_up_sem, 0) == pdTRUE) {
-        set_backlight_brightness(1);
+        set_backlight_brightness(100);
         is_backlight_dimmed = false;
         last_touch_time = xTaskGetTickCount(); // Reset inactivity timer
         was_woken_by_interrupt = true; // Set flag
@@ -1061,7 +1057,7 @@ void hardware_input_task(void *pvParameters) {
         // treat an encoder turn as “touch”
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
-          set_backlight_brightness(1);
+          set_backlight_brightness(100);
           is_backlight_dimmed = false;
           // Don't send input event when waking from dimmed state
         } else {
@@ -1079,7 +1075,7 @@ void hardware_input_task(void *pvParameters) {
         // treat an encoder click as “touch”
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
-          set_backlight_brightness(1);
+          set_backlight_brightness(100);
           is_backlight_dimmed = false;
           // Don't send input event when waking from dimmed state
         } else {
@@ -1098,7 +1094,7 @@ void hardware_input_task(void *pvParameters) {
     if (joystick_just_pressed(&exit_button)) {
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
-          set_backlight_brightness(1);
+          set_backlight_brightness(100);
           is_backlight_dimmed = false;
         } else {
           InputEvent ev = {
@@ -1193,7 +1189,7 @@ void hardware_input_task(void *pvParameters) {
           if (is_backlight_dimmed) {
             // CARDPUTER wake logic is keypress-to-wake, which is desired.
             // No changes needed here as it's separate from S3T-Watch touch logic.
-            set_backlight_brightness(1);
+            set_backlight_brightness(100);
             is_backlight_dimmed = false;
             skip_event = true;
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -1285,7 +1281,7 @@ void hardware_input_task(void *pvParameters) {
       if (is_backlight_dimmed) {
 // Disable tap-to-wake, use button interrupt instead.
 #ifndef CONFIG_IS_S3TWATCH
-        set_backlight_brightness(1);
+        set_backlight_brightness(100);
         is_backlight_dimmed = false;
         skip_event = true;
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -1330,12 +1326,12 @@ void hardware_input_task(void *pvParameters) {
         ESP_LOGD(TAG, "Display timeout check: last_touch=%lu, timeout=%lu",
                  (unsigned long)last_touch_time, (unsigned long)current_timeout);
         ESP_LOGI(TAG, "Input detected, waking backlight");
-        set_backlight_brightness(1);
+        set_backlight_brightness(100);
         is_backlight_dimmed = false;
       }
     } else if (is_backlight_dimmed) { // If timeout is 'Never' and backlight is dimmed, set to full brightness
         ESP_LOGI(TAG, "Display timeout set to Never, waking backlight from dimmed state.");
-        set_backlight_brightness(1);
+        set_backlight_brightness(100);
         is_backlight_dimmed = false;
     }
     //end backlight dim logic
