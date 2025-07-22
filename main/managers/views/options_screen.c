@@ -595,7 +595,7 @@ static void apply_setting_change(int setting_index, int new_value) {
         // This setting is only available if LV_DISP_BACKLIGHT_PWM is enabled
         case SETTING_MAX_BRIGHTNESS:
             settings_set_max_screen_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
-            set_backlight_brightness(settings_get_max_screen_brightness(&G_Settings));
+            set_backlight_brightness(100); // set to 100 since brightness becomes scaled by the max
             break;
         #endif
     }
