@@ -69,6 +69,8 @@
 #define LILYGO_KB_BRIGHTNESS_CMD             0x01
 #define LILYGO_KB_ALT_B_BRIGHTNESS_CMD       0x02
 
+void set_keyboard_brightness(uint8_t brightness);
+
 #endif
 
 
@@ -682,6 +684,9 @@ void display_manager_init(void) {
   };
   ledc_channel_config(&ledc_channel);
 
+#ifdef CONFIG_USE_TDECK
+set_keyboard_brightness(0xFF); // Set to 100% brightness
+#endif
 #ifndef CONFIG_JC3248W535EN_LCD
   lv_init();
 #ifdef CONFIG_USE_CARDPUTER
@@ -918,6 +923,11 @@ void set_backlight_brightness(uint8_t percentage) {
     gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage ? 1 : 0);
 #else
 # error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
+#endif
+
+#ifdef CONFIG_USE_TDECK
+    // Synchronize keyboard backlight with screen backlight
+    set_keyboard_brightness(percentage ? 0xFF : 0x00);
 #endif
 
     /*
@@ -1380,3 +1390,12 @@ void lvgl_tick_task(void *arg) {
   }
   vTaskDelete(NULL);
 }
+
+#ifdef CONFIG_USE_TDECK
+void set_keyboard_brightness(uint8_t brightness) {
+    uint8_t kb_brightness[2] = {LILYGO_KB_BRIGHTNESS_CMD, brightness};
+    ESP_LOGI(TAG, "Setting keyboard brightness to %d", brightness);
+    // Write the brightness command to the keyboard
+    lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, kb_brightness, 2);
+}
+#endif
