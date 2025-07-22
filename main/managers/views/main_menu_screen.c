@@ -82,14 +82,41 @@ static void anim_set_x(void *obj, int32_t v) {
     lv_obj_set_x((lv_obj_t *)obj, (lv_coord_t)v);
 }
 
-/**
- * @brief Updates the displayed menu item with animation.
- */
+// Add this helper at file scope if not present:
+static void fade_out_ready_cb(lv_anim_t *a) {
+    lv_obj_del((lv_obj_t *)a->var);
+}
+
 static void update_menu_item(bool slide_left) {
+    static lv_obj_t *prev_item_obj = NULL;
+
+    // Animate out old item if it exists
     if (current_item_obj) {
-        lv_obj_del(current_item_obj);
+        prev_item_obj = current_item_obj;
+
+        // Slide out
+        lv_anim_t anim_out;
+        lv_anim_init(&anim_out);
+        lv_anim_set_var(&anim_out, prev_item_obj);
+        int end_x = slide_left ? -LV_HOR_RES : LV_HOR_RES;
+        lv_anim_set_values(&anim_out, lv_obj_get_x(prev_item_obj), end_x);
+        lv_anim_set_time(&anim_out, 120);
+        lv_anim_set_path_cb(&anim_out, lv_anim_path_ease_in_out);
+        lv_anim_set_exec_cb(&anim_out, anim_set_x);
+        lv_anim_set_ready_cb(&anim_out, fade_out_ready_cb);
+        lv_anim_start(&anim_out);
+
+        // Fade out
+        lv_anim_t fade_out;
+        lv_anim_init(&fade_out);
+        lv_anim_set_var(&fade_out, prev_item_obj);
+        lv_anim_set_values(&fade_out, LV_OPA_COVER, LV_OPA_TRANSP);
+        lv_anim_set_time(&fade_out, 120);
+        lv_anim_set_exec_cb(&fade_out, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+        lv_anim_start(&fade_out);
     }
 
+    // Create new item (off-screen, transparent)
     current_item_obj = lv_btn_create(menu_container);
     lv_obj_set_style_bg_color(current_item_obj, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
     lv_obj_set_style_shadow_width(current_item_obj, 3, LV_PART_MAIN);
@@ -97,38 +124,40 @@ static void update_menu_item(bool slide_left) {
     lv_obj_set_style_border_width(current_item_obj, 2, LV_PART_MAIN);
     lv_obj_set_style_border_color(current_item_obj, menu_items[selected_item_index].border_color, LV_PART_MAIN);
     lv_obj_set_style_radius(current_item_obj, 10, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(current_item_obj, 0, LV_PART_MAIN); // Remove padding
-    lv_obj_set_style_clip_corner(current_item_obj, false, 0); // Prevent clipping by button
+    lv_obj_set_style_pad_all(current_item_obj, 0, LV_PART_MAIN);
+    lv_obj_set_style_clip_corner(current_item_obj, false, 0);
 
     int btn_size = LV_MIN(LV_HOR_RES, LV_VER_RES) * 0.6;
     if (LV_HOR_RES <= 128 && LV_VER_RES <= 128) {
-        btn_size = 80; // Changed from 50 to match app menu minimum size
+        btn_size = 80;
     }
     lv_obj_set_size(current_item_obj, btn_size, btn_size);
+
+    // Start new item off-screen (opposite direction of swipe)
+    int start_x = slide_left ? LV_HOR_RES : -LV_HOR_RES;
+    lv_obj_set_x(current_item_obj, start_x);
+    lv_obj_set_style_opa(current_item_obj, LV_OPA_TRANSP, 0); // Start transparent
     lv_obj_align(current_item_obj, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *icon = lv_img_create(current_item_obj);
     lv_img_set_src(icon, menu_items[selected_item_index].icon);
 
-    const int icon_size = 50; // Fixed size to match app menu
+    const int icon_size = 50;
     lv_obj_set_size(icon, icon_size, icon_size);
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
-    lv_img_set_antialias(icon, false); // Prevent scaling artifacts
-    // Only recolor non-clock icons
-    if (strcmp(menu_items[selected_item_index].name,"Clock")) { 
+    lv_img_set_antialias(icon, false);
+    if (strcmp(menu_items[selected_item_index].name,"Clock")) {
         lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
     }
-    lv_obj_set_style_clip_corner(icon, false, 0); // Prevent clipping
+    lv_obj_set_style_clip_corner(icon, false, 0);
 
-    // Calculate centered position with offsets
-    int icon_x_offset = -3;  // Match app menu
-    int icon_y_offset = -5;  // Match app menu
+    int icon_x_offset = -3;
+    int icon_y_offset = -5;
     int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
     int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
     lv_obj_set_pos(icon, x_pos, y_pos);
 
-    // Debug output
     lv_coord_t img_width = menu_items[selected_item_index].icon->header.w;
     lv_coord_t img_height = menu_items[selected_item_index].icon->header.h;
     ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
@@ -142,15 +171,26 @@ static void update_menu_item(bool slide_left) {
         lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
     }
 
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, current_item_obj);
-    lv_anim_set_time(&a, 75); // Match app menu timing
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-    int start_x = slide_left ? LV_HOR_RES : -LV_HOR_RES;
-    lv_anim_set_values(&a, start_x, 0);
-    lv_anim_set_exec_cb(&a, anim_set_x);
-    lv_anim_start(&a);
+    // Animate in new item (slide and fade)
+    lv_anim_t anim_in;
+    lv_anim_init(&anim_in);
+    lv_anim_set_var(&anim_in, current_item_obj);
+    lv_anim_set_values(&anim_in, start_x, 0);
+    lv_anim_set_time(&anim_in, 120);
+    lv_anim_set_path_cb(&anim_in, lv_anim_path_ease_in_out);
+    lv_anim_set_exec_cb(&anim_in, anim_set_x);
+    lv_anim_start(&anim_in);
+
+    lv_anim_t fade_in;
+    lv_anim_init(&fade_in);
+    lv_anim_set_var(&fade_in, current_item_obj);
+    lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_time(&fade_in, 120);
+    lv_anim_set_exec_cb(&fade_in, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+    lv_anim_start(&fade_in);
+
+    // Ensure the new item is fully opaque at the end
+    lv_obj_set_style_opa(current_item_obj, LV_OPA_COVER, 0);
 }
 /**
  *  @brief handles keyboard button presses
