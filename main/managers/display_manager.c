@@ -907,6 +907,13 @@ void display_manager_fill_screen(lv_color_t color) {
 }
 
 void set_backlight_brightness(uint8_t percentage) {
+    // Clamp to user setting
+    uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
+    //if (percentage > max_brightness) percentage = max_brightness;
+
+    //scale percent by max_brightness
+    percentage = (percentage * max_brightness) / 100;
+
 #if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
     if (percentage > 100) percentage = 100;
     uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
@@ -922,11 +929,11 @@ void set_backlight_brightness(uint8_t percentage) {
 # error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
 #endif
 
-    ESP_LOGI(TAG, "set_backlight_brightness: %d%%", percentage);
+    ESP_LOGI(TAG, "set_backlight_brightness: %d%% (max allowed: %d%%)", percentage, max_brightness);
 
 #ifdef CONFIG_USE_TDECK
     // Synchronize keyboard backlight with screen backlight
-    set_keyboard_brightness(percentage == 100 ? 0xFF : 0x00);
+    set_keyboard_brightness(percentage == max_brightness ? 0xFF : 0x00);
 #endif
 
     /*
