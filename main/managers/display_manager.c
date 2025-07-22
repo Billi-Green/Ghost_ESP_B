@@ -24,6 +24,7 @@
 #include <limits.h> // for UINT32_MAX
 #include "managers/ap_manager.h"
 #include "core/serial_manager.h"
+#include "managers/wifi_manager.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -440,8 +441,10 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   } else {
     lv_color_t default_color = lv_color_hex(0xCCCCCC);
     if (wifi_label && lv_obj_is_valid(wifi_label)) {
-        if (is_ap_active) {
-            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0); // Green for active AP
+        if (wifi_manager_is_evil_portal_active()) {
+            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
+        } else if (is_ap_active) {
+            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
         } else {
             lv_obj_set_style_text_color(wifi_label, default_color, 0);
         }
@@ -527,7 +530,13 @@ static const uint32_t theme_palettes[15][6] = {
   };
 
 void display_manager_add_status_bar(const char *CurrentMenuName) {
-  status_bar = lv_obj_create(lv_scr_act());
+    if (status_bar != NULL && lv_obj_is_valid(status_bar)) {
+        lv_label_set_text(mainlabel, CurrentMenuName);
+        lv_obj_move_foreground(status_bar);
+        lv_obj_invalidate(status_bar);
+        return;
+    }
+    status_bar = lv_obj_create(lv_scr_act());
   lv_obj_set_size(status_bar, LV_HOR_RES, 20);
   lv_obj_align(status_bar, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x333333), LV_PART_MAIN);
@@ -828,14 +837,6 @@ void display_manager_switch_view(View *view) {
            dm.current_view ? dm.current_view->name : "NULL", view->name);
 
     if (dm.current_view && dm.current_view->root) {
-      if (status_bar) {
-        lv_obj_del(status_bar);
-        wifi_label = NULL;
-        bt_label = NULL;
-        sd_label = NULL;
-        battery_label = NULL;
-        status_bar = NULL;
-      }
       display_manager_previous_view = dm.current_view; // Store current view as previous
       display_manager_fade_out(dm.current_view->root, fade_out_ready_cb, view);
     } else {

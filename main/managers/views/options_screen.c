@@ -7,8 +7,8 @@
 
 static char selected_portal[MAX_PORTAL_NAME] = {0}; // <-- Move here
 
-static char evil_portal_names[MAX_PORTALS][MAX_PORTAL_NAME];
-static const char *evil_portal_options[MAX_PORTALS + 1]; // +1 for NULL terminator
+static char (*evil_portal_names)[MAX_PORTAL_NAME] = NULL;
+static const char **evil_portal_options = NULL;
 
 #include "managers/views/keyboard_screen.h"
 #include "esp_timer.h"
@@ -397,6 +397,14 @@ void options_menu_create() {
             case WIFI_MENU_EVIL_PORTAL_SELECT: // <-- Add this case
             {
                 ESP_LOGI(TAG, "Populating evil portal selector...");
+                evil_portal_names = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
+                evil_portal_options = malloc(sizeof(char*) * (MAX_PORTALS + 1));
+
+                if (!evil_portal_names || !evil_portal_options) { // Check for allocation failure
+                    ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
+                    // Handle error, maybe go back to the previous menu
+                    break;
+                }
                 int count = get_evil_portal_list(evil_portal_names);
                 ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
                 if (count == 0) {
@@ -1519,6 +1527,15 @@ void options_menu_destroy() {
     }
 
     is_settings_mode = false;
+
+    if (evil_portal_names != NULL) {
+        free(evil_portal_names);
+        evil_portal_names = NULL;
+    }
+    if (evil_portal_options != NULL) {
+        free(evil_portal_options);
+        evil_portal_options = NULL;
+    }
 }
 
 void get_options_menu_callback(void **callback) { *callback = options_menu_view.input_callback; }
