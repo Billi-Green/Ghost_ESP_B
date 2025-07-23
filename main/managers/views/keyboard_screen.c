@@ -74,6 +74,7 @@ static void remove_char_from_buffer();
 static void update_input_label();
 static void update_key_labels();
 static void recreate_keyboard_buttons();
+static void get_key_position(int row, int col, int *x, int *width, bool symbols_mode);
 
 static void submit_text() {
     if (input_len > 0) {
@@ -218,7 +219,9 @@ static void recreate_keyboard_buttons() {
             
             lv_obj_t *key_btn = lv_btn_create(root);
             lv_obj_remove_style_all(key_btn);
-            lv_obj_set_size(key_btn, current_key_width - 2, key_height);
+            int key_x, key_w;
+            get_key_position(r, c, &key_x, &key_w, is_symbols_mode);
+            lv_obj_set_size(key_btn, key_w - 2, key_height);
             lv_obj_set_pos(key_btn, key_x, key_y);
             
             lv_obj_set_style_bg_color(key_btn, lv_color_hex(0x7B1FA2), 0);
@@ -329,7 +332,9 @@ static void keyboard_create() {
             
             lv_obj_t *key_btn = lv_btn_create(root);
             lv_obj_remove_style_all(key_btn);
-            lv_obj_set_size(key_btn, current_key_width - 2, key_height);
+            int key_x, key_w;
+            get_key_position(r, c, &key_x, &key_w, is_symbols_mode);
+            lv_obj_set_size(key_btn, key_w - 2, key_height);
             lv_obj_set_pos(key_btn, key_x, key_y);
             
             lv_obj_set_style_bg_color(key_btn, lv_color_hex(0x7B1FA2), 0);
@@ -530,20 +535,12 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
             int col = -1;
             int current_x = 0;
             for (int c = 0; c < current_row_lengths[row]; c++) {
-                int current_key_width = base_key_width;
-                
-                // adjust for wider SHIFT and DEL buttons
-                if (!is_symbols_mode && c < row_lengths[row]) {
-                    if (strcmp(keys[row][c], "SHIFT") == 0 || strcmp(keys[row][c], "DEL") == 0 || strcmp(keys[row][c], " ") == 0) {
-                        current_key_width = base_key_width * 2;
-                    }
-                }
-                
-                if (touch_x >= current_x && touch_x < current_x + current_key_width) {
+                int key_x, key_w;
+                get_key_position(row, c, &key_x, &key_w, is_symbols_mode);
+                if (touch_x >= key_x && touch_x < key_x + key_w) {
                     col = c;
                     break;
                 }
-                current_x += current_key_width;
             }
 
             if (col >= 0) {
@@ -619,3 +616,47 @@ View keyboard_view = {
     .name = "Keyboard Screen",
     .get_hardwareinput_callback = get_keyboard_callback
 };
+
+static void get_key_position(int row, int col, int *x, int *width, bool symbols_mode) {
+    int screen_width = LV_HOR_RES;
+    int padding = 5;
+    const int *row_lens = symbols_mode ? symbols_row_lengths : row_lengths;
+    int actual_len = row_lens[row];
+    int special_count = 0;
+    if (!symbols_mode) {
+        for (int i = 0; i < actual_len; i++) {
+            const char *txt = keys[row][i];
+            if (strcmp(txt, "SHIFT") == 0 || strcmp(txt, "DEL") == 0 || strcmp(txt, " ") == 0) {
+                special_count++;
+            }
+        }
+    }
+    int total_key_width = screen_width - (padding * 2);
+    int current_row_length = max_row_lengths[row];
+    int key_width = total_key_width / current_row_length;
+    int extra_space = special_count * (key_width / 2);
+    int total_keys_width = actual_len * key_width + extra_space;
+    int blank_space = total_key_width - total_keys_width;
+    int key_x = padding + blank_space / 2;
+
+    // Calculate position for each key
+    for (int c = 0; c < col; c++) {
+        int current_key_width = key_width;
+        if (!symbols_mode && c < row_lens[row]) {
+            const char *txt = keys[row][c];
+            if (strcmp(txt, "SHIFT") == 0 || strcmp(txt, "DEL") == 0 || strcmp(txt, " ") == 0) {
+                current_key_width += key_width / 2;
+            }
+        }
+        key_x += current_key_width;
+    }
+    int current_key_width = key_width;
+    if (!symbols_mode && col < row_lens[row]) {
+        const char *txt = keys[row][col];
+        if (strcmp(txt, "SHIFT") == 0 || strcmp(txt, "DEL") == 0 || strcmp(txt, " ") == 0) {
+            current_key_width += key_width / 2;
+        }
+    }
+    *x = key_x;
+    *width = current_key_width;
+}
