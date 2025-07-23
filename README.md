@@ -36,7 +36,13 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - **Beacon Spam List Management** – Manage SSID lists (`beaconadd`, `beaconremove`, `beaconclear`, `beaconshow`) and spam them (`beaconspamlist`).
 
-- **Deauthentication Attacks** – Disconnect clients from specific networks.
+- **Deauthentication Attacks** – Disconnect clients from specific networks (supports multiple APs).
+
+- **EAPOL Logoff Attack** – Force disconnect authenticated clients.
+
+- **SAE Flood Attack** – Target WPA3 networks specifically.
+
+- **Probe Request Listening** – Passive monitoring of device probe requests.
 
 - **DHCP Starvation** – Flood DHCP requests to exhaust network leases (`dhcpstarve`).
 
@@ -58,6 +64,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - **BLE Scanning** – Detect BLE devices, including specialized modes for AirTags, Flipper Zeros, and more.
 
+- **BLE Spam** – Spoof Apple, Microsoft, Samsung, and Google devices *(not supported on ESP32S2)*.
+
 - **BLE Packet Capture** – Capture and analyze BLE traffic.
 
 - **BLE Wardriving** – Map and track BLE devices in your vicinity.
@@ -65,6 +73,20 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **Flipper Zero RSSI Tracking** – Detect and monitor the signal strength (RSSI) of Flipper Zero devices (`blescan -f`).
 
 - **AirTag Spoofing** – Spoof the identity of a selected AirTag device (`spoofairtag`).
+
+</details>
+
+<details>
+
+<summary>IR Features</summary>
+
+- **FlipperZero IR File Support** – Use FlipperZero formatted IR files stored on SD card *(supported on LilyGo S3TWatch and Cardputer)*.
+
+- **Universal Library IR Transmit** – Send pre-programmed universal remote signals.
+
+- **Custom Signals IR Transmit** – Transmit custom IR signals from files.
+
+- **Multiple IR Protocols** – Support for NEC, Kaseikyo, Pioneer, RCA, Samsung, SIRC, RC5, and RC6 protocols.
 
 </details>
 
@@ -85,8 +107,6 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **Timezone Configuration** – Change system timezone string (`timezone`).
 
 </details>
-
-> **Note:** BLE Spam is **NOT** supported at this time.
 
 ---
 
@@ -157,6 +177,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - Marauder V4
 
 - Marauder V6
+
+- LilyGo TEmbed C1101 
 
 </details>
 

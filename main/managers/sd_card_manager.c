@@ -10,6 +10,9 @@
 #include "esp_vfs_fat.h"
 #include "vendor/drivers/CH422G.h"
 #include "vendor/pcap.h"
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(CONFIG_ENCODER_INA) /* S3 builds that use the rotary encoder */
+#include "driver/gpio.h"
+#endif
 #include <dirent.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,6 +44,7 @@ sd_card_manager_t sd_card_manager = { // Change this based on board config
     .spi_mosi_pin = CONFIG_SD_SPI_MOSI_PIN
 #endif
 };
+
 
 #ifdef CONFIG_IS_S3TWATCH
 static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
@@ -166,6 +170,7 @@ static void sdmmc_card_print_info(const sdmmc_card_t *card) {
 esp_err_t sd_card_init(void) {
   esp_err_t ret = ESP_FAIL;
 
+
 #ifdef CONFIG_IS_S3TWATCH
   ESP_LOGI(SD_TAG, "S3TWatch detected - attempting virtual storage mount");
   
@@ -288,6 +293,8 @@ esp_err_t sd_card_init(void) {
 
   printf("Initializing SD card in SPI mode using configured pins...\n");
 
+
+
 #ifdef CONFIG_Waveshare_LCD
 #define I2C_NUM I2C_NUM_0
 #define I2C_ADDRESS 0x24
@@ -364,6 +371,9 @@ esp_err_t sd_card_init(void) {
 #endif
 
   sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(CONFIG_ENCODER_INA)
+  host.max_freq_khz = 4000;       /* 4 MHz for first probe – increase later if needed */
+#endif
 
   spi_bus_config_t bus_config;
 
@@ -383,6 +393,7 @@ esp_err_t sd_card_init(void) {
 
   bool bus_init_success = false;
 
+#ifndef CONFIG_ENCODER_INA 
 #if defined(CONFIG_IDF_TARGET_ESP32)
   {
     esp_err_t bus_ret = spi_bus_initialize(SPI3_HOST, &bus_config, dmabus);
@@ -414,6 +425,7 @@ esp_err_t sd_card_init(void) {
     }
   }
 #endif
+#endif
 
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
       .format_if_mount_failed = false,
@@ -425,7 +437,11 @@ esp_err_t sd_card_init(void) {
 #if defined(CONFIG_IDF_TARGET_ESP32)
   slot_config.host_id = SPI3_HOST;
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_ENCODER_INA)
+  slot_config.host_id = SPI3_HOST; // use spi3_host (vspi) for sd if encoder is active on esp32s3
+#else
   slot_config.host_id = SPI2_HOST;
+#endif
 #else
   slot_config.host_id = SPI2_HOST;
 #endif
@@ -615,6 +631,7 @@ esp_err_t sd_card_setup_directory_structure() {
   const char *gps_dir = "/mnt/ghostesp/gps";
   const char *games_dir = "/mnt/ghostesp/games";
   const char *evil_portal_dir = "/mnt/ghostesp/evil_portal";
+  const char *evil_portal_portals_dir = "/mnt/ghostesp/evil_portal/portals"; // <-- Add this line
   const char *universals_dir = "/mnt/ghostesp/infrared/universals";
 
 
@@ -701,6 +718,19 @@ esp_err_t sd_card_setup_directory_structure() {
     }
   } else {
     printf("Directory %s already exists\n", evil_portal_dir);
+  }
+
+  // Create evil_portal/portals directory
+  if (!sd_card_exists(evil_portal_portals_dir)) {
+    printf("Creating directory: %s\n", evil_portal_portals_dir);
+    esp_err_t ret = sd_card_create_directory(evil_portal_portals_dir);
+    if (ret != ESP_OK) {
+      printf("Failed to create directory %s: %s\n", evil_portal_portals_dir,
+             esp_err_to_name(ret));
+      return ret;
+    }
+  } else {
+    printf("Directory %s already exists\n", evil_portal_portals_dir);
   }
 
   const char *infrared_dir = "/mnt/ghostesp/infrared";
@@ -926,4 +956,31 @@ bool sd_card_is_virtual_storage() {
 #else
   return false;
 #endif
+}
+
+#include <dirent.h>
+#include <string.h>
+
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
+int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]) {
+    const char *portal_dir = "/mnt/ghostesp/evil_portal/portals";
+    DIR *dir = opendir(portal_dir);
+    if (!dir) return 0;
+    struct dirent *entry;
+    int count = 0;
+    while ((entry = readdir(dir)) && count < MAX_PORTALS) {
+        // Only include regular files with .html extension
+        if (entry->d_type == DT_REG) {
+            const char *dot = strrchr(entry->d_name, '.');
+            if (dot && strcmp(dot, ".html") == 0) {
+                strncpy(portal_names[count], entry->d_name, MAX_PORTAL_NAME - 1);
+                portal_names[count][MAX_PORTAL_NAME - 1] = '\0';
+                count++;
+            }
+        }
+    }
+    closedir(dir);
+    return count;
 }

@@ -1,5 +1,74 @@
 # Ghost ESP Changelog
 
+## Revival v1.7
+
+### Big Changes
+
+#### Support for connecting two ESP32 chips running GhostESP with a WebUI section for control
+
+#### Up to 5X the battery life on supported devices with power saving mode
+
+#### Support for the LilyGo TEmbed C1101
+
+#### Support for 'AITRIP CYD' or ESP2432S028R, a CYD device - @tototo31
+
+
+### Added
+
+- Display
+  - Added 'Never' display timeout setting.
+  - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.
+  - Terminal App to use commands with the keyboard - @tototo31
+  - Added option to select Custom Evil Portal html file from the SD Card - @tototo31
+  - Placeholder text for keyboard view - @tototo31
+  - Encoder friendly version of the keyboard view
+  - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
+
+- Commands
+  - 'chipinfo' command to display chip information
+  - 'apenable' command to enable/disable the Access Point
+
+### Changed
+
+- Display
+  - Reuse options screen view for settings screen. Resolves #66 and #65
+  - PWM backlight control using ledc on supported devices
+  - Moved 'Terminal Color' and 'Third Control' to the Display section in settings
+  - Organise BLE menu into hierarchical sub-menus - @tototo31
+  - Color status bar icons based on their activity
+  - S3TWatch: Disable tap-to-wake, use touch interrupt instead.
+  - Exiting a view now returns to the previous view instead of the main menu - @tototo31
+
+- WebUI
+  - Minor style tweaks
+  - Update Help tab
+  
+- Attacks
+  - Refactor packet capture
+
+### Bug Fixes
+
+- Display
+  - Dynamically size error popup to content and center on screen
+  - Reduce FatFS memory usage on S3TWatch and Cardputer
+  - Improve battery reading accuracy on Cardputer
+
+- Commands
+  - Add termianl_view_add_text logs to commands missing them
+  - Skip pcap flush if mutex is null
+  - Fix stop command not stopping GPS task
+
+- General
+  - Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
+  - Flush every packet to UART (Flipper) immediately when there's no sd card
+  - Miscellaneous refactoring for memory usage
+
+
+## Revival 1.6.1
+
+- Hotfix for 'BLE stack not ready' on CYD devices.
+
+
 ## Revival v1.6
 
 ### TLDR

@@ -2,6 +2,7 @@
 #include "managers/views/flappy_ghost_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/views/terminal_screen.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -21,10 +22,12 @@ typedef struct {
 
 static const lv_color_t flap_color = LV_COLOR_MAKE(255, 215, 0);
 static const lv_color_t rave_color = LV_COLOR_MAKE(128, 0, 128);
+static const lv_color_t terminal_color = LV_COLOR_MAKE(0, 128, 0);
 
 static app_item_t app_items[] = {
     {"Flap", &GESPFlappyghost, flap_color, &flappy_bird_view},
     {"Rave", &rave, rave_color, &music_visualizer_view},
+    {"Terminal", &terminal_icon, terminal_color, &terminal_view},
 };
 
 static int num_apps = sizeof(app_items) / sizeof(app_items[0]);
@@ -68,7 +71,11 @@ static void anim_set_x(void *obj, int32_t v) {
 
     lv_obj_t *icon = lv_img_create(current_app_obj);
     lv_img_set_src(icon, app_items[selected_app_index].icon);
-    
+
+    if (strcmp(app_items[selected_app_index].name, "Terminal") == 0) { // Special case for terminal icon
+        lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0); // Recolor to match border
+        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+    }
 
     const int icon_size = 50;
     lv_obj_set_size(icon, icon_size, icon_size);
@@ -158,13 +165,18 @@ static void anim_set_x(void *obj, int32_t v) {
  */
 void apps_menu_destroy(void) {
     if (apps_container) {
-        lv_obj_clean(apps_container);
-        lv_obj_del(apps_container);
+        lv_obj_del(apps_container); // This deletes all children recursively
         apps_container = NULL;
         apps_menu_view.root = NULL;
         current_app_obj = NULL;
         back_button = NULL;
     }
+    // Reset state variables for a clean re-create
+    selected_app_index = 0;
+    touch_started = false;
+    touch_start_x = 0;
+    touch_start_y = 0;
+    // If you add timers or other resources, clean them up here!
 }
 
 /**
@@ -263,6 +275,21 @@ static void handle_keyboard_interactions(int keyValue){
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         ESP_LOGW(TAG, "keyboard event");
         handle_keyboard_interactions(event->data.key_value);
+    } else if (event->type == INPUT_TYPE_ENCODER) {
+        if (event->data.encoder.button) {
+            handle_app_item_selection(selected_app_index);
+        } else {
+            if (event->data.encoder.direction > 0) {
+                select_app_item(selected_app_index + 1, true);
+            } else {
+                select_app_item(selected_app_index - 1, false);
+            }
+        }
+#ifdef CONFIG_USE_ENCODER
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+        display_manager_switch_view(&main_menu_view);
+#endif
     }
 }
 

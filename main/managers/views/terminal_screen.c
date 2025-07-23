@@ -6,8 +6,11 @@
 #include "managers/views/main_menu_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/display_manager.h"
+#include "esp_timer.h"
 #include <stdlib.h>
 #include <string.h>
+
+extern View keyboard_view;
 
 #include "lvgl.h"
 #include "managers/settings_manager.h"
@@ -27,13 +30,24 @@ static bool is_stopping = false;
 #define BUTTON_PADDING 5
 
 static lv_obj_t *back_btn = NULL;
+static lv_obj_t *input_label = NULL;
 static size_t current_text_length = 0; // track total characters to manage memory
 lv_timer_t *terminal_update_timer = NULL;
+static unsigned long createdTimeInMs = 0;
+#define ENCODER_DEBOUNCE_TIME_MS 500
+
+static char input_buffer[128] = {0}; // keyboard input buffer
+static int input_len = 0; // input length counter
 
 static void scroll_terminal_up(void);
 static void scroll_terminal_down(void);
 static void stop_all_operations(void);
 
+// keyboard function predefs
+static void submit_text();
+static void add_char_to_buffer(char c);
+static void remove_char_from_buffer();
+static void update_input_label();
 
 typedef struct {
   char messages[MAX_QUEUE_SIZE][MAX_MESSAGE_SIZE];
@@ -44,6 +58,37 @@ typedef struct {
 
 static MessageQueue message_queue = {.head = 0, .tail = 0, .count = 0};
 
+static void submit_text() {
+    if (input_len > 0) {
+      char prompt_buf[sizeof(input_buffer) + 4]; // +4 for "> " and null terminator
+      snprintf(prompt_buf, sizeof(prompt_buf), "> %s", input_buffer); // format the prompt
+      terminal_view_add_text(prompt_buf); // add prompt before the command when printing to screen
+      simulateCommand(input_buffer); // execute the command
+      memset(input_buffer, 0, sizeof(input_buffer)); // clear the input buffer
+      input_len = 0; // reset input length
+      update_input_label(); // update the input label to show empty state
+    }
+}
+
+static void add_char_to_buffer(char c) {
+  if (input_len < sizeof(input_buffer) - 1) {
+    input_buffer[input_len++] = c;
+    input_buffer[input_len] = '\0';
+    update_input_label();
+  }
+}
+
+static void remove_char_from_buffer() {
+  if (input_len > 0) {
+    input_buffer[--input_len] = '\0';
+    update_input_label();
+  }
+}
+static void update_input_label() {
+    if (input_label) {
+        lv_label_set_text(input_label, input_buffer);
+    }
+}
 
 static void queue_message(const char *text) {
   if (message_queue.count >= MAX_QUEUE_SIZE) {
@@ -76,15 +121,13 @@ static void process_queued_messages(void) {
   while (message_queue.count > 0) {
     const char *msg = message_queue.messages[message_queue.head];
     
-    // Add text to LVGL list
     lv_obj_t *item = lv_list_add_text(terminal_page, msg);
     lv_label_set_long_mode(item, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
     lv_obj_set_style_text_color(item, lv_color_hex(settings_get_terminal_text_color(&G_Settings)), 0);
     lv_obj_set_style_text_font(item, &lv_font_montserrat_10, 0);
-    last_item = item; // Keep track of the last added item
+    last_item = item;
 
-    // update total length counter and trigger cleanup if needed
     current_text_length += strlen(msg);
 
     if (current_text_length > CLEANUP_THRESHOLD) {
@@ -118,12 +161,11 @@ static void process_queued_messages(void) {
   xSemaphoreGive(terminal_mutex);
 }
 
-// Wrapper callback for the LVGL timer
 static void process_queued_messages_callback(lv_timer_t * timer) {
     process_queued_messages();
 }
 
-int custom_log_vprintf(const char *fmt, va_list args);
+
 static int (*default_log_vprintf)(const char *, va_list) = NULL;
 
 static void scroll_terminal_up(void) {
@@ -145,19 +187,26 @@ static void scroll_terminal_down(void) {
 static void stop_all_operations(void) {
   terminal_active = false;
   is_stopping = true;
-  clear_message_queue();
+
+  // Send all stop commands
   simulateCommand("stop");
-  simulateCommand("stopspam");
-  simulateCommand("stopdeauth");
-  simulateCommand("capture -stop");
-  simulateCommand("stopportal");
-  simulateCommand("gpsinfo -s");
-  simulateCommand("blewardriving -s");
-  simulateCommand("pineap -s");
-  display_manager_switch_view(&options_menu_view);
+
+  vTaskDelay(pdMS_TO_TICKS(20));
+
+  // Now, switch the view
+  display_manager_switch_view(display_manager_previous_view);
   ESP_LOGI(TAG, "Stop all operations triggered");
 }
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+void text_box_click_cb(lv_event_t *e){
+  ESP_LOGI(TAG, "Text box clicked");
+  printf("Text box clicked\n");
 
+  display_manager_switch_view(&keyboard_view);
+
+  // If using a hardware keyboard, we can ignore this click
+}
+#endif
 void terminal_view_create(void) {
   is_stopping = false;
   if (terminal_view.root != NULL) {
@@ -180,18 +229,22 @@ void terminal_view_create(void) {
   lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
 
-  // Define status bar height (as seen in display_manager.c)
-  const int STATUS_BAR_HEIGHT = 20; 
-  
-  // Calculate available height, considering status bar and bottom buttons (if present)
+  const int STATUS_BAR_HEIGHT = 20;
+
   int available_height = LV_VER_RES - STATUS_BAR_HEIGHT;
   if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
       available_height -= (BUTTON_SIZE + BUTTON_PADDING * 2);
   }
   int textarea_height = available_height;
 
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+  int padding = 5;
+  int textbox_height = 40;
+  int textbox_width = LV_HOR_RES - 2 * padding;
+  textarea_height -= (textbox_height + padding); // only need 1x pad since the text box is at the bottom of the screen
+#endif  
+
   terminal_page = lv_list_create(terminal_view.root);
-  // Set position below status bar
   lv_obj_set_pos(terminal_page, 0, STATUS_BAR_HEIGHT); 
   lv_obj_set_size(terminal_page, LV_HOR_RES, textarea_height);
   lv_obj_set_style_bg_color(terminal_page, lv_color_black(), 0);
@@ -200,10 +253,10 @@ void terminal_view_create(void) {
   lv_obj_set_style_border_width(terminal_page, 0, 0);
   lv_obj_set_style_clip_corner(terminal_page, false, 0);
   lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_border_width(terminal_view.root, 0, 0);
+  lv_obj_set_style_border_width(terminal_view.root, 0,0 );
   lv_obj_set_style_radius(terminal_view.root, 0, 0);
   lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
-
+#ifdef CONFIG_USE_TOUCHSCREEN
   if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
     back_btn = lv_btn_create(terminal_view.root);
     lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
@@ -222,87 +275,87 @@ void terminal_view_create(void) {
              lv_obj_get_x(back_btn), lv_obj_get_y(back_btn), 
              lv_obj_get_width(back_btn), lv_obj_get_height(back_btn));
   }
+  textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING;
+  if (textbox_width < 40) textbox_width = 40;
+#endif
+
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+    input_label = lv_label_create(terminal_view.root);
+    lv_obj_set_size(input_label, textbox_width, textbox_height - 2 * padding);
+    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_pad_all(input_label, padding, 0);
+    lv_obj_set_style_radius(input_label, 5, 0);
+    lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -2*padding);
+    lv_obj_add_event_cb(input_label, text_box_click_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_label_set_long_mode(input_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(input_label, "Type Command...");
+#endif
 
   display_manager_add_status_bar("Terminal");
 
-  // Create and start the update timer
   if (!terminal_update_timer) { 
-      terminal_update_timer = lv_timer_create(process_queued_messages_callback, 50, NULL); // 50ms interval
+      terminal_update_timer = lv_timer_create(process_queued_messages_callback, 50, NULL);
       if (!terminal_update_timer) {
           ESP_LOGE(TAG, "Failed to create terminal update timer");
       }
   }
+  createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
 }
 
 void terminal_view_destroy(void) {
-  terminal_active = false;
-  is_stopping = true;
-  clear_message_queue();
+    terminal_active = false;
+    is_stopping = true;
+    clear_message_queue();
 
-  // Stop and delete the timer
-  if (terminal_update_timer) {
-    lv_timer_del(terminal_update_timer);
-    terminal_update_timer = NULL;
-  }
-
-  vTaskDelay(pdMS_TO_TICKS(50));
-
-  if (terminal_mutex) {
-    if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
-      vSemaphoreDelete(terminal_mutex);
-      terminal_mutex = NULL;
+    if (terminal_update_timer) {
+        lv_timer_del(terminal_update_timer);
+        terminal_update_timer = NULL;
     }
-  }
 
-  if (terminal_view.root != NULL) {
-    lv_obj_del(terminal_view.root);
-    terminal_view.root = NULL;
-    terminal_page = NULL;
-    back_btn = NULL;
-  }
-
-  current_text_length = 0;
- 
-  is_stopping = false;
-}
-
-
-void terminal_view_add_text(const char *text) {
-  if (!text || is_stopping) return;
-  if (text[0] == '\0') return;
-
-  // If terminal is not active or ready, just queue the message
-  if (!terminal_active || !terminal_page || !terminal_mutex) {
-    // Need mutex to safely queue even if terminal inactive
-    if (!terminal_mutex) { // Create if absolutely needed, should ideally exist
-        ESP_LOGW(TAG, "Terminal mutex not yet created, creating temporarily");
-        terminal_mutex = xSemaphoreCreateMutex();
-        if (!terminal_mutex) {
-            ESP_LOGE(TAG, "Failed to create temporary mutex for queueing");
-            return; // Cannot queue safely
+    if (terminal_mutex) {
+        if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            if (terminal_view.root != NULL) {
+                lv_obj_del(terminal_view.root);
+                terminal_view.root = NULL;
+                terminal_page = NULL;
+                back_btn = NULL;
+                input_label = NULL;
+            }
+            vSemaphoreDelete(terminal_mutex);
+            terminal_mutex = NULL;
+        } else {
+            ESP_LOGE(TAG, "Failed to acquire terminal mutex during destroy. A leak may occur.");
+            terminal_view.root = NULL;
+            terminal_mutex = NULL;
         }
     }
-    if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        queue_message(text);
-        xSemaphoreGive(terminal_mutex);
-    } else {
-        ESP_LOGW(TAG, "Failed to get mutex for early queueing");
-        // Maybe drop message or handle error?
-    }
-    return;
+
+    // Reset state variables
+    current_text_length = 0;
+    input_len = 0;
+    input_buffer[0] = '\0';
+    is_stopping = false;
+}
+
+void terminal_view_add_text(const char *text) {
+  if (!text || is_stopping || text[0] == '\0') {
+      return;
   }
 
-  // Terminal is active, acquire mutex and queue message
-  if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
-    ESP_LOGW(TAG, "Failed to acquire terminal mutex in add_text");
-    // Consider alternative like trying to queue without mutex if desperate?
-    // For now, log and drop/ignore.
-    return;
+  if (!terminal_mutex) {
+      ESP_LOGW(TAG, "Attempted to add text while terminal is destroying. Ignoring.");
+      return;
   }
 
-  queue_message(text);
-  
-  xSemaphoreGive(terminal_mutex);
+  if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      queue_message(text);
+      xSemaphoreGive(terminal_mutex);
+  } else {
+      ESP_LOGW(TAG, "Failed to acquire terminal mutex in add_text");
+  }
 }
 
 void terminal_view_hardwareinput_callback(InputEvent *event) {
@@ -314,6 +367,23 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
     int touch_x = event->data.touch_data.point.x;
     int touch_y = event->data.touch_data.point.y;
     ESP_LOGW(TAG, "Touch detected at x=%d, y=%d (screen: %dx%d)", touch_x, touch_y, LV_HOR_RES, LV_VER_RES);
+
+    if (input_label){
+      ESP_LOGI(TAG, "Input label exists, checking for click");
+      // Check if the touch is within the input label area
+      lv_obj_t *input_area = lv_obj_get_parent(input_label);
+      int input_x_min = lv_obj_get_x(input_label);
+      int input_x_max = input_x_min + lv_obj_get_width(input_label);
+      int input_y_min = lv_obj_get_y(input_label);
+      int input_y_max = input_y_min + lv_obj_get_height(input_label);
+
+      if (touch_x >= input_x_min && touch_x <= input_x_max &&
+          touch_y >= input_y_min && touch_y <= input_y_max) {
+        ESP_LOGI(TAG, "Input label clicked at x=%d, y=%d", touch_x, touch_y);
+        lv_event_send(input_label, LV_EVENT_CLICKED, NULL);
+        return;
+      }
+    }
 
     if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
       int button_y_min = LV_VER_RES - (BUTTON_SIZE + BUTTON_PADDING * 2);
@@ -371,7 +441,54 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_up();
     } else if (key == 46 || key == '.') {      //down arrow
       scroll_terminal_down();
+    } else if (key == 13){
+      ESP_LOGW(TAG, "Enter key pressed, submitting text");
+      submit_text();
+    } else if (key == 8 || key == 127) { // backspace
+      ESP_LOGW(TAG, "Backspace key pressed, removing last character");
+      remove_char_from_buffer();
+    } else if (key == 32) { // space
+      ESP_LOGW(TAG, "Space key pressed, adding space to input buffer");
+      add_char_to_buffer(' ');
+    } else if (key >= 32 && key <= 126) { // printable ASCII characters
+      ESP_LOGW(TAG, "Adding character '%c' to input buffer", (char)key);
+      add_char_to_buffer((char)key);
+    } else if (key == 0) {
+      ESP_LOGW(TAG, "Null character received, ignoring"); 
     }
+    else {
+      ESP_LOGW(TAG, "Unhandled keyboard input: %d", key);
+      // Optionally handle other keys or log them
+      char key_str[2];
+      key_str[0] = (char)key;
+      key_str[1] = '\0';
+      terminal_view_add_text(key_str); // Add unhandled keys to terminal
+    }
+  } else if (event->type == INPUT_TYPE_ENCODER) {
+    unsigned long now_ms = (unsigned long)(esp_timer_get_time() / 1000ULL);
+    if (event->data.encoder.button) {
+      if (now_ms - createdTimeInMs <= ENCODER_DEBOUNCE_TIME_MS) {
+        ESP_LOGD(TAG, "Encoder button press debounced");
+        return;
+      }
+      ESP_LOGW(TAG, "Encoder button pressed, stopping all operations");
+      stop_all_operations();
+      createdTimeInMs = now_ms; // Update last press time
+    } else {
+      if (event->data.encoder.direction > 0) {
+        ESP_LOGW(TAG, "Encoder CW, scrolling down");
+        scroll_terminal_down();
+      } else {
+        ESP_LOGW(TAG, "Encoder CCW, scrolling up");
+        scroll_terminal_up();
+      }
+    }
+#ifdef CONFIG_USE_ENCODER
+  } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+    ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+    stop_all_operations();
+    display_manager_switch_view(&main_menu_view);
+#endif
   }
 }
 
@@ -383,15 +500,8 @@ void terminal_view_get_hardwareinput_callback(void **callback) {
   }
 }
 
-int custom_log_vprintf(const char *fmt, va_list args) {
-  char buf[256];
-  int len = vsnprintf(buf, sizeof(buf), fmt, args);
-  if (len < 0) {
-    return len;
-  }
-  terminal_view_add_text(buf);
-  return len;
-}
+
+static View *terminal_return_view = NULL;
 
 View terminal_view = {
   .root = NULL,
@@ -401,3 +511,7 @@ View terminal_view = {
   .name = "TerminalView",
   .get_hardwareinput_callback = terminal_view_get_hardwareinput_callback
 };
+
+void terminal_set_return_view(View *view) {
+    terminal_return_view = view;
+}
