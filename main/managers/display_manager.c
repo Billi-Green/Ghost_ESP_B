@@ -82,6 +82,9 @@ void set_keyboard_brightness(uint8_t brightness);
 #define CONFIG_TFT_HEIGHT 320
 #endif
 
+#define BACKLIGHT_TIMER LEDC_TIMER_0
+#define RGB_TIMER       LEDC_TIMER_1
+
 #define LVGL_TASK_PERIOD_MS 5
 #define INTERMEDIATE_DIM_PERCENT 20
 #define INTERMEDIATE_DIM_DURATION_MS 5000
@@ -670,7 +673,7 @@ void display_manager_init(void) {
   ledc_timer_config_t ledc_timer = {
       .speed_mode = LEDC_LOW_SPEED_MODE,
       .duty_resolution = LEDC_TIMER_10_BIT,
-      .timer_num = LEDC_TIMER_0,
+      .timer_num = BACKLIGHT_TIMER,
       .freq_hz = 5000, // 5 kHz
       .clk_cfg = LEDC_AUTO_CLK,
   };
@@ -680,7 +683,7 @@ void display_manager_init(void) {
   ledc_channel_config_t ledc_channel = {
       .speed_mode = LEDC_LOW_SPEED_MODE,
       .channel = LEDC_CHANNEL_0,
-      .timer_sel = LEDC_TIMER_0,
+      .timer_sel = BACKLIGHT_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
       .gpio_num = CONFIG_LV_DISP_PIN_BCKL,
       .duty = 0, // Set initial duty to 0
@@ -913,18 +916,18 @@ void set_backlight_brightness(uint8_t percentage) {
 
     //scale percent by max_brightness
     percentage = (percentage * max_brightness) / 100;
+    if (percentage > 100) percentage = 100;
+    if (percentage < 0) percentage = 0;
 
 #if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
-    if (percentage > 100) percentage = 100;
     uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
     // ----- switch mode -----
     // make sure the pin is configured as a GPIO output
-    if (percentage > 1) percentage = 1;
     gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
-    gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage ? 1 : 0);
+    gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage > 0 ? 1 : 0);
 #else
 # error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
 #endif
