@@ -10,6 +10,8 @@
 #include <string.h>
 #include <ctype.h>
 
+#define KEYBOARD_COLUMNS 10
+
 static const char *TAG = "keyboard_screen";
 
 static lv_obj_t *root = NULL;
