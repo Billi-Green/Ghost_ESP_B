@@ -98,7 +98,7 @@ static void add_char_to_buffer(char c) {
         update_input_label();
     }
     if (is_caps) {
-        is_caps = false; // Reset to lowercase after adding a character
+        is_caps = false; // Reset to lowercase after any key press
         update_key_labels(); // Update key labels to reflect the change
     }
 }
@@ -355,7 +355,7 @@ static void keyboard_create() {
             lv_obj_set_style_radius(key_btn, 3, 0);
 
             lv_obj_t *key_label = lv_label_create(key_btn);
-            const char *(*current_keys)[10] = is_symbols_mode ? symbols : keys;
+            const char *(*current_keys)[KEYBOARD_COLUMNS] = is_symbols_mode ? symbols : keys;
             if (c < row_lens[r]) {
                 const char* key_text = current_keys[r][c];
                 if (!is_symbols_mode && strlen(key_text) == 1) {
@@ -593,7 +593,11 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                 } else if (strcmp(key, " ") == 0) {
                     add_char_to_buffer(' ');
                 } else if (strlen(key) == 1) {
-                    add_char_to_buffer(key[0]);
+                    char adjusted_char = key[0];
+                    if (!is_symbols_mode && strlen(key) == 1) {
+                        adjusted_char = is_caps ? toupper(adjusted_char) : tolower(adjusted_char);
+                    }
+                    add_char_to_buffer(adjusted_char);
                 }
             }
         }
