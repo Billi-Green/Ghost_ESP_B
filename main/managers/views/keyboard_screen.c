@@ -92,9 +92,14 @@ static void submit_text() {
 
 static void add_char_to_buffer(char c) {
     if (input_len < sizeof(input_buffer) - 1) {
-        input_buffer[input_len++] = c;
+        // Use SHIFT if active, otherwise lowercase
+        input_buffer[input_len++] = is_caps ? toupper((unsigned char)c) : tolower((unsigned char)c);
         input_buffer[input_len] = '\0';
         update_input_label();
+    }
+    if (is_caps) {
+        is_caps = false; // Reset to lowercase after adding a character
+        update_key_labels(); // Update key labels to reflect the change
     }
 }
 
@@ -144,6 +149,17 @@ static void update_key_labels() {
                                 lv_label_set_text(key_label, new_text);
                             } else {
                                 lv_label_set_text(key_label, key_text);
+                            }
+
+                            // Highlight SHIFT key if active
+                            if (strcmp(key_text, "SHIFT") == 0) {
+                                if (is_caps) {
+                                    lv_obj_set_style_bg_color(key_btn, lv_color_hex(0xFFD600), 0); // yellow when active
+                                    lv_obj_set_style_text_color(key_label, lv_color_hex(0x000000), 0); // black text
+                                } else {
+                                    lv_obj_set_style_bg_color(key_btn, lv_color_hex(0x7B1FA2), 0); // default purple
+                                    lv_obj_set_style_text_color(key_label, lv_color_hex(0xFFFFFF), 0); // white text
+                                }
                             }
                             lv_obj_clear_flag(key_btn, LV_OBJ_FLAG_HIDDEN);
                         } else {
@@ -254,7 +270,7 @@ static void recreate_keyboard_buttons() {
 }
 
 static void keyboard_create() {
-    is_caps = true;
+    is_caps = true; // Start in caps mode
     is_symbols_mode = false;
     input_len = 0;
     memset(input_buffer, 0, sizeof(input_buffer));
@@ -339,8 +355,17 @@ static void keyboard_create() {
             lv_obj_set_style_radius(key_btn, 3, 0);
 
             lv_obj_t *key_label = lv_label_create(key_btn);
+            const char *(*current_keys)[10] = is_symbols_mode ? symbols : keys;
             if (c < row_lens[r]) {
-                lv_label_set_text(key_label, keys[r][c]);
+                const char* key_text = current_keys[r][c];
+                if (!is_symbols_mode && strlen(key_text) == 1) {
+                    char new_text[2];
+                    new_text[0] = is_caps ? toupper(key_text[0]) : tolower(key_text[0]);
+                    new_text[1] = '\0';
+                    lv_label_set_text(key_label, new_text);
+                } else {
+                    lv_label_set_text(key_label, key_text);
+                }
             } else {
                 lv_label_set_text(key_label, "");
                 lv_obj_add_flag(key_btn, LV_OBJ_FLAG_HIDDEN);
@@ -397,6 +422,8 @@ static void keyboard_create() {
 #endif
     
     display_manager_add_status_bar("Keyboard");
+
+    update_key_labels();
 }
 
 static void keyboard_destroy() {
@@ -566,11 +593,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                 } else if (strcmp(key, " ") == 0) {
                     add_char_to_buffer(' ');
                 } else if (strlen(key) == 1) {
-                    if (is_symbols_mode) {
-                        add_char_to_buffer(key[0]);
-                    } else {
-                        add_char_to_buffer(is_caps ? toupper(key[0]) : tolower(key[0]));
-                    }
+                    add_char_to_buffer(key[0]);
                 }
             }
         }
