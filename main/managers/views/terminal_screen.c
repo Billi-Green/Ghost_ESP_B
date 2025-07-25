@@ -208,101 +208,128 @@ void text_box_click_cb(lv_event_t *e){
 }
 #endif
 void terminal_view_create(void) {
-  is_stopping = false;
-  if (terminal_view.root != NULL) {
-    return;
-  }
-
-  if (!terminal_mutex) {
-    terminal_mutex = xSemaphoreCreateMutex();
-    if (!terminal_mutex) {
-      ESP_LOGE(TAG, "Failed to create terminal mutex");
-      return;
+    is_stopping = false;
+    if (terminal_view.root != NULL) {
+        return;
     }
-  }
 
-  terminal_active = true;
+    if (!terminal_mutex) {
+        terminal_mutex = xSemaphoreCreateMutex();
+        if (!terminal_mutex) {
+            ESP_LOGE(TAG, "Failed to create terminal mutex");
+            return;
+        }
+    }
 
-  terminal_view.root = lv_obj_create(lv_scr_act());
-  lv_obj_set_size(terminal_view.root, LV_HOR_RES, LV_VER_RES);
-  lv_obj_set_style_bg_color(terminal_view.root, lv_color_black(), 0);
-  lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
+    terminal_active = true;
 
-  const int STATUS_BAR_HEIGHT = 20;
+    terminal_view.root = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(terminal_view.root, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_style_bg_color(terminal_view.root, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(terminal_view.root, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(terminal_view.root, 0, 0); // Remove border
+    lv_obj_set_style_border_color(terminal_view.root, lv_color_black(), 0); // Ensure border is black if shown
+    lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
 
-  int available_height = LV_VER_RES - STATUS_BAR_HEIGHT;
-  if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
-      available_height -= (BUTTON_SIZE + BUTTON_PADDING * 2);
-  }
-  int textarea_height = available_height;
+    const int STATUS_BAR_HEIGHT = 20;
+    const int padding = 5;
+    const int textbox_height = 40;
 
-#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
-  int padding = 5;
-  int textbox_height = 40;
-  int textbox_width = LV_HOR_RES - 2 * padding;
-  textarea_height -= (textbox_height + padding); // only need 1x pad since the text box is at the bottom of the screen
-#endif  
-
-  terminal_page = lv_list_create(terminal_view.root);
-  lv_obj_set_pos(terminal_page, 0, STATUS_BAR_HEIGHT); 
-  lv_obj_set_size(terminal_page, LV_HOR_RES, textarea_height);
-  lv_obj_set_style_bg_color(terminal_page, lv_color_black(), 0);
-  lv_obj_set_style_pad_all(terminal_page, 0, 0);
-  lv_obj_set_scrollbar_mode(terminal_page, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_border_width(terminal_page, 0, 0);
-  lv_obj_set_style_clip_corner(terminal_page, false, 0);
-  lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_border_width(terminal_view.root, 0,0 );
-  lv_obj_set_style_radius(terminal_view.root, 0, 0);
-  lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
+    int back_button_height = 0;
 #ifdef CONFIG_USE_TOUCHSCREEN
-  if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
-    back_btn = lv_btn_create(terminal_view.root);
-    lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, BUTTON_PADDING, -BUTTON_PADDING);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x333333), LV_PART_MAIN);
-    lv_obj_set_style_radius(back_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
-    lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, LV_SYMBOL_LEFT);
-    lv_obj_center(back_label);
+    if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+        back_button_height = BUTTON_SIZE + BUTTON_PADDING * 2;
+    }
+#endif
 
+    // Calculate the height for the input area (input box + padding)
+    int input_area_height = textbox_height + padding;
+    if (back_button_height > input_area_height) {
+        input_area_height = back_button_height + padding;
+    }
 
-    lv_obj_update_layout(terminal_view.root);
-    ESP_LOGW(TAG, "Back pos: x=%d, y=%d, w=%d, h=%d", 
-             lv_obj_get_x(back_btn), lv_obj_get_y(back_btn), 
-             lv_obj_get_width(back_btn), lv_obj_get_height(back_btn));
-  }
-  textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING;
-  if (textbox_width < 40) textbox_width = 40;
+    // Calculate the height for the terminal readout area
+    int textarea_height = LV_VER_RES - STATUS_BAR_HEIGHT - input_area_height;
+
+    // Create the terminal_page to fill all space above the input box and back button
+    terminal_page = lv_list_create(terminal_view.root);
+    lv_obj_set_pos(terminal_page, 0, STATUS_BAR_HEIGHT);
+    lv_obj_set_size(terminal_page, LV_HOR_RES, textarea_height);
+    lv_obj_set_style_bg_color(terminal_page, lv_color_black(), 0);
+    lv_obj_set_style_pad_all(terminal_page, 0, 0);
+    lv_obj_set_scrollbar_mode(terminal_page, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_border_width(terminal_page, 0, 0);
+    lv_obj_set_style_clip_corner(terminal_page, false, 0);
+    lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
+
+#ifdef CONFIG_USE_TOUCHSCREEN
+    if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+        back_btn = lv_btn_create(terminal_view.root);
+        lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
+        lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, BUTTON_PADDING, -BUTTON_PADDING);
+        lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+        lv_obj_set_style_radius(back_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
+        lv_obj_t *back_label = lv_label_create(back_btn);
+        lv_label_set_text(back_label, LV_SYMBOL_LEFT);
+        lv_obj_center(back_label);
+
+        lv_obj_update_layout(terminal_view.root);
+        ESP_LOGW(TAG, "Back pos: x=%d, y=%d, w=%d, h=%d",
+                 lv_obj_get_x(back_btn), lv_obj_get_y(back_btn),
+                 lv_obj_get_width(back_btn), lv_obj_get_height(back_btn));
+    }
 #endif
 
 #if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+    int textbox_width = LV_HOR_RES - 2 * padding;
+#ifdef CONFIG_USE_TOUCHSCREEN
+    if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+        textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING;
+    }
+#endif
+    if (textbox_width < 40) textbox_width = 40;
+
     input_label = lv_label_create(terminal_view.root);
-    lv_obj_set_size(input_label, textbox_width, textbox_height - 2 * padding);
-    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_size(input_label, textbox_width, textbox_height);
+    // Match back button styling:
+    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x333333), 0); // Same dark gray as back button
     lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0); // White text for contrast
     lv_obj_set_style_pad_all(input_label, padding, 0);
-    lv_obj_set_style_radius(input_label, 5, 0);
-    lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -2*padding);
+    lv_obj_set_style_radius(input_label, 6, 0); // Circular radius like back button
+    lv_obj_set_style_border_width(input_label, 0, 0); // No border, matches back button
+    lv_obj_set_style_shadow_width(input_label, 0, 0); // No shadow, matches back button
+    lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -padding);
     lv_obj_add_event_cb(input_label, text_box_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
-    lv_label_set_long_mode(input_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(input_label, LV_LABEL_LONG_CLIP);
     lv_label_set_text(input_label, "Type Command...");
+    // Remove or reduce vertical padding for better fit
+    lv_obj_set_style_pad_ver(input_label, padding, 0); // Or remove this line entirely
+
+    // Center horizontally
+    //lv_obj_set_style_text_align(input_label, LV_TEXT_ALIGN_CENTER, 0);
+
+    // Center vertically by adjusting vertical padding
+    int font_height = lv_font_get_line_height(&lv_font_montserrat_14); // Use your font
+    int vertical_pad = (textbox_height - font_height) / 2;
+    if (vertical_pad < 0) vertical_pad = 0; // Prevent negative padding
+    lv_obj_set_style_pad_top(input_label, vertical_pad, 0);
+    lv_obj_set_style_pad_bottom(input_label, vertical_pad, 0);
 #endif
 
-  display_manager_add_status_bar("Terminal");
+    display_manager_add_status_bar("Terminal");
 
-  if (!terminal_update_timer) { 
-      terminal_update_timer = lv_timer_create(process_queued_messages_callback, 50, NULL);
-      if (!terminal_update_timer) {
-          ESP_LOGE(TAG, "Failed to create terminal update timer");
-      }
-  }
-  createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
+    if (!terminal_update_timer) {
+        terminal_update_timer = lv_timer_create(process_queued_messages_callback, 50, NULL);
+        if (!terminal_update_timer) {
+            ESP_LOGE(TAG, "Failed to create terminal update timer");
+        }
+    }
+    createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
 }
 
 void terminal_view_destroy(void) {
