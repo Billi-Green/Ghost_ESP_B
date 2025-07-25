@@ -87,6 +87,10 @@ static void fade_out_ready_cb(lv_anim_t *a) {
     lv_obj_del((lv_obj_t *)a->var);
 }
 
+static void anim_set_opa(void *obj, int32_t v) {
+    lv_obj_set_style_opa((lv_obj_t *)obj, v, 0);
+}
+
 static void update_menu_item(bool slide_left) {
     static lv_obj_t *prev_item_obj = NULL;
 
@@ -112,7 +116,7 @@ static void update_menu_item(bool slide_left) {
         lv_anim_set_var(&fade_out, prev_item_obj);
         lv_anim_set_values(&fade_out, LV_OPA_COVER, LV_OPA_TRANSP);
         lv_anim_set_time(&fade_out, 120);
-        lv_anim_set_exec_cb(&fade_out, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+        lv_anim_set_exec_cb(&fade_out, anim_set_opa);
         lv_anim_start(&fade_out);
     }
 
@@ -186,7 +190,7 @@ static void update_menu_item(bool slide_left) {
     lv_anim_set_var(&fade_in, current_item_obj);
     lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_time(&fade_in, 120);
-    lv_anim_set_exec_cb(&fade_in, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+    lv_anim_set_exec_cb(&fade_in, anim_set_opa);
     lv_anim_start(&fade_in);
 
     // Ensure the new item is fully opaque at the end
