@@ -13,6 +13,8 @@
 
 static const char *TAG = "MainMenu";
 
+#define ANIM_DURATION 60 // Animation duration in milliseconds HIGH: 30, LOW: 120
+
 lv_obj_t *menu_container;
 static int selected_item_index = 0;
 static int touch_start_x;
@@ -97,14 +99,13 @@ static void update_menu_item(bool slide_left) {
     // Animate out old item if it exists
     if (current_item_obj) {
         prev_item_obj = current_item_obj;
-
         // Slide out
         lv_anim_t anim_out;
         lv_anim_init(&anim_out);
         lv_anim_set_var(&anim_out, prev_item_obj);
         int end_x = slide_left ? -LV_HOR_RES : LV_HOR_RES;
-        lv_anim_set_values(&anim_out, lv_obj_get_x(prev_item_obj), end_x);
-        lv_anim_set_time(&anim_out, 120);
+        lv_anim_set_values(&anim_out, 0, end_x);
+        lv_anim_set_time(&anim_out, ANIM_DURATION);
         lv_anim_set_path_cb(&anim_out, lv_anim_path_ease_in_out);
         lv_anim_set_exec_cb(&anim_out, anim_set_x);
         lv_anim_set_ready_cb(&anim_out, fade_out_ready_cb);
@@ -115,7 +116,7 @@ static void update_menu_item(bool slide_left) {
         lv_anim_init(&fade_out);
         lv_anim_set_var(&fade_out, prev_item_obj);
         lv_anim_set_values(&fade_out, LV_OPA_COVER, LV_OPA_TRANSP);
-        lv_anim_set_time(&fade_out, 120);
+        lv_anim_set_time(&fade_out, ANIM_DURATION);
         lv_anim_set_exec_cb(&fade_out, anim_set_opa);
         lv_anim_start(&fade_out);
     }
@@ -139,9 +140,8 @@ static void update_menu_item(bool slide_left) {
 
     // Start new item off-screen (opposite direction of swipe)
     int start_x = slide_left ? LV_HOR_RES : -LV_HOR_RES;
-    lv_obj_set_x(current_item_obj, start_x);
-    lv_obj_set_style_opa(current_item_obj, LV_OPA_TRANSP, 0); // Start transparent
     lv_obj_align(current_item_obj, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_opa(current_item_obj, LV_OPA_TRANSP, 0); // Start transparent
 
     lv_obj_t *icon = lv_img_create(current_item_obj);
     lv_img_set_src(icon, menu_items[selected_item_index].icon);
@@ -161,6 +161,7 @@ static void update_menu_item(bool slide_left) {
     int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
     int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
     lv_obj_set_pos(icon, x_pos, y_pos);
+    //lv_obj_align(icon, LV_ALIGN_CENTER, icon_x_offset, icon_y_offset);
 
     lv_coord_t img_width = menu_items[selected_item_index].icon->header.w;
     lv_coord_t img_height = menu_items[selected_item_index].icon->header.h;
@@ -180,7 +181,7 @@ static void update_menu_item(bool slide_left) {
     lv_anim_init(&anim_in);
     lv_anim_set_var(&anim_in, current_item_obj);
     lv_anim_set_values(&anim_in, start_x, 0);
-    lv_anim_set_time(&anim_in, 120);
+    lv_anim_set_time(&anim_in, ANIM_DURATION);
     lv_anim_set_path_cb(&anim_in, lv_anim_path_ease_in_out);
     lv_anim_set_exec_cb(&anim_in, anim_set_x);
     lv_anim_start(&anim_in);
@@ -189,7 +190,7 @@ static void update_menu_item(bool slide_left) {
     lv_anim_init(&fade_in);
     lv_anim_set_var(&fade_in, current_item_obj);
     lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_time(&fade_in, 120);
+    lv_anim_set_time(&fade_in, ANIM_DURATION);
     lv_anim_set_exec_cb(&fade_in, anim_set_opa);
     lv_anim_start(&fade_in);
 
