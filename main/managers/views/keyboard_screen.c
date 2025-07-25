@@ -376,7 +376,7 @@ static void keyboard_create() {
                 const char* key_text = current_keys[r][c];
                 if (!is_symbols_mode && strlen(key_text) == 1) {
                     char new_text[2];
-                    if (isalpha(key_text[0])) {
+                    if (isalpha((unsigned char)key_text[0])) {
                         new_text[0] = is_caps ? toupper(key_text[0]) : tolower(key_text[0]);
                     } else {
                         new_text[0] = key_text[0];
