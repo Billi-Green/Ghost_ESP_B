@@ -98,7 +98,11 @@ static void add_char_to_buffer(char c) {
     if (input_len < sizeof(input_buffer) - 1) {
         // Use capslock or SHIFT if active, otherwise lowercase
         bool use_caps = is_capslock || is_caps;
-        input_buffer[input_len++] = use_caps ? toupper((unsigned char)c) : tolower((unsigned char)c);
+        if (isalpha((unsigned char)c)) {
+            input_buffer[input_len++] = use_caps ? toupper((unsigned char)c) : tolower((unsigned char)c);
+        } else {
+            input_buffer[input_len++] = c; // Add non-alphabetic characters unchanged
+        }
         input_buffer[input_len] = '\0';
         update_input_label();
     }
