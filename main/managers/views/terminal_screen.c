@@ -294,24 +294,19 @@ void terminal_view_create(void) {
 
     input_label = lv_label_create(terminal_view.root);
     lv_obj_set_size(input_label, textbox_width, textbox_height);
-    // Match back button styling:
-    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x333333), 0); // Same dark gray as back button
+    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x333333), 0);
     lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0); // White text for contrast
+    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_pad_all(input_label, padding, 0);
-    lv_obj_set_style_radius(input_label, 6, 0); // Circular radius like back button
-    lv_obj_set_style_border_width(input_label, 0, 0); // No border, matches back button
-    lv_obj_set_style_shadow_width(input_label, 0, 0); // No shadow, matches back button
+    lv_obj_set_style_radius(input_label, 6, 0);
+    lv_obj_set_style_border_width(input_label, 0, 0);
+    lv_obj_set_style_shadow_width(input_label, 0, 0);
     lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -padding);
     lv_obj_add_event_cb(input_label, text_box_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
     lv_label_set_long_mode(input_label, LV_LABEL_LONG_CLIP);
     lv_label_set_text(input_label, "Type Command...");
     // Remove or reduce vertical padding for better fit
-    lv_obj_set_style_pad_ver(input_label, padding, 0); // Or remove this line entirely
-
-    // Center horizontally
-    //lv_obj_set_style_text_align(input_label, LV_TEXT_ALIGN_CENTER, 0);
 
     // Center vertically by adjusting vertical padding
     int font_height = lv_font_get_line_height(&lv_font_montserrat_14); // Use your font
@@ -355,8 +350,7 @@ void terminal_view_destroy(void) {
             terminal_mutex = NULL;
         } else {
             ESP_LOGE(TAG, "Failed to acquire terminal mutex during destroy. A leak may occur.");
-            terminal_view.root = NULL;
-            terminal_mutex = NULL;
+            // Optionally retry or set a flag to attempt cleanup later
         }
     }
 
