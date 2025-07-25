@@ -613,7 +613,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                     add_char_to_buffer(' ');
                 } else if (strlen(key) == 1) {
                     char adjusted_char = key[0];
-                    if (!is_symbols_mode && strlen(key) == 1) {
+                    if (!is_symbols_mode && strlen(key) == 1 && isalpha(adjusted_char)) {
                         adjusted_char = is_caps ? toupper(adjusted_char) : tolower(adjusted_char);
                     }
                     add_char_to_buffer(adjusted_char);
