@@ -22,6 +22,7 @@ static KeyboardSubmitCallback submit_callback = NULL;
 
 static bool is_caps = true;
 static bool is_symbols_mode = false;
+static bool is_capslock = false;
 #ifdef CONFIG_USE_ENCODER
 static lv_obj_t *encoder_cont = NULL;
 static lv_obj_t *encoder_labels[50];
@@ -95,13 +96,14 @@ static void submit_text() {
 
 static void add_char_to_buffer(char c) {
     if (input_len < sizeof(input_buffer) - 1) {
-        // Use SHIFT if active, otherwise lowercase
-        input_buffer[input_len++] = is_caps ? toupper((unsigned char)c) : tolower((unsigned char)c);
+        // Use capslock or SHIFT if active, otherwise lowercase
+        bool use_caps = is_capslock || is_caps;
+        input_buffer[input_len++] = use_caps ? toupper((unsigned char)c) : tolower((unsigned char)c);
         input_buffer[input_len] = '\0';
         update_input_label();
     }
-    if (is_caps) {
-        is_caps = false; // Reset to lowercase after any key press
+    if (is_caps && !is_capslock) {
+        is_caps = false; // Reset to lowercase after any key press unless capslock is on
         update_key_labels(); // Update key labels to reflect the change
     }
 }
@@ -156,7 +158,10 @@ static void update_key_labels() {
 
                             // Highlight SHIFT key if active
                             if (strcmp(key_text, "SHIFT") == 0) {
-                                if (is_caps) {
+                                if (is_capslock) {
+                                    lv_obj_set_style_bg_color(key_btn, lv_color_hex(0x00BFFF), 0); // blue for capslock
+                                    lv_obj_set_style_text_color(key_label, lv_color_hex(0xFFFFFF), 0);
+                                } else if (is_caps) {
                                     lv_obj_set_style_bg_color(key_btn, lv_color_hex(0xFFD600), 0); // yellow when active
                                     lv_obj_set_style_text_color(key_label, lv_color_hex(0x000000), 0); // black text
                                 } else {
@@ -444,6 +449,7 @@ static void keyboard_destroy() {
         input_buffer[0] = '\0';
         is_symbols_mode = false;
         is_caps = true;
+        is_capslock = false;
 #ifdef CONFIG_USE_ENCODER
         encoder_cont = NULL;
         encoder_item_count = 0;
@@ -575,7 +581,13 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
             if (col >= 0) {
                 const char* key = current_keys[row][col];
                 if (strcmp(key, "SHIFT") == 0) {
-                    is_caps = !is_caps;
+                    if (is_caps) {
+                        // If SHIFT is already active, toggle capslock
+                        is_capslock = !is_capslock;
+                        is_caps = is_capslock; // Keep caps active if capslock is on
+                    } else {
+                        is_caps = true;
+                    }
                     update_key_labels();
                 } else if (strcmp(key, "SYM") == 0) {
                     is_symbols_mode = true;
