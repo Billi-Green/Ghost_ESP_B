@@ -306,7 +306,7 @@ void terminal_view_create(void) {
     lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
     lv_label_set_long_mode(input_label, LV_LABEL_LONG_CLIP);
     lv_label_set_text(input_label, "Type Command...");
-    // Remove or reduce vertical padding for better fit
+    // Calculate and set vertical padding to center the text within the textbox
 
     // Center vertically by adjusting vertical padding
     int font_height = lv_font_get_line_height(&lv_font_montserrat_14); // Use your font
