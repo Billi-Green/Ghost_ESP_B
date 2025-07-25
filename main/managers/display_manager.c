@@ -926,6 +926,7 @@ void set_backlight_brightness(uint8_t percentage) {
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
     // ----- switch mode -----
     // make sure the pin is configured as a GPIO output
+    gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
     gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
     gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage > 0 ? 1 : 0);
 #else
