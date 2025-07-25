@@ -205,6 +205,7 @@ static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
 
 // shared styles for memory optimization
 static lv_style_t style_menu_item;
+static lv_style_t style_menu_item_alt;
 static lv_style_t style_selected_item;
 static lv_style_t style_menu_label;
 static bool styles_initialized = false;
@@ -227,6 +228,13 @@ static void init_shared_styles(void) {
     lv_style_set_bg_opa(&style_menu_item, LV_OPA_COVER);
     lv_style_set_border_width(&style_menu_item, 0);
     lv_style_set_radius(&style_menu_item, 0);
+
+    // Alternate style for subtle zebra striping
+    lv_style_init(&style_menu_item_alt);
+    lv_style_set_bg_color(&style_menu_item_alt, lv_color_hex(0x232323)); // Slightly lighter/darker, but more subtle
+    lv_style_set_bg_opa(&style_menu_item_alt, LV_OPA_COVER);
+    lv_style_set_border_width(&style_menu_item_alt, 0);
+    lv_style_set_radius(&style_menu_item_alt, 0);
     
     lv_style_init(&style_selected_item);
     lv_style_set_bg_opa(&style_selected_item, LV_OPA_COVER);
@@ -1521,6 +1529,7 @@ void options_menu_destroy() {
     // Reset styles if needed
     if (styles_initialized) {
         lv_style_reset(&style_menu_item);
+        lv_style_reset(&style_menu_item_alt);
         lv_style_reset(&style_selected_item);
         lv_style_reset(&style_menu_label);
         styles_initialized = false;
@@ -1671,7 +1680,16 @@ static void menu_builder_cb(lv_timer_t *t)
                         lv_obj_set_style_text_font(label,
                             is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
                             0);
-                        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+                        //lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0); // Center horizontally
+
+                        // Vertically center by adjusting top/bottom padding
+                        int font_height = lv_font_get_line_height(is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
+                        int btn_height = lv_obj_get_height(btn);
+                        int vertical_pad = (btn_height - font_height) / 2;
+                        if (vertical_pad < 0) vertical_pad = 0;
+                        lv_obj_set_style_pad_top(label, vertical_pad, 0);
+                        lv_obj_set_style_pad_bottom(label, vertical_pad, 0);
+
                         lv_obj_add_style(label, &style_menu_label, 0);
                     }
                     lv_obj_set_user_data(btn, (void *)(intptr_t)build_item_index);
@@ -1702,6 +1720,14 @@ static void menu_builder_cb(lv_timer_t *t)
                         lv_obj_set_style_text_font(label,
                             is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
                             0);
+                        // Vertically center by adjusting top/bottom padding
+                        int font_height = lv_font_get_line_height(is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
+                        int btn_height = lv_obj_get_height(btn);
+                        int vertical_pad = (btn_height - font_height) / 2;
+                        if (vertical_pad < 0) vertical_pad = 0;
+                        lv_obj_set_style_pad_top(label, vertical_pad, 0);
+                        lv_obj_set_style_pad_bottom(label, vertical_pad, 0);
+
                         lv_obj_add_style(label, &style_menu_label, 0);
                     }
                     lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
@@ -1723,12 +1749,25 @@ static void menu_builder_cb(lv_timer_t *t)
                 lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
                 if (!btn) break;
                 lv_obj_set_height(btn, button_height_global);
-                lv_obj_add_style(btn, &style_menu_item, 0);
+                // Alternate style based on index
+                if ((num_items % 2) == 0) {
+                    lv_obj_add_style(btn, &style_menu_item, 0);
+                } else {
+                    lv_obj_add_style(btn, &style_menu_item_alt, 0);
+                }
                 lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
                     lv_obj_set_style_text_font(label,
                         is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
                         0);
+                    // Vertically center by adjusting top/bottom padding
+                    int font_height = lv_font_get_line_height(is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
+                    int btn_height = lv_obj_get_height(btn);
+                    int vertical_pad = (btn_height - font_height) / 2;
+                    if (vertical_pad < 0) vertical_pad = 0;
+                    lv_obj_set_style_pad_top(label, vertical_pad, 0);
+                    lv_obj_set_style_pad_bottom(label, vertical_pad, 0);
+
                     lv_obj_add_style(label, &style_menu_label, 0);
                 }
                 lv_obj_set_user_data(btn, (void *)opt);
