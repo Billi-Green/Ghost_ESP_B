@@ -329,36 +329,51 @@ void terminal_view_create(void) {
 }
 
 void terminal_view_destroy(void) {
+    // Signal all callbacks/timers to stop
     terminal_active = false;
     is_stopping = true;
-    clear_message_queue();
 
+    // Clear message queue and reset state
+    clear_message_queue();
+    current_text_length = 0;
+    input_len = 0;
+    input_buffer[0] = '\0';
+
+    // Delete timer first to prevent callbacks after objects are freed
     if (terminal_update_timer) {
         lv_timer_del(terminal_update_timer);
         terminal_update_timer = NULL;
     }
 
+    // Safely delete LVGL objects
     if (terminal_mutex) {
         if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
-            if (terminal_view.root != NULL) {
+            // Delete LVGL objects if they exist
+            if (terminal_view.root) {
                 lv_obj_del(terminal_view.root);
                 terminal_view.root = NULL;
-                terminal_page = NULL;
-                back_btn = NULL;
-                input_label = NULL;
             }
+            // Set all pointers to NULL to avoid dangling references
+            terminal_page = NULL;
+            back_btn = NULL;
+            input_label = NULL;
+
+            xSemaphoreGive(terminal_mutex); // Release before deleting
             vSemaphoreDelete(terminal_mutex);
             terminal_mutex = NULL;
         } else {
             ESP_LOGE(TAG, "Failed to acquire terminal mutex during destroy. A leak may occur.");
-            // Optionally retry or set a flag to attempt cleanup later
+            // Optionally set a flag to retry cleanup later
         }
+    } else {
+        // If mutex is already NULL, still clear pointers
+        terminal_view.root = NULL;
+        terminal_page = NULL;
+        back_btn = NULL;
+        input_label = NULL;
     }
 
-    // Reset state variables
-    current_text_length = 0;
-    input_len = 0;
-    input_buffer[0] = '\0';
+    // Final state reset
     is_stopping = false;
 }
 
