@@ -309,7 +309,8 @@ void terminal_view_create(void) {
     // Calculate and set vertical padding to center the text within the textbox
 
     // Center vertically by adjusting vertical padding
-    int font_height = lv_font_get_line_height(&lv_font_montserrat_14); // Use your font
+    const lv_font_t *current_font = lv_obj_get_style_text_font(input_label, 0);
+    int font_height = lv_font_get_line_height(current_font);
     int vertical_pad = (textbox_height - font_height) / 2;
     if (vertical_pad < 0) vertical_pad = 0; // Prevent negative padding
     lv_obj_set_style_pad_top(input_label, vertical_pad, 0);
