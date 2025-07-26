@@ -228,7 +228,6 @@ void terminal_view_create(void) {
     lv_obj_set_style_bg_color(terminal_view.root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(terminal_view.root, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(terminal_view.root, 0, 0); // Remove border
-    lv_obj_set_style_border_color(terminal_view.root, lv_color_black(), 0); // Ensure border is black if shown
     lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
 
