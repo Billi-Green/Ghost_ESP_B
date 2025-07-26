@@ -52,6 +52,7 @@
   - Dynamically size error popup to content and center on screen
   - Reduce FatFS memory usage on S3TWatch and Cardputer
   - Improve battery reading accuracy on Cardputer
+  - Fix keyboard view touch detection logic - @tototo31
 
 - Commands
   - Add termianl_view_add_text logs to commands missing them
