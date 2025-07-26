@@ -69,14 +69,14 @@ void app_main(void) {
 
     // SET all SPI CS pins high to get the devices to shut it
     gpio_set_direction(39, GPIO_MODE_OUTPUT);
-    gpio_set_level(39, 100);
+    gpio_set_level(39, 1);
     gpio_set_direction(12, GPIO_MODE_OUTPUT);
-    gpio_set_level(12, 100);
+    gpio_set_level(12, 1);
     gpio_set_direction(9, GPIO_MODE_OUTPUT);
-    gpio_set_level(9, 100);
+    gpio_set_level(9, 1);
 
     gpio_set_direction(10, GPIO_MODE_OUTPUT);
-    gpio_set_level(10, 100); // set tdeck POWER_ON pin high to enable peripherals
+    gpio_set_level(10, 1); // set tdeck POWER_ON pin high to enable peripherals
 #endif
 
 #ifdef USB_MODULE
