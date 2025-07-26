@@ -28,6 +28,9 @@
   - 'chipinfo' command to display chip information
   - 'apenable' command to enable/disable the Access Point
 
+- Misc
+  - Add build name config variable for debugging and auto-flash support - @tototo31
+
 ### Changed
 
 - Display
