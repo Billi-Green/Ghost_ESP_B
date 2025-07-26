@@ -1655,12 +1655,13 @@ static const lv_font_t* get_options_menu_font(void) {
 
 static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
     if (!label || !btn) return;
-    int font_height = lv_font_get_line_height(get_options_menu_font());
-    int btn_height = lv_obj_get_height(btn);
-    int vertical_pad = (btn_height - font_height) / 2;
-    if (vertical_pad < 0) vertical_pad = 0;
-    lv_obj_set_style_pad_top(label, vertical_pad, 0);
-    lv_obj_set_style_pad_bottom(label, vertical_pad, 0);
+    lv_obj_set_style_pad_top(btn, 0, 0);
+    float btn_y_center_pad = (button_height_global - lv_font_get_line_height(get_options_menu_font())) / 2;
+    if (btn_y_center_pad < 0) btn_y_center_pad = 0; // Ensure padding is not negative
+    lv_obj_set_style_pad_top(label, btn_y_center_pad, 0);
+
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+
 }
 
 static lv_style_t* get_zebra_style(int index) {
