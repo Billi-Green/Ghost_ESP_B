@@ -537,6 +537,7 @@ static void apply_setting_change(int setting_index, int new_value) {
     switch (item->setting_type) {
         case SETTING_RGB_MODE:
             settings_set_rgb_mode(&G_Settings, new_value);
+            display_manager_update_status_bar_color();
             break;
         case SETTING_DISPLAY_TIMEOUT: {
             uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : new_value == 3 ? 60000 : 0; // Handle "Never"

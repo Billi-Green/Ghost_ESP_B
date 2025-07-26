@@ -410,6 +410,8 @@ static void update_rainbow_effect(const FSettings *settings) {
     if (rainbow_timer != NULL) {
       lv_timer_del(rainbow_timer);
       rainbow_timer = NULL;
+      // Reset status bar color when leaving rainbow mode
+      display_manager_update_status_bar_color();
     }
   }
 }
