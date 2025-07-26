@@ -357,8 +357,7 @@ void terminal_view_destroy(void) {
             back_btn = NULL;
             input_label = NULL;
 
-            xSemaphoreGive(terminal_mutex); // Release before deleting
-            vSemaphoreDelete(terminal_mutex);
+            vSemaphoreDelete(terminal_mutex); // Delete mutex directly after acquiring
             terminal_mutex = NULL;
         } else {
             ESP_LOGE(TAG, "Failed to acquire terminal mutex during destroy. A leak may occur.");
