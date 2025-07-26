@@ -62,6 +62,7 @@
   - Add termianl_view_add_text logs to commands missing them
   - Skip pcap flush if mutex is null
   - Fix stop command not stopping GPS task
+  - Fix serial going unresponsive by using 'scanap -stop'
 
 - General
   - Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
