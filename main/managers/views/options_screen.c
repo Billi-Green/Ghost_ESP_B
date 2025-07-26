@@ -1752,14 +1752,7 @@ static void menu_builder_cb(lv_timer_t *t)
                 lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
                     lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
-                    // Vertically center by adjusting top/bottom padding
-                    int font_height = lv_font_get_line_height(get_options_menu_font());
-                    int btn_height = lv_obj_get_height(btn);
-                    int vertical_pad = (btn_height - font_height) / 2;
-                    if (vertical_pad < 0) vertical_pad = 0;
-                    lv_obj_set_style_pad_top(label, vertical_pad, 0);
-                    lv_obj_set_style_pad_bottom(label, vertical_pad, 0);
-
+                    vertically_center_label(label, btn);
                     lv_obj_add_style(label, &style_menu_label, 0);
                 }
                 lv_obj_set_user_data(btn, (void *)opt);
