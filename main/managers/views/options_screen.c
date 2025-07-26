@@ -1777,7 +1777,7 @@ static void menu_builder_cb(lv_timer_t *t)
             lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
             if (btn) {
                 lv_obj_set_height(btn, button_height_global);
-                lv_obj_add_style(btn, &style_menu_item, 0);
+                lv_obj_add_style(btn, get_zebra_style(num_items), 0);
                 lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
                     lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
