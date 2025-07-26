@@ -18,6 +18,8 @@ extern View keyboard_view;
 static const char *TAG = "Terminal";
 static lv_obj_t *terminal_page = NULL;
 static SemaphoreHandle_t terminal_mutex = NULL;
+static bool retry_cleanup_flag = false;
+static lv_timer_t *terminal_cleanup_retry_timer = NULL;
 static bool terminal_active = false;
 static bool is_stopping = false;
 #define MAX_TEXT_LENGTH 4096
@@ -326,6 +328,19 @@ void terminal_view_create(void) {
     }
     createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
 }
+static void terminal_retry_cleanup_cb(lv_timer_t *timer) {
+    if (!retry_cleanup_flag) {
+        lv_timer_del(timer);
+        terminal_cleanup_retry_timer = NULL;
+        return;
+    }
+    ESP_LOGI(TAG, "Retrying terminal cleanup...");
+    // Try to destroy again
+    retry_cleanup_flag = false;
+    terminal_view_destroy();
+    // If cleanup succeeds, the flag will stay false and timer will be deleted
+    // If not, the flag will be set again and timer will keep running
+}
 
 void terminal_view_destroy(void) {
     // Signal all callbacks/timers to stop
@@ -362,6 +377,9 @@ void terminal_view_destroy(void) {
         } else {
             ESP_LOGE(TAG, "Failed to acquire terminal mutex during destroy. A leak may occur.");
             retry_cleanup_flag = true; // Set flag to retry cleanup later
+            if (!terminal_cleanup_retry_timer) {
+                terminal_cleanup_retry_timer = lv_timer_create(terminal_retry_cleanup_cb, 250, NULL);
+            }
         }
     } else {
         // If mutex is already NULL, still clear pointers
@@ -373,6 +391,10 @@ void terminal_view_destroy(void) {
 
     // Final state reset
     is_stopping = false;
+    if (terminal_cleanup_retry_timer) {
+        lv_timer_del(terminal_cleanup_retry_timer);
+        terminal_cleanup_retry_timer = NULL;
+    }
 }
 
 void terminal_view_add_text(const char *text) {
