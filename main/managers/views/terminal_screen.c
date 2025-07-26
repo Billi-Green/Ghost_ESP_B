@@ -361,7 +361,7 @@ void terminal_view_destroy(void) {
             terminal_mutex = NULL;
         } else {
             ESP_LOGE(TAG, "Failed to acquire terminal mutex during destroy. A leak may occur.");
-            // Optionally set a flag to retry cleanup later
+            retry_cleanup_flag = true; // Set flag to retry cleanup later
         }
     } else {
         // If mutex is already NULL, still clear pointers
