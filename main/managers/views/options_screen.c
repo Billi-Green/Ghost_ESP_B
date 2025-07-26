@@ -1680,7 +1680,6 @@ static void menu_builder_cb(lv_timer_t *t)
                         lv_obj_set_style_text_font(label,
                             is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
                             0);
-                        //lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0); // Center horizontally
 
                         // Vertically center by adjusting top/bottom padding
                         int font_height = lv_font_get_line_height(is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
