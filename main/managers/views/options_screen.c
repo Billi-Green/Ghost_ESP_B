@@ -1663,6 +1663,10 @@ static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
     lv_obj_set_style_pad_bottom(label, vertical_pad, 0);
 }
 
+static lv_style_t* get_zebra_style(int index) {
+    return (index % 2 == 0) ? &style_menu_item : &style_menu_item_alt;
+}
+
 // build menu items in small batches so we don't starve the watchdog
 static void menu_builder_cb(lv_timer_t *t)
 {
@@ -1683,12 +1687,14 @@ static void menu_builder_cb(lv_timer_t *t)
     if (!back_option_was_added_in_previous_tick) {
         if (is_settings_mode) {
             if (current_settings_category < 0) { // Top-level categories (e.g., "Display", "Config")
+                // Top-level categories (e.g., "Display", "Config")
                 while (settings_categories[build_item_index] != NULL && built_this_tick < BATCH) {
                     const char *cat = settings_categories[build_item_index];
                     lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, cat);
                     if (!btn) break;
                     lv_obj_set_height(btn, button_height_global * 1.2);
-                    lv_obj_add_style(btn, &style_menu_item, 0);
+                    // Zebra striping here:
+                    lv_obj_add_style(btn, get_zebra_style(num_items), 0);
                     lv_obj_t *label = lv_obj_get_child(btn, 0);
                     if (label) {
                         lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
@@ -1717,7 +1723,7 @@ static void menu_builder_cb(lv_timer_t *t)
                     lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, buf);
                     if (!btn) break;
                     lv_obj_set_height(btn, button_height_global);
-                    lv_obj_add_style(btn, &style_menu_item, 0);
+                    lv_obj_add_style(btn, get_zebra_style(num_items), 0);
                     lv_obj_t *label = lv_obj_get_child(btn, 0);
                     if (label) {
                         lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
@@ -1743,12 +1749,7 @@ static void menu_builder_cb(lv_timer_t *t)
                 lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
                 if (!btn) break;
                 lv_obj_set_height(btn, button_height_global);
-                // Alternate style based on index
-                if ((num_items % 2) == 0) {
-                    lv_obj_add_style(btn, &style_menu_item, 0);
-                } else {
-                    lv_obj_add_style(btn, &style_menu_item_alt, 0);
-                }
+                lv_obj_add_style(btn, get_zebra_style(num_items), 0);
                 lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
                     lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
