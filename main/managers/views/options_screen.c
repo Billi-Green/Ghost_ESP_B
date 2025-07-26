@@ -1661,7 +1661,6 @@ static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
     lv_obj_set_style_pad_top(label, btn_y_center_pad, 0);
 
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
-
 }
 
 static lv_style_t* get_zebra_style(int index) {
