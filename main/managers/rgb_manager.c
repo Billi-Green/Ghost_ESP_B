@@ -356,6 +356,23 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
 esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
                                 uint8_t red, uint8_t green, uint8_t blue,
                                 bool pulse) {
+    // --- STEALTH MODE ENFORCEMENT ---
+    if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
+        // Always turn off all LEDs in stealth mode
+        if (rgb_manager->is_separate_pins) {
+            ledc_stop(LEDC_MODE, LEDC_CHANNEL_RED, 1);
+            ledc_stop(LEDC_MODE, LEDC_CHANNEL_GREEN, 1);
+            ledc_stop(LEDC_MODE, LEDC_CHANNEL_BLUE, 1);
+        } else if (rgb_manager->strip) {
+            for (int i = 0; i < rgb_manager->num_leds; i++) {
+                led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
+            }
+            led_strip_refresh(rgb_manager->strip);
+        }
+        return ESP_OK;
+    }
+    // --- END STEALTH MODE ENFORCEMENT ---
+
     if (!rgb_manager)
         return ESP_ERR_INVALID_ARG;
 
