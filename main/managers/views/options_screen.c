@@ -1649,6 +1649,10 @@ display_manager_switch_view(&terminal_view);
     keyboard_view_set_submit_callback(NULL);
 }
 
+static const lv_font_t* get_options_menu_font(void) {
+    return is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+}
+
 // build menu items in small batches so we don't starve the watchdog
 static void menu_builder_cb(lv_timer_t *t)
 {
@@ -1677,12 +1681,10 @@ static void menu_builder_cb(lv_timer_t *t)
                     lv_obj_add_style(btn, &style_menu_item, 0);
                     lv_obj_t *label = lv_obj_get_child(btn, 0);
                     if (label) {
-                        lv_obj_set_style_text_font(label,
-                            is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                            0);
+                        lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
 
                         // Vertically center by adjusting top/bottom padding
-                        int font_height = lv_font_get_line_height(is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
+                        int font_height = lv_font_get_line_height(get_options_menu_font());
                         int btn_height = lv_obj_get_height(btn);
                         int vertical_pad = (btn_height - font_height) / 2;
                         if (vertical_pad < 0) vertical_pad = 0;
@@ -1716,11 +1718,9 @@ static void menu_builder_cb(lv_timer_t *t)
                     lv_obj_add_style(btn, &style_menu_item, 0);
                     lv_obj_t *label = lv_obj_get_child(btn, 0);
                     if (label) {
-                        lv_obj_set_style_text_font(label,
-                            is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                            0);
+                        lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
                         // Vertically center by adjusting top/bottom padding
-                        int font_height = lv_font_get_line_height(is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
+                        int font_height = lv_font_get_line_height(get_options_menu_font());
                         int btn_height = lv_obj_get_height(btn);
                         int vertical_pad = (btn_height - font_height) / 2;
                         if (vertical_pad < 0) vertical_pad = 0;
@@ -1756,11 +1756,9 @@ static void menu_builder_cb(lv_timer_t *t)
                 }
                 lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
-                    lv_obj_set_style_text_font(label,
-                        is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                        0);
+                    lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
                     // Vertically center by adjusting top/bottom padding
-                    int font_height = lv_font_get_line_height(is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
+                    int font_height = lv_font_get_line_height(get_options_menu_font());
                     int btn_height = lv_obj_get_height(btn);
                     int vertical_pad = (btn_height - font_height) / 2;
                     if (vertical_pad < 0) vertical_pad = 0;
@@ -1794,7 +1792,7 @@ static void menu_builder_cb(lv_timer_t *t)
                 lv_obj_add_style(btn, &style_menu_item, 0);
                 lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
-                    lv_obj_set_style_text_font(label, is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14, 0);
+                    lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
                     if (is_settings_mode && current_settings_category < 0) {
                         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
                     }
