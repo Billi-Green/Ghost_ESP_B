@@ -1687,7 +1687,6 @@ static void menu_builder_cb(lv_timer_t *t)
     if (!back_option_was_added_in_previous_tick) {
         if (is_settings_mode) {
             if (current_settings_category < 0) { // Top-level categories (e.g., "Display", "Config")
-                // Top-level categories (e.g., "Display", "Config")
                 while (settings_categories[build_item_index] != NULL && built_this_tick < BATCH) {
                     const char *cat = settings_categories[build_item_index];
                     lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, cat);
