@@ -21,7 +21,7 @@ typedef struct {
   double v; // ∈ [0, 1]
 } hsv;
 
-#define LEDC_TIMER LEDC_TIMER_1
+#define LEDC_TIMER LEDC_TIMER_0
 #define LEDC_MODE LEDC_LOW_SPEED_MODE
 #define LEDC_CHANNEL_RED LEDC_CHANNEL_0
 #define LEDC_CHANNEL_GREEN LEDC_CHANNEL_1
