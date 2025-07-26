@@ -38,6 +38,7 @@
   - Color status bar icons based on their activity
   - S3TWatch: Disable tap-to-wake, use touch interrupt instead.
   - Exiting a view now returns to the previous view instead of the main menu - @tototo31
+  - Add CAPSLOCK shift toggle to keyboard view - @tototo31
 
 - WebUI
   - Minor style tweaks
@@ -52,6 +53,7 @@
   - Dynamically size error popup to content and center on screen
   - Reduce FatFS memory usage on S3TWatch and Cardputer
   - Improve battery reading accuracy on Cardputer
+  - Fix keyboard view touch detection logic - @tototo31
 
 - Commands
   - Add termianl_view_add_text logs to commands missing them
