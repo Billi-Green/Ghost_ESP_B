@@ -2343,6 +2343,7 @@ void handle_web_auth_cmd(int argc, char **argv) {
 void handle_listportals(int argc, char **argv);
 void handle_evilportal(int argc, char **argv);
 void handle_wifi_disconnect(int argc, char **argv);
+void handle_set_rgb_mode_cmd(int argc, char **argv);
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -2715,6 +2716,7 @@ void register_commands() {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blespam", handle_ble_spam_cmd);
 #endif
+    register_command("setrgbmode", handle_set_rgb_mode_cmd);
     
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
     
@@ -2810,6 +2812,30 @@ void handle_evilportal(int argc, char **argv) {
         printf("Error: Unknown command '%s'\n", argv[2]);
         TERMINAL_VIEW_ADD_TEXT("Error: Unknown command '%s'\n", argv[2]);
     }
+}
+
+void handle_set_rgb_mode_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        printf("Usage: setrgbmode <normal|rainbow|stealth>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: setrgbmode <normal|rainbow|stealth>\n");
+        return;
+    }
+    RGBMode mode;
+    if (strcasecmp(argv[1], "normal") == 0) {
+        mode = RGB_MODE_NORMAL;
+    } else if (strcasecmp(argv[1], "rainbow") == 0) {
+        mode = RGB_MODE_RAINBOW;
+    } else if (strcasecmp(argv[1], "stealth") == 0) {
+        mode = RGB_MODE_STEALTH;
+    } else {
+        printf("Invalid mode '%s'. Supported modes: normal, rainbow, stealth\n", argv[1]);
+        TERMINAL_VIEW_ADD_TEXT("Invalid mode '%s'. Supported modes: normal, rainbow, stealth\n", argv[1]);
+        return;
+    }
+    settings_set_rgb_mode(&G_Settings, mode);
+    settings_save(&G_Settings);
+    printf("RGB mode set to %s\n", argv[1]);
+    TERMINAL_VIEW_ADD_TEXT("RGB mode set to %s\n", argv[1]);
 }
 
 

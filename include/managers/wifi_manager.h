@@ -154,6 +154,8 @@ void wifi_manager_stop_beacon();
 
 void wifi_manager_set_manual_disconnect(bool disconnect);
 
+void wifi_manager_configure_sta_from_settings(void);
+
 void wifi_manager_start_ip_lookup();
 
 void wifi_manager_connect_wifi(const char *ssid, const char *password);

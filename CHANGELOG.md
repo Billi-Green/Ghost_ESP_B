@@ -31,10 +31,12 @@
   - 'chipinfo' command to display chip information
   - 'apenable' command to enable/disable the Access Point
   - 'disconnect' command to disconnect from the current network
+  - 'setrgbmode' command to change the RGB mode
 
 - Misc
   - Add build name config variable for debugging and auto-flash support - @tototo31
   - Try to connect to saved WiFi on boot if available
+  - Add 'Stealth' mode for silencing RGB - @tototo31
   
 ### Changed
 
