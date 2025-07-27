@@ -35,7 +35,7 @@ typedef enum {
 } html_capture_state_t;
 
 static html_capture_state_t html_capture_state = HTML_STATE_IDLE;
-static char html_capture_buffer[32768];
+static char html_capture_buffer[2048];
 static size_t html_capture_pos = 0;
 
 // Forward declaration of command handler
