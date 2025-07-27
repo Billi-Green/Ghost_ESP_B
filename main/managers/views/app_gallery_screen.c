@@ -129,8 +129,6 @@ static void update_app_item(bool slide_left) {
     int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
     int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
     lv_obj_set_pos(icon, x_pos, y_pos);
-    //lv_obj_align(icon, LV_ALIGN_CENTER, icon_x_offset, icon_y_offset);
-
     lv_coord_t img_width = app_items[selected_app_index].icon->header.w;
     lv_coord_t img_height = app_items[selected_app_index].icon->header.h;
     ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
