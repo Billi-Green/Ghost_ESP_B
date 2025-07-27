@@ -118,7 +118,7 @@ static void update_app_item(bool slide_left) {
     lv_obj_set_size(icon, icon_size, icon_size);
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
     lv_img_set_antialias(icon, false);
-    if (strcmp(app_items[selected_app_index].name,"Clock")) {
+    if (strcmp(app_items[selected_app_index].name,"Flap")) {
         lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
     }
@@ -165,79 +165,7 @@ static void update_app_item(bool slide_left) {
     // Ensure the new item is fully opaque at the end
     lv_obj_set_style_opa(current_app_obj, LV_OPA_COVER, 0); // Always fully opaque
 }
-/*
- static void update_app_item(bool slide_left) {
-    if (current_app_obj) {
-        lv_obj_del(current_app_obj);
-    }
 
-    current_app_obj = lv_btn_create(apps_container);
-    lv_obj_set_style_bg_color(current_app_obj, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(current_app_obj, 3, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(current_app_obj, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_border_width(current_app_obj, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(current_app_obj, app_items[selected_app_index].border_color, LV_PART_MAIN);
-    lv_obj_set_style_radius(current_app_obj, 10, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(current_app_obj, 0, LV_PART_MAIN);
-    lv_obj_set_style_clip_corner(current_app_obj, false, 0);
-
-    int btn_size = LV_MIN(LV_HOR_RES, LV_VER_RES) * 0.6;
-    if (LV_HOR_RES <= 128 && LV_VER_RES <= 128) {
-        btn_size = 80;
-    }
-    lv_obj_set_size(current_app_obj, btn_size, btn_size);
-    lv_obj_align(current_app_obj, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t *icon = lv_img_create(current_app_obj);
-    lv_img_set_src(icon, app_items[selected_app_index].icon);
-
-    if (strcmp(app_items[selected_app_index].name, "Terminal") == 0) { // Special case for terminal icon
-        lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0); // Recolor to match border
-        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
-    }
-
-    const int icon_size = 50;
-    lv_obj_set_size(icon, icon_size, icon_size);
-    lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
-    lv_img_set_antialias(icon, false);
-    lv_obj_set_style_clip_corner(icon, false, 0);
-
-
-    int icon_x_offset = -3;
-    int icon_y_offset = -5;
-    int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
-    int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
-    lv_obj_set_pos(icon, x_pos, y_pos);
-
-    // Debug output
-    lv_coord_t img_width = app_items[selected_app_index].icon->header.w;
-    lv_coord_t img_height = app_items[selected_app_index].icon->header.h;
-    ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
-           btn_size, btn_size, icon_size, icon_size, img_width, img_height, x_pos, y_pos);
-
-    if (LV_HOR_RES > 150) {
-        lv_obj_t *label = lv_label_create(current_app_obj);
-        lv_label_set_text(label, app_items[selected_app_index].name);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
-    }
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, current_app_obj);
-    lv_anim_set_time(&a, 75);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-    int start_x = slide_left ? LV_HOR_RES : -LV_HOR_RES;
-    lv_anim_set_values(&a, start_x, 0);
-    lv_anim_set_exec_cb(&a, anim_set_x);
-    lv_anim_start(&a);
-
-    if (back_button) {
-        lv_obj_move_foreground(back_button);
-    }
-}
-*/
 /**
  * @brief Creates the apps menu screen view
  */
