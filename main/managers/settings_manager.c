@@ -992,7 +992,7 @@ void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
 }
 uint8_t settings_get_max_screen_brightness(const FSettings *settings) {
     return settings->max_screen_brightness;
-  
+}  
 
 void settings_get_nvs_stats(nvs_stats_t *stats) {
   esp_err_t err = nvs_get_stats(NULL, stats);
