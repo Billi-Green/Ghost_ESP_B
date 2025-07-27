@@ -99,8 +99,6 @@ static void unmount_virtual_storage(void) {
 }
 #endif
 
-// Removed unused function get_next_pcap_file_name - it was defined but never used
-
 void list_files_recursive(const char *dirname, int level) {
   DIR *dir = opendir(dirname);
   if (!dir) {
