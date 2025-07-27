@@ -238,16 +238,30 @@ void terminal_view_create(void) {
     const int textbox_height = 40;
 
     int back_button_height = 0;
+    bool show_back_btn = false;
+    bool show_input_bar = false;
+
 #ifdef CONFIG_USE_TOUCHSCREEN
     if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+        show_back_btn = true;
         back_button_height = BUTTON_SIZE + BUTTON_PADDING * 2;
     }
 #endif
 
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
+    show_input_bar = true;
+#endif
+
     // Calculate the height for the input area (input box + padding)
-    int input_area_height = textbox_height + padding;
-    if (back_button_height > input_area_height) {
-        input_area_height = back_button_height + padding;
+    int input_area_height = 0;
+    if (show_back_btn && show_input_bar) {
+        input_area_height = (back_button_height > (textbox_height + padding) ? back_button_height : (textbox_height + padding));
+    } else if (show_back_btn) {
+        input_area_height = back_button_height;
+    } else if (show_input_bar) {
+        input_area_height = textbox_height + padding;
+    } else {
+        input_area_height = 0;
     }
 
     // Calculate the height for the terminal readout area
@@ -265,7 +279,7 @@ void terminal_view_create(void) {
     lv_obj_set_scroll_dir(terminal_page, LV_DIR_VER);
 
 #ifdef CONFIG_USE_TOUCHSCREEN
-    if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+    if (show_back_btn) {
         back_btn = lv_btn_create(terminal_view.root);
         lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
         lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, BUTTON_PADDING, -BUTTON_PADDING);
@@ -285,37 +299,37 @@ void terminal_view_create(void) {
 #endif
 
 #if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
-    int textbox_width = LV_HOR_RES - 2 * padding;
-#ifdef CONFIG_USE_TOUCHSCREEN
-    if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
-        textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING;
+    if (show_input_bar) {
+        int textbox_width = LV_HOR_RES - 2 * padding;
+    #ifdef CONFIG_USE_TOUCHSCREEN
+        if (show_back_btn) {
+            textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING;
+        }
+    #endif
+        if (textbox_width < 40) textbox_width = 40;
+
+        input_label = lv_label_create(terminal_view.root);
+        lv_obj_set_size(input_label, textbox_width, textbox_height);
+        lv_obj_set_style_bg_color(input_label, lv_color_hex(0x333333), 0);
+        lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_pad_all(input_label, padding, 0);
+        lv_obj_set_style_radius(input_label, 6, 0);
+        lv_obj_set_style_border_width(input_label, 0, 0);
+        lv_obj_set_style_shadow_width(input_label, 0, 0);
+        lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -padding);
+        lv_obj_add_event_cb(input_label, text_box_click_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
+        lv_label_set_long_mode(input_label, LV_LABEL_LONG_CLIP);
+        lv_label_set_text(input_label, "Type Command...");
+        // Center vertically by adjusting vertical padding
+        const lv_font_t *current_font = lv_obj_get_style_text_font(input_label, 0);
+        int font_height = lv_font_get_line_height(current_font);
+        int vertical_pad = (textbox_height - font_height) / 2;
+        if (vertical_pad < 0) vertical_pad = 0; // Prevent negative padding
+        lv_obj_set_style_pad_top(input_label, vertical_pad, 0);
+        lv_obj_set_style_pad_bottom(input_label, vertical_pad, 0);
     }
-#endif
-    if (textbox_width < 40) textbox_width = 40;
-
-    input_label = lv_label_create(terminal_view.root);
-    lv_obj_set_size(input_label, textbox_width, textbox_height);
-    lv_obj_set_style_bg_color(input_label, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_pad_all(input_label, padding, 0);
-    lv_obj_set_style_radius(input_label, 6, 0);
-    lv_obj_set_style_border_width(input_label, 0, 0);
-    lv_obj_set_style_shadow_width(input_label, 0, 0);
-    lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -padding);
-    lv_obj_add_event_cb(input_label, text_box_click_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(input_label, LV_OBJ_FLAG_CLICKABLE);
-    lv_label_set_long_mode(input_label, LV_LABEL_LONG_CLIP);
-    lv_label_set_text(input_label, "Type Command...");
-    // Calculate and set vertical padding to center the text within the textbox
-
-    // Center vertically by adjusting vertical padding
-    const lv_font_t *current_font = lv_obj_get_style_text_font(input_label, 0);
-    int font_height = lv_font_get_line_height(current_font);
-    int vertical_pad = (textbox_height - font_height) / 2;
-    if (vertical_pad < 0) vertical_pad = 0; // Prevent negative padding
-    lv_obj_set_style_pad_top(input_label, vertical_pad, 0);
-    lv_obj_set_style_pad_bottom(input_label, vertical_pad, 0);
 #endif
 
     display_manager_add_status_bar("Terminal");
