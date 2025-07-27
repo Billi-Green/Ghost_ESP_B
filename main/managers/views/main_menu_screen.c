@@ -23,6 +23,10 @@ static bool touch_started = false;
 static const int SWIPE_THRESHOLD = 50;
 static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
 
+static const View *pending_view_to_switch = NULL;
+static EOptionsMenuType pending_menu_type;
+static bool menu_item_selected = false;
+
 typedef struct {
   const char *name;
   const lv_img_dsc_t *icon;
@@ -93,6 +97,50 @@ static void anim_set_opa(void *obj, int32_t v) {
     lv_obj_set_style_opa((lv_obj_t *)obj, v, 0);
 }
 
+static void anim_set_scale(void *obj, int32_t v) {
+    lv_obj_set_style_transform_zoom((lv_obj_t *)obj, v, 0);
+}
+
+static void anim_set_bg_color(void *obj, int32_t v) {
+    // v is a 24-bit RGB value
+    lv_color_t color = lv_color_hex(v);
+    lv_obj_set_style_bg_color((lv_obj_t *)obj, color, LV_PART_MAIN);
+}
+
+static void button_click_anim_cb(lv_anim_t *a) {
+    if (pending_view_to_switch) {
+        if (pending_view_to_switch == &options_menu_view)
+            SelectedMenuType = pending_menu_type;
+        display_manager_switch_view((View *)pending_view_to_switch);
+        pending_view_to_switch = NULL;
+    }
+}
+static void animate_button_click(lv_obj_t *btn) {
+    // Animate opacity down and back up
+    int anim_duration = ANIM_DURATION / 8; // Half duration for click effect - divide by 8 for faster click effect
+    if (anim_duration < 10) anim_duration = 10; // Ensure minimum duration
+    
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, btn);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_50);
+    lv_anim_set_time(&a, anim_duration);
+    lv_anim_set_exec_cb(&a, anim_set_opa);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+
+    lv_anim_t a2;
+    lv_anim_init(&a2);
+    lv_anim_set_var(&a2, btn);
+    lv_anim_set_values(&a2, LV_OPA_50, LV_OPA_COVER);
+    lv_anim_set_time(&a2, anim_duration);
+    lv_anim_set_exec_cb(&a2, anim_set_opa);
+    lv_anim_set_path_cb(&a2, lv_anim_path_ease_in);
+    lv_anim_set_ready_cb(&a2, button_click_anim_cb);
+    lv_anim_start(&a2);
+    
+}
+
 static void update_menu_item(bool slide_left) {
     static lv_obj_t *prev_item_obj = NULL;
 
@@ -108,7 +156,9 @@ static void update_menu_item(bool slide_left) {
         lv_anim_set_time(&anim_out, ANIM_DURATION);
         lv_anim_set_path_cb(&anim_out, lv_anim_path_ease_in_out);
         lv_anim_set_exec_cb(&anim_out, anim_set_x);
-        lv_anim_set_ready_cb(&anim_out, fade_out_ready_cb);
+        if (!menu_item_selected) { // Only delete if not selecting
+            lv_anim_set_ready_cb(&anim_out, fade_out_ready_cb);
+        }
         lv_anim_start(&anim_out);
 
         // Fade out
@@ -295,43 +345,46 @@ static void select_menu_item(int index, bool slide_left) {
  * @brief Handles the selection of menu items.
  */
 static void handle_menu_item_selection(int item_index) {
-    typedef struct {
-        const char *name;
-        EOptionsMenuType type;
-        View *view;
-    } menu_action_t;
+    if (current_item_obj) {
+        menu_item_selected = true;
+        // Find the action for this menu item
+        typedef struct {
+            const char *name;
+            EOptionsMenuType type;
+            View *view;
+        } menu_action_t;
 
-    static const menu_action_t menu_actions[] = {
-#ifndef CONFIG_IDF_TARGET_ESP32S2
-        {"BLE", OT_Bluetooth, &options_menu_view},
-#endif
-        {"WiFi", OT_Wifi, &options_menu_view},
-#ifdef CONFIG_HAS_GPS
-        {"GPS", OT_GPS, &options_menu_view},
-#endif
-#if CONFIG_HAS_INFRARED
-        {"Infrared", 0, &infrared_view},
-#endif
-        {"Apps", 0, &apps_menu_view},
-#ifdef CONFIG_HAS_RTC_CLOCK
-        {"Clock", 0, &clock_view},
-#endif
-        {"Settings", OT_Settings, &options_menu_view}
-    };
+        static const menu_action_t menu_actions[] = {
+    #ifndef CONFIG_IDF_TARGET_ESP32S2
+            {"BLE", OT_Bluetooth, &options_menu_view},
+    #endif
+            {"WiFi", OT_Wifi, &options_menu_view},
+    #ifdef CONFIG_HAS_GPS
+            {"GPS", OT_GPS, &options_menu_view},
+    #endif
+    #if CONFIG_HAS_INFRARED
+            {"Infrared", 0, &infrared_view},
+    #endif
+            {"Apps", 0, &apps_menu_view},
+    #ifdef CONFIG_HAS_RTC_CLOCK
+            {"Clock", 0, &clock_view},
+    #endif
+            {"Settings", OT_Settings, &options_menu_view}
+        };
 
-    const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
-    const char *name = menu_items[item_index].name;
-    for (int i = 0; i < num_actions; ++i) {
-        if (strcmp(name, menu_actions[i].name) == 0) {
-            ESP_LOGI(TAG, "%s selected\n", menu_actions[i].name);
-            if (menu_actions[i].view == &options_menu_view) {
-                SelectedMenuType = menu_actions[i].type;
+        const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
+        const char *name = menu_items[item_index].name;
+        for (int i = 0; i < num_actions; ++i) {
+            if (strcmp(name, menu_actions[i].name) == 0) {
+                ESP_LOGI(TAG, "%s selected\n", menu_actions[i].name);
+                pending_view_to_switch = menu_actions[i].view;
+                pending_menu_type = menu_actions[i].type;
+                animate_button_click(current_item_obj);
+                return;
             }
-            display_manager_switch_view(menu_actions[i].view);
-            return;
         }
+        ESP_LOGW(TAG, "Unknown menu item selected: %s\n", name);
     }
-    ESP_LOGW(TAG, "Unknown menu item selected: %s\n", name);
 }
 
 /**
@@ -370,6 +423,8 @@ void main_menu_destroy(void) {
 void get_main_menu_callback(void **callback) {
     *callback = main_menu_view.input_callback;
 }
+
+
 
 View main_menu_view = {
     .root = NULL,
