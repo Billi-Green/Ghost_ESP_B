@@ -356,7 +356,9 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
 esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
                                 uint8_t red, uint8_t green, uint8_t blue,
                                 bool pulse) {
-    // --- STEALTH MODE ENFORCEMENT ---
+    if (!rgb_manager)
+        return ESP_ERR_INVALID_ARG;
+
     if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
         // Always turn off all LEDs in stealth mode
         if (rgb_manager->is_separate_pins) {
@@ -371,10 +373,6 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
         }
         return ESP_OK;
     }
-    // --- END STEALTH MODE ENFORCEMENT ---
-
-    if (!rgb_manager)
-        return ESP_ERR_INVALID_ARG;
 
     if (rgb_manager->is_separate_pins) {
         // Handle separate R, G, B pins using LEDC
