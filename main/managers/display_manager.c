@@ -909,7 +909,7 @@ void display_manager_fill_screen(lv_color_t color) {
 void set_backlight_brightness(uint8_t percentage) {
     // Clamp to user setting
     uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
-    //if (percentage > max_brightness) percentage = max_brightness;
+    if (percentage > max_brightness) percentage = max_brightness;
 
     //scale percent by max_brightness
     percentage = (percentage * max_brightness) / 100;
