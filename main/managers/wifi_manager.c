@@ -66,6 +66,7 @@ const char *TAG = "WiFiManager";
 station_ap_pair_t station_ap_list[MAX_STATIONS];
 int station_count = 0;
 bool manual_disconnect = false;
+static bool boot_connection_attempted = false;
 void *beacon_task_handle = NULL;
 void *deauth_task_handle = NULL;
 int beacon_task_running = 0;
@@ -274,15 +275,15 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         case WIFI_EVENT_STA_START:
             printf("STA started\n");
-            esp_wifi_connect();
+            // No auto-connect here - handled by wifi_event_handler
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
             if (manual_disconnect) {
                 printf("Disconnected from Wi-Fi (manual)\n");
                 manual_disconnect = false; // Reset flag
             } else {
-                printf("Disconnected from Wi-Fi\nRetrying...\n");
-                esp_wifi_connect();
+                printf("Disconnected from Wi-Fi\n");
+                // No auto-reconnection
             }
             break;
         default:
@@ -306,24 +307,29 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
                                void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        // Only auto-connect on boot if we have saved credentials
+        if (!boot_connection_attempted) {
+            boot_connection_attempted = true;
+            
+            const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+            if (saved_ssid && strlen(saved_ssid) > 0) {
+                printf("Attempting boot-time connection to saved network: %s\n", saved_ssid);
+                TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
+                esp_wifi_connect();
+            }
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
         printf("Disconnected from WiFi (reason: %d)\n", disconnected->reason);
         TERMINAL_VIEW_ADD_TEXT("Disconnected from WiFi (reason: %d)\n", disconnected->reason);
         
-        // Only attempt to reconnect if we're not in the middle of a manual connection attempt
-        // This prevents conflicts between manual and automatic reconnection attempts
-        EventBits_t bits = xEventGroupGetBits(wifi_event_group);
-        if (!(bits & WIFI_CONNECTING_BIT)) {
-            if (manual_disconnect) {
-                printf("Disconnected from WiFi (manual)\n");
-                TERMINAL_VIEW_ADD_TEXT("Disconnected from WiFi (manual)\n");
-                manual_disconnect = false; // Reset the flag
-            } else {
-                esp_wifi_connect();
-            }
+        // No auto-reconnection - only manual connections via 'connect' command
+        if (manual_disconnect) {
+            printf("Disconnected from WiFi (manual)\n");
+            TERMINAL_VIEW_ADD_TEXT("Disconnected from WiFi (manual)\n");
+            manual_disconnect = false; // Reset the flag
         }
+        
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
@@ -1272,6 +1278,45 @@ void wifi_manager_init(void) {
         printf("Global CA certificate store initialized successfully.\n");
     } else {
         printf("Failed to initialize global CA certificate store: %s\n", esp_err_to_name(ret));
+    }
+}
+
+void wifi_manager_configure_sta_from_settings(void) {
+    // Configure STA with saved credentials for boot-time connection
+    const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+    const char *saved_password = settings_get_sta_password(&G_Settings);
+    if (saved_ssid && strlen(saved_ssid) > 0) {
+        wifi_config_t sta_config = {
+            .sta = {
+                .threshold.authmode = (saved_password && strlen(saved_password) > 0) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
+                .pmf_cfg = {.capable = true, .required = false},
+            },
+        };
+        
+        strlcpy((char *)sta_config.sta.ssid, saved_ssid, sizeof(sta_config.sta.ssid));
+        if (saved_password) {
+            strlcpy((char *)sta_config.sta.password, saved_password, sizeof(sta_config.sta.password));
+        }
+        
+        esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &sta_config);
+        if (err == ESP_OK) {
+            printf("STA configured with saved credentials: %s\n", saved_ssid);
+            
+            // Mark that we've attempted boot connection and try to connect
+            boot_connection_attempted = true;
+            printf("Attempting boot-time connection to: %s\n", saved_ssid);
+            TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
+            
+            esp_err_t connect_err = esp_wifi_connect();
+            if (connect_err != ESP_OK) {
+                printf("Failed to initiate connection: %s\n", esp_err_to_name(connect_err));
+                TERMINAL_VIEW_ADD_TEXT("Failed to connect to saved network\n");
+            }
+        } else {
+            printf("Failed to configure STA: %s\n", esp_err_to_name(err));
+        }
+    } else {
+        printf("No saved WiFi credentials found\n");
     }
 }
 
