@@ -35,6 +35,7 @@
 - Misc
   - Add build name config variable for debugging and auto-flash support - @tototo31
   - Try to connect to saved WiFi on boot if available
+  - Add 'Stealth' mode for silencing RGB - @tototo31
   
 ### Changed
 
