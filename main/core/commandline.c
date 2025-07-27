@@ -487,6 +487,7 @@ void handle_wifi_connection(int argc, char **argv) {
         settings_set_sta_password(&G_Settings, password);
         settings_save(&G_Settings);
     }
+    wifi_manager_set_manual_disconnect(false);
     wifi_manager_connect_wifi(ssid, password);
 
     if (VisualizerHandle == NULL) {
@@ -502,6 +503,19 @@ void handle_wifi_connection(int argc, char **argv) {
     sntp_setservername(0, "pool.ntp.org");
     sntp_init();
 #endif
+}
+
+void handle_wifi_disconnect(int argc, char **argv)
+{
+    wifi_manager_set_manual_disconnect(true);
+    esp_err_t err = esp_wifi_disconnect();
+    if (err == ESP_OK) {
+        printf("WiFi disconnect command sent successfully\n");
+        TERMINAL_VIEW_ADD_TEXT("WiFi disconnect command sent successfully\n");
+    } else {
+        printf("Failed to send disconnect command: %s\n", esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("Failed to send disconnect command\n");
+    }
 }
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -2328,6 +2342,7 @@ void handle_web_auth_cmd(int argc, char **argv) {
 
 void handle_listportals(int argc, char **argv);
 void handle_evilportal(int argc, char **argv);
+void handle_wifi_disconnect(int argc, char **argv);
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -2640,6 +2655,7 @@ void register_commands() {
     register_command("select", handle_select_cmd);
     register_command("capture", handle_capture_scan);
     register_command("startportal", handle_start_portal);
+    register_command("disconnect", handle_wifi_disconnect);
     register_command("stopportal", stop_portal);
     register_command("connect", handle_wifi_connection);
     register_command("dialconnect", handle_dial_command);

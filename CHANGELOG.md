@@ -30,10 +30,12 @@
 - Commands
   - 'chipinfo' command to display chip information
   - 'apenable' command to enable/disable the Access Point
+  - 'disconnect' command to disconnect from the current network
 
 - Misc
   - Add build name config variable for debugging and auto-flash support - @tototo31
-
+  - Try to connect to saved WiFi on boot if available
+  
 ### Changed
 
 - Display
@@ -62,15 +64,17 @@
   - Fix keyboard view touch detection logic - @tototo31
 
 - Commands
-  - Add termianl_view_add_text logs to commands missing them
+  - Add terminal_view_add_text logs to commands missing them
   - Skip pcap flush if mutex is null
   - Fix stop command not stopping GPS task
   - Fix serial going unresponsive by using 'scanap -stop'
-
+  - Small fixes to the process of connecting to a WiFi network
+  
 - General
   - Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
   - Flush every packet to UART (Flipper) immediately when there's no sd card
   - Miscellaneous refactoring for memory usage
+  - Add wifi_manager_stop_beacon function
 
 
 ## Revival 1.6.1
