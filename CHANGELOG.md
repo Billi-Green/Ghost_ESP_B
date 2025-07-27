@@ -15,6 +15,9 @@
 
 ### Added
 
+- Attacks
+  - Support for setting an Evil Portal HTML via the Flipper Zero App with a max size of 2048 bytes (as of app v1.4)
+
 - Display
   - Added 'Never' display timeout setting.
   - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.

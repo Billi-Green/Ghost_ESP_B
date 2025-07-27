@@ -1156,6 +1156,24 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("    Usage: startportal [FilePath] [AP_SSID] [PSK]\n");
     TERMINAL_VIEW_ADD_TEXT("           PSK is optional for an open network.\n");
 
+    printf("evilportal\n");
+    printf("    Description: Configure Evil Portal HTML content via UART buffer.\n");
+    printf("    Usage: evilportal -c sethtmlstr\n");
+    printf("    Steps:\n");
+    printf("      1. Run: evilportal -c sethtmlstr\n");
+    printf("      2. Send [HTML/BEGIN] marker over UART\n");
+    printf("      3. Send HTML content over UART\n");
+    printf("      4. Send [HTML/CLOSE] marker over UART\n");
+    printf("      5. Run startportal (will use buffered HTML)\n");
+    TERMINAL_VIEW_ADD_TEXT("evilportal\n");
+    TERMINAL_VIEW_ADD_TEXT("    Desc: Configure Evil Portal HTML via UART buffer.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: evilportal -c sethtmlstr\n");
+    TERMINAL_VIEW_ADD_TEXT("    Steps: 1) evilportal -c sethtmlstr\n");
+    TERMINAL_VIEW_ADD_TEXT("           2) Send [HTML/BEGIN] marker\n");
+    TERMINAL_VIEW_ADD_TEXT("           3) Send HTML content\n");
+    TERMINAL_VIEW_ADD_TEXT("           4) Send [HTML/CLOSE] marker\n");
+    TERMINAL_VIEW_ADD_TEXT("           5) Run startportal\n");
+
 
     printf("stopportal\n");
     printf("    Description: Stop Evil Portal\n");
@@ -2309,6 +2327,7 @@ void handle_web_auth_cmd(int argc, char **argv) {
 
 
 void handle_listportals(int argc, char **argv);
+void handle_evilportal(int argc, char **argv);
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -2634,6 +2653,7 @@ void register_commands() {
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
     register_command("listportals", handle_listportals);
+    register_command("evilportal", handle_evilportal);
     register_command("commdiscovery", handle_comm_discovery);
     register_command("commconnect", handle_comm_connect);
     register_command("commsend", handle_comm_send);
@@ -2746,6 +2766,33 @@ void handle_listportals(int argc, char **argv) {
     for (int i = 0; i < count; ++i) {
         printf("  %.508s\n", portal_names[i]);
         TERMINAL_VIEW_ADD_TEXT("  %.508s\n", portal_names[i]);
+    }
+}
+
+void handle_evilportal(int argc, char **argv) {
+    if (argc < 3) {
+        printf("Usage: %s -c <command>\n", argv[0]);
+        TERMINAL_VIEW_ADD_TEXT("Usage: %s -c <command>\n", argv[0]);
+        printf("Commands:\n");
+        printf("  sethtmlstr - Set HTML content from buffer (use with UART markers)\n");
+        TERMINAL_VIEW_ADD_TEXT("Commands:\n");
+        TERMINAL_VIEW_ADD_TEXT("  sethtmlstr - Set HTML content from buffer\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "-c") != 0) {
+        printf("Error: Expected -c flag\n");
+        TERMINAL_VIEW_ADD_TEXT("Error: Expected -c flag\n");
+        return;
+    }
+
+    if (strcmp(argv[2], "sethtmlstr") == 0) {
+        wifi_manager_set_html_from_uart();
+        printf("HTML buffer mode enabled for evil portal\n");
+        TERMINAL_VIEW_ADD_TEXT("HTML buffer mode enabled for evil portal\n");
+    } else {
+        printf("Error: Unknown command '%s'\n", argv[2]);
+        TERMINAL_VIEW_ADD_TEXT("Error: Unknown command '%s'\n", argv[2]);
     }
 }
 

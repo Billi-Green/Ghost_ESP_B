@@ -154,6 +154,11 @@ static char current_creds_filename[128] = "";
 static char current_keystrokes_filename[128] = "";
 static int ap_connection_count = 0;
 
+#define MAX_HTML_BUFFER_SIZE 2048
+static char* html_buffer = NULL;
+static size_t html_buffer_size = 0;
+static bool use_html_buffer = false;
+
 // Station Scan Channel Hopping Globals
 static esp_timer_handle_t scansta_channel_hop_timer = NULL;
 static uint8_t scansta_current_channel = 1;
@@ -781,6 +786,15 @@ esp_err_t portal_handler(httpd_req_t *req) {
     printf("Client requested URL: %s\n", req->uri);
     ESP_LOGI(TAG, "Free heap before serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
 
+    // Check if we should serve HTML from buffer first
+    if (use_html_buffer && html_buffer != NULL && html_buffer_size > 0) {
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_send(req, html_buffer, html_buffer_size);
+        ESP_LOGI(TAG, "Served HTML from buffer (size: %zu bytes).", html_buffer_size);
+        ESP_LOGI(TAG, "Free heap after serving buffer: %" PRIu32 " bytes", esp_get_free_heap_size());
+        return ESP_OK;
+    }
+
     // Check if we should serve the default embedded portal
     if (strcmp(PORTALURL, "INTERNAL_DEFAULT_PORTAL") == 0) {
         httpd_resp_set_type(req, "text/html");
@@ -1080,6 +1094,14 @@ void wifi_manager_stop_evil_portal() {
     login_done = false; // Reset login state on stop
     current_creds_filename[0] = '\0'; // Clear saved filenames
     current_keystrokes_filename[0] = '\0';
+    
+    // Clean up HTML buffer
+    use_html_buffer = false;
+    if (html_buffer != NULL) {
+        free(html_buffer);
+        html_buffer = NULL;
+    }
+    html_buffer_size = 0;
 
     if (dns_handle != NULL) {
         stop_dns_server(dns_handle);
@@ -4020,6 +4042,41 @@ void wifi_manager_stop_sae_flood(void) {
     wifi_manager_stop_monitor_mode();
     printf("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+}
+
+void wifi_manager_set_html_from_uart(void) {
+    use_html_buffer = true;
+    if (html_buffer == NULL) {
+        html_buffer = (char*)malloc(MAX_HTML_BUFFER_SIZE);
+        if (html_buffer == NULL) {
+            printf("Failed to allocate HTML buffer\n");
+            use_html_buffer = false;
+            return;
+        }
+    }
+    html_buffer_size = 0;
+    printf("HTML buffer mode enabled, ready to receive HTML content\n");
+}
+
+void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final) {
+    if (!use_html_buffer || html_buffer == NULL) {
+        return;
+    }
+    
+    if (html_buffer_size + len >= MAX_HTML_BUFFER_SIZE) {
+        printf("HTML buffer overflow, truncating content\n");
+        len = MAX_HTML_BUFFER_SIZE - html_buffer_size - 1;
+    }
+    
+    if (len > 0) {
+        memcpy(html_buffer + html_buffer_size, data, len);
+        html_buffer_size += len;
+    }
+    
+    if (is_final) {
+        html_buffer[html_buffer_size] = '\0';
+        printf("HTML content stored in buffer (%zu bytes)\n", html_buffer_size);
+    }
 }
 
 void wifi_manager_sae_flood_help(void) {

@@ -229,4 +229,8 @@ void wifi_manager_start_sae_flood(void);
 void wifi_manager_stop_sae_flood(void);
 void wifi_manager_sae_flood_help(void);
 
+// HTML buffer functions for evil portal
+void wifi_manager_set_html_from_uart(void);
+void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final);
+
 #endif // WIFI_MANAGER_H
