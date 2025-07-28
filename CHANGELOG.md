@@ -53,6 +53,7 @@
   - S3TWatch: Disable tap-to-wake, use touch interrupt instead.
   - Exiting a view now returns to the previous view instead of the main menu - @tototo31
   - Add CAPSLOCK shift toggle to keyboard view - @tototo31
+  - Restyle terminal view - @tototo31
 
 - WebUI
   - Minor style tweaks
