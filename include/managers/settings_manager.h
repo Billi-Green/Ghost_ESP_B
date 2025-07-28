@@ -95,6 +95,7 @@ typedef struct {
   int32_t esp_comm_rx_pin; // ESP communication RX pin
   bool ap_enabled; // Enable/disable AP across reboots
   bool power_save_enabled;
+  bool zebra_menus_enabled;
 } FSettings;
 
 // Function declarations
@@ -134,6 +135,9 @@ const char *settings_get_ap_password(const FSettings *settings);
 
 void settings_set_rgb_speed(FSettings *settings, uint8_t speed);
 uint8_t settings_get_rgb_speed(const FSettings *settings);
+
+void settings_set_zebra_menus_enabled(FSettings *settings, bool enabled);
+bool settings_get_zebra_menus_enabled(const FSettings *settings);
 
 // Getters and Setters for Evil Portal
 void settings_set_portal_url(FSettings *settings, const char *url);
