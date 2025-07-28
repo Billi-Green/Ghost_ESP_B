@@ -25,9 +25,7 @@ void terminal_set_return_view(View *view);
         if (esp_comm_manager_is_remote_command()) {                                \
             esp_comm_manager_send_response((const uint8_t*)buffer, strlen(buffer));\
         }                                                                          \
-        if (terminal_view.root) {                                                  \
-            terminal_view_add_text(buffer);                                        \
-        }                                                                          \
+        terminal_view_add_text(buffer);                                            \
         ap_manager_add_log(buffer);                                                \
     } while (0)
 #else
