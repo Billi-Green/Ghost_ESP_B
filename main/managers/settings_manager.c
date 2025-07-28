@@ -407,6 +407,7 @@ void settings_load(FSettings *settings) {
     settings->zebra_menus_enabled = (value_u8 != 0);
   } else {
     settings->zebra_menus_enabled = false;
+  } // Default to disabled if not found
   // Load Max Screen Brightness
   err = nvs_get_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, &value_u8);
   if (err == ESP_OK) {

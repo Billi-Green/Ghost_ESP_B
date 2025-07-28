@@ -50,12 +50,11 @@ static int current_settings_category = -1;
 // Category 1: "Config"  (indices: 0, 6, 7, 8)
 // Example: settings_category_indices[0] lists settings for "Display" category.
 static int settings_category_indices[][8] = {
-    {1, 2, 5, 3, 4,
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-     9,
-#endif
-     10, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness if PWM
-    {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
+    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+        {1, 2, 5, 3, 4, 9, 10, -1}, // Display: ... Max Brightness, Zebra Menus
+    #else
+        {1, 2, 5, 3, 4, 9, -1},     // Display: ... Zebra Menus
+    #endif
 };
 
 typedef enum {
@@ -140,9 +139,7 @@ enum {
     SETTING_WEB_AUTH,
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
-    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
     SETTING_MAX_BRIGHTNESS,
-    #endif
     SETTING_ZEBRA_MENUS
 };
 
