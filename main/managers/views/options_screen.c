@@ -581,9 +581,9 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = settings_get_zebra_menus_enabled(&G_Settings) ? 1 : 0;
                 break;
             #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-            case SETTING_MAX_BRIGHT:
+            case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
-                break:
+                break;
             #endif
             default:
                 settings_items[i].current_value = 0;
