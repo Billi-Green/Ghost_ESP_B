@@ -1180,7 +1180,7 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     }
     
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
-    ESP_LOGI("WIFI_MANAGER", "Set hardware filter mask: 0x%02X", filter.filter_mask);
+    ESP_LOGI("WIFI_MANAGER", "Set hardware filter mask: 0x%02" PRIx32, filter.filter_mask);
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
 
@@ -4404,7 +4404,9 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));  // Copy to avoid unaligned pointer
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
     
     // Check if it's an authentication frame from our target AP
     if ((hdr->frame_ctrl & 0xFC) != 0xB0) return;  // Not auth frame

@@ -1,6 +1,7 @@
 #include "managers/views/options_screen.h"
 #include "core/serial_manager.h"
 #include "core/commandline.h" // for get_evil_portal_list
+#include "managers/display_manager.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
@@ -49,8 +50,12 @@ static int current_settings_category = -1;
 // Category 1: "Config"  (indices: 0, 6, 7, 8)
 // Example: settings_category_indices[0] lists settings for "Display" category.
 static int settings_category_indices[][8] = {
-    {1, 2, 5, 3, 4, 9, -1}, // Display: Timeout, Theme, Invert, Third Control, Terminal Color, Zebra Menus
-    {0, 6, 7, 8, -1},       // Config: RGB Mode, Web Auth, AP Enabled, Power Saving
+    {1, 2, 5, 3, 4,
+#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+     9,
+#endif
+     10, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness if PWM
+    {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -135,8 +140,17 @@ enum {
     SETTING_WEB_AUTH,
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
+    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+    SETTING_MAX_BRIGHTNESS,
+    #endif
     SETTING_ZEBRA_MENUS
 };
+
+#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+static const char *brightness_options[] = {
+    "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
+};
+#endif
 
 static SettingsItem settings_items[] = {
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
@@ -148,6 +162,9 @@ static SettingsItem settings_items[] = {
     {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1},
     {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1},
     {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0},
+    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
+    #endif
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0}
 };
 
@@ -424,7 +441,7 @@ void options_menu_create() {
                 }
                 int count = get_evil_portal_list(evil_portal_names);
                 ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
-                if (count == 0) {
+                if (count <= 0) {
                     evil_portal_options[0] = "default";
                     evil_portal_options[1] = NULL;
                     ESP_LOGI(TAG, "No portals found, using 'default'");
@@ -566,6 +583,11 @@ static void load_current_settings_values(void) {
             case SETTING_ZEBRA_MENUS:
                 settings_items[i].current_value = settings_get_zebra_menus_enabled(&G_Settings) ? 1 : 0;
                 break;
+            #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+            case SETTING_MAX_BRIGHT:
+                settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
+                break:
+            #endif
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -576,7 +598,7 @@ static void load_current_settings_values(void) {
 static void apply_setting_change(int setting_index, int new_value) {
     SettingsItem *item = &settings_items[setting_index];
     item->current_value = new_value;
-    
+
     switch (item->setting_type) {
         case SETTING_RGB_MODE:
             settings_set_rgb_mode(&G_Settings, new_value);
@@ -624,8 +646,14 @@ static void apply_setting_change(int setting_index, int new_value) {
                 menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
             }
             break;
+        #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+        // This setting is only available if LV_DISP_BACKLIGHT_PWM is enabled
+        case SETTING_MAX_BRIGHTNESS:
+            settings_set_max_screen_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            set_backlight_brightness(100); // set to 100 since brightness becomes scaled by the max
+            break;
+        #endif
     }
-    
     settings_save(&G_Settings);
 }
 

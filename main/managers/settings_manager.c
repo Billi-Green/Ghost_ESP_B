@@ -27,9 +27,9 @@ static const char *NVS_PORTAL_DOMAIN_KEY = "portal_domain";
 static const char *NVS_PORTAL_OFFLINE_KEY = "portal_offline";
 static const char *NVS_PRINTER_IP_KEY = "printer_ip";
 static const char *NVS_PRINTER_TEXT_KEY = "printer_text";
-static const char *NVS_PRINTER_FONT_SIZE_KEY = "printer_font_size";
-static const char *NVS_PRINTER_ALIGNMENT_KEY = "printer_alignment";
-static const char *NVS_PRINTER_CONNECTED_KEY = "printer_connected";
+static const char *NVS_PRINTER_FONT_SIZE_KEY = "pntr_ft_size";
+static const char *NVS_PRINTER_ALIGNMENT_KEY = "pntr_alignment";
+static const char *NVS_PRINTER_CONNECTED_KEY = "pntr_connected";
 static const char *NVS_BOARD_TYPE_KEY = "board_type";
 static const char *NVS_CUSTOM_PIN_CONFIG_KEY = "custom_pin_config";
 static const char *NVS_FLAPPY_GHOST_NAME = "flap_name";
@@ -54,6 +54,8 @@ static const char *NVS_ESP_COMM_RX_PIN_KEY = "esp_comm_rx";
 static const char *NVS_AP_ENABLED_KEY = "ap_enabled";
 static const char *NVS_POWER_SAVE_KEY = "power_save";
 static const char *NVS_ZEBRA_MENUS_KEY = "zebra_menus";
+static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
+
 
 static const char *TAG = "SettingsManager";
 
@@ -138,6 +140,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->ap_enabled = true; // Default to enabled
   settings->power_save_enabled = false;
   settings->zebra_menus_enabled = false; // or true if you want it enabled by default
+  settings->max_screen_brightness = 100; // Default to 100% brightness
 }
 
 void settings_load(FSettings *settings) {
@@ -404,6 +407,12 @@ void settings_load(FSettings *settings) {
     settings->zebra_menus_enabled = (value_u8 != 0);
   } else {
     settings->zebra_menus_enabled = false;
+  // Load Max Screen Brightness
+  err = nvs_get_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->max_screen_brightness = value_u8;
+  } else {
+    settings->max_screen_brightness = 100; // Default to 100% if not found
   }
 }
 
@@ -599,6 +608,14 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) {
     printf("Failed to save RGB blue pin\n");
   }
+  // Save Max Screen Brightness
+  err = nvs_set_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, settings->max_screen_brightness);
+  if (err != ESP_OK) {
+    printf("Failed to save key '%s' (value=%u): %s (%d)\n",
+           NVS_MAX_SCREEN_BRIGHTNESS_KEY,
+           settings->max_screen_brightness,
+           esp_err_to_name(err), err);
+  }
 
   if (settings_get_rgb_mode(settings) == RGB_MODE_NORMAL) {
     // Normal: static color/off
@@ -607,12 +624,12 @@ void settings_save(const FSettings *settings) {
         rgb_effect_task_handle = NULL;
     }
     rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
-} else if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
     // Rainbow: animated
     if (rgb_effect_task_handle == NULL) {
         xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1, &rgb_effect_task_handle);
     }
-} else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
     // Stealth: LEDs always off
     if (rgb_effect_task_handle != NULL) {
         vTaskDelete(rgb_effect_task_handle);
@@ -984,6 +1001,14 @@ void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int3
   if (tx_pin) *tx_pin = settings->esp_comm_tx_pin;
   if (rx_pin) *rx_pin = settings->esp_comm_rx_pin;
 }
+
+void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
+    if (value > 100) value = 100;
+    settings->max_screen_brightness = value;
+}
+uint8_t settings_get_max_screen_brightness(const FSettings *settings) {
+    return settings->max_screen_brightness;
+}  
 
 void settings_get_nvs_stats(nvs_stats_t *stats) {
   esp_err_t err = nvs_get_stats(NULL, stats);
