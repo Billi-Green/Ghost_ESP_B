@@ -600,6 +600,14 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) {
     printf("Failed to save RGB blue pin\n");
   }
+  // Save Max Screen Brightness
+  err = nvs_set_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, settings->max_screen_brightness);
+  if (err != ESP_OK) {
+    printf("Failed to save key '%s' (value=%u): %s (%d)\n",
+           NVS_MAX_SCREEN_BRIGHTNESS_KEY,
+           settings->max_screen_brightness,
+           esp_err_to_name(err), err);
+  }
 
   // Save Max Screen Brightness
   err = nvs_set_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, settings->max_screen_brightness);
@@ -617,12 +625,12 @@ void settings_save(const FSettings *settings) {
         rgb_effect_task_handle = NULL;
     }
     rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
-} else if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
     // Rainbow: animated
     if (rgb_effect_task_handle == NULL) {
         xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1, &rgb_effect_task_handle);
     }
-} else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
     // Stealth: LEDs always off
     if (rgb_effect_task_handle != NULL) {
         vTaskDelete(rgb_effect_task_handle);
@@ -995,7 +1003,7 @@ void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int3
   if (rx_pin) *rx_pin = settings->esp_comm_rx_pin;
 }
 
-// Add these getters/setters near the others:
+
 void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
     if (value > 100) value = 100;
     settings->max_screen_brightness = value;
@@ -1003,6 +1011,7 @@ void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
 uint8_t settings_get_max_screen_brightness(const FSettings *settings) {
     return settings->max_screen_brightness;
 }
+
 void settings_get_nvs_stats(nvs_stats_t *stats) {
   esp_err_t err = nvs_get_stats(NULL, stats);
   if (err != ESP_OK) {
