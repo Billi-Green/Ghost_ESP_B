@@ -4,9 +4,12 @@
 
 ### Big Changes
 
+
 #### Support for connecting two ESP32 chips running GhostESP with a WebUI section for control
 
 #### Up to 5X the battery life on supported devices with power saving mode
+
+#### Support for the LilyGo T-Deck - @tototo31
 
 #### Support for the LilyGo TEmbed C1101
 
@@ -37,6 +40,7 @@
   - Add build name config variable for debugging and auto-flash support - @tototo31
   - Try to connect to saved WiFi on boot if available
   - Add 'Stealth' mode for silencing RGB - @tototo31
+  - Display backlight percentage setting for PWM enabled devices - @tototo31
   
 ### Changed
 
