@@ -55,6 +55,7 @@ static int settings_category_indices[][8] = {
     #else
         {1, 2, 5, 3, 4, 9, -1},     // Display: ... Zebra Menus
     #endif
+        {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -580,11 +581,9 @@ static void load_current_settings_values(void) {
             case SETTING_ZEBRA_MENUS:
                 settings_items[i].current_value = settings_get_zebra_menus_enabled(&G_Settings) ? 1 : 0;
                 break;
-            #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
             case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
                 break;
-            #endif
             default:
                 settings_items[i].current_value = 0;
                 break;
