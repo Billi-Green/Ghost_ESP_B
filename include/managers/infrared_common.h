@@ -122,13 +122,20 @@ typedef struct {
     bool repeat;
 } InfraredDecodedMessage;
 
-// Decoder state enumeration
+// Decoder state enumeration (Flipper Zero compatible)
 typedef enum {
     InfraredDecoderStateIdle,
     InfraredDecoderStatePreambleMark,
     InfraredDecoderStatePreambleSpace,
-    InfraredDecoderStateData
+    InfraredDecoderStateData,
+    // Flipper Zero states
+    InfraredCommonDecoderStateWaitPreamble,
+    InfraredCommonDecoderStateDecode,
+    InfraredCommonDecoderStateProcessRepeat
 } InfraredDecoderState;
+
+// Constants
+#define INFRARED_MAX_TIMINGS 200
 
 // Common decoder structure
 struct InfraredCommonDecoder {
@@ -139,6 +146,7 @@ struct InfraredCommonDecoder {
     uint8_t data[8];        // Buffer for decoded data
     uint32_t databit_cnt;
     bool switch_detect;
+    bool level;             // Current signal level (Flipper Zero)
     InfraredDecoderState state;  // Current decoder state
     void* context;          // Protocol-specific context
 };

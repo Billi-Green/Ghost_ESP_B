@@ -65,7 +65,7 @@ static const InfraredDecoderProtocolSpec infrared_protocol_sirc_decoder = {
     },
     .databit_len = {20, 15, 12, 0},
     .manchester_start_from_space = false,
-    .decode = infrared_common_decode_sirc,
+    .decode = infrared_common_decode_pdwm,  // Use PDWM like Flipper Zero
     .decode_repeat = NULL,
     .interpret = infrared_decoder_sirc_interpret,
     .reset = NULL,
@@ -317,18 +317,267 @@ InfraredDecodedMessage* infrared_decoder_decode(InfraredDecoderContext* decoder,
     return NULL;
 }
 
+// Helper functions for Flipper Zero architecture
+static inline size_t consume_samples(uint32_t* array, size_t len, size_t shift) {
+    if (len < shift) return 0;
+    len -= shift;
+    for (size_t i = 0; i < len; ++i) {
+        array[i] = array[i + shift];
+    }
+    return len;
+}
+
+static inline void accumulate_lsb(InfraredCommonDecoder* decoder, bool bit) {
+    uint16_t index = decoder->databit_cnt / 8;
+    uint8_t shift = decoder->databit_cnt % 8; // LSB first
+
+    if (!shift) decoder->data[index] = 0;
+
+    if (bit) {
+        decoder->data[index] |= (0x1 << shift); // add 1
+    }
+    // else add 0 (already cleared)
+
+    ++decoder->databit_cnt;
+}
+
+static bool infrared_check_preamble(InfraredCommonDecoder* decoder) {
+    if (!decoder || decoder->timings_cnt == 0) return false;
+
+    bool result = false;
+    bool start_level = (decoder->level + decoder->timings_cnt + 1) % 2;
+
+    // align to start at Mark timing
+    if (!start_level) {
+        decoder->timings_cnt = consume_samples(decoder->timings, decoder->timings_cnt, 1);
+    }
+
+    if (decoder->protocol->timings.preamble_mark == 0) {
+        return true;
+    }
+
+    while ((!result) && (decoder->timings_cnt >= 2)) {
+        float preamble_tolerance = decoder->protocol->timings.preamble_tolerance;
+        uint16_t preamble_mark = decoder->protocol->timings.preamble_mark;
+        uint16_t preamble_space = decoder->protocol->timings.preamble_space;
+
+        if ((MATCH_TIMING(decoder->timings[0], preamble_mark, preamble_tolerance)) &&
+           (MATCH_TIMING(decoder->timings[1], preamble_space, preamble_tolerance))) {
+            result = true;
+        }
+
+        decoder->timings_cnt = consume_samples(decoder->timings, decoder->timings_cnt, 2);
+    }
+
+    return result;
+}
+
+static InfraredDecoderStatus infrared_common_decode_bits(InfraredCommonDecoder* decoder) {
+    if (!decoder) return InfraredDecoderStatusError;
+
+    InfraredDecoderStatus status = InfraredDecoderStatusOk;
+    const InfraredTimings* timings = &decoder->protocol->timings;
+
+    while (decoder->timings_cnt && (status == InfraredDecoderStatusOk)) {
+        bool level = (decoder->level + decoder->timings_cnt + 1) % 2;
+        uint32_t timing = decoder->timings[0];
+
+        // Check for min_split_time (long space) - this is the key Flipper Zero logic
+        if (timings->min_split_time && !level) {
+            if (timing > timings->min_split_time) {
+                // Long low timing - check if we're ready for any protocol variant
+                for (size_t i = 0; i < 4 && decoder->protocol->databit_len[i]; ++i) {
+                    if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
+                        ESP_LOGD(TAG, "min_split_time detected: timing=%luµs > %luµs, databit_cnt=%d matches variant %zu",
+                               timing, timings->min_split_time, decoder->databit_cnt, i);
+                        return InfraredDecoderStatusReady;
+                    }
+                }
+            } else if (decoder->protocol->databit_len[0] == decoder->databit_cnt) {
+                // Short low timing for longest protocol - signal is longer than expected
+                ESP_LOGD(TAG, "Signal longer than expected: timing=%luµs <= %luµs, databit_cnt=%d",
+                       timing, timings->min_split_time, decoder->databit_cnt);
+                return InfraredDecoderStatusError;
+            }
+        }
+
+        // Decode the current timing
+        status = decoder->protocol->decode(decoder, level, timing);
+        if (status == InfraredDecoderStatusError) {
+            ESP_LOGD(TAG, "Decode error at databit_cnt=%d, level=%d, timing=%luµs", 
+                   decoder->databit_cnt, level, timing);
+            break;
+        }
+        
+        decoder->timings_cnt = consume_samples(decoder->timings, decoder->timings_cnt, 1);
+
+        // Check if largest protocol version can be decoded (for protocols without min_split_time)
+        if (level && (decoder->protocol->databit_len[0] == decoder->databit_cnt) && !timings->min_split_time) {
+            ESP_LOGD(TAG, "Max bits reached without min_split_time: databit_cnt=%d", decoder->databit_cnt);
+            status = InfraredDecoderStatusReady;
+            break;
+        }
+    }
+
+    return status;
+}
+
+InfraredDecodedMessage* infrared_common_decoder_check_ready_internal(InfraredCommonDecoder* decoder) {
+    if (!decoder) return NULL;
+    
+    InfraredDecodedMessage* message = NULL;
+    bool found_length = false;
+
+    // Check if current bit count matches any valid length
+    for (size_t i = 0; i < 4 && decoder->protocol->databit_len[i]; ++i) {
+        if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
+            found_length = true;
+            ESP_LOGD(TAG, "Found valid length: databit_cnt=%d matches variant %zu", decoder->databit_cnt, i);
+            break;
+        }
+    }
+
+    if (found_length && decoder->protocol->interpret && decoder->protocol->interpret(decoder)) {
+        ESP_LOGD(TAG, "Interpretation successful for databit_cnt=%d", decoder->databit_cnt);
+        decoder->databit_cnt = 0;
+        message = &decoder->message;
+        if (decoder->protocol->decode_repeat) {
+            decoder->state = InfraredCommonDecoderStateProcessRepeat;
+        } else {
+            decoder->state = InfraredCommonDecoderStateWaitPreamble;
+        }
+    } else {
+        ESP_LOGD(TAG, "Interpretation failed: found_length=%d, databit_cnt=%d", found_length, decoder->databit_cnt);
+    }
+
+    return message;
+}
+
+static void infrared_common_decoder_reset_state(InfraredCommonDecoder* decoder) {
+    if (!decoder) return;
+    
+    decoder->state = InfraredCommonDecoderStateWaitPreamble;
+    decoder->databit_cnt = 0;
+    decoder->switch_detect = false;
+    decoder->message.protocol = InfraredProtocolUnknown;
+    
+    if (decoder->protocol->timings.preamble_mark == 0) {
+        if (decoder->timings_cnt > 0) {
+            decoder->timings_cnt = consume_samples(decoder->timings, decoder->timings_cnt, 1);
+        }
+    }
+}
+
+// Main Flipper Zero decode function
+InfraredDecodedMessage* infrared_common_decode(InfraredCommonDecoder* decoder, bool level, uint32_t duration) {
+    if (!decoder) return NULL;
+
+    InfraredDecodedMessage* message = NULL;
+    InfraredDecoderStatus status = InfraredDecoderStatusError;
+
+    // Reset if level didn't change (should alternate)
+    if (decoder->level == level) {
+        infrared_common_decoder_reset(decoder);
+    }
+    decoder->level = level; // start with low level (Space timing)
+
+    // Add timing to buffer
+    if (decoder->timings_cnt < INFRARED_MAX_TIMINGS) {
+        decoder->timings[decoder->timings_cnt] = duration;
+        decoder->timings_cnt++;
+    } else {
+        ESP_LOGW(TAG, "Timing buffer overflow, resetting decoder");
+        infrared_common_decoder_reset(decoder);
+        return NULL;
+    }
+
+    // State machine processing
+    while (1) {
+        switch (decoder->state) {
+        case InfraredCommonDecoderStateWaitPreamble:
+            if (infrared_check_preamble(decoder)) {
+                ESP_LOGD(TAG, "Preamble detected, switching to decode state");
+                decoder->state = InfraredCommonDecoderStateDecode;
+                decoder->databit_cnt = 0;
+                decoder->switch_detect = false;
+                continue;
+            }
+            break;
+            
+        case InfraredCommonDecoderStateDecode:
+            status = infrared_common_decode_bits(decoder);
+            if (status == InfraredDecoderStatusReady) {
+                message = infrared_common_decoder_check_ready_internal(decoder);
+                if (message) {
+                    continue;
+                } else if (decoder->protocol->databit_len[0] == decoder->databit_cnt) {
+                    // Error: can't decode largest protocol - begin from start
+                    ESP_LOGD(TAG, "Cannot decode largest protocol variant, resetting");
+                    decoder->state = InfraredCommonDecoderStateWaitPreamble;
+                }
+            } else if (status == InfraredDecoderStatusError) {
+                ESP_LOGD(TAG, "Decode error, resetting state");
+                infrared_common_decoder_reset_state(decoder);
+                continue;
+            }
+            break;
+            
+        // Handle legacy states (not used in Flipper Zero architecture)
+        case InfraredDecoderStateIdle:
+        case InfraredDecoderStatePreambleMark:
+        case InfraredDecoderStatePreambleSpace:
+        case InfraredDecoderStateData:
+            // These states are not used in the new architecture
+            decoder->state = InfraredCommonDecoderStateWaitPreamble;
+            break;
+            
+        case InfraredCommonDecoderStateProcessRepeat:
+            if (decoder->protocol->decode_repeat) {
+                status = decoder->protocol->decode_repeat(decoder);
+                if (status == InfraredDecoderStatusError) {
+                    infrared_common_decoder_reset_state(decoder);
+                    continue;
+                } else if (status == InfraredDecoderStatusReady) {
+                    decoder->message.repeat = true;
+                    message = &decoder->message;
+                }
+            }
+            break;
+        }
+        break;
+    }
+
+    return message;
+}
+
 // Allocate common decoder
 InfraredCommonDecoder* infrared_common_decoder_alloc(const InfraredDecoderProtocolSpec* protocol) {
     if (!protocol) return NULL;
     
-    InfraredCommonDecoder* decoder = malloc(sizeof(InfraredCommonDecoder));
-    if (!decoder) {
-        ESP_LOGE(TAG, "Failed to allocate common decoder");
+    // Validate protocol databit_len array - find maximum bit length
+    uint32_t max_bits = 0;
+    for (size_t i = 0; i < 4; ++i) {
+        if (protocol->databit_len[i] > max_bits) {
+            max_bits = protocol->databit_len[i];
+        }
+    }
+    
+    if (max_bits == 0) {
+        ESP_LOGE(TAG, "Invalid protocol: no valid databit_len found");
         return NULL;
     }
     
-    memset(decoder, 0, sizeof(InfraredCommonDecoder));
+    // Calculate size needed for data buffer
+    size_t data_size = (max_bits + 7) / 8;  // Round up to nearest byte
+    size_t total_size = sizeof(InfraredCommonDecoder) + data_size;
+    
+    InfraredCommonDecoder* decoder = (InfraredCommonDecoder*)malloc(total_size);
+    if (!decoder) return NULL;
+    
+    memset(decoder, 0, total_size);
     decoder->protocol = protocol;
+    decoder->state = InfraredDecoderStateIdle;  // Simple architecture initial state
+    decoder->level = true;  // Initialize level
     
     return decoder;
 }
@@ -344,206 +593,157 @@ void infrared_common_decoder_free(InfraredCommonDecoder* decoder) {
 void infrared_common_decoder_reset(InfraredCommonDecoder* decoder) {
     if (!decoder) return;
     
+    // Simple architecture reset logic
     decoder->timings_cnt = 0;
     decoder->databit_cnt = 0;
     decoder->switch_detect = false;
-    decoder->state = InfraredDecoderStateIdle;
+    decoder->level = true;
+    decoder->state = InfraredDecoderStateIdle;  // Use simple state for PDWM
+    decoder->message.protocol = InfraredProtocolUnknown;
+    decoder->message.address = 0;
+    decoder->message.command = 0;
+    decoder->message.repeat = false;
     memset(decoder->data, 0, sizeof(decoder->data));
     memset(decoder->timings, 0, sizeof(decoder->timings));
 }
 
-// Check if decoder is ready
+// Check if decoder is ready (public interface)
 InfraredDecodedMessage* infrared_common_decoder_check_ready(InfraredCommonDecoder* decoder) {
-    return (decoder && decoder->message.protocol != InfraredProtocolUnknown) ? &decoder->message : NULL;
+    if (!decoder) return NULL;
+    
+    // Use the internal function for actual logic
+    return infrared_common_decoder_check_ready_internal(decoder);
 }
 
 // Common PDWM (Pulse Distance Width Modulation) decoder
 InfraredDecoderStatus infrared_common_decode_pdwm(InfraredCommonDecoder* decoder, bool level, uint32_t timing) {
-    if (!decoder || !decoder->protocol) return InfraredDecoderStatusError;
-    
-    const InfraredTimings* timings = &decoder->protocol->timings;
-    
-    // Store timing
-    if (decoder->timings_cnt < sizeof(decoder->timings) / sizeof(decoder->timings[0])) {
-        decoder->timings[decoder->timings_cnt++] = timing;
+    if (!decoder || !decoder->protocol) {
+        ESP_LOGE(TAG, "PDWM: Invalid decoder state: %d", decoder ? decoder->state : -1);
+        return InfraredDecoderStatusError;
     }
     
-    // State machine for proper preamble detection
+    // Handle end-of-signal (timing=0) - check if we have a valid bit count
+    if (timing == 0 && decoder->state == InfraredDecoderStateData) {
+        ESP_LOGD(TAG, "PDWM: End of signal detected, checking for valid bit count (%d)", decoder->databit_cnt);
+        for (int i = 0; i < 4 && decoder->protocol->databit_len[i]; i++) {
+            if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
+                ESP_LOGD(TAG, "PDWM: Valid bit count (%d) found at end of signal, ready for interpretation", 
+                         decoder->databit_cnt);
+                return InfraredDecoderStatusReady;
+            }
+        }
+        ESP_LOGD(TAG, "PDWM: No valid bit count found at end of signal (%d)", decoder->databit_cnt);
+        return InfraredDecoderStatusError;
+    }
+    
+    const InfraredTimings* timings = &decoder->protocol->timings;
+    uint32_t bit_tolerance = timings->bit_tolerance;
+    uint16_t bit1_mark = timings->bit1_mark;
+    uint16_t bit1_space = timings->bit1_space;
+    uint16_t bit0_mark = timings->bit0_mark;
+    uint16_t bit0_space = timings->bit0_space;
+
+    // State machine for PDWM decoding
     switch (decoder->state) {
         case InfraredDecoderStateIdle:
             // Waiting for preamble mark
             if (level && MATCH_TIMING(timing, timings->preamble_mark, timings->preamble_tolerance)) {
                 decoder->state = InfraredDecoderStatePreambleMark;
-                ESP_LOGD(TAG, "PDWM: Preamble mark detected: %luµs (expected %luµs ±%luµs)", 
-                         timing, timings->preamble_mark, timings->preamble_tolerance);
+                ESP_LOGD(TAG, "PDWM: Preamble mark detected: %luµs", timing);
                 return InfraredDecoderStatusOk;
             }
-            ESP_LOGD(TAG, "PDWM: Waiting for preamble mark - got level=%d, timing=%luµs", level, timing);
             return InfraredDecoderStatusError;
             
         case InfraredDecoderStatePreambleMark:
             // Waiting for preamble space
             if (!level && MATCH_TIMING(timing, timings->preamble_space, timings->preamble_tolerance)) {
                 decoder->state = InfraredDecoderStateData;
-                ESP_LOGD(TAG, "PDWM: Preamble space detected: %luµs (expected %luµs ±%luµs) - starting data collection", 
-                         timing, timings->preamble_space, timings->preamble_tolerance);
+                decoder->databit_cnt = 0;
+                memset(decoder->data, 0, sizeof(decoder->data));
+                ESP_LOGD(TAG, "PDWM: Preamble complete, starting data decode");
                 return InfraredDecoderStatusOk;
             }
-            ESP_LOGD(TAG, "PDWM: Expected preamble space but got level=%d, timing=%luµs", level, timing);
+            decoder->state = InfraredDecoderStateIdle;
             return InfraredDecoderStatusError;
             
-        case InfraredDecoderStateData:
-            // Decode data bits
-            if (level) {
-                // Mark phase - validate mark timing but don't decode yet
-                if (MATCH_TIMING(timing, timings->bit1_mark, timings->bit_tolerance) ||
-                    MATCH_TIMING(timing, timings->bit0_mark, timings->bit_tolerance)) {
-                    return InfraredDecoderStatusOk;
-                } else {
-                    ESP_LOGD(TAG, "PDWM: Invalid mark timing: %luµs", timing);
-                    return InfraredDecoderStatusError;
-                }
-            } else {
-                // Space phase - determine bit value
+        case InfraredDecoderStateData: {
+            // PDWM logic: determine which timing carries the bit information
+            // For SIRC: bit1_mark != bit0_mark, so analyze_timing = level ^ false = level
+            bool analyze_timing = level ^ (timings->bit1_mark == timings->bit0_mark);
+            uint32_t bit1_timing = level ? timings->bit1_mark : timings->bit1_space;
+            uint32_t bit0_timing = level ? timings->bit0_mark : timings->bit0_space;
+            uint32_t no_info_timing = (timings->bit1_mark == timings->bit0_mark) ? timings->bit1_mark : timings->bit1_space;
+            
+            if (analyze_timing) {
+                // This timing carries bit information - decode it
                 bool bit_value;
-                if (MATCH_TIMING(timing, timings->bit1_space, timings->bit_tolerance)) {
+                if (MATCH_TIMING(timing, bit1_timing, timings->bit_tolerance)) {
                     bit_value = true;
-                } else if (MATCH_TIMING(timing, timings->bit0_space, timings->bit_tolerance)) {
+                } else if (MATCH_TIMING(timing, bit0_timing, timings->bit_tolerance)) {
                     bit_value = false;
                 } else {
-                    ESP_LOGD(TAG, "PDWM: Invalid space timing: %luµs (bit1=%luµs±%lu, bit0=%luµs±%lu)", 
-                             timing, timings->bit1_space, timings->bit_tolerance, 
-                             timings->bit0_space, timings->bit_tolerance);
+                    ESP_LOGD(TAG, "PDWM: Invalid %s timing: %luµs (bit1=%lu±%lu, bit0=%lu±%lu)", 
+                             level ? "mark" : "space", timing, bit1_timing, timings->bit_tolerance, 
+                             bit0_timing, timings->bit_tolerance);
                     return InfraredDecoderStatusError;
                 }
                 
-                // Store bit
+                // Store bit LSB-first (like Flipper Zero)
                 uint8_t byte_index = decoder->databit_cnt / 8;
                 uint8_t bit_index = decoder->databit_cnt % 8;
                 
                 if (byte_index < sizeof(decoder->data)) {
+                    if (!bit_index) decoder->data[byte_index] = 0;  // Clear byte on first bit
                     if (bit_value) {
-                        decoder->data[byte_index] |= (1 << bit_index);
+                        decoder->data[byte_index] |= (1 << bit_index);  // LSB first
                     }
                     decoder->databit_cnt++;
                     
-                    ESP_LOGD(TAG, "PDWM: Bit %d = %d (total bits: %d)", decoder->databit_cnt - 1, bit_value, decoder->databit_cnt);
+                    ESP_LOGD(TAG, "PDWM: Bit %d = %d (%s=%luµs, total bits: %d)", 
+                             decoder->databit_cnt - 1, bit_value, level ? "mark" : "space", 
+                             timing, decoder->databit_cnt);
                     
-                    // Check if we have reached the maximum possible bits
-                    uint32_t max_bits = 0;
-                    for (int i = 0; i < 4; i++) {
-                        if (decoder->protocol->databit_len[i] > max_bits) {
-                            max_bits = decoder->protocol->databit_len[i];
+                    // Check if we have a valid bit count for any SIRC variant
+                    for (int i = 0; i < 4 && decoder->protocol->databit_len[i]; i++) {
+                        if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
+                            ESP_LOGD(TAG, "PDWM: Valid bit count (%d) reached for variant %d, checking for completion", 
+                                   decoder->databit_cnt, i);
+                            // For protocols with min_split_time, wait for the long space
+                            // For others, or if this is the maximum variant, signal ready
+                            if (!timings->min_split_time || i == 0) {
+                                ESP_LOGD(TAG, "PDWM: Ready for interpretation (no min_split_time or max variant)");
+                                return InfraredDecoderStatusReady;
+                            }
+                            break;
                         }
                     }
+                }
+            } else {
+                // This timing doesn't carry bit info - validate it and check for min_split_time
+                if (timings->min_split_time && !level && timing > timings->min_split_time) {
+                    // Long space detected - check if we have a valid bit count (like Flipper Zero)
+                    ESP_LOGD(TAG, "PDWM: Long space detected (%luµs > %luµs), checking for valid bit count", 
+                             timing, timings->min_split_time);
                     
-                    if (decoder->databit_cnt >= max_bits) {
-                        ESP_LOGD(TAG, "PDWM: Collected maximum %d bits, ready for interpretation", decoder->databit_cnt);
-                        return InfraredDecoderStatusReady;
+                    for (int i = 0; i < 4 && decoder->protocol->databit_len[i]; i++) {
+                        if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
+                            ESP_LOGD(TAG, "PDWM: Valid bit count (%d) found, ready for interpretation", 
+                                     decoder->databit_cnt);
+                            return InfraredDecoderStatusReady;
+                        }
                     }
+                    ESP_LOGD(TAG, "PDWM: No valid bit count found (%d), continuing", decoder->databit_cnt);
+                } else if (!MATCH_TIMING(timing, no_info_timing, timings->bit_tolerance)) {
+                    ESP_LOGD(TAG, "PDWM: Invalid %s timing: %luµs (expected %lu±%lu)", 
+                             level ? "mark" : "space", timing, no_info_timing, timings->bit_tolerance);
+                    return InfraredDecoderStatusError;
                 }
             }
             break;
+        }
             
         default:
             ESP_LOGE(TAG, "PDWM: Invalid decoder state: %d", decoder->state);
-            return InfraredDecoderStatusError;
-    }
-    
-    return InfraredDecoderStatusOk;
-}
-
-// SIRC-specific decoder (uses mark timing for bit values)
-InfraredDecoderStatus infrared_common_decode_sirc(InfraredCommonDecoder* decoder, bool level, uint32_t timing) {
-    if (!decoder || !decoder->protocol) return InfraredDecoderStatusError;
-    
-    const InfraredTimings* timings = &decoder->protocol->timings;
-    
-    // Store timing
-    if (decoder->timings_cnt < sizeof(decoder->timings) / sizeof(decoder->timings[0])) {
-        decoder->timings[decoder->timings_cnt++] = timing;
-    }
-    
-    // State machine for proper preamble detection
-    switch (decoder->state) {
-        case InfraredDecoderStateIdle:
-            // Waiting for preamble mark
-            if (level && MATCH_TIMING(timing, timings->preamble_mark, timings->preamble_tolerance)) {
-                decoder->state = InfraredDecoderStatePreambleMark;
-                ESP_LOGD(TAG, "SIRC: Preamble mark detected: %luµs (expected %luµs ±%luµs)", 
-                         timing, timings->preamble_mark, timings->preamble_tolerance);
-                return InfraredDecoderStatusOk;
-            }
-            ESP_LOGD(TAG, "SIRC: Waiting for preamble mark - got level=%d, timing=%luµs", level, timing);
-            return InfraredDecoderStatusError;
-            
-        case InfraredDecoderStatePreambleMark:
-            // Waiting for preamble space
-            if (!level && MATCH_TIMING(timing, timings->preamble_space, timings->preamble_tolerance)) {
-                decoder->state = InfraredDecoderStateData;
-                ESP_LOGD(TAG, "SIRC: Preamble space detected: %luµs (expected %luµs ±%luµs) - starting data collection", 
-                         timing, timings->preamble_space, timings->preamble_tolerance);
-                return InfraredDecoderStatusOk;
-            }
-            ESP_LOGD(TAG, "SIRC: Expected preamble space but got level=%d, timing=%luµs", level, timing);
-            return InfraredDecoderStatusError;
-            
-        case InfraredDecoderStateData:
-            // Decode data bits - SIRC uses MARK timing for bit values
-            if (level) {
-                // Mark phase - determine bit value based on mark duration
-                bool bit_value;
-                if (MATCH_TIMING(timing, timings->bit1_mark, timings->bit_tolerance)) {
-                    bit_value = true;
-                } else if (MATCH_TIMING(timing, timings->bit0_mark, timings->bit_tolerance)) {
-                    bit_value = false;
-                } else {
-                    ESP_LOGD(TAG, "SIRC: Invalid mark timing: %luµs (bit1=%luµs±%lu, bit0=%luµs±%lu)", 
-                             timing, timings->bit1_mark, timings->bit_tolerance, 
-                             timings->bit0_mark, timings->bit_tolerance);
-                    return InfraredDecoderStatusError;
-                }
-                
-                // Store bit
-                uint8_t byte_index = decoder->databit_cnt / 8;
-                uint8_t bit_index = decoder->databit_cnt % 8;
-                
-                if (byte_index < sizeof(decoder->data)) {
-                    if (bit_value) {
-                        decoder->data[byte_index] |= (1 << bit_index);
-                    }
-                    decoder->databit_cnt++;
-                    
-                    ESP_LOGD(TAG, "SIRC: Bit %d = %d (total bits: %d)", decoder->databit_cnt - 1, bit_value, decoder->databit_cnt);
-                    
-                    // Check if we have reached the maximum possible bits
-                    uint32_t max_bits = 0;
-                    for (int i = 0; i < 4; i++) {
-                        if (decoder->protocol->databit_len[i] > max_bits) {
-                            max_bits = decoder->protocol->databit_len[i];
-                        }
-                    }
-                    
-                    if (decoder->databit_cnt >= max_bits) {
-                        ESP_LOGD(TAG, "SIRC: Collected maximum %d bits, ready for interpretation", decoder->databit_cnt);
-                        return InfraredDecoderStatusReady;
-                    }
-                }
-                return InfraredDecoderStatusOk;
-            } else {
-                // Space phase - just validate space timing but don't decode
-                if (MATCH_TIMING(timing, timings->bit1_space, timings->bit_tolerance) ||
-                    MATCH_TIMING(timing, timings->bit0_space, timings->bit_tolerance)) {
-                    return InfraredDecoderStatusOk;
-                } else {
-                    ESP_LOGD(TAG, "SIRC: Invalid space timing: %luµs", timing);
-                    return InfraredDecoderStatusError;
-                }
-            }
-            break;
-            
-        default:
-            ESP_LOGE(TAG, "SIRC: Invalid decoder state: %d", decoder->state);
             return InfraredDecoderStatusError;
     }
     
@@ -694,19 +894,25 @@ bool infrared_decoder_sirc_interpret(InfraredCommonDecoder* decoder) {
     uint8_t command = 0;
     InfraredProtocol protocol = InfraredProtocolUnknown;
     
+    ESP_LOGD(TAG, "SIRC interpreter: databit_cnt=%d, data=0x%08lX", decoder->databit_cnt, *data);
+    
     if (decoder->databit_cnt == 12) {
         address = (*data >> 7) & 0x1F;
         command = *data & 0x7F;
         protocol = InfraredProtocolSIRC;
+        ESP_LOGD(TAG, "SIRC: 12-bit variant selected");
     } else if (decoder->databit_cnt == 15) {
         address = (*data >> 7) & 0xFF;
         command = *data & 0x7F;
         protocol = InfraredProtocolSIRC15;
+        ESP_LOGD(TAG, "SIRC: 15-bit variant selected");
     } else if (decoder->databit_cnt == 20) {
         address = (*data >> 7) & 0x1FFF;
         command = *data & 0x7F;
         protocol = InfraredProtocolSIRC20;
+        ESP_LOGD(TAG, "SIRC: 20-bit variant selected");
     } else {
+        ESP_LOGD(TAG, "SIRC: Invalid bit count %d", decoder->databit_cnt);
         return false;
     }
     
@@ -714,6 +920,9 @@ bool infrared_decoder_sirc_interpret(InfraredCommonDecoder* decoder) {
     decoder->message.address = address;
     decoder->message.command = command;
     decoder->message.repeat = false;
+    
+    ESP_LOGD(TAG, "SIRC interpreter result: protocol=%d, address=0x%04X, command=0x%02X", 
+             protocol, address, command);
     
     return true;
 }
