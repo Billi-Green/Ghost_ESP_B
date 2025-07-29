@@ -129,7 +129,7 @@ static void clear_input_buffer(void) {
     update_input_label();
 }
 static void set_placeholder_text(const char *text) {
-    if (text && strlen(text) < sizeof(placeholder)) {
+    if (text && strlen(text) <= sizeof(placeholder) - 1) {
         strncpy(placeholder, text, sizeof(placeholder) - 1);
         placeholder[sizeof(placeholder) - 1] = '\0';
     }
