@@ -23,7 +23,7 @@ static bool touch_started = false;
 static const int SWIPE_THRESHOLD = 50;
 static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
 
-static const View *pending_view_to_switch = NULL;
+const View *pending_view_to_switch = NULL;
 static EOptionsMenuType pending_menu_type;
 static bool menu_item_selected = false;
 
