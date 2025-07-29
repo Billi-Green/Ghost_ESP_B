@@ -1916,14 +1916,14 @@ void create_signal_preview_popup(void)
         lv_style_init(&popup_style);
         lv_style_set_bg_color(&popup_style, lv_color_hex(0x222222));
         lv_style_set_border_color(&popup_style, lv_color_hex(0xFFFFFF));
-        lv_style_set_border_width(&popup_style, 2);
+        lv_style_set_border_width(&popup_style, 1);
         lv_style_set_radius(&popup_style, 8);
         popup_style_initialized = true;
     }
     
     // Create popup container with compact sizing for landscape displays
     signal_preview_popup = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(signal_preview_popup, LV_HOR_RES - 20, 160);  // Reduced height for landscape
+    lv_obj_set_size(signal_preview_popup, LV_HOR_RES - 30, 160);  // Reduced height for landscape
     lv_obj_center(signal_preview_popup);
     lv_obj_add_style(signal_preview_popup, &popup_style, 0);
     
@@ -1935,7 +1935,7 @@ void create_signal_preview_popup(void)
     // Create buttons first to ensure proper z-order
     save_btn = lv_btn_create(signal_preview_popup);
     lv_obj_set_size(save_btn, 80, 40);
-    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 35, 5);
+    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 35, -5);
     lv_obj_add_event_cb(save_btn, signal_preview_save_cb, LV_EVENT_CLICKED, NULL);
     
     // Remove default button styling
@@ -1950,7 +1950,7 @@ void create_signal_preview_popup(void)
     
     cancel_btn = lv_btn_create(signal_preview_popup);
     lv_obj_set_size(cancel_btn, 80, 40);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -35, 5);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -35, -5);
     lv_obj_add_event_cb(cancel_btn, signal_preview_cancel_cb, LV_EVENT_CLICKED, NULL);
     
     // Remove default button styling
