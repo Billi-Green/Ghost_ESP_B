@@ -237,6 +237,7 @@ static void append_signal_to_remote(const char *signal_name);
 
 
 
+#ifdef CONFIG_HAS_INFRARED_RX
 // Callback for adding a learned signal to an existing remote
 static void add_signal_to_remote_callback(const char *name) {
     if (!name || strlen(name) == 0) {
@@ -257,7 +258,9 @@ static void add_signal_to_remote_callback(const char *name) {
     // Return to infrared view
     display_manager_switch_view(&infrared_view);
 }
+#endif
 
+#ifdef CONFIG_HAS_INFRARED_RX
 // Function to append a learned signal to an existing remote file
 static void append_signal_to_remote(const char *signal_name) {
     ESP_LOGI(TAG, "append_signal_to_remote called with name: %s", signal_name ? signal_name : "NULL");
@@ -360,6 +363,7 @@ static void append_signal_to_remote(const char *signal_name) {
         learned_signal.payload.raw.timings = NULL;
     }
 }
+#endif
 
 #ifdef CONFIG_USE_ENCODER
 static const char *IR_BACK_OPTION_MAGIC_STR = "__IR_BACK_OPTION__"; // Unique string for the back button
