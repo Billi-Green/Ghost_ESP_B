@@ -20,6 +20,7 @@ static int selected_item_index = 0;
 static int touch_start_x;
 static int touch_start_y;
 static bool touch_started = false;
+static bool is_animating = false;
 static const int SWIPE_THRESHOLD = 50;
 static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
 
@@ -93,6 +94,10 @@ static void fade_out_ready_cb(lv_anim_t *a) {
     lv_obj_del((lv_obj_t *)a->var);
 }
 
+static void fade_in_ready_cb(lv_anim_t *a) {
+    is_animating = false;
+}
+
 static void anim_set_opa(void *obj, int32_t v) {
     lv_obj_set_style_opa((lv_obj_t *)obj, v, 0);
 }
@@ -143,7 +148,7 @@ static void animate_button_click(lv_obj_t *btn) {
 
 static void update_menu_item(bool slide_left) {
     static lv_obj_t *prev_item_obj = NULL;
-
+    is_animating = true; // Set flag to block input during animation
     // Animate out old item if it exists
     if (current_item_obj) {
         prev_item_obj = current_item_obj;
@@ -240,6 +245,7 @@ static void update_menu_item(bool slide_left) {
     lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_time(&fade_in, ANIM_DURATION);
     lv_anim_set_exec_cb(&fade_in, anim_set_opa);
+    lv_anim_set_ready_cb(&fade_in, fade_in_ready_cb);
     lv_anim_start(&fade_in);
 
     // Ensure the new item is fully opaque at the end
@@ -333,6 +339,7 @@ void handle_hardware_button_press(int ButtonPressed) {
  * @brief Selects a menu item and updates the display.
  */
 static void select_menu_item(int index, bool slide_left) {
+    if (is_animating) return; // Block input during animation
     if (index < 0) index = num_items - 1;
     if (index >= num_items) index = 0;
     selected_item_index = index;
@@ -343,6 +350,7 @@ static void select_menu_item(int index, bool slide_left) {
  * @brief Handles the selection of menu items.
  */
 static void handle_menu_item_selection(int item_index) {
+    if (is_animating) return; // Block input during animation
     if (current_item_obj) {
         menu_item_selected = true;
         // Find the action for this menu item
