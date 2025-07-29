@@ -17,6 +17,9 @@ void infrared_common_decoder_free(InfraredCommonDecoder* decoder);
 void infrared_common_decoder_reset(InfraredCommonDecoder* decoder);
 InfraredDecodedMessage* infrared_common_decoder_check_ready(InfraredCommonDecoder* decoder);
 
+// Main Flipper Zero decode function
+InfraredDecodedMessage* infrared_common_decode(InfraredCommonDecoder* decoder, bool level, uint32_t duration);
+
 // Common decoding algorithms
 InfraredDecoderStatus infrared_common_decode_pdwm(InfraredCommonDecoder* decoder, bool level, uint32_t timing);
 InfraredDecoderStatus infrared_common_decode_manchester(InfraredCommonDecoder* decoder, bool level, uint32_t timing);

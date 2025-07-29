@@ -2,6 +2,9 @@
 #include "esp_log.h"
 #include "managers/views/keyboard_screen.h"
 
+// Forward declaration to fix implicit declaration warning
+void update_learning_popup_selection(void);
+
 static const char *TAG = "infrared_view";
 
 // --- Function prototypes for preview/callbacks ---
@@ -907,15 +910,24 @@ void infrared_view_input_cb(InputEvent *event) {
                 }
             }
         } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER) {
-            // Handle joystick/encoder navigation for cancel button
+            // Only one button: treat left/right/tab as select
             if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_PRESS) ||
                 (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_PRESS)) {
                 learning_cancel_cb(NULL);
                 return;
+            } else if (
+                (event->type == INPUT_TYPE_JOYSTICK && (event->data.joystick_index == JOYSTICK_LEFT || event->data.joystick_index == JOYSTICK_RIGHT)) ||
+                (event->type == INPUT_TYPE_ENCODER && (event->data.encoder.direction == ENCODER_LEFT || event->data.encoder.direction == ENCODER_RIGHT)) ||
+                (event->type == INPUT_TYPE_KEYBOARD && event->data.key_value == 9)) // Tab
+            {
+                // Toggle selection state (only one button, so stays selected)
+                preview_selected_option = 1;
+                update_learning_popup_selection();
             } else if (event->type == INPUT_TYPE_KEYBOARD) {
                 // Handle Cardputer keyboard input for cancel
                 if (event->data.key_value == 'c' || event->data.key_value == 'C' ||
-                    event->data.key_value == 27) { // ESC key
+                    event->data.key_value == 27 || // ESC key
+                    event->data.key_value == 13 || event->data.key_value == 10) { // Enter
                     learning_cancel_cb(NULL);
                     return;
                 }
@@ -1606,7 +1618,12 @@ void rename_remote_cb(lv_event_t *e) {
     // Switch to keyboard view to get new name
     keyboard_view_set_submit_callback(rename_remote_keyboard_callback);
 
-    keyboard_view_set_placeholder("Enter new remote name");
+    // Use current remote name as placeholder
+    if (strlen(current_remote_name) > 0) {
+        keyboard_view_set_placeholder(current_remote_name);
+    } else {
+        keyboard_view_set_placeholder("Enter remote name");
+    }
     display_manager_switch_view(&keyboard_view);
 }
 
@@ -1625,18 +1642,27 @@ void add_signal_cb(lv_event_t *e) {
     lv_obj_set_size(learning_popup, 300, 150);
     lv_obj_center(learning_popup);
     lv_obj_set_style_bg_color(learning_popup, lv_color_hex(0x2E2E2E), 0);
+
+    // --- Add Cancel Button for IR Learning Popup ---
+    learning_cancel_btn = lv_btn_create(learning_popup);
+    lv_obj_set_size(learning_cancel_btn, 80, 40);
+    lv_obj_align(learning_cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
+    lv_obj_add_event_cb(learning_cancel_btn, learning_cancel_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(learning_cancel_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(learning_cancel_btn, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(learning_cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t *cancel_label = lv_label_create(learning_cancel_btn);
+    lv_label_set_text(cancel_label, "Cancel");
+    lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(cancel_label);
+
+    // Track selection state for highlight (0: none, 1: cancel selected)
+    preview_selected_option = 1; // Only cancel for learning popup
+    update_learning_popup_selection();
     lv_obj_set_style_border_color(learning_popup, lv_color_hex(0x555555), 0);
     lv_obj_set_style_border_width(learning_popup, 2, 0);
     lv_obj_set_style_radius(learning_popup, 10, 0);
-    
-    // Create cancel button first to ensure proper z-order
-    learning_cancel_btn = lv_btn_create(learning_popup);
-    lv_obj_set_size(learning_cancel_btn, 80, 30);
-    lv_obj_align(learning_cancel_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0x555555), 0);
-    lv_obj_t *cancel_label = lv_label_create(learning_cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_center(cancel_label);
     
     // Add cancel button callback
     lv_obj_add_event_cb(learning_cancel_btn, learning_cancel_cb, LV_EVENT_CLICKED, NULL);
@@ -1801,7 +1827,7 @@ void signal_preview_save_cb(lv_event_t *e)
 {
     // Transition to keyboard view for naming
     lv_async_call(cleanup_signal_preview_popup, NULL);
-    keyboard_view_set_placeholder("Enter signal name...");
+    keyboard_view_set_placeholder("Enter signal name");
     
     // Use different callbacks based on whether we're adding to existing remote or creating new
     if (add_signal_mode) {
@@ -1863,6 +1889,26 @@ void update_signal_preview_selection(void)
     }
 }
 
+// --- New: Update learning popup cancel button highlight ---
+void update_learning_popup_selection(void)
+{
+    if (!learning_cancel_btn) return;
+    if (preview_selected_option == 1) {
+        // Cancel selected - white background, black text
+        lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(learning_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *cancel_label = lv_obj_get_child(learning_cancel_btn, 0);
+        if (cancel_label) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+    } else {
+        // Cancel unselected - dark background, white text
+        lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(learning_cancel_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *cancel_label = lv_obj_get_child(learning_cancel_btn, 0);
+        if (cancel_label) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
+    }
+}
+
+
 void create_signal_preview_popup(void)
 {
     // Initialize popup style if not already done
@@ -1889,7 +1935,7 @@ void create_signal_preview_popup(void)
     // Create buttons first to ensure proper z-order
     save_btn = lv_btn_create(signal_preview_popup);
     lv_obj_set_size(save_btn, 80, 40);
-    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 30, 0);
+    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 35, 5);
     lv_obj_add_event_cb(save_btn, signal_preview_save_cb, LV_EVENT_CLICKED, NULL);
     
     // Remove default button styling
@@ -1904,7 +1950,7 @@ void create_signal_preview_popup(void)
     
     cancel_btn = lv_btn_create(signal_preview_popup);
     lv_obj_set_size(cancel_btn, 80, 40);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -30, 0);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -35, 5);
     lv_obj_add_event_cb(cancel_btn, signal_preview_cancel_cb, LV_EVENT_CLICKED, NULL);
     
     // Remove default button styling
@@ -1947,9 +1993,9 @@ void create_signal_preview_popup(void)
     lv_obj_set_style_text_font(address_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_font(command_label, &lv_font_montserrat_14, 0);
     
-    lv_obj_align(protocol_label, LV_ALIGN_TOP_LEFT, 30, 5);
-    lv_obj_align(address_label, LV_ALIGN_TOP_LEFT, 30, 25);
-    lv_obj_align(command_label, LV_ALIGN_TOP_LEFT, 30, 45);
+    lv_obj_align(protocol_label, LV_ALIGN_TOP_MID, 0, 5);
+    lv_obj_align(address_label, LV_ALIGN_TOP_MID, 0, 25);
+    lv_obj_align(command_label, LV_ALIGN_TOP_MID, 0, 45);
     
     // Raw signal info
     lv_obj_t *raw_info = lv_label_create(signal_preview_popup);
@@ -1957,7 +2003,7 @@ void create_signal_preview_popup(void)
                          learned_signal.payload.raw.timings_size);
     lv_obj_set_style_text_color(raw_info, lv_color_hex(0xCCCCCC), 0);
     lv_obj_set_style_text_font(raw_info, &lv_font_montserrat_14, 0);
-    lv_obj_align(raw_info, LV_ALIGN_TOP_LEFT, 30, 65);
+    lv_obj_align(raw_info, LV_ALIGN_TOP_MID, 0, 65);
     
     // Set initial selection
     preview_selected_option = 0;
@@ -2077,7 +2123,7 @@ static void save_learned_signal(const char *signal_name) {
     fprintf(f, "Filetype: IR signals file\n");
     fprintf(f, "Version: 1\n");
     fprintf(f, "#\n");
-    fprintf(f, "# Generated by Ghost ESP IR Learning\n");
+    fprintf(f, "# Generated by Ghost ESP\n");
     fprintf(f, "# Signal: %s\n", signal_name);
     fprintf(f, "#\n");
     fprintf(f, "name: %s\n", signal_name);
@@ -2401,6 +2447,20 @@ static void ir_learning_task(void *arg) {
                                             result->address, result->command);
                                     break;
                                 }
+                            }
+                        }
+                        
+                        // Send end-of-signal indication to decoder if not already decoded
+                        // This is crucial for protocols like SIRC that need end-of-signal detection
+                        if (!signal_decoded) {
+                            ESP_LOGD(TAG, "Sending end-of-signal indication to decoder (timing=0)");
+                            InfraredDecodedMessage* result = infrared_decoder_decode(decoder_context, false, 0);
+                            if (result) {
+                                decoded_message = result;
+                                signal_decoded = true;
+                                ESP_LOGI(TAG, "Signal decoded after end-of-signal: %s, addr=0x%08lX, cmd=0x%08lX", 
+                                        infrared_protocol_to_string(result->protocol),
+                                        result->address, result->command);
                             }
                         }
                         
