@@ -80,6 +80,8 @@ static void update_key_labels();
 static void recreate_keyboard_buttons();
 static void get_key_position(int row, int col, int *x, int *width, bool symbols_mode);
 
+static lv_obj_t *pressed_key_btn = NULL;
+
 static bool is_shift_key(const char *key) {
     return strcmp(key, "SHIFT") == 0;
 }
@@ -607,6 +609,20 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
             }
 
             if (col >= 0) {
+                // Find the key button object
+                int key_index = 0;
+                for (int rr = 0; rr < num_rows; rr++) {
+                    for (int cc = 0; cc < max_row_lengths[rr]; cc++) {
+                        if (rr == row && cc == col) {
+                            int child_idx = 1 + key_index;
+                            pressed_key_btn = lv_obj_get_child(root, child_idx);
+                            if (pressed_key_btn) {
+                                lv_obj_set_style_bg_color(pressed_key_btn, lv_color_hex(0xFF9800), 0); // Orange highlight
+                            }
+                        }
+                        key_index++;
+                    }
+                }
                 const char* key = current_keys[row][col];
                 if (strcmp(key, "SHIFT") == 0) {
                     if (is_caps) {
@@ -639,6 +655,18 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                     add_char_to_buffer(adjusted_char);
                 }
             }
+        }
+    } else if (event->type == INPUT_TYPE_TOUCH && event->data.touch_data.state == LV_INDEV_STATE_REL) {
+        if (pressed_key_btn) {
+            // Only restore style if not SHIFT key, otherwise let update_key_labels() handle it
+            lv_obj_t *key_label = lv_obj_get_child(pressed_key_btn, 0);
+            const char *label_text = lv_label_get_text(key_label);
+            if (strcmp(label_text, LV_SYMBOL_UP) != 0) {
+                lv_obj_set_style_bg_color(pressed_key_btn, lv_color_hex(0x7B1FA2), 0);
+            }
+            pressed_key_btn = NULL;
+            // Always update key labels to refresh SHIFT key highlight
+            update_key_labels();
         }
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         char c = (char)event->data.key_value;
