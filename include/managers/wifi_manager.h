@@ -242,4 +242,8 @@ void wifi_manager_sae_flood_help(void);
 void wifi_manager_set_html_from_uart(void);
 void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final);
 
+// Karma attack functions
+void wifi_manager_start_karma(void);
+void wifi_manager_stop_karma(void);
+
 #endif // WIFI_MANAGER_H

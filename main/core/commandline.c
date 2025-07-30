@@ -2344,6 +2344,7 @@ void handle_listportals(int argc, char **argv);
 void handle_evilportal(int argc, char **argv);
 void handle_wifi_disconnect(int argc, char **argv);
 void handle_set_rgb_mode_cmd(int argc, char **argv);
+void handle_karma_cmd(int argc, char **argv);
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -2717,6 +2718,7 @@ void register_commands() {
     register_command("blespam", handle_ble_spam_cmd);
 #endif
     register_command("setrgbmode", handle_set_rgb_mode_cmd);
+    register_command("karma", handle_karma_cmd);
     
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
     
@@ -2836,6 +2838,22 @@ void handle_set_rgb_mode_cmd(int argc, char **argv) {
     settings_save(&G_Settings);
     printf("RGB mode set to %s\n", argv[1]);
     TERMINAL_VIEW_ADD_TEXT("RGB mode set to %s\n", argv[1]);
+}
+
+void handle_karma_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: karma <start|stop>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: karma <start|stop>\n");
+        return;
+    }
+    if (strcmp(argv[1], "start") == 0) {
+        wifi_manager_start_karma();
+    } else if (strcmp(argv[1], "stop") == 0) {
+        wifi_manager_stop_karma();
+    } else {
+        printf("Usage: karma <start|stop>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: karma <start|stop>\n");
+    }
 }
 
 
