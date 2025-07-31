@@ -26,3 +26,4 @@ scripts/site/package.json
 scripts/site/rollup.config.mjs
 /.cache
 dependencies.lock
+.venv

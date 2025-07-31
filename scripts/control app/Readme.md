@@ -32,7 +32,11 @@ The **Ghost ESP Control Panel** is a GUI application that facilitates control an
 2. **Dependencies**:
    - Install required packages by running:
      ```bash
-     pip install pyserial pyqt6
+     sudo apt update
+     sudo apt install libxcb-cursor0
+     python -m venv .venv
+     source .venv/bin/activate
+     pip install -r requirements.txt
      ```
 
 3. **Ghost ESP Firmware**: This application is the firmware that can interpret commands sent from the control panel. Please ensure the ESP32 is configured accordingly.
