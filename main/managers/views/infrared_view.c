@@ -792,7 +792,9 @@ static void back_event_cb(lv_event_t *e) {
 
 void infrared_view_create(void) {
     // Initialize infrared settings
+#ifdef CONFIG_HAS_INFRARED_RX
     is_easy_mode = settings_get_infrared_easy_mode(&G_Settings);
+#endif
     
     root = lv_obj_create(lv_scr_act());
     lv_obj_set_style_pad_all(root, 0, 0);
@@ -3246,6 +3248,7 @@ static void ir_learning_task(void *arg) {
 
 void learning_cancel_cb(lv_event_t *e) {
     ESP_LOGI(TAG, "Learn Remote cancel button pressed");
+#ifdef CONFIG_HAS_INFRARED_RX
     ir_learning_cancel = true;
     
     // Reset the add signal mode flag when cancelling
@@ -3256,11 +3259,15 @@ void learning_cancel_cb(lv_event_t *e) {
     } else {
         cleanup_learning_popup(NULL);
     }
+#else
+    cleanup_learning_popup(NULL);
+#endif
 }
 
 void easy_learn_toggle_cb(lv_event_t *e) {
     ESP_LOGI(TAG, "Easy Learn toggle pressed");
     
+#ifdef CONFIG_HAS_INFRARED_RX
     // Toggle the easy mode state
     is_easy_mode = !is_easy_mode;
     
@@ -3288,6 +3295,10 @@ void easy_learn_toggle_cb(lv_event_t *e) {
     }
     
     ESP_LOGI(TAG, "Easy Learn mode %s", is_easy_mode ? "enabled" : "disabled");
+#else
+    // Do nothing if IR RX is not configured
+    ESP_LOGI(TAG, "Easy Learn mode not available (IR RX not configured)");
+#endif
 }
 
 #ifdef CONFIG_HAS_INFRARED_RX
