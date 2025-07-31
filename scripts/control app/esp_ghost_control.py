@@ -8,8 +8,8 @@ from serial.tools import list_ports
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
-                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle)
-from PyQt6.QtCore import Qt, pyqtSignal, QThread
+                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox)
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor
 from functools import partial
 
@@ -30,6 +30,9 @@ class SerialMonitorThread(QThread):
                         self.data_received.emit(data)
             except Exception as e:
                 self.data_received.emit(f"Error reading serial: {str(e)}")
+                # Disconnect on serial read error
+                if hasattr(self.parent(), "disconnect"):
+                    self.parent().disconnect()
                 break
             self.msleep(10)
 
@@ -61,6 +64,13 @@ class ESP32ControlGUI(QMainWindow):
 
         # Refresh available ports
         self.refresh_ports()
+
+        # --- Auto Reconnect Timer ---
+        self.reconnect_timer = QTimer(self)
+        self.reconnect_timer.setInterval(2000)  # Check every 2 seconds
+        self.reconnect_timer.timeout.connect(self.check_auto_reconnect)
+        self.reconnect_timer.start()
+        # --- End Auto Reconnect Timer ---
 
     def setup_dark_theme(self):
         palette = QPalette()
@@ -124,6 +134,12 @@ class ESP32ControlGUI(QMainWindow):
         self.port_combo.setMinimumWidth(150)
         connection_layout.addWidget(QLabel("Port:"))
         connection_layout.addWidget(self.port_combo)
+
+        # --- Auto Reconnect Checkbox ---
+        self.auto_reconnect_checkbox = QCheckBox("Auto Reconnect")
+        self.auto_reconnect_checkbox.setChecked(False)
+        connection_layout.addWidget(self.auto_reconnect_checkbox)
+        # --- End Auto Reconnect Checkbox ---
 
         refresh_btn = QPushButton("Refresh Ports")
         refresh_btn.clicked.connect(self.refresh_ports)
@@ -316,26 +332,29 @@ class ESP32ControlGUI(QMainWindow):
         # Portal Settings with default values
         self.portal_ssid = QLineEdit("FreeWiFi")
         self.portal_password = QLineEdit("password123")
-
         portal_layout.addRow("Portal SSID:", self.portal_ssid)
         portal_layout.addRow("Portal Password:", self.portal_password)
-
 
         # --- Available Portals Dropdown + Refresh Button ---
         dropdown_layout = QHBoxLayout()
         self.portal_dropdown = QComboBox()
-        self.portal_dropdown.addItem("default")  # Always show "default" initially
+        self.portal_dropdown.addItem("default")
         dropdown_layout.addWidget(self.portal_dropdown)
 
         list_portals_btn = QPushButton()
         list_portals_btn.setToolTip("Refresh Portal List")
         list_portals_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
-        list_portals_btn.setFixedSize(28, 28)  # Small and square
+        list_portals_btn.setFixedSize(28, 28)
         list_portals_btn.clicked.connect(lambda: self.send_command("listportals"))
         dropdown_layout.addWidget(list_portals_btn)
 
         portal_layout.addRow("Available Portals:", dropdown_layout)
-        # --- End Available Portals Dropdown + Refresh Button ---
+
+        # --- File selection button ---
+        file_btn = QPushButton("Send Local HTML as Portal")
+        file_btn.clicked.connect(self.send_local_portal_file)
+        portal_layout.addRow(file_btn)
+        # --- End File selection button ---
 
         # Control buttons
         button_layout = QHBoxLayout()
@@ -343,7 +362,6 @@ class ESP32ControlGUI(QMainWindow):
         start_portal_btn.clicked.connect(self.start_evil_portal)
         stop_portal_btn = QPushButton("Stop Portal")
         stop_portal_btn.clicked.connect(lambda: self.send_command("stopportal"))
-
         button_layout.addWidget(start_portal_btn)
         button_layout.addWidget(stop_portal_btn)
         portal_layout.addRow(button_layout)
@@ -532,11 +550,15 @@ class ESP32ControlGUI(QMainWindow):
                 self.monitor_thread.data_received.connect(self.process_response)
                 self.monitor_thread.start()
 
+                # Enable auto-reconnect only after manual connect
+                self.auto_reconnect_enabled = True
+
             except Exception as e:
                 QMessageBox.critical(self, "Connection Error", str(e))
                 self.log_message(f"Connection error: {str(e)}")
         else:
             self.disconnect()
+            self.auto_reconnect_enabled = False  # Disable auto-reconnect on manual disconnect
 
     def disconnect(self):
         if self.monitor_thread:
@@ -560,6 +582,7 @@ class ESP32ControlGUI(QMainWindow):
             self.serial_port.write(f"{command}\n".encode())
         except Exception as e:
             self.log_message(f"Error sending command: {str(e)}")
+            self.disconnect()  # Disconnect
 
     def send_custom_command(self):
         command = self.cmd_entry.text().strip()
@@ -568,6 +591,11 @@ class ESP32ControlGUI(QMainWindow):
             self.cmd_entry.clear()
 
     def process_response(self, response):
+        if response.startswith("Error reading serial:"):
+            self.log_message(response)
+            self.disconnect()
+            return
+
         # Check for evil portal list output
         if "Available Evil Portals:" in response or (
             hasattr(self, "_portal_list_mode") and self._portal_list_mode
@@ -750,6 +778,50 @@ class ESP32ControlGUI(QMainWindow):
         if ok and pins:
             self.send_command(f"rgb_pins {pins}")
 
+    def send_local_portal_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select HTML File", "", "HTML Files (*.html *.htm)")
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+                # You may want to chunk the data if it's large; here we send it as one command
+                # You can define a protocol, e.g. "portalhtml <SSID> <PASSWORD> <CONTENT>"
+                ssid = self.portal_ssid.text().strip()
+                password = self.portal_password.text().strip()
+                # Escape newlines and quotes if needed
+                safe_html = html_content.replace('\n', '\\n').replace('"', '\\"')
+                cmd = f'evilportal -c sethtmlstr'
+                self.send_command(cmd)
+                self.send_command(f'[HTML/BEGIN]{safe_html}[HTML/CLOSE]')
+                QMessageBox.information(self, "Portal Sent", "HTML file sent as evil portal.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to send file: {str(e)}")
+
+    def check_auto_reconnect(self):
+        # Only auto-reconnect if enabled and checkbox is checked
+        if getattr(self, "auto_reconnect_enabled", False) and self.auto_reconnect_checkbox.isChecked():
+            if not self.serial_port or not self.serial_port.is_open:
+                port = self.port_combo.currentText()
+                if port:
+                    try:
+                        self.serial_port = serial.Serial(port, 115200, timeout=1)
+                        self.connect_btn.setText("Disconnect")
+                        self.connect_btn.setStyleSheet("background-color: #ff4444;")
+                        self.log_message(f"Auto-reconnected to {port}")
+
+                        self.monitor_thread = SerialMonitorThread(self.serial_port)
+                        self.monitor_thread.data_received.connect(self.process_response)
+                        self.monitor_thread.start()
+                    except Exception as e:
+                        self.log_message(f"Auto-reconnect failed: {str(e)}")
+
+        self.auto_reconnect_checkbox.stateChanged.connect(self.toggle_reconnect_timer)
+
+    def toggle_reconnect_timer(self, state):
+        if state:
+            self.reconnect_timer.start()
+        else:
+            self.reconnect_timer.stop()
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     font = QFont("Arial", 10)
