@@ -427,11 +427,6 @@ class ESP32ControlGUI(QMainWindow):
         rgbpins_btn.clicked.connect(self.show_rgbpins_dialog)
         settings_layout.addRow(rgbpins_btn)
 
-        setrgbmode_combo = QComboBox()
-        setrgbmode_combo.addItems(["Normal", "Rainbow", "Stealth"])
-        setrgbmode_combo.currentIndexChanged.connect(lambda i: self.send_command(f"setrgbmode {setrgbmode_combo.currentText().lower()}"))
-        settings_layout.addRow("Set RGB Mode:", setrgbmode_combo)
-
         return settings_widget
 
     def create_command_group(self, title, commands, layout, row, col):
