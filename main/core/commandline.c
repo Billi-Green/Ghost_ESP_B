@@ -2487,28 +2487,16 @@ void handle_comm_setpins(int argc, char **argv) {
 }
 
 static void comm_command_callback(const char* command, const char* data, void* user_data) {
-    char log_buf[512];
-    if (data && strlen(data) > 0) {
-        snprintf(log_buf, sizeof(log_buf), "Received command from peer: %s with data: %s\n", command, data);
-    } else {
-        snprintf(log_buf, sizeof(log_buf), "Received command from peer: %s\n", command);
-    }
-    printf("%s", log_buf);
-    TERMINAL_VIEW_ADD_TEXT(log_buf);
+    static char full_command[128];
     
-    char full_command[256];
+    // Minimal processing in command executor task - just queue the command
     if (data && strlen(data) > 0) {
-        snprintf(full_command, sizeof(full_command), "%s %s", command, data);
+        snprintf(full_command, sizeof(full_command), "peer:%s %s", command, data);
     } else {
-        snprintf(full_command, sizeof(full_command), "%s", command);
+        snprintf(full_command, sizeof(full_command), "peer:%s", command);
     }
     
-    snprintf(log_buf, sizeof(log_buf), "Executing received command: %s\n", full_command);
-    printf("%s", log_buf);
-    TERMINAL_VIEW_ADD_TEXT(log_buf);
-    esp_comm_manager_set_remote_command_flag(true);
-    handle_serial_command(full_command);
-    esp_comm_manager_set_remote_command_flag(false);
+    simulateCommand(full_command);
 }
 void handle_ap_enable_cmd(int argc, char **argv) {
     if (argc != 2) {
