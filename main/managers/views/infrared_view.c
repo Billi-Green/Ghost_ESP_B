@@ -448,16 +448,41 @@ static void append_signal_to_remote(const char *signal_name) {
     // Append the new signal to the file
     fprintf(f, "#\n");
     fprintf(f, "name: %s\n", signal_name);
-    fprintf(f, "type: raw\n");
-    fprintf(f, "frequency: %lu\n", learned_signal.payload.raw.frequency);
-    fprintf(f, "duty_cycle: %.6f\n", learned_signal.payload.raw.duty_cycle);
-    fprintf(f, "data: ");
     
-    // Write timing data
-    for (size_t i = 0; i < learned_signal.payload.raw.timings_size; i++) {
-        fprintf(f, "%lu ", learned_signal.payload.raw.timings[i]);
+    // Check if we have a decoded signal to save in proper format
+    if (signal_decoded && decoded_message) {
+        ESP_LOGI(TAG, "Appending decoded signal: %s, addr=0x%08lX, cmd=0x%08lX", 
+                infrared_protocol_to_string(decoded_message->protocol),
+                decoded_message->address, decoded_message->command);
+        
+        // Save as decoded signal
+        fprintf(f, "type: parsed\n");
+        fprintf(f, "protocol: %s\n", infrared_protocol_to_string(decoded_message->protocol));
+        fprintf(f, "address: %02lX %02lX %02lX %02lX\n", 
+                (decoded_message->address >> 0) & 0xFF,
+                (decoded_message->address >> 8) & 0xFF, 
+                (decoded_message->address >> 16) & 0xFF,
+                (decoded_message->address >> 24) & 0xFF);
+        fprintf(f, "command: %02lX %02lX %02lX %02lX\n",
+                (decoded_message->command >> 0) & 0xFF,
+                (decoded_message->command >> 8) & 0xFF,
+                (decoded_message->command >> 16) & 0xFF, 
+                (decoded_message->command >> 24) & 0xFF);
+    } else {
+        ESP_LOGI(TAG, "Appending as raw signal (could not decode)");
+        
+        // Save as raw signal
+        fprintf(f, "type: raw\n");
+        fprintf(f, "frequency: %lu\n", learned_signal.payload.raw.frequency);
+        fprintf(f, "duty_cycle: %.6f\n", learned_signal.payload.raw.duty_cycle);
+        fprintf(f, "data: ");
+        
+        // Write timing data
+        for (size_t i = 0; i < learned_signal.payload.raw.timings_size; i++) {
+            fprintf(f, "%lu ", learned_signal.payload.raw.timings[i]);
+        }
+        fprintf(f, "\n");
     }
-    fprintf(f, "\n");
     
     fclose(f);
     
@@ -2904,16 +2929,41 @@ static void save_learned_signal(const char *signal_name) {
     fprintf(f, "# Signal: %s\n", signal_name);
     fprintf(f, "#\n");
     fprintf(f, "name: %s\n", signal_name);
-    fprintf(f, "type: raw\n");
-    fprintf(f, "frequency: %lu\n", learned_signal.payload.raw.frequency);
-    fprintf(f, "duty_cycle: %.6f\n", learned_signal.payload.raw.duty_cycle);
-    fprintf(f, "data: ");
+    
+    // Check if we have a decoded signal to save in proper format
+    if (signal_decoded && decoded_message) {
+        ESP_LOGI(TAG, "Saving decoded signal: %s, addr=0x%08lX, cmd=0x%08lX", 
+                infrared_protocol_to_string(decoded_message->protocol),
+                decoded_message->address, decoded_message->command);
+        
+        // Save as decoded signal
+        fprintf(f, "type: parsed\n");
+        fprintf(f, "protocol: %s\n", infrared_protocol_to_string(decoded_message->protocol));
+        fprintf(f, "address: %02lX %02lX %02lX %02lX\n", 
+                (decoded_message->address >> 0) & 0xFF,
+                (decoded_message->address >> 8) & 0xFF, 
+                (decoded_message->address >> 16) & 0xFF,
+                (decoded_message->address >> 24) & 0xFF);
+        fprintf(f, "command: %02lX %02lX %02lX %02lX\n",
+                (decoded_message->command >> 0) & 0xFF,
+                (decoded_message->command >> 8) & 0xFF,
+                (decoded_message->command >> 16) & 0xFF, 
+                (decoded_message->command >> 24) & 0xFF);
+    } else {
+        ESP_LOGI(TAG, "Saving as raw signal (could not decode)");
+        
+        // Save as raw signal
+        fprintf(f, "type: raw\n");
+        fprintf(f, "frequency: %lu\n", learned_signal.payload.raw.frequency);
+        fprintf(f, "duty_cycle: %.6f\n", learned_signal.payload.raw.duty_cycle);
+        fprintf(f, "data: ");
 
-    // Write timing data
-    for (size_t i = 0; i < learned_signal.payload.raw.timings_size; i++) {
-        fprintf(f, "%lu ", learned_signal.payload.raw.timings[i]);
+        // Write timing data
+        for (size_t i = 0; i < learned_signal.payload.raw.timings_size; i++) {
+            fprintf(f, "%lu ", learned_signal.payload.raw.timings[i]);
+        }
+        fprintf(f, "\n");
     }
-    fprintf(f, "\n");
 
     fclose(f);
     
