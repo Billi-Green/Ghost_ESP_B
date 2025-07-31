@@ -452,7 +452,6 @@ class ESP32ControlGUI(QMainWindow):
         display_layout.addWidget(self.display_text)
 
         button_layout = QHBoxLayout()
-
         clear_display_btn = QPushButton("Clear Display")
         clear_display_btn.clicked.connect(self.display_text.clear)
         button_layout.addWidget(clear_display_btn)
@@ -461,6 +460,18 @@ class ESP32ControlGUI(QMainWindow):
         save_log_btn.clicked.connect(self.save_log)
         button_layout.addWidget(save_log_btn)
         display_layout.addLayout(button_layout)
+
+        # --- Custom Command Box ---
+        cmd_layout = QHBoxLayout()
+        self.cmd_entry = QLineEdit()
+        self.cmd_entry.setPlaceholderText("Enter custom command...")
+        self.cmd_entry.returnPressed.connect(self.send_custom_command)
+        cmd_layout.addWidget(self.cmd_entry)
+        send_cmd_btn = QPushButton("Send")
+        send_cmd_btn.clicked.connect(self.send_custom_command)
+        cmd_layout.addWidget(send_cmd_btn)
+        display_layout.addLayout(cmd_layout)
+        # --- End Custom Command Box ---
 
         layout.addWidget(display_group)
 
