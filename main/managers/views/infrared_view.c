@@ -124,10 +124,11 @@ static bool is_easy_mode = false;
 static int existing_remote_button_index = 0;
 
 static const char *common_button_names[] = {
-    "Power", "Vol_up", "Vol_down", "Mute", "Channel_up", "Channel_down",
-    "Up", "Down", "Left", "Right", "OK", "Back", "Menu", "Exit",
-    "Play", "Pause", "Stop", "Rewind", "Fast_forward", "Record",
-    "Red", "Green", "Yellow", "Blue", "Info", "Guide", "Home"
+    "Power", "Vol_up", "Vol_dn", "Mute", "Ch_up",
+    "Ch_dn", "Ok", "Up", "Down", "Left",
+    "Right", "Menu", "Back", "Play", "Pause",
+    "Stop", "Next", "Prev", "FF", "Rew",
+    "Input", "Exit", "Eject", "Subtitle"
 };
 static const int num_common_buttons = sizeof(common_button_names) / sizeof(common_button_names[0]);
 
