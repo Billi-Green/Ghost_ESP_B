@@ -138,50 +138,48 @@ class ESP32ControlGUI(QMainWindow):
         connection_layout.addStretch()
         main_layout.addWidget(connection_group)
 
+    def setup_command_panels(self, layout):
+        # Dropdown for panel selection
+        self.panel_combo = QComboBox()
+        self.panel_combo.addItems([
+            "WiFi Operations",
+            "Network Operations",
+            "BLE Operations",
+            "Capture Operations",
+            "Evil Portal",
+            "Settings"
+        ])
+        layout.addWidget(self.panel_combo)
+
+        # Create each panel widget
+        self.panels = []
+        self.panels.append(self.create_wifi_tab())
+        self.panels.append(self.create_network_tab())
+        self.panels.append(self.create_ble_tab())
+        self.panels.append(self.create_capture_tab())
+        self.panels.append(self.create_evil_portal_tab())
+        self.panels.append(self.create_settings_tab())
+
+        # Container for panels
+        self.panel_container = QWidget()
+        self.panel_layout = QVBoxLayout(self.panel_container)
+        for panel in self.panels:
+            self.panel_layout.addWidget(panel)
+            panel.hide()
+        layout.addWidget(self.panel_container)
+
+        # Show the first panel by default
+        self.panels[0].show()
+
+        # Connect dropdown change to panel switch
+        self.panel_combo.currentIndexChanged.connect(self.switch_panel)
+
+    def switch_panel(self, index):
+        for i, panel in enumerate(self.panels):
+            panel.setVisible(i == index)
+
     def setup_command_tabs(self, layout):
-        self.tab_widget = QTabWidget()
-
-        # WiFi Operations Tab
-        self.tab_widget.addTab(self.create_wifi_tab(), "WiFi Operations")
-
-        # Network Operations Tab
-        self.tab_widget.addTab(self.create_network_tab(), "Network Operations")
-
-        # BLE Operations Tab
-        self.tab_widget.addTab(self.create_ble_tab(), "BLE Operations")
-
-        # Capture Operations Tab
-        self.tab_widget.addTab(self.create_capture_tab(), "Capture Operations")
-
-        # Evil Portal Tab
-        self.tab_widget.addTab(self.create_evil_portal_tab(), "Evil Portal")
-
-        # Settings Tab
-        self.tab_widget.addTab(self.create_settings_tab(), "Settings")
-
-        # Custom Command Area
-        custom_group = QGroupBox("Custom Command")
-        custom_layout = QVBoxLayout(custom_group)
-
-        # Custom command input
-        self.cmd_entry = QLineEdit()
-        self.cmd_entry.setPlaceholderText("Enter custom command...")
-        self.cmd_entry.returnPressed.connect(self.send_custom_command)
-        custom_layout.addWidget(self.cmd_entry)
-
-        # Send Command button
-        send_btn = QPushButton("Send Command")
-        send_btn.clicked.connect(self.send_custom_command)
-        custom_layout.addWidget(send_btn)
-
-        # Help Command button
-        help_btn = QPushButton("Help Command")
-        help_btn.clicked.connect(lambda: self.send_command("help"))
-        custom_layout.addWidget(help_btn)
-
-        # Adding widgets to layout
-        layout.addWidget(self.tab_widget)
-        layout.addWidget(custom_group)
+        self.setup_command_panels(layout)
 
     def create_wifi_tab(self):
         wifi_widget = QWidget()
@@ -404,7 +402,18 @@ class ESP32ControlGUI(QMainWindow):
 
     def refresh_ports(self):
         self.port_combo.clear()
-        ports = [port.device for port in list_ports.comports()]
+        ports = []
+        for port in list_ports.comports():
+            # Filter out system ports commonly found on Linux
+            if port.device.startswith("/dev/ttyS"):
+                continue
+            if port.device.startswith("/dev/ttyAMA"):
+                continue
+            if port.device.startswith("/dev/ttyprintk"):
+                continue
+            if port.device.startswith("/dev/pts"):
+                continue
+            ports.append(port.device)
         self.port_combo.addItems(ports)
 
     def toggle_connection(self):
