@@ -245,5 +245,6 @@ void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final);
 // Karma attack functions
 void wifi_manager_start_karma(void);
 void wifi_manager_stop_karma(void);
+void wifi_manager_set_karma_ssid_list(const char **ssids, int count);
 
 #endif // WIFI_MANAGER_H

@@ -4512,6 +4512,8 @@ static char karma_ssid_cache[KARMA_MAX_SSIDS][33];
 static int karma_ssid_count = 0;
 static int karma_ssid_index = 0;
 static uint32_t last_ssid_change_time = 0;
+static bool karma_ssid_manual_mode = false;
+
 
 // Helper to add SSID to cache if not present
 static void karma_add_ssid(const char *ssid) {
@@ -4528,6 +4530,20 @@ static void karma_add_ssid(const char *ssid) {
         printf("Karma cached SSID: %s\n", ssid);
         TERMINAL_VIEW_ADD_TEXT("Karma cached SSID: %s\n", ssid);
     }
+}
+
+void wifi_manager_set_karma_ssid_list(const char **ssids, int count) {
+    if (count > KARMA_MAX_SSIDS) count = KARMA_MAX_SSIDS;
+    karma_ssid_count = 0;
+    for (int i = 0; i < count; ++i) {
+        if (ssids[i] && strlen(ssids[i]) > 0 && strlen(ssids[i]) < 33) {
+            strncpy(karma_ssid_cache[karma_ssid_count], ssids[i], 32);
+            karma_ssid_cache[karma_ssid_count][32] = '\0';
+            karma_ssid_count++;
+        }
+    }
+    karma_ssid_index = 0;
+    karma_ssid_manual_mode = true;
 }
 
 // Helper function to send a probe response to a station
@@ -4587,7 +4603,9 @@ static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t 
             if (ssid_len > 0 && ssid_len < 33) {
                 char probed_ssid[33] = {0};
                 memcpy(probed_ssid, &payload[ssid_offset + 2], ssid_len);
-                karma_add_ssid(probed_ssid);
+                if (!karma_ssid_manual_mode) {
+                    karma_add_ssid(probed_ssid);
+                }
                 // Respond directly to probe request
                 karma_send_probe_response(hdr->addr2, probed_ssid);
             }
@@ -4606,10 +4624,31 @@ static void karma_task(void *param) {
     esp_wifi_set_promiscuous_rx_cb(karma_probe_request_callback);
 
     last_ssid_change_time = esp_timer_get_time() / 1000;
+
+    // If only one SSID, set it once and don't rotate
+    if (karma_ssid_count == 1) {
+        wifi_config_t ap_config = {
+            .ap = {
+                .ssid = "",
+                .ssid_len = strlen(karma_ssid_cache[0]),
+                .channel = 1,
+                .authmode = WIFI_AUTH_OPEN,
+                .max_connection = 4,
+                .ssid_hidden = 0
+            }
+        };
+        strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[0], 32);
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        printf("Karma using single SSID: %s\n", karma_ssid_cache[0]);
+        TERMINAL_VIEW_ADD_TEXT("Karma using single SSID: %s\n", karma_ssid_cache[0]);
+    }
+
     while (karma_running) {
         uint32_t now = esp_timer_get_time() / 1000;
-        // Rotate AP SSID every 5 seconds
-        if (karma_ssid_count > 0 && (now - last_ssid_change_time > 5000)) {
+        // Only rotate if more than one SSID
+        if (karma_ssid_count > 1 && (now - last_ssid_change_time > 5000)) {
             wifi_config_t ap_config = {
                 .ap = {
                     .ssid = "",
@@ -4644,7 +4683,6 @@ static void karma_task(void *param) {
     TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
     vTaskDelete(NULL);
 }
-
 void wifi_manager_start_karma(void) {
     if (karma_running) {
         printf("Karma attack already running\n");
@@ -4652,8 +4690,10 @@ void wifi_manager_start_karma(void) {
         return;
     }
     karma_running = true;
-    karma_ssid_count = 0;
-    karma_ssid_index = 0;
+    if (!karma_ssid_manual_mode) {
+        karma_ssid_count = 0;
+        karma_ssid_index = 0;
+    }
     xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
 }
 
@@ -4666,5 +4706,6 @@ void wifi_manager_stop_karma(void) {
     karma_running = false;
     karma_ssid_count = 0;
     karma_ssid_index = 0;
+    karma_ssid_manual_mode = false;
     // Task will clean up itself
 }
