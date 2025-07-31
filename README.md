@@ -80,13 +80,20 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 <summary>IR Features</summary>
 
-- **FlipperZero IR File Support** – Use FlipperZero formatted IR files stored on SD card *(supported on LilyGo S3TWatch and Cardputer)*.
+- **FlipperZero IR File Support** – Use FlipperZero formatted IR files stored on SD card *(supported on LilyGo S3TWatch, Cardputer and TEmbed C1101)*.
 
 - **Universal Library IR Transmit** – Send pre-programmed universal remote signals.
+
+- **IR Receive and Decode** – Decode IR signals received by the device *(supported on TEmbed C1101)*.
 
 - **Custom Signals IR Transmit** – Transmit custom IR signals from files.
 
 - **Multiple IR Protocols** – Support for NEC, Kaseikyo, Pioneer, RCA, Samsung, SIRC, RC5, and RC6 protocols.
+
+- **Easy Learn Mode** – Learn IR signals from your remote with auto naming *(supported on TEmbed C1101)*.
+
+- **IR Rename, Delete, Add Remotes** – Rename, delete, and add remotes *(supported on TEmbed C1101)*.
+
 
 </details>
 
