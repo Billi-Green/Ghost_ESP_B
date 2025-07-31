@@ -30,6 +30,8 @@ static const char **evil_portal_options = NULL;
 #include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
 
+#define KARMA_MAX_SSIDS 64
+
 static const char *TAG = "optionsScreen";
 
 static const char *settings_categories[] = {"Display", "Config", NULL};
@@ -73,6 +75,7 @@ static const char *wifi_attacks_options[] = {
     "Start DHCP-Starve",
     "Stop DHCP-Starve",
     "Start Karma Attack",
+    "Start Karma Attack (Custom SSIDs)", // <-- Add this lin
     "Stop Karma Attack",       
     NULL
 };
@@ -948,6 +951,51 @@ void handle_hardware_button_press_options(InputEvent *event) {
     }
 }
 
+static void karma_custom_ssids_cb(const char *input) {
+    if (!input || strlen(input) == 0) {
+        error_popup_create("Please enter at least one SSID.");
+        return;
+    }
+
+    // Parse comma-separated SSIDs
+    static const char *ssids[KARMA_MAX_SSIDS];
+    static char ssid_buf[33 * KARMA_MAX_SSIDS];
+    int count = 0;
+
+    // Copy input to buffer for strtok
+    strncpy(ssid_buf, input, sizeof(ssid_buf) - 1);
+    ssid_buf[sizeof(ssid_buf) - 1] = '\0';
+
+    char *token = strtok(ssid_buf, ",");
+    while (token && count < KARMA_MAX_SSIDS) {
+        // Trim leading/trailing spaces
+        while (*token == ' ') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && (*end == ' ' || *end == '\n' || *end == '\r')) {
+            *end = '\0';
+            end--;
+        }
+        if (strlen(token) > 0 && strlen(token) < 33) {
+            ssids[count++] = token;
+        }
+        token = strtok(NULL, ",");
+    }
+
+    if (count == 0) {
+        error_popup_create("No valid SSIDs entered.");
+        return;
+    }
+
+    // Set SSID list and start Karma attack
+    wifi_manager_set_karma_ssid_list(ssids, count);
+    wifi_manager_start_karma();
+
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    TERMINAL_VIEW_ADD_TEXT("Karma attack started with custom SSIDs\n");
+    keyboard_view_set_submit_callback(NULL);
+}
+
 void option_event_cb(lv_event_t *e) {
     if (option_invoked) return;
     option_invoked = true;
@@ -1173,6 +1221,12 @@ void option_event_cb(lv_event_t *e) {
         display_manager_switch_view(&terminal_view);
         TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
         view_switched = true;
+    }
+    else if (strcmp(Selected_Option, "Start Karma Attack (Custom SSIDs)") == 0) {
+        keyboard_view_set_submit_callback(karma_custom_ssids_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("SSID1,SSID2,SSID3");
+        return;
     }
 
     else if (strcmp(Selected_Option, "Capture WPS") == 0) {
@@ -1739,6 +1793,9 @@ static void menu_builder_cb(lv_timer_t *t)
 #endif
                 }
                 if (settings_categories[build_item_index] == NULL) { // End of categories list
+
+
+
                     all_current_options_processed = true;
                 }
             } else { // Submenu of a settings category (e.g., "RGB Mode", "Display Timeout")
