@@ -347,12 +347,6 @@ class ESP32ControlGUI(QMainWindow):
         settings_widget = QWidget()
         settings_layout = QFormLayout(settings_widget)
 
-        # RGB Mode
-        rgb_mode = QComboBox()
-        rgb_mode.addItems(["Stealth Mode", "Normal Mode", "Rainbow Mode"])
-        rgb_mode.currentIndexChanged.connect(lambda i: self.send_command(f"setsetting 1 {i+1}"))
-        settings_layout.addRow("RGB Mode:", rgb_mode)
-
         # Channel Switch Delay
         channel_delay = QComboBox()
         channel_delay.addItems(["0.5s", "1s", "2s", "3s", "4s"])
@@ -426,6 +420,11 @@ class ESP32ControlGUI(QMainWindow):
         rgbpins_btn = QPushButton("Set RGB Pins")
         rgbpins_btn.clicked.connect(self.show_rgbpins_dialog)
         settings_layout.addRow(rgbpins_btn)
+
+        setrgbmode_combo = QComboBox()
+        setrgbmode_combo.addItems(["Normal", "Rainbow", "Stealth"])
+        setrgbmode_combo.currentIndexChanged.connect(lambda i: self.send_command(f"setrgbmode {setrgbmode_combo.currentText().lower()}"))
+        settings_layout.addRow("Set RGB Mode:", setrgbmode_combo)
 
         return settings_widget
 
