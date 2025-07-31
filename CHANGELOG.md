@@ -18,8 +18,9 @@
 
 - **Infrared**
   - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
-  - Ability to Rename, Delete, Add remotes and signals (only enabled on TEmbed C1101)
-
+  - Ability to Rename, Delete, Add remotes (only enabled on TEmbed C1101)
+  - Easy Learn Mode 
+  
 ### Added
 
 - Attacks

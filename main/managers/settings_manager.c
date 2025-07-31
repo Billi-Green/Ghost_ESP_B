@@ -48,6 +48,7 @@ static const char *NVS_THIRD_CTRL_KEY = "third_ctrl";
 static const char *NVS_MENU_THEME_KEY = "menu_theme";
 static const char *NVS_TERMINAL_TEXT_COLOR_KEY = "term_color";
 static const char *NVS_INVERT_COLORS_KEY = "invert_colors";
+static const char *NVS_INFRARED_EASY_MODE_KEY = "ir_easy_mode";
 static const char *NVS_WEB_AUTH_KEY = "web_auth";
 static const char *NVS_ESP_COMM_TX_PIN_KEY = "esp_comm_tx";
 static const char *NVS_ESP_COMM_RX_PIN_KEY = "esp_comm_rx";
@@ -138,6 +139,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->ap_enabled = true; // Default to enabled
   settings->power_save_enabled = false;
   settings->max_screen_brightness = 100; // Default to 100% brightness
+  settings->infrared_easy_mode = false; // Default to disabled
 }
 
 void settings_load(FSettings *settings) {
@@ -405,6 +407,14 @@ void settings_load(FSettings *settings) {
     settings->max_screen_brightness = value_u8;
   } else {
     settings->max_screen_brightness = 100; // Default to 100% if not found
+  }
+
+  // Load Infrared Easy Mode
+  err = nvs_get_u8(nvsHandle, NVS_INFRARED_EASY_MODE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->infrared_easy_mode = (bool)value_u8;
+  } else {
+    settings->infrared_easy_mode = false; // Default to disabled if not found
   }
 }
 
@@ -702,6 +712,9 @@ void settings_save(const FSettings *settings) {
   
   err = nvs_set_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, settings->esp_comm_rx_pin);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save esp_comm_rx_pin: %s", esp_err_to_name(err));
+  
+  err = nvs_set_u8(nvsHandle, NVS_INFRARED_EASY_MODE_KEY, settings->infrared_easy_mode);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save infrared_easy_mode: %s", esp_err_to_name(err));
   
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
@@ -1024,6 +1037,16 @@ void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
 }
 uint8_t settings_get_max_screen_brightness(const FSettings *settings) {
     return settings->max_screen_brightness;
+}
+
+
+// Infrared Settings Getters and Setters
+void settings_set_infrared_easy_mode(FSettings *settings, bool enabled) {
+  settings->infrared_easy_mode = enabled;
+}
+
+bool settings_get_infrared_easy_mode(const FSettings *settings) {
+  return settings->infrared_easy_mode;
 }
 
 void settings_get_nvs_stats(nvs_stats_t *stats) {
