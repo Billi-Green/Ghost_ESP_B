@@ -210,6 +210,29 @@ class ESP32ControlGUI(QMainWindow):
             ("Stop Spam", "stopspam")
         ], wifi_layout, 1, 0)
 
+        # Beacon List Management
+        self.create_command_group("Beacon List Management", [
+            ("Add SSID to List", self.show_beacon_add_dialog),
+            ("Remove SSID from List", self.show_beacon_remove_dialog),
+            ("Clear Beacon List", "beaconclear"),
+            ("Show Beacon List", "beaconshow"),
+            ("Spam Beacon List", "beaconspamlist"),
+        ], wifi_layout, 1, 1)
+
+        # Probe Request Listener
+        probe_group = QGroupBox("Probe Request Listener")
+        probe_layout = QHBoxLayout(probe_group)
+        self.probe_channel = QLineEdit()
+        self.probe_channel.setPlaceholderText("Channel (optional)")
+        probe_layout.addWidget(self.probe_channel)
+        start_probe_btn = QPushButton("Start Listening")
+        start_probe_btn.clicked.connect(self.start_probe_listener)
+        probe_layout.addWidget(start_probe_btn)
+        stop_probe_btn = QPushButton("Stop Listening")
+        stop_probe_btn.clicked.connect(lambda: self.send_command("listenprobes stop"))
+        probe_layout.addWidget(stop_probe_btn)
+        wifi_layout.addWidget(probe_group, 2, 0)
+
         return wifi_widget
 
     def create_network_tab(self):
@@ -238,6 +261,21 @@ class ESP32ControlGUI(QMainWindow):
             ("Cast Random YouTube Video", "dialconnect"),
             ("Print to Network Printer", self.show_printer_dialog)
         ], network_layout, 0, 1)
+
+        # Port Scanner
+        portscan_group = QGroupBox("Port Scanner")
+        portscan_layout = QFormLayout(portscan_group)
+
+        self.portscan_ip = QLineEdit()
+        self.portscan_args = QLineEdit()
+        portscan_layout.addRow("Target IP (or 'local'):", self.portscan_ip)
+        portscan_layout.addRow("Args (-C, -A, or range):", self.portscan_args)
+
+        scan_btn = QPushButton("Scan Ports")
+        scan_btn.clicked.connect(self.run_port_scan)
+        portscan_layout.addRow(scan_btn)
+
+        network_layout.addWidget(portscan_group, 1, 0)
 
         return network_widget
 
@@ -299,6 +337,10 @@ class ESP32ControlGUI(QMainWindow):
         button_layout.addWidget(stop_portal_btn)
         portal_layout.addRow(button_layout)
 
+        list_portals_btn = QPushButton("Show Available Portals")
+        list_portals_btn.clicked.connect(lambda: self.send_command("listportals"))
+        portal_layout.addRow(list_portals_btn)
+
         return portal_widget
 
     def create_settings_tab(self):
@@ -329,6 +371,12 @@ class ESP32ControlGUI(QMainWindow):
         ble_mac.currentIndexChanged.connect(lambda i: self.send_command(f"setsetting 4 {i+1}"))
         settings_layout.addRow("Random BLE MAC:", ble_mac)
 
+        # Access Point
+        ap_enable_combo = QComboBox()
+        ap_enable_combo.addItems(["Enable", "Disable"])
+        ap_enable_combo.currentIndexChanged.connect(lambda i: self.send_command(f"apenable {'on' if i == 0 else 'off'}"))
+        settings_layout.addRow("Access Point:", ap_enable_combo)
+
         # Reboot and Save buttons side by side
         button_layout = QHBoxLayout()
         reboot_btn = QPushButton("Reboot")
@@ -341,6 +389,48 @@ class ESP32ControlGUI(QMainWindow):
 
         # Add the button layout to settings layout
         settings_layout.addRow(button_layout)
+
+        # SD Card Settings
+        sd_group = QGroupBox("SD Card Settings")
+        sd_layout = QVBoxLayout(sd_group)
+
+        sd_config_btn = QPushButton("Show SD Config")
+        sd_config_btn.clicked.connect(lambda: self.send_command("sd_config"))
+        sd_layout.addWidget(sd_config_btn)
+
+        sd_save_btn = QPushButton("Save SD Config")
+        sd_save_btn.clicked.connect(lambda: self.send_command("sd_save_config"))
+        sd_layout.addWidget(sd_save_btn)
+
+        sd_pins_mmc_btn = QPushButton("Set SDMMC Pins")
+        sd_pins_mmc_btn.clicked.connect(self.show_sdmmc_dialog)
+        sd_layout.addWidget(sd_pins_mmc_btn)
+
+        sd_pins_spi_btn = QPushButton("Set SPI Pins")
+        sd_pins_spi_btn.clicked.connect(self.show_sdspi_dialog)
+        sd_layout.addWidget(sd_pins_spi_btn)
+
+        settings_layout.addRow(sd_group)
+
+        chipinfo_btn = QPushButton("Show Chip Info")
+        chipinfo_btn.clicked.connect(lambda: self.send_command("chipinfo"))
+        settings_layout.addRow(chipinfo_btn)
+
+        # Timezone setting
+        self.tz_entry = QLineEdit()
+        tz_btn = QPushButton("Set Timezone")
+        tz_btn.clicked.connect(lambda: self.send_command(f"timezone {self.tz_entry.text().strip()}"))
+        settings_layout.addRow("Timezone:", self.tz_entry)
+        settings_layout.addRow(tz_btn)
+
+        rgbpins_btn = QPushButton("Set RGB Pins")
+        rgbpins_btn.clicked.connect(self.show_rgbpins_dialog)
+        settings_layout.addRow(rgbpins_btn)
+
+        setrgbmode_combo = QComboBox()
+        setrgbmode_combo.addItems(["Normal", "Rainbow", "Stealth"])
+        setrgbmode_combo.currentIndexChanged.connect(lambda i: self.send_command(f"setrgbmode {setrgbmode_combo.currentText().lower()}"))
+        settings_layout.addRow("Set RGB Mode:", setrgbmode_combo)
 
         return settings_widget
 
@@ -569,6 +659,14 @@ class ESP32ControlGUI(QMainWindow):
         else:
             QMessageBox.warning(self, "Input Error", "Please fill all required fields")
 
+    def run_port_scan(self):
+        ip = self.portscan_ip.text().strip()
+        args = self.portscan_args.text().strip()
+        if ip and args:
+            self.send_command(f"scanports {ip} {args}")
+        else:
+            QMessageBox.warning(self, "Input Error", "Please enter both IP and arguments")
+
     def update_display_scan(self, scan_data):
         self.display_text.append("\n=== Scan Results ===")
         for item in scan_data:
@@ -585,6 +683,38 @@ class ESP32ControlGUI(QMainWindow):
         if self.serial_port and self.serial_port.is_open:
             self.disconnect()
         super().closeEvent(event)
+
+    def show_beacon_add_dialog(self):
+        ssid, ok = QInputDialog.getText(self, "Add SSID", "Enter SSID to add to beacon list:")
+        if ok and ssid:
+            self.send_command(f'beaconadd "{ssid}"')
+
+    def show_beacon_remove_dialog(self):
+        ssid, ok = QInputDialog.getText(self, "Remove SSID", "Enter SSID to remove from beacon list:")
+        if ok and ssid:
+            self.send_command(f'beaconremove "{ssid}"')
+
+    def show_sdmmc_dialog(self):
+        pins, ok = QInputDialog.getText(self, "Set SDMMC Pins", "Enter pins: clk cmd d0 d1 d2 d3 (space-separated)")
+        if ok and pins:
+            self.send_command(f"sd_pins_mmc {pins}")
+
+    def show_sdspi_dialog(self):
+        pins, ok = QInputDialog.getText(self, "Set SPI Pins", "Enter pins: cs clk miso mosi (space-separated)")
+        if ok and pins:
+            self.send_command(f"sd_pins_spi {pins}")
+
+    def start_probe_listener(self):
+        channel = self.probe_channel.text().strip()
+        if channel:
+            self.send_command(f"listenprobes {channel}")
+        else:
+            self.send_command("listenprobes")
+
+    def show_rgbpins_dialog(self):
+        pins, ok = QInputDialog.getText(self, "Set RGB Pins", "Enter RGB pins (R1 G1 B1 R2 G2 B2 ...):")
+        if ok and pins:
+            self.send_command(f"rgb_pins {pins}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
