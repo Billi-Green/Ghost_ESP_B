@@ -8,7 +8,7 @@ from serial.tools import list_ports
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
-                             QSplitter, QInputDialog, QSpinBox, QFormLayout)
+                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor
 from functools import partial
@@ -313,18 +313,29 @@ class ESP32ControlGUI(QMainWindow):
         portal_widget = QWidget()
         portal_layout = QFormLayout(portal_widget)
 
-        # Portal Settings
-        self.portal_url = QLineEdit()
-        self.portal_ssid = QLineEdit()
-        self.portal_password = QLineEdit()
-        self.portal_ap_ssid = QLineEdit()
-        self.portal_domain = QLineEdit()
+        # Portal Settings with default values
+        self.portal_ssid = QLineEdit("FreeWiFi")
+        self.portal_password = QLineEdit("password123")
 
-        portal_layout.addRow("Portal URL:", self.portal_url)
         portal_layout.addRow("Portal SSID:", self.portal_ssid)
         portal_layout.addRow("Portal Password:", self.portal_password)
-        portal_layout.addRow("AP SSID:", self.portal_ap_ssid)
-        portal_layout.addRow("Custom Domain:", self.portal_domain)
+
+
+        # --- Available Portals Dropdown + Refresh Button ---
+        dropdown_layout = QHBoxLayout()
+        self.portal_dropdown = QComboBox()
+        self.portal_dropdown.addItem("default")  # Always show "default" initially
+        dropdown_layout.addWidget(self.portal_dropdown)
+
+        list_portals_btn = QPushButton()
+        list_portals_btn.setToolTip("Refresh Portal List")
+        list_portals_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        list_portals_btn.setFixedSize(28, 28)  # Small and square
+        list_portals_btn.clicked.connect(lambda: self.send_command("listportals"))
+        dropdown_layout.addWidget(list_portals_btn)
+
+        portal_layout.addRow("Available Portals:", dropdown_layout)
+        # --- End Available Portals Dropdown + Refresh Button ---
 
         # Control buttons
         button_layout = QHBoxLayout()
@@ -336,10 +347,6 @@ class ESP32ControlGUI(QMainWindow):
         button_layout.addWidget(start_portal_btn)
         button_layout.addWidget(stop_portal_btn)
         portal_layout.addRow(button_layout)
-
-        list_portals_btn = QPushButton("Show Available Portals")
-        list_portals_btn.clicked.connect(lambda: self.send_command("listportals"))
-        portal_layout.addRow(list_portals_btn)
 
         return portal_widget
 
@@ -561,6 +568,32 @@ class ESP32ControlGUI(QMainWindow):
             self.cmd_entry.clear()
 
     def process_response(self, response):
+        # Check for evil portal list output
+        if "Available Evil Portals:" in response or (
+            hasattr(self, "_portal_list_mode") and self._portal_list_mode
+        ):
+            # Start portal list mode if header detected
+            if "Available Evil Portals:" in response:
+                self.portal_dropdown.clear()
+                self.portal_dropdown.addItem("default")  # Always add "default" portal
+                self._portal_list_mode = True
+                self._portal_lines = []
+                # Don't return yet, continue to parse this line
+
+            # Parse lines for .html files, stripping timestamps
+            lines = response.splitlines()
+            for line in lines:
+                line = line.strip()
+                # Remove timestamp if present
+                if "] " in line:
+                    line = line.split("] ", 1)[-1]
+                if line.endswith(".html"):
+                    self._portal_lines.append(line)
+                    self.portal_dropdown.addItem(line)
+            self.display_text.append(response)
+            self.display_text.ensureCursorVisible()
+            return
+
         try:
             # Try to parse as JSON for structured data
             data = json.loads(response)
@@ -650,19 +683,15 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.warning(self, "Input Error", "Please enter both SSID and password")
 
     def start_evil_portal(self):
-        url = self.portal_url.text()
         ssid = self.portal_ssid.text()
         password = self.portal_password.text()
-        ap_ssid = self.portal_ap_ssid.text()
-        domain = self.portal_domain.text()
+        portal_file = self.portal_dropdown.currentText()
 
-        if all([url, ssid, password, ap_ssid]):
-            cmd = f"startportal {url} {ssid} {password} {ap_ssid}"
-            if domain:
-                cmd += f" {domain}"
+        if all([ssid, password, portal_file]):
+            cmd = f"startportal {portal_file} {ssid} {password}"
             self.send_command(cmd)
         else:
-            QMessageBox.warning(self, "Input Error", "Please fill all required fields")
+            QMessageBox.warning(self, "Input Error", "Please fill all required fields and select a portal")
 
     def run_port_scan(self):
         ip = self.portscan_ip.text().strip()
