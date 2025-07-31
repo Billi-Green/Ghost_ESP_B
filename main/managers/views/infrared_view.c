@@ -1927,40 +1927,106 @@ void rename_remote_cb(lv_event_t *e) {
 }
 
 #ifdef CONFIG_HAS_INFRARED_RX
-// Function to create the learning popup
-static void create_learning_popup(void) {
-    // Create standard learning popup
-    learning_popup = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(learning_popup, 300, 150);
-    lv_obj_center(learning_popup);
-    lv_obj_set_style_bg_color(learning_popup, lv_color_hex(0x2E2E2E), 0);
-    lv_obj_set_style_border_color(learning_popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(learning_popup, 2, 0);
-    lv_obj_set_style_radius(learning_popup, 10, 0);
+typedef enum {
+    LEARNING_POPUP_STANDARD,
+    LEARNING_POPUP_EASY_LEARN
+} learning_popup_type_t;
+
+typedef struct {
+    const char *title;
+    const char *instruction;
+    int width;
+    int height;
+    bool has_skip_button;
+    lv_event_cb_t cancel_cb;
+    lv_event_cb_t skip_cb;
+} learning_popup_config_t;
+
+static void create_unified_learning_popup(learning_popup_type_t type, learning_popup_config_t *config) {
+    lv_obj_t *popup;
+    lv_obj_t *cancel_btn;
+    lv_obj_t *skip_btn = NULL;
+    lv_obj_t *instruction_label;
     
-    // Create cancel button first to ensure proper z-order
-    learning_cancel_btn = lv_btn_create(learning_popup);
-    lv_obj_set_size(learning_cancel_btn, 80, 30);
-    lv_obj_align(learning_cancel_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0x555555), 0);
-    lv_obj_t *cancel_label = lv_label_create(learning_cancel_btn);
+    if (type == LEARNING_POPUP_STANDARD) {
+        learning_popup = lv_obj_create(lv_scr_act());
+        popup = learning_popup;
+    } else {
+        easy_learn_popup = lv_obj_create(lv_scr_act());
+        popup = easy_learn_popup;
+    }
+    
+    lv_obj_set_size(popup, config->width, config->height);
+    lv_obj_center(popup);
+    lv_obj_set_style_bg_color(popup, lv_color_hex(0x2E2E2E), 0);
+    lv_obj_set_style_border_color(popup, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_width(popup, 2, 0);
+    lv_obj_set_style_radius(popup, 10, 0);
+    
+    if (config->has_skip_button) {
+        cancel_btn = lv_btn_create(popup);
+        lv_obj_set_size(cancel_btn, 80, 30);
+        lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 20, -10);
+        
+        skip_btn = lv_btn_create(popup);
+        lv_obj_set_size(skip_btn, 80, 30);
+        lv_obj_align(skip_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
+        lv_obj_set_style_bg_color(skip_btn, lv_color_hex(0x555555), 0);
+        lv_obj_t *skip_label = lv_label_create(skip_btn);
+        lv_label_set_text(skip_label, "Skip");
+        lv_obj_center(skip_label);
+        lv_obj_add_event_cb(skip_btn, config->skip_cb, LV_EVENT_CLICKED, NULL);
+        
+        if (type == LEARNING_POPUP_EASY_LEARN) {
+            easy_learn_cancel_btn = cancel_btn;
+            easy_learn_skip_btn = skip_btn;
+        }
+    } else {
+        cancel_btn = lv_btn_create(popup);
+        lv_obj_set_size(cancel_btn, 80, 30);
+        lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
+        
+        if (type == LEARNING_POPUP_STANDARD) {
+            learning_cancel_btn = cancel_btn;
+        }
+    }
+    
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x555555), 0);
+    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
     lv_label_set_text(cancel_label, "Cancel");
     lv_obj_center(cancel_label);
+    lv_obj_add_event_cb(cancel_btn, config->cancel_cb, LV_EVENT_CLICKED, NULL);
     
-    // Add cancel button callback
-    lv_obj_add_event_cb(learning_cancel_btn, learning_cancel_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t *title_label = lv_label_create(learning_popup);
-    lv_label_set_text(title_label, "Learning IR Signal");
+    lv_obj_t *title_label = lv_label_create(popup);
+    lv_label_set_text(title_label, config->title);
     lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 20);
     
-    lv_obj_t *instruction_label = lv_label_create(learning_popup);
-    lv_label_set_text(instruction_label, "Press a button on your remote...");
+    instruction_label = lv_label_create(popup);
     lv_obj_set_style_text_font(instruction_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(instruction_label, lv_color_hex(0xCCCCCC), 0);
     lv_obj_align(instruction_label, LV_ALIGN_CENTER, 0, 0);
+    
+    if (type == LEARNING_POPUP_EASY_LEARN) {
+        easy_learn_instruction_label = instruction_label;
+    } else {
+        lv_label_set_text(instruction_label, config->instruction);
+    }
+}
+
+static void create_learning_popup(void) {
+    learning_popup_config_t config = {
+        .title = "Learning IR Signal",
+        .instruction = "Press a button on your remote...",
+        .width = 300,
+        .height = 150,
+        .has_skip_button = false,
+        .cancel_cb = learning_cancel_cb,
+        .skip_cb = NULL
+    };
+    
+    create_unified_learning_popup(LEARNING_POPUP_STANDARD, &config);
 }
 
 // Function to start the IR learning task
@@ -2096,21 +2162,30 @@ static void add_encoder_back_btn(void)
 
 #ifdef CONFIG_HAS_INFRARED_RX
 // IR learning functionality
+static void cleanup_unified_learning_popup(learning_popup_type_t type)
+{
+    if (type == LEARNING_POPUP_STANDARD) {
+        if (learning_popup) {
+            lv_obj_del(learning_popup);
+            learning_popup = NULL;
+        }
+    } else {
+        if (easy_learn_popup) {
+            lv_obj_del(easy_learn_popup);
+            easy_learn_popup = NULL;
+            easy_learn_instruction_label = NULL;
+        }
+    }
+}
+
 static void cleanup_learning_popup(void *obj)
 {
-    if (learning_popup) {
-        lv_obj_del(learning_popup);
-        learning_popup = NULL;
-    }
+    cleanup_unified_learning_popup(LEARNING_POPUP_STANDARD);
 }
 
 void cleanup_easy_learn_popup(void *obj)
 {
-    if (easy_learn_popup) {
-        lv_obj_del(easy_learn_popup);
-        easy_learn_popup = NULL;
-        easy_learn_instruction_label = NULL;
-    }
+    cleanup_unified_learning_popup(LEARNING_POPUP_EASY_LEARN);
 }
 
 // Signal preview UI functions
@@ -2584,49 +2659,17 @@ void generate_unique_remote_filename(const char* base_name, char* output_filenam
 
 void create_easy_learn_popup(void)
 {
-    // Create learning popup
-    easy_learn_popup = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(easy_learn_popup, LV_HOR_RES - 30, 160);
-    lv_obj_center(easy_learn_popup);
-    lv_obj_set_style_bg_color(easy_learn_popup, lv_color_hex(0x2E2E2E), 0);
-    lv_obj_set_style_border_color(easy_learn_popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(easy_learn_popup, 2, 0);
-    lv_obj_set_style_radius(easy_learn_popup, 10, 0);
+    learning_popup_config_t config = {
+        .title = "Easy Learn Mode",
+        .instruction = "", // Will be set by update_easy_learn_instruction_text()
+        .width = LV_HOR_RES - 30,
+        .height = 160,
+        .has_skip_button = true,
+        .cancel_cb = easy_learn_cancel_cb,
+        .skip_cb = easy_learn_skip_cb
+    };
     
-    // Create cancel button
-    easy_learn_cancel_btn = lv_btn_create(easy_learn_popup);
-    lv_obj_set_size(easy_learn_cancel_btn, 80, 30);
-    lv_obj_align(easy_learn_cancel_btn, LV_ALIGN_BOTTOM_LEFT, 20, -10);
-    lv_obj_set_style_bg_color(easy_learn_cancel_btn, lv_color_hex(0x555555), 0);
-    lv_obj_t *cancel_label = lv_label_create(easy_learn_cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_center(cancel_label);
-    
-    // Add cancel button callback
-    lv_obj_add_event_cb(easy_learn_cancel_btn, easy_learn_cancel_cb, LV_EVENT_CLICKED, NULL);
-    
-    // Create skip button
-    easy_learn_skip_btn = lv_btn_create(easy_learn_popup);
-    lv_obj_set_size(easy_learn_skip_btn, 80, 30);
-    lv_obj_align(easy_learn_skip_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
-    lv_obj_set_style_bg_color(easy_learn_skip_btn, lv_color_hex(0x555555), 0);
-    lv_obj_t *skip_label = lv_label_create(easy_learn_skip_btn);
-    lv_label_set_text(skip_label, "Skip");
-    lv_obj_center(skip_label);
-    
-    // Add skip button callback
-    lv_obj_add_event_cb(easy_learn_skip_btn, easy_learn_skip_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t *title_label = lv_label_create(easy_learn_popup);
-    lv_label_set_text(title_label, "Easy Learn Mode");
-    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 20);
-    
-    easy_learn_instruction_label = lv_label_create(easy_learn_popup);
-    lv_obj_set_style_text_font(easy_learn_instruction_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(easy_learn_instruction_label, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_align(easy_learn_instruction_label, LV_ALIGN_CENTER, 0, 0);
+    create_unified_learning_popup(LEARNING_POPUP_EASY_LEARN, &config);
     
     // Initialize button index to first unused button when adding to existing remote
     if (add_signal_mode && strlen(current_remote_path) > 0) {
