@@ -460,23 +460,33 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
 
   lv_obj_invalidate(status_bar);
 
-  // set status bar icon colors based on power save mode
+  // set status bar icon colors based on power save mode and AP state
+  lv_color_t default_color = lv_color_hex(0xCCCCCC);
+  lv_color_t gray_color = lv_color_hex(0x808080); // Gray for inactive state
+  
+  // WiFi icon color logic
+  if (wifi_label && lv_obj_is_valid(wifi_label)) {
+      // Check if AP should be active (enabled in settings AND power saving disabled)
+      bool ap_should_be_active = settings_get_ap_enabled(&G_Settings) && !power_save_enabled;
+      
+      if (!ap_should_be_active) {
+          // AP is disabled or power saving is on - show gray
+          lv_obj_set_style_text_color(wifi_label, gray_color, 0);
+      } else if (wifi_manager_is_evil_portal_active()) {
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
+      } else if (is_ap_active) {
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
+      } else {
+          lv_obj_set_style_text_color(wifi_label, default_color, 0);
+      }
+  }
+  
   if (power_save_enabled) {
     lv_color_t orange_color = lv_color_hex(0xFFA500); // orange like apple uses
     if (battery_label && lv_obj_is_valid(battery_label)) {
       lv_obj_set_style_text_color(battery_label, orange_color, 0);
     }
   } else {
-    lv_color_t default_color = lv_color_hex(0xCCCCCC);
-    if (wifi_label && lv_obj_is_valid(wifi_label)) {
-        if (wifi_manager_is_evil_portal_active()) {
-            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
-        } else if (is_ap_active) {
-            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
-        } else {
-            lv_obj_set_style_text_color(wifi_label, default_color, 0);
-        }
-    }
     if (bt_label && lv_obj_is_valid(bt_label)) {
       lv_obj_set_style_text_color(bt_label, default_color, 0);
     }
@@ -534,6 +544,8 @@ static void status_update_cb(lv_timer_t *timer) {
   ESP_LOGD(TAG, "Status update - Battery: %d%%, Charging: %s, Has battery: %s",
            battery_percentage, is_charging ? "YES" : "NO", has_battery ? "YES" : "NO");
 
+  // WiFi icon should always be visible - pass true for wifi_enabled
+  // Color will be determined by AP state and power saving mode in update_status_bar
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
 }
@@ -639,6 +651,9 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   bool has_battery = get_battery_info(&power_level, &is_charging);
 
   int battery_percentage = has_battery ? power_level : -1;
+  
+  // WiFi icon should always be visible - pass true for wifi_enabled
+  // Color will be determined by AP state and power saving mode in update_status_bar
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
   if (!status_timer_initialized) {
