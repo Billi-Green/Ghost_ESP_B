@@ -2,7 +2,7 @@ import sys
 import os
 import subprocess
 
-VENV_DIR = "venv"
+VENV_DIR = "ghost-control-venv"
 REQ_FILE = "requirements.txt"
 
 def in_venv():
