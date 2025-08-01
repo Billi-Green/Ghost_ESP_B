@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
                              QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
-from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor
+from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
 from functools import partial
 
 class SerialMonitorThread(QThread):
@@ -70,6 +70,9 @@ class ESP32ControlGUI(QMainWindow):
         super().__init__()
         self.setWindowTitle("Ghost ESP Control Panel")
         self.setGeometry(100, 100, 1400, 900)
+
+        # Set custom app icon
+        self.setWindowIcon(QIcon("assets/gesp_ghost_trans_bg.png"))  # Use .ico, .png, or .svg
 
         # Initialize serial communication variables
         self.serial_port = None

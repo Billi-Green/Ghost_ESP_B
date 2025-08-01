@@ -2,16 +2,20 @@
 
 ## Overview
 
-The **Ghost ESP Control Panel** is a GUI application that facilitates control and communication with an ESP32 microcontroller over a serial connection. Developed with Python and PyQt6, this tool offers functions for WiFi and BLE scanning, packet capturing, and custom command execution.
+The **Ghost ESP Control Panel** is a GUI application for controlling and communicating with an ESP32 microcontroller over a serial connection. Built with Python and PyQt6, it provides WiFi/BLE scanning, packet capture, custom commands, and more.
 
 ## Features
 
-- **Serial Connection Management**: Connect to and communicate with ESP32 devices via serial port.
-- **WiFi Operations**: Scan networks, list access points and stations, perform de-authentication, and send beacon spam.
-- **BLE Operations**: Scan for BLE devices, find specific devices (e.g., AirTag), and stop scans.
-- **Packet Capture**: Capture packets across multiple types, including deauthentication, WPS, and raw data.
-- **Custom Command Support**: Execute custom commands directly from the interface.
-- **Logging and Display Areas**: Real-time logging of commands and responses, with a display for scan results and status updates.
+- **Serial Connection Management**: Connect/disconnect to ESP32 devices via serial port.
+- **WiFi Operations**: Scan networks, list APs/stations, de-auth, beacon spam, and more.
+- **BLE Operations**: Scan for BLE devices, find Flippers/AirTags, stop scans.
+- **Packet Capture**: Capture various WiFi packet types.
+- **Custom Command Support**: Send any command directly.
+- **Logging and Display**: Real-time logs and structured scan/status display.
+- **Auto-Reconnect**: Optionally reconnect if the serial connection drops.
+- **UI Lock/Overlay**: The UI disables and shows a visual overlay when not connected.
+- **Resizable Panes**: Command and display areas can be resized.
+- **Portal File Upload**: Upload custom HTML portals with progress indication.
 
 ## Table of Contents
 
@@ -28,24 +32,20 @@ The **Ghost ESP Control Panel** is a GUI application that facilitates control an
 
 ### Prerequisites
 
-1. **Python 3.8+**: Ensure Python 3.8 or later is installed on your system.
+1. **Python 3.8+**: Install Python 3.8 or later.
 2. **Dependencies**:
-   - Install required packages by running:
-     ```bash
-     sudo apt update
-     sudo apt install libxcb-cursor0
-     python -m venv .venv
-     source .venv/bin/activate
-     pip install -r requirements.txt
-     ```
-
-3. **Ghost ESP Firmware**: This application is the firmware that can interpret commands sent from the control panel. Please ensure the ESP32 is configured accordingly.
+   ```bash
+   sudo apt update
+   sudo apt install libxcb-cursor0
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. **Ghost ESP Firmware**: Flash your ESP32 with compatible firmware.
 
 ## Usage
 
 ### Starting the Application
-
-Run the main script:
 
 ```bash
 python esp_ghost_control.py
@@ -53,51 +53,56 @@ python esp_ghost_control.py
 
 ### Connecting to ESP32
 
-1. Select a serial port from the dropdown menu in the **Serial Connection** section.
-2. Click **Refresh Ports** if the port is not visible.
-3. Click **Connect** to initiate the connection.
-   - **Note**: The connection status and errors are displayed in the log area.
+1. Select a serial port in the **Serial Connection** section.
+2. Click **Refresh Ports** if needed.
+3. Click **Connect**.
+   - The UI will unlock and overlay will disappear when connected.
+   - Status and errors are shown in the log area.
 
 ### Available Operations
 
 #### WiFi Operations
 
-- **Scan Access Points**: Scans for nearby WiFi access points.
-- **Start/Stop Deauth**: Initiates or stops a deauthentication command on selected APs.
-- **Beacon Spam**: Sends random beacons, a Rickroll beacon, or AP list beacon spam.
+- **Scan Access Points**: Find nearby WiFi APs.
+- **Start/Stop Deauth**: Deauthenticate selected APs.
+- **Beacon Spam**: Send random, Rickroll, or AP list beacons.
 
 #### BLE Operations
 
-- **Find Flippers**: Searches for known "Flipper" BLE devices.
-- **AirTag Scanner**: Detects nearby AirTags.
-- **Raw BLE Scan**: Initiates a low-level BLE scan.
+- **Find Flippers**: Scan for Flipper BLE devices.
+- **AirTag Scanner**: Detect AirTags.
+- **Raw BLE Scan**: Low-level BLE scan.
 
 #### Packet Capture
 
-Captures and logs specific types of packets from nearby networks.
+- **Capture Probes**: Detect WiFi probe requests.
+- **Capture Deauth**: Track deauth packets.
+- **Capture WPS**: Log WPS packets.
 
-1. **Capture Probes**: Detects WiFi probe requests.
-2. **Capture Deauth**: Tracks deauthentication packets.
-3. **Capture WPS**: Logs WPS-specific packets.
+#### Portal File Upload
 
-### Sending Custom Commands
+- **Send Local HTML as Portal**: Upload a custom HTML file as an evil portal.
+- Progress is shown with an indicator/spinner.
+- After upload, the portal dropdown updates to "uploaded html".
 
-1. Type a custom command into the **Custom Command** input field.
-2. Press **Enter** or click **Send Command** to execute.
+#### Custom Commands
+
+- Type a command in the **Custom Command** field.
+- Press **Enter** or click **Send**.
 
 ### Logging and Display
 
-All command responses, statuses, and logs are displayed in the respective areas:
-
-- **Log Area**: Shows timestamps and command-related feedback.
-- **Display Area**: Shows structured responses, scan results, and status updates.
+- **Log Area**: Shows timestamps and command feedback.
+- **Display Area**: Shows scan results, status, and structured responses.
 
 ## Code Structure
 
-- **`SerialMonitorThread`**: A dedicated thread handling serial data reading, emitting data via `data_received` signal.
-- **`ESP32ControlGUI`**: The main GUI class, encapsulating the UI setup, event handling, and command operations.
-  - **UI Components**: Organized within tabs for WiFi, BLE, and packet capture operations.
-  - **Command Functions**: Encapsulates individual command calls with error handling and logging.
+- **`SerialMonitorThread`**: Reads serial data in a thread, emits via `data_received`.
+- **`PortalFileSenderThread`**: Uploads portal files in a thread, emits progress and completion.
+- **`ESP32ControlGUI`**: Main GUI class, sets up UI, handles events, manages commands.
+  - **UI Components**: Tabs for WiFi, BLE, capture, portal, and settings.
+  - **Overlay**: Visual indicator when not connected.
+  - **Resizable Panes**: Uses splitters for flexible layout.
 
 ## UI
 
@@ -105,10 +110,12 @@ All command responses, statuses, and logs are displayed in the respective areas:
 
 ## Troubleshooting
 
-- **Cannot Connect to ESP32**: Ensure the correct port is selected, and ESP32 is properly flashed and powered.
-- **Unexpected Disconnects**: Check for physical connection issues or try lowering the baud rate.
-- **Command Errors**: Ensure commands are compatible with the ESP32’s firmware. Some features may require specific firmware configurations.
+- **Cannot Connect to ESP32**: Check port, firmware, and power.
+- **Unexpected Disconnects**: Check cable, try lower baud rate, enable auto-reconnect.
+- **Command Errors**: Ensure commands match firmware.
+- **UI Overlay Covers Controls**: Overlay only covers main UI; serial controls always accessible.
+- **Portal Upload Hangs**: Make sure you are connected and the ESP32 is ready.
 
 ---
 
-**Note**: This application is intended for development and diagnostic purposes only. Ensure compliance with local regulations when using network diagnostic tools.
+**Note**: This application is for development and diagnostics. Use responsibly and comply with local regulations when using network diagnostic tools.
