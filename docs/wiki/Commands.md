@@ -17,6 +17,8 @@
 - `attack -e` - Start EAPOL logoff attack
 - `attack -s` - Start SAE flood attack (ESP32-C5/C6 only)
 - `stopdeauth` - Stop deauth attacks
+- `karma start [ssid1 ssid2 ...]` - Start Karma attack (responds to probe requests with specified or all SSIDs)
+- `karma stop` - Stop Karma attack
 
 ## 📡 Network Generation
 
@@ -82,7 +84,6 @@ Not available on ESP32-S2:
 - `blewardriving -s` - Stop BLE wardriving
 - `blespam -apple|-ms|-samsung|-google|-random|-s` - BLE spam attacks
 
-
 ## 📍 GPS Features
 
 - `startwd` - Begin recording networks with GPS location
@@ -123,4 +124,4 @@ Not available on ESP32-S2:
 - `congestion` - Display Wi-Fi channel congestion chart
 - `listenprobes [channel] [stop]` - Listen for and log probe requests
 
-> Remember to check your hardware compatibility before using commands
+> Remember to check your hardware compatibility
