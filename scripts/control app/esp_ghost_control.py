@@ -16,6 +16,7 @@ from functools import partial
 
 class SerialMonitorThread(QThread):
     """Thread for monitoring incoming data from the serial port."""
+    data_received = pyqtSignal(str)
 
     def __init__(self, serial_port):
         """
