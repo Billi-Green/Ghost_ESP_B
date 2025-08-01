@@ -1,11 +1,14 @@
 import sys
 import json
 import queue
+from serial.tools import list_ports
 import serial
 import threading
 import time
+from serial_threads import SerialMonitorThread, PortalFileSenderThread
+from dialogs import show_select_ap_dialog, show_custom_beacon_dialog, show_printer_dialog
+from utils import log_message, timestamp
 from datetime import datetime
-from serial.tools import list_ports
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
@@ -13,79 +16,6 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
 from functools import partial
-
-class SerialMonitorThread(QThread):
-    """Thread for monitoring incoming data from the serial port."""
-    data_received = pyqtSignal(str)
-
-    def __init__(self, serial_port):
-        """
-        Initialize the serial monitor thread.
-
-        Args:
-            serial_port (serial.Serial): The serial port to monitor.
-        """
-        super().__init__()
-        self.serial_port = serial_port
-        self.running = True
-
-    def run(self):
-        """Continuously read data from the serial port and emit received lines."""
-        while self.running and self.serial_port.is_open:
-            try:
-                if self.serial_port.in_waiting:
-                    data = self.serial_port.readline().decode().strip()
-                    if data:
-                        self.data_received.emit(data)
-            except Exception as e:
-                self.data_received.emit(f"Error reading serial: {str(e)}")
-                # Disconnect on serial read error
-                if hasattr(self.parent(), "disconnect"):
-                    self.parent().disconnect()
-                break
-            self.msleep(10)
-
-    def stop(self):
-        """Stop the serial monitor thread."""
-        self.running = False
-
-class PortalFileSenderThread(QThread):
-    """Thread for sending a local HTML file to the ESP32 as an evil portal."""
-
-    send_line = pyqtSignal(str)
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
-    progress = pyqtSignal(int)
-
-    def __init__(self, safe_html):
-        """
-        Initialize the portal file sender thread.
-
-        Args:
-            safe_html (str): The HTML content to send.
-        """
-        super().__init__()
-        self.safe_html = safe_html
-
-    def run(self):
-        """Send the HTML content in chunks to the ESP32 and emit progress."""
-        try:
-            self.send_line.emit('evilportal -c sethtmlstr')
-            self.msleep(200)
-            self.send_line.emit('[HTML/BEGIN]')
-            self.msleep(200)
-            chunk_size = 256
-            total = len(self.safe_html)
-            for i in range(0, total, chunk_size):
-                self.send_line.emit(self.safe_html[i:i+chunk_size])
-                percent = int((i + chunk_size) / total * 100)
-                self.progress.emit(min(percent, 100))
-                self.msleep(50)
-            self.msleep(200)
-            self.send_line.emit('[HTML/CLOSE]')
-            self.finished.emit()
-        except Exception as e:
-            self.error.emit(str(e))
 
 class ESP32ControlGUI(QMainWindow):
     """Main GUI class for controlling the Ghost ESP32 device."""
@@ -400,7 +330,7 @@ class ESP32ControlGUI(QMainWindow):
         self.create_command_group("Attack Operations", [
             ("Start Deauth", "attack -d"),
             ("Stop Deauth", "stopdeauth"),
-            ("Select AP", self.show_select_ap_dialog)
+            ("Select AP", lambda: show_select_ap_dialog(self))
         ], wifi_layout, 0, 1)
 
         # Beacon Operations
@@ -408,7 +338,7 @@ class ESP32ControlGUI(QMainWindow):
             ("Random Beacon Spam", "beaconspam -r"),
             ("Rickroll Beacon", "beaconspam -rr"),
             ("AP List Beacon", "beaconspam -l"),
-            ("Custom SSID Beacon", self.show_custom_beacon_dialog),
+            ("Custom SSID Beacon", lambda: show_custom_beacon_dialog(self)),
             ("Stop Spam", "stopspam")
         ], wifi_layout, 1, 0)
 
@@ -490,7 +420,7 @@ class ESP32ControlGUI(QMainWindow):
         # Network Tools
         self.create_command_group("Network Tools", [
             ("Cast Random YouTube Video", "dialconnect"),
-            ("Print to Network Printer", self.show_printer_dialog)
+            ("Print to Network Printer", lambda: show_printer_dialog(self))
         ], network_layout, 0, 1)
 
         # Port Scanner
@@ -850,7 +780,7 @@ class ESP32ControlGUI(QMainWindow):
                 self.serial_port = serial.Serial(port, 115200, timeout=1)
                 self.connect_btn.setText("Disconnect")
                 self.connect_btn.setStyleSheet("")  # Remove highlight
-                self.log_message(f"Connected to {port}")
+                log_message(self.log_text, f"Connected to {port}")
 
                 # Start monitor thread
                 self.monitor_thread = SerialMonitorThread(self.serial_port)
@@ -868,11 +798,11 @@ class ESP32ControlGUI(QMainWindow):
                 elif "Device or resource busy" in error_msg:
                     error_msg += "\n\nThe port may be in use by another application."
                 QMessageBox.critical(self, "Connection Error", error_msg)
-                self.log_message(f"Connection error: {error_msg}")
+                log_message(self.log_text, f"Connection error: {error_msg}")
                 self.update_connection_status(False)
             except Exception as e:
                 QMessageBox.critical(self, "Connection Error", str(e))
-                self.log_message(f"Connection error: {str(e)}")
+                log_message(self.log_text, f"Connection error: {str(e)}")
                 self.update_connection_status(False)
         else:
             self.disconnect()
@@ -887,7 +817,7 @@ class ESP32ControlGUI(QMainWindow):
             self.serial_port.close()
         self.connect_btn.setText("Connect")
         self.connect_btn.setStyleSheet("")  # Remove highlight
-        self.log_message("Disconnected")
+        log_message(self.log_text, "Disconnected")
         self.set_main_ui_enabled(False)
         self.update_connection_status(False)  # <-- Ensure status updates on disconnect
 
@@ -902,11 +832,11 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.warning(self, "Not Connected", "Please connect to ESP32 first")
             return
 
-        self.log_message(f"Sending command: {command}")
+        log_message(self.log_text, f"Sending command: {command}")
         try:
             self.serial_port.write(f"{command}\n".encode())
         except Exception as e:
-            self.log_message(f"Error sending command: {str(e)}")
+            log_message(self.log_text, f"Error sending command: {str(e)}")
             self.disconnect()  # Disconnect
 
     def eventFilter(self, obj, event):
@@ -953,7 +883,7 @@ class ESP32ControlGUI(QMainWindow):
             response (str): The response string.
         """
         if response.startswith("Error reading serial:"):
-            self.log_message(response)
+            log_message(self.log_text, response)
             self.disconnect()
             self.update_connection_status(False)  # <-- Ensure status updates on error
             return
@@ -996,27 +926,11 @@ class ESP32ControlGUI(QMainWindow):
 
         except json.JSONDecodeError:
             # Format the text with timestamp
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            formatted_text = f"[{timestamp}] {response}"
+            ts = timestamp("%H:%M:%S")
+            formatted_text = f"[{ts}] {response}"
             self.display_text.append(formatted_text)
 
         self.display_text.ensureCursorVisible()
-
-    def log_message(self, message):
-        """
-        Log a message to the log area with a timestamp.
-
-        Args:
-            message (str): The message to log.
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {message}")
-        self.log_text.ensureCursorVisible()
-        # Limit log size
-        max_lines = 1000
-        log_content = self.log_text.toPlainText().splitlines()
-        if len(log_content) > max_lines:
-            self.log_text.setPlainText('\n'.join(log_content[-max_lines:]))
 
     def save_log(self):
         """Save the display log to a file."""
@@ -1025,59 +939,9 @@ class ESP32ControlGUI(QMainWindow):
         try:
             with open(filename, 'w') as f:
                 f.write(self.display_text.toPlainText())
-            self.log_message(f"Log saved to {filename}")
+            log_message(self.log_text, f"Log saved to {filename}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save log: {str(e)}")
-
-    def show_select_ap_dialog(self):
-        """Show a dialog to select an access point and send the selection."""
-        selected_ap, ok = QInputDialog.getText(self, "Select Access Point", "Enter Access Point name:")
-        if ok and selected_ap:
-            self.send_command(f"select -a {selected_ap}")
-
-    def show_custom_beacon_dialog(self):
-        """Show a dialog to enter a custom SSID for beacon spam."""
-        ssid, ok = QInputDialog.getText(self, "Custom Beacon", "Enter SSID for beacon spam:")
-        if ok and ssid:
-            self.send_command(f'beaconspam "{ssid}"')
-
-    def show_printer_dialog(self):
-        """Show a dialog to print text to a network printer."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Print to Network Printer")
-        layout = QFormLayout(dialog)
-
-        ip_input = QLineEdit()
-        text_input = QTextEdit()
-        font_size = QSpinBox()
-        font_size.setRange(8, 72)
-        font_size.setValue(12)
-
-        alignment = QComboBox()
-        alignment.addItems(["Center Middle (CM)", "Top Left (TL)", "Top Right (TR)",
-                          "Bottom Right (BR)", "Bottom Left (BL)"])
-
-        layout.addRow("Printer IP:", ip_input)
-        layout.addRow("Text:", text_input)
-        layout.addRow("Font Size:", font_size)
-        layout.addRow("Alignment:", alignment)
-
-        buttons = QHBoxLayout()
-        ok_button = QPushButton("Print")
-        cancel_button = QPushButton("Cancel")
-        buttons.addWidget(ok_button)
-        buttons.addWidget(cancel_button)
-        layout.addRow(buttons)
-
-        ok_button.clicked.connect(dialog.accept)
-        cancel_button.clicked.connect(dialog.reject)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            align_map = {"Center Middle (CM)": "CM", "Top Left (TL)": "TL",
-                        "Top Right (TR)": "TR", "Bottom Right (BR)": "BR",
-                        "Bottom Left (BL)": "BL"}
-            cmd = f'powerprinter {ip_input.text()} "{text_input.toPlainText()}" {font_size.value()} {align_map[alignment.currentText()]}'
-            self.send_command(cmd)
 
     def connect_to_wifi(self):
         """Send WiFi connection credentials to the ESP32."""
@@ -1134,8 +998,8 @@ class ESP32ControlGUI(QMainWindow):
         Args:
             status (str): The status message.
         """
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.display_text.append(f"[{timestamp}] Status: {status}")
+        ts = timestamp("%H:%M:%S")
+        self.display_text.append(f"[{ts}] Status: {status}")
         self.display_text.ensureCursorVisible()
 
     def closeEvent(self, event):
@@ -1245,7 +1109,7 @@ class ESP32ControlGUI(QMainWindow):
                         self.serial_port = serial.Serial(port, 115200, timeout=1)
                         self.connect_btn.setText("Disconnect")
                         self.connect_btn.setStyleSheet("")
-                        self.log_message(f"Auto-reconnected to {port}")
+                        log_message(self.log_text, f"Auto-reconnected to {port}")
 
                         self.monitor_thread = SerialMonitorThread(self.serial_port)
                         self.monitor_thread.data_received.connect(self.process_response)
@@ -1260,7 +1124,7 @@ class ESP32ControlGUI(QMainWindow):
                             error_msg += "\n\nTry running as root or check your user permissions for serial devices."
                         elif "Device or resource busy" in error_msg:
                             error_msg += "\n\nThe port may be in use by another application."
-                        self.log_message(f"Auto-reconnect failed: {error_msg}")
+                        log_message(self.log_text, f"Auto-reconnect failed: {error_msg}")
                         self.update_connection_status(False)
                         self.set_main_ui_enabled(False)
                         self.reconnect_attempts += 1
@@ -1268,7 +1132,7 @@ class ESP32ControlGUI(QMainWindow):
                         backoff = min(self.reconnect_base_interval * (2 ** self.reconnect_attempts), 32000)
                         self.reconnect_timer.setInterval(backoff)
                     except Exception as e:
-                        self.log_message(f"Auto-reconnect failed: {str(e)}")
+                        log_message(self.log_text, f"Auto-reconnect failed: {str(e)}")
                         self.update_connection_status(False)
                         self.set_main_ui_enabled(False)
                         self.reconnect_attempts += 1
@@ -1297,13 +1161,3 @@ class ESP32ControlGUI(QMainWindow):
         """
         super().showEvent(event)
         self.resizeEvent(None)
-if __name__ == "__main__":
-    """
-    Entry point for the Ghost ESP Control Panel application.
-    """
-    app = QApplication(sys.argv)
-    font = QFont("Arial", 10)
-    app.setFont(font)
-    window = ESP32ControlGUI()
-    window.show()
-    sys.exit(app.exec())
