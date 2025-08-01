@@ -3,6 +3,7 @@ import json
 import queue
 import serial
 import threading
+import time
 from datetime import datetime
 from serial.tools import list_ports
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -784,15 +785,23 @@ class ESP32ControlGUI(QMainWindow):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     html_content = f.read()
-                # You may want to chunk the data if it's large; here we send it as one command
-                # You can define a protocol, e.g. "portalhtml <SSID> <PASSWORD> <CONTENT>"
                 ssid = self.portal_ssid.text().strip()
                 password = self.portal_password.text().strip()
-                # Escape newlines and quotes if needed
-                safe_html = html_content.replace('\n', '\\n').replace('"', '\\"')
+                safe_html = html_content.replace('"', '\\"')  # Only escape quotes, keep lines
+
                 cmd = f'evilportal -c sethtmlstr'
                 self.send_command(cmd)
-                self.send_command(f'[HTML/BEGIN]{safe_html}[HTML/CLOSE]')
+                time.sleep(0.2)
+                self.send_command('[HTML/BEGIN]')
+                time.sleep(0.2)
+
+                # Send each line as a separate command
+                chunk_size = 256
+                for i in range(0, len(safe_html), chunk_size):
+                    self.send_command(safe_html[i:i+chunk_size])
+                    time.sleep(0.05)
+                time.sleep(0.2)
+                self.send_command('[HTML/CLOSE]')
                 QMessageBox.information(self, "Portal Sent", "HTML file sent as evil portal.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to send file: {str(e)}")
