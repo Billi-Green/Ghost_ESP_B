@@ -435,6 +435,9 @@ class ESP32ControlGUI(QMainWindow):
         probe_layout.addWidget(stop_probe_btn)
         wifi_layout.addWidget(probe_group, 2, 0)
 
+        wifi_layout.setColumnStretch(0, 1)
+        wifi_layout.setColumnStretch(1, 1)
+
         return wifi_widget
 
     def create_network_tab(self):
@@ -502,6 +505,10 @@ class ESP32ControlGUI(QMainWindow):
         # Place Capture Operations next to Port Scanner
         network_layout.addWidget(capture_group, 1, 1)
 
+        # Make both columns stretch equally
+        network_layout.setColumnStretch(0, 1)
+        network_layout.setColumnStretch(1, 1)
+
         return network_widget
 
     def create_ble_tab(self):
@@ -516,6 +523,9 @@ class ESP32ControlGUI(QMainWindow):
             ("Raw BLE Scan", "blescan -r"),
             ("Stop BLE Scan", "blescan -s")
         ], ble_layout, 0, 0)
+
+        ble_layout.setColumnStretch(0, 1)
+        ble_layout.setColumnStretch(1, 1)
 
         return ble_widget
 
