@@ -9,7 +9,7 @@ from serial.tools import list_ports
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
-                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox)
+                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor
 from functools import partial
