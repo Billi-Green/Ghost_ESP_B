@@ -241,5 +241,6 @@ void wifi_manager_sae_flood_help(void);
 // HTML buffer functions for evil portal
 void wifi_manager_set_html_from_uart(void);
 void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final);
+void wifi_manager_clear_html_buffer(void);
 
 #endif // WIFI_MANAGER_H
