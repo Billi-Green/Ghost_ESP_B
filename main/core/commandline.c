@@ -1500,6 +1500,31 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve stop\n");
     TERMINAL_VIEW_ADD_TEXT("           dhcpstarve display\n\n");
 
+
+    printf("karma\n");
+    printf("    Description: Start or stop the Karma attack (responds to probe requests with specified or all SSIDs).\n");
+    printf("    Usage: karma start [ssid1 ssid2 ...]\n");
+    printf("           karma stop\n");
+    printf("    Arguments:\n");
+    printf("        start : Begin Karma attack. Optionally specify SSIDs to respond with (default: all known SSIDs).\n");
+    printf("        stop  : Stop Karma attack.\n");
+    printf("    Examples:\n");
+    printf("        karma start\n");
+    printf("        karma start FreeWiFi Starbucks\n");
+    printf("        karma stop\n\n");
+    TERMINAL_VIEW_ADD_TEXT("karma\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Start or stop the Karma attack (responds to probe requests with specified or all SSIDs).\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: karma start [ssid1 ssid2 ...]\n");
+    TERMINAL_VIEW_ADD_TEXT("           karma stop\n");
+    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
+    TERMINAL_VIEW_ADD_TEXT("        start : Begin Karma attack. Optionally specify SSIDs to respond with (default: all known SSIDs).\n");
+    TERMINAL_VIEW_ADD_TEXT("        stop  : Stop Karma attack.\n");
+    TERMINAL_VIEW_ADD_TEXT("    Examples:\n");
+    TERMINAL_VIEW_ADD_TEXT("        karma start\n");
+    TERMINAL_VIEW_ADD_TEXT("        karma start FreeWiFi Starbucks\n");
+    TERMINAL_VIEW_ADD_TEXT("        karma stop\n\n");
+
+
     printf("saeflood\n");
     printf("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
     printf("    Usage: saeflood (requires selected WPA3 AP)\n\n");
