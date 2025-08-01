@@ -1,10 +1,6 @@
-import sys
 import json
-import queue
 from serial.tools import list_ports
 import serial
-import threading
-import time
 from serial_threads import SerialMonitorThread, PortalFileSenderThread
 from dialogs import show_select_ap_dialog, show_custom_beacon_dialog, show_printer_dialog
 from utils import log_message, timestamp

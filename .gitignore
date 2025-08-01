@@ -27,3 +27,5 @@ scripts/site/rollup.config.mjs
 /.cache
 dependencies.lock
 .venv
+__pycache__
+*.pyc
