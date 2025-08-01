@@ -4393,6 +4393,16 @@ void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final) 
     }
 }
 
+void wifi_manager_clear_html_buffer(void) {
+    use_html_buffer = false;
+    if (html_buffer != NULL) {
+        free(html_buffer);
+        html_buffer = NULL;
+    }
+    html_buffer_size = 0;
+    printf("HTML buffer cleared and disabled\n");
+}
+
 void wifi_manager_sae_flood_help(void) {
     printf("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
     TERMINAL_VIEW_ADD_TEXT("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");

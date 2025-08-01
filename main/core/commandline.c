@@ -2781,8 +2781,10 @@ void handle_evilportal(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("Usage: %s -c <command>\n", argv[0]);
         printf("Commands:\n");
         printf("  sethtmlstr - Set HTML content from buffer (use with UART markers)\n");
+        printf("  clear - Clear HTML buffer and disable buffer mode\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
         TERMINAL_VIEW_ADD_TEXT("  sethtmlstr - Set HTML content from buffer\n");
+        TERMINAL_VIEW_ADD_TEXT("  clear - Clear HTML buffer and disable buffer mode\n");
         return;
     }
 
@@ -2796,6 +2798,10 @@ void handle_evilportal(int argc, char **argv) {
         wifi_manager_set_html_from_uart();
         printf("HTML buffer mode enabled for evil portal\n");
         TERMINAL_VIEW_ADD_TEXT("HTML buffer mode enabled for evil portal\n");
+    } else if (strcmp(argv[2], "clear") == 0) {
+        wifi_manager_clear_html_buffer();
+        printf("HTML buffer cleared - will use default portal on next startportal\n");
+        TERMINAL_VIEW_ADD_TEXT("HTML buffer cleared - will use default portal on next startportal\n");
     } else {
         printf("Error: Unknown command '%s'\n", argv[2]);
         TERMINAL_VIEW_ADD_TEXT("Error: Unknown command '%s'\n", argv[2]);
