@@ -435,6 +435,35 @@ class ESP32ControlGUI(QMainWindow):
         probe_layout.addWidget(stop_probe_btn)
         wifi_layout.addWidget(probe_group, 2, 0)
 
+        # --- Capture Controls ---
+        capture_group = QGroupBox("Capture Operations")
+        capture_layout = QVBoxLayout(capture_group)
+        self.capture_type_combo = QComboBox()
+        self.capture_type_combo.addItems([
+            "Probes",
+            "Beacons",
+            "Deauth",
+            "Raw",
+            "WPS",
+            "Pwnagotchi"
+        ])
+        self.capture_type_combo.setMinimumHeight(32)
+        capture_layout.addWidget(QLabel("Capture Type:"))
+        capture_layout.addWidget(self.capture_type_combo)
+        button_layout = QHBoxLayout()
+        start_btn = QPushButton("Start Capture")
+        stop_btn = QPushButton("Stop Capture")
+        start_btn.setMinimumHeight(32)
+        stop_btn.setMinimumHeight(32)
+        button_layout.addWidget(start_btn)
+        button_layout.addWidget(stop_btn)
+        capture_layout.addLayout(button_layout)
+        capture_layout.addStretch()
+        start_btn.clicked.connect(self.start_capture)
+        stop_btn.clicked.connect(lambda: self.send_command("capture -stop"))
+        # Place Capture Operations at the bottom of the WiFi tab, spanning both columns
+        wifi_layout.addWidget(capture_group, 2, 1)
+
         wifi_layout.setColumnStretch(0, 1)
         wifi_layout.setColumnStretch(1, 1)
 
@@ -476,35 +505,7 @@ class ESP32ControlGUI(QMainWindow):
         portscan_layout.addRow(scan_btn)
         network_layout.addWidget(portscan_group, 1, 0)
 
-        # --- Capture Controls ---
-        capture_group = QGroupBox("Capture Operations")
-        capture_layout = QVBoxLayout(capture_group)
-        self.capture_type_combo = QComboBox()
-        self.capture_type_combo.addItems([
-            "Probes",
-            "Beacons",
-            "Deauth",
-            "Raw",
-            "WPS",
-            "Pwnagotchi"
-        ])
-        self.capture_type_combo.setMinimumHeight(32)
-        capture_layout.addWidget(QLabel("Capture Type:"))
-        capture_layout.addWidget(self.capture_type_combo)
-        button_layout = QHBoxLayout()
-        start_btn = QPushButton("Start Capture")
-        stop_btn = QPushButton("Stop Capture")
-        start_btn.setMinimumHeight(32)
-        stop_btn.setMinimumHeight(32)
-        button_layout.addWidget(start_btn)
-        button_layout.addWidget(stop_btn)
-        capture_layout.addLayout(button_layout)
-        capture_layout.addStretch()
-        start_btn.clicked.connect(self.start_capture)
-        stop_btn.clicked.connect(lambda: self.send_command("capture -stop"))
-        # Place Capture Operations next to Port Scanner
-        network_layout.addWidget(capture_group, 1, 1)
-
+        
         # Make both columns stretch equally
         network_layout.setColumnStretch(0, 1)
         network_layout.setColumnStretch(1, 1)
