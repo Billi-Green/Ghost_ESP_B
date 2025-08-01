@@ -40,6 +40,31 @@ class SerialMonitorThread(QThread):
     def stop(self):
         self.running = False
 
+class PortalFileSenderThread(QThread):
+    send_line = pyqtSignal(str)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, safe_html):
+        super().__init__()
+        self.safe_html = safe_html
+
+    def run(self):
+        try:
+            self.send_line.emit('evilportal -c sethtmlstr')
+            self.msleep(200)
+            self.send_line.emit('[HTML/BEGIN]')
+            self.msleep(200)
+            chunk_size = 256
+            for i in range(0, len(self.safe_html), chunk_size):
+                self.send_line.emit(self.safe_html[i:i+chunk_size])
+                self.msleep(50)
+            self.msleep(200)
+            self.send_line.emit('[HTML/CLOSE]')
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
 class ESP32ControlGUI(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -350,6 +375,11 @@ class ESP32ControlGUI(QMainWindow):
         dropdown_layout.addWidget(list_portals_btn)
 
         portal_layout.addRow("Available Portals:", dropdown_layout)
+
+        # --- Upload indicator ---
+        self.portal_upload_indicator = QLabel("")
+        portal_layout.addRow(self.portal_upload_indicator)
+        # --- End Upload indicator ---
 
         # --- File selection button ---
         file_btn = QPushButton("Send Local HTML as Portal")
@@ -785,26 +815,25 @@ class ESP32ControlGUI(QMainWindow):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     html_content = f.read()
-                ssid = self.portal_ssid.text().strip()
-                password = self.portal_password.text().strip()
-                safe_html = html_content.replace('"', '\\"')  # Only escape quotes, keep lines
-
-                cmd = f'evilportal -c sethtmlstr'
-                self.send_command(cmd)
-                time.sleep(0.2)
-                self.send_command('[HTML/BEGIN]')
-                time.sleep(0.2)
-
-                # Send each line as a separate command
-                chunk_size = 256
-                for i in range(0, len(safe_html), chunk_size):
-                    self.send_command(safe_html[i:i+chunk_size])
-                    time.sleep(0.05)
-                time.sleep(0.2)
-                self.send_command('[HTML/CLOSE]')
-                QMessageBox.information(self, "Portal Sent", "HTML file sent as evil portal.")
+                safe_html = html_content.replace('"', '\\"')
+                self.portal_upload_indicator.setText("Uploading portal file...")
+                self.portal_sender_thread = PortalFileSenderThread(safe_html)
+                self.portal_sender_thread.send_line.connect(self.send_command)
+                self.portal_sender_thread.finished.connect(self._portal_upload_finished)
+                self.portal_sender_thread.error.connect(self._portal_upload_error)
+                self.portal_sender_thread.start()
             except Exception as e:
+                self.portal_upload_indicator.setText("")
                 QMessageBox.critical(self, "Error", f"Failed to send file: {str(e)}")
+
+    def _portal_upload_finished(self):
+        self.portal_upload_indicator.setText("")
+
+        QMessageBox.information(self, "Portal Sent", "HTML file sent as evil portal.")
+
+    def _portal_upload_error(self, e):
+        self.portal_upload_indicator.setText("")
+        QMessageBox.critical(self, "Error", f"Failed to send file: {e}")
 
     def check_auto_reconnect(self):
         # Only auto-reconnect if enabled and checkbox is checked
