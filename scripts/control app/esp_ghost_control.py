@@ -336,7 +336,6 @@ class ESP32ControlGUI(QMainWindow):
             "WiFi Operations",
             "Network Operations",
             "BLE Operations",
-            "Capture Operations",
             "Evil Portal",
             "Settings"
         ])
@@ -347,7 +346,6 @@ class ESP32ControlGUI(QMainWindow):
         self.panels.append(self.create_wifi_tab())
         self.panels.append(self.create_network_tab())
         self.panels.append(self.create_ble_tab())
-        self.panels.append(self.create_capture_tab())
         self.panels.append(self.create_evil_portal_tab())
         self.panels.append(self.create_settings_tab())
 
@@ -447,18 +445,14 @@ class ESP32ControlGUI(QMainWindow):
         # WiFi Connection
         wifi_connect_group = QGroupBox("WiFi Connection")
         wifi_connect_layout = QFormLayout(wifi_connect_group)
-
         self.wifi_ssid = QLineEdit()
         self.wifi_password = QLineEdit()
         self.wifi_password.setEchoMode(QLineEdit.EchoMode.Password)
-
         wifi_connect_layout.addRow("SSID:", self.wifi_ssid)
         wifi_connect_layout.addRow("Password:", self.wifi_password)
-
         connect_btn = QPushButton("Connect to Network")
         connect_btn.clicked.connect(self.connect_to_wifi)
         wifi_connect_layout.addRow(connect_btn)
-
         network_layout.addWidget(wifi_connect_group, 0, 0)
 
         # Network Tools
@@ -470,17 +464,43 @@ class ESP32ControlGUI(QMainWindow):
         # Port Scanner
         portscan_group = QGroupBox("Port Scanner")
         portscan_layout = QFormLayout(portscan_group)
-
         self.portscan_ip = QLineEdit()
         self.portscan_args = QLineEdit()
         portscan_layout.addRow("Target IP (or 'local'):", self.portscan_ip)
         portscan_layout.addRow("Args (-C, -A, or range):", self.portscan_args)
-
         scan_btn = QPushButton("Scan Ports")
         scan_btn.clicked.connect(self.run_port_scan)
         portscan_layout.addRow(scan_btn)
-
         network_layout.addWidget(portscan_group, 1, 0)
+
+        # --- Capture Controls ---
+        capture_group = QGroupBox("Capture Operations")
+        capture_layout = QVBoxLayout(capture_group)
+        self.capture_type_combo = QComboBox()
+        self.capture_type_combo.addItems([
+            "Probes",
+            "Beacons",
+            "Deauth",
+            "Raw",
+            "WPS",
+            "Pwnagotchi"
+        ])
+        self.capture_type_combo.setMinimumHeight(32)
+        capture_layout.addWidget(QLabel("Capture Type:"))
+        capture_layout.addWidget(self.capture_type_combo)
+        button_layout = QHBoxLayout()
+        start_btn = QPushButton("Start Capture")
+        stop_btn = QPushButton("Stop Capture")
+        start_btn.setMinimumHeight(32)
+        stop_btn.setMinimumHeight(32)
+        button_layout.addWidget(start_btn)
+        button_layout.addWidget(stop_btn)
+        capture_layout.addLayout(button_layout)
+        capture_layout.addStretch()
+        start_btn.clicked.connect(self.start_capture)
+        stop_btn.clicked.connect(lambda: self.send_command("capture -stop"))
+        # Place Capture Operations next to Port Scanner
+        network_layout.addWidget(capture_group, 1, 1)
 
         return network_widget
 
@@ -500,19 +520,34 @@ class ESP32ControlGUI(QMainWindow):
         return ble_widget
 
     def create_capture_tab(self):
-        """Create and return the Capture operations tab widget."""
+        """Create and return the Capture operations tab widget as a dropdown with Start/Stop buttons."""
         capture_widget = QWidget()
-        capture_layout = QGridLayout(capture_widget)
+        layout = QVBoxLayout(capture_widget)
 
-        self.create_command_group("Packet Capture (Requires SD Card or Flipper)", [
-            ("Capture Probes", "capture -probe"),
-            ("Capture Beacons", "capture -beacon"),
-            ("Capture Deauth", "capture -deauth"),
-            ("Capture Raw", "capture -raw"),
-            ("Capture WPS", "capture -wps"),
-            ("Capture Pwnagotchi", "capture -pwn"),
-            ("Stop Capture", "capture -stop")
-        ], capture_layout, 0, 0)
+        # Dropdown for capture type
+        self.capture_type_combo = QComboBox()
+        self.capture_type_combo.addItems([
+            "Probes",
+            "Beacons",
+            "Deauth",
+            "Raw",
+            "WPS",
+            "Pwnagotchi"
+        ])
+        layout.addWidget(QLabel("Capture Type:"))
+        layout.addWidget(self.capture_type_combo)
+
+        # Start/Stop buttons
+        button_layout = QHBoxLayout()
+        start_btn = QPushButton("Start Capture")
+        stop_btn = QPushButton("Stop Capture")
+        button_layout.addWidget(start_btn)
+        button_layout.addWidget(stop_btn)
+        layout.addLayout(button_layout)
+
+        # Connect buttons
+        start_btn.clicked.connect(self.start_capture)
+        stop_btn.clicked.connect(lambda: self.send_command("capture -stop"))
 
         return capture_widget
 
@@ -1062,6 +1097,11 @@ class ESP32ControlGUI(QMainWindow):
             self.send_command(f"scanports {ip} {args}")
         else:
             QMessageBox.warning(self, "Input Error", "Please enter both IP and arguments")
+
+    def start_capture(self):
+        """Send the capture command to the ESP32 based on selected type."""
+        capture_type = self.capture_type_combo.currentText().lower()
+        self.send_command(f"capture -{capture_type}")
 
     def update_display_scan(self, scan_data):
         """
