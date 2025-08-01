@@ -127,6 +127,10 @@ class ESP32ControlGUI(QMainWindow):
         self.command_history = []
         self.history_index = -1
 
+        # Reconnect settings
+        self.reconnect_attempts = 0
+        self.reconnect_base_interval = 2000  # 2 seconds
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # Get geometry of central widget
@@ -993,7 +997,7 @@ class ESP32ControlGUI(QMainWindow):
                     try:
                         self.serial_port = serial.Serial(port, 115200, timeout=1)
                         self.connect_btn.setText("Disconnect")
-                        self.connect_btn.setStyleSheet("")  # Remove highlight
+                        self.connect_btn.setStyleSheet("")
                         self.log_message(f"Auto-reconnected to {port}")
 
                         self.monitor_thread = SerialMonitorThread(self.serial_port)
@@ -1001,6 +1005,8 @@ class ESP32ControlGUI(QMainWindow):
                         self.monitor_thread.start()
                         self.update_connection_status(True)
                         self.set_main_ui_enabled(True)
+                        self.reconnect_attempts = 0  # Reset on success
+                        self.reconnect_timer.setInterval(self.reconnect_base_interval)
                     except serial.SerialException as e:
                         error_msg = str(e)
                         if "Permission denied" in error_msg:
@@ -1010,10 +1016,17 @@ class ESP32ControlGUI(QMainWindow):
                         self.log_message(f"Auto-reconnect failed: {error_msg}")
                         self.update_connection_status(False)
                         self.set_main_ui_enabled(False)
+                        self.reconnect_attempts += 1
+                        # Exponential backoff, max 32 seconds
+                        backoff = min(self.reconnect_base_interval * (2 ** self.reconnect_attempts), 32000)
+                        self.reconnect_timer.setInterval(backoff)
                     except Exception as e:
                         self.log_message(f"Auto-reconnect failed: {str(e)}")
                         self.update_connection_status(False)
                         self.set_main_ui_enabled(False)
+                        self.reconnect_attempts += 1
+                        backoff = min(self.reconnect_base_interval * (2 ** self.reconnect_attempts), 32000)
+                        self.reconnect_timer.setInterval(backoff)
         self.auto_reconnect_checkbox.stateChanged.connect(self.toggle_reconnect_timer)
 
     def toggle_reconnect_timer(self, state):
