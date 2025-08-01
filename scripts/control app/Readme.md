@@ -16,6 +16,8 @@ The **Ghost ESP Control Panel** is a GUI application for controlling and communi
 - **UI Lock/Overlay**: The UI disables and shows a visual overlay when not connected.
 - **Resizable Panes**: Command and display areas can be resized.
 - **Portal File Upload**: Upload custom HTML portals with progress indication.
+- **Automatic Virtual Environment & Dependency Install**: The app will create a Python venv and install dependencies on first run.
+- **Color Terminal Support**: Terminal output supports ANSI color codes for better readability.
 
 ## Table of Contents
 
@@ -24,6 +26,7 @@ The **Ghost ESP Control Panel** is a GUI application for controlling and communi
   - [Starting the Application](#starting-the-application)
   - [Connecting to ESP32](#connecting-to-esp32)
   - [Available Operations](#available-operations)
+  - [Logging and Display](#logging-and-display)
 - [Code Structure](#code-structure)
 - [UI](#ui)
 - [Troubleshooting](#troubleshooting)
@@ -33,13 +36,10 @@ The **Ghost ESP Control Panel** is a GUI application for controlling and communi
 ### Prerequisites
 
 1. **Python 3.8+**: Install Python 3.8 or later.
-2. **Dependencies**:
+2. **System Dependencies**:
    ```bash
    sudo apt update
    sudo apt install libxcb-cursor0
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
    ```
 3. **Ghost ESP Firmware**: Flash your ESP32 with compatible firmware.
 
