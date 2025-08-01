@@ -574,27 +574,28 @@ class ESP32ControlGUI(QMainWindow):
         return portal_widget
 
     def create_settings_tab(self):
-        """Create and return the Settings tab widget."""
+        """Create and return the Settings tab widget with grouped categories."""
         settings_widget = QWidget()
-        settings_layout = QFormLayout(settings_widget)
+        main_layout = QVBoxLayout(settings_widget)
 
-        # RGB Mode
+        # --- Display Settings ---
+        display_group = QGroupBox("Display Settings")
+        display_layout = QFormLayout(display_group)
+
         rgb_mode = QComboBox()
         rgb_mode.addItems(["Normal", "Rainbow", "Stealth"])
         rgb_mode.currentIndexChanged.connect(
             lambda i: self.send_command(f"setrgbmode {rgb_mode.currentText().lower()}")
         )
-        settings_layout.addRow("RGB Mode:", rgb_mode)
+        display_layout.addRow("RGB Mode:", rgb_mode)
 
-        # Display Timeout
         timeout = QComboBox()
         timeout.addItems(["5s", "10s", "30s", "60s", "Never"])
         timeout.currentIndexChanged.connect(
             lambda i: self.send_command(f"settimeout {i}")
         )
-        settings_layout.addRow("Display Timeout:", timeout)
+        display_layout.addRow("Display Timeout:", timeout)
 
-        # Menu Theme
         theme = QComboBox()
         theme.addItems([
             "Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome",
@@ -604,63 +605,68 @@ class ESP32ControlGUI(QMainWindow):
         theme.currentIndexChanged.connect(
             lambda i: self.send_command(f"settheme {i}")
         )
-        settings_layout.addRow("Menu Theme:", theme)
+        display_layout.addRow("Menu Theme:", theme)
 
-        # Third Control
-        thirds_control = QComboBox()
-        thirds_control.addItems(["Off", "On"])
-        thirds_control.currentIndexChanged.connect(
-            lambda i: self.send_command(f"setthirdcontrol {'on' if i else 'off'}")
-        )
-        settings_layout.addRow("Third Control:", thirds_control)
-
-        # Terminal Color
         term_color = QComboBox()
         term_color.addItems(["Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"])
         term_color.currentIndexChanged.connect(
             lambda i: self.send_command(f"settermcolor {i}")
         )
-        settings_layout.addRow("Terminal Color:", term_color)
+        display_layout.addRow("Terminal Color:", term_color)
 
-        # Invert Colors
         invert_colors = QComboBox()
         invert_colors.addItems(["Off", "On"])
         invert_colors.currentIndexChanged.connect(
             lambda i: self.send_command(f"setinvert {'on' if i else 'off'}")
         )
-        settings_layout.addRow("Invert Colors:", invert_colors)
+        display_layout.addRow("Invert Colors:", invert_colors)
 
-        # Web Auth
-        web_auth = QComboBox()
-        web_auth.addItems(["Off", "On"])
-        web_auth.currentIndexChanged.connect(
-            lambda i: self.send_command(f"webauth {'on' if i else 'off'}")
-        )
-        settings_layout.addRow("Web Auth:", web_auth)
-
-        # AP Enabled
-        ap_enabled = QComboBox()
-        ap_enabled.addItems(["Off", "On"])
-        ap_enabled.currentIndexChanged.connect(
-            lambda i: self.send_command(f"apenable {'on' if i else 'off'}")
-        )
-        settings_layout.addRow("AP Enabled:", ap_enabled)
-
-        # Power Saving Mode
-        power_save = QComboBox()
-        power_save.addItems(["Off", "On"])
-        power_save.currentIndexChanged.connect(
-            lambda i: self.send_command(f"setpowersave {'on' if i else 'off'}")
-        )
-        settings_layout.addRow("Power Saving Mode:", power_save)
-
-        # Max Brightness (if supported)
         max_brightness = QComboBox()
         max_brightness.addItems(["10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"])
         max_brightness.currentIndexChanged.connect(
             lambda i: self.send_command(f"setbrightness {(i+1)*10}")
         )
-        settings_layout.addRow("Max Brightness:", max_brightness)
+        display_layout.addRow("Max Brightness:", max_brightness)
+
+        main_layout.addWidget(display_group)
+
+        # --- Network Settings ---
+        network_group = QGroupBox("Network Settings")
+        network_layout = QFormLayout(network_group)
+
+        web_auth = QComboBox()
+        web_auth.addItems(["Off", "On"])
+        web_auth.currentIndexChanged.connect(
+            lambda i: self.send_command(f"webauth {'on' if i else 'off'}")
+        )
+        network_layout.addRow("Web Auth:", web_auth)
+
+        ap_enabled = QComboBox()
+        ap_enabled.addItems(["Off", "On"])
+        ap_enabled.currentIndexChanged.connect(
+            lambda i: self.send_command(f"apenable {'on' if i else 'off'}")
+        )
+        network_layout.addRow("AP Enabled:", ap_enabled)
+
+        main_layout.addWidget(network_group)
+
+        # --- System Settings ---
+        system_group = QGroupBox("System Settings")
+        system_layout = QFormLayout(system_group)
+
+        thirds_control = QComboBox()
+        thirds_control.addItems(["Off", "On"])
+        thirds_control.currentIndexChanged.connect(
+            lambda i: self.send_command(f"setthirdcontrol {'on' if i else 'off'}")
+        )
+        system_layout.addRow("Third Control:", thirds_control)
+
+        power_save = QComboBox()
+        power_save.addItems(["Off", "On"])
+        power_save.currentIndexChanged.connect(
+            lambda i: self.send_command(f"setpowersave {'on' if i else 'off'}")
+        )
+        system_layout.addRow("Power Saving Mode:", power_save)
 
         # Reboot and Save buttons side by side
         button_layout = QHBoxLayout()
@@ -672,7 +678,9 @@ class ESP32ControlGUI(QMainWindow):
         save_btn.clicked.connect(lambda: self.send_command("savesetting"))
         button_layout.addWidget(save_btn)
 
-        settings_layout.addRow(button_layout)
+        system_layout.addRow(button_layout)
+
+        main_layout.addWidget(system_group)
 
         return settings_widget
 
