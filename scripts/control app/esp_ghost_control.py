@@ -119,6 +119,10 @@ class ESP32ControlGUI(QMainWindow):
         # --- Fix: set overlay geometry at startup ---
         self.resizeEvent(None)
 
+        # Command history for custom commands
+        self.command_history = []
+        self.history_index = -1
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # Get geometry of central widget
@@ -588,6 +592,7 @@ class ESP32ControlGUI(QMainWindow):
         self.cmd_entry = QLineEdit()
         self.cmd_entry.setPlaceholderText("Enter custom command...")
         self.cmd_entry.returnPressed.connect(self.send_custom_command)
+        self.cmd_entry.installEventFilter(self)  # Add this line
         cmd_layout.addWidget(self.cmd_entry)
         send_cmd_btn = QPushButton("Send")
         send_cmd_btn.clicked.connect(self.send_custom_command)
@@ -692,10 +697,29 @@ class ESP32ControlGUI(QMainWindow):
             self.log_message(f"Error sending command: {str(e)}")
             self.disconnect()  # Disconnect
 
+    def eventFilter(self, obj, event):
+        if obj == self.cmd_entry and event.type() == event.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Up:
+                if self.command_history and self.history_index > 0:
+                    self.history_index -= 1
+                    self.cmd_entry.setText(self.command_history[self.history_index])
+                return True
+            elif event.key() == Qt.Key.Key_Down:
+                if self.command_history and self.history_index < len(self.command_history) - 1:
+                    self.history_index += 1
+                    self.cmd_entry.setText(self.command_history[self.history_index])
+                elif self.history_index == len(self.command_history) - 1:
+                    self.history_index += 1
+                    self.cmd_entry.clear()
+                return True
+        return super().eventFilter(obj, event)
+
     def send_custom_command(self):
         command = self.cmd_entry.text().strip()
         if command:
             self.send_command(command)
+            self.command_history.append(command)
+            self.history_index = len(self.command_history)
             self.cmd_entry.clear()
 
     def process_response(self, response):
