@@ -9,7 +9,7 @@ from serial.tools import list_ports
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
-                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog)
+                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
 from functools import partial
@@ -44,6 +44,7 @@ class PortalFileSenderThread(QThread):
     send_line = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
+    progress = pyqtSignal(int)  # Add this signal
 
     def __init__(self, safe_html):
         super().__init__()
@@ -56,8 +57,11 @@ class PortalFileSenderThread(QThread):
             self.send_line.emit('[HTML/BEGIN]')
             self.msleep(200)
             chunk_size = 256
-            for i in range(0, len(self.safe_html), chunk_size):
+            total = len(self.safe_html)
+            for i in range(0, total, chunk_size):
                 self.send_line.emit(self.safe_html[i:i+chunk_size])
+                percent = int((i + chunk_size) / total * 100)
+                self.progress.emit(min(percent, 100))
                 self.msleep(50)
             self.msleep(200)
             self.send_line.emit('[HTML/CLOSE]')
@@ -224,29 +228,32 @@ class ESP32ControlGUI(QMainWindow):
 
         self.port_combo = QComboBox()
         self.port_combo.setMinimumWidth(150)
+        self.port_combo.setToolTip("Select the serial port for ESP32")
         connection_layout.addWidget(QLabel("Port:"))
         connection_layout.addWidget(self.port_combo)
 
-        # --- Status Indicator ---
         self.status_indicator = QLabel("Disconnected")
         self.status_indicator.setFixedWidth(100)
         self.status_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_indicator.setStyleSheet("background-color: #ff4444; color: white; border-radius: 8px;")
+        self.status_indicator.setToolTip("Shows current connection status")
         connection_layout.addWidget(self.status_indicator)
-        # --- End Status Indicator ---
 
         self.auto_reconnect_checkbox = QCheckBox("Auto Reconnect")
         self.auto_reconnect_checkbox.setChecked(False)
+        self.auto_reconnect_checkbox.setToolTip("Automatically reconnect if connection is lost")
         connection_layout.addWidget(self.auto_reconnect_checkbox)
 
         refresh_btn = QPushButton("Refresh Ports")
         refresh_btn.clicked.connect(self.refresh_ports)
         refresh_btn.setFixedWidth(100)
+        refresh_btn.setToolTip("Refresh the list of available serial ports")
         connection_layout.addWidget(refresh_btn)
 
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self.toggle_connection)
         self.connect_btn.setFixedWidth(100)
+        self.connect_btn.setToolTip("Connect or disconnect from ESP32")
         connection_layout.addWidget(self.connect_btn)
 
         connection_layout.addStretch()
@@ -459,7 +466,15 @@ class ESP32ControlGUI(QMainWindow):
         # --- Upload indicator ---
         self.portal_upload_indicator = QLabel("")
         portal_layout.addRow(self.portal_upload_indicator)
-        # --- End Upload indicator ---
+
+        # --- Progress Bar ---
+        self.portal_progress_bar = QProgressBar()
+        self.portal_progress_bar.setMinimum(0)
+        self.portal_progress_bar.setMaximum(100)
+        self.portal_progress_bar.setValue(0)
+        self.portal_progress_bar.setVisible(False)
+        portal_layout.addRow(self.portal_progress_bar)
+        # --- End Progress Bar ---
 
         # --- File selection button ---
         file_btn = QPushButton("Send Local HTML as Portal")
@@ -570,6 +585,7 @@ class ESP32ControlGUI(QMainWindow):
 
         for text, command in commands:
             btn = QPushButton(text)
+            btn.setToolTip(f"Send command: {text}")
             if callable(command):
                 btn.clicked.connect(command)
             else:
@@ -943,22 +959,30 @@ class ESP32ControlGUI(QMainWindow):
                     html_content = f.read()
                 safe_html = html_content.replace('"', '\\"')
                 self.portal_upload_indicator.setText("Uploading portal file...")
+                self.portal_progress_bar.setVisible(True)
+                self.portal_progress_bar.setValue(0)
                 self.portal_sender_thread = PortalFileSenderThread(safe_html)
                 self.portal_sender_thread.send_line.connect(self.send_command)
                 self.portal_sender_thread.finished.connect(self._portal_upload_finished)
                 self.portal_sender_thread.error.connect(self._portal_upload_error)
+                self.portal_sender_thread.progress.connect(self._portal_upload_progress)  # Add this signal
                 self.portal_sender_thread.start()
             except Exception as e:
                 self.portal_upload_indicator.setText("")
+                self.portal_progress_bar.setVisible(False)
                 QMessageBox.critical(self, "Error", f"Failed to send file: {str(e)}")
+
+    def _portal_upload_progress(self, percent):
+        self.portal_progress_bar.setValue(percent)
 
     def _portal_upload_finished(self):
         self.portal_upload_indicator.setText("")
-
+        self.portal_progress_bar.setVisible(False)
         QMessageBox.information(self, "Portal Sent", "HTML file sent as evil portal.")
 
     def _portal_upload_error(self, e):
         self.portal_upload_indicator.setText("")
+        self.portal_progress_bar.setVisible(False)
         QMessageBox.critical(self, "Error", f"Failed to send file: {e}")
 
     def check_auto_reconnect(self):
