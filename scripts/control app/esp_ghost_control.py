@@ -15,14 +15,21 @@ from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
 from functools import partial
 
 class SerialMonitorThread(QThread):
-    data_received = pyqtSignal(str)
+    """Thread for monitoring incoming data from the serial port."""
 
     def __init__(self, serial_port):
+        """
+        Initialize the serial monitor thread.
+
+        Args:
+            serial_port (serial.Serial): The serial port to monitor.
+        """
         super().__init__()
         self.serial_port = serial_port
         self.running = True
 
     def run(self):
+        """Continuously read data from the serial port and emit received lines."""
         while self.running and self.serial_port.is_open:
             try:
                 if self.serial_port.in_waiting:
@@ -38,19 +45,29 @@ class SerialMonitorThread(QThread):
             self.msleep(10)
 
     def stop(self):
+        """Stop the serial monitor thread."""
         self.running = False
 
 class PortalFileSenderThread(QThread):
+    """Thread for sending a local HTML file to the ESP32 as an evil portal."""
+
     send_line = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
-    progress = pyqtSignal(int)  # Add this signal
+    progress = pyqtSignal(int)
 
     def __init__(self, safe_html):
+        """
+        Initialize the portal file sender thread.
+
+        Args:
+            safe_html (str): The HTML content to send.
+        """
         super().__init__()
         self.safe_html = safe_html
 
     def run(self):
+        """Send the HTML content in chunks to the ESP32 and emit progress."""
         try:
             self.send_line.emit('evilportal -c sethtmlstr')
             self.msleep(200)
@@ -70,7 +87,10 @@ class PortalFileSenderThread(QThread):
             self.error.emit(str(e))
 
 class ESP32ControlGUI(QMainWindow):
+    """Main GUI class for controlling the Ghost ESP32 device."""
+
     def __init__(self):
+        """Initialize the ESP32 control panel GUI and its components."""
         super().__init__()
         self.setWindowTitle("Ghost ESP Control Panel")
         self.setGeometry(100, 100, 1400, 900)
@@ -132,6 +152,12 @@ class ESP32ControlGUI(QMainWindow):
         self.reconnect_base_interval = 2000  # 2 seconds
 
     def resizeEvent(self, event):
+        """
+        Handle window resize events to adjust overlay geometry.
+
+        Args:
+            event (QResizeEvent): The resize event.
+        """
         super().resizeEvent(event)
         # Get geometry of central widget
         central_geom = self.centralWidget().geometry()
@@ -152,6 +178,12 @@ class ESP32ControlGUI(QMainWindow):
             self.overlay.setGeometry(0, 60, central_geom.width(), central_geom.height() - 60)
 
     def set_main_ui_enabled(self, enabled):
+        """
+        Enable or disable the main UI panels except the serial connection bar.
+
+        Args:
+            enabled (bool): Whether to enable or disable the UI.
+        """
         # Disable/enable all main panels except connection bar
         # You may need to adjust these references based on your layout
         # Example assumes you have self.panel_container, self.panel_combo, self.log_group, etc.
@@ -171,6 +203,7 @@ class ESP32ControlGUI(QMainWindow):
             self.overlay.hide()
 
     def setup_dark_theme(self):
+        """Apply a dark theme to the application."""
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
         palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
@@ -188,6 +221,12 @@ class ESP32ControlGUI(QMainWindow):
         self.setPalette(palette)
 
     def setup_ui(self, main_layout):
+        """
+        Set up the main UI layout and widgets.
+
+        Args:
+            main_layout (QVBoxLayout): The main layout to populate.
+        """
         # Create top bar for serial connection
         self.setup_connection_bar(main_layout)
 
@@ -226,6 +265,12 @@ class ESP32ControlGUI(QMainWindow):
         splitter.setStretchFactor(1, 1)  # Log area
 
     def setup_connection_bar(self, main_layout):
+        """
+        Set up the serial connection bar at the top of the UI.
+
+        Args:
+            main_layout (QVBoxLayout): The main layout to add the connection bar to.
+        """
         connection_group = QGroupBox("Serial Connection")
         connection_group.setObjectName("serial_connection_bar")
         connection_layout = QHBoxLayout(connection_group)
@@ -264,6 +309,12 @@ class ESP32ControlGUI(QMainWindow):
         main_layout.addWidget(connection_group)
 
     def update_connection_status(self, connected):
+        """
+        Update the connection status indicator.
+
+        Args:
+            connected (bool): True if connected, False otherwise.
+        """
         if connected:
             self.status_indicator.setText("Connected")
             self.status_indicator.setStyleSheet("background-color: #44bb44; color: white; border-radius: 8px;")
@@ -272,6 +323,12 @@ class ESP32ControlGUI(QMainWindow):
             self.status_indicator.setStyleSheet("background-color: #ff4444; color: white; border-radius: 8px;")
 
     def setup_command_panels(self, layout):
+        """
+        Set up the command panel dropdown and associated panels.
+
+        Args:
+            layout (QVBoxLayout): The layout to add the panels to.
+        """
         # Dropdown for panel selection
         self.panel_combo = QComboBox()
         self.panel_combo.addItems([
@@ -308,13 +365,26 @@ class ESP32ControlGUI(QMainWindow):
         self.panel_combo.currentIndexChanged.connect(self.switch_panel)
 
     def switch_panel(self, index):
+        """
+        Switch the visible command panel based on dropdown selection.
+
+        Args:
+            index (int): The index of the selected panel.
+        """
         for i, panel in enumerate(self.panels):
             panel.setVisible(i == index)
 
     def setup_command_tabs(self, layout):
+        """
+        Set up the command tabs (panels).
+
+        Args:
+            layout (QVBoxLayout): The layout to add the tabs to.
+        """
         self.setup_command_panels(layout)
 
     def create_wifi_tab(self):
+        """Create and return the WiFi operations tab widget."""
         wifi_widget = QWidget()
         wifi_layout = QGridLayout(wifi_widget)
 
@@ -369,6 +439,7 @@ class ESP32ControlGUI(QMainWindow):
         return wifi_widget
 
     def create_network_tab(self):
+        """Create and return the Network operations tab widget."""
         network_widget = QWidget()
         network_layout = QGridLayout(network_widget)
 
@@ -413,6 +484,7 @@ class ESP32ControlGUI(QMainWindow):
         return network_widget
 
     def create_ble_tab(self):
+        """Create and return the BLE operations tab widget."""
         ble_widget = QWidget()
         ble_layout = QGridLayout(ble_widget)
 
@@ -427,6 +499,7 @@ class ESP32ControlGUI(QMainWindow):
         return ble_widget
 
     def create_capture_tab(self):
+        """Create and return the Capture operations tab widget."""
         capture_widget = QWidget()
         capture_layout = QGridLayout(capture_widget)
 
@@ -443,6 +516,7 @@ class ESP32ControlGUI(QMainWindow):
         return capture_widget
 
     def create_evil_portal_tab(self):
+        """Create and return the Evil Portal tab widget."""
         portal_widget = QWidget()
         portal_layout = QFormLayout(portal_widget)
 
@@ -499,6 +573,7 @@ class ESP32ControlGUI(QMainWindow):
         return portal_widget
 
     def create_settings_tab(self):
+        """Create and return the Settings tab widget."""
         settings_widget = QWidget()
         settings_layout = QFormLayout(settings_widget)
 
@@ -584,6 +659,16 @@ class ESP32ControlGUI(QMainWindow):
         return settings_widget
 
     def create_command_group(self, title, commands, layout, row, col):
+        """
+        Create a group of command buttons.
+
+        Args:
+            title (str): The group title.
+            commands (list): List of (button text, command/callback) tuples.
+            layout (QGridLayout): The layout to add the group to.
+            row (int): Row position in the grid.
+            col (int): Column position in the grid.
+        """
         group = QGroupBox(title)
         group_layout = QVBoxLayout(group)
 
@@ -600,6 +685,12 @@ class ESP32ControlGUI(QMainWindow):
         layout.addWidget(group, row, col)
 
     def setup_display_area(self, layout):
+        """
+        Set up the display area for responses and custom commands.
+
+        Args:
+            layout (QVBoxLayout): The layout to add the display area to.
+        """
         # Make display area resizable using a QSplitter
         display_splitter = QSplitter(Qt.Orientation.Vertical)
 
@@ -642,6 +733,7 @@ class ESP32ControlGUI(QMainWindow):
         layout.addWidget(display_splitter)
 
     def setup_log_area(self):
+        """Set up the log area for logging messages and saving logs."""
         self.log_group = QGroupBox("Log")
         log_layout = QVBoxLayout(self.log_group)
 
@@ -662,6 +754,7 @@ class ESP32ControlGUI(QMainWindow):
         log_layout.addLayout(button_layout)
 
     def refresh_ports(self):
+        """Refresh the list of available serial ports."""
         self.port_combo.clear()
         ports = []
         for port in list_ports.comports():
@@ -678,6 +771,7 @@ class ESP32ControlGUI(QMainWindow):
         self.port_combo.addItems(ports)
 
     def toggle_connection(self):
+        """Connect or disconnect from the selected serial port."""
         if not self.serial_port or not self.serial_port.is_open:
             try:
                 port = self.port_combo.currentText()
@@ -713,6 +807,7 @@ class ESP32ControlGUI(QMainWindow):
             self.auto_reconnect_enabled = False
 
     def disconnect(self):
+        """Disconnect from the serial port and update UI."""
         if self.monitor_thread:
             self.monitor_thread.stop()
             self.monitor_thread.wait()
@@ -725,6 +820,12 @@ class ESP32ControlGUI(QMainWindow):
         self.update_connection_status(False)  # <-- Ensure status updates on disconnect
 
     def send_command(self, command):
+        """
+        Send a command to the ESP32 via serial.
+
+        Args:
+            command (str): The command to send.
+        """
         if not self.serial_port or not self.serial_port.is_open:
             QMessageBox.warning(self, "Not Connected", "Please connect to ESP32 first")
             return
@@ -737,6 +838,16 @@ class ESP32ControlGUI(QMainWindow):
             self.disconnect()  # Disconnect
 
     def eventFilter(self, obj, event):
+        """
+        Handle custom command history navigation in the command entry.
+
+        Args:
+            obj (QObject): The object receiving the event.
+            event (QEvent): The event to filter.
+
+        Returns:
+            bool: True if event handled, False otherwise.
+        """
         if obj == self.cmd_entry and event.type() == event.Type.KeyPress:
             if event.key() == Qt.Key.Key_Up:
                 if self.command_history and self.history_index > 0:
@@ -754,6 +865,7 @@ class ESP32ControlGUI(QMainWindow):
         return super().eventFilter(obj, event)
 
     def send_custom_command(self):
+        """Send a custom command entered by the user."""
         command = self.cmd_entry.text().strip()
         if command:
             self.send_command(command)
@@ -762,6 +874,12 @@ class ESP32ControlGUI(QMainWindow):
             self.cmd_entry.clear()
 
     def process_response(self, response):
+        """
+        Process a response received from the ESP32.
+
+        Args:
+            response (str): The response string.
+        """
         if response.startswith("Error reading serial:"):
             self.log_message(response)
             self.disconnect()
@@ -813,6 +931,12 @@ class ESP32ControlGUI(QMainWindow):
         self.display_text.ensureCursorVisible()
 
     def log_message(self, message):
+        """
+        Log a message to the log area with a timestamp.
+
+        Args:
+            message (str): The message to log.
+        """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
         self.log_text.ensureCursorVisible()
@@ -823,6 +947,7 @@ class ESP32ControlGUI(QMainWindow):
             self.log_text.setPlainText('\n'.join(log_content[-max_lines:]))
 
     def save_log(self):
+        """Save the display log to a file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"ghost_esp_log_{timestamp}.txt"
         try:
@@ -833,16 +958,19 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to save log: {str(e)}")
 
     def show_select_ap_dialog(self):
+        """Show a dialog to select an access point and send the selection."""
         selected_ap, ok = QInputDialog.getText(self, "Select Access Point", "Enter Access Point name:")
         if ok and selected_ap:
             self.send_command(f"select -a {selected_ap}")
 
     def show_custom_beacon_dialog(self):
+        """Show a dialog to enter a custom SSID for beacon spam."""
         ssid, ok = QInputDialog.getText(self, "Custom Beacon", "Enter SSID for beacon spam:")
         if ok and ssid:
             self.send_command(f'beaconspam "{ssid}"')
 
     def show_printer_dialog(self):
+        """Show a dialog to print text to a network printer."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Print to Network Printer")
         layout = QFormLayout(dialog)
@@ -880,6 +1008,7 @@ class ESP32ControlGUI(QMainWindow):
             self.send_command(cmd)
 
     def connect_to_wifi(self):
+        """Send WiFi connection credentials to the ESP32."""
         ssid = self.wifi_ssid.text()
         password = self.wifi_password.text()
         if ssid and password:
@@ -888,6 +1017,7 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.warning(self, "Input Error", "Please enter both SSID and password")
 
     def start_evil_portal(self):
+        """Start the evil portal with selected settings."""
         ssid = self.portal_ssid.text()
         password = self.portal_password.text()
         portal_file = self.portal_dropdown.currentText()
@@ -899,6 +1029,7 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.warning(self, "Input Error", "Please fill all required fields and select a portal")
 
     def run_port_scan(self):
+        """Run a port scan with the specified IP and arguments."""
         ip = self.portscan_ip.text().strip()
         args = self.portscan_args.text().strip()
         if ip and args:
@@ -907,6 +1038,12 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.warning(self, "Input Error", "Please enter both IP and arguments")
 
     def update_display_scan(self, scan_data):
+        """
+        Update the display area with scan results.
+
+        Args:
+            scan_data (list): List of scan result items.
+        """
         self.display_text.append("\n=== Scan Results ===")
         for item in scan_data:
             self.display_text.append(f"- {item}")
@@ -914,36 +1051,53 @@ class ESP32ControlGUI(QMainWindow):
         self.display_text.ensureCursorVisible()
 
     def update_display_status(self, status):
+        """
+        Update the display area with a status message.
+
+        Args:
+            status (str): The status message.
+        """
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.display_text.append(f"[{timestamp}] Status: {status}")
         self.display_text.ensureCursorVisible()
 
     def closeEvent(self, event):
+        """
+        Handle the window close event and disconnect serial if needed.
+
+        Args:
+            event (QCloseEvent): The close event.
+        """
         if self.serial_port and self.serial_port.is_open:
             self.disconnect()
         super().closeEvent(event)
 
     def show_beacon_add_dialog(self):
+        """Show a dialog to add an SSID to the beacon list."""
         ssid, ok = QInputDialog.getText(self, "Add SSID", "Enter SSID to add to beacon list:")
         if ok and ssid:
             self.send_command(f'beaconadd "{ssid}"')
 
     def show_beacon_remove_dialog(self):
+        """Show a dialog to remove an SSID from the beacon list."""
         ssid, ok = QInputDialog.getText(self, "Remove SSID", "Enter SSID to remove from beacon list:")
         if ok and ssid:
             self.send_command(f'beaconremove "{ssid}"')
 
     def show_sdmmc_dialog(self):
+        """Show a dialog to set SDMMC pins."""
         pins, ok = QInputDialog.getText(self, "Set SDMMC Pins", "Enter pins: clk cmd d0 d1 d2 d3 (space-separated)")
         if ok and pins:
             self.send_command(f"sd_pins_mmc {pins}")
 
     def show_sdspi_dialog(self):
+        """Show a dialog to set SPI pins."""
         pins, ok = QInputDialog.getText(self, "Set SPI Pins", "Enter pins: cs clk miso mosi (space-separated)")
         if ok and pins:
             self.send_command(f"sd_pins_spi {pins}")
 
     def start_probe_listener(self):
+        """Start listening for probe requests on the specified channel."""
         channel = self.probe_channel.text().strip()
         if channel:
             self.send_command(f"listenprobes {channel}")
@@ -951,11 +1105,13 @@ class ESP32ControlGUI(QMainWindow):
             self.send_command("listenprobes")
 
     def show_rgbpins_dialog(self):
+        """Show a dialog to set RGB pins."""
         pins, ok = QInputDialog.getText(self, "Set RGB Pins", "Enter RGB pins (R1 G1 B1 R2 G2 B2 ...):")
         if ok and pins:
             self.send_command(f"rgb_pins {pins}")
 
     def send_local_portal_file(self):
+        """Send a local HTML file as an evil portal to the ESP32."""
         file_path, _ = QFileDialog.getOpenFileName(self, "Select HTML File", "", "HTML Files (*.html *.htm)")
         if file_path:
             try:
@@ -977,19 +1133,33 @@ class ESP32ControlGUI(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to send file: {str(e)}")
 
     def _portal_upload_progress(self, percent):
+        """
+        Update the portal upload progress bar.
+
+        Args:
+            percent (int): Progress percentage.
+        """
         self.portal_progress_bar.setValue(percent)
 
     def _portal_upload_finished(self):
+        """Handle completion of portal file upload."""
         self.portal_upload_indicator.setText("")
         self.portal_progress_bar.setVisible(False)
         QMessageBox.information(self, "Portal Sent", "HTML file sent as evil portal.")
 
     def _portal_upload_error(self, e):
+        """
+        Handle an error during portal file upload.
+
+        Args:
+            e (str): Error message.
+        """
         self.portal_upload_indicator.setText("")
         self.portal_progress_bar.setVisible(False)
         QMessageBox.critical(self, "Error", f"Failed to send file: {e}")
 
     def check_auto_reconnect(self):
+        """Check and handle auto-reconnect logic for the serial port."""
         if getattr(self, "auto_reconnect_enabled", False) and self.auto_reconnect_checkbox.isChecked():
             if not self.serial_port or not self.serial_port.is_open:
                 port = self.port_combo.currentText()
@@ -1030,15 +1200,30 @@ class ESP32ControlGUI(QMainWindow):
         self.auto_reconnect_checkbox.stateChanged.connect(self.toggle_reconnect_timer)
 
     def toggle_reconnect_timer(self, state):
+        """
+        Toggle the auto-reconnect timer based on checkbox state.
+
+        Args:
+            state (int): Checkbox state.
+        """
         if state:
             self.reconnect_timer.start()
         else:
             self.reconnect_timer.stop()
 
     def showEvent(self, event):
+        """
+        Handle the show event to adjust overlay geometry.
+
+        Args:
+            event (QShowEvent): The show event.
+        """
         super().showEvent(event)
         self.resizeEvent(None)
 if __name__ == "__main__":
+    """
+    Entry point for the Ghost ESP Control Panel application.
+    """
     app = QApplication(sys.argv)
     font = QFont("Arial", 10)
     app.setFont(font)
