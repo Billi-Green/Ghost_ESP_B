@@ -227,11 +227,17 @@ class ESP32ControlGUI(QMainWindow):
         connection_layout.addWidget(QLabel("Port:"))
         connection_layout.addWidget(self.port_combo)
 
-        # --- Auto Reconnect Checkbox ---
+        # --- Status Indicator ---
+        self.status_indicator = QLabel("Disconnected")
+        self.status_indicator.setFixedWidth(100)
+        self.status_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_indicator.setStyleSheet("background-color: #ff4444; color: white; border-radius: 8px;")
+        connection_layout.addWidget(self.status_indicator)
+        # --- End Status Indicator ---
+
         self.auto_reconnect_checkbox = QCheckBox("Auto Reconnect")
         self.auto_reconnect_checkbox.setChecked(False)
         connection_layout.addWidget(self.auto_reconnect_checkbox)
-        # --- End Auto Reconnect Checkbox ---
 
         refresh_btn = QPushButton("Refresh Ports")
         refresh_btn.clicked.connect(self.refresh_ports)
@@ -245,6 +251,14 @@ class ESP32ControlGUI(QMainWindow):
 
         connection_layout.addStretch()
         main_layout.addWidget(connection_group)
+
+    def update_connection_status(self, connected):
+        if connected:
+            self.status_indicator.setText("Connected")
+            self.status_indicator.setStyleSheet("background-color: #44bb44; color: white; border-radius: 8px;")
+        else:
+            self.status_indicator.setText("Disconnected")
+            self.status_indicator.setStyleSheet("background-color: #ff4444; color: white; border-radius: 8px;")
 
     def setup_command_panels(self, layout):
         # Dropdown for panel selection
@@ -657,33 +671,38 @@ class ESP32ControlGUI(QMainWindow):
                 self.monitor_thread.data_received.connect(self.process_response)
                 self.monitor_thread.start()
 
-                # Enable auto-reconnect only after manual connect
                 self.auto_reconnect_enabled = True
-
-                # Enable main UI
                 self.set_main_ui_enabled(True)
+                self.update_connection_status(True)  # Update status indicator
 
+            except serial.SerialException as e:
+                error_msg = str(e)
+                if "Permission denied" in error_msg:
+                    error_msg += "\n\nTry running as root or check your user permissions for serial devices."
+                elif "Device or resource busy" in error_msg:
+                    error_msg += "\n\nThe port may be in use by another application."
+                QMessageBox.critical(self, "Connection Error", error_msg)
+                self.log_message(f"Connection error: {error_msg}")
+                self.update_connection_status(False)
             except Exception as e:
                 QMessageBox.critical(self, "Connection Error", str(e))
                 self.log_message(f"Connection error: {str(e)}")
+                self.update_connection_status(False)
         else:
             self.disconnect()
-            self.auto_reconnect_enabled = False  # Disable auto-reconnect on manual disconnect
+            self.auto_reconnect_enabled = False
 
     def disconnect(self):
         if self.monitor_thread:
             self.monitor_thread.stop()
             self.monitor_thread.wait()
-
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
-
         self.connect_btn.setText("Connect")
         self.connect_btn.setStyleSheet("")
         self.log_message("Disconnected")
-
-        # Disable main UI
         self.set_main_ui_enabled(False)
+        self.update_connection_status(False)  # <-- Ensure status updates on disconnect
 
     def send_command(self, command):
         if not self.serial_port or not self.serial_port.is_open:
@@ -726,6 +745,7 @@ class ESP32ControlGUI(QMainWindow):
         if response.startswith("Error reading serial:"):
             self.log_message(response)
             self.disconnect()
+            self.update_connection_status(False)  # <-- Ensure status updates on error
             return
 
         # Check for evil portal list output
@@ -776,6 +796,11 @@ class ESP32ControlGUI(QMainWindow):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
         self.log_text.ensureCursorVisible()
+        # Limit log size
+        max_lines = 1000
+        log_content = self.log_text.toPlainText().splitlines()
+        if len(log_content) > max_lines:
+            self.log_text.setPlainText('\n'.join(log_content[-max_lines:]))
 
     def save_log(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -937,7 +962,6 @@ class ESP32ControlGUI(QMainWindow):
         QMessageBox.critical(self, "Error", f"Failed to send file: {e}")
 
     def check_auto_reconnect(self):
-        # Only auto-reconnect if enabled and checkbox is checked
         if getattr(self, "auto_reconnect_enabled", False) and self.auto_reconnect_checkbox.isChecked():
             if not self.serial_port or not self.serial_port.is_open:
                 port = self.port_combo.currentText()
@@ -951,9 +975,21 @@ class ESP32ControlGUI(QMainWindow):
                         self.monitor_thread = SerialMonitorThread(self.serial_port)
                         self.monitor_thread.data_received.connect(self.process_response)
                         self.monitor_thread.start()
+                        self.update_connection_status(True)
+                        self.set_main_ui_enabled(True)  # <-- Add this line
+                    except serial.SerialException as e:
+                        error_msg = str(e)
+                        if "Permission denied" in error_msg:
+                            error_msg += "\n\nTry running as root or check your user permissions for serial devices."
+                        elif "Device or resource busy" in error_msg:
+                            error_msg += "\n\nThe port may be in use by another application."
+                        self.log_message(f"Auto-reconnect failed: {error_msg}")
+                        self.update_connection_status(False)
+                        self.set_main_ui_enabled(False)  # <-- Add this line
                     except Exception as e:
                         self.log_message(f"Auto-reconnect failed: {str(e)}")
-
+                        self.update_connection_status(False)
+                        self.set_main_ui_enabled(False)  # <-- Add this line
         self.auto_reconnect_checkbox.stateChanged.connect(self.toggle_reconnect_timer)
 
     def toggle_reconnect_timer(self, state):
