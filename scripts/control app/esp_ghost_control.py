@@ -119,30 +119,31 @@ class ESP32ControlGUI(QMainWindow):
         # Create top bar for serial connection
         self.setup_connection_bar(main_layout)
 
-        # Create splitter for resizable sections
+        # Create splitter for resizable sections (vertical: content/log)
         splitter = QSplitter(Qt.Orientation.Vertical)
         main_layout.addWidget(splitter)
 
-        # Create main content area
-        content_widget = QWidget()
-        content_layout = QHBoxLayout(content_widget)
-        splitter.addWidget(content_widget)
+        # --- Horizontal splitter for left/right ---
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(content_splitter)
 
         # Left side - Command panels
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         self.setup_command_tabs(left_layout)
-        content_layout.addWidget(left_widget)
+        left_widget.setLayout(left_layout)
+        content_splitter.addWidget(left_widget)
 
         # Right side - Display area
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         self.setup_display_area(right_layout)
-        content_layout.addWidget(right_widget)
+        right_widget.setLayout(right_layout)
+        content_splitter.addWidget(right_widget)
 
-        # Set content layout stretch factors
-        content_layout.setStretch(0, 1)  # Left side
-        content_layout.setStretch(1, 1)  # Right side
+        # Set initial sizes (optional)
+        content_splitter.setStretchFactor(0, 1)
+        content_splitter.setStretchFactor(1, 2)
 
         # Bottom - Log area
         self.setup_log_area()
@@ -500,6 +501,10 @@ class ESP32ControlGUI(QMainWindow):
         layout.addWidget(group, row, col)
 
     def setup_display_area(self, layout):
+        # Make display area resizable using a QSplitter
+        display_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # --- Display Group ---
         display_group = QGroupBox("Display")
         display_layout = QVBoxLayout(display_group)
 
@@ -529,7 +534,12 @@ class ESP32ControlGUI(QMainWindow):
         display_layout.addLayout(cmd_layout)
         # --- End Custom Command Box ---
 
-        layout.addWidget(display_group)
+        display_splitter.addWidget(display_group)
+
+        # Optionally, add another widget below (e.g., log area) for further resizing
+        # display_splitter.addWidget(self.log_group)
+
+        layout.addWidget(display_splitter)
 
     def setup_log_area(self):
         self.log_group = QGroupBox("Log")
