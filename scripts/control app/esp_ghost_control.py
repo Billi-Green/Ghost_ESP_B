@@ -578,29 +578,89 @@ class ESP32ControlGUI(QMainWindow):
         settings_widget = QWidget()
         settings_layout = QFormLayout(settings_widget)
 
-        # Channel Switch Delay
-        channel_delay = QComboBox()
-        channel_delay.addItems(["0.5s", "1s", "2s", "3s", "4s"])
-        channel_delay.currentIndexChanged.connect(lambda i: self.send_command(f"setsetting 2 {i+1}"))
-        settings_layout.addRow("Channel Switch Delay:", channel_delay)
+        # RGB Mode
+        rgb_mode = QComboBox()
+        rgb_mode.addItems(["Normal", "Rainbow", "Stealth"])
+        rgb_mode.currentIndexChanged.connect(
+            lambda i: self.send_command(f"setrgbmode {rgb_mode.currentText().lower()}")
+        )
+        settings_layout.addRow("RGB Mode:", rgb_mode)
 
-        # Channel Hopping
-        channel_hopping = QComboBox()
-        channel_hopping.addItems(["Disabled", "Enabled"])
-        channel_hopping.currentIndexChanged.connect(lambda i: self.send_command(f"setsetting 3 {i+1}"))
-        settings_layout.addRow("Channel Hopping:", channel_hopping)
+        # Display Timeout
+        timeout = QComboBox()
+        timeout.addItems(["5s", "10s", "30s", "60s", "Never"])
+        timeout.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settimeout {i}")
+        )
+        settings_layout.addRow("Display Timeout:", timeout)
 
-        # Random BLE MAC
-        ble_mac = QComboBox()
-        ble_mac.addItems(["Disabled", "Enabled"])
-        ble_mac.currentIndexChanged.connect(lambda i: self.send_command(f"setsetting 4 {i+1}"))
-        settings_layout.addRow("Random BLE MAC:", ble_mac)
+        # Menu Theme
+        theme = QComboBox()
+        theme.addItems([
+            "Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome",
+            "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk",
+            "Ocean", "Sunset", "Forest"
+        ])
+        theme.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settheme {i}")
+        )
+        settings_layout.addRow("Menu Theme:", theme)
 
-        # Access Point
-        ap_enable_combo = QComboBox()
-        ap_enable_combo.addItems(["Enable", "Disable"])
-        ap_enable_combo.currentIndexChanged.connect(lambda i: self.send_command(f"apenable {'on' if i == 0 else 'off'}"))
-        settings_layout.addRow("Access Point:", ap_enable_combo)
+        # Third Control
+        thirds_control = QComboBox()
+        thirds_control.addItems(["Off", "On"])
+        thirds_control.currentIndexChanged.connect(
+            lambda i: self.send_command(f"setthirdcontrol {'on' if i else 'off'}")
+        )
+        settings_layout.addRow("Third Control:", thirds_control)
+
+        # Terminal Color
+        term_color = QComboBox()
+        term_color.addItems(["Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"])
+        term_color.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settermcolor {i}")
+        )
+        settings_layout.addRow("Terminal Color:", term_color)
+
+        # Invert Colors
+        invert_colors = QComboBox()
+        invert_colors.addItems(["Off", "On"])
+        invert_colors.currentIndexChanged.connect(
+            lambda i: self.send_command(f"setinvert {'on' if i else 'off'}")
+        )
+        settings_layout.addRow("Invert Colors:", invert_colors)
+
+        # Web Auth
+        web_auth = QComboBox()
+        web_auth.addItems(["Off", "On"])
+        web_auth.currentIndexChanged.connect(
+            lambda i: self.send_command(f"webauth {'on' if i else 'off'}")
+        )
+        settings_layout.addRow("Web Auth:", web_auth)
+
+        # AP Enabled
+        ap_enabled = QComboBox()
+        ap_enabled.addItems(["Off", "On"])
+        ap_enabled.currentIndexChanged.connect(
+            lambda i: self.send_command(f"apenable {'on' if i else 'off'}")
+        )
+        settings_layout.addRow("AP Enabled:", ap_enabled)
+
+        # Power Saving Mode
+        power_save = QComboBox()
+        power_save.addItems(["Off", "On"])
+        power_save.currentIndexChanged.connect(
+            lambda i: self.send_command(f"setpowersave {'on' if i else 'off'}")
+        )
+        settings_layout.addRow("Power Saving Mode:", power_save)
+
+        # Max Brightness (if supported)
+        max_brightness = QComboBox()
+        max_brightness.addItems(["10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"])
+        max_brightness.currentIndexChanged.connect(
+            lambda i: self.send_command(f"setbrightness {(i+1)*10}")
+        )
+        settings_layout.addRow("Max Brightness:", max_brightness)
 
         # Reboot and Save buttons side by side
         button_layout = QHBoxLayout()
@@ -612,50 +672,7 @@ class ESP32ControlGUI(QMainWindow):
         save_btn.clicked.connect(lambda: self.send_command("savesetting"))
         button_layout.addWidget(save_btn)
 
-        # Add the button layout to settings layout
         settings_layout.addRow(button_layout)
-
-        # SD Card Settings
-        sd_group = QGroupBox("SD Card Settings")
-        sd_layout = QVBoxLayout(sd_group)
-
-        sd_config_btn = QPushButton("Show SD Config")
-        sd_config_btn.clicked.connect(lambda: self.send_command("sd_config"))
-        sd_layout.addWidget(sd_config_btn)
-
-        sd_save_btn = QPushButton("Save SD Config")
-        sd_save_btn.clicked.connect(lambda: self.send_command("sd_save_config"))
-        sd_layout.addWidget(sd_save_btn)
-
-        sd_pins_mmc_btn = QPushButton("Set SDMMC Pins")
-        sd_pins_mmc_btn.clicked.connect(self.show_sdmmc_dialog)
-        sd_layout.addWidget(sd_pins_mmc_btn)
-
-        sd_pins_spi_btn = QPushButton("Set SPI Pins")
-        sd_pins_spi_btn.clicked.connect(self.show_sdspi_dialog)
-        sd_layout.addWidget(sd_pins_spi_btn)
-
-        settings_layout.addRow(sd_group)
-
-        chipinfo_btn = QPushButton("Show Chip Info")
-        chipinfo_btn.clicked.connect(lambda: self.send_command("chipinfo"))
-        settings_layout.addRow(chipinfo_btn)
-
-        # Timezone setting
-        self.tz_entry = QLineEdit()
-        tz_btn = QPushButton("Set Timezone")
-        tz_btn.clicked.connect(lambda: self.send_command(f"timezone {self.tz_entry.text().strip()}"))
-        settings_layout.addRow("Timezone:", self.tz_entry)
-        settings_layout.addRow(tz_btn)
-
-        rgbpins_btn = QPushButton("Set RGB Pins")
-        rgbpins_btn.clicked.connect(self.show_rgbpins_dialog)
-        settings_layout.addRow(rgbpins_btn)
-
-        setrgbmode_combo = QComboBox()
-        setrgbmode_combo.addItems(["Normal", "Rainbow", "Stealth"])
-        setrgbmode_combo.currentIndexChanged.connect(lambda i: self.send_command(f"setrgbmode {setrgbmode_combo.currentText().lower()}"))
-        settings_layout.addRow("Set RGB Mode:", setrgbmode_combo)
 
         return settings_widget
 
@@ -1118,7 +1135,7 @@ class ESP32ControlGUI(QMainWindow):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     html_content = f.read()
-                safe_html = html_content.replace('"', '\\"')
+                safe_html = html_content
                 self.portal_upload_indicator.setText("Uploading portal file...")
                 self.portal_progress_bar.setVisible(True)
                 self.portal_progress_bar.setValue(0)
