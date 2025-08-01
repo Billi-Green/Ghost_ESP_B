@@ -98,6 +98,63 @@ class ESP32ControlGUI(QMainWindow):
         self.reconnect_timer.start()
         # --- End Auto Reconnect Timer ---
 
+        # Overlay message for no connection
+        self.overlay = QLabel(self.centralWidget())
+        self.overlay.setText("No serial connection.\nConnect to enable controls.")
+        self.overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overlay.setStyleSheet("""
+            background-color: rgba(30, 30, 30, 180);
+            color: white;
+            font-size: 24px;
+            border-radius: 10px;
+        """)
+        self.overlay.hide()
+
+        # Disable UI except serial connection bar at startup
+        self.set_main_ui_enabled(False)
+
+        # --- Fix: set overlay geometry at startup ---
+        self.resizeEvent(None)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Get geometry of central widget
+        central_geom = self.centralWidget().geometry()
+        # Find the serial connection bar widget by object name
+        connection_bar = self.findChild(QGroupBox, "serial_connection_bar")
+        if connection_bar:
+            # Get connection bar geometry relative to central widget
+            bar_geom = connection_bar.geometry()
+            # Overlay should start below the connection bar
+            x = 0
+            y = bar_geom.y() + bar_geom.height()
+            w = central_geom.width()
+            h = central_geom.height() - y
+            # Set overlay geometry relative to central widget
+            self.overlay.setGeometry(x, y, w, h)
+        else:
+            # Fallback: cover everything except top 60px (adjust if needed)
+            self.overlay.setGeometry(0, 60, central_geom.width(), central_geom.height() - 60)
+
+    def set_main_ui_enabled(self, enabled):
+        # Disable/enable all main panels except connection bar
+        # You may need to adjust these references based on your layout
+        # Example assumes you have self.panel_container, self.panel_combo, self.log_group, etc.
+        try:
+            self.panel_container.setEnabled(enabled)
+            self.panel_combo.setEnabled(enabled)
+            self.log_group.setEnabled(enabled)
+            self.display_text.setEnabled(enabled)
+            self.cmd_entry.setEnabled(enabled)
+        except Exception:
+            pass  # Ignore if not initialized yet
+        # Show/hide overlay
+        if not enabled:
+            self.overlay.show()
+            self.overlay.raise_()
+        else:
+            self.overlay.hide()
+
     def setup_dark_theme(self):
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
@@ -155,6 +212,7 @@ class ESP32ControlGUI(QMainWindow):
 
     def setup_connection_bar(self, main_layout):
         connection_group = QGroupBox("Serial Connection")
+        connection_group.setObjectName("serial_connection_bar")
         connection_layout = QHBoxLayout(connection_group)
 
         self.port_combo = QComboBox()
@@ -594,6 +652,9 @@ class ESP32ControlGUI(QMainWindow):
                 # Enable auto-reconnect only after manual connect
                 self.auto_reconnect_enabled = True
 
+                # Enable main UI
+                self.set_main_ui_enabled(True)
+
             except Exception as e:
                 QMessageBox.critical(self, "Connection Error", str(e))
                 self.log_message(f"Connection error: {str(e)}")
@@ -612,6 +673,9 @@ class ESP32ControlGUI(QMainWindow):
         self.connect_btn.setText("Connect")
         self.connect_btn.setStyleSheet("")
         self.log_message("Disconnected")
+
+        # Disable main UI
+        self.set_main_ui_enabled(False)
 
     def send_command(self, command):
         if not self.serial_port or not self.serial_port.is_open:
@@ -870,6 +934,10 @@ class ESP32ControlGUI(QMainWindow):
             self.reconnect_timer.start()
         else:
             self.reconnect_timer.stop()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.resizeEvent(None)
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     font = QFont("Arial", 10)
