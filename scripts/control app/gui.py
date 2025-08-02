@@ -1976,13 +1976,41 @@ class ESP32ControlGUI(QMainWindow):
             self.flash_console.append(f"Failed to download asset: {e}")
 
     def on_flash_panel_changed(self, index):
-        """Switch the visible flash panel based on dropdown selection."""
+        """Switch the visible flash panel based on dropdown selection and show instructions."""
         self.flash_panel_stack.setCurrentIndex(index)
-        # Fetch releases when switching to the Flash Release Bundle panel
-        if index == 1:  # 1 = "Flash Release Bundle"
+        # Show instructions in the flasher output window for each panel
+        self.flash_console.clear()
+        if index == 0:  # Flash Firmware
+            self.flash_console.append(
+                "Instructions: Flash Firmware\n"
+                "1. Select the correct chip type for your board.\n"
+                "2. Browse and select the bootloader.bin, partition-table.bin, and firmware.bin files.\n"
+                "3. Select the serial port.\n"
+                "4. Click 'Flash Board' to flash your ESP32.\n"
+                "5. Use 'Exit Flash Mode' to return to the main UI."
+            )
+        elif index == 1:  # Flash Release Bundle
+            self.flash_console.append(
+                "Instructions: Flash Release Bundle\n"
+                "1. Select a release version or choose 'Custom local .zip' to use your own bundle.\n"
+                "2. Select the desired asset if multiple are available.\n"
+                "3. Download the asset or browse for a local .zip file.\n"
+                "4. Select the chip type and serial port.\n"
+                "5. Click 'Flash Bundle' to flash your ESP32.\n"
+                "6. Use 'Exit Flash Mode' to return to the main UI."
+            )
             self.fetch_github_releases()
-        # Show warning when switching to Custom Build panel
-        if index == 2:
+        elif index == 2:  # Custom Build
+            self.flash_console.append(
+                "Instructions: Custom Build\n"
+                "1. (Optional) Copy an SDKConfig template or edit with menuconfig.\n"
+                "2. Set the target chip and run 'Set Target'.\n"
+                "3. Use 'Run Build' to compile your firmware (requires ESP-IDF in PATH).\n"
+                "4. Use 'Run idf.py fullclean' to clean the build folder if needed.\n"
+                "5. Click 'Flash Custom Build' to flash the built firmware from the build folder.\n"
+                "6. Use 'Exit Flash Mode' to return to the main UI.\n"
+                "Note: Use at your own risk. Support will not be provided for unofficial images."
+            )
             QMessageBox.warning(
                 self,
                 "Custom Build Warning",
