@@ -8,10 +8,12 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
-                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar, QSizePolicy)
+                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar, QSizePolicy, QStackedWidget)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
 from functools import partial
+import glob
+import requests
 
 class ESP32ControlGUI(QMainWindow):
     """Main GUI class for controlling the Ghost ESP32 device."""
@@ -209,10 +211,25 @@ class ESP32ControlGUI(QMainWindow):
         flash_controls_layout = QVBoxLayout(flash_controls_widget)
         flash_controls_layout.setContentsMargins(0, 0, 0, 0)
 
-        label = QLabel("Flash Mode\n\nSelect a firmware file and flash your ESP32 board.")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("font-size: 22px; font-weight: bold;")
-        flash_controls_layout.addWidget(label)
+        # --- Flash Mode Panel Dropdown (like normal mode) ---
+        self.flash_panel_combo = QComboBox()
+        self.flash_panel_combo.addItems([
+            "Flash Firmware",
+            "Flash Release Bundle",
+            "Custom Build"
+        ])
+        self.flash_panel_combo.setCurrentIndex(0)
+        self.flash_panel_combo.setMinimumHeight(28)
+        flash_controls_layout.addWidget(self.flash_panel_combo)
+
+        # --- Flash Mode Panels as QStackedWidget ---
+        self.flash_panel_stack = QStackedWidget()
+        flash_controls_layout.addWidget(self.flash_panel_stack)
+
+        # Panel 1: Flash Firmware
+        flash_firmware_panel = QWidget()
+        flash_firmware_layout = QVBoxLayout(flash_firmware_panel)
+        flash_firmware_layout.addWidget(QLabel("Select a firmware file and flash your ESP32 board."))
 
         # --- Chip selection row ---
         chip_layout = QHBoxLayout()
@@ -222,7 +239,7 @@ class ESP32ControlGUI(QMainWindow):
         self.chip_combo.setCurrentIndex(0)  # Start with blank selected
         chip_layout.addWidget(QLabel("Chip:"))
         chip_layout.addWidget(self.chip_combo)
-        flash_controls_layout.addLayout(chip_layout)
+        flash_firmware_layout.addLayout(chip_layout)
         self.selected_chip = ""  # Default to blank
         self.chip_combo.currentTextChanged.connect(self.set_chip_type)
 
@@ -234,7 +251,7 @@ class ESP32ControlGUI(QMainWindow):
         bootloader_browse_btn = QPushButton("Browse")
         bootloader_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.bootloader_file_edit))
         bootloader_layout.addWidget(bootloader_browse_btn)
-        flash_controls_layout.addLayout(bootloader_layout)
+        flash_firmware_layout.addLayout(bootloader_layout)
 
         # --- Partition table file selection ---
         partition_layout = QHBoxLayout()
@@ -244,7 +261,7 @@ class ESP32ControlGUI(QMainWindow):
         partition_browse_btn = QPushButton("Browse")
         partition_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.partition_file_edit))
         partition_layout.addWidget(partition_browse_btn)
-        flash_controls_layout.addLayout(partition_layout)
+        flash_firmware_layout.addLayout(partition_layout)
 
         # --- Firmware file selection ---
         firmware_layout = QHBoxLayout()
@@ -254,18 +271,83 @@ class ESP32ControlGUI(QMainWindow):
         firmware_browse_btn = QPushButton("Browse")
         firmware_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.firmware_file_edit))
         firmware_layout.addWidget(firmware_browse_btn)
-        flash_controls_layout.addLayout(firmware_layout)
+        flash_firmware_layout.addLayout(firmware_layout)
 
         # --- Flash/Exit buttons and status ---
         self.flash_btn = QPushButton("Flash Board")
         self.flash_btn.clicked.connect(self.flash_board)
-        flash_controls_layout.addWidget(self.flash_btn)
+        flash_firmware_layout.addWidget(self.flash_btn)
         self.flash_status = QLabel("")
-        flash_controls_layout.addWidget(self.flash_status)
+        flash_firmware_layout.addWidget(self.flash_status)
         exit_btn = QPushButton("Exit Flash Mode")
         exit_btn.clicked.connect(self.exit_flash_mode)
-        flash_controls_layout.addWidget(exit_btn)
-        flash_controls_layout.addStretch()
+        flash_firmware_layout.addWidget(exit_btn)
+        flash_firmware_layout.addStretch()
+
+        # Add firmware panel to stacked widget
+        self.flash_panel_stack.addWidget(flash_firmware_panel)
+        self.flash_panel_combo.currentIndexChanged.connect(self.on_flash_panel_changed)
+
+
+        # --- Panel 2: Flash Release Bundle ---
+        release_bundle_panel = QWidget()
+        release_bundle_layout = QVBoxLayout(release_bundle_panel)
+        release_bundle_layout.addWidget(QLabel("Select a release bundle (.zip) containing bootloader.bin, partition-table.bin, and firmware.bin."))
+
+        # --- Chip selection row for release bundle ---
+        release_chip_layout = QHBoxLayout()
+        release_chip_label = QLabel("Chip:")
+        release_chip_label.setContentsMargins(0, 0, 0, 0)
+        release_chip_layout.setSpacing(0)
+        self.release_chip_combo = QComboBox()
+        self.release_chip_combo.addItem("")  # Blank/placeholder
+        self.release_chip_combo.addItems(["esp32", "esp32s2", "esp32s3", "esp32c3", "esp32c5", "esp32c6"])
+        self.release_chip_combo.setCurrentIndex(0)
+        release_chip_layout.addWidget(release_chip_label)
+        release_chip_layout.addWidget(self.release_chip_combo)
+        release_bundle_layout.addLayout(release_chip_layout)
+        self.release_chip_combo.currentTextChanged.connect(self.set_chip_type)
+
+        # --- ZIP file selection ---
+        zip_layout = QHBoxLayout()
+        self.release_zip_edit = QLineEdit()
+        self.release_zip_edit.setPlaceholderText("Select release bundle .zip...")
+        zip_layout.addWidget(self.release_zip_edit)
+        release_zip_browse_btn = QPushButton("Browse")
+        release_zip_browse_btn.clicked.connect(lambda: self.browse_zip_file(self.release_zip_edit))
+        zip_layout.addWidget(release_zip_browse_btn)
+        release_bundle_layout.addLayout(zip_layout)
+
+        # --- Version selection dropdown ---
+        version_layout = QHBoxLayout()
+        version_label = QLabel("Version:")
+        version_label.setContentsMargins(0, 0, 0, 0)
+        version_layout.setSpacing(0)
+        self.release_version_combo = QComboBox()
+        self.release_version_combo.addItem("Loading...")
+        # Connect the version dropdown to update the asset dropdown
+        #self.release_version_combo.currentIndexChanged.connect(self.update_release_assets_dropdown)
+        version_layout.addWidget(version_label)
+        version_layout.addWidget(self.release_version_combo)
+        release_bundle_layout.addLayout(version_layout)
+
+        # --- Flash/Exit buttons and status for release bundle ---
+        self.flash_bundle_btn = QPushButton("Flash Bundle")
+        self.flash_bundle_btn.clicked.connect(self.flash_release_bundle)
+        release_bundle_layout.addWidget(self.flash_bundle_btn)
+        self.flash_bundle_status = QLabel("")
+        release_bundle_layout.addWidget(self.flash_bundle_status)
+
+        self.flash_panel_stack.addWidget(release_bundle_panel)
+
+        # Panel 3: Custom Build
+        custom_build_panel = QWidget()
+        custom_build_layout = QVBoxLayout(custom_build_panel)
+        custom_build_layout.addWidget(QLabel("Custom build options (not yet implemented)."))
+        self.flash_panel_stack.addWidget(custom_build_panel)
+
+        # Connect combo box to stacked widget
+        self.flash_panel_combo.currentIndexChanged.connect(self.flash_panel_stack.setCurrentIndex)
 
         # Add controls to splitter
         flash_splitter.addWidget(flash_controls_widget)
@@ -311,24 +393,23 @@ class ESP32ControlGUI(QMainWindow):
             # Hide connect button and auto reconnect checkbox in flash mode
             self.connect_btn.hide()
             self.auto_reconnect_checkbox.hide()
-            # If you have a status indicator, hide it as well
             if hasattr(self, "status_indicator"):
                 self.status_indicator.hide()
-            # Hide overlay if it's showing
             self.overlay.hide()
+            # Change button text to "Command Mode"
+            self.flash_mode_btn.setText("Command Mode")
         else:
             self.flash_mode_widget.hide()
             self.main_content_widget.show()
-            # Show connect button and auto reconnect checkbox when not in flash mode
             self.connect_btn.show()
             self.auto_reconnect_checkbox.show()
             if hasattr(self, "status_indicator"):
                 self.status_indicator.show()
-            # Enable connect button when not in flash mode
             self.connect_btn.setEnabled(True)
-            # Show overlay if not connected
             is_connected = self.serial_port and self.serial_port.is_open
             self.set_main_ui_enabled(is_connected)
+            # Change button text back to "Flash Mode"
+            self.flash_mode_btn.setText("Flash Mode")
 
     def browse_flash_file(self):
         """Open a file dialog to select a firmware file."""
@@ -391,9 +472,90 @@ class ESP32ControlGUI(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
 
+    def browse_zip_file(self, line_edit):
+        """Open a file dialog to select a .zip file and set it in the given QLineEdit."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Release Bundle ZIP", "", "ZIP Files (*.zip)")
+        if file_path:
+            line_edit.setText(file_path)
+
+    def flash_release_bundle(self):
+        """Extract the selected ZIP and flash the contained .bin files."""
+        import zipfile
+        import tempfile
+        import os
+
+        zip_path = self.release_zip_edit.text().strip()
+        port = self.port_combo.currentText()
+        chip = getattr(self, "selected_chip", "")
+        if not zip_path or not port or not chip:
+            self.flash_bundle_status.setText("Please select a .zip file, chip type, and serial port.")
+            return
+
+        self.flash_bundle_status.setText("Extracting and flashing bundle...")
+        self.flash_console.clear()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(tmpdir)
+                bootloader = os.path.join(tmpdir, "bootloader.bin")
+                partition = os.path.join(tmpdir, "partition-table.bin")
+                # Find any .bin file that is not bootloader or partition-table
+                all_bins = glob.glob(os.path.join(tmpdir, "*.bin"))
+                firmware = None
+                for f in all_bins:
+                    base = os.path.basename(f)
+                    if base not in ("bootloader.bin", "partition-table.bin"):
+                        firmware = f
+                        break
+
+                if not (os.path.exists(bootloader) and os.path.exists(partition) and firmware and os.path.exists(firmware)):
+                    self.flash_bundle_status.setText("ZIP must contain bootloader.bin, partition-table.bin, and a firmware .bin file.")
+                    return
+
+                # Determine offsets based on chip type
+                if chip in ["esp32s2", "esp32"]:
+                    boot_offset = "0x1000"
+                elif chip in ["esp32s3", "esp32c3", "esp32c5", "esp32c6"]:
+                    boot_offset = "0x0"
+                else:
+                    boot_offset = "0x1000"  # Default/fallback
+
+                partition_offset = "0x8000"
+                firmware_offset = "0x10000"
+
+                import subprocess
+                cmd = [
+                    "esptool", "--chip", chip, "--port", port, "write-flash",
+                    boot_offset, bootloader,
+                    partition_offset, partition,
+                    firmware_offset, firmware
+                ]
+                self.flash_console.append(f"$ {' '.join(cmd)}\n")
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                for line in process.stdout:
+                    self.flash_console.append(line.rstrip())
+                    self.flash_console.ensureCursorVisible()
+                    QApplication.processEvents()
+                process.wait()
+                if process.returncode == 0:
+                    self.flash_bundle_status.setText("Flashing successful!")
+                else:
+                    self.flash_bundle_status.setText("Flashing failed. See console output.")
+        except Exception as e:
+            self.flash_bundle_status.setText(f"Error: {str(e)}")
+            self.flash_console.append(f"Error: {str(e)}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
     def set_chip_type(self):
-        """Set the chip type for flashing."""
-        chip = self.chip_combo.currentText()
+        """Set the chip type for flashing from either chip combo box."""
+        # Prefer the one that is currently visible/enabled
+        chip = ""
+        if hasattr(self, "chip_combo") and self.chip_combo.isVisible():
+            chip = self.chip_combo.currentText()
+        if hasattr(self, "release_chip_combo") and self.release_chip_combo.isVisible():
+            chip = self.release_chip_combo.currentText()
         self.selected_chip = chip
         # Optionally update a status label if you want, but no dialog needed
         # self.flash_status.setText(f"Chip set to: {chip}")
@@ -1396,7 +1558,96 @@ class ESP32ControlGUI(QMainWindow):
         if file_path:
             line_edit.setText(file_path)
 
+    def browse_zip_file(self, line_edit):
+        """Open a file dialog to select a .zip file and set it in the given QLineEdit."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Release Bundle ZIP", "", "ZIP Files (*.zip)")
+        if file_path:
+            line_edit.setText(file_path)
+
     def exit_flash_mode(self):
         """Exit Flash Mode and return to the main UI."""
         self.flash_mode_btn.setChecked(False)
         self.toggle_flash_mode()
+
+    def fetch_github_releases(self):
+        """Fetch release tags from GitHub and populate the version dropdown."""
+        api_url = "https://api.github.com/repos/jaylikesbunda/Ghost_ESP/releases"
+        try:
+            response = requests.get(api_url, timeout=10)
+            response.raise_for_status()
+            releases = response.json()
+            self._github_releases = releases  # Save for asset lookup
+            versions = [release.get("tag_name", "Unknown") for release in releases if "tag_name" in release]
+            self.release_version_combo.blockSignals(True)
+            self.release_version_combo.clear()
+            if versions:
+                self.release_version_combo.addItems(versions)
+            else:
+                self.release_version_combo.addItem("No releases found")
+            self.release_version_combo.blockSignals(False)
+        except Exception as e:
+            self.release_version_combo.clear()
+            self.release_version_combo.addItem("Failed to load releases")
+            self._github_releases = []
+            print(f"Error fetching releases: {e}")
+
+        # Always update assets dropdown as well
+        self.update_release_assets_dropdown()
+
+    def update_release_assets_dropdown(self):
+        """Populate the asset dropdown based on the selected version."""
+        # Create the asset dropdown if it doesn't exist
+        if not hasattr(self, "release_asset_combo"):
+            asset_layout = QHBoxLayout()
+            asset_label = QLabel("Asset:")
+            asset_label.setContentsMargins(0, 0, 0, 0)
+            asset_layout.setSpacing(0)
+            self.release_asset_combo = QComboBox()
+            self.release_asset_combo.addItem("Select a version first")
+            asset_layout.addWidget(asset_label)
+            asset_layout.addWidget(self.release_asset_combo)
+
+            # Insert asset_layout directly after the version_layout
+            parent_layout = self.release_version_combo.parentWidget().layout()
+            # Find the index of the version_layout in the parent layout
+            insert_index = None
+            for i in range(parent_layout.count()):
+                item = parent_layout.itemAt(i)
+                if item and item.layout():
+                    # Check if this layout contains the version combo
+                    for j in range(item.layout().count()):
+                        subitem = item.layout().itemAt(j)
+                        widget = subitem.widget()
+                        if widget is self.release_version_combo:
+                            insert_index = i + 1
+                            break
+                if insert_index is not None:
+                    break
+            if insert_index is not None:
+                parent_layout.insertLayout(insert_index, asset_layout)
+            else:
+                parent_layout.addLayout(asset_layout)  # fallback
+
+        self.release_asset_combo.clear()
+        selected_version = self.release_version_combo.currentText()
+        releases = getattr(self, "_github_releases", [])
+        assets = []
+        for release in releases:
+            if release.get("tag_name") == selected_version:
+                assets = release.get("assets", [])
+                break
+        if assets:
+            for asset in assets:
+                name = asset.get("name", "Unknown")
+                self.release_asset_combo.addItem(name, asset.get("browser_download_url"))
+        else:
+            self.release_asset_combo.addItem("No assets found")
+
+    def on_flash_panel_changed(self, index):
+        """Switch the visible flash panel based on dropdown selection."""
+        self.flash_panel_stack.setCurrentIndex(index)
+        # Fetch releases when switching to the Flash Release Bundle panel
+        if index == 1:  # 1 = "Flash Release Bundle"
+            self.fetch_github_releases()
+
+
