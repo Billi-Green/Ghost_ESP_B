@@ -16,6 +16,10 @@ import glob
 import requests
 import tempfile
 import os
+import sys
+from PyQt6.QtWidgets import QApplication
+
+QApplication.setStyle("Fusion")
 
 class ESP32ControlGUI(QMainWindow):
     """Main GUI class for controlling the Ghost ESP32 device."""
