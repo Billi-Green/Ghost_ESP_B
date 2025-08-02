@@ -2003,7 +2003,7 @@ class ESP32ControlGUI(QMainWindow):
         elif index == 2:  # Custom Build
             self.flash_console.append(
                 "Instructions: Custom Build\n"
-                "1. (Optional) Copy an SDKConfig template or edit with menuconfig.\n"
+                "1. You must have a valid sdkconfig file. Copy an SDKConfig template or edit your existing one with menuconfig.\n"
                 "2. Set the target chip and run 'Set Target'.\n"
                 "3. Use 'Run Build' to compile your firmware (requires ESP-IDF in PATH).\n"
                 "4. Use 'Run idf.py fullclean' to clean the build folder if needed.\n"
@@ -2031,17 +2031,17 @@ class ESP32ControlGUI(QMainWindow):
 
         try:
             if sys.platform.startswith("linux"):
-                # Try common Linux terminals
+                # Try common Linux terminals, remove 'exec bash' so terminal closes after command
                 terminals = [
-                    ("gnome-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
-                    ("xfce4-terminal", f'--command="bash -c \'cd \\"{project_root}\\"; {idf_cmd}; exec bash\'"'),
-                    ("konsole", f'--workdir "{project_root}" -e bash -c "{idf_cmd}; exec bash"'),
-                    ("xterm", f'-e "cd \\"{project_root}\\"; {idf_cmd}; bash"'),
-                    ("lxterminal", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
-                    ("mate-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
-                    ("tilix", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
-                    ("alacritty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
-                    ("kitty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
+                    ("gnome-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
+                    ("xfce4-terminal", f'--command="bash -c \'cd \\"{project_root}\\"; {idf_cmd}\'"'),
+                    ("konsole", f'--workdir "{project_root}" -e bash -c "{idf_cmd}"'),
+                    ("xterm", f'-e "cd \\"{project_root}\\"; {idf_cmd}"'),
+                    ("lxterminal", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
+                    ("mate-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
+                    ("tilix", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
+                    ("alacritty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
+                    ("kitty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
                 ]
                 for term, args in terminals:
                     if shutil.which(term):
@@ -2050,17 +2050,17 @@ class ESP32ControlGUI(QMainWindow):
                 raise RuntimeError("No supported terminal emulator found. Please install gnome-terminal, konsole, xterm, etc.")
 
             elif sys.platform.startswith("win"):
-                # Windows: use start with cmd.exe
-                cmd = f'start cmd.exe /K "cd /d {project_root} && {idf_cmd}"'
+                # Windows: use start with cmd.exe, /C closes after command
+                cmd = f'start cmd.exe /C "cd /d {project_root} && {idf_cmd}"'
                 os.system(cmd)
                 return
 
             elif sys.platform == "darwin":
-                # macOS: use osascript to open Terminal.app
+                # macOS: use osascript to open Terminal.app and close after command
                 osa_script = f'''
                 tell application "Terminal"
                     activate
-                    do script "cd \\"{project_root}\\"; {idf_cmd}"
+                    do script "cd \\"{project_root}\\"; {idf_cmd}; exit"
                 end tell
                 '''
                 os.system(f'osascript -e \'{osa_script}\'')
