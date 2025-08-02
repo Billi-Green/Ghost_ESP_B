@@ -303,17 +303,32 @@ class ESP32ControlGUI(QMainWindow):
             # If serial is connected, disconnect before entering flash mode
             if self.serial_port and self.serial_port.is_open:
                 self.disconnect()
+            # Turn off auto reconnect if it's on
+            if self.auto_reconnect_checkbox.isChecked():
+                self.auto_reconnect_checkbox.setChecked(False)
             self.main_content_widget.hide()
             self.flash_mode_widget.show()
-            # Disable connect button in flash mode
-            self.connect_btn.setEnabled(False)
+            # Hide connect button and auto reconnect checkbox in flash mode
+            self.connect_btn.hide()
+            self.auto_reconnect_checkbox.hide()
+            # If you have a status indicator, hide it as well
+            if hasattr(self, "status_indicator"):
+                self.status_indicator.hide()
             # Hide overlay if it's showing
             self.overlay.hide()
         else:
             self.flash_mode_widget.hide()
             self.main_content_widget.show()
+            # Show connect button and auto reconnect checkbox when not in flash mode
+            self.connect_btn.show()
+            self.auto_reconnect_checkbox.show()
+            if hasattr(self, "status_indicator"):
+                self.status_indicator.show()
             # Enable connect button when not in flash mode
             self.connect_btn.setEnabled(True)
+            # Show overlay if not connected
+            is_connected = self.serial_port and self.serial_port.is_open
+            self.set_main_ui_enabled(is_connected)
 
     def browse_flash_file(self):
         """Open a file dialog to select a firmware file."""
@@ -400,29 +415,35 @@ class ESP32ControlGUI(QMainWindow):
         connection_layout.addWidget(QLabel("Port:"))
         connection_layout.addWidget(self.port_combo)
 
-        self.status_indicator = QLabel("Disconnected")
-        self.status_indicator.setFixedWidth(100)
-        self.status_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_indicator.setStyleSheet("background-color: #ff4444; color: white; border-radius: 8px;")
+        # --- Refresh Ports Button with Icon, placed directly next to port_combo ---
+        refresh_btn = QPushButton()
+        refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        refresh_btn.setToolTip("Refresh the list of available serial ports")
+        refresh_btn.setFixedWidth(32)
+        refresh_btn.clicked.connect(self.refresh_ports)
+        connection_layout.addWidget(refresh_btn)
+        self.refresh_btn = refresh_btn  # Save reference if you want to disable in flash mode
+
+        self.status_indicator = QLabel()
+        self.status_indicator.setFixedSize(18, 18)
+        self.status_indicator.setStyleSheet("""
+            background-color: #ff4444;
+            border-radius: 9px;
+            border: 1px solid #222;
+        """)
         self.status_indicator.setToolTip("Shows current connection status")
         connection_layout.addWidget(self.status_indicator)
-
-        self.auto_reconnect_checkbox = QCheckBox("Auto Reconnect")
-        self.auto_reconnect_checkbox.setChecked(False)
-        self.auto_reconnect_checkbox.setToolTip("Automatically reconnect if connection is lost")
-        connection_layout.addWidget(self.auto_reconnect_checkbox)
-
-        refresh_btn = QPushButton("Refresh Ports")
-        refresh_btn.clicked.connect(self.refresh_ports)
-        refresh_btn.setFixedWidth(100)
-        refresh_btn.setToolTip("Refresh the list of available serial ports")
-        connection_layout.addWidget(refresh_btn)
 
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self.toggle_connection)
         self.connect_btn.setFixedWidth(100)
         self.connect_btn.setToolTip("Connect or disconnect from ESP32")
         connection_layout.addWidget(self.connect_btn)
+
+        self.auto_reconnect_checkbox = QCheckBox("Auto Reconnect")
+        self.auto_reconnect_checkbox.setChecked(False)
+        self.auto_reconnect_checkbox.setToolTip("Automatically reconnect if connection is lost")
+        connection_layout.addWidget(self.auto_reconnect_checkbox)
 
         # --- Add stretch here to push Flash Mode button to the right ---
         connection_layout.addStretch()
@@ -448,11 +469,17 @@ class ESP32ControlGUI(QMainWindow):
             connected (bool): True if connected, False otherwise.
         """
         if connected:
-            self.status_indicator.setText("Connected")
-            self.status_indicator.setStyleSheet("background-color: #44bb44; color: white; border-radius: 8px;")
+            self.status_indicator.setStyleSheet("""
+                background-color: #44bb44;
+                border-radius: 9px;
+                border: 1px solid #222;
+            """)
         else:
-            self.status_indicator.setText("Disconnected")
-            self.status_indicator.setStyleSheet("background-color: #ff4444; color: white; border-radius: 8px;")
+            self.status_indicator.setStyleSheet("""
+                background-color: #ff4444;
+                border-radius: 9px;
+                border: 1px solid #222;
+            """)
 
     def setup_command_panels(self, layout):
         """
