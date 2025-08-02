@@ -19,10 +19,13 @@ def run_in_venv():
     # Re-run this script using the venv's Python
     if os.name == "nt":
         python_bin = os.path.join(VENV_DIR, "Scripts", "python.exe")
+        print(f"Re-running in venv: {python_bin}")
+        subprocess.Popen([python_bin] + sys.argv)
+        sys.exit(0)
     else:
         python_bin = os.path.join(VENV_DIR, "bin", "python")
-    print(f"Re-running in venv: {python_bin}")
-    os.execv(python_bin, [python_bin] + sys.argv)
+        print(f"Re-running in venv: {python_bin}")
+        os.execv(python_bin, [python_bin] + sys.argv)
 
 def install_requirements():
     print(f"Installing dependencies from {REQ_FILE}...")
