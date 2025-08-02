@@ -303,11 +303,19 @@ class ESP32ControlGUI(QMainWindow):
         version_layout.setSpacing(0)
         self.release_version_combo = QComboBox()
         self.release_version_combo.addItem("Loading...")
-        # Connect the version dropdown to update the asset dropdown
-        self.release_version_combo.currentIndexChanged.connect(self.update_release_assets_dropdown)
+
+        # --- Show pre-releases checkbox ---
+        self.show_prereleases_checkbox = QCheckBox("Show pre-releases")
+        self.show_prereleases_checkbox.setChecked(False)
         version_layout.addWidget(version_label)
         version_layout.addWidget(self.release_version_combo)
+        version_layout.addWidget(self.show_prereleases_checkbox)
         release_bundle_layout.addLayout(version_layout)
+
+        self.release_version_combo.currentIndexChanged.connect(self.update_release_assets_dropdown)
+
+        # Connect the checkbox to refetch releases when toggled
+        self.show_prereleases_checkbox.stateChanged.connect(self.fetch_github_releases)
 
         # --- Chip selection row for release bundle ---
         release_chip_layout = QHBoxLayout()
@@ -1579,6 +1587,13 @@ class ESP32ControlGUI(QMainWindow):
             response = requests.get(api_url, timeout=10)
             response.raise_for_status()
             releases = response.json()
+            show_prereleases = self.show_prereleases_checkbox.isChecked()
+            # Filter out versions that start with "prerelease-" if box is unchecked
+            if not show_prereleases:
+                releases = [
+                    r for r in releases
+                    if not r.get("prerelease", False) and not r.get("tag_name", "").startswith("prerelease-")
+                ]
             self._github_releases = releases  # Save for asset lookup
             versions = [release.get("tag_name", "Unknown") for release in releases if "tag_name" in release]
             self.release_version_combo.blockSignals(True)
@@ -1654,7 +1669,8 @@ class ESP32ControlGUI(QMainWindow):
             self.release_asset_combo.addItem("No assets found")
 
     def download_selected_asset(self, index):
-        """Download the selected asset (if not the prompt) and set the path in the zip file field."""
+        """Download the selected asset (if not the prompt) and set the path in the zip file field.
+           Also auto-select the chip based on asset name using the release_assets dictionary."""
         if not hasattr(self, "release_asset_combo"):
             return
         url = self.release_asset_combo.currentData()
@@ -1662,17 +1678,54 @@ class ESP32ControlGUI(QMainWindow):
         if not url or "Select Release Asset" in name or "No assets found" in name:
             return
 
+        # --- Auto-select chip based on asset name ---
+        release_assets = {
+            "esp32-generic.zip": "esp32",
+            "esp32s2-generic.zip": "esp32s2",
+            "esp32s3-generic.zip": "esp32s3",
+            "esp32c3-generic.zip": "esp32c3",
+            "esp32c5-generic-v01.zip": "esp32c5",
+            "esp32c6-generic.zip": "esp32c6",
+            "esp32v5_awok.zip": "esp32s2",
+            "ghostboard.zip": "esp32c6",
+            "MarauderV4_FlipperHub.zip": "esp32",
+            "MarauderV6_AwokDual.zip": "esp32",
+            "AwokMini.zip": "esp32s2",
+            "ESP32-S3-Cardputer.zip": "esp32s3",
+            "CYD2USB.zip": "esp32",
+            "CYDMicroUSB.zip": "esp32",
+            "CYDDualUSB.zip": "esp32",
+            "CYD2USB2.4Inch.zip": "esp32",
+            "CYD2USB2.4Inch_C.zip": "esp32",
+            "CYD2432S028R.zip": "esp32",
+            "Waveshare_LCD.zip": "esp32s3",
+            "Crowtech_LCD.zip": "esp32s3",
+            "Flipper_JCMK_GPS.zip": "esp32s2",
+            "LilyGo-T-Deck.zip": "esp32s3",
+            "LilyGo-TEmbedC1101.zip": "esp32s3",
+            "LilyGo-S3TWatch.zip": "esp32s3",
+        }
+        chip_type = release_assets.get(name)
+        if chip_type:
+            idx = self.release_chip_combo.findText(chip_type, Qt.MatchFlag.MatchFixedString)
+            if idx >= 0:
+                self.release_chip_combo.setCurrentIndex(idx)
+                self.flash_bundle_status.setText(f"Chip auto-selected: {chip_type}")
+
         try:
             import requests
-            # Download to a temp file
+            import tempfile
+            import os
+            # Download to a temp file named after the asset
+            temp_dir = tempfile.gettempdir()
+            safe_name = os.path.basename(name)
+            temp_path = os.path.join(temp_dir, safe_name)
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
-            fd, temp_path = tempfile.mkstemp(suffix=".zip")
-            with os.fdopen(fd, "wb") as f:
+            with open(temp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-            # Set the path in the zip file field
             self.release_zip_edit.setText(temp_path)
             self.flash_bundle_status.setText(f"Downloaded {name} to {temp_path}")
         except Exception as e:
