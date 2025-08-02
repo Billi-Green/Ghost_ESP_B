@@ -5,6 +5,7 @@
 #include "core/serial_manager.h"
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
+#include "sdkconfig.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -2620,6 +2621,9 @@ void handle_chip_info_cmd(int argc, char **argv) {
     printf("  Free Heap: %lu bytes\n", esp_get_free_heap_size());
     printf("  Min Free Heap: %lu bytes\n", esp_get_minimum_free_heap_size());
     printf("  IDF Version: %s\n", esp_get_idf_version());
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    printf("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+#endif
     
     TERMINAL_VIEW_ADD_TEXT("Chip Information:\n");
     char info_buffer[512];
@@ -2627,6 +2631,11 @@ void handle_chip_info_cmd(int argc, char **argv) {
              "  Model: %s\n  Revision: v%d.%d\n  CPU Cores: %d\n  Free Heap: %lu bytes\n",
              model_name, major_rev, minor_rev, chip_info.cores, esp_get_free_heap_size());
     TERMINAL_VIEW_ADD_TEXT(info_buffer);
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    char build_config_buffer[128];
+    snprintf(build_config_buffer, sizeof(build_config_buffer), "  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+    TERMINAL_VIEW_ADD_TEXT(build_config_buffer);
+#endif
 }
 
 void register_commands() {
