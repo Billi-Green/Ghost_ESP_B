@@ -313,6 +313,10 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
 
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
+                               void *event_data);
+static void wifi_retry_timer_callback(void* arg);
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
                                void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -329,14 +333,33 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
-        printf("Disconnected from WiFi (reason: %d)\n", disconnected->reason);
-        TERMINAL_VIEW_ADD_TEXT("Disconnected from WiFi (reason: %d)\n", disconnected->reason);
         
-        // No auto-reconnection - only manual connections via 'connect' command
+        // Provide more detailed reason descriptions
+        const char* reason_str = "Unknown";
+        switch(disconnected->reason) {
+            case 2: reason_str = "Auth Expired"; break;
+            case 3: reason_str = "Auth Leave"; break;
+            case 4: reason_str = "Assoc Expire"; break;
+            case 5: reason_str = "Assoc Too Many"; break;
+            case 6: reason_str = "Not Authed"; break;
+            case 7: reason_str = "Not Assoc"; break;
+            case 8: reason_str = "Assoc Leave"; break;
+            case 15: reason_str = "4Way Handshake Timeout"; break;
+            case 201: reason_str = "Beacon Timeout"; break;
+            case 202: reason_str = "No AP Found"; break;
+            case 203: reason_str = "Auth Fail"; break;
+            case 204: reason_str = "Assoc Fail"; break;
+            case 205: reason_str = "Handshake Timeout"; break;
+        }
+        
+        // Clean, single-line disconnect logging
         if (manual_disconnect) {
-            printf("Disconnected from WiFi (manual)\n");
-            TERMINAL_VIEW_ADD_TEXT("Disconnected from WiFi (manual)\n");
+            printf("WiFi disconnected manually\n");
+            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected manually\n");
             manual_disconnect = false; // Reset the flag
+        } else {
+            printf("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
+            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
@@ -344,9 +367,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         printf("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
         TERMINAL_VIEW_ADD_TEXT("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
+        
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
+
+// Removed old wifi_retry_timer_callback - using unified retry system
 
 static void generate_random_ssid(char *ssid, size_t length) {
     const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -1216,7 +1242,8 @@ void wifi_manager_init(void) {
 
     esp_log_level_set("wifi", ESP_LOG_ERROR); // Only show errors, not warnings
 
-    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    // Disable WiFi power saving to improve connection stability
+    esp_wifi_set_ps(WIFI_PS_NONE);
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1286,6 +1313,13 @@ void wifi_manager_init(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     // Start the Wi-Fi AP
     ESP_ERROR_CHECK(esp_wifi_start());
+    
+    // Additional WiFi stability settings
+    // Set maximum TX power to improve signal strength
+    esp_wifi_set_max_tx_power(78); // 19.5 dBm (78/4)
+    
+    // Set connection timeout to be more lenient
+    esp_wifi_set_inactive_time(WIFI_IF_STA, 60); // 60 seconds before considering connection inactive
 
     // Initialize global CA certificate store
     ret = esp_crt_bundle_attach(NULL);
@@ -3134,67 +3168,83 @@ void wifi_manager_start_ip_lookup() {
 }
 
 void wifi_manager_connect_wifi(const char *ssid, const char *password) {
-    wifi_config_t wifi_config = {
-        .sta = {
-            .threshold.authmode = strlen(password) > 0 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
-            .pmf_cfg = {.capable = true, .required = false},
-        },
-    };
-
+    printf("Connecting to WiFi: %s\n", ssid);
+    TERMINAL_VIEW_ADD_TEXT("Connecting to WiFi: %s\n", ssid);
+    
+    wifi_config_t wifi_config = {0};
+    
     // Copy SSID and password safely
     strlcpy((char *)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid));
     strlcpy((char *)wifi_config.sta.password, password, sizeof(wifi_config.sta.password));
-
+    
+    // Set auth mode - use WPA_WPA2_PSK for better compatibility with modern routers
+    if (strlen(password) > 0) {
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+        wifi_config.sta.pmf_cfg.capable = true;
+        wifi_config.sta.pmf_cfg.required = false;
+    } else {
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    }
+    
+    // Enable scan method for better AP selection
+    wifi_config.sta.scan_method = WIFI_FAST_SCAN;
+    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    
     // Ensure clean start state
-    // Clear connection bits first
     xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_CONNECTING_BIT);
     
-    // Set the connecting bit BEFORE any WiFi operations to prevent automatic connection attempts
+    // Set the connecting bit BEFORE any WiFi operations
     xEventGroupSetBits(wifi_event_group, WIFI_CONNECTING_BIT);
     
-    // Disconnect any existing connection and wait for it to complete
-    esp_wifi_disconnect();
-    // Wait a bit for the disconnection to be processed
-    vTaskDelay(pdMS_TO_TICKS(500));
+    // Stop WiFi completely to ensure clean state
+    esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
     
+    // Reconfigure and restart WiFi
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    
+    // Wait for WiFi to be ready
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     int retry_count = 0;
-    const int max_retries = 8;  // Increased retry count
+    const int max_retries = 5;  // Reduced retry count for cleaner logs
     bool connected = false;
 
     while (retry_count < max_retries && !connected) {
+        if (retry_count > 0) {
+            printf("Retry attempt %d/%d...\n", retry_count, max_retries);
+            TERMINAL_VIEW_ADD_TEXT("Retry attempt %d/%d...\n", retry_count, max_retries);
+        }
+        
         esp_err_t ret = esp_wifi_connect();
         if (ret == ESP_ERR_WIFI_CONN) {
             ret = ESP_OK; // Already connecting, handled elsewhere
         }
 
         if (ret == ESP_OK) {
-            // Increased timeout to 15 seconds for better reliability
+            // Wait for connection with timeout
             EventBits_t bits = xEventGroupWaitBits(wifi_event_group, 
-                WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(15000));
+                WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(10000));
             
             if (bits & WIFI_CONNECTED_BIT) {
                 connected = true;
-                TERMINAL_VIEW_ADD_TEXT("Connected to %s\n", ssid);
-                printf("Connected to %s\n", ssid);
+                printf("Successfully connected to %s\n", ssid);
+                TERMINAL_VIEW_ADD_TEXT("Successfully connected to %s\n", ssid);
                 break;
-            } else {
-                TERMINAL_VIEW_ADD_TEXT("Timeout connecting to %s (attempt %d/%d)\n", ssid, retry_count+1, max_retries);
-                printf("Timeout connecting to %s (attempt %d/%d)\n", ssid, retry_count+1, max_retries);
             }
         } else {
-            TERMINAL_VIEW_ADD_TEXT("Failed to initiate connection to %s (error: %d) (attempt %d/%d)\n", ssid, ret, retry_count+1, max_retries);
-            printf("Failed to initiate connection to %s (error: %d) (attempt %d/%d)\n", ssid, ret, retry_count+1, max_retries);
+            printf("Connection initiation failed (error: %d)\n", ret);
+            TERMINAL_VIEW_ADD_TEXT("Connection initiation failed (error: %d)\n", ret);
         }
 
         if (!connected) {
             esp_wifi_disconnect();
-            // Increased delay between retries to prevent overwhelming the AP
-            vTaskDelay(pdMS_TO_TICKS(2000));
             retry_count++;
+            if (retry_count < max_retries) {
+                vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay between retries
+            }
         }
     }
 
