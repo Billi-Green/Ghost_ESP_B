@@ -294,7 +294,12 @@ class ESP32ControlGUI(QMainWindow):
         # --- Panel 2: Flash Release Bundle ---
         release_bundle_panel = QWidget()
         release_bundle_layout = QVBoxLayout(release_bundle_panel)
-        release_bundle_layout.addWidget(QLabel("Select a release bundle (.zip) containing bootloader.bin, partition-table.bin, and firmware.bin."))
+        release_bundle_layout.setAlignment(Qt.AlignmentFlag.AlignTop)  # Stack all controls to the top
+
+        # Centered top label
+        top_label = QLabel("Select a release bundle (.zip) containing bootloader.bin, partition-table.bin, and firmware.bin.")
+        top_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        release_bundle_layout.addWidget(top_label)
 
         # --- Version selection dropdown ---
         version_layout = QHBoxLayout()
@@ -500,28 +505,48 @@ class ESP32ControlGUI(QMainWindow):
         chip = getattr(self, "selected_chip", "")
         if not zip_path or not port or not chip:
             self.flash_bundle_status.setText("Please select a .zip file, chip type, and serial port.")
+            self.flash_console.append("Please select a .zip file, chip type, and serial port.")
             return
 
         self.flash_bundle_status.setText("Extracting and flashing bundle...")
         self.flash_console.clear()
+        self.flash_console.append(f"Extracting {zip_path} ...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     zip_ref.extractall(tmpdir)
+                self.flash_console.append(f"Extracted bundle to {tmpdir}")
+
+                # Accept both partition-table.bin and partitions.bin
                 bootloader = os.path.join(tmpdir, "bootloader.bin")
-                partition = os.path.join(tmpdir, "partition-table.bin")
-                # Find any .bin file that is not bootloader or partition-table
+                partition_candidates = [
+                    os.path.join(tmpdir, "partition-table.bin"),
+                    os.path.join(tmpdir, "partitions.bin"),
+                ]
+                partition = next((p for p in partition_candidates if os.path.exists(p)), None)
+
                 all_bins = glob.glob(os.path.join(tmpdir, "*.bin"))
                 firmware = None
                 for f in all_bins:
                     base = os.path.basename(f)
-                    if base not in ("bootloader.bin", "partition-table.bin"):
+                    if base not in ("bootloader.bin", "partition-table.bin", "partitions.bin"):
                         firmware = f
                         break
 
-                if not (os.path.exists(bootloader) and os.path.exists(partition) and firmware and os.path.exists(firmware)):
-                    self.flash_bundle_status.setText("ZIP must contain bootloader.bin, partition-table.bin, and a firmware .bin file.")
+                if not (os.path.exists(bootloader) and partition and firmware and os.path.exists(firmware)):
+                    msg = (
+                        "ZIP must contain bootloader.bin, partition-table.bin or partitions.bin, and a firmware .bin file.\n"
+                        f"Checked for:\n"
+                        f"  bootloader.bin: {'FOUND' if os.path.exists(bootloader) else 'MISSING'} ({bootloader})\n"
+                        f"  partition-table.bin: {'FOUND' if os.path.exists(partition_candidates[0]) else 'MISSING'} ({partition_candidates[0]})\n"
+                        f"  partitions.bin: {'FOUND' if os.path.exists(partition_candidates[1]) else 'MISSING'} ({partition_candidates[1]})\n"
+                        f"  firmware .bin: {'FOUND' if firmware and os.path.exists(firmware) else 'MISSING'} ({firmware if firmware else 'None found'})\n"
+                        f"All .bin files found in extracted folder:\n  " +
+                        "\n  ".join(os.path.basename(f) for f in all_bins)
+                    )
+                    self.flash_bundle_status.setText("ZIP missing required files. See console for details.")
+                    self.flash_console.append(msg)
                     return
 
                 # Determine offsets based on chip type
@@ -551,8 +576,10 @@ class ESP32ControlGUI(QMainWindow):
                 process.wait()
                 if process.returncode == 0:
                     self.flash_bundle_status.setText("Flashing successful!")
+                    self.flash_console.append("Flashing successful!")
                 else:
                     self.flash_bundle_status.setText("Flashing failed. See console output.")
+                    self.flash_console.append("Flashing failed. See console output.")
         except Exception as e:
             self.flash_bundle_status.setText(f"Error: {str(e)}")
             self.flash_console.append(f"Error: {str(e)}")
@@ -1711,15 +1738,16 @@ class ESP32ControlGUI(QMainWindow):
             if idx >= 0:
                 self.release_chip_combo.setCurrentIndex(idx)
                 self.flash_bundle_status.setText(f"Chip auto-selected: {chip_type}")
+                self.flash_console.append(f"Chip auto-selected: {chip_type}")
 
         try:
             import requests
             import tempfile
             import os
-            # Download to a temp file named after the asset
             temp_dir = tempfile.gettempdir()
             safe_name = os.path.basename(name)
             temp_path = os.path.join(temp_dir, safe_name)
+            self.flash_console.append(f"Downloading asset: {name} ...")
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
             with open(temp_path, "wb") as f:
@@ -1728,8 +1756,10 @@ class ESP32ControlGUI(QMainWindow):
                         f.write(chunk)
             self.release_zip_edit.setText(temp_path)
             self.flash_bundle_status.setText(f"Downloaded {name} to {temp_path}")
+            self.flash_console.append(f"Downloaded {name} to {temp_path}")
         except Exception as e:
             self.flash_bundle_status.setText(f"Failed to download asset: {e}")
+            self.flash_console.append(f"Failed to download asset: {e}")
 
     def on_flash_panel_changed(self, index):
         """Switch the visible flash panel based on dropdown selection."""
