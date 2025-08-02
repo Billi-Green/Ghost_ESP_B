@@ -359,6 +359,10 @@ class ESP32ControlGUI(QMainWindow):
         # Panel 3: Custom Build
         custom_build_panel = QWidget()
         custom_build_layout = QVBoxLayout(custom_build_panel)
+        custom_build_layout.setAlignment(Qt.AlignmentFlag.AlignTop)  # Stack all controls to the top
+
+        # Ensure all layouts added to custom_build_layout are also aligned to the top
+        custom_build_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # Top label
         custom_label = QLabel("Custom Build: Configure and compile your own custom firmware image\n idf.py must be installed and in your PATH.")
@@ -373,7 +377,7 @@ class ESP32ControlGUI(QMainWindow):
 
                 # --- SDKConfig selection dropdown ---
         config_layout = QHBoxLayout()
-        config_label = QLabel("Copy existing SDKConfig emplate:")
+        config_label = QLabel("Copy existing SDKConfig template:")
         config_label.setContentsMargins(0, 0, 0, 0)
         config_layout.setSpacing(0)
         self.sdkconfig_combo = QComboBox()
@@ -1833,6 +1837,7 @@ class ESP32ControlGUI(QMainWindow):
                         widget = subitem.widget()
                         if widget is self.release_version_combo:
                             insert_index = i + 1
+                           
                             break
                 if insert_index is not None:
                     break
