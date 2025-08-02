@@ -14,6 +14,8 @@ from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
 from functools import partial
 import glob
 import requests
+import tempfile
+import os
 
 class ESP32ControlGUI(QMainWindow):
     """Main GUI class for controlling the Ghost ESP32 device."""
@@ -294,6 +296,19 @@ class ESP32ControlGUI(QMainWindow):
         release_bundle_layout = QVBoxLayout(release_bundle_panel)
         release_bundle_layout.addWidget(QLabel("Select a release bundle (.zip) containing bootloader.bin, partition-table.bin, and firmware.bin."))
 
+        # --- Version selection dropdown ---
+        version_layout = QHBoxLayout()
+        version_label = QLabel("Version:")
+        version_label.setContentsMargins(0, 0, 0, 0)
+        version_layout.setSpacing(0)
+        self.release_version_combo = QComboBox()
+        self.release_version_combo.addItem("Loading...")
+        # Connect the version dropdown to update the asset dropdown
+        self.release_version_combo.currentIndexChanged.connect(self.update_release_assets_dropdown)
+        version_layout.addWidget(version_label)
+        version_layout.addWidget(self.release_version_combo)
+        release_bundle_layout.addLayout(version_layout)
+
         # --- Chip selection row for release bundle ---
         release_chip_layout = QHBoxLayout()
         release_chip_label = QLabel("Chip:")
@@ -318,18 +333,6 @@ class ESP32ControlGUI(QMainWindow):
         zip_layout.addWidget(release_zip_browse_btn)
         release_bundle_layout.addLayout(zip_layout)
 
-        # --- Version selection dropdown ---
-        version_layout = QHBoxLayout()
-        version_label = QLabel("Version:")
-        version_label.setContentsMargins(0, 0, 0, 0)
-        version_layout.setSpacing(0)
-        self.release_version_combo = QComboBox()
-        self.release_version_combo.addItem("Loading...")
-        # Connect the version dropdown to update the asset dropdown
-        #self.release_version_combo.currentIndexChanged.connect(self.update_release_assets_dropdown)
-        version_layout.addWidget(version_label)
-        version_layout.addWidget(self.release_version_combo)
-        release_bundle_layout.addLayout(version_layout)
 
         # --- Flash/Exit buttons and status for release bundle ---
         self.flash_bundle_btn = QPushButton("Flash Bundle")
@@ -1580,14 +1583,19 @@ class ESP32ControlGUI(QMainWindow):
             versions = [release.get("tag_name", "Unknown") for release in releases if "tag_name" in release]
             self.release_version_combo.blockSignals(True)
             self.release_version_combo.clear()
+            # Add "Custom local .zip" as the default option
+            self.release_version_combo.addItem("Custom local .zip")
             if versions:
                 self.release_version_combo.addItems(versions)
             else:
                 self.release_version_combo.addItem("No releases found")
+            self.release_version_combo.setCurrentIndex(0)  # Always select "Custom local .zip" by default
             self.release_version_combo.blockSignals(False)
         except Exception as e:
             self.release_version_combo.clear()
+            self.release_version_combo.addItem("Custom local .zip")
             self.release_version_combo.addItem("Failed to load releases")
+            self.release_version_combo.setCurrentIndex(0)
             self._github_releases = []
             print(f"Error fetching releases: {e}")
 
@@ -1596,7 +1604,6 @@ class ESP32ControlGUI(QMainWindow):
 
     def update_release_assets_dropdown(self):
         """Populate the asset dropdown based on the selected version."""
-        # Create the asset dropdown if it doesn't exist
         if not hasattr(self, "release_asset_combo"):
             asset_layout = QHBoxLayout()
             asset_label = QLabel("Asset:")
@@ -1609,12 +1616,10 @@ class ESP32ControlGUI(QMainWindow):
 
             # Insert asset_layout directly after the version_layout
             parent_layout = self.release_version_combo.parentWidget().layout()
-            # Find the index of the version_layout in the parent layout
             insert_index = None
             for i in range(parent_layout.count()):
                 item = parent_layout.itemAt(i)
                 if item and item.layout():
-                    # Check if this layout contains the version combo
                     for j in range(item.layout().count()):
                         subitem = item.layout().itemAt(j)
                         widget = subitem.widget()
@@ -1628,6 +1633,9 @@ class ESP32ControlGUI(QMainWindow):
             else:
                 parent_layout.addLayout(asset_layout)  # fallback
 
+            # Connect asset selection to download handler
+            self.release_asset_combo.currentIndexChanged.connect(self.download_selected_asset)
+
         self.release_asset_combo.clear()
         selected_version = self.release_version_combo.currentText()
         releases = getattr(self, "_github_releases", [])
@@ -1637,11 +1645,38 @@ class ESP32ControlGUI(QMainWindow):
                 assets = release.get("assets", [])
                 break
         if assets:
+            self.release_asset_combo.addItem("Select Release Asset...")
             for asset in assets:
                 name = asset.get("name", "Unknown")
                 self.release_asset_combo.addItem(name, asset.get("browser_download_url"))
+            self.release_asset_combo.setCurrentIndex(0)
         else:
             self.release_asset_combo.addItem("No assets found")
+
+    def download_selected_asset(self, index):
+        """Download the selected asset (if not the prompt) and set the path in the zip file field."""
+        if not hasattr(self, "release_asset_combo"):
+            return
+        url = self.release_asset_combo.currentData()
+        name = self.release_asset_combo.currentText()
+        if not url or "Select Release Asset" in name or "No assets found" in name:
+            return
+
+        try:
+            import requests
+            # Download to a temp file
+            response = requests.get(url, stream=True, timeout=30)
+            response.raise_for_status()
+            fd, temp_path = tempfile.mkstemp(suffix=".zip")
+            with os.fdopen(fd, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            # Set the path in the zip file field
+            self.release_zip_edit.setText(temp_path)
+            self.flash_bundle_status.setText(f"Downloaded {name} to {temp_path}")
+        except Exception as e:
+            self.flash_bundle_status.setText(f"Failed to download asset: {e}")
 
     def on_flash_panel_changed(self, index):
         """Switch the visible flash panel based on dropdown selection."""
