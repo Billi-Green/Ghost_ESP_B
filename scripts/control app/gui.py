@@ -369,6 +369,30 @@ class ESP32ControlGUI(QMainWindow):
         custom_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         custom_build_layout.addWidget(custom_label)
 
+                # Add this in your setup_ui method, after setting up the custom build panel (e.g., after custom_build_layout is created):
+
+        import shutil
+
+        idf_status_layout = QHBoxLayout()
+        idf_status_label = QLabel("ESP-IDF (idf.py):")
+        idf_status_label.setContentsMargins(0, 0, 0, 0)
+        idf_status_layout.addWidget(idf_status_label)
+
+        idf_path = shutil.which("idf.py")
+        self.idf_status_indicator = QLabel()
+        if idf_path:
+            self.idf_status_indicator.setText("Found")
+            self.idf_status_indicator.setStyleSheet("color: #44bb44; font-weight: bold;")
+            self.idf_status_indicator.setToolTip(f"idf.py found at: {idf_path}")
+        else:
+            self.idf_status_indicator.setText("Not Found")
+            self.idf_status_indicator.setStyleSheet("color: #ff4444; font-weight: bold;")
+            self.idf_status_indicator.setToolTip("idf.py not found in PATH. ESP-IDF features will not work.")
+
+        idf_status_layout.addWidget(self.idf_status_indicator)
+        idf_status_layout.addStretch()
+        custom_build_layout.addLayout(idf_status_layout)
+
         # Button to run idf.py fullclean
         self.fullclean_btn = QPushButton("Run idf.py fullclean")
         self.fullclean_btn.setToolTip("Run idf.py fullclean in your project (requires ESP-IDF in PATH)")
