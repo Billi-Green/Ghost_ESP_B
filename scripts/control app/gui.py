@@ -8,7 +8,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
-                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar)
+                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar, QSizePolicy)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
 from functools import partial
@@ -111,9 +111,6 @@ class ESP32ControlGUI(QMainWindow):
         Args:
             enabled (bool): Whether to enable or disable the UI.
         """
-        # Disable/enable all main panels except connection bar
-        # You may need to adjust these references based on your layout
-        # Example assumes you have self.panel_container, self.panel_combo, self.log_group, etc.
         try:
             self.panel_container.setEnabled(enabled)
             self.panel_combo.setEnabled(enabled)
@@ -122,8 +119,9 @@ class ESP32ControlGUI(QMainWindow):
             self.cmd_entry.setEnabled(enabled)
         except Exception:
             pass  # Ignore if not initialized yet
-        # Show/hide overlay
-        if not enabled:
+
+        # Only show overlay if not in flash mode
+        if not enabled and (not hasattr(self, "flash_mode_btn") or not self.flash_mode_btn.isChecked()):
             self.overlay.show()
             self.overlay.raise_()
         else:
@@ -157,9 +155,14 @@ class ESP32ControlGUI(QMainWindow):
         # Create top bar for serial connection
         self.setup_connection_bar(main_layout)
 
+        # --- Main content area (everything below serial bar) ---
+        self.main_content_widget = QWidget()
+        self.main_content_layout = QVBoxLayout(self.main_content_widget)
+        self.main_content_layout.setContentsMargins(0, 0, 0, 0)
+
         # Create splitter for resizable sections (vertical: content/log)
         splitter = QSplitter(Qt.Orientation.Vertical)
-        main_layout.addWidget(splitter)
+        self.main_content_layout.addWidget(splitter)
 
         # --- Horizontal splitter for left/right ---
         content_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -190,6 +193,195 @@ class ESP32ControlGUI(QMainWindow):
         # Set splitter stretch factors
         splitter.setStretchFactor(0, 3)  # Content area
         splitter.setStretchFactor(1, 1)  # Log area
+
+        # Add main content widget to the main layout with stretch
+        main_layout.addWidget(self.main_content_widget, stretch=1)
+
+        # --- Flash mode widget placeholder (hidden by default) ---
+        self.flash_mode_widget = QWidget()
+        self.flash_mode_widget.hide()
+
+        # Use a splitter for left (controls) and right (console)
+        flash_splitter = QSplitter(Qt.Orientation.Horizontal, self.flash_mode_widget)
+
+        # Left side: controls
+        flash_controls_widget = QWidget()
+        flash_controls_layout = QVBoxLayout(flash_controls_widget)
+        flash_controls_layout.setContentsMargins(0, 0, 0, 0)
+
+        label = QLabel("Flash Mode\n\nSelect a firmware file and flash your ESP32 board.")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("font-size: 22px; font-weight: bold;")
+        flash_controls_layout.addWidget(label)
+
+        # --- Chip selection row ---
+        chip_layout = QHBoxLayout()
+        self.chip_combo = QComboBox()
+        self.chip_combo.addItem("")  # Add blank/placeholder entry
+        self.chip_combo.addItems(["esp32", "esp32s2", "esp32s3", "esp32c3", "esp32c5", "esp32c6"])
+        self.chip_combo.setCurrentIndex(0)  # Start with blank selected
+        chip_layout.addWidget(QLabel("Chip:"))
+        chip_layout.addWidget(self.chip_combo)
+        flash_controls_layout.addLayout(chip_layout)
+        self.selected_chip = ""  # Default to blank
+        self.chip_combo.currentTextChanged.connect(self.set_chip_type)
+
+        # --- Bootloader file selection ---
+        bootloader_layout = QHBoxLayout()
+        self.bootloader_file_edit = QLineEdit()
+        self.bootloader_file_edit.setPlaceholderText("Select bootloader.bin...")
+        bootloader_layout.addWidget(self.bootloader_file_edit)
+        bootloader_browse_btn = QPushButton("Browse")
+        bootloader_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.bootloader_file_edit))
+        bootloader_layout.addWidget(bootloader_browse_btn)
+        flash_controls_layout.addLayout(bootloader_layout)
+
+        # --- Partition table file selection ---
+        partition_layout = QHBoxLayout()
+        self.partition_file_edit = QLineEdit()
+        self.partition_file_edit.setPlaceholderText("Select partition-table.bin...")
+        partition_layout.addWidget(self.partition_file_edit)
+        partition_browse_btn = QPushButton("Browse")
+        partition_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.partition_file_edit))
+        partition_layout.addWidget(partition_browse_btn)
+        flash_controls_layout.addLayout(partition_layout)
+
+        # --- Firmware file selection ---
+        firmware_layout = QHBoxLayout()
+        self.firmware_file_edit = QLineEdit()
+        self.firmware_file_edit.setPlaceholderText("Select firmware.bin...")
+        firmware_layout.addWidget(self.firmware_file_edit)
+        firmware_browse_btn = QPushButton("Browse")
+        firmware_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.firmware_file_edit))
+        firmware_layout.addWidget(firmware_browse_btn)
+        flash_controls_layout.addLayout(firmware_layout)
+
+        # --- Flash/Exit buttons and status ---
+        self.flash_btn = QPushButton("Flash Board")
+        self.flash_btn.clicked.connect(self.flash_board)
+        flash_controls_layout.addWidget(self.flash_btn)
+        self.flash_status = QLabel("")
+        flash_controls_layout.addWidget(self.flash_status)
+        exit_btn = QPushButton("Exit Flash Mode")
+        exit_btn.clicked.connect(self.exit_flash_mode)
+        flash_controls_layout.addWidget(exit_btn)
+        flash_controls_layout.addStretch()
+
+        # Add controls to splitter
+        flash_splitter.addWidget(flash_controls_widget)
+
+        # Right side: console output
+        flasher_output_layout = QVBoxLayout()
+        flasher_output_label = QLabel("Flasher Output")
+        flasher_output_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+        flasher_output_layout.addWidget(flasher_output_label)
+        self.flash_console = QTextEdit()
+        self.flash_console.setReadOnly(True)
+        self.flash_console.setMinimumWidth(400)
+        flasher_output_layout.addWidget(self.flash_console)
+
+        # Create a widget to hold the label and text box
+        flasher_output_widget = QWidget()
+        flasher_output_widget.setLayout(flasher_output_layout)
+        flash_splitter.addWidget(flasher_output_widget)
+
+        # Set initial splitter ratio (left:right)
+        flash_splitter.setStretchFactor(0, 1)
+        flash_splitter.setStretchFactor(1, 2)
+
+        # Add splitter to flash_mode_widget layout
+        flash_layout = QVBoxLayout(self.flash_mode_widget)
+        flash_layout.setContentsMargins(0, 0, 0, 0)
+        flash_layout.addWidget(flash_splitter)
+
+        # Add flash mode widget to the main layout with stretch
+        main_layout.addWidget(self.flash_mode_widget, stretch=1)
+
+    def toggle_flash_mode(self):
+        """Toggle between the main UI and Flash Mode view."""
+        if self.flash_mode_btn.isChecked():
+            # If serial is connected, disconnect before entering flash mode
+            if self.serial_port and self.serial_port.is_open:
+                self.disconnect()
+            self.main_content_widget.hide()
+            self.flash_mode_widget.show()
+            # Disable connect button in flash mode
+            self.connect_btn.setEnabled(False)
+            # Hide overlay if it's showing
+            self.overlay.hide()
+        else:
+            self.flash_mode_widget.hide()
+            self.main_content_widget.show()
+            # Enable connect button when not in flash mode
+            self.connect_btn.setEnabled(True)
+
+    def browse_flash_file(self):
+        """Open a file dialog to select a firmware file."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Firmware File", "", "BIN Files (*.bin)")
+        if file_path:
+            self.flash_file_edit.setText(file_path)
+
+    def flash_board(self):
+        """Flash the selected firmware, bootloader, and partition table to the ESP32 board."""
+        port = self.port_combo.currentText()
+        chip = getattr(self, "selected_chip", "")
+        bootloader = self.bootloader_file_edit.text().strip()
+        partition = self.partition_file_edit.text().strip()
+        firmware = self.firmware_file_edit.text().strip()
+
+        # Validate inputs
+        if not chip:
+            self.flash_status.setText("Please select a chip type before flashing.")
+            return
+        if not all([bootloader, partition, firmware, port]):
+            self.flash_status.setText("Please select all .bin files and a serial port.")
+            return
+
+        # Determine offsets based on chip type
+        if chip in ["esp32s2", "esp32"]:
+            boot_offset = "0x1000"
+        elif chip in ["esp32s3", "esp32c3", "esp32c5", "esp32c6"]:
+            boot_offset = "0x0"
+        else:
+            boot_offset = "0x1000"  # Default/fallback
+
+        partition_offset = "0x8000"
+        firmware_offset = "0x10000"
+
+        self.flash_status.setText(f"Flashing ({chip})... Please wait.")
+        self.flash_console.clear()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            import subprocess
+            cmd = [
+                "esptool", "--chip", chip, "--port", port, "write-flash",
+                boot_offset, bootloader,
+                partition_offset, partition,
+                firmware_offset, firmware
+            ]
+            self.flash_console.append(f"$ {' '.join(cmd)}\n")
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for line in process.stdout:
+                self.flash_console.append(line.rstrip())
+                self.flash_console.ensureCursorVisible()
+                QApplication.processEvents()  # Keep UI responsive
+            process.wait()
+            if process.returncode == 0:
+                self.flash_status.setText("Flashing successful!")
+            else:
+                self.flash_status.setText("Flashing failed. See console output.")
+        except Exception as e:
+            self.flash_status.setText(f"Error: {str(e)}")
+            self.flash_console.append(f"Error: {str(e)}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def set_chip_type(self):
+        """Set the chip type for flashing."""
+        chip = self.chip_combo.currentText()
+        self.selected_chip = chip
+        # Optionally update a status label if you want, but no dialog needed
+        # self.flash_status.setText(f"Chip set to: {chip}")
 
     def setup_connection_bar(self, main_layout):
         """
@@ -232,7 +424,20 @@ class ESP32ControlGUI(QMainWindow):
         self.connect_btn.setToolTip("Connect or disconnect from ESP32")
         connection_layout.addWidget(self.connect_btn)
 
+        # --- Add stretch here to push Flash Mode button to the right ---
         connection_layout.addStretch()
+
+        # --- Flash Mode Button (right justified) ---
+        self.flash_mode_btn = QPushButton("Flash Mode")
+        self.flash_mode_btn.setCheckable(True)
+        self.flash_mode_btn.setFixedWidth(110)
+        self.flash_mode_btn.setToolTip("Toggle Flash Mode to flash your board")
+        self.flash_mode_btn.clicked.connect(self.toggle_flash_mode)
+        connection_layout.addWidget(self.flash_mode_btn)
+        # --- End Flash Mode Button ---
+
+        # Set the size policy to not expand vertically
+        connection_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(connection_group)
 
     def update_connection_status(self, connected):
@@ -1157,3 +1362,14 @@ class ESP32ControlGUI(QMainWindow):
         """
         super().showEvent(event)
         self.resizeEvent(None)
+
+    def browse_bin_file(self, line_edit):
+        """Open a file dialog to select a .bin file and set it in the given QLineEdit."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select BIN File", "", "BIN Files (*.bin)")
+        if file_path:
+            line_edit.setText(file_path)
+
+    def exit_flash_mode(self):
+        """Exit Flash Mode and return to the main UI."""
+        self.flash_mode_btn.setChecked(False)
+        self.toggle_flash_mode()
