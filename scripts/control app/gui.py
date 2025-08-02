@@ -2003,7 +2003,7 @@ class ESP32ControlGUI(QMainWindow):
         elif index == 2:  # Custom Build
             self.flash_console.append(
                 "Instructions: Custom Build\n"
-                "1. You must have a valid sdkconfig file. Copy an SDKConfig template or edit your existing one with menuconfig.\n"
+                "1. Copy an SDKConfig template or edit your existing one with the edit sdkconfig button.\n"
                 "2. Set the target chip and run 'Set Target'.\n"
                 "3. Use 'Run Build' to compile your firmware (requires ESP-IDF in PATH).\n"
                 "4. Use 'Run idf.py fullclean' to clean the build folder if needed.\n"
