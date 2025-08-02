@@ -44,6 +44,7 @@ TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 
 // Forward declarations for command handlers
+void cmd_wifi_scan_stop(int argc, char **argv);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_airtags_cmd(int argc, char **argv);
 void handle_select_airtag(int argc, char **argv);
@@ -118,6 +119,10 @@ void handle_unknown_command(const char *cmd) {
 
 void cmd_wifi_scan_start(int argc, char **argv) {
     if (argc > 1) {
+        if (strcmp(argv[1], "-stop") == 0) {
+            cmd_wifi_scan_stop(argc, argv);
+            return;
+        }
         int seconds = atoi(argv[1]);
         wifi_manager_start_scan_with_time(seconds);
     } else {
