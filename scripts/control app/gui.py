@@ -23,7 +23,7 @@ class ESP32ControlGUI(QMainWindow):
     def __init__(self):
         """Initialize the ESP32 control panel GUI and its components."""
         super().__init__()
-        self.setWindowTitle("Ghost ESP Control Panel")
+        self.setWindowTitle("Ghost ESP Commander")
         self.setGeometry(100, 100, 1400, 900)
 
         # Set custom app icon
@@ -394,10 +394,11 @@ class ESP32ControlGUI(QMainWindow):
         config_layout.addWidget(self.sdkconfig_combo)
         custom_build_layout.addLayout(config_layout)
 
-        # Add a button with a copy icon next to the dropdown
+        # Add a button with a more intuitive copy icon next to the dropdown
         copy_sdkconfig_btn = QPushButton()
-        copy_sdkconfig_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogToParent))
+        copy_sdkconfig_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))  # Use download/open icon
         copy_sdkconfig_btn.setToolTip("Copy selected config to ../../sdkconfig and ../../sdkconfig.defaults")
+        copy_sdkconfig_btn.setFixedSize(28, 28)  # Match the size of the trash icon
         config_layout.addWidget(copy_sdkconfig_btn)
 
         def copy_selected_sdkconfig():
@@ -418,6 +419,36 @@ class ESP32ControlGUI(QMainWindow):
                 QMessageBox.critical(self, "Copy Failed", f"Failed to copy: {e}")
 
         copy_sdkconfig_btn.clicked.connect(copy_selected_sdkconfig)
+
+        # Add a trashcan icon button to delete ../../sdkconfig and ../../sdkconfig.defaults
+        delete_sdkconfig_btn = QPushButton()
+        delete_sdkconfig_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        delete_sdkconfig_btn.setToolTip("Delete ../../sdkconfig and ../../sdkconfig.defaults")
+        delete_sdkconfig_btn.setFixedSize(28, 28)
+        config_layout.addWidget(delete_sdkconfig_btn)
+
+        def delete_selected_sdkconfig():
+            import os
+            removed = []
+            errors = []
+            for fname in ["../../sdkconfig", "../../sdkconfig.defaults"]:
+                path = os.path.abspath(os.path.join(os.path.dirname(__file__), fname))
+                try:
+                    if os.path.isfile(path):
+                        os.remove(path)
+                        removed.append(path)
+                except Exception as e:
+                    errors.append(f"{path}: {e}")
+            if removed:
+                self.flash_console.append("Deleted:\n" + "\n".join(removed))
+                QMessageBox.information(self, "Deleted", "Deleted:\n" + "\n".join(removed))
+            if errors:
+                self.flash_console.append("Errors:\n" + "\n".join(errors))
+                QMessageBox.critical(self, "Delete Failed", "Errors:\n" + "\n".join(errors))
+            if not removed and not errors:
+                QMessageBox.information(self, "Nothing to Delete", "No sdkconfig files found to delete.")
+
+        delete_sdkconfig_btn.clicked.connect(delete_selected_sdkconfig)
 
         # --- Chip selection (replace the current section in setup_ui for custom_build_panel) ---
 
@@ -444,7 +475,7 @@ class ESP32ControlGUI(QMainWindow):
         self.custom_chip_combo.currentTextChanged.connect(self.set_chip_type)
 
         # Button to run idf.py menuconfig
-        self.menuconfig_btn = QPushButton("Run idf.py menuconfig")
+        self.menuconfig_btn = QPushButton("Customize SDKConfig")
         self.menuconfig_btn.setToolTip("Open ESP-IDF menuconfig for your project (requires ESP-IDF in PATH)")
         self.menuconfig_btn.clicked.connect(self.run_idf_menuconfig)
         custom_build_layout.addWidget(self.menuconfig_btn)
