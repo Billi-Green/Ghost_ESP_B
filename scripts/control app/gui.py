@@ -463,13 +463,12 @@ class ESP32ControlGUI(QMainWindow):
         custom_chip_layout.addWidget(custom_chip_label)
         custom_chip_layout.addWidget(self.custom_chip_combo)
 
-        # Add set-target icon button next to chip dropdown
-        set_target_icon_btn = QPushButton()
-        set_target_icon_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_CommandLink))
-        set_target_icon_btn.setToolTip("Run idf.py set-target for the selected chip (requires ESP-IDF in PATH)")
-        set_target_icon_btn.setFixedWidth(32)
-        set_target_icon_btn.clicked.connect(self.run_idf_set_target)
-        custom_chip_layout.addWidget(set_target_icon_btn)
+        # Add set-target button next to chip dropdown
+        set_target_btn = QPushButton("Set Target")
+        set_target_btn.setToolTip("Run idf.py set-target for the selected chip (requires ESP-IDF in PATH)")
+        set_target_btn.setFixedHeight(28)
+        set_target_btn.clicked.connect(self.run_idf_set_target)
+        custom_chip_layout.addWidget(set_target_btn)
 
         custom_build_layout.addLayout(custom_chip_layout)
         self.custom_chip_combo.currentTextChanged.connect(self.set_chip_type)
@@ -481,7 +480,7 @@ class ESP32ControlGUI(QMainWindow):
         custom_build_layout.addWidget(self.menuconfig_btn)
 
         # Button to run idf.py build
-        self.build_btn = QPushButton("Run idf.py build")
+        self.build_btn = QPushButton("Run Build")
         self.build_btn.setToolTip("Run idf.py build in your project (requires ESP-IDF in PATH)")
         self.build_btn.clicked.connect(self.run_idf_build)
         custom_build_layout.addWidget(self.build_btn)
