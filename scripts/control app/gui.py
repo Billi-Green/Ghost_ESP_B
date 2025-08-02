@@ -359,7 +359,107 @@ class ESP32ControlGUI(QMainWindow):
         # Panel 3: Custom Build
         custom_build_panel = QWidget()
         custom_build_layout = QVBoxLayout(custom_build_panel)
-        custom_build_layout.addWidget(QLabel("Custom build options (not yet implemented)."))
+
+        # Top label
+        custom_label = QLabel("Custom Build: Configure and compile your own custom firmware image\n idf.py must be installed and in your PATH.")
+        custom_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        custom_build_layout.addWidget(custom_label)
+
+        # Button to run idf.py fullclean
+        self.fullclean_btn = QPushButton("Run idf.py fullclean")
+        self.fullclean_btn.setToolTip("Run idf.py fullclean in your project (requires ESP-IDF in PATH)")
+        self.fullclean_btn.clicked.connect(self.run_idf_fullclean)
+        custom_build_layout.addWidget(self.fullclean_btn)
+
+                # --- SDKConfig selection dropdown ---
+        config_layout = QHBoxLayout()
+        config_label = QLabel("Copy existing SDKConfig emplate:")
+        config_label.setContentsMargins(0, 0, 0, 0)
+        config_layout.setSpacing(0)
+        self.sdkconfig_combo = QComboBox()
+        self.sdkconfig_combo.setMinimumWidth(250)
+
+        # Populate dropdown with files from ../../configs
+        import os
+        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../configs"))
+        config_files = sorted(glob.glob(os.path.join(config_dir, "*")))
+        for f in config_files:
+            if os.path.isfile(f):
+                self.sdkconfig_combo.addItem(os.path.basename(f), f)
+        config_layout.addWidget(config_label)
+        config_layout.addWidget(self.sdkconfig_combo)
+        custom_build_layout.addLayout(config_layout)
+
+        # Add a button with a copy icon next to the dropdown
+        copy_sdkconfig_btn = QPushButton()
+        copy_sdkconfig_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogToParent))
+        copy_sdkconfig_btn.setToolTip("Copy selected config to ../../sdkconfig and ../../sdkconfig.defaults")
+        config_layout.addWidget(copy_sdkconfig_btn)
+
+        def copy_selected_sdkconfig():
+            import shutil
+            import os
+            src = self.sdkconfig_combo.currentData()
+            if not src or not os.path.isfile(src):
+                QMessageBox.warning(self, "Copy Failed", "No valid config file selected.")
+                return
+            dest1 = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../sdkconfig"))
+            dest2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../sdkconfig.defaults"))
+            try:
+                shutil.copyfile(src, dest1)
+                shutil.copyfile(src, dest2)
+                self.flash_console.append(f"Copied {os.path.basename(src)} to sdkconfig and sdkconfig.defaults.")
+                QMessageBox.information(self, "Copied", f"Copied to:\n{dest1}\n{dest2}")
+            except Exception as e:
+                QMessageBox.critical(self, "Copy Failed", f"Failed to copy: {e}")
+
+        copy_sdkconfig_btn.clicked.connect(copy_selected_sdkconfig)
+
+        # --- Chip selection (replace the current section in setup_ui for custom_build_panel) ---
+
+        custom_chip_layout = QHBoxLayout()
+        custom_chip_label = QLabel("Set idf.py target chip:")
+        custom_chip_label.setContentsMargins(0, 0, 0, 0)
+        custom_chip_layout.setSpacing(0)
+        self.custom_chip_combo = QComboBox()
+        self.custom_chip_combo.addItem("")  # Blank/placeholder
+        self.custom_chip_combo.addItems(["esp32", "esp32s2", "esp32s3", "esp32c3", "esp32c5", "esp32c6"])
+        self.custom_chip_combo.setCurrentIndex(0)
+        custom_chip_layout.addWidget(custom_chip_label)
+        custom_chip_layout.addWidget(self.custom_chip_combo)
+
+        # Add set-target icon button next to chip dropdown
+        set_target_icon_btn = QPushButton()
+        set_target_icon_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_CommandLink))
+        set_target_icon_btn.setToolTip("Run idf.py set-target for the selected chip (requires ESP-IDF in PATH)")
+        set_target_icon_btn.setFixedWidth(32)
+        set_target_icon_btn.clicked.connect(self.run_idf_set_target)
+        custom_chip_layout.addWidget(set_target_icon_btn)
+
+        custom_build_layout.addLayout(custom_chip_layout)
+        self.custom_chip_combo.currentTextChanged.connect(self.set_chip_type)
+
+        # Button to run idf.py menuconfig
+        self.menuconfig_btn = QPushButton("Run idf.py menuconfig")
+        self.menuconfig_btn.setToolTip("Open ESP-IDF menuconfig for your project (requires ESP-IDF in PATH)")
+        self.menuconfig_btn.clicked.connect(self.run_idf_menuconfig)
+        custom_build_layout.addWidget(self.menuconfig_btn)
+
+        # Button to run idf.py build
+        self.build_btn = QPushButton("Run idf.py build")
+        self.build_btn.setToolTip("Run idf.py build in your project (requires ESP-IDF in PATH)")
+        self.build_btn.clicked.connect(self.run_idf_build)
+        custom_build_layout.addWidget(self.build_btn)
+
+
+
+        # Flash/Exit buttons and status
+        self.custom_flash_btn = QPushButton("Flash Custom Build")
+        self.custom_flash_btn.clicked.connect(self.flash_custom_build)
+        custom_build_layout.addWidget(self.custom_flash_btn)
+        self.custom_flash_status = QLabel("")
+        custom_build_layout.addWidget(self.custom_flash_status)
+
         self.flash_panel_stack.addWidget(custom_build_panel)
 
         # Connect combo box to stacked widget
@@ -484,6 +584,72 @@ class ESP32ControlGUI(QMainWindow):
                 self.flash_status.setText("Flashing failed. See console output.")
         except Exception as e:
             self.flash_status.setText(f"Error: {str(e)}")
+            self.flash_console.append(f"Error: {str(e)}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def flash_custom_build(self):
+        """Flash the .bin files built in ../../build to the ESP32 board."""
+        import os
+        from PyQt6.QtWidgets import QApplication
+
+        port = self.port_combo.currentText()
+        chip = self.custom_chip_combo.currentText()
+        build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../build"))
+
+        # Use fixed paths as specified
+        bootloader = os.path.join(build_dir, "bootloader", "bootloader.bin")
+        partition = os.path.join(build_dir, "partition_table", "partition-table.bin")
+        firmware = os.path.join(build_dir, "Ghost_ESP_IDF.bin")
+
+        # Show what was found
+        self.flash_console.clear()
+        self.flash_console.append(f"Using files from: {build_dir}")
+        self.flash_console.append(f"bootloader: {bootloader if os.path.exists(bootloader) else 'NOT FOUND'}")
+        self.flash_console.append(f"partition-table: {partition if os.path.exists(partition) else 'NOT FOUND'}")
+        self.flash_console.append(f"firmware: {firmware if os.path.exists(firmware) else 'NOT FOUND'}")
+
+        if not chip:
+            self.custom_flash_status.setText("Please select a chip type before flashing.")
+            return
+        if not (os.path.exists(bootloader) and os.path.exists(partition) and os.path.exists(firmware) and port):
+            self.custom_flash_status.setText("Missing required .bin files or serial port. See console for details.")
+            return
+
+        # Determine offsets based on chip type
+        if chip in ["esp32s2", "esp32"]:
+            boot_offset = "0x1000"
+        elif chip in ["esp32s3", "esp32c3", "esp32c5", "esp32c6"]:
+            boot_offset = "0x0"
+        else:
+            boot_offset = "0x1000"
+
+        partition_offset = "0x8000"
+        firmware_offset = "0x10000"
+
+        self.custom_flash_status.setText(f"Flashing ({chip})... Please wait.")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            import subprocess
+            cmd = [
+                "esptool", "--chip", chip, "--port", port, "write-flash",
+                boot_offset, bootloader,
+                partition_offset, partition,
+                firmware_offset, firmware
+            ]
+            self.flash_console.append(f"$ {' '.join(cmd)}\n")
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for line in process.stdout:
+                self.flash_console.append(line.rstrip())
+                self.flash_console.ensureCursorVisible()
+                QApplication.processEvents()
+            process.wait()
+            if process.returncode == 0:
+                self.custom_flash_status.setText("Flashing successful!")
+            else:
+                self.custom_flash_status.setText("Flashing failed. See console output.")
+        except Exception as e:
+            self.custom_flash_status.setText(f"Error: {str(e)}")
             self.flash_console.append(f"Error: {str(e)}")
         finally:
             QApplication.restoreOverrideCursor()
@@ -1722,32 +1888,21 @@ class ESP32ControlGUI(QMainWindow):
             "CYD2USB.zip": "esp32",
             "CYDMicroUSB.zip": "esp32",
             "CYDDualUSB.zip": "esp32",
-            "CYD2USB2.4Inch.zip": "esp32",
-            "CYD2USB2.4Inch_C.zip": "esp32",
-            "CYD2432S028R.zip": "esp32",
-            "Waveshare_LCD.zip": "esp32s3",
-            "Crowtech_LCD.zip": "esp32s3",
-            "Flipper_JCMK_GPS.zip": "esp32s2",
-            "LilyGo-T-Deck.zip": "esp32s3",
-            "LilyGo-TEmbedC1101.zip": "esp32s3",
-            "LilyGo-S3TWatch.zip": "esp32s3",
         }
-        chip_type = release_assets.get(name)
-        if chip_type:
-            idx = self.release_chip_combo.findText(chip_type, Qt.MatchFlag.MatchFixedString)
-            if idx >= 0:
-                self.release_chip_combo.setCurrentIndex(idx)
-                self.flash_bundle_status.setText(f"Chip auto-selected: {chip_type}")
-                self.flash_console.append(f"Chip auto-selected: {chip_type}")
+        chip = release_assets.get(name, "")
+        if chip:
+            self.custom_chip_combo.setCurrentText(chip)
+            self.selected_chip = chip
 
+        # --- Download the asset ---
+        import requests
+        import tempfile
+        import os
+        temp_dir = tempfile.gettempdir()
+        safe_name = os.path.basename(name)
+        temp_path = os.path.join(temp_dir, safe_name)
+        self.flash_console.append(f"Downloading asset: {name} ...")
         try:
-            import requests
-            import tempfile
-            import os
-            temp_dir = tempfile.gettempdir()
-            safe_name = os.path.basename(name)
-            temp_path = os.path.join(temp_dir, safe_name)
-            self.flash_console.append(f"Downloading asset: {name} ...")
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
             with open(temp_path, "wb") as f:
@@ -1767,5 +1922,171 @@ class ESP32ControlGUI(QMainWindow):
         # Fetch releases when switching to the Flash Release Bundle panel
         if index == 1:  # 1 = "Flash Release Bundle"
             self.fetch_github_releases()
+        # Show warning when switching to Custom Build panel
+        if index == 2:
+            QMessageBox.warning(
+                self,
+                "Custom Build Warning",
+                "Use at your own risk. Support will not be provided for unofficial images"
+            )
+
+    def run_idf_menuconfig(self):
+        """Run idf.py menuconfig in the project root (../../) in a new terminal window (cross-platform)."""
+        import os
+        import sys
+        import shutil
+        from PyQt6.QtWidgets import QMessageBox
+
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+        idf_cmd = "idf.py menuconfig"
+
+        self.flash_console.append(f"Opening terminal to run: {idf_cmd}\n")
+
+        try:
+            if sys.platform.startswith("linux"):
+                # Try common Linux terminals
+                terminals = [
+                    ("gnome-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
+                    ("xfce4-terminal", f'--command="bash -c \'cd \\"{project_root}\\"; {idf_cmd}; exec bash\'"'),
+                    ("konsole", f'--workdir "{project_root}" -e bash -c "{idf_cmd}; exec bash"'),
+                    ("xterm", f'-e "cd \\"{project_root}\\"; {idf_cmd}; bash"'),
+                    ("lxterminal", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
+                    ("mate-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
+                    ("tilix", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
+                    ("alacritty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
+                    ("kitty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}; exec bash"'),
+                ]
+                for term, args in terminals:
+                    if shutil.which(term):
+                        os.system(f'{term} {args}')
+                        return
+                raise RuntimeError("No supported terminal emulator found. Please install gnome-terminal, konsole, xterm, etc.")
+
+            elif sys.platform.startswith("win"):
+                # Windows: use start with cmd.exe
+                cmd = f'start cmd.exe /K "cd /d {project_root} && {idf_cmd}"'
+                os.system(cmd)
+                return
+
+            elif sys.platform == "darwin":
+                # macOS: use osascript to open Terminal.app
+                osa_script = f'''
+                tell application "Terminal"
+                    activate
+                    do script "cd \\"{project_root}\\"; {idf_cmd}"
+                end tell
+                '''
+                os.system(f'osascript -e \'{osa_script}\'')
+                return
+
+            else:
+                raise RuntimeError(f"Unsupported OS: {sys.platform}")
+
+        except Exception as e:
+            self.flash_console.append(f"Failed to run idf.py menuconfig: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to run idf.py menuconfig:\n{e}")
+
+    def run_idf_set_target(self):
+        """Run idf.py set-target for the selected chip."""
+        import subprocess
+        import os
+        from PyQt6.QtWidgets import QMessageBox
+
+        chip = self.custom_chip_combo.currentText()
+        if not chip or chip == "Select Chip":
+            QMessageBox.warning(self, "No Chip Selected", "Please select a chip type first.")
+            return
+
+        self.flash_console.append(f"Setting ESP-IDF target to {chip}...\n")
+        try:
+            # Set working directory to two levels up from this script
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+            process = subprocess.Popen(
+                ["idf.py", "set-target", chip],
+                cwd=project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            for line in process.stdout:
+                self.flash_console.append(line.rstrip())
+                self.flash_console.ensureCursorVisible()
+                QApplication.processEvents()
+            process.wait()
+            if process.returncode == 0:
+                self.flash_console.append(f"ESP-IDF target set to {chip} successfully.")
+            else:
+                self.flash_console.append("Failed to set ESP-IDF target. See errors above.")
+        except Exception as e:
+            self.flash_console.append(f"Error: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to run idf.py set-target:\n{e}")
+
+    def run_idf_fullclean(self):
+        """Run idf.py fullclean in the project root (../../) as a subprocess and show output in the console."""
+        import os
+        import subprocess
+        from PyQt6.QtWidgets import QMessageBox, QApplication
+
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+        idf_cmd = ["idf.py", "fullclean"]
+
+        self.flash_console.append("Running: idf.py fullclean\n")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            process = subprocess.Popen(
+                idf_cmd,
+                cwd=project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            for line in process.stdout:
+                self.flash_console.append(line.rstrip())
+                self.flash_console.ensureCursorVisible()
+                QApplication.processEvents()
+            process.wait()
+            if process.returncode == 0:
+                self.flash_console.append("idf.py fullclean finished successfully.")
+            else:
+                self.flash_console.append("idf.py fullclean exited with errors.")
+        except Exception as e:
+            self.flash_console.append(f"Failed to run idf.py fullclean: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to run idf.py fullclean:\n{e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def run_idf_build(self):
+        """Run idf.py build in the project root (../../) as a subprocess and show output in the console."""
+        import os
+        import subprocess
+        from PyQt6.QtWidgets import QMessageBox, QApplication
+
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+        idf_cmd = ["idf.py", "build"]
+
+        self.flash_console.append("Running: idf.py build\n")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            process = subprocess.Popen(
+                idf_cmd,
+                cwd=project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            for line in process.stdout:
+                self.flash_console.append(line.rstrip())
+                self.flash_console.ensureCursorVisible()
+                QApplication.processEvents()
+            process.wait()
+            if process.returncode == 0:
+                self.flash_console.append("idf.py build finished successfully.")
+            else:
+                self.flash_console.append("idf.py build exited with errors.")
+        except Exception as e:
+            self.flash_console.append(f"Failed to run idf.py build: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to run idf.py build:\n{e}")
+        finally:
+            QApplication.restoreOverrideCursor()
 
 
