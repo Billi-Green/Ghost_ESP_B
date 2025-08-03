@@ -191,6 +191,8 @@ def find_esp_idf(auto_download: bool = False) -> Optional[str]:
             "/opt/espressif/esp-idf",
             f"{home}/esp/esp-idf-v5.5",
             f"{home}/esp/esp-idf-v5.4.1",
+            f"{home}/esp/v5.5/esp-idf",
+            f"{home}/esp/v5.4.1/esp-idf",
             os.path.join(script_dir, "esp-idf-v5.5"),
             os.path.join(script_dir, "esp-idf-v5.4.1"),
             os.path.join(script_dir, "esp-idf")
