@@ -1416,7 +1416,6 @@ class ESP32ControlGUI(QMainWindow):
         self.port_combo.clear()
         ports = []
         for port in list_ports.comports():
-            # Filter out system ports commonly found on Linux
             if port.device.startswith("/dev/ttyS"):
                 continue
             if port.device.startswith("/dev/ttyAMA"):
@@ -1425,17 +1424,41 @@ class ESP32ControlGUI(QMainWindow):
                 continue
             if port.device.startswith("/dev/pts"):
                 continue
-            ports.append(port.device)
-        self.port_combo.addItems(ports)
+            label = port.device
+            try:
+                desc = (port.description or "").lower()
+                manu = (getattr(port, "manufacturer", "") or "").lower()
+                vid = getattr(port, "vid", None)
+                pid = getattr(port, "pid", None)
+                looks_esp = False
+                if vid is not None and pid is not None:
+                    if (vid == 0x303A) or (vid == 0x0403 and pid == 0x6001) or (vid == 0x10C4 and pid == 0xEA60) or (vid == 0x1A86 and pid in (0x7523, 0x5523)):
+                        looks_esp = True
+                if ("cp210" in desc) or ("ch340" in desc) or ("ftdi" in desc) or ("esp32" in desc) or ("silicon labs" in manu) or ("wch" in manu):
+                    looks_esp = True
+                if looks_esp:
+                    label = f"Maybe ESP32: {port.description}"
+                else:
+                    if port.description:
+                        label = f"{port.description}"
+            except Exception:
+                pass
+            ports.append((label, port.device))
+        for label, device in ports:
+            self.port_combo.addItem(label, device)
+        if ports:
+            self.port_combo.setCurrentIndex(0)
 
     def toggle_connection(self):
         """Connect or disconnect from the selected serial port."""
         if not self.serial_port or not self.serial_port.is_open:
             try:
-                port = self.port_combo.currentText()
+                # get actual device from combo data if available
+                data = self.port_combo.currentData()
+                port = data if data else self.port_combo.currentText().split()[0]
                 self.serial_port = serial.Serial(port, 115200, timeout=1)
                 self.connect_btn.setText("Disconnect")
-                self.connect_btn.setStyleSheet("")  # Remove highlight
+                self.connect_btn.setStyleSheet("")
                 log_message(self.log_text, f"Connected to {port}")
 
                 # Start monitor thread
