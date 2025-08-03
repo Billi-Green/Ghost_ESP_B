@@ -4,13 +4,16 @@ import serial
 from serial_threads import SerialMonitorThread, PortalFileSenderThread
 from dialogs import show_select_ap_dialog, show_custom_beacon_dialog, show_printer_dialog
 from utils import log_message, timestamp
+from settings import AppSettings, ThemeManager, TimestampManager, AppSettingsDialog
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
-                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar, QSizePolicy, QStackedWidget)
+                             QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar, QSizePolicy, QStackedWidget,
+                             QMenuBar, QDialogButtonBox, QSlider)
+from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
-from PyQt6.QtGui import QFont, QTextCursor, QPalette, QColor, QIcon
+from PyQt6.QtGui import QFont, QTextCursor, QIcon
 from functools import partial
 import glob
 import requests
@@ -37,8 +40,14 @@ class ESP32ControlGUI(QMainWindow):
         self.serial_port = None
         self.monitor_thread = None
 
-        # Set dark theme
-        self.setup_dark_theme()
+        # Initialize app settings
+        self.app_settings = AppSettings()
+        
+        # Set up menu bar
+        self.setup_menu_bar()
+
+        # Apply theme based on settings
+        self.apply_theme()
 
         # Create central widget
         central_widget = QWidget()
@@ -85,6 +94,48 @@ class ESP32ControlGUI(QMainWindow):
         # Reconnect settings
         self.reconnect_attempts = 0
         self.reconnect_base_interval = 2000  # 2 seconds
+
+
+
+    def setup_menu_bar(self):
+        """Set up the application menu bar."""
+        menubar = self.menuBar()
+        
+        # Settings menu
+        settings_menu = menubar.addMenu('Preferences')
+        
+        settings_action = QAction('Config...', self)
+        settings_action.triggered.connect(self.show_app_settings_dialog)
+        settings_menu.addAction(settings_action)
+
+    def apply_theme(self):
+        """Apply the selected theme to the application."""
+        theme = self.app_settings.get("theme", "dark")
+        ThemeManager.apply_theme(self, theme)
+        
+        # Apply text size
+        text_size = self.app_settings.get("text_size", "medium")
+        ThemeManager.apply_text_size(self, text_size)
+
+
+
+    def show_app_settings_dialog(self):
+        """Show the application settings dialog."""
+        old_show_timestamps = self.app_settings.get("show_timestamps", True)
+        dialog = AppSettingsDialog(self, self.app_settings.settings)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_settings = dialog.get_settings()
+            new_show_timestamps = new_settings.get("show_timestamps", True)
+            
+            self.app_settings.update(new_settings)
+            self.app_settings.save_settings()
+            self.apply_theme()
+            
+            # Update existing logs if timestamp setting changed
+            if old_show_timestamps != new_show_timestamps:
+                TimestampManager.update_existing_logs_timestamps(self, new_show_timestamps)
+                
+
 
     def resizeEvent(self, event):
         """
@@ -135,23 +186,7 @@ class ESP32ControlGUI(QMainWindow):
         else:
             self.overlay.hide()
 
-    def setup_dark_theme(self):
-        """Apply a dark theme to the application."""
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
-        palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 25))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
-        palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
-        palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
-        palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
-        palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
-        palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
-        self.setPalette(palette)
+
 
     def setup_ui(self, main_layout):
         """
@@ -840,6 +875,7 @@ class ESP32ControlGUI(QMainWindow):
         self.port_combo = QComboBox()
         self.port_combo.setMinimumWidth(150)
         self.port_combo.setToolTip("Select the serial port for ESP32")
+        self.port_combo.currentTextChanged.connect(self.on_port_changed)
         connection_layout.addWidget(QLabel("Port:"))
         connection_layout.addWidget(self.port_combo)
 
@@ -888,6 +924,18 @@ class ESP32ControlGUI(QMainWindow):
         # Set the size policy to not expand vertically
         connection_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(connection_group)
+
+    def on_port_changed(self, new_port):
+        """
+        Handle port combo box selection change.
+        Auto-disconnect if currently connected to prevent connection issues.
+        
+        Args:
+            new_port (str): The newly selected port.
+        """
+        if self.serial_port and self.serial_port.is_open:
+            log_message(self.log_text, f"Port changed to {new_port}, disconnecting from current port", self.app_settings.get("show_timestamps", True))
+            self.disconnect()
 
     def update_connection_status(self, connected):
         """
@@ -1459,7 +1507,7 @@ class ESP32ControlGUI(QMainWindow):
                 self.serial_port = serial.Serial(port, 115200, timeout=1)
                 self.connect_btn.setText("Disconnect")
                 self.connect_btn.setStyleSheet("")
-                log_message(self.log_text, f"Connected to {port}")
+                log_message(self.log_text, f"Connected to {port}", self.app_settings.get("show_timestamps", True))
 
                 # Start monitor thread
                 self.monitor_thread = SerialMonitorThread(self.serial_port)
@@ -1477,11 +1525,11 @@ class ESP32ControlGUI(QMainWindow):
                 elif "Device or resource busy" in error_msg:
                     error_msg += "\n\nThe port may be in use by another application."
                 QMessageBox.critical(self, "Connection Error", error_msg)
-                log_message(self.log_text, f"Connection error: {error_msg}")
+                log_message(self.log_text, f"Connection error: {error_msg}", self.app_settings.get("show_timestamps", True))
                 self.update_connection_status(False)
             except Exception as e:
                 QMessageBox.critical(self, "Connection Error", str(e))
-                log_message(self.log_text, f"Connection error: {str(e)}")
+                log_message(self.log_text, f"Connection error: {str(e)}", self.app_settings.get("show_timestamps", True))
                 self.update_connection_status(False)
         else:
             self.disconnect()
@@ -1496,9 +1544,9 @@ class ESP32ControlGUI(QMainWindow):
             self.serial_port.close()
         self.connect_btn.setText("Connect")
         self.connect_btn.setStyleSheet("")  # Remove highlight
-        log_message(self.log_text, "Disconnected")
+        log_message(self.log_text, "Disconnected", self.app_settings.get("show_timestamps", True))
         self.set_main_ui_enabled(False)
-        self.update_connection_status(False)  # <-- Ensure status updates on disconnect
+        self.update_connection_status(False)  # Ensure status updates on disconnect
 
     def send_command(self, command):
         """
@@ -1511,11 +1559,11 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.warning(self, "Not Connected", "Please connect to ESP32 first")
             return
 
-        log_message(self.log_text, f"Sending command: {command}")
+        log_message(self.log_text, f"Sending command: {command}", self.app_settings.get("show_timestamps", True))
         try:
             self.serial_port.write(f"{command}\n".encode())
         except Exception as e:
-            log_message(self.log_text, f"Error sending command: {str(e)}")
+            log_message(self.log_text, f"Error sending command: {str(e)}", self.app_settings.get("show_timestamps", True))
             self.disconnect()  # Disconnect
 
     def eventFilter(self, obj, event):
@@ -1562,7 +1610,7 @@ class ESP32ControlGUI(QMainWindow):
             response (str): The response string.
         """
         if response.startswith("Error reading serial:"):
-            log_message(self.log_text, response)
+            log_message(self.log_text, response, self.app_settings.get("show_timestamps", True))
             self.disconnect()
             self.update_connection_status(False)  # <-- Ensure status updates on error
             return
@@ -1604,10 +1652,13 @@ class ESP32ControlGUI(QMainWindow):
                 self.display_text.append(response)
 
         except json.JSONDecodeError:
-            # Format the text with timestamp
-            ts = timestamp("%H:%M:%S")
-            formatted_text = f"[{ts}] {response}"
-            self.display_text.append(formatted_text)
+            # Format the text with timestamp if enabled
+            if self.app_settings.get("show_timestamps", True):
+                ts = timestamp("%H:%M:%S")
+                formatted_text = f"[{ts}] {response}"
+                self.display_text.append(formatted_text)
+            else:
+                self.display_text.append(response)
 
         self.display_text.ensureCursorVisible()
 
@@ -1618,7 +1669,7 @@ class ESP32ControlGUI(QMainWindow):
         try:
             with open(filename, 'w') as f:
                 f.write(self.display_text.toPlainText())
-            log_message(self.log_text, f"Log saved to {filename}")
+            log_message(self.log_text, f"Log saved to {filename}", self.app_settings.get("show_timestamps", True))
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save log: {str(e)}")
 
@@ -1677,8 +1728,11 @@ class ESP32ControlGUI(QMainWindow):
         Args:
             status (str): The status message.
         """
-        ts = timestamp("%H:%M:%S")
-        self.display_text.append(f"[{ts}] Status: {status}")
+        if self.app_settings.get("show_timestamps", True):
+            ts = timestamp("%H:%M:%S")
+            self.display_text.append(f"[{ts}] Status: {status}")
+        else:
+            self.display_text.append(f"Status: {status}")
         self.display_text.ensureCursorVisible()
 
     def closeEvent(self, event):
@@ -1788,7 +1842,7 @@ class ESP32ControlGUI(QMainWindow):
                         self.serial_port = serial.Serial(port, 115200, timeout=1)
                         self.connect_btn.setText("Disconnect")
                         self.connect_btn.setStyleSheet("")
-                        log_message(self.log_text, f"Auto-reconnected to {port}")
+                        log_message(self.log_text, f"Auto-reconnected to {port}", self.app_settings.get("show_timestamps", True))
 
                         self.monitor_thread = SerialMonitorThread(self.serial_port)
                         self.monitor_thread.data_received.connect(self.process_response)
@@ -1811,7 +1865,7 @@ class ESP32ControlGUI(QMainWindow):
                         backoff = min(self.reconnect_base_interval * (2 ** self.reconnect_attempts), 32000)
                         self.reconnect_timer.setInterval(backoff)
                     except Exception as e:
-                        log_message(self.log_text, f"Auto-reconnect failed: {str(e)}")
+                        log_message(self.log_text, f"Auto-reconnect failed: {str(e)}", self.app_settings.get("show_timestamps", True))
                         self.update_connection_status(False)
                         self.set_main_ui_enabled(False)
                         self.reconnect_attempts += 1
@@ -2168,7 +2222,7 @@ class ESP32ControlGUI(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to run idf.py fullclean:\n{e}")
         finally:
             QApplication.restoreOverrideCursor()
-
+            
     def run_idf_build(self):
         """Run idf.py build in the project root (../../) as a subprocess and show output in the console."""
         import os
@@ -2178,7 +2232,8 @@ class ESP32ControlGUI(QMainWindow):
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
         idf_cmd = ["idf.py", "build"]
 
-        self.flash_console.append("Running: idf.py build\n")
+        if hasattr(self, 'flash_console'):
+            self.flash_console.append("Running: idf.py build\n")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             process = subprocess.Popen(
@@ -2188,19 +2243,24 @@ class ESP32ControlGUI(QMainWindow):
                 stderr=subprocess.STDOUT,
                 text=True
             )
-            for line in process.stdout:
-                self.flash_console.append(line.rstrip())
-                self.flash_console.ensureCursorVisible()
-                QApplication.processEvents()
+            if hasattr(self, 'flash_console'):
+                for line in process.stdout:
+                    self.flash_console.append(line.rstrip())
+                    self.flash_console.ensureCursorVisible()
+                    QApplication.processEvents()
             process.wait()
-            if process.returncode == 0:
-                self.flash_console.append("idf.py build finished successfully.")
-            else:
-                self.flash_console.append("idf.py build exited with errors.")
+            if hasattr(self, 'flash_console'):
+                if process.returncode == 0:
+                    self.flash_console.append("idf.py build finished successfully.")
+                else:
+                    self.flash_console.append("idf.py build exited with errors.")
         except Exception as e:
-            self.flash_console.append(f"Failed to run idf.py build: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to run idf.py build:\n{e}")
+            error_msg = f"Failed to run idf.py build: {e}"
+            if hasattr(self, 'flash_console'):
+                self.flash_console.append(error_msg)
+            QMessageBox.critical(self, "Error", error_msg)
         finally:
             QApplication.restoreOverrideCursor()
+
 
 
