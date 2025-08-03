@@ -673,6 +673,19 @@ void apply_power_management_config(bool power_save_enabled) {
     ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
   }
 
+#if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
+  // Reconfigure LEDC timer after power management changes to maintain stable PWM
+  ledc_timer_config_t ledc_timer = {
+      .speed_mode = LEDC_LOW_SPEED_MODE,
+      .duty_resolution = LEDC_TIMER_10_BIT,
+      .timer_num = BACKLIGHT_TIMER,
+      .freq_hz = 5000, // 5 kHz
+      .clk_cfg = LEDC_USE_RC_FAST_CLK, // Auto-select best clock for current power mode
+  };
+  ledc_timer_config(&ledc_timer);
+  ESP_LOGI(TAG, "LEDC timer reconfigured for power save mode: %s", power_save_enabled ? "enabled" : "disabled");
+#endif
+
   // control ap based on power save mode
   if (power_save_enabled) {
     ap_manager_stop_services();
@@ -690,7 +703,7 @@ void display_manager_init(void) {
       .duty_resolution = LEDC_TIMER_10_BIT,
       .timer_num = BACKLIGHT_TIMER,
       .freq_hz = 5000, // 5 kHz
-      .clk_cfg = LEDC_AUTO_CLK,
+      .clk_cfg = LEDC_USE_RC_FAST_CLK, // Use stable APB clock for reliable PWM 
   };
   ledc_timer_config(&ledc_timer);
 
