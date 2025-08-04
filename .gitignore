@@ -27,6 +27,7 @@ scripts/site/rollup.config.mjs
 /.cache
 dependencies.lock
 .venv
+ghost-control-venv
 __pycache__
 *.pyc
-ghost-control-venv
+local_builds

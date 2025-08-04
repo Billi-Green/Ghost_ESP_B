@@ -22,6 +22,9 @@ if("${IDF_TARGET}" STREQUAL "esp32s3")
     list(APPEND sources "vendor/m5/m5gfx_wrapper.cpp")
     # Add M5GFX to the required components
     list(APPEND required_components M5GFX)
+    
+    # Add I80 display driver for TDisplay S3
+    list(APPEND sources "vendor/i80_display.c")
 endif()
 
 idf_component_register(SRCS ${sources}
