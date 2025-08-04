@@ -13,7 +13,8 @@
 
 - **New Boards**
   - LilyGo TEmbed C1101
-  - LilyGo T-Deck — @tototo31
+  - LilyGo TDeck — @tototo31
+  - LilyGo TDisplay S3 Touch
   - AITRIP CYD / ESP2432S028R — @tototo31
 
 - **Infrared**
