@@ -187,6 +187,10 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - LilyGo TEmbed C1101 
 
+- LilyGo T-Display S3 Touch
+
+- LilyGo T-Deck
+
 </details>
 
 ---
