@@ -26,3 +26,6 @@ scripts/site/package.json
 scripts/site/rollup.config.mjs
 /.cache
 dependencies.lock
+__pycache__
+*.pyc
+local_builds
