@@ -13,13 +13,15 @@
 
 - **New Boards**
   - LilyGo TEmbed C1101
-  - LilyGo T-Deck — @tototo31
+  - LilyGo TDeck — @tototo31
+  - LilyGo TDisplay S3 Touch
   - AITRIP CYD / ESP2432S028R — @tototo31
 
 - **Infrared**
   - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
-  - Ability to Rename, Delete, Add remotes and signals (only enabled on TEmbed C1101)
-
+  - Ability to Rename, Delete, Add remotes (only enabled on TEmbed C1101)
+  - Easy Learn Mode: **Name buttons automatically**
+  
 ### Added
 
 - Attacks
@@ -90,6 +92,7 @@
   - Add wifi_manager_stop_beacon function
   - Check if an RMT channel already exists and clean it up before making a new one
   - Update LEDs and Status bar when changing from rainbow mode
+  - Randomise BLE Spam MAC addr and add more devices
 
 
 

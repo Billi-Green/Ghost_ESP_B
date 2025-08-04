@@ -22,6 +22,7 @@ static bool retry_cleanup_flag = false;
 static lv_timer_t *terminal_cleanup_retry_timer = NULL;
 static bool terminal_active = false;
 static bool is_stopping = false;
+static bool terminal_initialized = false; // Flag to track if terminal has been fully initialized
 #define MAX_TEXT_LENGTH 4096
 #define CLEANUP_THRESHOLD (MAX_TEXT_LENGTH * 3 / 4)
 #define CLEANUP_AMOUNT (MAX_TEXT_LENGTH / 2)
@@ -59,6 +60,9 @@ typedef struct {
 } MessageQueue;
 
 static MessageQueue message_queue = {.head = 0, .tail = 0, .count = 0};
+
+// Add a pre-initialization queue for messages that arrive before terminal is ready
+static MessageQueue pre_init_message_queue = {.head = 0, .tail = 0, .count = 0};
 
 static void submit_text() {
     if (input_len > 0) {
@@ -107,6 +111,12 @@ static void clear_message_queue(void) {
   message_queue.head = 0;
   message_queue.tail = 0;
   message_queue.count = 0;
+}
+
+static void clear_pre_init_message_queue(void) {
+  pre_init_message_queue.head = 0;
+  pre_init_message_queue.tail = 0;
+  pre_init_message_queue.count = 0;
 }
 
 static void process_queued_messages(void) {
@@ -340,6 +350,23 @@ void terminal_view_create(void) {
             ESP_LOGE(TAG, "Failed to create terminal update timer");
         }
     }
+    
+    // Process any messages that were queued before terminal was initialized
+    if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // Move all pre-initialization messages to the main message queue
+        while (pre_init_message_queue.count > 0) {
+            const char *msg = pre_init_message_queue.messages[pre_init_message_queue.head];
+            queue_message(msg);
+            // dequeue from pre-init queue
+            pre_init_message_queue.head = (pre_init_message_queue.head + 1) % MAX_QUEUE_SIZE;
+            pre_init_message_queue.count--;
+        }
+        xSemaphoreGive(terminal_mutex);
+    }
+    
+    // Mark terminal as fully initialized
+    terminal_initialized = true;
+    
     createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
 }
 static void terminal_retry_cleanup_cb(lv_timer_t *timer) {
@@ -360,9 +387,11 @@ void terminal_view_destroy(void) {
     // Signal all callbacks/timers to stop
     terminal_active = false;
     is_stopping = true;
+    terminal_initialized = false; // Reset initialization flag
 
     // Clear message queue and reset state
     clear_message_queue();
+    clear_pre_init_message_queue(); // Clear pre-initialization queue
     current_text_length = 0;
     input_len = 0;
     input_buffer[0] = '\0';
@@ -413,6 +442,39 @@ void terminal_view_destroy(void) {
 
 void terminal_view_add_text(const char *text) {
   if (!text || is_stopping || text[0] == '\0') {
+      return;
+  }
+
+  // If terminal is not yet initialized, queue messages in the pre-init queue
+  if (!terminal_initialized) {
+      // If mutex doesn't exist yet, just add directly to pre-init queue without semaphore
+      if (!terminal_mutex) {
+          // Direct access to pre-init queue without semaphore since it doesn't exist yet
+          if (pre_init_message_queue.count >= MAX_QUEUE_SIZE) {
+              pre_init_message_queue.head = (pre_init_message_queue.head + 1) % MAX_QUEUE_SIZE;
+              pre_init_message_queue.count--;
+          }
+          strncpy(pre_init_message_queue.messages[pre_init_message_queue.tail], text, MAX_MESSAGE_SIZE - 1);
+          pre_init_message_queue.messages[pre_init_message_queue.tail][MAX_MESSAGE_SIZE - 1] = '\0';
+          pre_init_message_queue.tail = (pre_init_message_queue.tail + 1) % MAX_QUEUE_SIZE;
+          pre_init_message_queue.count++;
+      } else {
+          // Mutex exists, use it to protect access
+          if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+              // Use the pre-initialization queue when terminal is not ready
+              if (pre_init_message_queue.count >= MAX_QUEUE_SIZE) {
+                  pre_init_message_queue.head = (pre_init_message_queue.head + 1) % MAX_QUEUE_SIZE;
+                  pre_init_message_queue.count--;
+              }
+              strncpy(pre_init_message_queue.messages[pre_init_message_queue.tail], text, MAX_MESSAGE_SIZE - 1);
+              pre_init_message_queue.messages[pre_init_message_queue.tail][MAX_MESSAGE_SIZE - 1] = '\0';
+              pre_init_message_queue.tail = (pre_init_message_queue.tail + 1) % MAX_QUEUE_SIZE;
+              pre_init_message_queue.count++;
+              xSemaphoreGive(terminal_mutex);
+          } else {
+              ESP_LOGW(TAG, "Failed to acquire terminal mutex in add_text (pre-init)");
+          }
+      }
       return;
   }
 
