@@ -88,6 +88,7 @@ static void anim_set_x(void *obj, int32_t v) {
 static void update_menu_item(bool slide_left) {
     if (current_item_obj) {
         lv_obj_del(current_item_obj);
+        current_item_obj = NULL; // a real nasty bug was here
     }
 
     current_item_obj = lv_btn_create(menu_container);
