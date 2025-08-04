@@ -15,6 +15,8 @@
 #include "esp_idf_version.h"
 #if ESP_IDF_VERSION <= ESP_IDF_VERSION_VAL(5,0,0)
 #include "rom/gpio.h"
+#else
+#include "esp_rom_gpio.h"
 #endif
 typedef struct {
     bool pwm_control; // true: LEDC is used, false: GPIO is used
@@ -60,7 +62,11 @@ disp_backlight_h disp_backlight_new(const disp_backlight_config_t *config)
 
         ESP_ERROR_CHECK(ledc_timer_config(&LCD_backlight_timer));
         ESP_ERROR_CHECK(ledc_channel_config(&LCD_backlight_channel));
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5,0,0)
+        esp_rom_gpio_connect_out_signal(config->gpio_num, ledc_periph_signal[LEDC_LOW_SPEED_MODE].sig_out0_idx + config->channel_idx, config->output_invert, 0);
+#else
         gpio_iomux_out(config->gpio_num, ledc_periph_signal[LEDC_LOW_SPEED_MODE].sig_out0_idx + config->channel_idx, config->output_invert);
+#endif
     }
     else
     {
@@ -72,7 +78,11 @@ disp_backlight_h disp_backlight_new(const disp_backlight_config_t *config)
         esp_rom_gpio_pad_select_gpio(config->gpio_num);
 #endif
         ESP_ERROR_CHECK(gpio_set_direction(config->gpio_num, GPIO_MODE_OUTPUT));
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5,0,0)
+        esp_rom_gpio_connect_out_signal(config->gpio_num, SIG_GPIO_OUT_IDX, config->output_invert, 0);
+#else
         gpio_iomux_out(config->gpio_num, SIG_GPIO_OUT_IDX, config->output_invert);
+#endif
     }
 
     return (disp_backlight_h)bckl_dev;
