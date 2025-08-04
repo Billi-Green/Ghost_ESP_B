@@ -16,6 +16,7 @@
   - LilyGo TDeck — @tototo31
   - LilyGo TDisplay S3 Touch
   - AITRIP CYD / ESP2432S028R — @tototo31
+  - ESP32-C5 with 2.8" ILI9341 TFT (non-touch)
 
 - **Infrared**
   - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
