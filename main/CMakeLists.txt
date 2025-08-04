@@ -1,7 +1,11 @@
-file(GLOB_RECURSE app_sources 
+file(GLOB_RECURSE app_sources
     "${CMAKE_SOURCE_DIR}/main/*.c"
     "${CMAKE_SOURCE_DIR}/main/core/esp_comm_manager.c"
 )
+# Exclude the parallel I80 display driver from the default build. It relies on
+# ESP32-S3 specific APIs and breaks compilation on other targets such as the
+# ESP32-C5. Boards that need this driver explicitly add it later.
+list(FILTER app_sources EXCLUDE REGEX ".*/vendor/i80_display\\.c$")
 # Explicitly include infrared view implementation
 list(APPEND app_sources "${CMAKE_SOURCE_DIR}/main/managers/views/infrared_view.c")
 file(GLOB_RECURSE image_sources "${CMAKE_SOURCE_DIR}/main/vendor/images/*.c")
