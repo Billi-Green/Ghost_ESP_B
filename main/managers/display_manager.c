@@ -25,10 +25,16 @@
 #include "managers/ap_manager.h"
 #include "core/serial_manager.h"
 #include "managers/wifi_manager.h"
+#include "driver/i2c.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
 #include "vendor/m5/m5gfx_wrapper.h"
+#endif
+
+#ifdef CONFIG_USE_TDISPLAY_S3
+#include "../vendor/i80_display.h"
+#include "lvgl_touch/touch_driver.h"
 #endif
 
 #ifdef CONFIG_HAS_BATTERY_ADC
@@ -171,6 +177,8 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
     }
 #ifdef CONFIG_USE_CARDPUTER
     m5stack_lvgl_render_callback(drv, area, color_p);
+#elif defined(CONFIG_USE_TDISPLAY_S3)
+    i80_display_flush_cb(drv, area, color_p);
 #else
     disp_driver_flush(drv, area, color_p);
 #endif
@@ -186,6 +194,10 @@ void set_backlight_brightness(uint8_t percentage); // forward declaration
 
 #elif CONFIG_USE_TDECK
 #define _batAdcCh ADC1_GPIO4_CHANNEL
+#elif CONFIG_USE_TDISPLAY_S3
+#define _batAdcCh ADC1_GPIO4_CHANNEL
+#else
+
 #endif
 
 #define _batAdcUnit ADC_UNIT_1
@@ -461,23 +473,33 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
 
   lv_obj_invalidate(status_bar);
 
-  // set status bar icon colors based on power save mode
+  // set status bar icon colors based on power save mode and AP state
+  lv_color_t default_color = lv_color_hex(0xCCCCCC);
+  lv_color_t gray_color = lv_color_hex(0x808080); // Gray for inactive state
+  
+  // WiFi icon color logic
+  if (wifi_label && lv_obj_is_valid(wifi_label)) {
+      // Check if AP should be active (enabled in settings AND power saving disabled)
+      bool ap_should_be_active = settings_get_ap_enabled(&G_Settings) && !power_save_enabled;
+      
+      if (!ap_should_be_active) {
+          // AP is disabled or power saving is on - show gray
+          lv_obj_set_style_text_color(wifi_label, gray_color, 0);
+      } else if (wifi_manager_is_evil_portal_active()) {
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
+      } else if (is_ap_active) {
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
+      } else {
+          lv_obj_set_style_text_color(wifi_label, default_color, 0);
+      }
+  }
+  
   if (power_save_enabled) {
     lv_color_t orange_color = lv_color_hex(0xFFA500); // orange like apple uses
     if (battery_label && lv_obj_is_valid(battery_label)) {
       lv_obj_set_style_text_color(battery_label, orange_color, 0);
     }
   } else {
-    lv_color_t default_color = lv_color_hex(0xCCCCCC);
-    if (wifi_label && lv_obj_is_valid(wifi_label)) {
-        if (wifi_manager_is_evil_portal_active()) {
-            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
-        } else if (is_ap_active) {
-            lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
-        } else {
-            lv_obj_set_style_text_color(wifi_label, default_color, 0);
-        }
-    }
     if (bt_label && lv_obj_is_valid(bt_label)) {
       lv_obj_set_style_text_color(bt_label, default_color, 0);
     }
@@ -535,6 +557,8 @@ static void status_update_cb(lv_timer_t *timer) {
   ESP_LOGD(TAG, "Status update - Battery: %d%%, Charging: %s, Has battery: %s",
            battery_percentage, is_charging ? "YES" : "NO", has_battery ? "YES" : "NO");
 
+  // WiFi icon should always be visible - pass true for wifi_enabled
+  // Color will be determined by AP state and power saving mode in update_status_bar
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
 }
@@ -640,6 +664,9 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   bool has_battery = get_battery_info(&power_level, &is_charging);
 
   int battery_percentage = has_battery ? power_level : -1;
+  
+  // WiFi icon should always be visible - pass true for wifi_enabled
+  // Color will be determined by AP state and power saving mode in update_status_bar
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
   if (!status_timer_initialized) {
@@ -659,6 +686,19 @@ void apply_power_management_config(bool power_save_enabled) {
     ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
   }
 
+#if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
+  // Reconfigure LEDC timer after power management changes to maintain stable PWM
+  ledc_timer_config_t ledc_timer = {
+      .speed_mode = LEDC_LOW_SPEED_MODE,
+      .duty_resolution = LEDC_TIMER_10_BIT,
+      .timer_num = BACKLIGHT_TIMER,
+      .freq_hz = 5000, // 5 kHz
+      .clk_cfg = LEDC_USE_RC_FAST_CLK, // Auto-select best clock for current power mode
+  };
+  ledc_timer_config(&ledc_timer);
+  ESP_LOGI(TAG, "LEDC timer reconfigured for power save mode: %s", power_save_enabled ? "enabled" : "disabled");
+#endif
+
   // control ap based on power save mode
   if (power_save_enabled) {
     ap_manager_stop_services();
@@ -676,7 +716,7 @@ void display_manager_init(void) {
       .duty_resolution = LEDC_TIMER_10_BIT,
       .timer_num = BACKLIGHT_TIMER,
       .freq_hz = 5000, // 5 kHz
-      .clk_cfg = LEDC_AUTO_CLK,
+      .clk_cfg = LEDC_USE_RC_FAST_CLK, // Use stable APB clock for reliable PWM 
   };
   ledc_timer_config(&ledc_timer);
 
@@ -686,7 +726,11 @@ void display_manager_init(void) {
       .channel = LEDC_CHANNEL_0,
       .timer_sel = BACKLIGHT_TIMER,
       .intr_type = LEDC_INTR_DISABLE,
+#ifdef CONFIG_USE_TDISPLAY_S3
+      .gpio_num = I80_BUS_BL_GPIO, // Use I80 backlight pin for TDisplay S3
+#else
       .gpio_num = CONFIG_LV_DISP_PIN_BCKL,
+#endif
       .duty = 0, // Set initial duty to 0
       .hpoint = 0,
       .sleep_mode = LEDC_SLEEP_MODE_KEEP_ALIVE,
@@ -697,9 +741,38 @@ void display_manager_init(void) {
 set_keyboard_brightness(0xFF); // Set to 100% brightness
 #endif
 #ifndef CONFIG_JC3248W535EN_LCD
+  // Initialize I2C driver for touch functionality
+#ifdef CONFIG_USE_TDISPLAY_S3
+  ESP_LOGI(TAG, "Initializing I2C for touch functionality");
+  i2c_config_t i2c_config = {
+    .mode = I2C_MODE_MASTER,
+    .sda_io_num = 18,  // TDisplay S3 I2C SDA pin
+    .scl_io_num = 17,  // TDisplay S3 I2C SCL pin
+    .sda_pullup_en = GPIO_PULLUP_ENABLE,
+    .scl_pullup_en = GPIO_PULLUP_ENABLE,
+    .master.clk_speed = 100000,  // Standard I2C speed for CST816
+  };
+  esp_err_t i2c_ret = i2c_param_config(I2C_NUM_0, &i2c_config);
+  if (i2c_ret == ESP_OK) {
+    i2c_ret = i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
+    if (i2c_ret == ESP_OK) {
+      ESP_LOGI(TAG, "I2C driver initialized successfully");
+    } else {
+      ESP_LOGE(TAG, "Failed to install I2C driver: %s", esp_err_to_name(i2c_ret));
+    }
+  } else {
+    ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(i2c_ret));
+  }
+#endif
   lv_init();
 #ifdef CONFIG_USE_CARDPUTER
   init_m5gfx_display();
+#elif defined(CONFIG_USE_TDISPLAY_S3)
+  esp_err_t ret = i80_display_init();
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "I80 display initialization failed: %s", esp_err_to_name(ret));
+    return;
+  }
 #else
   lvgl_driver_init();
 #endif
@@ -721,6 +794,9 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #ifdef CONFIG_USE_CARDPUTER
   int width = get_m5gfx_width();
   int height = get_m5gfx_height();
+#elif defined(CONFIG_USE_TDISPLAY_S3)
+  int width = I80_LCD_H_RES;
+  int height = I80_LCD_V_RES;
 #else
   int width = CONFIG_TFT_WIDTH;
   int height = CONFIG_TFT_HEIGHT;
@@ -738,6 +814,7 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
   disp_drv.flush_cb = invert_flush_cb;
   disp_drv.draw_buf = &disp_buf;
   lv_disp_drv_register(&disp_drv);
+
 #elif defined(CONFIG_JC3248W535EN_LCD)
   esp_err_t ret = lcd_axs15231b_init();
   if (ret != ESP_OK) {
@@ -921,7 +998,13 @@ void set_backlight_brightness(uint8_t percentage) {
     if (percentage > 100) percentage = 100;
     if (percentage < 0) percentage = 0;
 
-#if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
+#ifdef CONFIG_USE_TDISPLAY_S3
+    // TDisplay S3 backlight now uses LEDC for PWM control
+    uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    ESP_LOGI(TAG, "TDisplay S3 backlight: %d%% (LEDC PWM)", percentage);
+#elif defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
     uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);

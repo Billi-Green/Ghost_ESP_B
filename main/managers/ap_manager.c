@@ -488,7 +488,7 @@ esp_err_t ap_manager_init(void) {
             return ESP_ERR_NO_MEM;
         }
 
-        log_mutex = xSemaphoreCreateMutex();
+        log_mutex = xSemaphoreCreateRecursiveMutex();
         if (!log_mutex) {
             ESP_LOGE(TAG, "Failed to create log mutex");
             free(log_buffer);
@@ -687,8 +687,8 @@ void ap_manager_add_log(const char *log_message) {
     size_t message_length = strlen(log_message);
     if (message_length == 0) return;
     
-    // Take mutex with timeout
-    if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    // Take recursive mutex with timeout
+    if (xSemaphoreTakeRecursive(log_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Failed to take log mutex");
         return;
     }
@@ -722,7 +722,7 @@ void ap_manager_add_log(const char *log_message) {
         log_buffer_index += message_length;
     }
     
-    xSemaphoreGive(log_mutex);
+    xSemaphoreGiveRecursive(log_mutex);
 }
 
 esp_err_t ap_manager_start_services() {
