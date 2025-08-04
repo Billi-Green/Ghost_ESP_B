@@ -352,6 +352,7 @@ def get_build_targets() -> List[Dict[str, str]]:
         {"name": "esp32s3-generic", "idf_target": "esp32s3", "sdkconfig_file": "configs/sdkconfig.default.esp32s3", "zip_name": "esp32s3-generic.zip"},
         {"name": "esp32c3-generic", "idf_target": "esp32c3", "sdkconfig_file": "configs/sdkconfig.default.esp32c3", "zip_name": "esp32c3-generic.zip"},
         {"name": "esp32c5-generic", "idf_target": "esp32c5", "sdkconfig_file": "configs/sdkconfig.default.esp32c5", "zip_name": "esp32c5-generic-v01.zip"},
+        {"name": "esp32c5-ili9341", "idf_target": "esp32c5", "sdkconfig_file": "configs/sdkconfig.esp32c5-ili9341", "zip_name": "esp32c5-ili9341-v01.zip"},
         {"name": "esp32c6-generic", "idf_target": "esp32c6", "sdkconfig_file": "configs/sdkconfig.default.esp32c6", "zip_name": "esp32c6-generic.zip"},
         {"name": "Awok V5", "idf_target": "esp32s2", "sdkconfig_file": "configs/sdkconfig.default.esp32s2", "zip_name": "esp32v5_awok.zip"},
         {"name": "ghostboard", "idf_target": "esp32c6", "sdkconfig_file": "configs/sdkconfig.ghostboard", "zip_name": "ghostboard.zip"},

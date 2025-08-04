@@ -151,6 +151,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - DevKitC-ESP32-C5
 
+- ESP32-C5 + 2.8" ILI9341 TFT (non-touch) and 0.96" SSD1306 OLED
+
 - DevKitC-ESP32-C6
 
 - RabbitLabs GhostBoard
