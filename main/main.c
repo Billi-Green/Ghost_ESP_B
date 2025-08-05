@@ -16,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "esp_heap_caps.h"
 
 #ifdef CONFIG_WITH_ETHERNET
 // TODO
@@ -25,6 +26,14 @@
 #include "managers/views/splash_screen.h"
 #endif
 
+// Helper macro for measuring RAM usage
+#define MEASURE_INIT_RAM(name, init_call) do { \
+    size_t before = heap_caps_get_free_size(MALLOC_CAP_8BIT); \
+    ESP_LOGI(TAG, "Free RAM before %s: %d bytes", name, (int)before); \
+    init_call; \
+    size_t after = heap_caps_get_free_size(MALLOC_CAP_8BIT); \
+    ESP_LOGI(TAG, "Free RAM after %s: %d bytes (used: %d bytes)", name, (int)after, (int)(before - after)); \
+} while(0)
 
 int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) { return 0; }
 static const char *TAG = "Main.c";
@@ -52,14 +61,10 @@ void app_main(void) {
 #endif
 
 
-    ESP_LOGI(TAG, "Initializing Serial Manager");
-    serial_manager_init();
-
-    ESP_LOGI(TAG, "Initializing Wifi Manager");
-    wifi_manager_init();
-
+    MEASURE_INIT_RAM("Serial Manager", serial_manager_init());
+    MEASURE_INIT_RAM("Wifi Manager", wifi_manager_init());
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    // ble_init();
+    // MEASURE_INIT_RAM("BLE Manager", ble_init());
 #endif
 
 #ifdef CONFIG_USE_TDECK
@@ -125,22 +130,22 @@ void app_main(void) {
 
 #endif
     ESP_LOGI(TAG, "Initializing Commands");
-    command_init();
+    MEASURE_INIT_RAM("Commands init", command_init());
 
     ESP_LOGI(TAG, "Registering Commands");
-    register_commands();
+    MEASURE_INIT_RAM("Commands registration", register_commands());
 
     ESP_LOGI(TAG, "Initializing Settings");
-    settings_init(&G_Settings);
+    MEASURE_INIT_RAM("Settings init", settings_init(&G_Settings));
 
     ESP_LOGI(TAG, "Configuring WiFi STA from settings");
-    wifi_manager_configure_sta_from_settings();
+    MEASURE_INIT_RAM("WiFi STA Config", wifi_manager_configure_sta_from_settings());
 
     ESP_LOGI(TAG, "Initializing Comm Manager");
-    esp_comm_manager_init_with_defaults();
+    MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init_with_defaults());
 
     ESP_LOGI(TAG, "Initializing AP Manager");
-    ap_manager_init();
+    MEASURE_INIT_RAM("AP Manager", ap_manager_init());
 
 #ifdef CONFIG_WITH_SCREEN
 
@@ -155,7 +160,7 @@ void app_main(void) {
     printf("Joystick GPIO Setup Successfully...\n");
 #endif
     ESP_LOGI(TAG, "Initializing display manager");
-    display_manager_init();
+    MEASURE_INIT_RAM("Display Manager", display_manager_init() );
     ESP_LOGI(TAG, "Presenting splash screen");
     display_manager_switch_view(&splash_view);
     if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
