@@ -1263,6 +1263,13 @@ void wifi_manager_stop_monitor_mode() {
 
 void wifi_manager_init(void) {
 
+    // --- Memory check before WiFi init ---
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (free_heap < (45 * 1024)) {
+        ESP_LOGW(TAG, "WARNING: Less than 45KB of free RAM available (%d bytes). WiFi may fail to initialize or operate reliably!", (int)free_heap);
+        TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB RAM free (%d bytes). WiFi may not initialize or operate reliably!\n", (int)free_heap);
+    }
+
     esp_log_level_set("wifi", ESP_LOG_ERROR); // Only show errors, not warnings
 
     // Disable WiFi power saving to improve connection stability
@@ -2126,7 +2133,7 @@ void animate_led_based_on_amplitude(void *pvParameters) {
                            (struct sockaddr *)&source_addr, &socklen);
 
         if (len > 0) {
-            rx_buffer[len] = '\0';
+            rx_buffer[len] = 0; // Null-terminate
             inet_ntoa_r(source_addr.sin_addr, addr_str, sizeof(addr_str) - 1);
             printf("Received %d bytes from %s: %s\n", len, addr_str, rx_buffer);
 
@@ -3558,7 +3565,7 @@ void wifi_manager_scanall_chart() {
     }
 
     printf("\n--- Combined AP and Station Scan Results ---\n\n");
-    TERMINAL_VIEW_ADD_TEXT("\n--- Combined AP/STA Scan Results ---\n\n");
+    TERMINAL_VIEW_ADD_TEXT("\n--- Combined AP and Station Scan Results ---\n\n");
 
     const char* ap_header_top =    "┌──────────────────────────────────┬───────────────────┬──────┬───────────┐";
     const char* ap_header_mid =    "│ SSID                             │ BSSID             │ Chan │ Company   │";
@@ -3676,13 +3683,6 @@ void wifi_manager_add_beacon_ssid(const char *ssid) {
         printf("SSID too long\n");
         return;
     }
-    for (int i = 0; i < g_beacon_list_count; ++i) {
-        if (strcmp(g_beacon_list[i], ssid) == 0) {
-            printf("SSID already in list: %s\n", ssid);
-            return;
-        }
-    }
-    strcpy(g_beacon_list[g_beacon_list_count++], ssid);
     printf("Added SSID to beacon list: %s\n", ssid);
 }
 
