@@ -5,6 +5,7 @@
 #include "core/serial_manager.h"
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
+#include "sdkconfig.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -44,6 +45,7 @@ TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 
 // Forward declarations for command handlers
+void cmd_wifi_scan_stop(int argc, char **argv);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_airtags_cmd(int argc, char **argv);
 void handle_select_airtag(int argc, char **argv);
@@ -118,6 +120,10 @@ void handle_unknown_command(const char *cmd) {
 
 void cmd_wifi_scan_start(int argc, char **argv) {
     if (argc > 1) {
+        if (strcmp(argv[1], "-stop") == 0) {
+            cmd_wifi_scan_stop(argc, argv);
+            return;
+        }
         int seconds = atoi(argv[1]);
         wifi_manager_start_scan_with_time(seconds);
     } else {
@@ -2487,28 +2493,16 @@ void handle_comm_setpins(int argc, char **argv) {
 }
 
 static void comm_command_callback(const char* command, const char* data, void* user_data) {
-    char log_buf[512];
-    if (data && strlen(data) > 0) {
-        snprintf(log_buf, sizeof(log_buf), "Received command from peer: %s with data: %s\n", command, data);
-    } else {
-        snprintf(log_buf, sizeof(log_buf), "Received command from peer: %s\n", command);
-    }
-    printf("%s", log_buf);
-    TERMINAL_VIEW_ADD_TEXT(log_buf);
+    static char full_command[128];
     
-    char full_command[256];
+    // Minimal processing in command executor task - just queue the command
     if (data && strlen(data) > 0) {
-        snprintf(full_command, sizeof(full_command), "%s %s", command, data);
+        snprintf(full_command, sizeof(full_command), "peer:%s %s", command, data);
     } else {
-        snprintf(full_command, sizeof(full_command), "%s", command);
+        snprintf(full_command, sizeof(full_command), "peer:%s", command);
     }
     
-    snprintf(log_buf, sizeof(log_buf), "Executing received command: %s\n", full_command);
-    printf("%s", log_buf);
-    TERMINAL_VIEW_ADD_TEXT(log_buf);
-    esp_comm_manager_set_remote_command_flag(true);
-    handle_serial_command(full_command);
-    esp_comm_manager_set_remote_command_flag(false);
+    simulateCommand(full_command);
 }
 void handle_ap_enable_cmd(int argc, char **argv) {
     if (argc != 2) {
@@ -2627,6 +2621,9 @@ void handle_chip_info_cmd(int argc, char **argv) {
     printf("  Free Heap: %lu bytes\n", esp_get_free_heap_size());
     printf("  Min Free Heap: %lu bytes\n", esp_get_minimum_free_heap_size());
     printf("  IDF Version: %s\n", esp_get_idf_version());
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    printf("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+#endif
     
     TERMINAL_VIEW_ADD_TEXT("Chip Information:\n");
     char info_buffer[512];
@@ -2634,6 +2631,11 @@ void handle_chip_info_cmd(int argc, char **argv) {
              "  Model: %s\n  Revision: v%d.%d\n  CPU Cores: %d\n  Free Heap: %lu bytes\n",
              model_name, major_rev, minor_rev, chip_info.cores, esp_get_free_heap_size());
     TERMINAL_VIEW_ADD_TEXT(info_buffer);
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    char build_config_buffer[128];
+    snprintf(build_config_buffer, sizeof(build_config_buffer), "  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+    TERMINAL_VIEW_ADD_TEXT(build_config_buffer);
+#endif
 }
 
 void register_commands() {
@@ -2793,8 +2795,10 @@ void handle_evilportal(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("Usage: %s -c <command>\n", argv[0]);
         printf("Commands:\n");
         printf("  sethtmlstr - Set HTML content from buffer (use with UART markers)\n");
+        printf("  clear - Clear HTML buffer and disable buffer mode\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
         TERMINAL_VIEW_ADD_TEXT("  sethtmlstr - Set HTML content from buffer\n");
+        TERMINAL_VIEW_ADD_TEXT("  clear - Clear HTML buffer and disable buffer mode\n");
         return;
     }
 
@@ -2808,6 +2812,10 @@ void handle_evilportal(int argc, char **argv) {
         wifi_manager_set_html_from_uart();
         printf("HTML buffer mode enabled for evil portal\n");
         TERMINAL_VIEW_ADD_TEXT("HTML buffer mode enabled for evil portal\n");
+    } else if (strcmp(argv[2], "clear") == 0) {
+        wifi_manager_clear_html_buffer();
+        printf("HTML buffer cleared - will use default portal on next startportal\n");
+        TERMINAL_VIEW_ADD_TEXT("HTML buffer cleared - will use default portal on next startportal\n");
     } else {
         printf("Error: Unknown command '%s'\n", argv[2]);
         TERMINAL_VIEW_ADD_TEXT("Error: Unknown command '%s'\n", argv[2]);

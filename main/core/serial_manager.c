@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "managers/gps_manager.h"
 #include "managers/wifi_manager.h"
+#include "managers/views/terminal_screen.h"
 #include <core/commandline.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -153,6 +154,19 @@ void serial_manager_init() {
 }
 
 int handle_serial_command(const char *input) {
+  // Handle peer commands with logging and proper remote flag management
+  if (strncmp(input, "peer:", 5) == 0) {
+    const char* actual_command = input + 5;
+    esp_comm_manager_set_remote_command_flag(true);
+    printf("Received command from peer: %s\n", actual_command);
+    TERMINAL_VIEW_ADD_TEXT("Received command from peer: %s\n", actual_command);
+    printf("Executing received command: %s\n", actual_command);
+    TERMINAL_VIEW_ADD_TEXT("Executing received command: %s\n", actual_command);
+    int result = handle_serial_command(actual_command);
+    esp_comm_manager_set_remote_command_flag(false);
+    return result;
+  }
+  
   char *input_copy = strdup(input);
   if (input_copy == NULL) {
     printf("Memory allocation error\n");

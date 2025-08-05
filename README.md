@@ -80,13 +80,20 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 <summary>IR Features</summary>
 
-- **FlipperZero IR File Support** – Use FlipperZero formatted IR files stored on SD card *(supported on LilyGo S3TWatch and Cardputer)*.
+- **FlipperZero IR File Support** – Use FlipperZero formatted IR files stored on SD card *(supported on LilyGo S3TWatch, Cardputer and TEmbed C1101)*.
 
 - **Universal Library IR Transmit** – Send pre-programmed universal remote signals.
+
+- **IR Receive and Decode** – Decode IR signals received by the device *(supported on TEmbed C1101)*.
 
 - **Custom Signals IR Transmit** – Transmit custom IR signals from files.
 
 - **Multiple IR Protocols** – Support for NEC, Kaseikyo, Pioneer, RCA, Samsung, SIRC, RC5, and RC6 protocols.
+
+- **Easy Learn Mode** – Learn IR signals from your remote with auto naming *(supported on TEmbed C1101)*.
+
+- **IR Rename, Delete, Add Remotes** – Rename, delete, and add remotes *(supported on TEmbed C1101)*.
+
 
 </details>
 
@@ -180,6 +187,10 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - LilyGo TEmbed C1101 
 
+- LilyGo T-Display S3 Touch
+
+- LilyGo T-Deck
+
 </details>
 
 ---
@@ -188,13 +199,64 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 Special thanks to:
 
-- **[JustCallMeKoKo](https://github.com/justcallmekoko/ESP32Marauder):** For foundational ESP32 development.
-
-- **[thibauts](https://github.com/thibauts/node-castv2-client):** For CastV2 protocol insights.
-
-- **[MarcoLucidi01](https://github.com/MarcoLucidi01/ytcast/tree/master/dial):** For DIAL protocol integration.
-
-- **[SpacehuhnTech](https://github.com/SpacehuhnTech/esp8266_deauther):** For reference deauthentication code.
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/justcallmekoko">
+        <img src="https://github.com/justcallmekoko.png" width="80" height="80" style="border-radius: 50%;" alt="JustCallMeKoKo"/><br/>
+        <b>JustCallMeKoKo</b>
+      </a><br/>
+      <sub>ESP32Marauder foundational development</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/thibauts">
+        <img src="https://github.com/thibauts.png" width="80" height="80" style="border-radius: 50%;" alt="thibauts"/><br/>
+        <b>thibauts</b>
+      </a><br/>
+      <sub>CastV2 protocol insights</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/MarcoLucidi01">
+        <img src="https://github.com/MarcoLucidi01.png" width="80" height="80" style="border-radius: 50%;" alt="MarcoLucidi01"/><br/>
+        <b>MarcoLucidi01</b>
+      </a><br/>
+      <sub>DIAL protocol integration</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/SpacehuhnTech">
+        <img src="https://github.com/SpacehuhnTech.png" width="80" height="80" style="border-radius: 50%;" alt="SpacehuhnTech"/><br/>
+        <b>SpacehuhnTech</b>
+      </a><br/>
+      <sub>Reference deauthentication code</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/Spooks4576">
+        <img src="https://github.com/Spooks4576.png" width="80" height="80" style="border-radius: 50%;" alt="Spooks4576"/><br/>
+        <b>Spooks4576</b>
+      </a><br/>
+      <sub>Original GhostESP Developer</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/tototo31">
+        <img src="https://github.com/tototo31.png" width="80" height="80" style="border-radius: 50%;" alt="Tototo31"/><br/>
+        <b>Tototo31</b>
+      </a><br/>
+      <sub>Large contributions to the project</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/WillyJL">
+        <img src="https://github.com/WillyJL.png" width="80" height="80" style="border-radius: 50%;" alt="WillyJL"/><br/>
+        <b>WillyJL</b>
+      </a><br/>
+      <sub>Flipper BLE Spam code</sub>
+    </td>
+    <td align="center">
+      <!-- Empty cell for symmetry -->
+    </td>
+  </tr>
+</table>
 
 ---
 

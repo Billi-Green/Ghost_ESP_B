@@ -11,15 +11,18 @@
 - **Power Saving**
   - Up to 5x the battery life on compatible boards using the new Power Saving Mode (when compared with v1.6.1).
 
-- **New Boards**
+- **New Board Support**
   - LilyGo TEmbed C1101
-  - LilyGo T-Deck — @tototo31
+  - LilyGo TDeck — @tototo31
+  - LilyGo TDisplay S3 Touch
   - AITRIP CYD / ESP2432S028R — @tototo31
+  - JCMK DevBoard Pro
 
 - **Infrared**
   - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
-  - Ability to Rename, Delete, Add remotes and signals (only enabled on TEmbed C1101)
-
+  - Ability to Rename, Delete, Add remotes (only enabled on TEmbed C1101)
+  - Easy Learn Mode: **Name buttons automatically**
+  
 ### Added
 
 - Attacks
@@ -33,6 +36,8 @@
   - Placeholder text for keyboard view - @tototo31
   - Encoder friendly version of the keyboard view
   - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
+  - Smooth mainmenu animations - @tototo31
+  - Keyboard enhancements - @tototo31
 
 - Commands
   - 'chipinfo' command to display chip information
@@ -90,7 +95,8 @@
   - Add wifi_manager_stop_beacon function
   - Check if an RMT channel already exists and clean it up before making a new one
   - Update LEDs and Status bar when changing from rainbow mode
-
+  - Randomise BLE Spam MAC addr and add more devices
+  - Better EP credential handling
 
 
 ## Revival 1.6.1
