@@ -36,6 +36,7 @@
   - Placeholder text for keyboard view - @tototo31
   - Encoder friendly version of the keyboard view
   - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
+  - Smooth mainmenu animations - @tototo31
 
 - Commands
   - 'chipinfo' command to display chip information
