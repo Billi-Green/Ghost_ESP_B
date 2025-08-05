@@ -11,11 +11,12 @@
 - **Power Saving**
   - Up to 5x the battery life on compatible boards using the new Power Saving Mode (when compared with v1.6.1).
 
-- **New Boards**
+- **New Board Support**
   - LilyGo TEmbed C1101
   - LilyGo TDeck — @tototo31
   - LilyGo TDisplay S3 Touch
   - AITRIP CYD / ESP2432S028R — @tototo31
+  - JCMK DevBoard Pro
 
 - **Infrared**
   - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
