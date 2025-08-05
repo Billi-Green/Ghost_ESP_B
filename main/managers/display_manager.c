@@ -188,6 +188,7 @@ void set_backlight_brightness(uint8_t percentage); // forward declaration
 
 #ifdef CONFIG_HAS_BATTERY_ADC
 
+
 #ifdef CONFIG_USE_CARDPUTER
 #define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
 
@@ -989,6 +990,7 @@ void display_manager_fill_screen(lv_color_t color) {
 void set_backlight_brightness(uint8_t percentage) {
     // Clamp to user setting
     uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
+
     //if (percentage > max_brightness) percentage = max_brightness;
 
     //scale percent by max_brightness
@@ -1009,6 +1011,7 @@ void set_backlight_brightness(uint8_t percentage) {
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
     // ----- switch mode -----
     // make sure the pin is configured as a GPIO output
+
     gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
     gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
     gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage > 0 ? 1 : 0);

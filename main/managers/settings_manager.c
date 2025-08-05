@@ -619,6 +619,16 @@ void settings_save(const FSettings *settings) {
            esp_err_to_name(err), err);
   }
 
+
+  // Save Max Screen Brightness
+  err = nvs_set_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, settings->max_screen_brightness);
+  if (err != ESP_OK) {
+    printf("Failed to save key '%s' (value=%u): %s (%d)\n",
+           NVS_MAX_SCREEN_BRIGHTNESS_KEY,
+           settings->max_screen_brightness,
+           esp_err_to_name(err), err);
+  }
+  
   // Clean up any existing rainbow task before starting a new one
   if (rgb_effect_task_handle != NULL) {
       // Signal the rainbow task to exit gracefully instead of forceful deletion
@@ -1020,6 +1030,7 @@ void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int3
   if (rx_pin) *rx_pin = settings->esp_comm_rx_pin;
 }
 
+
 void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
     if (value > 100) value = 100;
     settings->max_screen_brightness = value;
@@ -1027,6 +1038,7 @@ void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
 uint8_t settings_get_max_screen_brightness(const FSettings *settings) {
     return settings->max_screen_brightness;
 }
+
 
 // Infrared Settings Getters and Setters
 void settings_set_infrared_easy_mode(FSettings *settings, bool enabled) {
