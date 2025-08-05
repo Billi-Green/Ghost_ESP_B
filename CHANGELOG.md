@@ -96,7 +96,7 @@
   - Check if an RMT channel already exists and clean it up before making a new one
   - Update LEDs and Status bar when changing from rainbow mode
   - Randomise BLE Spam MAC addr and add more devices
-
+  - Better EP credential handling
 
 
 ## Revival 1.6.1
