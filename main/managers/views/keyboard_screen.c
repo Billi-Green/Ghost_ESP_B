@@ -634,9 +634,15 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                     }
                     update_key_labels();
                 } else if (strcmp(key, "SYM") == 0) {
+                    /* Switching to symbols mode rebuilds the keyboard and deletes existing key buttons.
+                     * Clear any stored pointer to the previously pressed key to avoid accessing
+                     * a freed object in the subsequent LV_INDEV_STATE_REL event. */
+                    pressed_key_btn = NULL;
                     is_symbols_mode = true;
                     recreate_keyboard_buttons();
                 } else if (strcmp(key, "ABC") == 0) {
+                    /* Same safety measure when switching back to alphabet mode. */
+                    pressed_key_btn = NULL;
                     is_symbols_mode = false;
                     recreate_keyboard_buttons();
                 } else if (strcmp(key, "Exit") == 0) {
