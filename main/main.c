@@ -206,6 +206,13 @@ void app_main(void) {
     ESP_LOGI(TAG, "Build config used: %s", CONFIG_BUILD_CONFIG_TEMPLATE);
     printf("Build Name: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
 
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+    float percent_free = (total_heap > 0) ? (100.0f * free_heap / total_heap) : 0.0f;
+
+    ESP_LOGI(TAG, "Free heap after init: %d / %d bytes (%.1f%% free)", (int)free_heap, (int)total_heap, percent_free);
+    printf("Free heap after init: %d / %d bytes (%.1f%% free)\n", (int)free_heap, (int)total_heap, percent_free);
+
     ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)");
     printf("Ghost ESP Ready ;)\n");
 }
