@@ -45,6 +45,7 @@
   - 'disconnect' command to disconnect from the current network
   - 'setrgbmode' command to change the RGB mode
   - 'scanarp' command to initiate an ARP scan on the local network
+  - 'scanssh [IP]' command to initiate an SSH scan on the target IP
 
 - Misc
   - Add build name config variable for debugging and auto-flash support - @tototo31

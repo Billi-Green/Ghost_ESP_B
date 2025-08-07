@@ -267,6 +267,9 @@
 - <code>scanarp</code>  
   Perform ARP scan on local network to discover active hosts
 
+- <code>scanssh [IP]</code>  
+  Perform SSH scan on a specific IP
+
 - <code>congestion</code>  
   Display Wi-Fi channel congestion chart
 

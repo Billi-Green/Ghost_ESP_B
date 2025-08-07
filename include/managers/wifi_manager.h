@@ -217,6 +217,7 @@ scanner_ctx_t *scanner_init(void);
 bool wifi_manager_scan_subnet();
 
 void scan_ports_on_host(const char *target_ip, host_result_t *result);
+void scan_ssh_on_host(const char *target_ip, host_result_t *result);
 
 bool scan_ip_port_range(const char *target_ip, uint16_t start_port,
                         uint16_t end_port);

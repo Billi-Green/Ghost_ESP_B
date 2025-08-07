@@ -2734,6 +2734,115 @@ void scan_ports_on_host(const char *target_ip, host_result_t *result) {
     }
 }
 
+void scan_ssh_on_host(const char *target_ip, host_result_t *result) {
+    struct sockaddr_in server_addr;
+    int sock;
+    int scan_result;
+    struct timeval timeout;
+    fd_set fdset;
+    int flags;
+    char banner[256];
+    ssize_t bytes_read;
+    
+    ESP_LOGI("SSH_SCAN", "Starting SSH scan on host: %s", target_ip);
+    
+    strcpy(result->ip, target_ip);
+    result->num_open_ports = 0;
+    
+    server_addr.sin_family = AF_INET;
+    inet_pton(AF_INET, target_ip, &server_addr.sin_addr.s_addr);
+    
+    printf("SSH scanning host: %s\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("SSH scanning host: %s\n", target_ip);
+    
+    uint16_t ssh_ports[] = {22, 2222, 2022};
+    size_t num_ssh_ports = sizeof(ssh_ports) / sizeof(ssh_ports[0]);
+    
+    for (size_t i = 0; i < num_ssh_ports; i++) {
+        if (result->num_open_ports >= MAX_OPEN_PORTS)
+            break;
+            
+        uint16_t port = ssh_ports[i];
+        ESP_LOGI("SSH_SCAN", "Testing port %d on %s", port, target_ip);
+        printf("Testing SSH port %d on %s...", port, target_ip);
+        TERMINAL_VIEW_ADD_TEXT("Testing SSH port %d on %s...", port, target_ip);
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            ESP_LOGE("SSH_SCAN", "Failed to create socket for port %d: errno=%d", port, errno);
+            continue;
+        }
+            
+        flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        
+        server_addr.sin_port = htons(port);
+        ESP_LOGD("SSH_SCAN", "Attempting connection to %s:%d", target_ip, port);
+        scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        
+        if (scan_result < 0 && errno == EINPROGRESS) {
+            timeout.tv_sec = 3;
+            timeout.tv_usec = 0;
+            
+            FD_ZERO(&fdset);
+            FD_SET(sock, &fdset);
+            
+            scan_result = select(sock + 1, NULL, &fdset, NULL, &timeout);
+            
+            if (scan_result > 0) {
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                    ESP_LOGI("SSH_SCAN", "Port %d is OPEN on %s", port, target_ip);
+                    result->open_ports[result->num_open_ports++] = port;
+                    
+                    fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+                    
+                    timeout.tv_sec = 2;
+                    timeout.tv_usec = 0;
+                    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+                    
+                    memset(banner, 0, sizeof(banner));
+                    bytes_read = recv(sock, banner, sizeof(banner) - 1, 0);
+                    ESP_LOGD("SSH_SCAN", "Received %d bytes from %s:%d", (int)bytes_read, target_ip, port);
+                    
+                    if (bytes_read > 0) {
+                        banner[bytes_read] = '\0';
+                        char *newline = strchr(banner, '\r');
+                        if (newline) *newline = '\0';
+                        newline = strchr(banner, '\n');
+                        if (newline) *newline = '\0';
+                        
+                        ESP_LOGI("SSH_SCAN", "SSH banner from %s:%d: %s", target_ip, port, banner);
+                        printf(" OPEN: %s\n", banner);
+                        TERMINAL_VIEW_ADD_TEXT(" OPEN: %s\n", banner);
+                    } else {
+                        printf(" OPEN (no banner)\n");
+                        TERMINAL_VIEW_ADD_TEXT(" OPEN (no banner)\n");
+                    }
+                } else {
+                    ESP_LOGD("SSH_SCAN", "Port %d connection failed on %s (getsockopt error)", port, target_ip);
+                    printf(" CLOSED\n");
+                    TERMINAL_VIEW_ADD_TEXT(" CLOSED\n");
+                }
+            } else {
+                ESP_LOGD("SSH_SCAN", "Port %d timeout on %s (select result: %d)", port, target_ip, scan_result);
+                printf(" TIMEOUT\n");
+                TERMINAL_VIEW_ADD_TEXT(" TIMEOUT\n");
+            }
+        } else {
+            ESP_LOGD("SSH_SCAN", "Port %d immediate connection failure on %s (errno: %d)", port, target_ip, errno);
+            printf(" CLOSED\n");
+            TERMINAL_VIEW_ADD_TEXT(" CLOSED\n");
+        }
+        
+        close(sock);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    printf("SSH scan completed on %s - found %d open ports\n", target_ip, result->num_open_ports);
+    TERMINAL_VIEW_ADD_TEXT("SSH scan completed on %s - found %d open ports\n", target_ip, result->num_open_ports);
+}
+
 void scanner_cleanup(scanner_ctx_t *ctx) {
     if (ctx) {
         if (ctx->results) {

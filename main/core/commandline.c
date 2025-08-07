@@ -1038,6 +1038,30 @@ void handle_scan_arp(int argc, char **argv) {
     wifi_manager_arp_scan_subnet();
 }
 
+void handle_scan_ssh(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: scanssh <IP>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: scanssh <IP>\n");
+        return;
+    }
+
+    const char *target_ip = argv[1];
+    host_result_t result;
+    char msg_buf[64];
+    
+    printf("Starting SSH scan on %s...\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("Starting SSH scan on %s...\n", target_ip);
+    
+    scan_ssh_on_host(target_ip, &result);
+    
+    if (result.num_open_ports > 0) {
+        printf("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
+        TERMINAL_VIEW_ADD_TEXT("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
+    } else {
+        TERMINAL_VIEW_ADD_TEXT("No SSH services found.\n");
+    }
+}
+
 void handle_crash(int argc, char **argv) {
     int *ptr = NULL;
     *ptr = 42;
@@ -2676,6 +2700,7 @@ void register_commands() {
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
     register_command("scanarp", handle_scan_arp);
+    register_command("scanssh", handle_scan_ssh);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
     register_command("listportals", handle_listportals);

@@ -259,6 +259,7 @@ static void init_shared_styles(void) {
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
+static void ssh_scan_kb_cb(const char *text);
 
 static void evil_portal_ssid_cb(const char *input) {
     if (!input || !selected_portal[0]) return;
@@ -1383,6 +1384,13 @@ display_manager_switch_view(&terminal_view);
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Scan SSH") == 0) {
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand("scanssh");
+    view_switched = true;
+    }
+    
     else if (strcmp(Selected_Option, "Reset AP Credentials") == 0) {
     terminal_set_return_view(&options_menu_view);
 display_manager_switch_view(&terminal_view);
@@ -1656,6 +1664,22 @@ static void switch_to_settings_category(int cat_idx) {
     menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
 }
 
+static void ssh_scan_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a valid IP address");
+        return;
+    }
+    
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "scanssh %s", text);
+    
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+
 static void wifi_connect_kb_cb(const char *text){
     const char *p=text;
     while(*p && *p!='\"') p++;
@@ -1675,10 +1699,11 @@ static void wifi_connect_kb_cb(const char *text){
     char cmd[256];
     snprintf(cmd,sizeof(cmd),"connect \"%s\" \"%s\"",ssid,pass);
     terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+    display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
 }
+
 
 // build menu items in small batches so we don't starve the watchdog
 static void menu_builder_cb(lv_timer_t *t)
