@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "esp_heap_caps.h"  // Add this include at the top if not already present
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "core/callbacks.h"
 #include "esp_random.h"
@@ -1383,6 +1384,13 @@ esp_err_t ble_unregister_handler(ble_data_handler_t handler) {
 
 void ble_init(void) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
+    // --- Memory check before BLE init ---
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (free_heap < (45 * 1024)) {
+        ESP_LOGW(TAG_BLE, "WARNING: Less than 45KB of free RAM available (%d bytes). BLE may fail to initialize!", (int)free_heap);
+        TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB RAM free (%d bytes). BLE may not initialize!\n", (int)free_heap);
+    }
+
     if (!ble_initialized) {
         esp_err_t ret = nvs_flash_init();
         if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1673,6 +1681,7 @@ void ble_list_flippers(void) {
         TERMINAL_VIEW_ADD_TEXT("No Flippers discovered yet.\n");
         return;
     }
+   
     for (int i = 0; i < discovered_flipper_count; i++) {
         char mac[18];
         snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",

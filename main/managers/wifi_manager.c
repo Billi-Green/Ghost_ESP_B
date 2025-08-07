@@ -1265,6 +1265,13 @@ void wifi_manager_stop_monitor_mode() {
 
 void wifi_manager_init(void) {
 
+    // --- Memory check before WiFi init ---
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (free_heap < (45 * 1024)) {
+        ESP_LOGW(TAG, "WARNING: Less than 45KB of free RAM available (%d bytes). WiFi may fail to initialize or operate reliably!", (int)free_heap);
+        TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB RAM free (%d bytes). WiFi may not initialize or operate reliably!\n", (int)free_heap);
+    }
+
     esp_log_level_set("wifi", ESP_LOG_ERROR); // Only show errors, not warnings
 
     // Disable WiFi power saving to improve connection stability
@@ -3993,7 +4000,7 @@ void wifi_manager_scanall_chart() {
     }
 
     printf("\n--- Combined AP and Station Scan Results ---\n\n");
-    TERMINAL_VIEW_ADD_TEXT("\n--- Combined AP/STA Scan Results ---\n\n");
+    TERMINAL_VIEW_ADD_TEXT("\n--- Combined AP and Station Scan Results ---\n\n");
 
     const char* ap_header_top =    "┌──────────────────────────────────┬───────────────────┬──────┬───────────┐";
     const char* ap_header_mid =    "│ SSID                             │ BSSID             │ Chan │ Company   │";
