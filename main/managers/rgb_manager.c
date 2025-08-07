@@ -377,26 +377,29 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
     uint8_t adj_green = green * brightness_scale;
     uint8_t adj_blue = blue * brightness_scale;
 
-    // Handle multiple LEDs if present
-    if (rgb_manager->num_leds > 1) {
-      for (int i = 0; i < rgb_manager->num_leds; i++) {
-        esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, i, adj_red,
+    if (rgb_manager->is_separate_pins) {
+      rgb_manager_set_color(rgb_manager, -1, adj_red, adj_green, adj_blue, false);
+    } else {
+      if (rgb_manager->num_leds > 1) {
+        for (int i = 0; i < rgb_manager->num_leds; i++) {
+          esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, i, adj_red,
+                                              adj_green, adj_blue);
+          if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set LED %d color", i);
+            return;
+          }
+        }
+      } else {
+        esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, 0, adj_red,
                                             adj_green, adj_blue);
         if (ret != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to set LED %d color\n", i);
+          ESP_LOGE(TAG, "Failed to set LED color");
           return;
         }
       }
-    } else {
-      esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, 0, adj_red,
-                                          adj_green, adj_blue);
-      if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set LED color\n");
-        return;
-      }
-    }
 
-    led_strip_refresh(rgb_manager->strip);
+      led_strip_refresh(rgb_manager->strip);
+    }
 
     brightness += direction * 5;
 
@@ -407,11 +410,14 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 
-  // Ensure LEDs are off at the end
-  for (int i = 0; i < rgb_manager->num_leds; i++) {
-    led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
+  if (rgb_manager->is_separate_pins) {
+    rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
+  } else {
+    for (int i = 0; i < rgb_manager->num_leds; i++) {
+      led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
+    }
+    led_strip_refresh(rgb_manager->strip);
   }
-  led_strip_refresh(rgb_manager->strip);
 }
 
 esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
