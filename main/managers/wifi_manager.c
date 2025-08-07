@@ -2120,6 +2120,9 @@ void animate_led_based_on_amplitude(void *pvParameters) {
     float last_amplitude = 0.0f;
     float smoothing_factor = 0.1f;
     int hue = 0;
+    
+    uint32_t last_error_time = 0;
+    const uint32_t error_rate_limit_ms = 5000;
 
     while (1) {
         struct sockaddr_in source_addr;
@@ -2612,14 +2615,7 @@ bool wifi_manager_arp_scan_subnet(void) {
                     ctx->hosts[ctx->num_active_hosts].is_active = true;
                     ctx->num_active_hosts++;
 
-                    char host_msg[80];
-                    snprintf(host_msg, sizeof(host_msg), "  -> %s [%02X:%02X:%02X:%02X:%02X:%02X]\n",
-                            current_ip, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-                    TERMINAL_VIEW_ADD_TEXT(host_msg);
-                    printf("  -> %s [%02X:%02X:%02X:%02X:%02X:%02X]\n",
-                            current_ip, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-                    ESP_LOGI(TAG, "Found host: %s [%02X:%02X:%02X:%02X:%02X:%02X]",
-                            current_ip, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
                 }
             }
         }

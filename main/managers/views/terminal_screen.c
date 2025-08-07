@@ -26,11 +26,13 @@ static bool terminal_initialized = false; // Flag to track if terminal has been 
 #define MAX_TEXT_LENGTH 4096
 #define CLEANUP_THRESHOLD (MAX_TEXT_LENGTH * 3 / 4)
 #define CLEANUP_AMOUNT (MAX_TEXT_LENGTH / 2)
-#define MAX_QUEUE_SIZE 10
+#define MAX_QUEUE_SIZE 15
 #define MAX_MESSAGE_SIZE 256
 #define MIN_SCREEN_SIZE 239
 #define BUTTON_SIZE 40
 #define BUTTON_PADDING 5
+#define MAX_MESSAGES_PER_BATCH 5  // Process max 5 messages per timer tick
+#define PROCESSING_INTERVAL_MS 50 // Process messages every 50ms during bursts
 
 static lv_obj_t *back_btn = NULL;
 static lv_obj_t *input_label = NULL;
@@ -96,15 +98,54 @@ static void update_input_label() {
     }
 }
 
-static void queue_message(const char *text) {
+static void queue_message_chunk(const char *chunk) {
   if (message_queue.count >= MAX_QUEUE_SIZE) {
     message_queue.head = (message_queue.head + 1) % MAX_QUEUE_SIZE;
     message_queue.count--;
   }
-  strncpy(message_queue.messages[message_queue.tail], text, MAX_MESSAGE_SIZE - 1);
+  strncpy(message_queue.messages[message_queue.tail], chunk, MAX_MESSAGE_SIZE - 1);
   message_queue.messages[message_queue.tail][MAX_MESSAGE_SIZE - 1] = '\0';
   message_queue.tail = (message_queue.tail + 1) % MAX_QUEUE_SIZE;
   message_queue.count++;
+}
+
+static void queue_message(const char *text) {
+  if (!text) return;
+  
+  size_t text_len = strlen(text);
+  if (text_len <= MAX_MESSAGE_SIZE - 1) {
+    // Message fits in one chunk
+    queue_message_chunk(text);
+    return;
+  }
+  
+  // Split large message into chunks
+  const char *pos = text;
+  while (*pos) {
+    size_t chunk_size = MAX_MESSAGE_SIZE - 1;
+    
+    // Try to break at word boundary if possible
+    if (text_len > chunk_size) {
+      const char *space = pos + chunk_size - 1;
+      while (space > pos && *space != ' ' && *space != '\n' && *space != '\t') {
+        space--;
+      }
+      if (space > pos) {
+        chunk_size = space - pos + 1; // Include the space
+      }
+    } else {
+      chunk_size = text_len;
+    }
+    
+    char chunk[MAX_MESSAGE_SIZE];
+    strncpy(chunk, pos, chunk_size);
+    chunk[chunk_size] = '\0';
+    
+    queue_message_chunk(chunk);
+    
+    pos += chunk_size;
+    text_len -= chunk_size;
+  }
 }
 
 static void clear_message_queue(void) {
@@ -120,60 +161,104 @@ static void clear_pre_init_message_queue(void) {
 }
 
 static void process_queued_messages(void) {
-  if (!terminal_active || !terminal_page || is_stopping || message_queue.count == 0) {
+  if (!terminal_active || !terminal_page || is_stopping) {
     return;
   }
 
-  if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-    ESP_LOGW(TAG, "Failed to acquire terminal mutex in process_queued_messages");
-    return; // Try again later
-  }
-
+  // This function runs in LVGL task context - no mutex needed for LVGL operations!
+  // Only protect message queue access with minimal critical sections
+  
   lv_obj_t *last_item = NULL;
-  while (message_queue.count > 0) {
-    const char *msg = message_queue.messages[message_queue.head];
+  int processed_count = 0;
+  bool need_cleanup = false;
+  
+  // Process messages in batches to prevent UI overload
+  while (processed_count < MAX_MESSAGES_PER_BATCH) {
+    // Critical section: only for message queue access
+    char msg_buffer[MAX_MESSAGE_SIZE];
+    bool has_message = false;
     
-    lv_obj_t *item = lv_list_add_text(terminal_page, msg);
+    if (terminal_mutex && xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      if (message_queue.count > 0) {
+        // Copy message out of queue quickly
+        strncpy(msg_buffer, message_queue.messages[message_queue.head], MAX_MESSAGE_SIZE - 1);
+        msg_buffer[MAX_MESSAGE_SIZE - 1] = '\0';
+        
+        // Dequeue immediately
+        message_queue.head = (message_queue.head + 1) % MAX_QUEUE_SIZE;
+        message_queue.count--;
+        has_message = true;
+      }
+      xSemaphoreGive(terminal_mutex);
+    }
+    
+    if (!has_message) {
+      break; // No more messages to process
+    }
+    
+    // LVGL operations - no mutex needed, we're in LVGL task context
+    lv_obj_t *item = lv_list_add_text(terminal_page, msg_buffer);
     lv_label_set_long_mode(item, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
     lv_obj_set_style_text_color(item, lv_color_hex(settings_get_terminal_text_color(&G_Settings)), 0);
     lv_obj_set_style_text_font(item, &lv_font_montserrat_10, 0);
     last_item = item;
 
-    current_text_length += strlen(msg);
+    current_text_length += strlen(msg_buffer);
 
+    // Mark cleanup needed but don't do it during object creation
     if (current_text_length > CLEANUP_THRESHOLD) {
-        // aim to free at least CLEANUP_AMOUNT characters
-        size_t target_len = (current_text_length > CLEANUP_AMOUNT) ? current_text_length - CLEANUP_AMOUNT : 0;
-        while (current_text_length > target_len && lv_obj_get_child_cnt(terminal_page) > 0) {
-            lv_obj_t *oldest = lv_obj_get_child(terminal_page, 0); // first child is oldest
-            const char *old_text = lv_label_get_text(oldest);
-            if (old_text) {
-                size_t old_len = strlen(old_text);
-                if (current_text_length > old_len) {
-                    current_text_length -= old_len;
-                } else {
-                    current_text_length = 0;
-                }
-            }
-            lv_obj_del(oldest);
-        }
+        need_cleanup = true;
     }
-
-    // dequeue
-    message_queue.head = (message_queue.head + 1) % MAX_QUEUE_SIZE;
-    message_queue.count--;
+    
+    processed_count++;
+  }
+  
+  // Only do cleanup AFTER all new objects are created to prevent race conditions
+  if (need_cleanup) {
+    size_t target_len = (current_text_length > CLEANUP_AMOUNT) ? current_text_length - CLEANUP_AMOUNT : 0;
+    while (current_text_length > target_len && lv_obj_get_child_cnt(terminal_page) > 0) {
+      lv_obj_t *oldest = lv_obj_get_child(terminal_page, 0);
+      
+      // Get text length before deletion
+      size_t old_len = 0;
+      const char *old_text = lv_label_get_text(oldest);
+      if (old_text) {
+        old_len = strlen(old_text);
+      }
+      
+      // Update counter
+      if (current_text_length > old_len) {
+        current_text_length -= old_len;
+      } else {
+        current_text_length = 0;
+      }
+      
+      // Safe deletion after all object creation is complete
+      lv_obj_del(oldest);
+    }
+  }
+  
+  // Check if more messages need processing (quick check)
+  bool has_more_messages = false;
+  if (terminal_mutex && xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {
+    has_more_messages = (message_queue.count > 0);
+    xSemaphoreGive(terminal_mutex);
+  }
+  
+  // Schedule next processing cycle if needed
+  if (has_more_messages && terminal_update_timer) {
+    lv_timer_set_period(terminal_update_timer, PROCESSING_INTERVAL_MS);
   }
 
   // Scroll to the last item added in this batch
   if (last_item) {
     lv_obj_scroll_to_view(last_item, LV_ANIM_OFF);
   }
-
-  xSemaphoreGive(terminal_mutex);
 }
 
 static void process_queued_messages_callback(lv_timer_t * timer) {
+    // This now runs within the LVGL task context - no race conditions!
     process_queued_messages();
 }
 

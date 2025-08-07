@@ -80,7 +80,7 @@ void update_led_visualizer(uint8_t *amplitudes, size_t num_bars,
  */
 void rgb_manager_signal_rainbow_exit(void);
 
-RGBManager_t rgb_manager;
+extern RGBManager_t rgb_manager;
 
 TaskHandle_t rgb_effect_task_handle;
 

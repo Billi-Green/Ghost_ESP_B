@@ -1,13 +1,17 @@
 #include "managers/rgb_manager.h"
+#include "managers/settings_manager.h"
+#include "vendor/led/led_strip.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "managers/settings_manager.h"
-#include <math.h>
-
-void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms);
+#include "freertos/semphr.h"
+#include "math.h"
 
 static const char *TAG = "RGBManager";
+static SemaphoreHandle_t rgb_mutex = NULL;
+
+void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms);
 
 typedef struct {
   double r; // ∈ [0, 1]
@@ -175,6 +179,15 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
 #endif
   if (!rgb_manager)
     return ESP_ERR_INVALID_ARG;
+
+  // Initialize mutex if not already created
+  if (rgb_mutex == NULL) {
+    rgb_mutex = xSemaphoreCreateRecursiveMutex();
+    if (rgb_mutex == NULL) {
+      ESP_LOGE(TAG, "Failed to create RGB mutex");
+      return ESP_ERR_NO_MEM;
+    }
+  }
 
   rgb_manager->pin = pin;
   rgb_manager->num_leds = num_leds;
@@ -412,15 +425,18 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
 
     if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
         // Always turn off all LEDs in stealth mode
-        if (rgb_manager->is_separate_pins) {
-            ledc_stop(LEDC_MODE, LEDC_CHANNEL_RED, 1);
-            ledc_stop(LEDC_MODE, LEDC_CHANNEL_GREEN, 1);
-            ledc_stop(LEDC_MODE, LEDC_CHANNEL_BLUE, 1);
-        } else if (rgb_manager->strip) {
-            for (int i = 0; i < rgb_manager->num_leds; i++) {
-                led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
+        if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+            if (rgb_manager->is_separate_pins) {
+                ledc_stop(LEDC_MODE, LEDC_CHANNEL_RED, 1);
+                ledc_stop(LEDC_MODE, LEDC_CHANNEL_GREEN, 1);
+                ledc_stop(LEDC_MODE, LEDC_CHANNEL_BLUE, 1);
+            } else if (rgb_manager->strip) {
+                for (int i = 0; i < rgb_manager->num_leds; i++) {
+                    led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
+                }
+                led_strip_refresh(rgb_manager->strip);
             }
-            led_strip_refresh(rgb_manager->strip);
+            xSemaphoreGiveRecursive(rgb_mutex);
         }
         return ESP_OK;
     }
@@ -437,25 +453,28 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
         // A more robust check would involve checking the driver state if possible.
         // For now, we assume if is_separate_pins is true, init happened.
 
-        if (ired == 255 && igreen == 255 && iblue == 255) {
-            // Turn off LEDs by setting duty cycle to 0 or stopping
-            // Using stop might be better if it properly handles re-enabling
-            ledc_stop(LEDC_MODE, LEDC_CHANNEL_RED, 1);
-            ledc_stop(LEDC_MODE, LEDC_CHANNEL_GREEN, 1);
-            ledc_stop(LEDC_MODE, LEDC_CHANNEL_BLUE, 1);
-        } else {
-            // Ensure channels are running before setting duty
-            // This might be redundant if ledc_channel_config ensures they start
-            // ledc_timer_resume(LEDC_MODE, LEDC_TIMER); // If timers could be paused
+        if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+            if (ired == 255 && igreen == 255 && iblue == 255) {
+                // Turn off LEDs by setting duty cycle to 0 or stopping
+                // Using stop might be better if it properly handles re-enabling
+                ledc_stop(LEDC_MODE, LEDC_CHANNEL_RED, 1);
+                ledc_stop(LEDC_MODE, LEDC_CHANNEL_GREEN, 1);
+                ledc_stop(LEDC_MODE, LEDC_CHANNEL_BLUE, 1);
+            } else {
+                // Ensure channels are running before setting duty
+                // This might be redundant if ledc_channel_config ensures they start
+                // ledc_timer_resume(LEDC_MODE, LEDC_TIMER); // If timers could be paused
 
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RED, ired));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RED));
+                ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_RED, ired));
+                ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_RED));
 
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_GREEN, igreen));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_GREEN));
+                ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_GREEN, igreen));
+                ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_GREEN));
 
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_BLUE, iblue));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_BLUE));
+                ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_BLUE, iblue));
+                ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_BLUE));
+            }
+            xSemaphoreGiveRecursive(rgb_mutex);
         }
     } else {
         // Handle single pin LED strip using RMT
@@ -471,34 +490,40 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
             uint8_t r = red, g = green, b = blue;
             scale_grb_by_brightness(&g, &r, &b, 0.3); // Scale brightness for RMT
 
-            // If led_idx is -1, set all LEDs. Otherwise, set the specified LED.
-            if (led_idx == -1) {
-                // Set all LEDs
-                for (int i = 0; i < rgb_manager->num_leds; i++) {
-                    esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, i, r, g, b);
+            esp_err_t ret = ESP_OK;
+            if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+                // If led_idx is -1, set all LEDs. Otherwise, set the specified LED.
+                if (led_idx == -1) {
+                    // Set all LEDs
+                    for (int i = 0; i < rgb_manager->num_leds; i++) {
+                        ret = led_strip_set_pixel(rgb_manager->strip, i, r, g, b);
+                        if (ret != ESP_OK) {
+                            ESP_LOGE(TAG, "Failed to set all LEDs color (at index %d)", i);
+                            // Continue trying other LEDs?
+                        }
+                    }
+                } else if (led_idx >= 0 && led_idx < rgb_manager->num_leds) {
+                    // Set specific LED
+                    ret = led_strip_set_pixel(rgb_manager->strip, led_idx, r, g, b);
                     if (ret != ESP_OK) {
-                        ESP_LOGE(TAG, "Failed to set all LEDs color (at index %d)", i);
-                        // Continue trying other LEDs?
+                        ESP_LOGE(TAG, "Failed to set LED %d color", led_idx);
+                    }
+                } else {
+                     ESP_LOGW(TAG, "Invalid led_idx (%d) for num_leds (%d)", led_idx, rgb_manager->num_leds);
+                     xSemaphoreGiveRecursive(rgb_mutex);
+                     return ESP_ERR_INVALID_ARG; // Invalid index
+                }
+
+                // Refresh the strip after setting pixels
+                if (ret == ESP_OK) {
+                    ret = led_strip_refresh(rgb_manager->strip);
+                    if (ret != ESP_OK) {
+                        ESP_LOGE(TAG, "Failed to refresh LED strip: %s", esp_err_to_name(ret));
+                        // Try to clear the strip as a fallback
+                        led_strip_clear(rgb_manager->strip);
                     }
                 }
-            } else if (led_idx >= 0 && led_idx < rgb_manager->num_leds) {
-                // Set specific LED
-                esp_err_t ret = led_strip_set_pixel(rgb_manager->strip, led_idx, r, g, b);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to set LED %d color", led_idx);
-                    return ret; // Return on error for single pixel set
-                }
-            } else {
-                 ESP_LOGW(TAG, "Invalid led_idx (%d) for num_leds (%d)", led_idx, rgb_manager->num_leds);
-                 return ESP_ERR_INVALID_ARG; // Invalid index
-            }
-
-            // Refresh the strip after setting pixels
-            esp_err_t ret = led_strip_refresh(rgb_manager->strip);
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to refresh LED strip: %s", esp_err_to_name(ret));
-                // Try to clear the strip as a fallback
-                led_strip_clear(rgb_manager->strip);
+                xSemaphoreGiveRecursive(rgb_mutex);
             }
             return ret;
         }
@@ -671,6 +696,12 @@ esp_err_t rgb_manager_deinit(RGBManager_t *rgb_manager) {
     // Clear the LED strip and deinitialize
     led_strip_clear(rgb_manager->strip);
     ESP_LOGI(TAG, "RGBManager deinitialized (LED strip)\n");
+  }
+
+  // Clean up mutex if it exists
+  if (rgb_mutex != NULL) {
+    vSemaphoreDelete(rgb_mutex);
+    rgb_mutex = NULL;
   }
 
   return ESP_OK;
