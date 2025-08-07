@@ -2133,7 +2133,7 @@ void animate_led_based_on_amplitude(void *pvParameters) {
                            (struct sockaddr *)&source_addr, &socklen);
 
         if (len > 0) {
-            rx_buffer[len] = 0; // Null-terminate
+            rx_buffer[len] = '\0';
             inet_ntoa_r(source_addr.sin_addr, addr_str, sizeof(addr_str) - 1);
             printf("Received %d bytes from %s: %s\n", len, addr_str, rx_buffer);
 
@@ -3683,6 +3683,13 @@ void wifi_manager_add_beacon_ssid(const char *ssid) {
         printf("SSID too long\n");
         return;
     }
+    for (int i = 0; i < g_beacon_list_count; ++i) {
+        if (strcmp(g_beacon_list[i], ssid) == 0) {
+            printf("SSID already in list: %s\n", ssid);
+            return;
+        }
+    }
+    strcpy(g_beacon_list[g_beacon_list_count++], ssid);
     printf("Added SSID to beacon list: %s\n", ssid);
 }
 
