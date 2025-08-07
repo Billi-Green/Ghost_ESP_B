@@ -70,6 +70,7 @@
   
 - Attacks
   - Refactor packet capture
+  - Refactor 'scanports' command to be more intuitive and user-friendly
 
 ### Bug Fixes
 
