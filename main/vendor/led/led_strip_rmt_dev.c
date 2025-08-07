@@ -8,7 +8,7 @@
 #include "esp_log.h"
 #include "vendor/led/led_strip.h"
 #include "vendor/led/led_strip_interface.h"
-#include "vendor/led/led_strip_rmt_encoder.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <sys/cdefs.h>
@@ -192,12 +192,25 @@ esp_err_t led_strip_new_rmt_device(const led_strip_config_t *led_config,
   ESP_GOTO_ON_ERROR(rmt_new_tx_channel(&rmt_chan_config, &rmt_strip->rmt_chan),
                     err, TAG, "create RMT TX channel failed");
 
-  // Create the LED strip encoder
-  led_strip_encoder_config_t strip_encoder_conf = {
-      .resolution = resolution, .led_model = led_config->led_model};
+  // Create bytes encoder for LED strip data
+  rmt_bytes_encoder_config_t bytes_encoder_config = {
+      .bit0 = {
+          .level0 = 1,
+          .duration0 = 0.3 * resolution / 1000000, // T0H=0.3us
+          .level1 = 0,
+          .duration1 = 0.9 * resolution / 1000000, // T0L=0.9us
+      },
+      .bit1 = {
+          .level0 = 1,
+          .duration0 = 0.9 * resolution / 1000000, // T1H=0.9us
+          .level1 = 0,
+          .duration1 = 0.3 * resolution / 1000000, // T1L=0.3us
+      },
+      .flags.msb_first = 1 // WS2812 uses MSB first
+  };
   ESP_GOTO_ON_ERROR(
-      rmt_new_led_strip_encoder(&strip_encoder_conf, &rmt_strip->strip_encoder),
-      err, TAG, "create LED strip encoder failed");
+      rmt_new_bytes_encoder(&bytes_encoder_config, &rmt_strip->strip_encoder),
+      err, TAG, "create bytes encoder failed");
 
   // Assign functions and parameters to the strip object
   rmt_strip->base.led_pixel_format = led_config->led_pixel_format;

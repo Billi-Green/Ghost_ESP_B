@@ -516,10 +516,18 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
 
                 // Refresh the strip after setting pixels
                 if (ret == ESP_OK) {
-                    ret = led_strip_refresh(rgb_manager->strip);
+                    int attempts = 0;
+                    do {
+                        ret = led_strip_refresh(rgb_manager->strip);
+                        if (ret == ESP_ERR_INVALID_STATE) {
+                            // Previous transfer still running – wait a bit and retry
+                            vTaskDelay(pdMS_TO_TICKS(2));
+                        }
+                    } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
+
                     if (ret != ESP_OK) {
-                        ESP_LOGE(TAG, "Failed to refresh LED strip: %s", esp_err_to_name(ret));
-                        // Try to clear the strip as a fallback
+                        ESP_LOGE(TAG, "Failed to refresh LED strip after %d attempts: %s", attempts, esp_err_to_name(ret));
+                        // As fallback, clear the strip (non-critical if this fails)
                         led_strip_clear(rgb_manager->strip);
                     }
                 }
@@ -560,16 +568,15 @@ void rgb_manager_rainbow_effect_matrix(RGBManager_t *rgb_manager,
       blue = (uint8_t)(fmin(rgb_color.b * 255, 120));
 
       clamp_rgb(&red, &green, &blue);
-
       scale_grb_by_brightness(&green, &red, &blue, 0.3);
 
-      esp_err_t ret =
-          led_strip_set_pixel(rgb_manager->strip, i, red, green, blue);
-
-      if (!rgb_manager->is_separate_pins) {
-        led_strip_refresh(rgb_manager->strip);
-      }
+      led_strip_set_pixel(rgb_manager->strip, i, red, green, blue);
       hue = fmod(hue + 0.5, 360.0);
+    }
+
+    // Single refresh at end of frame to avoid overlapping RMT transfers
+    if (!rgb_manager->is_separate_pins) {
+      led_strip_refresh(rgb_manager->strip);
     }
 
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
@@ -611,8 +618,8 @@ void rgb_manager_rainbow_effect(RGBManager_t *rgb_manager, int delay_ms) {
         uint8_t iblue = (uint8_t)(255 - blue);
         rgb_manager_set_color(rgb_manager, i, ired, igreen, iblue, false);
       } else {
-        rgb_manager_set_color(rgb_manager, rgb_manager->num_leds == 1 ? 0 : i,
-                              red, green, blue, false);
+        led_strip_set_pixel(rgb_manager->strip,
+                            (rgb_manager->num_leds == 1 ? 0 : i), red, green, blue);
       }
     }
 
