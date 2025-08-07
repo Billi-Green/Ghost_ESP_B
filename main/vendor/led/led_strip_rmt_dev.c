@@ -88,13 +88,17 @@ static esp_err_t led_strip_rmt_refresh(led_strip_t *strip) {
   // Silent error handling for all operations
   esp_err_t err;
 
-  // Try to enable RMT channel
-  err = rmt_enable(rmt_strip->rmt_chan);
-  if (err != ESP_OK) {
-    return err;
+  // Ensure RMT channel is enabled (enable only first time)
+  static bool channel_enabled = false;
+  if (!channel_enabled) {
+    err = rmt_enable(rmt_strip->rmt_chan);
+    if (err != ESP_OK) {
+      return err;
+    }
+    channel_enabled = true;
   }
 
-  // Try to transmit
+  // Transmit
   err = rmt_transmit(
       rmt_strip->rmt_chan, rmt_strip->strip_encoder, rmt_strip->pixel_buf,
       rmt_strip->strip_len * rmt_strip->bytes_per_pixel, &tx_conf);
@@ -110,12 +114,7 @@ static esp_err_t led_strip_rmt_refresh(led_strip_t *strip) {
     return err;
   }
 
-  // Disable RMT channel
-  err = rmt_disable(rmt_strip->rmt_chan);
-  if (err != ESP_OK) {
-    return err;
-  }
-
+  // Keep channel enabled for continuous operation
   return ESP_OK;
 }
 

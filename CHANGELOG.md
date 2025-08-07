@@ -100,7 +100,8 @@
   - Update LEDs and Status bar when changing from rainbow mode
   - Randomise BLE Spam MAC addr and add more devices
   - Better EP credential handling
-
+  - Keep one led strip rmt instance
+  - Remove legacy led strip rmt driver
 
 ## Revival 1.6.1
 
