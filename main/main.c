@@ -35,6 +35,8 @@
     ESP_LOGI(TAG, "Free RAM after %s: %d bytes (used: %d bytes)", name, (int)after, (int)(before - after)); \
 } while(0)
 
+RGBManager_t rgb_manager;  // Global instance for entire project
+
 int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) { return 0; }
 static const char *TAG = "Main.c";
 void app_main(void) {

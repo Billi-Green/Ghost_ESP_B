@@ -972,69 +972,93 @@ void handle_timezone_cmd(int argc, char **argv) {
 
 void handle_scan_ports(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage:\n");
         TERMINAL_VIEW_ADD_TEXT("Usage:\n");
-        printf("scanports local [-C/-A/start_port-end_port]\n");
-        TERMINAL_VIEW_ADD_TEXT("scanports local [-C/-A/start_port-end_port]\n");
-        printf("scanports [IP] [-C/-A/start_port-end_port]\n");
-        TERMINAL_VIEW_ADD_TEXT("scanports [IP] [-C/-A/start_port-end_port]\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanports local\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanports <IP> [all | start-end]\n");
         return;
     }
 
-    bool is_local = strcmp(argv[1], "local") == 0;
-    const char *target_ip = NULL;
-    const char *port_arg = NULL;
-
-    // Parse arguments based on whether it's a local scan
-    if (is_local) {
-        if (argc < 3) {
-            printf("Missing port argument for local scan\n");
-            TERMINAL_VIEW_ADD_TEXT("Missing port argument for local scan\n");
-            return;
+    // Handle local subnet scan
+    if (strcmp(argv[1], "local") == 0) {
+        if (argc > 2) {
+            TERMINAL_VIEW_ADD_TEXT("Info: 'local' scan does not take arguments.\n");
         }
-        port_arg = argv[2];
-    } else {
-        if (argc < 3) {
-            printf("Missing port argument for IP scan\n");
-            TERMINAL_VIEW_ADD_TEXT("Missing port argument for IP scan\n");
-            return;
-        }
-        target_ip = argv[1];
-        port_arg = argv[2];
-    }
-
-    if (is_local) {
+        TERMINAL_VIEW_ADD_TEXT("Starting local subnet scan...\n");
         wifi_manager_scan_subnet();
         return;
     }
 
-    host_result_t result;
-    if (strcmp(port_arg, "-C") == 0) {
+    // Handle remote IP scan
+    const char *target_ip = argv[1];
+    int start_port = 0, end_port = 0;
+
+    // Default to common ports if no range is specified
+    if (argc < 3) {
+        host_result_t result;
+        char msg_buf[64];
+        snprintf(msg_buf, sizeof(msg_buf), "Scanning common ports on %s...\n", target_ip);
+        TERMINAL_VIEW_ADD_TEXT(msg_buf);
+
         scan_ports_on_host(target_ip, &result);
+
         if (result.num_open_ports > 0) {
-            printf("Open ports on %s:\n", target_ip);
-            char open_buf[64];
-            snprintf(open_buf, sizeof(open_buf), "Open ports on %s:\n", target_ip);
-            TERMINAL_VIEW_ADD_TEXT(open_buf);
+            snprintf(msg_buf, sizeof(msg_buf), "Found %d open ports on %s:\n", result.num_open_ports, target_ip);
+            TERMINAL_VIEW_ADD_TEXT(msg_buf);
             for (int i = 0; i < result.num_open_ports; i++) {
-                printf("Port %d\n", result.open_ports[i]);
                 char port_buf[32];
-                snprintf(port_buf, sizeof(port_buf), "Port %d\n", result.open_ports[i]);
+                snprintf(port_buf, sizeof(port_buf), "  Port %d\n", result.open_ports[i]);
                 TERMINAL_VIEW_ADD_TEXT(port_buf);
             }
+        } else {
+            TERMINAL_VIEW_ADD_TEXT("No common open ports found.\n");
         }
+        return;
+    }
+
+    // Parse port range argument
+    const char *port_arg = argv[2];
+    if (strcmp(port_arg, "all") == 0) {
+        start_port = 1;
+        end_port = 65535;
+    } else if (sscanf(port_arg, "%d-%d", &start_port, &end_port) != 2 || start_port < 1 ||
+               end_port > 65535 || start_port > end_port) {
+        TERMINAL_VIEW_ADD_TEXT("Error: Invalid port range. Use 'all' or 'start-end'.\n");
+        return;
+    }
+
+    char msg_buf[64];
+    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s ports %d-%d...\n", target_ip, start_port, end_port);
+    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    scan_ip_port_range(target_ip, start_port, end_port);
+}
+
+void handle_scan_arp(int argc, char **argv) {
+    TERMINAL_VIEW_ADD_TEXT("Starting ARP scan on local network...\n");
+    printf("Starting ARP scan on local network...\n");
+    wifi_manager_arp_scan_subnet();
+}
+
+void handle_scan_ssh(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: scanssh <IP>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: scanssh <IP>\n");
+        return;
+    }
+
+    const char *target_ip = argv[1];
+    host_result_t result;
+    char msg_buf[64];
+    
+    printf("Starting SSH scan on %s...\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("Starting SSH scan on %s...\n", target_ip);
+    
+    scan_ssh_on_host(target_ip, &result);
+    
+    if (result.num_open_ports > 0) {
+        printf("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
+        TERMINAL_VIEW_ADD_TEXT("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
     } else {
-        int start_port, end_port;
-        if (strcmp(port_arg, "-A") == 0) {
-            start_port = 1;
-            end_port = 65535;
-        } else if (sscanf(port_arg, "%d-%d", &start_port, &end_port) != 2 || start_port < 1 ||
-                   end_port > 65535 || start_port > end_port) {
-            printf("Invalid port range\n");
-            TERMINAL_VIEW_ADD_TEXT("Invalid port range\n");
-            return;
-        }
-        scan_ip_port_range(target_ip, start_port, end_port);
+        TERMINAL_VIEW_ADD_TEXT("No SSH services found.\n");
     }
 }
 
@@ -1315,25 +1339,31 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("pineap\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Start/Stop detecting WiFi Pineapples.\n");
     TERMINAL_VIEW_ADD_TEXT("    Usage: pineap [-s]\n");
-    TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
     TERMINAL_VIEW_ADD_TEXT("        -s  : Stop PineAP detection\n\n");
 
     printf("Port Scanner\n");
     printf("    Description: Scan ports on local subnet or specific IP\n");
-    printf("    Usage: scanports local [-C/-A/start_port-end_port]\n");
-    printf("           scanports [IP] [-C/-A/start_port-end_port]\n");
+    printf("    Usage: scanports local\n");
+    printf("           scanports <IP> [all | start-end]\n");
     printf("    Arguments:\n");
-    printf("        -C  : Scan common ports only\n");
-    printf("        -A  : Scan all ports (1-65535)\n");
-    printf("        start_port-end_port : Custom port range (e.g. 80-443)\n\n");
+    printf("        all  : Scan all ports (1-65535)\n");
+    printf("        start-end : Custom port range (e.g. 80-443)\n");
+    printf("        (no range) : Scan common ports (default)\n\n");
     TERMINAL_VIEW_ADD_TEXT("Port Scanner\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: Scan ports on local subnet or specific IP\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: scanports local [-C/-A/start_port-end_port]\n");
-    TERMINAL_VIEW_ADD_TEXT("           scanports [IP] [-C/-A/start_port-end_port]\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: scanports local\n");
+    TERMINAL_VIEW_ADD_TEXT("           scanports <IP> [all | start-end]\n");
     TERMINAL_VIEW_ADD_TEXT("    Arguments:\n");
-    TERMINAL_VIEW_ADD_TEXT("        -C  : Scan common ports only\n");
-    TERMINAL_VIEW_ADD_TEXT("        -A  : Scan all ports (1-65535)\n");
-    TERMINAL_VIEW_ADD_TEXT("        start_port-end_port : Custom port range (e.g. 80-443)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("        all  : Scan all ports (1-65535)\n");
+    TERMINAL_VIEW_ADD_TEXT("        start-end : Custom port range (e.g. 80-443)\n");
+    TERMINAL_VIEW_ADD_TEXT("        (no range) : Scan common ports (default)\n\n");
+
+    printf("scanarp\n");
+    printf("    Description: Perform ARP scan on local network to discover active hosts\n");
+    printf("    Usage: scanarp\n\n");
+    TERMINAL_VIEW_ADD_TEXT("scanarp\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Perform ARP scan on local network to discover active hosts\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: scanarp\n\n");
 
     printf("congestion\n");
     printf("    Description: Display Wi-Fi channel congestion chart.\n");
@@ -2669,6 +2699,8 @@ void register_commands() {
     register_command("startwd", handle_startwd);
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
+    register_command("scanarp", handle_scan_arp);
+    register_command("scanssh", handle_scan_ssh);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
     register_command("listportals", handle_listportals);

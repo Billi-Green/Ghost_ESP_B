@@ -96,6 +96,12 @@ typedef struct {
 } host_result_t;
 
 typedef struct {
+  char ip[16];
+  uint8_t mac[6];
+  bool is_active;
+} arp_host_t;
+
+typedef struct {
   const char *ssid;
   const char *password;
 } wifi_credentials_t;
@@ -106,6 +112,13 @@ typedef struct {
   size_t max_results;
   size_t num_active_hosts;
 } scanner_ctx_t;
+
+typedef struct {
+  char subnet_prefix[16];
+  arp_host_t *hosts;
+  size_t max_hosts;
+  size_t num_active_hosts;
+} arp_scanner_ctx_t;
 
 typedef void (*wifi_promiscuous_cb_t_t)(void *buf,
                                         wifi_promiscuous_pkt_type_t type);
@@ -204,9 +217,17 @@ scanner_ctx_t *scanner_init(void);
 bool wifi_manager_scan_subnet();
 
 void scan_ports_on_host(const char *target_ip, host_result_t *result);
+void scan_ssh_on_host(const char *target_ip, host_result_t *result);
 
 bool scan_ip_port_range(const char *target_ip, uint16_t start_port,
                         uint16_t end_port);
+
+// ARP scan functions
+arp_scanner_ctx_t *arp_scanner_init(void);
+void arp_scanner_cleanup(arp_scanner_ctx_t *ctx);
+bool wifi_manager_arp_scan_subnet(void);
+bool send_arp_request(const char *target_ip);
+bool get_arp_table_entry(const char *ip, uint8_t *mac);
 
 extern const uint16_t COMMON_PORTS[];
 extern const size_t NUM_PORTS;

@@ -44,6 +44,8 @@
   - 'apenable' command to enable/disable the Access Point
   - 'disconnect' command to disconnect from the current network
   - 'setrgbmode' command to change the RGB mode
+  - 'scanarp' command to initiate an ARP scan on the local network
+  - 'scanssh [IP]' command to initiate an SSH scan on the target IP
 
 - Misc
   - Add build name config variable for debugging and auto-flash support - @tototo31
@@ -70,6 +72,7 @@
   
 - Attacks
   - Refactor packet capture
+  - Refactor 'scanports' command to be more intuitive and user-friendly
 
 ### Bug Fixes
 
@@ -97,7 +100,8 @@
   - Update LEDs and Status bar when changing from rainbow mode
   - Randomise BLE Spam MAC addr and add more devices
   - Better EP credential handling
-
+  - Keep one led strip rmt instance
+  - Remove legacy led strip rmt driver
 
 ## Revival 1.6.1
 

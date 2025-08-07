@@ -12,6 +12,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "lwip/etharp.h"
+#include "lwip/netif.h"
+#include "lwip/ip4_addr.h"
 #include "lwip/lwip_napt.h"
 #include "managers/ap_manager.h"
 #include "managers/rgb_manager.h"
@@ -2125,6 +2127,9 @@ void animate_led_based_on_amplitude(void *pvParameters) {
     float last_amplitude = 0.0f;
     float smoothing_factor = 0.1f;
     int hue = 0;
+    
+    uint32_t last_error_time = 0;
+    const uint32_t error_rate_limit_ms = 5000;
 
     while (1) {
         struct sockaddr_in source_addr;
@@ -2354,6 +2359,327 @@ scanner_ctx_t *scanner_init(void) {
     return ctx;
 }
 
+arp_scanner_ctx_t *arp_scanner_init(void) {
+    arp_scanner_ctx_t *ctx = malloc(sizeof(arp_scanner_ctx_t));
+    if (!ctx) {
+        return NULL;
+    }
+
+    ctx->max_hosts = END_HOST - START_HOST + 1;
+    ctx->hosts = malloc(sizeof(arp_host_t) * ctx->max_hosts);
+    if (!ctx->hosts) {
+        free(ctx);
+        return NULL;
+    }
+
+    ctx->num_active_hosts = 0;
+    memset(ctx->subnet_prefix, 0, sizeof(ctx->subnet_prefix));
+    return ctx;
+}
+
+void arp_scanner_cleanup(arp_scanner_ctx_t *ctx) {
+    if (ctx) {
+        if (ctx->hosts) {
+            free(ctx->hosts);
+        }
+        free(ctx);
+    }
+}
+
+bool send_arp_request(const char *target_ip) {
+    if (!target_ip) {
+        ESP_LOGW(TAG, "send_arp_request: target_ip is NULL");
+        return false;
+    }
+
+    ESP_LOGD(TAG, "Sending ARP request to %s", target_ip);
+    
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!netif) {
+        ESP_LOGW(TAG, "send_arp_request: Failed to get WiFi STA interface");
+        return false;
+    }
+
+    // Get our own IP and MAC
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK) {
+        return false;
+    }
+
+    uint8_t our_mac[6];
+    if (esp_netif_get_mac(netif, our_mac) != ESP_OK) {
+        return false;
+    }
+
+    // Parse target IP
+    esp_ip4_addr_t target_addr;
+    if (inet_pton(AF_INET, target_ip, &target_addr) != 1) {
+        return false;
+    }
+
+    // Create ARP request packet
+    uint8_t arp_packet[42] = {
+        // Ethernet header
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Destination MAC (broadcast)
+        our_mac[0], our_mac[1], our_mac[2], our_mac[3], our_mac[4], our_mac[5], // Source MAC
+        0x08, 0x06, // EtherType (ARP)
+        
+        // ARP header
+        0x00, 0x01, // Hardware type (Ethernet)
+        0x08, 0x00, // Protocol type (IPv4)
+        0x06,       // Hardware address length
+        0x04,       // Protocol address length
+        0x00, 0x01, // Operation (ARP request)
+        
+        // Sender hardware address (our MAC)
+        our_mac[0], our_mac[1], our_mac[2], our_mac[3], our_mac[4], our_mac[5],
+        
+        // Sender protocol address (our IP)
+        (ip_info.ip.addr >> 0) & 0xFF,
+        (ip_info.ip.addr >> 8) & 0xFF,
+        (ip_info.ip.addr >> 16) & 0xFF,
+        (ip_info.ip.addr >> 24) & 0xFF,
+        
+        // Target hardware address (unknown, all zeros)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        
+        // Target protocol address (target IP)
+        (target_addr.addr >> 0) & 0xFF,
+        (target_addr.addr >> 8) & 0xFF,
+        (target_addr.addr >> 16) & 0xFF,
+        (target_addr.addr >> 24) & 0xFF
+    };
+
+    // Send raw ARP packet using esp_wifi_80211_tx with retry logic
+    ESP_LOGD(TAG, "Sending ARP packet to %s via esp_wifi_80211_tx", target_ip);
+    
+    esp_err_t err = ESP_FAIL;
+    int retry_count = 0;
+    const int max_retries = 3;
+    
+    while (retry_count < max_retries) {
+        err = esp_wifi_80211_tx(WIFI_IF_STA, arp_packet, sizeof(arp_packet), false);
+        
+        if (err == ESP_OK) {
+            ESP_LOGD(TAG, "ARP packet sent successfully to %s", target_ip);
+            return true;
+        } else if (err == ESP_ERR_NO_MEM) {
+            // WiFi buffer exhaustion - wait and retry
+            retry_count++;
+            ESP_LOGD(TAG, "WiFi buffer full for %s, retry %d/%d", target_ip, retry_count, max_retries);
+            vTaskDelay(pdMS_TO_TICKS(10)); // Wait 10ms before retry
+        } else {
+            // Other error - don't retry
+            ESP_LOGW(TAG, "Failed to send ARP packet to %s: %s", target_ip, esp_err_to_name(err));
+            break;
+        }
+    }
+    
+    if (err == ESP_ERR_NO_MEM) {
+        ESP_LOGW(TAG, "Failed to send ARP packet to %s after %d retries: WiFi buffers exhausted", target_ip, max_retries);
+    }
+    
+    return false;
+}
+
+// Alternative ARP resolution using ICMP ping to trigger ARP
+bool trigger_arp_via_ping(const char *ip) {
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = inet_addr(ip);
+    
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sock < 0) {
+        // Try UDP socket as fallback
+        sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock < 0) {
+            return false;
+        }
+        dest_addr.sin_port = htons(53); // DNS port
+        
+        // Set non-blocking and short timeout
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        
+        // Try to connect to trigger ARP resolution
+        connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        close(sock);
+        return true;
+    }
+    
+    close(sock);
+    return true;
+}
+
+bool send_arp_request_lwip(const char *target_ip) {
+    if (!target_ip) {
+        return false;
+    }
+
+    // Parse target IP
+    ip4_addr_t target_addr;
+    if (!ip4addr_aton(target_ip, &target_addr)) {
+        return false;
+    }
+
+    // Get STA network interface
+    struct netif *netif = netif_default;
+    if (!netif) {
+        ESP_LOGW(TAG, "netif_default is NULL");
+        return false;
+    }
+
+    // Send ARP request using lwIP
+    err_t result = etharp_request(netif, &target_addr);
+    return (result == ERR_OK);
+}
+
+bool get_arp_table_entry(const char *ip, uint8_t *mac) {
+    if (!ip || !mac) {
+        return false;
+    }
+
+    // Parse target IP
+    ip4_addr_t target_addr;
+    if (!ip4addr_aton(ip, &target_addr)) {
+        return false;
+    }
+
+    // Search ARP table using NULL netif (searches all interfaces)
+    struct eth_addr *eth_ret = NULL;
+    const ip4_addr_t *ip_ret = NULL;
+    
+    s8_t arp_idx = etharp_find_addr(NULL, &target_addr, &eth_ret, &ip_ret);
+    if (arp_idx >= 0 && eth_ret) {
+        memcpy(mac, eth_ret->addr, 6);
+        return true;
+    }
+
+    return false;
+}
+
+bool wifi_manager_arp_scan_subnet(void) {
+    arp_scanner_ctx_t *ctx = arp_scanner_init();
+    if (!ctx) {
+        TERMINAL_VIEW_ADD_TEXT("Failed to initialize ARP scanner context\n");
+        return false;
+    }
+
+    // Get subnet information using existing function
+    scanner_ctx_t temp_ctx;
+    if (!get_subnet_prefix(&temp_ctx)) {
+        TERMINAL_VIEW_ADD_TEXT("Failed to get network information. Make sure WiFi is connected.\n");
+        arp_scanner_cleanup(ctx);
+        return false;
+    }
+
+    strncpy(ctx->subnet_prefix, temp_ctx.subnet_prefix, sizeof(ctx->subnet_prefix) - 1);
+
+    char scan_msg[64];
+    snprintf(scan_msg, sizeof(scan_msg), "Starting ARP scan on %s0/24\n", ctx->subnet_prefix);
+    TERMINAL_VIEW_ADD_TEXT(scan_msg);
+
+    TERMINAL_VIEW_ADD_TEXT("Scanning network using ARP requests...\n");
+    printf("Starting ARP scan on %s1-%d\n", ctx->subnet_prefix, END_HOST);
+    ESP_LOGI(TAG, "Starting ARP scan, scanning %s1-%d", ctx->subnet_prefix, END_HOST);
+    
+    ctx->num_active_hosts = 0;
+    const int batch_size = 10;
+    
+    for (int batch_start = START_HOST; batch_start <= END_HOST; batch_start += batch_size) {
+        int batch_end = (batch_start + batch_size - 1 > END_HOST) ? END_HOST : batch_start + batch_size - 1;
+        
+        // Progress update
+        char progress_msg[64];
+        snprintf(progress_msg, sizeof(progress_msg), "Scanning %s%d-%d...\n", ctx->subnet_prefix, batch_start, batch_end);
+        TERMINAL_VIEW_ADD_TEXT(progress_msg);
+        printf("Scanning %s%d-%d...\n", ctx->subnet_prefix, batch_start, batch_end);
+        
+        ESP_LOGI(TAG, "Sending ARP batch %d-%d", batch_start, batch_end);
+        
+        // Send batch of ARP requests using lwIP
+        for (int host = batch_start; host <= batch_end; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", ctx->subnet_prefix, host);
+            
+            send_arp_request_lwip(current_ip);
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between requests
+        }
+        
+        // Wait for responses to arrive
+        vTaskDelay(pdMS_TO_TICKS(250));
+        
+        // Check ARP table for this batch
+        for (int host = batch_start; host <= batch_end; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", ctx->subnet_prefix, host);
+            
+            uint8_t mac[6];
+            if (get_arp_table_entry(current_ip, mac)) {
+                if (ctx->num_active_hosts < ctx->max_hosts) {
+                    strncpy(ctx->hosts[ctx->num_active_hosts].ip, current_ip, sizeof(ctx->hosts[ctx->num_active_hosts].ip) - 1);
+                    memcpy(ctx->hosts[ctx->num_active_hosts].mac, mac, 6);
+                    ctx->hosts[ctx->num_active_hosts].is_active = true;
+                    ctx->num_active_hosts++;
+
+
+                }
+            }
+        }
+        
+        // Progress update every 5 batches or at end
+        if ((batch_end - START_HOST + 1) % 50 == 0 || batch_end == END_HOST) {
+            char status_msg[64];
+            snprintf(status_msg, sizeof(status_msg), "Progress: %d/%d scanned, %zu hosts found\n", 
+                    batch_end - START_HOST + 1, END_HOST - START_HOST + 1, ctx->num_active_hosts);
+            TERMINAL_VIEW_ADD_TEXT(status_msg);
+            printf("Progress: %d/%d scanned, %zu hosts found\n", 
+                    batch_end - START_HOST + 1, END_HOST - START_HOST + 1, ctx->num_active_hosts);
+            ESP_LOGI(TAG, "Progress: %d/%d, found %zu hosts so far", 
+                    batch_end - START_HOST + 1, END_HOST - START_HOST + 1, ctx->num_active_hosts);
+        }
+    }
+
+    // Final summary
+    TERMINAL_VIEW_ADD_TEXT("\n=== ARP Scan Results ===\n");
+    printf("\n=== ARP Scan Results ===\n");
+    
+    char result_msg[64];
+    snprintf(result_msg, sizeof(result_msg), "Found %zu active hosts on %s0/24:\n", ctx->num_active_hosts, ctx->subnet_prefix);
+    TERMINAL_VIEW_ADD_TEXT(result_msg);
+    printf("Found %zu active hosts on %s0/24:\n", ctx->num_active_hosts, ctx->subnet_prefix);
+    
+    if (ctx->num_active_hosts > 0) {
+        TERMINAL_VIEW_ADD_TEXT("\nActive hosts:\n");
+        printf("\nActive hosts:\n");
+        
+        for (size_t i = 0; i < ctx->num_active_hosts; i++) {
+            char host_entry[80];
+            snprintf(host_entry, sizeof(host_entry), "%2zu. %s [%02X:%02X:%02X:%02X:%02X:%02X]\n",
+                    i + 1,
+                    ctx->hosts[i].ip,
+                    ctx->hosts[i].mac[0], ctx->hosts[i].mac[1], ctx->hosts[i].mac[2],
+                    ctx->hosts[i].mac[3], ctx->hosts[i].mac[4], ctx->hosts[i].mac[5]);
+            TERMINAL_VIEW_ADD_TEXT(host_entry);
+            printf("%2zu. %s [%02X:%02X:%02X:%02X:%02X:%02X]\n",
+                    i + 1,
+                    ctx->hosts[i].ip,
+                    ctx->hosts[i].mac[0], ctx->hosts[i].mac[1], ctx->hosts[i].mac[2],
+                    ctx->hosts[i].mac[3], ctx->hosts[i].mac[4], ctx->hosts[i].mac[5]);
+        }
+    } else {
+        TERMINAL_VIEW_ADD_TEXT("No active hosts found.\n");
+        printf("No active hosts found.\n");
+    }
+    
+    TERMINAL_VIEW_ADD_TEXT("\nARP scan completed.\n");
+    printf("\nARP scan completed.\n");
+    ESP_LOGI(TAG, "ARP scan completed. Found %zu active hosts", ctx->num_active_hosts);
+
+    arp_scanner_cleanup(ctx);
+    return true;
+}
+
 void scan_ports_on_host(const char *target_ip, host_result_t *result) {
     struct sockaddr_in server_addr;
     int sock;
@@ -2409,6 +2735,115 @@ void scan_ports_on_host(const char *target_ip, host_result_t *result) {
         close(sock);
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+void scan_ssh_on_host(const char *target_ip, host_result_t *result) {
+    struct sockaddr_in server_addr;
+    int sock;
+    int scan_result;
+    struct timeval timeout;
+    fd_set fdset;
+    int flags;
+    char banner[256];
+    ssize_t bytes_read;
+    
+    ESP_LOGI("SSH_SCAN", "Starting SSH scan on host: %s", target_ip);
+    
+    strcpy(result->ip, target_ip);
+    result->num_open_ports = 0;
+    
+    server_addr.sin_family = AF_INET;
+    inet_pton(AF_INET, target_ip, &server_addr.sin_addr.s_addr);
+    
+    printf("SSH scanning host: %s\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("SSH scanning host: %s\n", target_ip);
+    
+    uint16_t ssh_ports[] = {22, 2222, 2022};
+    size_t num_ssh_ports = sizeof(ssh_ports) / sizeof(ssh_ports[0]);
+    
+    for (size_t i = 0; i < num_ssh_ports; i++) {
+        if (result->num_open_ports >= MAX_OPEN_PORTS)
+            break;
+            
+        uint16_t port = ssh_ports[i];
+        ESP_LOGI("SSH_SCAN", "Testing port %d on %s", port, target_ip);
+        printf("Testing SSH port %d on %s...", port, target_ip);
+        TERMINAL_VIEW_ADD_TEXT("Testing SSH port %d on %s...", port, target_ip);
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            ESP_LOGE("SSH_SCAN", "Failed to create socket for port %d: errno=%d", port, errno);
+            continue;
+        }
+            
+        flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        
+        server_addr.sin_port = htons(port);
+        ESP_LOGD("SSH_SCAN", "Attempting connection to %s:%d", target_ip, port);
+        scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        
+        if (scan_result < 0 && errno == EINPROGRESS) {
+            timeout.tv_sec = 3;
+            timeout.tv_usec = 0;
+            
+            FD_ZERO(&fdset);
+            FD_SET(sock, &fdset);
+            
+            scan_result = select(sock + 1, NULL, &fdset, NULL, &timeout);
+            
+            if (scan_result > 0) {
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                    ESP_LOGI("SSH_SCAN", "Port %d is OPEN on %s", port, target_ip);
+                    result->open_ports[result->num_open_ports++] = port;
+                    
+                    fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+                    
+                    timeout.tv_sec = 2;
+                    timeout.tv_usec = 0;
+                    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+                    
+                    memset(banner, 0, sizeof(banner));
+                    bytes_read = recv(sock, banner, sizeof(banner) - 1, 0);
+                    ESP_LOGD("SSH_SCAN", "Received %d bytes from %s:%d", (int)bytes_read, target_ip, port);
+                    
+                    if (bytes_read > 0) {
+                        banner[bytes_read] = '\0';
+                        char *newline = strchr(banner, '\r');
+                        if (newline) *newline = '\0';
+                        newline = strchr(banner, '\n');
+                        if (newline) *newline = '\0';
+                        
+                        ESP_LOGI("SSH_SCAN", "SSH banner from %s:%d: %s", target_ip, port, banner);
+                        printf(" OPEN: %s\n", banner);
+                        TERMINAL_VIEW_ADD_TEXT(" OPEN: %s\n", banner);
+                    } else {
+                        printf(" OPEN (no banner)\n");
+                        TERMINAL_VIEW_ADD_TEXT(" OPEN (no banner)\n");
+                    }
+                } else {
+                    ESP_LOGD("SSH_SCAN", "Port %d connection failed on %s (getsockopt error)", port, target_ip);
+                    printf(" CLOSED\n");
+                    TERMINAL_VIEW_ADD_TEXT(" CLOSED\n");
+                }
+            } else {
+                ESP_LOGD("SSH_SCAN", "Port %d timeout on %s (select result: %d)", port, target_ip, scan_result);
+                printf(" TIMEOUT\n");
+                TERMINAL_VIEW_ADD_TEXT(" TIMEOUT\n");
+            }
+        } else {
+            ESP_LOGD("SSH_SCAN", "Port %d immediate connection failure on %s (errno: %d)", port, target_ip, errno);
+            printf(" CLOSED\n");
+            TERMINAL_VIEW_ADD_TEXT(" CLOSED\n");
+        }
+        
+        close(sock);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    printf("SSH scan completed on %s - found %d open ports\n", target_ip, result->num_open_ports);
+    TERMINAL_VIEW_ADD_TEXT("SSH scan completed on %s - found %d open ports\n", target_ip, result->num_open_ports);
 }
 
 void scanner_cleanup(scanner_ctx_t *ctx) {
