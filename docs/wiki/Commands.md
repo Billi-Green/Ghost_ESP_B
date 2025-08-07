@@ -258,11 +258,14 @@
 <details>
 <summary><strong>Utilities</strong></summary>
 
-- <code>scanports local [-C/-A/start_port-end_port]</code>  
+- <code>scanports local</code>  
   Scan ports on local subnet
 
-- <code>scanports [IP] [-C/-A/start_port-end_port]</code>  
+- <code>scanports [IP] [start_port-end_port (OPTIONAL)]</code>  
   Scan ports on a specific IP
+
+- <code>scanarp</code>  
+  Perform ARP scan on local network to discover active hosts
 
 - <code>congestion</code>  
   Display Wi-Fi channel congestion chart

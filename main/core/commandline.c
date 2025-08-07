@@ -1032,6 +1032,12 @@ void handle_scan_ports(int argc, char **argv) {
     scan_ip_port_range(target_ip, start_port, end_port);
 }
 
+void handle_scan_arp(int argc, char **argv) {
+    TERMINAL_VIEW_ADD_TEXT("Starting ARP scan on local network...\n");
+    printf("Starting ARP scan on local network...\n");
+    wifi_manager_arp_scan_subnet();
+}
+
 void handle_crash(int argc, char **argv) {
     int *ptr = NULL;
     *ptr = 42;
@@ -1327,6 +1333,13 @@ void handle_help(int argc, char **argv) {
     TERMINAL_VIEW_ADD_TEXT("        all  : Scan all ports (1-65535)\n");
     TERMINAL_VIEW_ADD_TEXT("        start-end : Custom port range (e.g. 80-443)\n");
     TERMINAL_VIEW_ADD_TEXT("        (no range) : Scan common ports (default)\n\n");
+
+    printf("scanarp\n");
+    printf("    Description: Perform ARP scan on local network to discover active hosts\n");
+    printf("    Usage: scanarp\n\n");
+    TERMINAL_VIEW_ADD_TEXT("scanarp\n");
+    TERMINAL_VIEW_ADD_TEXT("    Description: Perform ARP scan on local network to discover active hosts\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: scanarp\n\n");
 
     printf("congestion\n");
     printf("    Description: Display Wi-Fi channel congestion chart.\n");
@@ -2662,6 +2675,7 @@ void register_commands() {
     register_command("startwd", handle_startwd);
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
+    register_command("scanarp", handle_scan_arp);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
     register_command("listportals", handle_listportals);

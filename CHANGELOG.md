@@ -44,6 +44,7 @@
   - 'apenable' command to enable/disable the Access Point
   - 'disconnect' command to disconnect from the current network
   - 'setrgbmode' command to change the RGB mode
+  - 'scanarp' command to initiate an ARP scan on the local network
 
 - Misc
   - Add build name config variable for debugging and auto-flash support - @tototo31
