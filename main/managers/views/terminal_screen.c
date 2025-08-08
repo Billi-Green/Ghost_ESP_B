@@ -325,6 +325,7 @@ void terminal_view_create(void) {
     lv_obj_set_style_bg_color(terminal_view.root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(terminal_view.root, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(terminal_view.root, 0, 0); // Remove border
+    lv_obj_set_style_radius(terminal_view.root, 0, 0);
     lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
 
@@ -368,6 +369,7 @@ void terminal_view_create(void) {
     lv_obj_set_size(terminal_page, LV_HOR_RES, textarea_height);
     lv_obj_set_style_bg_color(terminal_page, lv_color_black(), 0);
     lv_obj_set_style_pad_all(terminal_page, 0, 0);
+    lv_obj_set_style_radius(terminal_page, 0, 0);
     lv_obj_set_scrollbar_mode(terminal_page, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_border_width(terminal_page, 0, 0);
     lv_obj_set_style_clip_corner(terminal_page, false, 0);
@@ -409,7 +411,7 @@ void terminal_view_create(void) {
         lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(input_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_pad_all(input_label, padding, 0);
-        lv_obj_set_style_radius(input_label, 6, 0);
+        lv_obj_set_style_radius(input_label, 0, 0);
         lv_obj_set_style_border_width(input_label, 0, 0);
         lv_obj_set_style_shadow_width(input_label, 0, 0);
         lv_obj_align(input_label, LV_ALIGN_BOTTOM_RIGHT, -padding, -padding);
