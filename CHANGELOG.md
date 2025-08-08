@@ -90,7 +90,8 @@
   - Fix stop command not stopping GPS task
   - Fix serial going unresponsive by using 'scanap -stop'
   - Small fixes to the process of connecting to a WiFi network
-  - Fix SAE Flood Attack 
+  - Fix SAE Flood Attack
+  - Handle backspace and DEL properly in serial input
   
 - General
   - Disable and re-enable ESP comm manager UART around GPS usage to avoid driver conflicts
