@@ -69,6 +69,28 @@ static void wifi_beacon_list_task(void *param);
 
 // Forward declarations for SAE flood attack
 static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+static esp_err_t start_live_ap_channel_hopping(void);
+static void stop_live_ap_channel_hopping(void);
+static esp_timer_handle_t live_ap_channel_hop_timer = NULL;
+static volatile bool live_ap_hopping_active = false;
+static uint32_t last_live_print_ms = 0;
+static uint16_t live_last_printed_index = 0;
+
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+static const uint8_t live_ap_channels[] = {
+    1,2,3,4,5,6,7,8,9,10,11,12,13,
+    36,40,44,48,52,56,60,64,
+    100,104,108,112,116,120,124,128,132,136,140,144,
+    149,153,157,161,165
+};
+#else
+static const uint8_t live_ap_channels[] = {
+    1,2,3,4,5,6,7,8,9,10,11,12,13
+};
+#endif
+static const size_t live_ap_channels_len = sizeof(live_ap_channels) / sizeof(live_ap_channels[0]);
+static size_t live_ap_channel_index = 0;
 
 uint16_t ap_count;
 wifi_ap_record_t *scanned_aps;
@@ -3256,7 +3278,80 @@ void wifi_manager_stop_deauth() {
     }
 }
 
-// Print the scan results and match BSSID to known companies
+static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_record_t *rec, bool include_security) {
+    char sanitized_ssid[33];
+    sanitize_ssid_and_check_hidden((uint8_t *)rec->ssid, sanitized_ssid, sizeof(sanitized_ssid));
+
+    ECompany company = match_bssid_to_company(rec->bssid);
+    const char *company_str = "Unknown";
+    switch (company) {
+        case COMPANY_DLINK: company_str = "DLink"; break;
+        case COMPANY_NETGEAR: company_str = "Netgear"; break;
+        case COMPANY_BELKIN: company_str = "Belkin"; break;
+        case COMPANY_TPLINK: company_str = "TPLink"; break;
+        case COMPANY_LINKSYS: company_str = "Linksys"; break;
+        case COMPANY_ASUS: company_str = "ASUS"; break;
+        case COMPANY_ACTIONTEC: company_str = "Actiontec"; break;
+        default: company_str = "Unknown"; break;
+    }
+
+    printf("[%u] SSID: %s,\n"
+           "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
+           "     RSSI: %d,\n"
+           "     Channel: %d,\n",
+           idx,
+           sanitized_ssid,
+           rec->bssid[0], rec->bssid[1], rec->bssid[2], rec->bssid[3], rec->bssid[4], rec->bssid[5],
+           rec->rssi,
+           rec->primary);
+    TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
+                           "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
+                           "     RSSI: %d,\n"
+                           "     Channel: %d,\n",
+                           idx,
+                           sanitized_ssid,
+                           rec->bssid[0], rec->bssid[1], rec->bssid[2], rec->bssid[3], rec->bssid[4], rec->bssid[5],
+                           rec->rssi,
+                           rec->primary);
+
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (include_security) {
+        int ch = rec->primary;
+        const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
+        printf("     Band: %s,\n", band_str);
+        TERMINAL_VIEW_ADD_TEXT("     Band: %s,\n", band_str);
+
+        const char *auth_str = "Unknown";
+        const char *pmf_str = NULL;
+        switch (rec->authmode) {
+            case WIFI_AUTH_OPEN: auth_str = "Open"; break;
+            case WIFI_AUTH_WEP: auth_str = "WEP"; break;
+            case WIFI_AUTH_WPA_PSK: auth_str = "WPA"; break;
+            case WIFI_AUTH_WPA2_PSK: auth_str = "WPA2"; break;
+            case WIFI_AUTH_WPA_WPA2_PSK: auth_str = "WPA/WPA2"; break;
+            case WIFI_AUTH_WPA2_ENTERPRISE: auth_str = "WPA2-Enterprise"; break;
+            case WIFI_AUTH_WPA3_PSK: auth_str = "WPA3"; pmf_str = "Required"; break;
+            case WIFI_AUTH_WPA2_WPA3_PSK: auth_str = "WPA2/WPA3"; pmf_str = "Required (WPA3)"; break;
+            case WIFI_AUTH_WAPI_PSK: auth_str = "WAPI"; break;
+            case WIFI_AUTH_WPA3_ENTERPRISE: auth_str = "WPA3-Enterprise"; pmf_str = "Required"; break;
+            default: auth_str = "Unknown"; break;
+        }
+        if (pmf_str) {
+            printf("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
+            TERMINAL_VIEW_ADD_TEXT("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
+        } else {
+            printf("     Security: %s\n", auth_str);
+            TERMINAL_VIEW_ADD_TEXT("     Security: %s\n", auth_str);
+        }
+    }
+#endif
+
+    if (strcmp(company_str, "Unknown") != 0) {
+        printf("     Company: %s\n", company_str);
+        TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+    }
+}
+
 void wifi_manager_print_scan_results_with_oui() {
     if (scanned_aps == NULL) {
         printf("AP information not available\n");
@@ -3264,7 +3359,12 @@ void wifi_manager_print_scan_results_with_oui() {
         return;
     }
 
-    for (uint16_t i = 0; i < ap_count; i++) {
+    uint16_t limit = ap_count;
+    if (limit > 50) {
+        limit = 50;
+    }
+
+    for (uint16_t i = 0; i < limit; i++) {
         char sanitized_ssid[33];
         sanitize_ssid_and_check_hidden(scanned_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
@@ -3441,6 +3541,188 @@ void wifi_manager_print_scan_results_with_oui() {
             TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
         }
     }
+}
+
+static void live_ap_channel_hop_timer_callback(void *arg) {
+    if (!live_ap_hopping_active) return;
+    live_ap_channel_index = (live_ap_channel_index + 1) % live_ap_channels_len;
+    esp_wifi_set_channel(live_ap_channels[live_ap_channel_index], WIFI_SECOND_CHAN_NONE);
+}
+
+static esp_err_t start_live_ap_channel_hopping(void) {
+    if (live_ap_channel_hop_timer != NULL) {
+        esp_timer_stop(live_ap_channel_hop_timer);
+        esp_timer_delete(live_ap_channel_hop_timer);
+        live_ap_channel_hop_timer = NULL;
+    }
+    live_ap_channel_index = 0;
+    esp_wifi_set_channel(live_ap_channels[live_ap_channel_index], WIFI_SECOND_CHAN_NONE);
+    esp_timer_create_args_t timer_args = {
+        .callback = live_ap_channel_hop_timer_callback,
+        .name = "live_ap_hop"
+    };
+    esp_err_t err = esp_timer_create(&timer_args, &live_ap_channel_hop_timer);
+    if (err != ESP_OK) return err;
+    err = esp_timer_start_periodic(live_ap_channel_hop_timer, SCANSTA_CHANNEL_HOP_INTERVAL_MS * 1000);
+    if (err != ESP_OK) {
+        esp_timer_delete(live_ap_channel_hop_timer);
+        live_ap_channel_hop_timer = NULL;
+        return err;
+    }
+    live_ap_hopping_active = true;
+    return ESP_OK;
+}
+
+static void stop_live_ap_channel_hopping(void) {
+    if (live_ap_channel_hop_timer) {
+        esp_timer_stop(live_ap_channel_hop_timer);
+        esp_timer_delete(live_ap_channel_hop_timer);
+        live_ap_channel_hop_timer = NULL;
+    }
+    live_ap_hopping_active = false;
+}
+
+static bool bssid_already_listed(const uint8_t *bssid) {
+    for (int i = 0; i < ap_count; i++) {
+        if (memcmp(scanned_aps[i].bssid, bssid, 6) == 0) return true;
+    }
+    return false;
+}
+
+static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    if (pkt->rx_ctrl.sig_len < 36) return;
+    const uint8_t *payload = pkt->payload;
+    uint8_t frame_subtype = (payload[0] & 0xF0) >> 4;
+    if (frame_subtype != 0x08 && frame_subtype != 0x05) return;
+
+    const wifi_ieee80211_packet_t *ipkt = (const wifi_ieee80211_packet_t *)payload;
+    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    const uint8_t *bssid = hdr->addr3;
+
+    if (bssid_already_listed(bssid)) return;
+
+    int idx = 36;
+    char ssid[33] = {0};
+    while (idx + 1 < pkt->rx_ctrl.sig_len) {
+        uint8_t id = payload[idx];
+        uint8_t ie_len = payload[idx + 1];
+        if (idx + 2 + ie_len > pkt->rx_ctrl.sig_len) break;
+        if (id == 0 && ie_len <= 32) {
+            memcpy(ssid, &payload[idx + 2], ie_len);
+            ssid[ie_len] = '\0';
+            break;
+        }
+        idx += 2 + ie_len;
+    }
+
+    if (ssid[0] == '\0') {
+        strncpy(ssid, "<hidden>", sizeof(ssid));
+    }
+
+    char sanitized[33];
+    sanitize_ssid_and_check_hidden((uint8_t *)ssid, sanitized, sizeof(sanitized));
+
+    // derive security from IEs
+    bool has_wpa = false;
+    bool has_wpa2 = false;
+    bool has_wpa3 = false;
+    // capability info privacy bit for WEP detection
+    if (pkt->rx_ctrl.sig_len >= 36) {
+        uint16_t cap = (uint16_t)payload[34] | ((uint16_t)payload[35] << 8);
+        // iterate IEs to find RSN/WPA
+        int ie = 36;
+        while (ie + 1 < pkt->rx_ctrl.sig_len) {
+            uint8_t eid = payload[ie];
+            uint8_t elen = payload[ie + 1];
+            if (ie + 2 + elen > pkt->rx_ctrl.sig_len) break;
+            if (eid == 48 /* RSN */ && elen >= 2) {
+                int off = ie + 2;
+                if (off + 2 <= ie + 2 + elen) {
+                    off += 2; // version
+                }
+                if (off + 4 <= ie + 2 + elen) {
+                    off += 4; // group cipher suite
+                }
+                if (off + 2 <= ie + 2 + elen) {
+                    uint16_t pairwise_count = payload[off] | (payload[off + 1] << 8);
+                    off += 2 + 4 * pairwise_count;
+                }
+                if (off + 2 <= ie + 2 + elen) {
+                    uint16_t akm_count = payload[off] | (payload[off + 1] << 8);
+                    off += 2;
+                    for (uint16_t a = 0; a < akm_count; a++) {
+                        if (off + 4 > ie + 2 + elen) break;
+                        // OUI 00:0F:AC
+                        uint8_t oui0 = payload[off + 0];
+                        uint8_t oui1 = payload[off + 1];
+                        uint8_t oui2 = payload[off + 2];
+                        uint8_t type = payload[off + 3];
+                        if (oui0 == 0x00 && oui1 == 0x0F && oui2 == 0xAC) {
+                            if (type == 2) has_wpa2 = true;      // PSK
+                            if (type == 8) has_wpa3 = true;      // SAE
+                        }
+                        off += 4;
+                    }
+                }
+            } else if (eid == 221 /* Vendor */ && elen >= 4) {
+                // WPA (00:50:F2, type 1)
+                if (payload[ie + 2] == 0x00 && payload[ie + 3] == 0x50 && payload[ie + 4] == 0xF2 && payload[ie + 5] == 0x01) {
+                    has_wpa = true;
+                }
+            }
+            ie += 2 + elen;
+        }
+    }
+
+    if (scanned_aps == NULL) {
+        scanned_aps = calloc(MAX_SCANNED_APS, sizeof(wifi_ap_record_t));
+        ap_count = 0;
+    }
+    if (scanned_aps && ap_count < MAX_SCANNED_APS) {
+        wifi_ap_record_t *rec = &scanned_aps[ap_count++];
+        memset(rec, 0, sizeof(*rec));
+        memcpy(rec->bssid, bssid, 6);
+        strncpy((char *)rec->ssid, sanitized, sizeof(rec->ssid));
+        rec->rssi = pkt->rx_ctrl.rssi;
+        rec->primary = pkt->rx_ctrl.channel;
+        // map to closest auth mode
+        if (has_wpa3 && has_wpa2) rec->authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+        else if (has_wpa3) rec->authmode = WIFI_AUTH_WPA3_PSK;
+        else if (has_wpa2) rec->authmode = WIFI_AUTH_WPA2_PSK;
+        else if (has_wpa) rec->authmode = WIFI_AUTH_WPA_PSK;
+        else {
+            // check WEP via privacy bit
+            uint16_t cap = (uint16_t)payload[34] | ((uint16_t)payload[35] << 8);
+            if (cap & 0x0010) rec->authmode = WIFI_AUTH_WEP; else rec->authmode = WIFI_AUTH_OPEN;
+        }
+    }
+
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now_ms - last_live_print_ms < 100) return;
+    last_live_print_ms = now_ms;
+
+    while (live_last_printed_index < ap_count) {
+        uint16_t idx = live_last_printed_index;
+        wifi_ap_record_t *rec = &scanned_aps[idx];
+        wifi_manager_print_ap_entry_formatted(idx, rec, true);
+        live_last_printed_index++;
+    }
+}
+
+void wifi_manager_start_live_ap_scan(void) {
+    ap_manager_stop_services();
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    if (scanned_aps) { free(scanned_aps); scanned_aps = NULL; }
+    ap_count = 0;
+    live_last_printed_index = 0;
+    last_live_print_ms = 0;
+    wifi_manager_start_monitor_mode(live_ap_scan_callback);
+    start_live_ap_channel_hopping();
+    printf("Live AP scan started. Type 'stopscan' to stop.\n");
+    TERMINAL_VIEW_ADD_TEXT("Live AP scan started.\n");
 }
 
 esp_err_t wifi_manager_broadcast_ap(const char *ssid) {

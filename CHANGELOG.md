@@ -18,7 +18,7 @@
   - AITRIP CYD / ESP2432S028R — @tototo31
   - JCMK DevBoard Pro
 
-- **Infrared**
+- **Infrared RX**
   - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
   - Ability to Rename, Delete, Add remotes (only enabled on TEmbed C1101)
   - Easy Learn Mode: **Name buttons automatically**
@@ -47,6 +47,7 @@
   - 'setrgbmode' command to change the RGB mode
   - 'scanarp' command to initiate an ARP scan on the local network
   - 'scanssh [IP]' command to initiate an SSH scan on the target IP
+  - '-live' arg for 'scanap' for a non blocking scan that lists APs as they're found
 
 - Misc
   - Add build name config variable for debugging and auto-flash support - @tototo31
@@ -74,6 +75,9 @@
 - Attacks
   - Refactor packet capture
   - Refactor 'scanports' command to be more intuitive and user-friendly
+
+- General
+  - Cap displayed WiFi APs to 50 for 'scanap' output
 
 ### Bug Fixes
 

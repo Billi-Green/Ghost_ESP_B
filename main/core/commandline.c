@@ -124,6 +124,12 @@ void cmd_wifi_scan_start(int argc, char **argv) {
             cmd_wifi_scan_stop(argc, argv);
             return;
         }
+        if (strcmp(argv[1], "-live") == 0) {
+            printf("Starting live AP scan...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting live AP scan...\n");
+            wifi_manager_start_live_ap_scan();
+            return;
+        }
         int seconds = atoi(argv[1]);
         wifi_manager_start_scan_with_time(seconds);
     } else {

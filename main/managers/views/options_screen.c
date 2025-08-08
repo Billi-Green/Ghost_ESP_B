@@ -76,7 +76,7 @@ static const char *wifi_capture_options[] = {
 };
 
 static const char *wifi_scanning_options[] = {
-    "Scan Access Points", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
+    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
     "ARP Scan Network", "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
@@ -1023,6 +1023,13 @@ void option_event_cb(lv_event_t *e) {
         terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("scanap");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Scan APs Live") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("scanap -live");
         view_switched = true;
     }
 
