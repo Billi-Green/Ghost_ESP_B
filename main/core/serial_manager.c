@@ -94,10 +94,16 @@ void serial_task(void *pvParameter) {
     }
 #endif
 
-    // Process data from the main UART
     if (length > 0) {
       for (int i = 0; i < length; i++) {
         char incoming_char = (char)data[i];
+
+        if (incoming_char == '\b' || (unsigned char)incoming_char == 0x7F) {
+          if (index > 0) {
+            index--;
+          }
+          continue;
+        }
 
         if (incoming_char == '\n' || incoming_char == '\r') {
           serial_buffer[index] = '\0';
@@ -105,10 +111,15 @@ void serial_task(void *pvParameter) {
             process_html_line(serial_buffer);
             index = 0;
           }
-        } else if (index < SERIAL_BUFFER_SIZE - 1) {
-          serial_buffer[index++] = incoming_char;
-        } else {
-          index = 0;
+          continue;
+        }
+
+        if ((unsigned char)incoming_char >= 32 && (unsigned char)incoming_char != 127) {
+          if (index < SERIAL_BUFFER_SIZE - 1) {
+            serial_buffer[index++] = incoming_char;
+          } else {
+            index = 0;
+          }
         }
       }
     }
