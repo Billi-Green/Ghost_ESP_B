@@ -213,6 +213,7 @@ bool get_subnet_prefix(scanner_ctx_t *ctx);
 bool is_host_active(const char *ip_addr);
 
 scanner_ctx_t *scanner_init(void);
+void scanner_cleanup(scanner_ctx_t *ctx);
 
 bool wifi_manager_scan_subnet();
 
@@ -221,6 +222,10 @@ void scan_ssh_on_host(const char *target_ip, host_result_t *result);
 
 bool scan_ip_port_range(const char *target_ip, uint16_t start_port,
                         uint16_t end_port);
+
+void scan_udp_ports_on_host(const char *target_ip, host_result_t *result);
+bool scan_ip_udp_port_range(const char *target_ip, uint16_t start_port,
+                            uint16_t end_port);
 
 // ARP scan functions
 arp_scanner_ctx_t *arp_scanner_init(void);

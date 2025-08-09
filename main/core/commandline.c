@@ -1012,21 +1012,44 @@ void handle_scan_ports(int argc, char **argv) {
     if (argc < 3) {
         host_result_t result;
         char msg_buf[64];
-        snprintf(msg_buf, sizeof(msg_buf), "Scanning common ports on %s...\n", target_ip);
+        snprintf(msg_buf, sizeof(msg_buf), "Scanning common tcp ports on %s...\n", target_ip);
+        printf("%s", msg_buf);
         TERMINAL_VIEW_ADD_TEXT(msg_buf);
-
         scan_ports_on_host(target_ip, &result);
 
         if (result.num_open_ports > 0) {
             snprintf(msg_buf, sizeof(msg_buf), "Found %d open ports on %s:\n", result.num_open_ports, target_ip);
+            printf("%s", msg_buf);
             TERMINAL_VIEW_ADD_TEXT(msg_buf);
             for (int i = 0; i < result.num_open_ports; i++) {
                 char port_buf[32];
                 snprintf(port_buf, sizeof(port_buf), "  Port %d\n", result.open_ports[i]);
+                printf("%s", port_buf);
                 TERMINAL_VIEW_ADD_TEXT(port_buf);
             }
         } else {
+            printf("No common open ports found.\n");
             TERMINAL_VIEW_ADD_TEXT("No common open ports found.\n");
+        }
+
+        host_result_t udp_result;
+        snprintf(msg_buf, sizeof(msg_buf), "Scanning common udp ports on %s...\n", target_ip);
+        printf("%s", msg_buf);
+        TERMINAL_VIEW_ADD_TEXT(msg_buf);
+        scan_udp_ports_on_host(target_ip, &udp_result);
+        if (udp_result.num_open_ports > 0) {
+            snprintf(msg_buf, sizeof(msg_buf), "Found %d udp ports responding on %s:\n", udp_result.num_open_ports, target_ip);
+            printf("%s", msg_buf);
+            TERMINAL_VIEW_ADD_TEXT(msg_buf);
+            for (int i = 0; i < udp_result.num_open_ports; i++) {
+                char port_buf[32];
+                snprintf(port_buf, sizeof(port_buf), "  UDP %d\n", udp_result.open_ports[i]);
+                printf("%s", port_buf);
+                TERMINAL_VIEW_ADD_TEXT(port_buf);
+            }
+        } else {
+            printf("No common udp responses found.\n");
+            TERMINAL_VIEW_ADD_TEXT("No common udp responses found.\n");
         }
         return;
     }
@@ -1043,9 +1066,15 @@ void handle_scan_ports(int argc, char **argv) {
     }
 
     char msg_buf[64];
-    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s ports %d-%d...\n", target_ip, start_port, end_port);
+    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s tcp ports %d-%d...\n", target_ip, start_port, end_port);
+    printf("%s", msg_buf);
     TERMINAL_VIEW_ADD_TEXT(msg_buf);
     scan_ip_port_range(target_ip, start_port, end_port);
+
+    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s udp ports %d-%d...\n", target_ip, start_port, end_port);
+    printf("%s", msg_buf);
+    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    scan_ip_udp_port_range(target_ip, start_port, end_port);
 }
 
 void handle_scan_arp(int argc, char **argv) {

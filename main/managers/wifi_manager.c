@@ -106,68 +106,161 @@ void *deauth_task_handle = NULL;
 int beacon_task_running = 0;
 
 const uint16_t COMMON_PORTS[] = {
-    20,    // FTP Data
-    21,    // FTP Control
-    22,    // SSH
-    23,    // Telnet
-    25,    // SMTP
-    53,    // DNS
-    69,    // TFTP
-    80,    // HTTP
-    88,    // Kerberos
-    110,   // POP3
-    111,   // RPCBind
-    123,   // NTP
-    135,   // MSRPC
-    137,   // NetBIOS Name Service
-    138,   // NetBIOS Datagram Service
-    139,   // NetBIOS Session Service
-    143,   // IMAP
-    161,   // SNMP
-    389,   // LDAP
-    443,   // HTTPS
-    445,   // SMB
-    465,   // SMTPS
-    500,   // IKE (VPN)
-    514,   // Syslog
-    515,   // LPD/LPR Printer
-    587,   // SMTP (submission)
-    631,   // IPP (Printing)
-    636,   // LDAPS
-    993,   // IMAPS
-    995,   // POP3S
-    1080,  // SOCKS Proxy
-    1433,  // MSSQL
-    1434,  // MSSQL Browser
-    1521,  // Oracle DB
-    1701,  // L2TP
-    1723,  // PPTP
-    1883,  // MQTT
-    2049,  // NFS
-    2082,  // cPanel
-    2083,  // cPanel SSL
-    2086,  // WHM
-    2087,  // WHM SSL
-    2222,  // Alternative SSH
-    3306,  // MySQL
-    3389,  // RDP
-    5060,  // SIP
-    5222,  // XMPP
-    5432,  // PostgreSQL
-    5900,  // VNC
-    5901,  // VNC-1
-    5902,  // VNC-2
-    6379,  // Redis
-    8080,  // HTTP Proxy
-    8443,  // HTTPS Alt
-    8883,  // MQTT SSL
-    9100,  // Printer
-    27017, // MongoDB
-    32400, // Plex Media Server
-    51820, // Wireguard
-    55443  // Alt HTTP
+    7,     // echo
+    20,    // ftp-data
+    21,    // ftp
+    22,    // ssh
+    23,    // telnet
+    25,    // smtp
+    53,    // dns
+    69,    // tftp (udp mostly)
+    80,    // http
+    88,    // kerberos
+    110,   // pop3
+    111,   // rpcbind
+    119,   // nntp
+    123,   // ntp (udp mostly)
+    135,   // msrpc
+    137,   // netbios-ns
+    138,   // netbios-dgm
+    139,   // netbios-ssn
+    143,   // imap
+    161,   // snmp (udp mostly)
+    162,   // snmp-trap (udp mostly)
+    389,   // ldap
+    443,   // https
+    445,   // smb
+    465,   // smtps
+    500,   // ike (udp mostly)
+    502,   // modbus
+    512,   // exec
+    513,   // login
+    514,   // syslog/shell (udp mostly)
+    515,   // lpd
+    587,   // smtp-submission
+    593,   // rpc over http
+    631,   // ipp
+    636,   // ldaps
+    646,   // ldp
+    873,   // rsync
+    902,   // vmware-server
+    989,   // ftps-data
+    990,   // ftps
+    993,   // imaps
+    995,   // pop3s
+    1080,  // socks
+    1099,  // rmi
+    1433,  // mssql
+    1434,  // mssql-browser (udp mostly)
+    1494,  // citrix-ica
+    1521,  // oracle-db
+    1701,  // l2tp (udp mostly)
+    1720,  // h323
+    1723,  // pptp
+    1883,  // mqtt
+    1900,  // ssdp (udp mostly)
+    2049,  // nfs
+    2082,  // cpanel
+    2083,  // cpanel-ssl
+    2086,  // whm
+    2087,  // whm-ssl
+    2095,  // webmail
+    2096,  // webmail-ssl
+    2222,  // ssh-alt
+    2375,  // docker
+    2376,  // docker-tls
+    2377,  // docker-swarm
+    2379,  // etcd
+    2380,  // etcd-peer
+    2381,  // etcd-alt
+    2480,  // oracle-web
+    25565, // minecraft
+    27017, // mongodb
+    27018, // mongodb-shard
+    27019, // mongodb-config
+    28017, // mongodb-http
+    3000,  // dev-http
+    3001,  // dev-http-alt
+    3128,  // squid-proxy
+    32400, // plex
+    3260,  // iscsi
+    3306,  // mysql
+    3389,  // rdp
+    3478,  // stun (udp mostly)
+    3689,  // daap
+    4369,  // epmd
+    4444,  // tcp-alt
+    4500,  // ipsec-nat-t (udp mostly)
+    4789,  // vxlan (udp mostly)
+    4848,  // glassfish-admin
+    5000,  // http-alt/upnp
+    5001,  // http-alt
+    5004,  // rtp (udp mostly)
+    5005,  // rtp (udp mostly)
+    5060,  // sip
+    5061,  // sips
+    5222,  // xmpp
+    5223,  // xmpp-ssl/apns
+    5357,  // wsdapi
+    5432,  // postgresql
+    5555,  // android-adb
+    5601,  // kibana
+    5671,  // amqp-tls
+    5672,  // amqp
+    5683,  // coap (udp mostly)
+    5900,  // vnc
+    5901,  // vnc-1
+    5902,  // vnc-2
+    5984,  // couchdb
+    5985,  // winrm
+    5986,  // winrm-https
+    6000,  // x11
+    6379,  // redis
+    6667,  // irc
+    7001,  // websphere
+    7199,  // cassandra-intra
+    8000,  // http-alt
+    8008,  // http-alt
+    8080,  // http-proxy
+    8081,  // http-alt
+    8082,  // http-alt
+    8083,  // http-alt
+    8086,  // influxdb
+    8088,  // http-alt
+    8123,  // home-assistant
+    8161,  // activemq
+    8181,  // http-alt
+    8200,  // upnp-minidlna
+    8222,  // vmware
+    8333,  // bitcoin
+    8443,  // https-alt
+    8500,  // consul
+    8530,  // wsus
+    8554,  // rtsp-alt
+    8883,  // mqtt-tls
+    8888,  // http-alt
+    9000,  // sonarqube/php-fpm
+    9042,  // cassandra-cql
+    9080,  // http-alt
+    9090,  // http-alt
+    9091,  // transmission
+    9092,  // kafka
+    9100,  // printer
+    9200,  // elasticsearch
+    9300,  // elasticsearch-node
+    9418,  // git
+    9443,  // https-alt
+    10000, // webmin
+    11211, // memcached
+    15672, // rabbitmq-mgmt
+    51820, // wireguard
+    55443  // http-alt
 };
 const size_t NUM_PORTS = sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]);
+static const uint16_t UDP_COMMON_PORTS[] = {
+    53, 67, 68, 69, 123, 137, 161, 162, 1900, 500, 514, 520, 5353, 5683
+};
+static const size_t NUM_UDP_PORTS = sizeof(UDP_COMMON_PORTS) / sizeof(UDP_COMMON_PORTS[0]);
 static char PORTALURL[512] = "";
 static char domain_str[128] = "";
 EventGroupHandle_t wifi_event_group;
@@ -2760,6 +2853,172 @@ void scan_ports_on_host(const char *target_ip, host_result_t *result) {
     }
 }
 
+static size_t build_udp_probe(uint16_t port, uint8_t *buf, size_t bufsize) {
+    if (port == 53 && bufsize >= 64) {
+        uint8_t *p = buf;
+        uint16_t id = (uint16_t)esp_random();
+        *(uint16_t *)(p + 0) = htons(id);
+        *(uint16_t *)(p + 2) = htons(0x0100);
+        *(uint16_t *)(p + 4) = htons(1);
+        *(uint16_t *)(p + 6) = 0;
+        *(uint16_t *)(p + 8) = 0;
+        *(uint16_t *)(p + 10) = 0;
+        p += 12;
+        const char *name = "example.com";
+        const char *dot = name;
+        while (*dot) {
+            const char *start = dot;
+            while (*dot && *dot != '.') dot++;
+            size_t len = (size_t)(dot - start);
+            *p++ = (uint8_t)len;
+            memcpy(p, start, len);
+            p += len;
+            if (*dot == '.') dot++;
+        }
+        *p++ = 0;
+        *(uint16_t *)p = htons(1);
+        p += 2;
+        *(uint16_t *)p = htons(1);
+        p += 2;
+        return (size_t)(p - buf);
+    }
+    if (port == 123 && bufsize >= 48) {
+        memset(buf, 0, 48);
+        buf[0] = 0x1b;
+        return 48;
+    }
+    if (port == 69 && bufsize >= 64) {
+        uint8_t *p = buf;
+        *(uint16_t *)p = htons(1);
+        p += 2;
+        const char *fname = "test";
+        memcpy(p, fname, strlen(fname));
+        p += strlen(fname);
+        *p++ = 0;
+        const char *mode = "octet";
+        memcpy(p, mode, strlen(mode));
+        p += strlen(mode);
+        *p++ = 0;
+        return (size_t)(p - buf);
+    }
+    if (port == 1900 && bufsize >= 256) {
+        const char *msearch = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n";
+        size_t len = strlen(msearch);
+        memcpy(buf, msearch, len);
+        return len;
+    }
+    if (bufsize >= 1) {
+        buf[0] = 0x00;
+        return 1;
+    }
+    return 0;
+}
+
+static bool udp_port_is_open(const char *target_ip, uint16_t port, uint32_t wait_ms) {
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) return false;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, target_ip, &addr.sin_addr.s_addr);
+
+    struct timeval tv;
+    tv.tv_sec = wait_ms / 1000;
+    tv.tv_usec = (wait_ms % 1000) * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    uint8_t probe[256];
+    size_t probe_len = build_udp_probe(port, probe, sizeof(probe));
+    if (probe_len == 0) {
+        close(sock);
+        return false;
+    }
+    sendto(sock, probe, probe_len, 0, (struct sockaddr *)&addr, sizeof(addr));
+
+    uint8_t buf[512];
+    struct sockaddr_in from;
+    socklen_t fromlen = sizeof(from);
+    int n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&from, &fromlen);
+    if (n > 0) {
+        close(sock);
+        return true;
+    }
+    int err = errno;
+    close(sock);
+    if (err == ECONNREFUSED) return false;
+    return false;
+}
+
+void scan_udp_ports_on_host(const char *target_ip, host_result_t *result) {
+    strcpy(result->ip, target_ip);
+    result->num_open_ports = 0;
+
+    printf("Scanning UDP host: %s\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("Scanning UDP host: %s\n", target_ip);
+
+    for (size_t i = 0; i < NUM_UDP_PORTS; i++) {
+        if (result->num_open_ports >= MAX_OPEN_PORTS) break;
+        uint16_t port = UDP_COMMON_PORTS[i];
+        if (udp_port_is_open(target_ip, port, 40)) {
+            result->open_ports[result->num_open_ports++] = port;
+            printf("%s - UDP %d responded\n", target_ip, port);
+            TERMINAL_VIEW_ADD_TEXT("%s - UDP %d responded\n", target_ip, port);
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+}
+
+bool scan_ip_udp_port_range(const char *target_ip, uint16_t start_port, uint16_t end_port) {
+    scanner_ctx_t *ctx = scanner_init();
+    if (!ctx) {
+        printf("Failed to initialize scanner context\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to initialize scanner context\n");
+        return false;
+    }
+
+    ctx->num_active_hosts = 1;
+    host_result_t *result = &ctx->results[0];
+    strcpy(result->ip, target_ip);
+    result->num_open_ports = 0;
+
+    printf("Scanning %s UDP ports %d-%d\n", target_ip, start_port, end_port);
+    TERMINAL_VIEW_ADD_TEXT("Scanning %s UDP ports %d-%d\n", target_ip, start_port, end_port);
+
+    uint16_t ports_scanned = 0;
+    uint16_t total_ports = end_port - start_port + 1;
+
+    for (uint16_t port = start_port; port <= end_port; port++) {
+        if (result->num_open_ports >= MAX_OPEN_PORTS) break;
+        ports_scanned++;
+        if (ports_scanned % 200 == 0) {
+            printf("UDP Progress: %d/%d ports scanned (%.1f%%)\n", ports_scanned, total_ports,
+                   (float)ports_scanned / total_ports * 100);
+            TERMINAL_VIEW_ADD_TEXT("UDP Progress: %d/%d ports scanned (%.1f%%)\n", ports_scanned,
+                                   total_ports, (float)ports_scanned / total_ports * 100);
+        }
+        if (udp_port_is_open(target_ip, port, 40)) {
+            result->open_ports[result->num_open_ports++] = port;
+            printf("%s - UDP %d responded\n", target_ip, port);
+            TERMINAL_VIEW_ADD_TEXT("%s - UDP %d responded\n", target_ip, port);
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+
+    for (size_t i = 0; i < ctx->num_active_hosts; i++) {
+        if (ctx->results[i].num_open_ports > 0) {
+            printf("Host %s has %d udp ports responding\n", ctx->results[i].ip,
+                   ctx->results[i].num_open_ports);
+            TERMINAL_VIEW_ADD_TEXT("Host %s has %d udp ports responding\n", ctx->results[i].ip,
+                                   ctx->results[i].num_open_ports);
+        }
+    }
+
+    scanner_cleanup(ctx);
+    return true;
+}
+
 void scan_ssh_on_host(const char *target_ip, host_result_t *result) {
     struct sockaddr_in server_addr;
     int sock;
@@ -2905,7 +3164,29 @@ bool wifi_manager_scan_subnet() {
         if (is_host_active(current_ip)) {
             printf("Found active host: %s\n", current_ip);
             TERMINAL_VIEW_ADD_TEXT("Found active host: %s\n", current_ip);
-            scan_ports_on_host(current_ip, &ctx->results[ctx->num_active_hosts]);
+
+            host_result_t tcp_result;
+            host_result_t udp_result;
+
+            scan_ports_on_host(current_ip, &tcp_result);
+            scan_udp_ports_on_host(current_ip, &udp_result);
+
+            ctx->results[ctx->num_active_hosts] = tcp_result;
+
+            if (udp_result.num_open_ports > 0) {
+                printf("UDP ports responding on %s:\n", current_ip);
+                TERMINAL_VIEW_ADD_TEXT("UDP ports responding on %s:\n", current_ip);
+                for (uint8_t k = 0; k < udp_result.num_open_ports; k++) {
+                    char line[32];
+                    snprintf(line, sizeof(line), "  UDP %d\n", udp_result.open_ports[k]);
+                    printf("%s", line);
+                    TERMINAL_VIEW_ADD_TEXT(line);
+                }
+            } else {
+                printf("No UDP responses on %s\n", current_ip);
+                TERMINAL_VIEW_ADD_TEXT("No UDP responses on %s\n", current_ip);
+            }
+
             ctx->num_active_hosts++;
         }
     }
