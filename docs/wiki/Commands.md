@@ -40,7 +40,7 @@
 - <code>attack -e</code>  
   Start EAPOL logoff attack
 
-- <code>attack -s</code>  
+- <code>attack -s &lt;password&gt;</code>  
   Start SAE flood attack (ESP32-C5/C6 only)
 
 - <code>stopdeauth</code>  

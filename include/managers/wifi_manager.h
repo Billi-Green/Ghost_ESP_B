@@ -257,7 +257,7 @@ void wifi_manager_eapollogoff_display(void);
 void wifi_manager_eapollogoff_help(void);
 
 // SAE Handshake Flooding Attack (ESP32-C5/C6 only)
-void wifi_manager_start_sae_flood(void);
+void wifi_manager_start_sae_flood(const char *password);
 void wifi_manager_stop_sae_flood(void);
 void wifi_manager_sae_flood_help(void);
 

@@ -94,7 +94,7 @@
   - Fix stop command not stopping GPS task
   - Fix serial going unresponsive by using 'scanap -stop'
   - Small fixes to the process of connecting to a WiFi network
-  - Fix SAE Flood Attack
+  - Refactor SAE Flood Attack - now requires a password to be set as an argument
   - Handle backspace and DEL properly in serial input
   
 - General

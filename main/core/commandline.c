@@ -238,20 +238,30 @@ void handle_attack_cmd(int argc, char **argv) {
             wifi_manager_start_eapollogoff_attack();
             return;
         } else if (strcmp(argv[1], "-s") == 0) {
+            if (argc < 3) {
+                printf("Usage: attack -s <password>\n");
+                TERMINAL_VIEW_ADD_TEXT("Usage: attack -s <password>\n");
+                return;
+            }
             printf("SAE flood attack starting...\n");
             TERMINAL_VIEW_ADD_TEXT("SAE flood attack starting...\n");
-            wifi_manager_start_sae_flood();
+            wifi_manager_start_sae_flood(argv[2]);
             return;
         }
     }
-    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
 }
 
 void handle_sae_flood_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: saeflood <password>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: saeflood <password>\n");
+        return;
+    }
     printf("Starting SAE flood attack...\n");
     TERMINAL_VIEW_ADD_TEXT("Starting SAE flood attack...\n");
-    wifi_manager_start_sae_flood();
+    wifi_manager_start_sae_flood(argv[1]);
 }
 
 void handle_stop_sae_flood_cmd(int argc, char **argv) {
@@ -1544,10 +1554,10 @@ void handle_help(int argc, char **argv) {
 
     printf("saeflood\n");
     printf("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
-    printf("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+    printf("    Usage: saeflood <password> (requires selected WPA3 AP)\n\n");
     TERMINAL_VIEW_ADD_TEXT("saeflood\n");
     TERMINAL_VIEW_ADD_TEXT("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
-    TERMINAL_VIEW_ADD_TEXT("    Usage: saeflood (requires selected WPA3 AP)\n\n");
+    TERMINAL_VIEW_ADD_TEXT("    Usage: saeflood <password> (requires selected WPA3 AP)\n\n");
 
     printf("stopsaeflood\n");
     printf("    Description: Stop SAE flood attack\n");
