@@ -41,6 +41,7 @@
   
   
 - Commands
+  - Help command reorganised into categories - @tototo31
   - 'chipinfo' command to display chip information
   - 'apenable' command to enable/disable the Access Point
   - 'disconnect' command to disconnect from the current network
