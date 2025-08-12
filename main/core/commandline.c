@@ -124,6 +124,12 @@ void cmd_wifi_scan_start(int argc, char **argv) {
             cmd_wifi_scan_stop(argc, argv);
             return;
         }
+        if (strcmp(argv[1], "-live") == 0) {
+            printf("Starting live AP scan...\n");
+            TERMINAL_VIEW_ADD_TEXT("Starting live AP scan...\n");
+            wifi_manager_start_live_ap_scan();
+            return;
+        }
         int seconds = atoi(argv[1]);
         wifi_manager_start_scan_with_time(seconds);
     } else {
@@ -232,20 +238,30 @@ void handle_attack_cmd(int argc, char **argv) {
             wifi_manager_start_eapollogoff_attack();
             return;
         } else if (strcmp(argv[1], "-s") == 0) {
+            if (argc < 3) {
+                printf("Usage: attack -s <password>\n");
+                TERMINAL_VIEW_ADD_TEXT("Usage: attack -s <password>\n");
+                return;
+            }
             printf("SAE flood attack starting...\n");
             TERMINAL_VIEW_ADD_TEXT("SAE flood attack starting...\n");
-            wifi_manager_start_sae_flood();
+            wifi_manager_start_sae_flood(argv[2]);
             return;
         }
     }
-    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
+    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
 }
 
 void handle_sae_flood_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: saeflood <password>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: saeflood <password>\n");
+        return;
+    }
     printf("Starting SAE flood attack...\n");
     TERMINAL_VIEW_ADD_TEXT("Starting SAE flood attack...\n");
-    wifi_manager_start_sae_flood();
+    wifi_manager_start_sae_flood(argv[1]);
 }
 
 void handle_stop_sae_flood_cmd(int argc, char **argv) {
@@ -972,69 +988,122 @@ void handle_timezone_cmd(int argc, char **argv) {
 
 void handle_scan_ports(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage:\n");
         TERMINAL_VIEW_ADD_TEXT("Usage:\n");
-        printf("scanports local [-C/-A/start_port-end_port]\n");
-        TERMINAL_VIEW_ADD_TEXT("scanports local [-C/-A/start_port-end_port]\n");
-        printf("scanports [IP] [-C/-A/start_port-end_port]\n");
-        TERMINAL_VIEW_ADD_TEXT("scanports [IP] [-C/-A/start_port-end_port]\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanports local\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanports <IP> [all | start-end]\n");
         return;
     }
 
-    bool is_local = strcmp(argv[1], "local") == 0;
-    const char *target_ip = NULL;
-    const char *port_arg = NULL;
-
-    // Parse arguments based on whether it's a local scan
-    if (is_local) {
-        if (argc < 3) {
-            printf("Missing port argument for local scan\n");
-            TERMINAL_VIEW_ADD_TEXT("Missing port argument for local scan\n");
-            return;
+    // Handle local subnet scan
+    if (strcmp(argv[1], "local") == 0) {
+        if (argc > 2) {
+            TERMINAL_VIEW_ADD_TEXT("Info: 'local' scan does not take arguments.\n");
         }
-        port_arg = argv[2];
-    } else {
-        if (argc < 3) {
-            printf("Missing port argument for IP scan\n");
-            TERMINAL_VIEW_ADD_TEXT("Missing port argument for IP scan\n");
-            return;
-        }
-        target_ip = argv[1];
-        port_arg = argv[2];
-    }
-
-    if (is_local) {
+        TERMINAL_VIEW_ADD_TEXT("Starting local subnet scan...\n");
         wifi_manager_scan_subnet();
         return;
     }
 
-    host_result_t result;
-    if (strcmp(port_arg, "-C") == 0) {
+    // Handle remote IP scan
+    const char *target_ip = argv[1];
+    int start_port = 0, end_port = 0;
+
+    // Default to common ports if no range is specified
+    if (argc < 3) {
+        host_result_t result;
+        char msg_buf[64];
+        snprintf(msg_buf, sizeof(msg_buf), "Scanning common tcp ports on %s...\n", target_ip);
+        printf("%s", msg_buf);
+        TERMINAL_VIEW_ADD_TEXT(msg_buf);
         scan_ports_on_host(target_ip, &result);
+
         if (result.num_open_ports > 0) {
-            printf("Open ports on %s:\n", target_ip);
-            char open_buf[64];
-            snprintf(open_buf, sizeof(open_buf), "Open ports on %s:\n", target_ip);
-            TERMINAL_VIEW_ADD_TEXT(open_buf);
+            snprintf(msg_buf, sizeof(msg_buf), "Found %d open ports on %s:\n", result.num_open_ports, target_ip);
+            printf("%s", msg_buf);
+            TERMINAL_VIEW_ADD_TEXT(msg_buf);
             for (int i = 0; i < result.num_open_ports; i++) {
-                printf("Port %d\n", result.open_ports[i]);
                 char port_buf[32];
-                snprintf(port_buf, sizeof(port_buf), "Port %d\n", result.open_ports[i]);
+                snprintf(port_buf, sizeof(port_buf), "  Port %d\n", result.open_ports[i]);
+                printf("%s", port_buf);
                 TERMINAL_VIEW_ADD_TEXT(port_buf);
             }
+        } else {
+            printf("No common open ports found.\n");
+            TERMINAL_VIEW_ADD_TEXT("No common open ports found.\n");
         }
+
+        host_result_t udp_result;
+        snprintf(msg_buf, sizeof(msg_buf), "Scanning common udp ports on %s...\n", target_ip);
+        printf("%s", msg_buf);
+        TERMINAL_VIEW_ADD_TEXT(msg_buf);
+        scan_udp_ports_on_host(target_ip, &udp_result);
+        if (udp_result.num_open_ports > 0) {
+            snprintf(msg_buf, sizeof(msg_buf), "Found %d udp ports responding on %s:\n", udp_result.num_open_ports, target_ip);
+            printf("%s", msg_buf);
+            TERMINAL_VIEW_ADD_TEXT(msg_buf);
+            for (int i = 0; i < udp_result.num_open_ports; i++) {
+                char port_buf[32];
+                snprintf(port_buf, sizeof(port_buf), "  UDP %d\n", udp_result.open_ports[i]);
+                printf("%s", port_buf);
+                TERMINAL_VIEW_ADD_TEXT(port_buf);
+            }
+        } else {
+            printf("No common udp responses found.\n");
+            TERMINAL_VIEW_ADD_TEXT("No common udp responses found.\n");
+        }
+        return;
+    }
+
+    // Parse port range argument
+    const char *port_arg = argv[2];
+    if (strcmp(port_arg, "all") == 0) {
+        start_port = 1;
+        end_port = 65535;
+    } else if (sscanf(port_arg, "%d-%d", &start_port, &end_port) != 2 || start_port < 1 ||
+               end_port > 65535 || start_port > end_port) {
+        TERMINAL_VIEW_ADD_TEXT("Error: Invalid port range. Use 'all' or 'start-end'.\n");
+        return;
+    }
+
+    char msg_buf[64];
+    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s tcp ports %d-%d...\n", target_ip, start_port, end_port);
+    printf("%s", msg_buf);
+    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    scan_ip_port_range(target_ip, start_port, end_port);
+
+    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s udp ports %d-%d...\n", target_ip, start_port, end_port);
+    printf("%s", msg_buf);
+    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    scan_ip_udp_port_range(target_ip, start_port, end_port);
+}
+
+void handle_scan_arp(int argc, char **argv) {
+    TERMINAL_VIEW_ADD_TEXT("Starting ARP scan on local network...\n");
+    printf("Starting ARP scan on local network...\n");
+    wifi_manager_arp_scan_subnet();
+}
+
+void handle_scan_ssh(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: scanssh <IP>\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: scanssh <IP>\n");
+        return;
+    }
+
+    const char *target_ip = argv[1];
+    host_result_t result;
+    char msg_buf[64];
+    
+    printf("Starting SSH scan on %s...\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("Starting SSH scan on %s...\n", target_ip);
+    
+    scan_ssh_on_host(target_ip, &result);
+    
+    if (result.num_open_ports > 0) {
+        printf("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
+        TERMINAL_VIEW_ADD_TEXT("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
     } else {
-        int start_port, end_port;
-        if (strcmp(port_arg, "-A") == 0) {
-            start_port = 1;
-            end_port = 65535;
-        } else if (sscanf(port_arg, "%d-%d", &start_port, &end_port) != 2 || start_port < 1 ||
-                   end_port > 65535 || start_port > end_port) {
-            printf("Invalid port range\n");
-            TERMINAL_VIEW_ADD_TEXT("Invalid port range\n");
-            return;
-        }
-        scan_ip_port_range(target_ip, start_port, end_port);
+        TERMINAL_VIEW_ADD_TEXT("No SSH services found.\n");
     }
 }
 
@@ -2316,6 +2385,8 @@ void register_commands() {
     register_command("startwd", handle_startwd);
     register_command("gpsinfo", handle_gps_info);
     register_command("scanports", handle_scan_ports);
+    register_command("scanarp", handle_scan_arp);
+    register_command("scanssh", handle_scan_ssh);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
     register_command("listportals", handle_listportals);

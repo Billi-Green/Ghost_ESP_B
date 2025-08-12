@@ -24,6 +24,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "esp_vfs_fat.h"
+#include "esp_heap_caps.h"
+
 
 // Forward declarations
 static esp_err_t http_get_handler(httpd_req_t *req);
@@ -476,6 +478,13 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
 esp_err_t ap_manager_init(void) {
     esp_err_t ret;
     wifi_mode_t mode;
+
+    // --- Memory check before AP init ---
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (free_heap < (45 * 1024)) {
+        ESP_LOGW(TAG, "WARNING: Less than 45KB of free RAM available (%d bytes). AP may fail to initialize or operate reliably!", (int)free_heap);
+        //TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB RAM free (%d bytes). AP may not initialize or operate reliably!\n", (int)free_heap);
+    }
 
     // Check if AP is disabled in settings
     if (!settings_get_ap_enabled(&G_Settings)) {
