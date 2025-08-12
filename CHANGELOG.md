@@ -5,7 +5,7 @@
 ### Major Updates
 
 - **Dual ESP32 Communication**
-  - Connect two GhostESP devices for synchronized operation.
+  - Connect two GhostESP devices together.
   - Dedicated WebUI section for managing linked devices.
 
 - **Power Saving**
