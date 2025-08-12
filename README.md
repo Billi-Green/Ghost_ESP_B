@@ -24,37 +24,41 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 <summary>WiFi Features</summary>
 
+- **Evil Portal** – Set up a fake WiFi portal with a custom SSID and domain.
+
+- **Deauthentication Attacks** – Disconnect clients from specific networks (supports multiple APs).
+
+- **Beacon Spam** – Broadcast customizable SSID beacons.
+
+- **WiFi Capture** – Log probe requests, beacon frames, deauth packets, and raw data *(requires SD card or compatible storage)*.
+
+- **Pineapple Detection** – Detect Wi-Fi Pineapples and Evil Twin Attacks.
+
+- **SAE Flood Attack** – Target WPA3 networks specifically.
+
+- **EAPOL Logoff Attack** – Force disconnect authenticated clients.
+
+- **Web-UI** – Built-in interface for configuring settings, sending commands to another connected ESP, and managing the filesystem.
+
 - **AP Scanning** – Detect nearby WiFi networks.
 
 - **Station Scanning** – Monitor connected WiFi clients.
 
 - **Combined AP/Station Scan** – Perform both AP and station scans in one command (`scanall`).
 
-- **IP Lookup** – Retrieve local network IP information (`scanlocal`).
-
-- **Beacon Spam** – Broadcast customizable SSID beacons.
-
 - **Beacon Spam List Management** – Manage SSID lists (`beaconadd`, `beaconremove`, `beaconclear`, `beaconshow`) and spam them (`beaconspamlist`).
-
-- **Deauthentication Attacks** – Disconnect clients from specific networks (supports multiple APs).
-
-- **EAPOL Logoff Attack** – Force disconnect authenticated clients.
-
-- **SAE Flood Attack** – Target WPA3 networks specifically.
 
 - **Probe Request Listening** – Passive monitoring of device probe requests.
 
 - **DHCP Starvation** – Flood DHCP requests to exhaust network leases (`dhcpstarve`).
 
-- **WiFi Capture** – Log probe requests, beacon frames, deauth packets, and raw data *(requires SD card or compatible storage)*.
-
-- **Evil Portal** – Set up a fake WiFi portal with a custom SSID and domain.
-
-- **Pineapple Detection** – Detect Wi-Fi Pineapples and Evil Twin Attacks.
-
-- **Web-UI** – Built-in interface for changing settings and sending commands easily.
-
 - **Port Scanning** – Scan your local network for open ports.
+
+- **ARP Scanning** – Scan for devices on local network using ARP (`scanarp`).
+
+- **SSH Scanning** – Scan for SSH services on network (`scanssh`).
+
+- **IP Lookup** – Retrieve local network IP information (`scanlocal`).
 
 </details>
 
@@ -62,17 +66,17 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 <summary>BLE Features</summary>
 
-- **BLE Scanning** – Detect BLE devices, including specialized modes for AirTags, Flipper Zeros, and more.
-
 - **BLE Spam** – Spoof Apple, Microsoft, Samsung, and Google devices *(not supported on ESP32S2)*.
+
+- **AirTag Spoofing** – Spoof the identity of a selected AirTag device (`spoofairtag`).
 
 - **BLE Packet Capture** – Capture and analyze BLE traffic.
 
-- **BLE Wardriving** – Map and track BLE devices in your vicinity.
+- **BLE Scanning** – Detect BLE devices, including specialized modes for AirTags, Flipper Zeros, and more.
 
 - **Flipper Zero RSSI Tracking** – Detect and monitor the signal strength (RSSI) of Flipper Zero devices (`blescan -f`).
 
-- **AirTag Spoofing** – Spoof the identity of a selected AirTag device (`spoofairtag`).
+- **BLE Wardriving** – Map and track BLE devices in your vicinity.
 
 </details>
 
@@ -80,17 +84,17 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 <summary>IR Features</summary>
 
+- **Easy Learn Mode** – Learn IR signals from your remote with auto naming *(supported on TEmbed C1101)*.
+
 - **FlipperZero IR File Support** – Use FlipperZero formatted IR files stored on SD card *(supported on LilyGo S3TWatch, Cardputer and TEmbed C1101)*.
 
 - **Universal Library IR Transmit** – Send pre-programmed universal remote signals.
 
-- **IR Receive and Decode** – Decode IR signals received by the device *(supported on TEmbed C1101)*.
-
 - **Custom Signals IR Transmit** – Transmit custom IR signals from files.
 
-- **Multiple IR Protocols** – Support for NEC, Kaseikyo, Pioneer, RCA, Samsung, SIRC, RC5, and RC6 protocols.
+- **IR Receive and Decode** – Decode IR signals received by the device *(supported on TEmbed C1101)*.
 
-- **Easy Learn Mode** – Learn IR signals from your remote with auto naming *(supported on TEmbed C1101)*.
+- **Multiple IR Protocols** – Support for NEC, Kaseikyo, Pioneer, RCA, Samsung, SIRC, RC5, and RC6 protocols.
 
 - **IR Rename, Delete, Add Remotes** – Rename, delete, and add remotes *(supported on TEmbed C1101)*.
 
@@ -101,15 +105,15 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 <summary>Additional Features</summary>
 
-- **GPS Integration** – Retrieve location info via the `gpsinfo` command *(on supported hardware)*.
-
-- **RGB LED Modes** – Customizable LED feedback (Stealth, Normal, Rainbow).
-
 - **DIAL & Chromecast V2 Support** – Interact with DIAL-capable devices (e.g., Roku, Chromecast).
 
 - **Flappy Ghost and Rave Modes** – Extra apps for boards with displays.
 
+- **GPS Integration** – Retrieve location info via the `gpsinfo` command *(on supported hardware)*.
+
 - **Network Printer Output** – Print custom text to a LAN printer (`powerprinter`).
+
+- **RGB LED Modes** – Customizable LED feedback (Stealth, Normal, Rainbow).
 
 - **Timezone Configuration** – Change system timezone string (`timezone`).
 
