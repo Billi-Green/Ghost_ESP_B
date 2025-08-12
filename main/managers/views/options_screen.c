@@ -568,6 +568,24 @@ static void apply_setting_change(int setting_index, int new_value) {
         }
         case SETTING_MENU_THEME:
             settings_set_menu_theme(&G_Settings, new_value);
+            display_manager_update_status_bar_color();
+            /* Refresh currently selected item's highlight to use new theme color */
+            if (menu_container && lv_obj_is_valid(menu_container) && selected_item_index >= 0) {
+                lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
+                if (current_item) {
+                    uint8_t theme = settings_get_menu_theme(&G_Settings);
+                    lv_color_t theme_bg = lv_color_hex(theme_palettes[theme][0]);
+                    lv_style_set_bg_color(&style_selected_item, theme_bg);
+                    lv_style_set_bg_grad_color(&style_selected_item, theme_bg);
+                    lv_obj_add_style(current_item, &style_selected_item, 0);
+                    lv_obj_t *label = lv_obj_get_child(current_item, 0);
+                    if (label) {
+                        if (theme == 3) lv_obj_set_style_text_color(label, lv_color_hex(0x000000), 0);
+                        else lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+                    }
+                    lv_obj_invalidate(current_item);
+                }
+            }
             break;
         case SETTING_THIRD_CONTROL:
             settings_set_thirds_control_enabled(&G_Settings, new_value == 1);

@@ -27,18 +27,18 @@
 
 - Attacks
   - Support for setting an Evil Portal HTML via the Flipper Zero App with a max size of 2048 bytes (as of app v1.4)
+  - Added option to select Custom Evil Portal html file from the SD Card - @tototo31
 
 - Display
   - Added 'Never' display timeout setting.
   - Added 'Power Saving' setting which turns off the AP and lowers the CPU frequency on Cardputer and S3TWatch.
-  - Terminal App to use commands with the keyboard - @tototo31
-  - Added option to select Custom Evil Portal html file from the SD Card - @tototo31
+  - Display backlight percentage setting for PWM enabled devices - @tototo31
   - Placeholder text for keyboard view - @tototo31
   - Encoder friendly version of the keyboard view
   - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
   - Smooth mainmenu animations - @tototo31
   - Keyboard enhancements - @tototo31
-  - Add memory checks before initializing AP, BLE, and WiFi managers - @tototo31
+  
   
 - Commands
   - 'chipinfo' command to display chip information
@@ -53,7 +53,8 @@
   - Add build name config variable for debugging and auto-flash support - @tototo31
   - Try to connect to saved WiFi on boot if available
   - Add 'Stealth' mode for silencing RGB - @tototo31
-  - Display backlight percentage setting for PWM enabled devices - @tototo31
+  - Terminal App to use commands with the keyboard - @tototo31
+  - Add memory checks for debugging before initializing AP, BLE, and WiFi managers - @tototo31
   
 ### Changed
 
@@ -61,7 +62,6 @@
   - Reuse options screen view for settings screen. Resolves #66 and #65
   - PWM backlight control using ledc on supported devices
   - Moved 'Terminal Color' and 'Third Control' to the Display section in settings
-  - Organise BLE menu into hierarchical sub-menus - @tototo31
   - Color status bar icons based on their activity
   - S3TWatch: Disable tap-to-wake, use touch interrupt instead.
   - Exiting a view now returns to the previous view instead of the main menu - @tototo31
@@ -78,6 +78,7 @@
 
 - General
   - Cap displayed WiFi APs to 50 for 'scanap' output
+  - Organise BLE menu into hierarchical sub-menus - @tototo31
 
 ### Bug Fixes
 
@@ -87,6 +88,8 @@
   - Improve battery reading accuracy on Cardputer
   - Fix keyboard view touch detection logic - @tototo31
   - Save settings when exiting the settings view
+  - Update LEDs and Status bar when changing from rainbow mode
+  - Refresh current item highlight when changing theme
 
 - Commands
   - Add terminal_view_add_text logs to commands missing them
@@ -103,7 +106,6 @@
   - Miscellaneous refactoring for memory usage
   - Add wifi_manager_stop_beacon function
   - Check if an RMT channel already exists and clean it up before making a new one
-  - Update LEDs and Status bar when changing from rainbow mode
   - Randomise BLE Spam MAC addr and add more devices
   - Better EP credential handling
   - Keep one led strip rmt instance
