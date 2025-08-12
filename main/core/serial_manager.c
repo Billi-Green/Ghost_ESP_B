@@ -31,6 +31,8 @@
 #define SERIAL_BUFFER_SIZE 528
 
 char serial_buffer[SERIAL_BUFFER_SIZE];
+static TaskHandle_t s_serial_task_handle = NULL;
+static bool s_serial_initialized = false;
 
 // HTML capture state
 typedef enum {
@@ -160,9 +162,31 @@ void serial_manager_init() {
 
   commandQueue = xQueueCreate(10, sizeof(SerialCommand));
 
-  xTaskCreate(serial_task, "SerialTask", 8192, NULL, 2, NULL);
+  xTaskCreate(serial_task, "SerialTask", 8192, NULL, 2, &s_serial_task_handle);
+  s_serial_initialized = true;
   printf("Serial Started...\n");
 }
+
+void serial_manager_deinit() {
+  if (!s_serial_initialized) {
+    return;
+  }
+  if (s_serial_task_handle) {
+    vTaskDelete(s_serial_task_handle);
+    s_serial_task_handle = NULL;
+  }
+#if JTAG_SUPPORTED
+  usb_serial_jtag_driver_uninstall();
+#endif
+  uart_driver_delete(UART_NUM);
+  if (commandQueue) {
+    vQueueDelete(commandQueue);
+    commandQueue = NULL;
+  }
+  s_serial_initialized = false;
+}
+
+int serial_manager_get_uart_num() { return (int)UART_NUM; }
 
 int handle_serial_command(const char *input) {
   // Handle peer commands with logging and proper remote flag management
@@ -247,10 +271,13 @@ int handle_serial_command(const char *input) {
 }
 
 void simulateCommand(const char *commandString) {
-  SerialCommand command;
-  strncpy(command.command, commandString, sizeof(command.command) - 1);
-  command.command[sizeof(command.command) - 1] = '\0';
-  if (xQueueSend(commandQueue, &command, 0) != pdTRUE) {
-    printf("simulateCommand queue full, command dropped: %s\n", commandString);
+  if (commandQueue) {
+    SerialCommand command;
+    strncpy(command.command, commandString, sizeof(command.command) - 1);
+    command.command[sizeof(command.command) - 1] = '\0';
+    if (xQueueSend(commandQueue, &command, 0) == pdTRUE) {
+      return;
+    }
   }
+  handle_serial_command(commandString);
 }

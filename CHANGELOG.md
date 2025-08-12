@@ -80,6 +80,7 @@
 - General
   - Cap displayed WiFi APs to 50 for 'scanap' output
   - Organise BLE menu into hierarchical sub-menus - @tototo31
+  - If dualcomm is set to pins used by the serial UART, disable the serial UART
 
 ### Bug Fixes
 
