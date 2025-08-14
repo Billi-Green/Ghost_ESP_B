@@ -28,7 +28,9 @@ class SerialMonitorThread(QThread):
                 self.data_received.emit(f"Error reading serial: {str(e)}")
                 # Disconnect on serial read error
                 if hasattr(self.parent(), "disconnect"):
-                    self.parent().disconnect()
+                parent = self.parent()
+                if parent is not None and hasattr(parent, "disconnect"):
+                    parent.disconnect()
                 break
             self.msleep(10)
 
