@@ -4,6 +4,8 @@ import shutil
 import zipfile
 import tempfile
 import urllib.request
+import sys
+import subprocess
 from PyQt6.QtWidgets import QMessageBox
 
 def find_esp_idf_gui(parent=None, auto_download=True):
@@ -17,7 +19,7 @@ def find_esp_idf_gui(parent=None, auto_download=True):
         if os.path.exists(os.path.join(idf_path, "export.sh")) or os.path.exists(os.path.join(idf_path, "export.bat")):
             return idf_path
 
-# Common ESP-IDF installation paths
+    # Common ESP-IDF installation paths
     search_paths = []
     
     if os.name == 'nt':  # Windows
@@ -140,3 +142,36 @@ def download_esp_idf_gui(parent=None, version="5.5"):
                 os.unlink(tmp_path)
         except Exception:
             pass
+
+def get_esp_idf_env(idf_path):
+    """
+    Returns a dict of environment variables after sourcing export.sh/bat.
+    """
+    if sys.platform.startswith("win"):
+        export_script = os.path.join(idf_path, "export.bat")
+        if not os.path.exists(export_script):
+            raise FileNotFoundError(f"ESP-IDF export.bat not found at {export_script}")
+        # Use 'cmd' to run export.bat and then printenv
+        cmd = f'"{export_script}" && set'
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
+        output = proc.communicate()[0].decode(errors="ignore")
+        env = {}
+        for line in output.splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                env[k] = v
+        return env
+    else:
+        export_script = os.path.join(idf_path, "export.sh")
+        if not os.path.exists(export_script):
+            raise FileNotFoundError(f"ESP-IDF export.sh not found at {export_script}")
+        # Use bash to source export.sh and print env
+        cmd = f'bash -c "source \\"{export_script}\\" >/dev/null 2>&1 && env"'
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True, executable="/bin/bash")
+        output = proc.communicate()[0].decode(errors="ignore")
+        env = os.environ.copy()
+        for line in output.splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                env[k] = v
+        return env

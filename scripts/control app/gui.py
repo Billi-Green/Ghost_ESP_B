@@ -4,7 +4,7 @@ import serial
 from serial_threads import SerialMonitorThread, PortalFileSenderThread
 from dialogs import show_select_ap_dialog, show_custom_beacon_dialog, show_printer_dialog
 from utils import log_message, timestamp
-from espidf_utils import find_esp_idf_gui, download_esp_idf_gui
+from espidf_utils import find_esp_idf_gui, download_esp_idf_gui, get_esp_idf_env
 from settings import AppSettings, ThemeManager, TimestampManager, AppSettingsDialog
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -410,8 +410,6 @@ class ESP32ControlGUI(QMainWindow):
         custom_build_layout.addWidget(custom_label)
 
                 # Add this in your setup_ui method, after setting up the custom build panel (e.g., after custom_build_layout is created):
-
-        import shutil
 
         idf_status_layout = QHBoxLayout()
         idf_status_label = QLabel("ESP-IDF (idf.py):")
@@ -2100,30 +2098,35 @@ class ESP32ControlGUI(QMainWindow):
             )
 
     def run_idf_menuconfig(self):
-        """Run idf.py menuconfig in the project root (../../) in a new terminal window (cross-platform)."""
+        """Run idf.py menuconfig in the project root (../../) in a new terminal window (cross-platform, with ESP-IDF env)."""
         import os
         import sys
         import shutil
         from PyQt6.QtWidgets import QMessageBox
 
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-        idf_cmd = "idf.py menuconfig"
+        idf_path = find_esp_idf_gui(self)
+        if not idf_path:
+            QMessageBox.critical(self, "ESP-IDF Not Found", "ESP-IDF not found. Please install or configure ESP-IDF first.")
+            return
 
-        self.flash_console.append(f"Opening terminal to run: {idf_cmd}\n")
+        self.flash_console.append(f"Opening terminal to run: idf.py menuconfig\n")
 
         try:
             if sys.platform.startswith("linux"):
-                # Try common Linux terminals, remove 'exec bash' so terminal closes after command
+                export_script = os.path.join(idf_path, "export.sh")
+                if not os.path.exists(export_script):
+                    raise RuntimeError(f"ESP-IDF export.sh not found at {export_script}")
                 terminals = [
-                    ("gnome-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
-                    ("xfce4-terminal", f'--command="bash -c \'cd \\"{project_root}\\"; {idf_cmd}\'"'),
-                    ("konsole", f'--workdir "{project_root}" -e bash -c "{idf_cmd}"'),
-                    ("xterm", f'-e "cd \\"{project_root}\\"; {idf_cmd}"'),
-                    ("lxterminal", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
-                    ("mate-terminal", f'-- bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
-                    ("tilix", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
-                    ("alacritty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
-                    ("kitty", f'-e bash -c "cd \\"{project_root}\\"; {idf_cmd}"'),
+                    ("gnome-terminal", f'-- bash -c "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig"'),
+                    ("xfce4-terminal", f'--command="bash -c \'cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig\'"'),
+                    ("konsole", f'--workdir "{project_root}" -e bash -c "source \\"{export_script}\\"; idf.py menuconfig"'),
+                    ("xterm", f'-e "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig"'),
+                    ("lxterminal", f'-e bash -c "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig"'),
+                    ("mate-terminal", f'-- bash -c "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig"'),
+                    ("tilix", f'-e bash -c "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig"'),
+                    ("alacritty", f'-e bash -c "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig"'),
+                    ("kitty", f'-e bash -c "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig"'),
                 ]
                 for term, args in terminals:
                     if shutil.which(term):
@@ -2132,17 +2135,21 @@ class ESP32ControlGUI(QMainWindow):
                 raise RuntimeError("No supported terminal emulator found. Please install gnome-terminal, konsole, xterm, etc.")
 
             elif sys.platform.startswith("win"):
-                # Windows: use start with cmd.exe, /C closes after command
-                cmd = f'start cmd.exe /C "cd /d {project_root} && {idf_cmd}"'
+                export_script = os.path.join(idf_path, "export.bat")
+                if not os.path.exists(export_script):
+                    raise RuntimeError(f"ESP-IDF export.bat not found at {export_script}")
+                cmd = f'start cmd.exe /K "cd /d {project_root} && call \\"{export_script}\\" && idf.py menuconfig"'
                 os.system(cmd)
                 return
 
             elif sys.platform == "darwin":
-                # macOS: use osascript to open Terminal.app and close after command
+                export_script = os.path.join(idf_path, "export.sh")
+                if not os.path.exists(export_script):
+                    raise RuntimeError(f"ESP-IDF export.sh not found at {export_script}")
                 osa_script = f'''
                 tell application "Terminal"
                     activate
-                    do script "cd \\"{project_root}\\"; {idf_cmd}; exit"
+                    do script "cd \\"{project_root}\\"; source \\"{export_script}\\"; idf.py menuconfig; exit"
                 end tell
                 '''
                 os.system(f'osascript -e \'{osa_script}\'')
@@ -2170,9 +2177,12 @@ class ESP32ControlGUI(QMainWindow):
         try:
             # Set working directory to two levels up from this script
             project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+            idf_path = find_esp_idf_gui(self)
+            env = get_esp_idf_env(idf_path) if idf_path else None
             process = subprocess.Popen(
                 ["idf.py", "set-target", chip],
                 cwd=project_root,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True
@@ -2202,9 +2212,12 @@ class ESP32ControlGUI(QMainWindow):
         self.flash_console.append("Running: idf.py fullclean\n")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
+            idf_path = find_esp_idf_gui(self)
+            env = get_esp_idf_env(idf_path) if idf_path else None
             process = subprocess.Popen(
                 idf_cmd,
                 cwd=project_root,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True
@@ -2237,9 +2250,12 @@ class ESP32ControlGUI(QMainWindow):
             self.flash_console.append("Running: idf.py build\n")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
+            idf_path = find_esp_idf_gui(self)
+            env = get_esp_idf_env(idf_path) if idf_path else None
             process = subprocess.Popen(
                 idf_cmd,
                 cwd=project_root,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True
