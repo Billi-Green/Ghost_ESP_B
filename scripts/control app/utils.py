@@ -5,7 +5,7 @@ def timestamp(fmt="%Y-%m-%d %H:%M:%S"):
     return datetime.now().strftime(fmt)
 
 def log_message(log_widget, message, show_timestamps=True):
-    from datetime import datetime
+    
     if show_timestamps:
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_widget.append(f"[{timestamp}] {message}")
