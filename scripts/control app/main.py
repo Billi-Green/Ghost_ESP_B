@@ -21,7 +21,8 @@ def run_in_venv():
         python_bin = os.path.join(VENV_DIR, "Scripts", "python.exe")
         print(f"Re-running in venv: {python_bin}")
         subprocess.Popen([python_bin] + sys.argv)
-        sys.exit(0)
+        result = subprocess.run([python_bin] + sys.argv)
+        sys.exit(result.returncode)
     else:
         python_bin = os.path.join(VENV_DIR, "bin", "python")
         print(f"Re-running in venv: {python_bin}")
