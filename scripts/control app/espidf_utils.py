@@ -3,9 +3,10 @@ import shutil
 import zipfile
 import tempfile
 import urllib.request
+import time
 import sys
 import subprocess
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox, QProgressDialog, QApplication
 
 def find_esp_idf_gui(parent=None, auto_download=True):
     """
@@ -100,39 +101,99 @@ def download_esp_idf_gui(parent=None, version="5.5"):
         QMessageBox.information(parent, "ESP-IDF", f"ESP-IDF v{version} already exists at {install_path}")
         return install_path
 
-    # Download
     tmp_fd, tmp_path = tempfile.mkstemp(suffix='.zip', dir=script_dir)
     os.close(tmp_fd)
     try:
         url = urls[version]
-        dlg = QMessageBox(parent)
+        dlg = QProgressDialog(parent)
         dlg.setWindowTitle("Downloading ESP-IDF")
-        dlg.setText(f"Downloading ESP-IDF v{version}...\nThis may take a few minutes.")
-        dlg.setStandardButtons(QMessageBox.StandardButton.NoButton)
+        dlg.setLabelText(f"Downloading ESP-IDF v{version}...")
+        dlg.setRange(0, 100)
+        dlg.setValue(0)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
         dlg.show()
-        def progress_hook(block_num, block_size, total_size):
-            downloaded = block_num * block_size
-            if total_size > 0:
-                percent = min(100, (downloaded * 100) // total_size)
-                dlg.setInformativeText(f"Progress: {percent}% ({downloaded // 1024 // 1024} MB / {total_size // 1024 // 1024} MB)")
-        urllib.request.urlretrieve(url, tmp_path, progress_hook)
-        dlg.hide()
+        QApplication.processEvents()
 
-        # Extract
+        max_retries = 3
+        attempt = 0
+        while True:
+            try:
+                existing = 0
+                if os.path.exists(tmp_path):
+                    existing = os.path.getsize(tmp_path)
+                req = urllib.request.Request(url)
+                req.add_header("User-Agent", "GhostESP-Downloader")
+                if existing > 0:
+                    req.add_header("Range", f"bytes={existing}-")
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    total_size_header = resp.getheader("Content-Length")
+                    if total_size_header is not None:
+                        total_size = int(total_size_header)
+                        if existing > 0 and resp.getcode() == 206:
+                            total_size = existing + total_size
+                        dlg.setRange(0, total_size)
+                    else:
+                        total_size = None
+                        dlg.setRange(0, 0)
+                    mode = "ab" if existing > 0 else "wb"
+                    downloaded = existing
+                    chunk_size = 1024 * 1024
+                    with open(tmp_path, mode) as f:
+                        while True:
+                            chunk = resp.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size is not None:
+                                dlg.setValue(downloaded)
+                                percent = (downloaded * 100) // total_size if total_size else 0
+                                dlg.setLabelText(f"Downloading ESP-IDF v{version}... {percent}% ({downloaded // 1024 // 1024} MB / {total_size // 1024 // 1024} MB)")
+                            QApplication.processEvents()
+                if total_size is not None and downloaded < total_size:
+                    raise IOError(f"retrieval incomplete: got only {downloaded} out of {total_size} bytes")
+                break
+            except Exception:
+                attempt += 1
+                if attempt >= max_retries:
+                    raise
+                time.sleep(min(5 * attempt, 15))
+                QApplication.processEvents()
+        dlg.setLabelText("Extracting...")
+        dlg.setRange(0, 0)
+        dlg.setValue(0)
+        QApplication.processEvents()
+
         with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
             temp_extract_dir = os.path.join(script_dir, f"temp_extract_{version}")
             if os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir)
             os.makedirs(temp_extract_dir)
-            zip_ref.extractall(temp_extract_dir)
+            members = zip_ref.infolist()
+            total = len(members)
+            if total > 0:
+                dlg.setRange(0, total)
+            done = 0
+            for m in members:
+                zip_ref.extract(m, temp_extract_dir)
+                done += 1
+                if total > 0:
+                    dlg.setValue(done)
+                QApplication.processEvents()
             extracted_items = os.listdir(temp_extract_dir)
             if len(extracted_items) == 1 and os.path.isdir(os.path.join(temp_extract_dir, extracted_items[0])):
                 shutil.move(os.path.join(temp_extract_dir, extracted_items[0]), install_path)
             else:
                 shutil.move(temp_extract_dir, install_path)
+        dlg.close()
         QMessageBox.information(parent, "ESP-IDF", f"ESP-IDF v{version} installed to {install_path}")
         return install_path
     except Exception as e:
+        try:
+            dlg.close()
+        except Exception:
+            pass
         QMessageBox.critical(parent, "Error", f"Failed to download ESP-IDF: {e}")
         return None
     finally:

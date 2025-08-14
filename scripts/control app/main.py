@@ -20,7 +20,6 @@ def run_in_venv():
     if os.name == "nt":
         python_bin = os.path.join(VENV_DIR, "Scripts", "python.exe")
         print(f"Re-running in venv: {python_bin}")
-        subprocess.Popen([python_bin] + sys.argv)
         result = subprocess.run([python_bin] + sys.argv)
         sys.exit(result.returncode)
     else:
