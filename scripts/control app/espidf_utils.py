@@ -1,4 +1,3 @@
-# Add at the top of gui.py
 import os
 import shutil
 import zipfile
