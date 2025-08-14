@@ -631,7 +631,9 @@ class ESP32ControlGUI(QMainWindow):
 
     def flash_board(self):
         """Flash the selected firmware, bootloader, and partition table to the ESP32 board."""
-        port = self.port_combo.currentText()
+        # get actual device from combo data if available
+        data = self.port_combo.currentData()
+        port = data if data else self.port_combo.currentText().split()[0]
         chip = getattr(self, "selected_chip", "")
         bootloader = self.bootloader_file_edit.text().strip()
         partition = self.partition_file_edit.text().strip()
@@ -689,7 +691,9 @@ class ESP32ControlGUI(QMainWindow):
         import os
         from PyQt6.QtWidgets import QApplication
 
-        port = self.port_combo.currentText()
+        # get actual device from combo data if available
+        data = self.port_combo.currentData()
+        port = data if data else self.port_combo.currentText().split()[0]
         chip = self.custom_chip_combo.currentText()
         build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../build"))
 
@@ -763,7 +767,9 @@ class ESP32ControlGUI(QMainWindow):
         import os
 
         zip_path = self.release_zip_edit.text().strip()
-        port = self.port_combo.currentText()
+        # get actual device from combo data if available
+        data = self.port_combo.currentData()
+        port = data if data else self.port_combo.currentText().split()[0]
         chip = getattr(self, "selected_chip", "")
         if not zip_path or not port or not chip:
             self.flash_bundle_status.setText("Please select a .zip file, chip type, and serial port.")
@@ -1835,7 +1841,9 @@ class ESP32ControlGUI(QMainWindow):
         """Check and handle auto-reconnect logic for the serial port."""
         if getattr(self, "auto_reconnect_enabled", False) and self.auto_reconnect_checkbox.isChecked():
             if not self.serial_port or not self.serial_port.is_open:
-                port = self.port_combo.currentText()
+                        # get actual device from combo data if available
+                data = self.port_combo.currentData()
+                port = data if data else self.port_combo.currentText().split()[0]
                 if port:
                     try:
                         self.serial_port = serial.Serial(port, 115200, timeout=1)
