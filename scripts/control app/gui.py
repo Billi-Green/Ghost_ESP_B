@@ -4,6 +4,7 @@ import serial
 from serial_threads import SerialMonitorThread, PortalFileSenderThread
 from dialogs import show_select_ap_dialog, show_custom_beacon_dialog, show_printer_dialog
 from utils import log_message, timestamp
+from espidf_utils import find_esp_idf_gui, download_esp_idf_gui
 from settings import AppSettings, ThemeManager, TimestampManager, AppSettingsDialog
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -417,7 +418,7 @@ class ESP32ControlGUI(QMainWindow):
         idf_status_label.setContentsMargins(0, 0, 0, 0)
         idf_status_layout.addWidget(idf_status_label)
 
-        idf_path = shutil.which("idf.py")
+        idf_path = find_esp_idf_gui(self)
         self.idf_status_indicator = QLabel()
         if idf_path:
             self.idf_status_indicator.setText("Found")
