@@ -54,7 +54,9 @@ static const char *NVS_ESP_COMM_TX_PIN_KEY = "esp_comm_tx";
 static const char *NVS_ESP_COMM_RX_PIN_KEY = "esp_comm_rx";
 static const char *NVS_AP_ENABLED_KEY = "ap_enabled";
 static const char *NVS_POWER_SAVE_KEY = "power_save";
+static const char *NVS_ZEBRA_MENUS_KEY = "zebra_menus";
 static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
+
 
 static const char *TAG = "SettingsManager";
 
@@ -138,6 +140,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->esp_comm_rx_pin = 7;
   settings->ap_enabled = true; // Default to enabled
   settings->power_save_enabled = false;
+  settings->zebra_menus_enabled = false; // or true if you want it enabled by default
   settings->max_screen_brightness = 100; // Default to 100% brightness
   settings->infrared_easy_mode = false; // Default to disabled
 }
@@ -401,6 +404,12 @@ void settings_load(FSettings *settings) {
     settings->esp_comm_rx_pin = 7;
   }
 
+  err = nvs_get_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->zebra_menus_enabled = (value_u8 != 0);
+  } else {
+    settings->zebra_menus_enabled = false;
+  } // Default to disabled if not found
   // Load Max Screen Brightness
   err = nvs_get_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, &value_u8);
   if (err == ESP_OK) {
@@ -713,11 +722,16 @@ void settings_save(const FSettings *settings) {
   err = nvs_set_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, settings->esp_comm_rx_pin);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save esp_comm_rx_pin: %s", esp_err_to_name(err));
   
+
+  err = nvs_set_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, settings->zebra_menus_enabled);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save zebra_menus_enabled: %s", esp_err_to_name(err));
+
   err = nvs_set_u8(nvsHandle, NVS_INFRARED_EASY_MODE_KEY, settings->infrared_easy_mode);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save infrared_easy_mode: %s", esp_err_to_name(err));
   
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
+
 }
 
 // Core Settings Getters and Setters
@@ -1125,4 +1139,12 @@ void settings_print_namespace_stats(const char *namespace_name) {
   size_t used_entries = settings_get_namespace_used_entries(namespace_name);
   ESP_LOGI(TAG, "Namespace '%s': %zu entries used", namespace_name, used_entries);
   printf("Namespace '%s': %zu entries used\n", namespace_name, used_entries);
+}
+
+void settings_set_zebra_menus_enabled(FSettings *settings, bool enabled) {
+    settings->zebra_menus_enabled = enabled;
+}
+
+bool settings_get_zebra_menus_enabled(const FSettings *settings) {
+    return settings->zebra_menus_enabled;
 }
