@@ -256,20 +256,20 @@ static void update_menu_item(bool slide_left) {
  */
 
 void handle_keyboard_interactions(int keyValue){
-
-    if (keyValue == 44 || keyValue == ',') { // Left
-        ESP_LOGI(TAG, "Left button pressed\n");
+    // Support both ASCII and LVGL key codes for h/j/k/l
+    if (keyValue == 44 || keyValue == ',' || keyValue == 'h') { // Left or 'h'
+        ESP_LOGI(TAG, "Left button or 'h' pressed\n");
         select_menu_item(selected_item_index - 1, true);
-    } else if (keyValue == 47 || keyValue == '/') { // Right
-        ESP_LOGI(TAG, "Right button pressed\n");
+    } else if (keyValue == 47 || keyValue == '/' || keyValue == 'l') { // Right or 'l'
+        ESP_LOGI(TAG, "Right button or 'l' pressed\n");
         select_menu_item(selected_item_index + 1, false);
-    } else if (keyValue == 13) { // Select
-        ESP_LOGI(TAG, "Enter button pressed\n");
+    } else if (keyValue == 13 || keyValue == 'j') { // Enter or 'j' (down/select)
+        ESP_LOGI(TAG, "Enter button or 'j' pressed\n");
         handle_menu_item_selection(selected_item_index);
-    } else if (keyValue == 29 || keyValue == '`') { // esc
-        ESP_LOGI(TAG, "Esc button pressed\n");
+    } else if (keyValue == 29 || keyValue == '`' || keyValue == 'k') { // Esc or 'k' (up/escape)
+        ESP_LOGI(TAG, "Esc button or 'k' pressed\n");
+        // Optionally, implement up/escape action here if needed
     }
-
 }
 /**
  * @brief Combined handler for menu item events.

@@ -918,7 +918,30 @@ void handle_hardware_button_press_options(InputEvent *event) {
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         uint8_t keyValue = event->data.key_value;
 
-        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) {
+        // --- Vim keybinds ---
+        if (keyValue == 'h') { // Vim left
+            ESP_LOGI(TAG, "Vim 'h' pressed (left)");
+            if (is_settings_mode) {
+                change_current_row(false);
+            } else {
+                select_option_item(selected_item_index - 1);
+            }
+        } else if (keyValue == 'l') { // Vim right
+            ESP_LOGI(TAG, "Vim 'l' pressed (right)");
+            if (is_settings_mode) {
+                change_current_row(true);
+            } else {
+                select_option_item(selected_item_index + 1);
+            }
+        } else if (keyValue == 'k') { // Vim up
+            ESP_LOGI(TAG, "Vim 'k' pressed (up)");
+            select_option_item(selected_item_index - 1);
+        } else if (keyValue == 'j') { // Vim down
+            ESP_LOGI(TAG, "Vim 'j' pressed (down)");
+            select_option_item(selected_item_index + 1);
+        }
+        // --- Existing keybinds ---
+        else if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) {
             ESP_LOGI(TAG, "Left/Up button pressed");
             if (is_settings_mode && (keyValue == 44 || keyValue == ',')) {
                 change_current_row(false);

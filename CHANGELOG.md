@@ -36,9 +36,10 @@
   - Placeholder text for keyboard view - @tototo31
   - Encoder friendly version of the keyboard view
   - Fuel Gauge support with manager and kconf setting (only BQ27220 support initially)
+  - Add Vim keybindings for keyboard interactions in various screens - @tototo31
+  - Add zebra menu styling and improve vertical alignment - @tototo31
   - Smooth mainmenu animations - @tototo31
   - Keyboard enhancements - @tototo31
-  
   
 - Commands
   - Help command reorganised into categories - @tototo31
