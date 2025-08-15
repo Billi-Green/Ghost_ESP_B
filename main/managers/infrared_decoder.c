@@ -624,15 +624,15 @@ InfraredDecoderStatus infrared_common_decode_pdwm(InfraredCommonDecoder* decoder
     
     // Handle end-of-signal (timing=0) - check if we have a valid bit count
     if (timing == 0 && decoder->state == InfraredDecoderStateData) {
-        ESP_LOGD(TAG, "PDWM: End of signal detected, checking for valid bit count (%d)", decoder->databit_cnt);
+        ESP_LOGD(TAG, "PDWM: End of signal detected, checking for valid bit count (%lu)", (unsigned long)decoder->databit_cnt);
         for (int i = 0; i < 4 && decoder->protocol->databit_len[i]; i++) {
             if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
-                ESP_LOGD(TAG, "PDWM: Valid bit count (%d) found at end of signal, ready for interpretation", 
-                         decoder->databit_cnt);
+                ESP_LOGD(TAG, "PDWM: Valid bit count (%lu) found at end of signal, ready for interpretation", 
+                         (unsigned long)decoder->databit_cnt);
                 return InfraredDecoderStatusReady;
             }
         }
-        ESP_LOGD(TAG, "PDWM: No valid bit count found at end of signal (%d)", decoder->databit_cnt);
+        ESP_LOGD(TAG, "PDWM: No valid bit count found at end of signal (%lu)", (unsigned long)decoder->databit_cnt);
         return InfraredDecoderStatusError;
     }
     
@@ -699,15 +699,15 @@ InfraredDecoderStatus infrared_common_decode_pdwm(InfraredCommonDecoder* decoder
                     }
                     decoder->databit_cnt++;
                     
-                    ESP_LOGD(TAG, "PDWM: Bit %d = %d (%s=%luµs, total bits: %d)", 
-                             decoder->databit_cnt - 1, bit_value, level ? "mark" : "space", 
-                             timing, decoder->databit_cnt);
+                    ESP_LOGD(TAG, "PDWM: Bit %lu = %d (%s=%luµs, total bits: %lu)", 
+                             (unsigned long)(decoder->databit_cnt - 1), bit_value, level ? "mark" : "space", 
+                             timing, (unsigned long)decoder->databit_cnt);
                     
                     // Check if we have a valid bit count for any SIRC variant
                     for (int i = 0; i < 4 && decoder->protocol->databit_len[i]; i++) {
                         if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
-                            ESP_LOGD(TAG, "PDWM: Valid bit count (%d) reached for variant %d, checking for completion", 
-                                   decoder->databit_cnt, i);
+                            ESP_LOGD(TAG, "PDWM: Valid bit count (%lu) reached for variant %d, checking for completion", 
+                                   (unsigned long)decoder->databit_cnt, i);
                             // For protocols with min_split_time, wait for the long space
                             // For others, or if this is the maximum variant, signal ready
                             if (!timings->min_split_time || i == 0) {
@@ -727,12 +727,12 @@ InfraredDecoderStatus infrared_common_decode_pdwm(InfraredCommonDecoder* decoder
                     
                     for (int i = 0; i < 4 && decoder->protocol->databit_len[i]; i++) {
                         if (decoder->protocol->databit_len[i] == decoder->databit_cnt) {
-                            ESP_LOGD(TAG, "PDWM: Valid bit count (%d) found, ready for interpretation", 
-                                     decoder->databit_cnt);
+                            ESP_LOGD(TAG, "PDWM: Valid bit count (%lu) found, ready for interpretation", 
+                                     (unsigned long)decoder->databit_cnt);
                             return InfraredDecoderStatusReady;
                         }
                     }
-                    ESP_LOGD(TAG, "PDWM: No valid bit count found (%d), continuing", decoder->databit_cnt);
+                    ESP_LOGD(TAG, "PDWM: No valid bit count found (%lu), continuing", (unsigned long)decoder->databit_cnt);
                 } else if (!MATCH_TIMING(timing, no_info_timing, timings->bit_tolerance)) {
                     ESP_LOGD(TAG, "PDWM: Invalid %s timing: %luµs (expected %lu±%lu)", 
                              level ? "mark" : "space", timing, no_info_timing, timings->bit_tolerance);
@@ -743,7 +743,7 @@ InfraredDecoderStatus infrared_common_decode_pdwm(InfraredCommonDecoder* decoder
         }
             
         default:
-            ESP_LOGE(TAG, "PDWM: Invalid decoder state: %d", decoder->state);
+            ESP_LOGE(TAG, "PDWM: Invalid decoder state: %d", (int)decoder->state);
             return InfraredDecoderStatusError;
     }
     
@@ -894,7 +894,7 @@ bool infrared_decoder_sirc_interpret(InfraredCommonDecoder* decoder) {
     uint8_t command = 0;
     InfraredProtocol protocol = InfraredProtocolUnknown;
     
-    ESP_LOGD(TAG, "SIRC interpreter: databit_cnt=%d, data=0x%08lX", decoder->databit_cnt, *data);
+    ESP_LOGD(TAG, "SIRC interpreter: databit_cnt=%lu, data=0x%08lX", (unsigned long)decoder->databit_cnt, *data);
     
     if (decoder->databit_cnt == 12) {
         address = (*data >> 7) & 0x1F;
@@ -912,7 +912,7 @@ bool infrared_decoder_sirc_interpret(InfraredCommonDecoder* decoder) {
         protocol = InfraredProtocolSIRC20;
         ESP_LOGD(TAG, "SIRC: 20-bit variant selected");
     } else {
-        ESP_LOGD(TAG, "SIRC: Invalid bit count %d", decoder->databit_cnt);
+        ESP_LOGD(TAG, "SIRC: Invalid bit count %lu", (unsigned long)decoder->databit_cnt);
         return false;
     }
     
@@ -922,7 +922,7 @@ bool infrared_decoder_sirc_interpret(InfraredCommonDecoder* decoder) {
     decoder->message.repeat = false;
     
     ESP_LOGD(TAG, "SIRC interpreter result: protocol=%d, address=0x%04X, command=0x%02X", 
-             protocol, address, command);
+             (int)protocol, address, command);
     
     return true;
 }
@@ -933,7 +933,7 @@ bool infrared_decoder_rc5_interpret(InfraredCommonDecoder* decoder) {
     
     // RC5 must be exactly 14 bits - reject anything else
     if (decoder->databit_cnt != 14) {
-        ESP_LOGD(TAG, "RC5: Invalid bit count %d (expected 14)", decoder->databit_cnt);
+        ESP_LOGD(TAG, "RC5: Invalid bit count %lu (expected 14)", (unsigned long)decoder->databit_cnt);
         return false;
     }
     

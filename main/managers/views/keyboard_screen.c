@@ -191,6 +191,18 @@ static void add_char_to_buffer(char c) {
     if (is_caps && !is_capslock) {
         is_caps = false; // Reset to lowercase after any key press unless capslock is on
         update_key_labels(); // Update key labels to reflect the change
+        #ifdef CONFIG_USE_ENCODER
+        encoder_uppercase = (is_capslock || is_caps);
+        if (encoder_cont && !encoder_sym_mode) {
+            for (int j = 0; j < encoder_item_count; j++) {
+                const char *t = encoder_items[j];
+                if (strlen(t) == 1 && isalpha((unsigned char)t[0])) {
+                    char tmp2[2] = { encoder_uppercase ? toupper((unsigned char)t[0]) : tolower((unsigned char)t[0]), '\0' };
+                    lv_label_set_text(encoder_labels[j], tmp2);
+                }
+            }
+        }
+        #endif
     }
 }
 
