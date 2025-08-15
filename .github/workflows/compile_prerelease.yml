@@ -25,7 +25,7 @@ jobs:
           - { name: "esp32s2-generic", idf_target: "esp32s2", sdkconfig_file: "configs/sdkconfig.default.esp32s2",    zip_name: "esp32s2-generic.zip" }
           - { name: "esp32s3-generic", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.default.esp32s3",    zip_name: "esp32s3-generic.zip" }
           - { name: "esp32c3-generic", idf_target: "esp32c3", sdkconfig_file: "configs/sdkconfig.default.esp32c3",    zip_name: "esp32c3-generic.zip" }
-          - { name: "esp32c5-generic", idf_target: "esp32c5", sdkconfig_file: "configs/sdkconfig.default.esp32c5",    zip_name: "esp32c5-generic-v01.zip" }
+          - { name: "esp32c5-generic", idf_target: "esp32c5", sdkconfig_file: "configs/sdkconfig.default.esp32c5",    zip_name: "esp32c5-generic.zip" }
           - { name: "esp32c6-generic", idf_target: "esp32c6", sdkconfig_file: "configs/sdkconfig.default.esp32c6",    zip_name: "esp32c6-generic.zip" }
           - { name: "Awok V5",         idf_target: "esp32s2", sdkconfig_file: "configs/sdkconfig.default.esp32s2",    zip_name: "esp32v5_awok.zip" }
           - { name: "ghostboard",      idf_target: "esp32c6", sdkconfig_file: "configs/sdkconfig.ghostboard",         zip_name: "ghostboard.zip" }
@@ -64,7 +64,7 @@ jobs:
 
       - name: Install ESP-IDF v5.4.1
         run: |
-          git clone -b v5.4.1 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
+          git clone -b v5.5 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
           ~/esp-idf/install.sh esp32,esp32s2,esp32s3,esp32c3,esp32c5,esp32c6 # Specify all targets needed
 
       - name: Apply Custom SDK Config

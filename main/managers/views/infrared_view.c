@@ -1143,7 +1143,13 @@ static void ir_select_item(int index) {
     selected_ir_index = index;
     lv_obj_t *cur = lv_obj_get_child(list, selected_ir_index);
     if(cur) {
-        lv_obj_set_style_bg_color(cur, lv_color_hex(0x555555), LV_PART_MAIN);
+        // If the currently selected item is the Delete Remote management option,
+        // highlight it with a lighter red instead of the default gray.
+        if (showing_commands && selected_ir_index >= signal_count && selected_ir_index == signal_count + 2) {
+            lv_obj_set_style_bg_color(cur, lv_color_hex(0xB22222), LV_PART_MAIN);
+        } else {
+            lv_obj_set_style_bg_color(cur, lv_color_hex(0x555555), LV_PART_MAIN);
+        }
         lv_obj_scroll_to_view(cur, LV_ANIM_OFF);
     }
 }

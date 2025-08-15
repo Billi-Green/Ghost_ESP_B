@@ -65,7 +65,6 @@ int detected_network_count = 0;
 esp_timer_handle_t stop_timer;
 int should_store_wps = 1;
 gps_t *gps = NULL;
-extern RGBManager_t rgb_manager;
 typedef struct {
     uint8_t bssid[6];
     time_t detection_time;
