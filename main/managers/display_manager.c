@@ -188,6 +188,7 @@ void set_backlight_brightness(uint8_t percentage); // forward declaration
 
 #ifdef CONFIG_HAS_BATTERY_ADC
 
+
 #ifdef CONFIG_USE_CARDPUTER
 #define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
 
@@ -536,6 +537,8 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
 
 static void status_update_cb(lv_timer_t *timer) {
   if (!status_bar || !lv_obj_is_valid(status_bar)) return;
+  if (is_backlight_off) return; // Skip updates when backlight is off
+
   bool HasBluetooth;
 #ifndef CONFIG_IDF_TARGET_ESP32S2
   HasBluetooth = true;
@@ -707,6 +710,17 @@ void apply_power_management_config(bool power_save_enabled) {
 }
 
 void display_manager_init(void) {
+
+  esp_pm_config_esp32_t pm_cfg = {
+    .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+    .min_freq_mhz = 80,
+    .light_sleep_enable = true,
+  };
+  esp_err_t pm_err = esp_pm_configure(&pm_cfg);
+  if (pm_err != ESP_OK) {
+    ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
+  }
+
   apply_power_management_config(settings_get_power_save_enabled(&G_Settings));
 
   // Configure LEDC timer for backlight
@@ -989,6 +1003,7 @@ void display_manager_fill_screen(lv_color_t color) {
 void set_backlight_brightness(uint8_t percentage) {
     // Clamp to user setting
     uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
+
     //if (percentage > max_brightness) percentage = max_brightness;
 
     //scale percent by max_brightness
@@ -1009,6 +1024,7 @@ void set_backlight_brightness(uint8_t percentage) {
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
     // ----- switch mode -----
     // make sure the pin is configured as a GPIO output
+
     gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
     gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
     gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage > 0 ? 1 : 0);

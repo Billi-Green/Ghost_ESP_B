@@ -374,6 +374,7 @@ def get_build_targets() -> List[Dict[str, str]]:
         {"name": "TEmbedC1101", "idf_target": "esp32s3", "sdkconfig_file": "configs/sdkconfig.TEmbedC1101", "zip_name": "LilyGo-TEmbedC1101.zip"},
         {"name": "S3TWatch", "idf_target": "esp32s3", "sdkconfig_file": "configs/sdkconfig.S3TWatch", "zip_name": "LilyGo-S3TWatch-2020.zip"},
         {"name": "TDisplayS3-Touch", "idf_target": "esp32s3", "sdkconfig_file": "configs/sdkconfig.TDisplayS3-Touch", "zip_name": "LilyGo-TDisplayS3-Touch.zip"},
+        {"name": "JCMK_DevBoardPro", "idf_target": "esp32", "sdkconfig_file": "configs/sdkconfig.JCMK_DevBoardPro", "zip_name": "JCMK_DevBoardPro.zip"}
     ]
 
 def validate_project_directory() -> bool:
@@ -653,11 +654,57 @@ def build_target(target: Dict[str, str], env: Dict[str, str], cmd_prefix: str = 
                 zipf.write(item_path, item)
         
         print(f"Successfully created: {zip_path}")
-        return True
         
     except Exception as e:
         print(f"ERROR: Failed to create ZIP file: {e}")
         return False
+
+# --- Merge binaries using esptool.py merge_bin ---
+    merged_bin_path = os.path.join("local_builds", target['name'] + "-merged-gesp.bin")
+    bootloader_bin = os.path.join("build", "bootloader", "bootloader.bin")
+    partition_bin = os.path.join("build", "partition_table", "partition-table.bin")
+    firmware_bin = None
+    for bin_file in build_dir.glob("*.bin"):
+        if bin_file.name not in ["bootloader.bin", "partition-table.bin"]:
+            firmware_bin = str(bin_file)
+            break
+
+    if firmware_bin:
+        # Determine offsets (adjust if needed for your project)
+        boot_offset = "0x1000" if target['idf_target'] in ["esp32", "esp32s2"] else "0x0"
+        partition_offset = "0x8000"
+        firmware_offset = "0x10000"
+        import sys
+        merge_cmd = [
+            sys.executable, "-m", "esptool", 
+            "--chip", target['idf_target'],
+            "merge-bin",
+            "-o", merged_bin_path,
+            "--flash-mode", "dio",
+            "--flash-freq", "40m",
+            "--flash-size", "4MB",
+            boot_offset, bootloader_bin,
+            partition_offset, partition_bin,
+            firmware_offset, firmware_bin
+        ]
+        print(f"Merging binaries with: {' '.join(merge_cmd)}")
+        try:
+            result = subprocess.run(merge_cmd, check=True, capture_output=True, text=True)
+            print("esptool.py merge_bin output:")
+            print(result.stdout)
+            if os.path.exists(merged_bin_path):
+                print(f"Merged binary created: {merged_bin_path}")
+            else:
+                print("ERROR: Merged binary was not created.")
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: esptool.py merge_bin failed: {e}")
+            print(e.stdout)
+            print(e.stderr)
+            return False
+    else:
+        print("ERROR: Firmware binary not found for merging.")
+        return
+    return True
 
 def main():
     parser = argparse.ArgumentParser(description='Cross-platform build script for Ghost ESP')

@@ -42,13 +42,20 @@ typedef enum {
 
 static int current_settings_category = -1;
 
+// Indices of settings for each category in the settings menu.
+// Each sub-array lists the indices of settings_items[] that belong to a category.
+// The last element in each sub-array must be -1 to mark the end.
+//
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9)
+// Category 1: "Config"  (indices: 0, 6, 7, 8)
+// Example: settings_category_indices[0] lists settings for "Display" category.
 static int settings_category_indices[][8] = {
-    {1, 2, 5, 3, 4,
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-     9,
-#endif
-     -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness if PWM
-    {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
+    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+        {1, 2, 5, 3, 4, 9, 10, -1}, // Display: ... Max Brightness, Zebra Menus
+    #else
+        {1, 2, 5, 3, 4, 9, -1},     // Display: ... Zebra Menus
+    #endif
+        {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -76,8 +83,8 @@ static const char *wifi_capture_options[] = {
 };
 
 static const char *wifi_scanning_options[] = {
-    "Scan Access Points", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
-    "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
+    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
+    "ARP Scan Network", "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
 
@@ -133,9 +140,8 @@ enum {
     SETTING_WEB_AUTH,
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
-    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-    SETTING_MAX_BRIGHTNESS
-    #endif
+    SETTING_MAX_BRIGHTNESS,
+    SETTING_ZEBRA_MENUS
 };
 
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
@@ -155,8 +161,9 @@ static SettingsItem settings_items[] = {
     {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1},
     {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0},
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9} // default 100%
+    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     #endif
+    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0}
 };
 
 static bool is_settings_mode = false;
@@ -222,6 +229,7 @@ static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
 
 // shared styles for memory optimization
 static lv_style_t style_menu_item;
+static lv_style_t style_menu_item_alt;
 static lv_style_t style_selected_item;
 static lv_style_t style_menu_label;
 static bool styles_initialized = false;
@@ -244,6 +252,13 @@ static void init_shared_styles(void) {
     lv_style_set_bg_opa(&style_menu_item, LV_OPA_COVER);
     lv_style_set_border_width(&style_menu_item, 0);
     lv_style_set_radius(&style_menu_item, 0);
+
+    // Alternate style for subtle zebra striping
+    lv_style_init(&style_menu_item_alt);
+    lv_style_set_bg_color(&style_menu_item_alt, lv_color_hex(0x232323)); // Slightly lighter/darker, but more subtle
+    lv_style_set_bg_opa(&style_menu_item_alt, LV_OPA_COVER);
+    lv_style_set_border_width(&style_menu_item_alt, 0);
+    lv_style_set_radius(&style_menu_item_alt, 0);
     
     lv_style_init(&style_selected_item);
     lv_style_set_bg_opa(&style_selected_item, LV_OPA_COVER);
@@ -259,6 +274,7 @@ static void init_shared_styles(void) {
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
+static void ssh_scan_kb_cb(const char *text);
 
 static void evil_portal_ssid_cb(const char *input) {
     if (!input || !selected_portal[0]) return;
@@ -524,31 +540,56 @@ void options_menu_create() {
 }
 
 static void load_current_settings_values(void) {
-    settings_items[0].current_value = settings_get_rgb_mode(&G_Settings);
-    
-    uint32_t timeout = settings_get_display_timeout(&G_Settings);
-    settings_items[1].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : timeout < 60000 ? 3 : 4;
-    
-    settings_items[2].current_value = settings_get_menu_theme(&G_Settings);
-    settings_items[3].current_value = settings_get_thirds_control_enabled(&G_Settings) ? 1 : 0;
-    
-    uint32_t term_color = settings_get_terminal_text_color(&G_Settings);
-    settings_items[4].current_value = 0;
-    for (int i = 0; i < 8; i++) {
-        if (term_color == textcolor_values[i]) {
-            settings_items[4].current_value = i;
-            break;
+    for (int i = 0; i < sizeof(settings_items)/sizeof(settings_items[0]); i++) {
+        switch (settings_items[i].setting_type) {
+            case SETTING_RGB_MODE:
+                settings_items[i].current_value = settings_get_rgb_mode(&G_Settings);
+                break;
+            case SETTING_DISPLAY_TIMEOUT: {
+                uint32_t timeout = settings_get_display_timeout(&G_Settings);
+                settings_items[i].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : timeout < 60000 ? 3 : 4;
+                break;
+            }
+            case SETTING_MENU_THEME:
+                settings_items[i].current_value = settings_get_menu_theme(&G_Settings);
+                break;
+            case SETTING_THIRD_CONTROL:
+                settings_items[i].current_value = settings_get_thirds_control_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_TERMINAL_COLOR: {
+                uint32_t term_color = settings_get_terminal_text_color(&G_Settings);
+                settings_items[i].current_value = 0;
+                for (int j = 0; j < settings_items[i].value_count; j++) {
+                    if (term_color == textcolor_values[j]) {
+                        settings_items[i].current_value = j;
+                        break;
+                    }
+                }
+                break;
+            }
+            case SETTING_INVERT_COLORS:
+                settings_items[i].current_value = settings_get_invert_colors(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_WEB_AUTH:
+                settings_items[i].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_AP_ENABLED:
+                settings_items[i].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_POWER_SAVE:
+                settings_items[i].current_value = settings_get_power_save_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_ZEBRA_MENUS:
+                settings_items[i].current_value = settings_get_zebra_menus_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_MAX_BRIGHTNESS:
+                settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
+                break;
+            default:
+                settings_items[i].current_value = 0;
+                break;
         }
     }
-    
-    settings_items[5].current_value = settings_get_invert_colors(&G_Settings) ? 1 : 0;
-    settings_items[6].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
-    settings_items[7].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
-    settings_items[8].current_value = settings_get_power_save_enabled(&G_Settings) ? 1 : 0;
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-    settings_items[9].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
-    // If your value is 100, this gives index 9, for 10% index 0, etc.
-#endif
 }
 
 static void apply_setting_change(int setting_index, int new_value) {
@@ -567,6 +608,24 @@ static void apply_setting_change(int setting_index, int new_value) {
         }
         case SETTING_MENU_THEME:
             settings_set_menu_theme(&G_Settings, new_value);
+            display_manager_update_status_bar_color();
+            /* Refresh currently selected item's highlight to use new theme color */
+            if (menu_container && lv_obj_is_valid(menu_container) && selected_item_index >= 0) {
+                lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
+                if (current_item) {
+                    uint8_t theme = settings_get_menu_theme(&G_Settings);
+                    lv_color_t theme_bg = lv_color_hex(theme_palettes[theme][0]);
+                    lv_style_set_bg_color(&style_selected_item, theme_bg);
+                    lv_style_set_bg_grad_color(&style_selected_item, theme_bg);
+                    lv_obj_add_style(current_item, &style_selected_item, 0);
+                    lv_obj_t *label = lv_obj_get_child(current_item, 0);
+                    if (label) {
+                        if (theme == 3) lv_obj_set_style_text_color(label, lv_color_hex(0x000000), 0);
+                        else lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+                    }
+                    lv_obj_invalidate(current_item);
+                }
+            }
             break;
         case SETTING_THIRD_CONTROL:
             settings_set_thirds_control_enabled(&G_Settings, new_value == 1);
@@ -591,6 +650,16 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_POWER_SAVE:
             settings_set_power_save_enabled(&G_Settings, new_value == 1);
             apply_power_management_config(new_value == 1);
+            break;
+        case SETTING_ZEBRA_MENUS:
+            settings_set_zebra_menus_enabled(&G_Settings, new_value == 1);
+            // Redraw the menu to update zebra striping
+            if (is_settings_mode && menu_container) {
+                lv_obj_clean(menu_container);
+                num_items = 0;
+                build_item_index = 0;
+                menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+            }
             break;
         #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
         // This setting is only available if LV_DISP_BACKLIGHT_PWM is enabled
@@ -1048,6 +1117,13 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Scan APs Live") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("scanap -live");
+        view_switched = true;
+    }
+
     else if (strcmp(Selected_Option, "List Access Points") == 0) {
         terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
@@ -1112,6 +1188,13 @@ display_manager_switch_view(&terminal_view);
     terminal_set_return_view(&options_menu_view);
 display_manager_switch_view(&terminal_view);
         simulateCommand("scanlocal");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "ARP Scan Network") == 0) {
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
+        simulateCommand("scanarp");
         view_switched = true;
     }
 
@@ -1399,6 +1482,13 @@ display_manager_switch_view(&terminal_view);
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Scan SSH") == 0) {
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand("scanssh");
+    view_switched = true;
+    }
+    
     else if (strcmp(Selected_Option, "Reset AP Credentials") == 0) {
     terminal_set_return_view(&options_menu_view);
 display_manager_switch_view(&terminal_view);
@@ -1572,6 +1662,7 @@ void options_menu_destroy() {
     // Reset styles if needed
     if (styles_initialized) {
         lv_style_reset(&style_menu_item);
+        lv_style_reset(&style_menu_item_alt);
         lv_style_reset(&style_selected_item);
         lv_style_reset(&style_menu_label);
         styles_initialized = false;
@@ -1672,6 +1763,22 @@ static void switch_to_settings_category(int cat_idx) {
     menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
 }
 
+static void ssh_scan_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a valid IP address");
+        return;
+    }
+    
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "scanssh %s", text);
+    
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+
 static void wifi_connect_kb_cb(const char *text){
     const char *p=text;
     while(*p && *p!='\"') p++;
@@ -1691,10 +1798,31 @@ static void wifi_connect_kb_cb(const char *text){
     char cmd[256];
     snprintf(cmd,sizeof(cmd),"connect \"%s\" \"%s\"",ssid,pass);
     terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+    display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
 }
+
+
+static const lv_font_t* get_options_menu_font(void) {
+    return is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+}
+
+static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
+    if (!label || !btn) return;
+    lv_obj_set_style_pad_top(btn, 0, 0);
+    float btn_y_center_pad = (button_height_global - lv_font_get_line_height(get_options_menu_font())) / 2;
+    if (btn_y_center_pad < 0) btn_y_center_pad = 0; // Ensure padding is not negative
+    lv_obj_set_style_pad_top(label, btn_y_center_pad, 0);
+
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+}
+
+static lv_style_t* get_zebra_style(int index) {
+    if(settings_get_zebra_menus_enabled(&G_Settings)) return (index % 2 == 0) ? &style_menu_item : &style_menu_item_alt; // Use zebra striping styles if enabled
+    return &style_menu_item; // no zebra enabled, always return the default style
+}
+
 
 // build menu items in small batches so we don't starve the watchdog
 static void menu_builder_cb(lv_timer_t *t)
@@ -1721,13 +1849,12 @@ static void menu_builder_cb(lv_timer_t *t)
                     lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, cat);
                     if (!btn) break;
                     lv_obj_set_height(btn, button_height_global * 1.2);
-                    lv_obj_add_style(btn, &style_menu_item, 0);
+                    // Zebra striping here:
+                    lv_obj_add_style(btn, get_zebra_style(num_items), 0);
                     lv_obj_t *label = lv_obj_get_child(btn, 0);
                     if (label) {
-                        lv_obj_set_style_text_font(label,
-                            is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                            0);
-                        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+                        lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
+                        vertically_center_label(label, btn);
                         lv_obj_add_style(label, &style_menu_label, 0);
                     }
                     lv_obj_set_user_data(btn, (void *)(intptr_t)build_item_index);
@@ -1752,12 +1879,11 @@ static void menu_builder_cb(lv_timer_t *t)
                     lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, buf);
                     if (!btn) break;
                     lv_obj_set_height(btn, button_height_global);
-                    lv_obj_add_style(btn, &style_menu_item, 0);
+                    lv_obj_add_style(btn, get_zebra_style(num_items), 0);
                     lv_obj_t *label = lv_obj_get_child(btn, 0);
                     if (label) {
-                        lv_obj_set_style_text_font(label,
-                            is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                            0);
+                        lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
+                        vertically_center_label(label, btn);
                         lv_obj_add_style(label, &style_menu_label, 0);
                     }
                     lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
@@ -1779,12 +1905,11 @@ static void menu_builder_cb(lv_timer_t *t)
                 lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
                 if (!btn) break;
                 lv_obj_set_height(btn, button_height_global);
-                lv_obj_add_style(btn, &style_menu_item, 0);
-                lv_obj_t *label = lv_obj_get_child(btn,  0);
+                lv_obj_add_style(btn, get_zebra_style(num_items), 0);
+                lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
-                    lv_obj_set_style_text_font(label,
-                        is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14,
-                                               0);
+                    lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
+                    vertically_center_label(label, btn);
                     lv_obj_add_style(label, &style_menu_label, 0);
                 }
                 lv_obj_set_user_data(btn, (void *)opt);
@@ -1809,10 +1934,10 @@ static void menu_builder_cb(lv_timer_t *t)
             lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
             if (btn) {
                 lv_obj_set_height(btn, button_height_global);
-                lv_obj_add_style(btn, &style_menu_item, 0);
+                lv_obj_add_style(btn, get_zebra_style(num_items), 0);
                 lv_obj_t *label = lv_obj_get_child(btn, 0);
                 if (label) {
-                    lv_obj_set_style_text_font(label, is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14, 0);
+                    lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
                     if (is_settings_mode && current_settings_category < 0) {
                         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
                     }
