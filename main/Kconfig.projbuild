@@ -168,6 +168,12 @@ menu "Ghost ESP Options"
             help
                 Enable Cardputer input.
         
+        config USE_TDISPLAY_S3
+            bool "Enable T-Display S3"
+            default n
+            help
+                Enable support for LilyGo T-Display S3 with ST7789 display and CST816 touch.
+        
         config USE_HW_KB
             bool "Enable Hardware Keyboard"
             default n

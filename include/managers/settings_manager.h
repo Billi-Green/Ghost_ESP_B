@@ -95,7 +95,11 @@ typedef struct {
   int32_t esp_comm_rx_pin; // ESP communication RX pin
   bool ap_enabled; // Enable/disable AP across reboots
   bool power_save_enabled;
+  bool zebra_menus_enabled;
   uint8_t max_screen_brightness; // Max screen brightness (0-100)
+
+  // Infrared settings
+  bool infrared_easy_mode; // Easy learn mode toggle
 } FSettings;
 
 // Function declarations
@@ -135,6 +139,9 @@ const char *settings_get_ap_password(const FSettings *settings);
 
 void settings_set_rgb_speed(FSettings *settings, uint8_t speed);
 uint8_t settings_get_rgb_speed(const FSettings *settings);
+
+void settings_set_zebra_menus_enabled(FSettings *settings, bool enabled);
+bool settings_get_zebra_menus_enabled(const FSettings *settings);
 
 // Getters and Setters for Evil Portal
 void settings_set_portal_url(FSettings *settings, const char *url);
@@ -225,6 +232,11 @@ void settings_set_power_save_enabled(FSettings *settings, bool enabled);
 // Brightness settings
 void settings_set_max_screen_brightness(FSettings *settings, uint8_t value);
 uint8_t settings_get_max_screen_brightness(const FSettings *settings);
+
+// Infrared settings
+void settings_set_infrared_easy_mode(FSettings *settings, bool enabled);
+bool settings_get_infrared_easy_mode(const FSettings *settings);
+
 extern FSettings G_Settings;
 
 #endif // SETTINGS_MANAGER_H
