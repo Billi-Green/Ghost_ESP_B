@@ -11,6 +11,9 @@
 #include <string.h>
 
 extern View keyboard_view;
+extern void keyboard_view_set_return_view(View *view);
+
+static View *terminal_return_view = NULL;
 
 #include "lvgl.h"
 #include "managers/settings_manager.h"
@@ -282,28 +285,39 @@ static void scroll_terminal_down(void) {
 }
 
 static void stop_all_operations(void) {
-  terminal_active = false;
-  is_stopping = true;
+    terminal_active = false;
+    is_stopping = true;
 
-  // Send all stop commands
-  simulateCommand("stop");
+    // Send all stop commands
+    simulateCommand("stop");
 
-  vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(20));
 
-  // Now, switch the view
-  display_manager_switch_view(display_manager_previous_view);
-  ESP_LOGI(TAG, "Stop all operations triggered");
+    // Now, switch the view
+    if (terminal_return_view) {
+        display_manager_switch_view(terminal_return_view);
+        terminal_return_view = NULL; // Clear after use
+    } else {
+        display_manager_switch_view(&main_menu_view); // Fallback
+    }
+    ESP_LOGI(TAG, "Stop all operations triggered");
 }
 #if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN)
 void text_box_click_cb(lv_event_t *e){
   ESP_LOGI(TAG, "Text box clicked");
   printf("Text box clicked\n");
 
+  keyboard_view_set_return_view(&terminal_view);
   display_manager_switch_view(&keyboard_view);
 
   // If using a hardware keyboard, we can ignore this click
 }
 #endif
+
+static void back_btn_event_cb(lv_event_t *e) {
+    stop_all_operations();
+}
+
 void terminal_view_create(void) {
     is_stopping = false;
     if (terminal_view.root != NULL) {
@@ -382,6 +396,7 @@ void terminal_view_create(void) {
         lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, BUTTON_PADDING, -BUTTON_PADDING);
         lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x333333), LV_PART_MAIN);
         lv_obj_set_style_radius(back_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_add_event_cb(back_btn, back_btn_event_cb, LV_EVENT_CLICKED, NULL);
         lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
         lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
         lv_obj_t *back_label = lv_label_create(back_btn);
@@ -615,7 +630,7 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
         int back_x_max = BUTTON_PADDING + BUTTON_SIZE + 25;
         if (touch_x >= back_x_min && touch_x <= back_x_max) {
           ESP_LOGW(TAG, "Back button triggered");
-          stop_all_operations();
+          lv_event_send(back_btn, LV_EVENT_CLICKED, NULL);
           return;
         }
       }
@@ -721,7 +736,6 @@ void terminal_view_get_hardwareinput_callback(void **callback) {
 }
 
 
-static View *terminal_return_view = NULL;
 
 View terminal_view = {
   .root = NULL,

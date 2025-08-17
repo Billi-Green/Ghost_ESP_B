@@ -14,6 +14,8 @@
 
 static const char *TAG = "keyboard_screen";
 
+static View *keyboard_return_view = NULL;
+
 static lv_obj_t *root = NULL;
 static lv_obj_t *input_label = NULL;
 static char input_buffer[128] = {0};
@@ -166,8 +168,9 @@ static void submit_text() {
         if (submit_callback) {
             submit_callback(input_buffer);
         } else {
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);            vTaskDelay(pdMS_TO_TICKS(10));
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            vTaskDelay(pdMS_TO_TICKS(10));
             simulateCommand(input_buffer);
         }
         memset(input_buffer, 0, sizeof(input_buffer));
@@ -658,7 +661,11 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                     is_symbols_mode = false;
                     recreate_keyboard_buttons();
                 } else if (strcmp(key, "Exit") == 0) {
-                    display_manager_switch_view(&options_menu_view);
+                    if (keyboard_return_view) {
+                        display_manager_switch_view(keyboard_return_view);
+                    } else {
+                        display_manager_switch_view(&options_menu_view); // fallback
+                    }
                 } else if (strcmp(key, "Done") == 0) {
                     submit_text();
                 } else if (strcmp(key, "DEL") == 0) {
@@ -721,6 +728,10 @@ void keyboard_view_set_placeholder(const char *text){
     memset(input_buffer, 0, sizeof(input_buffer));
     input_len = 0;
     update_input_label();
+}
+
+void keyboard_view_set_return_view(View *view) {
+    keyboard_return_view = view;
 }
 
 View keyboard_view = {
