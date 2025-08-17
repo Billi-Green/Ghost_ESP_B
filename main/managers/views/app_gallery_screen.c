@@ -239,6 +239,12 @@ static void select_app_item(int index, bool slide_left) {
  */
 static void handle_app_item_selection(int item_index) {
     ESP_LOGI(TAG, "Launching app: %s (index %d)\n", app_items[item_index].name, item_index);
+
+    // If launching the terminal, set its return view to the apps menu
+    if (app_items[item_index].view == &terminal_view) {
+        terminal_set_return_view(&apps_menu_view);
+    }
+
     display_manager_switch_view(app_items[item_index].view);
 }
 
