@@ -1,5 +1,17 @@
 #include "managers/views/options_screen.h"
 #include "core/serial_manager.h"
+#include "core/commandline.h" // for get_evil_portal_list
+#include "managers/display_manager.h"
+
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
+static char selected_portal[MAX_PORTAL_NAME] = {0}; // <-- Move here
+
+static char (*evil_portal_names)[MAX_PORTAL_NAME] = NULL;
+static const char **evil_portal_options = NULL;
+
+#include "managers/views/keyboard_screen.h"
 #include "esp_timer.h"
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
@@ -15,9 +27,36 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
 
 static const char *TAG = "optionsScreen";
+
+static const char *settings_categories[] = {"Display", "Config", NULL};
+
+typedef enum {
+    SETTINGS_CATEGORY_DISPLAY,
+    SETTINGS_CATEGORY_CONFIG,
+    SETTINGS_CATEGORY_COUNT
+} SettingsCategory;
+
+static int current_settings_category = -1;
+
+// Indices of settings for each category in the settings menu.
+// Each sub-array lists the indices of settings_items[] that belong to a category.
+// The last element in each sub-array must be -1 to mark the end.
+//
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9)
+// Category 1: "Config"  (indices: 0, 6, 7, 8)
+// Example: settings_category_indices[0] lists settings for "Display" category.
+static int settings_category_indices[][8] = {
+    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+        {1, 2, 5, 3, 4, 9, 10, -1}, // Display: ... Max Brightness, Zebra Menus
+    #else
+        {1, 2, 5, 3, 4, 9, -1},     // Display: ... Zebra Menus
+    #endif
+        {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
+};
 
 typedef enum {
     WIFI_MENU_MAIN,
@@ -26,7 +65,8 @@ typedef enum {
     WIFI_MENU_SCANNING,
     WIFI_MENU_EVIL_PORTAL,
     WIFI_MENU_CONNECTION,
-    WIFI_MENU_MISC
+    WIFI_MENU_MISC,
+    WIFI_MENU_EVIL_PORTAL_SELECT // <-- Add this line
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -43,12 +83,17 @@ static const char *wifi_capture_options[] = {
 };
 
 static const char *wifi_scanning_options[] = {
-    "Scan Access Points", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
-    "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
+    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
+    "ARP Scan Network", "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
 
-static const char *wifi_evil_portal_options[] = {"Start Evil Portal", "Stop Evil Portal", NULL};
+static void switch_to_settings_category(int cat_idx);
+
+static const char *wifi_evil_portal_options[] = {
+    "Start Evil Portal", "Start Custom Evil Portal", "Stop Evil Portal", NULL
+};
+
 
 static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
 
@@ -68,9 +113,60 @@ static const char *bluetooth_options[] = {"Find Flippers", "List Flippers", "Sel
 static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
                                     "BLE Wardriving",   NULL};
 
-static const char *settings_options[] = {"Set RGB Mode - Stealth", "Set RGB Mode - Normal",
-                                         "Set RGB Mode - Rainbow", "Webauth On", "Webauth Off", NULL};
+static void load_current_settings_values(void);
 
+typedef struct {
+    const char *label;
+    int setting_type;
+    const char **value_options;
+    int value_count;
+    int current_value;
+} SettingsItem;
+
+static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth"};
+static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
+static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
+static const char *bool_options[] = {"Off", "On"};
+static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
+static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
+
+enum {
+    SETTING_RGB_MODE = 0,
+    SETTING_DISPLAY_TIMEOUT,
+    SETTING_MENU_THEME,
+    SETTING_THIRD_CONTROL,
+    SETTING_TERMINAL_COLOR,
+    SETTING_INVERT_COLORS,
+    SETTING_WEB_AUTH,
+    SETTING_AP_ENABLED,
+    SETTING_POWER_SAVE,
+    SETTING_MAX_BRIGHTNESS,
+    SETTING_ZEBRA_MENUS
+};
+
+#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+static const char *brightness_options[] = {
+    "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
+};
+#endif
+
+static SettingsItem settings_items[] = {
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
+    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1},
+    {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
+    {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
+    {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0},
+    {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0},
+    {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1},
+    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1},
+    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0},
+    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
+    #endif
+    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0}
+};
+
+static bool is_settings_mode = false;
 
 EOptionsMenuType SelectedMenuType = OT_Wifi;
 int selected_item_index = 0;
@@ -99,14 +195,48 @@ static bool touch_on_scroll_btn = false; // Flag active between press and releas
 // Add button declaration for back button
 static lv_obj_t *back_btn = NULL;
 
+// --- Add Bluetooth submenu arrays and state ---
+static const char *bluetooth_main_options[] = {
+    "AirTag", "Flipper", "Spam", "Raw", "Skimmer", NULL
+};
+static const char *bluetooth_airtag_options[] = {
+    "Start AirTag Scanner", "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing", NULL
+};
+static const char *bluetooth_flipper_options[] = {
+    "Find Flippers", "List Flippers", "Select Flipper", NULL
+};
+static const char *bluetooth_spam_options[] = {
+    "BLE Spam - Apple", "BLE Spam - Microsoft", "BLE Spam - Samsung",
+    "BLE Spam - Google", "BLE Spam - Random", "Stop BLE Spam", NULL
+};
+static const char *bluetooth_raw_options[] = {
+    "Raw BLE Scanner", NULL
+};
+static const char *bluetooth_skimmer_options[] = {
+    "BLE Skimmer Detect", NULL
+};
+
+typedef enum {
+    BLUETOOTH_MENU_MAIN,
+    BLUETOOTH_MENU_AIRTAG,
+    BLUETOOTH_MENU_FLIPPER,
+    BLUETOOTH_MENU_SPAM,
+    BLUETOOTH_MENU_RAW,
+    BLUETOOTH_MENU_SKIMMER
+} BluetoothMenuState;
+
+static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
+
 // shared styles for memory optimization
 static lv_style_t style_menu_item;
+static lv_style_t style_menu_item_alt;
 static lv_style_t style_selected_item;
 static lv_style_t style_menu_label;
 static bool styles_initialized = false;
 
 // forward declaration for incremental builder callback
 static void menu_builder_cb(lv_timer_t *t);
+static void change_setting_value(int setting_index, bool increment); // Forward Declaration
 
 static lv_timer_t *menu_build_timer = NULL;
 static const char **current_options_list = NULL;
@@ -122,6 +252,13 @@ static void init_shared_styles(void) {
     lv_style_set_bg_opa(&style_menu_item, LV_OPA_COVER);
     lv_style_set_border_width(&style_menu_item, 0);
     lv_style_set_radius(&style_menu_item, 0);
+
+    // Alternate style for subtle zebra striping
+    lv_style_init(&style_menu_item_alt);
+    lv_style_set_bg_color(&style_menu_item_alt, lv_color_hex(0x232323)); // Slightly lighter/darker, but more subtle
+    lv_style_set_bg_opa(&style_menu_item_alt, LV_OPA_COVER);
+    lv_style_set_border_width(&style_menu_item_alt, 0);
+    lv_style_set_radius(&style_menu_item_alt, 0);
     
     lv_style_init(&style_selected_item);
     lv_style_set_bg_opa(&style_selected_item, LV_OPA_COVER);
@@ -137,6 +274,56 @@ static void init_shared_styles(void) {
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
+static void ssh_scan_kb_cb(const char *text);
+
+static void evil_portal_ssid_cb(const char *input) {
+    if (!input || !selected_portal[0]) return;
+    char ssid[64] = {0};
+    char pass[64] = {0};
+    const char *space = strchr(input, ' ');
+    if (space) {
+        size_t ssid_len = space - input;
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
+        const char *pw = space + 1;
+        size_t pass_len = strlen(pw);
+        if (pass_len > 0) {
+            if (pass_len < 8) {
+                error_popup_create("Password must be at least 8 chars");
+                return;
+            }
+            if (pass_len >= sizeof(pass)) {
+                error_popup_create("pass too long");
+                return;
+            }
+            memcpy(pass, pw, pass_len);
+            pass[pass_len] = '\0';
+        }
+    } else {
+        size_t ssid_len = strlen(input);
+        if (ssid_len == 0 || ssid_len >= sizeof(ssid)) {
+            error_popup_create("ssid too long");
+            return;
+        }
+        memcpy(ssid, input, ssid_len);
+        ssid[ssid_len] = '\0';
+    }
+    char cmd[256];
+    if (pass[0]) {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s %s", selected_portal, ssid, pass);
+    } else {
+        snprintf(cmd, sizeof(cmd), "startportal %s %s", selected_portal, ssid);
+    }
+terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+    selected_portal[0] = '\0';
+}
 
 // Add scroll functions
 static void scroll_options_up(lv_event_t *e) {
@@ -191,6 +378,7 @@ static const uint32_t theme_palettes[15][6] = {
 
 void options_menu_create() {
     option_invoked = false;
+    current_settings_category = -1;
     int screen_width = LV_HOR_RES;
     int screen_height = LV_VER_RES;
 
@@ -211,7 +399,6 @@ void options_menu_create() {
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
 
-    // Calculate heights considering status bar (20px) and scroll buttons
     const int STATUS_BAR_HEIGHT = 20;
 #ifdef CONFIG_USE_TOUCHSCREEN
     const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
@@ -228,6 +415,8 @@ void options_menu_create() {
     lv_obj_set_style_border_width(menu_container, 0, 0);
 
     const char **options = NULL;
+    is_settings_mode = false;
+    
     switch (SelectedMenuType) {
     case OT_Wifi:
         switch (current_wifi_menu_state) {
@@ -238,70 +427,287 @@ void options_menu_create() {
             case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
             case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
+            case WIFI_MENU_EVIL_PORTAL_SELECT: // <-- Add this case
+            {
+                ESP_LOGI(TAG, "Populating evil portal selector...");
+                evil_portal_names = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
+                evil_portal_options = malloc(sizeof(char*) * (MAX_PORTALS + 1));
+
+                if (!evil_portal_names || !evil_portal_options) { // Check for allocation failure
+                    ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
+                    // Handle error, maybe go back to the previous menu
+                    break;
+                }
+                int count = get_evil_portal_list(evil_portal_names);
+                ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
+                if (count <= 0) {
+                    evil_portal_options[0] = "default";
+                    evil_portal_options[1] = NULL;
+                    ESP_LOGI(TAG, "No portals found, using 'default'");
+                } else {
+                    for (int i = 0; i < count; ++i) evil_portal_options[i] = evil_portal_names[i];
+                    evil_portal_options[count] = NULL;
+                }
+                options = evil_portal_options;
+                break;
+            }
         }
         break;
-    case OT_Bluetooth: options = bluetooth_options; break;
+    case OT_Bluetooth:
+        switch (current_bluetooth_menu_state) {
+            case BLUETOOTH_MENU_MAIN: options = bluetooth_main_options; break;
+            case BLUETOOTH_MENU_AIRTAG: options = bluetooth_airtag_options; break;
+            case BLUETOOTH_MENU_FLIPPER: options = bluetooth_flipper_options; break;
+            case BLUETOOTH_MENU_SPAM: options = bluetooth_spam_options; break;
+            case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
+            case BLUETOOTH_MENU_SKIMMER: options = bluetooth_skimmer_options; break;
+        }
+        break;
     case OT_GPS: options = gps_options; break;
-    case OT_Settings: options = settings_options; break;
+    case OT_Settings: 
+        is_settings_mode = true;
+        load_current_settings_values();
+        break;
     default: options = NULL; break;
     }
 
-    if (options == NULL) {
+    if (!is_settings_mode && options == NULL) {
         display_manager_switch_view(&main_menu_view);
         return;
     }
 
     num_items = 0;
-    int button_height = is_small_screen ? 35 : 50;
+    int button_height = is_small_screen ? 40 : 55;
     is_small_screen_global = is_small_screen;
     button_height_global = button_height;
-    current_options_list = options;
-    build_item_index = 0;
-    ESP_LOGI(TAG, "starting incremental menu build");
-    menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+    
+    if (is_settings_mode) {
+        if (current_settings_category < 0) {
+            current_options_list = settings_categories;
+            build_item_index = 0;
+            menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+        } else {
+            current_options_list = NULL;
+            build_item_index = 0;
+            menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+        }
+    } else {
+        current_options_list = options;
+        build_item_index = 0;
+        menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+    }
 
     display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
-#ifdef CONFIG_USE_TOUCHSCREEN // only show touch buttons if on a touch screen device.
-    // Create scroll buttons and back button
-    scroll_up_btn = lv_btn_create(root); // UP button on the LEFT
+#ifdef CONFIG_USE_TOUCHSCREEN
+    scroll_up_btn = lv_btn_create(root);
     lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
-    lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING); // Align left
+    lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
     lv_obj_set_style_bg_color(scroll_up_btn, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_up_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_up_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(scroll_up_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(scroll_up_btn, scroll_options_up, LV_EVENT_CLICKED, NULL);
     lv_obj_t *up_label = lv_label_create(scroll_up_btn);
-    lv_label_set_text(up_label, LV_SYMBOL_UP); // Keep UP symbol
+    lv_label_set_text(up_label, LV_SYMBOL_UP);
     lv_obj_center(up_label);
 
-    scroll_down_btn = lv_btn_create(root); // DOWN button on the RIGHT
+    scroll_down_btn = lv_btn_create(root);
     lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
-    lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING); // Align right
+    lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
     lv_obj_set_style_bg_color(scroll_down_btn, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_down_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_down_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(scroll_down_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(scroll_down_btn, scroll_options_down, LV_EVENT_CLICKED, NULL);
     lv_obj_t *down_label = lv_label_create(scroll_down_btn);
-    lv_label_set_text(down_label, LV_SYMBOL_DOWN); // Keep DOWN symbol
+    lv_label_set_text(down_label, LV_SYMBOL_DOWN);
     lv_obj_center(down_label);
 
-    // Create Back button
     back_btn = lv_btn_create(root);
-    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE); // Slightly wider
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING); // Align center bottom
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x555555), LV_PART_MAIN); // Different color
-    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN); // Slightly rounded rectangle
-    lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN); // Add horizontal padding
+    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x555555), LV_PART_MAIN);
+    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN);
     lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back"); // Back symbol and text
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
 #endif
     createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
+}
+
+static void load_current_settings_values(void) {
+    for (int i = 0; i < sizeof(settings_items)/sizeof(settings_items[0]); i++) {
+        switch (settings_items[i].setting_type) {
+            case SETTING_RGB_MODE:
+                settings_items[i].current_value = settings_get_rgb_mode(&G_Settings);
+                break;
+            case SETTING_DISPLAY_TIMEOUT: {
+                uint32_t timeout = settings_get_display_timeout(&G_Settings);
+                settings_items[i].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : timeout < 60000 ? 3 : 4;
+                break;
+            }
+            case SETTING_MENU_THEME:
+                settings_items[i].current_value = settings_get_menu_theme(&G_Settings);
+                break;
+            case SETTING_THIRD_CONTROL:
+                settings_items[i].current_value = settings_get_thirds_control_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_TERMINAL_COLOR: {
+                uint32_t term_color = settings_get_terminal_text_color(&G_Settings);
+                settings_items[i].current_value = 0;
+                for (int j = 0; j < settings_items[i].value_count; j++) {
+                    if (term_color == textcolor_values[j]) {
+                        settings_items[i].current_value = j;
+                        break;
+                    }
+                }
+                break;
+            }
+            case SETTING_INVERT_COLORS:
+                settings_items[i].current_value = settings_get_invert_colors(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_WEB_AUTH:
+                settings_items[i].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_AP_ENABLED:
+                settings_items[i].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_POWER_SAVE:
+                settings_items[i].current_value = settings_get_power_save_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_ZEBRA_MENUS:
+                settings_items[i].current_value = settings_get_zebra_menus_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_MAX_BRIGHTNESS:
+                settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
+                break;
+            default:
+                settings_items[i].current_value = 0;
+                break;
+        }
+    }
+}
+
+static void apply_setting_change(int setting_index, int new_value) {
+    SettingsItem *item = &settings_items[setting_index];
+    item->current_value = new_value;
+
+    switch (item->setting_type) {
+        case SETTING_RGB_MODE:
+            settings_set_rgb_mode(&G_Settings, new_value);
+            display_manager_update_status_bar_color();
+            break;
+        case SETTING_DISPLAY_TIMEOUT: {
+            uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : new_value == 3 ? 60000 : 0; // Handle "Never"
+            settings_set_display_timeout(&G_Settings, timeout_ms);
+            break;
+        }
+        case SETTING_MENU_THEME:
+            settings_set_menu_theme(&G_Settings, new_value);
+            display_manager_update_status_bar_color();
+            /* Refresh currently selected item's highlight to use new theme color */
+            if (menu_container && lv_obj_is_valid(menu_container) && selected_item_index >= 0) {
+                lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
+                if (current_item) {
+                    uint8_t theme = settings_get_menu_theme(&G_Settings);
+                    lv_color_t theme_bg = lv_color_hex(theme_palettes[theme][0]);
+                    lv_style_set_bg_color(&style_selected_item, theme_bg);
+                    lv_style_set_bg_grad_color(&style_selected_item, theme_bg);
+                    lv_obj_add_style(current_item, &style_selected_item, 0);
+                    lv_obj_t *label = lv_obj_get_child(current_item, 0);
+                    if (label) {
+                        if (theme == 3) lv_obj_set_style_text_color(label, lv_color_hex(0x000000), 0);
+                        else lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+                    }
+                    lv_obj_invalidate(current_item);
+                }
+            }
+            break;
+        case SETTING_THIRD_CONTROL:
+            settings_set_thirds_control_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_TERMINAL_COLOR:
+            settings_set_terminal_text_color(&G_Settings, textcolor_values[new_value]);
+            break;
+        case SETTING_INVERT_COLORS:
+            settings_set_invert_colors(&G_Settings, new_value == 1);
+            break;
+        case SETTING_WEB_AUTH:
+            settings_set_web_auth_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_AP_ENABLED:
+            settings_set_ap_enabled(&G_Settings, new_value == 1);
+            if (new_value == 1) {
+                ap_manager_start_services();
+            } else {
+                ap_manager_stop_services();
+            }
+            break;
+        case SETTING_POWER_SAVE:
+            settings_set_power_save_enabled(&G_Settings, new_value == 1);
+            apply_power_management_config(new_value == 1);
+            break;
+        case SETTING_ZEBRA_MENUS:
+            settings_set_zebra_menus_enabled(&G_Settings, new_value == 1);
+            // Redraw the menu to update zebra striping
+            if (is_settings_mode && menu_container) {
+                lv_obj_clean(menu_container);
+                num_items = 0;
+                build_item_index = 0;
+                menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+            }
+            break;
+        #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+        // This setting is only available if LV_DISP_BACKLIGHT_PWM is enabled
+        case SETTING_MAX_BRIGHTNESS:
+            settings_set_max_screen_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            set_backlight_brightness(100); // set to 100 since brightness becomes scaled by the max
+            break;
+        #endif
+    }
+    settings_save(&G_Settings);
+}
+
+static void change_current_row(bool increment)
+{
+    if (!menu_container) return;
+    /* Only valid when we are IN a settings submenu (not at category level) */
+    if (current_settings_category < 0) return;
+
+    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+    if (!sel) return;
+
+    int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+    change_setting_value(setting_idx, increment);
+}
+
+static void change_setting_value(int setting_index, bool increment) {
+    SettingsItem *item = &settings_items[setting_index];
+    int new_value = item->current_value;
+    
+    if (increment) {
+        new_value = (new_value + 1) % item->value_count;
+    } else {
+        new_value = (new_value + item->value_count - 1) % item->value_count;
+    }
+    
+    apply_setting_change(setting_index, new_value);
+    
+    lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
+    if (current_item) {
+        lv_obj_t *label = lv_obj_get_child(current_item, 0);
+        if (label) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%s %s: %s %s", 
+                    LV_SYMBOL_LEFT, item->label, 
+                    item->value_options[new_value], LV_SYMBOL_RIGHT);
+            lv_label_set_text(label, buf);
+        }
+    }
 }
 
 static void select_option_item(int index) {
@@ -354,10 +760,9 @@ void handle_hardware_button_press_options(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
-            // Press on scroll up button
+            // existing "press" logic unchanged...
             if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
-                lv_area_t area;
-                lv_obj_get_coords(scroll_up_btn, &area);
+                lv_area_t area; lv_obj_get_coords(scroll_up_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     scroll_options_up(NULL);
@@ -365,10 +770,8 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     return;
                 }
             }
-            // Press on scroll down button
             if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) {
-                lv_area_t area;
-                lv_obj_get_coords(scroll_down_btn, &area);
+                lv_area_t area; lv_obj_get_coords(scroll_down_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     scroll_options_down(NULL);
@@ -376,18 +779,15 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     return;
                 }
             }
-            // Press on back button
             if (back_btn && lv_obj_is_valid(back_btn)) {
-                lv_area_t area;
-                lv_obj_get_coords(back_btn, &area);
+                lv_area_t area; lv_obj_get_coords(back_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
-                    back_event_cb(NULL); // Trigger back action
-                    opt_touch_started = false; // Prevent further processing
+                    back_event_cb(NULL);
+                    opt_touch_started = false;
                     return;
                 }
             }
-            // Record touch start only once (ignore movement events)
             if (!opt_touch_started) {
                 opt_touch_started = true;
                 opt_touch_start_x = data->point.x;
@@ -395,51 +795,80 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
             return;
         }
+
         if (data->state == LV_INDEV_STATE_REL) {
-            // Only process if a touch start was registered
             if (!opt_touch_started) return;
+            opt_touch_started = false;
+
             int dx = data->point.x - opt_touch_start_x;
             int dy = data->point.y - opt_touch_start_y;
-            opt_touch_started = false;
+
+            // thirds-control special behavior
             if (settings_get_thirds_control_enabled(&G_Settings)) {
                 int y = data->point.y;
                 int screen_h = LV_VER_RES;
                 if (y < screen_h/3) {
                     select_option_item(selected_item_index - 1);
-                } else if (y > (screen_h * 2)/3) {
+                } else if (y > (screen_h*2)/3) {
                     select_option_item(selected_item_index + 1);
                 } else {
-                    lv_obj_t *selected = lv_obj_get_child(menu_container, selected_item_index);
-                    if (selected) handle_option_directly((const char *)lv_obj_get_user_data(selected));
+                    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                    if (sel) handle_option_directly((const char*)lv_obj_get_user_data(sel));
                 }
                 return;
             }
-            // Define thresholds
-            int threshold_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
-            int threshold_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
-            // Vertical swipe -> scroll
-            if (abs(dy) > threshold_y) {
+
+            // vertical swipe = scroll
+            int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            // Lower threshold for Evil Portal HTML list
+            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
+            }
+            if (abs(dy) > thr_y) {
                 lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                 return;
             }
-            // Horizontal swipe -> ignore selection
-            if (abs(dx) > threshold_x) return;
-            // Check tap within menu container bounds
-            lv_area_t container_area;
-            lv_obj_get_coords(menu_container, &container_area);
-            if (data->point.x < container_area.x1 || data->point.x > container_area.x2 ||
-                data->point.y < container_area.y1 || data->point.y > container_area.y2) {
+            // horizontal swipe = ignore
+            int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            if (abs(dx) > thr_x) return;
+
+            // now treat as tap inside the menu list
+            lv_area_t cont_area;
+            lv_obj_get_coords(menu_container, &cont_area);
+            if (data->point.x < cont_area.x1 || data->point.x > cont_area.x2 ||
+                data->point.y < cont_area.y1 || data->point.y > cont_area.y2) {
                 return;
             }
-            // Treat as tap -> select option
+
+            // find which button was tapped
             for (int i = 0; i < num_items; i++) {
                 lv_obj_t *btn = lv_obj_get_child(menu_container, i);
                 lv_area_t btn_area;
                 lv_obj_get_coords(btn, &btn_area);
                 if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
                     data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
+                    // highlight it
                     select_option_item(i);
-                    handle_option_directly((const char *)lv_obj_get_user_data(btn));
+
+                    if (is_settings_mode) {
+                        // **NEW**: if we're still at category-level, open submenu
+                        if (current_settings_category < 0) {
+                            switch_to_settings_category(i);
+                        } else {
+                            // leaf setting: change value
+                            int center_x = (btn_area.x1 + btn_area.x2) / 2;
+                            bool increment = data->point.x >= center_x;
+                            lv_obj_t *sel = lv_obj_get_child(menu_container, i);
+                            if (sel) {
+                                int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+                                change_setting_value(setting_idx, increment);
+                            }
+                        }
+                    } else {
+                        // non-settings menus
+                        const char *opt = (const char*)lv_obj_get_user_data(btn);
+                        handle_option_directly(opt);
+                    }
                     return;
                 }
             }
@@ -448,41 +877,159 @@ void handle_hardware_button_press_options(InputEvent *event) {
         return;
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
         int button = event->data.joystick_index;
+        ESP_LOGI(TAG, "Joystick index = %d", button);
         if (button == 2) {
             select_option_item(selected_item_index - 1);
         } else if (button == 4) {
             select_option_item(selected_item_index + 1);
-        } else if (button == 1) {
-            lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
-            if (selected_obj) {
-                const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
-                if (selected_option) {
-                    handle_option_directly(selected_option);
+        } else if (button == 1) { // Normal select button
+            if (is_settings_mode) {
+                if (current_settings_category < 0) {
+                    // Enter settings category
+                    switch_to_settings_category(selected_item_index);
+                } else { // current_settings_category >= 0
+                    // Change setting value
+                    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                    if (sel) {
+                        int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+                        change_setting_value(setting_idx, true);
+                    }
+                }
+            } else {
+                // Non-settings menu selection
+                lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+                if (selected_obj) {
+                    const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                    if (selected_option) {
+                        handle_option_directly(selected_option);
+                    }
                 }
             }
+        } else if (button == 0 && is_settings_mode && current_settings_category >= 0) { // Left (decrement) button for settings
+            change_current_row(false);
+        } else if (button == 3) { // Cardputer select button OR Right (increment) button for settings
+            if (is_settings_mode && current_settings_category >= 0) {
+                // Change setting value (Cardputer specific or normal increment)
+                change_current_row(true);
+            }
+            // For non-settings, button 3 doesn't have a defined action as per the problem description.
+            // If it were a general 'select' for non-settings, it would need similar logic to button 1's 'else' block.
         }
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         uint8_t keyValue = event->data.key_value;
 
-        if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) { // Left / up
-            ESP_LOGI(TAG, "Left/Up button pressed\n");
+        // --- Vim keybinds ---
+        if (keyValue == 'h') { // Vim left
+            ESP_LOGI(TAG, "Vim 'h' pressed (left)");
+            if (is_settings_mode) {
+                change_current_row(false);
+            } else {
+                select_option_item(selected_item_index - 1);
+            }
+        } else if (keyValue == 'l') { // Vim right
+            ESP_LOGI(TAG, "Vim 'l' pressed (right)");
+            if (is_settings_mode) {
+                change_current_row(true);
+            } else {
+                select_option_item(selected_item_index + 1);
+            }
+        } else if (keyValue == 'k') { // Vim up
+            ESP_LOGI(TAG, "Vim 'k' pressed (up)");
             select_option_item(selected_item_index - 1);
-        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) { // Right / down
-            ESP_LOGI(TAG, "Right/Down button pressed\n");
+        } else if (keyValue == 'j') { // Vim down
+            ESP_LOGI(TAG, "Vim 'j' pressed (down)");
             select_option_item(selected_item_index + 1);
-        } else if (keyValue == 13) { // Select
-            ESP_LOGI(TAG, "Enter button pressed\n");
-            lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
-            if (selected_obj) {
-                const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
-                if (selected_option) {
-                    handle_option_directly(selected_option);
+        }
+        // --- Existing keybinds ---
+        else if ((keyValue == 44 || keyValue == ',') || (keyValue == 59 || keyValue == ';')) {
+            ESP_LOGI(TAG, "Left/Up button pressed");
+            if (is_settings_mode && (keyValue == 44 || keyValue == ',')) {
+                change_current_row(false);
+            } else {
+                select_option_item(selected_item_index - 1);
+            }
+        } else if ((keyValue == 47 || keyValue == '/') || (keyValue == 46 || keyValue == '.')) {
+            ESP_LOGI(TAG, "Right/Down button pressed");
+            if (is_settings_mode && (keyValue == 47 || keyValue == '/')) {
+                change_current_row(true);
+            } else {
+                select_option_item(selected_item_index + 1);
+            }
+        } else if (keyValue == 13) {
+            ESP_LOGI(TAG, "Enter button pressed");
+            if (is_settings_mode) {
+                if (current_settings_category < 0) {
+                    // We're at the top level ("Display", "Config", ...) -> open submenu
+                    switch_to_settings_category(selected_item_index);
+                } else { // current_settings_category >= 0
+                    // Inside a submenu -> cycle the value
+                    change_current_row(true);
+                }
+            } else {
+                lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+                if (selected_obj) {
+                    const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                    if (selected_option) {
+                        handle_option_directly(selected_option);
+                    }
                 }
             }
         } else if (keyValue == 29 || keyValue == '`') { // esc
-            ESP_LOGI(TAG, "Esc button pressed\n");
+            ESP_LOGI(TAG, "Esc button pressed");
             back_event_cb(NULL);
         }
+    } else if (event->type == INPUT_TYPE_ENCODER) {
+        if (event->data.encoder.button) {
+            // Encoder button press - treat as select/enter/cycle
+            if (is_settings_mode) {
+                if (current_settings_category < 0) {
+                    // Top level settings (category selection) - button *enters* category
+                    switch_to_settings_category(selected_item_index);
+                } else { // current_settings_category >= 0
+                    /* Inside a settings submenu:
+                     *  ─ encoder press on a normal row  → cycle the value
+                     *  ─ encoder press on "← Back"     → leave submenu        */
+                    lv_obj_t *sel = lv_obj_get_child(menu_container,
+                                                     selected_item_index);
+                    if (sel) {
+                        void *udata = lv_obj_get_user_data(sel);
+                        // back button is always the string literal pointer
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else if (is_settings_mode && current_settings_category >= 0) {
+                            // In settings submenu, always cycle value
+                            int setting_idx = (int)(intptr_t)udata;
+                            change_setting_value(setting_idx, true);
+                        } else {
+                            // For non-settings, treat as select
+                            const char *opt = (const char *)udata;
+                            handle_option_directly(opt);
+                        }
+                    }
+                }
+            } else {
+                // Non-settings menus: button selects the item
+                lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
+                if (selected_obj) {
+                    const char *selected_option = (const char *)lv_obj_get_user_data(selected_obj);
+                    if (selected_option) {
+                        handle_option_directly(selected_option);
+                    }
+                }
+            }
+        } else {
+            // Encoder direction change (rotation) - always navigate/select item
+            if (event->data.encoder.direction > 0) { // Clockwise (CW) - down/right
+                select_option_item(selected_item_index + 1);
+            } else { // Counter-clockwise (CCW) - up/left
+                select_option_item(selected_item_index - 1);
+            }
+        }
+#ifdef CONFIG_USE_ENCODER
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
+        display_manager_switch_view(&main_menu_view);
+#endif
     }
 }
 
@@ -499,13 +1046,43 @@ void option_event_cb(lv_event_t *e) {
         option_invoked = false; 
         return;
     }
-    const char *Selected_Option = (const char *)lv_event_get_user_data(e);
-    if (Selected_Option == last_option && now_ms - last_time_ms < 200) {
-        option_invoked = false; 
+    
+    if (is_settings_mode) {
+        const char *udata = (const char *)lv_event_get_user_data(e);
+
+        /* ---------- settings ROOT ("Display", "Config") ---------- */
+        if (current_settings_category < 0) {
+            int cat_idx = (int)(intptr_t)udata;
+            switch_to_settings_category(cat_idx);
+            option_invoked = false;
+            return;
+        }
+
+        /* ---------- settings SUBMENU ---------- */
+        if (udata && strcmp(udata, "__BACK_OPTION__") == 0) {
+            back_event_cb(NULL);
+            option_invoked = false;
+            return;
+        }
+
+        int setting_index = (int)(intptr_t)udata;
+        change_setting_value(setting_index, true);
+        option_invoked = false;
         return;
     }
-    last_option = Selected_Option;
-    last_time_ms = now_ms;
+    
+    const char *Selected_Option = (const char *)lv_event_get_user_data(e);
+
+    // Handle the "Back" option specifically
+    if (strcmp(Selected_Option, "__BACK_OPTION__") == 0) {
+        if (menu_build_timer) {
+            lv_timer_del(menu_build_timer);
+            menu_build_timer = NULL;
+        }
+        back_event_cb(NULL);
+        option_invoked = false;
+        return;
+    }
 
     if (SelectedMenuType == OT_Wifi) {
         if (current_wifi_menu_state == WIFI_MENU_MAIN) {
@@ -520,26 +1097,50 @@ void option_event_cb(lv_event_t *e) {
         }
     }
 
+    // --- Bluetooth submenu navigation ---
+    if (SelectedMenuType == OT_Bluetooth) {
+        if (current_bluetooth_menu_state == BLUETOOTH_MENU_MAIN) {
+            if (strcmp(Selected_Option, "AirTag") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_AIRTAG;
+            else if (strcmp(Selected_Option, "Flipper") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_FLIPPER;
+            else if (strcmp(Selected_Option, "Spam") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SPAM;
+            else if (strcmp(Selected_Option, "Raw") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_RAW;
+            else if (strcmp(Selected_Option, "Skimmer") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SKIMMER;
+            display_manager_switch_view(&options_menu_view);
+            return;
+        }
+    }
+
     if (strcmp(Selected_Option, "Scan Access Points") == 0) {
+        terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("scanap");
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Scan APs Live") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("scanap -live");
+        view_switched = true;
+    }
+
     else if (strcmp(Selected_Option, "List Access Points") == 0) {
+        terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("list -a");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan All (AP & Station)") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scanall");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start Deauth Attack") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         if (!scanned_aps) {
             TERMINAL_VIEW_ADD_TEXT("No APs scanned. Please run 'Scan Access Points' first.\\n");
             
@@ -550,13 +1151,15 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Scan Stations") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scansta");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "List Stations") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("list -s");
         view_switched = true;
     }
@@ -568,26 +1171,37 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - Random") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("beaconspam -r");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - Rickroll") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("beaconspam -rr");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan LAN Devices") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scanlocal");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "ARP Scan Network") == 0) {
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
+        simulateCommand("scanarp");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - List") == 0) {
         if (scanned_aps) {
-            display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
             simulateCommand("beaconspam -l");
             view_switched = true;
         } else {
@@ -597,92 +1211,122 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Capture Deauth") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -deauth");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Probe") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -probe");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Beacon") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -beacon");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Raw") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -raw");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Eapol") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -eapol");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Listen for Probes") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("listenprobes");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start EAPOL Logoff") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("attack -e");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture WPS") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -wps");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "TV Cast (Dial Connect)") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("dialconnect");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Power Printer") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("powerprinter");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start Evil Portal") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("startportal default FreeWiFi");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop Evil Portal") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("stopportal");
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Start Custom Evil Portal") == 0) {
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        // Prompt for SSID after selecting portal
+        strncpy(selected_portal, Selected_Option, MAX_PORTAL_NAME-1);
+        selected_portal[MAX_PORTAL_NAME-1] = '\0';
+        keyboard_view_set_submit_callback(evil_portal_ssid_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("SSID");
+        return;
+    }
+
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("startwd");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop Wardriving") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("startwd -s");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start AirTag Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -a");
         view_switched = true;
 #else
@@ -693,7 +1337,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "Find Flippers") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -f");
         view_switched = true;
 #else
@@ -702,7 +1347,8 @@ void option_event_cb(lv_event_t *e) {
 #endif
     } else if (strcmp(Selected_Option, "List Flippers") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("listflippers");
         view_switched = true;
 #else
@@ -720,7 +1366,8 @@ void option_event_cb(lv_event_t *e) {
 #endif
     } else if (strcmp(Selected_Option, "List AirTags") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("listairtags");
         view_switched = true;
 #else
@@ -740,7 +1387,8 @@ void option_event_cb(lv_event_t *e) {
 
      else if (strcmp(Selected_Option, "Spoof Selected AirTag") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("spoofairtag");
         view_switched = true;
 #else
@@ -751,7 +1399,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "Stop Spoofing") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("stopspoof");
         view_switched = true;
 #else
@@ -760,54 +1409,26 @@ void option_event_cb(lv_event_t *e) {
 #endif
     }
 
-    else if (strcmp(Selected_Option, "Set RGB Mode - Stealth") == 0) {
-        simulateCommand("setsetting 1 1");
-        vTaskDelay(pdMS_TO_TICKS(10));
-        error_popup_create("Set RGB Mode Successfully...");
-        
-    }
 
-    else if (strcmp(Selected_Option, "Set RGB Mode - Normal") == 0) {
-        simulateCommand("setsetting 1 2");
-        vTaskDelay(pdMS_TO_TICKS(10));
-        error_popup_create("Set RGB Mode Successfully...");
-        
-    }
-
-    else if (strcmp(Selected_Option, "Set RGB Mode - Rainbow") == 0) {
-        simulateCommand("setsetting 1 3");
-        vTaskDelay(pdMS_TO_TICKS(10));
-        error_popup_create("Set RGB Mode Successfully...");
-        
-    }
-
-    else if (strcmp(Selected_Option, "Webauth On") == 0) {
-        simulateCommand("webauth on");
-        error_popup_create("Webauth Enabled.");
-        
-    }
-
-    else if (strcmp(Selected_Option, "Webauth Off") == 0) {
-        simulateCommand("webauth off");
-        error_popup_create("Webauth Disabled.");
-        
-    }
 
     else if (strcmp(Selected_Option, "Capture PWN") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -pwn");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "TP Link Test") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("tplinktest");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Raw BLE Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -r");
         view_switched = true;
 #else
@@ -818,7 +1439,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Skimmer Detect") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("capture -skimmer");
         view_switched = true;
 #else
@@ -828,14 +1450,16 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "GPS Info") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("gpsinfo");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "BLE Wardriving") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blewardriving");
         view_switched = true;
 #else
@@ -845,19 +1469,29 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "PineAP Detection") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("pineap");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan Open Ports") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("scanports local -C");
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Scan SSH") == 0) {
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand("scanssh");
+    view_switched = true;
+    }
+    
     else if (strcmp(Selected_Option, "Reset AP Credentials") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("apcred -r");
         view_switched = true;
     }
@@ -880,19 +1514,22 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Channel Congestion") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("congestion");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start DHCP-Starve") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("dhcpstarve start");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop DHCP-Starve") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("dhcpstarve stop");
         view_switched = true;
     }
@@ -905,14 +1542,16 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Connect to saved WiFi") == 0) {
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("connect");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "BLE Spam - Apple") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -apple");
         view_switched = true;
 #else
@@ -922,7 +1561,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Microsoft") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -ms");
         view_switched = true;
 #else
@@ -932,7 +1572,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Samsung") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -samsung");
         view_switched = true;
 #else
@@ -942,7 +1583,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Google") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -google");
         view_switched = true;
 #else
@@ -952,7 +1594,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "BLE Spam - Random") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -random");
         view_switched = true;
 #else
@@ -962,7 +1605,8 @@ void option_event_cb(lv_event_t *e) {
 
     else if (strcmp(Selected_Option, "Stop BLE Spam") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        display_manager_switch_view(&terminal_view);
+    terminal_set_return_view(&options_menu_view);
+display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -s");
         view_switched = true;
 #else
@@ -982,39 +1626,57 @@ void option_event_cb(lv_event_t *e) {
 }
 
 void handle_option_directly(const char *Selected_Option) {
+    if (is_settings_mode) {
+        int setting_index = (int)(intptr_t)Selected_Option;
+        change_setting_value(setting_index, true);
+        return;
+    }
     lv_event_t e;
     e.user_data = (void *)Selected_Option;
     option_event_cb(&e);
 }
 
-void options_menu_destroy(void) {
+void options_menu_destroy() {
+    // Delete the root object (deletes all children recursively)
     if (options_menu_view.root) {
-        if (menu_container) {
-            lv_obj_clean(menu_container);
-            menu_container = NULL;
-        }
-
-        lv_obj_clean(options_menu_view.root);
         lv_obj_del(options_menu_view.root);
         options_menu_view.root = NULL;
-        back_btn = NULL;
-        scroll_up_btn = NULL;
-        scroll_down_btn = NULL;
-
-        selected_item_index = 0;
-        num_items = 0;
     }
-    
+
+    // Set all pointers to NULL
+    menu_container = NULL;
+    back_btn = NULL;
+    scroll_up_btn = NULL;
+    scroll_down_btn = NULL;
+
+    // Reset state variables
+    selected_item_index = 0;
+    num_items = 0;
+    current_settings_category = -1;
+
+    // Delete and clear any timers
     if (menu_build_timer) {
         lv_timer_del(menu_build_timer);
         menu_build_timer = NULL;
     }
-    
+    // Reset styles if needed
     if (styles_initialized) {
         lv_style_reset(&style_menu_item);
+        lv_style_reset(&style_menu_item_alt);
         lv_style_reset(&style_selected_item);
         lv_style_reset(&style_menu_label);
         styles_initialized = false;
+    }
+
+    is_settings_mode = false;
+
+    if (evil_portal_names != NULL) {
+        free(evil_portal_names);
+        evil_portal_names = NULL;
+    }
+    if (evil_portal_options != NULL) {
+        free(evil_portal_options);
+        evil_portal_options = NULL;
     }
 }
 
@@ -1028,14 +1690,94 @@ View options_menu_view = {.root = NULL,
                           .get_hardwareinput_callback = get_options_menu_callback};
 
 static void back_event_cb(lv_event_t *e) {
+
+    // Save settings when exiting options menu
+    if (is_settings_mode) {
+        settings_save(&G_Settings);
+    }
+
+    // If in Evil Portal select submenu, go back to Evil Portal menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
         display_manager_switch_view(&options_menu_view);
-    } else {
-        current_wifi_menu_state = WIFI_MENU_MAIN; // Reset for next time
-        display_manager_switch_view(&main_menu_view);
+        return;
     }
+    // If in a Bluetooth submenu (but not main), go back to main Bluetooth menu
+    if (SelectedMenuType == OT_Bluetooth && current_bluetooth_menu_state != BLUETOOTH_MENU_MAIN) {
+        current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    // If in a settings submenu, go back to category selection
+    if (is_settings_mode && current_settings_category >= 0) {
+        current_settings_category = -1;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
+    // Otherwise, go back to main menu
+    display_manager_switch_view(&main_menu_view);
 }
+
+static void switch_to_settings_category(int cat_idx) {
+    /* -------------------------------------------------------------------- *
+     * SAFETY GUARD                                                         *
+     *                                                                      *
+     * The encoder can highlight the synthetic "← Back" row that is added   *
+     * to the end of the Settings root list when CONFIG_USE_ENCODER is set.*
+     * That row's index is **2**, but there are only two real categories    *
+     * (indices 0 and 1).                                                   *
+     *                                                                      *
+     * If we let that bogus index through, the very next LVGL tick in       *
+     * menu_builder_cb() dereferences                                        *
+     *     settings_category_indices[current_settings_category]             *
+     * which explodes with a LoadProhibited panic.                          *
+     *                                                                      *
+     * Instead, treat any out-of-range index exactly like a Back press and  *
+     * leave current_settings_category unchanged.                           *
+     * ------------------------------------------------------------------ */
+    if (cat_idx < 0 || cat_idx >= SETTINGS_CATEGORY_COUNT) {
+        ESP_LOGW(TAG,
+                 "switch_to_settings_category: index %d outside [0..%d]; "
+                 "interpreting as Back action",
+                 cat_idx, SETTINGS_CATEGORY_COUNT - 1);
+        back_event_cb(NULL);
+        return;
+    }
+
+    if (menu_build_timer) {
+        lv_timer_del(menu_build_timer);
+        menu_build_timer = NULL;
+    }
+    if (menu_container) {
+        lv_obj_clean(menu_container);
+    }
+    num_items = 0;
+    build_item_index = 0;
+    current_settings_category = cat_idx;
+    menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+}
+
+static void ssh_scan_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a valid IP address");
+        return;
+    }
+    
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "scanssh %s", text);
+    
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
 
 static void wifi_connect_kb_cb(const char *text){
     const char *p=text;
@@ -1055,39 +1797,169 @@ static void wifi_connect_kb_cb(const char *text){
     }
     char cmd[256];
     snprintf(cmd,sizeof(cmd),"connect \"%s\" \"%s\"",ssid,pass);
+    terminal_set_return_view(&options_menu_view);
     display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
 }
 
+
+static const lv_font_t* get_options_menu_font(void) {
+    return is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+}
+
+static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
+    if (!label || !btn) return;
+    lv_obj_set_style_pad_top(btn, 0, 0);
+    float btn_y_center_pad = (button_height_global - lv_font_get_line_height(get_options_menu_font())) / 2;
+    if (btn_y_center_pad < 0) btn_y_center_pad = 0; // Ensure padding is not negative
+    lv_obj_set_style_pad_top(label, btn_y_center_pad, 0);
+
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+}
+
+static lv_style_t* get_zebra_style(int index) {
+    if(settings_get_zebra_menus_enabled(&G_Settings)) return (index % 2 == 0) ? &style_menu_item : &style_menu_item_alt; // Use zebra striping styles if enabled
+    return &style_menu_item; // no zebra enabled, always return the default style
+}
+
+
 // build menu items in small batches so we don't starve the watchdog
-static void menu_builder_cb(lv_timer_t *t) {
-    const int BATCH = 1; // build 1 item per tick to keep task responsive
-    int built = 0;
-    while (current_options_list && current_options_list[build_item_index] && built < BATCH) {
-        const char *opt = current_options_list[build_item_index++];
-        lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
-        if (!btn) break;
-        lv_obj_set_height(btn, button_height_global);
-        lv_obj_add_style(btn, &style_menu_item, 0);
-        lv_obj_t *label = lv_obj_get_child(btn, 0);
-        if (label) {
-            lv_obj_set_style_text_font(label, is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14, 0);
-            lv_obj_add_style(label, &style_menu_label, 0);
-        }
-        lv_obj_set_user_data(btn, (void *)opt);
-        lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
-        num_items++;
-        built++;
-#ifndef CONFIG_USE_TOUCHSCREEN
-        if (num_items == 1) { // highlight the first item on non-touch interfaces
-            select_option_item(0);
-        }
-#endif
-    }
-    if (!current_options_list || !current_options_list[build_item_index]) {
+static void menu_builder_cb(lv_timer_t *t)
+{
+    /* If the view is gone, stop this timer immediately. ---------------- */
+    if (!menu_container || !lv_obj_is_valid(menu_container)) {
         lv_timer_del(t);
         menu_build_timer = NULL;
-        ESP_LOGI(TAG, "menu build finished, %d items", num_items);
+        return;
+    }
+    const int BATCH = 8;
+    int built_this_tick = 0;
+    bool all_current_options_processed = false;
+
+    // Check if the "Back" option has already been added in a prior tick for this menu
+    bool back_option_was_added_in_previous_tick = (bool)(intptr_t)t->user_data;
+
+    // Add regular menu items if the "Back" option hasn't been added yet
+    if (!back_option_was_added_in_previous_tick) {
+        if (is_settings_mode) {
+            if (current_settings_category < 0) { // Top-level categories (e.g., "Display", "Config")
+                while (settings_categories[build_item_index] != NULL && built_this_tick < BATCH) {
+                    const char *cat = settings_categories[build_item_index];
+                    lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, cat);
+                    if (!btn) break;
+                    lv_obj_set_height(btn, button_height_global * 1.2);
+                    // Zebra striping here:
+                    lv_obj_add_style(btn, get_zebra_style(num_items), 0);
+                    lv_obj_t *label = lv_obj_get_child(btn, 0);
+                    if (label) {
+                        lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
+                        vertically_center_label(label, btn);
+                        lv_obj_add_style(label, &style_menu_label, 0);
+                    }
+                    lv_obj_set_user_data(btn, (void *)(intptr_t)build_item_index);
+                    lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)build_item_index);
+                    num_items++;
+                    built_this_tick++;
+                    build_item_index++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+                    if (num_items == 1) select_option_item(0);
+#endif
+                }
+                if (settings_categories[build_item_index] == NULL) { // End of categories list
+                    all_current_options_processed = true;
+                }
+            } else { // Submenu of a settings category (e.g., "RGB Mode", "Display Timeout")
+                int *indices = settings_category_indices[current_settings_category];
+                while (indices[build_item_index] >= 0 && built_this_tick < BATCH) {
+                    int setting_idx = indices[build_item_index];
+                    SettingsItem *item = &settings_items[setting_idx];
+                    char buf[128];
+                    snprintf(buf, sizeof(buf), "%s %s: %s %s", LV_SYMBOL_LEFT, item->label, item->value_options[item->current_value], LV_SYMBOL_RIGHT);
+                    lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, buf);
+                    if (!btn) break;
+                    lv_obj_set_height(btn, button_height_global);
+                    lv_obj_add_style(btn, get_zebra_style(num_items), 0);
+                    lv_obj_t *label = lv_obj_get_child(btn, 0);
+                    if (label) {
+                        lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
+                        vertically_center_label(label, btn);
+                        lv_obj_add_style(label, &style_menu_label, 0);
+                    }
+                    lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
+                    lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)setting_idx);
+                    num_items++;
+                    built_this_tick++;
+                    build_item_index++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+                    if (num_items == 1) select_option_item(0);
+#endif
+                }
+                if (indices[build_item_index] < 0) { // End of settings submenu list
+                    all_current_options_processed = true;
+                }
+            }
+        } else { // Non-settings menus (e.g., Wi-Fi Attacks, Bluetooth Main)
+            while (current_options_list != NULL && current_options_list[build_item_index] != NULL && built_this_tick < BATCH) {
+                const char *opt = current_options_list[build_item_index];
+                lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, opt);
+                if (!btn) break;
+                lv_obj_set_height(btn, button_height_global);
+                lv_obj_add_style(btn, get_zebra_style(num_items), 0);
+                lv_obj_t *label = lv_obj_get_child(btn, 0);
+                if (label) {
+                    lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
+                    vertically_center_label(label, btn);
+                    lv_obj_add_style(label, &style_menu_label, 0);
+                }
+                lv_obj_set_user_data(btn, (void *)opt);
+                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)opt);
+                num_items++;
+                built_this_tick++;
+                build_item_index++;
+#ifndef CONFIG_USE_TOUCHSCREEN
+                if (num_items == 1) select_option_item(0);
+#endif
+            }
+            if (current_options_list == NULL || current_options_list[build_item_index] == NULL) { // End of regular options list
+                all_current_options_processed = true;
+            }
+        }
+    }
+
+    // Now, handle adding the "Back" button and stopping the timer
+    if (all_current_options_processed) {
+#ifdef CONFIG_USE_ENCODER
+        if (!back_option_was_added_in_previous_tick) { // Add back button only once
+            lv_obj_t *btn = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
+            if (btn) {
+                lv_obj_set_height(btn, button_height_global);
+                lv_obj_add_style(btn, get_zebra_style(num_items), 0);
+                lv_obj_t *label = lv_obj_get_child(btn, 0);
+                if (label) {
+                    lv_obj_set_style_text_font(label, get_options_menu_font(), 0);
+                    if (is_settings_mode && current_settings_category < 0) {
+                        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+                    }
+                    lv_obj_add_style(label, &style_menu_label, 0);
+                }
+                lv_obj_set_user_data(btn, (void *)"__BACK_OPTION__");
+                lv_obj_add_event_cb(btn, option_event_cb, LV_EVENT_CLICKED, (void *)"__BACK_OPTION__");
+                num_items++;
+                t->user_data = (void*)1; // Mark back option as added
+            }
+        }
+#endif
+        // Timer should stop if all options are processed AND (if encoder, the back option is now added, OR if no encoder)
+        if (
+#ifdef CONFIG_USE_ENCODER
+            (bool)(intptr_t)t->user_data
+#else
+            true // If no encoder, we stop as soon as regular options are done
+#endif
+        ) {
+            lv_timer_del(t);
+            menu_build_timer = NULL;
+        }
     }
 }

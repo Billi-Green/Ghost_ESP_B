@@ -9,8 +9,10 @@
 
 // Enum for RGB Modes
 typedef enum {
-  RGB_MODE_NORMAL = 0,
-  RGB_MODE_RAINBOW = 1,
+    RGB_MODE_NORMAL = 0,
+    RGB_MODE_RAINBOW = 1,
+    RGB_MODE_STEALTH = 2
+    // ...add more modes here if needed
 } RGBMode;
 
 typedef enum {
@@ -87,7 +89,17 @@ typedef struct {
   uint32_t terminal_text_color; // Terminal text color in 0xRRGGBB
   uint8_t menu_theme;  // Theme for main menu colors (0=Default)
   bool invert_colors; // Invert screen colors
-  bool web_auth_enabled; // Add this line
+  bool web_auth_enabled;
+  
+  int32_t esp_comm_tx_pin; // ESP communication TX pin
+  int32_t esp_comm_rx_pin; // ESP communication RX pin
+  bool ap_enabled; // Enable/disable AP across reboots
+  bool power_save_enabled;
+  bool zebra_menus_enabled;
+  uint8_t max_screen_brightness; // Max screen brightness (0-100)
+
+  // Infrared settings
+  bool infrared_easy_mode; // Easy learn mode toggle
 } FSettings;
 
 // Function declarations
@@ -111,7 +123,7 @@ void settings_set_flappy_ghost_name(FSettings *settings, const char *Name);
 const char *settings_get_flappy_ghost_name(const FSettings *settings);
 
 void settings_set_rts_enabled(FSettings *settings, bool enabled);
-bool settings_get_rts_enabled(FSettings *settings);
+bool settings_get_rts_enabled(const FSettings *settings);
 
 void settings_set_timezone_str(FSettings *settings, const char *Name);
 const char *settings_get_timezone_str(const FSettings *settings);
@@ -127,6 +139,9 @@ const char *settings_get_ap_password(const FSettings *settings);
 
 void settings_set_rgb_speed(FSettings *settings, uint8_t speed);
 uint8_t settings_get_rgb_speed(const FSettings *settings);
+
+void settings_set_zebra_menus_enabled(FSettings *settings, bool enabled);
+bool settings_get_zebra_menus_enabled(const FSettings *settings);
 
 // Getters and Setters for Evil Portal
 void settings_set_portal_url(FSettings *settings, const char *url);
@@ -192,6 +207,35 @@ bool settings_get_invert_colors(const FSettings *settings);
 // Getter and Setter for web auth
 void settings_set_web_auth_enabled(FSettings *settings, bool enabled);
 bool settings_get_web_auth_enabled(const FSettings *settings);
+
+void settings_set_esp_comm_pins(FSettings *settings, int32_t tx_pin, int32_t rx_pin);
+void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int32_t *rx_pin);
+
+// NVS Storage Monitoring Functions
+void settings_get_nvs_stats(nvs_stats_t *stats);
+size_t settings_get_nvs_used_entries(void);
+size_t settings_get_nvs_free_entries(void);
+size_t settings_get_nvs_total_entries(void);
+float settings_get_nvs_usage_percentage(void);
+void settings_print_nvs_stats(void);
+size_t settings_get_namespace_used_entries(const char *namespace_name);
+void settings_print_namespace_stats(const char *namespace_name);
+
+// Getter and Setter for AP enabled state
+void settings_set_ap_enabled(FSettings *settings, bool enabled);
+bool settings_get_ap_enabled(const FSettings *settings);
+
+// Getter and Setter for power save enabled state
+bool settings_get_power_save_enabled(const FSettings *settings);
+void settings_set_power_save_enabled(FSettings *settings, bool enabled);
+
+// Brightness settings
+void settings_set_max_screen_brightness(FSettings *settings, uint8_t value);
+uint8_t settings_get_max_screen_brightness(const FSettings *settings);
+
+// Infrared settings
+void settings_set_infrared_easy_mode(FSettings *settings, bool enabled);
+bool settings_get_infrared_easy_mode(const FSettings *settings);
 
 extern FSettings G_Settings;
 

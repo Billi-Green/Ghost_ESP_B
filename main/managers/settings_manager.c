@@ -8,6 +8,7 @@
 #include <esp_log.h>
 #include <string.h>
 #include <time.h>
+#include <nvs.h>
 
 #define S_TAG "SETTINGS"
 
@@ -26,9 +27,9 @@ static const char *NVS_PORTAL_DOMAIN_KEY = "portal_domain";
 static const char *NVS_PORTAL_OFFLINE_KEY = "portal_offline";
 static const char *NVS_PRINTER_IP_KEY = "printer_ip";
 static const char *NVS_PRINTER_TEXT_KEY = "printer_text";
-static const char *NVS_PRINTER_FONT_SIZE_KEY = "printer_font_size";
-static const char *NVS_PRINTER_ALIGNMENT_KEY = "printer_alignment";
-static const char *NVS_PRINTER_CONNECTED_KEY = "printer_connected";
+static const char *NVS_PRINTER_FONT_SIZE_KEY = "pntr_ft_size";
+static const char *NVS_PRINTER_ALIGNMENT_KEY = "pntr_alignment";
+static const char *NVS_PRINTER_CONNECTED_KEY = "pntr_connected";
 static const char *NVS_BOARD_TYPE_KEY = "board_type";
 static const char *NVS_CUSTOM_PIN_CONFIG_KEY = "custom_pin_config";
 static const char *NVS_FLAPPY_GHOST_NAME = "flap_name";
@@ -47,7 +48,15 @@ static const char *NVS_THIRD_CTRL_KEY = "third_ctrl";
 static const char *NVS_MENU_THEME_KEY = "menu_theme";
 static const char *NVS_TERMINAL_TEXT_COLOR_KEY = "term_color";
 static const char *NVS_INVERT_COLORS_KEY = "invert_colors";
+static const char *NVS_INFRARED_EASY_MODE_KEY = "ir_easy_mode";
 static const char *NVS_WEB_AUTH_KEY = "web_auth";
+static const char *NVS_ESP_COMM_TX_PIN_KEY = "esp_comm_tx";
+static const char *NVS_ESP_COMM_RX_PIN_KEY = "esp_comm_rx";
+static const char *NVS_AP_ENABLED_KEY = "ap_enabled";
+static const char *NVS_POWER_SAVE_KEY = "power_save";
+static const char *NVS_ZEBRA_MENUS_KEY = "zebra_menus";
+static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
+
 
 static const char *TAG = "SettingsManager";
 
@@ -81,6 +90,7 @@ void settings_init(FSettings *settings) {
   if (err == ESP_OK) {
     settings_load(settings);
     printf("Settings loaded successfully.\n");
+    settings_print_nvs_stats();
   } else {
     printf("Failed to open NVS handle: %s\n", esp_err_to_name(err));
   }
@@ -114,7 +124,7 @@ void settings_set_defaults(FSettings *settings) {
   strcpy(settings->selected_hex_accent_color, "#ffffff");
   strcpy(settings->selected_timezone, "MST7MDT,M3.2.0,M11.1.0");
   settings->gps_rx_pin = 0;
-  settings->display_timeout_ms = 10000; // Default 10 seconds
+  settings->display_timeout_ms = UINT32_MAX; // Default to never timeout
   settings->rts_enabled = false;
   strcpy(settings->sta_ssid, ""); // Default empty station SSID
   strcpy(settings->sta_password, ""); // Default empty station password
@@ -126,6 +136,13 @@ void settings_set_defaults(FSettings *settings) {
   settings->terminal_text_color = 0x00FF00;
   settings->invert_colors = false;
   settings->web_auth_enabled = true;
+  settings->esp_comm_tx_pin = 6;
+  settings->esp_comm_rx_pin = 7;
+  settings->ap_enabled = true; // Default to enabled
+  settings->power_save_enabled = false;
+  settings->zebra_menus_enabled = false; // or true if you want it enabled by default
+  settings->max_screen_brightness = 100; // Default to 100% brightness
+  settings->infrared_easy_mode = false; // Default to disabled
 }
 
 void settings_load(FSettings *settings) {
@@ -279,7 +296,7 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->display_timeout_ms = timeout_value;
   } else {
-    settings->display_timeout_ms = 10000; // Default 10 seconds if not found
+    settings->display_timeout_ms = UINT32_MAX; // Default to never timeout if not found
   }
 
   uint8_t rtsenabledvalue;
@@ -358,15 +375,64 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->web_auth_enabled = (value_u8 != 0);
   }
+
+  err = nvs_get_u8(nvsHandle, NVS_AP_ENABLED_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->ap_enabled = (value_u8 != 0);
+  } else {
+    settings->ap_enabled = true; // Default to enabled if not found
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_POWER_SAVE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->power_save_enabled = (value_u8 != 0);
+  } else {
+    settings->power_save_enabled = false; // Default to disabled if not found
+  }
+
+  err = nvs_get_i32(nvsHandle, NVS_ESP_COMM_TX_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->esp_comm_tx_pin = tmp;
+  } else {
+    settings->esp_comm_tx_pin = 6;
+  }
+  
+  err = nvs_get_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, &tmp);
+  if (err == ESP_OK) {
+    settings->esp_comm_rx_pin = tmp;
+  } else {
+    settings->esp_comm_rx_pin = 7;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->zebra_menus_enabled = (value_u8 != 0);
+  } else {
+    settings->zebra_menus_enabled = false;
+  } // Default to disabled if not found
+  // Load Max Screen Brightness
+  err = nvs_get_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->max_screen_brightness = value_u8;
+  } else {
+    settings->max_screen_brightness = 100; // Default to 100% if not found
+  }
+
+  // Load Infrared Easy Mode
+  err = nvs_get_u8(nvsHandle, NVS_INFRARED_EASY_MODE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->infrared_easy_mode = (bool)value_u8;
+  } else {
+    settings->infrared_easy_mode = false; // Default to disabled if not found
+  }
 }
 
 static void update_rainbow_effect(const FSettings *settings) {
 #ifndef CONFIG_WITH_SCREEN
-  return; // early return to avoid creating with no screen
+  return;
 #endif
 
-
-  if (settings_get_rgb_mode(settings) != 0) {
+  if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
     if (rainbow_timer == NULL) {
       rainbow_timer = lv_timer_create(rainbow_effect_cb, 50, NULL);
       rainbow_hue = 0;
@@ -375,6 +441,8 @@ static void update_rainbow_effect(const FSettings *settings) {
     if (rainbow_timer != NULL) {
       lv_timer_del(rainbow_timer);
       rainbow_timer = NULL;
+      // Reset status bar color when leaving rainbow mode
+      display_manager_update_status_bar_color();
     }
   }
 }
@@ -551,18 +619,57 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) {
     printf("Failed to save RGB blue pin\n");
   }
+  // Save Max Screen Brightness
+  err = nvs_set_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, settings->max_screen_brightness);
+  if (err != ESP_OK) {
+    printf("Failed to save key '%s' (value=%u): %s (%d)\n",
+           NVS_MAX_SCREEN_BRIGHTNESS_KEY,
+           settings->max_screen_brightness,
+           esp_err_to_name(err), err);
+  }
 
-  if (settings_get_rgb_mode(settings) == 0) {
-    if (rgb_effect_task_handle != NULL) {
-      vTaskDelete(rgb_effect_task_handle);
+
+  // Save Max Screen Brightness
+  err = nvs_set_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, settings->max_screen_brightness);
+  if (err != ESP_OK) {
+    printf("Failed to save key '%s' (value=%u): %s (%d)\n",
+           NVS_MAX_SCREEN_BRIGHTNESS_KEY,
+           settings->max_screen_brightness,
+           esp_err_to_name(err), err);
+  }
+  
+  // Clean up any existing rainbow task before starting a new one
+  if (rgb_effect_task_handle != NULL) {
+      // Signal the rainbow task to exit gracefully instead of forceful deletion
+      rgb_manager_signal_rainbow_exit();
+      
+      // Wait for the task to terminate gracefully (up to 500ms)
+      for (int i = 0; i < 50; i++) {
+          if (eTaskGetState(rgb_effect_task_handle) == eDeleted) {
+              break;
+          }
+          vTaskDelay(pdMS_TO_TICKS(10));
+      }
+      
+      // If task is still running after timeout, force delete as last resort
+      if (eTaskGetState(rgb_effect_task_handle) != eDeleted) {
+          ESP_LOGW(S_TAG, "Rainbow task did not exit gracefully, force deleting");
+          vTaskDelete(rgb_effect_task_handle);
+      }
+      
       rgb_effect_task_handle = NULL;
-    }
-    rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
+      ESP_LOGI(S_TAG, "Rainbow task cleanup completed");
+  }
+  
+  if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
+      // Rainbow: animated
+      xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1, &rgb_effect_task_handle);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
+      // Stealth: LEDs always off
+      rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false); // Turn off all LEDs
   } else {
-    if (rgb_effect_task_handle == NULL) {
-      xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1,
-                  &rgb_effect_task_handle);
-    }
+      // Normal mode: LEDs off
+      rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false); // Turn off all LEDs
   }
 
 
@@ -604,8 +711,27 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save terminal_text_color: %s", esp_err_to_name(err));
   err = nvs_set_u8(nvsHandle, NVS_WEB_AUTH_KEY, settings->web_auth_enabled);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save web_auth_enabled: %s", esp_err_to_name(err));
+  err = nvs_set_u8(nvsHandle, NVS_AP_ENABLED_KEY, settings->ap_enabled);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save ap_enabled: %s", esp_err_to_name(err));
+  err = nvs_set_u8(nvsHandle, NVS_POWER_SAVE_KEY, settings->power_save_enabled);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save power_save_enabled: %s", esp_err_to_name(err));
+  
+  err = nvs_set_i32(nvsHandle, NVS_ESP_COMM_TX_PIN_KEY, settings->esp_comm_tx_pin);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save esp_comm_tx_pin: %s", esp_err_to_name(err));
+  
+  err = nvs_set_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, settings->esp_comm_rx_pin);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save esp_comm_rx_pin: %s", esp_err_to_name(err));
+  
+
+  err = nvs_set_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, settings->zebra_menus_enabled);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save zebra_menus_enabled: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_INFRARED_EASY_MODE_KEY, settings->infrared_easy_mode);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save infrared_easy_mode: %s", esp_err_to_name(err));
+  
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
+
 }
 
 // Core Settings Getters and Setters
@@ -617,7 +743,7 @@ void settings_set_rts_enabled(FSettings *settings, bool enabled) {
   settings->rts_enabled = enabled;
 }
 
-bool settings_get_rts_enabled(FSettings *settings) {
+bool settings_get_rts_enabled(const FSettings *settings) {
   return settings->rts_enabled;
 }
 
@@ -802,7 +928,11 @@ PrinterAlignment settings_get_printer_alignment(const FSettings *settings) {
 void settings_set_display_timeout(FSettings *settings, uint32_t timeout_ms) {
   ESP_LOGI(TAG, "Setting display timeout from %lu to %lu ms",
            settings->display_timeout_ms, timeout_ms);
-  settings->display_timeout_ms = timeout_ms;
+  if (timeout_ms == 0) { // "Never" option
+      settings->display_timeout_ms = UINT32_MAX;
+  } else {
+      settings->display_timeout_ms = timeout_ms;
+  }
 }
 
 uint32_t settings_get_display_timeout(const FSettings *settings) {
@@ -886,4 +1016,135 @@ void settings_set_web_auth_enabled(FSettings *settings, bool enabled) {
 
 bool settings_get_web_auth_enabled(const FSettings *settings) {
   return settings->web_auth_enabled;
+}
+
+void settings_set_ap_enabled(FSettings *settings, bool enabled) {
+  settings->ap_enabled = enabled;
+}
+
+bool settings_get_ap_enabled(const FSettings *settings) {
+  return settings->ap_enabled;
+}
+
+void settings_set_power_save_enabled(FSettings *settings, bool enabled) {
+  settings->power_save_enabled = enabled;
+}
+
+bool settings_get_power_save_enabled(const FSettings *settings) {
+  return settings->power_save_enabled;
+}
+
+void settings_set_esp_comm_pins(FSettings *settings, int32_t tx_pin, int32_t rx_pin) {
+  settings->esp_comm_tx_pin = tx_pin;
+  settings->esp_comm_rx_pin = rx_pin;
+}
+
+void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int32_t *rx_pin) {
+  if (tx_pin) *tx_pin = settings->esp_comm_tx_pin;
+  if (rx_pin) *rx_pin = settings->esp_comm_rx_pin;
+}
+
+
+void settings_set_max_screen_brightness(FSettings *settings, uint8_t value) {
+    if (value > 100) value = 100;
+    settings->max_screen_brightness = value;
+}
+uint8_t settings_get_max_screen_brightness(const FSettings *settings) {
+    return settings->max_screen_brightness;
+}
+
+
+// Infrared Settings Getters and Setters
+void settings_set_infrared_easy_mode(FSettings *settings, bool enabled) {
+  settings->infrared_easy_mode = enabled;
+}
+
+bool settings_get_infrared_easy_mode(const FSettings *settings) {
+  return settings->infrared_easy_mode;
+}
+
+void settings_get_nvs_stats(nvs_stats_t *stats) {
+  esp_err_t err = nvs_get_stats(NULL, stats);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to get NVS stats: %s", esp_err_to_name(err));
+    memset(stats, 0, sizeof(nvs_stats_t));
+  }
+}
+
+size_t settings_get_nvs_used_entries(void) {
+  nvs_stats_t stats;
+  settings_get_nvs_stats(&stats);
+  return stats.used_entries;
+}
+
+size_t settings_get_nvs_free_entries(void) {
+  nvs_stats_t stats;
+  settings_get_nvs_stats(&stats);
+  return stats.free_entries;
+}
+
+size_t settings_get_nvs_total_entries(void) {
+  nvs_stats_t stats;
+  settings_get_nvs_stats(&stats);
+  return stats.total_entries;
+}
+
+float settings_get_nvs_usage_percentage(void) {
+  nvs_stats_t stats;
+  settings_get_nvs_stats(&stats);
+  if (stats.total_entries == 0) {
+    return 0.0f;
+  }
+  return ((float)stats.used_entries / (float)stats.total_entries) * 100.0f;
+}
+
+void settings_print_nvs_stats(void) {
+  nvs_stats_t stats;
+  settings_get_nvs_stats(&stats);
+  
+  ESP_LOGI(TAG, "NVS Storage Statistics:");
+  ESP_LOGI(TAG, "  Total entries: %zu", stats.total_entries);
+  ESP_LOGI(TAG, "  Used entries: %zu", stats.used_entries);
+  ESP_LOGI(TAG, "  Free entries: %zu", stats.free_entries);
+  ESP_LOGI(TAG, "  Namespaces: %zu", stats.namespace_count);
+  ESP_LOGI(TAG, "  Usage: %.1f%%", settings_get_nvs_usage_percentage());
+  
+  printf("NVS Storage: %zu/%zu entries used (%.1f%%)\n", 
+         stats.used_entries, stats.total_entries, 
+         settings_get_nvs_usage_percentage());
+}
+
+size_t settings_get_namespace_used_entries(const char *namespace_name) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(namespace_name, NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to open NVS namespace '%s': %s", 
+             namespace_name, esp_err_to_name(err));
+    return 0;
+  }
+  
+  size_t used_entries = 0;
+  err = nvs_get_used_entry_count(handle, &used_entries);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to get used entry count for namespace '%s': %s", 
+             namespace_name, esp_err_to_name(err));
+    used_entries = 0;
+  }
+  
+  nvs_close(handle);
+  return used_entries;
+}
+
+void settings_print_namespace_stats(const char *namespace_name) {
+  size_t used_entries = settings_get_namespace_used_entries(namespace_name);
+  ESP_LOGI(TAG, "Namespace '%s': %zu entries used", namespace_name, used_entries);
+  printf("Namespace '%s': %zu entries used\n", namespace_name, used_entries);
+}
+
+void settings_set_zebra_menus_enabled(FSettings *settings, bool enabled) {
+    settings->zebra_menus_enabled = enabled;
+}
+
+bool settings_get_zebra_menus_enabled(const FSettings *settings) {
+    return settings->zebra_menus_enabled;
 }

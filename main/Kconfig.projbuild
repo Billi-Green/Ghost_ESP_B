@@ -1,5 +1,14 @@
 menu "Ghost ESP Options"
 
+    menu "Device Detials"
+
+    config BUILD_CONFIG_TEMPLATE
+        string "Specify template used to build"
+        default "unknown_board"
+        help
+            Specify GESP build config template that was used at build time.
+    endmenu
+    
     menu "LED Options"
     
     config USE_NEOPIXEL
@@ -71,19 +80,6 @@ menu "Ghost ESP Options"
         default n
         help
             Enable touchscreen input.
-    
-    config USE_JOYSTICK
-        bool "Enable Joystick"
-        default n
-        help
-            Enable joystick input.
-    
-    config USE_CARDPUTER
-        bool "Enable Cardputer"
-        default n
-        help
-            Enable Cardputer input.
-    
     config USE_7_INCHER
         bool "Use 7-inch Display"
         default n
@@ -124,11 +120,126 @@ menu "Ghost ESP Options"
 
     menu "Misc Options"
 
+        config USE_JOYSTICK
+            bool "Enable Joystick"
+            default n
+            help
+                Enable joystick input.
+        config L_BTN
+            int "Left button data pin"
+            default 0
+            depends on USE_JOYSTICK
+            help
+                Set the data pin for left button
+        config R_BTN
+            int "Right button data pin"
+            default 0
+            depends on USE_JOYSTICK
+            help
+                Set the data pin for right button
+        config U_BTN
+            int "Up button data pin"
+            default 0
+            depends on USE_JOYSTICK
+            help
+                Set the data pin for up button
+        config D_BTN
+            int "Down button data pin"
+            default 0
+            depends on USE_JOYSTICK
+            help
+                Set the data pin for down button
+        config C_BTN
+            int "Center button data pin"
+            default 0
+            depends on USE_JOYSTICK
+            help
+                Set the data pin for center button
+                
+        config USE_TDECK
+            bool "Enable TDECK-plus"
+            default n
+            help
+                Enable tdeck logics.
+    
+        config USE_CARDPUTER
+            bool "Enable Cardputer"
+            default n
+            help
+                Enable Cardputer input.
+        
+        config USE_TDISPLAY_S3
+            bool "Enable T-Display S3"
+            default n
+            help
+                Enable support for LilyGo T-Display S3 with ST7789 display and CST816 touch.
+        
+        config USE_HW_KB
+            bool "Enable Hardware Keyboard"
+            default n
+            help
+                Enable hardware keyboard input ui elements.
+
         config HAS_BATTERY
             bool "Enable power saving"
             default n
             help
                 Enable power saving features if you have a battery.
+
+
+        config HAS_BATTERY_ADC
+            bool "Enable battery ADC reading"
+            default n
+            help
+                Enable ADC battery readings
+                
+        config ADC_BATTERY_PIN
+            int "Pin for reading ADC measurements - Unused atm."
+            default -1
+            depends on HAS_BATTERY_ADC
+            help
+                Set ADC battery pin - Unused atm.
+
+        config HAS_FUEL_GAUGE
+            bool "Enable Fuel Gauge Support"
+            default n
+            help
+                Enable fuel gauge support for accurate battery monitoring.
+
+        config USE_BQ27220_FUEL_GAUGE
+            bool "Use BQ27220 Fuel Gauge"
+            default n
+            depends on HAS_FUEL_GAUGE
+            help
+                Enable support for BQ27220 fuel gauge via I2C.
+
+        config BQ27220_I2C_ADDRESS
+            hex "BQ27220 I2C Address"
+            default 0x55
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                I2C address for BQ27220 fuel gauge (default 0x55).
+
+        config BQ27220_I2C_SDA_PIN
+            int "BQ27220 I2C SDA Pin"
+            default 8
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                GPIO pin for BQ27220 I2C SDA line.
+
+        config BQ27220_I2C_SCL_PIN
+            int "BQ27220 I2C SCL Pin"
+            default 18
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                GPIO pin for BQ27220 I2C SCL line.
+
+        config BQ27220_DESIGN_CAPACITY
+            int "Battery Design Capacity (mAh)"
+            default 1300
+            depends on USE_BQ27220_FUEL_GAUGE
+            help
+                Design capacity of the battery in mAh (default 1300 for T-Embed CC1101).
     
         config HAS_RTC_CLOCK
             bool "Enable RTC Clock"
@@ -167,6 +278,47 @@ menu "Ghost ESP Options"
             help
                 Set the GPIO pin used for IR LED transmission and indication.
 
+        config HAS_INFRARED_RX
+            bool "Enable Infrared Receive Support"
+            default n
+            depends on HAS_INFRARED
+            help
+                Enable infrared receive functionality for learning remote signals.
+
+        config INFRARED_RX_PIN
+            int "Infrared RX Pin"
+            default 0
+            depends on HAS_INFRARED_RX
+            help
+                Set the GPIO pin used for IR signal reception.
+
+        config USE_ENCODER
+            bool "Enable Encoder Input"
+            default n
+            help
+                Enable support for rotary encoder input.
+
+        config ENCODER_INA
+            int "Encoder INA Pin"
+            default 4
+            depends on USE_ENCODER
+            help
+                Set the GPIO pin for Encoder INA.
+
+        config ENCODER_INB
+            int "Encoder INB Pin"
+            default 5
+            depends on USE_ENCODER
+            help
+                Set the GPIO pin for Encoder INB.
+
+        config ENCODER_KEY
+            int "Encoder Key Pin"
+            default 0
+            depends on USE_ENCODER
+            help
+                Set the GPIO pin for the Encoder button.
+
     endmenu
     
     menu "GPS Configuration"
@@ -183,7 +335,13 @@ menu "Ghost ESP Options"
         depends on HAS_GPS
         help
             Define the UART RX pin for GPS.
-
+    
+    config GPS_UART_BAUD_RATE
+        int "Set baud rate for gps serial"
+        default 9600
+        depends on HAS_GPS
+        help
+            Define the UART RX pin baud rate for GPS.
 
     config NMEA_PARSER_RING_BUFFER_SIZE
         int "NMEA Parser Ring Buffer Size"

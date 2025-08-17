@@ -7,10 +7,16 @@
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "core/esp_comm_manager.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
 #include <esp_log.h>
+#include "esp_sleep.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_heap_caps.h"
 
 #ifdef CONFIG_WITH_ETHERNET
 // TODO
@@ -20,16 +26,64 @@
 #include "managers/views/splash_screen.h"
 #endif
 
+// Helper macro for measuring RAM usage
+#define MEASURE_INIT_RAM(name, init_call) do { \
+    size_t before = heap_caps_get_free_size(MALLOC_CAP_8BIT); \
+    ESP_LOGI(TAG, "Free RAM before %s: %d bytes", name, (int)before); \
+    init_call; \
+    size_t after = heap_caps_get_free_size(MALLOC_CAP_8BIT); \
+    ESP_LOGI(TAG, "Free RAM after %s: %d bytes (used: %d bytes)", name, (int)after, (int)(before - after)); \
+} while(0)
+
+RGBManager_t rgb_manager;  // Global instance for entire project
+
 int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) { return 0; }
 static const char *TAG = "Main.c";
 void app_main(void) {
-    ESP_LOGI(TAG, "Initializing Serial Manager");
-    serial_manager_init();
+    // Pull SPI CS pins HIGH to prevent bus conflicts for the TEmbed C1101
+#ifdef CONFIG_USE_ENCODER
+    ESP_LOGI(TAG, "Initializing SPI CS pins");
 
-    ESP_LOGI(TAG, "Initializing Wifi Manager");
-    wifi_manager_init();
+    gpio_reset_pin(CONFIG_LV_DISP_SPI_CS);
+    gpio_set_direction(CONFIG_LV_DISP_SPI_CS, GPIO_MODE_OUTPUT);
+    gpio_set_level(CONFIG_LV_DISP_SPI_CS, 1);
+    ESP_LOGI(TAG, "TFT CS pin %d set HIGH", CONFIG_LV_DISP_SPI_CS);
+
+    // CC1101 SS pin
+    gpio_reset_pin(12);
+    gpio_set_direction(12, GPIO_MODE_OUTPUT);
+    gpio_set_level(12, 1);
+    ESP_LOGI(TAG, "CC1101 SS pin 12 set HIGH");
+
+    // SD Card CS pin
+    gpio_reset_pin(CONFIG_SD_SPI_CS_PIN);
+    gpio_set_direction(CONFIG_SD_SPI_CS_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(CONFIG_SD_SPI_CS_PIN, 1);
+    ESP_LOGI(TAG, "SD Card CS pin %d set HIGH", CONFIG_SD_SPI_CS_PIN);
+#endif
+
+
+    MEASURE_INIT_RAM("Serial Manager", serial_manager_init());
+    MEASURE_INIT_RAM("Wifi Manager", wifi_manager_init());
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    // ble_init();
+    // MEASURE_INIT_RAM("BLE Manager", ble_init());
+#endif
+
+#ifdef CONFIG_USE_TDECK
+    ESP_LOGI(TAG, "TDECK: Delay for c3 boot");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP_LOGI(TAG, "TDECK: END DELAY for c3 boot");
+
+    // SET all SPI CS pins high to get the devices to shut it
+    gpio_set_direction(39, GPIO_MODE_OUTPUT);
+    gpio_set_level(39, 1);
+    gpio_set_direction(12, GPIO_MODE_OUTPUT);
+    gpio_set_level(12, 1);
+    gpio_set_direction(9, GPIO_MODE_OUTPUT);
+    gpio_set_level(9, 1);
+
+    gpio_set_direction(10, GPIO_MODE_OUTPUT);
+    gpio_set_level(10, 1); // set tdeck POWER_ON pin high to enable peripherals
 #endif
 
 #ifdef USB_MODULE
@@ -37,44 +91,81 @@ void app_main(void) {
     return;
 #endif
 
+#ifdef CONFIG_USE_ENCODER
+    gpio_reset_pin(15);
+    gpio_set_direction(15, GPIO_MODE_OUTPUT);
+    
+    // Check if we woke up from deep sleep
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    
+    switch (wakeup_reason) {
+        case ESP_SLEEP_WAKEUP_UNDEFINED:
+            ESP_LOGI("Main", "Normal startup (not from deep sleep), IO15 set high");
+            break;
+        case ESP_SLEEP_WAKEUP_EXT0:
+            ESP_LOGI("DeepSleep", "Woke up from deep sleep via EXT0 (IO6), pulling IO15 high");
+            gpio_set_level(15, 1);
+            break;
+        case ESP_SLEEP_WAKEUP_EXT1:
+            ESP_LOGI("DeepSleep", "Woke up from deep sleep via EXT1 (IO6), pulling IO15 high");
+            gpio_set_level(15, 1);
+            break;
+        case ESP_SLEEP_WAKEUP_TIMER:
+            ESP_LOGI("Main", "Woke up from deep sleep via timer, IO15 set high");
+            break;
+        case ESP_SLEEP_WAKEUP_TOUCHPAD:
+            ESP_LOGI("Main", "Woke up from deep sleep via touchpad, IO15 set high");
+            break;
+        case ESP_SLEEP_WAKEUP_ULP:
+            ESP_LOGI("Main", "Woke up from deep sleep via ULP, IO15 set high");
+            break;
+        default:
+            ESP_LOGI("Main", "Woke up from deep sleep via unknown cause (%d), IO15 set high", wakeup_reason);
+            break;
+    }
+    
+    // Always set IO15 high on startup
+    gpio_set_level(15, 1);
+#endif
+
 #ifdef CONFIG_WITH_ETHERNET
 
 #endif
     ESP_LOGI(TAG, "Initializing Commands");
-    command_init();
+    MEASURE_INIT_RAM("Commands init", command_init());
 
     ESP_LOGI(TAG, "Registering Commands");
-    register_commands();
+    MEASURE_INIT_RAM("Commands registration", register_commands());
 
     ESP_LOGI(TAG, "Initializing Settings");
-    settings_init(&G_Settings);
+    MEASURE_INIT_RAM("Settings init", settings_init(&G_Settings));
+
+    ESP_LOGI(TAG, "Configuring WiFi STA from settings");
+    MEASURE_INIT_RAM("WiFi STA Config", wifi_manager_configure_sta_from_settings());
+
+    ESP_LOGI(TAG, "Initializing Comm Manager");
+    MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init_with_defaults());
 
     ESP_LOGI(TAG, "Initializing AP Manager");
-    ap_manager_init();
+    MEASURE_INIT_RAM("AP Manager", ap_manager_init());
 
 #ifdef CONFIG_WITH_SCREEN
 
 #ifdef CONFIG_USE_JOYSTICK
 
-#define L_BTN 13
-#define C_BTN 34
-#define U_BTN 36
-#define R_BTN 39
-#define D_BTN 35
-
-    joystick_init(&joysticks[0], L_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[1], C_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[2], U_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[3], R_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[4], D_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);
+    joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);
 
     printf("Joystick GPIO Setup Successfully...\n");
 #endif
     ESP_LOGI(TAG, "Initializing display manager");
-    display_manager_init();
+    MEASURE_INIT_RAM("Display Manager", display_manager_init() );
     ESP_LOGI(TAG, "Presenting splash screen");
     display_manager_switch_view(&splash_view);
-    if (settings_get_rgb_mode(&G_Settings) != 0) {
+    if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
         if (rainbow_timer == NULL) {
             rainbow_timer = lv_timer_create(rainbow_effect_cb, 50, NULL);
             rainbow_hue = 0;
@@ -113,6 +204,16 @@ void app_main(void) {
                         &rgb_effect_task_handle);
         }
     }
+
+    ESP_LOGI(TAG, "Build config used: %s", CONFIG_BUILD_CONFIG_TEMPLATE);
+    printf("Build Name: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+    float percent_free = (total_heap > 0) ? (100.0f * free_heap / total_heap) : 0.0f;
+
+    ESP_LOGI(TAG, "Free heap after init: %d / %d bytes (%.1f%% free)", (int)free_heap, (int)total_heap, percent_free);
+    printf("Free heap after init: %d / %d bytes (%.1f%% free)\n", (int)free_heap, (int)total_heap, percent_free);
 
     ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)");
     printf("Ghost ESP Ready ;)\n");

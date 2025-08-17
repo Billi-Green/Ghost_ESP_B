@@ -19,6 +19,7 @@ typedef struct {
 
 extern station_ap_pair_t station_ap_list[MAX_STATIONS];
 extern int station_count;
+extern bool manual_disconnect;
 extern wifi_ap_record_t *scanned_aps;
 extern wifi_ap_record_t selected_ap;
 extern wifi_ap_record_t *selected_aps;
@@ -26,6 +27,10 @@ extern int selected_ap_count;
 extern void *beacon_task_handle;
 extern void *deauth_task_handle;
 extern int beacon_task_running;
+
+// WiFi event group bits
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_CONNECTING_BIT BIT1
 
 typedef struct {
   uint8_t frame_control[2]; // Frame Control
@@ -91,6 +96,12 @@ typedef struct {
 } host_result_t;
 
 typedef struct {
+  char ip[16];
+  uint8_t mac[6];
+  bool is_active;
+} arp_host_t;
+
+typedef struct {
   const char *ssid;
   const char *password;
 } wifi_credentials_t;
@@ -101,6 +112,13 @@ typedef struct {
   size_t max_results;
   size_t num_active_hosts;
 } scanner_ctx_t;
+
+typedef struct {
+  char subnet_prefix[16];
+  arp_host_t *hosts;
+  size_t max_hosts;
+  size_t num_active_hosts;
+} arp_scanner_ctx_t;
 
 typedef void (*wifi_promiscuous_cb_t_t)(void *buf,
                                         wifi_promiscuous_pkt_type_t type);
@@ -147,6 +165,10 @@ void wifi_manager_auto_deauth();
 
 void wifi_manager_stop_beacon();
 
+void wifi_manager_set_manual_disconnect(bool disconnect);
+
+void wifi_manager_configure_sta_from_settings(void);
+
 void wifi_manager_start_ip_lookup();
 
 void wifi_manager_connect_wifi(const char *ssid, const char *password);
@@ -176,6 +198,7 @@ esp_err_t wifi_manager_start_evil_portal(const char *URL, const char *SSID,
                                          const char *Password,
                                          const char *ap_ssid,
                                          const char *domain);
+bool wifi_manager_is_evil_portal_active(void);
 
 void screen_music_visualizer_task(void *pvParameters);
 
@@ -190,13 +213,26 @@ bool get_subnet_prefix(scanner_ctx_t *ctx);
 bool is_host_active(const char *ip_addr);
 
 scanner_ctx_t *scanner_init(void);
+void scanner_cleanup(scanner_ctx_t *ctx);
 
 bool wifi_manager_scan_subnet();
 
 void scan_ports_on_host(const char *target_ip, host_result_t *result);
+void scan_ssh_on_host(const char *target_ip, host_result_t *result);
 
 bool scan_ip_port_range(const char *target_ip, uint16_t start_port,
                         uint16_t end_port);
+
+void scan_udp_ports_on_host(const char *target_ip, host_result_t *result);
+bool scan_ip_udp_port_range(const char *target_ip, uint16_t start_port,
+                            uint16_t end_port);
+
+// ARP scan functions
+arp_scanner_ctx_t *arp_scanner_init(void);
+void arp_scanner_cleanup(arp_scanner_ctx_t *ctx);
+bool wifi_manager_arp_scan_subnet(void);
+bool send_arp_request(const char *target_ip);
+bool get_arp_table_entry(const char *ip, uint8_t *mac);
 
 extern const uint16_t COMMON_PORTS[];
 extern const size_t NUM_PORTS;
@@ -212,6 +248,8 @@ void wifi_manager_clear_beacon_list(void);
 void wifi_manager_show_beacon_list(void);
 void wifi_manager_start_beacon_list(void);
 
+void wifi_manager_start_live_ap_scan(void);
+
 // Add DHCP starvation attack functions
 void wifi_manager_start_dhcpstarve(int threads);
 void wifi_manager_stop_dhcpstarve(void);
@@ -224,8 +262,13 @@ void wifi_manager_eapollogoff_display(void);
 void wifi_manager_eapollogoff_help(void);
 
 // SAE Handshake Flooding Attack (ESP32-C5/C6 only)
-void wifi_manager_start_sae_flood(void);
+void wifi_manager_start_sae_flood(const char *password);
 void wifi_manager_stop_sae_flood(void);
 void wifi_manager_sae_flood_help(void);
+
+// HTML buffer functions for evil portal
+void wifi_manager_set_html_from_uart(void);
+void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final);
+void wifi_manager_clear_html_buffer(void);
 
 #endif // WIFI_MANAGER_H

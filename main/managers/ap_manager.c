@@ -1,6 +1,7 @@
 #include "managers/ap_manager.h"
 #include "managers/ghost_esp_site.h"
 #include "managers/settings_manager.h"
+#include "core/esp_comm_manager.h"
 #include <cJSON.h>
 #include <core/serial_manager.h>
 #include <ctype.h>
@@ -23,6 +24,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "esp_vfs_fat.h"
+#include "esp_heap_caps.h"
+
 
 // Forward declarations
 static esp_err_t http_get_handler(httpd_req_t *req);
@@ -31,6 +34,9 @@ static esp_err_t api_settings_handler(httpd_req_t *req);
 static esp_err_t api_command_handler(httpd_req_t *req);
 static esp_err_t api_settings_get_handler(httpd_req_t *req);
 static esp_err_t api_logs_handler(httpd_req_t *req);
+static esp_err_t api_esp_comm_status_handler(httpd_req_t *req);
+static esp_err_t api_esp_comm_control_handler(httpd_req_t *req);
+static esp_err_t api_esp_comm_send_handler(httpd_req_t *req);
 
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
                           void *event_data);
@@ -47,7 +53,7 @@ static esp_err_t teardown_mdns(void);
 #define MAX_LOG_BUFFER_SIZE (8 * 1024)  // 8KB log buffer size
 #define LOG_CHUNK_SIZE (MAX_LOG_BUFFER_SIZE / 4)  // Size to remove when buffer is full
 #define MAX_FILE_SIZE (5 * 1024 * 1024) // 5 MB
-#define BUFFER_SIZE (1024)              // 1 KB buffer size for reading chunks
+#define AP_MANAGER_BUFFER_SIZE (1024)   // 1 KB buffer size for reading chunks
 #define MIN_(a, b) ((a) < (b) ? (a) : (b))
 #define SERIAL_BUFFER_SIZE 528          // Size of serial buffer
 
@@ -61,7 +67,7 @@ static esp_netif_t *netif = NULL;
 static bool mdns_freed = false;
 
 static httpd_config_t server_config;
-static httpd_uri_t uri_handlers[10];
+static httpd_uri_t uri_handlers[20];
 static int handler_count = 0;
 static bool config_loaded = false;
 
@@ -229,7 +235,7 @@ static esp_err_t api_sd_card_post_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment");
 
     // Allocate a buffer for sending chunks
-    char *chunk_buf = malloc(BUFFER_SIZE);
+    char *chunk_buf = malloc(AP_MANAGER_BUFFER_SIZE);
     if (!chunk_buf) {
         ESP_LOGE(TAG, "Failed to allocate memory for chunk buffer.");
         fclose(file);
@@ -241,7 +247,7 @@ static esp_err_t api_sd_card_post_handler(httpd_req_t *req) {
 
     size_t bytes_read;
     esp_err_t ret = ESP_OK;
-    while ((bytes_read = fread(chunk_buf, 1, BUFFER_SIZE, file)) > 0) {
+    while ((bytes_read = fread(chunk_buf, 1, AP_MANAGER_BUFFER_SIZE, file)) > 0) {
         if (httpd_resp_send_chunk(req, chunk_buf, bytes_read) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to send file chunk.");
             ret = ESP_FAIL;
@@ -354,7 +360,7 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Upload path: %s", path_param);
 
     // Buffer for receiving data
-    char *buf = malloc(BUFFER_SIZE + 1);
+    char *buf = malloc(AP_MANAGER_BUFFER_SIZE + 1);
     if (!buf) {
         httpd_resp_set_status(req, "500 Internal Server Error");
         httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed for buffer.\"}");
@@ -368,7 +374,7 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
     bool headers_parsed = false;
     char *body_start = NULL;
 
-    while ((received = httpd_req_recv(req, buf, BUFFER_SIZE)) > 0) {
+    while ((received = httpd_req_recv(req, buf, AP_MANAGER_BUFFER_SIZE)) > 0) {
         buf[received] = '\0';
         total_received += received;
 
@@ -472,6 +478,39 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
 esp_err_t ap_manager_init(void) {
     esp_err_t ret;
     wifi_mode_t mode;
+
+    // --- Memory check before AP init ---
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (free_heap < (45 * 1024)) {
+        ESP_LOGW(TAG, "WARNING: Less than 45KB of free RAM available (%d bytes). AP may fail to initialize or operate reliably!", (int)free_heap);
+        //TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB RAM free (%d bytes). AP may not initialize or operate reliably!\n", (int)free_heap);
+    }
+
+    // Check if AP is disabled in settings
+    if (!settings_get_ap_enabled(&G_Settings)) {
+        printf("Access Point disabled in settings, skipping AP initialization\n");
+        
+        // Initialize log buffer and mutex even when AP is disabled
+        log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
+        if(!log_buffer){
+            ESP_LOGE(TAG, "failed to alloc log buffer");
+            return ESP_ERR_NO_MEM;
+        }
+
+        log_mutex = xSemaphoreCreateRecursiveMutex();
+        if (!log_mutex) {
+            ESP_LOGE(TAG, "Failed to create log mutex");
+            free(log_buffer);
+            log_buffer = NULL;
+            return ESP_FAIL;
+        }
+
+        if(log_buffer){
+            memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
+        }
+        
+        return ESP_OK;
+    }
 
     ret = esp_wifi_get_mode(&mode);
     if (ret == ESP_ERR_WIFI_NOT_INIT) {
@@ -657,8 +696,8 @@ void ap_manager_add_log(const char *log_message) {
     size_t message_length = strlen(log_message);
     if (message_length == 0) return;
     
-    // Take mutex with timeout
-    if (xSemaphoreTake(log_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    // Take recursive mutex with timeout
+    if (xSemaphoreTakeRecursive(log_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Failed to take log mutex");
         return;
     }
@@ -692,11 +731,19 @@ void ap_manager_add_log(const char *log_message) {
         log_buffer_index += message_length;
     }
     
-    xSemaphoreGive(log_mutex);
+    xSemaphoreGiveRecursive(log_mutex);
 }
 
 esp_err_t ap_manager_start_services() {
     esp_err_t ret;
+
+    // if ap is disabled or power saving is on, do not start ap services.
+    if (!settings_get_ap_enabled(&G_Settings) || settings_get_power_save_enabled(&G_Settings)) {
+        printf("ap services skipped: ap disabled or power saving mode is on\n");
+        // make sure services are stopped if they somehow started and conditions changed
+        ap_manager_stop_services();
+        return ESP_OK;
+    }
 
     // Set Wi-Fi mode to AP
     ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
@@ -1099,6 +1146,11 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         settings_set_web_auth_enabled(settings, web_auth_enabled_bool->valueint != 0);
     }
 
+    cJSON *ap_enabled_bool = cJSON_GetObjectItem(root, "ap_enabled");
+    if (ap_enabled_bool) {
+        settings_set_ap_enabled(settings, ap_enabled_bool->valueint != 0);
+    }
+
     cJSON *gps_rx_pin = cJSON_GetObjectItem(root, "gps_rx_pin");
     if (gps_rx_pin) {
         settings_set_gps_rx_pin(settings, gps_rx_pin->valueint);
@@ -1155,6 +1207,13 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "display_timeout", settings_get_display_timeout(settings));
     cJSON_AddNumberToObject(root, "rts_enabled_bool", settings_get_rts_enabled(settings));
     cJSON_AddBoolToObject(root, "web_auth_enabled", settings_get_web_auth_enabled(settings));
+    cJSON_AddBoolToObject(root, "ap_enabled", settings_get_ap_enabled(settings));
+
+    // Add ESP communication pin settings
+    int32_t tx_pin, rx_pin;
+    settings_get_esp_comm_pins(settings, &tx_pin, &rx_pin);
+    cJSON_AddNumberToObject(root, "esp_comm_tx_pin", tx_pin);
+    cJSON_AddNumberToObject(root, "esp_comm_rx_pin", rx_pin);
 
     esp_netif_ip_info_t ip_info;
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -1182,6 +1241,155 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// Handler for ESP communication status
+static esp_err_t api_esp_comm_status_handler(httpd_req_t *req) {
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\": \"Failed to create JSON object\"}");
+        return ESP_FAIL;
+    }
+
+    comm_state_t state = esp_comm_manager_get_state();
+    const char *state_str = "unknown";
+    switch (state) {
+        case COMM_STATE_IDLE: state_str = "idle"; break;
+        case COMM_STATE_SCANNING: state_str = "scanning"; break;
+        case COMM_STATE_HANDSHAKE: state_str = "handshake"; break;
+        case COMM_STATE_CONNECTED: state_str = "connected"; break;
+        case COMM_STATE_ERROR: state_str = "error"; break;
+        default: state_str = "unknown"; break;
+    }
+
+    cJSON_AddStringToObject(root, "state", state_str);
+    cJSON_AddBoolToObject(root, "connected", esp_comm_manager_is_connected());
+    cJSON_AddBoolToObject(root, "is_remote_command", esp_comm_manager_is_remote_command());
+
+    char *response_string = cJSON_Print(root);
+    if (!response_string) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\": \"Failed to serialize JSON\"}");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, response_string);
+
+    cJSON_Delete(root);
+    free(response_string);
+    return ESP_OK;
+}
+
+// Handler for ESP communication control (start discovery, connect, disconnect)
+static esp_err_t api_esp_comm_control_handler(httpd_req_t *req) {
+    char content[512];
+    int ret = httpd_req_recv(req, content, MIN_(req->content_len, sizeof(content) - 1));
+    if (ret <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\": \"Invalid request payload\"}");
+        return ESP_FAIL;
+    }
+    
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (!json) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\": \"Invalid JSON payload\"}");
+        return ESP_FAIL;
+    }
+
+    cJSON *action = cJSON_GetObjectItem(json, "action");
+    if (!action || !cJSON_IsString(action)) {
+        cJSON_Delete(json);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\": \"Missing or invalid action\"}");
+        return ESP_FAIL;
+    }
+
+    const char *action_str = action->valuestring;
+    bool success = false;
+    char response_msg[256] = {0};
+
+    if (strcmp(action_str, "start_discovery") == 0) {
+        success = esp_comm_manager_start_discovery();
+        snprintf(response_msg, sizeof(response_msg), "Discovery %s", success ? "started" : "failed");
+    } else if (strcmp(action_str, "connect") == 0) {
+        cJSON *peer_name = cJSON_GetObjectItem(json, "peer_name");
+        if (peer_name && cJSON_IsString(peer_name)) {
+            success = esp_comm_manager_connect_to_peer(peer_name->valuestring);
+            snprintf(response_msg, sizeof(response_msg), "Connection to %s %s", 
+                     peer_name->valuestring, success ? "initiated" : "failed");
+        } else {
+            snprintf(response_msg, sizeof(response_msg), "Missing peer name");
+        }
+    } else if (strcmp(action_str, "disconnect") == 0) {
+        esp_comm_manager_disconnect();
+        success = true;
+        snprintf(response_msg, sizeof(response_msg), "Disconnected");
+    } else {
+        snprintf(response_msg, sizeof(response_msg), "Unknown action: %s", action_str);
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", success);
+    cJSON_AddStringToObject(response, "message", response_msg);
+
+    char *response_string = cJSON_Print(response);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, response_string);
+
+    cJSON_Delete(json);
+    cJSON_Delete(response);
+    free(response_string);
+    return ESP_OK;
+}
+
+// Handler for sending ESP communication commands
+static esp_err_t api_esp_comm_send_handler(httpd_req_t *req) {
+    char content[512];
+    int ret = httpd_req_recv(req, content, MIN_(req->content_len, sizeof(content) - 1));
+    if (ret <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\": \"Invalid request payload\"}");
+        return ESP_FAIL;
+    }
+    
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (!json) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\": \"Invalid JSON payload\"}");
+        return ESP_FAIL;
+    }
+
+    cJSON *command = cJSON_GetObjectItem(json, "command");
+    if (!command || !cJSON_IsString(command)) {
+        cJSON_Delete(json);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\": \"Missing or invalid command\"}");
+        return ESP_FAIL;
+    }
+
+    // Send the full command string as-is (no separate data field needed)
+    bool success = esp_comm_manager_send_command(command->valuestring, NULL);
+    
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", success);
+    cJSON_AddStringToObject(response, "message", success ? "Command sent successfully" : "Failed to send command");
+
+    char *response_string = cJSON_Print(response);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, response_string);
+
+    cJSON_Delete(json);
+    cJSON_Delete(response);
+    free(response_string);
+    return ESP_OK;
+}
+
 // Event handler for Wi-Fi events
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
                           void *event_data) {
@@ -1201,20 +1409,8 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
 
             break;
         case WIFI_EVENT_STA_START: {
-            static bool connection_in_progress = false;
-            
-            if(!connection_in_progress) {
-                connection_in_progress = true;
-                
-                // Get configured SSID from station config
-                wifi_config_t sta_config;
-                if(esp_wifi_get_config(WIFI_IF_STA, &sta_config) == ESP_OK) {
-                    printf("\nConnecting to %.*s\n", 18, sta_config.sta.ssid);
-                } else {
-                    printf("\nConnecting to network\n");
-                }
-                esp_wifi_connect();
-            }
+            // No auto-connect here - handled by wifi_manager's wifi_event_handler
+            printf("AP_manager: STA interface started\n");
             break;
         }
         case WIFI_EVENT_STA_DISCONNECTED: {
@@ -1295,6 +1491,9 @@ static esp_err_t load_server_config(void) {
     ADD_URI_HANDLER("/api/command", HTTP_POST, api_command_handler);
     ADD_URI_HANDLER("/api/logs", HTTP_GET, api_logs_handler);
     ADD_URI_HANDLER("/api/clear_logs", HTTP_POST, api_clear_logs_handler);
+    ADD_URI_HANDLER("/api/esp_comm/status", HTTP_GET, api_esp_comm_status_handler);
+    ADD_URI_HANDLER("/api/esp_comm/control", HTTP_POST, api_esp_comm_control_handler);
+    ADD_URI_HANDLER("/api/esp_comm/send", HTTP_POST, api_esp_comm_send_handler);
 
 #undef ADD_URI_HANDLER
 

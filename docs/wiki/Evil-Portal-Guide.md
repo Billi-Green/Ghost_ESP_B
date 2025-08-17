@@ -1,5 +1,9 @@
 # Evil Portal Guide for Beginners
 
+
+```anything you read here may or may not be entirely accurate or up to date.``` 
+
+
 ## What is Evil Portal?
 
 An Evil Portal creates a fake WiFi hotspot that looks like a real login page (like those you see at hotels or cafes). When people try to connect, they see a login page you create. This is for educational and authorized testing only!
@@ -15,22 +19,49 @@ An Evil Portal creates a fake WiFi hotspot that looks like a real login page (li
 2. **Prepare SD Card**
    - Get an SD card (32GB or less works best)
    - Format it to FAT32
-   - Create a folder called `portal` on the SD card
+   - Create a folder called `/ghostesp/evil_portal/portals` on the SD card
 
 3. **Create Your Login Page**
    - Copy the template at the bottom of this guide
    - Save it as `index.html`
-   - Put it in the `portal` folder on your SD card
+   - Put it in the `/ghostesp/evil_portal/portals` folder on your SD card
 
-4. **Start Your Portal**
-   - Use the command `startportal /portal/index.html "Free WiFi" domainexample` to create your portal!
+4. **List Available Portals**
+   - To see all available HTML portals in `/ghostesp/evil_portal/portals` on your SD card, run:
+     ```
+     listportals
+     ```
+
+5. **Start Your Portal**
+   - Use the command:  
+     ```
+     startportal default "Free WiFi"
+     ```
+     to launch the built-in portal, **or**  
+     ```
+     startportal myportal.html "Free WiFi"
+     ```
+     to launch a custom HTML portal you placed in `/ghostesp/evil_portal/portals/myportal.html`.
+
    - This creates a WiFi network called "Free WiFi"
 
-5. **Test It!**
+6. **Test It!**
    - Look for "Free WiFi" in your phone's WiFi list
    - Connect to it
    - You should see a login page
    - If it doesn't work, see troubleshooting below
+
+## Alternative: Flipper Zero App Method
+
+If you have the GhostESP Flipper Zero App (v1.4+), you can upload simple HTML directly:
+
+1. **Open the GhostESP App** on your Flipper Zero
+2. **Navigate to WiFi** section then **Evil Portal**
+3. **Select "Set HTML"** option
+4. **Enter your HTML** (max 2048 bytes)
+5. **Start the portal** with your desired SSID ```default FreeWiFi```
+
+> **Note**: This method is limited to 2048 bytes and is best for simple login pages.
 
 ## Step-by-Step Setup
 
@@ -38,10 +69,14 @@ An Evil Portal creates a fake WiFi hotspot that looks like a real login page (li
 
 1. Get an SD card (32GB or less works best)
 2. Format it to FAT32
-3. Create a folder called `portal` on the SD card
-4. Save the login page template as `index.html` in that folder
+3. Create a folder called `/ghostesp/evil_portal/portals` on the SD card
+4. Save your login page as `index.html` (or any `.html` file) in that folder
 5. Put the SD card in your board
-6. Run: `startportal /portal/index.html "Free WiFi" domainexample`
+6. Run:  
+   ```
+   startportal myportal.html "Free WiFi"
+   ```
+   (replace `myportal.html` with your file name, or use `default` for the built-in page)
 
 ## Common Problems & Fixes
 
@@ -106,7 +141,10 @@ Copy this exactly - it works on most devices:
 
 ## How to Stop
 
-Just type: `stopportal`
+Just type:  
+```
+stopportal
+```
 
 ## Important Warnings
 
@@ -145,7 +183,7 @@ SingleFile is a browser extension that saves web pages as single HTML files, per
    - It will automatically download an HTML file
 
 3. **Prepare the File**
-   - Rename the downloaded file to `index.html`
+   - Rename the downloaded file to `index.html` (or any name ending in `.html`)
    - The file already includes all images and CSS!
 
 4. **Important Changes**
@@ -169,4 +207,4 @@ SingleFile is a browser extension that saves web pages as single HTML files, per
 - Choose simple login pages - they work better
 - Avoid pages with lots of images or animations
 - Some sites might not work well - try different ones
-- Hotel/cafe portal pages usually work best
+- Hotel/cafe login pages often work well as templates
