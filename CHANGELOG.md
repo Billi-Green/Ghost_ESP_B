@@ -17,6 +17,7 @@
   - LilyGo TDisplay S3 Touch
   - AITRIP CYD / ESP2432S028R — @tototo31
   - JCMK DevBoard Pro
+  - Rabbit Labs Minion
 
 - **Infrared RX**
   - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
