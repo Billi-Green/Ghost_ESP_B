@@ -751,16 +751,27 @@ static void restart_ble_stack(void) {
     // Small delay to let stack settle
     vTaskDelay(pdMS_TO_TICKS(10));
     
-    // Stop and deinitialize the NimBLE stack
+    // Stop the NimBLE stack and wait for the host task to exit before deinit
     nimble_port_stop();
-    nimble_port_deinit();
-    
-    // Wait for nimble host task to finish and clean up
+
+    // Wait for the nimble host task to exit (give it some time)
     if (nimble_host_task_handle != NULL) {
-        // Wait for the task to finish (nimble_port_stop should cause it to exit)
-        vTaskDelay(pdMS_TO_TICKS(100));
+        int wait_iterations = 0;
+        while (eTaskGetState(nimble_host_task_handle) != eDeleted && wait_iterations < 25) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            wait_iterations++;
+        }
+
+        if (eTaskGetState(nimble_host_task_handle) != eDeleted) {
+            ESP_LOGW(TAG_BLE, "nimble_host_task did not exit in time, deleting task");
+            vTaskDelete(nimble_host_task_handle);
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
         nimble_host_task_handle = NULL;
     }
+
+    // Now deinitialize the port
+    nimble_port_deinit();
     
     // Small delay before reinitializing
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -1276,12 +1287,142 @@ void ble_start_spoofing_selected_airtag(void) {
     }
 
 
-    // Set the advertisement data
-    rc = ble_gap_adv_set_data(tag_to_spoof->payload, tag_to_spoof->payload_len);
+    ESP_LOGI(TAG_BLE, "Preparing spoof adv: captured_len=%zu mfg_len=%zu mfg_ptr=%p",
+             tag_to_spoof->payload_len, mfg_data_len, (void*)mfg_data_start);
+
+    uint8_t adv_buf[31];
+    size_t adv_len = 0;
+
+    adv_buf[adv_len++] = 0x02;
+    adv_buf[adv_len++] = 0x01;
+    adv_buf[adv_len++] = 0x1A;
+
+    if (mfg_data_start && mfg_data_len > 0) {
+        size_t space = sizeof(adv_buf) - adv_len;
+        if (space >= 2) {
+            size_t copy_len = mfg_data_len;
+            if (copy_len > space - 2) copy_len = space - 2;
+            adv_buf[adv_len++] = (uint8_t)(copy_len + 1);
+            adv_buf[adv_len++] = 0xFF;
+            memcpy(&adv_buf[adv_len], mfg_data_start, copy_len);
+            adv_len += copy_len;
+            if (copy_len < mfg_data_len) {
+                ESP_LOGW(TAG_BLE, "Truncated manufacturer data from %zu to %zu bytes", mfg_data_len, copy_len);
+            }
+        }
+    } else if (tag_to_spoof->payload_len > 2) {
+        size_t space = sizeof(adv_buf) - adv_len;
+        size_t use = tag_to_spoof->payload_len - 2;
+        if (use > space - 2) use = space - 2;
+        adv_buf[adv_len++] = (uint8_t)(use + 1);
+        adv_buf[adv_len++] = 0xFF;
+        memcpy(&adv_buf[adv_len], &tag_to_spoof->payload[2], use);
+        adv_len += use;
+        ESP_LOGI(TAG_BLE, "Using raw payload slice for manufacturer data, used=%zu", use);
+    }
+
+    size_t dump_len = adv_len < 16 ? adv_len : 16;
+    char hdump[3 * 16 + 1];
+    for (size_t i = 0; i < dump_len; i++) sprintf(&hdump[i * 3], "%02X ", adv_buf[i]);
+    hdump[dump_len * 3] = '\0';
+    ESP_LOGI(TAG_BLE, "Final adv_buf len=%zu data[0..%zu]=%s", adv_len, dump_len, hdump);
+
+    if (ble_gap_adv_active()) {
+        ble_gap_adv_stop();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    /* Clear any existing adv and scan rsp data on controller to free memory */
+    (void)ble_gap_adv_set_data(NULL, 0);
+    (void)ble_gap_adv_rsp_set_data(NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    rc = ble_gap_adv_set_data(adv_buf, adv_len);
     if (rc != 0) {
-        ESP_LOGE(TAG_BLE, "Error setting advertisement data; rc=%d", rc);
+        ESP_LOGW(TAG_BLE, "Initial ble_gap_adv_set_data failed rc=%d; will retry with backoff and further truncation", rc);
         TERMINAL_VIEW_ADD_TEXT("Error setting adv data; rc=%d\n", rc);
-        return;
+
+        /* Try a few retry attempts with longer delays and progressively smaller manufacturer data */
+        int retry_count = 3;
+        int attempt = 0;
+        int base_shrink = 3; /* bytes to remove per retry */
+        int last_rc = rc;
+
+        for (attempt = 1; attempt <= retry_count; attempt++) {
+            vTaskDelay(pdMS_TO_TICKS(100 * attempt));
+
+            /* rebuild adv_buf with reduced manufacturer data */
+            size_t new_adv_len = 0;
+            uint8_t tmp_buf[31];
+            tmp_buf[new_adv_len++] = 0x02;
+            tmp_buf[new_adv_len++] = 0x01;
+            tmp_buf[new_adv_len++] = 0x1A;
+
+            if (mfg_data_start && mfg_data_len > 0) {
+                size_t space = sizeof(tmp_buf) - new_adv_len;
+                if (space >= 2) {
+                    /* reduce copy length progressively */
+                    size_t copy_len = mfg_data_len;
+                    if (copy_len > space - 2) copy_len = space - 2;
+                    size_t shrink = (size_t)(base_shrink * attempt);
+                    if (shrink >= copy_len) copy_len = 0;
+                    else copy_len -= shrink;
+
+                    if (copy_len > 0) {
+                        tmp_buf[new_adv_len++] = (uint8_t)(copy_len + 1);
+                        tmp_buf[new_adv_len++] = 0xFF;
+                        memcpy(&tmp_buf[new_adv_len], mfg_data_start, copy_len);
+                        new_adv_len += copy_len;
+                    }
+                }
+            } else if (tag_to_spoof->payload_len > 2) {
+                size_t space = sizeof(tmp_buf) - new_adv_len;
+                size_t use = tag_to_spoof->payload_len - 2;
+                if (use > space - 2) use = space - 2;
+                size_t shrink = (size_t)(base_shrink * attempt);
+                if (shrink >= use) use = 0;
+                else use -= shrink;
+                if (use > 0) {
+                    tmp_buf[new_adv_len++] = (uint8_t)(use + 1);
+                    tmp_buf[new_adv_len++] = 0xFF;
+                    memcpy(&tmp_buf[new_adv_len], &tag_to_spoof->payload[2], use);
+                    new_adv_len += use;
+                }
+            }
+
+            size_t dump_len2 = new_adv_len < 16 ? new_adv_len : 16;
+            char hdump2[3 * 16 + 1];
+            for (size_t i = 0; i < dump_len2; i++) sprintf(&hdump2[i * 3], "%02X ", tmp_buf[i]);
+            hdump2[dump_len2 * 3] = '\0';
+            ESP_LOGI(TAG_BLE, "Retry %d: trying adv len=%zu data[0..%zu]=%s", attempt, new_adv_len, dump_len2, hdump2);
+
+            if (ble_gap_adv_active()) {
+                ble_gap_adv_stop();
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+
+            /* Clear previous data before retry setting new */
+            (void)ble_gap_adv_set_data(NULL, 0);
+            (void)ble_gap_adv_rsp_set_data(NULL, 0);
+            vTaskDelay(pdMS_TO_TICKS(10));
+
+            last_rc = ble_gap_adv_set_data(tmp_buf, new_adv_len);
+            if (last_rc == 0) {
+                /* success: copy tmp_buf into adv_buf for subsequent start */
+                memcpy(adv_buf, tmp_buf, new_adv_len);
+                adv_len = new_adv_len;
+                rc = 0;
+                break;
+            }
+
+            ESP_LOGW(TAG_BLE, "Retry %d ble_gap_adv_set_data failed rc=%d", attempt, last_rc);
+        }
+
+        if (last_rc != 0) {
+            ESP_LOGE(TAG_BLE, "All retries failed setting adv data, giving up (last rc=%d)", last_rc);
+            TERMINAL_VIEW_ADD_TEXT("Failed setting adv data after retries; rc=%d\n", last_rc);
+            return;
+        }
     }
 
     // Configure advertisement parameters
@@ -1297,11 +1438,20 @@ void ble_start_spoofing_selected_airtag(void) {
     // AirTags typically use Random Static addresses.
     // Check the address type. We can usually only spoof Random addresses.
     if (tag_to_spoof->addr.type == BLE_ADDR_RANDOM) {
-        rc = ble_hs_id_set_rnd(tag_to_spoof->addr.val); // Set the stack's random address
+        uint8_t rnd_addr[6];
+        memcpy(rnd_addr, tag_to_spoof->addr.val, 6);
+        if ((rnd_addr[5] & 0xC0) == 0xC0) {
+            rc = ble_hs_id_set_rnd(rnd_addr);
+        } else {
+            rnd_addr[5] = (rnd_addr[5] & 0x3F) | 0xC0;
+            if ((rnd_addr[0] | rnd_addr[1] | rnd_addr[2] | rnd_addr[3] | rnd_addr[4] | (rnd_addr[5] & 0x3F)) == 0x00) {
+                rnd_addr[0] = 0x01;
+            }
+            rc = ble_hs_id_set_rnd(rnd_addr);
+        }
         if (rc != 0) {
             ESP_LOGE(TAG_BLE, "Failed to set random address for spoofing; rc=%d", rc);
             TERMINAL_VIEW_ADD_TEXT("Error: Failed set spoof rnd addr; rc=%d\n", rc);
-            // Fallback to default address
             rc = ble_hs_id_infer_auto(0, &own_addr_type);
             if (rc != 0) {
                 ESP_LOGE(TAG_BLE, "Error inferring own address; rc=%d", rc);
@@ -1311,7 +1461,6 @@ void ble_start_spoofing_selected_airtag(void) {
             ESP_LOGW(TAG_BLE, "Using default inferred address type %d", own_addr_type);
             TERMINAL_VIEW_ADD_TEXT("Warn: Using default address.\n");
         } else {
-            // If setting random address succeeded, use it for advertising
             own_addr_type = BLE_OWN_ADDR_RANDOM;
             ESP_LOGI(TAG_BLE, "Set random address successfully. Advertising with type %d", own_addr_type);
             TERMINAL_VIEW_ADD_TEXT("Using spoofed random address.\n");
@@ -1612,13 +1761,34 @@ void ble_start_raw_ble_packetscan(void) {
 }
 
 void ble_start_airtag_scanner(void) {
+    ESP_LOGI(TAG_BLE, "Starting AirTag scanner: active scan, duplicates allowed, larger window");
     ble_register_handler(airtag_scanner_callback);
-    ble_start_scanning();
-    // Reset discovered count when starting a new scan session? Or keep appending?
-    // Let's keep appending for now. Add a command to clear if needed later.
-    // discovered_airtag_count = 0;
-    // airTagCount = 0;
-    // selected_airtag_index = -1;
+
+    if (!ble_initialized) {
+        ble_init();
+    }
+
+    if (!wait_for_ble_ready()) {
+        ESP_LOGE(TAG_BLE, "BLE stack not ready for AirTag scanner");
+        return;
+    }
+
+    struct ble_gap_disc_params disc_params = {0};
+    disc_params.itvl = 0x30; // ~30ms (0.625ms units)
+    disc_params.window = 0x30; // full window to increase listen time
+    disc_params.filter_policy = 0; // accept all
+    disc_params.limited = 0;
+    disc_params.passive = 0; // active scanning to get scan response
+    disc_params.filter_duplicates = 0; // deliver duplicates
+    disc_params.disable_observer_mode = 0;
+
+    int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &disc_params, ble_gap_event_general, NULL);
+    if (rc != 0) {
+        ESP_LOGE(TAG_BLE, "Error starting AirTag BLE scan; rc=%d", rc);
+        TERMINAL_VIEW_ADD_TEXT("Error starting AirTag scan\n");
+    } else {
+        ESP_LOGI(TAG_BLE, "AirTag scanning started");
+    }
 }
 
 static void ble_pcap_callback(struct ble_gap_event *event, size_t len) {
