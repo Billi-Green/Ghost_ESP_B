@@ -115,6 +115,7 @@
   - Better EP credential handling
   - Keep one led strip rmt instance
   - Remove legacy led strip rmt driver
+  - Tweaks to evil portal captive portal handling
 
 ## Revival 1.6.1
 
