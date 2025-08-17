@@ -82,7 +82,7 @@ static const char *wifi_attacks_options[] = {
     "Start DHCP-Starve",
     "Stop DHCP-Starve",
     "Start Karma Attack",
-    "Start Karma Attack (Custom SSIDs)", // <-- Add this lin
+    "Start Karma Attack (Custom SSIDs)", // <-- Add this line
     "Stop Karma Attack",       
     NULL
 };
