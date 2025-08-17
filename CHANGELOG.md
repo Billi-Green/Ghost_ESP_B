@@ -19,9 +19,9 @@
   - JCMK DevBoard Pro
   - Rabbit Labs Minion
 
-- **Infrared RX**
-  - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
-  - Ability to Rename, Delete, Add remotes (only enabled on TEmbed C1101)
+- **Infrared RX** (only enabled on TEmbed C1101)
+  - IR receive and decode support for all protocols supported by Flipper Zero firmware.
+  - Ability to Rename, Delete, Add remotes 
   - Easy Learn Mode: **Name buttons automatically**
   
 ### Added
