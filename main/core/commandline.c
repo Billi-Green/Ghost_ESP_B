@@ -1691,36 +1691,61 @@ void handle_apcred(int argc, char **argv) {
 }
 
 void handle_rgb_mode(int argc, char **argv) {
+    static bool last_effect_is_rainbow = false;
     if (argc < 2) {
         printf("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
         return;
     }
 
-    // Cancel any currently running LED effect task.
+    // Cancel any currently running LED effect task safely.
     if (rgb_effect_task_handle != NULL) {
-        vTaskDelete(rgb_effect_task_handle);
-        rgb_effect_task_handle = NULL;
+        if (last_effect_is_rainbow) {
+            rgb_manager_signal_rainbow_exit();
+            vTaskDelay(pdMS_TO_TICKS(50));
+            rgb_effect_task_handle = NULL;
+        } else {
+            vTaskDelete(rgb_effect_task_handle);
+            rgb_effect_task_handle = NULL;
+        }
     }
 
     // Check for built-in modes first.
     if (strcasecmp(argv[1], "rainbow") == 0) {
+        if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
+            printf("RGB not initialized\n");
+            TERMINAL_VIEW_ADD_TEXT("RGB not initialized\n");
+            return;
+        }
         xTaskCreate(rainbow_task, "rainbow_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        last_effect_is_rainbow = true;
         printf("Rainbow mode activated\n");
         TERMINAL_VIEW_ADD_TEXT("Rainbow mode activated\n");
     } else if (strcasecmp(argv[1], "police") == 0) {
+        if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
+            printf("RGB not initialized\n");
+            TERMINAL_VIEW_ADD_TEXT("RGB not initialized\n");
+            return;
+        }
         xTaskCreate(police_task, "police_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        last_effect_is_rainbow = false;
         printf("Police mode activated\n");
         TERMINAL_VIEW_ADD_TEXT("Police mode activated\n");
     } else if (strcasecmp(argv[1], "strobe") == 0) {
         printf("SEIZURE WARNING\nPLEASE EXIT NOW IF\nYOU ARE SENSITIVE\n");
         vTaskDelay(pdMS_TO_TICKS(2000));
+        if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
+            printf("RGB not initialized\n");
+            TERMINAL_VIEW_ADD_TEXT("RGB not initialized\n");
+            return;
+        }
         xTaskCreate(strobe_task, "strobe_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        last_effect_is_rainbow = false;
         printf("Strobe mode activated\n");
         TERMINAL_VIEW_ADD_TEXT("Strobe mode activated\n");
     } else if (strcasecmp(argv[1], "off") == 0) {
         rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
-        if (!rgb_manager.is_separate_pins) {
+        if (!rgb_manager.is_separate_pins && rgb_manager.strip) {
             led_strip_clear(rgb_manager.strip);
             led_strip_refresh(rgb_manager.strip);
         }

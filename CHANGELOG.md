@@ -1,5 +1,11 @@
 # Ghost ESP Changelog
 
+## Revival v1.7.1
+
+-  Fix for RGB not properly being handled on devices with no LEDs
+
+
+
 ## Revival v1.7
 
 ### Major Updates
