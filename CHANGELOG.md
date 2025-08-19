@@ -2,8 +2,8 @@
 
 ## Revival v1.7.1
 
--  Fix for RGB not properly being handled on devices with no LEDs
-
+- Fix for RGB not properly being handled on devices with no LEDs
+- Possible fix for captive portal not being effective on some devices
 
 
 ## Revival v1.7
