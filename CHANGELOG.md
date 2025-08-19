@@ -4,7 +4,7 @@
 
 - Fix for RGB not properly being handled on devices with no LEDs
 - Possible fix for captive portal not being effective on some devices
-
+- Apply existing wroom disp opt to c5
 
 ## Revival v1.7
 
