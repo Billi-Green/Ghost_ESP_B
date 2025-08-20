@@ -4249,7 +4249,7 @@ void wifi_manager_start_ip_lookup() {
 
             if (mdnsresult == NULL) {
                 while (retries < 5 && mdnsresult == NULL) {
-                    mdns_query_ptr(services[s].query, "_tcp", 2000, 30, &mdnsresult);
+                    esp_err_t qret = mdns_query_ptr(services[s].query, "_tcp", 2000, 30, &mdnsresult);
 
                     if (mdnsresult == NULL) {
                         retries++;
@@ -4268,9 +4268,20 @@ void wifi_manager_start_ip_lookup() {
 
                 mdns_result_t *current_result = mdnsresult;
                 while (current_result != NULL && device_count < MAX_DEVICES) {
-                    char ip_str[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &current_result->addr->addr.u_addr.ip4, ip_str,
-                              INET_ADDRSTRLEN);
+                    char ip_str[INET_ADDRSTRLEN] = {0};
+                    mdns_ip_addr_t *addr_item = current_result->addr;
+                    bool has_v4 = false;
+                    while (addr_item != NULL) {
+                        if (addr_item->addr.type == IPADDR_TYPE_V4) {
+                            inet_ntop(AF_INET, &addr_item->addr.u_addr.ip4, ip_str, INET_ADDRSTRLEN);
+                            has_v4 = true;
+                            break;
+                        }
+                        addr_item = addr_item->next;
+                    }
+                    if (!has_v4) {
+                        strncpy(ip_str, "0.0.0.0", sizeof(ip_str));
+                    }
 
                     printf("Device at: %s\n", ip_str);
                     printf("  Name: %s\n", current_result->hostname);
