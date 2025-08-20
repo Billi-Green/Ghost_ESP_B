@@ -4,8 +4,8 @@
 
 - Fix for RGB not properly being handled on devices with no LEDs
 - Possible fix for captive portal not being effective on some devices
-- Apply existing wroom disp opt to c5
-- Fix incorrect mDNS usage
+- Apply existing wroom display memory optimizations to c5
+- Fix incorrect usage of mDNS
 
 ## Revival v1.7
 
