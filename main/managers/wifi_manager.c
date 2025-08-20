@@ -1124,16 +1124,16 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     }
     const char *uri = req->uri;
     if (
-        strcmp(uri, "/generate_204") == 0 ||
-        strcmp(uri, "/gen_204") == 0 ||
-        strcmp(uri, "/connecttest.txt") == 0 ||
-        strcmp(uri, "/ncsi.txt") == 0 ||
-        strcmp(uri, "/check_network_status.txt") == 0 ||
-        strcmp(uri, "/success.txt") == 0 ||
-        strcmp(uri, "/library/test/success.html") == 0 ||
-        strcmp(uri, "/success.html") == 0 ||
-        strcmp(uri, "/") == 0 ||
-        strcmp(uri, "/redirect") == 0
+        (strncmp(uri, "/generate_204", 13) == 0 && (uri[13] == '\0' || uri[13] == '?' )) ||
+        (strncmp(uri, "/gen_204", 8) == 0 && (uri[8] == '\0' || uri[8] == '?' )) ||
+        (strncmp(uri, "/connecttest.txt", 16) == 0 && (uri[16] == '\0' || uri[16] == '?' )) ||
+        (strncmp(uri, "/ncsi.txt", 9) == 0 && (uri[9] == '\0' || uri[9] == '?' )) ||
+        (strncmp(uri, "/check_network_status.txt", 25) == 0 && (uri[25] == '\0' || uri[25] == '?' )) ||
+        (strncmp(uri, "/success.txt", 12) == 0 && (uri[12] == '\0' || uri[12] == '?' )) ||
+        (strncmp(uri, "/library/test/success.html", 26) == 0 && (uri[26] == '\0' || uri[26] == '?' )) ||
+        (strncmp(uri, "/success.html", 13) == 0 && (uri[13] == '\0' || uri[13] == '?' )) ||
+        (uri[0] == '/' && (uri[1] == '\0' || uri[1] == '?')) ||
+        (strncmp(uri, "/redirect", 9) == 0 && (uri[9] == '\0' || uri[9] == '?' ))
     ) {
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         esp_err_t r = portal_handler(req);
@@ -1156,7 +1156,7 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     }
 
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_status(req, "511 Network Authentication Required");
+    httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/login");
     httpd_resp_send(req, NULL, 0);
     ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
@@ -1181,8 +1181,8 @@ static esp_err_t captive_portal_head_ok_handler(httpd_req_t *req) {
     if (login_done) {
         httpd_resp_set_status(req, "204 No Content");
     } else {
-        httpd_resp_set_status(req, "200 OK");
-        httpd_resp_set_type(req, "text/html");
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", "/login");
     }
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
