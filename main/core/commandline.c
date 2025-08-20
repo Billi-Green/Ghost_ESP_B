@@ -1217,7 +1217,9 @@ void handle_help(int argc, char **argv) {
         printf("    Description: Set the Wi-Fi country code.\n");
         printf("    Usage: setcountry <CC>\n");
         printf("    Arguments:\n");
-        printf("        <CC> : Two-letter ISO country code (e.g., US, GB, JP)\n\n");
+        printf("        <CC> : Country code (\"01\" world-safe) or two-letter ISO (e.g., US)\n");
+        printf("    Supported: 01, AT, AU, BE, BG, BR, CA, CH, CN, CY, CZ, DE, DK, EE, ES, FI, FR, GB, GR, HK, HR, HU,\n");
+        printf("               IE, IN, IS, IT, JP, KR, LI, LT, LU, LV, MT, MX, NL, NO, NZ, PL, PT, RO, SE, SI, SK, TW, US\n\n");
 #endif
         TERMINAL_VIEW_ADD_TEXT("scanap, scansta, stopscan, attack, list, beaconspam, stopspam, stopdeauth, select, scanall, congestion, connect, apcred, apenable, listenprobes");
 #if CONFIG_IDF_TARGET_ESP32C5
@@ -2155,18 +2157,10 @@ void handle_setcountry(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("Usage: setcountry <CC>\n");
         return;
     }
-    wifi_country_t country = {
-        .schan = 1,
-        .nchan = 14,
-        .policy = WIFI_COUNTRY_POLICY_AUTO,
-        .wifi_5g_channel_mask = 0
-    };
-    strncpy(country.cc, argv[1], sizeof(country.cc) - 1);
-    country.cc[sizeof(country.cc) - 1] = '\0';
-    esp_err_t err = esp_wifi_set_country(&country);
+    esp_err_t err = esp_wifi_set_country_code(argv[1], true);
     if (err == ESP_OK) {
-        printf("country set to %s\n", country.cc);
-        TERMINAL_VIEW_ADD_TEXT("country set to %s\n", country.cc);
+        printf("country set to %s\n", argv[1]);
+        TERMINAL_VIEW_ADD_TEXT("country set to %s\n", argv[1]);
     } else {
         printf("failed to set country: %s\n", esp_err_to_name(err));
         TERMINAL_VIEW_ADD_TEXT("failed to set country: %s\n", esp_err_to_name(err));
