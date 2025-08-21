@@ -57,6 +57,10 @@ menu_item_t menu_items[] = {
 static int num_items = sizeof(menu_items) / sizeof(menu_items[0]);
 lv_obj_t *current_item_obj = NULL;
 
+// Add navigation button objects at file scope
+static lv_obj_t *left_nav_btn = NULL;
+static lv_obj_t *right_nav_btn = NULL;
+
 static void init_menu_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     const uint32_t palettes[15][6] = { // if more menu items are added this will need to expand, or reuse colors
@@ -110,6 +114,29 @@ static void anim_set_bg_color(void *obj, int32_t v) {
     // v is a 24-bit RGB value
     lv_color_t color = lv_color_hex(v);
     lv_obj_set_style_bg_color((lv_obj_t *)obj, color, LV_PART_MAIN);
+}
+
+// Timer callback to restore button color
+static void restore_button_color_cb(lv_timer_t *timer) {
+    lv_obj_t *btn_obj = (lv_obj_t *)timer->user_data;
+    // Restore original color (assuming it was 0x333333)
+    lv_obj_set_style_bg_color(btn_obj, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_timer_del(timer);
+}
+
+// Helper function to animate navigation button press
+static void animate_nav_button_press(lv_obj_t *btn) {
+    // Get original background color
+    lv_color_t original_bg = lv_obj_get_style_bg_color(btn, LV_PART_MAIN);
+    
+    // Create a brighter highlight color (increase brightness by ~50%)
+    lv_color_t highlight_color = lv_color_mix(lv_color_hex(0xFFFFFF), original_bg, 50);
+    
+    // Highlight effect - change to brighter color
+    lv_obj_set_style_bg_color(btn, highlight_color, LV_PART_MAIN);
+    
+    // Return to original color after a short delay
+    lv_timer_create(restore_button_color_cb, 150, btn);
 }
 
 static void button_click_anim_cb(lv_anim_t *a) {
@@ -286,6 +313,32 @@ static void menu_item_event_handler(InputEvent *event) {
             int dx = data->point.x - touch_start_x;
             int dy = data->point.y - touch_start_y;
             touch_started = false;
+            
+            // Check if touch was on navigation buttons
+            if (left_nav_btn && right_nav_btn) {
+                lv_area_t left_area, right_area;
+                lv_obj_get_coords(left_nav_btn, &left_area);
+                lv_obj_get_coords(right_nav_btn, &right_area);
+                
+                // Check if touch point is within left button bounds
+                if (data->point.x >= left_area.x1 && data->point.x <= left_area.x2 &&
+                    data->point.y >= left_area.y1 && data->point.y <= left_area.y2) {
+                    ESP_LOGI(TAG, "Left navigation button touched");
+                    animate_nav_button_press(left_nav_btn);
+                    select_menu_item(selected_item_index - 1, true);
+                    return;
+                }
+                
+                // Check if touch point is within right button bounds
+                if (data->point.x >= right_area.x1 && data->point.x <= right_area.x2 &&
+                    data->point.y >= right_area.y1 && data->point.y <= right_area.y2) {
+                    ESP_LOGI(TAG, "Right navigation button touched");
+                    animate_nav_button_press(right_nav_btn);
+                    select_menu_item(selected_item_index + 1, false);
+                    return;
+                }
+            }
+            
             if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) { // Swipe detected
                 if (dx < 0) {
                     select_menu_item(selected_item_index + 1, true);
@@ -410,6 +463,84 @@ void main_menu_create(void) {
 
     update_menu_item(false);
 
+    // Only show navigation buttons on touch-capable devices or larger screens
+    // where they provide value over swipe gestures
+    // Check at runtime since LV_HOR_RES is a macro that expands to a function call
+    bool should_show_nav_buttons = false;
+    
+#ifdef CONFIG_LVGL_TOUCH
+    should_show_nav_buttons = true;
+#else
+    // Check screen dimensions at runtime
+    int screen_width = lv_disp_get_hor_res(lv_disp_get_default());
+    should_show_nav_buttons = (screen_width > 200);
+#endif
+
+    if (should_show_nav_buttons) {
+        // Create left navigation button
+        left_nav_btn = lv_btn_create(lv_scr_act());
+        
+        // Responsive button sizing based on screen dimensions - make them smaller
+        int btn_size = 40; // Default smaller size
+        int btn_margin = 15;
+        int screen_width = lv_disp_get_hor_res(lv_disp_get_default());
+        if (screen_width <= 128) {
+            btn_size = 32; // Even smaller for small screens
+            btn_margin = 10;
+        } else if (screen_width >= 320) {
+            btn_size = 48; // Slightly larger for large screens but still compact
+            btn_margin = 20;
+        }
+        
+        lv_obj_set_size(left_nav_btn, btn_size, btn_size);
+        lv_obj_set_style_bg_color(left_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(left_nav_btn, LV_OPA_80, LV_PART_MAIN);
+        lv_obj_set_style_radius(left_nav_btn, btn_size/2, LV_PART_MAIN);
+        lv_obj_set_style_border_width(left_nav_btn, 2, LV_PART_MAIN);
+        lv_obj_set_style_border_color(left_nav_btn, lv_color_hex(0x666666), LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(left_nav_btn, 3, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(left_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+        
+        // Position left button at bottom left
+        lv_obj_align(left_nav_btn, LV_ALIGN_BOTTOM_LEFT, btn_margin, -btn_margin);
+        
+        // Add left arrow icon/text
+        lv_obj_t *left_label = lv_label_create(left_nav_btn);
+        lv_label_set_text(left_label, "<");
+        lv_obj_set_style_text_font(left_label, &lv_font_montserrat_12, 0);
+        if (btn_size < 40) {
+            lv_obj_set_style_text_font(left_label, &lv_font_montserrat_10, 0);
+        }
+        lv_obj_set_style_text_color(left_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(left_label, LV_ALIGN_CENTER, 0, 0);
+
+        // Create right navigation button
+        right_nav_btn = lv_btn_create(lv_scr_act());
+        lv_obj_set_size(right_nav_btn, btn_size, btn_size);
+        lv_obj_set_style_bg_color(right_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(right_nav_btn, LV_OPA_80, LV_PART_MAIN);
+        lv_obj_set_style_radius(right_nav_btn, btn_size/2, LV_PART_MAIN);
+        lv_obj_set_style_border_width(right_nav_btn, 2, LV_PART_MAIN);
+        lv_obj_set_style_border_color(right_nav_btn, lv_color_hex(0x666666), LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(right_nav_btn, 3, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(right_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+        
+        // Position right button at bottom right
+        lv_obj_align(right_nav_btn, LV_ALIGN_BOTTOM_RIGHT, -btn_margin, -btn_margin);
+        
+        // Add right arrow icon/text
+        lv_obj_t *right_label = lv_label_create(right_nav_btn);
+        lv_label_set_text(right_label, ">");
+        lv_obj_set_style_text_font(right_label, &lv_font_montserrat_12, 0);
+        if (btn_size < 40) {
+            lv_obj_set_style_text_font(right_label, &lv_font_montserrat_10, 0);
+        }
+        lv_obj_set_style_text_color(right_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(right_label, LV_ALIGN_CENTER, 0, 0);
+        
+        ESP_LOGI(TAG, "Navigation buttons created - size: %d, margin: %d", btn_size, btn_margin);
+    }
+
     display_manager_add_status_bar(LV_HOR_RES > 128 ? "Main Menu" : "");
 }
 
@@ -423,6 +554,16 @@ void main_menu_destroy(void) {
         menu_container = NULL;
         main_menu_view.root = NULL;
         current_item_obj = NULL;
+    }
+    
+    // Clean up navigation buttons
+    if (left_nav_btn) {
+        lv_obj_del(left_nav_btn);
+        left_nav_btn = NULL;
+    }
+    if (right_nav_btn) {
+        lv_obj_del(right_nav_btn);
+        right_nav_btn = NULL;
     }
 }
 
