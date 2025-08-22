@@ -183,7 +183,7 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - 'CYD Dual USB'
 
-- 'S3 T-Watch'
+- LilyGo S3 T-Watch
 
 - Marauder V4
 
@@ -195,6 +195,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - LilyGo T-Deck
 
+- JCMK Devboard Pro
+  
 </details>
 
 ---
