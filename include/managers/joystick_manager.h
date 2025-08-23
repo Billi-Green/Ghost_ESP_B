@@ -5,6 +5,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef CONFIG_USE_IO_EXPANDER
+#include "io_manager.h"
+#endif
+
 // Define a struct for joystick management
 typedef struct {
   int pin;
@@ -28,6 +32,15 @@ typedef struct {
  */
 void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
                    bool pullup);
+
+#ifdef CONFIG_USE_IO_EXPANDER
+/**
+ * @brief Initializes the IO expander for joystick input.
+ *
+ * @return esp_err_t ESP_OK on success, error code on failure.
+ */
+esp_err_t joystick_io_expander_init(void);
+#endif
 
 /**
  * @brief Checks if the joystick is being held.

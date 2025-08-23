@@ -152,14 +152,34 @@ void app_main(void) {
 #ifdef CONFIG_WITH_SCREEN
 
 #ifdef CONFIG_USE_JOYSTICK
-
-    joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);
-
-    printf("Joystick GPIO Setup Successfully...\n");
+#ifdef CONFIG_USE_IO_EXPANDER
+    esp_err_t io_ret = joystick_io_expander_init();
+    if (io_ret == ESP_OK) {
+        printf("IO Expander initialized successfully for joystick input\n");
+        // Map to display manager expectations: [0]=Left, [1]=Select, [2]=Up, [3]=Right, [4]=Down
+        joystick_init(&joysticks[0], 3, HOLD_LIMIT, true);  // Left button (P03) -> joysticks[0]
+        joystick_init(&joysticks[1], 2, HOLD_LIMIT, true);  // Select button (P02) -> joysticks[1]
+        joystick_init(&joysticks[2], 0, HOLD_LIMIT, true);  // Up button (P00) -> joysticks[2]
+        joystick_init(&joysticks[3], 4, HOLD_LIMIT, true);  // Right button (P04) -> joysticks[3]
+        joystick_init(&joysticks[4], 1, HOLD_LIMIT, true);  // Down button (P01) -> joysticks[4]
+    } else {
+        printf("IO Expander initialization failed, falling back to GPIO mode\n");
+        // Fallback to GPIO mode - map to display manager expectations: [0]=Left, [1]=Select, [2]=Up, [3]=Right, [4]=Down
+        joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);  // Left
+        joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);  // Select
+        joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);  // Up
+        joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);  // Right
+        joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);  // Down
+    }
+#else
+    // Standard GPIO joystick mode - map to display manager expectations: [0]=Left, [1]=Select, [2]=Up, [3]=Right, [4]=Down
+    joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);  // Left
+    joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);  // Select
+    joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);  // Up
+    joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);  // Right
+    joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);  // Down
+#endif
+    printf("Joystick Setup Successfully...\n");
 #endif
     ESP_LOGI(TAG, "Initializing display manager");
     MEASURE_INIT_RAM("Display Manager", display_manager_init() );

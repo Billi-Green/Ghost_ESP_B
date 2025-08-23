@@ -8,6 +8,7 @@
 - Fix incorrect usage of mDNS
 - Update setcountry command on the C5 to use the official esp_wifi_set_country_code function
 
+
 ## Revival v1.7
 
 ### Major Updates

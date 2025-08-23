@@ -3,6 +3,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#ifdef CONFIG_USE_IO_EXPANDER
+#include "esp_log.h"
+static const char *TAG = "JOYSTICK_IO";
+static bool io_expander_initialized = false;
+#endif
+
 void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
                    bool pullup) {
   joystick->pin = pin;
@@ -24,9 +30,66 @@ void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
   gpio_config(&io_conf);
 }
 
+#ifdef CONFIG_USE_IO_EXPANDER
+esp_err_t joystick_io_expander_init(void)
+{
+    if (io_expander_initialized) {
+        ESP_LOGW(TAG, "IO expander already initialized");
+        return ESP_OK;
+    }
+
+    // Configure IO expander with the settings from Kconfig
+    io_manager_config_t config = {
+        .sda_pin = CONFIG_IO_EXPANDER_SDA_PIN,
+        .scl_pin = CONFIG_IO_EXPANDER_SCL_PIN,
+        .i2c_addr = CONFIG_IO_EXPANDER_I2C_ADDR,
+        .i2c_port = 0
+    };
+
+    esp_err_t ret = io_manager_init(&config);
+    if (ret == ESP_OK) {
+        io_expander_initialized = true;
+        ESP_LOGI(TAG, "IO expander initialized successfully");
+        
+        // Debug: Check initial button states
+        io_manager_debug_states();
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize IO expander: %s", esp_err_to_name(ret));
+    }
+
+    return ret;
+}
+#endif
+
 bool joystick_is_held(joystick_t *joystick) { return joystick->isheld; }
 
 bool joystick_get_button_state(joystick_t *joystick) {
+#ifdef CONFIG_USE_IO_EXPANDER
+  if (io_expander_initialized) {
+    // For IO expander, we need to map the joystick index to the button
+    // Display manager expects: 0=Left, 1=Select, 2=Up, 3=Right, 4=Down
+    // Our hardware mapping: P00=Up, P01=Down, P02=Select, P03=Left, P04=Right
+    btn_event_t states;
+    esp_err_t ret = io_manager_get_button_states(&states);
+    if (ret == ESP_OK) {
+      // Debug: Log which button is being checked
+      ESP_LOGI(TAG, "Checking button %d - up: %d, down: %d, select: %d, left: %d, right: %d", 
+               joystick->pin, states.up, states.down, states.select, states.left, states.right);
+      
+      switch (joystick->pin) {
+        case 0: return states.up;     // P00: Up
+        case 1: return states.down;   // P01: Down
+        case 2: return states.select; // P02: Select
+        case 3: return states.left;   // P03: Left
+        case 4: return states.right;  // P04: Right
+        default: return false;
+      }
+    }
+    return false;
+  }
+#endif
+
+  // Fallback to GPIO mode
   int button_state = gpio_get_level(joystick->pin);
 
   if ((joystick->pullup && button_state == 0) ||

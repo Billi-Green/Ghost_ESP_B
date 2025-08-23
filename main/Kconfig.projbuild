@@ -125,6 +125,35 @@ menu "Ghost ESP Options"
             default n
             help
                 Enable joystick input.
+                
+        config USE_IO_EXPANDER
+            bool "Enable IO Expander (TCA9535)"
+            default n
+            depends on USE_JOYSTICK
+            help
+                Enable TCA9535 IO expander for joystick input via I2C.
+                
+        config IO_EXPANDER_SDA_PIN
+            int "IO Expander SDA Pin"
+            default 6
+            depends on USE_IO_EXPANDER
+            help
+                Set the SDA pin for the TCA9535 IO expander.
+                
+        config IO_EXPANDER_SCL_PIN
+            int "IO Expander SCL Pin"
+            default 7
+            depends on USE_IO_EXPANDER
+            help
+                Set the SCL pin for the TCA9535 IO expander.
+                
+        config IO_EXPANDER_I2C_ADDR
+            hex "IO Expander I2C Address"
+            default 0x74
+            depends on USE_IO_EXPANDER
+            help
+                Set the I2C address for the TCA9535 IO expander.
+                
         config L_BTN
             int "Left button data pin"
             default 0
