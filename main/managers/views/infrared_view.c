@@ -1173,17 +1173,15 @@ void infrared_view_input_cb(InputEvent *event) {
                 }
             }
         } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER) {
-            // Only one button: treat left/right/tab as select
-            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_PRESS) ||
+            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 0) ||
                 (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_PRESS)) {
                 learning_cancel_cb(NULL);
                 return;
             } else if (
-                (event->type == INPUT_TYPE_JOYSTICK && (event->data.joystick_index == JOYSTICK_LEFT || event->data.joystick_index == JOYSTICK_RIGHT)) ||
+                (event->type == INPUT_TYPE_JOYSTICK && (event->data.joystick_index == 3)) ||
                 (event->type == INPUT_TYPE_ENCODER && (event->data.encoder.direction == ENCODER_LEFT || event->data.encoder.direction == ENCODER_RIGHT)) ||
-                (event->type == INPUT_TYPE_KEYBOARD && event->data.key_value == 9)) // Tab
+                (event->type == INPUT_TYPE_KEYBOARD && event->data.key_value == 9))
             {
-                // Toggle selection state (only one button, so stays selected)
                 preview_selected_option = 1;
                 update_learning_popup_selection();
             } else if (event->type == INPUT_TYPE_KEYBOARD) {
@@ -1227,15 +1225,15 @@ void infrared_view_input_cb(InputEvent *event) {
             }
         } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER) {
             // Handle joystick/encoder navigation
-            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_LEFT) || 
+            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 0) || 
                 (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_LEFT)) {
                 easy_learn_selected_option = 0; // Cancel
                 update_easy_learn_popup_selection();
-            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_RIGHT) ||
+            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 3) ||
                       (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_RIGHT)) {
                 easy_learn_selected_option = 1; // Skip
                 update_easy_learn_popup_selection();
-            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_PRESS) ||
+            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 1) ||
                       (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_PRESS)) {
                 if (easy_learn_selected_option == 0) {
                     easy_learn_cancel_cb(NULL);
@@ -1291,15 +1289,15 @@ void infrared_view_input_cb(InputEvent *event) {
             }
         } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER) {
             // Handle joystick/encoder navigation
-            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_LEFT) || 
+            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 0) || 
                 (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_LEFT)) {
                 preview_selected_option = 0; // Save
                 update_signal_preview_selection();
-            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_RIGHT) ||
+            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 3) ||
                       (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_RIGHT)) {
                 preview_selected_option = 1; // Cancel
                 update_signal_preview_selection();
-            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == JOYSTICK_PRESS) ||
+            } else if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 1) ||
                       (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_PRESS)) {
                 if (preview_selected_option == 0) {
                     signal_preview_save_cb(NULL);
