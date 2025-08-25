@@ -1,5 +1,9 @@
 # Ghost ESP Changelog
 
+## Revival v1.8
+
+- WebUI Redesign
+
 ## Revival v1.7.1
 
 - Fix for RGB not properly being handled on devices with no LEDs
