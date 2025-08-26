@@ -3,6 +3,7 @@
 ## Revival v1.8
 
 - WebUI Redesign
+- Flush PCAP and CSV data to SD Card on a timer
 
 ## Revival v1.7.1
 
