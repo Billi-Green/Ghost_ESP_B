@@ -90,7 +90,7 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - **Universal Library IR Transmit** – Send pre-programmed universal remote signals.
 
-- **Custom Signals IR Transmit** – Transmit custom IR signals from files.
+- **IR Transmit** – Transmit IR signals from F0 files.
 
 - **IR Receive and Decode** – Decode IR signals received by the device *(supported on TEmbed C1101)*.
 
