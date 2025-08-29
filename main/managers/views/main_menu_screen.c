@@ -463,18 +463,20 @@ void main_menu_create(void) {
 
     update_menu_item(false);
 
-    // Only show navigation buttons on touch-capable devices or larger screens
-    // where they provide value over swipe gestures
-    // Check at runtime since LV_HOR_RES is a macro that expands to a function call
-    bool should_show_nav_buttons = false;
+    // Check if navigation buttons should be shown based on user setting
+    // Also respect the original logic for device capabilities
+    bool should_show_nav_buttons = settings_get_nav_buttons_enabled(&G_Settings);
     
+    // Only show if both user wants them AND device supports them
+    if (should_show_nav_buttons) {
 #ifdef CONFIG_LVGL_TOUCH
-    should_show_nav_buttons = true;
+        should_show_nav_buttons = true;
 #else
-    // Check screen dimensions at runtime
-    int screen_width = lv_disp_get_hor_res(lv_disp_get_default());
-    should_show_nav_buttons = (screen_width > 200);
+        // Check screen dimensions at runtime
+        int screen_width = lv_disp_get_hor_res(lv_disp_get_default());
+        should_show_nav_buttons = (screen_width > 200);
 #endif
+    }
 
     if (should_show_nav_buttons) {
         // Create left navigation button
