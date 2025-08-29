@@ -496,10 +496,8 @@ void main_menu_create(void) {
         
         lv_obj_set_size(left_nav_btn, btn_size, btn_size);
         lv_obj_set_style_bg_color(left_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(left_nav_btn, LV_OPA_80, LV_PART_MAIN);
-        lv_obj_set_style_radius(left_nav_btn, btn_size/2, LV_PART_MAIN);
-        lv_obj_set_style_border_width(left_nav_btn, 2, LV_PART_MAIN);
-        lv_obj_set_style_border_color(left_nav_btn, lv_color_hex(0x666666), LV_PART_MAIN);
+        lv_obj_set_style_radius(left_nav_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_border_width(left_nav_btn, 0, LV_PART_MAIN);
         lv_obj_set_style_shadow_width(left_nav_btn, 3, LV_PART_MAIN);
         lv_obj_set_style_shadow_color(left_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
         
@@ -520,10 +518,8 @@ void main_menu_create(void) {
         right_nav_btn = lv_btn_create(lv_scr_act());
         lv_obj_set_size(right_nav_btn, btn_size, btn_size);
         lv_obj_set_style_bg_color(right_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(right_nav_btn, LV_OPA_80, LV_PART_MAIN);
-        lv_obj_set_style_radius(right_nav_btn, btn_size/2, LV_PART_MAIN);
-        lv_obj_set_style_border_width(right_nav_btn, 2, LV_PART_MAIN);
-        lv_obj_set_style_border_color(right_nav_btn, lv_color_hex(0x666666), LV_PART_MAIN);
+        lv_obj_set_style_radius(right_nav_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_border_width(right_nav_btn, 0, LV_PART_MAIN);
         lv_obj_set_style_shadow_width(right_nav_btn, 3, LV_PART_MAIN);
         lv_obj_set_style_shadow_color(right_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
         
