@@ -90,7 +90,7 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - **Universal Library IR Transmit** – Send pre-programmed universal remote signals.
 
-- **Custom Signals IR Transmit** – Transmit custom IR signals from files.
+- **IR Transmit** – Transmit IR signals from F0 files.
 
 - **IR Receive and Decode** – Decode IR signals received by the device *(supported on TEmbed C1101)*.
 
@@ -183,7 +183,7 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - 'CYD Dual USB'
 
-- 'S3 T-Watch'
+- LilyGo S3 T-Watch
 
 - Marauder V4
 
@@ -195,6 +195,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - LilyGo T-Deck
 
+- JCMK Devboard Pro
+  
 </details>
 
 ---
