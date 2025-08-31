@@ -33,12 +33,43 @@ static SemaphoreHandle_t g_connect_sem = NULL;
 static SemaphoreHandle_t g_response_sem = NULL;
 
 // Chameleon Ultra command constants (from official protocol documentation)
+// Basic device commands (1000-1099)
+#define CMD_GET_APP_VERSION     1000  // 0x03E8 - Get firmware version
+#define CMD_CHANGE_DEVICE_MODE  1001  // 0x03E9 - Change device mode
+#define CMD_GET_DEVICE_MODE     1002  // 0x03EA - Get current device mode
+#define CMD_SET_ACTIVE_SLOT     1003  // 0x03EB - Set active slot
+#define CMD_GET_DEVICE_CHIP_ID  1011  // 0x03F3 - Get device chip ID
+#define CMD_GET_DEVICE_ADDRESS  1012  // 0x03F4 - Get device BLE address
+#define CMD_GET_GIT_VERSION     1017  // 0x03F9 - Get git version info
+#define CMD_GET_ACTIVE_SLOT     1018  // 0x03FA - Get active slot
+#define CMD_GET_SLOT_INFO       1019  // 0x03FB - Get slot information
+#define CMD_GET_BATTERY_INFO    1025  // 0x0401 - Get battery information
+#define CMD_GET_DEVICE_MODEL    1033  // 0x0409 - Get device model
+#define CMD_GET_DEVICE_SETTINGS 1034  // 0x040A - Get device settings
+#define CMD_GET_DEVICE_CAPABILITIES 1035 // 0x040B - Get device capabilities
+
+// HF commands (2000-2999)
 #define CMD_HF14A_SCAN          2000  // 0x07D0 - Official HF14A_SCAN command
+#define CMD_MF1_DETECT_SUPPORT  2001  // 0x07D1 - Detect MIFARE Classic support
+#define CMD_MF1_DETECT_PRNG     2002  // 0x07D2 - Detect PRNG type
+#define CMD_MF1_NESTED_ACQUIRE  2006  // 0x07D6 - Nested attack
+#define CMD_MF1_DARKSIDE_ACQUIRE 2004 // 0x07D4 - Darkside attack
+#define CMD_HF14A_RAW           2010  // 0x07DA - Send raw HF command
+
+// LF commands (3000-3999)
 #define CMD_EM410X_SCAN         3000  // 0x0BB8 - Official EM410X_SCAN command
-#define CMD_GET_BATTERY_INFO    1025
-#define CMD_CHANGE_DEVICE_MODE  1001
+#define CMD_HIDPROX_SCAN        3002  // 0x0BBA - HID Prox scan
+
+// Mode constants
 #define HW_MODE_READER          0x01
 #define HW_MODE_EMULATOR        0x00
+
+// Status codes
+#define STATUS_SUCCESS          0x68
+#define STATUS_HF_TAG_OK        0x00
+#define STATUS_HF_TAG_NO        0x01
+#define STATUS_LF_TAG_OK        0x00
+#define STATUS_LF_TAG_NO        0x01
 
 // Service and characteristic UUIDs for Chameleon Ultra
 // Service: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
@@ -656,4 +687,422 @@ bool chameleon_manager_set_emulator_mode(void) {
     }
     
     return result;
+}
+
+// Device information functions
+bool chameleon_manager_get_firmware_version(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Getting firmware version...\n");
+    TERMINAL_VIEW_ADD_TEXT("Getting firmware version...\n");
+    
+    g_response_received = false;
+    bool result = send_command(CMD_GET_APP_VERSION, NULL, 0);
+    if (!result) {
+        printf("Failed to send firmware version command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send firmware version command\n");
+        return false;
+    }
+    
+    // Wait for response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_GET_APP_VERSION) {
+            if (g_last_response.status == STATUS_SUCCESS) {
+                if (g_last_response.data_size >= 2) {
+                    uint8_t major = g_last_response.data[0];
+                    uint8_t minor = g_last_response.data[1];
+                    if (g_last_response.data_size >= 3) {
+                        uint8_t patch = g_last_response.data[2];
+                        printf("Firmware Version: %d.%d.%d\n", major, minor, patch);
+                        TERMINAL_VIEW_ADD_TEXT("Firmware Version: %d.%d.%d\n", major, minor, patch);
+                    } else {
+                        printf("Firmware Version: %d.%d\n", major, minor);
+                        TERMINAL_VIEW_ADD_TEXT("Firmware Version: %d.%d\n", major, minor);
+                    }
+                    return true;
+                }
+            } else {
+                printf("Failed to get firmware version, status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to get firmware version, status: 0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("Firmware version command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Firmware version command timed out\n");
+    }
+    
+    return false;
+}
+
+bool chameleon_manager_get_device_mode(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Getting device mode...\n");
+    TERMINAL_VIEW_ADD_TEXT("Getting device mode...\n");
+    
+    // Clear any previous response and reset flag
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    bool result = send_command(CMD_GET_DEVICE_MODE, NULL, 0);
+    if (!result) {
+        printf("Failed to send device mode command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send device mode command\n");
+        return false;
+    }
+    
+    // Wait for response with longer timeout
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(8000)) == pdTRUE) {
+        // Give a small delay for the response to be processed
+        vTaskDelay(pdMS_TO_TICKS(100));
+        
+        ESP_LOGI(TAG, "After semaphore - Response received=%d", g_response_received);
+        if (g_response_received) {
+            ESP_LOGI(TAG, "Command received=0x%04X, expected=0x%04X", g_last_response.command, CMD_GET_DEVICE_MODE);
+        }
+        
+        if (g_response_received && g_last_response.command == CMD_GET_DEVICE_MODE) {
+            ESP_LOGI(TAG, "Status=0x%02X, Data size=%d", g_last_response.status, g_last_response.data_size);
+            
+            if (g_last_response.data_size >= 1) {
+                uint8_t mode = g_last_response.data[0];
+                ESP_LOGI(TAG, "Mode byte=0x%02X", mode);
+                
+                const char* mode_str;
+                if (mode == HW_MODE_READER) {
+                    mode_str = "Reader";
+                } else if (mode == HW_MODE_EMULATOR) {
+                    mode_str = "Emulator";
+                } else {
+                    mode_str = "Unknown";
+                }
+                
+                printf("Device Mode: %s (0x%02X)\n", mode_str, mode);
+                TERMINAL_VIEW_ADD_TEXT("Device Mode: %s (0x%02X)\n", mode_str, mode);
+                return true;
+            } else {
+                printf("Failed to get device mode, status: 0x%02X, insufficient data\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to get device mode, status: 0x%02X, insufficient data\n", g_last_response.status);
+            }
+        } else {
+            ESP_LOGI(TAG, "Response received=%d, Command match=%d", g_response_received, 
+                   g_response_received ? (g_last_response.command == CMD_GET_DEVICE_MODE) : 0);
+        }
+    } else {
+        printf("Device mode command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Device mode command timed out\n");
+    }
+    
+    return false;
+}
+
+bool chameleon_manager_get_active_slot(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Getting active slot...\n");
+    TERMINAL_VIEW_ADD_TEXT("Getting active slot...\n");
+    
+    g_response_received = false;
+    bool result = send_command(CMD_GET_ACTIVE_SLOT, NULL, 0);
+    if (!result) {
+        printf("Failed to send active slot command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send active slot command\n");
+        return false;
+    }
+    
+    // Wait for response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_GET_ACTIVE_SLOT) {
+            if (g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 1) {
+                uint8_t slot = g_last_response.data[0];
+                printf("Active Slot: %d\n", slot);
+                TERMINAL_VIEW_ADD_TEXT("Active Slot: %d\n", slot);
+                return true;
+            } else {
+                printf("Failed to get active slot, status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to get active slot, status: 0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("Active slot command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Active slot command timed out\n");
+    }
+    
+    return false;
+}
+
+bool chameleon_manager_set_active_slot(uint8_t slot) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    if (slot > 7) {
+        printf("Invalid slot number: %d (must be 0-7)\n", slot);
+        TERMINAL_VIEW_ADD_TEXT("Invalid slot number: %d (must be 0-7)\n", slot);
+        return false;
+    }
+    
+    printf("Setting active slot to %d...\n", slot);
+    TERMINAL_VIEW_ADD_TEXT("Setting active slot to %d...\n", slot);
+    
+    g_response_received = false;
+    bool result = send_command(CMD_SET_ACTIVE_SLOT, &slot, 1);
+    if (!result) {
+        printf("Failed to send set active slot command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send set active slot command\n");
+        return false;
+    }
+    
+    // Wait for response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_SET_ACTIVE_SLOT) {
+            if (g_last_response.status == STATUS_SUCCESS) {
+                printf("Active slot set to %d successfully\n", slot);
+                TERMINAL_VIEW_ADD_TEXT("Active slot set to %d successfully\n", slot);
+                return true;
+            } else {
+                printf("Failed to set active slot, status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to set active slot, status: 0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("Set active slot command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Set active slot command timed out\n");
+    }
+    
+    return false;
+}
+
+bool chameleon_manager_get_slot_info(uint8_t slot) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    if (slot > 7) {
+        printf("Invalid slot number: %d (must be 0-7)\n", slot);
+        TERMINAL_VIEW_ADD_TEXT("Invalid slot number: %d (must be 0-7)\n", slot);
+        return false;
+    }
+    
+    printf("Getting slot %d information...\n", slot);
+    TERMINAL_VIEW_ADD_TEXT("Getting slot %d information...\n", slot);
+    
+    g_response_received = false;
+    bool result = send_command(CMD_GET_SLOT_INFO, &slot, 1);
+    if (!result) {
+        printf("Failed to send slot info command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send slot info command\n");
+        return false;
+    }
+    
+    // Wait for response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_GET_SLOT_INFO) {
+            if (g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 3) {
+                uint8_t hf_type = g_last_response.data[0];
+                uint8_t lf_type = g_last_response.data[1];
+                uint8_t enabled = g_last_response.data[2];
+                
+                printf("Slot %d Info:\n", slot);
+                printf("  HF Type: 0x%02X\n", hf_type);
+                printf("  LF Type: 0x%02X\n", lf_type);
+                printf("  Enabled: %s\n", enabled ? "Yes" : "No");
+                
+                TERMINAL_VIEW_ADD_TEXT("Slot %d Info:\n", slot);
+                TERMINAL_VIEW_ADD_TEXT("  HF Type: 0x%02X\n", hf_type);
+                TERMINAL_VIEW_ADD_TEXT("  LF Type: 0x%02X\n", lf_type);
+                TERMINAL_VIEW_ADD_TEXT("  Enabled: %s\n", enabled ? "Yes" : "No");
+                
+                return true;
+            } else {
+                printf("Failed to get slot info, status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to get slot info, status: 0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("Slot info command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Slot info command timed out\n");
+    }
+    
+    return false;
+}
+
+bool chameleon_manager_mf1_detect_support(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Detecting MIFARE Classic support...\n");
+    TERMINAL_VIEW_ADD_TEXT("Detecting MIFARE Classic support...\n");
+    
+    g_response_received = false;
+    bool result = send_command(CMD_MF1_DETECT_SUPPORT, NULL, 0);
+    if (!result) {
+        printf("Failed to send MF1 detect support command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send MF1 detect support command\n");
+        return false;
+    }
+    
+    // Wait for response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_MF1_DETECT_SUPPORT) {
+            if (g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 1) {
+                uint8_t support = g_last_response.data[0];
+                const char* support_str = support ? "Supported" : "Not Supported";
+                printf("MIFARE Classic Support: %s\n", support_str);
+                TERMINAL_VIEW_ADD_TEXT("MIFARE Classic Support: %s\n", support_str);
+                return true;
+            } else {
+                printf("Failed to detect MF1 support, status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to detect MF1 support, status: 0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("MF1 detect support command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("MF1 detect support command timed out\n");
+    }
+    
+    return false;
+}
+
+bool chameleon_manager_mf1_detect_prng(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Detecting MIFARE Classic PRNG type...\n");
+    TERMINAL_VIEW_ADD_TEXT("Detecting MIFARE Classic PRNG type...\n");
+    
+    g_response_received = false;
+    bool result = send_command(CMD_MF1_DETECT_PRNG, NULL, 0);
+    if (!result) {
+        printf("Failed to send MF1 detect PRNG command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send MF1 detect PRNG command\n");
+        return false;
+    }
+    
+    // Wait for response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_MF1_DETECT_PRNG) {
+            if (g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 1) {
+                uint8_t prng_type = g_last_response.data[0];
+                const char* prng_str;
+                switch (prng_type) {
+                    case 0: prng_str = "Static"; break;
+                    case 1: prng_str = "Weak"; break;
+                    case 2: prng_str = "Hard"; break;
+                    default: prng_str = "Unknown"; break;
+                }
+                printf("MIFARE Classic PRNG Type: %s (0x%02X)\n", prng_str, prng_type);
+                TERMINAL_VIEW_ADD_TEXT("MIFARE Classic PRNG Type: %s (0x%02X)\n", prng_str, prng_type);
+                return true;
+            } else {
+                printf("Failed to detect PRNG type, status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to detect PRNG type, status: 0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("MF1 detect PRNG command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("MF1 detect PRNG command timed out\n");
+    }
+    
+    return false;
+}
+
+bool chameleon_manager_scan_hidprox(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    // First, ensure we're in reader mode for scanning
+    printf("Setting reader mode for HID Prox scan...\n");
+    TERMINAL_VIEW_ADD_TEXT("Setting reader mode for HID Prox scan...\n");
+    
+    g_response_received = false;
+    uint8_t mode_data = HW_MODE_READER;
+    if (!send_command(CMD_CHANGE_DEVICE_MODE, &mode_data, 1)) {
+        printf("Failed to set reader mode\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode\n");
+        return false;
+    }
+    
+    // Wait for mode change response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE || !g_response_received) {
+        printf("Mode change timeout\n");
+        TERMINAL_VIEW_ADD_TEXT("Mode change timeout\n");
+        return false;
+    }
+    
+    if (g_last_response.status != STATUS_SUCCESS) {
+        printf("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+        TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+        return false;
+    }
+    
+    printf("Reader mode set, scanning for HID Prox tags...\n");
+    TERMINAL_VIEW_ADD_TEXT("Reader mode set, scanning for HID Prox tags...\n");
+    
+    g_response_received = false;
+    bool result = send_command(CMD_HIDPROX_SCAN, NULL, 0);
+    if (!result) {
+        printf("Failed to send HID Prox scan command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send HID Prox scan command\n");
+        return false;
+    }
+    
+    printf("HID Prox scan command sent, waiting for response...\n");
+    TERMINAL_VIEW_ADD_TEXT("HID Prox scan command sent, waiting for response...\n");
+    
+    // Wait for response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_HIDPROX_SCAN) {
+            if (g_last_response.status == STATUS_LF_TAG_OK && g_last_response.data_size >= 5) {
+                // Parse HID Prox data: typically 5 bytes
+                printf("HID Prox Tag found!\n");
+                printf("Tag Data: ");
+                TERMINAL_VIEW_ADD_TEXT("HID Prox Tag found!\nTag Data: ");
+                
+                for (uint8_t i = 0; i < g_last_response.data_size && i < 10; i++) {
+                    printf("%02X ", g_last_response.data[i]);
+                }
+                printf("\n");
+                TERMINAL_VIEW_ADD_TEXT("\n");
+                
+                return true;
+            } else if (g_last_response.status == STATUS_LF_TAG_NO) {
+                printf("No HID Prox tag found\n");
+                TERMINAL_VIEW_ADD_TEXT("No HID Prox tag found\n");
+            } else {
+                printf("HID Prox scan failed with status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("HID Prox scan failed with status: 0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("HID Prox scan command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("HID Prox scan command timed out\n");
+    }
+    
+    return false;
 }

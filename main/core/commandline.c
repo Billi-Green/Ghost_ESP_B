@@ -2575,22 +2575,48 @@ void handle_chameleon_cmd(int argc, char **argv) {
     if (argc < 2) {
         printf("Usage: chameleon <command>\n");
         printf("Commands:\n");
+        printf("Connection:\n");
         printf("  connect [timeout] - Connect to Chameleon Ultra (default timeout: 10s)\n");
         printf("  disconnect        - Disconnect from Chameleon Ultra\n");
         printf("  status           - Check connection status\n");
+        printf("Device Info:\n");
+        printf("  firmware         - Get firmware version\n");
+        printf("  devicemode       - Get current device mode\n");
+        printf("  activeslot       - Get active slot number\n");
+        printf("  setslot <0-7>    - Set active slot number\n");
+        printf("  slotinfo <0-7>   - Get slot information\n");
+        printf("  battery          - Get battery information\n");
+        printf("Scanning:\n");
         printf("  scanhf           - Scan for HF tags\n");
         printf("  scanlf           - Scan for LF tags\n");
-        printf("  battery          - Get battery information\n");
+        printf("  scanhidprox      - Scan for HID Prox tags\n");
+        printf("MIFARE Classic:\n");
+        printf("  mfdetect         - Detect MIFARE Classic support\n");
+        printf("  mfprng           - Detect MIFARE Classic PRNG type\n");
+        printf("Mode Control:\n");
         printf("  reader           - Set to reader mode\n");
         printf("  emulator         - Set to emulator mode\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
+        TERMINAL_VIEW_ADD_TEXT("Connection:\n");
         TERMINAL_VIEW_ADD_TEXT("  connect [timeout] - Connect to Chameleon Ultra (default timeout: 10s)\n");
         TERMINAL_VIEW_ADD_TEXT("  disconnect        - Disconnect from Chameleon Ultra\n");
         TERMINAL_VIEW_ADD_TEXT("  status           - Check connection status\n");
+        TERMINAL_VIEW_ADD_TEXT("Device Info:\n");
+        TERMINAL_VIEW_ADD_TEXT("  firmware         - Get firmware version\n");
+        TERMINAL_VIEW_ADD_TEXT("  devicemode       - Get current device mode\n");
+        TERMINAL_VIEW_ADD_TEXT("  activeslot       - Get active slot number\n");
+        TERMINAL_VIEW_ADD_TEXT("  setslot <0-7>    - Set active slot number\n");
+        TERMINAL_VIEW_ADD_TEXT("  slotinfo <0-7>   - Get slot information\n");
+        TERMINAL_VIEW_ADD_TEXT("  battery          - Get battery information\n");
+        TERMINAL_VIEW_ADD_TEXT("Scanning:\n");
         TERMINAL_VIEW_ADD_TEXT("  scanhf           - Scan for HF tags\n");
         TERMINAL_VIEW_ADD_TEXT("  scanlf           - Scan for LF tags\n");
-        TERMINAL_VIEW_ADD_TEXT("  battery          - Get battery information\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanhidprox      - Scan for HID Prox tags\n");
+        TERMINAL_VIEW_ADD_TEXT("MIFARE Classic:\n");
+        TERMINAL_VIEW_ADD_TEXT("  mfdetect         - Detect MIFARE Classic support\n");
+        TERMINAL_VIEW_ADD_TEXT("  mfprng           - Detect MIFARE Classic PRNG type\n");
+        TERMINAL_VIEW_ADD_TEXT("Mode Control:\n");
         TERMINAL_VIEW_ADD_TEXT("  reader           - Set to reader mode\n");
         TERMINAL_VIEW_ADD_TEXT("  emulator         - Set to emulator mode\n");
         return;
@@ -2638,6 +2664,42 @@ void handle_chameleon_cmd(int argc, char **argv) {
     }
     else if (strcmp(subcommand, "emulator") == 0) {
         chameleon_manager_set_emulator_mode();
+    }
+    else if (strcmp(subcommand, "firmware") == 0) {
+        chameleon_manager_get_firmware_version();
+    }
+    else if (strcmp(subcommand, "devicemode") == 0) {
+        chameleon_manager_get_device_mode();
+    }
+    else if (strcmp(subcommand, "activeslot") == 0) {
+        chameleon_manager_get_active_slot();
+    }
+    else if (strcmp(subcommand, "setslot") == 0) {
+        if (argc < 3) {
+            printf("Usage: chameleon setslot <0-7>\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon setslot <0-7>\n");
+            return;
+        }
+        uint8_t slot = (uint8_t)atoi(argv[2]);
+        chameleon_manager_set_active_slot(slot);
+    }
+    else if (strcmp(subcommand, "slotinfo") == 0) {
+        if (argc < 3) {
+            printf("Usage: chameleon slotinfo <0-7>\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon slotinfo <0-7>\n");
+            return;
+        }
+        uint8_t slot = (uint8_t)atoi(argv[2]);
+        chameleon_manager_get_slot_info(slot);
+    }
+    else if (strcmp(subcommand, "scanhidprox") == 0) {
+        chameleon_manager_scan_hidprox();
+    }
+    else if (strcmp(subcommand, "mfdetect") == 0) {
+        chameleon_manager_mf1_detect_support();
+    }
+    else if (strcmp(subcommand, "mfprng") == 0) {
+        chameleon_manager_mf1_detect_prng();
     }
     else {
         printf("Unknown chameleon command: %s\n", subcommand);

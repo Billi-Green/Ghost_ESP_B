@@ -66,6 +66,74 @@ bool chameleon_manager_set_reader_mode(void);
  */
 bool chameleon_manager_set_emulator_mode(void);
 
+/**
+ * @brief Get firmware version information
+ * @return true if version was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_get_firmware_version(void);
+
+/**
+ * @brief Get git version information
+ * @return true if version was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_get_git_version(void);
+
+/**
+ * @brief Get device model information
+ * @return true if model was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_get_device_model(void);
+
+/**
+ * @brief Get device chip ID
+ * @return true if chip ID was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_get_chip_id(void);
+
+/**
+ * @brief Get current device mode
+ * @return true if mode was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_get_device_mode(void);
+
+/**
+ * @brief Get active slot number
+ * @return true if slot was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_get_active_slot(void);
+
+/**
+ * @brief Set active slot number
+ * @param slot Slot number (0-7)
+ * @return true if slot was set successfully, false otherwise
+ */
+bool chameleon_manager_set_active_slot(uint8_t slot);
+
+/**
+ * @brief Get slot information
+ * @param slot Slot number (0-7)
+ * @return true if slot info was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_get_slot_info(uint8_t slot);
+
+/**
+ * @brief Detect MIFARE Classic support on detected tag
+ * @return true if detection was successful, false otherwise
+ */
+bool chameleon_manager_mf1_detect_support(void);
+
+/**
+ * @brief Detect MIFARE Classic PRNG type
+ * @return true if detection was successful, false otherwise
+ */
+bool chameleon_manager_mf1_detect_prng(void);
+
+/**
+ * @brief Scan for HID Prox tags
+ * @return true if scan was successful, false otherwise
+ */
+bool chameleon_manager_scan_hidprox(void);
+
 #ifdef __cplusplus
 }
 #endif
