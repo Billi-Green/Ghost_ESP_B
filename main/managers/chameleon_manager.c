@@ -548,6 +548,40 @@ bool chameleon_manager_scan_lf(void) {
     printf("Scanning for LF tags...\n");
     TERMINAL_VIEW_ADD_TEXT("Scanning for LF tags...\n");
     
+    // First, set device to reader mode for LF
+    printf("Setting device to reader mode for LF scan...\n");
+    TERMINAL_VIEW_ADD_TEXT("Setting device to reader mode for LF scan...\n");
+    
+    uint8_t mode = HW_MODE_READER;
+    bool mode_result = send_command(CMD_CHANGE_DEVICE_MODE, &mode, 1);
+    if (!mode_result) {
+        printf("Failed to set reader mode\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode\n");
+        return false;
+    }
+    
+    // Wait for mode change response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_CHANGE_DEVICE_MODE) {
+            if (g_last_response.status != STATUS_SUCCESS) {
+                printf("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+                return false;
+            }
+        } else {
+            printf("Mode change command failed\n");
+            TERMINAL_VIEW_ADD_TEXT("Mode change command failed\n");
+            return false;
+        }
+    } else {
+        printf("Mode change command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Mode change command timed out\n");
+        return false;
+    }
+    
+    // Clear response state for the scan command
+    g_response_received = false;
+    
     bool result = send_command(CMD_EM410X_SCAN, NULL, 0);
     if (result) {
         printf("LF scan command sent, waiting for response...\n");
@@ -556,6 +590,8 @@ bool chameleon_manager_scan_lf(void) {
         // Wait for response
         if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
             if (g_response_received && g_last_response.command == CMD_EM410X_SCAN) {
+                ESP_LOGI(TAG, "LF scan response - Status: 0x%02X, Data size: %d", g_last_response.status, g_last_response.data_size);
+                
                 if (g_last_response.status == 0x40) { // LF_TAG_OK
                     if (g_last_response.data_size >= 5) {
                         printf("LF Tag found!\n");
@@ -576,10 +612,32 @@ bool chameleon_manager_scan_lf(void) {
                         TERMINAL_VIEW_ADD_TEXT("%s\n", uid_str);
                         
                         return true;
+                    } else {
+                        printf("LF Tag found but insufficient data: %d bytes\n", g_last_response.data_size);
+                        TERMINAL_VIEW_ADD_TEXT("LF Tag found but insufficient data: %d bytes\n", g_last_response.data_size);
                     }
                 } else if (g_last_response.status == 0x41) { // EM410X_TAG_NO_FOUND
-                    printf("No LF tag found\n");
-                    TERMINAL_VIEW_ADD_TEXT("No LF tag found\n");
+                    printf("No EM410X LF tag found\n");
+                    TERMINAL_VIEW_ADD_TEXT("No EM410X LF tag found\n");
+                } else if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x68) {
+                    // Some success status but might be a different tag type
+                    printf("LF scan completed successfully but no EM410X tag detected\n");
+                    TERMINAL_VIEW_ADD_TEXT("LF scan completed successfully but no EM410X tag detected\n");
+                    if (g_last_response.data_size > 0) {
+                        printf("Received %d bytes of data: ", g_last_response.data_size);
+                        TERMINAL_VIEW_ADD_TEXT("Received %d bytes of data: ", g_last_response.data_size);
+                        for (uint8_t i = 0; i < g_last_response.data_size && i < 10; i++) {
+                            printf("%02X ", g_last_response.data[i]);
+                        }
+                        printf("\n");
+                        char uid_str[64] = "";
+                        for (uint8_t i = 0; i < g_last_response.data_size && i < 10; i++) {
+                            char temp[4];
+                            snprintf(temp, sizeof(temp), "%02X ", g_last_response.data[i]);
+                            strcat(uid_str, temp);
+                        }
+                        TERMINAL_VIEW_ADD_TEXT("%s\n", uid_str);
+                    }
                 } else {
                     printf("LF scan failed with status: 0x%02X\n", g_last_response.status);
                     TERMINAL_VIEW_ADD_TEXT("LF scan failed with status: 0x%02X\n", g_last_response.status);
@@ -826,9 +884,10 @@ bool chameleon_manager_get_active_slot(void) {
     if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
         if (g_response_received && g_last_response.command == CMD_GET_ACTIVE_SLOT) {
             if (g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 1) {
-                uint8_t slot = g_last_response.data[0];
-                printf("Active Slot: %d\n", slot);
-                TERMINAL_VIEW_ADD_TEXT("Active Slot: %d\n", slot);
+                uint8_t device_slot = g_last_response.data[0];
+                uint8_t user_slot = device_slot + 1; // Convert 0-7 to 1-8
+                printf("Active Slot: %d\n", user_slot);
+                TERMINAL_VIEW_ADD_TEXT("Active Slot: %d\n", user_slot);
                 return true;
             } else {
                 printf("Failed to get active slot, status: 0x%02X\n", g_last_response.status);
@@ -856,8 +915,9 @@ bool chameleon_manager_set_active_slot(uint8_t slot) {
         return false;
     }
     
-    printf("Setting active slot to %d...\n", slot);
-    TERMINAL_VIEW_ADD_TEXT("Setting active slot to %d...\n", slot);
+    uint8_t user_slot = slot + 1; // Convert 0-7 to 1-8 for display
+    printf("Setting active slot to %d...\n", user_slot);
+    TERMINAL_VIEW_ADD_TEXT("Setting active slot to %d...\n", user_slot);
     
     g_response_received = false;
     bool result = send_command(CMD_SET_ACTIVE_SLOT, &slot, 1);
@@ -871,8 +931,8 @@ bool chameleon_manager_set_active_slot(uint8_t slot) {
     if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
         if (g_response_received && g_last_response.command == CMD_SET_ACTIVE_SLOT) {
             if (g_last_response.status == STATUS_SUCCESS) {
-                printf("Active slot set to %d successfully\n", slot);
-                TERMINAL_VIEW_ADD_TEXT("Active slot set to %d successfully\n", slot);
+                printf("Active slot set to %d successfully\n", user_slot);
+                TERMINAL_VIEW_ADD_TEXT("Active slot set to %d successfully\n", user_slot);
                 return true;
             } else {
                 printf("Failed to set active slot, status: 0x%02X\n", g_last_response.status);
@@ -900,8 +960,9 @@ bool chameleon_manager_get_slot_info(uint8_t slot) {
         return false;
     }
     
-    printf("Getting slot %d information...\n", slot);
-    TERMINAL_VIEW_ADD_TEXT("Getting slot %d information...\n", slot);
+    uint8_t user_slot = slot + 1; // Convert 0-7 to 1-8 for display
+    printf("Getting slot %d information...\n", user_slot);
+    TERMINAL_VIEW_ADD_TEXT("Getting slot %d information...\n", user_slot);
     
     g_response_received = false;
     bool result = send_command(CMD_GET_SLOT_INFO, &slot, 1);
@@ -919,12 +980,12 @@ bool chameleon_manager_get_slot_info(uint8_t slot) {
                 uint8_t lf_type = g_last_response.data[1];
                 uint8_t enabled = g_last_response.data[2];
                 
-                printf("Slot %d Info:\n", slot);
+                printf("Slot %d Info:\n", user_slot);
                 printf("  HF Type: 0x%02X\n", hf_type);
                 printf("  LF Type: 0x%02X\n", lf_type);
                 printf("  Enabled: %s\n", enabled ? "Yes" : "No");
                 
-                TERMINAL_VIEW_ADD_TEXT("Slot %d Info:\n", slot);
+                TERMINAL_VIEW_ADD_TEXT("Slot %d Info:\n", user_slot);
                 TERMINAL_VIEW_ADD_TEXT("  HF Type: 0x%02X\n", hf_type);
                 TERMINAL_VIEW_ADD_TEXT("  LF Type: 0x%02X\n", lf_type);
                 TERMINAL_VIEW_ADD_TEXT("  Enabled: %s\n", enabled ? "Yes" : "No");
@@ -953,6 +1014,19 @@ bool chameleon_manager_mf1_detect_support(void) {
     printf("Detecting MIFARE Classic support...\n");
     TERMINAL_VIEW_ADD_TEXT("Detecting MIFARE Classic support...\n");
     
+    // First, run HF scan to detect and establish communication with tag
+    printf("Running HF scan first to detect tag...\n");
+    TERMINAL_VIEW_ADD_TEXT("Running HF scan first to detect tag...\n");
+    
+    if (!chameleon_manager_scan_hf()) {
+        printf("No HF tag found - MIFARE detection requires a tag to be present\n");
+        TERMINAL_VIEW_ADD_TEXT("No HF tag found - MIFARE detection requires a tag to be present\n");
+        return false;
+    }
+    
+    // Small delay to ensure scan is complete
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
     g_response_received = false;
     bool result = send_command(CMD_MF1_DETECT_SUPPORT, NULL, 0);
     if (!result) {
@@ -964,11 +1038,18 @@ bool chameleon_manager_mf1_detect_support(void) {
     // Wait for response
     if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
         if (g_response_received && g_last_response.command == CMD_MF1_DETECT_SUPPORT) {
-            if (g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 1) {
+            ESP_LOGI(TAG, "MF1 detect response - Status: 0x%02X, Data size: %d", g_last_response.status, g_last_response.data_size);
+            
+            if ((g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) && g_last_response.data_size >= 1) {
                 uint8_t support = g_last_response.data[0];
                 const char* support_str = support ? "Supported" : "Not Supported";
                 printf("MIFARE Classic Support: %s\n", support_str);
                 TERMINAL_VIEW_ADD_TEXT("MIFARE Classic Support: %s\n", support_str);
+                return true;
+            } else if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                // Success status but no data - interpret as supported
+                printf("MIFARE Classic Support: Supported (no specific data returned)\n");
+                TERMINAL_VIEW_ADD_TEXT("MIFARE Classic Support: Supported (no specific data returned)\n");
                 return true;
             } else {
                 printf("Failed to detect MF1 support, status: 0x%02X\n", g_last_response.status);
@@ -993,6 +1074,19 @@ bool chameleon_manager_mf1_detect_prng(void) {
     printf("Detecting MIFARE Classic PRNG type...\n");
     TERMINAL_VIEW_ADD_TEXT("Detecting MIFARE Classic PRNG type...\n");
     
+    // First, run HF scan to detect and establish communication with tag
+    printf("Running HF scan first to detect tag...\n");
+    TERMINAL_VIEW_ADD_TEXT("Running HF scan first to detect tag...\n");
+    
+    if (!chameleon_manager_scan_hf()) {
+        printf("No HF tag found - MIFARE PRNG detection requires a tag to be present\n");
+        TERMINAL_VIEW_ADD_TEXT("No HF tag found - MIFARE PRNG detection requires a tag to be present\n");
+        return false;
+    }
+    
+    // Small delay to ensure scan is complete
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
     g_response_received = false;
     bool result = send_command(CMD_MF1_DETECT_PRNG, NULL, 0);
     if (!result) {
@@ -1004,7 +1098,9 @@ bool chameleon_manager_mf1_detect_prng(void) {
     // Wait for response
     if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
         if (g_response_received && g_last_response.command == CMD_MF1_DETECT_PRNG) {
-            if (g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 1) {
+            ESP_LOGI(TAG, "MF1 PRNG detect response - Status: 0x%02X, Data size: %d", g_last_response.status, g_last_response.data_size);
+            
+            if ((g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) && g_last_response.data_size >= 1) {
                 uint8_t prng_type = g_last_response.data[0];
                 const char* prng_str;
                 switch (prng_type) {
@@ -1015,6 +1111,11 @@ bool chameleon_manager_mf1_detect_prng(void) {
                 }
                 printf("MIFARE Classic PRNG Type: %s (0x%02X)\n", prng_str, prng_type);
                 TERMINAL_VIEW_ADD_TEXT("MIFARE Classic PRNG Type: %s (0x%02X)\n", prng_str, prng_type);
+                return true;
+            } else if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                // Success status but no data - no MIFARE tag present for PRNG detection
+                printf("MIFARE Classic PRNG detection successful, but no MIFARE tag present\n");
+                TERMINAL_VIEW_ADD_TEXT("MIFARE Classic PRNG detection successful, but no MIFARE tag present\n");
                 return true;
             } else {
                 printf("Failed to detect PRNG type, status: 0x%02X\n", g_last_response.status);

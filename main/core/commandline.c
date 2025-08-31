@@ -2583,12 +2583,13 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("  firmware         - Get firmware version\n");
         printf("  devicemode       - Get current device mode\n");
         printf("  activeslot       - Get active slot number\n");
-        printf("  setslot <0-7>    - Set active slot number\n");
-        printf("  slotinfo <0-7>   - Get slot information\n");
+        printf("  setslot <1-8>    - Set active slot number\n");
+        printf("  slotinfo <1-8>   - Get slot information\n");
         printf("  battery          - Get battery information\n");
         printf("Scanning:\n");
         printf("  scanhf           - Scan for HF tags\n");
-        printf("  scanlf           - Scan for LF tags\n");
+        printf("  scanlf           - Scan for LF EM410X tags\n");
+        printf("  scanlfall        - Scan for all LF tag types\n");
         printf("  scanhidprox      - Scan for HID Prox tags\n");
         printf("MIFARE Classic:\n");
         printf("  mfdetect         - Detect MIFARE Classic support\n");
@@ -2606,12 +2607,13 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("  firmware         - Get firmware version\n");
         TERMINAL_VIEW_ADD_TEXT("  devicemode       - Get current device mode\n");
         TERMINAL_VIEW_ADD_TEXT("  activeslot       - Get active slot number\n");
-        TERMINAL_VIEW_ADD_TEXT("  setslot <0-7>    - Set active slot number\n");
-        TERMINAL_VIEW_ADD_TEXT("  slotinfo <0-7>   - Get slot information\n");
+        TERMINAL_VIEW_ADD_TEXT("  setslot <1-8>    - Set active slot number\n");
+        TERMINAL_VIEW_ADD_TEXT("  slotinfo <1-8>   - Get slot information\n");
         TERMINAL_VIEW_ADD_TEXT("  battery          - Get battery information\n");
         TERMINAL_VIEW_ADD_TEXT("Scanning:\n");
         TERMINAL_VIEW_ADD_TEXT("  scanhf           - Scan for HF tags\n");
-        TERMINAL_VIEW_ADD_TEXT("  scanlf           - Scan for LF tags\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanlf           - Scan for LF EM410X tags\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanlfall        - Scan for all LF tag types\n");
         TERMINAL_VIEW_ADD_TEXT("  scanhidprox      - Scan for HID Prox tags\n");
         TERMINAL_VIEW_ADD_TEXT("MIFARE Classic:\n");
         TERMINAL_VIEW_ADD_TEXT("  mfdetect         - Detect MIFARE Classic support\n");
@@ -2656,6 +2658,23 @@ void handle_chameleon_cmd(int argc, char **argv) {
     else if (strcmp(subcommand, "scanlf") == 0) {
         chameleon_manager_scan_lf();
     }
+    else if (strcmp(subcommand, "scanlfall") == 0) {
+        // Try multiple LF scan types
+        printf("Scanning for all LF tag types...\n");
+        TERMINAL_VIEW_ADD_TEXT("Scanning for all LF tag types...\n");
+        
+        // First try EM410X
+        printf("1. Trying EM410X scan...\n");
+        TERMINAL_VIEW_ADD_TEXT("1. Trying EM410X scan...\n");
+        if (chameleon_manager_scan_lf()) {
+            return;  // Found something, stop here
+        }
+        
+        // Then try HID Prox
+        printf("2. Trying HID Prox scan...\n");
+        TERMINAL_VIEW_ADD_TEXT("2. Trying HID Prox scan...\n");
+        chameleon_manager_scan_hidprox();
+    }
     else if (strcmp(subcommand, "battery") == 0) {
         chameleon_manager_get_battery_info();
     }
@@ -2676,21 +2695,33 @@ void handle_chameleon_cmd(int argc, char **argv) {
     }
     else if (strcmp(subcommand, "setslot") == 0) {
         if (argc < 3) {
-            printf("Usage: chameleon setslot <0-7>\n");
-            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon setslot <0-7>\n");
+            printf("Usage: chameleon setslot <1-8>\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon setslot <1-8>\n");
             return;
         }
-        uint8_t slot = (uint8_t)atoi(argv[2]);
-        chameleon_manager_set_active_slot(slot);
+        uint8_t user_slot = (uint8_t)atoi(argv[2]);
+        if (user_slot < 1 || user_slot > 8) {
+            printf("Error: Slot must be between 1-8\n");
+            TERMINAL_VIEW_ADD_TEXT("Error: Slot must be between 1-8\n");
+            return;
+        }
+        uint8_t device_slot = user_slot - 1; // Convert 1-8 to 0-7
+        chameleon_manager_set_active_slot(device_slot);
     }
     else if (strcmp(subcommand, "slotinfo") == 0) {
         if (argc < 3) {
-            printf("Usage: chameleon slotinfo <0-7>\n");
-            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon slotinfo <0-7>\n");
+            printf("Usage: chameleon slotinfo <1-8>\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon slotinfo <1-8>\n");
             return;
         }
-        uint8_t slot = (uint8_t)atoi(argv[2]);
-        chameleon_manager_get_slot_info(slot);
+        uint8_t user_slot = (uint8_t)atoi(argv[2]);
+        if (user_slot < 1 || user_slot > 8) {
+            printf("Error: Slot must be between 1-8\n");
+            TERMINAL_VIEW_ADD_TEXT("Error: Slot must be between 1-8\n");
+            return;
+        }
+        uint8_t device_slot = user_slot - 1; // Convert 1-8 to 0-7
+        chameleon_manager_get_slot_info(device_slot);
     }
     else if (strcmp(subcommand, "scanhidprox") == 0) {
         chameleon_manager_scan_hidprox();
