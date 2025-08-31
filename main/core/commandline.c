@@ -2594,9 +2594,19 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("MIFARE Classic:\n");
         printf("  mfdetect         - Detect MIFARE Classic support\n");
         printf("  mfprng           - Detect MIFARE Classic PRNG type\n");
+        printf("  darkside <block> <key> - Perform Darkside attack (key: A or B)\n");
+        printf("  nested <known_block> <known_key> <target_block> <target_key> - Nested attack\n");
         printf("Mode Control:\n");
         printf("  reader           - Set to reader mode\n");
         printf("  emulator         - Set to emulator mode\n");
+        printf("Data Management:\n");
+        printf("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        printf("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        printf("  readhf           - Read full HF card data (all blocks)\n");
+        printf("  readlf           - Read full LF card data\n");
+        printf("  savedump [filename] - Save last card dump to SD card\n");
+        printf("  savedarkside [filename] - Save Darkside attack data to SD card\n");
+        printf("  savenested [filename] - Save Nested attack data to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
         TERMINAL_VIEW_ADD_TEXT("Connection:\n");
@@ -2618,9 +2628,19 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("MIFARE Classic:\n");
         TERMINAL_VIEW_ADD_TEXT("  mfdetect         - Detect MIFARE Classic support\n");
         TERMINAL_VIEW_ADD_TEXT("  mfprng           - Detect MIFARE Classic PRNG type\n");
+        TERMINAL_VIEW_ADD_TEXT("  darkside <block> <key> - Perform Darkside attack (key: A or B)\n");
+        TERMINAL_VIEW_ADD_TEXT("  nested <known_block> <known_key> <target_block> <target_key> - Nested attack\n");
         TERMINAL_VIEW_ADD_TEXT("Mode Control:\n");
         TERMINAL_VIEW_ADD_TEXT("  reader           - Set to reader mode\n");
         TERMINAL_VIEW_ADD_TEXT("  emulator         - Set to emulator mode\n");
+        TERMINAL_VIEW_ADD_TEXT("Data Management:\n");
+        TERMINAL_VIEW_ADD_TEXT("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        TERMINAL_VIEW_ADD_TEXT("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        TERMINAL_VIEW_ADD_TEXT("  readhf           - Read full HF card data (all blocks)\n");
+        TERMINAL_VIEW_ADD_TEXT("  readlf           - Read full LF card data\n");
+        TERMINAL_VIEW_ADD_TEXT("  savedump [filename] - Save last card dump to SD card\n");
+        TERMINAL_VIEW_ADD_TEXT("  savedarkside [filename] - Save Darkside attack data to SD card\n");
+        TERMINAL_VIEW_ADD_TEXT("  savenested [filename] - Save Nested attack data to SD card\n");
         return;
     }
 
@@ -2684,6 +2704,24 @@ void handle_chameleon_cmd(int argc, char **argv) {
     else if (strcmp(subcommand, "emulator") == 0) {
         chameleon_manager_set_emulator_mode();
     }
+    else if (strcmp(subcommand, "savehf") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_last_hf_scan(filename);
+    }
+    else if (strcmp(subcommand, "savelf") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_last_lf_scan(filename);
+    }
+    else if (strcmp(subcommand, "readhf") == 0) {
+        chameleon_manager_read_hf_card();
+    }
+    else if (strcmp(subcommand, "readlf") == 0) {
+        chameleon_manager_read_lf_card();
+    }
+    else if (strcmp(subcommand, "savedump") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_card_dump(filename);
+    }
     else if (strcmp(subcommand, "firmware") == 0) {
         chameleon_manager_get_firmware_version();
     }
@@ -2731,6 +2769,120 @@ void handle_chameleon_cmd(int argc, char **argv) {
     }
     else if (strcmp(subcommand, "mfprng") == 0) {
         chameleon_manager_mf1_detect_prng();
+    }
+    else if (strcmp(subcommand, "darkside") == 0) {
+        if (argc < 4) {
+            printf("Usage: chameleon darkside <block> <key>\n");
+            printf("  block: Target block number (0-63)\n");
+            printf("  key: Key type (A or B)\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon darkside <block> <key>\n");
+            TERMINAL_VIEW_ADD_TEXT("  block: Target block number, key: A or B\n");
+            return;
+        }
+        
+        int block = atoi(argv[2]);
+        const char* key_str = argv[3];
+        
+        if (block < 0 || block > 63) {
+            printf("Invalid block number: %d (must be 0-63)\n", block);
+            TERMINAL_VIEW_ADD_TEXT("Invalid block number: %d\n", block);
+            return;
+        }
+        
+        uint8_t key_type;
+        if (strcasecmp(key_str, "A") == 0) {
+            key_type = 0x60; // MF_KEY_A
+        } else if (strcasecmp(key_str, "B") == 0) {
+            key_type = 0x61; // MF_KEY_B
+        } else {
+            printf("Invalid key type: %s (must be A or B)\n", key_str);
+            TERMINAL_VIEW_ADD_TEXT("Invalid key type: %s\n", key_str);
+            return;
+        }
+        
+        printf("Starting Darkside attack on block %d with key %s...\n", block, key_str);
+        TERMINAL_VIEW_ADD_TEXT("Starting Darkside attack on block %d with key %s...\n", block, key_str);
+        
+        if (chameleon_manager_darkside_attack((uint8_t)block, key_type)) {
+            printf("Darkside attack completed! Use 'chameleon savedarkside' to save data.\n");
+            TERMINAL_VIEW_ADD_TEXT("Darkside attack completed!\n");
+        }
+    }
+    else if (strcmp(subcommand, "savedarkside") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_darkside_data(filename);
+    }
+    else if (strcmp(subcommand, "nested") == 0) {
+        if (argc < 6) {
+            printf("Usage: chameleon nested <known_block> <known_key> <target_block> <target_key>\n");
+            printf("  known_block: Block number with known key (0-63)\n");
+            printf("  known_key: Key type (A or B) and hex key (e.g., A FFFFFFFFFFFF)\n");
+            printf("  target_block: Target block number (0-63)\n");
+            printf("  target_key: Target key type (A or B)\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon nested <known_block> <known_key> <target_block> <target_key>\n");
+            return;
+        }
+        
+        int known_block = atoi(argv[2]);
+        const char* known_key_str = argv[3];
+        int target_block = atoi(argv[4]);
+        const char* target_key_str = argv[5];
+        
+        if (known_block < 0 || known_block > 63 || target_block < 0 || target_block > 63) {
+            printf("Invalid block numbers (must be 0-63)\n");
+            TERMINAL_VIEW_ADD_TEXT("Invalid block numbers (must be 0-63)\n");
+            return;
+        }
+        
+        // Parse known key (format: "A FFFFFFFFFFFF" or "B A0A1A2A3A4A5")
+        uint8_t known_key_type, target_key_type;
+        uint8_t known_key[6];
+        
+        if (strlen(known_key_str) >= 13) { // "A FFFFFFFFFFFF"
+            if (known_key_str[0] == 'A' || known_key_str[0] == 'a') {
+                known_key_type = 0x60; // MF_KEY_A
+            } else if (known_key_str[0] == 'B' || known_key_str[0] == 'b') {
+                known_key_type = 0x61; // MF_KEY_B
+            } else {
+                printf("Invalid known key type: %c (must be A or B)\n", known_key_str[0]);
+                TERMINAL_VIEW_ADD_TEXT("Invalid known key type\n");
+                return;
+            }
+            
+            // Parse hex key (skip "A " or "B ")
+            const char* hex_key = &known_key_str[2];
+            for (int i = 0; i < 6; i++) {
+                char hex_byte[3] = {hex_key[i*2], hex_key[i*2+1], 0};
+                known_key[i] = (uint8_t)strtol(hex_byte, NULL, 16);
+            }
+        } else {
+            printf("Invalid known key format. Use: A FFFFFFFFFFFF or B A0A1A2A3A4A5\n");
+            TERMINAL_VIEW_ADD_TEXT("Invalid known key format\n");
+            return;
+        }
+        
+        if (strcasecmp(target_key_str, "A") == 0) {
+            target_key_type = 0x60; // MF_KEY_A
+        } else if (strcasecmp(target_key_str, "B") == 0) {
+            target_key_type = 0x61; // MF_KEY_B
+        } else {
+            printf("Invalid target key type: %s (must be A or B)\n", target_key_str);
+            TERMINAL_VIEW_ADD_TEXT("Invalid target key type\n");
+            return;
+        }
+        
+        printf("Starting Nested attack: known block %d -> target block %d\n", known_block, target_block);
+        TERMINAL_VIEW_ADD_TEXT("Starting Nested attack...\n");
+        
+        if (chameleon_manager_nested_attack((uint8_t)known_block, known_key_type, known_key,
+                                          (uint8_t)target_block, target_key_type)) {
+            printf("Nested attack completed! Use 'chameleon savenested' to save data.\n");
+            TERMINAL_VIEW_ADD_TEXT("Nested attack completed!\n");
+        }
+    }
+    else if (strcmp(subcommand, "savenested") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_nested_data(filename);
     }
     else {
         printf("Unknown chameleon command: %s\n", subcommand);
