@@ -201,6 +201,25 @@ bool chameleon_manager_nested_attack(uint8_t known_block, uint8_t known_key_type
  */
 bool chameleon_manager_save_nested_data(const char* filename);
 
+/**
+ * @brief Detect and identify NTAG card type and version
+ * @return true if NTAG card detected and identified, false otherwise
+ */
+bool chameleon_manager_detect_ntag(void);
+
+/**
+ * @brief Read complete NTAG card data (all pages)
+ * @return true if successful, false otherwise
+ */
+bool chameleon_manager_read_ntag_card(void);
+
+/**
+ * @brief Save NTAG dump data to SD card
+ * @param filename Custom filename (optional, can be NULL for auto-naming)
+ * @return true if data was saved successfully, false otherwise
+ */
+bool chameleon_manager_save_ntag_dump(const char* filename);
+
 #ifdef __cplusplus
 }
 #endif

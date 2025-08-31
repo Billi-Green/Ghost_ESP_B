@@ -2596,6 +2596,9 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("  mfprng           - Detect MIFARE Classic PRNG type\n");
         printf("  darkside <block> <key> - Perform Darkside attack (key: A or B)\n");
         printf("  nested <known_block> <known_key> <target_block> <target_key> - Nested attack\n");
+        printf("NTAG Cards:\n");
+        printf("  ntagdetect       - Detect and identify NTAG card type\n");
+        printf("  ntagdump         - Dump complete NTAG card data\n");
         printf("Mode Control:\n");
         printf("  reader           - Set to reader mode\n");
         printf("  emulator         - Set to emulator mode\n");
@@ -2607,6 +2610,7 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("  savedump [filename] - Save last card dump to SD card\n");
         printf("  savedarkside [filename] - Save Darkside attack data to SD card\n");
         printf("  savenested [filename] - Save Nested attack data to SD card\n");
+        printf("  saventralag [filename] - Save NTAG dump data to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
         TERMINAL_VIEW_ADD_TEXT("Connection:\n");
@@ -2630,6 +2634,9 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("  mfprng           - Detect MIFARE Classic PRNG type\n");
         TERMINAL_VIEW_ADD_TEXT("  darkside <block> <key> - Perform Darkside attack (key: A or B)\n");
         TERMINAL_VIEW_ADD_TEXT("  nested <known_block> <known_key> <target_block> <target_key> - Nested attack\n");
+        TERMINAL_VIEW_ADD_TEXT("NTAG Cards:\n");
+        TERMINAL_VIEW_ADD_TEXT("  ntagdetect       - Detect and identify NTAG card type\n");
+        TERMINAL_VIEW_ADD_TEXT("  ntagdump         - Dump complete NTAG card data\n");
         TERMINAL_VIEW_ADD_TEXT("Mode Control:\n");
         TERMINAL_VIEW_ADD_TEXT("  reader           - Set to reader mode\n");
         TERMINAL_VIEW_ADD_TEXT("  emulator         - Set to emulator mode\n");
@@ -2641,6 +2648,7 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("  savedump [filename] - Save last card dump to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("  savedarkside [filename] - Save Darkside attack data to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("  savenested [filename] - Save Nested attack data to SD card\n");
+        TERMINAL_VIEW_ADD_TEXT("  saventralag [filename] - Save NTAG dump data to SD card\n");
         return;
     }
 
@@ -2883,6 +2891,34 @@ void handle_chameleon_cmd(int argc, char **argv) {
     else if (strcmp(subcommand, "savenested") == 0) {
         const char* filename = (argc > 2) ? argv[2] : NULL;
         chameleon_manager_save_nested_data(filename);
+    }
+    else if (strcmp(subcommand, "ntagdetect") == 0) {
+        printf("Detecting NTAG card type...\n");
+        TERMINAL_VIEW_ADD_TEXT("Detecting NTAG card type...\n");
+        
+        if (chameleon_manager_detect_ntag()) {
+            printf("NTAG detection completed successfully!\n");
+            TERMINAL_VIEW_ADD_TEXT("NTAG detection completed!\n");
+        } else {
+            printf("NTAG detection failed or card not supported\n");
+            TERMINAL_VIEW_ADD_TEXT("NTAG detection failed\n");
+        }
+    }
+    else if (strcmp(subcommand, "ntagdump") == 0) {
+        printf("Starting NTAG card dump...\n");
+        TERMINAL_VIEW_ADD_TEXT("Starting NTAG card dump...\n");
+        
+        if (chameleon_manager_read_ntag_card()) {
+            printf("NTAG dump completed! Use 'chameleon saventralag' to save data.\n");
+            TERMINAL_VIEW_ADD_TEXT("NTAG dump completed!\n");
+        } else {
+            printf("NTAG dump failed\n");
+            TERMINAL_VIEW_ADD_TEXT("NTAG dump failed\n");
+        }
+    }
+    else if (strcmp(subcommand, "saventralag") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_ntag_dump(filename);
     }
     else {
         printf("Unknown chameleon command: %s\n", subcommand);
