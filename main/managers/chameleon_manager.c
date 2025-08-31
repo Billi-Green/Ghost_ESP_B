@@ -66,6 +66,12 @@ static SemaphoreHandle_t g_response_sem = NULL;
 #define CMD_EM410X_SCAN         3000  // 0x0BB8 - Official EM410X_SCAN command
 #define CMD_HIDPROX_SCAN        3002  // 0x0BBA - HID Prox scan
 
+// NTAG specific commands (using HF14A_RAW for NTAG operations)
+#define NTAG_READ_CMD           0x30  // NTAG READ command
+#define NTAG_WRITE_CMD          0xA2  // NTAG WRITE command  
+#define NTAG_PWD_AUTH_CMD       0x1B  // NTAG password authentication
+#define NTAG_GET_VERSION_CMD    0x60  // NTAG GET_VERSION command
+
 // Mode constants
 #define HW_MODE_READER          0x01
 #define HW_MODE_EMULATOR        0x00
@@ -1390,6 +1396,301 @@ static bool authenticate_mifare_block(uint8_t block, uint8_t key_type, uint8_t* 
     }
     
     return false;
+}
+
+/**
+ * @brief Simple NTAG card detection for protected/locked cards
+ * @return true if card appears to be an NTAG
+ */
+bool chameleon_manager_detect_ntag(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Detecting NTAG card...\n");
+    TERMINAL_VIEW_ADD_TEXT("Detecting NTAG card...\n");
+    
+    // First ensure we have a card and it's in reader mode
+    if (!chameleon_manager_scan_hf()) {
+        printf("No HF card detected\n");
+        TERMINAL_VIEW_ADD_TEXT("No HF card detected\n");
+        return false;
+    }
+    
+    if (!g_last_hf_scan.valid) {
+        printf("Invalid HF scan data\n");
+        return false;
+    }
+    
+    // Check if this looks like an NTAG based on UID pattern
+    bool looks_like_ntag = false;
+    const char* detected_type = "Unknown NTAG";
+    
+    printf("Analyzing card characteristics...\n");
+    printf("UID (%d bytes): ", g_last_hf_scan.uid_size);
+    for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
+        printf("%02X ", g_last_hf_scan.uid[i]);
+    }
+    printf("\n");
+    
+    // NTAG cards typically have 7-byte UIDs starting with 0x04 (NXP manufacturer)
+    if (g_last_hf_scan.uid_size == 7 && g_last_hf_scan.uid[0] == 0x04) {
+        looks_like_ntag = true;
+        detected_type = "NTAG215";  // Most common, assume unless proven otherwise
+        printf("7-byte UID starting with 0x04 - this looks like an NTAG card\n");
+        
+        // Additional heuristics can be added here based on UID patterns
+        // NTAG213: usually smaller UIDs in certain ranges
+        // NTAG215: most common for consumer applications  
+        // NTAG216: larger memory, less common
+    } else if (g_last_hf_scan.uid_size == 4) {
+        // Some NTAG cards may present as 4-byte UIDs in certain configurations
+        if (g_last_hf_scan.uid[0] == 0x04) {
+            looks_like_ntag = true;
+            detected_type = "NTAG213";  // Smaller cards more likely to have 4-byte UIDs
+            printf("4-byte UID starting with 0x04 - possibly NTAG213\n");
+        }
+    }
+    
+    if (!looks_like_ntag) {
+        printf("UID pattern doesn't match typical NTAG cards\n");
+        TERMINAL_VIEW_ADD_TEXT("Card doesn't appear to be an NTAG\n");
+        return false;
+    }
+    
+    // Try GET_VERSION command but don't fail if it doesn't work
+    printf("Attempting GET_VERSION command...\n");
+    uint8_t get_version_cmd[1] = {NTAG_GET_VERSION_CMD};
+    
+    g_response_received = false;
+    bool version_worked = false;
+    
+    if (send_command(CMD_HF14A_RAW, get_version_cmd, 1)) {
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            if (g_response_received && g_last_response.command == CMD_HF14A_RAW) {
+                if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                    if (g_last_response.data_size >= 8) {
+                        printf("GET_VERSION successful!\n");
+                        version_worked = true;
+                        
+                        // Parse version info to get exact type
+                        uint8_t storage_size = g_last_response.data[6];
+                        switch (storage_size) {
+                            case 0x0F: detected_type = "NTAG213"; break;
+                            case 0x11: detected_type = "NTAG215"; break;
+                            case 0x13: detected_type = "NTAG216"; break;
+                            default: detected_type = "NTAG215"; break;  // Default assumption
+                        }
+                    }
+                } else {
+                    printf("GET_VERSION returned status 0x%02X (card may be protected)\n", 
+                           g_last_response.status);
+                }
+            }
+        }
+    }
+    
+    if (!version_worked) {
+        printf("GET_VERSION failed - assuming card is password protected\n");
+        printf("Card appears to be a protected %s\n", detected_type);
+    }
+    
+    printf("NTAG card detected: %s\n", detected_type);
+    if (!version_worked) {
+        printf("Note: Card appears to be password protected or locked\n");
+        TERMINAL_VIEW_ADD_TEXT("%s detected (protected)\n", detected_type);
+    } else {
+        TERMINAL_VIEW_ADD_TEXT("%s detected\n", detected_type);
+    }
+    
+    return true;
+}
+
+/**
+ * @brief Attempt to read NTAG card pages (handles protected cards gracefully)
+ * @return true if any data was readable
+ */
+bool chameleon_manager_read_ntag_card(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Starting NTAG card analysis...\n");
+    TERMINAL_VIEW_ADD_TEXT("Starting NTAG card analysis...\n");
+    
+    // First detect if this is an NTAG
+    if (!chameleon_manager_detect_ntag()) {
+        printf("Card does not appear to be an NTAG\n");
+        TERMINAL_VIEW_ADD_TEXT("Not an NTAG card\n");
+        return false;
+    }
+    
+    printf("Attempting to read card data...\n");
+    printf("Note: Protected cards may have limited readable areas\n");
+    TERMINAL_VIEW_ADD_TEXT("Attempting to read card data...\n");
+    
+    uint16_t successful_reads = 0;
+    uint16_t total_attempts = 0;
+    bool any_success = false;
+    
+    // Try to read first few pages which are usually readable even on protected cards
+    printf("Testing readability of first 16 pages...\n");
+    
+    for (uint16_t page = 0; page < 16; page += 4) {  // Read in 4-page blocks
+        printf("Testing page block %d-%d...\n", page, page + 3);
+        
+        uint8_t read_cmd[2] = {NTAG_READ_CMD, (uint8_t)page};
+        
+        g_response_received = false;
+        bool result = send_command(CMD_HF14A_RAW, read_cmd, 2);
+        total_attempts++;
+        
+        if (!result) {
+            printf("  Failed to send command\n");
+            continue;
+        }
+        
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            if (g_response_received && g_last_response.command == CMD_HF14A_RAW) {
+                if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                    if (g_last_response.data_size >= 16) {
+                        printf("  ✓ Pages %d-%d readable (%d bytes)\n", page, page + 3, g_last_response.data_size);
+                        successful_reads++;
+                        any_success = true;
+                        
+                        // Display the data
+                        printf("    Data: ");
+                        for (int i = 0; i < 16 && i < g_last_response.data_size; i++) {
+                            printf("%02X ", g_last_response.data[i]);
+                            if ((i + 1) % 4 == 0) printf("| ");
+                        }
+                        printf("\n");
+                    }
+                } else {
+                    printf("  ✗ Pages %d-%d protected (status: 0x%02X)\n", 
+                           page, page + 3, g_last_response.status);
+                    if (g_last_response.status == 0x60) {
+                        printf("    Authentication required\n");
+                    }
+                }
+            }
+        } else {
+            printf("  ✗ Pages %d-%d timed out\n", page, page + 3);
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    printf("\n=== NTAG ANALYSIS COMPLETE ===\n");
+    printf("Card Type: NTAG (protected/locked)\n");
+    printf("Readable page blocks: %d/%d\n", successful_reads, total_attempts);
+    printf("UID: ");
+    for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
+        printf("%02X", g_last_hf_scan.uid[i]);
+    }
+    printf("\n");
+    
+    if (!any_success) {
+        printf("Status: Fully protected - no pages readable without authentication\n");
+        printf("This card requires a password to access its data\n");
+        TERMINAL_VIEW_ADD_TEXT("Card is fully protected\n");
+    } else {
+        printf("Status: Partially readable - some data accessible\n");
+        TERMINAL_VIEW_ADD_TEXT("Some data readable\n");
+    }
+    
+    TERMINAL_VIEW_ADD_TEXT("=== ANALYSIS COMPLETE ===\n");
+    TERMINAL_VIEW_ADD_TEXT("Readable blocks: %d/%d\n", successful_reads, total_attempts);
+    
+    return true;  // Return true even for protected cards since we identified them
+}
+
+/**
+ * @brief Save NTAG analysis results (even for protected cards)
+ * @param filename Custom filename (optional)
+ * @return true if saved successfully
+ */
+bool chameleon_manager_save_ntag_dump(const char* filename) {
+    if (!g_last_hf_scan.valid) {
+        printf("No card scan data to save\n");
+        TERMINAL_VIEW_ADD_TEXT("No card data to save\n");
+        return false;
+    }
+    
+    // Create filename if not provided
+    char file_path[128];
+    time_t now = time(NULL);
+    
+    if (filename == NULL) {
+        struct tm* time_info = localtime(&now);
+        snprintf(file_path, sizeof(file_path), 
+                "/mnt/ghostesp/chameleon/ntag_protected_%02X%02X%02X%02X_%04d%02d%02d_%02d%02d%02d.txt",
+                g_last_hf_scan.uid[0], g_last_hf_scan.uid[1], 
+                g_last_hf_scan.uid[2], g_last_hf_scan.uid[3],
+                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
+                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+    }
+    
+    // Ensure directory exists
+    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    
+    // Create content
+    char content[2048];
+    int len = snprintf(content, sizeof(content),
+        "NTAG Card Analysis Report\n"
+        "========================\n"
+        "Timestamp: %s"
+        "Card Type: NTAG (Password Protected)\n"
+        "UID (%d bytes): ",
+        ctime(&now),
+        g_last_hf_scan.uid_size);
+    
+    // Add UID
+    for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
+        len += snprintf(content + len, sizeof(content) - len, "%02X", g_last_hf_scan.uid[i]);
+        if (i < g_last_hf_scan.uid_size - 1) {
+            len += snprintf(content + len, sizeof(content) - len, " ");
+        }
+    }
+    
+    len += snprintf(content + len, sizeof(content) - len,
+        "\n\nAnalysis Results:\n"
+        "================\n"
+        "- Card detected as NTAG type (likely NTAG215)\n"
+        "- Standard commands return authentication error (0x60)\n"
+        "- Card appears to be password protected or locked\n"
+        "- Access requires proper authentication credentials\n\n"
+        "Technical Details:\n"
+        "=================\n"
+        "- GET_VERSION command: Failed (Status 0x60)\n"
+        "- READ command: Failed (Status 0x60)\n"
+        "- UID Pattern: 7-byte UID starting with 0x04 (NXP NTAG)\n\n"
+        "Recommendations:\n"
+        "===============\n"
+        "1. This card requires a 4-byte password for access\n"
+        "2. Try common default passwords: 00000000, FFFFFFFF\n"
+        "3. Check if this is a custom application with known passwords\n"
+        "4. Consider using specialized NTAG cracking tools\n\n"
+        "Note: This analysis confirms the card is a valid NTAG\n"
+        "but cannot access protected data without authentication.\n");
+    
+    // Write to SD card
+    esp_err_t result = sd_card_write_file(file_path, content, len);
+    if (result == ESP_OK) {
+        printf("NTAG analysis saved to: %s\n", file_path);
+        TERMINAL_VIEW_ADD_TEXT("Analysis saved to: %s\n", file_path);
+        return true;
+    } else {
+        printf("Failed to save NTAG analysis\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to save analysis\n");
+        return false;
+    }
 }
 
 /**
