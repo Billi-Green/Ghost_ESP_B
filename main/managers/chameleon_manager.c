@@ -32,9 +32,9 @@ static SemaphoreHandle_t g_scan_sem = NULL;
 static SemaphoreHandle_t g_connect_sem = NULL;
 static SemaphoreHandle_t g_response_sem = NULL;
 
-// Chameleon Ultra command constants
-#define CMD_HF14A_SCAN          2000
-#define CMD_EM410X_SCAN         3000
+// Chameleon Ultra command constants (from official protocol documentation)
+#define CMD_HF14A_SCAN          2000  // 0x07D0 - Official HF14A_SCAN command
+#define CMD_EM410X_SCAN         3000  // 0x0BB8 - Official EM410X_SCAN command
 #define CMD_GET_BATTERY_INFO    1025
 #define CMD_CHANGE_DEVICE_MODE  1001
 #define HW_MODE_READER          0x01
@@ -418,9 +418,35 @@ bool chameleon_manager_scan_hf(void) {
         return false;
     }
     
-    printf("Scanning for HF tags...\n");
-    TERMINAL_VIEW_ADD_TEXT("Scanning for HF tags...\n");
+    // First, ensure we're in reader mode for scanning
+    printf("Setting reader mode...\n");
+    TERMINAL_VIEW_ADD_TEXT("Setting reader mode...\n");
     
+    g_response_received = false;
+    uint8_t mode_data = HW_MODE_READER;
+    if (!send_command(CMD_CHANGE_DEVICE_MODE, &mode_data, 1)) {
+        printf("Failed to set reader mode\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode\n");
+        return false;
+    }
+    
+    // Wait for mode change response
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE || !g_response_received) {
+        printf("Mode change timeout\n");
+        TERMINAL_VIEW_ADD_TEXT("Mode change timeout\n");
+        return false;
+    }
+    
+    if (g_last_response.status != 0x68) { // SUCCESS status
+        printf("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+        TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+        return false;
+    }
+    
+    printf("Reader mode set successfully, scanning for HF tags...\n");
+    TERMINAL_VIEW_ADD_TEXT("Reader mode set successfully, scanning for HF tags...\n");
+    
+    g_response_received = false;
     bool result = send_command(CMD_HF14A_SCAN, NULL, 0);
     if (result) {
         printf("HF scan command sent, waiting for response...\n");
@@ -429,7 +455,7 @@ bool chameleon_manager_scan_hf(void) {
         // Wait for response
         if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
             if (g_response_received && g_last_response.command == CMD_HF14A_SCAN) {
-                if (g_last_response.status == 0x00) { // HF_TAG_OK
+                if (g_last_response.status == 0x00 || g_last_response.status == 0x68) { // HF_TAG_OK - tag found
                     if (g_last_response.data_size >= 7) {
                         uint8_t uid_size = g_last_response.data[0];
                         printf("HF Tag found!\n");
@@ -461,6 +487,9 @@ bool chameleon_manager_scan_hf(void) {
                 } else if (g_last_response.status == 0x01) { // HF_TAG_NO
                     printf("No HF tag found\n");
                     TERMINAL_VIEW_ADD_TEXT("No HF tag found\n");
+                } else if (g_last_response.status == 0x66) { // Status we've been seeing
+                    printf("HF scan failed: Possibly wrong mode or device state (0x66)\n");
+                    TERMINAL_VIEW_ADD_TEXT("HF scan failed: Possibly wrong mode or device state (0x66)\n");
                 } else {
                     printf("HF scan failed with status: 0x%02X\n", g_last_response.status);
                     TERMINAL_VIEW_ADD_TEXT("HF scan failed with status: 0x%02X\n", g_last_response.status);
