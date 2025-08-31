@@ -31,6 +31,7 @@
 #include <dirent.h>
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
+#include "managers/chameleon_manager.h"
 
 #if !defined(MAX_WIFI_CHANNEL)
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
@@ -1119,7 +1120,7 @@ void handle_help(int argc, char **argv) {
 
     // List of all categories to print in order
     const char *all_categories[] = {
-        "wifi", "ble", "comm", "sd", "led", "gps", "misc", "portal", "printer", "cast", "capture", "beacon", "attack"
+        "wifi", "ble", "chameleon", "comm", "sd", "led", "gps", "misc", "portal", "printer", "cast", "capture", "beacon", "attack"
     };
     int num_categories = sizeof(all_categories) / sizeof(all_categories[0]);
 
@@ -1265,6 +1266,39 @@ void handle_help(int argc, char **argv) {
         printf("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
         printf("    Usage: blescan [seconds]\n\n");
         TERMINAL_VIEW_ADD_TEXT("blescan, blespam, blewardriving, list -airtags, select -airtag\n");
+        return;
+    }
+
+    if (strcmp(category, "chameleon") == 0) {
+        printf("\nChameleon Ultra Commands:\n\n");
+        TERMINAL_VIEW_ADD_TEXT("\nChameleon Ultra Commands:\n\n");
+        printf("chameleon connect [timeout]\n");
+        printf("    Description: Connect to a Chameleon Ultra device via BLE\n");
+        printf("    Usage: chameleon connect [timeout_seconds]\n");
+        printf("    Arguments:\n");
+        printf("        timeout_seconds : Connection timeout (default: 10)\n\n");
+        printf("chameleon disconnect\n");
+        printf("    Description: Disconnect from the Chameleon Ultra device\n");
+        printf("    Usage: chameleon disconnect\n\n");
+        printf("chameleon status\n");
+        printf("    Description: Check connection status with Chameleon Ultra\n");
+        printf("    Usage: chameleon status\n\n");
+        printf("chameleon scanhf\n");
+        printf("    Description: Scan for High Frequency (HF) RFID tags\n");
+        printf("    Usage: chameleon scanhf\n\n");
+        printf("chameleon scanlf\n");
+        printf("    Description: Scan for Low Frequency (LF) RFID tags\n");
+        printf("    Usage: chameleon scanlf\n\n");
+        printf("chameleon battery\n");
+        printf("    Description: Get battery information from Chameleon Ultra\n");
+        printf("    Usage: chameleon battery\n\n");
+        printf("chameleon reader\n");
+        printf("    Description: Set Chameleon Ultra to reader mode\n");
+        printf("    Usage: chameleon reader\n\n");
+        printf("chameleon emulator\n");
+        printf("    Description: Set Chameleon Ultra to emulator mode\n");
+        printf("    Usage: chameleon emulator\n\n");
+        TERMINAL_VIEW_ADD_TEXT("chameleon connect, chameleon disconnect, chameleon status, chameleon scanhf, chameleon scanlf, chameleon battery, chameleon reader, chameleon emulator\n");
         return;
     }
 #endif
@@ -2537,6 +2571,82 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #endif
 }
 
+void handle_chameleon_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: chameleon <command>\n");
+        printf("Commands:\n");
+        printf("  connect [timeout] - Connect to Chameleon Ultra (default timeout: 10s)\n");
+        printf("  disconnect        - Disconnect from Chameleon Ultra\n");
+        printf("  status           - Check connection status\n");
+        printf("  scanhf           - Scan for HF tags\n");
+        printf("  scanlf           - Scan for LF tags\n");
+        printf("  battery          - Get battery information\n");
+        printf("  reader           - Set to reader mode\n");
+        printf("  emulator         - Set to emulator mode\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
+        TERMINAL_VIEW_ADD_TEXT("Commands:\n");
+        TERMINAL_VIEW_ADD_TEXT("  connect [timeout] - Connect to Chameleon Ultra (default timeout: 10s)\n");
+        TERMINAL_VIEW_ADD_TEXT("  disconnect        - Disconnect from Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("  status           - Check connection status\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanhf           - Scan for HF tags\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanlf           - Scan for LF tags\n");
+        TERMINAL_VIEW_ADD_TEXT("  battery          - Get battery information\n");
+        TERMINAL_VIEW_ADD_TEXT("  reader           - Set to reader mode\n");
+        TERMINAL_VIEW_ADD_TEXT("  emulator         - Set to emulator mode\n");
+        return;
+    }
+
+    const char *subcommand = argv[1];
+
+    if (strcmp(subcommand, "connect") == 0) {
+        uint32_t timeout = 10; // Default timeout of 10 seconds
+        if (argc > 2) {
+            timeout = (uint32_t)atoi(argv[2]);
+            if (timeout == 0) {
+                timeout = 10;
+            }
+        }
+        printf("Connecting to Chameleon Ultra with %lu second timeout...\n", timeout);
+        TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra with %lu second timeout...\n", timeout);
+        chameleon_manager_connect(timeout);
+    }
+    else if (strcmp(subcommand, "disconnect") == 0) {
+        printf("Disconnecting from Chameleon Ultra...\n");
+        TERMINAL_VIEW_ADD_TEXT("Disconnecting from Chameleon Ultra...\n");
+        chameleon_manager_disconnect();
+    }
+    else if (strcmp(subcommand, "status") == 0) {
+        if (chameleon_manager_is_connected()) {
+            printf("Status: Connected to Chameleon Ultra\n");
+            TERMINAL_VIEW_ADD_TEXT("Status: Connected to Chameleon Ultra\n");
+        } else {
+            printf("Status: Not connected to Chameleon Ultra\n");
+            TERMINAL_VIEW_ADD_TEXT("Status: Not connected to Chameleon Ultra\n");
+        }
+    }
+    else if (strcmp(subcommand, "scanhf") == 0) {
+        chameleon_manager_scan_hf();
+    }
+    else if (strcmp(subcommand, "scanlf") == 0) {
+        chameleon_manager_scan_lf();
+    }
+    else if (strcmp(subcommand, "battery") == 0) {
+        chameleon_manager_get_battery_info();
+    }
+    else if (strcmp(subcommand, "reader") == 0) {
+        chameleon_manager_set_reader_mode();
+    }
+    else if (strcmp(subcommand, "emulator") == 0) {
+        chameleon_manager_set_emulator_mode();
+    }
+    else {
+        printf("Unknown chameleon command: %s\n", subcommand);
+        TERMINAL_VIEW_ADD_TEXT("Unknown chameleon command: %s\n", subcommand);
+        printf("Use 'chameleon' without arguments to see available commands.\n");
+        TERMINAL_VIEW_ADD_TEXT("Use 'chameleon' without arguments to see available commands.\n");
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -2588,6 +2698,7 @@ void register_commands() {
     register_command("selectairtag", handle_select_airtag);
     register_command("spoofairtag", handle_spoof_airtag);
     register_command("stopspoof", handle_stop_spoof);
+    register_command("chameleon", handle_chameleon_cmd);
 #endif
 #ifdef DEBUG
     register_command("crash", handle_crash);
