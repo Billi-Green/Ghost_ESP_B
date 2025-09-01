@@ -59,8 +59,8 @@ static SemaphoreHandle_t g_response_sem = NULL;
 #define CMD_MF1_NESTED_ACQUIRE  2006  // 0x07D6 - Nested attack
 #define CMD_MF1_DARKSIDE_ACQUIRE 2004 // 0x07D4 - Darkside attack
 #define CMD_MF1_AUTH_ONE_KEY_BLOCK  2007  // 0x07D7 - Authenticate with key for one block
-#define CMD_MF1_READ_ONE_BLOCK      2008  // 0x07D8 - Read MIFARE Classic block ✅ OFFICIAL
-#define CMD_MF1_WRITE_ONE_BLOCK     2009  // 0x07D9 - Write MIFARE Classic block ✅ OFFICIAL  
+#define CMD_MF1_READ_ONE_BLOCK      2008  // 0x07D8 - Read MIFARE Classic block SUCCESS: OFFICIAL
+#define CMD_MF1_WRITE_ONE_BLOCK     2009  // 0x07D9 - Write MIFARE Classic block SUCCESS: OFFICIAL  
 #define CMD_HF14A_RAW           2010  // 0x07DA - Send raw HF command
 
 // LF commands (3000-3999)
@@ -79,6 +79,27 @@ static SemaphoreHandle_t g_response_sem = NULL;
 #define NTAG_WRITE_CMD          0xA2  // NTAG WRITE command  
 #define NTAG_PWD_AUTH_CMD       0x1B  // NTAG password authentication
 #define NTAG_GET_VERSION_CMD    0x60  // NTAG GET_VERSION command
+
+// NTAG card memory sizes and page counts
+#define NTAG213_TOTAL_PAGES     45   // 180 bytes total
+#define NTAG215_TOTAL_PAGES     135  // 540 bytes total  
+#define NTAG216_TOTAL_PAGES     231  // 924 bytes total
+#define NTAG_PAGE_SIZE          4    // Each page is 4 bytes
+
+// NTAG memory map constants
+#define NTAG_HEADER_PAGES       4    // Pages 0-3: Header (UID, etc.)
+#define NTAG_USER_START_PAGE    4    // User data starts at page 4
+#define NTAG_CC_PAGE            3    // Capability Container at page 3
+
+// Common NTAG default passwords for authentication attempts
+static const uint32_t ntag_default_passwords[] = {
+    0x00000000,  // All zeros (most common)
+    0xFFFFFFFF,  // All ones
+    0x12345678,  // Common test password
+    0xABCDEF12,  // Another test password
+    0x11223344,  // Pattern password
+    0x44332211,  // Reverse pattern
+};
 
 // Mode constants
 #define HW_MODE_READER          0x01
@@ -122,9 +143,44 @@ typedef struct {
     uint8_t sak;
 } card_dump_data_t;
 
+// NTAG-specific dump structure
+typedef struct {
+    bool valid;
+    uint8_t uid[10];  // NTAG UIDs can be up to 10 bytes
+    uint8_t uid_size;
+    char card_type[32];  // NTAG213, NTAG215, NTAG216
+    time_t timestamp;
+    
+    // NTAG memory structure
+    uint8_t pages[NTAG216_TOTAL_PAGES][NTAG_PAGE_SIZE];  // Use largest possible size
+    bool page_valid[NTAG216_TOTAL_PAGES];
+    uint16_t total_pages;
+    uint16_t readable_pages;
+    uint16_t protected_pages;
+    
+    // NTAG-specific fields
+    uint8_t version_data[8];  // GET_VERSION response
+    bool version_valid;
+    bool password_protected;
+    uint32_t password;        // If password authentication succeeded
+    bool password_found;
+    
+    // Memory map information
+    uint16_t user_memory_start;  // Usually page 4
+    uint16_t user_memory_end;    // Varies by NTAG type
+    uint16_t config_pages_start; // Configuration area
+    uint16_t lock_bytes_page;    // Lock bytes location
+    
+    // NDEF information (if present)
+    bool ndef_present;
+    uint16_t ndef_size;
+    uint16_t ndef_start_page;
+} ntag_dump_data_t;
+
 static last_scan_data_t g_last_hf_scan = {0};
 static last_scan_data_t g_last_lf_scan = {0};
 static card_dump_data_t g_last_card_dump = {0};
+static ntag_dump_data_t g_last_ntag_dump = {0};
 
 // Comprehensive MIFARE Classic dictionary (based on UberGuidoZ Flipper collection)
 // Source: https://github.com/UberGuidoZ/Flipper/blob/main/NFC/mf_classic_dict/mf_classic_dict.nfc
@@ -2414,8 +2470,8 @@ bool chameleon_manager_save_last_lf_scan(const char* filename) {
 }
 
 /**
- * @brief Simple NTAG card detection for protected/locked cards
- * @return true if card appears to be an NTAG
+ * @brief Comprehensive NTAG card detection and type identification
+ * @return true if card appears to be an NTAG, false otherwise
  */
 bool chameleon_manager_detect_ntag(void) {
     if (!g_is_connected) {
@@ -2424,8 +2480,12 @@ bool chameleon_manager_detect_ntag(void) {
         return false;
     }
     
+    ESP_LOGI("chameleon_manager", "Starting comprehensive NTAG detection...");
     printf("Detecting NTAG card...\n");
     TERMINAL_VIEW_ADD_TEXT("Detecting NTAG card...\n");
+    
+    // Clear previous NTAG dump data
+    memset(&g_last_ntag_dump, 0, sizeof(g_last_ntag_dump));
     
     // First ensure we have a card and it's in reader mode
     if (!chameleon_manager_scan_hf()) {
@@ -2439,92 +2499,244 @@ bool chameleon_manager_detect_ntag(void) {
         return false;
     }
     
-    // Check if this looks like an NTAG based on UID pattern
-    bool looks_like_ntag = false;
-    const char* detected_type = "Unknown NTAG";
+    // Initialize NTAG dump structure
+    g_last_ntag_dump.valid = false;
+    g_last_ntag_dump.uid_size = g_last_hf_scan.uid_size;
+    memcpy(g_last_ntag_dump.uid, g_last_hf_scan.uid, g_last_hf_scan.uid_size);
+    g_last_ntag_dump.timestamp = time(NULL);
+    strcpy(g_last_ntag_dump.card_type, "Unknown NTAG");
     
-    printf("Analyzing card characteristics...\n");
-    printf("UID (%d bytes): ", g_last_hf_scan.uid_size);
+    // Analyze UID pattern for NTAG characteristics
+    printf("Card Analysis:\n");
+    printf("   UID (%d bytes): ", g_last_hf_scan.uid_size);
     for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
-        printf("%02X ", g_last_hf_scan.uid[i]);
+        printf("%02X", g_last_hf_scan.uid[i]);
+        if (i < g_last_hf_scan.uid_size - 1) printf(" ");
     }
     printf("\n");
     
+    // Check for NTAG characteristics
+    
     // NTAG cards typically have 7-byte UIDs starting with 0x04 (NXP manufacturer)
     if (g_last_hf_scan.uid_size == 7 && g_last_hf_scan.uid[0] == 0x04) {
-        looks_like_ntag = true;
-        detected_type = "NTAG215";  // Most common, assume unless proven otherwise
-        printf("7-byte UID starting with 0x04 - this looks like an NTAG card\n");
-        
-        // Additional heuristics can be added here based on UID patterns
-        // NTAG213: usually smaller UIDs in certain ranges
-        // NTAG215: most common for consumer applications  
-        // NTAG216: larger memory, less common
-    } else if (g_last_hf_scan.uid_size == 4) {
-        // Some NTAG cards may present as 4-byte UIDs in certain configurations
-        if (g_last_hf_scan.uid[0] == 0x04) {
-            looks_like_ntag = true;
-            detected_type = "NTAG213";  // Smaller cards more likely to have 4-byte UIDs
-            printf("4-byte UID starting with 0x04 - possibly NTAG213\n");
-        }
-    }
-    
-    if (!looks_like_ntag) {
-        printf("UID pattern doesn't match typical NTAG cards\n");
-        TERMINAL_VIEW_ADD_TEXT("Card doesn't appear to be an NTAG\n");
+        strcpy(g_last_ntag_dump.card_type, "NTAG215");  // Default assumption
+        printf("   * 7-byte UID starting with 0x04 (NXP) - NTAG pattern detected\n");
+    } else if (g_last_hf_scan.uid_size == 4 && g_last_hf_scan.uid[0] == 0x04) {
+        strcpy(g_last_ntag_dump.card_type, "NTAG213");  // Smaller cards more likely
+        printf("   * 4-byte UID starting with 0x04 (NXP) - possible NTAG213\n");
+    } else {
+        printf("   ERROR: UID pattern doesn't match typical NTAG cards\n");
+        TERMINAL_VIEW_ADD_TEXT("ERROR: Card doesn't appear to be an NTAG\n");
         return false;
     }
     
-    // Try GET_VERSION command but don't fail if it doesn't work
-    printf("Attempting GET_VERSION command...\n");
+    // Attempt GET_VERSION command for precise identification
+    printf("ANALYZING: Attempting GET_VERSION command for precise identification...\n");
     uint8_t get_version_cmd[1] = {NTAG_GET_VERSION_CMD};
     
     g_response_received = false;
-    bool version_worked = false;
+    g_last_ntag_dump.version_valid = false;
     
     if (send_command(CMD_HF14A_RAW, get_version_cmd, 1)) {
-        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
             if (g_response_received && g_last_response.command == CMD_HF14A_RAW) {
                 if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
                     if (g_last_response.data_size >= 8) {
-                        printf("GET_VERSION successful!\n");
-                        version_worked = true;
+                        printf("   SUCCESS: GET_VERSION successful! Parsing response...\n");
+                        g_last_ntag_dump.version_valid = true;
+                        memcpy(g_last_ntag_dump.version_data, g_last_response.data, 8);
                         
-                        // Parse version info to get exact type
+                        // Parse version info for exact NTAG type
+                        uint8_t vendor = g_last_response.data[1];
+                        uint8_t type = g_last_response.data[2];
+                        uint8_t subtype = g_last_response.data[3];
+                        uint8_t version_major = g_last_response.data[4];
+                        uint8_t version_minor = g_last_response.data[5];
                         uint8_t storage_size = g_last_response.data[6];
+                        uint8_t protocol = g_last_response.data[7];
+                        
+                        printf("   DETAILS: Version Details:\n");
+                        printf("      Vendor: 0x%02X, Type: 0x%02X, Subtype: 0x%02X\n", vendor, type, subtype);
+                        printf("      Version: %d.%d, Storage: 0x%02X, Protocol: 0x%02X\n", 
+                               version_major, version_minor, storage_size, protocol);
+                        
+                        // Determine exact NTAG type based on storage size
                         switch (storage_size) {
-                            case 0x0F: detected_type = "NTAG213"; break;
-                            case 0x11: detected_type = "NTAG215"; break;
-                            case 0x13: detected_type = "NTAG216"; break;
-                            default: detected_type = "NTAG215"; break;  // Default assumption
+                            case 0x0F:
+                                strcpy(g_last_ntag_dump.card_type, "NTAG213");
+                                g_last_ntag_dump.total_pages = NTAG213_TOTAL_PAGES;
+                                g_last_ntag_dump.user_memory_end = 39;
+                                printf("   IDENTIFIED: Identified: NTAG213 (180 bytes, 45 pages)\n");
+                                break;
+                            case 0x11:
+                                strcpy(g_last_ntag_dump.card_type, "NTAG215");
+                                g_last_ntag_dump.total_pages = NTAG215_TOTAL_PAGES;
+                                g_last_ntag_dump.user_memory_end = 129;
+                                printf("   IDENTIFIED: Identified: NTAG215 (540 bytes, 135 pages)\n");
+                                break;
+                            case 0x13:
+                                strcpy(g_last_ntag_dump.card_type, "NTAG216");
+                                g_last_ntag_dump.total_pages = NTAG216_TOTAL_PAGES;
+                                g_last_ntag_dump.user_memory_end = 225;
+                                printf("   IDENTIFIED: Identified: NTAG216 (924 bytes, 231 pages)\n");
+                                break;
+                            default:
+                                strcpy(g_last_ntag_dump.card_type, "NTAG215");  // Safe default
+                                g_last_ntag_dump.total_pages = NTAG215_TOTAL_PAGES;
+                                g_last_ntag_dump.user_memory_end = 129;
+                                printf("   WARNING:  Unknown storage size 0x%02X - assuming NTAG215\n", storage_size);
+                                break;
                         }
+                        
+                        g_last_ntag_dump.password_protected = false;  // GET_VERSION worked, so not protected
+                        
+                    } else {
+                        printf("   WARNING:  GET_VERSION response too short (%d bytes)\n", g_last_response.data_size);
                     }
                 } else {
-                    printf("GET_VERSION returned status 0x%02X (card may be protected)\n", 
-                           g_last_response.status);
+                    printf("   WARNING:  GET_VERSION failed (status: 0x%02X)\n", g_last_response.status);
+                    if (g_last_response.status == 0x60) {
+                        printf("   PROTECTED: Authentication required - card is password protected\n");
+                        g_last_ntag_dump.password_protected = true;
+                    }
+                }
+            }
+        } else {
+            printf("   TIMEOUT: GET_VERSION command timeout\n");
+        }
+    } else {
+        printf("   ERROR: Failed to send GET_VERSION command\n");
+    }
+    
+    // Set default values if GET_VERSION failed
+    if (!g_last_ntag_dump.version_valid) {
+        // Assume NTAG215 if we can't determine exactly
+        if (strcmp(g_last_ntag_dump.card_type, "Unknown NTAG") == 0) {
+            strcpy(g_last_ntag_dump.card_type, "NTAG215");
+        }
+        g_last_ntag_dump.total_pages = NTAG215_TOTAL_PAGES;
+        g_last_ntag_dump.user_memory_end = 129;
+        g_last_ntag_dump.password_protected = true;  // Assume protected if GET_VERSION failed
+    }
+    
+    // Set common NTAG memory map values
+    g_last_ntag_dump.user_memory_start = NTAG_USER_START_PAGE;
+    g_last_ntag_dump.lock_bytes_page = 2;  // Standard NTAG lock bytes location
+    
+    printf("\nSUCCESS: NTAG Detection Complete!\n");
+    printf("   INFO: Card Type: %s\n", g_last_ntag_dump.card_type);
+    printf("   SIZE: Total Pages: %d\n", g_last_ntag_dump.total_pages);
+    printf("   PROTECTED: Password Protected: %s\n", g_last_ntag_dump.password_protected ? "Yes" : "No");
+    
+    TERMINAL_VIEW_ADD_TEXT("SUCCESS: %s detected", g_last_ntag_dump.card_type);
+    if (g_last_ntag_dump.password_protected) {
+        TERMINAL_VIEW_ADD_TEXT(" (protected)");
+    }
+    TERMINAL_VIEW_ADD_TEXT("\n");
+    
+    g_last_ntag_dump.valid = true;
+    return true;
+}
+
+/**
+ * @brief Attempt NTAG password authentication with common passwords
+ * @param password 4-byte password to try
+ * @return true if authentication succeeded
+ */
+bool chameleon_manager_ntag_authenticate(uint32_t password) {
+    printf("   KEY: Trying password: %08" PRIX32 "\n", password);
+    
+    // Prepare PWD_AUTH command: [1B] [PWD0] [PWD1] [PWD2] [PWD3]
+    uint8_t auth_cmd[5] = {
+        NTAG_PWD_AUTH_CMD,
+        (password >> 24) & 0xFF,
+        (password >> 16) & 0xFF,
+        (password >> 8) & 0xFF,
+        password & 0xFF
+    };
+    
+    g_response_received = false;
+    if (send_command(CMD_HF14A_RAW, auth_cmd, 5)) {
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            if (g_response_received && g_last_response.command == CMD_HF14A_RAW) {
+                if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                    if (g_last_response.data_size >= 2) {
+                        printf("   SUCCESS: Password authentication successful!\n");
+                        printf("   INFO: PACK response: %02X %02X\n", 
+                               g_last_response.data[0], g_last_response.data[1]);
+                        return true;
+                    }
+                } else {
+                    ESP_LOGI("chameleon_manager", "Password auth failed: status 0x%02X", g_last_response.status);
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Try to read unprotected pages (header pages 0-3 are usually readable)
+ * @return number of pages successfully read
+ */
+static uint16_t read_unprotected_ntag_pages(void) {
+    uint16_t pages_read = 0;
+    
+    printf("   UNPROTECTED: Attempting to read unprotected header pages...\n");
+    
+    // Try to read the first 4 pages (header) which are usually readable even on protected cards
+    uint8_t read_cmd[2] = {NTAG_READ_CMD, 0x00};  // Start from page 0
+    
+    g_response_received = false;
+    if (send_command(CMD_HF14A_RAW, read_cmd, 2)) {
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
+            if (g_response_received && g_last_response.command == CMD_HF14A_RAW) {
+                if ((g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) && 
+                    g_last_response.data_size >= 16) {
+                    
+                    printf("   SUCCESS: Header pages readable - extracting UID and basic info\n");
+                    
+                    // Store the 4 header pages
+                    for (int i = 0; i < 4; i++) {
+                        if (i < NTAG216_TOTAL_PAGES) {
+                            memcpy(g_last_ntag_dump.pages[i], &g_last_response.data[i * 4], 4);
+                            g_last_ntag_dump.page_valid[i] = true;
+                            pages_read++;
+                        }
+                    }
+                    
+                    // Extract UID from header
+                    if (g_last_ntag_dump.page_valid[0] && g_last_ntag_dump.page_valid[1]) {
+                        printf("   INFO: UID from header: ");
+                        for (int i = 0; i < 3; i++) {
+                            printf("%02X ", g_last_ntag_dump.pages[0][i]);
+                        }
+                        for (int i = 0; i < 4; i++) {
+                            printf("%02X ", g_last_ntag_dump.pages[1][i]);
+                        }
+                        printf("\n");
+                        
+                        // Check capability container in page 3
+                        if (g_last_ntag_dump.page_valid[3]) {
+                            uint8_t cc_magic = g_last_ntag_dump.pages[3][0];
+                            uint8_t cc_version = g_last_ntag_dump.pages[3][1];
+                            uint8_t cc_size = g_last_ntag_dump.pages[3][2];
+                            uint8_t cc_read_write = g_last_ntag_dump.pages[3][3];
+                            
+                            printf("   PAGES: Capability Container: Magic=0x%02X, Ver=%d.%d, Size=0x%02X, RW=0x%02X\n",
+                                   cc_magic, (cc_version >> 4) & 0x0F, cc_version & 0x0F, cc_size, cc_read_write);
+                        }
+                    }
                 }
             }
         }
     }
     
-    if (!version_worked) {
-        printf("GET_VERSION failed - assuming card is password protected\n");
-        printf("Card appears to be a protected %s\n", detected_type);
-    }
-    
-    printf("NTAG card detected: %s\n", detected_type);
-    if (!version_worked) {
-        printf("Note: Card appears to be password protected or locked\n");
-        TERMINAL_VIEW_ADD_TEXT("%s detected (protected)\n", detected_type);
-    } else {
-        TERMINAL_VIEW_ADD_TEXT("%s detected\n", detected_type);
-    }
-    
-    return true;
+    return pages_read;
 }
 
 /**
- * @brief Attempt to read NTAG card pages (handles protected cards gracefully)
+ * @brief Comprehensive NTAG card dumping with password recovery attempts
  * @return true if any data was readable
  */
 bool chameleon_manager_read_ntag_card(void) {
@@ -2534,176 +2746,438 @@ bool chameleon_manager_read_ntag_card(void) {
         return false;
     }
     
-    printf("Starting NTAG card analysis...\n");
-    TERMINAL_VIEW_ADD_TEXT("Starting NTAG card analysis...\n");
+    ESP_LOGI("chameleon_manager", "Starting comprehensive NTAG card dump...");
+    printf("STARTING: Starting NTAG card dump...\n");
+    TERMINAL_VIEW_ADD_TEXT("STARTING: Starting NTAG card dump...\n");
     
-    // First detect if this is an NTAG
+    // First detect the NTAG type
     if (!chameleon_manager_detect_ntag()) {
-        printf("Card does not appear to be an NTAG\n");
-        TERMINAL_VIEW_ADD_TEXT("Not an NTAG card\n");
+        printf("ERROR: Card does not appear to be an NTAG\n");
+        TERMINAL_VIEW_ADD_TEXT("ERROR: Not an NTAG card\n");
         return false;
     }
     
-    printf("Attempting to read card data...\n");
-    printf("Note: Protected cards may have limited readable areas\n");
-    TERMINAL_VIEW_ADD_TEXT("Attempting to read card data...\n");
+    // Initialize page tracking
+    g_last_ntag_dump.readable_pages = 0;
+    g_last_ntag_dump.protected_pages = 0;
+    g_last_ntag_dump.password_found = false;
     
-    uint16_t successful_reads = 0;
-    uint16_t total_attempts = 0;
-    bool any_success = false;
+    // Try password authentication if the card appears protected
+    if (g_last_ntag_dump.password_protected) {
+        printf("\nPROTECTED: Card is password protected - attempting authentication...\n");
+        TERMINAL_VIEW_ADD_TEXT("PROTECTED: Attempting password authentication...\n");
+        
+        size_t num_passwords = sizeof(ntag_default_passwords) / sizeof(ntag_default_passwords[0]);
+        for (size_t i = 0; i < num_passwords; i++) {
+            if (chameleon_manager_ntag_authenticate(ntag_default_passwords[i])) {
+                printf("FOUND: Found working password: %08" PRIX32 "\n", ntag_default_passwords[i]);
+                TERMINAL_VIEW_ADD_TEXT("FOUND: Password found: %08" PRIX32 "\n", ntag_default_passwords[i]);
+                g_last_ntag_dump.password = ntag_default_passwords[i];
+                g_last_ntag_dump.password_found = true;
+                g_last_ntag_dump.password_protected = false;  // We can access it now
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));  // Small delay between attempts
+        }
+        
+        if (!g_last_ntag_dump.password_found) {
+            printf("WARNING:  No working password found in default list\n");
+            TERMINAL_VIEW_ADD_TEXT("WARNING:  Default passwords failed\n");
+            
+            // Try to read at least the unprotected header pages
+            printf("\nREADING: Attempting to read unprotected pages...\n");
+            uint16_t header_pages = read_unprotected_ntag_pages();
+            if (header_pages > 0) {
+                printf("   SUCCESS: Successfully read %d header pages\n", header_pages);
+                g_last_ntag_dump.readable_pages = header_pages;
+                
+                // For protected cards, we can still save basic info
+                printf("   NOTE: Card is protected but basic information extracted\n");
+                TERMINAL_VIEW_ADD_TEXT("SUCCESS: %d header pages read\n", header_pages);
+                return true; // Consider this a partial success
+            } else {
+                printf("   ERROR: Cannot read any pages - card is fully protected\n");
+                TERMINAL_VIEW_ADD_TEXT("ERROR: Fully protected card\n");
+                return false;
+            }
+        }
+    }
     
-    // Try to read first few pages which are usually readable even on protected cards
-    printf("Testing readability of first 16 pages...\n");
+    // Check connection before proceeding with dump
+    if (!g_is_connected) {
+        printf("ERROR: Connection lost during authentication - attempting reconnect...\n");
+        TERMINAL_VIEW_ADD_TEXT("ERROR: Connection lost - reconnecting...\n");
+        
+        // Try to reconnect
+        if (!chameleon_manager_connect(10)) {
+            printf("ERROR: Failed to reconnect to Chameleon Ultra\n");
+            TERMINAL_VIEW_ADD_TEXT("ERROR: Reconnection failed\n");
+            return false;
+        }
+        
+        printf("SUCCESS: Reconnected successfully\n");
+        TERMINAL_VIEW_ADD_TEXT("SUCCESS: Reconnected\n");
+        
+        // Re-scan the card after reconnection
+        if (!chameleon_manager_scan_hf()) {
+            printf("ERROR: Card no longer detected after reconnection\n");
+            TERMINAL_VIEW_ADD_TEXT("ERROR: Card lost\n");
+            return false;
+        }
+    }
     
-    for (uint16_t page = 0; page < 16; page += 4) {  // Read in 4-page blocks
-        printf("Testing page block %d-%d...\n", page, page + 3);
+    // Now attempt to read all pages
+    printf("\nREADING: Reading NTAG pages...\n");
+    printf("   Card Type: %s (%d total pages)\n", g_last_ntag_dump.card_type, g_last_ntag_dump.total_pages);
+    TERMINAL_VIEW_ADD_TEXT("READING: Reading pages...\n");
+    
+    // Read pages in 4-page blocks for better efficiency and connection stability
+    uint16_t read_failures = 0;
+    uint16_t max_failures = 10;  // Allow some failures before giving up
+    
+    for (uint16_t page = 0; page < g_last_ntag_dump.total_pages; page += 4) {
+        if (page % 20 == 0) {
+            printf("   PAGES: Reading pages %d-%d/%d...\n", page, 
+                   (page + 3 < g_last_ntag_dump.total_pages) ? page + 3 : g_last_ntag_dump.total_pages - 1,
+                   g_last_ntag_dump.total_pages - 1);
+        }
+        
+        // Check connection health periodically
+        if (page > 0 && page % 40 == 0) {
+            if (!g_is_connected) {
+                printf("   WARNING:  Connection lost at page %d - attempting reconnect...\n", page);
+                if (!chameleon_manager_connect(5)) {
+                    printf("   ERROR: Reconnection failed - stopping dump\n");
+                    break;
+                }
+                if (!chameleon_manager_scan_hf()) {
+                    printf("   ERROR: Card lost after reconnection - stopping dump\n");
+                    break;
+                }
+                printf("   SUCCESS: Reconnected and card re-detected\n");
+            }
+        }
         
         uint8_t read_cmd[2] = {NTAG_READ_CMD, (uint8_t)page};
         
         g_response_received = false;
         bool result = send_command(CMD_HF14A_RAW, read_cmd, 2);
-        total_attempts++;
         
         if (!result) {
-            printf("  Failed to send command\n");
+            ESP_LOGI("chameleon_manager", "Failed to send read command for page %d", page);
+            read_failures++;
+            if (read_failures > max_failures) {
+                printf("   ERROR: Too many read failures (%d) - stopping dump\n", read_failures);
+                break;
+            }
             continue;
         }
         
-        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
             if (g_response_received && g_last_response.command == CMD_HF14A_RAW) {
                 if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
                     if (g_last_response.data_size >= 16) {
-                        printf("  ✓ Pages %d-%d readable (%d bytes)\n", page, page + 3, g_last_response.data_size);
-                        successful_reads++;
-                        any_success = true;
-                        
-                        // Display the data
-                        printf("    Data: ");
-                        for (int i = 0; i < 16 && i < g_last_response.data_size; i++) {
-                            printf("%02X ", g_last_response.data[i]);
-                            if ((i + 1) % 4 == 0) printf("| ");
+                        // NTAG READ returns 4 pages (16 bytes) starting from the requested page
+                        for (int i = 0; i < 4 && (page + i) < g_last_ntag_dump.total_pages; i++) {
+                            uint16_t current_page = page + i;
+                            if (current_page < NTAG216_TOTAL_PAGES) {
+                                memcpy(g_last_ntag_dump.pages[current_page], 
+                                       &g_last_response.data[i * 4], 4);
+                                g_last_ntag_dump.page_valid[current_page] = true;
+                                g_last_ntag_dump.readable_pages++;
+                            }
                         }
-                        printf("\n");
+                        
+                        // Reset failure counter on successful read
+                        read_failures = 0;
+                        
+                    } else {
+                        ESP_LOGI("chameleon_manager", "Page %d: insufficient data (%d bytes)", 
+                                page, g_last_response.data_size);
+                        for (int i = 0; i < 4 && (page + i) < g_last_ntag_dump.total_pages; i++) {
+                            g_last_ntag_dump.protected_pages++;
+                        }
+                        read_failures++;
                     }
                 } else {
-                    printf("  ✗ Pages %d-%d protected (status: 0x%02X)\n", 
-                           page, page + 3, g_last_response.status);
                     if (g_last_response.status == 0x60) {
-                        printf("    Authentication required\n");
+                        ESP_LOGI("chameleon_manager", "Page %d: authentication required", page);
+                    } else {
+                        ESP_LOGI("chameleon_manager", "Page %d: read failed (status 0x%02X)", 
+                                page, g_last_response.status);
                     }
+                    for (int i = 0; i < 4 && (page + i) < g_last_ntag_dump.total_pages; i++) {
+                        g_last_ntag_dump.protected_pages++;
+                    }
+                    read_failures++;
                 }
+            } else {
+                ESP_LOGI("chameleon_manager", "Page %d: no response received", page);
+                for (int i = 0; i < 4 && (page + i) < g_last_ntag_dump.total_pages; i++) {
+                    g_last_ntag_dump.protected_pages++;
+                }
+                read_failures++;
             }
         } else {
-            printf("  ✗ Pages %d-%d timed out\n", page, page + 3);
+            ESP_LOGI("chameleon_manager", "Page %d: read timeout", page);
+            for (int i = 0; i < 4 && (page + i) < g_last_ntag_dump.total_pages; i++) {
+                g_last_ntag_dump.protected_pages++;
+            }
+            read_failures++;
         }
         
+        // Check if we've hit failure limit
+        if (read_failures > max_failures) {
+            printf("   ERROR: Too many consecutive failures (%d) - stopping dump\n", read_failures);
+            break;
+        }
+        
+        // Small delay to avoid overwhelming the connection
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     
-    printf("\n=== NTAG ANALYSIS COMPLETE ===\n");
-    printf("Card Type: NTAG (protected/locked)\n");
-    printf("Readable page blocks: %d/%d\n", successful_reads, total_attempts);
-    printf("UID: ");
-    for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
-        printf("%02X", g_last_hf_scan.uid[i]);
-    }
-    printf("\n");
-    
-    if (!any_success) {
-        printf("Status: Fully protected - no pages readable without authentication\n");
-        printf("This card requires a password to access its data\n");
-        TERMINAL_VIEW_ADD_TEXT("Card is fully protected\n");
-    } else {
-        printf("Status: Partially readable - some data accessible\n");
-        TERMINAL_VIEW_ADD_TEXT("Some data readable\n");
+    // Analyze NDEF data if present
+    g_last_ntag_dump.ndef_present = false;
+    if (g_last_ntag_dump.page_valid[4]) {  // NDEF typically starts at page 4
+        uint8_t ndef_header = g_last_ntag_dump.pages[4][0];
+        if (ndef_header == 0x03) {  // NDEF message TLV
+            g_last_ntag_dump.ndef_present = true;
+            g_last_ntag_dump.ndef_size = g_last_ntag_dump.pages[4][1];
+            g_last_ntag_dump.ndef_start_page = 4;
+            printf("   NDEF: NDEF data detected (size: %d bytes)\n", g_last_ntag_dump.ndef_size);
+        }
     }
     
-    TERMINAL_VIEW_ADD_TEXT("=== ANALYSIS COMPLETE ===\n");
-    TERMINAL_VIEW_ADD_TEXT("Readable blocks: %d/%d\n", successful_reads, total_attempts);
+    // Display summary
+    printf("\nIDENTIFIED: NTAG Dump Complete!\n");
+    printf("   INFO: Card Type: %s\n", g_last_ntag_dump.card_type);
+    printf("   DETAILS: Pages Read: %d/%d (%.1f%%)\n", 
+           g_last_ntag_dump.readable_pages, g_last_ntag_dump.total_pages,
+           (float)g_last_ntag_dump.readable_pages / g_last_ntag_dump.total_pages * 100);
+    printf("   PROTECTED: Protected Pages: %d\n", g_last_ntag_dump.protected_pages);
+    printf("   DATA: Total Data: %d bytes\n", g_last_ntag_dump.readable_pages * 4);
     
-    return true;  // Return true even for protected cards since we identified them
+    if (g_last_ntag_dump.password_found) {
+        printf("   KEY: Password: %08" PRIX32 "\n", g_last_ntag_dump.password);
+    }
+    
+    if (g_last_ntag_dump.ndef_present) {
+        printf("   NDEF: NDEF: Present (%d bytes)\n", g_last_ntag_dump.ndef_size);
+    }
+    
+    TERMINAL_VIEW_ADD_TEXT("IDENTIFIED: Dump complete: %d/%d pages\n", 
+                           g_last_ntag_dump.readable_pages, g_last_ntag_dump.total_pages);
+    
+    if (g_last_ntag_dump.password_found) {
+        TERMINAL_VIEW_ADD_TEXT("KEY: Password: %08" PRIX32 "\n", g_last_ntag_dump.password);
+    }
+    
+    return g_last_ntag_dump.readable_pages > 0;
 }
 
 /**
- * @brief Save NTAG analysis results (even for protected cards)
+ * @brief Save comprehensive NTAG dump data to SD card
  * @param filename Custom filename (optional)
  * @return true if saved successfully
  */
 bool chameleon_manager_save_ntag_dump(const char* filename) {
-    if (!g_last_hf_scan.valid) {
-        printf("No card scan data to save\n");
-        TERMINAL_VIEW_ADD_TEXT("No card data to save\n");
+    if (!g_last_ntag_dump.valid) {
+        printf("ERROR: No NTAG dump data to save\n");
+        TERMINAL_VIEW_ADD_TEXT("ERROR: No NTAG dump data to save\n");
         return false;
     }
     
     // Create filename if not provided
-    char file_path[128];
+    char file_path[256];  // Increased buffer size to avoid truncation
     time_t now = time(NULL);
     
     if (filename == NULL) {
         struct tm* time_info = localtime(&now);
+        char uid_str[16] = {0};  // Reduced size to prevent overflow
+        for (int i = 0; i < g_last_ntag_dump.uid_size && i < 4; i++) {
+            snprintf(uid_str + (i * 2), sizeof(uid_str) - (i * 2), "%02X", g_last_ntag_dump.uid[i]);
+        }
+        
         snprintf(file_path, sizeof(file_path), 
-                "/mnt/ghostesp/chameleon/ntag_protected_%02X%02X%02X%02X_%04d%02d%02d_%02d%02d%02d.txt",
-                g_last_hf_scan.uid[0], g_last_hf_scan.uid[1], 
-                g_last_hf_scan.uid[2], g_last_hf_scan.uid[3],
+                "/mnt/ghostesp/chameleon/ntag_%s_%s_%04d%02d%02d_%02d%02d%02d.bin",
+                g_last_ntag_dump.card_type,
+                uid_str,
                 time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
                 time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
     } else {
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+        if (strstr(filename, ".") == NULL) {
+            snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s.bin", filename);
+        } else {
+            snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+        }
     }
     
     // Ensure directory exists
     sd_card_create_directory("/mnt/ghostesp/chameleon");
     
-    // Create content
-    char content[2048];
-    int len = snprintf(content, sizeof(content),
-        "NTAG Card Analysis Report\n"
-        "========================\n"
-        "Timestamp: %s"
-        "Card Type: NTAG (Password Protected)\n"
+    // Create comprehensive dump content
+    char content[8192];  // Larger buffer for full dump
+    int len = 0;
+    
+    // Header information
+    len += snprintf(content + len, sizeof(content) - len,
+        "# Ghost ESP - NTAG Card Dump\n"
+        "# ===========================\n"
+        "# Generated: %s"
+        "# Device: Ghost ESP with Chameleon Ultra\n"
+        "# \n"
+        "# CARD INFORMATION\n"
+        "# ================\n"
+        "Card Type: %s\n"
         "UID (%d bytes): ",
         ctime(&now),
-        g_last_hf_scan.uid_size);
+        g_last_ntag_dump.card_type,
+        g_last_ntag_dump.uid_size);
     
     // Add UID
-    for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
-        len += snprintf(content + len, sizeof(content) - len, "%02X", g_last_hf_scan.uid[i]);
-        if (i < g_last_hf_scan.uid_size - 1) {
+    for (int i = 0; i < g_last_ntag_dump.uid_size; i++) {
+        len += snprintf(content + len, sizeof(content) - len, "%02X", g_last_ntag_dump.uid[i]);
+        if (i < g_last_ntag_dump.uid_size - 1) {
             len += snprintf(content + len, sizeof(content) - len, " ");
         }
     }
     
+    // Dump statistics
     len += snprintf(content + len, sizeof(content) - len,
-        "\n\nAnalysis Results:\n"
-        "================\n"
-        "- Card detected as NTAG type (likely NTAG215)\n"
-        "- Standard commands return authentication error (0x60)\n"
-        "- Card appears to be password protected or locked\n"
-        "- Access requires proper authentication credentials\n\n"
-        "Technical Details:\n"
-        "=================\n"
-        "- GET_VERSION command: Failed (Status 0x60)\n"
-        "- READ command: Failed (Status 0x60)\n"
-        "- UID Pattern: 7-byte UID starting with 0x04 (NXP NTAG)\n\n"
-        "Recommendations:\n"
-        "===============\n"
-        "1. This card requires a 4-byte password for access\n"
-        "2. Try common default passwords: 00000000, FFFFFFFF\n"
-        "3. Check if this is a custom application with known passwords\n"
-        "4. Consider using specialized NTAG cracking tools\n\n"
-        "Note: This analysis confirms the card is a valid NTAG\n"
-        "but cannot access protected data without authentication.\n");
+        "\nTotal Pages: %d\n"
+        "Readable Pages: %d (%.1f%%)\n"
+        "Protected Pages: %d\n"
+        "Total Data Size: %d bytes\n",
+        g_last_ntag_dump.total_pages,
+        g_last_ntag_dump.readable_pages,
+        (float)g_last_ntag_dump.readable_pages / g_last_ntag_dump.total_pages * 100,
+        g_last_ntag_dump.protected_pages,
+        g_last_ntag_dump.readable_pages * 4);
+    
+    // Version information if available
+    if (g_last_ntag_dump.version_valid) {
+        len += snprintf(content + len, sizeof(content) - len,
+            "\n# VERSION INFORMATION\n"
+            "# ===================\n"
+            "GET_VERSION Response: ");
+        for (int i = 0; i < 8; i++) {
+            len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_ntag_dump.version_data[i]);
+        }
+        len += snprintf(content + len, sizeof(content) - len, "\n");
+    }
+    
+    // Password information
+    if (g_last_ntag_dump.password_found) {
+        len += snprintf(content + len, sizeof(content) - len,
+            "\n# PASSWORD INFORMATION\n"
+            "# ====================\n"
+            "Password Found: %08" PRIX32 "\n"
+            "Authentication: Successful\n",
+            g_last_ntag_dump.password);
+    } else if (g_last_ntag_dump.password_protected) {
+        len += snprintf(content + len, sizeof(content) - len,
+            "\n# PASSWORD INFORMATION\n"
+            "# ====================\n"
+            "Password Protected: Yes\n"
+            "Authentication: Failed (default passwords)\n");
+    }
+    
+    // NDEF information
+    if (g_last_ntag_dump.ndef_present) {
+        len += snprintf(content + len, sizeof(content) - len,
+            "\n# NDEF INFORMATION\n"
+            "# =================\n"
+            "NDEF Present: Yes\n"
+            "NDEF Size: %d bytes\n"
+            "NDEF Start Page: %d\n",
+            g_last_ntag_dump.ndef_size,
+            g_last_ntag_dump.ndef_start_page);
+    }
+    
+    // Memory map information
+    len += snprintf(content + len, sizeof(content) - len,
+        "\n# MEMORY MAP\n"
+        "# ===========\n"
+        "User Memory Start: Page %d\n"
+        "User Memory End: Page %d\n"
+        "Lock Bytes Page: %d\n"
+        "\n# PAGE DATA\n"
+        "# ==========\n",
+        g_last_ntag_dump.user_memory_start,
+        g_last_ntag_dump.user_memory_end,
+        g_last_ntag_dump.lock_bytes_page);
+    
+    // Page-by-page data
+    for (uint16_t page = 0; page < g_last_ntag_dump.total_pages; page++) {
+        if (g_last_ntag_dump.page_valid[page]) {
+            len += snprintf(content + len, sizeof(content) - len, "Page %03d: ", page);
+            for (int i = 0; i < 4; i++) {
+                len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_ntag_dump.pages[page][i]);
+            }
+            
+            // Add ASCII representation
+            len += snprintf(content + len, sizeof(content) - len, " |");
+            for (int i = 0; i < 4; i++) {
+                uint8_t byte = g_last_ntag_dump.pages[page][i];
+                if (byte >= 32 && byte <= 126) {
+                    len += snprintf(content + len, sizeof(content) - len, "%c", byte);
+                } else {
+                    len += snprintf(content + len, sizeof(content) - len, ".");
+                }
+            }
+            len += snprintf(content + len, sizeof(content) - len, "|\n");
+            
+            // Add special page annotations
+            if (page == 0) {
+                len += snprintf(content + len, sizeof(content) - len, "         # UID and BCC\n");
+            } else if (page == 1) {
+                len += snprintf(content + len, sizeof(content) - len, "         # UID continuation\n");
+            } else if (page == 2) {
+                len += snprintf(content + len, sizeof(content) - len, "         # Lock bytes and OTP\n");
+            } else if (page == 3) {
+                len += snprintf(content + len, sizeof(content) - len, "         # Capability Container (CC)\n");
+            } else if (page >= 4 && page <= g_last_ntag_dump.user_memory_end) {
+                if (g_last_ntag_dump.ndef_present && page == g_last_ntag_dump.ndef_start_page) {
+                    len += snprintf(content + len, sizeof(content) - len, "         # NDEF data start\n");
+                } else {
+                    len += snprintf(content + len, sizeof(content) - len, "         # User data\n");
+                }
+            } else if (page > g_last_ntag_dump.user_memory_end) {
+                len += snprintf(content + len, sizeof(content) - len, "         # Configuration/Lock pages\n");
+            }
+        } else {
+            len += snprintf(content + len, sizeof(content) - len, "Page %03d: -- -- -- --  # Protected/Unreadable\n", page);
+        }
+        
+        // Prevent buffer overflow
+        if (len >= sizeof(content) - 200) {
+            len += snprintf(content + len, sizeof(content) - len, "\n# ... (truncated due to size limits)\n");
+            break;
+        }
+    }
+    
+    // Footer
+    len += snprintf(content + len, sizeof(content) - len,
+        "\n# ===========================================\n"
+        "# End of NTAG dump - Total readable pages: %d\n"
+        "# Generated by Ghost ESP - github.com/Spooks4576/Ghost_ESP\n"
+        "# ===========================================\n",
+        g_last_ntag_dump.readable_pages);
     
     // Write to SD card
     esp_err_t result = sd_card_write_file(file_path, content, len);
     if (result == ESP_OK) {
-        printf("NTAG analysis saved to: %s\n", file_path);
-        TERMINAL_VIEW_ADD_TEXT("Analysis saved to: %s\n", file_path);
+        printf("DATA: NTAG dump saved to: %s\n", file_path);
+        printf("   PAGES: File size: %d bytes\n", len);
+        printf("   DETAILS: Contains: %d/%d pages\n", g_last_ntag_dump.readable_pages, g_last_ntag_dump.total_pages);
+        
+        TERMINAL_VIEW_ADD_TEXT("DATA: Dump saved to: %s\n", file_path);
+        TERMINAL_VIEW_ADD_TEXT("DETAILS: %d/%d pages saved\n", g_last_ntag_dump.readable_pages, g_last_ntag_dump.total_pages);
+        
         return true;
     } else {
-        printf("Failed to save NTAG analysis\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to save analysis\n");
+        printf("ERROR: Failed to save NTAG dump\n");
+        TERMINAL_VIEW_ADD_TEXT("ERROR: Failed to save dump\n");
         return false;
     }
 }
@@ -2984,9 +3458,9 @@ bool chameleon_manager_enable_mfkey32_mode(void) {
     printf("✓ MFKey32 nonce collection enabled\n");
     TERMINAL_VIEW_ADD_TEXT("✓ Nonce collection enabled\n");
     
-    printf("\n🎯 SUCCESS! Chameleon Ultra is now in MFKey32 emulation mode\n");
+    printf("\nIDENTIFIED: SUCCESS! Chameleon Ultra is now in MFKey32 emulation mode\n");
     printf("📡 The device is generating RF field and ready for key recovery\n");
-    printf("\n📋 NEXT STEPS:\n");
+    printf("\nINFO: NEXT STEPS:\n");
     printf("1. Present the Chameleon Ultra to your card reader\n");
     printf("2. The reader will attempt authentication (generating nonces)\n");
     printf("3. Use 'chameleon collectnonces' to retrieve collected data\n");
@@ -3044,12 +3518,12 @@ bool chameleon_manager_collect_nonces(void) {
     TERMINAL_VIEW_ADD_TEXT("Detected: %" PRIu32 " nonces\n", detection_count);
     
     if (detection_count == 0) {
-        printf("\n⚠️  No nonces collected yet!\n");
+        printf("\nWARNING:  No nonces collected yet!\n");
         printf("Make sure to:\n");
         printf("1. Present the Chameleon Ultra to your card reader\n");
         printf("2. The reader should attempt to authenticate to the card\n");
         printf("3. Failed authentications generate nonces for key recovery\n");
-        TERMINAL_VIEW_ADD_TEXT("⚠️ No nonces collected yet\n");
+        TERMINAL_VIEW_ADD_TEXT("WARNING: No nonces collected yet\n");
         return false;
     }
     
@@ -3074,7 +3548,7 @@ bool chameleon_manager_collect_nonces(void) {
     TERMINAL_VIEW_ADD_TEXT("✓ Nonce data retrieved\n");
     
     // Display collected nonces for analysis
-    printf("\n📊 NONCE DATA FOR KEY RECOVERY:\n");
+    printf("\nDETAILS: NONCE DATA FOR KEY RECOVERY:\n");
     printf("Raw data (%d bytes): ", g_last_response.data_size);
     for (int i = 0; i < g_last_response.data_size && i < 64; i++) {
         printf("%02X ", g_last_response.data[i]);
@@ -3085,8 +3559,8 @@ bool chameleon_manager_collect_nonces(void) {
     }
     printf("\n");
     
-    printf("🎉 SUCCESS! RF-based key recovery data collected\n");
-    printf("📋 Use this nonce data with offline tools like:\n");
+    printf("FOUND: SUCCESS! RF-based key recovery data collected\n");
+    printf("INFO: Use this nonce data with offline tools like:\n");
     printf("   - mfcuk (Darkside attack)\n");
     printf("   - mfoc (nested attack)\n");
     printf("   - Proxmark3 tools\n\n");

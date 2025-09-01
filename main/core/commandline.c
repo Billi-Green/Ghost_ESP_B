@@ -2615,6 +2615,9 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("  testboth <block> <key_hex> - Test both Key A and Key B with same key (debugging)\n");
         printf("  enablemfkey32 - Enable MFKey32 emulation mode with RF activity (proper key recovery)\n");
         printf("  collectnonces - Collect nonces from MFKey32 mode for offline key recovery\n");
+        printf("NTAG Operations:\n");
+        printf("  ntagdetect   - Detect and identify NTAG cards (213/215/216)\n");
+        printf("  ntagdump     - Comprehensive NTAG dump with password recovery\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
         TERMINAL_VIEW_ADD_TEXT("Connection:\n");
@@ -2657,6 +2660,9 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("  testboth <block> <key_hex> - Test both Key A and Key B with same key (debugging)\n");
         TERMINAL_VIEW_ADD_TEXT("  enablemfkey32 - Enable MFKey32 emulation mode with RF activity (proper key recovery)\n");
         TERMINAL_VIEW_ADD_TEXT("  collectnonces - Collect nonces from MFKey32 mode for offline key recovery\n");
+        TERMINAL_VIEW_ADD_TEXT("NTAG Operations:\n");
+        TERMINAL_VIEW_ADD_TEXT("  ntagdetect   - Detect and identify NTAG cards (213/215/216)\n");
+        TERMINAL_VIEW_ADD_TEXT("  ntagdump     - Comprehensive NTAG dump with password recovery\n");
         return;
     }
 
@@ -2913,15 +2919,31 @@ void handle_chameleon_cmd(int argc, char **argv) {
         }
     }
     else if (strcmp(subcommand, "ntagdump") == 0) {
-        printf("Starting NTAG card dump...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting NTAG card dump...\n");
+        printf("Starting comprehensive NTAG card dump...\n");
+        TERMINAL_VIEW_ADD_TEXT("Starting NTAG dump...\n");
         
         if (chameleon_manager_read_ntag_card()) {
-            printf("NTAG dump completed! Use 'chameleon saventralag' to save data.\n");
+            printf("NTAG dump completed successfully!\n");
+            printf("Use 'chameleon saventralag [filename]' to save the full dump to SD card\n");
             TERMINAL_VIEW_ADD_TEXT("NTAG dump completed!\n");
+            TERMINAL_VIEW_ADD_TEXT("Use 'saventralag' to save\n");
         } else {
             printf("NTAG dump failed\n");
             TERMINAL_VIEW_ADD_TEXT("NTAG dump failed\n");
+        }
+    }
+    else if (strcmp(subcommand, "ntagdetect") == 0) {
+        printf("Starting NTAG detection and analysis...\n");
+        TERMINAL_VIEW_ADD_TEXT("Detecting NTAG...\n");
+        
+        if (chameleon_manager_detect_ntag()) {
+            printf("NTAG detection completed successfully!\n");
+            printf("Use 'chameleon ntagdump' to read the full card data\n");
+            TERMINAL_VIEW_ADD_TEXT("NTAG detected!\n");
+            TERMINAL_VIEW_ADD_TEXT("Use 'ntagdump' to read data\n");
+        } else {
+            printf("NTAG detection failed - card may not be an NTAG\n");
+            TERMINAL_VIEW_ADD_TEXT("Not an NTAG card\n");
         }
     }
             else if (strcmp(subcommand, "saventralag") == 0) {
