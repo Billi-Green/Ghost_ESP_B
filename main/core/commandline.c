@@ -2605,12 +2605,16 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("Data Management:\n");
         printf("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
         printf("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
-        printf("  readhf           - Read full HF card data (all blocks)\n");
+        printf("  readhf           - Read full HF card data with 50+ key dictionary attack\n");
         printf("  readlf           - Read full LF card data\n");
         printf("  savedump [filename] - Save last card dump to SD card\n");
         printf("  savedarkside [filename] - Save Darkside attack data to SD card\n");
         printf("  savenested [filename] - Save Nested attack data to SD card\n");
         printf("  saventralag [filename] - Save NTAG dump data to SD card\n");
+        printf("  testauth <block> <A|B> <key_hex> - Test authentication with specific key (debugging)\n");
+        printf("  testboth <block> <key_hex> - Test both Key A and Key B with same key (debugging)\n");
+        printf("  enablemfkey32 - Enable MFKey32 emulation mode with RF activity (proper key recovery)\n");
+        printf("  collectnonces - Collect nonces from MFKey32 mode for offline key recovery\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
         TERMINAL_VIEW_ADD_TEXT("Connection:\n");
@@ -2643,12 +2647,16 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("Data Management:\n");
         TERMINAL_VIEW_ADD_TEXT("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
         TERMINAL_VIEW_ADD_TEXT("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
-        TERMINAL_VIEW_ADD_TEXT("  readhf           - Read full HF card data (all blocks)\n");
+        TERMINAL_VIEW_ADD_TEXT("  readhf           - Read full HF card data with 50+ key dictionary attack\n");
         TERMINAL_VIEW_ADD_TEXT("  readlf           - Read full LF card data\n");
         TERMINAL_VIEW_ADD_TEXT("  savedump [filename] - Save last card dump to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("  savedarkside [filename] - Save Darkside attack data to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("  savenested [filename] - Save Nested attack data to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("  saventralag [filename] - Save NTAG dump data to SD card\n");
+        TERMINAL_VIEW_ADD_TEXT("  testauth <block> <A|B> <key_hex> - Test authentication with specific key (debugging)\n");
+        TERMINAL_VIEW_ADD_TEXT("  testboth <block> <key_hex> - Test both Key A and Key B with same key (debugging)\n");
+        TERMINAL_VIEW_ADD_TEXT("  enablemfkey32 - Enable MFKey32 emulation mode with RF activity (proper key recovery)\n");
+        TERMINAL_VIEW_ADD_TEXT("  collectnonces - Collect nonces from MFKey32 mode for offline key recovery\n");
         return;
     }
 
@@ -2916,10 +2924,123 @@ void handle_chameleon_cmd(int argc, char **argv) {
             TERMINAL_VIEW_ADD_TEXT("NTAG dump failed\n");
         }
     }
-    else if (strcmp(subcommand, "saventralag") == 0) {
-        const char* filename = (argc > 2) ? argv[2] : NULL;
-        chameleon_manager_save_ntag_dump(filename);
-    }
+            else if (strcmp(subcommand, "saventralag") == 0) {
+            const char* filename = (argc > 2) ? argv[2] : NULL;
+            chameleon_manager_save_ntag_dump(filename);
+        }
+        else if (strcmp(subcommand, "testauth") == 0) {
+            if (argc < 5) {
+                printf("Usage: chameleon testauth <block> <key_type> <key_hex>\n");
+                printf("  block: Block number (0-63)\n");
+                printf("  key_type: A or B\n");
+                printf("  key_hex: 12-character hex key (e.g., FFFFFFFFFFFF)\n");
+                printf("Example: chameleon testauth 0 A FFFFFFFFFFFF\n");
+                TERMINAL_VIEW_ADD_TEXT("Usage: chameleon testauth <block> <key_type> <key_hex>\n");
+                return;
+            }
+            
+            int block = atoi(argv[2]);
+            const char* key_type_str = argv[3];
+            const char* key_hex = argv[4];
+            
+            if (block < 0 || block > 63) {
+                printf("Invalid block number: %d (must be 0-63)\n", block);
+                TERMINAL_VIEW_ADD_TEXT("Invalid block number\n");
+                return;
+            }
+            
+            uint8_t key_type;
+            if (strcasecmp(key_type_str, "A") == 0) {
+                key_type = 0x60; // MF_KEY_A
+            } else if (strcasecmp(key_type_str, "B") == 0) {
+                key_type = 0x61; // MF_KEY_B
+            } else {
+                printf("Invalid key type: %s (must be A or B)\n", key_type_str);
+                TERMINAL_VIEW_ADD_TEXT("Invalid key type\n");
+                return;
+            }
+            
+            if (strlen(key_hex) != 12) {
+                printf("Invalid key length: %zu (must be 12 hex characters)\n", strlen(key_hex));
+                TERMINAL_VIEW_ADD_TEXT("Invalid key length\n");
+                return;
+            }
+            
+            printf("Testing authentication on block %d with key %s: %s\n", block, key_type_str, key_hex);
+            TERMINAL_VIEW_ADD_TEXT("Testing authentication...\n");
+            
+            if (chameleon_manager_test_auth((uint8_t)block, key_type, key_hex)) {
+                printf("Authentication test PASSED!\n");
+                TERMINAL_VIEW_ADD_TEXT("Authentication test PASSED!\n");
+            } else {
+                printf("Authentication test FAILED\n");
+                TERMINAL_VIEW_ADD_TEXT("Authentication test FAILED\n");
+            }
+        }
+        else if (strcmp(subcommand, "testboth") == 0) {
+            if (argc < 4) {
+                printf("Usage: chameleon testboth <block> <key_hex>\n");
+                printf("  block: Block number (0-63)\n");
+                printf("  key_hex: 12-character hex key (e.g., FFFFFFFFFFFF)\n");
+                printf("Example: chameleon testboth 0 FFFFFFFFFFFF\n");
+                printf("This tests both Key A and Key B with the same key on the same block\n");
+                TERMINAL_VIEW_ADD_TEXT("Usage: chameleon testboth <block> <key_hex>\n");
+                return;
+            }
+            
+            int block = atoi(argv[2]);
+            const char* key_hex = argv[3];
+            
+            if (block < 0 || block > 63) {
+                printf("Invalid block number: %d (must be 0-63)\n", block);
+                TERMINAL_VIEW_ADD_TEXT("Invalid block number\n");
+                return;
+            }
+            
+            if (strlen(key_hex) != 12) {
+                printf("Invalid key length: %zu (must be 12 hex characters)\n", strlen(key_hex));
+                TERMINAL_VIEW_ADD_TEXT("Invalid key length\n");
+                return;
+            }
+            
+            printf("Testing both Key A and Key B on block %d with key: %s\n", block, key_hex);
+            TERMINAL_VIEW_ADD_TEXT("Testing both Key A and Key B...\n");
+            
+            if (chameleon_manager_test_both_keys((uint8_t)block, key_hex)) {
+                printf("At least one key type test PASSED!\n");
+                TERMINAL_VIEW_ADD_TEXT("At least one key type test PASSED!\n");
+            } else {
+                printf("Both key types test FAILED\n");
+                TERMINAL_VIEW_ADD_TEXT("Both key types test FAILED\n");
+            }
+        }
+        else if (strcmp(subcommand, "enablemfkey32") == 0) {
+            printf("Enabling MFKey32 emulation mode for RF-based key recovery...\n");
+            TERMINAL_VIEW_ADD_TEXT("Enabling MFKey32 mode...\n");
+            
+            if (chameleon_manager_enable_mfkey32_mode()) {
+                printf("✓ MFKey32 mode enabled successfully!\n");
+                printf("📡 RF field is now active - present device to reader\n");
+                TERMINAL_VIEW_ADD_TEXT("✓ MFKey32 mode enabled - RF active!\n");
+            } else {
+                printf("✗ Failed to enable MFKey32 mode\n");
+                TERMINAL_VIEW_ADD_TEXT("✗ Failed to enable MFKey32 mode\n");
+            }
+        }
+        else if (strcmp(subcommand, "collectnonces") == 0) {
+            printf("Collecting nonces from MFKey32 emulation mode...\n");
+            TERMINAL_VIEW_ADD_TEXT("Collecting nonces...\n");
+            
+            if (chameleon_manager_collect_nonces()) {
+                printf("✓ Nonces collected successfully!\n");
+                printf("📊 Use the nonce data for offline key recovery\n");
+                TERMINAL_VIEW_ADD_TEXT("✓ Nonces collected successfully!\n");
+            } else {
+                printf("✗ Failed to collect nonces\n");
+                printf("💡 Make sure to enable MFKey32 mode first and present device to reader\n");
+                TERMINAL_VIEW_ADD_TEXT("✗ Failed to collect nonces\n");
+            }
+        }
     else {
         printf("Unknown chameleon command: %s\n", subcommand);
         TERMINAL_VIEW_ADD_TEXT("Unknown chameleon command: %s\n", subcommand);

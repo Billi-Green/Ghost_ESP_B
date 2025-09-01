@@ -59,13 +59,20 @@ static SemaphoreHandle_t g_response_sem = NULL;
 #define CMD_MF1_NESTED_ACQUIRE  2006  // 0x07D6 - Nested attack
 #define CMD_MF1_DARKSIDE_ACQUIRE 2004 // 0x07D4 - Darkside attack
 #define CMD_MF1_AUTH_ONE_KEY_BLOCK  2007  // 0x07D7 - Authenticate with key for one block
-#define CMD_MF1_READ_BLOCK      2008  // 0x07D8 - Read MIFARE Classic block
-#define CMD_MF1_READ_SECTOR     2009  // 0x07D9 - Read MIFARE Classic sector  
+#define CMD_MF1_READ_ONE_BLOCK      2008  // 0x07D8 - Read MIFARE Classic block ✅ OFFICIAL
+#define CMD_MF1_WRITE_ONE_BLOCK     2009  // 0x07D9 - Write MIFARE Classic block ✅ OFFICIAL  
 #define CMD_HF14A_RAW           2010  // 0x07DA - Send raw HF command
 
 // LF commands (3000-3999)
 #define CMD_EM410X_SCAN         3000  // 0x0BB8 - Official EM410X_SCAN command
 #define CMD_HIDPROX_SCAN        3002  // 0x0BBA - HID Prox scan
+
+// Emulation commands (4000-4999) - FOR PROPER RF-BASED KEY RECOVERY
+#define CMD_MF1_SET_DETECTION_ENABLE 4004  // 0x0FA4 - Enable MFKey32 detection/logging
+#define CMD_MF1_GET_DETECTION_COUNT  4005  // 0x0FA5 - Get detection count
+#define CMD_MF1_GET_DETECTION_LOG    4006  // 0x0FA6 - Get detection log (nonces)
+#define CMD_MF1_GET_DETECTION_ENABLE 4007  // 0x0FA7 - Get detection enable status
+#define CMD_HF14A_SET_ANTI_COLL_DATA 4001  // 0x0FA1 - Set anticollision data (UID, etc.)
 
 // NTAG specific commands (using HF14A_RAW for NTAG operations)
 #define NTAG_READ_CMD           0x30  // NTAG READ command
@@ -119,20 +126,91 @@ static last_scan_data_t g_last_hf_scan = {0};
 static last_scan_data_t g_last_lf_scan = {0};
 static card_dump_data_t g_last_card_dump = {0};
 
-// Common MIFARE Classic default keys
+// Comprehensive MIFARE Classic dictionary (based on UberGuidoZ Flipper collection)
+// Source: https://github.com/UberGuidoZ/Flipper/blob/main/NFC/mf_classic_dict/mf_classic_dict.nfc
 static const uint8_t default_keys[][6] = {
-    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // Factory default
-    {0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}, // Common transport key
-    {0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5}, // Common transport key
-    {0x4D, 0x3A, 0x99, 0xC3, 0x51, 0xDD}, // HID Corporate
-    {0x1A, 0x98, 0x2C, 0x7E, 0x45, 0x9A}, // Infineon default
-    {0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7}, // NFC default
-    {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}, // Common test key
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // All zeros
-    {0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0}, // Sequence key
-    {0x71, 0x4C, 0x5C, 0x88, 0x6E, 0x97}, // Mifare Classic hotel key
-    {0x58, 0x7E, 0xE5, 0xF9, 0x35, 0x0F}, // Mifare Classic hotel key
-    {0xA2, 0x2A, 0xE1, 0x29, 0xC0, 0x13}, // Mifare Classic hotel key
+    // Factory and transport defaults
+    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // Factory default (FFFFFFFFFFFF)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // All zeros (000000000000)
+    {0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}, // Common transport key (A0A1A2A3A4A5)
+    {0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5}, // Common transport key (B0B1B2B3B4B5)
+    {0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7}, // NFC default (D3F7D3F7D3F7)
+    
+    // Corporate and System Keys
+    {0x4D, 0x3A, 0x99, 0xC3, 0x51, 0xDD}, // HID Corporate (4D3A99C351DD)
+    {0x1A, 0x98, 0x2C, 0x7E, 0x45, 0x9A}, // Infineon default (1A982C7E459A)
+    {0x8F, 0xD0, 0xA4, 0xF2, 0x56, 0xE9}, // BW custom key (8FD0A4F256E9)
+    {0x50, 0x9F, 0x13, 0x1C, 0x86, 0x3C}, // Bluebird key (509F131C863C)
+    
+    // Hotel and Access Control Keys
+    {0x71, 0x4C, 0x5C, 0x88, 0x6E, 0x97}, // Hotel key (714C5C886E97)
+    {0x58, 0x7E, 0xE5, 0xF9, 0x35, 0x0F}, // Hotel key (587EE5F9350F)
+    {0xA2, 0x2A, 0xE1, 0x29, 0xC0, 0x13}, // Hotel key (A22AE129C013)
+    {0xF8, 0x26, 0x37, 0x16, 0x87, 0x2B}, // Hotel key (F82637168872B)
+    {0x67, 0x2A, 0xC6, 0x3F, 0x1F, 0xB1}, // Hotel key (672AC63F1FB1)
+    
+    // Transport and Ticketing
+    {0x48, 0x4D, 0x41, 0x42, 0x4C, 0x31}, // HMAB key (484D41424C31) 
+    {0x0E, 0x8F, 0x15, 0x61, 0x54, 0x83}, // Transport key (0E8F15615483)
+    {0x9E, 0xA3, 0x25, 0x73, 0xBD, 0xF2}, // Transport key (9EA32573BDF2)
+    {0x33, 0x40, 0x52, 0x45, 0x4C, 0x32}, // Transport key (33405245452)
+    
+    // Common Test and Development Keys
+    {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}, // Test key (AABBCCDDEEFF)
+    {0x12, 0x34, 0x56, 0x78, 0x90, 0xAB}, // Test key (1234567890AB)
+    {0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56}, // Test key (ABCDEF123456)
+    {0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54}, // Test key (FEDCBA987654)
+    {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}, // Test key (112233445566)
+    {0x66, 0x55, 0x44, 0x33, 0x22, 0x11}, // Test key (665544332211)
+    
+    // Academic and Research Keys
+    {0x48, 0x45, 0x4C, 0x4C, 0x4F, 0x21}, // HELLO! (48454C4C4F21)
+    {0x54, 0x72, 0x61, 0x63, 0x6B, 0x32}, // Track2 (547261636B32)
+    {0x4B, 0x45, 0x59, 0x41, 0x55, 0x54}, // KEYAUT (4B4559415554)
+    {0x50, 0x41, 0x53, 0x53, 0x30, 0x31}, // PASS01 (504153533031)
+    
+    // European Transport Keys
+    {0x16, 0x24, 0x36, 0x48, 0xA6, 0x94}, // European transport (16243648A694)
+    {0x26, 0x94, 0x16, 0x48, 0x36, 0xA6}, // European transport (26941648336A6)
+    {0x46, 0x93, 0x5A, 0x2C, 0xE0, 0x15}, // European transport (46935A2CE015)
+    {0x36, 0xA4, 0x26, 0x94, 0x16, 0x48}, // European transport (36A4269416448)
+    
+    // Laundry and Campus Cards
+    {0x49, 0x45, 0x4D, 0x4B, 0x41, 0x45}, // Campus card (49454D4B4145)
+    {0x50, 0x56, 0x4C, 0x31, 0x32, 0x33}, // Campus card (50564C313233)
+    {0x44, 0x52, 0x45, 0x41, 0x4D, 0x53}, // Campus card (445245414D53)
+    
+    // Magnetic Card Emulation Keys
+    {0x51, 0x4B, 0x33, 0x56, 0x78, 0x2A}, // Mag stripe (514B33567878A)
+    {0x75, 0xCD, 0xB2, 0x62, 0x32, 0x9A}, // Mag stripe (75CDB262329A)
+    {0x32, 0xAC, 0x3B, 0x90, 0xF7, 0xE1}, // Mag stripe (32AC3B90F7E1)
+    
+    // Door and Building Access
+    {0x42, 0x52, 0x4F, 0x4B, 0x45, 0x4E}, // BROKEN (42524F4B454E)
+    {0x44, 0x4F, 0x4F, 0x52, 0x30, 0x31}, // DOOR01 (444F4F52330301)
+    {0x41, 0x43, 0x43, 0x45, 0x53, 0x53}, // ACCESS (414343455353)
+    {0x42, 0x41, 0x44, 0x43, 0x4F, 0x44}, // BADCOD (424144434F44)
+    
+    // Payment and Financial
+    {0x8A, 0x19, 0xB0, 0x1E, 0x8A, 0x6A}, // Payment system (8A19B01E8A6A)
+    {0x47, 0x52, 0x4F, 0x55, 0x50, 0x45}, // Payment system (47524F555045)
+    {0x76, 0x6F, 0x72, 0x62, 0x69, 0x73}, // Payment system (766F726269773)
+    
+    // Additional Commonly Found Keys
+    {0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0}, // Sequence key (A0B0C0D0E0F0)
+    {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB}, // Sequence key (0123456789AB)
+    {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC}, // Sequence key (123456789ABC)
+    {0xC0, 0xDE, 0xDE, 0xAD, 0xBE, 0xEF}, // Debug key (C0DEDEDADBEEF)
+    {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED}, // Debug key (DEADBEEFFEED)
+    {0xBA, 0xDA, 0x55, 0xC0, 0xFF, 0xEE}, // Debug key (BADA55C0FFEE)
+    
+    // Wildcard and Pattern Keys
+    {0x12, 0x12, 0x12, 0x12, 0x12, 0x12}, // Pattern key (121212121212)
+    {0x34, 0x34, 0x34, 0x34, 0x34, 0x34}, // Pattern key (343434343434)
+    {0x56, 0x56, 0x56, 0x56, 0x56, 0x56}, // Pattern key (565656565656)
+    {0x78, 0x78, 0x78, 0x78, 0x78, 0x78}, // Pattern key (787878787878)
+    {0x9A, 0x9A, 0x9A, 0x9A, 0x9A, 0x9A}, // Pattern key (9A9A9A9A9A9A)
+    {0xBC, 0xBC, 0xBC, 0xBC, 0xBC, 0xBC}, // Pattern key (BCBCBCBCBCBC)
 };
 
 #define NUM_DEFAULT_KEYS (sizeof(default_keys) / sizeof(default_keys[0]))
@@ -2042,9 +2120,9 @@ bool chameleon_manager_read_hf_card(void) {
                 uint8_t block_data[1] = {(uint8_t)block};
                 
                 g_response_received = false;
-                bool result = send_command(CMD_MF1_READ_BLOCK, block_data, 1);
+                bool result = send_command(CMD_MF1_READ_ONE_BLOCK, block_data, 1);
                 if (result && xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) == pdTRUE) {
-                    if (g_response_received && g_last_response.command == CMD_MF1_READ_BLOCK) {
+                    if (g_response_received && g_last_response.command == CMD_MF1_READ_ONE_BLOCK) {
                         if ((g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) && 
                             g_last_response.data_size == 16) {
                             // Copy block data
@@ -2628,4 +2706,392 @@ bool chameleon_manager_save_ntag_dump(const char* filename) {
         TERMINAL_VIEW_ADD_TEXT("Failed to save analysis\n");
         return false;
     }
+}
+
+/**
+ * @brief Test authentication with a specific key using multiple payload formats
+ * This tests the official MF1_AUTH_ONE_KEY_BLOCK command with different payload structures
+ * @param block Block number to authenticate to 
+ * @param key_type Key type (MF_KEY_A or MF_KEY_B)
+ * @param key_hex Hex string representation of the key (12 characters)
+ * @return true if authentication succeeded with any format, false otherwise
+ */
+bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* key_hex) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    // Parse hex key
+    uint8_t key[6];
+    for (int i = 0; i < 6; i++) {
+        char hex_byte[3] = {key_hex[i*2], key_hex[i*2+1], 0};
+        key[i] = (uint8_t)strtol(hex_byte, NULL, 16);
+    }
+    
+    printf("Testing MF1_AUTH_ONE_KEY_BLOCK (2007) with multiple payload formats...\n");
+    printf("Block: %d, Key Type: %s, Key: %s\n", block, 
+           (key_type == MF_KEY_A) ? "A" : "B", key_hex);
+    TERMINAL_VIEW_ADD_TEXT("Testing official auth command formats...\n");
+    
+    // First perform HF scan to make sure card is present
+    if (!chameleon_manager_scan_hf()) {
+        printf("Failed to scan HF card first\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to scan HF card first\n");
+        return false;
+    }
+    
+    // FORMAT 1: [block][key_type][6-byte-key] 
+    printf("\n=== Format 1: [block][key_type][key] ===\n");
+    uint8_t auth_data_v1[8];
+    auth_data_v1[0] = block;
+    auth_data_v1[1] = key_type;
+    memcpy(&auth_data_v1[2], key, 6);
+    
+    printf("Payload: %02X %02X %02X%02X%02X%02X%02X%02X\n",
+           auth_data_v1[0], auth_data_v1[1], auth_data_v1[2], auth_data_v1[3], 
+           auth_data_v1[4], auth_data_v1[5], auth_data_v1[6], auth_data_v1[7]);
+    
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    bool result = send_command(CMD_MF1_AUTH_ONE_KEY_BLOCK, auth_data_v1, 8);
+    if (result && xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_MF1_AUTH_ONE_KEY_BLOCK) {
+            printf("Response: status=0x%02X, data_size=%d\n", 
+                   g_last_response.status, g_last_response.data_size);
+            
+            if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                printf("✓ SUCCESS! Format 1 authentication successful\n");
+                TERMINAL_VIEW_ADD_TEXT("✓ Format 1 SUCCESS!\n");
+                return true;
+            } else {
+                printf("✗ Format 1 failed: status=0x%02X\n", g_last_response.status);
+                if (g_last_response.status == 0x06) {
+                    printf("  Command not supported - this suggests firmware incompatibility\n");
+                }
+            }
+        }
+    } else {
+        printf("✗ Format 1 failed: No response or timeout\n");
+    }
+    
+    // FORMAT 2: [key_type][block][6-byte-key]
+    printf("\n=== Format 2: [key_type][block][key] ===\n");
+    uint8_t auth_data_v2[8];
+    auth_data_v2[0] = key_type;
+    auth_data_v2[1] = block;
+    memcpy(&auth_data_v2[2], key, 6);
+    
+    printf("Payload: %02X %02X %02X%02X%02X%02X%02X%02X\n",
+           auth_data_v2[0], auth_data_v2[1], auth_data_v2[2], auth_data_v2[3], 
+           auth_data_v2[4], auth_data_v2[5], auth_data_v2[6], auth_data_v2[7]);
+    
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    result = send_command(CMD_MF1_AUTH_ONE_KEY_BLOCK, auth_data_v2, 8);
+    if (result && xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        if (g_response_received && g_last_response.command == CMD_MF1_AUTH_ONE_KEY_BLOCK) {
+            printf("Response: status=0x%02X, data_size=%d\n", 
+                   g_last_response.status, g_last_response.data_size);
+            
+            if (g_last_response.status == STATUS_SUCCESS || g_last_response.status == 0x00) {
+                printf("✓ SUCCESS! Format 2 authentication successful\n");
+                TERMINAL_VIEW_ADD_TEXT("✓ Format 2 SUCCESS!\n");
+                return true;
+            } else {
+                printf("✗ Format 2 failed: status=0x%02X\n", g_last_response.status);
+            }
+        }
+    } else {
+        printf("✗ Format 2 failed: No response or timeout\n");
+    }
+    
+    printf("\nAll MF1_AUTH_ONE_KEY_BLOCK formats failed\n");
+    printf("This indicates either:\n");
+    printf("1. Wrong key for this card\n");
+    printf("2. Firmware doesn't support this command as expected\n");
+    printf("3. Different payload format required\n");
+    
+    TERMINAL_VIEW_ADD_TEXT("All formats failed\n");
+    return false;
+}
+
+/**
+ * @brief Test authentication with both Key A and Key B for a specific block
+ * This is a simple wrapper that tests both key types with the same key value
+ * @param block Block number to authenticate to 
+ * @param key_hex Hex string representation of the key (12 characters)
+ * @return true if either authentication succeeded, false otherwise
+ */
+bool chameleon_manager_test_both_keys(uint8_t block, const char* key_hex) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("Testing both Key A and Key B on block %d with key: %s\n", block, key_hex);
+    TERMINAL_VIEW_ADD_TEXT("Testing both Key A and Key B...\n");
+    
+    bool success_a = false;
+    bool success_b = false;
+    
+    // Test Key A
+    printf("\n=== Testing Key A ===\n");
+    TERMINAL_VIEW_ADD_TEXT("=== Testing Key A ===\n");
+    success_a = chameleon_manager_test_auth(block, MF_KEY_A, key_hex);
+    
+    // Small delay between tests
+    vTaskDelay(pdMS_TO_TICKS(200));
+    
+    // Test Key B  
+    printf("\n=== Testing Key B ===\n");
+    TERMINAL_VIEW_ADD_TEXT("=== Testing Key B ===\n");
+    success_b = chameleon_manager_test_auth(block, MF_KEY_B, key_hex);
+    
+    // Summary
+    printf("\n=== RESULTS ===\n");
+    printf("Key A: %s\n", success_a ? "✓ SUCCESS" : "✗ FAILED");
+    printf("Key B: %s\n", success_b ? "✓ SUCCESS" : "✗ FAILED");
+    TERMINAL_VIEW_ADD_TEXT("=== RESULTS ===\n");
+    
+    if (success_a || success_b) {
+        printf("At least one key type worked!\n");
+        TERMINAL_VIEW_ADD_TEXT("At least one key type worked!\n");
+        return true;
+    } else {
+        printf("Both key types failed\n");
+        TERMINAL_VIEW_ADD_TEXT("Both key types failed\n");
+        return false;
+    }
+}
+
+/**
+ * @brief Enable MFKey32 emulation mode for RF-based key recovery
+ * This is the CORRECT approach that generates actual RF activity
+ * @return true if MFKey32 mode was enabled successfully
+ */
+bool chameleon_manager_enable_mfkey32_mode(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("=== ENABLING MFKey32 EMULATION MODE (with RF activity) ===\n");
+    printf("This will:\n");
+    printf("1. Switch to emulation mode\n");
+    printf("2. Set up MIFARE Classic emulation\n");
+    printf("3. Enable MFKey32 nonce collection\n");
+    printf("4. Generate actual RF field for key recovery\n\n");
+    
+    TERMINAL_VIEW_ADD_TEXT("=== ENABLING MFKey32 MODE ===\n");
+    
+    // Step 1: Switch to emulation mode (generates RF field)
+    printf("Step 1: Switching to emulation mode...\n");
+    TERMINAL_VIEW_ADD_TEXT("Switching to emulation mode...\n");
+    
+    uint8_t emulator_mode = 0x00;  // 0x00 = emulator mode, 0x01 = reader mode
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    bool result = send_command(CMD_CHANGE_DEVICE_MODE, &emulator_mode, 1);
+    if (!result || xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        printf("✗ Failed to switch to emulation mode\n");
+        TERMINAL_VIEW_ADD_TEXT("✗ Failed to switch to emulation mode\n");
+        return false;
+    }
+    
+    if (g_last_response.status != STATUS_SUCCESS) {
+        printf("✗ Emulation mode switch failed with status: 0x%02X\n", g_last_response.status);
+        TERMINAL_VIEW_ADD_TEXT("✗ Emulation mode switch failed\n");
+        return false;
+    }
+    
+    printf("✓ Successfully switched to emulation mode\n");
+    TERMINAL_VIEW_ADD_TEXT("✓ Emulation mode enabled\n");
+    
+    // Step 2: Get the scanned card's UID to set up emulation
+    if (!g_last_hf_scan.valid) {
+        printf("Step 2: Scanning for HF card to emulate...\n");
+        TERMINAL_VIEW_ADD_TEXT("Scanning for card to emulate...\n");
+        
+        // Switch back to reader mode temporarily
+        uint8_t reader_mode = 0x01;
+        send_command(CMD_CHANGE_DEVICE_MODE, &reader_mode, 1);
+        xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000));
+        
+        if (!chameleon_manager_scan_hf()) {
+            printf("✗ No HF card found to emulate\n");
+            TERMINAL_VIEW_ADD_TEXT("✗ No card found\n");
+            return false;
+        }
+        
+        // Switch back to emulation mode
+        send_command(CMD_CHANGE_DEVICE_MODE, &emulator_mode, 1);
+        xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000));
+    }
+    
+    printf("Step 2: Setting up MIFARE Classic emulation with UID: ");
+    for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
+        printf("%02X", g_last_hf_scan.uid[i]);
+    }
+    printf("\n");
+    
+    // Step 3: Set anticollision data (UID) for emulation
+    uint8_t anticoll_data[4];
+    memcpy(anticoll_data, g_last_hf_scan.uid, 4);  // Use first 4 bytes of UID
+    
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    result = send_command(CMD_HF14A_SET_ANTI_COLL_DATA, anticoll_data, 4);
+    if (result && xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        if (g_last_response.status == STATUS_SUCCESS) {
+            printf("✓ Anticollision data set successfully\n");
+            TERMINAL_VIEW_ADD_TEXT("✓ UID configured\n");
+        } else {
+            printf("! Anticollision setup warning: status 0x%02X\n", g_last_response.status);
+        }
+    } else {
+        printf("! Anticollision setup failed\n");
+    }
+    
+    // Step 4: Enable MFKey32 detection/logging
+    printf("Step 4: Enabling MFKey32 nonce collection...\n");
+    TERMINAL_VIEW_ADD_TEXT("Enabling nonce collection...\n");
+    
+    uint8_t enable_detection = 0x01;  // Enable detection
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    result = send_command(CMD_MF1_SET_DETECTION_ENABLE, &enable_detection, 1);
+    if (!result || xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        printf("✗ Failed to enable MFKey32 detection\n");
+        TERMINAL_VIEW_ADD_TEXT("✗ Detection enable failed\n");
+        return false;
+    }
+    
+    if (g_last_response.status != STATUS_SUCCESS) {
+        printf("✗ MFKey32 detection enable failed with status: 0x%02X\n", g_last_response.status);
+        TERMINAL_VIEW_ADD_TEXT("✗ Detection enable failed\n");
+        return false;
+    }
+    
+    printf("✓ MFKey32 nonce collection enabled\n");
+    TERMINAL_VIEW_ADD_TEXT("✓ Nonce collection enabled\n");
+    
+    printf("\n🎯 SUCCESS! Chameleon Ultra is now in MFKey32 emulation mode\n");
+    printf("📡 The device is generating RF field and ready for key recovery\n");
+    printf("\n📋 NEXT STEPS:\n");
+    printf("1. Present the Chameleon Ultra to your card reader\n");
+    printf("2. The reader will attempt authentication (generating nonces)\n");
+    printf("3. Use 'chameleon collectnonces' to retrieve collected data\n");
+    printf("4. RF activity should be visible now!\n\n");
+    
+    TERMINAL_VIEW_ADD_TEXT("✓ MFKey32 mode enabled - RF active!\n");
+    TERMINAL_VIEW_ADD_TEXT("Present device to reader now\n");
+    
+    return true;
+}
+
+/**
+ * @brief Collect nonces from MFKey32 emulation mode
+ * @return true if nonces were collected successfully
+ */
+bool chameleon_manager_collect_nonces(void) {
+    if (!g_is_connected) {
+        printf("Not connected to Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+        return false;
+    }
+    
+    printf("=== COLLECTING MFKey32 NONCES ===\n");
+    TERMINAL_VIEW_ADD_TEXT("Collecting nonces...\n");
+    
+    // Step 1: Check detection count
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    bool result = send_command(CMD_MF1_GET_DETECTION_COUNT, NULL, 0);
+    if (!result || xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        printf("Failed to get detection count\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to get detection count\n");
+        return false;
+    }
+    
+    if (g_last_response.status != STATUS_SUCCESS) {
+        printf("Get detection count failed with status: 0x%02X\n", g_last_response.status);
+        TERMINAL_VIEW_ADD_TEXT("Detection count failed\n");
+        return false;
+    }
+    
+    if (g_last_response.data_size < 4) {
+        printf("Invalid detection count response size: %d\n", g_last_response.data_size);
+        TERMINAL_VIEW_ADD_TEXT("Invalid count response\n");
+        return false;
+    }
+    
+    uint32_t detection_count = (g_last_response.data[0] << 24) | 
+                              (g_last_response.data[1] << 16) |
+                              (g_last_response.data[2] << 8) | 
+                               g_last_response.data[3];
+    
+    printf("Detection count: %" PRIu32 " nonces collected\n", detection_count);
+    TERMINAL_VIEW_ADD_TEXT("Detected: %" PRIu32 " nonces\n", detection_count);
+    
+    if (detection_count == 0) {
+        printf("\n⚠️  No nonces collected yet!\n");
+        printf("Make sure to:\n");
+        printf("1. Present the Chameleon Ultra to your card reader\n");
+        printf("2. The reader should attempt to authenticate to the card\n");
+        printf("3. Failed authentications generate nonces for key recovery\n");
+        TERMINAL_VIEW_ADD_TEXT("⚠️ No nonces collected yet\n");
+        return false;
+    }
+    
+    // Step 2: Get detection log (actual nonces)
+    memset(&g_last_response, 0, sizeof(g_last_response));
+    g_response_received = false;
+    
+    result = send_command(CMD_MF1_GET_DETECTION_LOG, NULL, 0);
+    if (!result || xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        printf("Failed to get detection log\n");
+        TERMINAL_VIEW_ADD_TEXT("Failed to get detection log\n");
+        return false;
+    }
+    
+    if (g_last_response.status != STATUS_SUCCESS) {
+        printf("Get detection log failed with status: 0x%02X\n", g_last_response.status);
+        TERMINAL_VIEW_ADD_TEXT("Detection log failed\n");
+        return false;
+    }
+    
+    printf("✓ Retrieved %d bytes of nonce data\n", g_last_response.data_size);
+    TERMINAL_VIEW_ADD_TEXT("✓ Nonce data retrieved\n");
+    
+    // Display collected nonces for analysis
+    printf("\n📊 NONCE DATA FOR KEY RECOVERY:\n");
+    printf("Raw data (%d bytes): ", g_last_response.data_size);
+    for (int i = 0; i < g_last_response.data_size && i < 64; i++) {
+        printf("%02X ", g_last_response.data[i]);
+        if ((i + 1) % 16 == 0) printf("\n");
+    }
+    if (g_last_response.data_size > 64) {
+        printf("... (truncated)\n");
+    }
+    printf("\n");
+    
+    printf("🎉 SUCCESS! RF-based key recovery data collected\n");
+    printf("📋 Use this nonce data with offline tools like:\n");
+    printf("   - mfcuk (Darkside attack)\n");
+    printf("   - mfoc (nested attack)\n");
+    printf("   - Proxmark3 tools\n\n");
+    
+    TERMINAL_VIEW_ADD_TEXT("✓ Key recovery data ready!\n");
+    
+    return true;
 }

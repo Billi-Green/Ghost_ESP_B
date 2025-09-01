@@ -220,6 +220,12 @@ bool chameleon_manager_read_ntag_card(void);
  */
 bool chameleon_manager_save_ntag_dump(const char* filename);
 
+// Debug and testing functions
+bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* key_hex);
+bool chameleon_manager_test_both_keys(uint8_t block, const char* key_hex);
+bool chameleon_manager_enable_mfkey32_mode(void);
+bool chameleon_manager_collect_nonces(void);
+
 #ifdef __cplusplus
 }
 #endif
