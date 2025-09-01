@@ -144,6 +144,111 @@
 </details>
 
 <details>
+<summary><strong>Chameleon Ultra Integration</strong> <em>(13.56MHz NFC/RFID Tool)</em></summary>
+
+- <code>chameleon connect</code>  
+  Connect to Chameleon Ultra device via Bluetooth
+
+- <code>chameleon disconnect</code>  
+  Disconnect from Chameleon Ultra device
+
+- <code>chameleon status</code>  
+  Show connection status and device information
+
+- <code>chameleon battery</code>  
+  Check Chameleon Ultra battery level
+
+- <code>chameleon firmware</code>  
+  Display firmware version information
+
+- <code>chameleon devicemode</code>  
+  Show current device mode (Reader/Emulator)
+
+- <code>chameleon reader</code>  
+  Switch Chameleon Ultra to reader mode
+
+- <code>chameleon emulator</code>  
+  Switch Chameleon Ultra to emulator mode
+
+**HF (13.56MHz) Operations:**
+- <code>chameleon scanhf</code>  
+  Scan for HF cards (ISO14443 Type A/B, MIFARE, NTAG)
+
+- <code>chameleon savehf [filename]</code>  
+  Save last HF scan results to SD card (/mnt/ghostesp/chameleon/)
+
+- <code>chameleon readhf</code>  
+  Comprehensive MIFARE Classic analysis with default keys, Darkside, and Nested attacks
+
+- <code>chameleon savedump [filename]</code>  
+  Save complete card dump data to SD card
+
+**LF (125KHz) Operations:**
+- <code>chameleon scanlf</code>  
+  Scan for LF EM410X tags
+
+- <code>chameleon scanhidprox</code>  
+  Scan for HID Proximity cards
+
+- <code>chameleon scanlfall</code>  
+  Try both EM410X and HID Prox scanning
+
+- <code>chameleon savelf [filename]</code>  
+  Save last LF scan results to SD card
+
+- <code>chameleon readlf</code>  
+  Read LF card data (EM410X, HID Prox)
+
+**NTAG Operations:**
+- <code>chameleon ntagdetect</code>  
+  Detect and identify NTAG card type (213/215/216), handles password-protected cards
+
+- <code>chameleon ntagdump</code>  
+  Analyze NTAG card structure and attempt to read accessible pages
+
+- <code>chameleon saventralag [filename]</code>  
+  Save NTAG analysis results to SD card
+
+**MIFARE Classic Advanced Operations:**
+- <code>chameleon mfdetect</code>  
+  Detect MIFARE Classic support and card type
+
+- <code>chameleon mfprng</code>  
+  Test MIFARE Classic PRNG weakness
+
+- <code>chameleon darkside &lt;block&gt; &lt;key&gt;</code>  
+  Perform Darkside attack on MIFARE Classic (block 0-63, key A/B)
+
+- <code>chameleon savedarkside [filename]</code>  
+  Save Darkside attack data for offline key recovery
+
+- <code>chameleon nested &lt;known_block&gt; &lt;known_key&gt; &lt;target_block&gt; &lt;target_key&gt;</code>  
+  Perform Nested attack using known key to recover target key
+
+- <code>chameleon savenested [filename]</code>  
+  Save Nested attack data for offline analysis
+
+**Slot Management:**
+- <code>chameleon activeslot</code>  
+  Show currently active slot (1-8)
+
+- <code>chameleon setslot &lt;1-8&gt;</code>  
+  Change active slot
+
+- <code>chameleon slotinfo &lt;1-8&gt;</code>  
+  Display information about specific slot
+
+**📋 Notes:**
+- All save commands support optional custom filenames
+- Files are saved to `/mnt/ghostesp/chameleon/` directory on SD card
+- Auto-generated filenames include UID and timestamp
+- Protected/locked cards are analyzed and documented professionally
+- MIFARE Classic attacks automatically integrated into `readhf` command
+- Darkside and Nested attack data compatible with `mfcuk` and `mfoc` tools
+
+</details>
+
+<details>
 <summary><strong>Bluetooth Operations</strong> <em>(Not available on ESP32-S2)</em></summary>
 
 - <code>blescan -f</code>  
