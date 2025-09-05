@@ -563,6 +563,8 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
+    // Don't deinitialize serial manager on TDECK to avoid UART conflicts
+#ifndef CONFIG_USE_TDECK
     if (serial_manager_get_uart_num() == (int)UART_NUM_1) {
         serial_manager_deinit();
     } else if (serial_manager_get_uart_num() == (int)UART_NUM_0) {
@@ -570,9 +572,16 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
             serial_manager_deinit();
         }
     }
+#endif
+    
+    // Only install UART driver if not on TDECK to avoid conflicts
+#ifndef CONFIG_USE_TDECK
     uart_driver_install(UART_NUM_1, COMM_BUFFER_SIZE * 2, 0, 0, NULL, 0);
     uart_param_config(UART_NUM_1, &uart_config);
     uart_set_pin(UART_NUM_1, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+#else
+    printf("W: ESP Comm Manager disabled on TDECK to avoid UART conflicts\n");
+#endif
 
     s_comm_manager->tx_queue = NULL;
     s_comm_manager->rx_packet_queue = NULL;
@@ -616,6 +625,8 @@ bool esp_comm_manager_set_pins(gpio_num_t tx_pin, gpio_num_t rx_pin) {
     s_comm_manager->tx_pin = tx_pin;
     s_comm_manager->rx_pin = rx_pin;
 
+    // Don't deinitialize serial manager on TDECK to avoid UART conflicts
+#ifndef CONFIG_USE_TDECK
     if (serial_manager_get_uart_num() == (int)UART_NUM_1) {
         serial_manager_deinit();
     } else if (serial_manager_get_uart_num() == (int)UART_NUM_0) {
@@ -623,6 +634,7 @@ bool esp_comm_manager_set_pins(gpio_num_t tx_pin, gpio_num_t rx_pin) {
             serial_manager_deinit();
         }
     }
+#endif
 
     uart_set_pin(UART_NUM_1, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     
