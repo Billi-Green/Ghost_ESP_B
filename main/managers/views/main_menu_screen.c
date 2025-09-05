@@ -117,26 +117,25 @@ static void anim_set_bg_color(void *obj, int32_t v) {
 }
 
 // Timer callback to restore button color
-static void restore_button_color_cb(lv_timer_t *timer) {
-    lv_obj_t *btn_obj = (lv_obj_t *)timer->user_data;
-    // Restore original color (assuming it was 0x333333)
-    lv_obj_set_style_bg_color(btn_obj, lv_color_hex(0x333333), LV_PART_MAIN);
+// Restore label color timer callback (used since buttons are transparent)
+static void restore_label_color_cb(lv_timer_t *timer) {
+    lv_obj_t *label_obj = (lv_obj_t *)timer->user_data;
+    // restore label text color to white
+    lv_obj_set_style_text_color(label_obj, lv_color_hex(0xFFFFFF), 0);
     lv_timer_del(timer);
 }
 
-// Helper function to animate navigation button press
+// Helper function to animate navigation button press by highlighting the arrow label
 static void animate_nav_button_press(lv_obj_t *btn) {
-    // Get original background color
-    lv_color_t original_bg = lv_obj_get_style_bg_color(btn, LV_PART_MAIN);
-    
-    // Create a brighter highlight color (increase brightness by ~50%)
-    lv_color_t highlight_color = lv_color_mix(lv_color_hex(0xFFFFFF), original_bg, 50);
-    
-    // Highlight effect - change to brighter color
-    lv_obj_set_style_bg_color(btn, highlight_color, LV_PART_MAIN);
-    
-    // Return to original color after a short delay
-    lv_timer_create(restore_button_color_cb, 150, btn);
+    // Find first child (the label containing the arrow) - child id 0
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    if (!label) return;
+
+    // Set a temporary highlight color for the label
+    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFF00), 0);
+
+    // Return label to original color after a short delay
+    lv_timer_create(restore_label_color_cb, 150, label);
 }
 
 static void button_click_anim_cb(lv_anim_t *a) {
@@ -483,33 +482,35 @@ void main_menu_create(void) {
         left_nav_btn = lv_btn_create(lv_scr_act());
         
         // Responsive button sizing based on screen dimensions - make them smaller
-        int btn_size = 40; // Default smaller size
+        int btn_size = 52; // Default slightly larger size
         int btn_margin = 15;
         int screen_width = lv_disp_get_hor_res(lv_disp_get_default());
         if (screen_width <= 128) {
-            btn_size = 32; // Even smaller for small screens
+            btn_size = 40; // smaller for small screens
             btn_margin = 10;
         } else if (screen_width >= 320) {
-            btn_size = 48; // Slightly larger for large screens but still compact
+            btn_size = 60; // larger for large screens
             btn_margin = 20;
         }
         
         lv_obj_set_size(left_nav_btn, btn_size, btn_size);
-        lv_obj_set_style_bg_color(left_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
-        lv_obj_set_style_radius(left_nav_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        // make button transparent and remove shadows/border
+        lv_obj_set_style_bg_opa(left_nav_btn, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(left_nav_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_shadow_width(left_nav_btn, 3, LV_PART_MAIN);
-        lv_obj_set_style_shadow_color(left_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(left_nav_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(left_nav_btn, 0, LV_PART_MAIN);
         
-        // Position left button at bottom left
-        lv_obj_align(left_nav_btn, LV_ALIGN_BOTTOM_LEFT, btn_margin, -btn_margin);
+        // Position left button vertically centered at left edge
+        lv_obj_align(left_nav_btn, LV_ALIGN_LEFT_MID, btn_margin, 0);
         
         // Add left arrow icon/text
+        // create arrow label only, style it and center within the transparent button
         lv_obj_t *left_label = lv_label_create(left_nav_btn);
         lv_label_set_text(left_label, "<");
-        lv_obj_set_style_text_font(left_label, &lv_font_montserrat_12, 0);
+        // increase arrow size for better visibility
+        lv_obj_set_style_text_font(left_label, &lv_font_montserrat_18, 0);
         if (btn_size < 40) {
-            lv_obj_set_style_text_font(left_label, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(left_label, &lv_font_montserrat_14, 0);
         }
         lv_obj_set_style_text_color(left_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(left_label, LV_ALIGN_CENTER, 0, 0);
@@ -517,21 +518,22 @@ void main_menu_create(void) {
         // Create right navigation button
         right_nav_btn = lv_btn_create(lv_scr_act());
         lv_obj_set_size(right_nav_btn, btn_size, btn_size);
-        lv_obj_set_style_bg_color(right_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
-        lv_obj_set_style_radius(right_nav_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        // make button transparent and remove shadows/border
+        lv_obj_set_style_bg_opa(right_nav_btn, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(right_nav_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_shadow_width(right_nav_btn, 3, LV_PART_MAIN);
-        lv_obj_set_style_shadow_color(right_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(right_nav_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(right_nav_btn, 0, LV_PART_MAIN);
         
-        // Position right button at bottom right
-        lv_obj_align(right_nav_btn, LV_ALIGN_BOTTOM_RIGHT, -btn_margin, -btn_margin);
+        // Position right button vertically centered at right edge
+        lv_obj_align(right_nav_btn, LV_ALIGN_RIGHT_MID, -btn_margin, 0);
         
         // Add right arrow icon/text
         lv_obj_t *right_label = lv_label_create(right_nav_btn);
         lv_label_set_text(right_label, ">");
-        lv_obj_set_style_text_font(right_label, &lv_font_montserrat_12, 0);
+        // increase arrow size for better visibility
+        lv_obj_set_style_text_font(right_label, &lv_font_montserrat_18, 0);
         if (btn_size < 40) {
-            lv_obj_set_style_text_font(right_label, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(right_label, &lv_font_montserrat_14, 0);
         }
         lv_obj_set_style_text_color(right_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(right_label, LV_ALIGN_CENTER, 0, 0);
