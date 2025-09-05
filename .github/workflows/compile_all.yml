@@ -144,13 +144,6 @@ jobs:
           find all_artifacts -type f -exec cp {} flat_artifacts/ \;
           ls -lh flat_artifacts
 
-      # -------------------------------
-      # ⛔  👇  Cloudflare‑specific logic **REMOVED**
-      #     • Fetch boards.json
-      #     • Login / token generation
-      #     • Update supported boards list
-      #     • Upload ZIPs to api.spookytools.com
-      # -------------------------------
 
       # -----------------------------------------
       # 📦  Upload every zip to the LATEST release
