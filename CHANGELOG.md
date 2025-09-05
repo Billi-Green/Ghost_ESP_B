@@ -6,6 +6,7 @@
 - Flush PCAP and CSV data to SD Card on a timer
 - Prevent UART conflicts on TDECK by conditionally disabling serial manager and UART driver installation in esp_comm_manager.c - @tototo31
 - Added navigation arrows to the main menu - @tototo31
+- Add support for Lolin S3 pro - @tototo31
 
 ## Revival v1.7.1
 
