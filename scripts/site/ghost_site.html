@@ -7,8 +7,8 @@
     <style>
         /* CSS Variables for Colors and Fonts */
         :root {
-            --background-color: #0e0e0e;
-            --surface-color: #0a0a0a;
+            --background-color: #1a1919;
+            --surface-color: #24242462;
             --primary-color: #ffffff;
             --secondary-color: #1a1a1a;
             --accent-color: #ff6b9d;
@@ -29,6 +29,7 @@
             --font-display: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
             --font-mono: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
             --font-body: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+            --ios-green: #34C759;
         }
 
         /* Reset Styles */
@@ -68,9 +69,7 @@
             background: 
                 radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.05), transparent 40%),
                 radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.05), transparent 40%),
-                radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.03), transparent 60%),
-                repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.01) 0px, rgba(255, 255, 255, 0.01) 1px, transparent 1px, transparent 10px),
-                repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.01) 0px, rgba(255, 255, 255, 0.01) 1px, transparent 1px, transparent 10px);
+                radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.03), transparent 60%);
             z-index: -1;
             pointer-events: none;
         }
@@ -89,7 +88,7 @@
             font-family: var(--font-display);
             color: var(--text-primary);
             text-align: center;
-            margin: 2rem 0;
+            margin: 0rem 0;
             font-weight: 600;
             letter-spacing: -0.02em;
         }
@@ -103,6 +102,31 @@
             margin-top: 2rem;
         }
 
+        .page-title {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .page-title .title-text {
+            display: block;
+        }
+
+        .version-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06));
+            border: 1px solid rgba(255,255,255,0.2);
+            color: var(--primary-color);
+            font-size: 0.8rem;
+            line-height: 1;
+            -webkit-text-fill-color: var(--primary-color);
+            -webkit-background-clip: initial;
+            background-clip: border-box;
+        }
+
         input::-webkit-outer-spin-button,
         input::-webkit-inner-spin-button {
             -webkit-appearance: none;
@@ -112,27 +136,34 @@
 
         /* Tabs Styling */
         .tab {
+            position: relative;
             display: flex;
-            justify-content: space-around;
+            justify-content: center;
+            gap: 12px;
             border-radius: 12px;
             margin-bottom: 30px;
-            padding: 4px;
+            padding: 10px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scroll-snap-type: x mandatory;
         }
 
         .tab button {
             max-width: none;
-            flex: 1;
-            background: none;
-            border: none;
-            border-radius: 6px;
+            flex: 0 0 auto;
+            background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 9999px;
             outline: none;
             cursor: pointer;
-            padding: 15px 0;
-            margin: 0 2px;
-            font-size: 18px;
-            color: var(--text-secondary);
-            background-color: var(--surface-color);
-            transition: background-color 0.3s, color 0.3s;
+            padding: 12px 18px;
+            margin: 0;
+            font-size: 16px;
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s;
+            scroll-snap-align: start;
+            white-space: nowrap;
+            backdrop-filter: blur(6px) saturate(120%);
         }
 
         .tab button:first-child {
@@ -145,9 +176,27 @@
 
         .tab button:hover,
         .tab button.active {
-            background: var(--gradient-1);
-            color: var(--background-color);
-            box-shadow: 0 0 10px rgba(255, 107, 157, 0.3);
+            background: linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+            color: #ffffff;
+            border-color: rgba(255,255,255,0.2);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+        }
+
+        .tab::-webkit-scrollbar { height: 6px; }
+        .tab::-webkit-scrollbar-track { background: rgba(255,255,255,0.06); border-radius: 6px; }
+        .tab::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 6px; }
+        .tab { -ms-overflow-style: auto; scrollbar-width: thin; }
+
+        .tab::before,
+        .tab::after {
+            /* disable edge overlay to avoid visual glitch during scroll */
+            display: none !important;
+        }
+
+        @media (max-width: 900px) {
+            /* keep overlay disabled on small screens as well */
+            .tab::before,
+            .tab::after { display: none !important; }
         }
 
         /* Tab Content */
@@ -479,11 +528,11 @@
         }
 
         input:checked + .slider {
-            background-color: var(--primary-color);
+            background-color: var(--ios-green);
         }
 
         input:checked + .slider:before {
-            background-color: var(--background-color);
+            background-color: #ffffff;
             transform: translateX(28px);
         }
 
@@ -842,6 +891,20 @@
             margin: 0;
         }
 
+        /* Center action buttons inside settings pages only */
+        #Settings .settings-page > button.small,
+        #Settings .settings-page .action-buttons-page button {
+            display: block;
+            margin: 16px auto 0 auto;
+        }
+
+        .action-buttons-page {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
         /* For button containers that need inline buttons */
         .file-wrapper button,
         .file-actions button {
@@ -1179,11 +1242,174 @@
             border-radius: 6px;
             transition: width 0.5s ease-in-out;
         }
+
+        .settings-home {
+            display: block;
+        }
+
+        .settings-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .settings-item {
+            width: 100%;
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            border-radius: 12px;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.05s ease;
+        }
+
+        .settings-item:active {
+            transform: scale(0.998);
+        }
+
+        .settings-item .chev {
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .settings-page {
+            display: none;
+        }
+
+        .settings-page.show {
+            display: block;
+        }
+
+        .settings-page-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .settings-page-header .back-btn {
+            position: absolute;
+            left: 0;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: var(--primary-color);
+            padding: 8px 12px;
+            border-radius: 10px;
+            min-width: auto;
+            width: auto;
+            margin: 0;
+        }
+
+        .settings-page-header .back-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            transform: none;
+            box-shadow: none;
+        }
+
+        .settings-group {
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 14px;
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+        }
+
+        .setting-row label {
+            color: var(--primary-color);
+            font-weight: 500;
+            font-size: 15px;
+            margin: 0;
+        }
+
+        .setting-row .row-value {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .setting-row input[type="text"],
+        .setting-row input[type="number"],
+        .setting-row select,
+        .setting-row textarea,
+        .setting-row input[type="color"] {
+            width: auto;
+            min-width: 140px;
+            margin-top: 0;
+        }
+
+        @media (max-width: 600px) {
+            .settings-item {
+                padding: 12px 14px;
+                font-size: 15px;
+            }
+            .setting-row {
+                padding: 12px;
+            }
+            .setting-row .row-value {
+                gap: 8px;
+            }
+            .settings-page-header {
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+            }
+            .settings-page-header .back-btn {
+                position: static;
+                order: 2;
+                margin-top: 4px;
+            }
+            .tab {
+                gap: 12px;
+                padding: 12px 12px;
+                justify-content: flex-start;
+            }
+            .tab button {
+                padding: 12px 18px;
+                font-size: 15px;
+            }
+        }
+        /* hide legacy help list under the new help ui */
+        #Help .settings-grid { display: none; }
+
+        /* help page card alignment tweaks */
+        #Help #help-page .setting-row { align-items: flex-start; }
+        #Help #help-page .setting-row label { margin-bottom: 6px; }
+        #Help #help-page .setting-row .row-value { justify-content: flex-start; gap: 8px; }
+        #Help #help-page code { white-space: nowrap; }
+        @media (max-width: 600px) {
+            #Help #help-page .setting-row .row-value { flex-wrap: wrap; }
+            #Help #help-page code { white-space: normal; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>GhostESP: Revival v1.7</h1>
+        <div class="page-title">
+            <h1 class="title-text">GhostESP: Revival</h1>
+            <span class="version-badge">v1.7.2</span>
+        </div>
         <!-- Tab Navigation -->
         <div class="tab">
             <button class="tablinks active" onclick="openTab(event, 'Settings')" id="defaultTab">Settings</button>
@@ -1194,327 +1420,252 @@
         </div>
         <!-- Settings Tab Content -->
         <div id="Settings" class="tabcontent show">
-            <div class="settings-grid">
-                <!-- WiFi/BLE Section -->
-                <div class="settings-section" id="miscellaneous_section">
-                    <h2>Miscellaneous Settings</h2>
-
-                    <div class="input-group">
-                        <label for="gps_rx_pin">GPS RX Pin
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Provide the GPS RX Pin For the Firmware. Only for those who have a working GPS Installed</span>
-                            </span>
-                        </label>
-                        <input type="number" id="gps_rx_pin" min="0" max="50" step="1" placeholder="0 - 50" required>
-                    </div>
-
-                    <div class="input-group">
-                        <label for="flappy_name_text">Name 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the Name you want to have on the Flappy Ghost leaderboards.</span>
-                            </span>
-                        </label>
-                        <textarea id="flappy_name_text" placeholder="Enter Name"></textarea>
-                    </div>
-
-                    <div class="input-group">
-                        <label for="broadcast_speed">Broadcast Speed (ms) 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Set the speed at which broadcasts are sent, in milliseconds (5 - 1000 ms).</span>
-                            </span>
-                        </label>
-                        <input type="number" id="broadcast_speed" min="5" max="1000" step="1" placeholder="5 - 1000 ms" required>
-                    </div>
-                    
-                    <div class="input-group">
-                        <label for="accent_color_picker">Accent Color 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Pick a custom accent color for the firmware. Use the color picker to select your preferred color.</span>
-                            </span>
-                        </label>
-                        <input type="color" id="accent_color_picker" value="#ffffff">
-                        <span id="accent_color_hex" style="margin-left: 10px;">#ffffff</span>
-                    </div>
-
+            <div class="settings-home" id="settings-home">
+                <div class="settings-list">
+                    <div class="settings-item" onclick="openSettingsPage('misc-page')"><span>Miscellaneous</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openSettingsPage('wifi-page')"><span>WiFi</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openSettingsPage('evil-portal-page')"><span>Evil Portal</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openSettingsPage('printer-page')"><span>Power Printer</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openSettingsPage('rgb-page')"><span>RGB</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openSettingsPage('watch-page')"><span>Watch / RTC</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openSettingsPage('sd-config-page')"><span>SD Card Config</span><span class="chev">›</span></div>
                 </div>
-                <!-- Connect to WiFi Section (Disabled) -->
-                <div class="settings-section" id="connect-wifi-section">
-                    <h2>WiFi Status</h2>
-                    <div class="input-group">
-                        <label for="station_ip">ESP32 Station IP:</label>
-                        <input type="text" id="station_ip" placeholder="Not connected" readonly>
-                    </div>
-                    <h2>Connect to WiFi Network</h2>
-                    <div class="input-group">
-                        <label for="wifi_ssid">WiFi SSID 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the SSID of the WiFi network you want to connect to.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="wifi_ssid" placeholder="Enter WiFi SSID">
-                    </div>
-                    <div class="input-group">
-                        <label for="wifi_password">WiFi Password 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the password of the WiFi network you want to connect to.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="wifi_password" placeholder="Enter WiFi Password">
-                    </div>
-                    <button onclick="connectToWiFi()">Connect</button>
+            </div>
+
+            <div class="settings-page" id="misc-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showSettingsHome()">‹ Settings</button>
+                    <h2>Miscellaneous</h2>
                 </div>
-                <!-- Evil Portal Section -->
-                <div class="settings-section" id="evil-portal-section">
-                    <h2>Evil Portal Settings</h2>
-                    <div class="input-group">
-                        <label for="portal_url">File Path
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Set as 'default' for the default embedded Evil Portal.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="portal_url" placeholder="Enter file path">
+                <div class="settings-group">
+                    <div class="setting-row">
+                        <label for="gps_rx_pin">GPS RX Pin</label>
+                        <div class="row-value"><input type="number" id="gps_rx_pin" min="0" max="50" step="1" placeholder="0 - 50" required></div>
                     </div>
-                    <div class="input-group">
+                    <div class="setting-row">
+                        <label for="flappy_name_text">Name</label>
+                        <div class="row-value" style="width:100%"><textarea id="flappy_name_text" placeholder="Enter Name" style="width:100%"></textarea></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="broadcast_speed">Broadcast Speed (ms)</label>
+                        <div class="row-value"><input type="number" id="broadcast_speed" min="5" max="1000" step="1" placeholder="5 - 1000" required></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="accent_color_picker">Accent Color</label>
+                        <div class="row-value"><input type="color" id="accent_color_picker" value="#ffffff"><span id="accent_color_hex">#ffffff</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-page" id="wifi-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showSettingsHome()">‹ Settings</button>
+                    <h2>WiFi</h2>
+                </div>
+                <div class="settings-group">
+                    <div class="setting-row">
+                        <label for="station_ip">ESP32 Station IP</label>
+                        <div class="row-value"><input type="text" id="station_ip" placeholder="Not connected" readonly></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="wifi_ssid">WiFi SSID</label>
+                        <div class="row-value"><input type="text" id="wifi_ssid" placeholder="Enter WiFi SSID"></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="wifi_password">WiFi Password</label>
+                        <div class="row-value"><input type="text" id="wifi_password" placeholder="Enter WiFi Password"></div>
+                    </div>
+                </div>
+                <button class="small" onclick="connectToWiFi()">Connect</button>
+            </div>
+
+            <div class="settings-page" id="evil-portal-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showSettingsHome()">‹ Settings</button>
+                    <h2>Evil Portal</h2>
+                </div>
+                <div class="settings-group">
+                    <div class="setting-row">
+                        <label for="portal_url">File Path</label>
+                        <div class="row-value"><input type="text" id="portal_url" placeholder="Enter file path"></div>
+                    </div>
+                    <div class="setting-row">
                         <label for="portal_ap_ssid">Portal AP SSID</label>
-                        <input type="text" id="portal_ap_ssid" placeholder="Enter AP SSID">
+                        <div class="row-value"><input type="text" id="portal_ap_ssid" placeholder="Enter AP SSID"></div>
                     </div>
-                    <div class="input-group">
-                        <label for="portal_password">Portal AP PSK
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Leave blank for an open portal.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="portal_password" placeholder="Enter AP PSK">
+                    <div class="setting-row">
+                        <label for="portal_password">Portal AP PSK</label>
+                        <div class="row-value"><input type="text" id="portal_password" placeholder="Enter AP PSK"></div>
                     </div>
-                    <button onclick="startevilportal()">Start Evil Portal</button>
                 </div>
-                <!-- Power Printer Section -->
-                <div class="settings-section" id="power-printer-section">
-                    <h2>Power Printer Settings</h2>
-                    <div class="input-group">
-                        <label for="printer_ip">Printer IP 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the IP address of the printer.</span>
-                            </span>
-                        </label>
-                        <input type="text" id="printer_ip" placeholder="Enter Printer IP">
+                <button class="small" onclick="startevilportal()">Start Evil Portal</button>
+            </div>
+
+            <div class="settings-page" id="printer-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showSettingsHome()">‹ Settings</button>
+                    <h2>Power Printer</h2>
+                </div>
+                <div class="settings-group">
+                    <div class="setting-row">
+                        <label for="printer_ip">Printer IP</label>
+                        <div class="row-value"><input type="text" id="printer_ip" placeholder="Enter Printer IP"></div>
                     </div>
-                    <div class="input-group">
-                        <label for="printer_text">Printer Text 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Enter the text to print on the printer.</span>
-                            </span>
-                        </label>
-                        <textarea id="printer_text" placeholder="Enter Text to Print"></textarea>
+                    <div class="setting-row">
+                        <label for="printer_text">Printer Text</label>
+                        <div class="row-value" style="width:100%"><textarea id="printer_text" placeholder="Enter Text to Print" style="width:100%"></textarea></div>
                     </div>
-                    <div class="input-group">
-                        <label for="printer_font_size">Printer Font Size 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Set the font size for the printed text (10 - 72).</span>
-                            </span>
-                        </label>
-                        <input type="number" id="printer_font_size" min="10" max="72" step="1" placeholder="10 - 72" required>
+                    <div class="setting-row">
+                        <label for="printer_font_size">Printer Font Size</label>
+                        <div class="row-value"><input type="number" id="printer_font_size" min="10" max="72" step="1" placeholder="10 - 72" required></div>
                     </div>
-                    <div class="input-group">
-                        <label for="printer_alignment">Printer Alignment 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Select the alignment for the printed text.</span>
-                            </span>
-                        </label>
-                        <div class="select-wrapper">
-                            <select id="printer_alignment">
-                                <option value="0">Center Middle</option>
-                                <option value="1">Top Left</option>
-                                <option value="2">Top Right</option>
-                                <option value="3">Bottom Right</option>
-                                <option value="4">Bottom Left</option>
+                    <div class="setting-row">
+                        <label for="printer_alignment">Printer Alignment</label>
+                        <div class="row-value"><div class="select-wrapper"><select id="printer_alignment"><option value="0">Center Middle</option><option value="1">Top Left</option><option value="2">Top Right</option><option value="3">Bottom Right</option><option value="4">Bottom Left</option></select></div></div>
+                    </div>
+                </div>
+                <button class="small" onclick="sendtoprinter()">Send to Printer</button>
+            </div>
+
+            <div class="settings-page" id="rgb-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showSettingsHome()">‹ Settings</button>
+                    <h2>RGB</h2>
+                </div>
+                <div class="settings-group">
+                    <div class="setting-row">
+                        <label for="rainbow_mode">Rainbow Mode</label>
+                        <div class="row-value"><label class="toggle-switch"><input type="checkbox" id="rainbow_mode"><span class="slider"></span></label></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="rgb_speed">RGB Speed</label>
+                        <div class="row-value"><input type="number" id="rgb_speed" min="15" max="50" step="1" placeholder="15 - 50" required></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="rgb_red_pin">Red Pin</label>
+                        <div class="row-value"><input type="number" id="rgb_red_pin" min="0" max="34" placeholder="Red GPIO"></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="rgb_green_pin">Green Pin</label>
+                        <div class="row-value"><input type="number" id="rgb_green_pin" min="0" max="34" placeholder="Green GPIO"></div>
+                    </div>
+                    <div class="setting-row">
+                        <label for="rgb_blue_pin">Blue Pin</label>
+                        <div class="row-value"><input type="number" id="rgb_blue_pin" min="0" max="34" placeholder="Blue GPIO"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-page" id="watch-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showSettingsHome()">‹ Settings</button>
+                    <h2>Watch / RTC</h2>
+                </div>
+                <div class="settings-group">
+                    <div class="setting-row">
+                        <label for="timezone_select">Timezone</label>
+                        <div class="row-value" style="width:100%">
+                            <select id="timezone_select" style="width:100%">
+                                <option value="UTC0">UTC</option>
+                                <option value="HST10">Hawaii-Aleutian Standard Time (HST)</option>
+                                <option value="AKST9AKDT,M3.2.0,M11.1.0">Alaska Time (AKST/AKDT)</option>
+                                <option value="PST8PDT,M3.2.0,M11.1.0">Pacific Time (PST/PDT)</option>
+                                <option value="MST7MDT,M3.2.0,M11.1.0">Mountain Time (MST/MDT)</option>
+                                <option value="CST6CDT,M3.2.0,M11.1.0">Central Time (CST/CDT)</option>
+                                <option value="EST5EDT,M3.2.0,M11.1.0">Eastern Time (EST/EDT)</option>
+                                <option value="AST4">Atlantic Standard Time (AST)</option>
+                                <option value="AWST-8">Australian Western Time (AWST)</option>
+                                <option value="ACST-9:30">Australian Central Standard Time (ACST)</option>
+                                <option value="ACDT-10:30,M10.1.0,M4.1.0/3">Australian Central Daylight Time (ACST/ACDT)</option>
+                                <option value="AEST-10">Australian Eastern Standard Time (AEST)</option>
+                                <option value="AEDT-11,M10.1.0,M4.1.0/3">Australian Eastern Daylight Time (AEST/AEDT)</option>
+                                <option value="LHST-10:30">Lord Howe Standard Time (LHST)</option>
+                                <option value="WET0WEST,M3.5.0/1,M10.5.0">Western European Time (WET/WEST)</option>
+                                <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Eastern European Time (EET/EEST)</option>
+                                <option value="PKT-5">Pakistan Standard Time (PKT)</option>
+                                <option value="KST-9">Korea Standard Time (KST)</option>
+                                <option value="PHT-8">Philippine Time (PHT)</option>
+                                <option value="ICT-7">Indochina Time (ICT)</option>
+                                <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">New Zealand Time (NZST/NZDT)</option>
+                                <option value="FJT-12">Fiji Time (FJT)</option>
+                                <option value="IST-5:30">India Standard Time (IST)</option>
+                                <option value="GMT0BST,M3.5.0/1,M10.5.0/2">British Summer Time (GMT/BST)</option>
+                                <option value="CET-1CEST,M3.5.0,M10.5.0/3">Central European Time (CET/CEST)</option>
+                                <option value="JST-9">Japan Standard Time (JST)</option>
+                                <option value="CST-8">China Standard Time (CST)</option>
                             </select>
                         </div>
                     </div>
-                    <button onclick="sendtoprinter()">Send to Printer</button>
-                </div>
-                <!-- RGB Section -->
-                <div class="settings-section" id="rgb-section">
-                    <h2>RGB Settings</h2>
-                    <div class="input-group">
-                        <label for="rainbow_mode">Rainbow Mode 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Toggle the rainbow color mode for the RGB LEDs.</span>
-                            </span>
-                        </label>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="rainbow_mode">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="input-group">
-                        <label for="rgb_speed">RGB Speed 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Set the speed of the RGB color change (15 - 50).</span>
-                            </span>
-                        </label>
-                        <input type="number" id="rgb_speed" min="15" max="50" step="1" placeholder="15 - 50" required>
-                    </div>
-                    <div class="input-group">
-                        <label for="rgb_red_pin">Red Pin 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">GPIO for red LED (0-34)</span>
-                            </span>
-                        </label>
-                        <input type="number" id="rgb_red_pin" min="0" max="34" placeholder="Red GPIO">
-                    </div>
-                    <div class="input-group">
-                        <label for="rgb_green_pin">Green Pin 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">GPIO for green LED (0-34)</span>
-                            </span>
-                        </label>
-                        <input type="number" id="rgb_green_pin" min="0" max="34" placeholder="Green GPIO">
-                    </div>
-                    <div class="input-group">
-                        <label for="rgb_blue_pin">Blue Pin 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">GPIO for blue LED (0-34)</span>
-                            </span>
-                        </label>
-                        <input type="number" id="rgb_blue_pin" min="0" max="34" placeholder="Blue GPIO">
+                    <div class="setting-row">
+                        <label for="display_timeout">Display Timeout (ms)</label>
+                        <div class="row-value"><input type="number" id="display_timeout" min="1000" max="60000" step="1000" placeholder="1000 - 60000" required></div>
                     </div>
                 </div>
-                <!-- Flappy Ghost Section -->
-                <div class="settings-section" id="flappy_ghost_section">
-                    <h2>Watch / RTC Settings</h2>
-                    <div class="input-group">
-                        <label for="timezone_select">Timezone 
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Select your timezone. This will be used to adjust the device clock.</span>
-                            </span>
-                        </label>
-                        <select id="timezone_select">
-                            <option value="UTC0">UTC</option>
-                            
-                            <!-- United States Timezones -->
-                            <option value="HST10">Hawaii-Aleutian Standard Time (HST)</option>
-                            <option value="AKST9AKDT,M3.2.0,M11.1.0">Alaska Time (AKST/AKDT)</option>
-                            <option value="PST8PDT,M3.2.0,M11.1.0">Pacific Time (PST/PDT)</option>
-                            <option value="MST7MDT,M3.2.0,M11.1.0">Mountain Time (MST/MDT)</option>
-                            <option value="CST6CDT,M3.2.0,M11.1.0">Central Time (CST/CDT)</option>
-                            <option value="EST5EDT,M3.2.0,M11.1.0">Eastern Time (EST/EDT)</option>
-                            <option value="AST4">Atlantic Standard Time (AST)</option>
-                            
-                            <!-- Australian Timezones -->
-                            <option value="AWST-8">Australian Western Time (AWST)</option>
-                            <option value="ACST-9:30">Australian Central Standard Time (ACST)</option>
-                            <option value="ACDT-10:30,M10.1.0,M4.1.0/3">Australian Central Daylight Time (ACST/ACDT)</option>
-                            <option value="AEST-10">Australian Eastern Standard Time (AEST)</option>
-                            <option value="AEDT-11,M10.1.0,M4.1.0/3">Australian Eastern Daylight Time (AEST/AEDT)</option>
-                            <option value="LHST-10:30">Lord Howe Standard Time (LHST)</option>
-                            
-                            <!-- Additional European Timezones -->
-                            <option value="WET0WEST,M3.5.0/1,M10.5.0">Western European Time (WET/WEST)</option>
-                            <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Eastern European Time (EET/EEST)</option>
-                            
-                            <!-- Additional Asian Timezones -->
-                            <option value="PKT-5">Pakistan Standard Time (PKT)</option>
-                            <option value="KST-9">Korea Standard Time (KST)</option>
-                            <option value="PHT-8">Philippine Time (PHT)</option>
-                            <option value="ICT-7">Indochina Time (ICT)</option>
-                            
-                            <!-- Additional Pacific Timezones -->
-                            <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">New Zealand Time (NZST/NZDT)</option>
-                            <option value="FJT-12">Fiji Time (FJT)</option>
-                            
-                            <!-- Existing Other Common Timezones -->
-                            <option value="IST-5:30">India Standard Time (IST)</option>
-                            <option value="GMT0BST,M3.5.0/1,M10.5.0/2">British Summer Time (GMT/BST)</option>
-                            <option value="CET-1CEST,M3.5.0,M10.5.0/3">Central European Time (CET/CEST)</option>
-                            <option value="JST-9">Japan Standard Time (JST)</option>
-                            <option value="CST-8">China Standard Time (CST)</option>
-                        </select>
-                    </div>
-                    
-                    <div class="input-group">
-                        <label for="display_timeout">LilyGo T-Watch Display Timeout (ms)
-                            <span class="tooltip">?
-                                <span class="tooltiptext">Set how long before the display turns off when inactive (1000-60000 ms)</span>
-                            </span>
-                        </label>
-                        <input type="number" id="display_timeout" min="1000" max="60000" step="1000" placeholder="1000 - 60000 ms" required>
-                    </div>
-                </div>
-                
-                <!-- SD Card Configuration Section (Moved Here) -->
-                <section class="settings-section" id="sd-card-config">
+            </div>
+
+            <div class="settings-page" id="sd-config-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showSettingsHome()">‹ Settings</button>
                     <h2>SD Card Pin Configuration</h2>
-                    <p></p>
-                    <p style="font-size: 0.9em; color: var(--text-secondary); margin-top: 5px;">
-                        <strong>Note:</strong> The SD Card communication mode (SDMMC or SPI) is determined by the firmware's compile-time configuration (sdkconfig).
-                        This section allows setting the GPIO pins for *both* modes, but only the pins corresponding to the *compiled mode* will be used.
-                        Changing the actual mode requires recompiling and flashing new firmware.
-                        Setting pins for an inactive mode will have no effect.
-                    </p>
-                    
+                </div>
+                <section class="settings-section" id="sd-card-config">
+                    <p style="font-size: 0.9em; color: var(--text-secondary); margin-top: 5px;"></p>
+                    <p style="font-size: 0.9em; color: var(--text-secondary); margin-top: 5px;">The SD Card communication mode is determined by the firmware compile-time configuration.</p>
                     <div class="pin-config-container">
                         <div class="pin-group">
                             <h3>MMC Mode (4-bit/1-bit)</h3>
-                            <div class="pin-input">
-                                <label for="mmc-clk">CLK:</label>
-                                <input type="number" id="mmc-clk" min="0" max="40" placeholder="19">
-                            </div>
-                            <div class="pin-input">
-                                <label for="mmc-cmd">CMD:</label>
-                                <input type="number" id="mmc-cmd" min="0" max="40" placeholder="18">
-                            </div>
-                            <div class="pin-input">
-                                <label for="mmc-d0">D0:</label>
-                                <input type="number" id="mmc-d0" min="0" max="40" placeholder="20">
-                            </div>
-                            <div class="pin-input">
-                                <label for="mmc-d1">D1:</label>
-                                <input type="number" id="mmc-d1" min="0" max="40" placeholder="21">
-                            </div>
-                            <div class="pin-input">
-                                <label for="mmc-d2">D2:</label>
-                                <input type="number" id="mmc-d2" min="0" max="40" placeholder="22">
-                            </div>
-                            <div class="pin-input">
-                                <label for="mmc-d3">D3:</label>
-                                <input type="number" id="mmc-d3" min="0" max="40" placeholder="23">
-                            </div>
+                            <div class="pin-input"><label for="mmc-clk">CLK:</label><input type="number" id="mmc-clk" min="0" max="40" placeholder="19"></div>
+                            <div class="pin-input"><label for="mmc-cmd">CMD:</label><input type="number" id="mmc-cmd" min="0" max="40" placeholder="18"></div>
+                            <div class="pin-input"><label for="mmc-d0">D0:</label><input type="number" id="mmc-d0" min="0" max="40" placeholder="20"></div>
+                            <div class="pin-input"><label for="mmc-d1">D1:</label><input type="number" id="mmc-d1" min="0" max="40" placeholder="21"></div>
+                            <div class="pin-input"><label for="mmc-d2">D2:</label><input type="number" id="mmc-d2" min="0" max="40" placeholder="22"></div>
+                            <div class="pin-input"><label for="mmc-d3">D3:</label><input type="number" id="mmc-d3" min="0" max="40" placeholder="23"></div>
                             <button class="update-mmc-btn small">Update MMC Pins</button> 
                         </div>
-                        
                         <div class="pin-group">
                             <h3>SPI Mode</h3>
-                            <div class="pin-input">
-                                <label for="spi-cs">CS:</label>
-                                <input type="number" id="spi-cs" min="0" max="40" placeholder="5">
-                            </div>
-                            <div class="pin-input">
-                                <label for="spi-clk">CLK:</label>
-                                <input type="number" id="spi-clk" min="0" max="40" placeholder="18">
-                            </div>
-                            <div class="pin-input">
-                                <label for="spi-miso">MISO:</label>
-                                <input type="number" id="spi-miso" min="0" max="40" placeholder="19">
-                            </div>
-                            <div class="pin-input">
-                                <label for="spi-mosi">MOSI:</label>
-                                <input type="number" id="spi-mosi" min="0" max="40" placeholder="23">
-                            </div>
+                            <div class="pin-input"><label for="spi-cs">CS:</label><input type="number" id="spi-cs" min="0" max="40" placeholder="5"></div>
+                            <div class="pin-input"><label for="spi-clk">CLK:</label><input type="number" id="spi-clk" min="0" max="40" placeholder="18"></div>
+                            <div class="pin-input"><label for="spi-miso">MISO:</label><input type="number" id="spi-miso" min="0" max="40" placeholder="19"></div>
+                            <div class="pin-input"><label for="spi-mosi">MOSI:</label><input type="number" id="spi-mosi" min="0" max="40" placeholder="23"></div>
                             <button class="update-spi-btn small">Update SPI Pins</button>
                         </div>
                     </div>
-                    
                     <div class="action-buttons">
                         <button class="save-config-btn small">Save Configuration</button>
                         <button class="refresh-config-btn small">Refresh Current Values</button>
                     </div>
                 </section>
             </div>
+
             <button onclick="saveSettings()">Save Settings</button>
         </div>
         <!-- Help Tab Content -->
         <div id="Help" class="tabcontent">
+            <div class="settings-home" id="help-home">
+                <div class="settings-list">
+                    <div class="settings-item" onclick="openHelpPage('wifi')"><span>Wi‑Fi</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('ble')"><span>BLE</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('comm')"><span>Communication</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('sd')"><span>SD Card</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('led')"><span>LED / RGB</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('gps')"><span>GPS</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('misc')"><span>Misc</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('portal')"><span>Evil Portal</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('printer')"><span>Printer</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('cast')"><span>YouTube Cast</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('capture')"><span>Capture</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('beacon')"><span>Beacon</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('attack')"><span>Attack</span><span class="chev">›</span></div>
+                </div>
+            </div>
+            <div class="settings-page" id="help-page">
+                <div class="settings-page-header">
+                    <button class="back-btn" onclick="showHelpHome()">‹ Help</button>
+                    <h2 id="help-title">Help</h2>
+                </div>
+                <div class="settings-group" id="help-content"></div>
+            </div>
             <div class="settings-grid">
                 <div class="settings-section">
                     <h2>Ghost ESP Commands</h2>
@@ -2327,6 +2478,10 @@
                 startCommStatusPolling();
                 addCommTerminalMessage('Dual Communication tab activated');
                 clearCommTerminal(); // Start with clean terminal
+            } else if (tabName === "Settings") {
+                showSettingsHome();
+            } else if (tabName === "Help") {
+                showHelpHome();
             } else {
                 // Stop dual comm polling when switching away from the tab
                 stopCommStatusPolling();
@@ -2606,6 +2761,197 @@
             loadSettings();
             // Initialize dual comm terminal with welcome message
             addCommTerminalMessage('Dual Communication Terminal ready - Switch to Dual Comm tab to start using');
+        };
+
+        function openSettingsPage(pageId) {
+            const home = document.getElementById('settings-home');
+            const pages = document.querySelectorAll('#Settings .settings-page');
+            home.style.display = 'none';
+            pages.forEach(p => p.classList.remove('show'));
+            document.getElementById(pageId).classList.add('show');
+        }
+
+        function showSettingsHome() {
+            const home = document.getElementById('settings-home');
+            const pages = document.querySelectorAll('#Settings .settings-page');
+            pages.forEach(p => p.classList.remove('show'));
+            home.style.display = 'block';
+        }
+
+        function openHelpPage(categoryKey) {
+            const home = document.getElementById('help-home');
+            const page = document.getElementById('help-page');
+            const title = document.getElementById('help-title');
+            const content = document.getElementById('help-content');
+            home.style.display = 'none';
+            page.classList.add('show');
+            const mapping = helpCategories[categoryKey] || { title: 'Help', commands: [] };
+            title.textContent = mapping.title;
+            content.innerHTML = '';
+            mapping.commands.forEach(cmd => {
+                const row = document.createElement('div');
+                row.className = 'setting-row';
+                const label = document.createElement('label');
+                label.textContent = cmd.name;
+                const value = document.createElement('div');
+                value.className = 'row-value';
+                value.style.flexWrap = 'wrap';
+                const usage = document.createElement('code');
+                usage.textContent = cmd.usage;
+                usage.style.fontFamily = 'var(--font-mono)';
+                usage.style.background = 'rgba(0,0,0,0.3)';
+                usage.style.padding = '4px 8px';
+                usage.style.borderRadius = '6px';
+                value.appendChild(usage);
+                if (cmd.desc) {
+                    const d = document.createElement('span');
+                    d.textContent = ' ' + cmd.desc;
+                    d.style.color = 'var(--text-secondary)';
+                    d.style.fontSize = '14px';
+                    d.style.marginLeft = '8px';
+                    value.appendChild(d);
+                }
+                row.appendChild(label);
+                row.appendChild(value);
+                content.appendChild(row);
+            });
+        }
+
+        function showHelpHome() {
+            const home = document.getElementById('help-home');
+            const page = document.getElementById('help-page');
+            page.classList.remove('show');
+            home.style.display = 'block';
+        }
+
+        const helpCategories = {
+            wifi: {
+                title: 'Wi‑Fi Commands',
+                commands: [
+                    { name: 'scanap', usage: 'scanap [seconds]' },
+                    { name: 'scansta', usage: 'scansta' },
+                    { name: 'stopscan', usage: 'stopscan' },
+                    { name: 'attack', usage: 'attack -d | -e | -s <password>' },
+                    { name: 'list', usage: 'list -a | -s | -airtags' },
+                    { name: 'beaconspam', usage: 'beaconspam -r|-rr|-l|<SSID>' },
+                    { name: 'stopspam', usage: 'stopspam' },
+                    { name: 'stopdeauth', usage: 'stopdeauth' },
+                    { name: 'select', usage: 'select -a <num[,..]> | -s <num> | -airtag <num>' },
+                    { name: 'scanall', usage: 'scanall [seconds]' },
+                    { name: 'congestion', usage: 'congestion' },
+                    { name: 'connect', usage: 'connect <SSID> [Password]' },
+                    { name: 'apcred', usage: 'apcred <ssid> <password> | -r' },
+                    { name: 'apenable', usage: 'apenable <on|off>' },
+                    { name: 'listenprobes', usage: 'listenprobes [channel]|stop' },
+                    { name: 'setcountry', usage: 'setcountry <CC>', desc: 'ESP32-C5 only' },
+                ]
+            },
+            ble: {
+                title: 'BLE Commands',
+                commands: [
+                    { name: 'blescan', usage: 'blescan -f|-ds|-a|-r|-s' },
+                    { name: 'blespam', usage: 'blespam -apple|-ms|-samsung|-google|-random|-s' },
+                    { name: 'blewardriving', usage: 'blewardriving [-s]' },
+                    { name: 'listairtags', usage: 'listairtags' },
+                    { name: 'selectairtag', usage: 'selectairtag <index>' },
+                    { name: 'spoofairtag', usage: 'spoofairtag' },
+                    { name: 'stopspoof', usage: 'stopspoof' },
+                ]
+            },
+            comm: {
+                title: 'Communication Commands',
+                commands: [
+                    { name: 'commdiscovery', usage: 'commdiscovery' },
+                    { name: 'commconnect', usage: 'commconnect <peer_name>' },
+                    { name: 'commsend', usage: 'commsend <command> [data]' },
+                    { name: 'commstatus', usage: 'commstatus' },
+                    { name: 'commdisconnect', usage: 'commdisconnect' },
+                    { name: 'commsetpins', usage: 'commsetpins <tx_pin> <rx_pin>' },
+                ]
+            },
+            sd: {
+                title: 'SD Card Commands',
+                commands: [
+                    { name: 'sd_config', usage: 'sd_config' },
+                    { name: 'sd_pins_mmc', usage: 'sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>' },
+                    { name: 'sd_pins_spi', usage: 'sd_pins_spi <cs> <clk> <miso> <mosi>' },
+                    { name: 'sd_save_config', usage: 'sd_save_config' },
+                ]
+            },
+            led: {
+                title: 'LED / RGB Commands',
+                commands: [
+                    { name: 'rgbmode', usage: 'rgbmode <rainbow|police|strobe|off|color>' },
+                    { name: 'setrgbpins', usage: 'setrgbpins <red> <green> <blue>' },
+                    { name: 'setrgbmode', usage: 'setrgbmode <normal|rainbow|stealth>' },
+                ]
+            },
+            gps: {
+                title: 'GPS Commands',
+                commands: [
+                    { name: 'gpsinfo', usage: 'gpsinfo [-s]' },
+                    { name: 'startwd', usage: 'startwd [-s]' },
+                ]
+            },
+            misc: {
+                title: 'Miscellaneous',
+                commands: [
+                    { name: 'help', usage: 'help [category|all]' },
+                    { name: 'chipinfo', usage: 'chipinfo' },
+                    { name: 'timezone', usage: 'timezone <TZ_STRING>' },
+                    { name: 'webauth', usage: 'webauth <on|off>' },
+                    { name: 'pineap', usage: 'pineap [-s]' },
+                    { name: 'scanports', usage: 'scanports local | <IP> [all|start-end]' },
+                    { name: 'scanarp', usage: 'scanarp' },
+                ]
+            },
+            portal: {
+                title: 'Evil Portal',
+                commands: [
+                    { name: 'startportal', usage: 'startportal <FilePath> <AP_SSID> [PSK]' },
+                    { name: 'stopportal', usage: 'stopportal' },
+                    { name: 'listportals', usage: 'listportals' },
+                    { name: 'evilportal', usage: 'evilportal -c <sethtmlstr|clear>', desc: 'uart html buffer' },
+                ]
+            },
+            printer: {
+                title: 'Printer',
+                commands: [
+                    { name: 'powerprinter', usage: 'powerprinter <ip> <text> <size> <CM|TL|TR|BR|BL>' },
+                ]
+            },
+            cast: {
+                title: 'YouTube Cast',
+                commands: [
+                    { name: 'dialconnect', usage: 'dialconnect' },
+                ]
+            },
+            capture: {
+                title: 'Capture',
+                commands: [
+                    { name: 'capture', usage: 'capture -probe|-beacon|-deauth|-raw|-wps|-pwn|-eapol|-stop' },
+                ]
+            },
+            beacon: {
+                title: 'Beacon',
+                commands: [
+                    { name: 'beaconadd', usage: 'beaconadd <SSID>' },
+                    { name: 'beaconremove', usage: 'beaconremove <SSID>' },
+                    { name: 'beaconclear', usage: 'beaconclear' },
+                    { name: 'beaconshow', usage: 'beaconshow' },
+                    { name: 'beaconspamlist', usage: 'beaconspamlist' },
+                    { name: 'beaconspam', usage: 'beaconspam -r|-rr|-l|<SSID>' },
+                ]
+            },
+            attack: {
+                title: 'Attack',
+                commands: [
+                    { name: 'dhcpstarve', usage: 'dhcpstarve start [threads] | stop | display' },
+                    { name: 'saeflood', usage: 'saeflood <password>' },
+                    { name: 'stopsaeflood', usage: 'stopsaeflood' },
+                    { name: 'saefloodhelp', usage: 'saefloodhelp' },
+                ]
+            }
         };
 
         function sendTerminalCommand() {
@@ -2931,40 +3277,82 @@
 
         // Dual Communication Pin Configuration Functionality
         function updateCommPins() {
-            const txPin = document.getElementById('comm-tx-pin').value;
-            const rxPin = document.getElementById('comm-rx-pin').value;
-            
-            if (!txPin || !rxPin) {
-                alert('Please fill in both TX and RX pin fields');
+            // parse inputs as integers to avoid accidental string concatenation
+            const txEl = document.getElementById('comm-tx-pin');
+            const rxEl = document.getElementById('comm-rx-pin');
+            const txPinRaw = txEl ? txEl.value : '';
+            const rxPinRaw = rxEl ? rxEl.value : '';
+
+            const txPin = parseInt(txPinRaw, 10);
+            const rxPin = parseInt(rxPinRaw, 10);
+
+            if (Number.isNaN(txPin) || Number.isNaN(rxPin)) {
+                alert('Please fill in both TX and RX pin fields with valid numbers');
                 return;
             }
-            
+
             if (txPin < 0 || txPin > 48 || rxPin < 0 || rxPin > 48) {
                 alert('Pin numbers must be between 0-48');
                 return;
             }
-            
+
             if (txPin === rxPin) {
                 alert('TX and RX pins cannot be the same');
                 return;
             }
-            
-            const command = `commsetpins ${txPin} ${rxPin}`;
-            addCommTerminalMessage(`> ${command}`);
-            
+
+            // Build command explicitly with spaces to avoid concatenation like "76"
+            const command = 'commsetpins ' + txPin + ' ' + rxPin;
+            addCommTerminalMessage('> ' + command);
+
+            // Send the command and then inspect the device logs to determine actual result
             fetch('/api/command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: command })
             })
             .then(response => {
-                if (response.ok) {
-                    addCommTerminalMessage('Communication pins updated successfully');
-                    alert('Communication pins updated successfully!');
-                } else {
-                    addCommTerminalMessage('Failed to update communication pins');
-                    alert('Failed to update communication pins');
-                }
+                // The command endpoint returns quickly; wait briefly for the command handler to log results
+                setTimeout(() => {
+                    fetch('/api/logs')
+                        .then(r => r.text())
+                        .then(logs => {
+                            const tail = logs.slice(-1024); // examine last 1KB for recent messages
+                            if (/Communication pins changed/i.test(tail) || /pins changed and saved/i.test(tail)) {
+                                addCommTerminalMessage('Communication pins updated successfully');
+                                alert('Communication pins updated successfully!');
+                            } else if (/Failed to change pins/i.test(tail) || /Cannot change pins while connected or scanning/i.test(tail) || /Cannot change pins/i.test(tail)) {
+                                addCommTerminalMessage('Failed to update communication pins');
+                                // Ask user if they'd like to disconnect/stop discovery
+                                if (confirm('Failed to change pins because the device is connected or scanning. Stop discovery/disconnect now?')) {
+                                    fetch('/api/esp_comm/control', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ action: 'disconnect' })
+                                    })
+                                    .then(resp => resp.json())
+                                    .then(j => {
+                                        addCommTerminalMessage('Sent disconnect request: ' + j.message);
+                                        alert('Disconnect request sent. Retry updating pins after device is idle.');
+                                    })
+                                    .catch(err => {
+                                        console.error('Error sending disconnect request:', err);
+                                        alert('Failed to send disconnect request');
+                                    });
+                                } else {
+                                    alert('Pins were not changed. Stop any active connection or scanning and try again.');
+                                }
+                            } else {
+                                // Unknown - fallback message
+                                addCommTerminalMessage('Command sent; check logs for result');
+                                alert('Command sent; check device logs for result');
+                            }
+                        })
+                        .catch(err => {
+                            console.error('Error fetching logs after pin update:', err);
+                            alert('Command sent but failed to verify result (log fetch failed)');
+                        });
+                }, 500);
             })
             .catch(error => {
                 console.error('Error updating communication pins:', error);

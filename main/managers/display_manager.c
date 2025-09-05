@@ -792,12 +792,9 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #endif // CONFIG_JC3248W535EN_LCD
 
 #if !defined(CONFIG_USE_7_INCHER) && !defined(CONFIG_JC3248W535EN_LCD)
-#ifdef CONFIG_IDF_TARGET_ESP32
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(
-      4))); // We do this due to Dram Memory Constraints on ESP32 WROOM Modules
-  static lv_color_t buf2[CONFIG_TFT_WIDTH * 5]
-      __attribute__((aligned(4))); // Any other devices like ESP32S3 Etc Should
-                                   // be able to handle the * 20 Double Buffer
+#if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32C5)
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
+  static lv_color_t buf2[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
 #else
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));

@@ -144,7 +144,11 @@ void app_main(void) {
     MEASURE_INIT_RAM("WiFi STA Config", wifi_manager_configure_sta_from_settings());
 
     ESP_LOGI(TAG, "Initializing Comm Manager");
-    MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init_with_defaults());
+    {
+        int32_t comm_tx = G_Settings.esp_comm_tx_pin;
+        int32_t comm_rx = G_Settings.esp_comm_rx_pin;
+        MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, 921600));
+    }
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     MEASURE_INIT_RAM("AP Manager", ap_manager_init());
@@ -181,25 +185,27 @@ void app_main(void) {
         int32_t data_pin = settings_get_rgb_data_pin(&G_Settings);
         int32_t red_pin, green_pin, blue_pin;
         settings_get_rgb_separate_pins(&G_Settings, &red_pin, &green_pin, &blue_pin);
-        if (data_pin >= 0) {
-            rgb_manager_init(&rgb_manager, data_pin, CONFIG_NUM_LEDS, LED_PIXEL_FORMAT_GRB,
-                             LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
-            initialized = true;
-        } else if (red_pin >= 0 && green_pin >= 0 && blue_pin >= 0) {
-            rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
-                             LED_MODEL_WS2812, red_pin, green_pin, blue_pin);
-            initialized = true;
+        if (data_pin != GPIO_NUM_NC) {
+            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, data_pin, CONFIG_NUM_LEDS, LED_PIXEL_FORMAT_GRB,
+                                                 LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+            initialized = (rgb_err == ESP_OK);
+        } else if (red_pin != GPIO_NUM_NC && green_pin != GPIO_NUM_NC && blue_pin != GPIO_NUM_NC) {
+            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
+                                                 LED_MODEL_WS2812, red_pin, green_pin, blue_pin);
+            initialized = (rgb_err == ESP_OK);
         }
         if (!initialized) {
     #ifdef CONFIG_LED_DATA_PIN
-            rgb_manager_init(&rgb_manager, CONFIG_LED_DATA_PIN, CONFIG_NUM_LEDS, LED_ORDER,
-                             LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, CONFIG_LED_DATA_PIN, CONFIG_NUM_LEDS, LED_ORDER,
+                                                 LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+            initialized = (rgb_err == ESP_OK);
     #elif defined(CONFIG_RED_RGB_PIN) && defined(CONFIG_GREEN_RGB_PIN) && defined(CONFIG_BLUE_RGB_PIN)
-            rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
-                             LED_MODEL_WS2812, CONFIG_RED_RGB_PIN, CONFIG_GREEN_RGB_PIN, CONFIG_BLUE_RGB_PIN);
+            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
+                                                 LED_MODEL_WS2812, CONFIG_RED_RGB_PIN, CONFIG_GREEN_RGB_PIN, CONFIG_BLUE_RGB_PIN);
+            initialized = (rgb_err == ESP_OK);
     #endif
         }
-        if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
+        if (initialized && settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
             xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1,
                         &rgb_effect_task_handle);
         }

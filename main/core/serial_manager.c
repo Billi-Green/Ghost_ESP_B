@@ -103,11 +103,23 @@ void serial_task(void *pvParameter) {
         if (incoming_char == '\b' || (unsigned char)incoming_char == 0x7F) {
           if (index > 0) {
             index--;
+            // Echo backspace: write backspace, space, backspace directly to UART
+            const char backspace_seq[] = "\b \b";
+            uart_write_bytes(UART_NUM, backspace_seq, 3);
+#if JTAG_SUPPORTED
+            usb_serial_jtag_write_bytes((const uint8_t*)backspace_seq, 3, 0);
+#endif
           }
           continue;
         }
 
         if (incoming_char == '\n' || incoming_char == '\r') {
+          // Echo newline directly to UART
+          const char newline[] = "\n";
+          uart_write_bytes(UART_NUM, newline, 1);
+#if JTAG_SUPPORTED
+          usb_serial_jtag_write_bytes((const uint8_t*)newline, 1, 0);
+#endif
           serial_buffer[index] = '\0';
           if (index > 0) {
             process_html_line(serial_buffer);
@@ -118,6 +130,11 @@ void serial_task(void *pvParameter) {
 
         if ((unsigned char)incoming_char >= 32 && (unsigned char)incoming_char != 127) {
           if (index < SERIAL_BUFFER_SIZE - 1) {
+            // Echo the character immediately via direct UART write
+            uart_write_bytes(UART_NUM, &incoming_char, 1);
+#if JTAG_SUPPORTED
+            usb_serial_jtag_write_bytes((const uint8_t*)&incoming_char, 1, 0);
+#endif
             serial_buffer[index++] = incoming_char;
           } else {
             index = 0;
