@@ -1626,35 +1626,21 @@ static esp_err_t setup_mdns(void) {
         ESP_LOGE(TAG, "mdns_instance_name_set failed: %s", esp_err_to_name(ret));
     }
 
-    char ip_str[16];
-    snprintf(ip_str, sizeof(ip_str), "192.168.4.1");
-    mdns_txt_item_t serviceTxtData[] = {{"ip", ip_str}};
+    mdns_txt_item_t serviceTxtData[] = {{"ip", "192.168.4.1"}, {"ipv4", "192.168.4.1"}};
 
-    ret = mdns_service_add("GhostESP", "_http", "_tcp", 80, serviceTxtData, 1);
+    ret = mdns_service_add("GhostESP", "_http", "_tcp", 80, serviceTxtData, 2);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "mdns_service_add failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    ret = mdns_service_txt_set("_http", "_tcp", serviceTxtData, 1);
+    ret = mdns_service_txt_set("_http", "_tcp", serviceTxtData, 2);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "mdns_service_txt_set failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    char ip_txt[20];
-    snprintf(ip_txt, sizeof(ip_txt), "192.168.4.1");
-    mdns_txt_item_t ip_data[] = {{"ipv4", ip_txt}};
-    ret = mdns_service_txt_set("_http", "_tcp", ip_data, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mdns_service_txt_set failed: %s", esp_err_to_name(ret));
-    }
-
-    ret = mdns_service_add(NULL, "_http", "_http", 80, NULL, 0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "mDNS service add failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    
 
     ESP_LOGI(TAG, "mDNS setup completed successfully");
     return ESP_OK;

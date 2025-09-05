@@ -13,6 +13,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "ff.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *GPS_TAG = "GPS";
 static const char *CSV_TAG = "CSV";
@@ -26,6 +29,15 @@ static char csv_buffer[GPS_BUFFER_SIZE];
 static size_t buffer_offset = 0;
 static char csv_file_path[GPS_MAX_FILE_NAME_LENGTH];
 static bool gps_connection_logged = false;
+static SemaphoreHandle_t csv_mutex = NULL;
+static TaskHandle_t csv_flush_task = NULL;
+
+static void csv_flush_task_fn(void *arg) {
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        csv_flush_buffer_to_file();
+    }
+}
 
 esp_err_t csv_write_header(FILE *f) {
     // Wigle pre-header
@@ -85,6 +97,10 @@ esp_err_t csv_file_open(const char *base_file_name) {
         csv_file = NULL;
     }
 
+    if (csv_mutex == NULL) {
+        csv_mutex = xSemaphoreCreateMutex();
+    }
+
     esp_err_t ret = csv_write_header(csv_file);
     if (ret != ESP_OK) {
         printf("Failed to write CSV header.");
@@ -92,6 +108,10 @@ esp_err_t csv_file_open(const char *base_file_name) {
         fclose(csv_file);
         csv_file = NULL;
         return ret;
+    }
+
+    if (csv_flush_task == NULL) {
+        xTaskCreate(csv_flush_task_fn, "csv_flush", 3072, NULL, 1, &csv_flush_task);
     }
 
     if (csv_file) {
@@ -150,10 +170,12 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
         return ESP_ERR_NO_MEM;
     }
 
-    // Check if buffer needs flushing
+    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
+
     if (buffer_offset + len >= GPS_BUFFER_SIZE) {
         esp_err_t err = csv_flush_buffer_to_file();
         if (err != ESP_OK) {
+            if (csv_mutex) xSemaphoreGive(csv_mutex);
             return err;
         }
         buffer_offset = 0;
@@ -171,12 +193,16 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     memcpy(csv_buffer + buffer_offset, data_line, len);
     buffer_offset += len;
 
+    if (csv_mutex) xSemaphoreGive(csv_mutex);
+
     return ESP_OK;
 }
 
 esp_err_t csv_flush_buffer_to_file() {
-    // Don't flush if there's no data in buffer
+    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
+
     if (buffer_offset == 0) {
+        if (csv_mutex) xSemaphoreGive(csv_mutex);
         return ESP_OK;
     }
 
@@ -192,6 +218,7 @@ esp_err_t csv_flush_buffer_to_file() {
         uart_write_bytes(UART_NUM_0, "\n", 1);
 
         buffer_offset = 0;
+        if (csv_mutex) xSemaphoreGive(csv_mutex);
         return ESP_OK;
     }
 
@@ -206,11 +233,17 @@ esp_err_t csv_flush_buffer_to_file() {
     TERMINAL_VIEW_ADD_TEXT("Flushed %zu bytes to CSV file.\n", buffer_offset);
     buffer_offset = 0;
 
+    if (csv_mutex) xSemaphoreGive(csv_mutex);
+
     return ESP_OK;
 }
 
 void csv_file_close() {
     if (csv_file != NULL) {
+        if (csv_flush_task != NULL) {
+            vTaskDelete(csv_flush_task);
+            csv_flush_task = NULL;
+        }
         if (buffer_offset > 0) {
             printf("Flushing remaining buffer before closing file.\n");
             TERMINAL_VIEW_ADD_TEXT("Flushing remaining buffer before closing file.\n");
@@ -218,6 +251,10 @@ void csv_file_close() {
         }
         fclose(csv_file);
         csv_file = NULL;
+        if (csv_mutex != NULL) {
+            vSemaphoreDelete(csv_mutex);
+            csv_mutex = NULL;
+        }
         if (csv_file_path[0] != '\0') {
             gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
             const char *mount = "/mnt";

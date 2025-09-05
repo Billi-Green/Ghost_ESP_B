@@ -1,5 +1,18 @@
 # Ghost ESP Changelog
 
+## Revival v1.8
+
+- WebUI Redesign
+- Flush PCAP and CSV data to SD Card on a timer
+
+## Revival v1.7.1
+
+- Fix for RGB not properly being handled on devices with no LEDs
+- Possible fix for captive portal not being effective on some devices
+- Apply existing wroom display memory optimizations to c5
+- Fix incorrect usage of mDNS
+- Update setcountry command on the C5 to use the official esp_wifi_set_country_code function
+
 ## Revival v1.7
 
 ### Major Updates
@@ -17,10 +30,11 @@
   - LilyGo TDisplay S3 Touch
   - AITRIP CYD / ESP2432S028R — @tototo31
   - JCMK DevBoard Pro
+  - Rabbit Labs Minion
 
-- **Infrared RX**
-  - IR receive and decode support for all protocols supported by Flipper Zero firmware. (only enabled on TEmbed C1101)
-  - Ability to Rename, Delete, Add remotes (only enabled on TEmbed C1101)
+- **Infrared RX** (only enabled on TEmbed C1101)
+  - IR receive and decode support for all protocols supported by Flipper Zero firmware.
+  - Ability to Rename, Delete, Add remotes 
   - Easy Learn Mode: **Name buttons automatically**
   
 ### Added
@@ -114,6 +128,7 @@
   - Better EP credential handling
   - Keep one led strip rmt instance
   - Remove legacy led strip rmt driver
+  - Tweaks to evil portal captive portal handling
 
 ## Revival 1.6.1
 

@@ -143,13 +143,21 @@ void police_task(void *pvParameter) {
     return;
 #endif
   RGBManager_t *rgb_manager = (RGBManager_t *)pvParameter;
-  while (1) {
+  rainbow_task_should_exit = false;
+  while (!rainbow_task_should_exit) {
 
     rgb_manager_policesiren_effect(rgb_manager,
                                    settings_get_rgb_speed(&G_Settings));
 
     vTaskDelay(pdMS_TO_TICKS(20));
   }
+  if (rgb_manager->strip) {
+    led_strip_clear(rgb_manager->strip);
+    led_strip_refresh(rgb_manager->strip);
+  } else if (rgb_manager->is_separate_pins) {
+    rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
+  }
+  rgb_effect_task_handle = NULL;
   vTaskDelete(NULL);
 }
 
@@ -159,7 +167,15 @@ void strobe_task(void *pvParameter) {
     return;
 #endif
     RGBManager_t *rgb_manager = (RGBManager_t *)pvParameter;
+    rainbow_task_should_exit = false;
     rgb_manager_strobe_effect(rgb_manager, settings_get_rgb_speed(&G_Settings));
+    if (rgb_manager->strip) {
+        led_strip_clear(rgb_manager->strip);
+        led_strip_refresh(rgb_manager->strip);
+    } else if (rgb_manager->is_separate_pins) {
+        rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
+    }
+    rgb_effect_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -681,7 +697,7 @@ void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms) {
     if (rgb_manager->is_separate_pins && rgb_manager->num_leds > 1) {
          ESP_LOGW(TAG, "Strobe effect designed for single LED or strip treated as one.");
     }
-    while (1) {
+    while (!rainbow_task_should_exit) {
         // Strobe ON: Pass -1 to set all LEDs on a strip, 0 for single LED
         rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, 255, 255, 255, false);
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
