@@ -8,6 +8,7 @@
 - Added navigation arrows to the main menu - @tototo31
 - Add support for Lolin S3 pro - @tototo31
 - Fix not saving or using saved dual comm pins correctly
+- Echo backspace, newline, and characters directly to UART and JTAG when supported - @tototo31
 
 ## Revival v1.7.1
 
