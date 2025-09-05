@@ -1235,8 +1235,6 @@ void handle_help(int argc, char **argv) {
 #endif
         TERMINAL_VIEW_ADD_TEXT("scanap, scansta, stopscan, attack, list, beaconspam, stopspam, stopdeauth, select, scanall, congestion, connect, apcred, apenable, listenprobes");
 #if CONFIG_IDF_TARGET_ESP32C5
-        TERMINAL_VIEW_ADD_TEXT(", setcountry, karma");
-#endif
         TERMINAL_VIEW_ADD_TEXT(", setcountry");
 #endif
         TERMINAL_VIEW_ADD_TEXT(", karma\n");
