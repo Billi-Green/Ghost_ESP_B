@@ -49,11 +49,11 @@ static int current_settings_category = -1;
 // Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9)
 // Category 1: "Config"  (indices: 0, 6, 7, 8)
 // Example: settings_category_indices[0] lists settings for "Display" category.
-static int settings_category_indices[][8] = {
+static int settings_category_indices[][9] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 10, -1}, // Display: ... Max Brightness, Zebra Menus
+        {1, 2, 5, 3, 4, 9, 10, 11, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons
     #else
-        {1, 2, 5, 3, 4, 9, -1},     // Display: ... Zebra Menus
+        {1, 2, 5, 3, 4, 9, 10, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons
     #endif
         {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
@@ -141,7 +141,8 @@ enum {
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
     SETTING_MAX_BRIGHTNESS,
-    SETTING_ZEBRA_MENUS
+    SETTING_ZEBRA_MENUS,
+    SETTING_NAV_BUTTONS
 };
 
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
@@ -163,7 +164,8 @@ static SettingsItem settings_items[] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
     {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     #endif
-    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0}
+    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
+    {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1}
 };
 
 static bool is_settings_mode = false;
@@ -582,6 +584,9 @@ static void load_current_settings_values(void) {
             case SETTING_ZEBRA_MENUS:
                 settings_items[i].current_value = settings_get_zebra_menus_enabled(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_NAV_BUTTONS:
+                settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
                 break;
@@ -660,6 +665,9 @@ static void apply_setting_change(int setting_index, int new_value) {
                 build_item_index = 0;
                 menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
             }
+            break;
+        case SETTING_NAV_BUTTONS:
+            settings_set_nav_buttons_enabled(&G_Settings, new_value == 1);
             break;
         #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
         // This setting is only available if LV_DISP_BACKLIGHT_PWM is enabled
