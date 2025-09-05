@@ -50,6 +50,7 @@ jobs:
           - { name: "TDisplayS3-Touch",    idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.TDisplayS3-Touch",     zip_name: "LilyGo-TDisplayS3-Touch.zip" }
           - { name: "JCMK_DevBoardPro", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.JCMK_DevBoardPro", zip_name: "JCMK_DevBoardPro.zip" }
           - { name: "RabbitLabs_Minion", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.minion", zip_name: "RabbitLabs_Minion.zip" }
+          - { name: "Lolin_S3_Pro", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.lolins3pro", zip_name: "Lolin_S3_Pro.zip" }
     steps:
       - uses: actions/checkout@v4
 
