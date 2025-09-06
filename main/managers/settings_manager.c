@@ -137,8 +137,13 @@ void settings_set_defaults(FSettings *settings) {
   settings->terminal_text_color = 0x00FF00;
   settings->invert_colors = false;
   settings->web_auth_enabled = true;
+#ifdef CONFIG_IDF_TARGET_ESP32
+  settings->esp_comm_tx_pin = 17;
+  settings->esp_comm_rx_pin = 16;
+#else
   settings->esp_comm_tx_pin = 6;
   settings->esp_comm_rx_pin = 7;
+#endif
   settings->ap_enabled = true; // Default to enabled
   settings->power_save_enabled = false;
   settings->zebra_menus_enabled = false; // or true if you want it enabled by default
@@ -396,14 +401,22 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->esp_comm_tx_pin = tmp;
   } else {
+#ifdef CONFIG_IDF_TARGET_ESP32
+    settings->esp_comm_tx_pin = 17;
+#else
     settings->esp_comm_tx_pin = 6;
+#endif
   }
-  
+
   err = nvs_get_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, &tmp);
   if (err == ESP_OK) {
     settings->esp_comm_rx_pin = tmp;
   } else {
+#ifdef CONFIG_IDF_TARGET_ESP32
+    settings->esp_comm_rx_pin = 16;
+#else
     settings->esp_comm_rx_pin = 7;
+#endif
   }
 
   err = nvs_get_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, &value_u8);
