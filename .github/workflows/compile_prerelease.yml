@@ -166,10 +166,11 @@ jobs:
           TITLE: ${{ steps.pre_release_info.outputs.release_title }}
         run: |
           echo "Creating pre-release with tag $TAG and title '$TITLE'"
-          cat > release_notes.md <<'EOF'
+          cat > release_notes.md <<EOF
           Automated pre-release build for tag $TAG.
 
-          See https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG for details
+          Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG
+          Changelog: https://github.com/$GITHUB_REPOSITORY/blob/$TAG/CHANGELOG.md
 
           You can flash the bins with https://espressoflash.com/
 
