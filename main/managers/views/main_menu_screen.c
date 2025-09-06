@@ -542,6 +542,23 @@ void main_menu_create(void) {
     }
 
     display_manager_add_status_bar(LV_HOR_RES > 128 ? "Main Menu" : "");
+
+    // shift menu down to account for the status bar so icons are visually centered
+    // status bar height is set in display_manager_add_status_bar() as 20
+    int status_bar_height = 20;
+    if (menu_container) {
+        lv_obj_align(menu_container, LV_ALIGN_CENTER, 0, status_bar_height / 2);
+    }
+
+    // also shift nav buttons down so they remain vertically centered with the menu
+    if (left_nav_btn) {
+        lv_coord_t old_y = lv_obj_get_y(left_nav_btn);
+        lv_obj_set_y(left_nav_btn, old_y + status_bar_height / 2);
+    }
+    if (right_nav_btn) {
+        lv_coord_t old_y = lv_obj_get_y(right_nav_btn);
+        lv_obj_set_y(right_nav_btn, old_y + status_bar_height / 2);
+    }
 }
 
 /**

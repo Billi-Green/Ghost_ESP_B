@@ -2,7 +2,7 @@
 
 ## Revival v1.7.2
 
-- WebUI Redesign
+- WebUI Redesign - part 1
 - Flush PCAP and CSV data to SD Card on a timer
 - Prevent UART conflicts on TDECK by conditionally disabling serial manager and UART driver installation in esp_comm_manager.c - @tototo31
 - Added navigation arrows to the main menu - @tototo31
@@ -10,6 +10,7 @@
 - Fix not saving or using saved dual comm pins correctly
 - Echo backspace, newline, and characters directly to UART and JTAG when supported - @tototo31
 - Switch to single display buffer on cardputer for extra memory
+- Shift main menu down to account for status bar
 
 ## Revival v1.7.1
 
