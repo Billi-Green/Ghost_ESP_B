@@ -9,6 +9,7 @@
 - Add support for Lolin S3 pro - @tototo31
 - Fix not saving or using saved dual comm pins correctly
 - Echo backspace, newline, and characters directly to UART and JTAG when supported - @tototo31
+- Switch to single display buffer on cardputer for extra memory
 
 ## Revival v1.7.1
 

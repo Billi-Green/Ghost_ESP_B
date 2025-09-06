@@ -792,7 +792,11 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #endif // CONFIG_JC3248W535EN_LCD
 
 #if !defined(CONFIG_USE_7_INCHER) && !defined(CONFIG_JC3248W535EN_LCD)
-#if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32C5)
+/* For cardputer (no PSRAM) use a single smaller buffer to save internal RAM.
+   Single buffer increases flush frequency but greatly reduces RAM usage. */
+#if defined(CONFIG_USE_CARDPUTER)
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 2] __attribute__((aligned(4)));
+#elif defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32C5)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
 #else
@@ -813,7 +817,12 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #endif
 
   static lv_disp_draw_buf_t disp_buf;
+#if defined(CONFIG_USE_CARDPUTER)
+  /* single buffer mode: pass NULL for second buffer and set size accordingly */
+  lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 2);
+#else
   lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);
+#endif
 
   /* Initialize the display */
   static lv_disp_drv_t disp_drv;
