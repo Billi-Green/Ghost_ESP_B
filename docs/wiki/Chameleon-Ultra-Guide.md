@@ -53,34 +53,20 @@ chameleon savehf mycard   # Save with custom filename
 ```bash
 chameleon readhf          # Comprehensive automated analysis:
                          #   - Default key testing (12 common keys)
-                         #   - Automatic Darkside attacks
-                         #   - Automatic Nested attacks
                          #   - Complete data dumping
 
 chameleon savedump        # Save complete analysis results
 ```
 
-**The `readhf` command performs a 3-phase automated analysis:**
+**The `readhf` command performs automated analysis:**
 
-1. **Phase 1: Default Key Testing**
-   - Tests 12 common MIFARE keys on all 16 sectors
-   - Attempts both Key A and Key B for each sector
-   - Records successful authentications
+1. **Basic Card Detection**
+   - Identifies card type and reads UID
+   - Displays basic card information
 
-2. **Phase 2: Darkside Attack**
-   - Automatically runs Darkside attack on sectors with failed authentication
-   - Collects nonces for offline key recovery
-   - Saves attack data to individual files per sector
-
-3. **Phase 3: Nested Attack**
-   - Uses any discovered keys to attack remaining locked sectors
-   - Leverages key relationships between sectors
-   - Maximizes key recovery potential
-
-4. **Phase 4: Data Reading**
-   - Reads all accessible blocks using discovered keys
-   - Re-authenticates as needed for each sector
-   - Creates comprehensive dump with authentication summary
+2. **Data Collection**
+   - Saves basic card information to file
+   - Creates timestamped dump files
 
 ## 🏷️ NTAG Operations
 
@@ -118,28 +104,14 @@ Recommendations:
 4. Consider using specialized NTAG cracking tools
 ```
 
-## 🔓 Advanced MIFARE Classic Attacks
+## 🔓 Advanced MIFARE Classic Operations
 
-### Manual Attack Commands
+### Manual MIFARE Commands
 ```bash
 # MIFARE Detection
 chameleon mfdetect        # Detect MIFARE Classic support
 chameleon mfprng          # Test PRNG weakness
-
-# Darkside Attack (Key Recovery)
-chameleon darkside 4 A    # Attack block 4, Key A
-chameleon darkside 8 B    # Attack block 8, Key B
-chameleon savedarkside    # Save collected nonces
-
-# Nested Attack (Known key -> Unknown key)
-chameleon nested 0 A FFFFFFFFFFFF 4 A    # Use known key on block 0 to attack block 4
-chameleon savenested      # Save nested attack data
 ```
-
-**Attack Parameters:**
-- **Block**: 0-63 (sector trailer blocks: 3, 7, 11, 15, etc.)
-- **Key Type**: A or B
-- **Known Key**: 12-character hex (e.g., FFFFFFFFFFFF)
 
 ### Default Keys Tested
 The system automatically tests these common MIFARE keys:
@@ -195,8 +167,6 @@ All files are saved to `/mnt/ghostesp/chameleon/` on the SD card:
 /mnt/ghostesp/chameleon/
 ├── hf_scan_04AB1234_20241216_143022.txt      # HF scan results
 ├── mifare_dump_04AB1234_20241216_143055.txt  # Complete MIFARE dumps
-├── darkside_04AB1234_sector_02_20241216.txt  # Darkside attack data
-├── nested_04AB1234_block_04_20241216.txt     # Nested attack data  
 ├── ntag_protected_048AEE1B_20241216.txt      # NTAG analysis
 └── lf_scan_em410x_20241216_143101.txt        # LF scan results
 ```
@@ -279,11 +249,9 @@ chameleon connect
 - Always document your findings with save commands
 - Use custom filenames for organized research projects
 - Review generated reports for detailed technical information
-- Leverage automated attacks in `readhf` for comprehensive analysis
+- Use `readhf` for basic card detection and information collection
 
 ### Integration with External Tools
-- **Darkside data**: Compatible with `mfcuk` and `mfoc`
-- **Nested data**: Works with `libnfc-mfcuk` and similar tools
 - **Card dumps**: Standard format for analysis software
 - **Professional reports**: Suitable for security assessments
 

@@ -178,7 +178,7 @@
   Save last HF scan results to SD card (/mnt/ghostesp/chameleon/)
 
 - <code>chameleon readhf</code>  
-  Comprehensive MIFARE Classic analysis with default keys, Darkside, and Nested attacks
+  Basic MIFARE Classic card detection and information collection
 
 - <code>chameleon savedump [filename]</code>  
   Save complete card dump data to SD card
@@ -196,37 +196,13 @@
 - <code>chameleon savelf [filename]</code>  
   Save last LF scan results to SD card
 
-- <code>chameleon readlf</code>  
-  Read LF card data (EM410X, HID Prox)
-
-**NTAG Operations:**
-- <code>chameleon ntagdetect</code>  
-  Detect and identify NTAG card type (213/215/216), handles password-protected cards
-
-- <code>chameleon ntagdump</code>  
-  Analyze NTAG card structure and attempt to read accessible pages
-
-- <code>chameleon saventralag [filename]</code>  
-  Save NTAG analysis results to SD card
-
-**MIFARE Classic Advanced Operations:**
+**MIFARE Classic Operations:**
 - <code>chameleon mfdetect</code>  
   Detect MIFARE Classic support and card type
 
 - <code>chameleon mfprng</code>  
   Test MIFARE Classic PRNG weakness
 
-- <code>chameleon darkside &lt;block&gt; &lt;key&gt;</code>  
-  Perform Darkside attack on MIFARE Classic (block 0-63, key A/B)
-
-- <code>chameleon savedarkside [filename]</code>  
-  Save Darkside attack data for offline key recovery
-
-- <code>chameleon nested &lt;known_block&gt; &lt;known_key&gt; &lt;target_block&gt; &lt;target_key&gt;</code>  
-  Perform Nested attack using known key to recover target key
-
-- <code>chameleon savenested [filename]</code>  
-  Save Nested attack data for offline analysis
 
 **Slot Management:**
 - <code>chameleon activeslot</code>  
@@ -242,9 +218,8 @@
 - All save commands support optional custom filenames
 - Files are saved to `/mnt/ghostesp/chameleon/` directory on SD card
 - Auto-generated filenames include UID and timestamp
-- Protected/locked cards are analyzed and documented professionally
-- MIFARE Classic attacks automatically integrated into `readhf` command
-- Darkside and Nested attack data compatible with `mfcuk` and `mfoc` tools
+- Basic card detection and information collection only
+- For advanced analysis, use specialized tools
 
 </details>
 

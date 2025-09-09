@@ -89,10 +89,8 @@ GhostESP comes packed with various features for wireless network exploration and
 ### HF (13.56MHz) Capabilities
 
 - **MIFARE Classic Analysis**
-  - Automated 3-phase comprehensive analysis
-  - Default key testing (12 common keys tested automatically)
-  - Darkside attack integration for key recovery
-  - Nested attack support for advanced key extraction
+  - Automated comprehensive analysis
+  - Basic card detection and UID reading
   - Professional forensic reporting
 
 - **NTAG Support**
@@ -115,10 +113,8 @@ GhostESP comes packed with various features for wireless network exploration and
 
 ### Advanced Security Features
 
-- **Professional Attack Integration**
-  - Darkside attack data collection for offline tools (mfcuk, mfoc)
-  - Nested attack implementation with known-key leverage
-  - Automatic attack chaining for maximum key recovery
+- **Professional Security Analysis**
+  - Comprehensive card analysis and reporting
   - Compatible with standard security research tools
 
 - **Data Management**

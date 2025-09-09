@@ -167,39 +167,6 @@ bool chameleon_manager_read_lf_card(void);
  */
 bool chameleon_manager_save_card_dump(const char* filename);
 
-/**
- * @brief Perform MIFARE Classic Darkside attack to recover keys
- * @param block Target block number (usually 0 for first sector)
- * @param key_type Key type (0x60 for Key A, 0x61 for Key B)
- * @return true if attack data was collected successfully, false otherwise
- */
-bool chameleon_manager_darkside_attack(uint8_t block, uint8_t key_type);
-
-/**
- * @brief Save Darkside attack data to SD card for offline analysis
- * @param filename Custom filename (optional, can be NULL for auto-naming)
- * @return true if data was saved successfully, false otherwise
- */
-bool chameleon_manager_save_darkside_data(const char* filename);
-
-/**
- * @brief Perform MIFARE Classic Nested attack to recover keys
- * @param known_block Block with known key (usually 0 for first sector)
- * @param known_key_type Known key type (0x60 for Key A, 0x61 for Key B)
- * @param known_key The known key (6 bytes)
- * @param target_block Target block to recover key for
- * @param target_key_type Target key type (0x60 for Key A, 0x61 for Key B)
- * @return true if attack data was collected successfully, false otherwise
- */
-bool chameleon_manager_nested_attack(uint8_t known_block, uint8_t known_key_type, const uint8_t* known_key,
-                                    uint8_t target_block, uint8_t target_key_type);
-
-/**
- * @brief Save Nested attack data to SD card for offline analysis
- * @param filename Custom filename (optional, can be NULL for auto-naming)
- * @return true if data was saved successfully, false otherwise
- */
-bool chameleon_manager_save_nested_data(const char* filename);
 
 /**
  * @brief Detect and identify NTAG card type and version
