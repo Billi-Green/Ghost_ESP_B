@@ -146,8 +146,9 @@
 <details>
 <summary><strong>Chameleon Ultra Integration</strong> <em>(13.56MHz NFC/RFID Tool)</em></summary>
 
-- <code>chameleon connect</code>  
-  Connect to Chameleon Ultra device via Bluetooth
+- <code>chameleon connect [timeout] [pin]</code>  
+  Connect to Chameleon Ultra device via Bluetooth  
+  Optional timeout (default: 10s) and PIN (4-6 digits) for authentication
 
 - <code>chameleon disconnect</code>  
   Disconnect from Chameleon Ultra device

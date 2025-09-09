@@ -1272,11 +1272,12 @@ void handle_help(int argc, char **argv) {
     if (strcmp(category, "chameleon") == 0) {
         printf("\nChameleon Ultra Commands:\n\n");
         TERMINAL_VIEW_ADD_TEXT("\nChameleon Ultra Commands:\n\n");
-        printf("chameleon connect [timeout]\n");
+        printf("chameleon connect [timeout] [pin]\n");
         printf("    Description: Connect to a Chameleon Ultra device via BLE\n");
-        printf("    Usage: chameleon connect [timeout_seconds]\n");
+        printf("    Usage: chameleon connect [timeout_seconds] [pin]\n");
         printf("    Arguments:\n");
-        printf("        timeout_seconds : Connection timeout (default: 10)\n\n");
+        printf("        timeout_seconds : Connection timeout (default: 10)\n");
+        printf("        pin            : PIN for authentication (4-6 digits, optional)\n\n");
         printf("chameleon disconnect\n");
         printf("    Description: Disconnect from the Chameleon Ultra device\n");
         printf("    Usage: chameleon disconnect\n\n");
@@ -2576,7 +2577,7 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("Usage: chameleon <command>\n");
         printf("Commands:\n");
         printf("Connection:\n");
-        printf("  connect [timeout] - Connect to Chameleon Ultra (default timeout: 10s)\n");
+        printf("  connect [timeout] [pin] - Connect to Chameleon Ultra (default timeout: 10s)\n");
         printf("  disconnect        - Disconnect from Chameleon Ultra\n");
         printf("  status           - Check connection status\n");
         printf("Device Info:\n");
@@ -2608,7 +2609,7 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
         TERMINAL_VIEW_ADD_TEXT("Commands:\n");
         TERMINAL_VIEW_ADD_TEXT("Connection:\n");
-        TERMINAL_VIEW_ADD_TEXT("  connect [timeout] - Connect to Chameleon Ultra (default timeout: 10s)\n");
+        TERMINAL_VIEW_ADD_TEXT("  connect [timeout] [pin] - Connect to Chameleon Ultra (default timeout: 10s)\n");
         TERMINAL_VIEW_ADD_TEXT("  disconnect        - Disconnect from Chameleon Ultra\n");
         TERMINAL_VIEW_ADD_TEXT("  status           - Check connection status\n");
         TERMINAL_VIEW_ADD_TEXT("Device Info:\n");
@@ -2644,15 +2645,36 @@ void handle_chameleon_cmd(int argc, char **argv) {
 
     if (strcmp(subcommand, "connect") == 0) {
         uint32_t timeout = 10; // Default timeout of 10 seconds
+        const char* pin = NULL;
+        
+        // Parse arguments: connect [timeout] [pin]
         if (argc > 2) {
-            timeout = (uint32_t)atoi(argv[2]);
-            if (timeout == 0) {
-                timeout = 10;
+            // Check if second argument is a number (timeout) or PIN
+            if (strlen(argv[2]) <= 2 && atoi(argv[2]) > 0) {
+                // Second argument is timeout
+                timeout = (uint32_t)atoi(argv[2]);
+                if (timeout == 0) {
+                    timeout = 10;
+                }
+                // Check for PIN as third argument
+                if (argc > 3) {
+                    pin = argv[3];
+                }
+            } else {
+                // Second argument is PIN, use default timeout
+                pin = argv[2];
             }
         }
-        printf("Connecting to Chameleon Ultra with %lu second timeout...\n", timeout);
-        TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra with %lu second timeout...\n", timeout);
-        chameleon_manager_connect(timeout);
+        
+        if (pin != NULL) {
+            printf("Connecting to Chameleon Ultra with %lu second timeout and PIN...\n", timeout);
+            TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra with PIN...\n");
+        } else {
+            printf("Connecting to Chameleon Ultra with %lu second timeout...\n", timeout);
+            TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra...\n");
+        }
+        
+        chameleon_manager_connect(timeout, pin);
     }
     else if (strcmp(subcommand, "disconnect") == 0) {
         printf("Disconnecting from Chameleon Ultra...\n");

@@ -21,9 +21,10 @@ void chameleon_manager_init(void);
 /**
  * @brief Connect to a Chameleon Ultra device
  * @param timeout_seconds Timeout in seconds for the scan and connection
+ * @param pin PIN for authentication (optional, can be NULL for no PIN)
  * @return true if connected successfully, false otherwise
  */
-bool chameleon_manager_connect(uint32_t timeout_seconds);
+bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin);
 
 /**
  * @brief Disconnect from the Chameleon Ultra device

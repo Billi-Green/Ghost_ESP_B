@@ -9,6 +9,7 @@
 #include "host/ble_uuid.h"
 #include "host/ble_gatt.h"
 #include "host/ble_gap.h"
+#include "host/ble_sm.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,6 +36,10 @@ static uint16_t g_rx_char_handle = 0;
 static SemaphoreHandle_t g_scan_sem = NULL;
 static SemaphoreHandle_t g_connect_sem = NULL;
 static SemaphoreHandle_t g_response_sem = NULL;
+
+// PIN support
+char g_chameleon_pin[7] = {0}; // Store PIN as string (max 6 digits + null terminator)
+bool g_pin_required = false;
 
 // Chameleon Ultra command constants (from official protocol documentation)
 // Basic device commands (1000-1099)
@@ -223,6 +228,7 @@ static int chameleon_notification_cb(uint16_t conn_handle, uint16_t attr_handle,
 static bool send_command(uint16_t cmd, uint8_t *data, size_t data_len);
 static uint8_t calculate_lrc(const uint8_t *data, size_t length);
 static void start_service_discovery(void);
+static int chameleon_sm_io_cb(uint16_t conn_handle, const struct ble_sm_io *io, void *arg);
 
 static uint8_t calculate_lrc(const uint8_t *data, size_t length) {
     uint8_t lrc = 0;
@@ -494,7 +500,7 @@ void chameleon_manager_init(void) {
     
     // Initialize BLE if not already done
     ble_init();
-    
+
     g_is_initialized = true;
     printf("Chameleon Ultra manager initialized\n");
     TERMINAL_VIEW_ADD_TEXT("Chameleon Ultra manager initialized\n");
@@ -503,7 +509,7 @@ void chameleon_manager_init(void) {
     ESP_LOGI(TAG, "Free heap after Chameleon init: %d bytes", (int)free_heap);
 }
 
-bool chameleon_manager_connect(uint32_t timeout_seconds) {
+bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
     if (!g_is_initialized) {
         chameleon_manager_init();
     }
@@ -512,6 +518,38 @@ bool chameleon_manager_connect(uint32_t timeout_seconds) {
         printf("Already connected to Chameleon Ultra\n");
         TERMINAL_VIEW_ADD_TEXT("Already connected to Chameleon Ultra\n");
         return true;
+    }
+    
+    // Handle PIN parameter
+    if (pin != NULL && strlen(pin) > 0) {
+        // Validate PIN (should be 4-6 digits)
+        int pin_len = strlen(pin);
+        if (pin_len < 4 || pin_len > 6) {
+            printf("Invalid PIN: must be 4-6 digits\n");
+            TERMINAL_VIEW_ADD_TEXT("Invalid PIN: must be 4-6 digits\n");
+            return false;
+        }
+        
+        // Check if PIN contains only digits
+        for (int i = 0; i < pin_len; i++) {
+            if (pin[i] < '0' || pin[i] > '9') {
+                printf("Invalid PIN: must contain only digits\n");
+                TERMINAL_VIEW_ADD_TEXT("Invalid PIN: must contain only digits\n");
+                return false;
+            }
+        }
+        
+        // Store PIN for authentication
+        strncpy(g_chameleon_pin, pin, sizeof(g_chameleon_pin) - 1);
+        g_chameleon_pin[sizeof(g_chameleon_pin) - 1] = '\0';
+        g_pin_required = true;
+        
+        printf("PIN set for Chameleon Ultra authentication\n");
+        TERMINAL_VIEW_ADD_TEXT("PIN set for authentication\n");
+    } else {
+        // Clear PIN if not provided
+        memset(g_chameleon_pin, 0, sizeof(g_chameleon_pin));
+        g_pin_required = false;
     }
     
     printf("Searching for Chameleon Ultra device...\n");
