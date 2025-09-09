@@ -1,9 +1,24 @@
 # Ghost ESP Changelog
 
-## Revival v1.8
+## Revival v1.7.2
 
-- WebUI Redesign
+### Added
+
+- Added navigation arrows to the main menu - @tototo31
+- Add support for Lolin S3 pro - @tototo31
+- Echo backspace, newline, and characters directly to UART and JTAG when supported - @tototo31
+
+### Changed
+
+- WebUI Redesign (Part 1)
 - Flush PCAP and CSV data to SD Card on a timer
+- Switch to single display buffer on cardputer for extra memory
+
+### Bug Fixes
+
+- Fix not saving or using saved dual comm pins correctly
+- Shift main menu down to account for status bar
+- Prevent UART conflicts on TDECK by conditionally disabling serial manager and UART driver installation in esp_comm_manager.c - @tototo31
 
 ## Revival v1.7.1
 

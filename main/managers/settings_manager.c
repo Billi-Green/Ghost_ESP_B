@@ -56,6 +56,7 @@ static const char *NVS_AP_ENABLED_KEY = "ap_enabled";
 static const char *NVS_POWER_SAVE_KEY = "power_save";
 static const char *NVS_ZEBRA_MENUS_KEY = "zebra_menus";
 static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
+static const char *NVS_NAV_BUTTONS_KEY = "nav_buttons";
 
 
 static const char *TAG = "SettingsManager";
@@ -136,13 +137,19 @@ void settings_set_defaults(FSettings *settings) {
   settings->terminal_text_color = 0x00FF00;
   settings->invert_colors = false;
   settings->web_auth_enabled = true;
+#ifdef CONFIG_IDF_TARGET_ESP32
+  settings->esp_comm_tx_pin = 17;
+  settings->esp_comm_rx_pin = 16;
+#else
   settings->esp_comm_tx_pin = 6;
   settings->esp_comm_rx_pin = 7;
+#endif
   settings->ap_enabled = true; // Default to enabled
   settings->power_save_enabled = false;
   settings->zebra_menus_enabled = false; // or true if you want it enabled by default
   settings->max_screen_brightness = 100; // Default to 100% brightness
   settings->infrared_easy_mode = false; // Default to disabled
+  settings->nav_buttons_enabled = true; // Default to enabled
 }
 
 void settings_load(FSettings *settings) {
@@ -394,14 +401,22 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->esp_comm_tx_pin = tmp;
   } else {
+#ifdef CONFIG_IDF_TARGET_ESP32
+    settings->esp_comm_tx_pin = 17;
+#else
     settings->esp_comm_tx_pin = 6;
+#endif
   }
-  
+
   err = nvs_get_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, &tmp);
   if (err == ESP_OK) {
     settings->esp_comm_rx_pin = tmp;
   } else {
+#ifdef CONFIG_IDF_TARGET_ESP32
+    settings->esp_comm_rx_pin = 16;
+#else
     settings->esp_comm_rx_pin = 7;
+#endif
   }
 
   err = nvs_get_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, &value_u8);
@@ -424,6 +439,14 @@ void settings_load(FSettings *settings) {
     settings->infrared_easy_mode = (bool)value_u8;
   } else {
     settings->infrared_easy_mode = false; // Default to disabled if not found
+  }
+
+  // Load Navigation Buttons Enabled
+  err = nvs_get_u8(nvsHandle, NVS_NAV_BUTTONS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->nav_buttons_enabled = (bool)value_u8;
+  } else {
+    settings->nav_buttons_enabled = true; // Default to enabled if not found
   }
 }
 
@@ -728,6 +751,9 @@ void settings_save(const FSettings *settings) {
 
   err = nvs_set_u8(nvsHandle, NVS_INFRARED_EASY_MODE_KEY, settings->infrared_easy_mode);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save infrared_easy_mode: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_NAV_BUTTONS_KEY, settings->nav_buttons_enabled);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save nav_buttons_enabled: %s", esp_err_to_name(err));
   
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
@@ -1147,4 +1173,12 @@ void settings_set_zebra_menus_enabled(FSettings *settings, bool enabled) {
 
 bool settings_get_zebra_menus_enabled(const FSettings *settings) {
     return settings->zebra_menus_enabled;
+}
+
+void settings_set_nav_buttons_enabled(FSettings *settings, bool enabled) {
+    settings->nav_buttons_enabled = enabled;
+}
+
+bool settings_get_nav_buttons_enabled(const FSettings *settings) {
+    return settings->nav_buttons_enabled;
 }

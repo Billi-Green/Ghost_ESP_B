@@ -144,7 +144,11 @@ void app_main(void) {
     MEASURE_INIT_RAM("WiFi STA Config", wifi_manager_configure_sta_from_settings());
 
     ESP_LOGI(TAG, "Initializing Comm Manager");
-    MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init_with_defaults());
+    {
+        int32_t comm_tx = G_Settings.esp_comm_tx_pin;
+        int32_t comm_rx = G_Settings.esp_comm_rx_pin;
+        MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, 921600));
+    }
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     MEASURE_INIT_RAM("AP Manager", ap_manager_init());
