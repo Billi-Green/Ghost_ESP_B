@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include "managers/views/clock_screen.h"
 #include "managers/views/settings_screen.h"
+#include "managers/views/nfc_view.h"
 #if CONFIG_HAS_INFRARED
 #include "managers/views/infrared_view.h"
 #endif
@@ -47,6 +48,7 @@ menu_item_t menu_items[] = {
 #if CONFIG_HAS_INFRARED
     {"Infrared", &infrared, 0}, // main infrared icon
 #endif
+    {"NFC", &nfc_icon, 2},
     {"Apps", &GESPAppGallery, 3}, // applies to all boards
 #ifdef CONFIG_HAS_RTC_CLOCK
     {"Clock", &clock_icon, 4},
@@ -423,6 +425,7 @@ static void handle_menu_item_selection(int item_index) {
     #if CONFIG_HAS_INFRARED
             {"Infrared", 0, &infrared_view},
     #endif
+            {"NFC", 0, &nfc_view},
             {"Apps", 0, &apps_menu_view},
     #ifdef CONFIG_HAS_RTC_CLOCK
             {"Clock", 0, &clock_view},

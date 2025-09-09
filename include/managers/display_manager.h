@@ -120,6 +120,7 @@ LV_IMG_DECLARE(clock_icon);
 LV_IMG_DECLARE(settings_icon);
 LV_IMG_DECLARE(infrared);
 LV_IMG_DECLARE(terminal_icon);
+LV_IMG_DECLARE(nfc_icon);
 
 joystick_t joysticks[5];
 #ifdef CONFIG_USE_ENCODER
