@@ -5,6 +5,16 @@
 #include "lvgl.h"
 #include "esp_log.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#ifdef CONFIG_HAS_NFC
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/i2c.h"
+#include "pn532.h"
+#include "pn532_driver.h"
+#include "pn532_driver_i2c.h"
+#endif
 
 // Forward declaration of this view instance for internal references
 extern View nfc_view;
@@ -63,6 +73,69 @@ static void nfc_scan_cancel_cb(lv_event_t *e);
 static void create_nfc_scan_popup(void);
 static void cleanup_nfc_scan_popup(void *obj);
 static void update_nfc_popup_selection(void);
+
+#ifdef CONFIG_HAS_NFC
+static pn532_io_handle_t g_pn532 = NULL;
+static pn532_io_t g_pn532_instance;
+static TaskHandle_t nfc_scan_task_handle = NULL;
+
+static void nfc_update_labels_async(void *uid_buf) {
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(uid_buf); return; }
+    uint8_t *uid = (uint8_t *)uid_buf;
+    char uid_text[64];
+    int pos = 0;
+    pos += snprintf(uid_text, sizeof(uid_text), "UID:");
+    for (int i = 0; i < uid[0] && pos < (int)sizeof(uid_text) - 4; ++i) {
+        pos += snprintf(uid_text + pos, sizeof(uid_text) - pos, " %02X", uid[i + 1]);
+    }
+    lv_label_set_text(nfc_uid_label, uid_text);
+    lv_label_set_text(nfc_type_label, "Type: ISO14443A");
+    free(uid);
+}
+
+static void nfc_scan_task(void *arg) {
+    const char *TAGT = "NFCScan";
+    if (g_pn532 == NULL) {
+        g_pn532 = &g_pn532_instance;
+        if (pn532_new_driver_i2c(
+                (gpio_num_t)CONFIG_NFC_SDA_PIN,
+                (gpio_num_t)CONFIG_NFC_SCL_PIN,
+                (gpio_num_t)CONFIG_NFC_RST_PIN,
+                (gpio_num_t)CONFIG_NFC_IRQ_PIN,
+                I2C_NUM_0,
+                g_pn532) != ESP_OK) {
+            ESP_LOGE(TAGT, "pn532_new_driver_i2c failed");
+            nfc_scan_task_handle = NULL;
+            vTaskDelete(NULL);
+        }
+        if (pn532_init(g_pn532) != ESP_OK) {
+            ESP_LOGE(TAGT, "pn532_init failed");
+            nfc_scan_task_handle = NULL;
+            vTaskDelete(NULL);
+        }
+        pn532_set_passive_activation_retries(g_pn532, 0xFF);
+    }
+
+    while (nfc_scan_popup && lv_obj_is_valid(nfc_scan_popup)) {
+        uint8_t uid[8] = {0};
+        uint8_t uid_len = 0;
+        esp_err_t r = pn532_read_passive_target_id(g_pn532, 0x00, uid + 1, &uid_len, 500);
+        if (r == ESP_OK && uid_len > 0 && uid_len <= 7) {
+            uid[0] = uid_len;
+            uint8_t *copy = (uint8_t *)malloc(uid_len + 1);
+            if (copy) {
+                memcpy(copy, uid, uid_len + 1);
+                lv_async_call(nfc_update_labels_async, copy);
+            }
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    nfc_scan_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+#endif
 
 static void update_selected_style_from_theme(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
@@ -302,6 +375,13 @@ static void cleanup_nfc_scan_popup(void *obj) {
         nfc_uid_label = NULL;
         nfc_type_label = NULL;
     }
+#ifdef CONFIG_HAS_NFC
+    if (nfc_scan_task_handle) {
+        TaskHandle_t h = nfc_scan_task_handle;
+        nfc_scan_task_handle = NULL;
+        vTaskDelete(h);
+    }
+#endif
 }
 
 static void nfc_scan_cancel_cb(lv_event_t *e) {
@@ -364,6 +444,11 @@ static void create_nfc_scan_popup(void) {
     lv_obj_add_event_cb(nfc_scan_cancel_btn, nfc_scan_cancel_cb, LV_EVENT_CLICKED, NULL);
     nfc_popup_selected = 0;
     update_nfc_popup_selection();
+#ifdef CONFIG_HAS_NFC
+    if (nfc_scan_task_handle == NULL) {
+        xTaskCreate(nfc_scan_task, "nfc_scan", 4096, NULL, 5, &nfc_scan_task_handle);
+    }
+#endif
 }
 
 static void update_nfc_popup_selection(void) {
