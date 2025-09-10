@@ -2598,6 +2598,7 @@ void handle_chameleon_cmd(int argc, char **argv) {
         printf("NTAG Cards:\n");
         printf("  ntagdetect       - Detect and identify NTAG card type\n");
         printf("  ntagdump         - Dump complete NTAG card data\n");
+        printf("  saventag [filename] - Save NTAG dump to SD card\n");
         printf("Mode Control:\n");
         printf("  reader           - Set to reader mode\n");
         printf("  emulator         - Set to emulator mode\n");
@@ -2630,6 +2631,7 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("NTAG Cards:\n");
         TERMINAL_VIEW_ADD_TEXT("  ntagdetect       - Detect and identify NTAG card type\n");
         TERMINAL_VIEW_ADD_TEXT("  ntagdump         - Dump complete NTAG card data\n");
+        TERMINAL_VIEW_ADD_TEXT("  saventag [filename] - Save NTAG dump to SD card\n");
         TERMINAL_VIEW_ADD_TEXT("Mode Control:\n");
         TERMINAL_VIEW_ADD_TEXT("  reader           - Set to reader mode\n");
         TERMINAL_VIEW_ADD_TEXT("  emulator         - Set to emulator mode\n");
@@ -2784,6 +2786,16 @@ void handle_chameleon_cmd(int argc, char **argv) {
     }
     else if (strcmp(subcommand, "mfprng") == 0) {
         chameleon_manager_mf1_detect_prng();
+    }
+    else if (strcmp(subcommand, "ntagdetect") == 0) {
+        chameleon_manager_detect_ntag();
+    }
+    else if (strcmp(subcommand, "ntagdump") == 0) {
+        chameleon_manager_read_ntag_card();
+    }
+    else if (strcmp(subcommand, "saventag") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_ntag_dump(filename);
     }
     else {
         printf("Unknown chameleon command: %s\n", subcommand);

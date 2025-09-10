@@ -500,7 +500,7 @@ void chameleon_manager_init(void) {
     
     // Initialize BLE if not already done
     ble_init();
-
+    
     g_is_initialized = true;
     printf("Chameleon Ultra manager initialized\n");
     TERMINAL_VIEW_ADD_TEXT("Chameleon Ultra manager initialized\n");
@@ -1434,8 +1434,8 @@ bool chameleon_manager_read_hf_card(void) {
         printf("UID: ");
         for (int i = 0; i < g_last_card_dump.uid_size; i++) {
             printf("%02X", g_last_card_dump.uid[i]);
-        }
-        printf("\n");
+                            }
+                            printf("\n");
         TERMINAL_VIEW_ADD_TEXT("Card detected: %s\n", g_last_card_dump.tag_type);
     }
     
@@ -1624,9 +1624,9 @@ bool chameleon_manager_detect_ntag(void) {
     // NTAG detection logic would go here
     printf("NTAG detection not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("NTAG detection not implemented\n");
-    return false;
-}
-
+        return false;
+    }
+    
 bool chameleon_manager_ntag_authenticate(uint32_t password) {
     if (!g_is_connected) {
         printf("Not connected to Chameleon Ultra\n");
@@ -1637,20 +1637,20 @@ bool chameleon_manager_ntag_authenticate(uint32_t password) {
     // NTAG authentication not implemented in simplified version
     printf("NTAG authentication not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("NTAG authentication not implemented\n");
-    return false;
-}
-
+        return false;
+    }
+    
 bool chameleon_manager_read_ntag_card(void) {
     if (!g_is_connected) {
         printf("Not connected to Chameleon Ultra\n");
         TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
-        return false;
-    }
-    
+            return false;
+        }
+        
     // NTAG reading not implemented in simplified version
     printf("NTAG reading not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("NTAG reading not implemented\n");
-    return false;
+            return false;
 }
 
 bool chameleon_manager_save_ntag_dump(const char* filename) {
@@ -1663,7 +1663,7 @@ bool chameleon_manager_save_ntag_dump(const char* filename) {
     // NTAG dump saving not implemented in simplified version
     printf("NTAG dump saving not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("NTAG dump saving not implemented\n");
-    return false;
+        return false;
 }
 
 bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* key_hex) {
@@ -1676,9 +1676,9 @@ bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* ke
     // Authentication testing not implemented in simplified version
     printf("Authentication testing not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("Authentication testing not implemented\n");
-    return false;
-}
-
+        return false;
+    }
+    
 bool chameleon_manager_test_both_keys(uint8_t block, const char* key_hex) {
     if (!g_is_connected) {
         printf("Not connected to Chameleon Ultra\n");
@@ -1689,7 +1689,7 @@ bool chameleon_manager_test_both_keys(uint8_t block, const char* key_hex) {
     // Both keys testing not implemented in simplified version
     printf("Both keys testing not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("Both keys testing not implemented\n");
-    return false;
+        return false;
 }
 
 bool chameleon_manager_enable_mfkey32_mode(void) {
@@ -1702,9 +1702,9 @@ bool chameleon_manager_enable_mfkey32_mode(void) {
     // MFKey32 mode not implemented in simplified version
     printf("MFKey32 mode not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("MFKey32 mode not implemented\n");
-    return false;
-}
-
+        return false;
+    }
+    
 bool chameleon_manager_collect_nonces(void) {
     if (!g_is_connected) {
         printf("Not connected to Chameleon Ultra\n");
@@ -1715,5 +1715,6 @@ bool chameleon_manager_collect_nonces(void) {
     // Nonce collection not implemented in simplified version
     printf("Nonce collection not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("Nonce collection not implemented\n");
-    return false;
-}
+        return false;
+    }
+    

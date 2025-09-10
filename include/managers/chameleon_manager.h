@@ -195,6 +195,13 @@ bool chameleon_manager_save_ntag_dump(const char* filename);
  */
 bool chameleon_manager_ntag_authenticate(uint32_t password);
 
+/**
+ * @brief Read a specific NTAG page
+ * @param page The page number to read
+ * @return true if page read successfully, false otherwise
+ */
+bool chameleon_manager_read_ntag_page(int page);
+
 // Debug and testing functions
 bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* key_hex);
 bool chameleon_manager_test_both_keys(uint8_t block, const char* key_hex);
