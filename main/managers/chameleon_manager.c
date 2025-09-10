@@ -693,8 +693,17 @@ bool chameleon_manager_scan_hf(void) {
                         g_last_hf_scan.valid = true;
                         g_last_hf_scan.uid_size = uid_size;
                         memcpy(g_last_hf_scan.uid, &g_last_response.data[1], uid_size);
-                        snprintf(g_last_hf_scan.tag_type, sizeof(g_last_hf_scan.tag_type), 
-                                "HF-14A (ATQA:%02X%02X SAK:%02X)", atqa_hi, atqa_lo, sak);
+                        
+                        // Identify card type based on ATQA and SAK
+                        uint16_t atqa = (atqa_hi << 8) | atqa_lo;
+                        if (atqa == 0x0044 && sak == 0x00) {
+                            // This is likely an NTAG card - ATQA 0x0044 and SAK 0x00 are NTAG characteristics
+                            snprintf(g_last_hf_scan.tag_type, sizeof(g_last_hf_scan.tag_type), 
+                                    "NTAG (ATQA:%02X%02X SAK:%02X)", atqa_hi, atqa_lo, sak);
+                        } else {
+                            snprintf(g_last_hf_scan.tag_type, sizeof(g_last_hf_scan.tag_type), 
+                                    "HF-14A (ATQA:%02X%02X SAK:%02X)", atqa_hi, atqa_lo, sak);
+                        }
                         g_last_hf_scan.timestamp = time(NULL);
                         
                         return true;
@@ -1621,11 +1630,131 @@ bool chameleon_manager_detect_ntag(void) {
         return false;
     }
     
-    // NTAG detection logic would go here
-    printf("NTAG detection not implemented in simplified version\n");
-    TERMINAL_VIEW_ADD_TEXT("NTAG detection not implemented\n");
+    printf("Detecting NTAG card...\n");
+    TERMINAL_VIEW_ADD_TEXT("Detecting NTAG card...\n");
+    
+    // First, scan for HF cards to detect NTAG
+    if (!chameleon_manager_scan_hf()) {
+        printf("No HF card detected\n");
+        TERMINAL_VIEW_ADD_TEXT("No HF card detected\n");
         return false;
     }
+    
+    // Check if the detected card is an NTAG by looking at tag type
+    if (strstr(g_last_hf_scan.tag_type, "NTAG") != NULL) {
+        printf("NTAG card detected!\n");
+        printf("UID: ");
+        for (int i = 0; i < g_last_hf_scan.uid_size; i++) {
+            printf("%02X", g_last_hf_scan.uid[i]);
+        }
+        printf("\n");
+        
+        // Try to get NTAG version to determine exact type
+        printf("Reading NTAG version...\n");
+        TERMINAL_VIEW_ADD_TEXT("Reading NTAG version...\n");
+        
+        // Use HF14A_RAW to send the NTAG GET_VERSION command to the physical card
+        uint8_t version_cmd[1] = {0x60}; // NTAG GET_VERSION command
+        
+        g_response_received = false;
+        
+        if (send_command(CMD_HF14A_RAW, version_cmd, 1)) {
+            if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
+                if (g_response_received && g_last_response.command == CMD_HF14A_RAW && 
+                    g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 4) {
+                    
+                    uint8_t vendor_id = g_last_response.data[0];
+                    uint8_t product_type = g_last_response.data[1];
+                    uint8_t product_subtype = g_last_response.data[2];
+                    uint8_t major_version = g_last_response.data[3];
+                    uint8_t minor_version = g_last_response.data[4];
+                    
+                    printf("Version: %02X %02X %02X %02X %02X\n", 
+                           vendor_id, product_type, product_subtype, major_version, minor_version);
+                    
+                    // Determine NTAG type based on version data
+                    char ntag_type[32];
+                    int total_pages = 45; // Default to NTAG213
+                    
+                    if (vendor_id == 0x04 && product_type == 0x04) {
+                        if (product_subtype == 0x02) {
+                            strcpy(ntag_type, "NTAG213");
+                            total_pages = NTAG213_TOTAL_PAGES;
+                        } else if (product_subtype == 0x0E) {
+                            strcpy(ntag_type, "NTAG215");
+                            total_pages = NTAG215_TOTAL_PAGES;
+                        } else if (product_subtype == 0x0F) {
+                            strcpy(ntag_type, "NTAG216");
+                            total_pages = NTAG216_TOTAL_PAGES;
+                        } else {
+                            snprintf(ntag_type, sizeof(ntag_type), "NTAG (Unknown subtype: %02X)", product_subtype);
+                        }
+                    } else {
+                        snprintf(ntag_type, sizeof(ntag_type), "NTAG (Unknown: %02X %02X)", vendor_id, product_type);
+                    }
+                    
+                    printf("Card Type: %s\n", ntag_type);
+                    printf("Memory Size: %d pages (%d bytes)\n", total_pages, total_pages * NTAG_PAGE_SIZE);
+                    
+                    // Update the stored tag type
+                    strncpy(g_last_hf_scan.tag_type, ntag_type, sizeof(g_last_hf_scan.tag_type) - 1);
+                    
+                    TERMINAL_VIEW_ADD_TEXT("NTAG card detected!\n");
+                    TERMINAL_VIEW_ADD_TEXT("Card Type: ");
+                    TERMINAL_VIEW_ADD_TEXT(ntag_type);
+                    TERMINAL_VIEW_ADD_TEXT("\n");
+                    
+                    return true;
+                } else {
+                    printf("Failed to read NTAG version, using basic detection\n");
+                    TERMINAL_VIEW_ADD_TEXT("Failed to read NTAG version, using basic detection\n");
+                }
+            } else {
+                printf("Timeout reading NTAG version, using basic detection\n");
+                TERMINAL_VIEW_ADD_TEXT("Timeout reading NTAG version, using basic detection\n");
+            }
+        } else {
+            printf("Failed to send version command, using basic detection\n");
+            TERMINAL_VIEW_ADD_TEXT("Failed to send version command, using basic detection\n");
+        }
+        
+        // Fallback to basic detection - estimate based on UID length
+        int estimated_pages = 45; // Default to NTAG213
+        char estimated_type[32] = "NTAG (Unknown)";
+        
+        if (g_last_hf_scan.uid_size == 4) {
+            estimated_pages = 45; // NTAG213
+            strcpy(estimated_type, "NTAG213 (estimated)");
+        } else if (g_last_hf_scan.uid_size == 7) {
+            estimated_pages = 135; // NTAG215
+            strcpy(estimated_type, "NTAG215 (estimated)");
+        } else {
+            estimated_pages = 135; // Default to NTAG215 for other lengths
+            strcpy(estimated_type, "NTAG (estimated)");
+        }
+        
+        printf("Card Type: %s\n", estimated_type);
+        printf("Memory Size: %d pages (%d bytes) - estimated\n", estimated_pages, estimated_pages * NTAG_PAGE_SIZE);
+        
+        // Update the stored tag type with our estimate
+        strncpy(g_last_hf_scan.tag_type, estimated_type, sizeof(g_last_hf_scan.tag_type) - 1);
+        
+        TERMINAL_VIEW_ADD_TEXT("NTAG card detected!\n");
+        TERMINAL_VIEW_ADD_TEXT("Card Type: ");
+        TERMINAL_VIEW_ADD_TEXT(estimated_type);
+        TERMINAL_VIEW_ADD_TEXT("\n");
+        
+        return true;
+    } else {
+        printf("Card detected but not an NTAG\n");
+        printf("Card type: %s\n", g_last_hf_scan.tag_type);
+        TERMINAL_VIEW_ADD_TEXT("Card detected but not an NTAG\n");
+        TERMINAL_VIEW_ADD_TEXT("Card type: ");
+        TERMINAL_VIEW_ADD_TEXT(g_last_hf_scan.tag_type);
+        TERMINAL_VIEW_ADD_TEXT("\n");
+        return false;
+    }
+}
     
 bool chameleon_manager_ntag_authenticate(uint32_t password) {
     if (!g_is_connected) {
