@@ -864,12 +864,19 @@ static void write_flipper_nfc_file(void) {
         return;
     }
     int ppos = 0; int pages_read = 0;
-    for (int pg = 0; pg < pages_total; ++pg) {
-        uint8_t data[4] = {0};
-        if (ntag2xx_read_page(g_pn532, (uint8_t)pg, data, 4) == ESP_OK) {
-            pages_read++;
+    for (int pg = 0; pg < pages_total; pg += 4) {
+        uint8_t block[16] = {0};
+        if (ntag2xx_read_page(g_pn532, (uint8_t)pg, block, 16) == ESP_OK) {
+            int chunk = (pages_total - pg >= 4) ? 4 : (pages_total - pg);
+            pages_read += chunk;
         }
-        ppos += snprintf(pages + ppos, cap - ppos, "Page %d: %02X %02X %02X %02X\n", pg, data[0], data[1], data[2], data[3]);
+        // format up to 4 pages from this block
+        for (int off = 0; off < 4 && pg + off < pages_total; ++off) {
+            uint8_t *data = &block[off * 4];
+            ppos += snprintf(pages + ppos, cap - ppos, "Page %d: %02X %02X %02X %02X\n",
+                             pg + off, data[0], data[1], data[2], data[3]);
+            if (ppos >= (int)cap - 64) break;
+        }
         if (ppos >= (int)cap - 64) break;
     }
 
