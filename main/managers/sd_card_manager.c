@@ -627,9 +627,9 @@ esp_err_t sd_card_setup_directory_structure() {
   const char *gps_dir = "/mnt/ghostesp/gps";
   const char *games_dir = "/mnt/ghostesp/games";
   const char *evil_portal_dir = "/mnt/ghostesp/evil_portal";
-  const char *evil_portal_portals_dir = "/mnt/ghostesp/evil_portal/portals"; // <-- Add this line
+  const char *evil_portal_portals_dir = "/mnt/ghostesp/evil_portal/portals"; 
   const char *universals_dir = "/mnt/ghostesp/infrared/universals";
-
+  const char *nfc_dir = "/mnt/ghostesp/nfc";
 
   if (!sd_card_exists(root_dir)) {
     printf("Creating directory: %s\n", root_dir);

@@ -107,6 +107,14 @@ esp_err_t pn532_read_passive_target_id(pn532_io_handle_t io_handle,
                                        uint8_t *uid,
                                        uint8_t *uid_length,
                                        int32_t timeout);
+// Extended version that also returns ATQA (SENS_RES) and SAK (SEL_RES)
+esp_err_t pn532_read_passive_target_id_ex(pn532_io_handle_t io_handle,
+                                       uint8_t baud_rate_and_card_type,
+                                       uint8_t *uid,
+                                       uint8_t *uid_length,
+                                       uint16_t *atqa,
+                                       uint8_t *sak,
+                                       int32_t timeout);
 esp_err_t pn532_in_data_exchange(pn532_io_handle_t io_handle, const uint8_t *send_buffer, uint8_t send_buffer_length, uint8_t *response,
                                  uint8_t *response_length);
 esp_err_t pn532_in_list_passive_target(pn532_io_handle_t io_handle);
@@ -114,6 +122,12 @@ esp_err_t ntag2xx_get_model(pn532_io_handle_t io_handle, NTAG2XX_MODEL *model);
 esp_err_t ntag2xx_authenticate(pn532_io_handle_t io_handle, uint8_t page, uint8_t *key, uint8_t *uid, uint8_t uid_length);
 esp_err_t ntag2xx_read_page(pn532_io_handle_t io_handle, uint8_t page, uint8_t *buffer, size_t read_len);
 esp_err_t ntag2xx_write_page(pn532_io_handle_t io_handle, uint8_t page, const uint8_t *data);
+
+// Additional NTAG/Ultralight helpers
+esp_err_t ntag2xx_get_version(pn532_io_handle_t io_handle, uint8_t version_out[8]);
+esp_err_t ntag2xx_read_signature(pn532_io_handle_t io_handle, uint8_t sig_out[32]);
+esp_err_t ntag2xx_read_counter(pn532_io_handle_t io_handle, uint8_t counter_index, uint32_t *value_out);
+esp_err_t ntag2xx_read_tearing(pn532_io_handle_t io_handle, uint8_t counter_index, uint8_t *tearing_out);
 
 #ifdef __cplusplus
 }

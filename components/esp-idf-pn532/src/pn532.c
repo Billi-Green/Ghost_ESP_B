@@ -159,6 +159,118 @@
      return ESP_OK;
  }
  
+ esp_err_t pn532_read_passive_target_id_ex(pn532_io_handle_t io_handle,
+                                           uint8_t baud_rate_and_card_type,
+                                           uint8_t *uid,
+                                           uint8_t *uid_length,
+                                           uint16_t *atqa,
+                                           uint8_t *sak,
+                                           int32_t timeout)
+ {
+     pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
+     pn532_packetbuffer[1] = 1; // Support one card
+     pn532_packetbuffer[2] = baud_rate_and_card_type;
+
+     esp_err_t err = pn532_send_command_wait_ack(io_handle, pn532_packetbuffer, 3, PN532_WRITE_TIMEOUT);
+     if (ESP_OK != err) {
+ #ifdef CONFIG_PN532DEBUG
+         ESP_LOGD(TAG, "pn532_read_passive_target_id_ex(): No card(s) read");
+ #endif
+         return err;
+     }
+
+ #ifdef CONFIG_PN532DEBUG
+     ESP_LOGD(TAG, "pn532_read_passive_target_id_ex(): Waiting for IRQ (card presence)");
+ #endif
+     err = pn532_wait_ready(io_handle, timeout);
+     if (ESP_OK != err) {
+ #ifdef CONFIG_PN532DEBUG
+         ESP_LOGD(TAG, "pn532_read_passive_target_id_ex(): Timeout or error waiting for ready");
+ #endif
+         return err;
+     }
+
+     err = pn532_read_data(io_handle, pn532_packetbuffer, 32, timeout);
+     if (ESP_OK != err)
+         return err;
+
+     if (pn532_packetbuffer[7] != 1)
+        return ESP_FAIL;
+
+    // Save target number for subsequent INDATAEXCHANGE operations
+    pn532_inListedTag = pn532_packetbuffer[8];
+
+    if (atqa) {
+        *atqa = ((uint16_t)pn532_packetbuffer[9] << 8) | pn532_packetbuffer[10];
+    }
+    if (sak) {
+        *sak = pn532_packetbuffer[11];
+     }
+
+     *uid_length = pn532_packetbuffer[12];
+ #ifdef CONFIG_MIFAREDEBUG
+     printf("UID:");
+ #endif
+     for (uint8_t i = 0; i < pn532_packetbuffer[12]; i++) {
+         uid[i] = pn532_packetbuffer[13 + i];
+ #ifdef CONFIG_MIFAREDEBUG
+         printf(" 0x%.2X", uid[i]);
+ #endif
+     }
+ #ifdef CONFIG_MIFAREDEBUG
+     printf("\n");
+ #endif
+
+     return ESP_OK;
+ }
+
+ esp_err_t ntag2xx_get_version(pn532_io_handle_t io_handle, uint8_t version_out[8])
+ {
+     if (!version_out) return ESP_ERR_INVALID_ARG;
+     uint8_t cmd[1] = { 0x60 }; // GET_VERSION
+     uint8_t resp_len = 8;
+     esp_err_t err = pn532_in_data_exchange(io_handle, cmd, sizeof(cmd), version_out, &resp_len);
+     if (err != ESP_OK) return err;
+     return (resp_len == 8) ? ESP_OK : ESP_FAIL;
+ }
+
+ esp_err_t ntag2xx_read_signature(pn532_io_handle_t io_handle, uint8_t sig_out[32])
+ {
+     if (!sig_out) return ESP_ERR_INVALID_ARG;
+     uint8_t cmd[2] = { 0x3C, 0x00 }; // READ_SIG, address 0x00
+     uint8_t resp_len = 32;
+     esp_err_t err = pn532_in_data_exchange(io_handle, cmd, sizeof(cmd), sig_out, &resp_len);
+     if (err != ESP_OK) return err;
+     return (resp_len == 32) ? ESP_OK : ESP_FAIL;
+ }
+
+ esp_err_t ntag2xx_read_counter(pn532_io_handle_t io_handle, uint8_t counter_index, uint32_t *value_out)
+ {
+     if (!value_out || counter_index > 2) return ESP_ERR_INVALID_ARG;
+     uint8_t cmd[2] = { 0x39, counter_index }; // READ_CNT
+     uint8_t buf[3] = {0};
+     uint8_t resp_len = sizeof(buf);
+     esp_err_t err = pn532_in_data_exchange(io_handle, cmd, sizeof(cmd), buf, &resp_len);
+     if (err != ESP_OK) return err;
+     if (resp_len != 3) return ESP_FAIL;
+     // Interpret as 24-bit big-endian
+     *value_out = ((uint32_t)buf[0] << 16) | ((uint32_t)buf[1] << 8) | buf[2];
+     return ESP_OK;
+ }
+
+ esp_err_t ntag2xx_read_tearing(pn532_io_handle_t io_handle, uint8_t counter_index, uint8_t *tearing_out)
+ {
+     if (!tearing_out || counter_index > 2) return ESP_ERR_INVALID_ARG;
+     uint8_t cmd[2] = { 0x3A, counter_index }; // READ_TEARING
+     uint8_t resp = 0;
+     uint8_t resp_len = 1;
+     esp_err_t err = pn532_in_data_exchange(io_handle, cmd, sizeof(cmd), &resp, &resp_len);
+     if (err != ESP_OK) return err;
+     if (resp_len != 1) return ESP_FAIL;
+     *tearing_out = resp;
+     return ESP_OK;
+ }
+
  esp_err_t pn532_in_data_exchange(pn532_io_handle_t io_handle,
                                   const uint8_t *send_buffer,
                                   uint8_t send_buffer_length,
@@ -486,5 +598,3 @@
      err = pn532_read_data(io_handle, pn532_packetbuffer, 26, PN532_READ_TIMEOUT);
      return err;
  }
- 
- 
