@@ -18,6 +18,7 @@
 #include "pn532_driver.h"
 #include "pn532_driver_i2c.h"
 #include "managers/nfc/ntag_t2.h"
+#include "managers/nfc/mifare_classic.h"
 #endif
 
 // Forward declaration of this view instance for internal references
@@ -138,6 +139,18 @@ static void nfc_set_details_async(void *ptr) {
 
 
 static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, uint8_t uid_len) {
+    // Prefer MIFARE Classic summary if SAK indicates Classic
+    if (mfc_is_classic_sak(g_sak)) {
+        char *text = mfc_build_details_summary(io, uid, uid_len, g_atqa, g_sak);
+        if (!text) return;
+        ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+        if (!res) { free(text); return; }
+        res->text = text; res->text_len = strlen(text);
+        lv_async_call(nfc_set_details_async, res);
+        return;
+    }
+
+    // Otherwise try NTAG/Ultralight (Type 2)
     uint8_t *mem = NULL; size_t mem_len = 0; NTAG2XX_MODEL model = NTAG2XX_UNKNOWN;
     if (!ntag_t2_read_user_memory(io, &mem, &mem_len, &model)) {
         size_t cap = 256;
@@ -616,11 +629,21 @@ static void write_flipper_nfc_file(void) {
         up += snprintf(uid_part + up, sizeof(uid_part) - up, "%02X", g_uid[i]);
         if (i + 1 < g_uid_len) up += snprintf(uid_part + up, sizeof(uid_part) - up, "-");
     }
-    const char *model_str = ntag_t2_model_str(g_model);
     char path[192];
-    snprintf(path, sizeof(path), "%s/%s_%s.nfc", dir, model_str, uid_part);
+    if (!mfc_is_classic_sak(g_sak)) {
+        const char *model_str = ntag_t2_model_str(g_model);
+        snprintf(path, sizeof(path), "%s/%s_%s.nfc", dir, model_str, uid_part);
+    }
 
-    // Determine total pages by model
+    // If MIFARE Classic, write MIFARE Classic file format
+    if (mfc_is_classic_sak(g_sak)) {
+        bool ok = mfc_save_flipper_file(g_pn532, g_uid, g_uid_len, g_atqa, g_sak, dir, NULL, 0);
+        if (!ok) ESP_LOGE(TAG, "Failed to save Mifare Classic file");
+        else ESP_LOGI(TAG, "Mifare Classic file saved");
+        return;
+    }
+
+    // Determine total pages by model (NTAG/Ultralight)
     int pages_total = 0;
     switch (g_model) {
         case NTAG2XX_NTAG213: pages_total = 45; break;
@@ -643,6 +666,7 @@ static void write_flipper_nfc_file(void) {
     pos += snprintf(buf + pos, sizeof(buf) - pos, "ATQA: %02X %02X\n", (g_atqa >> 8) & 0xFF, g_atqa & 0xFF);
     pos += snprintf(buf + pos, sizeof(buf) - pos, "SAK: %02X\n", g_sak);
     pos += snprintf(buf + pos, sizeof(buf) - pos, "Data format version: 2\n");
+    const char *model_str = ntag_t2_model_str(g_model);
     pos += snprintf(buf + pos, sizeof(buf) - pos, "NTAG/Ultralight type: %s\n", model_str);
 
     if (sd_card_write_file(path, buf, (size_t)pos) != ESP_OK) {

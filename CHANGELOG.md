@@ -8,6 +8,7 @@
   - Read NTAG213/215/216 (Type 2)
   - Parse NDEF (URL, Text, SmartPoster)
   - Save to Flipper .nfc (metadata + full page dump)
+  - Mifare Classic (Mini/1K/4K): basic summary in UI
 
 
 ## Revival v1.7.2
