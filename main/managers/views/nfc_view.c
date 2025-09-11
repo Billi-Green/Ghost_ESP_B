@@ -933,7 +933,7 @@ static void nfc_show_details_view(bool show) {
         }
         // Align details label every time details view is shown (more spacing from title)
         if (nfc_details_label && lv_obj_is_valid(nfc_details_label)) {
-            lv_obj_align(nfc_details_label, LV_ALIGN_TOP_MID, 0, 14);
+            lv_obj_align(nfc_details_label, LV_ALIGN_TOP_MID, 0, 20);
         }
         // Set details text
         #ifdef CONFIG_HAS_NFC

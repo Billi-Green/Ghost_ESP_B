@@ -77,9 +77,9 @@ static void parse_ndef_record(uint8_t tnf,
     if (tnf == 0x01 && type_len == 1 && type[0] == 'U' && payload_len >= 1) {
         uint8_t code = payload[0];
         const char *pre = (code < (sizeof(ndef_uri_prefix) / sizeof(ndef_uri_prefix[0])) ? ndef_uri_prefix[code] : NULL);
-        if (pre && strcmp(pre, "tel:") == 0) append_str(out, cap, "Phone: ");
-        else if (pre && strcmp(pre, "mailto:") == 0) append_str(out, cap, "Mail: ");
-        else append_str(out, cap, "URL: ");
+        if (pre && strcmp(pre, "tel:") == 0) append_str(out, cap, "TEL ");
+        else if (pre && strcmp(pre, "mailto:") == 0) append_str(out, cap, "MAIL ");
+        else append_str(out, cap, "URL ");
         if (pre) append_str(out, cap, pre);
         for (size_t i = 1; i < payload_len && *cap > 1; ++i) {
             unsigned char c = payload[i];
@@ -94,42 +94,48 @@ static void parse_ndef_record(uint8_t tnf,
         uint8_t lang_len = status & 0x3F;
         size_t text_off = 1 + lang_len;
         if (text_off > payload_len) text_off = payload_len;
-        append_str(out, cap, "Text: ");
+        append_str(out, cap, "Text \"");
         for (size_t i = text_off; i < payload_len && *cap > 1; ++i) {
             unsigned char c = payload[i];
             if (c >= 32 && c <= 126) { **out = (char)c; (*out)++; (*cap)--; }
         }
-        append_str(out, cap, "\n");
+        append_str(out, cap, "\"\n");
         return;
     }
     if (tnf == 0x01 && type_len == 2 && type[0] == 'S' && type[1] == 'p' && payload_len > 0) {
-        size_t pos = 0;
+        const char *url_pre = NULL; const uint8_t *url_bytes = NULL; size_t url_len = 0;
+        const uint8_t *title_bytes = NULL; size_t title_len = 0; size_t pos = 0;
         while (pos < payload_len) {
             if (pos + 1 > payload_len) break;
             uint8_t flags = payload[pos++];
             uint8_t tlen = (pos < payload_len) ? payload[pos++] : 0;
             uint32_t plen = 0;
-            if (flags & 0x10) {
-                plen = (pos < payload_len) ? payload[pos++] : 0;
-            } else {
-                if (pos + 4 > payload_len) break;
-                plen = ((uint32_t)payload[pos] << 24) | ((uint32_t)payload[pos+1] << 16) | ((uint32_t)payload[pos+2] << 8) | payload[pos+3];
-                pos += 4;
-            }
-            uint8_t idlen = (flags & 0x08) ? ((pos < payload_len) ? payload[pos++] : 0) : 0;
+            if (flags & 0x10) { plen = (pos < payload_len) ? payload[pos++] : 0; }
+            else { if (pos + 4 > payload_len) break; plen = ((uint32_t)payload[pos] << 24) | ((uint32_t)payload[pos+1] << 16) | ((uint32_t)payload[pos+2] << 8) | payload[pos+3]; pos += 4; }
+            if (flags & 0x08) { if (pos < payload_len) pos++; }
             const uint8_t *tt = (pos + tlen <= payload_len) ? &payload[pos] : NULL; pos += tlen;
-            (void)idlen; // id not used
             const uint8_t *pl = (pos + plen <= payload_len) ? &payload[pos] : NULL; pos += plen;
             if (!tt || !pl) break;
-            parse_ndef_record(flags & 0x07, tt, tlen, pl, plen, out, cap);
+            if (tlen == 1 && tt[0] == 'U' && plen >= 1) { url_pre = (pl[0] < (sizeof(ndef_uri_prefix)/sizeof(ndef_uri_prefix[0])) ? ndef_uri_prefix[pl[0]] : NULL); url_bytes = &pl[1]; url_len = plen - 1; }
+            else if (tlen == 1 && tt[0] == 'T' && plen >= 1) { uint8_t ll = pl[0] & 0x3F; size_t toff = 1 + ll; if (toff <= plen) { title_bytes = &pl[toff]; title_len = plen - toff; } }
             if (flags & 0x40) break;
         }
+        append_str(out, cap, "SmartPoster ");
+        if (url_bytes) {
+            append_str(out, cap, "URL "); if (url_pre) append_str(out, cap, url_pre);
+            for (size_t i = 0; i < url_len && *cap > 1; ++i) { unsigned char c = url_bytes[i]; if (c >= 32 && c <= 126) { **out = (char)c; (*out)++; (*cap)--; } else { append_fmt(out, cap, "%%%02X", c); } }
+        }
+        if (title_bytes && title_len) {
+            append_str(out, cap, url_bytes ? " | Title \"" : "Title \"");
+            for (size_t i = 0; i < title_len && *cap > 1; ++i) { unsigned char c = title_bytes[i]; if (c >= 32 && c <= 126) { **out = (char)c; (*out)++; (*cap)--; } }
+            append_str(out, cap, "\"");
+        }
+        append_str(out, cap, "\n");
         return;
     }
-    append_str(out, cap, "Record: ");
-    append_fmt(out, cap, "tnf=0x%02X type=", tnf);
+    append_fmt(out, cap, "Record tnf=0x%02X type=", tnf);
     for (uint8_t i = 0; i < type_len; ++i) { if (*cap > 1) { **out = (char)type[i]; (*out)++; (*cap)--; } }
-    append_str(out, cap, "\n");
+    append_fmt(out, cap, " len=%u\n", (unsigned)payload_len);
 }
 
 char* ndef_build_details_from_message(const uint8_t* ndef_msg,
@@ -143,8 +149,7 @@ char* ndef_build_details_from_message(const uint8_t* ndef_msg,
     char *w = out; *w = '\0';
 
     if (!card_label) card_label = "NTAG2xx";
-    append_fmt(&w, &cap, "Card: %s\n", card_label);
-    append_str(&w, &cap, "UID:");
+    append_fmt(&w, &cap, "Card: %s | UID:", card_label);
     for (uint8_t i = 0; i < uid_len && cap > 3; ++i)
         append_fmt(&w, &cap, " %02X", uid[i]);
     append_str(&w, &cap, "\n");
@@ -154,7 +159,21 @@ char* ndef_build_details_from_message(const uint8_t* ndef_msg,
         return out;
     }
 
-    append_fmt(&w, &cap, "NDEF message: %u bytes\n", (unsigned)ndef_len);
+    size_t rc_count = 0; {
+        size_t p = 0, e = ndef_len;
+        while (p < e) {
+            if (p + 1 > e) break;
+            uint8_t flags = ndef_msg[p++];
+            uint8_t tlen = (p < e) ? ndef_msg[p++] : 0;
+            uint32_t plen = 0;
+            if (flags & 0x10) { plen = (p < e) ? ndef_msg[p++] : 0; }
+            else { if (p + 4 > e) break; plen = ((uint32_t)ndef_msg[p] << 24) | ((uint32_t)ndef_msg[p+1] << 16) | ((uint32_t)ndef_msg[p+2] << 8) | ndef_msg[p+3]; p += 4; }
+            if (flags & 0x08) { if (p < e) p++; }
+            p += tlen; p += plen; rc_count++;
+            if (flags & 0x40) break;
+        }
+    }
+    append_fmt(&w, &cap, "NDEF: %uB, %u rec\n", (unsigned)ndef_len, (unsigned)rc_count);
 
     size_t mpos = 0; size_t mend = ndef_len; int rec_idx = 0;
     while (mpos < mend) {

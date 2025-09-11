@@ -1,5 +1,15 @@
 # Ghost ESP Changelog
 
+## Revival v1.8
+
+### Added
+
+- NFC Capability
+  - Read NTAG213/215/216 (Type 2)
+  - Parse NDEF (URL, Text, SmartPoster)
+  - Save to Flipper .nfc (metadata + full page dump)
+
+
 ## Revival v1.7.2
 
 ### Added
