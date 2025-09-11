@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdbool.h>
 #include "pn532_driver.h"
 #include "pn532_driver_i2c.h"
 #include "esp_log.h"
@@ -10,6 +11,7 @@ typedef struct {
     gpio_num_t scl;
     i2c_port_t i2c_port_number;
     uint8_t frame_buffer[256];
+    bool owns_i2c_driver;
 } pn532_i2c_driver_config;
 
 static esp_err_t pn532_init_io(pn532_io_handle_t io_handle);
@@ -62,6 +64,7 @@ void pn532_release_driver(pn532_io_handle_t io_handle)
     if (io_handle == NULL || io_handle->driver_data == NULL)
         return;
 
+    // Ensure IO is released (safe if already released)
     pn532_release_io(io_handle);
     free(io_handle->driver_data);
     io_handle->driver_data = NULL;
@@ -85,15 +88,27 @@ esp_err_t pn532_init_io(pn532_io_handle_t io_handle)
         .clk_flags = 0,
     };
 
+    driver_config->owns_i2c_driver = false;
+
     esp_err_t r = i2c_param_config(driver_config->i2c_port_number, &conf);
-    if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) {
+    if (r == ESP_ERR_INVALID_STATE) {
+        // Already configured by another component (e.g., fuel gauge). Do not attempt to
+        // reinstall or reconfigure. Use shared bus without ownership.
+        driver_config->owns_i2c_driver = false;
+        return ESP_OK;
+    } else if (r != ESP_OK) {
         ESP_LOGE(TAG, "i2c_param_config failed: 0x%x", (int)r);
         return r;
     }
+
+    // Driver not yet installed (we just configured it) — install and take ownership
     r = i2c_driver_install(driver_config->i2c_port_number, conf.mode, 0, 0, 0);
-    if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "i2c_driver_install failed: 0x%x", (int)r);
-        return r;
+    if (r == ESP_OK) {
+        driver_config->owns_i2c_driver = true;
+    } else {
+        // If install failed for some other reason, proceed without ownership to avoid blocking NFC
+        driver_config->owns_i2c_driver = false;
+        ESP_LOGW(TAG, "i2c_driver_install not owned by PN532 (err=0x%x), proceeding with shared bus", (int)r);
     }
     return ESP_OK;
 }
@@ -104,7 +119,13 @@ void pn532_release_io(pn532_io_handle_t io_handle)
         return;
     }
     pn532_i2c_driver_config *driver_config = (pn532_i2c_driver_config *)io_handle->driver_data;
-    i2c_driver_delete(driver_config->i2c_port_number);
+    if (driver_config->owns_i2c_driver) {
+        esp_err_t r = i2c_driver_delete(driver_config->i2c_port_number);
+        if (r != ESP_OK) {
+            ESP_LOGW(TAG, "i2c_driver_delete failed: 0x%x", (int)r);
+        }
+        driver_config->owns_i2c_driver = false;
+    }
 }
 
 esp_err_t pn532_is_ready(pn532_io_handle_t io_handle)

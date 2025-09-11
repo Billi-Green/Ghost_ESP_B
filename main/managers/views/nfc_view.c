@@ -88,6 +88,13 @@ static void update_nfc_popup_selection(void);
 static void update_nfc_buttons_layout(void);
 static void nfc_show_details_view(bool show);
 static void write_flipper_nfc_file(void);
+// Worker task helpers
+static void nfc_save_task(void *arg);
+static void nfc_save_done_async(void *ptr);
+
+// Cross-task flags
+static volatile bool nfc_scan_cancel = false;
+static volatile bool nfc_save_in_progress = false;
 
 #ifdef CONFIG_HAS_NFC
 static pn532_io_handle_t g_pn532 = NULL;
@@ -171,7 +178,10 @@ static bool ntag_read_user_memory(pn532_io_handle_t io, uint8_t **out_buf, size_
     if (!io || !out_buf || !out_len) return false;
     *out_buf = NULL; *out_len = 0; if (out_model) *out_model = NTAG2XX_UNKNOWN;
     uint8_t page0_3[16] = {0};
-    if (ntag2xx_read_page(io, 0, page0_3, sizeof(page0_3)) != ESP_OK) return false;
+    if (ntag2xx_read_page(io, 0, page0_3, sizeof(page0_3)) != ESP_OK) {
+        ESP_LOGW(TAG, "ntag_read_user_memory: page0_3 read failed");
+        return false;
+    }
     // Capability Container at page 3
     if (page0_3[12] != 0xE1) {
         // Not a CC magic, still allow but mark unknown
@@ -192,9 +202,14 @@ static bool ntag_read_user_memory(pn532_io_handle_t io, uint8_t **out_buf, size_
     size_t copied = 0;
     // Read starting at page 4
     while (copied < data_bytes) {
+        if (nfc_scan_cancel) { ESP_LOGI(TAG, "ntag_read_user_memory: cancelled at start of loop (copied=%u)", (unsigned)copied); free(buf); return false; }
         uint8_t page = 4 + (copied / 4);
         uint8_t tmp[16] = {0};
-        if (ntag2xx_read_page(io, page, tmp, sizeof(tmp)) != ESP_OK) { free(buf); return false; }
+        if (ntag2xx_read_page(io, page, tmp, sizeof(tmp)) != ESP_OK) {
+            ESP_LOGW(TAG, "ntag_read_user_memory: read page %u failed", page);
+            free(buf);
+            return false;
+        }
         size_t remain = data_bytes - copied;
         size_t to_copy = (remain < sizeof(tmp)) ? remain : sizeof(tmp);
         memcpy(buf + copied, tmp, to_copy);
@@ -418,32 +433,60 @@ static void nfc_update_labels_async(void *uid_buf) {
 
 static void nfc_scan_task(void *arg) {
     const char *TAGT = "NFCScan";
+    ESP_LOGI(TAGT, "scan_task: start (cancel=%d)", nfc_scan_cancel);
     if (g_pn532 == NULL) {
         g_pn532 = &g_pn532_instance;
-        if (pn532_new_driver_i2c(
-                (gpio_num_t)CONFIG_NFC_SDA_PIN,
-                (gpio_num_t)CONFIG_NFC_SCL_PIN,
-                (gpio_num_t)CONFIG_NFC_RST_PIN,
-                (gpio_num_t)CONFIG_NFC_IRQ_PIN,
-                I2C_NUM_0,
-                g_pn532) != ESP_OK) {
-            ESP_LOGE(TAGT, "pn532_new_driver_i2c failed");
+        // Prefer a single I2C controller for all devices sharing the same pins.
+        // Match the Fuel Gauge manager's chosen port by target to avoid two controllers
+        // driving the same physical SDA/SCL.
+#if defined(CONFIG_HAS_FUEL_GAUGE) || defined(CONFIG_USE_BQ27220_FUEL_GAUGE)
+    #if defined(CONFIG_IDF_TARGET_ESP32S3)
+        // Use I2C_NUM_0 exclusively to share controller with fuel gauge
+        i2c_port_t try_ports[2] = { I2C_NUM_0, I2C_NUM_0 };
+    #else
+        i2c_port_t try_ports[2] = { I2C_NUM_0, I2C_NUM_1 };
+    #endif
+#else
+        i2c_port_t try_ports[2] = { I2C_NUM_0, I2C_NUM_1 };
+#endif
+        bool ok = false;
+        for (int pi = 0; pi < 2 && !ok; ++pi) {
+            i2c_port_t port = try_ports[pi];
+            ESP_LOGI(TAGT, "attempting PN532 on I2C port %d", (int)port);
+            if (pn532_new_driver_i2c(
+                    (gpio_num_t)CONFIG_NFC_SDA_PIN,
+                    (gpio_num_t)CONFIG_NFC_SCL_PIN,
+                    (gpio_num_t)CONFIG_NFC_RST_PIN,
+                    (gpio_num_t)CONFIG_NFC_IRQ_PIN,
+                    port,
+                    g_pn532) != ESP_OK) {
+                ESP_LOGE(TAGT, "pn532_new_driver_i2c failed (port=%d)", (int)port);
+                // ensure clean slate before next attempt
+                pn532_delete_driver(g_pn532);
+                continue;
+            }
+            if (pn532_init(g_pn532) == ESP_OK) {
+                pn532_set_passive_activation_retries(g_pn532, 0xFF);
+                ESP_LOGI(TAGT, "scan_task: PN532 initialized on port %d", (int)port);
+                ok = true;
+            } else {
+                ESP_LOGE(TAGT, "pn532_init failed (port=%d)", (int)port);
+                pn532_release(g_pn532);
+                pn532_delete_driver(g_pn532);
+            }
+        }
+        if (!ok) {
+            ESP_LOGE(TAGT, "PN532 init failed on all ports, exiting scan task");
             nfc_scan_task_handle = NULL;
             vTaskDelete(NULL);
         }
-        if (pn532_init(g_pn532) != ESP_OK) {
-            ESP_LOGE(TAGT, "pn532_init failed");
-            nfc_scan_task_handle = NULL;
-            vTaskDelete(NULL);
-        }
-        pn532_set_passive_activation_retries(g_pn532, 0xFF);
     }
 
-    while (nfc_scan_popup && lv_obj_is_valid(nfc_scan_popup)) {
+    while (!nfc_scan_cancel) {
         uint8_t uid[8] = {0};
         uint8_t uid_len = 0;
         uint16_t atqa = 0; uint8_t sak = 0;
-        esp_err_t r = pn532_read_passive_target_id_ex(g_pn532, 0x00, uid + 1, &uid_len, &atqa, &sak, 500);
+        esp_err_t r = pn532_read_passive_target_id_ex(g_pn532, 0x00, uid + 1, &uid_len, &atqa, &sak, 200);
         if (r == ESP_OK && uid_len > 0 && uid_len <= 7) {
             uid[0] = uid_len;
             uint8_t *copy = (uint8_t *)malloc(uid_len + 1);
@@ -452,14 +495,24 @@ static void nfc_scan_task(void *arg) {
                 lv_async_call(nfc_update_labels_async, copy);
             }
             // Build detailed info synchronously before exiting the task
+            if (nfc_scan_cancel) break;
             g_uid_len = uid_len; memcpy(g_uid, uid + 1, uid_len); g_atqa = atqa; g_sak = sak; g_model = NTAG2XX_UNKNOWN;
+            ESP_LOGI(TAGT, "scan_task: UID found, building details (len=%u)", uid_len);
             nfc_build_and_set_details(g_pn532, uid + 1, uid_len);
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
+    // Release PN532 resources when scan stops (either by cancel or completion)
+    if (g_pn532) {
+        ESP_LOGI(TAGT, "scan_task: releasing PN532 (cancel=%d)", nfc_scan_cancel);
+        pn532_release(g_pn532);
+        pn532_delete_driver(g_pn532);
+        g_pn532 = NULL;
+    }
     nfc_scan_task_handle = NULL;
+    ESP_LOGI(TAGT, "scan_task: exit");
     vTaskDelete(NULL);
 }
 #endif
@@ -743,6 +796,7 @@ static lv_style_t* get_zebra_style(int index) {
 }
 
 static void cleanup_nfc_scan_popup(void *obj) {
+    ESP_LOGI(TAG, "cleanup_nfc_scan_popup: begin (task=%p, cancel=%d)", (void*)nfc_scan_task_handle, nfc_scan_cancel);
     if (nfc_scan_popup) {
         lv_obj_del(nfc_scan_popup);
         nfc_scan_popup = NULL;
@@ -755,20 +809,17 @@ static void cleanup_nfc_scan_popup(void *obj) {
         nfc_details_label = NULL;
     }
 #ifdef CONFIG_HAS_NFC
-    if (nfc_scan_task_handle) {
-        TaskHandle_t h = nfc_scan_task_handle;
-        nfc_scan_task_handle = NULL;
-        vTaskDelete(h);
-    }
+    // Signal the scan task to exit gracefully (avoid calling LVGL from that task)
+    nfc_scan_cancel = true;
     if (nfc_details_text) { free(nfc_details_text); nfc_details_text = NULL; }
     nfc_details_ready = false;
     nfc_details_visible = false;
 #endif
+    ESP_LOGI(TAG, "cleanup_nfc_scan_popup: end (task=%p, cancel=%d)", (void*)nfc_scan_task_handle, nfc_scan_cancel);
 }
 
 static void nfc_scan_cancel_cb(lv_event_t *e) {
     cleanup_nfc_scan_popup(NULL);
-    display_manager_switch_view(&nfc_view);
 }
 
 static void nfc_scan_more_cb(lv_event_t *e) {
@@ -778,7 +829,15 @@ static void nfc_scan_more_cb(lv_event_t *e) {
 }
 
 static void nfc_scan_save_cb(lv_event_t *e) {
-    write_flipper_nfc_file();
+    if (nfc_save_in_progress) return;
+    nfc_save_in_progress = true;
+    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        lv_label_set_text(nfc_title_label, "Saving...");
+    }
+    if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
+        lv_obj_add_state(nfc_scan_save_btn, LV_STATE_DISABLED);
+    }
+    xTaskCreate(nfc_save_task, "nfc_save", 4096, NULL, 5, NULL);
 }
 
 static void write_flipper_nfc_file(void) {
@@ -897,10 +956,13 @@ static void write_flipper_nfc_file(void) {
 }
 
 static void create_nfc_scan_popup(void) {
+    ESP_LOGI(TAG, "create_nfc_scan_popup");
     if (nfc_scan_popup && lv_obj_is_valid(nfc_scan_popup)) {
         cleanup_nfc_scan_popup(NULL);
     }
     if (!root || !lv_obj_is_valid(root)) return;
+    // Reset scan cancel flag before starting a new scan
+    nfc_scan_cancel = false;
     nfc_scan_popup = lv_obj_create(root);
     // scale to screen, leave margin for status bar and edges
     int popup_w = LV_HOR_RES - 30;
@@ -991,9 +1053,28 @@ static void create_nfc_scan_popup(void) {
     update_nfc_popup_selection();
 #ifdef CONFIG_HAS_NFC
     if (nfc_scan_task_handle == NULL) {
+        ESP_LOGI(TAG, "create_nfc_scan_popup: starting scan task");
         xTaskCreate(nfc_scan_task, "nfc_scan", 4096, NULL, 5, &nfc_scan_task_handle);
     }
 #endif
+}
+
+// Run heavy save on a worker task to avoid blocking LVGL thread
+static void nfc_save_task(void *arg) {
+    write_flipper_nfc_file();
+    // Notify UI on completion
+    lv_async_call(nfc_save_done_async, NULL);
+    nfc_save_in_progress = false;
+    vTaskDelete(NULL);
+}
+
+static void nfc_save_done_async(void *ptr) {
+    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        lv_label_set_text(nfc_title_label, "Saved!");
+    }
+    if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
+        lv_obj_clear_state(nfc_scan_save_btn, LV_STATE_DISABLED);
+    }
 }
 
 static void update_nfc_popup_selection(void) {
@@ -1260,6 +1341,11 @@ static void nfc_view_create(void) {
 }
 
 static void nfc_view_destroy(void) {
+    ESP_LOGI(TAG, "nfc_view_destroy");
+    // Ensure any running scan is cancelled and resources are released
+    cleanup_nfc_scan_popup(NULL); // sets nfc_scan_cancel=true
+    nfc_scan_cancel = true;
+
     if (root) {
         lv_obj_del(root);
         root = NULL;
@@ -1277,6 +1363,18 @@ static void nfc_view_destroy(void) {
     nfc_uid_label = NULL;
     nfc_type_label = NULL;
     nfc_details_label = NULL;
+
+#ifdef CONFIG_HAS_NFC
+    // If scan task already exited, release PN532 here as a safety net
+    if (nfc_scan_task_handle == NULL && g_pn532) {
+        pn532_release(g_pn532);
+        pn532_delete_driver(g_pn532);
+        g_pn532 = NULL;
+    }
+    if (nfc_details_text) { free(nfc_details_text); nfc_details_text = NULL; }
+    nfc_details_ready = false;
+    nfc_details_visible = false;
+#endif
 }
 
 static void get_nfc_callback(void **cb) {

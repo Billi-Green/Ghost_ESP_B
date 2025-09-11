@@ -43,7 +43,7 @@ static const char *TAG = "FuelGaugeManager";
 #define BQ27220_REG_DATA_BLOCK  0x3F
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-#define I2C_MASTER_NUM          I2C_NUM_1
+#define I2C_MASTER_NUM          I2C_NUM_0
 #else
 #define I2C_MASTER_NUM          I2C_NUM_0
 #endif
@@ -280,7 +280,7 @@ static esp_err_t fuel_gauge_i2c_init(void) {
     };
 
     esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
-    if (ret != ESP_OK) {
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
         return ret;
     }

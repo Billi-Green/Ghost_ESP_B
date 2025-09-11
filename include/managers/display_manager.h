@@ -37,8 +37,8 @@ QueueHandle_tt input_queue;
 
 #define MUTEX_TIMEOUT_MS 100
 
-#define HARDWARE_INPUT_TASK_PRIORITY (4)
-#define RENDERING_TASK_PRIORITY (4)
+#define HARDWARE_INPUT_TASK_PRIORITY (14)
+#define RENDERING_TASK_PRIORITY (15)
 
 typedef struct {
   lv_obj_t *root;
