@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "pn532_driver.h"
+#include "pn532.h"
 
 const uint8_t ACK_FRAME[]  = { 0x00, 0x00, 0xFF, 0x00, 0xFF, 0x00 };
 const uint8_t NACK_FRAME[] = { 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00 };
@@ -41,7 +42,7 @@ esp_err_t pn532_init(pn532_io_handle_t io_handle)
         gpio_set_level(io_handle->reset, 0);
         vTaskDelay(400 / portTICK_PERIOD_MS);
         gpio_set_level(io_handle->reset, 1);
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(150 / portTICK_PERIOD_MS);
     }
 
     io_handle->isSAMConfigDone = false;
@@ -49,9 +50,18 @@ esp_err_t pn532_init(pn532_io_handle_t io_handle)
     if (err != ESP_OK)
         return err;
 
-    err = pn532_SAM_config(io_handle);
-    if (err != ESP_OK)
-        return err;
+    // Allow device to settle and probe firmware to wake/verify link
+    uint32_t fw = 0;
+    (void)pn532_get_firmware_version(io_handle, &fw);
+
+    // Try SAM config, retry once with a reset if it fails
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        err = pn532_SAM_config(io_handle);
+        if (err == ESP_OK) break;
+        pn532_reset(io_handle);
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    if (err != ESP_OK) return err;
 
     io_handle->isSAMConfigDone = true;
     return err;
@@ -87,7 +97,7 @@ void pn532_reset(pn532_io_handle_t io_handle)
     gpio_set_level(io_handle->reset, 0);
     vTaskDelay(400 / portTICK_PERIOD_MS);
     gpio_set_level(io_handle->reset, 1);
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    vTaskDelay(150 / portTICK_PERIOD_MS);
     io_handle->isSAMConfigDone = false;
 }
 
@@ -134,9 +144,9 @@ esp_err_t pn532_SAM_config(pn532_io_handle_t io_handle)
     static const uint8_t sam_config_frame[] = { 0x14, 0x01, 0x00, 0x01 };
     result = pn532_send_command_wait_ack(io_handle, sam_config_frame, sizeof(sam_config_frame), 1000);
     if (ESP_OK != result) return result;
-    result = pn532_wait_ready(io_handle, 100);
+    result = pn532_wait_ready(io_handle, 500);
     if (ESP_OK != result) return result;
-    result = pn532_read_data(io_handle, response_buffer, 10, 100);
+    result = pn532_read_data(io_handle, response_buffer, 10, 300);
     if (ESP_OK != result) return result;
     if (response_buffer[6] != 0x15) return ESP_FAIL;
     return ESP_OK;

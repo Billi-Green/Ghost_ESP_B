@@ -130,14 +130,15 @@ void pn532_release_io(pn532_io_handle_t io_handle)
 
 esp_err_t pn532_is_ready(pn532_io_handle_t io_handle)
 {
-    // use irq line if present, otherwise try to read a single status byte
+    // Prefer IRQ when present; if IRQ not asserted, also check status byte over I2C
     if (io_handle->irq != GPIO_NUM_NC) {
         int level = gpio_get_level(io_handle->irq);
-        return (level == 0) ? ESP_OK : ESP_FAIL;
+        if (level == 0) return ESP_OK;
+        // Fallback: read PN532 status byte (0x01 means ready)
     }
     pn532_i2c_driver_config *driver_config = (pn532_i2c_driver_config *)io_handle->driver_data;
     uint8_t status = 0;
-    esp_err_t res = i2c_master_read_from_device(driver_config->i2c_port_number, 0x24, &status, 1, 10 / portTICK_PERIOD_MS);
+    esp_err_t res = i2c_master_read_from_device(driver_config->i2c_port_number, 0x24, &status, 1, 30 / portTICK_PERIOD_MS);
     if (res != ESP_OK) return res;
     return (status == 0x01) ? ESP_OK : ESP_FAIL;
 }
