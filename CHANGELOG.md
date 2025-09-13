@@ -5,11 +5,11 @@
 ### Added
 
 - NFC Capability
-  - Read NTAG213/215/216 (Type 2)
-  - Parse NDEF (URL, Text, SmartPoster)
-  - Save to Flipper .nfc (metadata + full page dump)
-  - Mifare Classic (Mini/1K/4K): basic summary in UI
-
+  - Read NTAG213/215/216 (Type 2) with NDEF parsing
+  - Save to Flipper .nfc format (fully compatible)
+  - MIFARE Classic (Mini/1K/4K) support:
+    - Flipper's 1000+ key dictionary attack
+    - Magic backdoor detection (Gen1A clones)
 
 ## Revival v1.7.2
 

@@ -34,3 +34,10 @@ bool mfc_save_flipper_file(pn532_io_handle_t io,
                            const char* out_dir,
                            char* out_path,
                            size_t out_path_len);
+
+// Optional progress callback for dictionary attack attempts.
+// UI can set this to receive coarse progress updates (current/total keys)
+// while mfc_build_details_summary() and mfc_save_flipper_file() try the
+// embedded dictionary. Set cb=NULL to disable.
+typedef void (*mfc_progress_cb_t)(int current, int total, void* user);
+void mfc_set_progress_callback(mfc_progress_cb_t cb, void* user);

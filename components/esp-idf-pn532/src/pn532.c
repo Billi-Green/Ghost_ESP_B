@@ -14,6 +14,10 @@
  #include "pn532_driver.h"
  
  static const char TAG[] = "PN532";
+ static bool s_quiet = false;
+ static int s_indata_wait_ms = 100;  // default
+ static int s_thru_wait_ms = 800;   // default
+ static int s_inlist_wait_ms = 250; // default for in_list
  
  const uint8_t pn532response_firmwarevers[] = {0x00, 0xFF, 0x06, 0xFA, 0xD5, 0x03};
  
@@ -29,6 +33,8 @@
      if (io_handle == NULL || io_handle->driver_data == NULL) {
          return ESP_ERR_INVALID_ARG;
      }
+
+ 
  
      pn532_packetbuffer[0] = PN532_COMMAND_GETFIRMWAREVERSION;
  
@@ -277,78 +283,145 @@
                                   uint8_t *response,
                                   uint8_t *response_length) {
      if (send_buffer_length > PN532_COMMAND_BUFFER_LEN - 2) {
- #ifdef CONFIG_PN532DEBUG
-         ESP_LOGD(TAG, "APDU length too long for packet buffer");
- #endif
-         return ESP_ERR_INVALID_ARG;
-     }
- 
+       if (!s_quiet) ESP_LOGI(TAG, "APDU length too long for packet buffer");
+       return ESP_ERR_INVALID_ARG;
+   }
+
      uint8_t i;
      pn532_packetbuffer[0] = PN532_COMMAND_INDATAEXCHANGE;
      pn532_packetbuffer[1] = pn532_inListedTag;
      for (i = 0; i < send_buffer_length; ++i) {
          pn532_packetbuffer[i + 2] = send_buffer[i];
      }
- 
+
      esp_err_t err = pn532_send_command_wait_ack(io_handle, pn532_packetbuffer, send_buffer_length + 2, PN532_WRITE_TIMEOUT);
-     if (ESP_OK != err) {
- #ifdef CONFIG_PN532DEBUG
-         ESP_LOGD(TAG, "Could not send_buffer APDU");
- #endif
-         return err;
-     }
- 
-     err = pn532_wait_ready(io_handle, 1000);
-     if (ESP_OK != err) {
- #ifdef CONFIG_PN532DEBUG
-         ESP_LOGD(TAG, "Response never received for APDU ... timeout");
- #endif
-         return err;
-     }
- 
+   if (ESP_OK != err) {
+       if (!s_quiet) ESP_LOGI(TAG, "Could not send INDATAEXCHANGE APDU (err=%d)", err);
+       return err;
+   }
+
+     err = pn532_wait_ready(io_handle, s_indata_wait_ms);
+   if (ESP_OK != err) {
+       if (!s_quiet) ESP_LOGI(TAG, "INDATAEXCHANGE timeout waiting for response");
+       return err;
+   }
+
      err = pn532_read_data(io_handle, pn532_packetbuffer, sizeof(pn532_packetbuffer), PN532_READ_TIMEOUT);
      if (ESP_OK != err)
          return err;
- 
+
      if (pn532_packetbuffer[0] == 0 && pn532_packetbuffer[1] == 0 && pn532_packetbuffer[2] == 0xff) {
          uint8_t length = pn532_packetbuffer[3];
          if (0 != ((pn532_packetbuffer[4] + length) & 0xFF)) {
- #ifdef CONFIG_PN532DEBUG
-             ESP_LOGD(TAG, "Length check invalid 0x%02X 0x%02X", length, pn532_packetbuffer[4]);
- 
- #endif
-             return ESP_FAIL;
-         }
-         if (pn532_packetbuffer[5] == PN532_PN532TOHOST && pn532_packetbuffer[6] == PN532_RESPONSE_INDATAEXCHANGE) {
-             if ((pn532_packetbuffer[7] & 0x3f) != 0) {
- #ifdef CONFIG_PN532DEBUG
-                 ESP_LOGD(TAG, "Status code indicates an error");
- #endif
-                 return ESP_FAIL;
-             }
- 
-             length -= 3;
- 
-             if (length > *response_length) {
-                 length = *response_length; // silent truncation...
-             }
- 
-             for (i = 0; i < length; ++i) {
-                 response[i] = pn532_packetbuffer[8 + i];
-             }
-             *response_length = length;
- 
-             return ESP_OK;
-         } else {
-             ESP_LOGD(TAG, "Don't know how to handle this command: 0x%.2X", pn532_packetbuffer[6]);
-             return ESP_FAIL;
-         }
-     } else {
-         ESP_LOGD(TAG, "Preamble missing");
-         return ESP_FAIL;
-     }
- }
- 
+          if (!s_quiet) ESP_LOGI(TAG, "INDATAEXCHANGE length check invalid len=0x%02X sum=0x%02X", length, pn532_packetbuffer[4]);
+          return ESP_FAIL;
+      }
+       if (pn532_packetbuffer[5] == PN532_PN532TOHOST && pn532_packetbuffer[6] == PN532_RESPONSE_INDATAEXCHANGE) {
+            if ((pn532_packetbuffer[7] & 0x3f) != 0) {
+                if (!s_quiet) ESP_LOGI(TAG, "INDATAEXCHANGE status error: 0x%02X", pn532_packetbuffer[7]);
+                return ESP_FAIL;
+            }
+
+            // Subtract TFI, CMD, status
+            if (length < 3) {
+                if (!s_quiet) ESP_LOGI(TAG, "INDATAEXCHANGE payload length underflow: %u", (unsigned)length);
+                return ESP_FAIL;
+            }
+            length -= 3;
+
+            // Clamp to available buffer space to avoid overflow on malformed frames
+            size_t max_payload = (sizeof(pn532_packetbuffer) > 8) ? (sizeof(pn532_packetbuffer) - 8) : 0;
+            if (length > max_payload) {
+                length = (uint8_t)max_payload;
+            }
+            if (length > *response_length) {
+                length = *response_length; // silent truncation...
+            }
+
+            for (i = 0; i < length; ++i) {
+                response[i] = pn532_packetbuffer[8 + i];
+            }
+            *response_length = length;
+
+            return ESP_OK;
+        } else {
+          if (!s_quiet) ESP_LOGI(TAG, "INDATAEXCHANGE unexpected response CMD=0x%02X", pn532_packetbuffer[6]);
+          return ESP_FAIL;
+      }
+   } else {
+      if (!s_quiet) ESP_LOGI(TAG, "INDATAEXCHANGE preamble missing");
+      return ESP_FAIL;
+  }
+}
+
+ esp_err_t pn532_in_communicate_thru(pn532_io_handle_t io_handle,
+                                    const uint8_t *send_buffer,
+                                    uint8_t send_buffer_length,
+                                    uint8_t *response,
+                                    uint8_t *response_length) {
+    if (send_buffer_length > PN532_COMMAND_BUFFER_LEN - 1) {
+      if (!s_quiet) ESP_LOGI(TAG, "InCommunicateThru APDU too long");
+      return ESP_ERR_INVALID_ARG;
+  }
+
+    pn532_packetbuffer[0] = PN532_COMMAND_INCOMMUNICATETHRU;
+    for (uint8_t i = 0; i < send_buffer_length; ++i) {
+        pn532_packetbuffer[1 + i] = send_buffer[i];
+    }
+
+    esp_err_t err = pn532_send_command_wait_ack(io_handle, pn532_packetbuffer, send_buffer_length + 1, PN532_WRITE_TIMEOUT);
+  if (ESP_OK != err) {
+      if (!s_quiet) ESP_LOGI(TAG, "Could not send InCommunicateThru APDU (err=%d)", err);
+      return err;
+  }
+
+    err = pn532_wait_ready(io_handle, s_thru_wait_ms);
+  if (ESP_OK != err) {
+      if (!s_quiet) ESP_LOGI(TAG, "InCommunicateThru response timeout");
+      return err;
+  }
+
+    err = pn532_read_data(io_handle, pn532_packetbuffer, sizeof(pn532_packetbuffer), PN532_READ_TIMEOUT);
+    if (ESP_OK != err)
+        return err;
+
+    if (pn532_packetbuffer[0] == 0 && pn532_packetbuffer[1] == 0 && pn532_packetbuffer[2] == 0xFF) {
+        uint8_t length = pn532_packetbuffer[3];
+        if (0 != ((pn532_packetbuffer[4] + length) & 0xFF)) {
+            if (!s_quiet) ESP_LOGI(TAG, "InCommunicateThru length check invalid len=0x%02X sum=0x%02X", length, pn532_packetbuffer[4]);
+            return ESP_FAIL;
+        }
+        if (pn532_packetbuffer[5] == PN532_PN532TOHOST && pn532_packetbuffer[6] == PN532_RESPONSE_INCOMMUNICATETHRU) {
+            if ((pn532_packetbuffer[7] & 0x3F) != 0x00) {
+                if (!s_quiet) ESP_LOGI(TAG, "InCommunicateThru status error: 0x%02X", pn532_packetbuffer[7]);
+                return ESP_FAIL;
+            }
+            // subtract TFI, CMD, status; validate and clamp
+            if (length < 3) {
+                if (!s_quiet) ESP_LOGI(TAG, "InCommunicateThru payload length underflow: %u", (unsigned)length);
+                return ESP_FAIL;
+            }
+            length -= 3;
+            size_t max_payload = (sizeof(pn532_packetbuffer) > 8) ? (sizeof(pn532_packetbuffer) - 8) : 0;
+            if (length > max_payload) length = (uint8_t)max_payload;
+            if (length > *response_length) length = *response_length;
+            memcpy(response, pn532_packetbuffer + 8, length);
+            *response_length = length;
+            return ESP_OK;
+        } else {
+            if (!s_quiet) ESP_LOGI(TAG, "Unexpected response to InCommunicateThru: 0x%02X", pn532_packetbuffer[6]);
+            return ESP_FAIL;
+        }
+    }
+    if (!s_quiet) ESP_LOGI(TAG, "InCommunicateThru preamble missing");
+    return ESP_FAIL;
+}
+
+void pn532_set_quiet(bool quiet) { s_quiet = quiet; }
+void pn532_set_indata_wait_timeout(int ms) { if (ms > 0) s_indata_wait_ms = ms; }
+void pn532_set_thru_wait_timeout(int ms) { if (ms > 0) s_thru_wait_ms = ms; }
+void pn532_set_inlist_wait_timeout(int ms) { if (ms > 0) s_inlist_wait_ms = ms; }
+
  esp_err_t pn532_in_list_passive_target(pn532_io_handle_t io_handle) {
      pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
      pn532_packetbuffer[1] = 1;
@@ -366,7 +439,7 @@
          return err;
      }
  
-     err = pn532_wait_ready(io_handle, 10000);
+     err = pn532_wait_ready(io_handle, s_inlist_wait_ms);
      if (ESP_OK != err)
          return err;
  

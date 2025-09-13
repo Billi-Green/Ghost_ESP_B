@@ -1,6 +1,3 @@
-// copied from managed_components variant
-// seriously what a pain
-
 #ifndef PN532_DRIVER_H
 #define PN532_DRIVER_H
 

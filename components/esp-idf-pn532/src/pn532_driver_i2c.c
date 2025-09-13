@@ -161,6 +161,10 @@ esp_err_t pn532_write(pn532_io_handle_t io_handle, const uint8_t *write_buffer, 
 {
     pn532_i2c_driver_config *driver_config = (pn532_i2c_driver_config *)io_handle->driver_data;
     if (!driver_config) return ESP_ERR_INVALID_ARG;
+    // Ensure we don't overflow the local frame buffer (prefix + payload + suffix)
+    if (write_size + 2 > sizeof(driver_config->frame_buffer)) {
+        return ESP_ERR_INVALID_SIZE;
+    }
     driver_config->frame_buffer[0] = 0;
     memcpy(driver_config->frame_buffer + 1, write_buffer, write_size);
     driver_config->frame_buffer[write_size + 1] = 0;

@@ -32,9 +32,18 @@ if("${IDF_TARGET}" STREQUAL "esp32s3")
     endif()
 endif()
 
-idf_component_register(SRCS ${sources}
-                       INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include"
-                       REQUIRES ${required_components})
+if(CONFIG_HAS_NFC)
+    idf_component_register(SRCS ${sources}
+                           INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include"
+                           REQUIRES ${required_components}
+                           EMBED_TXTFILES "mf_classic_dict.nfc")
+    # Signal to C code that the dictionary is embedded so it can reference linker symbols safely
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_MFC_DICT_EMBEDDED=1)
+else()
+    idf_component_register(SRCS ${sources}
+                           INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include"
+                           REQUIRES ${required_components})
+endif()
 
 # add compile definition for esp32s2 target to maintain legacy guards (needs COMPONENT_LIB)
 if("${IDF_TARGET}" STREQUAL "esp32s2")

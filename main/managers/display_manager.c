@@ -54,6 +54,10 @@
 #include "managers/fuel_gauge_manager.h"
 #endif
 
+// Global low-I2C activity mode. When true, subsystems should avoid I2C-heavy polling/logging
+// to reduce contention (e.g., while PN532 scanning/bruteforcing).
+static volatile bool g_low_i2c_mode = false;
+
 #ifdef CONFIG_HAS_FUEL_GAUGE
 // Background polling to avoid blocking LVGL timer with I2C operations
 static TaskHandle_t battery_poll_task_handle = NULL;
@@ -62,13 +66,40 @@ static volatile bool g_cached_batt_charging = false;
 static volatile bool g_cached_batt_valid = false;
 static void battery_poll_task(void *arg) {
   fuel_gauge_data_t fg;
+  uint8_t last_pct = 0xFF;
+  bool last_chg = false;
+  int stable = 0;
+  uint32_t delay_ms = 2000;
   for (;;) {
+    // In low-I2C mode, pause polling to avoid I2C contention
+    if (g_low_i2c_mode) {
+      vTaskDelay(pdMS_TO_TICKS(5000));
+      continue;
+    }
     if (fuel_gauge_manager_get_data(&fg)) {
       g_cached_batt_percent = (uint8_t)fg.percentage;
       g_cached_batt_charging = fg.is_charging;
       g_cached_batt_valid = true;
+      if (last_pct == g_cached_batt_percent && last_chg == g_cached_batt_charging) {
+        if (stable < 6) stable++;
+      } else {
+        stable = 0;
+      }
+      last_pct = g_cached_batt_percent;
+      last_chg = g_cached_batt_charging;
     }
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (!g_cached_batt_valid) {
+      delay_ms = 2000;
+    } else if (g_cached_batt_charging) {
+      delay_ms = 1000;
+    } else if (stable >= 6) {
+      delay_ms = 15000;
+    } else if (stable >= 3) {
+      delay_ms = 5000;
+    } else {
+      delay_ms = 2000;
+    }
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
 }
 #endif
@@ -305,6 +336,29 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
         return result;
     }
 
+    // Cache for non-fuel-gauge configurations to avoid I2C access in low mode
+    static uint8_t last_pct_cache = 0;
+    static bool last_chg_cache = false;
+    static bool last_valid_cache = false;
+
+    // When low-I2C mode is active, avoid any fresh I2C queries here.
+    // For fuel-gauge configs, we already maintain cached values via the background task.
+    if (g_low_i2c_mode) {
+#ifdef CONFIG_HAS_FUEL_GAUGE
+        if (g_cached_batt_valid) {
+            *percentage = g_cached_batt_percent;
+            *is_charging = g_cached_batt_charging;
+            return true;
+        }
+#endif
+        if (last_valid_cache) {
+            *percentage = last_pct_cache;
+            *is_charging = last_chg_cache;
+            return true;
+        }
+        return false;
+    }
+
 #ifdef CONFIG_HAS_FUEL_GAUGE
     // Use cached fuel gauge values updated by background task (non-blocking)
     if (g_cached_batt_valid) {
@@ -323,9 +377,22 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
     *is_charging = isCharging();
     result = true;
 #endif
-    ESP_LOGI(TAG, "get_battery_info %d%%, Charging: %d", *percentage, *is_charging);
+    ESP_LOGD(TAG, "get_battery_info %d%%, Charging: %d", *percentage, *is_charging);
+
+    // Update local cache for non-fuel-gauge builds
+#if !defined(CONFIG_HAS_FUEL_GAUGE)
+    if (result) {
+        last_pct_cache = *percentage;
+        last_chg_cache = *is_charging;
+        last_valid_cache = true;
+    }
+#endif
 
     return result;
+}
+
+void display_manager_set_low_i2c_mode(bool on) {
+    g_low_i2c_mode = on;
 }
 
 void fade_out_cb(void *obj, int32_t v) {

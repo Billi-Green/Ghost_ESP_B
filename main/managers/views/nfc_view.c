@@ -1,4 +1,3 @@
-// new nfc_view.c - simple NFC view based on options_screen layout
 #include "managers/display_manager.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/settings_manager.h"
@@ -20,6 +19,10 @@
 #include "managers/nfc/ntag_t2.h"
 #include "managers/nfc/mifare_classic.h"
 #endif
+
+// UI hook from MIFARE Classic layer to indicate sector/block/key phase
+// (implementation declared later after static variables are defined)
+void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys);
 
 // Forward declaration of this view instance for internal references
 extern View nfc_view;
@@ -65,6 +68,10 @@ static const uint32_t theme_palettes[15][6] = {
     {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
 };
 
+// UI hook from MIFARE Classic layer to indicate sector/block/key phase
+// (implementation moved below after static phase variables are declared)
+void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys);
+
 static int button_height_global = 0;
 static bool is_small_screen_global = false;
 
@@ -73,14 +80,71 @@ static lv_obj_t *nfc_scan_popup = NULL;
 static lv_obj_t *nfc_scan_cancel_btn = NULL;
 static lv_obj_t *nfc_scan_more_btn = NULL;
 static lv_obj_t *nfc_scan_save_btn = NULL;
+static lv_obj_t *nfc_scan_attack_btn = NULL;
 static lv_obj_t *nfc_title_label = NULL;
 static lv_obj_t *nfc_uid_label = NULL;
 static lv_obj_t *nfc_type_label = NULL;
 static lv_obj_t *nfc_details_label = NULL;
+// Progress bar removed; we will update title and text instead
+// Track dictionary brute-force phase for richer UI status
+static int mfc_phase_sector = -1;
+static int mfc_phase_first_block = -1;
+static bool mfc_phase_key_b = false;
+static int mfc_phase_total = 0;
 static int nfc_popup_selected = 0; // 0 = Cancel, 1 = More (when available)
 static bool nfc_more_visible = false;
 static bool nfc_details_visible = false;
 static bool nfc_save_visible = false;
+static bool nfc_attack_visible = false;
+// When true, the MFC layer is performing a second-pass cache fill (live-read) after bruteforce.
+static bool nfc_cache_fill_phase = false;
+// When true, UI requests to skip dictionary attempts (basic read only)
+static bool nfc_dict_skip_requested = false;
+// When true, a tag was removed and we're waiting for re-present
+static bool nfc_paused = false;
+// When true, NFC details are ready and scan is complete
+static bool nfc_details_ready = false;
+
+// Async setter for paused title/state
+static void nfc_set_paused_async(void *ptr) {
+    bool on = (ptr != NULL);
+    nfc_paused = on;
+    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        if (on) {
+            lv_label_set_text(nfc_title_label, "Paused - present tag to continue");
+        } else {
+            // Restore appropriate title depending on phase
+            if (nfc_cache_fill_phase) lv_label_set_text(nfc_title_label, "Reading sectors... 0%");
+            else if (!nfc_details_visible) lv_label_set_text(nfc_title_label, "Bruteforcing keys... 0%");
+            else { lv_label_set_text(nfc_title_label, "NFC Tag"); lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22); }
+        }
+    }
+}
+
+// Exposed to MFC layer
+void mfc_ui_set_paused(bool on) {
+    lv_async_call(nfc_set_paused_async, on ? (void*)1 : NULL);
+}
+
+// Async setter for cache fill phase title/state
+static void nfc_set_cache_mode_async(void *ptr) {
+    bool on = (ptr != NULL);
+    nfc_cache_fill_phase = on;
+    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        if (on) lv_label_set_text(nfc_title_label, "Reading sectors... 0%");
+        else { lv_label_set_text(nfc_title_label, "NFC Tag"); lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22); }
+    }
+}
+
+// Exposed to MFC layer to toggle cache-fill phase
+void mfc_ui_set_cache_mode(bool on) {
+    lv_async_call(nfc_set_cache_mode_async, on ? (void*)1 : NULL);
+}
+
+#ifdef CONFIG_HAS_NFC
+// Exposed for mifare_classic.c to honor UI skip request (weak extern there)
+bool nfc_is_dict_skip_requested(void) { return nfc_dict_skip_requested; }
+#endif
 static void nfc_scan_cancel_cb(lv_event_t *e);
 static void nfc_scan_more_cb(lv_event_t *e);
 static void nfc_scan_save_cb(lv_event_t *e);
@@ -89,21 +153,113 @@ static void cleanup_nfc_scan_popup(void *obj);
 static void update_nfc_popup_selection(void);
 static void update_nfc_buttons_layout(void);
 static void nfc_show_details_view(bool show);
-static void write_flipper_nfc_file(void);
+static bool write_flipper_nfc_file(void);
 // Worker task helpers
 static void nfc_save_task(void *arg);
 static void nfc_save_done_async(void *ptr);
+// Deferred scan start if previous scan task hasn't exited yet
+static void nfc_try_start_scan_timer_cb(lv_timer_t *t);
 
-// Cross-task flags
+// Dictionary progress callback -> UI updater
+static void nfc_progress_update_async(void *ptr);
+// UI hook from MIFARE Classic layer to indicate sector/block/key phase (implementation)
+void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) {
+    // just update phase state and schedule a 0%% progress update on LVGL thread
+    mfc_phase_sector = sector;
+    mfc_phase_first_block = first_block;
+    mfc_phase_key_b = key_b;
+    mfc_phase_total = total_keys;
+    typedef struct { int c; int t; } dict_prog_t;
+    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
+    if (dp) { dp->c = 0; dp->t = total_keys; lv_async_call(nfc_progress_update_async, dp); }
+}
+static void mfc_dict_progress_cb(int current, int total, void *user) {
+    (void)user;
+    if (total <= 0) return;
+    int percent = (current * 100) / total;
+    if (percent < 0) { percent = 0; }
+    if (percent > 100) { percent = 100; }
+    static int last_percent = -1;
+    if (percent == last_percent) return;
+    last_percent = percent;
+    typedef struct { int c; int t; } dict_prog_t;
+    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
+    if (!dp) return;
+    dp->c = current; dp->t = total;
+    lv_async_call(nfc_progress_update_async, dp);
+}
+
+static void nfc_progress_update_async(void *ptr) {
+    if (!ptr) return;
+    typedef struct { int c; int t; } dict_prog_t;
+    dict_prog_t *dp = (dict_prog_t*)ptr;
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(dp); return; }
+    int percent = 0; if (dp->t > 0) percent = (dp->c * 100) / dp->t; if (percent > 100) percent = 100; if (percent < 0) percent = 0;
+    // Compose phase suffix e.g., "Sec 3 Blk 12 Key A"
+    char phase[40];
+    if (mfc_phase_sector >= 0 && mfc_phase_first_block >= 0) {
+        snprintf(phase, sizeof(phase), " | Sec %d Blk %d Key %c", mfc_phase_sector, mfc_phase_first_block, mfc_phase_key_b ? 'B' : 'A');
+    } else {
+        phase[0] = '\0';
+    }
+    // Update title with progress only (no phase in title)
+    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        char title[80];
+        if (nfc_paused) snprintf(title, sizeof(title), "Paused - present tag to continue");
+        else if (nfc_cache_fill_phase) snprintf(title, sizeof(title), "Reading sectors... %d%%", percent);
+        else if (nfc_dict_skip_requested) snprintf(title, sizeof(title), "Basic read (skipping dict) ...");
+        else if (nfc_details_ready) snprintf(title, sizeof(title), "NFC Tag");
+        else snprintf(title, sizeof(title), "Bruteforcing keys... %d%%", percent);
+        lv_label_set_text(nfc_title_label, title);
+        if (nfc_details_ready) lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
+    }
+    // While bruteforcing, repurpose More button as Skip (label only; callback decides behavior)
+    // Only show Skip button if we're actively bruteforcing (not completed)
+    if (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested && !nfc_details_ready && 
+        nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+        lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
+        nfc_more_visible = true;
+        // Change label to "Skip"
+        lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
+        if (lbl) lv_label_set_text(lbl, "Skip");
+        update_nfc_buttons_layout();
+        update_nfc_popup_selection();
+    }
+    // Replace UID/Type lines with sector/block and key when phase is valid
+    if (mfc_phase_sector >= 0 && mfc_phase_first_block >= 0) {
+        if (nfc_uid_label && lv_obj_is_valid(nfc_uid_label)) {
+            char l1[32];
+            snprintf(l1, sizeof(l1), "Sec %d Blk %d", mfc_phase_sector, mfc_phase_first_block);
+            lv_label_set_text(nfc_uid_label, l1);
+        }
+        if (nfc_type_label && lv_obj_is_valid(nfc_type_label)) {
+            char l2[16];
+            snprintf(l2, sizeof(l2), "Key %c", mfc_phase_key_b ? 'B' : 'A');
+            lv_label_set_text(nfc_type_label, l2);
+        }
+    }
+    // If details text is visible, show numeric progress and phase too
+    if (nfc_details_label && lv_obj_is_valid(nfc_details_label)) {
+        char info[96];
+        if (dp->t > 0) snprintf(info, sizeof(info), "Dictionary: %d/%d (%d%%)%s", dp->c, dp->t, percent, phase);
+        else snprintf(info, sizeof(info), "Dictionary: %d (unknown total)%s", dp->c, phase);
+        lv_label_set_text(nfc_details_label, info);
+    }
+    free(dp);
+}
+
 static volatile bool nfc_scan_cancel = false;
 static volatile bool nfc_save_in_progress = false;
+static volatile bool nfc_attack_in_progress = false;
+
+// Expose cancel status to MIFARE Classic layer (cooperative cancellation)
+bool nfc_is_scan_cancelled(void) { return nfc_scan_cancel; }
 
 #ifdef CONFIG_HAS_NFC
 static pn532_io_handle_t g_pn532 = NULL;
 static pn532_io_t g_pn532_instance;
 static TaskHandle_t nfc_scan_task_handle = NULL;
 static char *nfc_details_text = NULL;
-static bool nfc_details_ready = false;
 static uint8_t g_uid[10] = {0};
 static uint8_t g_uid_len = 0;
 static uint16_t g_atqa = 0;
@@ -129,10 +285,42 @@ static void nfc_set_details_async(void *ptr) {
     ndef_details_result_t *res = (ndef_details_result_t *)ptr;
     nfc_details_text = res->text;
     nfc_details_ready = true;
+    // Reset phase state and update summary labels to indicate completion
+    mfc_phase_sector = -1;
+    mfc_phase_first_block = -1;
+    // Revert label back to More after bruteforce completes
+    if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+        lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
+        if (lbl) lv_label_set_text(lbl, "More");
+        lv_obj_clear_state(nfc_scan_more_btn, LV_STATE_DISABLED);
+    }
+    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        lv_label_set_text(nfc_title_label, "NFC Tag");
+        lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
+    }
+    if (!nfc_details_visible) {
+        if (nfc_type_label && lv_obj_is_valid(nfc_type_label)) {
+            lv_label_set_text(nfc_type_label, "Scan complete - press More");
+        }
+    }
     // If already showing details, update label
     if (nfc_details_visible && nfc_details_label && lv_obj_is_valid(nfc_details_label)) {
         lv_label_set_text(nfc_details_label, nfc_details_text);
     }
+    // Reset dict-skip flag for next scans
+    nfc_dict_skip_requested = false;
+
+    // Reveal Save button now that details (and cache) are ready
+    if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn) && !nfc_save_visible) {
+        lv_obj_clear_flag(nfc_scan_save_btn, LV_OBJ_FLAG_HIDDEN);
+        nfc_save_visible = true;
+        update_nfc_buttons_layout();
+        update_nfc_popup_selection();
+    }
+
+    // Resume normal I2C activity now that scanning/bruteforce has finished
+    display_manager_set_low_i2c_mode(false);
+
     free(res);
 }
 
@@ -141,12 +329,17 @@ static void nfc_set_details_async(void *ptr) {
 static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, uint8_t uid_len) {
     // Prefer MIFARE Classic summary if SAK indicates Classic
     if (mfc_is_classic_sak(g_sak)) {
+        mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
+        if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) lv_label_set_text(nfc_title_label, "Bruteforcing keys... 0%");
+        // Reduce I2C contention during PN532 scanning/bruteforce
+        display_manager_set_low_i2c_mode(true);
         char *text = mfc_build_details_summary(io, uid, uid_len, g_atqa, g_sak);
         if (!text) return;
         ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
         if (!res) { free(text); return; }
         res->text = text; res->text_len = strlen(text);
         lv_async_call(nfc_set_details_async, res);
+        mfc_set_progress_callback(NULL, NULL);
         return;
     }
 
@@ -195,10 +388,7 @@ static void nfc_update_labels_async(void *uid_buf) {
         lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
         nfc_more_visible = true;
     }
-    if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn) && !nfc_save_visible) {
-        lv_obj_clear_flag(nfc_scan_save_btn, LV_OBJ_FLAG_HIDDEN);
-        nfc_save_visible = true;
-    }
+    // Save remains hidden until details are ready (shown in nfc_set_details_async)
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
     free(uid);
@@ -279,10 +469,14 @@ static void nfc_scan_task(void *arg) {
 
     // Release PN532 resources when scan stops (either by cancel or completion)
     if (g_pn532) {
-        ESP_LOGI(TAGT, "scan_task: releasing PN532 (cancel=%d)", nfc_scan_cancel);
-        pn532_release(g_pn532);
-        pn532_delete_driver(g_pn532);
-        g_pn532 = NULL;
+        if (nfc_scan_cancel) {
+            ESP_LOGI(TAGT, "scan_task: releasing PN532 (cancel=%d)", nfc_scan_cancel);
+            pn532_release(g_pn532);
+            pn532_delete_driver(g_pn532);
+            g_pn532 = NULL;
+        } else {
+            ESP_LOGI(TAGT, "scan_task: keeping PN532 for Save (cancel=%d)", nfc_scan_cancel);
+        }
     }
     nfc_scan_task_handle = NULL;
     ESP_LOGI(TAGT, "scan_task: exit");
@@ -584,9 +778,16 @@ static void cleanup_nfc_scan_popup(void *obj) {
 #ifdef CONFIG_HAS_NFC
     // Signal the scan task to exit gracefully (avoid calling LVGL from that task)
     nfc_scan_cancel = true;
+    // If scan task already ended, release PN532 here to avoid leaking the handle
+    if (g_pn532 && nfc_scan_task_handle == NULL) {
+        pn532_release(g_pn532);
+        pn532_delete_driver(g_pn532);
+        g_pn532 = NULL;
+    }
     if (nfc_details_text) { free(nfc_details_text); nfc_details_text = NULL; }
     nfc_details_ready = false;
     nfc_details_visible = false;
+    mfc_set_progress_callback(NULL, NULL);
 #endif
     ESP_LOGI(TAG, "cleanup_nfc_scan_popup: end (task=%p, cancel=%d)", (void*)nfc_scan_task_handle, nfc_scan_cancel);
 }
@@ -596,7 +797,22 @@ static void nfc_scan_cancel_cb(lv_event_t *e) {
 }
 
 static void nfc_scan_more_cb(lv_event_t *e) {
-    // Toggle details view
+    (void)e;
+    // If bruteforcing is active, treat More as Skip (basic read)
+    if (!nfc_dict_skip_requested && mfc_phase_sector >= 0) {
+        nfc_dict_skip_requested = true;
+        if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+            lv_label_set_text(nfc_title_label, "Basic read (skipping dict) ...");
+        }
+        // Update button to reflect action taken
+        if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+            lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
+            if (lbl) lv_label_set_text(lbl, "Skipping...");
+            lv_obj_add_state(nfc_scan_more_btn, LV_STATE_DISABLED);
+        }
+        return;
+    }
+    // Otherwise toggle details view
     if (!nfc_details_visible) nfc_show_details_view(true);
     else nfc_show_details_view(false);
 }
@@ -610,16 +826,19 @@ static void nfc_scan_save_cb(lv_event_t *e) {
     if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
         lv_obj_add_state(nfc_scan_save_btn, LV_STATE_DISABLED);
     }
-    xTaskCreate(nfc_save_task, "nfc_save", 4096, NULL, 5, NULL);
+#ifdef CONFIG_HAS_NFC
+    mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
+#endif
+    xTaskCreate(nfc_save_task, "nfc_save", 6144, NULL, 5, NULL);
 }
 
-static void write_flipper_nfc_file(void) {
+static bool write_flipper_nfc_file(void) {
     const char *dir = "/mnt/ghostesp/nfc";
     sd_card_create_directory(dir);
 #ifdef CONFIG_HAS_NFC
     if (g_uid_len == 0 || g_pn532 == NULL) {
         ESP_LOGW(TAG, "No NFC UID/driver to save");
-        return;
+        return false;
     }
 
     // Build filename: <Model>_<UID>.nfc
@@ -630,18 +849,25 @@ static void write_flipper_nfc_file(void) {
         if (i + 1 < g_uid_len) up += snprintf(uid_part + up, sizeof(uid_part) - up, "-");
     }
     char path[192];
-    if (!mfc_is_classic_sak(g_sak)) {
-        const char *model_str = ntag_t2_model_str(g_model);
-        snprintf(path, sizeof(path), "%s/%s_%s.nfc", dir, model_str, uid_part);
+
+    if (mfc_is_classic_sak(g_sak)) {
+        // Prefer cached save (io=NULL) so user can save without card present
+        bool ok = mfc_save_flipper_file(NULL, g_uid, g_uid_len, g_atqa, g_sak, dir, NULL, 0);
+        if (!ok && g_pn532) {
+            ESP_LOGW(TAG, "Offline save failed; retrying with live PN532");
+            ok = mfc_save_flipper_file(g_pn532, g_uid, g_uid_len, g_atqa, g_sak, dir, NULL, 0);
+        }
+        if (!ok) {
+            ESP_LOGE(TAG, "Failed to save Mifare Classic file");
+            return false;
+        }
+        ESP_LOGI(TAG, "Mifare Classic file saved");
+        return true;
     }
 
-    // If MIFARE Classic, write MIFARE Classic file format
-    if (mfc_is_classic_sak(g_sak)) {
-        bool ok = mfc_save_flipper_file(g_pn532, g_uid, g_uid_len, g_atqa, g_sak, dir, NULL, 0);
-        if (!ok) ESP_LOGE(TAG, "Failed to save Mifare Classic file");
-        else ESP_LOGI(TAG, "Mifare Classic file saved");
-        return;
-    }
+    // Non-Classic (NTAG/Ultralight) path
+    const char *model_str = ntag_t2_model_str(g_model);
+    snprintf(path, sizeof(path), "%s/%s_%s.nfc", dir, model_str, uid_part);
 
     // Determine total pages by model (NTAG/Ultralight)
     int pages_total = 0;
@@ -666,12 +892,11 @@ static void write_flipper_nfc_file(void) {
     pos += snprintf(buf + pos, sizeof(buf) - pos, "ATQA: %02X %02X\n", (g_atqa >> 8) & 0xFF, g_atqa & 0xFF);
     pos += snprintf(buf + pos, sizeof(buf) - pos, "SAK: %02X\n", g_sak);
     pos += snprintf(buf + pos, sizeof(buf) - pos, "Data format version: 2\n");
-    const char *model_str = ntag_t2_model_str(g_model);
     pos += snprintf(buf + pos, sizeof(buf) - pos, "NTAG/Ultralight type: %s\n", model_str);
 
     if (sd_card_write_file(path, buf, (size_t)pos) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write header: %s", path);
-        return;
+        return false;
     }
 
     // Signature (32 bytes)
@@ -693,7 +918,9 @@ static void write_flipper_nfc_file(void) {
 
     // Counters and tearing flags
     for (int ci = 0; ci < 3; ++ci) {
-        uint32_t cv = 0; uint8_t tr = 0; esp_err_t erc = ntag2xx_read_counter(g_pn532, (uint8_t)ci, &cv); esp_err_t ert = ntag2xx_read_tearing(g_pn532, (uint8_t)ci, &tr);
+        uint32_t cv = 0; uint8_t tr = 0;
+        esp_err_t erc = ntag2xx_read_counter(g_pn532, (uint8_t)ci, &cv);
+        esp_err_t ert = ntag2xx_read_tearing(g_pn532, (uint8_t)ci, &tr);
         pos = 0; pos += snprintf(buf + pos, sizeof(buf) - pos, "Counter %d: %u\n", ci, (erc == ESP_OK) ? (unsigned)cv : 0);
         pos += snprintf(buf + pos, sizeof(buf) - pos, "Tearing %d: %02X\n", ci, (ert == ESP_OK) ? tr : 0);
         sd_card_append_file(path, buf, (size_t)pos);
@@ -704,7 +931,7 @@ static void write_flipper_nfc_file(void) {
     char *pages = (char*)malloc(cap);
     if (!pages) {
         ESP_LOGE(TAG, "OOM building page dump");
-        return;
+        return false;
     }
     int ppos = 0; int pages_read = 0;
     for (int pg = 0; pg < pages_total; pg += 4) {
@@ -734,8 +961,10 @@ static void write_flipper_nfc_file(void) {
     sd_card_append_file(path, footer, strlen(footer));
 
     ESP_LOGI(TAG, "NFC file saved: %s", path);
+    return true;
 #else
     ESP_LOGW(TAG, "NFC not enabled; nothing to save");
+    return false;
 #endif
 }
 
@@ -745,8 +974,8 @@ static void create_nfc_scan_popup(void) {
         cleanup_nfc_scan_popup(NULL);
     }
     if (!root || !lv_obj_is_valid(root)) return;
-    // Reset scan cancel flag before starting a new scan
-    nfc_scan_cancel = false;
+    // We'll reset the cancel flag right before (re)starting the scan task
+    nfc_dict_skip_requested = false;
     nfc_scan_popup = lv_obj_create(root);
     // scale to screen, leave margin for status bar and edges
     int popup_w = LV_HOR_RES - 30;
@@ -787,6 +1016,8 @@ static void create_nfc_scan_popup(void) {
     lv_obj_set_style_text_color(nfc_type_label, lv_color_hex(0xCCCCCC), 0);
     lv_obj_set_style_text_font(nfc_type_label, body_font, 0);
     lv_obj_align(nfc_type_label, LV_ALIGN_TOP_MID, 0, 60);
+
+    // Progress indicators removed; we will update the title and details text instead
 
     // Cancel button
     nfc_scan_cancel_btn = lv_btn_create(nfc_scan_popup);
@@ -838,27 +1069,53 @@ static void create_nfc_scan_popup(void) {
 #ifdef CONFIG_HAS_NFC
     if (nfc_scan_task_handle == NULL) {
         ESP_LOGI(TAG, "create_nfc_scan_popup: starting scan task");
-        xTaskCreate(nfc_scan_task, "nfc_scan", 4096, NULL, 5, &nfc_scan_task_handle);
+        nfc_scan_cancel = false;
+        mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
+        xTaskCreate(nfc_scan_task, "nfc_scan", 6144, NULL, 5, &nfc_scan_task_handle);
+    } else {
+        // Previous task not fully exited yet; retry shortly
+        ESP_LOGW(TAG, "create_nfc_scan_popup: previous scan task still running, scheduling retry");
+        lv_timer_t *timer = lv_timer_create(nfc_try_start_scan_timer_cb, 120, NULL);
+        (void)timer;
     }
 #endif
 }
 
+#ifdef CONFIG_HAS_NFC
+static void nfc_try_start_scan_timer_cb(lv_timer_t *t) {
+    if (nfc_scan_task_handle == NULL) {
+        ESP_LOGI(TAG, "nfc_try_start_scan_timer_cb: starting scan task after prior exit");
+        nfc_scan_cancel = false;
+        mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
+        xTaskCreate(nfc_scan_task, "nfc_scan", 6144, NULL, 5, &nfc_scan_task_handle);
+        if (t) lv_timer_del(t);
+    }
+}
+#endif
+
 // Run heavy save on a worker task to avoid blocking LVGL thread
 static void nfc_save_task(void *arg) {
-    write_flipper_nfc_file();
-    // Notify UI on completion
-    lv_async_call(nfc_save_done_async, NULL);
+    bool ok = write_flipper_nfc_file();
+    // Notify UI on completion with result
+    bool *res = (bool*)malloc(sizeof(bool));
+    if (res) { *res = ok; lv_async_call(nfc_save_done_async, res); }
+    else { lv_async_call(nfc_save_done_async, NULL); }
     nfc_save_in_progress = false;
     vTaskDelete(NULL);
 }
 
 static void nfc_save_done_async(void *ptr) {
+    bool ok = (ptr != NULL) ? *((bool*)ptr) : false;
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
-        lv_label_set_text(nfc_title_label, "Saved!");
+        lv_label_set_text(nfc_title_label, ok ? "Saved!" : "Save failed");
     }
     if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
         lv_obj_clear_state(nfc_scan_save_btn, LV_STATE_DISABLED);
     }
+#ifdef CONFIG_HAS_NFC
+    mfc_set_progress_callback(NULL, NULL);
+#endif
+    if (ptr) free(ptr);
 }
 
 static void update_nfc_popup_selection(void) {

@@ -60,6 +60,7 @@ extern "C"
 #define PN532_COMMAND_TGGETTARGETSTATUS     (0x8A)
 
 #define PN532_RESPONSE_INDATAEXCHANGE       (0x41)
+#define PN532_RESPONSE_INCOMMUNICATETHRU    (0x43)
 #define PN532_RESPONSE_INLISTPASSIVETARGET  (0x4B)
 
 #define PN532_SPI_STATREAD                  (0x02)
@@ -117,6 +118,12 @@ esp_err_t pn532_read_passive_target_id_ex(pn532_io_handle_t io_handle,
                                        int32_t timeout);
 esp_err_t pn532_in_data_exchange(pn532_io_handle_t io_handle, const uint8_t *send_buffer, uint8_t send_buffer_length, uint8_t *response,
                                  uint8_t *response_length);
+// Raw frame exchange with the PICC, used for special sequences (e.g., magic backdoor, custom auth flows)
+esp_err_t pn532_in_communicate_thru(pn532_io_handle_t io_handle,
+                                    const uint8_t *send_buffer,
+                                    uint8_t send_buffer_length,
+                                    uint8_t *response,
+                                    uint8_t *response_length);
 esp_err_t pn532_in_list_passive_target(pn532_io_handle_t io_handle);
 esp_err_t ntag2xx_get_model(pn532_io_handle_t io_handle, NTAG2XX_MODEL *model);
 esp_err_t ntag2xx_authenticate(pn532_io_handle_t io_handle, uint8_t page, uint8_t *key, uint8_t *uid, uint8_t uid_length);
@@ -128,6 +135,14 @@ esp_err_t ntag2xx_get_version(pn532_io_handle_t io_handle, uint8_t version_out[8
 esp_err_t ntag2xx_read_signature(pn532_io_handle_t io_handle, uint8_t sig_out[32]);
 esp_err_t ntag2xx_read_counter(pn532_io_handle_t io_handle, uint8_t counter_index, uint32_t *value_out);
 esp_err_t ntag2xx_read_tearing(pn532_io_handle_t io_handle, uint8_t counter_index, uint8_t *tearing_out);
+
+// Control verbose logging inside PN532 driver to speed up tight loops
+void pn532_set_quiet(bool quiet);
+// Tune internal wait_ready timeouts used by INDATAEXCHANGE and INCOMMUNICATETHRU
+void pn532_set_indata_wait_timeout(int ms);
+void pn532_set_thru_wait_timeout(int ms);
+// Tune wait_ready timeout used by INLISTPASSIVETARGET
+void pn532_set_inlist_wait_timeout(int ms);
 
 #ifdef __cplusplus
 }
