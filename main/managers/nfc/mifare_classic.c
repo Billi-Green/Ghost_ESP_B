@@ -5,6 +5,7 @@
 #include "managers/sd_card_manager.h"
 #include "esp_log.h"
 #include "pn532.h"
+#include "managers/fuel_gauge_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -1350,9 +1351,11 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
     mfc_enable_debug_once();
     // Set PN532 timings suitable for repeated AUTH attempts
     pn532_set_quiet(true);
-    pn532_set_indata_wait_timeout(100);
-    pn532_set_thru_wait_timeout(1000);
-    pn532_set_inlist_wait_timeout(100);
+    pn532_set_indata_wait_timeout(20);
+    pn532_set_thru_wait_timeout(100);
+    pn532_set_inlist_wait_timeout(40);
+    // Avoid I2C contention: pause fuel gauge polling while we run tight NFC loops
+    fuel_gauge_manager_set_paused(true);
     MFC_TYPE t = mfc_type_from_sak(sak);
     int sectors = mfc_sector_count(t);
     if (sectors == 0) sectors = 16; // fallback
@@ -1506,7 +1509,7 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
         mfc_cache_complete_with_save_logic(io, uid, uid_len, sak);
     }
 
-    size_t cap = 1024; char *out = (char*)malloc(cap); if (!out) return NULL;
+    size_t cap = 1024; char *out = (char*)malloc(cap); if (!out) { fuel_gauge_manager_set_paused(false); return NULL; }
     char *w = out; size_t rem = cap; int n = 0;
     n = snprintf(w, rem, "Card: %s | UID:", mfc_type_str(t)); w += n; rem -= n;
     for (uint8_t i = 0; i < uid_len && rem > 4; ++i) { n = snprintf(w, rem, " %02X", uid[i]); w += n; rem -= n; }
@@ -1527,5 +1530,6 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
     }
     // Avoid unused-variable warnings for a_cnt/b_cnt (kept for logs/metrics above)
     (void)a_cnt; (void)b_cnt;
+    fuel_gauge_manager_set_paused(false);
     return out;
 }

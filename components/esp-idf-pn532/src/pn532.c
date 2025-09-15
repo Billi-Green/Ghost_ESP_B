@@ -15,9 +15,9 @@
  
  static const char TAG[] = "PN532";
  static bool s_quiet = false;
- static int s_indata_wait_ms = 100;  // default
- static int s_thru_wait_ms = 800;   // default
- static int s_inlist_wait_ms = 250; // default for in_list
+ static int s_indata_wait_ms = 20;  // default
+ static int s_thru_wait_ms = 100;   // default
+ static int s_inlist_wait_ms = 40; // default for in_list
  
  const uint8_t pn532response_firmwarevers[] = {0x00, 0xFF, 0x06, 0xFA, 0xD5, 0x03};
  

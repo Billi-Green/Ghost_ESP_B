@@ -52,6 +52,7 @@ static const char *TAG = "FuelGaugeManager";
 static bool is_initialized = false;
 static bool i2c_initialized_by_us = false;
 static fuel_gauge_data_t last_data = {0};
+static volatile bool s_paused = false;
 
 #if CONFIG_PM_ENABLE
 static esp_pm_lock_handle_t fg_i2c_pm_lock = NULL;
@@ -368,8 +369,20 @@ bool fuel_gauge_manager_init(void) {
     return true;
 }
 
+void fuel_gauge_manager_set_paused(bool paused) {
+    s_paused = paused;
+}
+
 bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     if (!is_initialized || !data) {
+        return false;
+    }
+
+    if (s_paused) {
+        if (last_data.is_initialized) {
+            memcpy(data, &last_data, sizeof(fuel_gauge_data_t));
+            return true;
+        }
         return false;
     }
 
@@ -525,5 +538,6 @@ int fuel_gauge_manager_get_percentage(void) { return -1; }
 bool fuel_gauge_manager_is_charging(void) { return false; }
 uint16_t fuel_gauge_manager_get_voltage_mv(void) { return 0; }
 void fuel_gauge_manager_deinit(void) {}
+void fuel_gauge_manager_set_paused(bool paused) { (void)paused; }
 
 #endif

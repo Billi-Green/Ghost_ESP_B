@@ -131,7 +131,7 @@ esp_err_t pn532_wait_ready(pn532_io_handle_t io_handle, int32_t timeout)
     TickType_t elapsed_ticks = 0;
     while (elapsed_ticks <= timeout_ticks) {
         if (io_handle->pn532_is_ready(io_handle) == ESP_OK) return ESP_OK;
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(1));
         elapsed_ticks = xTaskGetTickCount() - start_ticks;
     }
     return ESP_ERR_TIMEOUT;
