@@ -6,6 +6,7 @@
 
 - NFC Capability
   - Read NTAG213/215/216 (Type 2) with NDEF parsing
+  - Write NTAG213/215/216 (Type 2) from .nfc files
   - Save to Flipper .nfc format (fully compatible)
   - MIFARE Classic (Mini/1K/4K) support:
     - Flipper's 1000+ key dictionary attack

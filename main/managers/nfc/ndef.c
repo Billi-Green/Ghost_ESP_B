@@ -67,6 +67,31 @@ static const char* ndef_uri_prefix[] = {
     [0x23] = "urn:nfc:",
 };
 
+static char lowerc(char c) { return (c >= 'A' && c <= 'Z') ? (c + 32) : c; }
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+static void append_percent_decoded(const char *s, size_t len, char **out, size_t *cap) {
+    size_t i = 0;
+    while (i < len && *cap > 1) {
+        char c = s[i++];
+        if (c == '%' && i + 1 < len) {
+            int h1 = hexval(s[i]);
+            int h2 = (i + 1 < len) ? hexval(s[i + 1]) : -1;
+            if (h1 >= 0 && h2 >= 0) {
+                char d = (char)((h1 << 4) | h2);
+                **out = d; (*out)++; (*cap)--; i += 2; continue;
+            }
+        } else if (c == '+') {
+            **out = ' '; (*out)++; (*cap)--; continue;
+        }
+        **out = c; (*out)++; (*cap)--;
+    }
+}
+
 static void parse_ndef_record(uint8_t tnf,
                               const uint8_t *type,
                               uint8_t type_len,
@@ -76,7 +101,56 @@ static void parse_ndef_record(uint8_t tnf,
                               size_t *cap) {
     if (tnf == 0x01 && type_len == 1 && type[0] == 'U' && payload_len >= 1) {
         uint8_t code = payload[0];
-        const char *pre = (code < (sizeof(ndef_uri_prefix) / sizeof(ndef_uri_prefix[0])) ? ndef_uri_prefix[code] : NULL);
+        const char *pre = (code < (sizeof(ndef_uri_prefix)/sizeof(ndef_uri_prefix[0]))) ? ndef_uri_prefix[code] : NULL;
+        const char *scheme = pre;
+        const char *rest = (const char *)(payload + 1);
+        size_t rest_len = (payload_len > 1) ? (payload_len - 1) : 0;
+        if (!scheme && rest_len >= 4 && lowerc(rest[0])=='s' && lowerc(rest[1])=='m' && lowerc(rest[2])=='s' && rest[3]==':') {
+            append_str(out, cap, "SMS ");
+            const char *num = rest + 4;
+            const char *q = memchr(num, '?', rest_len - 4);
+            size_t num_len = q ? (size_t)(q - num) : (size_t)rest_len - 4;
+            append_percent_decoded(num, num_len, out, cap);
+            if (q) {
+                const char *params = q + 1;
+                size_t params_len = (size_t)((rest + rest_len) - params);
+                const char *bodyk = NULL;
+                // bounded search for "body=" inside params
+                for (size_t i = 0; i + 5 <= params_len; ++i) {
+                    if (params[i] == 'b' && i + 5 <= params_len &&
+                        params[i+1] == 'o' && params[i+2] == 'd' && params[i+3] == 'y' && params[i+4] == '=') {
+                        bodyk = params + i + 5;
+                        break;
+                    }
+                }
+                if (bodyk) {
+                    const char *params_end = rest + rest_len;
+                    const char *amp = memchr(bodyk, '&', (size_t)(params_end - bodyk));
+                    size_t blen = amp ? (size_t)(amp - bodyk) : (size_t)(params_end - bodyk);
+                    append_str(out, cap, " - ");
+                    append_percent_decoded(bodyk, blen, out, cap);
+                }
+            }
+            append_str(out, cap, "\n");
+            return;
+        }
+        if (!scheme && rest_len >= 6 && lowerc(rest[0])=='s' && lowerc(rest[1])=='m' && lowerc(rest[2])=='s' && lowerc(rest[3])=='t' && lowerc(rest[4])=='o' && rest[5]==':') {
+            append_str(out, cap, "SMS ");
+            const char *p = rest + 6;
+            size_t p_len = rest_len - 6;
+            const char *col = memchr(p, ':', p_len);
+            if (col) {
+                append_percent_decoded(p, (size_t)(col - p), out, cap);
+                append_str(out, cap, " - ");
+                const char *msg = col + 1;
+                size_t msg_len = (size_t)((rest + rest_len) - msg);
+                append_percent_decoded(msg, msg_len, out, cap);
+            } else {
+                append_percent_decoded(p, p_len, out, cap);
+            }
+            append_str(out, cap, "\n");
+            return;
+        }
         if (pre && strcmp(pre, "tel:") == 0) append_str(out, cap, "TEL ");
         else if (pre && strcmp(pre, "mailto:") == 0) append_str(out, cap, "MAIL ");
         else append_str(out, cap, "URL ");

@@ -1511,12 +1511,21 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
     n = snprintf(w, rem, "Card: %s | UID:", mfc_type_str(t)); w += n; rem -= n;
     for (uint8_t i = 0; i < uid_len && rem > 4; ++i) { n = snprintf(w, rem, " %02X", uid[i]); w += n; rem -= n; }
     n = snprintf(w, rem, "\nATQA: %02X %02X | SAK: %02X\n", (atqa>>8)&0xFF, atqa&0xFF, sak); w+=n; rem-=n;
-    n = snprintf(w, rem, "Sectors: %d, Readable: %d (A:%d, B:%d)\n", sectors, readable, a_cnt, b_cnt); w+=n; rem-=n;
+    // Compute accurate key counts discovered so far
+    int found_a = 0, found_b = 0;
+    for (int i = 0; i < sectors; ++i) {
+        if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, i)) found_a++;
+        if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, i)) found_b++;
+    }
+    int keys_found = found_a + found_b;
+    int keys_total = sectors * 2;
+    n = snprintf(w, rem, "Keys %d/%d | Sectors %d/%d\n", keys_found, keys_total, readable, sectors); w+=n; rem-=n;
     if (spos > 0) {
         // Trim trailing space
         if (sec_buf[spos-1] == ' ') sec_buf[spos-1] = '\0';
-        n = snprintf(w, rem, "Keys: %s\n", sec_buf);
-        (void)n;
+        n = snprintf(w, rem, "Key map: %s\n", sec_buf); (void)n;
     }
+    // Avoid unused-variable warnings for a_cnt/b_cnt (kept for logs/metrics above)
+    (void)a_cnt; (void)b_cnt;
     return out;
 }
