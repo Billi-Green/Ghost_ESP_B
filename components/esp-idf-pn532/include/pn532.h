@@ -63,6 +63,11 @@ extern "C"
 #define PN532_RESPONSE_INCOMMUNICATETHRU    (0x43)
 #define PN532_RESPONSE_INLISTPASSIVETARGET  (0x4B)
 
+// Target (card emulation) responses
+#define PN532_RESPONSE_TGINITASTARGET        (0x8D)
+#define PN532_RESPONSE_TGGETDATA             (0x87)
+#define PN532_RESPONSE_TGSETDATA             (0x8F)
+
 #define PN532_SPI_STATREAD                  (0x02)
 #define PN532_SPI_DATAWRITE                 (0x01)
 #define PN532_SPI_DATAREAD                  (0x03)
@@ -129,6 +134,11 @@ esp_err_t ntag2xx_get_model(pn532_io_handle_t io_handle, NTAG2XX_MODEL *model);
 esp_err_t ntag2xx_authenticate(pn532_io_handle_t io_handle, uint8_t page, uint8_t *key, uint8_t *uid, uint8_t uid_length);
 esp_err_t ntag2xx_read_page(pn532_io_handle_t io_handle, uint8_t page, uint8_t *buffer, size_t read_len);
 esp_err_t ntag2xx_write_page(pn532_io_handle_t io_handle, uint8_t page, const uint8_t *data);
+
+// Target (card emulation) wrappers
+esp_err_t pn532_tg_init_as_target(pn532_io_handle_t io_handle);
+esp_err_t pn532_tg_get_data(pn532_io_handle_t io_handle, uint8_t *response, uint8_t *response_length, int32_t timeout);
+esp_err_t pn532_tg_set_data(pn532_io_handle_t io_handle, const uint8_t *data, uint8_t data_length, int32_t timeout);
 
 // Additional NTAG/Ultralight helpers
 esp_err_t ntag2xx_get_version(pn532_io_handle_t io_handle, uint8_t version_out[8]);

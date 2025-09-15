@@ -141,7 +141,8 @@ esp_err_t pn532_SAM_config(pn532_io_handle_t io_handle)
 {
     esp_err_t result;
     uint8_t response_buffer[10];
-    static const uint8_t sam_config_frame[] = { 0x14, 0x01, 0x00, 0x01 };
+    // 0x14 (SAMConfiguration), 0x01 (Normal mode), 0x14 (timeout 50ms*20 = ~1s), 0x01 (use IRQ)
+    static const uint8_t sam_config_frame[] = { 0x14, 0x01, 0x14, 0x01 };
     result = pn532_send_command_wait_ack(io_handle, sam_config_frame, sizeof(sam_config_frame), 1000);
     if (ESP_OK != result) return result;
     result = pn532_wait_ready(io_handle, 500);

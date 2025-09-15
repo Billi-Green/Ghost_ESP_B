@@ -493,7 +493,7 @@ void pn532_set_inlist_wait_timeout(int ms) { if (ms > 0) s_inlist_wait_ms = ms; 
  
      *model = NTAG2XX_UNKNOWN;
  
-     uint8_t page_mem[16];
+     uint8_t page_mem[16] = {0};
      esp_err_t err = ntag2xx_read_page(io_handle, 0, page_mem, sizeof(page_mem));
      if (err != ESP_OK)
          return err;
@@ -599,17 +599,12 @@ void pn532_set_inlist_wait_timeout(int ms) { if (ms > 0) s_inlist_wait_ms = ms; 
  
      uint8_t status = pn532_packetbuffer[7];
      // check error code of status byte
-     if ((status & 0x3F) == 0x00) {
-         memcpy(buffer, pn532_packetbuffer + 8, read_len);
-     }
-     else {
- #ifdef CONFIG_MIFAREDEBUG
-         ESP_LOGD(TAG, "Status byte indicates an error: 0x%02x", pn532_packetbuffer[7]);
- #endif
+     if ((status & 0x3F) != 0x00) {
+         if (!s_quiet) ESP_LOGI(TAG, "Status byte indicates an error: 0x%02x", pn532_packetbuffer[7]);
          return ESP_FAIL;
      }
  
-     /* Display data for debug if requested */
+     // Display data for debug if requested
  #ifdef CONFIG_MIFAREDEBUG
      ESP_LOGD(TAG, "Page %d", page);
      ESP_LOG_BUFFER_HEX_LEVEL(TAG, buffer, 4, ESP_LOG_DEBUG);
@@ -671,3 +666,137 @@ void pn532_set_inlist_wait_timeout(int ms) { if (ms > 0) s_inlist_wait_ms = ms; 
      err = pn532_read_data(io_handle, pn532_packetbuffer, 26, PN532_READ_TIMEOUT);
      return err;
  }
+
+// ----------------------------------------------------------------------------
+// Target (card emulation) wrappers
+// ----------------------------------------------------------------------------
+
+esp_err_t pn532_tg_init_as_target(pn532_io_handle_t io_handle)
+{
+    // Default target parameters modeled after Adafruit's AsTarget()
+    // See PN532 User Manual for TGINITASTARGET (0x8C) payload structure
+    static const uint8_t target_init_frame[] = {
+        PN532_COMMAND_TGINITASTARGET, // 0x8C
+        0x00,                         // MODE (bitfield)
+        0x08, 0x00,                   // SENS_RES (ATQA) for MIFARE params
+        0xDC, 0x44, 0x20,             // NFCID1T (3 bytes)
+        0x60,                         // SEL_RES (SAK)
+        // Felica params (POL_RES): NFCID2T must start with 0x01 0xFE
+        0x01, 0xFE,
+        // PAD and System Code
+        0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xC0,
+        0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7,
+        0xFF, 0xFF,                   // System code
+        // NFCID3t and historical bytes for ATR_RES (example payload)
+        0xAA, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44,
+        0x33, 0x22, 0x11, 0x01, 0x00,
+        // Historical bytes
+        0x0D, 0x52, 0x46, 0x49, 0x44, 0x49, 0x4F,
+        0x74, 0x20, 0x50, 0x4E, 0x35, 0x33, 0x32
+    };
+
+    esp_err_t err = pn532_send_command_wait_ack(io_handle, target_init_frame, sizeof(target_init_frame), PN532_WRITE_TIMEOUT);
+    if (ESP_OK != err) return err;
+
+    // Wait for response indicating target init completed
+    err = pn532_wait_ready(io_handle, 1000);
+    if (ESP_OK != err) return err;
+
+    // Read a small response frame
+    err = pn532_read_data(io_handle, pn532_packetbuffer, 16, PN532_READ_TIMEOUT);
+    if (ESP_OK != err) return err;
+
+    // Validate frame header and response code
+    if (pn532_packetbuffer[0] == 0 && pn532_packetbuffer[1] == 0 && pn532_packetbuffer[2] == 0xFF) {
+        if (pn532_packetbuffer[5] == PN532_PN532TOHOST && pn532_packetbuffer[6] == PN532_RESPONSE_TGINITASTARGET) {
+            return ESP_OK;
+        }
+        if (!s_quiet) ESP_LOGI(TAG, "TgInitAsTarget unexpected response: 0x%02X", pn532_packetbuffer[6]);
+        return ESP_FAIL;
+    }
+    if (!s_quiet) ESP_LOGI(TAG, "TgInitAsTarget preamble missing");
+    return ESP_FAIL;
+}
+
+esp_err_t pn532_tg_get_data(pn532_io_handle_t io_handle, uint8_t *response, uint8_t *response_length, int32_t timeout)
+{
+    if (!response || !response_length) return ESP_ERR_INVALID_ARG;
+    uint8_t cmd = PN532_COMMAND_TGGETDATA; // 0x86
+    esp_err_t err = pn532_send_command_wait_ack(io_handle, &cmd, 1, PN532_WRITE_TIMEOUT);
+    if (ESP_OK != err) return err;
+
+    if (timeout <= 0) timeout = 1000;
+    err = pn532_wait_ready(io_handle, timeout);
+    if (ESP_OK != err) return err;
+
+    err = pn532_read_data(io_handle, pn532_packetbuffer, sizeof(pn532_packetbuffer), PN532_READ_TIMEOUT);
+    if (ESP_OK != err) return err;
+
+    if (pn532_packetbuffer[0] == 0 && pn532_packetbuffer[1] == 0 && pn532_packetbuffer[2] == 0xFF) {
+        uint8_t length = pn532_packetbuffer[3];
+        if (0 != ((pn532_packetbuffer[4] + length) & 0xFF)) {
+            if (!s_quiet) ESP_LOGI(TAG, "TgGetData length check invalid");
+            return ESP_FAIL;
+        }
+        if (pn532_packetbuffer[5] == PN532_PN532TOHOST && pn532_packetbuffer[6] == PN532_RESPONSE_TGGETDATA) {
+            // Status byte
+            if ((pn532_packetbuffer[7] & 0x3F) != 0x00) {
+                if (!s_quiet) ESP_LOGI(TAG, "TgGetData status error: 0x%02X", pn532_packetbuffer[7]);
+                return ESP_FAIL;
+            }
+            if (length < 3) {
+                if (!s_quiet) ESP_LOGI(TAG, "TgGetData payload underflow: %u", (unsigned)length);
+                return ESP_FAIL;
+            }
+            length -= 3; // remove TFI, CMD, status
+            size_t max_payload = (sizeof(pn532_packetbuffer) > 8) ? (sizeof(pn532_packetbuffer) - 8) : 0;
+            if (length > max_payload) length = (uint8_t)max_payload;
+            if (length > *response_length) length = *response_length;
+            memcpy(response, pn532_packetbuffer + 8, length);
+            *response_length = length;
+            return ESP_OK;
+        }
+        if (!s_quiet) ESP_LOGI(TAG, "TgGetData unexpected response: 0x%02X", pn532_packetbuffer[6]);
+        return ESP_FAIL;
+    }
+    if (!s_quiet) ESP_LOGI(TAG, "TgGetData preamble missing");
+    return ESP_FAIL;
+}
+
+esp_err_t pn532_tg_set_data(pn532_io_handle_t io_handle, const uint8_t *data, uint8_t data_length, int32_t timeout)
+{
+    if (data_length > PN532_COMMAND_BUFFER_LEN - 1) {
+        if (!s_quiet) ESP_LOGI(TAG, "TgSetData APDU too long");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    pn532_packetbuffer[0] = PN532_COMMAND_TGSETDATA; // 0x8E
+    for (uint8_t i = 0; i < data_length; ++i) {
+        pn532_packetbuffer[1 + i] = data[i];
+    }
+
+    esp_err_t err = pn532_send_command_wait_ack(io_handle, pn532_packetbuffer, data_length + 1, PN532_WRITE_TIMEOUT);
+    if (ESP_OK != err) return err;
+
+    if (timeout <= 0) timeout = 1000;
+    err = pn532_wait_ready(io_handle, timeout);
+    if (ESP_OK != err) return err;
+
+    // A small response with status is expected
+    err = pn532_read_data(io_handle, pn532_packetbuffer, 16, PN532_READ_TIMEOUT);
+    if (ESP_OK != err) return err;
+
+    if (pn532_packetbuffer[0] == 0 && pn532_packetbuffer[1] == 0 && pn532_packetbuffer[2] == 0xFF) {
+        if (pn532_packetbuffer[5] == PN532_PN532TOHOST && pn532_packetbuffer[6] == PN532_RESPONSE_TGSETDATA) {
+            if ((pn532_packetbuffer[7] & 0x3F) != 0x00) {
+                if (!s_quiet) ESP_LOGI(TAG, "TgSetData status error: 0x%02X", pn532_packetbuffer[7]);
+                return ESP_FAIL;
+            }
+            return ESP_OK;
+        }
+        if (!s_quiet) ESP_LOGI(TAG, "TgSetData unexpected response: 0x%02X", pn532_packetbuffer[6]);
+        return ESP_FAIL;
+    }
+    if (!s_quiet) ESP_LOGI(TAG, "TgSetData preamble missing");
+    return ESP_FAIL;
+}
