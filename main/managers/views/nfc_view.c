@@ -4,6 +4,7 @@
 #include "managers/settings_manager.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include "gui/popup.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,19 @@
 #include <errno.h>
 #include <dirent.h>
 #include "managers/sd_card_manager.h"
+
+// popup helper forward declarations
+lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height);
+
+lv_obj_t *popup_add_styled_button(lv_obj_t *container,
+	const char *label_text,
+    int btn_w, int btn_h,
+    lv_align_t align, lv_coord_t x_ofs, lv_coord_t y_ofs,
+    const lv_font_t *font, lv_event_cb_t cb, void *user_data);
+
+lv_obj_t *popup_create_title_label(lv_obj_t *container, const char *title, const lv_font_t *font, lv_coord_t y_ofs);
+
+lv_obj_t *popup_create_body_label(lv_obj_t *container, const char *text, lv_coord_t width, bool wrap, const lv_font_t *font, lv_coord_t y_ofs);
 #ifdef CONFIG_HAS_NFC
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1233,88 +1247,37 @@ static void create_nfc_scan_popup(void) {
     if (!root || !lv_obj_is_valid(root)) return;
     // We'll reset the cancel flag right before (re)starting the scan task
     nfc_dict_skip_requested = false;
-    nfc_scan_popup = lv_obj_create(root);
     // scale to screen, leave margin for status bar and edges
     int popup_w = LV_HOR_RES - 30;
     int popup_h = (LV_VER_RES <= 240) ? 140 : 160;
-    lv_obj_set_size(nfc_scan_popup, popup_w, popup_h);
-    lv_obj_align(nfc_scan_popup, LV_ALIGN_TOP_MID, 0, 24); // below status bar
-    lv_obj_set_style_bg_color(nfc_scan_popup, lv_color_hex(0x2E2E2E), 0);
-    lv_obj_set_style_border_color(nfc_scan_popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(nfc_scan_popup, 2, 0);
-    lv_obj_set_style_radius(nfc_scan_popup, 10, 0);
-    lv_obj_clear_flag(nfc_scan_popup, LV_OBJ_FLAG_SCROLLABLE);
-    // Tighten internal padding to maximize usable space
-    lv_obj_set_style_pad_top(nfc_scan_popup, 2, 0);
-    lv_obj_set_style_pad_bottom(nfc_scan_popup, 4, 0);
-    lv_obj_set_style_pad_left(nfc_scan_popup, 6, 0);
-    lv_obj_set_style_pad_right(nfc_scan_popup, 6, 0);
+    nfc_scan_popup = popup_create_container(root, popup_w, popup_h);
 
     // Title
-    nfc_title_label = lv_label_create(nfc_scan_popup);
-    lv_label_set_text(nfc_title_label, "Scanning NFC...");
     const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
-    lv_obj_set_style_text_font(nfc_title_label, title_font, 0);
-    lv_obj_set_style_text_color(nfc_title_label, lv_color_hex(0xFFFFFF), 0);
-    // Default non-details: title near top (summary)
-    lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
+    nfc_title_label = popup_create_title_label(nfc_scan_popup, "Scanning NFC...", title_font, 22);
 
     // Placeholder fields (UID / Type)
-    nfc_uid_label = lv_label_create(nfc_scan_popup);
-    lv_label_set_text(nfc_uid_label, "UID: -- -- -- -- -- -- -- --");
-    lv_obj_set_style_text_color(nfc_uid_label, lv_color_hex(0xCCCCCC), 0);
     const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
-    lv_obj_set_style_text_font(nfc_uid_label, body_font, 0);
-    // Default non-details: summary positions (UID a bit closer to title)
-    lv_obj_align(nfc_uid_label, LV_ALIGN_TOP_MID, 0, 40);
+    nfc_uid_label = popup_create_body_label(nfc_scan_popup, "UID: -- -- -- -- -- -- -- --", 0, false, body_font, 40);
+    if (nfc_uid_label) lv_obj_set_style_text_color(nfc_uid_label, lv_color_hex(0xCCCCCC), 0);
 
-    nfc_type_label = lv_label_create(nfc_scan_popup);
-    lv_label_set_text(nfc_type_label, "Type: --");
-    lv_obj_set_style_text_color(nfc_type_label, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_set_style_text_font(nfc_type_label, body_font, 0);
-    lv_obj_align(nfc_type_label, LV_ALIGN_TOP_MID, 0, 60);
+    nfc_type_label = popup_create_body_label(nfc_scan_popup, "Type: --", 0, false, body_font, 60);
+    if (nfc_type_label) lv_obj_set_style_text_color(nfc_type_label, lv_color_hex(0xCCCCCC), 0);
 
     // Progress indicators removed; we will update the title and details text instead
 
     // Cancel button
-    nfc_scan_cancel_btn = lv_btn_create(nfc_scan_popup);
     int btn_w = 90, btn_h = 34;
     if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 30; }
-    lv_obj_set_size(nfc_scan_cancel_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(nfc_scan_cancel_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(nfc_scan_cancel_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(nfc_scan_cancel_btn, 1, 0);
-    lv_obj_t *cancel_label = lv_label_create(nfc_scan_cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_set_style_text_font(cancel_label, body_font, 0);
-    lv_obj_center(cancel_label);
-    lv_obj_add_event_cb(nfc_scan_cancel_btn, nfc_scan_cancel_cb, LV_EVENT_CLICKED, NULL);
+    nfc_scan_cancel_btn = popup_add_styled_button(nfc_scan_popup, "Cancel", btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, 10, -8, body_font, nfc_scan_cancel_cb, NULL);
 
     // More button (hidden until a tag is scanned)
-    nfc_scan_more_btn = lv_btn_create(nfc_scan_popup);
-    lv_obj_set_size(nfc_scan_more_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(nfc_scan_more_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(nfc_scan_more_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(nfc_scan_more_btn, 1, 0);
-    lv_obj_add_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(nfc_scan_more_btn, nfc_scan_more_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *more_label = lv_label_create(nfc_scan_more_btn);
-    lv_label_set_text(more_label, "More");
-    lv_obj_set_style_text_font(more_label, body_font, 0);
-    lv_obj_center(more_label);
+    nfc_scan_more_btn = popup_add_styled_button(nfc_scan_popup, "More", btn_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, -8, body_font, nfc_scan_more_cb, NULL);
+    if (nfc_scan_more_btn) lv_obj_add_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
 
     // Save button (hidden until a tag is scanned)
-    nfc_scan_save_btn = lv_btn_create(nfc_scan_popup);
-    lv_obj_set_size(nfc_scan_save_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(nfc_scan_save_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(nfc_scan_save_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(nfc_scan_save_btn, 1, 0);
-    lv_obj_add_flag(nfc_scan_save_btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(nfc_scan_save_btn, nfc_scan_save_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *save_label = lv_label_create(nfc_scan_save_btn);
-    lv_label_set_text(save_label, "Save");
-    lv_obj_set_style_text_font(save_label, body_font, 0);
-    lv_obj_center(save_label);
+    nfc_scan_save_btn = popup_add_styled_button(nfc_scan_popup, "Save", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, -10, -8, body_font, nfc_scan_save_cb, NULL);
+    if (nfc_scan_save_btn) lv_obj_add_flag(nfc_scan_save_btn, LV_OBJ_FLAG_HIDDEN);
 
     // Initial state: only cancel visible, centered
     nfc_more_visible = false;
@@ -1463,11 +1426,7 @@ static void nfc_show_details_view(bool show) {
         }
         // Create details label if needed
         if (!nfc_details_label || !lv_obj_is_valid(nfc_details_label)) {
-            nfc_details_label = lv_label_create(nfc_scan_popup);
-            lv_obj_set_width(nfc_details_label, LV_HOR_RES - 50);
-            lv_label_set_long_mode(nfc_details_label, LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_text_font(nfc_details_label, body_font, 0);
-            lv_obj_set_style_text_color(nfc_details_label, lv_color_hex(0xDDDDDD), 0);
+            nfc_details_label = popup_create_body_label(nfc_scan_popup, "", LV_HOR_RES - 50, true, body_font, 20);
         }
         // Align details label every time details view is shown (more spacing from title)
         if (nfc_details_label && lv_obj_is_valid(nfc_details_label)) {
@@ -1906,29 +1865,14 @@ static void keys_scroll_down_cb(lv_event_t *e) {
 static void create_keys_popup(void) {
     if (!root) return;
     if (keys_popup && lv_obj_is_valid(keys_popup)) cleanup_keys_popup(NULL);
-    keys_popup = lv_obj_create(root);
     int popup_w = LV_HOR_RES - 30;
     int popup_h = (LV_VER_RES <= 240) ? 140 : 170; // one tab shorter
-    lv_obj_set_size(keys_popup, popup_w, popup_h);
-    lv_obj_align(keys_popup, LV_ALIGN_TOP_MID, 0, 24);
-    lv_obj_set_style_bg_color(keys_popup, lv_color_hex(0x2E2E2E), 0);
-    lv_obj_set_style_border_color(keys_popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(keys_popup, 2, 0);
-    lv_obj_set_style_radius(keys_popup, 10, 0);
-    lv_obj_clear_flag(keys_popup, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_pad_top(keys_popup, 2, 0);
-    lv_obj_set_style_pad_bottom(keys_popup, 4, 0);
-    lv_obj_set_style_pad_left(keys_popup, 6, 0);
-    lv_obj_set_style_pad_right(keys_popup, 6, 0);
+    keys_popup = popup_create_container(root, popup_w, popup_h);
 
     const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
     const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 
-    keys_title_label = lv_label_create(keys_popup);
-    lv_obj_set_style_text_font(keys_title_label, title_font, 0);
-    lv_obj_set_style_text_color(keys_title_label, lv_color_hex(0xFFFFFF), 0);
-    lv_label_set_text(keys_title_label, "User MFC Keys");
-    lv_obj_align(keys_title_label, LV_ALIGN_TOP_MID, 0, 10);
+    keys_title_label = popup_create_title_label(keys_popup, "User MFC Keys", title_font, 10);
 
     // Create scrollable container for keys and set fixed popup height
     keys_scroll = lv_obj_create(keys_popup);
@@ -1940,12 +1884,8 @@ static void create_keys_popup(void) {
     lv_obj_set_scroll_dir(keys_scroll, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(keys_scroll, LV_SCROLLBAR_MODE_AUTO);
 
-    keys_details_label = lv_label_create(keys_scroll);
-    lv_obj_set_width(keys_details_label, LV_HOR_RES - 60);
-    lv_label_set_long_mode(keys_details_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(keys_details_label, body_font, 0);
-    lv_obj_set_style_text_color(keys_details_label, lv_color_hex(0xDDDDDD), 0);
-    lv_obj_align(keys_details_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    keys_details_label = popup_create_body_label(keys_scroll, "", LV_HOR_RES - 60, true, body_font, 0);
+    if (keys_details_label) lv_obj_align(keys_details_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
     // read keys file and show (build text on heap to avoid stack pressure)
     size_t cap = 512; size_t pos = 0;
@@ -2024,43 +1964,11 @@ static void create_keys_popup(void) {
     }
 
     // Bottom controls: Up | Close | Down
-    keys_up_btn = lv_btn_create(keys_popup);
     int btn_w = 60, btn_h = 34; if (LV_VER_RES <= 240) { btn_w = 54; btn_h = 30; }
-    lv_obj_set_size(keys_up_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(keys_up_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(keys_up_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(keys_up_btn, 1, 0);
-    lv_obj_align(keys_up_btn, LV_ALIGN_BOTTOM_LEFT, 10, -8);
-    lv_obj_add_event_cb(keys_up_btn, keys_scroll_up_cb, LV_EVENT_CLICKED, keys_scroll);
-    lv_obj_t *kup_label = lv_label_create(keys_up_btn);
-    lv_label_set_text(kup_label, LV_SYMBOL_UP);
-    lv_obj_set_style_text_font(kup_label, body_font, 0);
-    lv_obj_center(kup_label);
-
-    keys_close_btn = lv_btn_create(keys_popup);
+    keys_up_btn = popup_add_styled_button(keys_popup, LV_SYMBOL_UP, btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, 10, -8, body_font, keys_scroll_up_cb, keys_scroll);
     int close_w = 90; if (LV_VER_RES <= 240) close_w = 80;
-    lv_obj_set_size(keys_close_btn, close_w, btn_h);
-    lv_obj_set_style_bg_color(keys_close_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(keys_close_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(keys_close_btn, 1, 0);
-    lv_obj_align(keys_close_btn, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_add_event_cb(keys_close_btn, keys_close_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *kclose_label = lv_label_create(keys_close_btn);
-    lv_label_set_text(kclose_label, "Close");
-    lv_obj_set_style_text_font(kclose_label, body_font, 0);
-    lv_obj_center(kclose_label);
-
-    keys_down_btn = lv_btn_create(keys_popup);
-    lv_obj_set_size(keys_down_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(keys_down_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(keys_down_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(keys_down_btn, 1, 0);
-    lv_obj_align(keys_down_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
-    lv_obj_add_event_cb(keys_down_btn, keys_scroll_down_cb, LV_EVENT_CLICKED, keys_scroll);
-    lv_obj_t *kdown_label = lv_label_create(keys_down_btn);
-    lv_label_set_text(kdown_label, LV_SYMBOL_DOWN);
-    lv_obj_set_style_text_font(kdown_label, body_font, 0);
-    lv_obj_center(kdown_label);
+    keys_close_btn = popup_add_styled_button(keys_popup, "Close", close_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, -8, body_font, keys_close_cb, NULL);
+    keys_down_btn = popup_add_styled_button(keys_popup, LV_SYMBOL_DOWN, btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, -10, -8, body_font, keys_scroll_down_cb, keys_scroll);
 
     keys_popup_selected = 1; // default focus on Close
     update_keys_popup_selection();
@@ -2365,37 +2273,17 @@ static void create_nfc_write_popup(const char *path) {
     ESP_LOGI(TAG, "create_nfc_write_popup: path=%s valid=%d", g_write_image_path, (int)g_write_image_valid);
 
     if (nfc_write_popup && lv_obj_is_valid(nfc_write_popup)) cleanup_nfc_write_popup(NULL);
-
-    nfc_write_popup = lv_obj_create(root);
     int popup_w = LV_HOR_RES - 30;
     int popup_h = (LV_VER_RES <= 240) ? 140 : 160;
-    lv_obj_set_size(nfc_write_popup, popup_w, popup_h);
-    lv_obj_align(nfc_write_popup, LV_ALIGN_TOP_MID, 0, 24);
-    lv_obj_set_style_bg_color(nfc_write_popup, lv_color_hex(0x2E2E2E), 0);
-    lv_obj_set_style_border_color(nfc_write_popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(nfc_write_popup, 2, 0);
-    lv_obj_set_style_radius(nfc_write_popup, 10, 0);
-    lv_obj_clear_flag(nfc_write_popup, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_pad_top(nfc_write_popup, 2, 0);
-    lv_obj_set_style_pad_bottom(nfc_write_popup, 4, 0);
-    lv_obj_set_style_pad_left(nfc_write_popup, 6, 0);
-    lv_obj_set_style_pad_right(nfc_write_popup, 6, 0);
+    nfc_write_popup = popup_create_container(root, popup_w, popup_h);
 
     const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
     const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 
-    nfc_write_title_label = lv_label_create(nfc_write_popup);
-    lv_obj_set_style_text_font(nfc_write_title_label, title_font, 0);
-    lv_obj_set_style_text_color(nfc_write_title_label, lv_color_hex(0xFFFFFF), 0);
-    lv_label_set_text(nfc_write_title_label, g_write_image_valid ? "Write Tag" : "Invalid file");
-    lv_obj_align(nfc_write_title_label, LV_ALIGN_TOP_MID, 0, 10);
+    const char *nfc_write_title_text = g_write_image_valid ? "Write Tag" : "Invalid file";
+    nfc_write_title_label = popup_create_title_label(nfc_write_popup, nfc_write_title_text, title_font, 10);
 
-    nfc_write_details_label = lv_label_create(nfc_write_popup);
-    lv_obj_set_width(nfc_write_details_label, LV_HOR_RES - 50);
-    lv_label_set_long_mode(nfc_write_details_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(nfc_write_details_label, body_font, 0);
-    lv_obj_set_style_text_color(nfc_write_details_label, lv_color_hex(0xDDDDDD), 0);
-    lv_obj_align(nfc_write_details_label, LV_ALIGN_TOP_MID, 0, 26);
+    nfc_write_details_label = popup_create_body_label(nfc_write_popup, "", LV_HOR_RES - 50, true, body_font, 26);
     if (g_write_image_valid) {
         char *det = build_compact_write_details(&g_write_image);
         if (det) {
@@ -2412,30 +2300,10 @@ static void create_nfc_write_popup(const char *path) {
     int btn_w = 90, btn_h = 34;
     if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 30; }
 
-    nfc_write_cancel_btn = lv_btn_create(nfc_write_popup);
-    lv_obj_set_size(nfc_write_cancel_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(nfc_write_cancel_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(nfc_write_cancel_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(nfc_write_cancel_btn, 1, 0);
-    lv_obj_align(nfc_write_cancel_btn, LV_ALIGN_BOTTOM_LEFT, 10, -8);
-    lv_obj_add_event_cb(nfc_write_cancel_btn, nfc_write_cancel_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *cancel_label = lv_label_create(nfc_write_cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_set_style_text_font(cancel_label, body_font, 0);
-    lv_obj_center(cancel_label);
+    nfc_write_cancel_btn = popup_add_styled_button(nfc_write_popup, "Cancel", btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, 10, -8, body_font, nfc_write_cancel_cb, NULL);
 
-    nfc_write_go_btn = lv_btn_create(nfc_write_popup);
-    lv_obj_set_size(nfc_write_go_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(nfc_write_go_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(nfc_write_go_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(nfc_write_go_btn, 1, 0);
-    lv_obj_align(nfc_write_go_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
-    lv_obj_add_event_cb(nfc_write_go_btn, nfc_write_go_cb, LV_EVENT_CLICKED, NULL);
-    if (!g_write_image_valid) lv_obj_add_state(nfc_write_go_btn, LV_STATE_DISABLED);
-    lv_obj_t *go_label = lv_label_create(nfc_write_go_btn);
-    lv_label_set_text(go_label, "Write");
-    lv_obj_set_style_text_font(go_label, body_font, 0);
-    lv_obj_center(go_label);
+    nfc_write_go_btn = popup_add_styled_button(nfc_write_popup, "Write", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, -10, -8, body_font, nfc_write_go_cb, NULL);
+    if (!g_write_image_valid && nfc_write_go_btn) lv_obj_add_state(nfc_write_go_btn, LV_STATE_DISABLED);
 
     nfc_write_popup_selected = 0;
     update_nfc_write_popup_selection();
@@ -2551,37 +2419,16 @@ static void cleanup_saved_details_popup(void *obj) {
 static void create_saved_details_popup(const char *path) {
     if (!root) return;
     if (saved_popup && lv_obj_is_valid(saved_popup)) cleanup_saved_details_popup(NULL);
-
-    saved_popup = lv_obj_create(root);
     int popup_w = LV_HOR_RES - 30;
     int popup_h = (LV_VER_RES <= 240) ? 140 : 160;
-    lv_obj_set_size(saved_popup, popup_w, popup_h);
-    lv_obj_align(saved_popup, LV_ALIGN_TOP_MID, 0, 24);
-    lv_obj_set_style_bg_color(saved_popup, lv_color_hex(0x2E2E2E), 0);
-    lv_obj_set_style_border_color(saved_popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(saved_popup, 2, 0);
-    lv_obj_set_style_radius(saved_popup, 10, 0);
-    lv_obj_clear_flag(saved_popup, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_pad_top(saved_popup, 2, 0);
-    lv_obj_set_style_pad_bottom(saved_popup, 4, 0);
-    lv_obj_set_style_pad_left(saved_popup, 6, 0);
-    lv_obj_set_style_pad_right(saved_popup, 6, 0);
+    saved_popup = popup_create_container(root, popup_w, popup_h);
 
     const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
     const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 
-    saved_title_label = lv_label_create(saved_popup);
-    lv_obj_set_style_text_font(saved_title_label, title_font, 0);
-    lv_obj_set_style_text_color(saved_title_label, lv_color_hex(0xFFFFFF), 0);
-    lv_label_set_text(saved_title_label, "Saved Tag");
-    lv_obj_align(saved_title_label, LV_ALIGN_TOP_MID, 0, 10);
+    saved_title_label = popup_create_title_label(saved_popup, "Saved Tag", title_font, 10);
 
-    saved_details_label = lv_label_create(saved_popup);
-    lv_obj_set_width(saved_details_label, LV_HOR_RES - 50);
-    lv_label_set_long_mode(saved_details_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(saved_details_label, body_font, 0);
-    lv_obj_set_style_text_color(saved_details_label, lv_color_hex(0xDDDDDD), 0);
-    lv_obj_align(saved_details_label, LV_ALIGN_TOP_MID, 0, 26);
+    saved_details_label = popup_create_body_label(saved_popup, "", LV_HOR_RES - 50, true, body_font, 26);
 
     // store current path for rename/delete
     strncpy(g_saved_current_path, path, sizeof(g_saved_current_path) - 1);
@@ -2612,41 +2459,9 @@ static void create_saved_details_popup(const char *path) {
 
     int btn_w = 90, btn_h = 34; if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 30; }
     // Buttons: Close (left), Rename (mid), Delete (right)
-    saved_close_btn = lv_btn_create(saved_popup);
-    lv_obj_set_size(saved_close_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(saved_close_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(saved_close_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(saved_close_btn, 1, 0);
-    lv_obj_align(saved_close_btn, LV_ALIGN_BOTTOM_LEFT, 10, -8);
-    lv_obj_add_event_cb(saved_close_btn, saved_close_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *close_label = lv_label_create(saved_close_btn);
-    lv_label_set_text(close_label, "Close");
-    lv_obj_set_style_text_font(close_label, body_font, 0);
-    lv_obj_center(close_label);
-
-    saved_rename_btn = lv_btn_create(saved_popup);
-    lv_obj_set_size(saved_rename_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(saved_rename_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(saved_rename_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(saved_rename_btn, 1, 0);
-    lv_obj_align(saved_rename_btn, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_add_event_cb(saved_rename_btn, saved_rename_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *rename_label = lv_label_create(saved_rename_btn);
-    lv_label_set_text(rename_label, "Rename");
-    lv_obj_set_style_text_font(rename_label, body_font, 0);
-    lv_obj_center(rename_label);
-
-    saved_delete_btn = lv_btn_create(saved_popup);
-    lv_obj_set_size(saved_delete_btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(saved_delete_btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(saved_delete_btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(saved_delete_btn, 1, 0);
-    lv_obj_align(saved_delete_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
-    lv_obj_add_event_cb(saved_delete_btn, saved_delete_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *delete_label = lv_label_create(saved_delete_btn);
-    lv_label_set_text(delete_label, "Delete");
-    lv_obj_set_style_text_font(delete_label, body_font, 0);
-    lv_obj_center(delete_label);
+    saved_close_btn = popup_add_styled_button(saved_popup, "Close", btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, 10, -8, body_font, saved_close_cb, NULL);
+    saved_rename_btn = popup_add_styled_button(saved_popup, "Rename", btn_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, -8, body_font, saved_rename_cb, NULL);
+    saved_delete_btn = popup_add_styled_button(saved_popup, "Delete", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, -10, -8, body_font, saved_delete_cb, NULL);
 
     saved_popup_selected = 0;
     update_saved_popup_selection();
