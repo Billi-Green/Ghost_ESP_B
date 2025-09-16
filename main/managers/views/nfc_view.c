@@ -1,5 +1,6 @@
 #include "managers/display_manager.h"
 #include "managers/views/main_menu_screen.h"
+#include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
 #include "lvgl.h"
 #include "esp_log.h"
@@ -10,6 +11,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <strings.h>
+#include <errno.h>
 #include <dirent.h>
 #include "managers/sd_card_manager.h"
 #ifdef CONFIG_HAS_NFC
@@ -59,6 +61,11 @@ static bool in_write_list = false;
 static char **nfc_file_paths = NULL;
 static size_t nfc_file_count = 0;
 
+// saved file list state
+static bool in_saved_list = false;
+static char **saved_file_paths = NULL;
+static size_t saved_file_count = 0;
+
 // NFC write popup
 static lv_obj_t *nfc_write_popup = NULL;
 static lv_obj_t *nfc_write_cancel_btn = NULL;
@@ -71,6 +78,26 @@ static volatile bool nfc_write_in_progress = false;
 static bool g_write_image_valid = false;
 static ntag_file_image_t g_write_image;
 static char g_write_image_path[256] = {0};
+
+// saved details popup
+static lv_obj_t *saved_popup = NULL;
+static lv_obj_t *saved_close_btn = NULL;
+static lv_obj_t *saved_rename_btn = NULL;
+static lv_obj_t *saved_delete_btn = NULL;
+static lv_obj_t *saved_title_label = NULL;
+static lv_obj_t *saved_details_label = NULL;
+static int saved_popup_selected = 0;
+static char g_saved_current_path[256] = {0};
+
+// user mfc keys popup
+static lv_obj_t *keys_popup = NULL;
+static lv_obj_t *keys_close_btn = NULL;
+static lv_obj_t *keys_title_label = NULL;
+static lv_obj_t *keys_details_label = NULL;
+static lv_obj_t *keys_up_btn = NULL;
+static lv_obj_t *keys_down_btn = NULL;
+static lv_obj_t *keys_scroll = NULL;
+static int keys_popup_selected = 0;
 
 // Match options_screen theme palettes for selected row color
 static const uint32_t theme_palettes[15][6] = {
@@ -193,6 +220,32 @@ static void cleanup_nfc_write_popup(void *obj);
 static void nfc_write_cancel_cb(lv_event_t *e);
 static void nfc_write_go_cb(lv_event_t *e);
 static void update_nfc_write_popup_selection(void);
+// saved flow
+static void saved_enter_list(void);
+static void saved_clear_list(void);
+static void saved_file_item_cb(lv_event_t *e);
+static void create_saved_details_popup(const char *path);
+static void cleanup_saved_details_popup(void *obj);
+static void saved_close_cb(lv_event_t *e);
+static void update_saved_popup_selection(void);
+static char* build_mfc_details_from_file(const char *path, char **out_title);
+static void saved_rename_cb(lv_event_t *e);
+static void saved_delete_cb(lv_event_t *e);
+static void saved_rename_keyboard_callback(const char *name);
+typedef struct {
+    char old_path[256];
+    char new_path[256];
+    int success;
+} saved_rename_job_t;
+static void saved_rename_ui_done_cb(void *param);
+static void saved_rename_task(void *arg);
+// keys popup
+static void create_keys_popup(void);
+static void cleanup_keys_popup(void *obj);
+static void keys_close_cb(lv_event_t *e);
+static void update_keys_popup_selection(void);
+static void keys_scroll_up_cb(lv_event_t *e);
+static void keys_scroll_down_cb(lv_event_t *e);
 #ifdef CONFIG_HAS_NFC
 static bool ensure_pn532_ready(void);
 static void nfc_write_task(void *arg);
@@ -682,6 +735,92 @@ static void nfc_view_input_cb(InputEvent *event) {
         }
         return; // consume input while popup is open
     }
+    // Handle saved details popup input
+    if (saved_popup && lv_obj_is_valid(saved_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_PR) return;
+            if (saved_close_btn && lv_obj_is_valid(saved_close_btn)) {
+                lv_area_t a; lv_obj_get_coords(saved_close_btn, &a);
+                if (d->point.x >= a.x1 && d->point.x <= a.x2 && d->point.y >= a.y1 && d->point.y <= a.y2) { saved_close_cb(NULL); return; }
+            }
+            if (saved_rename_btn && lv_obj_is_valid(saved_rename_btn)) {
+                lv_area_t b; lv_obj_get_coords(saved_rename_btn, &b);
+                if (d->point.x >= b.x1 && d->point.x <= b.x2 && d->point.y >= b.y1 && d->point.y <= b.y2) { saved_rename_cb(NULL); return; }
+            }
+            if (saved_delete_btn && lv_obj_is_valid(saved_delete_btn)) {
+                lv_area_t c; lv_obj_get_coords(saved_delete_btn, &c);
+                if (d->point.x >= c.x1 && d->point.x <= c.x2 && d->point.y >= c.y1 && d->point.y <= c.y2) { saved_delete_cb(NULL); return; }
+            }
+            update_saved_popup_selection();
+        } else if (event->type == INPUT_TYPE_JOYSTICK) {
+            int ji = event->data.joystick_index;
+            if (ji == 2 || ji == 4) { // up/down cycles 3 buttons
+                saved_popup_selected = (saved_popup_selected + 1) % 3;
+                update_saved_popup_selection();
+            } else if (ji == 1) { // select
+                if (saved_popup_selected == 0) saved_close_cb(NULL);
+                else if (saved_popup_selected == 1) saved_rename_cb(NULL);
+                else saved_delete_cb(NULL);
+                return;
+            } else if (ji == 0) { // back
+                saved_close_cb(NULL); return;
+            }
+        } else if (event->type == INPUT_TYPE_ENCODER) {
+            if (event->data.encoder.button) {
+                if (saved_popup_selected == 0) saved_close_cb(NULL);
+                else if (saved_popup_selected == 1) saved_rename_cb(NULL);
+                else saved_delete_cb(NULL);
+                return;
+            }
+            if (event->data.encoder.direction != 0) {
+                if (event->data.encoder.direction > 0) saved_popup_selected = (saved_popup_selected + 1) % 3;
+                else saved_popup_selected = (saved_popup_selected + 3 - 1) % 3;
+                update_saved_popup_selection();
+            }
+        } else if (event->type == INPUT_TYPE_KEYBOARD) {
+            int kv = event->data.key_value;
+            if (kv == 9) { saved_popup_selected = (saved_popup_selected + 1) % 3; update_saved_popup_selection(); }
+            else if (kv == 13 || kv == 10) {
+                if (saved_popup_selected == 0) saved_close_cb(NULL);
+                else if (saved_popup_selected == 1) saved_rename_cb(NULL);
+                else saved_delete_cb(NULL);
+                return;
+            } else if (kv == 27) { saved_close_cb(NULL); return; }
+        }
+        return;
+    }
+    // Handle keys popup input
+    if (keys_popup && lv_obj_is_valid(keys_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_PR) return;
+            if (keys_close_btn && lv_obj_is_valid(keys_close_btn)) {
+                lv_area_t a; lv_obj_get_coords(keys_close_btn, &a);
+                if (d->point.x >= a.x1 && d->point.x <= a.x2 && d->point.y >= a.y1 && d->point.y <= a.y2) { keys_close_cb(NULL); return; }
+            }
+            update_keys_popup_selection();
+        } else if (event->type == INPUT_TYPE_JOYSTICK) {
+            int ji = event->data.joystick_index;
+            if (ji == 1 || ji == 0) { keys_close_cb(NULL); return; }
+        } else if (event->type == INPUT_TYPE_ENCODER) {
+            if (event->data.encoder.button) {
+                // activate focused button: 0=Up,1=Close,2=Down
+                if (keys_popup_selected == 0) keys_scroll_up_cb(NULL);
+                else if (keys_popup_selected == 1) { keys_close_cb(NULL); return; }
+                else keys_scroll_down_cb(NULL);
+            }
+            if (event->data.encoder.direction != 0) {
+                if (event->data.encoder.direction > 0) keys_popup_selected = (keys_popup_selected + 1) % 3;
+                else keys_popup_selected = (keys_popup_selected + 3 - 1) % 3;
+                update_keys_popup_selection();
+            }
+        } else if (event->type == INPUT_TYPE_KEYBOARD) {
+            int kv = event->data.key_value;
+            if (kv == 13 || kv == 10 || kv == 27) { keys_close_cb(NULL); return; }
+        }
+        return;
+    }
     // Handle NFC write popup input
     if (nfc_write_popup && lv_obj_is_valid(nfc_write_popup)) {
         if (event->type == INPUT_TYPE_TOUCH) {
@@ -732,7 +871,7 @@ static void nfc_view_input_cb(InputEvent *event) {
             }
         }
         // touch outside -> back
-        if (in_write_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
+        if (in_write_list) back_to_root_menu(); else if (in_saved_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
         int btn = event->data.joystick_index;
         if (btn == 2) { // up
@@ -749,7 +888,7 @@ static void nfc_view_input_cb(InputEvent *event) {
                 execute_selected();
             }
         } else if (btn == 0) { // back
-            if (in_write_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
+            if (in_write_list) back_to_root_menu(); else if (in_saved_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
         }
     } else if (event->type == INPUT_TYPE_ENCODER) {
         if (event->data.encoder.button) {
@@ -778,11 +917,11 @@ static void nfc_view_input_cb(InputEvent *event) {
             selected_index = (selected_index + 1) % num_items;
             highlight_selected();
         } else if (kv == 29 || kv == '`') { // Esc
-            if (in_write_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
+            if (in_write_list) back_to_root_menu(); else if (in_saved_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
         }
 #ifdef CONFIG_USE_ENCODER
     } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
-        if (in_write_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
+        if (in_write_list) back_to_root_menu(); else if (in_saved_list) back_to_root_menu(); else display_manager_switch_view(&main_menu_view);
 #endif
     }
 }
@@ -806,7 +945,17 @@ static void nfc_option_event_cb(lv_event_t *e) {
         return;
     }
 
-    // no bottom status label; actions can be wired here if needed
+    if (strcmp(opt, "Saved") == 0) {
+        saved_enter_list();
+        return;
+    }
+
+    if (strcmp(opt, "User Keys") == 0) {
+        create_keys_popup();
+        return;
+    }
+
+
 }
 
 // touchscreen scroll callbacks
@@ -821,7 +970,7 @@ static void scroll_nfc_down(lv_event_t *e) {
     lv_obj_scroll_by_bounded(menu_container, 0, -scroll_amt, LV_ANIM_OFF);
 }
 static void back_event_cb(lv_event_t *e) {
-    if (in_write_list) back_to_root_menu();
+    if (in_write_list || in_saved_list) back_to_root_menu();
     else display_manager_switch_view(&main_menu_view);
 }
 
@@ -1348,7 +1497,9 @@ static void nfc_file_item_cb(lv_event_t *e) {
 static void back_to_root_menu(void) {
     if (!root || !menu_container) return;
     in_write_list = false;
+    in_saved_list = false;
     nfc_clear_write_list();
+    saved_clear_list();
     lv_obj_clean(menu_container);
 
     // rebuild Scan and Write rows (same as in create)
@@ -1365,10 +1516,36 @@ static void back_to_root_menu(void) {
     lv_obj_set_user_data(scan_btn, (void *)"Scan");
     lv_obj_add_event_cb(scan_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Scan");
 
+    // Add Saved button
+    lv_obj_t *saved_btn = lv_list_add_btn(menu_container, NULL, "Saved");
+    lv_obj_set_height(saved_btn, button_height_global);
+    lv_obj_add_style(saved_btn, get_zebra_style(1), 0);
+    lv_obj_t *svlabel = lv_obj_get_child(saved_btn, 0);
+    if (svlabel) {
+        lv_obj_set_style_text_font(svlabel, get_menu_font(), 0);
+        vertically_center_label(svlabel, saved_btn);
+        lv_obj_add_style(svlabel, &style_menu_label, 0);
+    }
+    lv_obj_set_user_data(saved_btn, (void *)"Saved");
+    lv_obj_add_event_cb(saved_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Saved");
+
+    // Add User Keys button
+    lv_obj_t *keys_btn = lv_list_add_btn(menu_container, NULL, "User Keys");
+    lv_obj_set_height(keys_btn, button_height_global);
+    lv_obj_add_style(keys_btn, get_zebra_style(2), 0);
+    lv_obj_t *klabel = lv_obj_get_child(keys_btn, 0);
+    if (klabel) {
+        lv_obj_set_style_text_font(klabel, get_menu_font(), 0);
+        vertically_center_label(klabel, keys_btn);
+        lv_obj_add_style(klabel, &style_menu_label, 0);
+    }
+    lv_obj_set_user_data(keys_btn, (void *)"User Keys");
+    lv_obj_add_event_cb(keys_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"User Keys");
+
     // Add Write button
     emulate_btn = lv_list_add_btn(menu_container, NULL, "Write");
     lv_obj_set_height(emulate_btn, button_height_global);
-    lv_obj_add_style(emulate_btn, get_zebra_style(1), 0);
+    lv_obj_add_style(emulate_btn, get_zebra_style(3), 0);
     lv_obj_t *elabel = lv_obj_get_child(emulate_btn, 0);
     if (elabel) {
         lv_obj_set_style_text_font(elabel, get_menu_font(), 0);
@@ -1378,7 +1555,26 @@ static void back_to_root_menu(void) {
     lv_obj_set_user_data(emulate_btn, (void *)"Write");
     lv_obj_add_event_cb(emulate_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Write");
 
-    num_items = 2;
+    num_items = 4;
+
+#ifdef CONFIG_USE_ENCODER
+    // Ensure encoder back row exists on main menu
+    lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
+    if (back_row) {
+        lv_obj_set_height(back_row, button_height_global);
+        lv_obj_add_style(back_row, get_zebra_style(4), 0);
+        lv_obj_t *blabel = lv_obj_get_child(back_row, 0);
+        if (blabel) {
+            lv_obj_set_style_text_font(blabel, get_menu_font(), 0);
+            vertically_center_label(blabel, back_row);
+            lv_obj_add_style(blabel, &style_menu_label, 0);
+        }
+        lv_obj_set_user_data(back_row, (void *)"__BACK_OPTION__");
+        lv_obj_add_event_cb(back_row, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"__BACK_OPTION__");
+        num_items++;
+    }
+#endif
+
     selected_index = 0;
     highlight_selected();
 }
@@ -1465,6 +1661,96 @@ static void nfc_enter_write_list(void) {
     highlight_selected();
 }
 
+static void saved_clear_list(void) {
+    if (saved_file_paths) {
+        for (size_t i = 0; i < saved_file_count; ++i) free(saved_file_paths[i]);
+        free(saved_file_paths);
+    }
+    saved_file_paths = NULL;
+    saved_file_count = 0;
+}
+
+static void saved_file_item_cb(lv_event_t *e) {
+    const char *path = (const char *)lv_event_get_user_data(e);
+    if (!path) return;
+    create_saved_details_popup(path);
+}
+
+static void saved_enter_list(void) {
+    if (!menu_container) return;
+    in_saved_list = true;
+    saved_clear_list();
+    lv_obj_clean(menu_container);
+
+    const char *dir = "/mnt/ghostesp/nfc";
+    DIR *d = opendir(dir);
+    if (d) {
+        struct dirent *de; size_t count = 0;
+        while ((de = readdir(d)) != NULL) {
+            if (de->d_name[0] == '.') continue;
+            if (has_nfc_ext(de->d_name)) count++;
+        }
+        rewinddir(d);
+        if (count > 0) saved_file_paths = (char**)calloc(count, sizeof(char*));
+        size_t idx = 0;
+        while ((de = readdir(d)) != NULL) {
+            if (de->d_name[0] == '.') continue;
+            if (!has_nfc_ext(de->d_name)) continue;
+            size_t need = strlen(dir) + 1 + strlen(de->d_name) + 1;
+            char *copy = (char*)malloc(need);
+            if (!copy) continue;
+            snprintf(copy, need, "%s/%s", dir, de->d_name);
+            if (saved_file_paths && idx < count) saved_file_paths[idx++] = copy;
+            ESP_LOGI(TAG, "saved_enter_list: %s", copy);
+
+            lv_obj_t *row = lv_list_add_btn(menu_container, NULL, de->d_name);
+            lv_obj_set_height(row, button_height_global);
+            lv_obj_add_style(row, get_zebra_style((int)idx & 1), 0);
+            lv_obj_t *label = lv_obj_get_child(row, 0);
+            if (label) {
+                lv_obj_set_style_text_font(label, get_menu_font(), 0);
+                vertically_center_label(label, row);
+                lv_obj_add_style(label, &style_menu_label, 0);
+            }
+            lv_obj_add_event_cb(row, saved_file_item_cb, LV_EVENT_CLICKED, copy);
+        }
+        saved_file_count = idx;
+        ESP_LOGI(TAG, "saved_enter_list: %u .nfc files", (unsigned)saved_file_count);
+        closedir(d);
+    }
+
+    if (saved_file_count == 0) {
+        lv_obj_t *row = lv_list_add_btn(menu_container, NULL, "No .nfc files");
+        lv_obj_set_height(row, button_height_global);
+        lv_obj_add_style(row, get_zebra_style(0), 0);
+        lv_obj_t *label = lv_obj_get_child(row, 0);
+        if (label) {
+            lv_obj_set_style_text_font(label, get_menu_font(), 0);
+            vertically_center_label(label, row);
+            lv_obj_add_style(label, &style_menu_label, 0);
+        }
+    }
+
+#ifdef CONFIG_USE_ENCODER
+    lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
+    if (back_row) {
+        lv_obj_set_height(back_row, button_height_global);
+        lv_obj_add_style(back_row, get_zebra_style((int)(saved_file_count + 1) & 1), 0);
+        lv_obj_t *blabel = lv_obj_get_child(back_row, 0);
+        if (blabel) {
+            lv_obj_set_style_text_font(blabel, get_menu_font(), 0);
+            vertically_center_label(blabel, back_row);
+            lv_obj_add_style(blabel, &style_menu_label, 0);
+        }
+        lv_obj_add_event_cb(back_row, back_event_cb, LV_EVENT_CLICKED, NULL);
+    }
+#endif
+
+    num_items = (int)saved_file_count + 1;
+    selected_index = 0;
+    highlight_selected();
+}
+
 static void update_nfc_write_popup_selection(void) {
     // Cancel
     if (nfc_write_cancel_btn && lv_obj_is_valid(nfc_write_cancel_btn)) {
@@ -1494,6 +1780,250 @@ static void update_nfc_write_popup_selection(void) {
             if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
         }
     }
+}
+
+static void update_saved_popup_selection(void) {
+    if (!saved_close_btn || !lv_obj_is_valid(saved_close_btn)) return;
+    // 0=Close, 1=Rename, 2=Delete
+    lv_obj_t *btns[3] = { saved_close_btn, saved_rename_btn, saved_delete_btn };
+    for (int i = 0; i < 3; ++i) {
+        lv_obj_t *b = btns[i]; if (!b || !lv_obj_is_valid(b)) continue;
+        if (saved_popup_selected == i) {
+            lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_border_color(b, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_t *lbl = lv_obj_get_child(b, 0);
+            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
+        } else {
+            lv_obj_set_style_bg_color(b, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_border_color(b, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_t *lbl = lv_obj_get_child(b, 0);
+            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+        }
+    }
+}
+
+static void keys_close_cb(lv_event_t *e) { (void)e; cleanup_keys_popup(NULL); }
+static void keys_scroll_up_cb(lv_event_t *e);
+static void keys_scroll_down_cb(lv_event_t *e);
+
+static void cleanup_keys_popup(void *obj) {
+    (void)obj;
+    if (keys_popup) { lv_obj_del(keys_popup); keys_popup = NULL; }
+    keys_close_btn = NULL;
+    keys_title_label = NULL;
+    keys_details_label = NULL;
+    keys_popup_selected = 0;
+}
+
+static void update_keys_popup_selection(void) {
+    // reset buttons
+    if (keys_up_btn && lv_obj_is_valid(keys_up_btn)) {
+        lv_obj_set_style_bg_color(keys_up_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(keys_up_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *l = lv_obj_get_child(keys_up_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    }
+    if (keys_close_btn && lv_obj_is_valid(keys_close_btn)) {
+        lv_obj_set_style_bg_color(keys_close_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(keys_close_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *l = lv_obj_get_child(keys_close_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    }
+    if (keys_down_btn && lv_obj_is_valid(keys_down_btn)) {
+        lv_obj_set_style_bg_color(keys_down_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(keys_down_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *l = lv_obj_get_child(keys_down_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    }
+    // highlight focused
+    lv_obj_t *focus_btn = (keys_popup_selected == 0) ? keys_up_btn : (keys_popup_selected == 1 ? keys_close_btn : keys_down_btn);
+    if (focus_btn && lv_obj_is_valid(focus_btn)) {
+        lv_obj_set_style_bg_color(focus_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(focus_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *l = lv_obj_get_child(focus_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0x000000), 0);
+    }
+}
+
+static void keys_scroll_up_cb(lv_event_t *e) {
+    lv_obj_t *scroll = keys_scroll;
+    if (e) {
+        lv_obj_t *ud = (lv_obj_t *)lv_event_get_user_data(e);
+        if (ud) scroll = ud;
+    }
+    if (!scroll || !lv_obj_is_valid(scroll)) return;
+    lv_coord_t y = lv_obj_get_scroll_y(scroll);
+    lv_obj_scroll_to_y(scroll, y - 40, LV_ANIM_OFF);
+}
+
+static void keys_scroll_down_cb(lv_event_t *e) {
+    lv_obj_t *scroll = keys_scroll;
+    if (e) {
+        lv_obj_t *ud = (lv_obj_t *)lv_event_get_user_data(e);
+        if (ud) scroll = ud;
+    }
+    if (!scroll || !lv_obj_is_valid(scroll)) return;
+    lv_coord_t y = lv_obj_get_scroll_y(scroll);
+    lv_obj_scroll_to_y(scroll, y + 40, LV_ANIM_OFF);
+}
+
+static void create_keys_popup(void) {
+    if (!root) return;
+    if (keys_popup && lv_obj_is_valid(keys_popup)) cleanup_keys_popup(NULL);
+    keys_popup = lv_obj_create(root);
+    int popup_w = LV_HOR_RES - 30;
+    int popup_h = (LV_VER_RES <= 240) ? 140 : 170; // one tab shorter
+    lv_obj_set_size(keys_popup, popup_w, popup_h);
+    lv_obj_align(keys_popup, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_bg_color(keys_popup, lv_color_hex(0x2E2E2E), 0);
+    lv_obj_set_style_border_color(keys_popup, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_width(keys_popup, 2, 0);
+    lv_obj_set_style_radius(keys_popup, 10, 0);
+    lv_obj_clear_flag(keys_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_top(keys_popup, 2, 0);
+    lv_obj_set_style_pad_bottom(keys_popup, 4, 0);
+    lv_obj_set_style_pad_left(keys_popup, 6, 0);
+    lv_obj_set_style_pad_right(keys_popup, 6, 0);
+
+    const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
+    const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+
+    keys_title_label = lv_label_create(keys_popup);
+    lv_obj_set_style_text_font(keys_title_label, title_font, 0);
+    lv_obj_set_style_text_color(keys_title_label, lv_color_hex(0xFFFFFF), 0);
+    lv_label_set_text(keys_title_label, "User MFC Keys");
+    lv_obj_align(keys_title_label, LV_ALIGN_TOP_MID, 0, 10);
+
+    // Create scrollable container for keys and set fixed popup height
+    keys_scroll = lv_obj_create(keys_popup);
+    lv_obj_set_style_bg_opa(keys_scroll, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(keys_scroll, 0, 0);
+    lv_obj_set_style_pad_all(keys_scroll, 0, 0);
+    lv_obj_set_size(keys_scroll, LV_HOR_RES - 50, popup_h - 80);
+    lv_obj_align(keys_scroll, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_set_scroll_dir(keys_scroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(keys_scroll, LV_SCROLLBAR_MODE_AUTO);
+
+    keys_details_label = lv_label_create(keys_scroll);
+    lv_obj_set_width(keys_details_label, LV_HOR_RES - 60);
+    lv_label_set_long_mode(keys_details_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(keys_details_label, body_font, 0);
+    lv_obj_set_style_text_color(keys_details_label, lv_color_hex(0xDDDDDD), 0);
+    lv_obj_align(keys_details_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    // read keys file and show (build text on heap to avoid stack pressure)
+    size_t cap = 512; size_t pos = 0;
+    char *buf = (char*)malloc(cap);
+    if (!buf) {
+        lv_label_set_text(keys_details_label, "No user keys file found");
+        return;
+    }
+    buf[0] = '\0';
+    FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "r");
+    if (!f) {
+        free(buf);
+        lv_label_set_text(keys_details_label, "No user keys file found");
+    } else {
+        char line[256];
+        int keys_on_line = 0;
+        while (fgets(line, sizeof(line), f)) {
+            // normalize: keep only hex chars, uppercase, and split into 12-length chunks
+            char hexbuf[256]; size_t h = 0;
+            for (char *p = line; *p && h < sizeof(hexbuf)-1; ++p) {
+                char c = *p;
+                if (c >= 'a' && c <= 'f') c -= 32;
+                if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) {
+                    hexbuf[h++] = c;
+                }
+            }
+            hexbuf[h] = '\0';
+            // output each 12-hex key; two per line: "KEY KEY\n"
+            size_t i = 0;
+            while (i + 12 <= h) {
+                // ensure capacity, attempt write, grow if truncated
+                for (;;) {
+                    int n;
+                    if (keys_on_line == 0) {
+                        n = snprintf(buf + pos, cap - pos, "%.*s", 12, &hexbuf[i]);
+                    } else {
+                        n = snprintf(buf + pos, cap - pos, " %.*s\n", 12, &hexbuf[i]);
+                    }
+                    if (n < 0) { break; }
+                    if ((size_t)n < (cap - pos)) { pos += (size_t)n; break; }
+                    size_t new_cap = cap * 2;
+                    char *nbuf = (char*)realloc(buf, new_cap);
+                    if (!nbuf) { fclose(f); lv_label_set_text(keys_details_label, "(Out of memory)"); free(buf); return; }
+                    buf = nbuf; cap = new_cap;
+                }
+                keys_on_line = (keys_on_line == 0) ? 1 : 0;
+                i += 12;
+            }
+            if (cap - pos < 64) {
+                size_t new_cap = cap * 2;
+                char *nbuf = (char*)realloc(buf, new_cap);
+                if (!nbuf) { fclose(f); lv_label_set_text(keys_details_label, "(Out of memory)"); free(buf); return; }
+                buf = nbuf; cap = new_cap;
+            }
+        }
+        // if one key left without its pair, terminate the line
+        if (keys_on_line == 1) {
+            for (;;) {
+                int n = snprintf(buf + pos, cap - pos, "\n");
+                if (n < 0) break;
+                if ((size_t)n < (cap - pos)) { pos += (size_t)n; break; }
+                size_t new_cap = cap * 2;
+                char *nbuf = (char*)realloc(buf, new_cap);
+                if (!nbuf) { lv_label_set_text(keys_details_label, "(Out of memory)"); free(buf); fclose(f); return; }
+                buf = nbuf; cap = new_cap;
+            }
+        }
+        fclose(f);
+        if (pos == 0) {
+            lv_label_set_text(keys_details_label, "(Empty)");
+        } else {
+            // set then free buffer (lvgl copies text)
+            lv_label_set_text(keys_details_label, buf);
+        }
+        free(buf);
+    }
+
+    // Bottom controls: Up | Close | Down
+    keys_up_btn = lv_btn_create(keys_popup);
+    int btn_w = 60, btn_h = 34; if (LV_VER_RES <= 240) { btn_w = 54; btn_h = 30; }
+    lv_obj_set_size(keys_up_btn, btn_w, btn_h);
+    lv_obj_set_style_bg_color(keys_up_btn, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(keys_up_btn, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_border_width(keys_up_btn, 1, 0);
+    lv_obj_align(keys_up_btn, LV_ALIGN_BOTTOM_LEFT, 10, -8);
+    lv_obj_add_event_cb(keys_up_btn, keys_scroll_up_cb, LV_EVENT_CLICKED, keys_scroll);
+    lv_obj_t *kup_label = lv_label_create(keys_up_btn);
+    lv_label_set_text(kup_label, LV_SYMBOL_UP);
+    lv_obj_set_style_text_font(kup_label, body_font, 0);
+    lv_obj_center(kup_label);
+
+    keys_close_btn = lv_btn_create(keys_popup);
+    int close_w = 90; if (LV_VER_RES <= 240) close_w = 80;
+    lv_obj_set_size(keys_close_btn, close_w, btn_h);
+    lv_obj_set_style_bg_color(keys_close_btn, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(keys_close_btn, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_border_width(keys_close_btn, 1, 0);
+    lv_obj_align(keys_close_btn, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_add_event_cb(keys_close_btn, keys_close_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *kclose_label = lv_label_create(keys_close_btn);
+    lv_label_set_text(kclose_label, "Close");
+    lv_obj_set_style_text_font(kclose_label, body_font, 0);
+    lv_obj_center(kclose_label);
+
+    keys_down_btn = lv_btn_create(keys_popup);
+    lv_obj_set_size(keys_down_btn, btn_w, btn_h);
+    lv_obj_set_style_bg_color(keys_down_btn, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(keys_down_btn, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_border_width(keys_down_btn, 1, 0);
+    lv_obj_align(keys_down_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
+    lv_obj_add_event_cb(keys_down_btn, keys_scroll_down_cb, LV_EVENT_CLICKED, keys_scroll);
+    lv_obj_t *kdown_label = lv_label_create(keys_down_btn);
+    lv_label_set_text(kdown_label, LV_SYMBOL_DOWN);
+    lv_obj_set_style_text_font(kdown_label, body_font, 0);
+    lv_obj_center(kdown_label);
+
+    keys_popup_selected = 1; // default focus on Close
+    update_keys_popup_selection();
 }
 
 static void cleanup_nfc_write_popup(void *obj) {
@@ -1566,6 +2096,138 @@ static char* build_compact_write_details(const ntag_file_image_t *img) {
     } else {
         pos += snprintf(out + pos, cap - pos, "NDEF: unknown\n");
     }
+    return out;
+}
+
+// Very lightweight Flipper MIFARE Classic parser for Saved popup
+static char* build_mfc_details_from_file(const char *path, char **out_title) {
+    if (out_title) *out_title = NULL;
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+    char line[256];
+    bool is_mfc = false;
+    char *title = NULL;
+    // extract UID, ATQA, SAK, and type string
+    uint8_t uid[10] = {0}; int uid_len = 0;
+    unsigned atqa_hi = 0, atqa_lo = 0; unsigned sak = 0;
+    char type_str[48] = {0};
+
+    // First pass: basic metadata
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "Device type:", 12) == 0 && strstr(line, "Mifare Classic")) {
+            is_mfc = true;
+        } else if (strncmp(line, "Mifare Classic type:", 21) == 0) {
+            // includes size: 4K/1K/Mini
+            char tmp[40] = {0};
+            if (sscanf(line + 21, " %39[^\n\r]", tmp) == 1) {
+                size_t prefix_len = strlen("MIFARE Classic ");
+                size_t max_tmp = (sizeof(type_str) > prefix_len + 1) ? (sizeof(type_str) - prefix_len - 1) : 0;
+                if (max_tmp > 0) snprintf(type_str, sizeof(type_str), "MIFARE Classic %.*s", (int)max_tmp, tmp);
+                else type_str[0] = '\0';
+            }
+        } else if (strncmp(line, "UID:", 4) == 0) {
+            const char *p = line + 4; int ncon = 0; unsigned b = 0;
+            while (*p && uid_len < (int)sizeof(uid)) {
+                while (*p == ' ') ++p;
+                if (!*p || *p == '\n' || *p == '\r') break;
+                if (sscanf(p, " %2x%n", &b, &ncon) == 1) { uid[uid_len++] = (uint8_t)b; p += ncon; }
+                else break;
+            }
+        } else if (strncmp(line, "ATQA:", 6) == 0) {
+            sscanf(line + 6, " %2x %2x", &atqa_hi, &atqa_lo);
+        } else if (strncmp(line, "SAK:", 4) == 0) {
+            sscanf(line + 4, " %2x", &sak);
+        }
+    }
+    if (!is_mfc) { fclose(f); return NULL; }
+    if (type_str[0] == '\0') snprintf(type_str, sizeof(type_str), "MIFARE Classic");
+
+    // Determine type and total sectors/keys
+    MFC_TYPE mt = mfc_type_from_sak((uint8_t)sak);
+    int sectors_total = mfc_sector_count(mt);
+    if (sectors_total == 0) sectors_total = 16;
+    int keys_total = sectors_total * 2;
+
+    // Prepare block count and allocate storage for block data
+    int blocks_total = 0;
+    for (int s = 0; s < sectors_total; ++s) blocks_total += mfc_blocks_in_sector(mt, s);
+
+    // Rewind and parse Block lines to assess readable blocks and keys
+    rewind(f);
+    // allocate array of int[blocks_total][16], -1 for unknown, 0-255 for bytes
+    int *blocks = (int*)malloc((size_t)blocks_total * 16 * sizeof(int));
+    if (!blocks) { fclose(f); return NULL; }
+    for (int i = 0; i < blocks_total * 16; ++i) blocks[i] = -1;
+    while (fgets(line, sizeof(line), f)) {
+        int blk = -1;
+        if (sscanf(line, "Block %d:", &blk) == 1 && blk >= 0 && blk < blocks_total) {
+            const char *p = strchr(line, ':');
+            if (!p) {
+                continue;
+            }
+            p++;
+            int off = blk * 16;
+            // parse up to 16 tokens
+            for (int bi = 0; bi < 16; ++bi) {
+                while (*p == ' ') ++p;
+                if (!*p || *p == '\n' || *p == '\r') break;
+                if (p[0] == '?' && p[1] == '?') { blocks[off + bi] = -1; p += 2; }
+                else {
+                    unsigned v = 0; int consumed = 0;
+                    if (sscanf(p, "%2x%n", &v, &consumed) == 1) { blocks[off + bi] = (int)v; p += consumed; }
+                    else { blocks[off + bi] = -1; while (*p && *p != ' ') ++p; }
+                }
+            }
+        }
+    }
+    fclose(f);
+
+    // Compute readable sectors and keys found
+    int sectors_readable = 0;
+    int keys_found = 0;
+    for (int s = 0; s < sectors_total; ++s) {
+        int first = mfc_first_block_of_sector(mt, s);
+        int blocks_in_sec = mfc_blocks_in_sector(mt, s);
+        bool sector_has_data = false;
+        // scan blocks in sector
+        for (int b = 0; b < blocks_in_sec; ++b) {
+            int blk = first + b;
+            if (blk < 0 || blk >= blocks_total) continue;
+            int off = blk * 16;
+            for (int bi = 0; bi < 16; ++bi) {
+                if (blocks[off + bi] >= 0) { sector_has_data = true; break; }
+            }
+            if (sector_has_data) break;
+        }
+        if (sector_has_data) sectors_readable++;
+        // check trailer for keys (last block)
+        int trailer = first + blocks_in_sec - 1;
+        if (trailer >= 0 && trailer < blocks_total) {
+            int offt = trailer * 16;
+            // Key A in bytes 0..5
+            bool key_a_known = true; for (int k = 0; k < 6; ++k) if (blocks[offt + k] < 0) { key_a_known = false; break; }
+            if (key_a_known) keys_found++;
+            // Key B in bytes 10..15
+            bool key_b_known = true; for (int k = 10; k < 16; ++k) if (blocks[offt + k] < 0) { key_b_known = false; break; }
+            if (key_b_known) keys_found++;
+        }
+    }
+    free(blocks);
+
+    // build title
+    title = (char*)malloc(48);
+    if (title) snprintf(title, 48, "%s", type_str);
+
+    // build details compact
+    size_t cap = 512; char *out = (char*)malloc(cap);
+    if (!out) { if (title) free(title); if (out_title) *out_title = NULL; return NULL; }
+    int pos = 0;
+    pos += snprintf(out + pos, cap - pos, "UID:");
+    for (int i = 0; i < uid_len && pos < (int)cap - 4; ++i) pos += snprintf(out + pos, cap - pos, " %02X", uid[i]);
+    pos += snprintf(out + pos, cap - pos, "\nATQA: %02X %02X | SAK: %02X\n", (unsigned)atqa_hi, (unsigned)atqa_lo, (unsigned)sak);
+    pos += snprintf(out + pos, cap - pos, "Sectors: %d/%d | Keys: %d/%d\n", sectors_readable, sectors_total, keys_found, keys_total);
+
+    if (out_title) *out_title = title; else if (title) free(title);
     return out;
 }
 
@@ -1653,6 +2315,217 @@ static void create_nfc_write_popup(const char *path) {
 
     nfc_write_popup_selected = 0;
     update_nfc_write_popup_selection();
+}
+
+static void saved_close_cb(lv_event_t *e) { (void)e; cleanup_saved_details_popup(NULL); }
+static void saved_rename_cb(lv_event_t *e) {
+    (void)e;
+    if (g_saved_current_path[0] == '\0') return;
+    // derive current base name without extension
+    const char *slash = strrchr(g_saved_current_path, '/');
+    const char *fname = slash ? slash + 1 : g_saved_current_path;
+    char base[64] = {0};
+    strncpy(base, fname, sizeof(base) - 1);
+    char *dot = strrchr(base, '.'); if (dot) *dot = '\0';
+    keyboard_view_set_submit_callback(saved_rename_keyboard_callback);
+    // placeholder should be the current base name (without extension) so typing "example" results in example.nfc
+    keyboard_view_set_placeholder(base[0] ? base : fname);
+    keyboard_view_set_return_view(&nfc_view);
+    display_manager_switch_view(&keyboard_view);
+}
+static void saved_delete_cb(lv_event_t *e) {
+    (void)e;
+    if (g_saved_current_path[0] == '\0') return;
+    if (remove(g_saved_current_path) == 0) {
+        ESP_LOGI(TAG, "deleted file: %s", g_saved_current_path);
+    } else {
+        ESP_LOGE(TAG, "failed delete: %s", g_saved_current_path);
+    }
+    cleanup_saved_details_popup(NULL);
+    // refresh list
+    if (!in_saved_list) saved_enter_list(); else saved_enter_list();
+}
+static void saved_rename_keyboard_callback(const char *name) {
+    if (!name || !*name) { display_manager_switch_view(&nfc_view); return; }
+    if (g_saved_current_path[0] == '\0') { display_manager_switch_view(&nfc_view); return; }
+    // Build new path safely
+    char dir[192]; strncpy(dir, g_saved_current_path, sizeof(dir)-1); dir[sizeof(dir)-1] = '\0';
+    char *last = strrchr(dir, '/'); if (last) *last = '\0'; else dir[0] = '\0';
+    char safe[200];
+    size_t max_name = 180; // conservative limit
+    size_t copy_len = (max_name < sizeof(safe) - 1) ? max_name : (sizeof(safe) - 1);
+    strncpy(safe, name, copy_len);
+    safe[copy_len] = '\0';
+    for (size_t i = strlen(safe); i > 0 && (safe[i-1] == ' ' || safe[i-1] == '\r' || safe[i-1] == '\n' || safe[i-1] == '\t'); --i) safe[i-1] = '\0';
+    for (char *p = safe; *p; ++p) { if (*p == '/' || *p == '\\') *p = '_'; }
+    bool has_ext = false; size_t sl = strlen(safe);
+    if (sl >= 4) { const char *ext = &safe[sl - 4]; if ((ext[0] == '.') && ((ext[1] | 0x20) == 'n') && ((ext[2] | 0x20) == 'f') && ((ext[3] | 0x20) == 'c')) has_ext = true; }
+
+    saved_rename_job_t *job = (saved_rename_job_t*)malloc(sizeof(saved_rename_job_t));
+    if (!job) { display_manager_switch_view(&nfc_view); return; }
+    strncpy(job->old_path, g_saved_current_path, sizeof(job->old_path)-1); job->old_path[sizeof(job->old_path)-1] = '\0';
+    {
+        size_t N = sizeof(job->new_path);
+        size_t dir_len = strlen(dir);
+        size_t ext_len = has_ext ? 0 : 4; // ".nfc"
+        if (dir_len + 1 + ext_len + 1 >= N) {
+            // not enough room for any name; produce a safe fallback
+            snprintf(job->new_path, N, "%s/renamed.nfc", dir);
+        } else {
+            int max_safe = (int)(N - dir_len - ext_len - 2); // room for '/', ext, and NUL
+            if (max_safe < 0) max_safe = 0;
+            if (has_ext) {
+                snprintf(job->new_path, N, "%s/%.*s", dir, max_safe, safe);
+            } else {
+                snprintf(job->new_path, N, "%s/%.*s.nfc", dir, max_safe, safe);
+            }
+        }
+    }
+    job->success = 0;
+
+    // Do the rename in a background task to avoid LVGL tick stack overflow
+    xTaskCreate(saved_rename_task, "saved_rename", 4096, job, 5, NULL);
+}
+
+static void saved_rename_task(void *arg) {
+    saved_rename_job_t *job = (saved_rename_job_t*)arg;
+    if (!job) { vTaskDelete(NULL); return; }
+    int res = rename(job->old_path, job->new_path);
+    job->success = (res == 0);
+    lv_async_call(saved_rename_ui_done_cb, job);
+    vTaskDelete(NULL);
+}
+
+static void saved_rename_ui_done_cb(void *param) {
+    saved_rename_job_t *job = (saved_rename_job_t*)param;
+    if (!job) return;
+    if (job->success) {
+        ESP_LOGI(TAG, "renamed: %s -> %s", job->old_path, job->new_path);
+        strncpy(g_saved_current_path, job->new_path, sizeof(g_saved_current_path)-1);
+        g_saved_current_path[sizeof(g_saved_current_path)-1] = '\0';
+    } else {
+        ESP_LOGE(TAG, "rename failed: %s -> %s (errno=%d)", job->old_path, job->new_path, errno);
+    }
+    // Close popup and refresh list on UI thread
+    cleanup_saved_details_popup(NULL);
+    display_manager_switch_view(&nfc_view);
+    saved_enter_list();
+    free(job);
+}
+
+static void cleanup_saved_details_popup(void *obj) {
+    (void)obj;
+    if (saved_popup) { lv_obj_del(saved_popup); saved_popup = NULL; }
+    saved_close_btn = NULL;
+    saved_rename_btn = NULL;
+    saved_delete_btn = NULL;
+    saved_title_label = NULL;
+    saved_details_label = NULL;
+    saved_popup_selected = 0;
+}
+
+static void create_saved_details_popup(const char *path) {
+    if (!root) return;
+    if (saved_popup && lv_obj_is_valid(saved_popup)) cleanup_saved_details_popup(NULL);
+
+    saved_popup = lv_obj_create(root);
+    int popup_w = LV_HOR_RES - 30;
+    int popup_h = (LV_VER_RES <= 240) ? 140 : 160;
+    lv_obj_set_size(saved_popup, popup_w, popup_h);
+    lv_obj_align(saved_popup, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_bg_color(saved_popup, lv_color_hex(0x2E2E2E), 0);
+    lv_obj_set_style_border_color(saved_popup, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_width(saved_popup, 2, 0);
+    lv_obj_set_style_radius(saved_popup, 10, 0);
+    lv_obj_clear_flag(saved_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_top(saved_popup, 2, 0);
+    lv_obj_set_style_pad_bottom(saved_popup, 4, 0);
+    lv_obj_set_style_pad_left(saved_popup, 6, 0);
+    lv_obj_set_style_pad_right(saved_popup, 6, 0);
+
+    const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
+    const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+
+    saved_title_label = lv_label_create(saved_popup);
+    lv_obj_set_style_text_font(saved_title_label, title_font, 0);
+    lv_obj_set_style_text_color(saved_title_label, lv_color_hex(0xFFFFFF), 0);
+    lv_label_set_text(saved_title_label, "Saved Tag");
+    lv_obj_align(saved_title_label, LV_ALIGN_TOP_MID, 0, 10);
+
+    saved_details_label = lv_label_create(saved_popup);
+    lv_obj_set_width(saved_details_label, LV_HOR_RES - 50);
+    lv_label_set_long_mode(saved_details_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(saved_details_label, body_font, 0);
+    lv_obj_set_style_text_color(saved_details_label, lv_color_hex(0xDDDDDD), 0);
+    lv_obj_align(saved_details_label, LV_ALIGN_TOP_MID, 0, 26);
+
+    // store current path for rename/delete
+    strncpy(g_saved_current_path, path, sizeof(g_saved_current_path) - 1);
+    g_saved_current_path[sizeof(g_saved_current_path) - 1] = '\0';
+
+    // parse file and show details (supports NTAG and MIFARE Classic)
+    char *title = NULL;
+    char *mfc_det = build_mfc_details_from_file(path, &title);
+    if (mfc_det) {
+        if (title) { lv_label_set_text(saved_title_label, title); free(title); title = NULL; }
+        lv_label_set_text(saved_details_label, mfc_det);
+        free(mfc_det);
+    } else {
+        ntag_file_image_t img; memset(&img, 0, sizeof(img));
+        bool ok = ntag_file_load(path, &img);
+        if (ok) {
+            // Title from model string
+            const char *label = ntag_t2_model_str(img.model);
+            lv_label_set_text(saved_title_label, label);
+            char *det = build_compact_write_details(&img);
+            if (det) { lv_label_set_text(saved_details_label, det); free(det); }
+            else { lv_label_set_text(saved_details_label, "File parsed"); }
+            ntag_file_free(&img);
+        } else {
+            lv_label_set_text(saved_details_label, "Failed to parse .nfc file");
+        }
+    }
+
+    int btn_w = 90, btn_h = 34; if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 30; }
+    // Buttons: Close (left), Rename (mid), Delete (right)
+    saved_close_btn = lv_btn_create(saved_popup);
+    lv_obj_set_size(saved_close_btn, btn_w, btn_h);
+    lv_obj_set_style_bg_color(saved_close_btn, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(saved_close_btn, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_border_width(saved_close_btn, 1, 0);
+    lv_obj_align(saved_close_btn, LV_ALIGN_BOTTOM_LEFT, 10, -8);
+    lv_obj_add_event_cb(saved_close_btn, saved_close_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *close_label = lv_label_create(saved_close_btn);
+    lv_label_set_text(close_label, "Close");
+    lv_obj_set_style_text_font(close_label, body_font, 0);
+    lv_obj_center(close_label);
+
+    saved_rename_btn = lv_btn_create(saved_popup);
+    lv_obj_set_size(saved_rename_btn, btn_w, btn_h);
+    lv_obj_set_style_bg_color(saved_rename_btn, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(saved_rename_btn, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_border_width(saved_rename_btn, 1, 0);
+    lv_obj_align(saved_rename_btn, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_add_event_cb(saved_rename_btn, saved_rename_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *rename_label = lv_label_create(saved_rename_btn);
+    lv_label_set_text(rename_label, "Rename");
+    lv_obj_set_style_text_font(rename_label, body_font, 0);
+    lv_obj_center(rename_label);
+
+    saved_delete_btn = lv_btn_create(saved_popup);
+    lv_obj_set_size(saved_delete_btn, btn_w, btn_h);
+    lv_obj_set_style_bg_color(saved_delete_btn, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(saved_delete_btn, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_border_width(saved_delete_btn, 1, 0);
+    lv_obj_align(saved_delete_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
+    lv_obj_add_event_cb(saved_delete_btn, saved_delete_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *delete_label = lv_label_create(saved_delete_btn);
+    lv_label_set_text(delete_label, "Delete");
+    lv_obj_set_style_text_font(delete_label, body_font, 0);
+    lv_obj_center(delete_label);
+
+    saved_popup_selected = 0;
+    update_saved_popup_selection();
 }
 
 static void nfc_write_cancel_cb(lv_event_t *e) {
@@ -1835,10 +2708,36 @@ static void nfc_view_create(void) {
     lv_obj_set_user_data(scan_btn, (void *)"Scan");
     lv_obj_add_event_cb(scan_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Scan");
 
+    // Add Saved button
+    lv_obj_t *saved_btn = lv_list_add_btn(menu_container, NULL, "Saved");
+    lv_obj_set_height(saved_btn, button_height_global);
+    lv_obj_add_style(saved_btn, get_zebra_style(1), 0);
+    lv_obj_t *svlabel = lv_obj_get_child(saved_btn, 0);
+    if (svlabel) {
+        lv_obj_set_style_text_font(svlabel, get_menu_font(), 0);
+        vertically_center_label(svlabel, saved_btn);
+        lv_obj_add_style(svlabel, &style_menu_label, 0);
+    }
+    lv_obj_set_user_data(saved_btn, (void *)"Saved");
+    lv_obj_add_event_cb(saved_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Saved");
+
+    // Add User Keys button
+    lv_obj_t *keys_btn = lv_list_add_btn(menu_container, NULL, "User Keys");
+    lv_obj_set_height(keys_btn, button_height_global);
+    lv_obj_add_style(keys_btn, get_zebra_style(2), 0);
+    lv_obj_t *klabel = lv_obj_get_child(keys_btn, 0);
+    if (klabel) {
+        lv_obj_set_style_text_font(klabel, get_menu_font(), 0);
+        vertically_center_label(klabel, keys_btn);
+        lv_obj_add_style(klabel, &style_menu_label, 0);
+    }
+    lv_obj_set_user_data(keys_btn, (void *)"User Keys");
+    lv_obj_add_event_cb(keys_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"User Keys");
+
     // Add Write button
     emulate_btn = lv_list_add_btn(menu_container, NULL, "Write");
     lv_obj_set_height(emulate_btn, button_height_global);
-    lv_obj_add_style(emulate_btn, get_zebra_style(1), 0);
+    lv_obj_add_style(emulate_btn, get_zebra_style(3), 0);
     lv_obj_t *elabel = lv_obj_get_child(emulate_btn, 0);
     if (elabel) {
         lv_obj_set_style_text_font(elabel, get_menu_font(), 0);
@@ -1848,14 +2747,14 @@ static void nfc_view_create(void) {
     lv_obj_set_user_data(emulate_btn, (void *)"Write");
     lv_obj_add_event_cb(emulate_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Write");
 
-    num_items = 2;
+    num_items = 4;
 
 #ifdef CONFIG_USE_ENCODER
     // Add Back option row for encoder users, mirroring options_screen behavior
     lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
     if (back_row) {
         lv_obj_set_height(back_row, button_height_global);
-        lv_obj_add_style(back_row, get_zebra_style(2), 0);
+        lv_obj_add_style(back_row, get_zebra_style(4), 0);
         lv_obj_t *blabel = lv_obj_get_child(back_row, 0);
         if (blabel) {
             lv_obj_set_style_text_font(blabel, get_menu_font(), 0);
@@ -1921,6 +2820,10 @@ static void nfc_view_destroy(void) {
     // Cancel any active write and cleanup popup
     nfc_write_cancel = true;
     cleanup_nfc_write_popup(NULL);
+    // Cleanup saved popup and list
+    cleanup_saved_details_popup(NULL);
+    saved_clear_list();
+    in_saved_list = false;
 
     if (root) {
         lv_obj_del(root);

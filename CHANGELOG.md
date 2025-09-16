@@ -11,6 +11,9 @@
   - MIFARE Classic (Mini/1K/4K) support:
     - Flipper's 1000+ key dictionary attack
     - Magic backdoor detection (Gen1A clones)
+    - Saved file manager:
+      - 'Saved' menu to browse .nfc files and rename/delete them from the UI
+      - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
 
 ## Revival v1.7.2
 
