@@ -12,6 +12,7 @@
   - **MIFARE Classic Support (Mini/1K/4K)**
     - Flipper's 1000+ key dictionary attack
     - Magic backdoor detection (Gen1A clones)
+    - Parse and display NDEF TLV data
   - **File Management**
     - 'Saved' menu to browse .nfc files and rename/delete them from the UI
     - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`

@@ -2228,6 +2228,90 @@ static char* build_mfc_details_from_file(const char *path, char **out_title) {
     pos += snprintf(out + pos, cap - pos, "Sectors: %d/%d | Keys: %d/%d\n", sectors_readable, sectors_total, keys_found, keys_total);
 
     if (out_title) *out_title = title; else if (title) free(title);
+
+    // Try to find NDEF in saved blocks and append a concise single-line summary
+    for (int s = 0; s < sectors_total; ++s) {
+        if (s == 16 && sectors_total > 16) continue; // skip MAD2 on 4K
+        int first = mfc_first_block_of_sector(mt, s);
+        int blocks_in_sec = mfc_blocks_in_sector(mt, s);
+        int data_blocks = blocks_in_sec - 1;
+        if (data_blocks <= 0) continue;
+        size_t sec_bytes = (size_t)data_blocks * 16;
+        uint8_t *sec_buf = (uint8_t*)malloc(sec_bytes);
+        if (!sec_buf) break;
+        size_t woff = 0;
+        for (int b = 0; b < data_blocks; ++b) {
+            int blk = first + b;
+            int off = blk * 16;
+            for (int bi = 0; bi < 16; ++bi) {
+                int v = -1;
+                if (blk >= 0 && blk < blocks_total) v = blocks[off + bi];
+                sec_buf[woff + bi] = (v >= 0) ? (uint8_t)v : 0x00;
+            }
+            woff += 16;
+        }
+        size_t off = 0, mlen = 0;
+        if (ntag_t2_find_ndef(sec_buf, sec_bytes, &off, &mlen) && off < sec_bytes && mlen > 0) {
+            // assemble contiguous view across subsequent sectors to cover message
+            size_t need = off + mlen;
+            size_t have = sec_bytes;
+            int ss = s + 1;
+            while (have < need && ss < sectors_total) {
+                if (ss == 16 && sectors_total > 16) { ss++; continue; }
+                int f2 = mfc_first_block_of_sector(mt, ss);
+                int bl2 = mfc_blocks_in_sector(mt, ss);
+                have += (size_t)(bl2 - 1) * 16;
+                ss++;
+            }
+            size_t total_cap = have;
+            uint8_t *cat = (uint8_t*)malloc(total_cap);
+            if (cat) {
+                // copy first sector
+                memcpy(cat, sec_buf, sec_bytes);
+                size_t cat_off = sec_bytes;
+                for (int s2 = s + 1; cat_off < total_cap && s2 < sectors_total; ++s2) {
+                    if (s2 == 16 && sectors_total > 16) continue;
+                    int f2 = mfc_first_block_of_sector(mt, s2);
+                    int bl2 = mfc_blocks_in_sector(mt, s2);
+                    for (int b2 = 0; b2 < bl2 - 1 && cat_off < total_cap; ++b2) {
+                        int absb2 = f2 + b2;
+                        int offb = absb2 * 16;
+                        for (int bi = 0; bi < 16 && cat_off < total_cap; ++bi) {
+                            int v = -1;
+                            if (absb2 >= 0 && absb2 < blocks_total) v = blocks[offb + bi];
+                            cat[cat_off++] = (v >= 0) ? (uint8_t)v : 0x00;
+                        }
+                    }
+                }
+
+                char *ndef_text = ndef_build_details_from_message(cat + off, mlen, uid, uid_len, type_str);
+                if (ndef_text) {
+                    // extract first record line
+                    const char *p = strstr(ndef_text, "\nR");
+                    if (!p) { if (ndef_text[0] == 'R') p = ndef_text; }
+                    else p++;
+                    if (p && p[0] == 'R') {
+                        const char *colon = strchr(p, ':');
+                        const char *start = NULL;
+                        if (colon) { start = colon + 1; if (*start == ' ') start++; }
+                        else start = p;
+                        const char *endl = strchr(start, '\n');
+                        if (!endl) endl = start + strlen(start);
+                        // append directly after existing lines (no extra blank)
+                        int napp = snprintf(out + pos, cap - pos, "NDEF: %.*s\n", (int)(endl - start), start);
+                        if (napp > 0) { pos += napp; }
+                    }
+                    free(ndef_text);
+                    free(cat);
+                    free(sec_buf);
+                    break; // stop after first found
+                }
+                free(cat);
+            }
+        }
+        free(sec_buf);
+    }
+
     return out;
 }
 

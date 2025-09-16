@@ -8,6 +8,14 @@
 #include "managers/fuel_gauge_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "managers/nfc/ndef.h"
+#include "managers/nfc/ntag_t2.h"
+
+char* ndef_build_details_from_tlv(const uint8_t* tlv_area,
+                                  size_t tlv_len,
+                                  const uint8_t* uid,
+                                  uint8_t uid_len,
+                                  const char* card_label);
 
 #define MFC_TAG "MFC"
 static void crc_a_calc(const uint8_t *data, size_t len, uint8_t out[2]);
@@ -1523,13 +1531,113 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
     int keys_found = found_a + found_b;
     int keys_total = sectors * 2;
     n = snprintf(w, rem, "Keys %d/%d | Sectors %d/%d\n", keys_found, keys_total, readable, sectors); w+=n; rem-=n;
-    if (spos > 0) {
-        // Trim trailing space
-        if (sec_buf[spos-1] == ' ') sec_buf[spos-1] = '\0';
-        n = snprintf(w, rem, "Key map: %s\n", sec_buf); (void)n;
-    }
+    // key map will be printed only if no NDEF summary is found
     // Avoid unused-variable warnings for a_cnt/b_cnt (kept for logs/metrics above)
     (void)a_cnt; (void)b_cnt;
+
+    // Attempt to locate and parse NDEF TLV within sector data blocks and append details
+    if (g_mfc_cache && mfc_cache_matches(uid, uid_len)) {
+        int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+        for (int s = 0; s < sectors; ++s) {
+            if (s == 16 && sectors > 16) continue; // skip MAD2 sector on 4K
+            int first = mfc_first_block_of_sector(t, s);
+            int blocks = mfc_blocks_in_sector(t, s);
+            int data_blocks = blocks - 1; if (data_blocks <= 0) continue;
+            size_t sec_bytes = (size_t)data_blocks * 16;
+            uint8_t *sec_buf = (uint8_t*)malloc(sec_bytes);
+            if (!sec_buf) break;
+            size_t woff = 0;
+            for (int b = 0; b < data_blocks; ++b) {
+                int absb = first + b;
+                if (BITSET_TEST(g_mfc_known, absb)) memcpy(sec_buf + woff, &g_mfc_cache[absb * 16], 16);
+                else memset(sec_buf + woff, 0, 16);
+                woff += 16;
+            }
+            size_t off = 0, mlen = 0;
+            if (ntag_t2_find_ndef(sec_buf, sec_bytes, &off, &mlen) && off < sec_bytes && mlen > 0) {
+                // Build a contiguous buffer from this offset across following sectors to cover message length
+                size_t need = off + mlen;
+                size_t have = sec_bytes;
+                size_t total_cap = need;
+                // If message spills to next sectors, extend
+                int ss = s + 1;
+                while (have < need && ss < sectors) {
+                    if (ss == 16 && sectors > 16) { ss++; continue; }
+                    int f2 = mfc_first_block_of_sector(t, ss);
+                    int bl2 = mfc_blocks_in_sector(t, ss);
+                    have += (size_t)(bl2 - 1) * 16;
+                    ss++;
+                }
+                total_cap = have;
+                uint8_t *cat = (uint8_t*)malloc(total_cap);
+                if (cat) {
+                    // copy current sector
+                    memcpy(cat, sec_buf, sec_bytes);
+                    size_t cat_off = sec_bytes;
+                    // append next sectors' data blocks
+                    for (int s2 = s + 1; cat_off < total_cap && s2 < sectors; ++s2) {
+                        if (s2 == 16 && sectors > 16) continue;
+                        int f2 = mfc_first_block_of_sector(t, s2);
+                        int bl2 = mfc_blocks_in_sector(t, s2);
+                        for (int b2 = 0; b2 < bl2 - 1 && cat_off < total_cap; ++b2) {
+                            int absb2 = f2 + b2;
+                            if (BITSET_TEST(g_mfc_known, absb2)) memcpy(cat + cat_off, &g_mfc_cache[absb2 * 16], 16);
+                            else memset(cat + cat_off, 0, 16);
+                            cat_off += 16;
+                        }
+                    }
+                    // Now we have a contiguous view; pass exact message window
+                    char *ndef_text = ndef_build_details_from_message(cat + off, mlen, uid, uid_len, mfc_type_str(t));
+                    if (ndef_text) {
+                        // Extract first decoded record line (e.g., URL ..., Text ..., SmartPoster ...)
+                        const char *p = strstr(ndef_text, "\nR");
+                        if (!p) {
+                            if (ndef_text[0] == 'R') p = ndef_text;
+                        } else {
+                            p++; // move to 'R'
+                        }
+                        if (p && p[0] == 'R') {
+                            const char *colon = strchr(p, ':');
+                            const char *start = NULL;
+                            if (colon) {
+                                start = colon + 1;
+                                if (*start == ' ') start++;
+                            }
+                            if (start) {
+                                const char *end = strchr(start, '\n');
+                                size_t linelen = end ? (size_t)(end - start) : strlen(start);
+                                // append single-line summary
+                                if (linelen > 0) {
+                                    if (linelen + 8 > rem) {
+                                        size_t used = w - out;
+                                        size_t newcap = (cap * 2) + linelen + 256;
+                                        char *n = (char*)realloc(out, newcap);
+                                        if (n) { w = n + used; out = n; rem = newcap - used; cap = newcap; }
+                                    }
+                                    if (rem > 0) {
+                                        int nn = snprintf(w, rem, "NDEF: ");
+                                        if (nn > 0) { w += nn; rem -= nn; }
+                                        size_t to_copy = (linelen < rem) ? linelen : rem - 1;
+                                        memcpy(w, start, to_copy);
+                                        w += to_copy; rem -= to_copy;
+                                        if (rem > 0) { *w = '\n'; w++; rem--; }
+                                    }
+                                }
+                            }
+                        }
+                        free(ndef_text);
+                        free(cat);
+                        free(sec_buf);
+                        fuel_gauge_manager_set_paused(false);
+                        return out; // done after first found message
+                    }
+                    free(cat);
+                }
+            }
+            free(sec_buf);
+        }
+    }
+
     fuel_gauge_manager_set_paused(false);
     return out;
 }
