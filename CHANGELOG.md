@@ -4,7 +4,7 @@
 
 ### Added
 
-- **NFC Capability**
+- **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
     - Read NTAG213/215/216 with NDEF parsing
     - Write NTAG213/215/216 from .nfc files
