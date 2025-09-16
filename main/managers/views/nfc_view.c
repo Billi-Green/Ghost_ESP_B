@@ -1116,32 +1116,72 @@ static bool write_flipper_nfc_file(void) {
         return false;
     }
 
-    // Signature (32 bytes)
-    uint8_t sig[32];
-    if (ntag2xx_read_signature(g_pn532, sig) != ESP_OK) memset(sig, 0, sizeof(sig));
-    pos = 0;
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "Signature:");
-    for (int i = 0; i < 32 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", sig[i]);
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
-    sd_card_append_file(path, buf, (size_t)pos);
-
-    // Mifare version (GET_VERSION -> 8 bytes)
-    uint8_t ver[8]; if (ntag2xx_get_version(g_pn532, ver) != ESP_OK) memset(ver, 0, sizeof(ver));
-    pos = 0;
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "Mifare version:");
-    for (int i = 0; i < 8 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", ver[i]);
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
-    sd_card_append_file(path, buf, (size_t)pos);
-
-    // Counters and tearing flags
-    for (int ci = 0; ci < 3; ++ci) {
-        uint32_t cv = 0; uint8_t tr = 0;
-        esp_err_t erc = ntag2xx_read_counter(g_pn532, (uint8_t)ci, &cv);
-        esp_err_t ert = ntag2xx_read_tearing(g_pn532, (uint8_t)ci, &tr);
-        pos = 0; pos += snprintf(buf + pos, sizeof(buf) - pos, "Counter %d: %u\n", ci, (erc == ESP_OK) ? (unsigned)cv : 0);
-        pos += snprintf(buf + pos, sizeof(buf) - pos, "Tearing %d: %02X\n", ci, (ert == ESP_OK) ? tr : 0);
+    // batch metadata writes: signature, version, counters
+    char *meta = NULL; size_t meta_cap = 512; size_t mpos = 0;
+    meta = (char*)malloc(meta_cap);
+    if (!meta) {
+        // fallback: original per-section appends
+        uint8_t sig[32];
+        if (ntag2xx_read_signature(g_pn532, sig) != ESP_OK) memset(sig, 0, sizeof(sig));
+        pos = 0;
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "Signature:");
+        for (int i = 0; i < 32 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", sig[i]);
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
         sd_card_append_file(path, buf, (size_t)pos);
+        uint8_t ver[8]; if (ntag2xx_get_version(g_pn532, ver) != ESP_OK) memset(ver, 0, sizeof(ver));
+        pos = 0;
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "Mifare version:");
+        for (int i = 0; i < 8 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", ver[i]);
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
+        sd_card_append_file(path, buf, (size_t)pos);
+        for (int ci = 0; ci < 3; ++ci) {
+            uint32_t cv = 0; uint8_t tr = 0;
+            esp_err_t erc = ntag2xx_read_counter(g_pn532, (uint8_t)ci, &cv);
+            esp_err_t ert = ntag2xx_read_tearing(g_pn532, (uint8_t)ci, &tr);
+            pos = 0; pos += snprintf(buf + pos, sizeof(buf) - pos, "Counter %d: %u\n", ci, (erc == ESP_OK) ? (unsigned)cv : 0);
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "Tearing %d: %02X\n", ci, (ert == ESP_OK) ? tr : 0);
+            sd_card_append_file(path, buf, (size_t)pos);
+        }
+    } else {
+        // signature
+        uint8_t sig[32];
+        if (ntag2xx_read_signature(g_pn532, sig) != ESP_OK) memset(sig, 0, sizeof(sig));
+        int w = snprintf(NULL, 0, "Signature:");
+        if (mpos + (size_t)w + 1 > meta_cap) { size_t nc = meta_cap * 2 + (size_t)w + 64; char *n = (char*)realloc(meta, nc); if (!n) { free(meta); meta = NULL; goto meta_fallback; } meta = n; meta_cap = nc; }
+        memcpy(meta + mpos, "Signature:", (size_t)w); mpos += (size_t)w;
+        for (int i = 0; i < 32; ++i) {
+            char tmp[4]; int tp = snprintf(tmp, sizeof(tmp), " %02X", sig[i]);
+            if (mpos + (size_t)tp + 1 > meta_cap) { size_t nc = meta_cap * 2 + 64; char *n = (char*)realloc(meta, nc); if (!n) { free(meta); meta = NULL; goto meta_fallback; } meta = n; meta_cap = nc; }
+            memcpy(meta + mpos, tmp, (size_t)tp); mpos += (size_t)tp;
+        }
+        if (mpos + 1 > meta_cap) { size_t nc = meta_cap + 64; char *n = (char*)realloc(meta, nc); if (!n) { free(meta); meta = NULL; goto meta_fallback; } meta = n; meta_cap = nc; }
+        meta[mpos++] = '\n';
+        // version
+        uint8_t ver[8]; if (ntag2xx_get_version(g_pn532, ver) != ESP_OK) memset(ver, 0, sizeof(ver));
+        w = snprintf(NULL, 0, "Mifare version:");
+        if (mpos + (size_t)w + 1 > meta_cap) { size_t nc = meta_cap * 2 + (size_t)w + 64; char *n = (char*)realloc(meta, nc); if (!n) { free(meta); meta = NULL; goto meta_fallback; } meta = n; meta_cap = nc; }
+        memcpy(meta + mpos, "Mifare version:", (size_t)w); mpos += (size_t)w;
+        for (int i = 0; i < 8; ++i) {
+            char tmp[4]; int tp = snprintf(tmp, sizeof(tmp), " %02X", ver[i]);
+            if (mpos + (size_t)tp + 1 > meta_cap) { size_t nc = meta_cap * 2 + 64; char *n = (char*)realloc(meta, nc); if (!n) { free(meta); meta = NULL; goto meta_fallback; } meta = n; meta_cap = nc; }
+            memcpy(meta + mpos, tmp, (size_t)tp); mpos += (size_t)tp;
+        }
+        if (mpos + 1 > meta_cap) { size_t nc = meta_cap + 64; char *n = (char*)realloc(meta, nc); if (!n) { free(meta); meta = NULL; goto meta_fallback; } meta = n; meta_cap = nc; }
+        meta[mpos++] = '\n';
+        // counters and tearing flags
+        for (int ci = 0; ci < 3; ++ci) {
+            uint32_t cv = 0; uint8_t tr = 0;
+            esp_err_t erc = ntag2xx_read_counter(g_pn532, (uint8_t)ci, &cv);
+            esp_err_t ert = ntag2xx_read_tearing(g_pn532, (uint8_t)ci, &tr);
+            char line[64];
+            int lp = snprintf(line, sizeof(line), "Counter %d: %u\nTearing %d: %02X\n", ci, (erc == ESP_OK) ? (unsigned)cv : 0, ci, (ert == ESP_OK) ? tr : 0);
+            if (mpos + (size_t)lp > meta_cap) { size_t nc = meta_cap * 2 + (size_t)lp + 64; char *n = (char*)realloc(meta, nc); if (!n) { free(meta); meta = NULL; goto meta_fallback; } meta = n; meta_cap = nc; }
+            memcpy(meta + mpos, line, (size_t)lp); mpos += (size_t)lp;
+        }
+        if (mpos > 0) sd_card_append_file(path, meta, mpos);
+        free(meta); meta = NULL;
     }
+meta_fallback: ;
 
     // Read all pages and build page dump
     size_t cap = (size_t)pages_total * 48 + 64;

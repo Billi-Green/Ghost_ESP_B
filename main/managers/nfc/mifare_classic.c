@@ -767,7 +767,8 @@ bool mfc_save_flipper_file(pn532_io_handle_t io,
         return false;
     }
 
-    // If no live driver, try writing from cache
+    // If no live driver, try writing from cache. Batch per-sector appends to
+    // reduce repeated small file writes while preserving exact output format.
     if (io == NULL) {
         if (!mfc_cache_matches(uid, uid_len)) {
             ESP_LOGE("MFC", "No cache for this UID; cannot save without card");
@@ -779,28 +780,66 @@ bool mfc_save_flipper_file(pn532_io_handle_t io,
             int first = mfc_first_block_of_sector(t, s);
             int blocks = mfc_blocks_in_sector(t, s);
             int trailer = first + blocks - 1;
+            // allocate an estimated sector buffer; grow if needed
+            size_t cap = (size_t)blocks * 64 + 64;
+            char *sector_buf = (char*)malloc(cap);
+            if (!sector_buf) {
+                // fallback to original per-block writes if allocation fails
+                for (int b = 0; b < blocks; ++b) {
+                    int absb = first + b;
+                    pos = 0; pos += snprintf(buf + pos, sizeof(buf) - pos, "Block %d:", absb);
+                    if (BITSET_TEST(g_mfc_known, absb)) {
+                        uint8_t outb[16];
+                        memcpy(outb, &g_mfc_cache[absb * 16], 16);
+                        if (absb == trailer) {
+                            if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) {
+                                memcpy(outb + 0, &g_sector_key_a[s * 6], 6);
+                            }
+                            if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) {
+                                memcpy(outb + 10, &g_sector_key_b[s * 6], 6);
+                            }
+                        }
+                        for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", outb[i]);
+                    } else {
+                        for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " ??");
+                    }
+                    pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
+                    esp_err_t we = sd_card_append_file(path, buf, (size_t)pos);
+                    if (we != ESP_OK) ESP_LOGE("MFC", "Append failed (%d): %s", (int)we, path);
+                }
+                continue;
+            }
+            size_t spos = 0;
             for (int b = 0; b < blocks; ++b) {
                 int absb = first + b;
-                pos = 0; pos += snprintf(buf + pos, sizeof(buf) - pos, "Block %d:", absb);
+                char line[128]; int lpos = 0;
+                lpos += snprintf(line + lpos, sizeof(line) - lpos, "Block %d:", absb);
                 if (BITSET_TEST(g_mfc_known, absb)) {
                     uint8_t outb[16];
                     memcpy(outb, &g_mfc_cache[absb * 16], 16);
                     if (absb == trailer) {
-                        if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) {
-                            memcpy(outb + 0, &g_sector_key_a[s * 6], 6);
-                        }
-                        if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) {
-                            memcpy(outb + 10, &g_sector_key_b[s * 6], 6);
-                        }
+                        if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) memcpy(outb + 0, &g_sector_key_a[s * 6], 6);
+                        if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) memcpy(outb + 10, &g_sector_key_b[s * 6], 6);
                     }
-                    for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", outb[i]);
+                    for (int i = 0; i < 16 && lpos < (int)sizeof(line) - 4; ++i) lpos += snprintf(line + lpos, sizeof(line) - lpos, " %02X", outb[i]);
                 } else {
-                    for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " ??");
+                    for (int i = 0; i < 16 && lpos < (int)sizeof(line) - 4; ++i) lpos += snprintf(line + lpos, sizeof(line) - lpos, " ??");
                 }
-                pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
-                esp_err_t we = sd_card_append_file(path, buf, (size_t)pos);
+                lpos += snprintf(line + lpos, sizeof(line) - lpos, "\n");
+                if (spos + (size_t)lpos + 1 > cap) {
+                    size_t ncap = cap * 2 + (size_t)lpos + 64;
+                    char *n = (char*)realloc(sector_buf, ncap);
+                    if (!n) break; // OOM: stop building further lines
+                    sector_buf = n; cap = ncap;
+                }
+                memcpy(sector_buf + spos, line, (size_t)lpos);
+                spos += (size_t)lpos;
+            }
+            if (spos > 0) {
+                esp_err_t we = sd_card_append_file(path, sector_buf, spos);
                 if (we != ESP_OK) ESP_LOGE("MFC", "Append failed (%d): %s", (int)we, path);
             }
+            free(sector_buf);
         }
         return true;
     }
@@ -943,80 +982,151 @@ bool mfc_save_flipper_file(pn532_io_handle_t io,
         if (authed && used_key_cur) mfc_cache_record_sector_key(s, usedB_cur, used_key_cur);
         // Optionally accelerate other sectors by sweeping this key
         if (authed && used_key_cur) mfc_key_reuse_sweep(io, t, uid, uid_len, usedB_cur, used_key_cur, s);
+        // Build and append one sector-sized buffer instead of per-block writes
         for (int b = 0; b < blocks; ++b) {
             // If Skip requested mid-sector, exit cache fill immediately
             if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) {
                 mfc_ui_set_cache_mode(false);
                 return false;
             }
-            uint8_t data[16]; bool known = false;
-            if (authed) {
-                uint8_t blk = (uint8_t)(first + b);
-                if (mfc_read_block(io, blk, data) == ESP_OK) {
-                    known = true;
-                } else {
-                    // Retry with re-auth using current key
-                    if (used_key_cur && mfc_auth_block(io, blk, usedB_cur, used_key_cur, uid, uid_len) == ESP_OK
-                        && mfc_read_block(io, blk, data) == ESP_OK) {
+        }
+
+        // Pre-allocate and assemble sector output
+        size_t sec_cap = (size_t)blocks * 96 + 64;
+        char *sector_buf = (char*)malloc(sec_cap);
+        if (!sector_buf) {
+            // fallback to original per-block append behavior when OOM
+            for (int b = 0; b < blocks; ++b) {
+                // Reuse original logic per-block (keeps behavior)
+                if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) { mfc_ui_set_cache_mode(false); return false; }
+                uint8_t data[16]; bool known = false;
+                if (authed) {
+                    uint8_t blk = (uint8_t)(first + b);
+                    if (mfc_read_block(io, blk, data) == ESP_OK) {
                         known = true;
                     } else {
-                        // Try complementary key if available or discoverable
-                        const uint8_t *comp = NULL; bool have_comp = false;
-                        if (usedB_cur) {
-                            if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) { comp = &g_sector_key_a[s*6]; have_comp = true; }
+                        if (used_key_cur && mfc_auth_block(io, blk, usedB_cur, used_key_cur, uid, uid_len) == ESP_OK
+                            && mfc_read_block(io, blk, data) == ESP_OK) {
+                            known = true;
                         } else {
-                            if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) { comp = &g_sector_key_b[s*6]; have_comp = true; }
-                        }
-                        if (!have_comp) {
-                            mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                            const uint8_t *comp = NULL; bool have_comp = false;
                             if (usedB_cur) {
                                 if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) { comp = &g_sector_key_a[s*6]; have_comp = true; }
                             } else {
                                 if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) { comp = &g_sector_key_b[s*6]; have_comp = true; }
                             }
+                            if (!have_comp) {
+                                mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                                if (usedB_cur) {
+                                    if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) { comp = &g_sector_key_a[s*6]; have_comp = true; }
+                                } else {
+                                    if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) { comp = &g_sector_key_b[s*6]; have_comp = true; }
+                                }
+                            }
+                            if (have_comp && mfc_auth_block(io, blk, !usedB_cur, comp, uid, uid_len) == ESP_OK
+                                && mfc_read_block(io, blk, data) == ESP_OK) {
+                                known = true;
+                                usedB_cur = !usedB_cur; used_key_cur = comp;
+                            }
                         }
-                        if (have_comp && mfc_auth_block(io, blk, !usedB_cur, comp, uid, uid_len) == ESP_OK
+                    }
+                }
+                pos = 0;
+                pos += snprintf(buf + pos, sizeof(buf) - pos, "Block %d:", first + b);
+                if (known) {
+                    if (b == blocks - 1) {
+                        mfc_harvest_trailer_keys(io, t, s, uid, uid_len, data);
+                        if (usedB_cur) {
+                            if (!(g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s))) {
+                                mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                            }
+                        } else {
+                            if (!(g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s))) {
+                                mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                            }
+                        }
+                        if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) { memcpy(data + 0, &g_sector_key_a[s * 6], 6); }
+                        if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) { memcpy(data + 10, &g_sector_key_b[s * 6], 6); }
+                    }
+                    for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", data[i]);
+                } else {
+                    for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " ??");
+                }
+                pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
+                esp_err_t we = sd_card_append_file(path, buf, (size_t)pos);
+                if (we != ESP_OK) { ESP_LOGE("MFC", "Append failed (%d): %s", (int)we, path); }
+            }
+        } else {
+            size_t spos = 0;
+            for (int b = 0; b < blocks; ++b) {
+                uint8_t data[16]; bool known = false;
+                if (authed) {
+                    uint8_t blk = (uint8_t)(first + b);
+                    if (mfc_read_block(io, blk, data) == ESP_OK) {
+                        known = true;
+                    } else {
+                        if (used_key_cur && mfc_auth_block(io, blk, usedB_cur, used_key_cur, uid, uid_len) == ESP_OK
                             && mfc_read_block(io, blk, data) == ESP_OK) {
                             known = true;
-                            usedB_cur = !usedB_cur; used_key_cur = comp;
+                        } else {
+                            const uint8_t *comp = NULL; bool have_comp = false;
+                            if (usedB_cur) {
+                                if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) { comp = &g_sector_key_a[s*6]; have_comp = true; }
+                            } else {
+                                if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) { comp = &g_sector_key_b[s*6]; have_comp = true; }
+                            }
+                            if (!have_comp) {
+                                mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                                if (usedB_cur) {
+                                    if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) { comp = &g_sector_key_a[s*6]; have_comp = true; }
+                                } else {
+                                    if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) { comp = &g_sector_key_b[s*6]; have_comp = true; }
+                                }
+                            }
+                            if (have_comp && mfc_auth_block(io, blk, !usedB_cur, comp, uid, uid_len) == ESP_OK
+                                && mfc_read_block(io, blk, data) == ESP_OK) {
+                                known = true;
+                                usedB_cur = !usedB_cur; used_key_cur = comp;
+                            }
                         }
                     }
                 }
-            }
-            pos = 0;
-            pos += snprintf(buf + pos, sizeof(buf) - pos, "Block %d:", first + b);
-            if (known) {
-                // If trailer: harvest, try to find missing complementary key, then overlay any now-known keys
-                if (b == blocks - 1) {
-                    mfc_harvest_trailer_keys(io, t, s, uid, uid_len, data);
-                    // If we authenticated via B and A is still unknown (or vice versa), try to find the complementary key now
-                    if (usedB_cur) {
-                        if (!(g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s))) {
-                            mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                char line[128]; int lpos = 0;
+                lpos += snprintf(line + lpos, sizeof(line) - lpos, "Block %d:", first + b);
+                if (known) {
+                    if (b == blocks - 1) {
+                        mfc_harvest_trailer_keys(io, t, s, uid, uid_len, data);
+                        if (usedB_cur) {
+                            if (!(g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s))) {
+                                mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                            }
+                        } else {
+                            if (!(g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s))) {
+                                mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
+                            }
                         }
-                    } else {
-                        if (!(g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s))) {
-                            mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
-                        }
+                        if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) memcpy(data + 0, &g_sector_key_a[s * 6], 6);
+                        if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) memcpy(data + 10, &g_sector_key_b[s * 6], 6);
                     }
-                    if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) {
-                        memcpy(data + 0, &g_sector_key_a[s * 6], 6);
-                    }
-                    if (g_sector_key_b_valid && BITSET_TEST(g_sector_key_b_valid, s)) {
-                        memcpy(data + 10, &g_sector_key_b[s * 6], 6);
-                    }
+                    for (int i = 0; i < 16 && lpos < (int)sizeof(line) - 4; ++i) lpos += snprintf(line + lpos, sizeof(line) - lpos, " %02X", data[i]);
+                } else {
+                    for (int i = 0; i < 16 && lpos < (int)sizeof(line) - 4; ++i) lpos += snprintf(line + lpos, sizeof(line) - lpos, " ??");
                 }
-                for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i)
-                    pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", data[i]);
-            } else {
-                for (int i = 0; i < 16 && pos < (int)sizeof(buf) - 4; ++i)
-                    pos += snprintf(buf + pos, sizeof(buf) - pos, " ??");
+                lpos += snprintf(line + lpos, sizeof(line) - lpos, "\n");
+                if (spos + (size_t)lpos + 1 > sec_cap) {
+                    size_t ncap = sec_cap * 2 + (size_t)lpos + 64;
+                    char *n = (char*)realloc(sector_buf, ncap);
+                    if (!n) break; // OOM: stop appending further lines
+                    sector_buf = n; sec_cap = ncap;
+                }
+                memcpy(sector_buf + spos, line, (size_t)lpos);
+                spos += (size_t)lpos;
             }
-            pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
-            esp_err_t we = sd_card_append_file(path, buf, (size_t)pos);
-            if (we != ESP_OK) {
-                ESP_LOGE("MFC", "Append failed (%d): %s", (int)we, path);
+            if (spos > 0) {
+                esp_err_t we = sd_card_append_file(path, sector_buf, spos);
+                if (we != ESP_OK) ESP_LOGE("MFC", "Append failed (%d): %s", (int)we, path);
             }
+            free(sector_buf);
         }
     }
     return true;
