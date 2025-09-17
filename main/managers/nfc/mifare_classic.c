@@ -19,6 +19,9 @@ char* ndef_build_details_from_tlv(const uint8_t* tlv_area,
 
 #define MFC_TAG "MFC"
 static void crc_a_calc(const uint8_t *data, size_t len, uint8_t out[2]);
+// Optional UI hook (weak) for reporting current dictionary attempt phase
+// Declared at file scope so the compiler knows it may be NULL at link time
+extern void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) __attribute__((weak));
 static void mfc_enable_debug_once(void) {
     static bool done = false;
     if (done) return;
@@ -1532,7 +1535,7 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
         // User dict interleaved A/B
         if (!ok) {
             int total = (g_user_key_count > 0) ? (g_user_key_count * 2) : (int)(sizeof(DEFAULT_KEYS)/6);
-            if (&mfc_ui_set_phase) mfc_ui_set_phase(s, auth_blk, false, total);
+            if (mfc_ui_set_phase) mfc_ui_set_phase(s, auth_blk, false, total);
             if (g_prog_cb) g_prog_cb(0, total, g_prog_user);
             bool usedB = false; const uint8_t *uk = NULL;
             if (mfc_auth_with_user_interleaved(io, auth_blk, uid, uid_len, &usedB, &uk)) {
@@ -1579,7 +1582,7 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
         if (!ok) {
             if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) { ESP_LOGW("MFC", "Summary: cancelled before dict sector=%d", s); break; }
             ESP_LOGI("MFC", "Summary: defaults failed, try dict interleaved sector=%d blk=%d", s, auth_blk);
-            if (&mfc_ui_set_phase) mfc_ui_set_phase(s, auth_blk, false, mfc_dict_total_keys());
+            if (mfc_ui_set_phase) mfc_ui_set_phase(s, auth_blk, false, mfc_dict_total_keys());
             bool usedB = false;
             if (mfc_auth_with_dict_interleaved(io, auth_blk, uid, uid_len, &usedB)) {
                 readable++; if (usedB) b_cnt++; else a_cnt++; ok = true;

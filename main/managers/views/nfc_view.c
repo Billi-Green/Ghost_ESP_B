@@ -28,6 +28,8 @@ lv_obj_t *popup_add_styled_button(lv_obj_t *container,
 lv_obj_t *popup_create_title_label(lv_obj_t *container, const char *title, const lv_font_t *font, lv_coord_t y_ofs);
 
 lv_obj_t *popup_create_body_label(lv_obj_t *container, const char *text, lv_coord_t width, bool wrap, const lv_font_t *font, lv_coord_t y_ofs);
+#include "managers/nfc/mifare_classic.h"
+#include "managers/nfc/ndef.h"
 #ifdef CONFIG_HAS_NFC
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -36,9 +38,7 @@ lv_obj_t *popup_create_body_label(lv_obj_t *container, const char *text, lv_coor
 #include "pn532_driver.h"
 #include "pn532_driver_i2c.h"
 #include "managers/nfc/ntag_t2.h"
-#include "managers/nfc/mifare_classic.h"
 #include "managers/nfc/write_ntag.h"
-#include "managers/nfc/ndef.h"
 #endif
 
 // UI hook from MIFARE Classic layer to indicate sector/block/key phase
@@ -90,7 +90,9 @@ static int nfc_write_popup_selected = 0; // 0=Cancel, 1=Write
 static volatile bool nfc_write_cancel = false;
 static volatile bool nfc_write_in_progress = false;
 static bool g_write_image_valid = false;
+#ifdef CONFIG_HAS_NFC
 static ntag_file_image_t g_write_image;
+#endif
 static char g_write_image_path[256] = {0};
 
 // saved details popup
@@ -994,7 +996,11 @@ static lv_style_t* get_zebra_style(int index) {
 }
 
 static void cleanup_nfc_scan_popup(void *obj) {
+#ifdef CONFIG_HAS_NFC
     ESP_LOGI(TAG, "cleanup_nfc_scan_popup: begin (task=%p, cancel=%d)", (void*)nfc_scan_task_handle, nfc_scan_cancel);
+#else
+    ESP_LOGI(TAG, "cleanup_nfc_scan_popup: begin");
+#endif
     if (nfc_scan_popup) {
         lv_obj_del(nfc_scan_popup);
         nfc_scan_popup = NULL;
@@ -1020,7 +1026,11 @@ static void cleanup_nfc_scan_popup(void *obj) {
     nfc_details_visible = false;
     mfc_set_progress_callback(NULL, NULL);
 #endif
+#ifdef CONFIG_HAS_NFC
     ESP_LOGI(TAG, "cleanup_nfc_scan_popup: end (task=%p, cancel=%d)", (void*)nfc_scan_task_handle, nfc_scan_cancel);
+#else
+    ESP_LOGI(TAG, "cleanup_nfc_scan_popup: end");
+#endif
 }
 
 static void nfc_scan_cancel_cb(lv_event_t *e) {
@@ -1981,9 +1991,14 @@ static void cleanup_nfc_write_popup(void *obj) {
     nfc_write_title_label = NULL; nfc_write_details_label = NULL;
     nfc_write_popup_selected = 0;
     // Do not force-cancel here; caller controls cancel flag
+    #ifdef CONFIG_HAS_NFC
     if (g_write_image_valid && !nfc_write_in_progress) { ntag_file_free(&g_write_image); g_write_image_valid = false; }
+    #else
+    g_write_image_valid = false;
+    #endif
 }
 
+#ifdef CONFIG_HAS_NFC
 static char* build_compact_write_details(const ntag_file_image_t *img) {
     if (!img) return NULL;
     size_t cap = 768;
@@ -2046,6 +2061,7 @@ static char* build_compact_write_details(const ntag_file_image_t *img) {
     }
     return out;
 }
+#endif
 
 // Very lightweight Flipper MIFARE Classic parser for Saved popup
 static char* build_mfc_details_from_file(const char *path, char **out_title) {
@@ -2198,6 +2214,7 @@ static char* build_mfc_details_from_file(const char *path, char **out_title) {
             }
             woff += 16;
         }
+        #ifdef CONFIG_HAS_NFC
         size_t off = 0, mlen = 0;
         if (ntag_t2_find_ndef(sec_buf, sec_bytes, &off, &mlen) && off < sec_bytes && mlen > 0) {
             // assemble contiguous view across subsequent sectors to cover message
@@ -2206,7 +2223,6 @@ static char* build_mfc_details_from_file(const char *path, char **out_title) {
             int ss = s + 1;
             while (have < need && ss < sectors_total) {
                 if (ss == 16 && sectors_total > 16) { ss++; continue; }
-                int f2 = mfc_first_block_of_sector(mt, ss);
                 int bl2 = mfc_blocks_in_sector(mt, ss);
                 have += (size_t)(bl2 - 1) * 16;
                 ss++;
@@ -2257,6 +2273,7 @@ static char* build_mfc_details_from_file(const char *path, char **out_title) {
                 free(cat);
             }
         }
+        #endif
         free(sec_buf);
     }
 
@@ -2266,11 +2283,17 @@ static char* build_mfc_details_from_file(const char *path, char **out_title) {
 static void create_nfc_write_popup(const char *path) {
     if (!root) return;
     // Load image
+    #ifdef CONFIG_HAS_NFC
     memset(&g_write_image, 0, sizeof(g_write_image));
     g_write_image_valid = ntag_file_load(path, &g_write_image);
     strncpy(g_write_image_path, path, sizeof(g_write_image_path) - 1);
     g_write_image_path[sizeof(g_write_image_path) - 1] = '\0';
     ESP_LOGI(TAG, "create_nfc_write_popup: path=%s valid=%d", g_write_image_path, (int)g_write_image_valid);
+    #else
+    g_write_image_valid = false;
+    strncpy(g_write_image_path, path, sizeof(g_write_image_path) - 1);
+    g_write_image_path[sizeof(g_write_image_path) - 1] = '\0';
+    #endif
 
     if (nfc_write_popup && lv_obj_is_valid(nfc_write_popup)) cleanup_nfc_write_popup(NULL);
     int popup_w = LV_HOR_RES - 30;
@@ -2280,10 +2303,17 @@ static void create_nfc_write_popup(const char *path) {
     const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
     const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 
-    const char *nfc_write_title_text = g_write_image_valid ? "Write Tag" : "Invalid file";
+    const char *nfc_write_title_text = g_write_image_valid ? "Write Tag" :
+    #ifdef CONFIG_HAS_NFC
+        "Invalid file"
+    #else
+        "NFC disabled"
+    #endif
+    ;
     nfc_write_title_label = popup_create_title_label(nfc_write_popup, nfc_write_title_text, title_font, 10);
 
     nfc_write_details_label = popup_create_body_label(nfc_write_popup, "", LV_HOR_RES - 50, true, body_font, 26);
+    #ifdef CONFIG_HAS_NFC
     if (g_write_image_valid) {
         char *det = build_compact_write_details(&g_write_image);
         if (det) {
@@ -2296,6 +2326,9 @@ static void create_nfc_write_popup(const char *path) {
     } else {
         lv_label_set_text(nfc_write_details_label, "Failed to parse .nfc file");
     }
+    #else
+    lv_label_set_text(nfc_write_details_label, "Writing tags requires NFC hardware");
+    #endif
 
     int btn_w = 90, btn_h = 34;
     if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 30; }
@@ -2442,6 +2475,7 @@ static void create_saved_details_popup(const char *path) {
         lv_label_set_text(saved_details_label, mfc_det);
         free(mfc_det);
     } else {
+    #ifdef CONFIG_HAS_NFC
         ntag_file_image_t img; memset(&img, 0, sizeof(img));
         bool ok = ntag_file_load(path, &img);
         if (ok) {
@@ -2455,6 +2489,9 @@ static void create_saved_details_popup(const char *path) {
         } else {
             lv_label_set_text(saved_details_label, "Failed to parse .nfc file");
         }
+    #else
+        lv_label_set_text(saved_details_label, "Saved file details require NFC support to parse NTAG format");
+    #endif
     }
 
     int btn_w = 90, btn_h = 34; if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 30; }
