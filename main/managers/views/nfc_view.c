@@ -730,7 +730,15 @@ static void nfc_view_input_cb(InputEvent *event) {
                 }
             }
             update_nfc_popup_selection();
-        } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        }
+#ifdef CONFIG_USE_ENCODER
+        else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            // Hardware back button closes the NFC scan popup
+            nfc_scan_cancel_cb(NULL);
+            return;
+        }
+#endif
+        else if (event->type == INPUT_TYPE_JOYSTICK) {
             int ji = event->data.joystick_index;
             int total = 1 + (nfc_more_visible ? 1 : 0) + (nfc_save_visible ? 1 : 0);
             if (ji == 2 || ji == 4) { // up/down cycles
@@ -800,7 +808,15 @@ static void nfc_view_input_cb(InputEvent *event) {
                 if (d->point.x >= c.x1 && d->point.x <= c.x2 && d->point.y >= c.y1 && d->point.y <= c.y2) { saved_delete_cb(NULL); return; }
             }
             update_saved_popup_selection();
-        } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        }
+#ifdef CONFIG_USE_ENCODER
+        else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            // Hardware back button closes the saved details popup
+            saved_close_cb(NULL);
+            return;
+        }
+#endif
+        else if (event->type == INPUT_TYPE_JOYSTICK) {
             int ji = event->data.joystick_index;
             if (ji == 2 || ji == 4) { // up/down cycles 3 buttons
                 saved_popup_selected = (saved_popup_selected + 1) % 3;
@@ -847,7 +863,15 @@ static void nfc_view_input_cb(InputEvent *event) {
                 if (d->point.x >= a.x1 && d->point.x <= a.x2 && d->point.y >= a.y1 && d->point.y <= a.y2) { keys_close_cb(NULL); return; }
             }
             update_keys_popup_selection();
-        } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        }
+#ifdef CONFIG_USE_ENCODER
+        else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            // Hardware back button closes the keys popup
+            keys_close_cb(NULL);
+            return;
+        }
+#endif
+        else if (event->type == INPUT_TYPE_JOYSTICK) {
             int ji = event->data.joystick_index;
             if (ji == 1 || ji == 0) { keys_close_cb(NULL); return; }
         } else if (event->type == INPUT_TYPE_ENCODER) {
@@ -882,7 +906,15 @@ static void nfc_view_input_cb(InputEvent *event) {
                 if (d->point.x >= b.x1 && d->point.x <= b.x2 && d->point.y >= b.y1 && d->point.y <= b.y2) { nfc_write_go_cb(NULL); return; }
             }
             update_nfc_write_popup_selection();
-        } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        }
+#ifdef CONFIG_USE_ENCODER
+        else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            // Hardware back button closes the NFC write popup
+            nfc_write_cancel_cb(NULL);
+            return;
+        }
+#endif
+        else if (event->type == INPUT_TYPE_JOYSTICK) {
             int ji = event->data.joystick_index;
             if (ji == 2 || ji == 4) { nfc_write_popup_selected = (nfc_write_popup_selected ^ 1); update_nfc_write_popup_selection(); }
             else if (ji == 1) { if (nfc_write_popup_selected == 0) nfc_write_cancel_cb(NULL); else nfc_write_go_cb(NULL); return; }
