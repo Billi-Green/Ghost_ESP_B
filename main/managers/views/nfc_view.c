@@ -1049,23 +1049,26 @@ static void cleanup_nfc_scan_popup(void *obj) {
     // Always restore normal I2C activity on popup close to avoid UI/input issues on some boards
     display_manager_set_low_i2c_mode(false);
 #ifdef CONFIG_HAS_FUEL_GAUGE
-    // Ensure fuel gauge polling resumes if we cancelled mid-scan
-    fuel_gauge_manager_set_paused(false);
+    // Pause fuel gauge while the NFC scan task winds down to avoid I2C contention
+    fuel_gauge_manager_set_paused(true);
 #endif
     // If a deferred retry timer exists, delete it now (legacy cleanup)
     if (nfc_scan_retry_timer) {
         lv_timer_del(nfc_scan_retry_timer);
         nfc_scan_retry_timer = NULL;
     }
-    // If scan task is still running, force delete it immediately to prevent UI freeze
-    if (nfc_scan_task_handle != NULL) {
-        ESP_LOGW(TAG, "cleanup_nfc_scan_popup: force deleting stuck task to prevent UI freeze");
-        vTaskDelete(nfc_scan_task_handle);
-        nfc_scan_task_handle = NULL;
+    // Wait briefly for the scan task to exit and release PN532 itself
+    uint32_t waited_ms = 0;
+    while (nfc_scan_task_handle != NULL && waited_ms < 800) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        waited_ms += 20;
     }
-    // Always release PN532 resources on cleanup to avoid leaking handles
-    if (g_pn532) {
-        ESP_LOGI(TAG, "cleanup_nfc_scan_popup: releasing PN532 resources");
+    if (nfc_scan_task_handle != NULL) {
+        ESP_LOGW(TAG, "cleanup_nfc_scan_popup: scan task still running after %ums (skipping force delete)", (unsigned)waited_ms);
+    }
+    // If for any reason PN532 is still held here and the task has exited, release as a safety net
+    if (nfc_scan_task_handle == NULL && g_pn532) {
+        ESP_LOGI(TAG, "cleanup_nfc_scan_popup: releasing PN532 resources (post-exit)");
         pn532_release(g_pn532);
         pn532_delete_driver(g_pn532);
         g_pn532 = NULL;
@@ -1083,6 +1086,10 @@ static void cleanup_nfc_scan_popup(void *obj) {
     mfc_set_progress_callback(NULL, NULL);
 #endif
 #ifdef CONFIG_HAS_NFC
+    // Resume fuel gauge after task has had time to stop
+#ifdef CONFIG_HAS_FUEL_GAUGE
+    fuel_gauge_manager_set_paused(false);
+#endif
     ESP_LOGI(TAG, "cleanup_nfc_scan_popup: end (task=%p, cancel=%d)", (void*)nfc_scan_task_handle, nfc_scan_cancel);
 #else
     ESP_LOGI(TAG, "cleanup_nfc_scan_popup: end");

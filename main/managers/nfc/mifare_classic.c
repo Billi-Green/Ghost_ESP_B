@@ -1268,6 +1268,10 @@ static esp_err_t mfc_auth_block(pn532_io_handle_t io, uint8_t block, bool use_ke
     uint8_t resp_len = sizeof(resp);
     esp_err_t err = pn532_in_data_exchange(io, cmd, sizeof(cmd), resp, &resp_len);
     if (err != ESP_OK) {
+        // If user requested cancel, bail out immediately to avoid extra I2C ops
+        if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) {
+            return err;
+        }
         // Check if authentication failed due to card removal
         if (!mfc_tag_is_present(io, uid, uid_len)) {
             // Card was removed, wait for it to return
