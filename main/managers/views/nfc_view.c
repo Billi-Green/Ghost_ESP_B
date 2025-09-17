@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include "managers/sd_card_manager.h"
+#include "managers/fuel_gauge_manager.h"
 
 // popup helper forward declarations
 lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height);
@@ -225,6 +226,8 @@ static void nfc_save_task(void *arg);
 static void nfc_save_done_async(void *ptr);
 // Deferred scan start if previous scan task hasn't exited yet
 static void nfc_try_start_scan_timer_cb(lv_timer_t *t);
+// Guard timer to avoid creating multiple retry timers
+static lv_timer_t *nfc_scan_retry_timer = NULL;
 
 // Write flow (file list and popup)
 static void nfc_enter_write_list(void);
@@ -1015,6 +1018,17 @@ static void cleanup_nfc_scan_popup(void *obj) {
 #ifdef CONFIG_HAS_NFC
     // Signal the scan task to exit gracefully (avoid calling LVGL from that task)
     nfc_scan_cancel = true;
+    // Always restore normal I2C activity on popup close to avoid UI/input issues on some boards
+    display_manager_set_low_i2c_mode(false);
+#ifdef CONFIG_HAS_FUEL_GAUGE
+    // Ensure fuel gauge polling resumes if we cancelled mid-scan
+    fuel_gauge_manager_set_paused(false);
+#endif
+    // If a deferred retry timer exists, delete it now
+    if (nfc_scan_retry_timer) {
+        lv_timer_del(nfc_scan_retry_timer);
+        nfc_scan_retry_timer = NULL;
+    }
     // If scan task already ended, release PN532 here to avoid leaking the handle
     if (g_pn532 && nfc_scan_task_handle == NULL) {
         pn532_release(g_pn532);
@@ -1305,8 +1319,9 @@ static void create_nfc_scan_popup(void) {
     } else {
         // Previous task not fully exited yet; retry shortly
         ESP_LOGW(TAG, "create_nfc_scan_popup: previous scan task still running, scheduling retry");
-        lv_timer_t *timer = lv_timer_create(nfc_try_start_scan_timer_cb, 120, NULL);
-        (void)timer;
+        if (!nfc_scan_retry_timer) {
+            nfc_scan_retry_timer = lv_timer_create(nfc_try_start_scan_timer_cb, 120, NULL);
+        }
     }
 #endif
 }
@@ -1318,7 +1333,10 @@ static void nfc_try_start_scan_timer_cb(lv_timer_t *t) {
         nfc_scan_cancel = false;
         mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
         xTaskCreate(nfc_scan_task, "nfc_scan", 6144, NULL, 5, &nfc_scan_task_handle);
-        if (t) lv_timer_del(t);
+        if (t) {
+            lv_timer_del(t);
+            nfc_scan_retry_timer = NULL;
+        }
     }
 }
 #endif
