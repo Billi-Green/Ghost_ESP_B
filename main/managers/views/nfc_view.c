@@ -767,8 +767,9 @@ static void nfc_view_input_cb(InputEvent *event) {
             // Rotation toggles selection when More is available
             int total = 1 + (nfc_more_visible ? 1 : 0) + (nfc_save_visible ? 1 : 0);
             if (event->data.encoder.direction != 0 && total > 1) {
-                if (event->data.encoder.direction > 0) nfc_popup_selected = (nfc_popup_selected + 1) % total;
-                else nfc_popup_selected = (nfc_popup_selected + total - 1) % total;
+                // invert encoder rotation: clockwise (direction>0) should move selection up
+                if (event->data.encoder.direction > 0) nfc_popup_selected = (nfc_popup_selected + total - 1) % total;
+                else nfc_popup_selected = (nfc_popup_selected + 1) % total;
             }
             update_nfc_popup_selection();
         } else if (event->type == INPUT_TYPE_KEYBOARD) {
@@ -837,8 +838,9 @@ static void nfc_view_input_cb(InputEvent *event) {
                 return;
             }
             if (event->data.encoder.direction != 0) {
-                if (event->data.encoder.direction > 0) saved_popup_selected = (saved_popup_selected + 1) % 3;
-                else saved_popup_selected = (saved_popup_selected + 3 - 1) % 3;
+                // invert encoder rotation: clockwise (direction>0) moves selection up
+                if (event->data.encoder.direction > 0) saved_popup_selected = (saved_popup_selected + 3 - 1) % 3;
+                else saved_popup_selected = (saved_popup_selected + 1) % 3;
                 update_saved_popup_selection();
             }
         } else if (event->type == INPUT_TYPE_KEYBOARD) {
@@ -882,8 +884,9 @@ static void nfc_view_input_cb(InputEvent *event) {
                 else keys_scroll_down_cb(NULL);
             }
             if (event->data.encoder.direction != 0) {
-                if (event->data.encoder.direction > 0) keys_popup_selected = (keys_popup_selected + 1) % 3;
-                else keys_popup_selected = (keys_popup_selected + 3 - 1) % 3;
+                // invert encoder rotation: clockwise (direction>0) moves selection up
+                if (event->data.encoder.direction > 0) keys_popup_selected = (keys_popup_selected + 3 - 1) % 3;
+                else keys_popup_selected = (keys_popup_selected + 1) % 3;
                 update_keys_popup_selection();
             }
         } else if (event->type == INPUT_TYPE_KEYBOARD) {
