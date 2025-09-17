@@ -63,6 +63,10 @@ static uint8_t *g_sector_key_a = NULL;       // sectors * 6
 static uint8_t *g_sector_key_b = NULL;       // sectors * 6
 static uint8_t *g_sector_key_a_valid = NULL; // bitset per sector
 static uint8_t *g_sector_key_b_valid = NULL; // bitset per sector
+
+// Forward declaration for session reset function
+static void mfc_session_reset(void);
+
 static void mfc_cache_reset(void){
     if(g_mfc_cache){ free(g_mfc_cache); g_mfc_cache=NULL; }
     if(g_mfc_known){ free(g_mfc_known); g_mfc_known=NULL; }
@@ -74,6 +78,8 @@ static void mfc_cache_reset(void){
 }
 static void mfc_cache_begin(MFC_TYPE t, const uint8_t* uid, uint8_t uid_len, uint16_t atqa, uint8_t sak){
     mfc_cache_reset();
+    // Reset session state for new scan to ensure clean state
+    mfc_session_reset();
     g_mfc_type = t; g_mfc_uid_len = uid_len; if(uid && uid_len){ memcpy(g_mfc_uid, uid, uid_len); }
     g_mfc_atqa = atqa; g_mfc_sak = sak;
     int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
@@ -483,6 +489,11 @@ static uint8_t *g_sess_a_keys = NULL; static int g_sess_a_count = 0;
 static uint8_t *g_sess_b_keys = NULL; static int g_sess_b_count = 0;
 static uint8_t s_last_key_a[6]; static bool s_last_key_a_valid = false;
 static uint8_t s_last_key_b[6]; static bool s_last_key_b_valid = false;
+// Flag to track if user dict is cached for this scan session
+static bool g_user_dict_cached_for_scan = false;
+
+// Forward declaration for cleanup function
+static void mfc_user_dict_cleanup(void);
 
 static bool key_eq_u(const uint8_t *a, const uint8_t *b){ return memcmp(a,b,6)==0; }
 static bool list_contains_u(const uint8_t *list, int count, const uint8_t key[6]){
@@ -494,30 +505,109 @@ static bool list_append_unique_u(uint8_t **list, int *count, const uint8_t key[6
     if (!n) return false;
     *list = n; memcpy(&(*list)[(*count)*6], key, 6); (*count)++; return true;
 }
+// Cleanup user dictionary cache (should be called when module is deinitialized)
+static void mfc_user_dict_cleanup(void) {
+    ESP_LOGI("MFC", "User dict: cleanup - freeing cached dictionary");
+    if (g_user_keys) { free(g_user_keys); g_user_keys = NULL; }
+    if (g_sess_a_keys) { free(g_sess_a_keys); g_sess_a_keys = NULL; }
+    if (g_sess_b_keys) { free(g_sess_b_keys); g_sess_b_keys = NULL; }
+    g_user_key_count = 0;
+    g_sess_a_count = 0;
+    g_sess_b_count = 0;
+    g_user_loaded = false;
+    g_user_dict_cached_for_scan = false;
+    s_last_key_a_valid = false;
+    s_last_key_b_valid = false;
+}
+
+// Reset session state and force user dictionary reload for new scan
+static void mfc_session_reset(void) {
+    ESP_LOGI("MFC", "Session reset: clearing session state for new scan");
+    
+    // Clear session keys
+    s_last_key_a_valid = false;
+    s_last_key_b_valid = false;
+    memset(s_last_key_a, 0, 6);
+    memset(s_last_key_b, 0, 6);
+    
+    // Clear session key lists
+    if (g_sess_a_keys) { free(g_sess_a_keys); g_sess_a_keys = NULL; }
+    if (g_sess_b_keys) { free(g_sess_b_keys); g_sess_b_keys = NULL; }
+    g_sess_a_count = 0;
+    g_sess_b_count = 0;
+    
+    // Mark user dict as not cached for this scan (will force reload)
+    g_user_dict_cached_for_scan = false;
+    g_user_loaded = false;
+}
+
 static void mfc_user_dict_ensure_loaded(void){
-    // Always reload from SD to pick up external edits
+    // Only reload if not already cached for this scan session
+    if (g_user_dict_cached_for_scan && g_user_loaded && g_user_keys) {
+        ESP_LOGD("MFC", "User dict: using cached version (%d keys)", g_user_key_count);
+        return;
+    }
+    
+    // Clear existing cache
     if (g_user_keys) { free(g_user_keys); g_user_keys = NULL; }
     g_user_key_count = 0;
-    g_user_loaded = true;
+    
+    ESP_LOGI("MFC", "User dict: loading from SD card");
     FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "r");
-    if (!f) return;
+    if (!f) {
+        ESP_LOGW("MFC", "User dict: file not found, using empty dictionary");
+        g_user_loaded = true;
+        g_user_dict_cached_for_scan = true;
+        return;
+    }
+    
     char line[96]; uint8_t key[6];
     while (fgets(line, sizeof(line), f)){
         const char *ls = line; const char *le = line + strlen(line);
-        if (parse_key_line_u(ls, le, key)) list_append_unique_u(&g_user_keys, &g_user_key_count, key);
+        if (parse_key_line_u(ls, le, key)) {
+            if (!list_append_unique_u(&g_user_keys, &g_user_key_count, key)) {
+                ESP_LOGW("MFC", "User dict: failed to add key (OOM?)");
+                break;
+            }
+        }
     }
     fclose(f);
-    ESP_LOGI("MFC", "User dict: loaded %d keys", g_user_key_count);
+    
+    g_user_loaded = true;
+    g_user_dict_cached_for_scan = true;
+    ESP_LOGI("MFC", "User dict: loaded and cached %d keys for scan session", g_user_key_count);
+}
+
+// Force reload user dictionary (for external changes detection)
+static void mfc_user_dict_force_reload(void) {
+    ESP_LOGI("MFC", "User dict: forcing fresh reload from SD card");
+    // Free existing cache first
+    if (g_user_keys) { free(g_user_keys); g_user_keys = NULL; }
+    g_user_key_count = 0;
+    g_user_dict_cached_for_scan = false;
+    g_user_loaded = false;
+    mfc_user_dict_ensure_loaded();
 }
 static void mfc_user_dict_append_unique(const uint8_t key[6]){
     mfc_user_dict_ensure_loaded();
     if (list_contains_u(g_user_keys, g_user_key_count, key)) return;
+    
+    // Append to SD card file
     sd_card_create_directory("/mnt/ghostesp/nfc");
     FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "a");
-    if (!f) return;
+    if (!f) {
+        ESP_LOGW("MFC", "User dict: failed to open file for append");
+        return;
+    }
     fprintf(f, "%02X%02X%02X%02X%02X%02X\n", key[0],key[1],key[2],key[3],key[4],key[5]);
     fclose(f);
-    list_append_unique_u(&g_user_keys, &g_user_key_count, key);
+    
+    // Add to cached dictionary for this session
+    if (!list_append_unique_u(&g_user_keys, &g_user_key_count, key)) {
+        ESP_LOGW("MFC", "User dict: failed to add new key to cache (OOM?)");
+    } else {
+        ESP_LOGI("MFC", "User dict: added new key to cache (now %d keys)", g_user_key_count);
+    }
 }
 static void session_add_key(bool use_key_b, const uint8_t key[6]){
     if (use_key_b) list_append_unique_u(&g_sess_b_keys, &g_sess_b_count, key);
@@ -563,7 +653,8 @@ static bool mfc_auth_with_user_interleaved(pn532_io_handle_t io, uint8_t block,
     int step = 0;
     if (g_prog_cb) g_prog_cb(0, total, g_prog_user);
     // Debug: entering user dict for this block
-    ESP_LOGI("MFC", "User dict: entering for blk=%u with %d keys", (unsigned)block, g_user_key_count);
+    ESP_LOGI("MFC", "User dict: entering for blk=%u with %d keys (cached=%d)", 
+             (unsigned)block, g_user_key_count, g_user_dict_cached_for_scan ? 1 : 0);
     for (int i = 0; i < g_user_key_count; ++i) {
         if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) return false;
         const uint8_t *k = &g_user_keys[i*6];
@@ -1191,6 +1282,9 @@ static esp_err_t mfc_auth_block(pn532_io_handle_t io, uint8_t block, bool use_ke
         } else {
             // Failed AUTH can desync the tag; reselect to restore state for next attempts
             (void)pn532_in_list_passive_target(io);
+            // Retry once after reselect
+            resp_len = sizeof(resp);
+            err = pn532_in_data_exchange(io, cmd, sizeof(cmd), resp, &resp_len);
         }
     }
     return err;
