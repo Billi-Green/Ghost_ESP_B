@@ -171,13 +171,19 @@ static bool nfc_dict_skip_requested = false;
 static bool nfc_paused = false;
 // When true, NFC details are ready and scan is complete
 static bool nfc_details_ready = false;
+// Active scan session to filter out stale async UI events
+static uint32_t nfc_scan_session = 0;
+// Simple boolean event payload for async calls
+typedef struct { bool on; uint32_t session; } nfc_bool_evt_t;
 
 // Async setter for paused title/state
 static void nfc_set_paused_async(void *ptr) {
-    bool on = (ptr != NULL);
-    nfc_paused = on;
+    nfc_bool_evt_t *ev = (nfc_bool_evt_t*)ptr;
+    if (!ev) return;
+    if (ev->session != nfc_scan_session) { free(ev); return; }
+    nfc_paused = ev->on;
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
-        if (on) {
+        if (ev->on) {
             lv_label_set_text(nfc_title_label, "Paused - present tag to continue");
         } else {
             // Restore appropriate title depending on phase
@@ -186,26 +192,39 @@ static void nfc_set_paused_async(void *ptr) {
             else { lv_label_set_text(nfc_title_label, "NFC Tag"); lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22); }
         }
     }
+    free(ev);
 }
 
 // Exposed to MFC layer
 void mfc_ui_set_paused(bool on) {
-    lv_async_call(nfc_set_paused_async, on ? (void*)1 : NULL);
+    nfc_bool_evt_t *ev = (nfc_bool_evt_t*)malloc(sizeof(nfc_bool_evt_t));
+    if (!ev) return;
+    ev->on = on;
+    ev->session = nfc_scan_session;
+    lv_async_call(nfc_set_paused_async, ev);
 }
 
 // Async setter for cache fill phase title/state
 static void nfc_set_cache_mode_async(void *ptr) {
-    bool on = (ptr != NULL);
+    nfc_bool_evt_t *ev = (nfc_bool_evt_t*)ptr;
+    if (!ev) return;
+    if (ev->session != nfc_scan_session) { free(ev); return; }
+    bool on = ev->on;
     nfc_cache_fill_phase = on;
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
         if (on) lv_label_set_text(nfc_title_label, "Reading sectors... 0%");
         else { lv_label_set_text(nfc_title_label, "NFC Tag"); lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22); }
     }
+    free(ev);
 }
 
 // Exposed to MFC layer to toggle cache-fill phase
 void mfc_ui_set_cache_mode(bool on) {
-    lv_async_call(nfc_set_cache_mode_async, on ? (void*)1 : NULL);
+    nfc_bool_evt_t *ev = (nfc_bool_evt_t*)malloc(sizeof(nfc_bool_evt_t));
+    if (!ev) return;
+    ev->on = on;
+    ev->session = nfc_scan_session;
+    lv_async_call(nfc_set_cache_mode_async, ev);
 }
 
 #ifdef CONFIG_HAS_NFC
@@ -224,9 +243,9 @@ static bool write_flipper_nfc_file(void);
 // Worker task helpers
 static void nfc_save_task(void *arg);
 static void nfc_save_done_async(void *ptr);
-// Deferred scan start if previous scan task hasn't exited yet
+// Deferred scan start if previous scan task hasn't exited yet (legacy - no longer used)
 static void nfc_try_start_scan_timer_cb(lv_timer_t *t);
-// Guard timer to avoid creating multiple retry timers
+// Guard timer to avoid creating multiple retry timers (legacy - no longer used)
 static lv_timer_t *nfc_scan_retry_timer = NULL;
 
 // Write flow (file list and popup)
@@ -283,9 +302,9 @@ void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) {
     mfc_phase_first_block = first_block;
     mfc_phase_key_b = key_b;
     mfc_phase_total = total_keys;
-    typedef struct { int c; int t; } dict_prog_t;
+    typedef struct { int c; int t; uint32_t s; } dict_prog_t;
     dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
-    if (dp) { dp->c = 0; dp->t = total_keys; lv_async_call(nfc_progress_update_async, dp); }
+    if (dp) { dp->c = 0; dp->t = total_keys; dp->s = nfc_scan_session; lv_async_call(nfc_progress_update_async, dp); }
 }
 static void mfc_dict_progress_cb(int current, int total, void *user) {
     (void)user;
@@ -296,17 +315,18 @@ static void mfc_dict_progress_cb(int current, int total, void *user) {
     static int last_percent = -1;
     if (percent == last_percent) return;
     last_percent = percent;
-    typedef struct { int c; int t; } dict_prog_t;
+    typedef struct { int c; int t; uint32_t s; } dict_prog_t;
     dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
     if (!dp) return;
-    dp->c = current; dp->t = total;
+    dp->c = current; dp->t = total; dp->s = nfc_scan_session;
     lv_async_call(nfc_progress_update_async, dp);
 }
 
 static void nfc_progress_update_async(void *ptr) {
     if (!ptr) return;
-    typedef struct { int c; int t; } dict_prog_t;
+    typedef struct { int c; int t; uint32_t s; } dict_prog_t;
     dict_prog_t *dp = (dict_prog_t*)ptr;
+    if (dp->s != nfc_scan_session) { free(dp); return; }
     if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(dp); return; }
     int percent = 0; if (dp->t > 0) percent = (dp->c * 100) / dp->t; if (percent > 100) percent = 100; if (percent < 0) percent = 0;
     // Compose phase suffix e.g., "Sec 3 Blk 12 Key A"
@@ -384,19 +404,16 @@ static NTAG2XX_MODEL g_model = NTAG2XX_UNKNOWN;
 typedef struct {
     char *text;      // allocated details text
     size_t text_len; // length of text
+    uint32_t session; // scan session
 } ndef_details_result_t;
 
 static void nfc_set_details_async(void *ptr) {
     if (!ptr) return;
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) {
-        ndef_details_result_t *res = (ndef_details_result_t *)ptr;
-        if (res->text) free(res->text);
-        free(res);
-        return;
-    }
+    ndef_details_result_t *res = (ndef_details_result_t *)ptr;
+    if (res->session != nfc_scan_session) { if (res->text) free(res->text); free(res); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { if (res->text) free(res->text); free(res); return; }
     // Replace old details if any
     if (nfc_details_text) { free(nfc_details_text); nfc_details_text = NULL; }
-    ndef_details_result_t *res = (ndef_details_result_t *)ptr;
     nfc_details_text = res->text;
     nfc_details_ready = true;
     // Reset phase state and update summary labels to indicate completion
@@ -448,10 +465,15 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
         // Reduce I2C contention during PN532 scanning/bruteforce
         display_manager_set_low_i2c_mode(true);
         char *text = mfc_build_details_summary(io, uid, uid_len, g_atqa, g_sak);
-        if (!text) return;
+        // Check if scan was cancelled during MIFARE processing (e.g., while paused)
+        if (nfc_scan_cancel || !text) {
+            if (text) free(text);
+            mfc_set_progress_callback(NULL, NULL);
+            return;
+        }
         ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
         if (!res) { free(text); return; }
-        res->text = text; res->text_len = strlen(text);
+        res->text = text; res->text_len = strlen(text); res->session = nfc_scan_session;
         lv_async_call(nfc_set_details_async, res);
         mfc_set_progress_callback(NULL, NULL);
         return;
@@ -464,7 +486,7 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
         ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
         if (!res) return;
         res->text = (char*)malloc(cap);
-        res->text_len = cap;
+        res->text_len = cap; res->session = nfc_scan_session;
         if (!res->text) { free(res); return; }
         char *w = res->text; snprintf(w, cap, "UID:"); size_t used = strlen(w); w += used; cap -= used;
         for (uint8_t i = 0; i < uid_len && cap > 3; ++i) { int n = snprintf(w, cap, " %02X", uid[i]); if (n>0){ w+=n; cap-=n; } }
@@ -478,18 +500,21 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
     g_model = model;
     ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
     if (!res) { free(text); return; }
-    res->text = text; res->text_len = strlen(text);
+    res->text = text; res->text_len = strlen(text); res->session = nfc_scan_session;
     lv_async_call(nfc_set_details_async, res);
 }
 
-static void nfc_update_labels_async(void *uid_buf) {
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(uid_buf); return; }
-    uint8_t *uid = (uint8_t *)uid_buf;
+typedef struct { uint32_t session; uint8_t uid_len; uint8_t uid[10]; } nfc_uid_evt_t;
+static void nfc_update_labels_async(void *ptr) {
+    if (!ptr) return;
+    nfc_uid_evt_t *ev = (nfc_uid_evt_t*)ptr;
+    if (ev->session != nfc_scan_session) { free(ev); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(ev); return; }
     char uid_text[64];
     int pos = 0;
     pos += snprintf(uid_text, sizeof(uid_text), "UID:");
-    for (int i = 0; i < uid[0] && pos < (int)sizeof(uid_text) - 4; ++i) {
-        pos += snprintf(uid_text + pos, sizeof(uid_text) - pos, " %02X", uid[i + 1]);
+    for (int i = 0; i < ev->uid_len && pos < (int)sizeof(uid_text) - 4; ++i) {
+        pos += snprintf(uid_text + pos, sizeof(uid_text) - pos, " %02X", ev->uid[i]);
     }
     lv_label_set_text(nfc_uid_label, uid_text);
     lv_label_set_text(nfc_type_label, "Type: ISO14443A");
@@ -505,7 +530,7 @@ static void nfc_update_labels_async(void *uid_buf) {
     // Save remains hidden until details are ready (shown in nfc_set_details_async)
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
-    free(uid);
+    free(ev);
 }
 
 static void nfc_scan_task(void *arg) {
@@ -566,10 +591,13 @@ static void nfc_scan_task(void *arg) {
         esp_err_t r = pn532_read_passive_target_id_ex(g_pn532, 0x00, uid + 1, &uid_len, &atqa, &sak, 200);
         if (r == ESP_OK && uid_len > 0 && uid_len <= 7) {
             uid[0] = uid_len;
-            uint8_t *copy = (uint8_t *)malloc(uid_len + 1);
-            if (copy) {
-                memcpy(copy, uid, uid_len + 1);
-                lv_async_call(nfc_update_labels_async, copy);
+            nfc_uid_evt_t *ev = (nfc_uid_evt_t*)malloc(sizeof(nfc_uid_evt_t));
+            if (ev) {
+                ev->session = nfc_scan_session;
+                ev->uid_len = uid_len;
+                if (uid_len > sizeof(ev->uid)) ev->uid_len = sizeof(ev->uid);
+                memcpy(ev->uid, uid + 1, ev->uid_len);
+                lv_async_call(nfc_update_labels_async, ev);
             }
             // Build detailed info synchronously before exiting the task
             if (nfc_scan_cancel) break;
@@ -1024,13 +1052,20 @@ static void cleanup_nfc_scan_popup(void *obj) {
     // Ensure fuel gauge polling resumes if we cancelled mid-scan
     fuel_gauge_manager_set_paused(false);
 #endif
-    // If a deferred retry timer exists, delete it now
+    // If a deferred retry timer exists, delete it now (legacy cleanup)
     if (nfc_scan_retry_timer) {
         lv_timer_del(nfc_scan_retry_timer);
         nfc_scan_retry_timer = NULL;
     }
-    // If scan task already ended, release PN532 here to avoid leaking the handle
-    if (g_pn532 && nfc_scan_task_handle == NULL) {
+    // If scan task is still running, force delete it immediately to prevent UI freeze
+    if (nfc_scan_task_handle != NULL) {
+        ESP_LOGW(TAG, "cleanup_nfc_scan_popup: force deleting stuck task to prevent UI freeze");
+        vTaskDelete(nfc_scan_task_handle);
+        nfc_scan_task_handle = NULL;
+    }
+    // Always release PN532 resources on cleanup to avoid leaking handles
+    if (g_pn532) {
+        ESP_LOGI(TAG, "cleanup_nfc_scan_popup: releasing PN532 resources");
         pn532_release(g_pn532);
         pn532_delete_driver(g_pn532);
         g_pn532 = NULL;
@@ -1038,6 +1073,13 @@ static void cleanup_nfc_scan_popup(void *obj) {
     if (nfc_details_text) { free(nfc_details_text); nfc_details_text = NULL; }
     nfc_details_ready = false;
     nfc_details_visible = false;
+    // Clear paused/cache flags so a new scan doesn't inherit a stale state
+    nfc_paused = false;
+    nfc_cache_fill_phase = false;
+    // Synchronously update UI to clear any paused state immediately
+    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        lv_label_set_text(nfc_title_label, "Cancelled");
+    }
     mfc_set_progress_callback(NULL, NULL);
 #endif
 #ifdef CONFIG_HAS_NFC
@@ -1271,6 +1313,12 @@ static void create_nfc_scan_popup(void) {
     if (!root || !lv_obj_is_valid(root)) return;
     // We'll reset the cancel flag right before (re)starting the scan task
     nfc_dict_skip_requested = false;
+    // Ensure fresh UI state (avoid showing stale paused/cache states)
+    nfc_paused = false;
+    nfc_cache_fill_phase = false;
+    nfc_details_ready = false;
+    // New scan session: invalidate any stale async events from prior scan
+    nfc_scan_session++;
     // scale to screen, leave margin for status bar and edges
     int popup_w = LV_HOR_RES - 30;
     int popup_h = (LV_VER_RES <= 240) ? 140 : 160;
@@ -1311,18 +1359,21 @@ static void create_nfc_scan_popup(void) {
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
 #ifdef CONFIG_HAS_NFC
-    if (nfc_scan_task_handle == NULL) {
-        ESP_LOGI(TAG, "create_nfc_scan_popup: starting scan task");
-        nfc_scan_cancel = false;
-        mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
-        xTaskCreate(nfc_scan_task, "nfc_scan", 6144, NULL, 5, &nfc_scan_task_handle);
-    } else {
-        // Previous task not fully exited yet; retry shortly
-        ESP_LOGW(TAG, "create_nfc_scan_popup: previous scan task still running, scheduling retry");
-        if (!nfc_scan_retry_timer) {
-            nfc_scan_retry_timer = lv_timer_create(nfc_try_start_scan_timer_cb, 120, NULL);
+    // Since we force-delete stuck tasks in cleanup, we should never have a running task here
+    if (nfc_scan_task_handle != NULL) {
+        ESP_LOGE(TAG, "create_nfc_scan_popup: unexpected running task, force cleaning up");
+        vTaskDelete(nfc_scan_task_handle);
+        nfc_scan_task_handle = NULL;
+        if (g_pn532) {
+            pn532_release(g_pn532);
+            pn532_delete_driver(g_pn532);
+            g_pn532 = NULL;
         }
     }
+    ESP_LOGI(TAG, "create_nfc_scan_popup: starting scan task");
+    nfc_scan_cancel = false;
+    mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
+    xTaskCreate(nfc_scan_task, "nfc_scan", 6144, NULL, 5, &nfc_scan_task_handle);
 #endif
 }
 
