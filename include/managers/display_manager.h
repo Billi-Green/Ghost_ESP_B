@@ -37,8 +37,8 @@ QueueHandle_tt input_queue;
 
 #define MUTEX_TIMEOUT_MS 100
 
-#define HARDWARE_INPUT_TASK_PRIORITY (4)
-#define RENDERING_TASK_PRIORITY (4)
+#define HARDWARE_INPUT_TASK_PRIORITY (14)
+#define RENDERING_TASK_PRIORITY (15)
 
 typedef struct {
   lv_obj_t *root;
@@ -108,6 +108,10 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
 
 void display_manager_add_status_bar(const char *CurrentMenuName);
 
+// Reduce I2C activity (e.g., pause battery polling/logging) while other subsystems
+// such as PN532 scanning/bruteforcing are active to avoid bus contention.
+void display_manager_set_low_i2c_mode(bool on);
+
 LV_IMG_DECLARE(Ghost_ESP);
 LV_IMG_DECLARE(Map);
 LV_IMG_DECLARE(bluetooth);
@@ -120,6 +124,7 @@ LV_IMG_DECLARE(clock_icon);
 LV_IMG_DECLARE(settings_icon);
 LV_IMG_DECLARE(infrared);
 LV_IMG_DECLARE(terminal_icon);
+LV_IMG_DECLARE(nfc_icon);
 
 joystick_t joysticks[5];
 #ifdef CONFIG_USE_ENCODER

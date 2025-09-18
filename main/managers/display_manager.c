@@ -54,6 +54,56 @@
 #include "managers/fuel_gauge_manager.h"
 #endif
 
+// Global low-I2C activity mode. When true, subsystems should avoid I2C-heavy polling/logging
+// to reduce contention (e.g., while PN532 scanning/bruteforcing).
+static volatile bool g_low_i2c_mode = false;
+
+#ifdef CONFIG_HAS_FUEL_GAUGE
+// Background polling to avoid blocking LVGL timer with I2C operations
+static TaskHandle_t battery_poll_task_handle = NULL;
+static volatile uint8_t g_cached_batt_percent = 0;
+static volatile bool g_cached_batt_charging = false;
+static volatile bool g_cached_batt_valid = false;
+static void battery_poll_task(void *arg) {
+  fuel_gauge_data_t fg;
+  uint8_t last_pct = 0xFF;
+  bool last_chg = false;
+  int stable = 0;
+  uint32_t delay_ms = 2000;
+  for (;;) {
+    // In low-I2C mode, pause polling to avoid I2C contention
+    if (g_low_i2c_mode) {
+      vTaskDelay(pdMS_TO_TICKS(5000));
+      continue;
+    }
+    if (fuel_gauge_manager_get_data(&fg)) {
+      g_cached_batt_percent = (uint8_t)fg.percentage;
+      g_cached_batt_charging = fg.is_charging;
+      g_cached_batt_valid = true;
+      if (last_pct == g_cached_batt_percent && last_chg == g_cached_batt_charging) {
+        if (stable < 6) stable++;
+      } else {
+        stable = 0;
+      }
+      last_pct = g_cached_batt_percent;
+      last_chg = g_cached_batt_charging;
+    }
+    if (!g_cached_batt_valid) {
+      delay_ms = 2000;
+    } else if (g_cached_batt_charging) {
+      delay_ms = 1000;
+    } else if (stable >= 6) {
+      delay_ms = 15000;
+    } else if (stable >= 3) {
+      delay_ms = 5000;
+    } else {
+      delay_ms = 2000;
+    }
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+  }
+}
+#endif
+
 #ifdef CONFIG_HAS_RTC_CLOCK
 #include "vendor/drivers/pcf8563.h"
 #endif
@@ -286,12 +336,34 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
         return result;
     }
 
+    // Cache for non-fuel-gauge configurations to avoid I2C access in low mode
+    static uint8_t last_pct_cache = 0;
+    static bool last_chg_cache = false;
+    static bool last_valid_cache = false;
+
+    // When low-I2C mode is active, avoid any fresh I2C queries here.
+    // For fuel-gauge configs, we already maintain cached values via the background task.
+    if (g_low_i2c_mode) {
 #ifdef CONFIG_HAS_FUEL_GAUGE
-    // Try fuel gauge first (most accurate)
-    int fuel_percentage = fuel_gauge_manager_get_percentage();
-    if (fuel_percentage >= 0) {
-        *percentage = (uint8_t)fuel_percentage;
-        *is_charging = fuel_gauge_manager_is_charging();
+        if (g_cached_batt_valid) {
+            *percentage = g_cached_batt_percent;
+            *is_charging = g_cached_batt_charging;
+            return true;
+        }
+#endif
+        if (last_valid_cache) {
+            *percentage = last_pct_cache;
+            *is_charging = last_chg_cache;
+            return true;
+        }
+        return false;
+    }
+
+#ifdef CONFIG_HAS_FUEL_GAUGE
+    // Use cached fuel gauge values updated by background task (non-blocking)
+    if (g_cached_batt_valid) {
+        *percentage = g_cached_batt_percent;
+        *is_charging = g_cached_batt_charging;
         result = true;
     }
 #elif defined(CONFIG_HAS_BATTERY)
@@ -305,9 +377,22 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
     *is_charging = isCharging();
     result = true;
 #endif
-    ESP_LOGI(TAG, "get_battery_info %d%%, Charging: %d", *percentage, *is_charging);
+    ESP_LOGD(TAG, "get_battery_info %d%%, Charging: %d", *percentage, *is_charging);
+
+    // Update local cache for non-fuel-gauge builds
+#if !defined(CONFIG_HAS_FUEL_GAUGE)
+    if (result) {
+        last_pct_cache = *percentage;
+        last_chg_cache = *is_charging;
+        last_valid_cache = true;
+    }
+#endif
 
     return result;
+}
+
+void display_manager_set_low_i2c_mode(bool on) {
+    g_low_i2c_mode = on;
 }
 
 void fade_out_cb(void *obj, int32_t v) {
@@ -883,6 +968,9 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #ifdef CONFIG_HAS_FUEL_GAUGE
   if (fuel_gauge_manager_init()) {
     ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
+    if (battery_poll_task_handle == NULL) {
+      xTaskCreate(battery_poll_task, "battery_poll", 4096, NULL, 5, &battery_poll_task_handle);
+    }
   } else {
     ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
   }
@@ -1480,9 +1568,11 @@ void processEvent() {
     return;
   }
 
+  const int max_events = 8;
+  int processed = 0;
   InputEvent event;
 
-  if (xQueueReceive(input_queue, &event, pdMS_TO_TICKS(10)) == pdTRUE) {
+  while (processed < max_events && xQueueReceive(input_queue, &event, 0) == pdTRUE) {
     if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
       View *current = dm.current_view;
       void (*input_callback)(InputEvent *) = NULL;
@@ -1497,11 +1587,30 @@ void processEvent() {
 
       xSemaphoreGive(dm.mutex);
 
-      ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type,
-               view_name);
+      ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
+      if (input_callback) input_callback(&event);
+    }
+    processed++;
+  }
 
-      if (input_callback) {
-        input_callback(&event);
+  if (processed == 0) {
+    if (xQueueReceive(input_queue, &event, pdMS_TO_TICKS(1)) == pdTRUE) {
+      if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+        View *current = dm.current_view;
+        void (*input_callback)(InputEvent *) = NULL;
+        const char *view_name = "NULL";
+
+        if (current) {
+          view_name = current->name;
+          input_callback = current->input_callback;
+        } else {
+          ESP_LOGW(TAG, "Current view is NULL in input_processing_task\n");
+        }
+
+        xSemaphoreGive(dm.mutex);
+
+        ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
+        if (input_callback) input_callback(&event);
       }
     }
   }
@@ -1509,10 +1618,20 @@ void processEvent() {
 
 void lvgl_tick_task(void *arg) {
   const TickType_t tick_interval = pdMS_TO_TICKS(10);
+  TickType_t last_mon = 0;
   while (1) {
       processEvent();
       lv_timer_handler();
       lv_tick_inc(10);
+      // Monitor input queue backlog periodically
+      TickType_t now = xTaskGetTickCount();
+      if (now - last_mon >= pdMS_TO_TICKS(500)) {
+          UBaseType_t pending = uxQueueMessagesWaiting((QueueHandle_t)input_queue);
+          if (pending > 0) {
+              ESP_LOGW(TAG, "lvgl_tick: input_queue backlog=%u", (unsigned)pending);
+          }
+          last_mon = now;
+      }
       vTaskDelay(tick_interval);
   }
   vTaskDelete(NULL);

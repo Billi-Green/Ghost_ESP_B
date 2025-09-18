@@ -1,5 +1,22 @@
 # Ghost ESP Changelog
 
+## Revival v1.8
+
+### Added
+
+- **PN532 NFC Capability**
+  - **NTAG Support (Type 2)**
+    - Read NTAG213/215/216 with NDEF parsing
+    - Write NTAG213/215/216 from .nfc files
+    - Save to Flipper .nfc format (fully compatible)
+  - **MIFARE Classic Support (Mini/1K/4K)**
+    - Flipper's 1000+ key dictionary attack
+    - Magic backdoor detection (Gen1A clones)
+    - Parse and display NDEF TLV data
+  - **File Management**
+    - 'Saved' menu to browse .nfc files and rename/delete them from the UI
+    - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
+
 ## Revival v1.7.2
 
 ### Added
