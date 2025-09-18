@@ -181,6 +181,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - M5 Cardputer
 
+- M5 Cardputer ADV
+
 - FlipperHub Rocket
 
 - FlipperHub Pocker Marauder
