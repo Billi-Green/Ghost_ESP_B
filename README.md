@@ -100,6 +100,24 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 
 </details>
+<details>
+<summary>NFC Features</summary>
+
+- **PN532 NFC Capability**
+  - **NTAG Support (Type 2)**
+    - Read NTAG213/215/216 with NDEF parsing
+    - Write NTAG213/215/216 from `.nfc` files
+    - Save to Flipper `.nfc` format
+  - **MIFARE Classic Support (Mini/1K/4K)**
+    - Flipper's 1000+ key dictionary attack
+    - Parse and display NDEF TLV data
+    - Save to Flipper `.nfc` format
+  - **File Management**
+    - 'Saved' menu to browse `.nfc` files and rename/delete them from the UI
+    - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
+
+</details>
+
 
 <details>
 
