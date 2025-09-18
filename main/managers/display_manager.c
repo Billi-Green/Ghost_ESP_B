@@ -1196,6 +1196,20 @@ void set_backlight_brightness(uint8_t percentage) {
     }
 }
 
+bool display_manager_notify_user_input(void) {
+    // If backlight is dimmed/off, restore it and indicate the input was used to wake
+    if (is_backlight_dimmed || is_backlight_off) {
+        set_backlight_brightness(100);
+        is_backlight_dimmed = false;
+        is_backlight_off = false;
+        last_touch_time = xTaskGetTickCount();
+        return true;
+    }
+    // otherwise update last_touch_time and allow normal processing
+    last_touch_time = xTaskGetTickCount();
+    return false;
+}
+
 void hardware_input_task(void *pvParameters) {
   const TickType_t tick_interval = pdMS_TO_TICKS(10);
 

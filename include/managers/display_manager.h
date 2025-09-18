@@ -100,6 +100,14 @@ void hardware_input_task(void *pvParameters);
 
 void display_manager_fill_screen(lv_color_t color);
 
+/**
+ * @brief Notify the display manager that a user input occurred (external driver/task).
+ * If the display was dimmed/off this will restore backlight and return true to indicate
+ * the input was consumed for wake purposes and should not be forwarded as a UI event.
+ * Returns true if the input woke the display (and should be swallowed), false otherwise.
+ */
+bool display_manager_notify_user_input(void);
+
 lv_color_t hex_to_lv_color(const char *hex_str);
 
 // Status Bar Functions

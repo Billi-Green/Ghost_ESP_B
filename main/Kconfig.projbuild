@@ -167,6 +167,12 @@ menu "Ghost ESP Options"
             default n
             help
                 Enable Cardputer input.
+
+        config USE_CARDPUTER_ADV
+            bool "Enable Cardputer ADV (TCA8418 keyboard)"
+            default n
+            help
+                Enable Cardputer ADV keyboard support using the TCA8418 keypad controller.
         
         config USE_TDISPLAY_S3
             bool "Enable T-Display S3"

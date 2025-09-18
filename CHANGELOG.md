@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added support for Cardputer ADV
+
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
     - Read NTAG213/215/216 with NDEF parsing
@@ -16,6 +18,10 @@
   - **File Management**
     - 'Saved' menu to browse .nfc files and rename/delete them from the UI
     - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
+
+### Changed
+
+- Use a fixed-size active-key buffer for keyboard
 
 ## Revival v1.7.2
 
