@@ -23,7 +23,8 @@
 ### Changed
 
 - Use a fixed-size active-key buffer for keyboard
-- Refactor popups to use helper functions
+- Refactor popups to use reusable popup helpers
+- Refactor options menu to use reusable options view helpers
 
 ### Bug Fixes
 
