@@ -222,15 +222,17 @@ static void rx_task(void* arg) {
                                 switch (comm->partial_packet.type) {
                                     case PACKET_TYPE_DISCOVERY:
                                         if (comm->state == COMM_STATE_SCANNING) {
-                                            memcpy(comm->peer.chip_id, comm->partial_packet.data, 6);
-                                            strncpy(comm->peer.chip_name, (char*)comm->partial_packet.data + 6, 32);
-                                            comm->peer.chip_name[31] = '\0';
-                                            printf("I: Discovered peer: %s\n", comm->peer.chip_name);
-                                            ap_manager_add_log("I: Discovered peer (scan)\n");
-                                            if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
-                                                printf("I: Peer has smaller name, I will initiate connection.\n");
-                                                ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
-                                                esp_comm_manager_connect_to_peer(comm->peer.chip_name);
+                                            if (memcmp(comm->chip_id, comm->partial_packet.data, 6) != 0) {
+                                                memcpy(comm->peer.chip_id, comm->partial_packet.data, 6);
+                                                strncpy(comm->peer.chip_name, (char*)comm->partial_packet.data + 6, 32);
+                                                comm->peer.chip_name[31] = '\0';
+                                                printf("I: Discovered peer: %s\n", comm->peer.chip_name);
+                                                ap_manager_add_log("I: Discovered peer (scan)\n");
+                                                if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
+                                                    printf("I: Peer has smaller name, I will initiate connection.\n");
+                                                    ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
+                                                    esp_comm_manager_connect_to_peer(comm->peer.chip_name);
+                                                }
                                             }
                                         }
                                         break;
@@ -384,18 +386,20 @@ static void protocol_task(void* arg) {
             switch(packet.type) {
                 case PACKET_TYPE_DISCOVERY:
                     if (comm->state == COMM_STATE_SCANNING) {
-                        memcpy(comm->peer.chip_id, packet.data, 6);
-                        strncpy(comm->peer.chip_name, (char*)packet.data + 6, 32);
-                        comm->peer.chip_name[31] = '\0';
-                        printf("I: Discovered peer: %s\n", comm->peer.chip_name);
-                        
-                        snprintf(log_buffer, sizeof(log_buffer), "I: Discovered peer: %s\n", comm->peer.chip_name);
-                        ap_manager_add_log(log_buffer);
+                        if (memcmp(comm->chip_id, packet.data, 6) != 0) {
+                            memcpy(comm->peer.chip_id, packet.data, 6);
+                            strncpy(comm->peer.chip_name, (char*)packet.data + 6, 32);
+                            comm->peer.chip_name[31] = '\0';
+                            printf("I: Discovered peer: %s\n", comm->peer.chip_name);
+                            
+                            snprintf(log_buffer, sizeof(log_buffer), "I: Discovered peer: %s\n", comm->peer.chip_name);
+                            ap_manager_add_log(log_buffer);
 
-                        if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
-                            printf("I: Peer has smaller name, I will initiate connection.\n");
-                            ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
-                            esp_comm_manager_connect_to_peer(comm->peer.chip_name);
+                            if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
+                                printf("I: Peer has smaller name, I will initiate connection.\n");
+                                ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
+                                esp_comm_manager_connect_to_peer(comm->peer.chip_name);
+                            }
                         }
                     }
                     break;
