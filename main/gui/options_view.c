@@ -127,6 +127,10 @@ lv_obj_t *options_view_add_item(options_view_t *ov, const char *label, lv_event_
     lv_obj_set_height(btn, ov->btn_h);
     lv_obj_set_style_pad_top(btn, 0, 0);
     lv_obj_set_style_pad_bottom(btn, 0, 0);
+    // Ensure children (label) are vertically centered regardless of internal list layout
+    lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_left(btn, 8, 0);
     lv_obj_add_style(btn, get_zebra_style(ov, ov->count), 0);
     if (on_click) lv_obj_add_event_cb(btn, on_click, LV_EVENT_CLICKED, user_data);
     // Style label like options_screen
@@ -134,13 +138,10 @@ lv_obj_t *options_view_add_item(options_view_t *ov, const char *label, lv_event_
     if (lbl) {
         const lv_font_t *font = get_item_font(ov);
         lv_obj_set_style_text_font(lbl, font, 0);
-        // Vertical center by padding relative to current button height
-        lv_coord_t pad_top = ov->btn_h - (lv_coord_t)lv_font_get_line_height(font);
-        if (pad_top < 0) pad_top = 0;
-        pad_top /= 2;
-        lv_obj_set_style_pad_top(lbl, pad_top, 0);
+        // Label inherits vertical centering from parent's flex align
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_LEFT, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_width(lbl, LV_PCT(100));
     }
     ov->items[ov->count++] = btn;
     if (ov->selected < 0) {
@@ -228,10 +229,9 @@ void options_view_relayout_item(options_view_t *ov, lv_obj_t *item) {
     lv_obj_t *lbl = lv_obj_get_child(item, 0);
     if (!lbl) return;
     const lv_font_t *font = get_item_font(ov);
-    lv_coord_t h = lv_obj_get_height(item);
-    lv_coord_t pad_top = h - (lv_coord_t)lv_font_get_line_height(font);
-    if (pad_top < 0) pad_top = 0;
-    pad_top /= 2;
-    lv_obj_set_style_pad_top(lbl, pad_top, 0);
+    lv_obj_set_style_text_font(lbl, font, 0);
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_LEFT, 0);
+    lv_coord_t left_pad = 8;
+    lv_obj_set_width(lbl, lv_obj_get_width(item) - (2 * left_pad));
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, left_pad, 0);
 }
