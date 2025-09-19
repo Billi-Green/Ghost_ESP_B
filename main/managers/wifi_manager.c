@@ -5032,8 +5032,16 @@ static void eapol_logoff_task(void *param) {
             }
             if (!sent_any) {
                 // no stations found, send generic logoff with random station mac
-                printf("no stations found for this ap.\nattack more effective with discovered stations\n");
-                TERMINAL_VIEW_ADD_TEXT("no stations found for this ap.\nattack more effective with discovered stations\n");
+                static uint32_t last_warning_time = 0;
+                uint32_t current_time = xTaskGetTickCount();
+                
+                // Only print warning every 5 seconds to avoid spam
+                if (current_time - last_warning_time > pdMS_TO_TICKS(5000)) {
+                    printf("no stations found for this ap.\nattack more effective with discovered stations\n");
+                    TERMINAL_VIEW_ADD_TEXT("no stations found for this ap.\nattack more effective with discovered stations\n");
+                    last_warning_time = current_time;
+                }
+                
                 uint8_t fake_sta[6];
                 esp_fill_random(fake_sta, 6);
                 fake_sta[0] &= 0xFE; fake_sta[0] |= 0x02;
@@ -5054,21 +5062,30 @@ static void eapol_logoff_task(void *param) {
         
         vTaskDelay(pdMS_TO_TICKS(eapol_attack_delay_ms));
     }
+    eapol_logoff_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
 static void eapol_logoff_display_task(void *param) {
     (void)param;
     uint32_t prev_total = 0;
+    static char log_buf[80];
     while (eapol_logoff_running) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         uint32_t total = eapol_logoff_packets_sent;
         uint32_t interval = total - prev_total;
         prev_total = total;
         uint32_t pps = interval / 5;
-        printf("EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", (unsigned long)pps, (unsigned long)total);
-        TERMINAL_VIEW_ADD_TEXT("EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", (unsigned long)pps, (unsigned long)total);
+        
+        // Format once, use twice - reduces stack usage significantly
+        int len = snprintf(log_buf, sizeof(log_buf), "EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", 
+                          (unsigned long)pps, (unsigned long)total);
+        if (len > 0 && len < sizeof(log_buf)) {
+            printf("%s", log_buf);
+            TERMINAL_VIEW_ADD_TEXT("%s", log_buf);
+        }
     }
+    eapol_logoff_display_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -5081,7 +5098,7 @@ void wifi_manager_start_eapollogoff_attack(void) {
     eapol_logoff_running = true;
     eapol_logoff_packets_sent = 0;
     xTaskCreate(eapol_logoff_task, "eapol_logoff", 2048, NULL, 5, &eapol_logoff_task_handle);
-    xTaskCreate(eapol_logoff_display_task, "eapol_disp", 2048, NULL, 5, &eapol_logoff_display_task_handle);
+    xTaskCreate(eapol_logoff_display_task, "eapol_disp", 3072, NULL, 5, &eapol_logoff_display_task_handle);
 }
 
 void wifi_manager_stop_eapollogoff_attack(void) {
@@ -5090,18 +5107,29 @@ void wifi_manager_stop_eapollogoff_attack(void) {
         TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff not running\n");
         return;
     }
-    // signal tasks to stop
+    
+    // Signal tasks to stop gracefully
     eapol_logoff_running = false;
-    // delete attack task if exists
+    
+    // Wait for tasks to finish gracefully before force deletion
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Delete attack task if still exists
     if (eapol_logoff_task_handle) {
-        vTaskDelete(eapol_logoff_task_handle);
+        TaskHandle_t temp_handle = eapol_logoff_task_handle;
         eapol_logoff_task_handle = NULL;
+        vTaskDelete(temp_handle);
     }
-    // delete display task if exists
+    
+    // Delete display task if still exists  
     if (eapol_logoff_display_task_handle) {
-        vTaskDelete(eapol_logoff_display_task_handle);
+        TaskHandle_t temp_handle = eapol_logoff_display_task_handle;
         eapol_logoff_display_task_handle = NULL;
+        vTaskDelete(temp_handle);
     }
+    
+    printf("EAPOL Logoff attack stopped\n");
+    TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack stopped\n");
 }
 
 void wifi_manager_eapollogoff_display(void) {
