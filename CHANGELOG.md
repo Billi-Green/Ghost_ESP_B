@@ -23,6 +23,11 @@
 ### Changed
 
 - Use a fixed-size active-key buffer for keyboard
+- Refactor popups to use helper functions
+
+### Bug Fixes
+
+- Fixed intermittent IR learning errors by properly owning and copying received RMT symbol data before passing from ISR to task.
 
 ## Revival v1.7.2
 

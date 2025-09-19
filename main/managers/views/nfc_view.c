@@ -1461,46 +1461,19 @@ static void nfc_save_done_async(void *ptr) {
 
 static void update_nfc_popup_selection(void) {
     if (!nfc_scan_cancel_btn) return;
-    // Cancel
-    if (nfc_popup_selected == 0) {
-        lv_obj_set_style_bg_color(nfc_scan_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(nfc_scan_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *lbl = lv_obj_get_child(nfc_scan_cancel_btn, 0);
-        if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
-    } else {
-        lv_obj_set_style_bg_color(nfc_scan_cancel_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(nfc_scan_cancel_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *lbl = lv_obj_get_child(nfc_scan_cancel_btn, 0);
-        if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-    }
-    // More
+    
+    // Update Cancel button
+    popup_set_button_selected(nfc_scan_cancel_btn, nfc_popup_selected == 0);
+    
+    // Update More button if visible
     if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn) && nfc_more_visible) {
-        if (nfc_popup_selected == 1) {
-            lv_obj_set_style_bg_color(nfc_scan_more_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_scan_more_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl2 = lv_obj_get_child(nfc_scan_more_btn, 0);
-            if (lbl2) lv_obj_set_style_text_color(lbl2, lv_color_hex(0x000000), 0);
-        } else {
-            lv_obj_set_style_bg_color(nfc_scan_more_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_scan_more_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl2 = lv_obj_get_child(nfc_scan_more_btn, 0);
-            if (lbl2) lv_obj_set_style_text_color(lbl2, lv_color_hex(0xFFFFFF), 0);
-        }
+        popup_set_button_selected(nfc_scan_more_btn, nfc_popup_selected == 1);
     }
-    // Save
+    
+    // Update Save button if visible
     if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn) && nfc_save_visible) {
         int save_index = nfc_more_visible ? 2 : 1;
-        if (nfc_popup_selected == save_index) {
-            lv_obj_set_style_bg_color(nfc_scan_save_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_scan_save_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl3 = lv_obj_get_child(nfc_scan_save_btn, 0);
-            if (lbl3) lv_obj_set_style_text_color(lbl3, lv_color_hex(0x000000), 0);
-        } else {
-            lv_obj_set_style_bg_color(nfc_scan_save_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_scan_save_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl3 = lv_obj_get_child(nfc_scan_save_btn, 0);
-            if (lbl3) lv_obj_set_style_text_color(lbl3, lv_color_hex(0xFFFFFF), 0);
-        }
+        popup_set_button_selected(nfc_scan_save_btn, nfc_popup_selected == save_index);
     }
 }
 
@@ -1872,54 +1845,21 @@ static void saved_enter_list(void) {
 }
 
 static void update_nfc_write_popup_selection(void) {
-    // Cancel
+    // Update Cancel button
     if (nfc_write_cancel_btn && lv_obj_is_valid(nfc_write_cancel_btn)) {
-        if (nfc_write_popup_selected == 0) {
-            lv_obj_set_style_bg_color(nfc_write_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_write_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl = lv_obj_get_child(nfc_write_cancel_btn, 0);
-            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
-        } else {
-            lv_obj_set_style_bg_color(nfc_write_cancel_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_write_cancel_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl = lv_obj_get_child(nfc_write_cancel_btn, 0);
-            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-        }
+        popup_set_button_selected(nfc_write_cancel_btn, nfc_write_popup_selected == 0);
     }
-    // Write
+    
+    // Update Write button
     if (nfc_write_go_btn && lv_obj_is_valid(nfc_write_go_btn)) {
-        if (nfc_write_popup_selected == 1) {
-            lv_obj_set_style_bg_color(nfc_write_go_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_write_go_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl = lv_obj_get_child(nfc_write_go_btn, 0);
-            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
-        } else {
-            lv_obj_set_style_bg_color(nfc_write_go_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(nfc_write_go_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl = lv_obj_get_child(nfc_write_go_btn, 0);
-            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-        }
+        popup_set_button_selected(nfc_write_go_btn, nfc_write_popup_selected == 1);
     }
 }
 
 static void update_saved_popup_selection(void) {
     if (!saved_close_btn || !lv_obj_is_valid(saved_close_btn)) return;
-    // 0=Close, 1=Rename, 2=Delete
     lv_obj_t *btns[3] = { saved_close_btn, saved_rename_btn, saved_delete_btn };
-    for (int i = 0; i < 3; ++i) {
-        lv_obj_t *b = btns[i]; if (!b || !lv_obj_is_valid(b)) continue;
-        if (saved_popup_selected == i) {
-            lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(b, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl = lv_obj_get_child(b, 0);
-            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
-        } else {
-            lv_obj_set_style_bg_color(b, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_color(b, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *lbl = lv_obj_get_child(b, 0);
-            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-        }
-    }
+    popup_update_selection(btns, 3, saved_popup_selected);
 }
 
 static void keys_close_cb(lv_event_t *e) { (void)e; cleanup_keys_popup(NULL); }
@@ -1936,29 +1876,9 @@ static void cleanup_keys_popup(void *obj) {
 }
 
 static void update_keys_popup_selection(void) {
-    // reset buttons
-    if (keys_up_btn && lv_obj_is_valid(keys_up_btn)) {
-        lv_obj_set_style_bg_color(keys_up_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(keys_up_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *l = lv_obj_get_child(keys_up_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-    }
-    if (keys_close_btn && lv_obj_is_valid(keys_close_btn)) {
-        lv_obj_set_style_bg_color(keys_close_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(keys_close_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *l = lv_obj_get_child(keys_close_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-    }
-    if (keys_down_btn && lv_obj_is_valid(keys_down_btn)) {
-        lv_obj_set_style_bg_color(keys_down_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(keys_down_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *l = lv_obj_get_child(keys_down_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-    }
-    // highlight focused
-    lv_obj_t *focus_btn = (keys_popup_selected == 0) ? keys_up_btn : (keys_popup_selected == 1 ? keys_close_btn : keys_down_btn);
-    if (focus_btn && lv_obj_is_valid(focus_btn)) {
-        lv_obj_set_style_bg_color(focus_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(focus_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *l = lv_obj_get_child(focus_btn, 0); if (l) lv_obj_set_style_text_color(l, lv_color_hex(0x000000), 0);
-    }
+    // Use the popup_update_selection helper for the array of buttons
+    lv_obj_t *btns[3] = { keys_up_btn, keys_close_btn, keys_down_btn };
+    popup_update_selection(btns, 3, keys_popup_selected);
 }
 
 static void keys_scroll_up_cb(lv_event_t *e) {
@@ -1996,14 +1916,7 @@ static void create_keys_popup(void) {
     keys_title_label = popup_create_title_label(keys_popup, "User MFC Keys", title_font, 10);
 
     // Create scrollable container for keys and set fixed popup height
-    keys_scroll = lv_obj_create(keys_popup);
-    lv_obj_set_style_bg_opa(keys_scroll, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(keys_scroll, 0, 0);
-    lv_obj_set_style_pad_all(keys_scroll, 0, 0);
-    lv_obj_set_size(keys_scroll, LV_HOR_RES - 50, popup_h - 80);
-    lv_obj_align(keys_scroll, LV_ALIGN_TOP_MID, 0, 26);
-    lv_obj_set_scroll_dir(keys_scroll, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(keys_scroll, LV_SCROLLBAR_MODE_AUTO);
+    keys_scroll = popup_create_scroll_area(keys_popup, LV_HOR_RES - 50, popup_h - 80, LV_ALIGN_TOP_MID, 0, 26);
 
     keys_details_label = popup_create_body_label(keys_scroll, "", LV_HOR_RES - 60, true, body_font, 0);
     if (keys_details_label) lv_obj_align(keys_details_label, LV_ALIGN_TOP_LEFT, 0, 0);

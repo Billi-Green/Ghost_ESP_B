@@ -2,6 +2,7 @@
 #include "lvgl.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 /*
  * popup.c
  *
@@ -175,4 +176,75 @@ popup_t *popup_show_simple(lv_obj_t *parent, int width, int height, const char *
 	}
 	popup_show(p);
 	return p;
+}
+
+void popup_set_button_selected(lv_obj_t *btn, bool selected) {
+    if (!btn || !lv_obj_is_valid(btn)) return;
+    if (selected) {
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+        if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
+    } else {
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+        if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+    }
+}
+
+void popup_update_selection(lv_obj_t **btns, int count, int selected_index) {
+    if (!btns || count <= 0) return;
+    for (int i = 0; i < count; ++i) {
+        lv_obj_t *b = btns[i];
+        if (!b || !lv_obj_is_valid(b)) continue;
+        popup_set_button_selected(b, i == selected_index);
+    }
+}
+
+lv_obj_t *popup_create_scroll_area(
+    lv_obj_t *parent,
+    lv_coord_t w,
+    lv_coord_t h,
+    lv_align_t align,
+    lv_coord_t x_ofs,
+    lv_coord_t y_ofs
+) {
+    if (!parent) parent = lv_scr_act();
+    lv_obj_t *scroll = lv_obj_create(parent);
+    lv_obj_set_size(scroll, w, h);
+    lv_obj_align(scroll, align, x_ofs, y_ofs);
+    // Transparent background and no border to blend with popup
+    lv_obj_set_style_bg_opa(scroll, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(scroll, 0, 0);
+    // Scroll behavior
+    lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(scroll, LV_SCROLLBAR_MODE_AUTO);
+    // Minimal padding so text aligns nicely to top-left
+    lv_obj_set_style_pad_all(scroll, 0, 0);
+    return scroll;
+}
+
+void popup_layout_buttons_row(
+    lv_obj_t *container,
+    lv_obj_t **btns,
+    int count,
+    lv_coord_t btn_w,
+    lv_coord_t btn_h,
+    lv_coord_t y,
+    lv_coord_t gap
+) {
+    if (!container || !btns || count <= 0) return;
+    lv_coord_t cw = lv_obj_get_width(container);
+    lv_coord_t total_w = count * btn_w + (count - 1) * gap;
+    lv_coord_t start_x = (cw > total_w) ? (cw - total_w) / 2 : 0;
+    for (int i = 0; i < count; ++i) {
+        lv_obj_t *b = btns[i];
+        if (!b || !lv_obj_is_valid(b)) continue;
+        lv_obj_set_size(b, btn_w, btn_h);
+        lv_obj_align(b, LV_ALIGN_TOP_LEFT, start_x + i * (btn_w + gap), y);
+        // Ensure label (first child) is centered within button
+        lv_obj_t *lbl = lv_obj_get_child(b, 0);
+        if (lbl) lv_obj_center(lbl);
+    }
 }

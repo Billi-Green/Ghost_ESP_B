@@ -26,3 +26,18 @@ popup_t *popup_show_simple(lv_obj_t *parent, int width, int height, const char *
 
 // create a styled container suitable for popups (returns an lv_obj_t* container)
 lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height);
+
+// create styled buttons and labels for popups
+lv_obj_t *popup_add_styled_button(lv_obj_t *container, const char *label_text, int btn_w, int btn_h, lv_align_t align, lv_coord_t x_ofs, lv_coord_t y_ofs, const lv_font_t *font, lv_event_cb_t cb, void *user_data);
+lv_obj_t *popup_create_title_label(lv_obj_t *container, const char *title, const lv_font_t *font, lv_coord_t y_ofs);
+lv_obj_t *popup_create_body_label(lv_obj_t *container, const char *text, lv_coord_t width, bool wrap, const lv_font_t *font, lv_coord_t y_ofs);
+
+// button selection helpers for consistent highlighting
+void popup_set_button_selected(lv_obj_t *btn, bool selected);
+void popup_update_selection(lv_obj_t **btns, int count, int selected_index);
+
+// create transparent scrollable area for popup content
+lv_obj_t *popup_create_scroll_area(lv_obj_t *parent, lv_coord_t w, lv_coord_t h, lv_align_t align, lv_coord_t x_ofs, lv_coord_t y_ofs);
+
+// layout buttons in an evenly-spaced row
+void popup_layout_buttons_row(lv_obj_t *container, lv_obj_t **btns, int count, lv_coord_t btn_w, lv_coord_t btn_h, lv_coord_t y, lv_coord_t gap);
