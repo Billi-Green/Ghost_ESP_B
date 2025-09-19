@@ -39,8 +39,10 @@ static SemaphoreHandle_t pcap_mutex = NULL;
 
 #define DLT_IEEE802_11_RADIO 127
 #define DLT_BLUETOOTH_HCI_H4 201
+// IEEE 802.15.4 without FCS, as frames provided by ESP-IDF lack FCS
+#define DLT_IEEE802_15_4_NOFCS 230
 
-typedef enum { PCAP_CAPTURE_WIFI, PCAP_CAPTURE_BLUETOOTH } pcap_capture_type_t;
+typedef enum { PCAP_CAPTURE_WIFI, PCAP_CAPTURE_BLUETOOTH, PCAP_CAPTURE_IEEE802154 } pcap_capture_type_t;
 
 esp_err_t pcap_init(void);
 esp_err_t pcap_write_global_header(FILE *f, pcap_capture_type_t capture_type);

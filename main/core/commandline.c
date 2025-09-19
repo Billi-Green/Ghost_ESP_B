@@ -1,4 +1,4 @@
-// command.c
+ // command.c
 
 #include "core/commandline.h"
 #include "core/callbacks.h"
@@ -17,6 +17,9 @@
 #include "core/esp_comm_manager.h"
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+#include "managers/zigbee_manager.h"
+#endif
 #include <esp_timer.h>
 #include <managers/gps_manager.h>
 #include <managers/views/terminal_screen.h>
@@ -787,7 +790,7 @@ void handle_ip_lookup(int argc, char **argv) {
 }
 
 void handle_capture_scan(int argc, char **argv) {
-    if (argc != 2) {
+    if (argc < 2 || argc > 3) {
         printf("Error: Incorrect number of arguments.\n");
         TERMINAL_VIEW_ADD_TEXT("Error: Incorrect number of arguments.\n");
         return;
@@ -851,6 +854,26 @@ void handle_capture_scan(int argc, char **argv) {
         wifi_manager_start_monitor_mode(wifi_raw_scan_callback);
     }
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (strcmp(capturetype, "-802154") == 0) {
+        printf("Starting IEEE 802.15.4 packet capture...\n");
+        TERMINAL_VIEW_ADD_TEXT("Starting IEEE 802.15.4 packet capture...\n");
+        int err = pcap_file_open("802154", PCAP_CAPTURE_IEEE802154);
+        if (err != ESP_OK) {
+            printf("Warning: PCAP failed to open (will stream to UART)\n");
+            TERMINAL_VIEW_ADD_TEXT("Warning: PCAP failed to open (will stream to UART)\n");
+        }
+        uint8_t ch = 0; // 0 means hopping by default
+        if (argc == 3 && argv[2]) {
+            const char *arg = argv[2];
+            if (strncmp(arg, "ch", 2) == 0) arg += 2;
+            int parsed = atoi(arg);
+            if (parsed >= 11 && parsed <= 26) ch = (uint8_t)parsed; // fixed channel
+        }
+        zigbee_manager_start_capture(ch);
+    }
+#endif
+
     if (strcmp(capturetype, "-eapol") == 0) {
         printf("Starting EAPOL\npacket capture...\n");
         TERMINAL_VIEW_ADD_TEXT("Starting EAPOL\npacket capture...\n");
@@ -898,7 +921,9 @@ void handle_capture_scan(int argc, char **argv) {
         wifi_manager_stop_monitor_mode();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
         ble_stop();
-        ble_stop_skimmer_detection();
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        zigbee_manager_stop_capture();
 #endif
         pcap_file_close();
     }
@@ -1423,11 +1448,18 @@ void handle_help(int argc, char **argv) {
         printf("        -raw   :   Start Capturing Raw Packets\n");
         printf("        -wps   :   Start Capturing WPS Packets and there Auth Type\n");
         printf("        -pwn   :   Start Capturing Pwnagotchi Packets\n");
+        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        printf("        -802154:   Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
+        #endif
         printf("        -stop   : Stops the active capture\n\n");
         TERMINAL_VIEW_ADD_TEXT("capture\n");
         TERMINAL_VIEW_ADD_TEXT("    Start a WiFi packet capture.\n");
         TERMINAL_VIEW_ADD_TEXT("    Usage: capture [OPTION]\n");
+        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -802154, -stop\n\n");
+        #else
         TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -stop\n\n");
+        #endif
         return;
     }
 
@@ -1500,8 +1532,13 @@ void handle_help(int argc, char **argv) {
 
 void handle_capture(int argc, char **argv) {
     if (argc < 2) {
+        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        printf("Usage: capture [-probe|-beacon|-deauth|-raw|-ble|-zigbee]\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: capture [-probe|-beacon|-deauth|-raw|-ble|-zigbee]\n");
+        #else
         printf("Usage: capture [-probe|-beacon|-deauth|-raw|-ble]\n");
         TERMINAL_VIEW_ADD_TEXT("Usage: capture [-probe|-beacon|-deauth|-raw|-ble]\n");
+        #endif
         return;
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2

@@ -79,7 +79,11 @@ static const char *wifi_attacks_options[] = {
 
 static const char *wifi_capture_options[] = {
     "Capture Probe", "Capture Deauth", "Capture Beacon", "Capture Raw", "Capture Eapol",
-    "Capture WPS", "Capture PWN", "Listen for Probes", NULL
+    "Capture WPS", "Capture PWN",
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    "Capture 802.15.4", "Capture 802.15.4 (Channel)",
+#endif
+    "Listen for Probes", NULL
 };
 
 static const char *wifi_scanning_options[] = {
@@ -277,6 +281,9 @@ static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
 static void ssh_scan_kb_cb(const char *text);
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+static void zigbee_capture_kb_cb(const char *text);
+#endif
 
 static void evil_portal_ssid_cb(const char *input) {
     if (!input || !selected_portal[0]) return;
@@ -1248,14 +1255,29 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "Capture Eapol") == 0) {
     terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+    display_manager_switch_view(&terminal_view);
         simulateCommand("capture -eapol");
         view_switched = true;
     }
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    else if (strcmp(Selected_Option, "Capture 802.15.4") == 0) {
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+        simulateCommand("capture -802154");
+        view_switched = true;
+    }
+    else if (strcmp(Selected_Option, "Capture 802.15.4 (Channel)") == 0) {
+        keyboard_view_set_submit_callback(zigbee_capture_kb_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("Channel 11-26");
+        return;
+    }
+#endif
+
     else if (strcmp(Selected_Option, "Listen for Probes") == 0) {
     terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+    display_manager_switch_view(&terminal_view);
         simulateCommand("listenprobes");
         view_switched = true;
     }
@@ -1785,6 +1807,34 @@ static void ssh_scan_kb_cb(const char *text) {
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
 }
+
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+static void zigbee_capture_kb_cb(const char *text) {
+    if (!text) {
+        error_popup_create("Enter channel 11-26");
+        return;
+    }
+    const char *p = text;
+    while (*p == ' ' || *p == '\t') p++;
+    if ((p[0] == 'c' || p[0] == 'C') && (p[1] == 'h' || p[1] == 'H')) {
+        p += 2;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    char *endptr = NULL;
+    long ch = strtol(p, &endptr, 10);
+    while (endptr && (*endptr == ' ' || *endptr == '\t')) endptr++;
+    if (p[0] == '\0' || (endptr && *endptr != '\0') || ch < 11 || ch > 26) {
+        error_popup_create("Channel must be 11-26");
+        return;
+    }
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "capture -802154 ch%ld", ch);
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+#endif
 
 
 static void wifi_connect_kb_cb(const char *text){

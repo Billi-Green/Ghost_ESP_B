@@ -43,16 +43,19 @@ esp_err_t pcap_init(void) {
 }
 
 esp_err_t pcap_write_global_header(FILE *f, pcap_capture_type_t capture_type) {
+  uint32_t dlt = DLT_IEEE802_11_RADIO;
+  if (capture_type == PCAP_CAPTURE_BLUETOOTH) {
+    dlt = DLT_BLUETOOTH_HCI_H4;
+  } else if (capture_type == PCAP_CAPTURE_IEEE802154) {
+    dlt = DLT_IEEE802_15_4_NOFCS;
+  }
   pcap_global_header_t header = {.magic_number = 0xa1b2c3d4,
                                  .version_major = 2,
                                  .version_minor = 4,
                                  .thiszone = 0,
                                  .sigfigs = 0,
                                  .snaplen = 65535,
-                                 .network =
-                                     (capture_type == PCAP_CAPTURE_BLUETOOTH)
-                                         ? DLT_BLUETOOTH_HCI_H4
-                                         : DLT_IEEE802_11_RADIO};
+                                 .network = dlt};
 
   if (f == NULL) {
     const char *mark_begin = "[BUF/BEGIN]";
@@ -338,6 +341,10 @@ esp_err_t pcap_write_packet_to_buffer(const void *packet, size_t length,
     const uint8_t *frame = (const uint8_t *)packet;
     actual_length = calculate_wifi_frame_length(frame, length);
     header_length = RADIOTAP_HEADER_LEN;
+  } else if (capture_type == PCAP_CAPTURE_IEEE802154) {
+    // IEEE 802.15.4 frames are written as-is (no FCS) with NOFCS DLT
+    actual_length = length;
+    header_length = 0;
   } else if (capture_type == PCAP_CAPTURE_BLUETOOTH) {
     const uint8_t *raw_packet = (const uint8_t *)packet;
 

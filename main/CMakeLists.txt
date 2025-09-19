@@ -32,6 +32,13 @@ if("${IDF_TARGET}" STREQUAL "esp32s3")
     endif()
 endif()
 
+# Add IEEE 802.15.4 component for Zigbee capture on ESP32-C5/C6
+if("${IDF_TARGET}" STREQUAL "esp32c5" OR "${IDF_TARGET}" STREQUAL "esp32c6")
+    list(APPEND required_components ieee802154)
+    # Add Zigbee manager source
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/zigbee_manager.c")
+endif()
+
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include"
