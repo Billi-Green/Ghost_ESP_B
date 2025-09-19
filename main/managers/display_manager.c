@@ -879,8 +879,8 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #if !defined(CONFIG_USE_7_INCHER) && !defined(CONFIG_JC3248W535EN_LCD)
 /* For cardputer (no PSRAM) use a single smaller buffer to save internal RAM.
    Single buffer increases flush frequency but greatly reduces RAM usage. */
-#if defined(CONFIG_USE_CARDPUTER)
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 2] __attribute__((aligned(4)));
+#if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
 #elif defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32C5)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
