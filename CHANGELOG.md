@@ -6,6 +6,7 @@
 
 - Added support for Cardputer ADV
 - Added 802.15.4 packet capture (only on C5, C6)
+- Alternate main menu layout (Grid)
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
@@ -25,6 +26,7 @@
 - Use a fixed-size active-key buffer for keyboard
 - Refactor popups to use reusable popup helpers
 - Refactor options menu to use reusable options view helpers
+- Update main menu icons to RGB565A8
 
 ### Bug Fixes
 
