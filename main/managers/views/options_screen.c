@@ -50,11 +50,11 @@ static int current_settings_category = -1;
 // Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9)
 // Category 1: "Config"  (indices: 0, 6, 7, 8)
 // Example: settings_category_indices[0] lists settings for "Display" category.
-static int settings_category_indices[][9] = {
+static int settings_category_indices[][10] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 10, 11, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons
+        {1, 2, 5, 3, 4, 9, 10, 11, 12, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
     #else
-        {1, 2, 5, 3, 4, 9, 10, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons
+        {1, 2, 5, 3, 4, 9, 10, 11, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
     #endif
         {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
@@ -134,6 +134,7 @@ static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "So
 static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
+static const char *menu_layout_options[] = {"Normal", "Grid"};
 
 enum {
     SETTING_RGB_MODE = 0,
@@ -147,7 +148,8 @@ enum {
     SETTING_POWER_SAVE,
     SETTING_MAX_BRIGHTNESS,
     SETTING_ZEBRA_MENUS,
-    SETTING_NAV_BUTTONS
+    SETTING_NAV_BUTTONS,
+    SETTING_MENU_LAYOUT
 };
 
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
@@ -170,7 +172,8 @@ static SettingsItem settings_items[] = {
     {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     #endif
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
-    {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1}
+    {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
+    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 2, 0}
 };
 
 static bool is_settings_mode = false;
@@ -544,6 +547,9 @@ static void load_current_settings_values(void) {
             case SETTING_NAV_BUTTONS:
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_MENU_LAYOUT:
+                settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
+                break;
             case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
                 break;
@@ -603,6 +609,10 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_NAV_BUTTONS:
             settings_set_nav_buttons_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_MENU_LAYOUT:
+            settings_set_menu_layout(&G_Settings, new_value);
+            // The layout change will take effect on next menu creation
             break;
         #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
         // This setting is only available if LV_DISP_BACKLIGHT_PWM is enabled
@@ -1763,9 +1773,9 @@ static void wifi_connect_kb_cb(const char *text){
 // build menu items in small batches so we don't starve the watchdog
 static void menu_builder_cb(lv_timer_t *t)
 {
-    /* If the view is gone, stop this timer immediately. ---------------- */
-    if (!menu_container || !lv_obj_is_valid(menu_container)) {
-        lv_timer_del(t);
+    /* If the view or options view is gone, stop this timer immediately. */
+    if (!menu_container || !lv_obj_is_valid(menu_container) || !g_options_view) {
+        if (t) lv_timer_del(t);
         menu_build_timer = NULL;
         return;
     }

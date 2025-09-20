@@ -103,6 +103,7 @@ typedef struct {
   
   // Navigation buttons setting
   bool nav_buttons_enabled; // Toggle for main menu navigation buttons
+  uint8_t menu_layout; // Menu layout type (0=Carousel, 1=Grid, 2=Wii Cards)
 } FSettings;
 
 // Function declarations
@@ -243,6 +244,10 @@ bool settings_get_infrared_easy_mode(const FSettings *settings);
 // Navigation buttons settings
 void settings_set_nav_buttons_enabled(FSettings *settings, bool enabled);
 bool settings_get_nav_buttons_enabled(const FSettings *settings);
+
+// Menu layout settings
+void settings_set_menu_layout(FSettings *settings, uint8_t layout);
+uint8_t settings_get_menu_layout(const FSettings *settings);
 
 extern FSettings G_Settings;
 
