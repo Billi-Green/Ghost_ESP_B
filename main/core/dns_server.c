@@ -19,7 +19,7 @@
 #include "lwip/sys.h"
 
 #define DNS_PORT (53)
-#define DNS_MAX_LEN (256)
+#define DNS_MAX_LEN (512)
 
 #define OPCODE_MASK (0x7800)
 #define QR_FLAG (1 << 7)
@@ -74,7 +74,15 @@ static char *parse_dns_name(char *raw_name, char *parsed_name,
   int name_len = 0;
 
   do {
-    int sub_name_len = *label;
+    int sub_name_len = (uint8_t)*label;
+    // refuse compression pointers here; we don't support them in questions
+    if ((sub_name_len & 0xC0) == 0xC0) {
+      return NULL;
+    }
+    // rfc 1035 label length must be <= 63
+    if (sub_name_len > 63) {
+      return NULL;
+    }
     // (len + 1) since we are adding  a '.'
     name_len += (sub_name_len + 1);
     if (name_len > parsed_name_max_len) {
@@ -111,20 +119,18 @@ static int parse_dns_request(char *req, size_t req_len, char *dns_reply,
            ntohs(header->id), ntohs(header->flags), ntohs(header->qd_count));
 
   // Not a standard query
-  if ((header->flags & OPCODE_MASK) != 0) {
+  uint16_t flags_host = ntohs(header->flags);
+  if ((flags_host & OPCODE_MASK) != 0) {
     return 0;
   }
 
   // Set question response flag
-  header->flags |= QR_FLAG;
+  flags_host |= 0x8000; // QR
+  header->flags = htons(flags_host);
 
   uint16_t qd_count = ntohs(header->qd_count);
-  header->an_count = htons(qd_count);
-
-  int reply_len = qd_count * sizeof(dns_answer_t) + req_len;
-  if (reply_len > dns_reply_max_len) {
-    return -1;
-  }
+  uint16_t answers_added = 0;
+  int reply_len = req_len;
 
   // Pointer to current answer and question
   char *cur_ans_ptr = dns_reply + req_len;
@@ -135,11 +141,15 @@ static int parse_dns_request(char *req, size_t req_len, char *dns_reply,
   for (int qd_i = 0; qd_i < qd_count; qd_i++) {
     char *name_end_ptr = parse_dns_name(cur_qd_ptr, name, sizeof(name));
     if (name_end_ptr == NULL) {
-      ESP_LOGE(TAG, "Failed to parse DNS question: %s", cur_qd_ptr);
+      ESP_LOGE(TAG, "Failed to parse DNS question");
       return -1;
     }
 
     dns_question_t *question = (dns_question_t *)(name_end_ptr);
+    if ((char *)question + sizeof(dns_question_t) > dns_reply + req_len) {
+      ESP_LOGE(TAG, "DNS question overruns packet");
+      return -1;
+    }
     uint16_t qd_type = ntohs(question->type);
     uint16_t qd_class = ntohs(question->class);
 
@@ -161,7 +171,7 @@ static int parse_dns_request(char *req, size_t req_len, char *dns_reply,
                 esp_netif_get_handle_from_ifkey(h->entry[i].if_key), &ip_info);
             ip.addr = ip_info.ip.addr;
             break;
-          } else if (h->entry->ip.addr != IPADDR_ANY) {
+          } else if (h->entry[i].ip.addr != IPADDR_ANY) {
             ip.addr = h->entry[i].ip.addr;
             break;
           }
@@ -170,6 +180,10 @@ static int parse_dns_request(char *req, size_t req_len, char *dns_reply,
       if (ip.addr ==
           IPADDR_ANY) { // no rule applies, continue with another question
         continue;
+      }
+      if (reply_len + (int)sizeof(dns_answer_t) > (int)dns_reply_max_len) {
+        ESP_LOGE(TAG, "DNS reply too big");
+        return -1;
       }
       dns_answer_t *answer = (dns_answer_t *)cur_ans_ptr;
 
@@ -183,8 +197,14 @@ static int parse_dns_request(char *req, size_t req_len, char *dns_reply,
 
       answer->addr_len = htons(sizeof(ip.addr));
       answer->ip_addr = ip.addr;
+      cur_ans_ptr += sizeof(dns_answer_t);
+      reply_len += sizeof(dns_answer_t);
+      answers_added++;
     }
+    // move to next question (after name and qtype/qclass)
+    cur_qd_ptr = (char *)question + sizeof(dns_question_t);
   }
+  header->an_count = htons(answers_added);
   return reply_len;
 }
 
@@ -193,7 +213,7 @@ static int parse_dns_request(char *req, size_t req_len, char *dns_reply,
     replies to all type A queries with the IP of the softAP
 */
 void dns_server_task(void *pvParameters) {
-  char rx_buffer[128];
+  char rx_buffer[DNS_MAX_LEN];
   char addr_str[128];
   int addr_family;
   int ip_protocol;
@@ -223,10 +243,10 @@ void dns_server_task(void *pvParameters) {
     ESP_LOGI(TAG, "Socket bound, port %d", DNS_PORT);
 
     while (handle->started) {
-      ESP_LOGI(TAG, "Waiting for data");
+      ESP_LOGD(TAG, "Waiting for data");
       struct sockaddr_in6 source_addr; // Large enough for both IPv4 or IPv6
       socklen_t socklen = sizeof(source_addr);
-      int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0,
+      int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer), 0,
                          (struct sockaddr *)&source_addr, &socklen);
 
       // Error occurred during receiving
@@ -245,14 +265,11 @@ void dns_server_task(void *pvParameters) {
           inet6_ntoa_r(source_addr.sin6_addr, addr_str, sizeof(addr_str) - 1);
         }
 
-        // Null-terminate whatever we received and treat like a string...
-        rx_buffer[len] = 0;
-
         char reply[DNS_MAX_LEN];
         int reply_len =
             parse_dns_request(rx_buffer, len, reply, DNS_MAX_LEN, handle);
 
-        ESP_LOGI(TAG, "Received %d bytes from %s | DNS reply with len: %d", len,
+        ESP_LOGD(TAG, "Received %d bytes from %s | DNS reply len: %d", len,
                  addr_str, reply_len);
         if (reply_len <= 0) {
           ESP_LOGE(TAG, "Failed to prepare a DNS reply");
