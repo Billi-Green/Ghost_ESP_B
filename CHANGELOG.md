@@ -26,6 +26,7 @@
 - Use a fixed-size active-key buffer for keyboard
 - Refactor popups to use reusable popup helpers
 - Refactor options menu to use reusable options view helpers
+- Refactor comm manager to centralize packet handling, add state mutex and handshake timeout, and guard UART driver install
 - Update main menu icons to RGB565A8
 
 ### Bug Fixes
