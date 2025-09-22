@@ -7,7 +7,7 @@
 - Added support for Cardputer ADV
 - Added 802.15.4 packet capture (only on C5, C6)
 - Alternate main menu layout (Grid)
-- Added glog
+- Added glog - a lightweight logging helper
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
