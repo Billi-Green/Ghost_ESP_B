@@ -34,6 +34,10 @@
 - Fixed intermittent IR learning errors by properly owning and copying received RMT symbol data before passing from ISR to task.
 - Ignore self when discovering peers for dual comm
 - Prevent crash and spam in EAPOL Logoff attack
+- Fixed minor issues with the dns server
+- Fixed memory leak, race conditions and add buffer error handling in pcap.c
+- Accepted HCI packet types now include CMD, ACL, SCO, and ISO
+- Fixed BLE capture stopping itself after recieving an event
 
 ## Revival v1.7.2
 
