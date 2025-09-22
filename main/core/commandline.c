@@ -373,6 +373,12 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_dhcpstarve();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    // ensure zigbee capture is stopped when using generic stop
+    zigbee_manager_stop_capture();
+#endif
+    // ensure pcap is properly flushed and closed
+    pcap_file_close();
     glog("Stopped activities.\nClosed files.\n");
 }
 

@@ -1,5 +1,6 @@
 #include "vendor/pcap.h"
 #include "core/utils.h"
+#include "core/glog.h"
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
@@ -75,7 +76,11 @@ esp_err_t pcap_write_global_header(FILE *f, pcap_capture_type_t capture_type) {
     return ESP_OK;
   } else {
     size_t written = fwrite(&header, 1, sizeof(header), f);
-    return (written == sizeof(header)) ? ESP_OK : ESP_FAIL;
+    if (written == sizeof(header)) {
+      fflush(f);
+      return ESP_OK;
+    }
+    return ESP_FAIL;
   }
 }
 
@@ -129,8 +134,14 @@ esp_err_t pcap_file_open(const char *base_file_name,
   if (file_name[0] != '\0') {
     ESP_LOGI(PCAP_TAG, "PCAP file %s opened and global header written.",
              file_name);
+    if (pcap_file != NULL) {
+      glog("PCAP: saving to SD as %s\n", file_name);
+    } else {
+      glog("PCAP: streaming over UART (SD open failed)\n");
+    }
   } else {
     ESP_LOGI(PCAP_TAG, "PCAP using serial (no file) and global header written.");
+    glog("PCAP: streaming over UART (no SD)\n");
   }
 
   xSemaphoreGive(pcap_mutex);
