@@ -1224,6 +1224,9 @@ void hardware_input_task(void *pvParameters) {
   uint8_t shift_count_before_caps =255; // effectively disable hold-to-caps for normal cardputer
   uint8_t shift_count = 0;
   bool caps_latch = false; // var for tracking if caps was just toggled
+  // track last pressed keys to emit only on new press (avoid spam)
+  static Point2D_t last_pressed_keys[16];
+  static size_t last_pressed_len = 0;
 #endif
   while (1) {
 #ifdef CONFIG_USE_TDECK
@@ -1404,11 +1407,21 @@ void hardware_input_task(void *pvParameters) {
 
       for (size_t i = 0; i < gkeyboard.key_list_buffer_len; ++i) {
         Point2D_t key_pos = gkeyboard.key_list_buffer[i];
+        // emit only on new press (edge-triggered)
+        bool is_new_press = true;
+        for (size_t k = 0; k < last_pressed_len; ++k) {
+          if (last_pressed_keys[k].x == key_pos.x && last_pressed_keys[k].y == key_pos.y) {
+            is_new_press = false;
+            break;
+          }
+        }
+        if (!is_new_press) {
+          continue;
+        }
         uint8_t key_value = keyboard_get_key(&gkeyboard, key_pos);
         keyboard_update_keys_state(&gkeyboard);
-        if (key_value != 0 && !touch_active) {
+        if (key_value != 0) {
           bool skip_event = false;
-          touch_active = true;
           last_touch_time = xTaskGetTickCount();
           if (is_backlight_dimmed) {
             // CARDPUTER wake logic is keypress-to-wake, which is desired.
@@ -1456,15 +1469,16 @@ void hardware_input_task(void *pvParameters) {
               ESP_LOGE(TAG, "Failed to send button input to queue\n");
             }
           }
-          vTaskDelay(pdMS_TO_TICKS(300));
-
-        } else if (touch_active) {
-
-          touch_active = false;
 
         }
       }
-    }
+      }
+      // update last pressed cache (cap to 16)
+      last_pressed_len = gkeyboard.key_list_buffer_len;
+      if (last_pressed_len > 16) last_pressed_len = 16;
+      for (size_t m = 0; m < last_pressed_len; ++m) {
+        last_pressed_keys[m] = gkeyboard.key_list_buffer[m];
+      }
 #endif
 
 #ifdef CONFIG_USE_JOYSTICK
