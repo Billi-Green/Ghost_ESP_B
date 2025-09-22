@@ -38,6 +38,7 @@
 - Fixed memory leak, race conditions and add buffer error handling in pcap.c
 - Track SPI host/mount state and only free initialized SPI host on unmount
 - Added NMEA handle null-checks
+- Flush PCAP header on open and close PCAP on generic stop command
 - Miscellaneous fixes and improvements
 
 
