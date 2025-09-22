@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <stdlib.h>
 
 #define RADIOTAP_HEADER_LEN 8
 
@@ -92,27 +93,47 @@ esp_err_t pcap_file_open(const char *base_file_name,
     ESP_LOGE(PCAP_TAG, "Failed to initialize PCAP");
     return init_ret;
   }
-
   char file_name[MAX_FILE_NAME_LENGTH];
+  file_name[0] = '\0';
+
+  /* take mutex to protect pcap_file and buffer_offset during open */
+  if (pcap_mutex == NULL) {
+    ESP_LOGE(PCAP_TAG, "pcap_mutex is NULL in pcap_file_open");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  if (xSemaphoreTake(pcap_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    ESP_LOGE(PCAP_TAG, "Failed to take mutex in pcap_file_open");
+    return ESP_ERR_TIMEOUT;
+  }
 
   if (sd_card_exists("/mnt/ghostesp/pcaps")) {
     get_next_pcap_file_name(file_name, base_file_name);
     pcap_file = fopen(file_name, "wb");
     if (!pcap_file) {
-      printf("PCAP file is not open. Flushing to Serial...");
+      ESP_LOGW(PCAP_TAG, "PCAP file is not open, will flush to serial");
     }
   }
 
   esp_err_t ret = pcap_write_global_header(pcap_file, capture_type);
   if (ret != ESP_OK) {
     ESP_LOGE(PCAP_TAG, "Failed to write PCAP global header.");
-    fclose(pcap_file);
-    pcap_file = NULL;
+    if (pcap_file) {
+      fclose(pcap_file);
+      pcap_file = NULL;
+    }
+    xSemaphoreGive(pcap_mutex);
     return ret;
   }
 
-  ESP_LOGI(PCAP_TAG, "PCAP file %s opened and global header written.",
-           file_name);
+  if (file_name[0] != '\0') {
+    ESP_LOGI(PCAP_TAG, "PCAP file %s opened and global header written.",
+             file_name);
+  } else {
+    ESP_LOGI(PCAP_TAG, "PCAP using serial (no file) and global header written.");
+  }
+
+  xSemaphoreGive(pcap_mutex);
   return ESP_OK;
 }
 
@@ -336,6 +357,8 @@ esp_err_t pcap_write_packet_to_buffer(const void *packet, size_t length,
 
   size_t actual_length;
   size_t header_length = 0;
+  uint8_t bt_h4_header[4];
+  int is_bt = 0;
 
   if (capture_type == PCAP_CAPTURE_WIFI) {
     const uint8_t *frame = (const uint8_t *)packet;
@@ -348,36 +371,36 @@ esp_err_t pcap_write_packet_to_buffer(const void *packet, size_t length,
   } else if (capture_type == PCAP_CAPTURE_BLUETOOTH) {
     const uint8_t *raw_packet = (const uint8_t *)packet;
 
-    // Add Bluetooth H4 header (4 bytes)
-    uint8_t h4_header[4] = {
-        0x00,          // Direction: Host to Controller
-        raw_packet[0], // HCI packet type
-        0x00, 0x00     // Reserved
-    };
+    /* prepare H4 header (direction + hci packet type + reserved) */
+    bt_h4_header[0] = 0x00; /* direction: host to controller */
+    bt_h4_header[1] = raw_packet[0];
+    bt_h4_header[2] = 0x00;
+    bt_h4_header[3] = 0x00;
 
-    // Calculate total length including H4 header
-    actual_length = length + sizeof(h4_header);
+    /* total length includes the H4 header */
+    actual_length = length + sizeof(bt_h4_header);
     header_length = 0;
-
-    // Copy H4 header and packet data to a temporary buffer
-    uint8_t *temp_buffer = malloc(actual_length);
-    if (!temp_buffer) {
-      xSemaphoreGive(pcap_mutex);
-      return ESP_ERR_NO_MEM;
-    }
-
-    memcpy(temp_buffer, h4_header, sizeof(h4_header));
-    memcpy(temp_buffer + sizeof(h4_header), packet, length);
-
-    // Update packet pointer and length
-    packet = temp_buffer;
-    ESP_LOGI(PCAP_TAG, "Writing BT packet with H4 header, total len=%d",
-             actual_length);
+    is_bt = 1;
   } else {
     const uint8_t *hci_packet = (const uint8_t *)packet;
-    // Verify HCI packet type (should be 0x04 for events)
-    if (hci_packet[0] != 0x04) {
-      ESP_LOGE(PCAP_TAG, "Invalid HCI packet type: 0x%02x", hci_packet[0]);
+    /* Accept common HCI packet types:
+       0x01 - HCI Command (from host)
+       0x02 - ACL Data
+       0x03 - SCO Data
+       0x04 - HCI Event
+       0x05 - ISO Data
+       Reject others as invalid. */
+    uint8_t pkt_type = hci_packet[0];
+    switch (pkt_type) {
+    case 0x01: /* command */
+    case 0x02: /* acl */
+    case 0x03: /* sco */
+    case 0x04: /* event */
+    case 0x05: /* iso */
+      /* accepted */
+      break;
+    default:
+      ESP_LOGE(PCAP_TAG, "Invalid HCI packet type: 0x%02x", pkt_type);
       xSemaphoreGive(pcap_mutex);
       return ESP_ERR_INVALID_ARG;
     }
@@ -437,12 +460,31 @@ esp_err_t pcap_write_packet_to_buffer(const void *packet, size_t length,
   }
 
   // Write packet data
-  memcpy(pcap_buffer + buffer_offset, packet, actual_length);
-  buffer_offset += actual_length;
+  if (is_bt) {
+    /* write h4 header then the raw packet payload (without extra allocation) */
+    memcpy(pcap_buffer + buffer_offset, bt_h4_header, sizeof(bt_h4_header));
+    buffer_offset += sizeof(bt_h4_header);
+    memcpy(pcap_buffer + buffer_offset, packet, length);
+    buffer_offset += length;
+  } else {
+    memcpy(pcap_buffer + buffer_offset, packet, actual_length);
+    buffer_offset += actual_length;
+  }
 
   if (pcap_file == NULL) {
     _pcap_flush_buffer_to_file_nolock();
   }
+  /* if we had allocated a temporary BT buffer earlier it would have been
+     pointed to by `packet` (only in the fallback malloc path). Free it now
+     if necessary. We can detect that by checking is_bt and whether the
+     original packet pointer differs from the buffer in flash/ram — but
+     since we avoided allocating in the fast path, the only allocation case
+     used `packet` pointing to heap memory. To keep logic simple, if
+     is_bt and the packet pointer lies within pcap_buffer region we do not
+     free; otherwise attempt to free based on a heuristic. */
+  /* Note: in current implementation we don't keep the temp pointer separately
+     so avoid freeing here to prevent double-free. The malloc fallback was
+     removed in favor of writing headers directly, so there's nothing to free. */
 
   xSemaphoreGive(pcap_mutex);
   return ESP_OK;
