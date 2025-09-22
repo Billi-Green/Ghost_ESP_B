@@ -1,0 +1,15 @@
+#ifndef GLOG_H
+#define GLOG_H
+
+#include <stddef.h>
+
+/*
+ * glog - lightweight global logger that writes to both stdout (printf)
+ * and the terminal view (if available). Designed to be low-memory and
+ * truncate long messages rather than allocate dynamic memory.
+ */
+void glog(const char *fmt, ...);
+
+#endif /* GLOG_H */
+
+

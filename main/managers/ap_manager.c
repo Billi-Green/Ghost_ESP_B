@@ -14,6 +14,7 @@
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "core/glog.h"
 #include <math.h>
 #include <mdns.h>
 #include <nvs_flash.h>
@@ -488,7 +489,7 @@ esp_err_t ap_manager_init(void) {
 
     // Check if AP is disabled in settings
     if (!settings_get_ap_enabled(&G_Settings)) {
-        printf("Access Point disabled in settings, skipping AP initialization\n");
+        glog("Access Point disabled in settings, skipping AP initialization\n");
         
         // Initialize log buffer and mutex even when AP is disabled
         log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
@@ -514,12 +515,12 @@ esp_err_t ap_manager_init(void) {
 
     ret = esp_wifi_get_mode(&mode);
     if (ret == ESP_ERR_WIFI_NOT_INIT) {
-        printf("Wi-Fi not initialized, initializing as Access Point...\n");
+        glog("Wi-Fi not initialized, initializing as Access Point...\n");
 
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         ret = esp_wifi_init(&cfg);
         if (ret != ESP_OK) {
-            printf("esp_wifi_init failed: %s\n", esp_err_to_name(ret));
+            glog("esp_wifi_init failed: %s\n", esp_err_to_name(ret));
             return ret;
         }
 
@@ -527,20 +528,20 @@ esp_err_t ap_manager_init(void) {
         if (!netif) {
             netif = esp_netif_create_default_wifi_ap();
             if (netif == NULL) {
-                printf("Failed to create default Wi-Fi AP\n");
+                glog("Failed to create default Wi-Fi AP\n");
                 return ESP_FAIL;
             }
         }
     } else if (ret == ESP_OK) {
-        printf("Wi-Fi already initialized, skipping Wi-Fi init.\n");
+        glog("Wi-Fi already initialized, skipping Wi-Fi init.\n");
     } else {
-        printf("esp_wifi_get_mode failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_get_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
     ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (ret != ESP_OK) {
-        printf("esp_wifi_set_mode failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_set_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
@@ -572,13 +573,13 @@ esp_err_t ap_manager_init(void) {
 
     ret = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
     if (ret != ESP_OK) {
-        printf("esp_wifi_set_config failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_set_config failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
     esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     if (ap_netif == NULL) {
-        printf("Failed to get the AP network interface\n");
+        glog("Failed to get the AP network interface\n");
     } else {
         // Stop DHCP server before configuring
         esp_netif_dhcps_stop(ap_netif);
@@ -591,16 +592,16 @@ esp_err_t ap_manager_init(void) {
         esp_netif_set_ip_info(ap_netif, &ip_info);
 
         esp_netif_dhcps_start(ap_netif);
-        printf("DHCP server configured successfully.\n");
+        glog("DHCP server configured successfully.\n");
     }
 
     ret = esp_wifi_start();
     if (ret != ESP_OK) {
-        printf("esp_wifi_start failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_start failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
-    printf("Wi-Fi Access Point started with SSID: %s\n", ssid);
+    glog("Wi-Fi Access Point started with SSID: %s\n", ssid);
 
     // Register event handlers for Wi-Fi events if not registered already
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));

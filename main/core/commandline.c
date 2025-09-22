@@ -30,6 +30,7 @@
 #include <vendor/dial_client.h>
 #include "esp_wifi.h"
 #include "managers/default_portal.h"
+#include "core/glog.h"
 #include <time.h>
 #include <dirent.h>
 #include "esp_chip_info.h"
@@ -1092,26 +1093,22 @@ void handle_scan_ports(int argc, char **argv) {
 
     char msg_buf[64];
     snprintf(msg_buf, sizeof(msg_buf), "Scanning %s tcp ports %d-%d...\n", target_ip, start_port, end_port);
-    printf("%s", msg_buf);
-    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    glog("%s", msg_buf);
     scan_ip_port_range(target_ip, start_port, end_port);
 
     snprintf(msg_buf, sizeof(msg_buf), "Scanning %s udp ports %d-%d...\n", target_ip, start_port, end_port);
-    printf("%s", msg_buf);
-    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    glog("%s", msg_buf);
     scan_ip_udp_port_range(target_ip, start_port, end_port);
 }
 
 void handle_scan_arp(int argc, char **argv) {
-    TERMINAL_VIEW_ADD_TEXT("Starting ARP scan on local network...\n");
-    printf("Starting ARP scan on local network...\n");
+    glog("Starting ARP scan on local network...\n");
     wifi_manager_arp_scan_subnet();
 }
 
 void handle_scan_ssh(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: scanssh <IP>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: scanssh <IP>\n");
+        glog("Usage: scanssh <IP>\n");
         return;
     }
 
@@ -1119,16 +1116,14 @@ void handle_scan_ssh(int argc, char **argv) {
     host_result_t result;
     char msg_buf[64];
     
-    printf("Starting SSH scan on %s...\n", target_ip);
-    TERMINAL_VIEW_ADD_TEXT("Starting SSH scan on %s...\n", target_ip);
+    glog("Starting SSH scan on %s...\n", target_ip);
     
     scan_ssh_on_host(target_ip, &result);
     
     if (result.num_open_ports > 0) {
-        printf("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
-        TERMINAL_VIEW_ADD_TEXT("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
+        glog("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
     } else {
-        TERMINAL_VIEW_ADD_TEXT("No SSH services found.\n");
+        glog("No SSH services found.\n");
     }
 }
 

@@ -35,6 +35,7 @@
 #endif
 #include "managers/sd_card_manager.h" // Add SD card manager include
 #include "managers/views/terminal_screen.h"
+#include "core/glog.h"
 #include "core/utils.h" // Add utils include
 #include <inttypes.h>
 #include "managers/default_portal.h"
@@ -3268,8 +3269,7 @@ bool wifi_manager_scan_subnet() {
         snprintf(current_ip, sizeof(current_ip), "%s%d", ctx->subnet_prefix, host);
 
         if (is_host_active(current_ip)) {
-            printf("Found active host: %s\n", current_ip);
-            TERMINAL_VIEW_ADD_TEXT("Found active host: %s\n", current_ip);
+            glog("Found active host: %s\n", current_ip);
 
             host_result_t tcp_result;
             host_result_t udp_result;
@@ -3280,108 +3280,86 @@ bool wifi_manager_scan_subnet() {
             ctx->results[ctx->num_active_hosts] = tcp_result;
 
             if (udp_result.num_open_ports > 0) {
-                printf("UDP ports responding on %s:\n", current_ip);
-                TERMINAL_VIEW_ADD_TEXT("UDP ports responding on %s:\n", current_ip);
+                glog("UDP ports responding on %s:\n", current_ip);
                 for (uint8_t k = 0; k < udp_result.num_open_ports; k++) {
                     char line[32];
                     snprintf(line, sizeof(line), "  UDP %d\n", udp_result.open_ports[k]);
-                    printf("%s", line);
-                    TERMINAL_VIEW_ADD_TEXT(line);
+                    glog("%s", line);
                 }
             } else {
-                printf("No UDP responses on %s\n", current_ip);
-                TERMINAL_VIEW_ADD_TEXT("No UDP responses on %s\n", current_ip);
+                glog("No UDP responses on %s\n", current_ip);
             }
 
             ctx->num_active_hosts++;
         }
     }
 
-    printf("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
-    TERMINAL_VIEW_ADD_TEXT("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
+    glog("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
 
     for (size_t i = 0; i < ctx->num_active_hosts; i++) {
         if (ctx->results[i].num_open_ports > 0) {
-            printf("Host %s has %d open ports:\n", ctx->results[i].ip,
-                   ctx->results[i].num_open_ports);
-            TERMINAL_VIEW_ADD_TEXT("Host %s has %d open ports:\n", ctx->results[i].ip,
-                                   ctx->results[i].num_open_ports);
+            glog("Host %s has %d open ports:\n", ctx->results[i].ip,
+                 ctx->results[i].num_open_ports);
 
-            printf("Possible services/devices:\n");
-            TERMINAL_VIEW_ADD_TEXT("Possible services/devices:\n");
+            glog("Possible services/devices:\n");
 
             for (uint8_t j = 0; j < ctx->results[i].num_open_ports; j++) {
                 uint16_t port = ctx->results[i].open_ports[j];
-                printf("  - Port %d: ", port);
-                TERMINAL_VIEW_ADD_TEXT("  - Port %d: ", port);
+                glog("  - Port %d: ", port);
 
                 switch (port) {
                 case 20:
                 case 21:
-                    printf("FTP Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("FTP Server\n");
+                    glog("FTP Server\n");
                     break;
                 case 22:
                 case 2222:
-                    printf("SSH Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("SSH Server\n");
+                    glog("SSH Server\n");
                     break;
                 case 23:
-                    printf("Telnet Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("Telnet Server\n");
+                    glog("Telnet Server\n");
                     break;
                 case 80:
                 case 8080:
                 case 8443:
                 case 443:
-                    printf("Web Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("Web Server\n");
+                    glog("Web Server\n");
                     break;
                 case 445:
                 case 139:
-                    printf("Windows File Share/Domain Controller\n");
-                    TERMINAL_VIEW_ADD_TEXT("Windows File Share/Domain Controller\n");
+                    glog("Windows File Share/Domain Controller\n");
                     break;
                 case 3389:
-                    printf("Windows Remote Desktop\n");
-                    TERMINAL_VIEW_ADD_TEXT("Windows Remote Desktop\n");
+                    glog("Windows Remote Desktop\n");
                     break;
                 case 5900:
                 case 5901:
                 case 5902:
-                    printf("VNC Remote Access\n");
-                    TERMINAL_VIEW_ADD_TEXT("VNC Remote Access\n");
+                    glog("VNC Remote Access\n");
                     break;
                 case 1521:
-                    printf("Oracle Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("Oracle Database\n");
+                    glog("Oracle Database\n");
                     break;
                 case 3306:
-                    printf("MySQL Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("MySQL Database\n");
+                    glog("MySQL Database\n");
                     break;
                 case 5432:
-                    printf("PostgreSQL Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("PostgreSQL Database\n");
+                    glog("PostgreSQL Database\n");
                     break;
                 case 27017:
-                    printf("MongoDB Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("MongoDB Database\n");
+                    glog("MongoDB Database\n");
                     break;
                 case 9100:
-                    printf("Network Printer\n");
-                    TERMINAL_VIEW_ADD_TEXT("Network Printer\n");
+                    glog("Network Printer\n");
                     break;
                 case 32400:
-                    printf("Plex Media Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("Plex Media Server\n");
+                    glog("Plex Media Server\n");
                     break;
                 case 2082:
                 case 2083:
                 case 2086:
                 case 2087:
-                    printf("Web Hosting Control Panel\n");
-                    TERMINAL_VIEW_ADD_TEXT("Web Hosting Control Panel\n");
+                    glog("Web Hosting Control Panel\n");
                     break;
                 case 6379:
                     printf("Redis Server\n");

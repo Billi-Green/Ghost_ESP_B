@@ -3,6 +3,7 @@
 #include "driver/periph_ctrl.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "core/glog.h"
 #include "managers/settings_manager.h"
 #include "soc/gpio_periph.h"
 #include "soc/io_mux_reg.h"
@@ -79,8 +80,7 @@ void gps_manager_init(GPSManager *manager) {
     current_rx_pin=custom_gps_pin;
     }
 
-    printf("GPS RX: IO%d\n", current_rx_pin);
-    TERMINAL_VIEW_ADD_TEXT("GPS RX: IO%d\n", current_rx_pin);
+    glog("GPS RX: IO%d\n", current_rx_pin);
 
     esp_comm_manager_deinit();
     #ifdef CONFIG_USE_TDISPLAY_S3
@@ -143,8 +143,7 @@ static void check_gps_connection_task(void *pvParameters) {
         if (!gps_connection_logged &&
             (gps->tim.hour != 0 || gps->tim.minute != 0 || gps->tim.second != 0 ||
              gps->latitude != 0 || gps->longitude != 0)) {
-            printf("GPS Module Connected\nReceiving Data\n");
-            TERMINAL_VIEW_ADD_TEXT("GPS Module Connected\nReceiving Data\n");
+            glog("GPS Module Connected\nReceiving Data\n");
             gps_connection_logged = true;
             gps_check_task_handle = NULL;
             vTaskDelete(NULL);
@@ -155,8 +154,7 @@ static void check_gps_connection_task(void *pvParameters) {
     }
 
     // If we reach here, connection check timed out
-    printf("GPS Module Connection Timeout\nCheck your connections\n");
-    TERMINAL_VIEW_ADD_TEXT("GPS Module Connection Timeout\nCheck your connections\n");
+    glog("GPS Module Connection Timeout\nCheck your connections\n");
     gps_timeout_detected = true;
     gps_check_task_handle = NULL;
     vTaskDelete(NULL);

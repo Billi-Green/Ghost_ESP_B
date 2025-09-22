@@ -1,6 +1,7 @@
 #include "vendor/printer.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "core/glog.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "managers/views/terminal_screen.h"
@@ -60,7 +61,7 @@ void print_text_to_printer(const char *printer_ip, const char *text,
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock < 0) {
     ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-    TERMINAL_VIEW_ADD_TEXT("Failed to create printer socket\n");
+    glog("Failed to create printer socket\n");
     return;
   }
 
@@ -72,13 +73,13 @@ void print_text_to_printer(const char *printer_ip, const char *text,
       connect(sock, (struct sockaddr *)&printer_addr, sizeof(printer_addr));
   if (err != 0) {
     ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
-    TERMINAL_VIEW_ADD_TEXT("Failed to connect to printer at %s\n", printer_ip);
+    glog("Failed to connect to printer at %s\n", printer_ip);
     close(sock);
     return;
   }
 
   ESP_LOGI(TAG, "Connected to printer at %s:%d", printer_ip, PRINTER_PORT);
-  TERMINAL_VIEW_ADD_TEXT("Connected to printer at %s\n", printer_ip);
+  glog("Connected to printer at %s\n", printer_ip);
 
   int font_points = pixels_to_points(font_px);
 
@@ -108,15 +109,15 @@ void print_text_to_printer(const char *printer_ip, const char *text,
   err = send(sock, formatted_text, len, 0);
   if (err < 0) {
     ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-    TERMINAL_VIEW_ADD_TEXT("Failed to send data to printer\n");
+    glog("Failed to send data to printer\n");
   } else {
     ESP_LOGI(TAG, "Sent %d bytes to the printer", err);
-    TERMINAL_VIEW_ADD_TEXT("Successfully sent print job to printer\n");
+    glog("Successfully sent print job to printer\n");
   }
 
   close(sock);
   ESP_LOGI(TAG, "Connection closed");
-  TERMINAL_VIEW_ADD_TEXT("Printer connection closed\n");
+  glog("Printer connection closed\n");
 }
 
 void eject_blank_pages(const char *printer_ip, int num_pages) {

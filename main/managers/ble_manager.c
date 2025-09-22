@@ -12,6 +12,7 @@
 #include "host/util/util.h"
 #include "managers/ble_manager.h"
 #include "managers/views/terminal_screen.h"
+#include "core/glog.h"
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -1874,10 +1875,8 @@ static void ble_pcap_callback(struct ble_gap_event *event, size_t len) {
         ble_pcap_packet_count++;
         if ((ble_pcap_packet_count % 50) == 0) {
             uint32_t filtered = ble_pcap_event_total_count - ble_pcap_packet_count;
-            printf("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
-                   (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
-            TERMINAL_VIEW_ADD_TEXT("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
-                                   (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
+            glog("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
+                 (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
         }
 
         pcap_write_packet_to_buffer(hci_buffer, hci_len, PCAP_CAPTURE_BLUETOOTH);

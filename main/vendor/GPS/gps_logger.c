@@ -2,6 +2,7 @@
 #include "core/callbacks.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "core/glog.h"
 #include "managers/gps_manager.h"
 #include "managers/sd_card_manager.h"
 #include "managers/views/terminal_screen.h"
@@ -103,8 +104,7 @@ esp_err_t csv_file_open(const char *base_file_name) {
 
     esp_err_t ret = csv_write_header(csv_file);
     if (ret != ESP_OK) {
-        printf("Failed to write CSV header.");
-        TERMINAL_VIEW_ADD_TEXT("Failed to write CSV header.");
+        glog("Failed to write CSV header.");
         fclose(csv_file);
         csv_file = NULL;
         return ret;
@@ -115,11 +115,9 @@ esp_err_t csv_file_open(const char *base_file_name) {
     }
 
     if (csv_file) {
-        printf("Streaming CSV buffer to SD card\n");
-        TERMINAL_VIEW_ADD_TEXT("Streaming CSV buffer to SD card\n");
+        glog("Streaming CSV buffer to SD card\n");
     } else {
-        printf("Streaming CSV buffer over UART\n");
-        TERMINAL_VIEW_ADD_TEXT("Streaming CSV buffer over UART\n");
+        glog("Streaming CSV buffer over UART\n");
     }
     return ESP_OK;
 }
@@ -224,13 +222,11 @@ esp_err_t csv_flush_buffer_to_file() {
 
     size_t written = fwrite(csv_buffer, 1, buffer_offset, csv_file);
     if (written != buffer_offset) {
-        printf("Failed to write buffer to file.\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to write buffer to file.\n");
+        glog("Failed to write buffer to file.\n");
         return ESP_FAIL;
     }
 
-    printf("Flushed %zu bytes to CSV file.\n", buffer_offset);
-    TERMINAL_VIEW_ADD_TEXT("Flushed %zu bytes to CSV file.\n", buffer_offset);
+    glog("Flushed %zu bytes to CSV file.\n", buffer_offset);
     buffer_offset = 0;
 
     if (csv_mutex) xSemaphoreGive(csv_mutex);
