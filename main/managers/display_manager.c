@@ -1221,7 +1221,7 @@ void hardware_input_task(void *pvParameters) {
   int screen_height = LV_VER_RES;
   bool was_woken_by_interrupt = false; // New flag for S3T-Watch
 #ifdef CONFIG_USE_CARDPUTER
-  uint8_t shift_count_before_caps =75; // num of cycles before capslock gets turned on
+  uint8_t shift_count_before_caps =255; // effectively disable hold-to-caps for normal cardputer
   uint8_t shift_count = 0;
   bool caps_latch = false; // var for tracking if caps was just toggled
 #endif
@@ -1391,6 +1391,9 @@ void hardware_input_task(void *pvParameters) {
 #ifdef CONFIG_USE_CARDPUTER
     keyboard_update_key_list(&gkeyboard);
     keyboard_update_keys_state(&gkeyboard);
+
+    // force caps-lock off for normal cardputer so letters aren't stuck uppercase
+    gkeyboard.is_caps_locked = false;
 
       if (!keyboard_is_key_pressed(&gkeyboard,129) && caps_latch){ // caps lock latch so it doesnt continuously flip on and off
         caps_latch = false;

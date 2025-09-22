@@ -5,10 +5,12 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "managers/display_manager.h"
+#include "esp_log.h"
 
 #define digitalWrite(pin, level) gpio_set_level((gpio_num_t)pin, level)
 #define digitalRead(pin)         gpio_get_level((gpio_num_t)pin)
 
+static const char *TAG = "m5_kbd";
     // forward declare get_key_value so it can be used throughout this file
 static uint8_t get_key_value(const Point2D_t* keyCoor, bool shift, bool ctrl, bool is_caps_locked);
 
@@ -33,6 +35,13 @@ static bool tca_ready = false;
 #define TCA_ACTIVE_KEYS_MAX 16
 static Point2D_t s_active_keys[TCA_ACTIVE_KEYS_MAX];
 static size_t s_active_count = 0;
+static bool tca_is_shift_like_active(Keyboard_t *kb){
+    for (size_t i=0;i<s_active_count;i++){
+        uint8_t code = get_key_value(&s_active_keys[i], false, false, kb->is_caps_locked);
+        if (code == KEY_LEFT_SHIFT || code == KEY_LEFT_ALT || code == KEY_OPT) return true;
+    }
+    return false;
+}
 // ISR -> task notification
 static SemaphoreHandle_t s_tca_sem = NULL;
 static TaskHandle_t s_tca_task = NULL;
@@ -102,7 +111,7 @@ static void tca_keyboard_task(void* arg){
     static bool ctrl_down = false;
     static bool alt_down = false;
     static uint8_t shift_count = 0;
-    static const uint8_t shift_count_before_caps = 8; // ~800ms at 100ms tick
+    static const uint8_t shift_count_before_caps = 255; // disable hold-to-caps
     static bool caps_latch = false;
     while (1){
         // wait for IRQ or timeout for low-rate poll
@@ -112,48 +121,76 @@ static void tca_keyboard_task(void* arg){
         if (tca_read_u8(TCA8418_REG_KEY_LCK_EC, &ec) != ESP_OK) continue;
         uint8_t count = (uint8_t)(ec & 0x1F);
         bool changed = false;
-        while (count--){
+        // batch all events so modifier updates apply to co-pressed keys regardless of delivery order
+        enum { BATCH_CAP = 32 };
+        static tca_event_t events[BATCH_CAP];
+        static Point2D_t pts[BATCH_CAP];
+        static uint8_t base_codes[BATCH_CAP];
+        size_t ev_idx = 0;
+        while (count-- && ev_idx < BATCH_CAP){
             uint8_t raw = 0;
             if (tca_read_u8(TCA8418_REG_KEY_EVENT_A, &raw) != ESP_OK) break;
-            tca_event_t ev = tca_parse_event(raw);
-            Point2D_t p; tca_remap_to_cardputer(&p, &ev);
-            // detect modifiers using base key mapping
-            uint8_t base_code = get_key_value(&p, false, false, gkeyboard.is_caps_locked);
-            if (ev.pressed){
-                tca_add_active(p);
+            events[ev_idx] = tca_parse_event(raw);
+            tca_remap_to_cardputer(&pts[ev_idx], &events[ev_idx]);
+            base_codes[ev_idx] = get_key_value(&pts[ev_idx], false, false, gkeyboard.is_caps_locked);
+            ev_idx++;
+        }
+
+        // first pass: update modifier state for all events
+        for (size_t i = 0; i < ev_idx; ++i) {
+            tca_event_t *ev = &events[i];
+            Point2D_t *p = &pts[i];
+            uint8_t base_code = base_codes[i];
+            if (ev->pressed) {
+                tca_add_active(*p);
                 changed = true;
-                // update modifier state
                 if (base_code == KEY_LEFT_SHIFT) shift_down = true;
                 else if (base_code == KEY_LEFT_CTRL) ctrl_down = true;
-                else if (base_code == KEY_LEFT_ALT) alt_down = true;
-
-                // reflect modifiers into keyboard state so keyboard_get_key respects SHIFT
-                gkeyboard.keys_state_buffer.shift = shift_down;
-                gkeyboard.keys_state_buffer.ctrl = ctrl_down;
-                gkeyboard.keys_state_buffer.alt  = alt_down;
-
-                uint8_t key_value = keyboard_get_key(&gkeyboard, p);
-                if (key_value) {
-                    // If display was dimmed, wake and swallow the event (don't forward)
-                    if (display_manager_notify_user_input()) {
-                        // swallowed as wake event
-                    } else {
-                        tca_push_key_event(key_value);
-                    }
+                else if (base_code == KEY_LEFT_ALT || base_code == KEY_OPT) alt_down = true;
+                if (base_code == KEY_LEFT_SHIFT || base_code == KEY_LEFT_CTRL || base_code == KEY_LEFT_ALT || base_code == KEY_OPT) {
+                    ESP_LOGI(TAG, "mod press base=0x%02x s%d c%d a%d cap%d", base_code, shift_down, ctrl_down, alt_down, gkeyboard.is_caps_locked);
                 }
             } else {
-                tca_remove_active(p);
+                tca_remove_active(*p);
                 changed = true;
                 if (base_code == KEY_LEFT_SHIFT) {
                     shift_down = false;
-                    // release cancels latch gate for next hold
                     caps_latch = false;
                     shift_count = 0;
                 } else if (base_code == KEY_LEFT_CTRL) ctrl_down = false;
-                else if (base_code == KEY_LEFT_ALT) alt_down = false;
-                gkeyboard.keys_state_buffer.shift = shift_down;
-                gkeyboard.keys_state_buffer.ctrl = ctrl_down;
-                gkeyboard.keys_state_buffer.alt  = alt_down;
+                else if (base_code == KEY_LEFT_ALT || base_code == KEY_OPT) alt_down = false;
+                if (base_code == KEY_LEFT_SHIFT || base_code == KEY_LEFT_CTRL || base_code == KEY_LEFT_ALT || base_code == KEY_OPT) {
+                    ESP_LOGI(TAG, "mod release base=0x%02x s%d c%d a%d cap%d", base_code, shift_down, ctrl_down, alt_down, gkeyboard.is_caps_locked);
+                }
+            }
+        }
+
+        // reflect modifier states so subsequent key reads honor them (also consider active set)
+        gkeyboard.keys_state_buffer.shift = (shift_down || alt_down || tca_is_shift_like_active(&gkeyboard));
+        gkeyboard.keys_state_buffer.ctrl = ctrl_down;
+        gkeyboard.keys_state_buffer.alt  = alt_down;
+
+        // second pass: emit pressed non-modifier keys with updated modifiers applied
+        for (size_t i = 0; i < ev_idx; ++i) {
+            if (!events[i].pressed) continue;
+            uint8_t base_code = base_codes[i];
+            if (base_code == KEY_LEFT_SHIFT || base_code == KEY_LEFT_CTRL || base_code == KEY_LEFT_ALT || base_code == KEY_OPT) continue;
+            uint8_t key_value = keyboard_get_key(&gkeyboard, pts[i]);
+            // force letters to uppercase when any shift-like is active
+            if ((gkeyboard.keys_state_buffer.shift || tca_is_shift_like_active(&gkeyboard)) && key_value >= 'a' && key_value <= 'z') {
+                key_value = (uint8_t)(key_value - ('a' - 'A'));
+            }
+            ESP_LOGI(TAG, "press base=0x%02x char=0x%02x s%d c%d a%d cap%d (%d,%d)",
+                     base_code, key_value,
+                     gkeyboard.keys_state_buffer.shift, gkeyboard.keys_state_buffer.ctrl,
+                     gkeyboard.keys_state_buffer.alt, gkeyboard.is_caps_locked,
+                     pts[i].x, pts[i].y);
+            if (key_value) {
+                if (display_manager_notify_user_input()) {
+                    // swallowed as wake event
+                } else {
+                    tca_push_key_event(key_value);
+                }
             }
         }
         // clear INT status
@@ -161,11 +198,7 @@ static void tca_keyboard_task(void* arg){
         // handle caps latch when holding SHIFT
         if (shift_down) {
             if (shift_count < 250) shift_count++; // saturate
-            if (shift_count > shift_count_before_caps && !caps_latch) {
-                gkeyboard.is_caps_locked = !gkeyboard.is_caps_locked;
-                caps_latch = true;
-                shift_count = 0;
-            }
+            // disabled: no auto caps toggle on hold
         }
         (void)changed;
     }
@@ -241,8 +274,7 @@ void keyboard_begin(Keyboard_t* keyboard) {
         gpio_isr_handler_add(11, tca_irq_isr, NULL);
         if (!s_tca_sem) s_tca_sem = xSemaphoreCreateBinary();
         if (!s_tca_task){
-            // small stack to keep memory low
-            xTaskCreate(tca_keyboard_task, "tca_kbd_task", 1536, NULL, HARDWARE_INPUT_TASK_PRIORITY + 1, &s_tca_task);
+            xTaskCreate(tca_keyboard_task, "tca_kbd_task", 3072, NULL, HARDWARE_INPUT_TASK_PRIORITY + 1, &s_tca_task);
         }
     } else {
         tca_ready = false;
@@ -429,10 +461,21 @@ static void keys_state_reset(KeysState_t* keys_state) {
 
 static uint8_t get_key_value(const Point2D_t* keyCoor, bool shift, bool ctrl, bool is_caps_locked) {
     uint8_t base_value = _key_value_map[keyCoor->y][keyCoor->x].value_first;
-    if (shift || (is_caps_locked && (base_value >= 'a' && base_value <= 'z'))) {
-        base_value = _key_value_map[keyCoor->y][keyCoor->x].value_second;
+    uint8_t shifted_value = _key_value_map[keyCoor->y][keyCoor->x].value_second;
+
+    // If shift is active or caps lock applies to letters, prefer shifted/upper mapping
+    if (shift) {
+        // If the base is a lowercase letter but the shifted_value is not the uppercase
+        // letter (some layouts keep shifted_value as punctuation), force uppercase for letters.
+        if (base_value >= 'a' && base_value <= 'z') {
+            return (uint8_t)(base_value - ('a' - 'A'));
+        }
+        return shifted_value;
     }
 
+    if (is_caps_locked && (base_value >= 'a' && base_value <= 'z')) {
+        return (uint8_t)(base_value - ('a' - 'A'));
+    }
 
     return base_value;
 }

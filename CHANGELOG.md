@@ -32,17 +32,28 @@
 
 ### Bug Fixes
 
+#### Core
+
 - Fixed intermittent IR learning errors by properly owning and copying received RMT symbol data before passing from ISR to task.
+- Fixed memory leak, race conditions and add buffer error handling in pcap.c
+- Track SPI host/mount state and only free initialized SPI host on unmount
+- Added NMEA handle null-checks
+- Miscellaneous fixes and improvements
+
+
+#### Network & Comms
+
 - Ignore self when discovering peers for dual comm
 - Prevent crash and spam in EAPOL Logoff attack
 - Fixed minor issues with the dns server
-- Fixed memory leak, race conditions and add buffer error handling in pcap.c
-- Accepted HCI packet types now include CMD, ACL, SCO, and ISO
 - Fixed BLE capture stopping itself after recieving an event
 - Added sanity checks to IE parsing to prevent OOB reads
-- Added NMEA handle null-checks
-- Track SPI host/mount state and only free initialized SPI host on unmount
-- Miscellaneous fixes and improvements
+- Accepted HCI packet types now include CMD, ACL, SCO, and ISO
+
+#### Input & UI
+
+- Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
+
 
 ## Revival v1.7.2
 
