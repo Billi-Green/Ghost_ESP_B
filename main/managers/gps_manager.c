@@ -56,6 +56,10 @@ static bool is_valid_date(const gps_date_t *date) {
 }
 
 void gps_manager_init(GPSManager *manager) {
+    if (!manager) {
+        ESP_LOGE(GPS_TAG, "NULL manager passed to gps_manager_init");
+        return;
+    }
     // If there's an existing check task, delete it
     if (gps_check_task_handle != NULL) {
         vTaskDelete(gps_check_task_handle);
@@ -117,9 +121,20 @@ void gps_manager_init(GPSManager *manager) {
 #endif
 
     nmea_hdl = nmea_parser_init(&config);
+    if (!nmea_hdl) {
+        ESP_LOGE(GPS_TAG, "Failed to initialize NMEA parser");
+        manager->isinitilized = false;
+        esp_comm_manager_init_with_defaults();
+        return;
+    }
     nmea_parser_add_handler(nmea_hdl, gps_event_handler, NULL);
     manager->isinitilized = true;
-    xTaskCreate(check_gps_connection_task, "gps_check", 2048, NULL, 1, &gps_check_task_handle);
+    BaseType_t task_created = xTaskCreate(check_gps_connection_task, "gps_check", 2048, NULL, 1, &gps_check_task_handle);
+    if (task_created != pdPASS) {
+        ESP_LOGW(GPS_TAG, "Failed to create gps_check task");
+        gps_check_task_handle = NULL;
+        // proceed without the connection-check task; parser remains initialized
+    }
 }
 
 static void check_gps_connection_task(void *pvParameters) {
@@ -168,8 +183,13 @@ void gps_manager_deinit(GPSManager *manager) {
             gps_check_task_handle = NULL;
         }
 
-        nmea_parser_remove_handler(nmea_hdl, gps_event_handler);
-        nmea_parser_deinit(nmea_hdl);
+        if (nmea_hdl) {
+            nmea_parser_remove_handler(nmea_hdl, gps_event_handler);
+            nmea_parser_deinit(nmea_hdl);
+            nmea_hdl = NULL;
+        } else {
+            ESP_LOGW(GPS_TAG, "gps_manager_deinit called but nmea_hdl is NULL");
+        }
         manager->isinitilized = false;
         gps_connection_logged = false;
         esp_comm_manager_init_with_defaults();
@@ -188,7 +208,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     }
     gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
     if (!data->ble_data.is_ble_device) {
-        if (!gps->valid || strlen(data->ssid) <= 2) {
+        if (!gps->valid || data->ssid[0] == '\0' || strlen(data->ssid) <= 2) {
             return ESP_ERR_INVALID_ARG;
         }
     } else {

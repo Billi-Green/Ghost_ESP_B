@@ -45,6 +45,13 @@ sd_card_manager_t sd_card_manager = { // Change this based on board config
 #endif
 };
 
+// track SPI bus initialization and mount type locally so we only free what we
+// initialized and always clear initialized state on unmount
+static bool s_spi_bus_initialized = false;
+static int s_spi_host_id = -1;
+typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_type_t;
+static sd_mount_type_t s_mount_type = MOUNT_NONE;
+
 
 #ifdef CONFIG_IS_S3TWATCH
 static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
@@ -84,6 +91,7 @@ static esp_err_t mount_virtual_storage(void) {
 
     s_virtual_storage_mounted = true;
     ESP_LOGI(TAG, "Virtual storage mounted successfully at /mnt");
+    s_mount_type = MOUNT_VIRTUAL;
     return ESP_OK;
 }
 
@@ -96,6 +104,7 @@ static void unmount_virtual_storage(void) {
     s_virtual_storage_mounted = false;
     s_wl_handle = WL_INVALID_HANDLE;
     ESP_LOGI(TAG, "Virtual storage unmounted");
+    s_mount_type = MOUNT_NONE;
 }
 #endif
 
@@ -227,6 +236,7 @@ esp_err_t sd_card_init(void) {
   }
 
   sd_card_manager.is_initialized = true;
+  s_mount_type = MOUNT_SDMMC;
   sdmmc_card_print_info(sd_card_manager.card);
   printf("SD card initialized successfully\n");
 
@@ -394,8 +404,10 @@ esp_err_t sd_card_init(void) {
     esp_err_t bus_ret = spi_bus_initialize(SPI3_HOST, &bus_config, dmabus);
     if (bus_ret == ESP_OK) {
       bus_init_success = true;
+      s_spi_bus_initialized = true;
+      s_spi_host_id = SPI3_HOST;
     } else if (bus_ret != ESP_ERR_INVALID_STATE) {
-      printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(bus_ret));
+      printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
       return bus_ret;
     }
   }
@@ -404,8 +416,10 @@ esp_err_t sd_card_init(void) {
     esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
     if (bus_ret == ESP_OK) {
       bus_init_success = true;
+      s_spi_bus_initialized = true;
+      s_spi_host_id = SPI2_HOST;
     } else if (bus_ret != ESP_ERR_INVALID_STATE) {
-      printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(bus_ret));
+      printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
       return bus_ret;
     }
   }
@@ -414,8 +428,10 @@ esp_err_t sd_card_init(void) {
     esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
     if (bus_ret == ESP_OK) {
       bus_init_success = true;
+      s_spi_bus_initialized = true;
+      s_spi_host_id = SPI2_HOST;
     } else if (bus_ret != ESP_ERR_INVALID_STATE) {
-      printf("Failed to initialize SPI2 bus: %s\n", esp_err_to_name(bus_ret));
+      printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
       return bus_ret;
     }
   }
@@ -447,12 +463,17 @@ esp_err_t sd_card_init(void) {
   if (ret != ESP_OK) {
     printf("Failed to mount filesystem: %s\n", esp_err_to_name(ret));
     if (bus_init_success) {
-      spi_bus_free(host.slot);
+      if (s_spi_bus_initialized && s_spi_host_id >= 0) {
+        spi_bus_free(s_spi_host_id);
+        s_spi_bus_initialized = false;
+        s_spi_host_id = -1;
+      }
     }
     return ret;
   }
 
   sd_card_manager.is_initialized = true;
+  s_mount_type = MOUNT_SPI;
   sdmmc_card_print_info(sd_card_manager.card);
   printf("SD card initialized successfully in SPI mode.\n");
 
@@ -483,6 +504,8 @@ void sd_card_unmount(void) {
   if (s_virtual_storage_mounted) {
     unmount_virtual_storage();
     sd_card_manager.is_initialized = false;
+    sd_card_manager.card = NULL;
+    s_mount_type = MOUNT_NONE;
     return;
   }
 #endif
@@ -492,12 +515,21 @@ void sd_card_unmount(void) {
     esp_vfs_fat_sdcard_unmount("/mnt", sd_card_manager.card);
     printf("SD card unmounted\n");
     sd_card_manager.is_initialized = false;
+    sd_card_manager.card = NULL;
+    s_mount_type = MOUNT_NONE;
   }
 #else
   if (sd_card_manager.is_initialized) {
     esp_vfs_fat_sdcard_unmount("/mnt", sd_card_manager.card);
-    spi_bus_free(SPI2_HOST); // Free the bus if already initialized
+    if (s_spi_bus_initialized && s_spi_host_id >= 0) {
+      spi_bus_free(s_spi_host_id);
+      s_spi_bus_initialized = false;
+      s_spi_host_id = -1;
+    }
     printf("SD card unmounted\n");
+    sd_card_manager.is_initialized = false;
+    sd_card_manager.card = NULL;
+    s_mount_type = MOUNT_NONE;
   }
 #endif
 }
@@ -814,32 +846,46 @@ esp_err_t sd_card_save_config() {
   }
 
   // Write MMC pins
-  nvs_set_i32(nvs_handle, "mmc_clk", sd_card_manager.clkpin);
-  nvs_set_i32(nvs_handle, "mmc_cmd", sd_card_manager.cmdpin);
-  nvs_set_i32(nvs_handle, "mmc_d0", sd_card_manager.d0pin);
-  nvs_set_i32(nvs_handle, "mmc_d1", sd_card_manager.d1pin);
-  nvs_set_i32(nvs_handle, "mmc_d2", sd_card_manager.d2pin);
-  nvs_set_i32(nvs_handle, "mmc_d3", sd_card_manager.d3pin);
+  err = nvs_set_i32(nvs_handle, "mmc_clk", sd_card_manager.clkpin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "mmc_cmd", sd_card_manager.cmdpin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "mmc_d0", sd_card_manager.d0pin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "mmc_d1", sd_card_manager.d1pin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "mmc_d2", sd_card_manager.d2pin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "mmc_d3", sd_card_manager.d3pin);
+  if (err != ESP_OK) goto nvs_write_error;
 
   // Write SPI pins
-  nvs_set_i32(nvs_handle, "spi_cs", sd_card_manager.spi_cs_pin);
-  nvs_set_i32(nvs_handle, "spi_clk", sd_card_manager.spi_clk_pin);
-  nvs_set_i32(nvs_handle, "spi_miso", sd_card_manager.spi_miso_pin);
-  nvs_set_i32(nvs_handle, "spi_mosi", sd_card_manager.spi_mosi_pin);
+  err = nvs_set_i32(nvs_handle, "spi_cs", sd_card_manager.spi_cs_pin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "spi_clk", sd_card_manager.spi_clk_pin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "spi_miso", sd_card_manager.spi_miso_pin);
+  if (err != ESP_OK) goto nvs_write_error;
+  err = nvs_set_i32(nvs_handle, "spi_mosi", sd_card_manager.spi_mosi_pin);
+  if (err != ESP_OK) goto nvs_write_error;
 
   // Commit changes
   err = nvs_commit(nvs_handle);
   if (err != ESP_OK) {
     printf("Error (%s) committing NVS changes!\n", esp_err_to_name(err));
-  }
-  else {
-      printf("SD card pin configuration saved to NVS.\n");
+  } else {
+    printf("SD card pin configuration saved to NVS.\n");
   }
 
-  // Close NVS handle
+  // Close NVS handle and return
   nvs_close(nvs_handle);
-
   return err; // Return the result of nvs_commit or nvs_open
+
+  // error handling label for write failures (kept inside function scope)
+nvs_write_error:
+  printf("Error (%s) writing NVS key!\n", esp_err_to_name(err));
+  nvs_close(nvs_handle);
+  return err;
 }
 
 esp_err_t sd_card_load_config() {
@@ -971,8 +1017,22 @@ int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]) {
     struct dirent *entry;
     int count = 0;
     while ((entry = readdir(dir)) && count < MAX_PORTALS) {
-        // Only include regular files with .html extension
+        bool is_reg = false;
         if (entry->d_type == DT_REG) {
+            is_reg = true;
+        } else if (entry->d_type == DT_UNKNOWN) {
+            // fallback to stat when d_type is unknown
+            char fullpath[256];
+            int written = snprintf(fullpath, sizeof(fullpath), "%s/%s", portal_dir, entry->d_name);
+            if (written > 0 && written < (int)sizeof(fullpath)) {
+                struct stat st;
+                if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode)) {
+                    is_reg = true;
+                }
+            }
+        }
+
+        if (is_reg) {
             const char *dot = strrchr(entry->d_name, '.');
             if (dot && strcmp(dot, ".html") == 0) {
                 strncpy(portal_names[count], entry->d_name, MAX_PORTAL_NAME - 1);

@@ -45,6 +45,7 @@ static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8
 #define PROBE_DEDUPE_TIMEOUT_MS 1000
 #define MIN_RSSI_THRESHOLD -90  // Drop packets weaker than -90 dBm
 #define MIN_PACKET_LENGTH 24    // Minimum 802.11 header size
+#define MAX_IE_LEN 255
 static pineap_network_t pineap_networks[MAX_PINEAP_NETWORKS];
 static int pineap_network_count = 0;
 static bool pineap_detection_active = false;
@@ -247,8 +248,15 @@ void log_pineap_detection(void *arg) {
         for (int i = 0; i < pineap_network_count; i++) {
             if (i != (network - pineap_networks) && // Skip self
                 strcasecmp(network->recent_ssids[0], pineap_networks[i].recent_ssids[0]) == 0) {
-                glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %.17s and\n%.100s\n",
-                     network->recent_ssids[0], mac_str, pineap_networks[i].bssid);
+                // format the other network's BSSID into a string before logging
+                char other_mac_str[18];
+                snprintf(other_mac_str, sizeof(other_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+                         pineap_networks[i].bssid[0], pineap_networks[i].bssid[1],
+                         pineap_networks[i].bssid[2], pineap_networks[i].bssid[3],
+                         pineap_networks[i].bssid[4], pineap_networks[i].bssid[5]);
+
+                glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %s and\n%s\n",
+                     network->recent_ssids[0], mac_str, other_mac_str);
             }
         }
 
@@ -565,7 +573,8 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        if (index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length is reasonable and within bounds */
+        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
             break;
         }
 
@@ -741,7 +750,8 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        if (index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length is reasonable and within bounds */
+        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
             break;
         }
 
@@ -770,7 +780,8 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
                     uint16_t attr_id = (payload[attr_index] << 8) | payload[attr_index + 1];
                     uint16_t attr_len = (payload[attr_index + 2] << 8) | payload[attr_index + 3];
 
-                    if (attr_len > (wps_ie_end - (attr_index + 4))) {
+                    /* sanity: attr_len must be reasonable and fit inside the WPS IE */
+                    if (attr_len > MAX_IE_LEN || attr_len > (wps_ie_end - (attr_index + 4))) {
                         break;
                     }
 
@@ -850,16 +861,19 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
                          &wardriving_data);
     }
 
-    // Get GPS data from the global handle
-    gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
-    if (gps != NULL && gps->valid) {
-        wardriving_data.gps_quality.satellites_used = gps->sats_in_use;
-        wardriving_data.gps_quality.hdop = gps->dop_h;
-        wardriving_data.gps_quality.speed = gps->speed;
-        wardriving_data.gps_quality.course = gps->cog;
-        wardriving_data.gps_quality.fix_quality = gps->fix;
-        wardriving_data.gps_quality.has_valid_fix = (gps->fix >= GPS_FIX_GPS);
+    // Get GPS data from the global handle, if available
+    if (nmea_hdl != NULL) {
+        gps_t *gps_local = &((esp_gps_t *)nmea_hdl)->parent;
+        if (gps_local != NULL && gps_local->valid) {
+            wardriving_data.gps_quality.satellites_used = gps_local->sats_in_use;
+            wardriving_data.gps_quality.hdop = gps_local->dop_h;
+            wardriving_data.gps_quality.speed = gps_local->speed;
+            wardriving_data.gps_quality.course = gps_local->cog;
+            wardriving_data.gps_quality.fix_quality = gps_local->fix;
+            wardriving_data.gps_quality.has_valid_fix = (gps_local->fix >= GPS_FIX_GPS);
+        }
     }
+    
 
     // Use GPS manager to log data
     esp_err_t err = gps_manager_log_wardriving_data(&wardriving_data);

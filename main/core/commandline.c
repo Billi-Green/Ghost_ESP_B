@@ -2535,8 +2535,3 @@ void handle_set_rgb_mode_cmd(int argc, char **argv) {
     settings_save(&G_Settings);
     glog("RGB mode set to %s\n", argv[1]);
 }
-
-
-
-
-

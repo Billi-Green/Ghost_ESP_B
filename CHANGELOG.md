@@ -39,6 +39,10 @@
 - Fixed memory leak, race conditions and add buffer error handling in pcap.c
 - Accepted HCI packet types now include CMD, ACL, SCO, and ISO
 - Fixed BLE capture stopping itself after recieving an event
+- Added sanity checks to IE parsing to prevent OOB reads
+- Added NMEA handle null-checks
+- Track SPI host/mount state and only free initialized SPI host on unmount
+- Miscellaneous fixes and improvements
 
 ## Revival v1.7.2
 
