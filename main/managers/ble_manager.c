@@ -40,6 +40,8 @@ static int airTagCount = 0;
 static bool ble_initialized = false;
 static esp_timer_handle_t flush_timer = NULL;
 static TaskHandle_t nimble_host_task_handle = NULL;
+static uint32_t ble_pcap_packet_count = 0;
+static uint32_t ble_pcap_event_total_count = 0;
 
 // Forward declarations
 static void generate_random_mac(uint8_t *mac_addr);
@@ -846,6 +848,19 @@ void ble_stop_skimmer_detection(void) {
     ble_unregister_handler(ble_skimmer_scan_callback);
     pcap_flush_buffer_to_file(); // Final flush
     pcap_file_close();           // Close the file after final flush
+
+    /* final capture summary */
+    printf("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+           (unsigned long)ble_pcap_packet_count,
+           (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+           (unsigned long)ble_pcap_event_total_count);
+    TERMINAL_VIEW_ADD_TEXT("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+                           (unsigned long)ble_pcap_packet_count,
+                           (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+                           (unsigned long)ble_pcap_event_total_count);
+    /* reset counters for next capture */
+    ble_pcap_packet_count = 0;
+    ble_pcap_event_total_count = 0;
 
     int rc = ble_gap_disc_cancel();
 
@@ -1718,6 +1733,19 @@ void ble_stop(void) {
     pcap_flush_buffer_to_file(); // Final flush
     pcap_file_close();           // Close the file after final flush
 
+    /* final capture summary */
+    printf("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+           (unsigned long)ble_pcap_packet_count,
+           (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+           (unsigned long)ble_pcap_event_total_count);
+    TERMINAL_VIEW_ADD_TEXT("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+                           (unsigned long)ble_pcap_packet_count,
+                           (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+                           (unsigned long)ble_pcap_event_total_count);
+    /* reset counters for next capture */
+    ble_pcap_packet_count = 0;
+    ble_pcap_event_total_count = 0;
+
     // Stop spoofing if it was active
     ble_stop_spoofing();
 
@@ -1795,6 +1823,9 @@ static void ble_pcap_callback(struct ble_gap_event *event, size_t len) {
     if (!event || len == 0)
         return;
 
+    /* count every callback event we receive for filtering stats */
+    ble_pcap_event_total_count++;
+
     uint8_t hci_buffer[258]; // Max HCI packet size
     size_t hci_len = 0;
 
@@ -1838,50 +1869,38 @@ static void ble_pcap_callback(struct ble_gap_event *event, size_t len) {
 
         hci_len = 15 + event->disc.length_data; // Total length
 
-        // packet logging (don't print to display terminal to prevent overwhelming)
-        printf("BLE Packet Received:\nType: 0x04 (HCI Event)\nMeta: 0x3E "
-               "(LE)\nLength: %d\n",
-               hci_len);
+        /* keep a lightweight counter and occasionally report a summary */
+
+        ble_pcap_packet_count++;
+        if ((ble_pcap_packet_count % 50) == 0) {
+            uint32_t filtered = ble_pcap_event_total_count - ble_pcap_packet_count;
+            printf("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
+                   (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
+            TERMINAL_VIEW_ADD_TEXT("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
+                                   (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
+        }
 
         pcap_write_packet_to_buffer(hci_buffer, hci_len, PCAP_CAPTURE_BLUETOOTH);
-    }
-
-    pcap_flush_buffer_to_file(); // Final flush
-    pcap_file_close();           // Close the file after final flush
-
-    // Stop spoofing if it was active
-    ble_stop_spoofing();
-
-    int rc = ble_gap_disc_cancel();
-
-    switch (rc) {
-    case 0:
-        printf("BLE scan stopped successfully.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE scan stopped successfully.\n");
-        break;
-    case BLE_HS_EBUSY:
-        printf("BLE scan is busy\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE scan is busy\n");
-        break;
-    case BLE_HS_ETIMEOUT:
-        printf("BLE operation timed out.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE operation timed out.\n");
-        break;
-    case BLE_HS_ENOTCONN:
-        printf("BLE not connected.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE not connected.\n");
-        break;
-    case BLE_HS_EINVAL:
-        printf("BLE invalid parameter.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE invalid parameter.\n");
-        break;
-    default:
-        printf("Error stopping BLE scan: %d\n", rc);
-        TERMINAL_VIEW_ADD_TEXT("Error stopping BLE scan: %d\n", rc);
     }
 }
 
 void ble_start_capture(void) {
+    /* ensure BLE stack is initialized and ready before opening PCAP and
+       starting scanning; avoids leaving a file open if scan fails */
+    if (!ble_initialized) {
+        ble_init();
+    }
+
+    if (!wait_for_ble_ready()) {
+        ESP_LOGE(TAG_BLE, "BLE stack not ready");
+        TERMINAL_VIEW_ADD_TEXT("BLE stack not ready\n");
+        return;
+    }
+
+    /* reset counters for a fresh capture session */
+    ble_pcap_packet_count = 0;
+    ble_pcap_event_total_count = 0;
+
     // Open PCAP file first
     esp_err_t err = pcap_file_open("ble_capture", PCAP_CAPTURE_BLUETOOTH);
     if (err != ESP_OK) {
