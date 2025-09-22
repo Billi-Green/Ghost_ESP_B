@@ -31,6 +31,10 @@ class ESP32ControlGUI(QMainWindow):
     def __init__(self):
         """Initialize the ESP32 control panel GUI and its components."""
         super().__init__()
+        
+        # Initialize flag to track initialization completion
+        self._initialization_complete = False
+        
         self.setWindowTitle("Ghost ESP Commander")
         self.setGeometry(100, 100, 1400, 900)
 
@@ -81,6 +85,9 @@ class ESP32ControlGUI(QMainWindow):
             border-radius: 10px;
         """)
         self.overlay.hide()
+
+        # Mark initialization as complete
+        self._initialization_complete = True
 
         # Disable UI except serial connection bar at startup
         self.set_main_ui_enabled(False)
@@ -146,6 +153,11 @@ class ESP32ControlGUI(QMainWindow):
             event (QResizeEvent): The resize event.
         """
         super().resizeEvent(event)
+        
+        # Only proceed if initialization is complete and overlay exists
+        if not self._initialization_complete or not hasattr(self, 'overlay'):
+            return
+            
         # Get geometry of central widget
         central_geom = self.centralWidget().geometry()
         # Find the serial connection bar widget by object name
