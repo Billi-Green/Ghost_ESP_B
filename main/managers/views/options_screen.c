@@ -24,6 +24,7 @@ static const char **evil_portal_options = NULL;
 #include "managers/wifi_manager.h"
 #include "managers/settings_manager.h"
 #include "esp_log.h"
+#include "core/glog.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1063,8 +1064,7 @@ display_manager_switch_view(&terminal_view);
     terminal_set_return_view(&options_menu_view);
 display_manager_switch_view(&terminal_view);
         if (!scanned_aps) {
-            TERMINAL_VIEW_ADD_TEXT("No APs scanned. Please run 'Scan Access Points' first.\\n");
-            
+            glog("No APs scanned. Please run 'Scan Access Points' first.\\n");
         } else {
             simulateCommand("attack -d");
         }

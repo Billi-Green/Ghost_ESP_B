@@ -5,30 +5,34 @@
 #include <stdio.h>
 #include <string.h>
 
-#define GLOG_BUF_SIZE 1024
+#define GLOG_BUF_SIZE 512
 
 void glog(const char *fmt, ...) {
     if (!fmt) return;
 
-    char buf[GLOG_BUF_SIZE];
     va_list ap;
     va_start(ap, fmt);
-    int written = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+
+    vprintf(fmt, ap);
     va_end(ap);
 
-    if (written < 0) return;
-
-    /* ensure NUL termination */
+    char buf[GLOG_BUF_SIZE];
+    int written = vsnprintf(buf, sizeof(buf), fmt, ap_copy);
+    if (written < 0) {
+        va_end(ap_copy);
+        return;
+    }
     buf[sizeof(buf)-1] = '\0';
+    if (esp_comm_manager_is_remote_command()) {
+        esp_comm_manager_send_response((const uint8_t*)buf, strlen(buf));
+    }
+    terminal_view_add_text(buf);
+    ap_manager_add_log(buf);
 
-    /* print to stdout without adding extra characters */
-    printf("%s", buf);
+    va_end(ap_copy);
 
-#ifdef TERMINAL_VIEW_ADD_TEXT
-    /* forward to terminal view using a simple "%s" format to avoid
-       repeated formatting allocations */
-    TERMINAL_VIEW_ADD_TEXT("%s", buf);
-#endif
 }
 
 

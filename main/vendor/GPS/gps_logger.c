@@ -205,8 +205,7 @@ esp_err_t csv_flush_buffer_to_file() {
     }
 
     if (csv_file == NULL) {
-        printf("Streaming CSV buffer over UART\n");
-        TERMINAL_VIEW_ADD_TEXT("Streaming CSV buffer over UART\n");
+        glog("Streaming CSV buffer over UART\n");
         const char *mark_begin = "[BUF/BEGIN]";
         const char *mark_close = "[BUF/CLOSE]";
 
@@ -241,8 +240,7 @@ void csv_file_close() {
             csv_flush_task = NULL;
         }
         if (buffer_offset > 0) {
-            printf("Flushing remaining buffer before closing file.\n");
-            TERMINAL_VIEW_ADD_TEXT("Flushing remaining buffer before closing file.\n");
+            glog("Flushing remaining buffer before closing file.\n");
             csv_flush_buffer_to_file();
         }
         fclose(csv_file);
@@ -264,8 +262,7 @@ void csv_file_close() {
                 f_utime(rel_path, &finfo);
             }
         }
-        printf("CSV file closed.\n");
-        TERMINAL_VIEW_ADD_TEXT("CSV file closed.\n");
+        glog("CSV file closed.\n");
     }
 }
 
@@ -387,8 +384,7 @@ void gps_info_display_task(void *pvParameters) {
         // Add null check for nmea_hdl
         if (!nmea_hdl) {
             if (gps_connection_logged) {
-                printf("GPS Module Disconnected\n");
-                TERMINAL_VIEW_ADD_TEXT("GPS Module Disconnected\n");
+                glog("GPS Module Disconnected\n");
                 gps_connection_logged = false;
             }
             vTaskDelay(delay);
@@ -399,8 +395,7 @@ void gps_info_display_task(void *pvParameters) {
 
         if (!gps) {
             if (gps_connection_logged) {
-                printf("GPS Module Disconnected\n");
-                TERMINAL_VIEW_ADD_TEXT("GPS Module Disconnected\n");
+                glog("GPS Module Disconnected\n");
                 gps_connection_logged = false;
             }
             vTaskDelay(delay);

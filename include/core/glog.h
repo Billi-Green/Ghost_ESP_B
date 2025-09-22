@@ -2,6 +2,7 @@
 #define GLOG_H
 
 #include <stddef.h>
+#include "managers/views/terminal_screen.h"
 
 /*
  * glog - lightweight global logger that writes to both stdout (printf)

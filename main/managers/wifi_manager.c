@@ -726,18 +726,11 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
              strcpy(ssid_str, "(Hidden)");
         }
 
-        printf(
+        glog(
             "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
             station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
             ssid_str, // Use SSID here
             ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
-        char station_log_buf[256];
-        snprintf(station_log_buf, sizeof(station_log_buf),
-            "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
-            station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
-            ssid_str, // Use SSID here
-            ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
-        TERMINAL_VIEW_ADD_TEXT(station_log_buf);
 
         // Add the station and the *specific AP BSSID* it was seen with to the list
         add_station_ap_pair(station_mac, ap_bssid);
@@ -5930,16 +5923,11 @@ void wifi_manager_clear_html_buffer(void) {
 }
 
 void wifi_manager_sae_flood_help(void) {
-    printf("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
-    TERMINAL_VIEW_ADD_TEXT("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
-    printf("Rate: 100+ frames/sec with randomization\n");
-    TERMINAL_VIEW_ADD_TEXT("Rate: 100+ frames/sec with randomization\n");
-    printf("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
-    TERMINAL_VIEW_ADD_TEXT("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
-    printf("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
-    printf("Commands: saeflood, stopsaeflood, saefloodhelp\n");
-    TERMINAL_VIEW_ADD_TEXT("Commands: saeflood, stopsaeflood, saefloodhelp\n");
+    glog("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
+    glog("Rate: 100+ frames/sec with randomization\n");
+    glog("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
+    glog("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
+    glog("Commands: saeflood, stopsaeflood, saefloodhelp\n");
 }
 
 
