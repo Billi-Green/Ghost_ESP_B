@@ -31,6 +31,7 @@
 - Update main menu icons to RGB565A8
 - Enabled software back buttons made for encoder controls on joystick too
 - Joystick builds now use touch keyboard layout with selection highlighting and navigation
+- Changed the C5 to use a single display buffer to save memory
 
 ### Bug Fixes
 
@@ -44,6 +45,7 @@
 - Miscellaneous fixes and improvements
 - Use the build chip's maximum allowed RMT memory per channel instead of a hard-coded value for IR
 - Small memory saves
+- Fixed RMT channel allocation on C5 to prevent conflicts with IR TX
 
 
 #### Network & Comms
