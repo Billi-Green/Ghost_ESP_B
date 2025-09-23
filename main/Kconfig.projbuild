@@ -196,6 +196,12 @@ menu "Ghost ESP Options"
             default n
             help
                 Enable Cardputer input.
+
+        config USE_CARDPUTER_ADV
+            bool "Enable Cardputer ADV (TCA8418 keyboard)"
+            default n
+            help
+                Enable Cardputer ADV keyboard support using the TCA8418 keypad controller.
         
         config USE_TDISPLAY_S3
             bool "Enable T-Display S3"
@@ -347,6 +353,44 @@ menu "Ghost ESP Options"
             depends on USE_ENCODER
             help
                 Set the GPIO pin for the Encoder button.
+
+        menu "NFC Options"
+
+            config HAS_NFC
+                bool "Enable NFC (PN532)"
+                default n
+                help
+                    Enable PN532 NFC support and show NFC in main menu.
+
+            config NFC_SCL_PIN
+                int "NFC Clock Pin (SCL/SCK)"
+                default 22
+                depends on HAS_NFC
+                help
+                    GPIO for PN532 I2C clock (aka SCL/SCK).
+
+            config NFC_SDA_PIN
+                int "NFC Data Pin (SDA)"
+                default 21
+                depends on HAS_NFC
+                help
+                    GPIO for PN532 I2C data (SDA).
+
+            config NFC_IRQ_PIN
+                int "NFC URQ/IRQ Pin"
+                default -1
+                depends on HAS_NFC
+                help
+                    GPIO for PN532 IRQ (aka URQ). Use -1 if not connected.
+
+            config NFC_RST_PIN
+                int "NFC RF RST Pin"
+                default -1
+                depends on HAS_NFC
+                help
+                    GPIO for PN532 reset (RF RST). Use -1 if not connected.
+
+        endmenu
 
     endmenu
     

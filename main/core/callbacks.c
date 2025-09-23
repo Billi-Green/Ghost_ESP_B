@@ -6,6 +6,7 @@
 #include "managers/wifi_manager.h"
 #include "vendor/GPS/gps_logger.h"
 #include "vendor/pcap.h"
+#include "core/glog.h"
 #include <ctype.h>
 #include <esp_log.h>
 #include <string.h>
@@ -44,6 +45,7 @@ static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8
 #define PROBE_DEDUPE_TIMEOUT_MS 1000
 #define MIN_RSSI_THRESHOLD -90  // Drop packets weaker than -90 dBm
 #define MIN_PACKET_LENGTH 24    // Minimum 802.11 header size
+#define MAX_IE_LEN 255
 static pineap_network_t pineap_networks[MAX_PINEAP_NETWORKS];
 static int pineap_network_count = 0;
 static bool pineap_detection_active = false;
@@ -246,19 +248,23 @@ void log_pineap_detection(void *arg) {
         for (int i = 0; i < pineap_network_count; i++) {
             if (i != (network - pineap_networks) && // Skip self
                 strcasecmp(network->recent_ssids[0], pineap_networks[i].recent_ssids[0]) == 0) {
-                IRAM_PRINTF("Evil Twin:\nSSID '%.100s'\nBSSID %.17s vs %.100s\n",
-                           network->recent_ssids[0], mac_str, pineap_networks[i].bssid);
-                TERMINAL_VIEW_ADD_TEXT(
-                    "Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %.17s and\n%.100s\n",
-                    network->recent_ssids[0], mac_str, pineap_networks[i].bssid);
+                // format the other network's BSSID into a string before logging
+                char other_mac_str[18];
+                snprintf(other_mac_str, sizeof(other_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+                         pineap_networks[i].bssid[0], pineap_networks[i].bssid[1],
+                         pineap_networks[i].bssid[2], pineap_networks[i].bssid[3],
+                         pineap_networks[i].bssid[4], pineap_networks[i].bssid[5]);
+
+                glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %s and\n%s\n",
+                     network->recent_ssids[0], mac_str, other_mac_str);
             }
         }
 
-        TERMINAL_VIEW_ADD_TEXT("\nPineapple detected!\n");
-        TERMINAL_VIEW_ADD_TEXT("BSSID: %s\n", mac_str);
-        TERMINAL_VIEW_ADD_TEXT("Channel: %d\n", network->last_channel);
-        TERMINAL_VIEW_ADD_TEXT("RSSI: %d\n", network->last_rssi);
-        TERMINAL_VIEW_ADD_TEXT("SSIDs (%d): %s\n", valid_ssid_count, ssids_str);
+        glog("\nPineapple detected!\n");
+        glog("BSSID: %s\n", mac_str);
+        glog("Channel: %d\n", network->last_channel);
+        glog("RSSI: %d\n", network->last_rssi);
+        glog("SSIDs (%d): %s\n", valid_ssid_count, ssids_str);
     }
 
     free(log_data);
@@ -567,7 +573,8 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        if (index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length is reasonable and within bounds */
+        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
             break;
         }
 
@@ -743,7 +750,8 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        if (index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length is reasonable and within bounds */
+        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
             break;
         }
 
@@ -772,7 +780,8 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
                     uint16_t attr_id = (payload[attr_index] << 8) | payload[attr_index + 1];
                     uint16_t attr_len = (payload[attr_index + 2] << 8) | payload[attr_index + 3];
 
-                    if (attr_len > (wps_ie_end - (attr_index + 4))) {
+                    /* sanity: attr_len must be reasonable and fit inside the WPS IE */
+                    if (attr_len > MAX_IE_LEN || attr_len > (wps_ie_end - (attr_index + 4))) {
                         break;
                     }
 
@@ -783,12 +792,10 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
                         IRAM_PRINTF("Configuration Methods found: 0x%04x\n", config_methods);
 
                         if (config_methods & WPS_CONF_METHODS_PBC) {
-                            IRAM_PRINTF("WPS Push Button detected:\n%s\n", ssid);
-                            TERMINAL_VIEW_ADD_TEXT("WPS Push Button detected:\n%s\n", ssid);
+                            glog("WPS Push Button detected:\n%s\n", ssid);
                         } else if (config_methods &
                                    (WPS_CONF_METHODS_PIN_DISPLAY | WPS_CONF_METHODS_PIN_KEYPAD)) {
-                            IRAM_PRINTF("WPS PIN detected:\n%s\n", ssid);
-                            TERMINAL_VIEW_ADD_TEXT("WPS PIN detected:\n%s\n", ssid);
+                            glog("WPS PIN detected:\n%s\n", ssid);
                         }
 
                         if (should_store_wps == 1) {
@@ -810,11 +817,8 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
                         }
 
                         if (detected_network_count >= MAX_WPS_NETWORKS) {
-                            IRAM_PRINTF("Maximum number of WPS networks detected\nStopping monitor "
-                                   "mode.\n");
-                            TERMINAL_VIEW_ADD_TEXT(
-                                "Maximum number of WPS networks detected\nStopping "
-                                "monitor mode.\n");
+                            glog("Maximum number of WPS networks detected\nStopping "
+                                 "monitor mode.\n");
                             wifi_manager_stop_monitor_mode();
                         }
                     }
@@ -857,16 +861,19 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
                          &wardriving_data);
     }
 
-    // Get GPS data from the global handle
-    gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
-    if (gps != NULL && gps->valid) {
-        wardriving_data.gps_quality.satellites_used = gps->sats_in_use;
-        wardriving_data.gps_quality.hdop = gps->dop_h;
-        wardriving_data.gps_quality.speed = gps->speed;
-        wardriving_data.gps_quality.course = gps->cog;
-        wardriving_data.gps_quality.fix_quality = gps->fix;
-        wardriving_data.gps_quality.has_valid_fix = (gps->fix >= GPS_FIX_GPS);
+    // Get GPS data from the global handle, if available
+    if (nmea_hdl != NULL) {
+        gps_t *gps_local = &((esp_gps_t *)nmea_hdl)->parent;
+        if (gps_local != NULL && gps_local->valid) {
+            wardriving_data.gps_quality.satellites_used = gps_local->sats_in_use;
+            wardriving_data.gps_quality.hdop = gps_local->dop_h;
+            wardriving_data.gps_quality.speed = gps_local->speed;
+            wardriving_data.gps_quality.course = gps_local->cog;
+            wardriving_data.gps_quality.fix_quality = gps_local->fix;
+            wardriving_data.gps_quality.has_valid_fix = (gps_local->fix >= GPS_FIX_GPS);
+        }
     }
+    
 
     // Use GPS manager to log data
     esp_err_t err = gps_manager_log_wardriving_data(&wardriving_data);
@@ -920,33 +927,17 @@ void ble_skimmer_scan_callback(struct ble_gap_event *event, void *arg) {
                          event->disc.addr.val[0], event->disc.addr.val[1], event->disc.addr.val[2],
                          event->disc.addr.val[3], event->disc.addr.val[4], event->disc.addr.val[5]);
 
-                IRAM_PRINTF("\nPOTENTIAL SKIMMER DETECTED!\n");
-                TERMINAL_VIEW_ADD_TEXT("\nPOTENTIAL SKIMMER DETECTED!\n");
+                glog("\nPOTENTIAL SKIMMER DETECTED!\n");
+                
+                glog("Device Name: %s\n", device_name);
 
-                IRAM_PRINTF("Device Name: %s\n", device_name);
-                TERMINAL_VIEW_ADD_TEXT("Device Name: ");
-                TERMINAL_VIEW_ADD_TEXT(device_name);
-                TERMINAL_VIEW_ADD_TEXT("\n");
+                glog("MAC Address: %s\n", mac_addr);
 
-                IRAM_PRINTF("MAC Address: %s\n", mac_addr);
-                TERMINAL_VIEW_ADD_TEXT("MAC Address: ");
-                TERMINAL_VIEW_ADD_TEXT(mac_addr);
-                TERMINAL_VIEW_ADD_TEXT("\n");
+                glog("RSSI: %d dBm\n", event->disc.rssi);
 
-                IRAM_PRINTF("RSSI: %d dBm\n", event->disc.rssi);
-                TERMINAL_VIEW_ADD_TEXT("RSSI: ");
-                char rssi_str[12];
-                snprintf(rssi_str, sizeof(rssi_str), "%d", event->disc.rssi);
-                TERMINAL_VIEW_ADD_TEXT(rssi_str);
-                TERMINAL_VIEW_ADD_TEXT(" dBm\n");
+                glog("Reason:\nMatched known skimmer pattern: %s\n", suspicious_names[i]);
 
-                IRAM_PRINTF("Reason:\nMatched known skimmer pattern: %s\n", suspicious_names[i]);
-                TERMINAL_VIEW_ADD_TEXT("Reason:\nMatched known skimmer pattern: ");
-                TERMINAL_VIEW_ADD_TEXT(suspicious_names[i]);
-                TERMINAL_VIEW_ADD_TEXT("\n");
-
-                IRAM_PRINTF("Please verify before taking action.\n\n");
-                TERMINAL_VIEW_ADD_TEXT("Please verify before taking action.\n\n");
+                glog("Please verify before taking action.\n\n");
 
                 // pulse rgb red once when skimmer is detected
                 pulse_once(&rgb_manager, 255, 0, 0);
@@ -1032,9 +1023,7 @@ static inline bool is_packet_valid(const wifi_promiscuous_pkt_t *pkt, wifi_promi
                 (unsigned long)packets_processed,
                 (float)packets_filtered_out * 100.0f / total_packets_received);
         
-        printf("%s\n", stats_msg);
-        TERMINAL_VIEW_ADD_TEXT(stats_msg);
-        TERMINAL_VIEW_ADD_TEXT("\n");
+        glog("%s\n", stats_msg);
     }
     
     return true;
@@ -1118,7 +1107,5 @@ void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     }
 
     // Print to console and display
-    printf("%s\n", log_msg);
-    TERMINAL_VIEW_ADD_TEXT(log_msg);
-    TERMINAL_VIEW_ADD_TEXT("\n");
+    glog("%s\n", log_msg);
 }
