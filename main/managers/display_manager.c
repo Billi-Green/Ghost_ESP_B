@@ -1094,6 +1094,14 @@ void display_manager_fill_screen(lv_color_t color) {
   lv_obj_add_style(lv_scr_act(), &style, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
+void display_manager_suspend_lvgl_task(void) {
+  if (lvgl_task_handle) vTaskSuspend(lvgl_task_handle);
+}
+
+void display_manager_resume_lvgl_task(void) {
+  if (lvgl_task_handle) vTaskResume(lvgl_task_handle);
+}
+
 void set_backlight_brightness(uint8_t percentage) {
     // Clamp to user setting
     uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);

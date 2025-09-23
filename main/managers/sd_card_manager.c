@@ -28,6 +28,55 @@
 static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
 
+
+/* time multiplex spi for somethingsomething v1*/
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI)
+#include "lvgl_helpers.h"
+#include "lvgl_tft/disp_spi.h"
+#include "lvgl_spi_conf.h"
+#ifdef LV_LVGL_H_INCLUDE_SIMPLE
+#include "lvgl.h"
+#else
+#include "lvgl/lvgl.h"
+#endif
+#include "managers/display_manager.h"
+static bool display_spi_suspend_for_sd(void) {
+  /* pause lvgl refresh to stop flush() while we steal the bus */
+  lv_disp_t *disp = lv_disp_get_default();
+  if (disp) {
+    lv_timer_t *refr = _lv_disp_get_refr_timer(disp);
+    if (refr) lv_timer_pause(refr);
+  }
+  /* wait all pending transactions, drop device, free bus */
+  display_manager_suspend_lvgl_task();
+  disp_wait_for_pending_transactions();
+  disp_spi_remove_device();
+  spi_bus_free(TFT_SPI_HOST);
+  /* assert CS high so that panel stays quiet */
+  #ifdef CONFIG_LV_DISP_SPI_CS
+  gpio_set_level(CONFIG_LV_DISP_SPI_CS, 1);
+  #endif
+  return true;
+}
+static void display_spi_resume_after_sd(void) {
+  (void)lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
+                             SPI_BUS_MAX_TRANSFER_SZ, 1, DISP_SPI_IO2, DISP_SPI_IO3);
+  disp_spi_add_device(TFT_SPI_HOST);
+  /* resume lvgl refresh */
+  lv_disp_t *disp = lv_disp_get_default();
+  if (disp) {
+    lv_timer_t *refr = _lv_disp_get_refr_timer(disp);
+    if (refr) lv_timer_resume(refr);
+  }
+  display_manager_resume_lvgl_task();
+}
+#else
+static bool display_spi_suspend_for_sd(void) { return false; }
+static void display_spi_resume_after_sd(void) {}
+#endif
+
+
+
 sd_card_manager_t sd_card_manager = { // Change this based on board config
     .card = NULL,
     .is_initialized = false,
@@ -296,6 +345,15 @@ esp_err_t sd_card_init(void) {
 
   printf("Initializing SD card in SPI mode using configured pins...\n");
 
+  bool gating_template = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#endif
+  bool display_was_suspended = false;
+  if (gating_template) {
+    display_was_suspended = display_spi_suspend_for_sd();
+  }
+
 
 
 #ifdef CONFIG_Waveshare_LCD
@@ -377,6 +435,10 @@ esp_err_t sd_card_init(void) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(CONFIG_ENCODER_INA)
   host.max_freq_khz = 4000;       /* 4 MHz for first probe – increase later if needed */
 #endif
+  /* select spi host slot for target */
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+  host.slot = SPI2_HOST;
+#endif
 
   spi_bus_config_t bus_config;
 
@@ -423,6 +485,18 @@ esp_err_t sd_card_init(void) {
       return bus_ret;
     }
   }
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+  {
+    esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
+    if (bus_ret == ESP_OK) {
+      bus_init_success = true;
+      s_spi_bus_initialized = true;
+      s_spi_host_id = SPI2_HOST;
+    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
+      printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
+      return bus_ret;
+    }
+  }
 #else
   {
     esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
@@ -454,6 +528,8 @@ esp_err_t sd_card_init(void) {
 #else
   slot_config.host_id = SPI2_HOST;
 #endif
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+  slot_config.host_id = SPI2_HOST;
 #else
   slot_config.host_id = SPI2_HOST;
 #endif
@@ -469,6 +545,9 @@ esp_err_t sd_card_init(void) {
         s_spi_host_id = -1;
       }
     }
+    if (display_was_suspended) {
+      display_spi_resume_after_sd();
+    }
     return ret;
   }
 
@@ -478,6 +557,14 @@ esp_err_t sd_card_init(void) {
   printf("SD card initialized successfully in SPI mode.\n");
 
   sd_card_setup_directory_structure();
+
+  if (gating_template) {
+    sd_card_unmount();
+    if (display_was_suspended) {
+      display_spi_resume_after_sd();
+    }
+    return ESP_OK;
+  }
 
 #endif
 

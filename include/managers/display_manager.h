@@ -120,6 +120,9 @@ void display_manager_add_status_bar(const char *CurrentMenuName);
 // such as PN532 scanning/bruteforcing are active to avoid bus contention.
 void display_manager_set_low_i2c_mode(bool on);
 
+void display_manager_suspend_lvgl_task(void);
+void display_manager_resume_lvgl_task(void);
+
 LV_IMG_DECLARE(Ghost_ESP);
 LV_IMG_DECLARE(Map);
 LV_IMG_DECLARE(bluetooth);
