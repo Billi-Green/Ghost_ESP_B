@@ -123,6 +123,7 @@ typedef struct {
 static esp_comm_manager_t* s_comm_manager = NULL;
 static comm_command_callback_t s_pending_callback = NULL;
 static void* s_pending_callback_user_data = NULL;
+static uart_port_t s_uart_num = UART_NUM_1; /* selected UART for dualcomm */
 
 // Forward declarations for functions referenced before their definitions
 static void tx_task(void* arg);
@@ -166,9 +167,9 @@ static bool send_packet(const comm_packet_t* packet) {
         return true;
     } else {
         // Direct transmit path used during scanning/handshake before TX task exists
-        uart_write_bytes(UART_NUM_1, (const char*)packet, PACKET_HEADER_SIZE + packet->length);
+        uart_write_bytes(s_uart_num, (const char*)packet, PACKET_HEADER_SIZE + packet->length);
         uint8_t checksum = calculate_checksum((const uint8_t*)packet, PACKET_HEADER_SIZE + packet->length);
-        uart_write_bytes(UART_NUM_1, (const char*)&checksum, 1);
+        uart_write_bytes(s_uart_num, (const char*)&checksum, 1);
         if (packet->type == PACKET_TYPE_RESPONSE) {
             vTaskDelay(pdMS_TO_TICKS(2));
         }
@@ -182,9 +183,9 @@ static void tx_task(void* arg) {
 
     while (1) {
         if (xQueueReceive(comm->tx_queue, &packet, portMAX_DELAY) == pdPASS) {
-            uart_write_bytes(UART_NUM_1, (uint8_t*)&packet, PACKET_HEADER_SIZE + packet.length);
+            uart_write_bytes(s_uart_num, (uint8_t*)&packet, PACKET_HEADER_SIZE + packet.length);
             uint8_t checksum = calculate_checksum((uint8_t*)&packet, PACKET_HEADER_SIZE + packet.length);
-            uart_write_bytes(UART_NUM_1, &checksum, 1);
+            uart_write_bytes(s_uart_num, &checksum, 1);
             if (packet.type == PACKET_TYPE_RESPONSE) {
                 vTaskDelay(pdMS_TO_TICKS(2));
             }
@@ -197,7 +198,7 @@ static void rx_task(void* arg) {
     uint8_t rx_buffer[COMM_BUFFER_SIZE];
 
     while (1) {
-        int len = uart_read_bytes(UART_NUM_1, rx_buffer, COMM_BUFFER_SIZE, pdMS_TO_TICKS(100));
+        int len = uart_read_bytes(s_uart_num, rx_buffer, COMM_BUFFER_SIZE, pdMS_TO_TICKS(100));
         if (len <= 0) continue;
 
         for (int i = 0; i < len; ++i) {
@@ -550,6 +551,21 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
+    /* select UART based on build template: use UART0 for "somethingsomething", else UART1 */
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        s_uart_num = UART_NUM_0;
+        /* if caller passed default placeholders, switch to U0 default pins */
+        if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
+            tx_pin = U0TXD_GPIO_NUM;
+            rx_pin = U0RXD_GPIO_NUM;
+        }
+    } else {
+        s_uart_num = UART_NUM_1;
+    }
+#else
+    s_uart_num = UART_NUM_1;
+#endif
     // Don't deinitialize serial manager on TDECK to avoid UART conflicts
 #ifndef CONFIG_USE_TDECK
     if (serial_manager_get_uart_num() == (int)UART_NUM_1) {
@@ -563,11 +579,11 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     
     // Only install UART driver if not on TDECK to avoid conflicts
 #ifndef CONFIG_USE_TDECK
-    if (uart_driver_install(UART_NUM_1, COMM_BUFFER_SIZE * 2, 0, 0, NULL, 0) == ESP_OK) {
+    if (uart_driver_install(s_uart_num, COMM_BUFFER_SIZE * 2, 0, 0, NULL, 0) == ESP_OK) {
         s_comm_manager->uart_driver_installed = true;
     }
-    uart_param_config(UART_NUM_1, &uart_config);
-    uart_set_pin(UART_NUM_1, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_param_config(s_uart_num, &uart_config);
+    uart_set_pin(s_uart_num, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 #else
     printf("W: ESP Comm Manager disabled on TDECK to avoid UART conflicts\n");
 #endif
@@ -623,7 +639,7 @@ bool esp_comm_manager_set_pins(gpio_num_t tx_pin, gpio_num_t rx_pin) {
     }
 #endif
 
-    uart_set_pin(UART_NUM_1, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_set_pin(s_uart_num, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     
     printf("I: Changed pins to TX:%d RX:%d\n", tx_pin, rx_pin);
     return true;
@@ -832,7 +848,7 @@ void esp_comm_manager_deinit(void) {
     if (!s_comm_manager) return;
 
     if (s_comm_manager->uart_driver_installed) {
-        uart_driver_delete(UART_NUM_1);
+        uart_driver_delete(s_uart_num);
         s_comm_manager->uart_driver_installed = false;
     }
     
