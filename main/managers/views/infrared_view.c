@@ -504,7 +504,7 @@ static void append_signal_to_remote(const char *signal_name) {
 }
 #endif
 
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
 static const char *IR_BACK_OPTION_MAGIC_STR = "__IR_BACK_OPTION__"; // Unique string for the back button
 #endif
 
@@ -545,7 +545,7 @@ static void universals_event_cb(lv_event_t *e);
 #ifdef CONFIG_HAS_INFRARED_RX
 static void learn_remote_event_cb(lv_event_t *e);
 #endif
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
 static void add_encoder_back_btn(void);
 #endif
 
@@ -709,7 +709,7 @@ static void back_event_cb(lv_event_t *e) {
             }
             lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
         }
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         add_encoder_back_btn();
 #endif
         if (num_ir_items > 0) ir_select_item(0);
@@ -905,7 +905,7 @@ void infrared_view_create(void) {
         .gpio_num = CONFIG_INFRARED_RX_PIN,
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 1000000, // 1MHz resolution
-        .mem_block_symbols = 128, // Larger buffer
+        .mem_block_symbols = CONFIG_SOC_RMT_MEM_WORDS_PER_CHANNEL,
         .intr_priority = 0, // Let driver choose priority
         .flags = {
             .invert_in = 0,
@@ -993,7 +993,7 @@ void infrared_view_create(void) {
     lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
 #endif
 
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
 #endif
 
@@ -1947,7 +1947,7 @@ static void remotes_event_cb(lv_event_t *e) {
     }
     selected_ir_index = 0;
     num_ir_items = ir_file_count;
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
 #endif
     if (ir_file_count > 0) ir_select_item(0);
@@ -2154,7 +2154,7 @@ static void universals_event_cb(lv_event_t *e) {
     if (ir_file_count > 0) ir_select_item(0);
 }
 
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
 static void add_encoder_back_btn(void)
 {
     lv_obj_t *btn = lv_list_add_btn(list, NULL, LV_SYMBOL_LEFT " Back");
@@ -2347,7 +2347,7 @@ void easy_learn_signal_name_callback(void)
             
             num_ir_items = signal_count + 3; // signals + 3 management options
             
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             add_encoder_back_btn();
 #endif
             

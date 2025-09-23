@@ -1851,7 +1851,7 @@ static void menu_builder_cb(lv_timer_t *t)
 
     // Now, handle adding the "Back" button and stopping the timer
     if (all_current_options_processed) {
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         if (!back_option_was_added_in_previous_tick) { // Add back button only once
             lv_obj_t *btn = options_view_add_item(g_options_view, LV_SYMBOL_LEFT " Back", option_event_cb, (void *)"__BACK_OPTION__");
             if (btn) {
@@ -1866,12 +1866,12 @@ static void menu_builder_cb(lv_timer_t *t)
             }
         }
 #endif
-        // Timer should stop if all options are processed AND (if encoder, the back option is now added, OR if no encoder)
+        // Timer should stop if all options are processed AND (if encoder/joystick, the back option is now added, OR if neither)
         if (
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             (bool)(intptr_t)t->user_data
 #else
-            true // If no encoder, we stop as soon as regular options are done
+            true // If neither encoder nor joystick, stop as soon as regular options are done
 #endif
         ) {
             lv_timer_del(t);

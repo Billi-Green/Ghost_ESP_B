@@ -29,6 +29,7 @@
 - Refactor options menu to use reusable options view helpers
 - Refactor comm manager to centralize packet handling, add state mutex and handshake timeout, and guard UART driver install
 - Update main menu icons to RGB565A8
+- Enabled software back buttons made for encoder controls on joystick too
 
 ### Bug Fixes
 
@@ -40,6 +41,7 @@
 - Added NMEA handle null-checks
 - Flush PCAP header on open and close PCAP on generic stop command
 - Miscellaneous fixes and improvements
+- Use the build chip's maximum allowed RMT memory per channel instead of a hard-coded value for IR
 
 
 #### Network & Comms

@@ -1650,8 +1650,8 @@ static void back_to_root_menu(void) {
 
     num_items = 4;
 
-#ifdef CONFIG_USE_ENCODER
-    // Ensure encoder back row exists on main menu
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+    // Ensure hardware back row exists on main menu (encoder/joystick builds)
     lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
     if (back_row) {
         lv_obj_set_height(back_row, button_height_global);
@@ -1733,8 +1733,8 @@ static void nfc_enter_write_list(void) {
         }
     }
 
-    // Encoder back row (like options screen)
-#ifdef CONFIG_USE_ENCODER
+    // Hardware back row (like options screen)
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
     if (back_row) {
         lv_obj_set_height(back_row, button_height_global);
@@ -1824,7 +1824,7 @@ static void saved_enter_list(void) {
         }
     }
 
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
     if (back_row) {
         lv_obj_set_height(back_row, button_height_global);
@@ -2749,8 +2749,8 @@ static void nfc_view_create(void) {
 
     num_items = 4;
 
-#ifdef CONFIG_USE_ENCODER
-    // Add Back option row for encoder users, mirroring options_screen behavior
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+    // Add Back option row for hardware users, mirroring options_screen behavior
     lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
     if (back_row) {
         lv_obj_set_height(back_row, button_height_global);
