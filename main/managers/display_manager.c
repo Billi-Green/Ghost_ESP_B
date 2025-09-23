@@ -1104,7 +1104,9 @@ void display_manager_fill_screen(lv_color_t color) {
 }
 
 void display_manager_suspend_lvgl_task(void) {
-  if (lvgl_task_handle) vTaskSuspend(lvgl_task_handle);
+  if (!lvgl_task_handle) return;
+  if (xTaskGetCurrentTaskHandle() == lvgl_task_handle) return;
+  vTaskSuspend(lvgl_task_handle);
 }
 
 void display_manager_resume_lvgl_task(void) {
