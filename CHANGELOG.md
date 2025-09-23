@@ -59,6 +59,7 @@
 
 - Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
 - Remove artificial delay in cardputer keyboard task to make more responsive
+- Improve terminal message handling
 
 ## Revival v1.7.2
 

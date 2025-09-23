@@ -27,15 +27,17 @@ static bool terminal_active = false;
 static bool is_stopping = false;
 static bool terminal_initialized = false; // Flag to track if terminal has been fully initialized
 #define MAX_TEXT_LENGTH 4096
-#define CLEANUP_THRESHOLD (MAX_TEXT_LENGTH * 3 / 4)
-#define CLEANUP_AMOUNT (MAX_TEXT_LENGTH / 2)
-#define MAX_QUEUE_SIZE 15
-#define MAX_MESSAGE_SIZE 256
+#define CLEANUP_THRESHOLD (MAX_TEXT_LENGTH - 512)
+#define CLEANUP_AMOUNT 512
+#define MAX_QUEUE_SIZE 60
+#define MAX_MESSAGE_SIZE 64
 #define MIN_SCREEN_SIZE 239
 #define BUTTON_SIZE 40
 #define BUTTON_PADDING 5
-#define MAX_MESSAGES_PER_BATCH 5  // Process max 5 messages per timer tick
-#define PROCESSING_INTERVAL_MS 50 // Process messages every 50ms during bursts
+#define MAX_MESSAGES_PER_BATCH 5
+#define MAX_MESSAGES_PER_BURST 60
+#define PROCESSING_INTERVAL_MS 50
+#define PROCESSING_INTERVAL_FAST_MS 5
 
 static lv_obj_t *back_btn = NULL;
 static lv_obj_t *input_label = NULL;
@@ -50,6 +52,7 @@ static int input_len = 0; // input length counter
 static void scroll_terminal_up(void);
 static void scroll_terminal_down(void);
 static void stop_all_operations(void);
+static bool terminal_is_near_bottom(void);
 
 // keyboard function predefs
 static void submit_text();
@@ -103,6 +106,17 @@ static void update_input_label() {
 
 static void queue_message_chunk(const char *chunk) {
   if (message_queue.count >= MAX_QUEUE_SIZE) {
+    // append into the last slot if there is room to coalesce; else drop oldest one
+    int last_idx = (message_queue.tail - 1 + MAX_QUEUE_SIZE) % MAX_QUEUE_SIZE;
+    size_t cur_len = strnlen(message_queue.messages[last_idx], MAX_MESSAGE_SIZE - 1);
+    size_t add_len = strnlen(chunk, MAX_MESSAGE_SIZE - 1);
+    if (cur_len < (MAX_MESSAGE_SIZE - 1)) {
+      size_t copy_len = ((MAX_MESSAGE_SIZE - 1) - cur_len);
+      if (copy_len > add_len) copy_len = add_len;
+      memcpy(&message_queue.messages[last_idx][cur_len], chunk, copy_len);
+      message_queue.messages[last_idx][cur_len + copy_len] = '\0';
+      return;
+    }
     message_queue.head = (message_queue.head + 1) % MAX_QUEUE_SIZE;
     message_queue.count--;
   }
@@ -174,9 +188,19 @@ static void process_queued_messages(void) {
   lv_obj_t *last_item = NULL;
   int processed_count = 0;
   bool need_cleanup = false;
+  bool was_near_bottom = terminal_is_near_bottom();
+  int dynamic_batch_limit = MAX_MESSAGES_PER_BATCH;
+
+  if (terminal_mutex && xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {
+    int backlog = message_queue.count;
+    xSemaphoreGive(terminal_mutex);
+    if (backlog > MAX_MESSAGES_PER_BATCH * 2) {
+      dynamic_batch_limit = MAX_MESSAGES_PER_BURST;
+    }
+  }
   
   // Process messages in batches to prevent UI overload
-  while (processed_count < MAX_MESSAGES_PER_BATCH) {
+  while (processed_count < dynamic_batch_limit) {
     // Critical section: only for message queue access
     char msg_buffer[MAX_MESSAGE_SIZE];
     bool has_message = false;
@@ -250,12 +274,16 @@ static void process_queued_messages(void) {
   }
   
   // Schedule next processing cycle if needed
-  if (has_more_messages && terminal_update_timer) {
-    lv_timer_set_period(terminal_update_timer, PROCESSING_INTERVAL_MS);
+  if (terminal_update_timer) {
+    if (has_more_messages) {
+      lv_timer_set_period(terminal_update_timer, PROCESSING_INTERVAL_FAST_MS);
+    } else {
+      lv_timer_set_period(terminal_update_timer, PROCESSING_INTERVAL_MS);
+    }
   }
 
   // Scroll to the last item added in this batch
-  if (last_item) {
+  if (last_item && was_near_bottom) {
     lv_obj_scroll_to_view(last_item, LV_ANIM_OFF);
   }
 }
@@ -452,22 +480,51 @@ void terminal_view_create(void) {
             ESP_LOGE(TAG, "Failed to create terminal update timer");
         }
     }
+
+    // core UI objects and timer exist; allow producers to enqueue immediately
+    terminal_initialized = true;
     
-    // Process any messages that were queued before terminal was initialized
+    // Render any messages that arrived before the terminal was initialized directly to the list
     if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        // Move all pre-initialization messages to the main message queue
+        lv_obj_t *last_item = NULL;
         while (pre_init_message_queue.count > 0) {
             const char *msg = pre_init_message_queue.messages[pre_init_message_queue.head];
-            queue_message(msg);
+            lv_obj_t *item = lv_list_add_text(terminal_page, msg);
+            lv_label_set_long_mode(item, LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_text_color(item, lv_color_hex(settings_get_terminal_text_color(&G_Settings)), 0);
+            lv_obj_set_style_text_font(item, &lv_font_montserrat_10, 0);
+            last_item = item;
+
+            size_t msg_len = strlen(msg);
+            current_text_length += msg_len;
+
             // dequeue from pre-init queue
             pre_init_message_queue.head = (pre_init_message_queue.head + 1) % MAX_QUEUE_SIZE;
             pre_init_message_queue.count--;
         }
         xSemaphoreGive(terminal_mutex);
+
+        // Gentle cleanup if needed after rendering
+        if (current_text_length > CLEANUP_THRESHOLD) {
+            size_t target_len = (current_text_length > CLEANUP_AMOUNT) ? current_text_length - CLEANUP_AMOUNT : 0;
+            while (current_text_length > target_len && lv_obj_get_child_cnt(terminal_page) > 0) {
+                lv_obj_t *oldest = lv_obj_get_child(terminal_page, 0);
+                size_t old_len = 0;
+                const char *old_text = lv_label_get_text(oldest);
+                if (old_text) old_len = strlen(old_text);
+                current_text_length = (current_text_length > old_len) ? (current_text_length - old_len) : 0;
+                lv_obj_del(oldest);
+            }
+        }
+
+        // On first open, scroll to the latest item
+        if (last_item) {
+            lv_obj_scroll_to_view(last_item, LV_ANIM_OFF);
+        }
     }
     
-    // Mark terminal as fully initialized
-    terminal_initialized = true;
+    // already initialized above
     
     createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
 }
@@ -553,8 +610,8 @@ void terminal_view_add_text(const char *text) {
       if (!terminal_mutex) {
           // Direct access to pre-init queue without semaphore since it doesn't exist yet
           if (pre_init_message_queue.count >= MAX_QUEUE_SIZE) {
-              pre_init_message_queue.head = (pre_init_message_queue.head + 1) % MAX_QUEUE_SIZE;
-              pre_init_message_queue.count--;
+              // drop newest when full to preserve earliest lines
+              return;
           }
           strncpy(pre_init_message_queue.messages[pre_init_message_queue.tail], text, MAX_MESSAGE_SIZE - 1);
           pre_init_message_queue.messages[pre_init_message_queue.tail][MAX_MESSAGE_SIZE - 1] = '\0';
@@ -565,8 +622,9 @@ void terminal_view_add_text(const char *text) {
           if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
               // Use the pre-initialization queue when terminal is not ready
               if (pre_init_message_queue.count >= MAX_QUEUE_SIZE) {
-                  pre_init_message_queue.head = (pre_init_message_queue.head + 1) % MAX_QUEUE_SIZE;
-                  pre_init_message_queue.count--;
+                  // drop newest when full to preserve earliest lines
+                  xSemaphoreGive(terminal_mutex);
+                  return;
               }
               strncpy(pre_init_message_queue.messages[pre_init_message_queue.tail], text, MAX_MESSAGE_SIZE - 1);
               pre_init_message_queue.messages[pre_init_message_queue.tail][MAX_MESSAGE_SIZE - 1] = '\0';
@@ -591,6 +649,16 @@ void terminal_view_add_text(const char *text) {
   } else {
       ESP_LOGW(TAG, "Failed to acquire terminal mutex in add_text");
   }
+}
+
+static bool terminal_is_near_bottom(void) {
+  if (!terminal_page) return true;
+  const lv_coord_t threshold = 20;
+  lv_coord_t content_h = lv_obj_get_content_height(terminal_page);
+  lv_coord_t view_h = lv_obj_get_height(terminal_page);
+  lv_coord_t scroll_y = lv_obj_get_scroll_y(terminal_page);
+  if (content_h <= view_h) return true;
+  return (scroll_y + view_h + threshold) >= content_h;
 }
 
 void terminal_view_hardwareinput_callback(InputEvent *event) {

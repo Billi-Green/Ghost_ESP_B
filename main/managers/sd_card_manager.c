@@ -110,6 +110,7 @@ static bool s_spi_bus_initialized = false;
 static int s_spi_host_id = -1;
 typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_type_t;
 static sd_mount_type_t s_mount_type = MOUNT_NONE;
+static TickType_t s_next_unmount_tick = 0;
 
 
 #ifdef CONFIG_IS_S3TWATCH
@@ -671,6 +672,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   }
   sd_card_manager.is_initialized = true;
   s_mount_type = MOUNT_SPI;
+  s_next_unmount_tick = xTaskGetTickCount() + pdMS_TO_TICKS(300);
   return ESP_OK;
 #else
   // For SDMMC, if not mounted try normal init path quickly
@@ -679,6 +681,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
 }
 
 void sd_card_unmount_after_flush(bool display_was_suspended) {
+  /* fuck it, unmount now so the display can safely resume without bus contention */
   if (sd_card_manager.is_initialized) {
     sd_card_unmount();
   }
