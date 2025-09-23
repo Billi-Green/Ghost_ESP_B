@@ -634,8 +634,12 @@ static void change_current_row(bool increment)
 
     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
     if (!sel) return;
-
-    int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+    void *udata = lv_obj_get_user_data(sel);
+    if (udata == (void *)"__BACK_OPTION__") {
+        // back isn't a setting
+        return;
+    }
+    int setting_idx = (int)(intptr_t)udata;
     change_setting_value(setting_idx, increment);
 }
 
@@ -777,13 +781,18 @@ void handle_hardware_button_press_options(InputEvent *event) {
                         if (current_settings_category < 0) {
                             switch_to_settings_category(i);
                         } else {
-                            // leaf setting: change value
+                            // leaf setting or back row
                             int center_x = (btn_area.x1 + btn_area.x2) / 2;
                             bool increment = data->point.x >= center_x;
                             lv_obj_t *sel = lv_obj_get_child(menu_container, i);
                             if (sel) {
-                                int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
-                                change_setting_value(setting_idx, increment);
+                                void *udata = lv_obj_get_user_data(sel);
+                                if (udata == (void *)"__BACK_OPTION__") {
+                                    back_event_cb(NULL);
+                                } else {
+                                    int setting_idx = (int)(intptr_t)udata;
+                                    change_setting_value(setting_idx, increment);
+                                }
                             }
                         }
                     } else {
@@ -810,11 +819,16 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     // Enter settings category
                     switch_to_settings_category(selected_item_index);
                 } else { // current_settings_category >= 0
-                    // Change setting value
+                    // Change setting value or handle back
                     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
                     if (sel) {
-                        int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
-                        change_setting_value(setting_idx, true);
+                        void *udata = lv_obj_get_user_data(sel);
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else {
+                            int setting_idx = (int)(intptr_t)udata;
+                            change_setting_value(setting_idx, true);
+                        }
                     }
                 }
             } else {
@@ -884,8 +898,16 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     // We're at the top level ("Display", "Config", ...) -> open submenu
                     switch_to_settings_category(selected_item_index);
                 } else { // current_settings_category >= 0
-                    // Inside a submenu -> cycle the value
-                    change_current_row(true);
+                    // Inside a submenu -> back row goes back, else cycle the value
+                    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                    if (sel) {
+                        void *udata = lv_obj_get_user_data(sel);
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else {
+                            change_current_row(true);
+                        }
+                    }
                 }
             } else {
                 lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
@@ -1563,6 +1585,11 @@ display_manager_switch_view(&terminal_view);
 
 void handle_option_directly(const char *Selected_Option) {
     if (is_settings_mode) {
+        if (Selected_Option == (const char *)"__BACK_OPTION__") {
+            // back is navigation, not a setting
+            back_event_cb(NULL);
+            return;
+        }
         int setting_index = (int)(intptr_t)Selected_Option;
         change_setting_value(setting_index, true);
         return;
