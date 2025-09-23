@@ -13,8 +13,13 @@ file(GLOB_RECURSE axs15231b_sources "${CMAKE_SOURCE_DIR}/components/axs15231b/*.
 list(APPEND app_sources ${axs15231b_sources} ${image_sources})
 
 
+set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp-idf-pn532 esp_timer io_manager)
 
-set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp-idf-pn532)
+# Optionally add extra include directories
+set(extra_includes "")
+if(CONFIG_USE_IO_EXPANDER)
+    list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/io_manager")
+endif()
 
 
 set(sources ${app_sources})
@@ -33,6 +38,11 @@ if("${IDF_TARGET}" STREQUAL "esp32s3")
     endif()
 endif()
 
+# Only pull in IO expander manager when enabled so headers are exported (all targets)
+if(CONFIG_USE_IO_EXPANDER)
+    list(APPEND required_components io_manager)
+endif()
+
 # Add IEEE 802.15.4 component for Zigbee capture on ESP32-C5/C6
 if("${IDF_TARGET}" STREQUAL "esp32c5" OR "${IDF_TARGET}" STREQUAL "esp32c6")
     list(APPEND required_components ieee802154)
@@ -42,14 +52,14 @@ endif()
 
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
-                           INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include"
+                           INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
                            REQUIRES ${required_components}
                            EMBED_TXTFILES "mf_classic_dict.nfc")
     # Signal to C code that the dictionary is embedded so it can reference linker symbols safely
     target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_MFC_DICT_EMBEDDED=1)
 else()
     idf_component_register(SRCS ${sources}
-                           INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include"
+                           INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
                            REQUIRES ${required_components})
 endif()
 
