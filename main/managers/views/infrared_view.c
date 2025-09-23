@@ -1003,8 +1003,8 @@ void infrared_view_create(void) {
     num_ir_items++; // account for learn remote button
     num_ir_items++; // account for easy learn button
 #endif
-#ifdef CONFIG_USE_ENCODER
-    num_ir_items++; // account for encoder back button
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+    num_ir_items++; // account for back button added for encoder/joystick navigation
 #endif
     selected_ir_index = 0;
     if (num_ir_items > 0) ir_select_item(0);
@@ -1418,7 +1418,7 @@ void infrared_view_input_cb(InputEvent *event) {
             ESP_LOGI(TAG, "joystick down pressed, selecting next item");
             ir_select_item(selected_ir_index + 1);
         } else if(idx == 1) {
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             // Check if the selected item is the Back option
             lv_obj_t *selected_obj = lv_obj_get_child(list, selected_ir_index);
             if (selected_obj && lv_obj_get_user_data(selected_obj) == IR_BACK_OPTION_MAGIC_STR) {
@@ -1438,11 +1438,14 @@ void infrared_view_input_cb(InputEvent *event) {
                 } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
                     ESP_LOGI(TAG, "joystick enter pressed on Learn Remote, starting IR learning");
                     learn_remote_event_cb(NULL);
+                } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
+                    ESP_LOGI(TAG, "joystick enter pressed on Easy Learn toggle");
+                    easy_learn_toggle_cb(NULL);
 #endif
                 } else {
                     int file_idx = selected_ir_index - ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0)
 #ifdef CONFIG_HAS_INFRARED_RX
-                        + 1
+                        + 2  // Account for both Learn Remote and Easy Learn buttons
 #endif
                     );
                     ESP_LOGI(TAG, "joystick enter pressed, opening selected file at index %d", file_idx);
@@ -1490,7 +1493,7 @@ void infrared_view_input_cb(InputEvent *event) {
             ir_select_item(selected_ir_index + 1);
         } else if (keyValue == 13) {
             ESP_LOGI(TAG, "Keyboard Enter button pressed\n");
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             // Check if the selected item is the Back option
             lv_obj_t *selected_obj = lv_obj_get_child(list, selected_ir_index);
             if (selected_obj && lv_obj_get_user_data(selected_obj) == IR_BACK_OPTION_MAGIC_STR) {
@@ -1709,7 +1712,10 @@ static void file_event_open(int idx) {
             }
             lv_obj_add_event_cb(btn, command_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
         }
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+        add_encoder_back_btn();
+#endif
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         add_encoder_back_btn();
 #endif
         ir_select_item(0);
@@ -1814,7 +1820,7 @@ static void file_event_open(int idx) {
     // Update item count to include management options
     num_ir_items = signal_count + 3;  // 3 management options
     
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
 #endif
     ir_select_item(0);
@@ -2004,15 +2010,30 @@ static void create_unified_learning_popup(learning_popup_type_t type, learning_p
     lv_obj_set_style_border_width(popup, 2, 0);
     lv_obj_set_style_radius(popup, 10, 0);
 
+    // compute responsive button sizes/positions to avoid overlap on small screens
+    lv_coord_t pw = lv_obj_get_width(popup);
+    lv_coord_t edge = 8;
+    lv_coord_t spacing = 24;
+
     if (config->has_skip_button) {
-        cancel_btn = popup_add_styled_button(popup, "Cancel", 80, 30, LV_ALIGN_BOTTOM_LEFT, 20, -10, NULL, config->cancel_cb, NULL);
-        skip_btn = popup_add_styled_button(popup, "Skip", 80, 30, LV_ALIGN_BOTTOM_RIGHT, -20, -10, NULL, config->skip_cb, NULL);
+        lv_coord_t pair_w = pw - (2 * edge) - spacing;
+        if (pair_w < 0) pair_w = 0;
+        lv_coord_t btn_w = pair_w / 2;
+        if (btn_w < 60) btn_w = 60;
+        lv_coord_t left_x = edge + (btn_w / 2);
+        lv_coord_t right_x = -(edge + (btn_w / 2));
+
+        cancel_btn = popup_add_styled_button(popup, "Cancel", btn_w, 30, LV_ALIGN_BOTTOM_LEFT, left_x, -10, NULL, config->cancel_cb, NULL);
+        skip_btn = popup_add_styled_button(popup, "Skip", btn_w, 30, LV_ALIGN_BOTTOM_RIGHT, right_x, -10, NULL, config->skip_cb, NULL);
         if (type == LEARNING_POPUP_EASY_LEARN) {
             easy_learn_cancel_btn = cancel_btn;
             easy_learn_skip_btn = skip_btn;
         }
     } else {
-        cancel_btn = popup_add_styled_button(popup, "Cancel", 80, 30, LV_ALIGN_BOTTOM_MID, 0, -10, NULL, config->cancel_cb, NULL);
+        lv_coord_t btn_w = pw - (2 * edge);
+        if (btn_w < 80) btn_w = 80;
+        if (btn_w > 160) btn_w = 160;
+        cancel_btn = popup_add_styled_button(popup, "Cancel", btn_w, 30, LV_ALIGN_BOTTOM_MID, 0, -10, NULL, config->cancel_cb, NULL);
         if (type == LEARNING_POPUP_STANDARD) {
             learning_cancel_btn = cancel_btn;
         }
@@ -2022,6 +2043,9 @@ static void create_unified_learning_popup(learning_popup_type_t type, learning_p
     (void)title_label;
 
     instruction_label = popup_create_body_label(popup, config->instruction, config->width - 20, true, &lv_font_montserrat_14, 60);
+    // center instruction text horizontally for both modes
+    lv_obj_set_style_text_align(instruction_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(instruction_label, LV_ALIGN_TOP_MID, 0, 60);
     if (type == LEARNING_POPUP_EASY_LEARN) {
         easy_learn_instruction_label = instruction_label;
         lv_obj_align(instruction_label, LV_ALIGN_CENTER, 0, 0);
@@ -2031,16 +2055,46 @@ static void create_unified_learning_popup(learning_popup_type_t type, learning_p
 }
 
 static void create_learning_popup(void) {
+    // compute responsive geometry from actual screen size; ensure it never exceeds viewport
+    lv_coord_t scr_w = LV_HOR_RES;
+    lv_coord_t scr_h = LV_VER_RES;
+    lv_coord_t margin = 10;
+    lv_coord_t popup_w;
+    if (scr_w <= 240) {
+        // 240x320 devices: match decoded popup convention (screen - 20)
+        popup_w = scr_w - 20; // 220 on 240-wide
+    } else {
+        // wider devices (e.g., 320x170): match decoded popup width logic
+        lv_coord_t base_w = scr_w - 20;
+        if (base_w > 340) base_w = 340;
+        if (base_w < 180) base_w = scr_w - 10;
+        popup_w = base_w; // 300 on 320-wide
+    }
+    // match decoded popup height behavior on short displays (e.g., 320x170)
+    lv_coord_t popup_h;
+    lv_coord_t max_h = scr_h - (2 * margin);
+    if (scr_h <= 200) {
+        // same logic as create_signal_preview_popup: base 160, clamp to scr_h - 30 on very short screens
+        popup_h = 160;
+        if (scr_h < 200) popup_h = scr_h - 30;
+        if (popup_h < 120) popup_h = 120;
+    } else {
+        // keep original for 240x320
+        popup_h = 150;
+        if (popup_h > max_h) popup_h = max_h;
+        if (popup_h < 110) popup_h = 110;
+    }
+
     learning_popup_config_t config = {
         .title = "Learning IR Signal",
         .instruction = "Press a button on your remote...",
-        .width = 300,
-        .height = 150,
+        .width = popup_w,
+        .height = popup_h,
         .has_skip_button = false,
         .cancel_cb = learning_cancel_cb,
         .skip_cb = NULL
     };
-    
+
     create_unified_learning_popup(LEARNING_POPUP_STANDARD, &config);
 }
 
@@ -2148,7 +2202,10 @@ static void universals_event_cb(lv_event_t *e) {
     }
     selected_ir_index = 0;
     num_ir_items = ir_file_count;
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+    add_encoder_back_btn();
+#endif
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
 #endif
     if (ir_file_count > 0) ir_select_item(0);
@@ -2722,8 +2779,16 @@ void create_signal_preview_popup(void)
         popup_style_initialized = true;
     }
     
-    // Create popup container with compact sizing for landscape displays
-    signal_preview_popup = popup_create_container(lv_scr_act(), LV_HOR_RES - 30, 160);
+    // Create popup container responsively (works for both landscape and vertical)
+    lv_coord_t scr_w = LV_HOR_RES;
+    lv_coord_t scr_h = LV_VER_RES;
+    lv_coord_t base_w = scr_w - 20; // small horizontal margin
+    if (base_w > 340) base_w = 340; // cap to avoid overly wide on large screens
+    if (base_w < 180) base_w = scr_w - 10; // very narrow screens
+    lv_coord_t base_h = 160;
+    if (scr_h < 200) base_h = scr_h - 30; // keep small margin on very short displays
+    if (base_h < 120) base_h = 120;
+    signal_preview_popup = popup_create_container(lv_scr_act(), base_w, base_h);
     lv_obj_center(signal_preview_popup);
     lv_obj_add_style(signal_preview_popup, &popup_style, 0);
     
@@ -2733,9 +2798,19 @@ void create_signal_preview_popup(void)
     lv_obj_set_style_pad_all(signal_preview_popup, 8, 0);
     
     // Create buttons first to ensure proper z-order (styled helper)
-    // use same button size as learning popup (80x30) to keep consistent UI
-    save_btn = popup_add_styled_button(signal_preview_popup, "Save", 80, 30, LV_ALIGN_BOTTOM_LEFT, 35, -5, NULL, signal_preview_save_cb, NULL);
-    cancel_btn = popup_add_styled_button(signal_preview_popup, "Cancel", 80, 30, LV_ALIGN_BOTTOM_RIGHT, -35, -5, NULL, signal_preview_cancel_cb, NULL);
+    // compute responsive widths/offsets to prevent overlap and increase inner gap
+    lv_coord_t pw_btn = lv_obj_get_width(signal_preview_popup);
+    lv_coord_t edge_btn = 8;
+    lv_coord_t spacing_btn = 24;
+    lv_coord_t pair_w_btn = pw_btn - (2 * edge_btn) - spacing_btn;
+    if (pair_w_btn < 0) pair_w_btn = 0;
+    lv_coord_t btn_w = pair_w_btn / 2;
+    if (btn_w < 60) btn_w = 60;
+    lv_coord_t left_x = edge_btn + (btn_w / 2);
+    lv_coord_t right_x = -(edge_btn + (btn_w / 2));
+
+    save_btn = popup_add_styled_button(signal_preview_popup, "Save", btn_w, 30, LV_ALIGN_BOTTOM_LEFT, left_x, -5, NULL, signal_preview_save_cb, NULL);
+    cancel_btn = popup_add_styled_button(signal_preview_popup, "Cancel", btn_w, 30, LV_ALIGN_BOTTOM_RIGHT, right_x, -5, NULL, signal_preview_cancel_cb, NULL);
     
     // Title
     lv_obj_t *title = popup_create_title_label(signal_preview_popup, "IR Signal Decoded", &lv_font_montserrat_16, 10);
@@ -2761,6 +2836,10 @@ void create_signal_preview_popup(void)
     lv_obj_set_style_text_color(protocol_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_color(address_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_color(command_label, lv_color_hex(0xFFFFFF), 0);
+    // center-align body labels to look better on narrow displays
+    lv_obj_set_style_text_align(protocol_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(address_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(command_label, LV_TEXT_ALIGN_CENTER, 0);
     
     // Raw signal info (use popup helper for consistent layout)
     lv_coord_t popup_w2 = lv_obj_get_width(signal_preview_popup);
@@ -3341,42 +3420,11 @@ static void learn_remote_event_cb(lv_event_t *e) {
         // Create easy learn popup
         create_easy_learn_popup();
     } else {
-        // Create standard learning popup
-        learning_popup = lv_obj_create(lv_scr_act());
-        lv_obj_set_size(learning_popup, 300, 150);
-        lv_obj_center(learning_popup);
-        lv_obj_set_style_bg_color(learning_popup, lv_color_hex(0x2E2E2E), 0);
-        lv_obj_set_style_border_color(learning_popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(learning_popup, 2, 0);
-    lv_obj_set_style_radius(learning_popup, 10, 0);
-    
-    // Create cancel button first to ensure proper z-order
-    learning_cancel_btn = lv_btn_create(learning_popup);
-    lv_obj_set_size(learning_cancel_btn, 80, 30);
-    lv_obj_align(learning_cancel_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0x555555), 0);
-    lv_obj_t *cancel_label = lv_label_create(learning_cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_center(cancel_label);
-    
-    // Add cancel button callback
-    lv_obj_add_event_cb(learning_cancel_btn, learning_cancel_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t *title_label = lv_label_create(learning_popup);
-    lv_label_set_text(title_label, "Learning IR Signal");
-    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 20);
-    
-    lv_obj_t *instruction_label = lv_label_create(learning_popup);
-    lv_label_set_text(instruction_label, "Press a button on your remote...");
-    lv_obj_set_style_text_font(instruction_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(instruction_label, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_align(instruction_label, LV_ALIGN_CENTER, 0, 0);
-    
-    // Start IR learning task
-    ir_learning_cancel = false;
-    xTaskCreate(ir_learning_task, "ir_learning", 4096, NULL, 5, &ir_learning_task_handle);
+        // Use unified responsive popup for standard flow
+        create_learning_popup();
+        // Start IR learning task
+        ir_learning_cancel = false;
+        xTaskCreate(ir_learning_task, "ir_learning", 4096, NULL, 5, &ir_learning_task_handle);
     }
 }
 #endif
