@@ -1159,17 +1159,15 @@ void infrared_view_create(void) {
     lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
 #endif
 
-#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-    add_encoder_back_btn();
-#endif
-
-    // set num_ir_items after all buttons are added (excluding back button)
     num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
 #ifdef CONFIG_HAS_INFRARED_RX
     num_ir_items++; // account for learn remote button
     num_ir_items++; // account for easy learn button
 #endif
-    // do not include the encoder/joystick back button in num_ir_items; it is handled via user_data
+
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+    add_encoder_back_btn();
+#endif
     selected_ir_index = 0;
     if (num_ir_items > 0) ir_select_item(0);
 
