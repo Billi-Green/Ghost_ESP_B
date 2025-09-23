@@ -696,7 +696,7 @@ void settings_save(const FSettings *settings) {
   
   if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
       // Rainbow: animated
-      xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1, &rgb_effect_task_handle);
+      xTaskCreate(rainbow_task, "Rainbow Task", 3072, &rgb_manager, 1, &rgb_effect_task_handle);
   } else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
       // Stealth: LEDs always off
       rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false); // Turn off all LEDs

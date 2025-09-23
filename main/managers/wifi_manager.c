@@ -53,7 +53,7 @@
 #define SCANSTA_MAX_WIFI_CHANNEL 13         // Scan channels 1-13
 
 #define MAX_DEVICES 255
-#define CHUNK_SIZE 8192
+#define CHUNK_SIZE 4096
 #define MDNS_NAME_BUF_LEN 65
 #define ARP_DELAY_MS 500
 #define MAX_PACKETS_PER_SECOND 500

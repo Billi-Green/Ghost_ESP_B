@@ -42,6 +42,7 @@
 - Flush PCAP header on open and close PCAP on generic stop command
 - Miscellaneous fixes and improvements
 - Use the build chip's maximum allowed RMT memory per channel instead of a hard-coded value for IR
+- Small memory saves
 
 
 #### Network & Comms

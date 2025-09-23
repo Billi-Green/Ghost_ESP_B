@@ -1618,7 +1618,7 @@ void handle_rgb_mode(int argc, char **argv) {
             glog("RGB not initialized\n");
             return;
         }
-        xTaskCreate(rainbow_task, "rainbow_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        xTaskCreate(rainbow_task, "rainbow_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = true;
         glog("Rainbow mode activated\n");
     } else if (strcasecmp(argv[1], "police") == 0) {
@@ -1626,7 +1626,7 @@ void handle_rgb_mode(int argc, char **argv) {
             glog("RGB not initialized\n");
             return;
         }
-        xTaskCreate(police_task, "police_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        xTaskCreate(police_task, "police_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = false;
         glog("Police mode activated\n");
     } else if (strcasecmp(argv[1], "strobe") == 0) {
@@ -1636,7 +1636,7 @@ void handle_rgb_mode(int argc, char **argv) {
             glog("RGB not initialized\n");
             return;
         }
-        xTaskCreate(strobe_task, "strobe_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        xTaskCreate(strobe_task, "strobe_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = false;
         glog("Strobe mode activated\n");
     } else if (strcasecmp(argv[1], "off") == 0) {
