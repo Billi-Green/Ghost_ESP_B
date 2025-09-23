@@ -41,6 +41,11 @@ static const char *NVS_NAMESPACE = "sd_config";
 #endif
 #include "managers/display_manager.h"
 static bool display_spi_suspend_for_sd(void) {
+  #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") != 0) {
+    return false;
+  }
+  #endif
   /* pause lvgl refresh to stop flush() while we steal the bus */
   lv_disp_t *disp = lv_disp_get_default();
   if (disp) {
@@ -59,6 +64,11 @@ static bool display_spi_suspend_for_sd(void) {
   return true;
 }
 static void display_spi_resume_after_sd(void) {
+  #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") != 0) {
+    return;
+  }
+  #endif
   (void)lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
                              SPI_BUS_MAX_TRANSFER_SZ, 1, DISP_SPI_IO2, DISP_SPI_IO3);
   disp_spi_add_device(TFT_SPI_HOST);
@@ -584,6 +594,97 @@ esp_err_t sd_card_init(void) {
   sd_card_setup_directory_structure();
 
   return ESP_OK;
+}
+
+// mount sd just-in-time for short io, then unmount after
+esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
+  if (display_was_suspended) *display_was_suspended = false;
+  // If already mounted, nothing to do
+  if (sd_card_manager.is_initialized) {
+    return ESP_OK;
+  }
+
+#if defined(CONFIG_USING_SPI)
+  bool gating_template = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#endif
+  if (gating_template) {
+    if (display_was_suspended) *display_was_suspended = display_spi_suspend_for_sd();
+  }
+  // Minimal SPI mount path for flush: reuse sd_card_init SPI branch logic
+  sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+  host.slot = SPI2_HOST;
+#endif
+
+  spi_bus_config_t bus_config; memset(&bus_config, 0, sizeof(spi_bus_config_t));
+  bus_config.miso_io_num = sd_card_manager.spi_miso_pin;
+  bus_config.mosi_io_num = sd_card_manager.spi_mosi_pin;
+  bus_config.sclk_io_num = sd_card_manager.spi_clk_pin;
+
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  int dmabus = 2;
+#else
+  int dmabus = SPI_DMA_CH_AUTO;
+#endif
+
+  if (!s_spi_bus_initialized) {
+    int host_id =
+#if defined(CONFIG_IDF_TARGET_ESP32)
+      SPI3_HOST;
+#else
+      SPI2_HOST;
+#endif
+    esp_err_t bus_ret = spi_bus_initialize(host_id, &bus_config, dmabus);
+    if (bus_ret != ESP_OK && bus_ret != ESP_ERR_INVALID_STATE) {
+      if (display_was_suspended && *display_was_suspended) display_spi_resume_after_sd();
+      return bus_ret;
+    }
+    s_spi_bus_initialized = true;
+    s_spi_host_id = host_id;
+  }
+
+  esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+      .format_if_mount_failed = false,
+      .max_files = 3,
+      .allocation_unit_size = 16 * 1024};
+
+  sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+  slot_config.gpio_cs = sd_card_manager.spi_cs_pin;
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  slot_config.host_id = SPI3_HOST;
+#else
+  slot_config.host_id = SPI2_HOST;
+#endif
+
+  esp_err_t ret = esp_vfs_fat_sdspi_mount("/mnt", &host, &slot_config, &mount_config,
+                                &sd_card_manager.card);
+  if (ret != ESP_OK) {
+    if (s_spi_bus_initialized && s_spi_host_id >= 0) {
+      spi_bus_free(s_spi_host_id);
+      s_spi_bus_initialized = false;
+      s_spi_host_id = -1;
+    }
+    if (display_was_suspended && *display_was_suspended) display_spi_resume_after_sd();
+    return ret;
+  }
+  sd_card_manager.is_initialized = true;
+  s_mount_type = MOUNT_SPI;
+  return ESP_OK;
+#else
+  // For SDMMC, if not mounted try normal init path quickly
+  return sd_card_init();
+#endif
+}
+
+void sd_card_unmount_after_flush(bool display_was_suspended) {
+  if (sd_card_manager.is_initialized) {
+    sd_card_unmount();
+  }
+  if (display_was_suspended) {
+    display_spi_resume_after_sd();
+  }
 }
 
 void sd_card_unmount(void) {
