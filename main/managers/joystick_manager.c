@@ -73,8 +73,8 @@ bool joystick_get_button_state(joystick_t *joystick) {
     esp_err_t ret = io_manager_get_button_states(&states);
     if (ret == ESP_OK) {
       // Debug: Log which button is being checked
-      ESP_LOGI(TAG, "Checking button %d - up: %d, down: %d, select: %d, left: %d, right: %d", 
-               joystick->pin, states.up, states.down, states.select, states.left, states.right);
+/*       ESP_LOGI(TAG, "Checking button %d - up: %d, down: %d, select: %d, left: %d, right: %d", 
+               joystick->pin, states.up, states.down, states.select, states.left, states.right); */
       
       switch (joystick->pin) {
         case 0: return states.up;     // P00: Up
