@@ -84,7 +84,7 @@ esp_err_t pn532_init_io(pn532_io_handle_t io_handle)
         .scl_io_num = driver_config->scl,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
+        .master.clk_speed = 100000,
         .clk_flags = 0,
     };
 
