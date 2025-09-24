@@ -1,5 +1,6 @@
 #include "gui/popup.h"
 #include "lvgl.h"
+#include "esp_log.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -20,6 +21,10 @@ struct popup_t {
 };
 
 static const lv_coord_t DEFAULT_MARGIN = 6;
+static const char *TAG = "PopupLayout";
+
+static lv_coord_t clamp_button_width(lv_coord_t desired, lv_coord_t min_w, lv_coord_t max_w);
+static lv_coord_t popup_measure_button_text_width(lv_obj_t *btn, lv_coord_t padding, lv_coord_t fallback);
 
 popup_t *popup_create(lv_obj_t *parent, int width, int height) {
 	if (!parent) parent = lv_scr_act();
@@ -61,6 +66,35 @@ popup_t *popup_create(lv_obj_t *parent, int width, int height) {
 	return p;
 }
 
+static lv_coord_t clamp_button_width(lv_coord_t desired, lv_coord_t min_w, lv_coord_t max_w) {
+    if (desired < min_w) return min_w;
+    if (desired > max_w) return max_w;
+    return desired;
+}
+
+static lv_coord_t popup_measure_button_text_width(lv_obj_t *btn, lv_coord_t padding, lv_coord_t fallback) {
+    if (!btn || !lv_obj_is_valid(btn)) return fallback;
+
+    lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+    if (!lbl || !lv_obj_is_valid(lbl)) return fallback;
+
+    const char *txt = lv_label_get_text(lbl);
+    if (!txt) txt = "";
+
+    const lv_font_t *font = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+    if (!font) font = LV_FONT_DEFAULT;
+
+    lv_coord_t letter_space = lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN);
+    lv_coord_t line_space = lv_obj_get_style_text_line_space(lbl, LV_PART_MAIN);
+
+    lv_point_t txt_size;
+    lv_txt_get_size(&txt_size, txt, font, letter_space, line_space, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+
+    lv_coord_t width = txt_size.x + padding;
+    if (width < fallback) width = fallback;
+    return width;
+}
+
 lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height) {
     if (!parent) parent = lv_scr_act();
     lv_obj_t *container = lv_obj_create(parent);
@@ -82,9 +116,24 @@ lv_obj_t *popup_add_styled_button(lv_obj_t *container, const char *label_text, i
     if (!container) return NULL;
     lv_obj_t *btn = lv_btn_create(container);
     lv_obj_set_size(btn, btn_w, btn_h);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_color_t bg = lv_color_hex(0x444444);
+    lv_color_t border = lv_color_hex(0x666666);
+
+    lv_obj_set_style_bg_color(btn, bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(btn, bg, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_color(btn, bg, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(btn, border, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(btn, border, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(btn, border, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+    lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+    lv_obj_set_style_transform_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_transform_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+    lv_obj_set_style_transform_height(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_transform_height(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
     lv_obj_align(btn, align, x_ofs, y_ofs);
     if (cb) lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
     lv_obj_t *lbl = lv_label_create(btn);
@@ -246,5 +295,240 @@ void popup_layout_buttons_row(
         // Ensure label (first child) is centered within button
         lv_obj_t *lbl = lv_obj_get_child(b, 0);
         if (lbl) lv_obj_center(lbl);
+    }
+}
+
+static bool popup_is_small_screen(lv_obj_t *popup) {
+    if (!popup) return false;
+    lv_coord_t popup_w = lv_obj_get_width(popup);
+    if (popup_w > 0 && popup_w <= 240) return true;
+    lv_disp_t *disp = lv_disp_get_default();
+    if (!disp) return false;
+    return lv_disp_get_hor_res(disp) <= 240;
+}
+
+static void popup_apply_button_label_center(lv_obj_t *btn) {
+    if (!btn || !lv_obj_is_valid(btn)) return;
+    lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+    if (lbl) lv_obj_center(lbl);
+}
+
+void popup_layout_buttons_responsive(
+    lv_obj_t *popup,
+    lv_obj_t **btns,
+    int count,
+    lv_coord_t yoff,
+    const PopupButtonLayoutConfig *config
+) {
+    if (!popup || !btns || count <= 0) return;
+
+    bool small = popup_is_small_screen(popup);
+    lv_coord_t default_gap = small ? 8 : 14;
+    lv_coord_t default_min_w = 0;
+    lv_coord_t default_max_w = small ? 120 : 150;
+    lv_coord_t default_min_threshold = 0;
+
+    lv_coord_t gap = (config && config->gap > 0) ? config->gap : default_gap;
+    lv_coord_t min_w = (config && config->min_w > 0) ? config->min_w : default_min_w;
+    lv_coord_t max_w = (config && config->max_w > 0) ? config->max_w : default_max_w;
+    lv_coord_t min_threshold = (config && config->min_threshold > 0) ? config->min_threshold : default_min_threshold;
+
+    lv_coord_t popup_w = lv_obj_get_width(popup);
+    if (count == 3) {
+        ESP_LOGI(TAG, "pre-layout popup=%p popup_w=%d", (void*)popup, popup_w);
+    }
+    lv_coord_t left_pad = lv_obj_get_style_pad_left(popup, LV_PART_MAIN);
+    lv_coord_t right_pad = lv_obj_get_style_pad_right(popup, LV_PART_MAIN);
+    if (left_pad == 0 && right_pad == 0) {
+        left_pad = 10;
+        right_pad = 10;
+    }
+    lv_coord_t available_w = popup_w - left_pad - right_pad;
+    if (available_w <= 0) available_w = popup_w;
+
+    if (available_w <= 0) {
+        lv_obj_update_layout(popup);
+        popup_w = lv_obj_get_width(popup);
+        available_w = popup_w - left_pad - right_pad;
+        if (available_w <= 0) available_w = popup_w;
+        if (count == 3) {
+            ESP_LOGI(TAG, "post-update popup=%p popup_w=%d available=%d", (void*)popup, popup_w, available_w);
+        }
+        if (available_w <= 0) {
+            ESP_LOGI(TAG, "layout popup=%p count=%d postponed (available_w=%d)", (void*)popup, count, available_w);
+            for (int i = 0; i < count; ++i) {
+                popup_apply_button_label_center(btns[i]);
+            }
+            return;
+        }
+    }
+
+    if (count == 1) {
+        lv_obj_t *btn = btns[0];
+        if (btn && lv_obj_is_valid(btn)) {
+            lv_coord_t btn_h = lv_obj_get_height(btn);
+            if (btn_h <= 0) btn_h = small ? 30 : 34;
+            const lv_coord_t single_label_padding = 16;
+            lv_coord_t fallback_min = (min_threshold > 0) ? min_threshold : 32;
+            lv_coord_t w = popup_measure_button_text_width(btn, single_label_padding, fallback_min);
+            if (min_w > 0 && w < min_w) w = min_w;
+            if (w > max_w) w = max_w;
+            lv_obj_set_size(btn, w, btn_h);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_FOCUSED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_PRESSED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_EDITED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_EDITED | LV_STATE_FOCUSED);
+            lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, yoff);
+            popup_apply_button_label_center(btn);
+        }
+        return;
+    }
+
+    const lv_coord_t label_padding = 16;
+
+    lv_coord_t btn_min_widths[count];
+    lv_coord_t btn_widths[count];
+    lv_coord_t min_total = 0;
+
+    for (int i = 0; i < count; ++i) {
+        lv_obj_t *btn = btns[i];
+        lv_coord_t fallback_min = (min_threshold > 0) ? min_threshold : 32;
+        lv_coord_t min_req = popup_measure_button_text_width(btn, label_padding, fallback_min);
+        if (min_threshold > 0 && min_req < min_threshold) min_req = min_threshold;
+        if (count == 3 && btn && lv_obj_is_valid(btn)) {
+            lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+            const char *txt = (lbl && lv_obj_is_valid(lbl)) ? lv_label_get_text(lbl) : "";
+            ESP_LOGI(TAG, "btn_min check[%d]=%p text='%s' width=%d", i, (void*)btn, txt ? txt : "", min_req);
+        }
+        if (min_req > max_w) min_req = max_w;
+        btn_min_widths[i] = min_req;
+        min_total += min_req;
+    }
+
+    lv_coord_t total_w = 0;
+    for (int i = 0; i < count; ++i) {
+        lv_coord_t w = btn_min_widths[i];
+        if (min_w > 0 && w < min_w) w = min_w;
+        if (w > max_w) w = max_w;
+        btn_widths[i] = w;
+        total_w += w;
+    }
+
+    total_w += gap * (count - 1);
+
+    bool use_vertical = false;
+
+    if (total_w > available_w) {
+        lv_coord_t overflow = total_w - available_w;
+        while (overflow > 0) {
+            bool reduced = false;
+            for (int i = 0; i < count && overflow > 0; ++i) {
+                lv_coord_t min_allowed = btn_min_widths[i];
+                if (btn_widths[i] > min_allowed) {
+                    lv_coord_t delta = btn_widths[i] - min_allowed;
+                    lv_coord_t step = (delta > overflow) ? overflow : delta;
+                    btn_widths[i] -= step;
+                    overflow -= step;
+                    reduced = true;
+                }
+            }
+            if (!reduced) break;
+        }
+        total_w = 0;
+        for (int i = 0; i < count; ++i) total_w += btn_widths[i];
+        total_w += gap * (count - 1);
+    }
+
+    if (total_w > available_w) {
+        lv_coord_t min_gap_total = min_total + gap * (count - 1);
+        if (min_gap_total > available_w && gap > 0 && count > 1) {
+            lv_coord_t min_possible_gap = gap;
+            lv_coord_t required_reduction = min_gap_total - available_w;
+            lv_coord_t gap_reduction = (required_reduction + (count - 2)) / (count - 1);
+            if (gap_reduction > gap) gap_reduction = gap;
+            min_possible_gap = gap - gap_reduction;
+            if (min_possible_gap < 2) min_possible_gap = 2;
+            gap = min_possible_gap;
+            total_w = 0;
+            for (int i = 0; i < count; ++i) total_w += btn_widths[i];
+            total_w += gap * (count - 1);
+        }
+
+        if (total_w > available_w) {
+            use_vertical = true;
+        }
+    }
+
+    lv_coord_t remaining_w = available_w - total_w;
+    // Keep horizontal layout as long as total width fits; do not stagger rows
+    // Only fall back to vertical if buttons cannot fit within available width
+    (void)remaining_w;
+
+    if (use_vertical) {
+        lv_coord_t vertical_gap = small ? 6 : 8;
+        lv_coord_t btn_h = 0;
+        lv_coord_t current_y = yoff;
+        for (int i = 0; i < count; ++i) {
+            lv_obj_t *btn = btns[i];
+            if (!btn || !lv_obj_is_valid(btn)) continue;
+            if (btn_h == 0) {
+                btn_h = lv_obj_get_height(btn);
+                if (btn_h <= 0) btn_h = small ? 30 : 34;
+            }
+            lv_coord_t w = btn_min_widths[i];
+            if (w < min_threshold) w = min_threshold;
+            if (w > max_w) w = max_w;
+            lv_obj_set_size(btn, w, btn_h);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_FOCUSED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_PRESSED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_EDITED);
+            lv_obj_set_style_width(btn, w, LV_PART_MAIN | LV_STATE_EDITED | LV_STATE_FOCUSED);
+            lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, current_y);
+            popup_apply_button_label_center(btn);
+            current_y -= (btn_h + vertical_gap);
+        }
+        if (count == 3) {
+            ESP_LOGI(TAG, "layout popup=%p count=%d vertical fallback avail=%d gap=%d", (void*)popup, count, available_w, gap);
+        }
+        return;
+    }
+
+    if (count == 3) {
+        ESP_LOGI(TAG, "layout popup=%p count=%d avail=%d total=%d gap=%d", (void*)popup, count, available_w, total_w, gap);
+        for (int i = 0; i < count; ++i) {
+            lv_obj_t *btn = btns[i];
+            ESP_LOGI(TAG, "btn_final[%d]=%p width=%d min=%d", i, (void*)btn, btn_widths[i], btn_min_widths[i]);
+        }
+    }
+
+    lv_coord_t start_x = left_pad;
+    if (available_w > total_w) start_x += (available_w - total_w) / 2;
+    if (start_x + total_w > popup_w) start_x = popup_w - total_w;
+    if (start_x < left_pad) start_x = left_pad;
+
+    lv_coord_t x = start_x;
+    lv_coord_t btn_h = 0;
+    for (int i = 0; i < count; ++i) {
+        lv_obj_t *btn = btns[i];
+        if (!btn || !lv_obj_is_valid(btn)) continue;
+        if (btn_h == 0) {
+            btn_h = lv_obj_get_height(btn);
+            if (btn_h <= 0) btn_h = small ? 30 : 34;
+        }
+        lv_coord_t current_w = btn_widths[i];
+        lv_obj_set_size(btn, current_w, btn_h);
+        lv_obj_set_style_width(btn, current_w, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_width(btn, current_w, LV_PART_MAIN | LV_STATE_FOCUSED);
+        lv_obj_set_style_width(btn, current_w, LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_width(btn, current_w, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+        lv_obj_set_style_width(btn, current_w, LV_PART_MAIN | LV_STATE_EDITED);
+        lv_obj_set_style_width(btn, current_w, LV_PART_MAIN | LV_STATE_EDITED | LV_STATE_FOCUSED);
+        lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, x, yoff);
+        x += current_w + gap;
+        popup_apply_button_label_center(btn);
     }
 }
