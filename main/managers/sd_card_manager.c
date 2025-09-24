@@ -649,7 +649,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
       .format_if_mount_failed = false,
       .max_files = 3,
-      .allocation_unit_size = 16 * 1024};
+      .allocation_unit_size = 4 * 1024};
 
   sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
   slot_config.gpio_cs = sd_card_manager.spi_cs_pin;
