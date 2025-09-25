@@ -61,6 +61,15 @@ static lv_style_t style_selected_item;
 static lv_style_t style_menu_label;
 static bool styles_initialized = false;
 
+// forward declarations for helpers used throughout this file
+static void init_styles(void);
+static lv_style_t *get_zebra_style(int idx);
+static const lv_font_t* get_menu_font(void);
+static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn);
+static void nfc_option_event_cb(lv_event_t *e);
+static void highlight_selected(void);
+static void nfc_view_input_cb(struct InputEvent *event);
+
 static lv_obj_t *root = NULL;
 static lv_obj_t *menu_container = NULL;
 static lv_obj_t *scan_btn = NULL;
@@ -141,7 +150,7 @@ static int keys_popup_selected = 0;
 static lv_obj_t *keys_btn_bar = NULL;
 
 // Match options_screen theme palettes for selected row color
-static const uint32_t theme_palettes[15][6] = {
+static const uint32_t theme_palettes[15][6] __attribute__((unused)) = {
     {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
     {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
     {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
