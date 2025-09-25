@@ -2,6 +2,7 @@
 #include "managers/ghost_esp_site.h"
 #include "managers/settings_manager.h"
 #include "core/esp_comm_manager.h"
+#include "sdkconfig.h"
 #include <cJSON.h>
 #include <core/serial_manager.h>
 #include <ctype.h>
@@ -71,6 +72,17 @@ static httpd_config_t server_config;
 static httpd_uri_t uri_handlers[20];
 static int handler_count = 0;
 static bool config_loaded = false;
+
+// Checks if the AP enabled key exists in NVS. Used to decide whether to apply a default override.
+static bool settings_ap_enabled_key_exists(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("storage", NVS_READONLY, &h);
+    if (err != ESP_OK) return false;
+    uint8_t val;
+    err = nvs_get_u8(h, "ap_enabled", &val);
+    nvs_close(h);
+    return (err == ESP_OK);
+}
 
 static esp_err_t scan_directory(const char *base_path, cJSON *json_array) {
     DIR *dir = opendir(base_path);
@@ -479,6 +491,16 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
 esp_err_t ap_manager_init(void) {
     esp_err_t ret;
     wifi_mode_t mode;
+
+    // Default override: For ESP32-C5 with build template "somethingsomething",
+    // default AP to OFF on first boot (when key not present in NVS)
+#if defined(CONFIG_IDF_TARGET_ESP32C5) && defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (!settings_ap_enabled_key_exists()) {
+            G_Settings.ap_enabled = false;
+        }
+    }
+#endif
 
     // --- Memory check before AP init ---
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
