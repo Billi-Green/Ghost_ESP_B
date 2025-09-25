@@ -505,10 +505,11 @@ void popup_layout_buttons_responsive(
         }
     }
 
-    lv_coord_t start_x = left_pad;
-    if (available_w > total_w) start_x += (available_w - total_w) / 2;
-    if (start_x + total_w > popup_w) start_x = popup_w - total_w;
-    if (start_x < left_pad) start_x = left_pad;
+    // Center within the content area (which already excludes padding)
+    lv_coord_t start_x = 0;
+    if (available_w > total_w) start_x = (available_w - total_w) / 2;
+    if (start_x + total_w > available_w) start_x = available_w - total_w;
+    if (start_x < 0) start_x = 0;
 
     lv_coord_t x = start_x;
     lv_coord_t btn_h = 0;

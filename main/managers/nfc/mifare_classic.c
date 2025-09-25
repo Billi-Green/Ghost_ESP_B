@@ -547,20 +547,48 @@ static void mfc_user_dict_ensure_loaded(void){
         ESP_LOGD("MFC", "User dict: using cached version (%d keys)", g_user_key_count);
         return;
     }
-    
+
+    bool mounted_here = false;
+    bool display_was_suspended = false;
+    bool needs_jit_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        needs_jit_mount = true;
+    }
+#endif
+    if (needs_jit_mount && !sd_card_manager.is_initialized) {
+        if (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK) {
+            mounted_here = true;
+        } else {
+            ESP_LOGW("MFC", "User dict: failed to mount storage; using empty dictionary this scan");
+            g_user_loaded = true;
+            g_user_dict_cached_for_scan = true;
+            return;
+        }
+    }
+
     // Clear existing cache
     if (g_user_keys) { free(g_user_keys); g_user_keys = NULL; }
     g_user_key_count = 0;
-    
+
     ESP_LOGI("MFC", "User dict: loading from SD card");
+    if (sd_card_manager.is_initialized) {
+        (void)sd_card_create_directory("/mnt/ghostesp/nfc");
+    }
+
     FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "r");
     if (!f) {
-        ESP_LOGW("MFC", "User dict: file not found, using empty dictionary");
+        ESP_LOGW("MFC", "User dict: file not found, creating empty dictionary");
+        if (sd_card_manager.is_initialized) {
+            FILE *cf = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "a");
+            if (cf) fclose(cf);
+        }
         g_user_loaded = true;
         g_user_dict_cached_for_scan = true;
+        if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
         return;
     }
-    
+
     char line[96]; uint8_t key[6];
     while (fgets(line, sizeof(line), f)){
         const char *ls = line; const char *le = line + strlen(line);
@@ -572,10 +600,12 @@ static void mfc_user_dict_ensure_loaded(void){
         }
     }
     fclose(f);
-    
+
     g_user_loaded = true;
     g_user_dict_cached_for_scan = true;
     ESP_LOGI("MFC", "User dict: loaded and cached %d keys for scan session", g_user_key_count);
+
+    if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
 }
 
 // Force reload user dictionary (for external changes detection)
@@ -591,23 +621,45 @@ static void mfc_user_dict_force_reload(void) {
 static void mfc_user_dict_append_unique(const uint8_t key[6]){
     mfc_user_dict_ensure_loaded();
     if (list_contains_u(g_user_keys, g_user_key_count, key)) return;
-    
+
+    bool mounted_here = false;
+    bool display_was_suspended = false;
+    bool needs_jit_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        needs_jit_mount = true;
+    }
+#endif
+    if (needs_jit_mount && !sd_card_manager.is_initialized) {
+        if (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK) {
+            mounted_here = true;
+        } else {
+            ESP_LOGW("MFC", "User dict: append skipped, failed to mount storage");
+            return;
+        }
+    }
+
     // Append to SD card file
-    sd_card_create_directory("/mnt/ghostesp/nfc");
+    if (sd_card_manager.is_initialized) {
+        sd_card_create_directory("/mnt/ghostesp/nfc");
+    }
     FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "a");
     if (!f) {
         ESP_LOGW("MFC", "User dict: failed to open file for append");
+        if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
         return;
     }
     fprintf(f, "%02X%02X%02X%02X%02X%02X\n", key[0],key[1],key[2],key[3],key[4],key[5]);
     fclose(f);
-    
+
     // Add to cached dictionary for this session
     if (!list_append_unique_u(&g_user_keys, &g_user_key_count, key)) {
         ESP_LOGW("MFC", "User dict: failed to add new key to cache (OOM?)");
     } else {
         ESP_LOGI("MFC", "User dict: added new key to cache (now %d keys)", g_user_key_count);
     }
+
+    if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
 }
 static void session_add_key(bool use_key_b, const uint8_t key[6]){
     if (use_key_b) list_append_unique_u(&g_sess_b_keys, &g_sess_b_count, key);

@@ -196,12 +196,27 @@ void infrared_rx_pause_for_tx(bool pause) {
 #ifdef CONFIG_HAS_INFRARED_RX
     if (pause) {
         if (rx_channel) {
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
             rmt_disable(rx_channel);
             rmt_del_channel(rx_channel);
             rx_channel = NULL;
-            ESP_LOGI(TAG, "paused RMT RX to free channel for TX");
+            ESP_LOGI(TAG, "released RMT RX channel for TX on C5");
+#else
+            rmt_disable(rx_channel);
+            ESP_LOGI(TAG, "paused RMT RX (disabled) for TX");
+#endif
         }
         return;
+    }
+    if (rx_channel) {
+        if (rmt_enable(rx_channel) == ESP_OK) {
+            ESP_LOGI(TAG, "resumed RMT RX after TX (re-enabled)");
+            return;
+        } else {
+            ESP_LOGW(TAG, "failed to re-enable RMT RX; recreating channel");
+            rmt_del_channel(rx_channel);
+            rx_channel = NULL;
+        }
     }
     if (!rx_channel) {
         rmt_rx_channel_config_t rx_config = {
@@ -225,7 +240,7 @@ void infrared_rx_pause_for_tx(bool pause) {
                 rmt_rx_event_callbacks_t cbs = { .on_recv_done = ir_rx_done_callback };
                 if (rmt_rx_register_event_callbacks(rx_channel, &cbs, ir_rx_queue) == ESP_OK) {
                     if (rmt_enable(rx_channel) == ESP_OK) {
-                        ESP_LOGI(TAG, "resumed RMT RX after TX");
+                        ESP_LOGI(TAG, "resumed RMT RX after TX (recreated)");
                         return;
                     }
                 }
@@ -530,7 +545,7 @@ static void append_signal_to_remote(const char *signal_name) {
     }
     if (ir_sd_queue) xQueueSend(ir_sd_queue, &job, 0);
     
-    ESP_LOGI(TAG, "Signal '%s' appended to remote file %s", signal_name, current_remote_path);
+    ESP_LOGI(TAG, "Queued append of signal '%s' to remote file %s", signal_name, current_remote_path);
     
     // Free timing data to prevent memory leaks
     if (learned_signal.payload.raw.timings) {
@@ -589,13 +604,148 @@ static void cleanup_transmit_popup(void *obj);
 static void cleanup_learning_popup(void *obj);
 static void universal_transmit_task(void *arg);
 
+static void clear_ir_file_paths(void) {
+    if (!ir_file_paths) {
+        return;
+    }
+    for (size_t i = 0; i < ir_file_count; i++) {
+        free(ir_file_paths[i]);
+    }
+    free(ir_file_paths);
+    ir_file_paths = NULL;
+    ir_file_count = 0;
+}
+
+static bool load_ir_file_list_from_dir(const char *dir) {
+    clear_ir_file_paths();
+
+    bool susp = false;
+    bool did = ir_sd_begin(&susp);
+
+    DIR *d = opendir(dir);
+    if (!d) {
+        ESP_LOGW(TAG, "Failed to open IR directory: %s", dir);
+        if (did) {
+            ir_sd_end(susp);
+        }
+        return false;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        const char *name = entry->d_name;
+        if (!name) {
+            continue;
+        }
+        if ((name[0] == '.') && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+            continue;
+        }
+
+        const char *ext = strrchr(name, '.');
+        if (!ext) {
+            continue;
+        }
+        if (!((ext[0] == '.') &&
+              (ext[1] == 'i' || ext[1] == 'I') &&
+              (ext[2] == 'r' || ext[2] == 'R') &&
+              ext[3] == '\0')) {
+            continue;
+        }
+
+        char *name_copy = strdup(name);
+        if (!name_copy) {
+            ESP_LOGE(TAG, "Failed to allocate IR filename copy");
+            continue;
+        }
+
+        char **new_paths = realloc(ir_file_paths, (ir_file_count + 1) * sizeof(*ir_file_paths));
+        if (!new_paths) {
+            ESP_LOGE(TAG, "Failed to grow IR file list");
+            free(name_copy);
+            continue;
+        }
+
+        ir_file_paths = new_paths;
+        ir_file_paths[ir_file_count] = name_copy;
+        ir_file_count++;
+    }
+
+    closedir(d);
+    if (did) {
+        ir_sd_end(susp);
+    }
+    return true;
+}
+
+static void rebuild_ir_file_list_ui(void) {
+    if (!list) {
+        return;
+    }
+
+    lv_obj_clean(list);
+    num_ir_items = ir_file_count;
+    selected_ir_index = 0;
+
+    for (size_t i = 0; i < ir_file_count; i++) {
+        lv_obj_t *btn = lv_list_add_btn(list, NULL, ir_file_paths[i]);
+        lv_obj_set_width(btn, LV_HOR_RES);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *label = lv_obj_get_child(btn, 0);
+        if (label) {
+            lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+        }
+        lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    }
+
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+    add_encoder_back_btn();
+#endif
+
+    if (ir_file_count > 0) {
+        ir_select_item(0);
+    }
+}
+
+static void refresh_ir_file_list(const char *dir) {
+    if (!list) {
+        return;
+    }
+
+    bool loaded = load_ir_file_list_from_dir(dir);
+    if (!loaded) {
+        lv_obj_clean(list);
+        num_ir_items = 0;
+        selected_ir_index = 0;
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+        add_encoder_back_btn();
+#endif
+        return;
+    }
+
+    rebuild_ir_file_list_ui();
+}
+
 // jit sd helpers for somethingsomething template
 static bool ir_sd_begin(bool *display_was_suspended)
 {
     if (display_was_suspended) *display_was_suspended = false;
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        return sd_card_mount_for_flush(display_was_suspended) == ESP_OK;
+        esp_err_t mount_err = sd_card_mount_for_flush(display_was_suspended);
+        if (mount_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to mount SD card for IR operation: %s", esp_err_to_name(mount_err));
+            return false;
+        }
+
+        esp_err_t dir_err = sd_card_setup_directory_structure();
+        if (dir_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to ensure SD directory structure: %s", esp_err_to_name(dir_err));
+        }
+        return true;
     }
 #endif
     return true;
@@ -625,7 +775,21 @@ static void ir_sd_worker_task(void *arg)
     for (;;) {
         IrIoJob_t job;
         if (xQueueReceive(ir_sd_queue, &job, portMAX_DELAY) != pdTRUE) continue;
-        bool susp = false; bool did = ir_sd_begin(&susp);
+
+        bool susp = false;
+        bool did = ir_sd_begin(&susp);
+        if (!did) {
+            ESP_LOGE(TAG, "IR SD worker: unable to mount SD card (op=%d, path=%s)", job.op, job.path);
+            if ((job.op == IR_IO_SAVE || job.op == IR_IO_APPEND) && job.timings) {
+                free(job.timings);
+            }
+            continue;
+        }
+
+        esp_err_t dir_err = sd_card_setup_directory_structure();
+        if (dir_err != ESP_OK) {
+            ESP_LOGW(TAG, "IR SD worker: directory setup failed: %s", esp_err_to_name(dir_err));
+        }
         switch (job.op) {
         case IR_IO_SAVE: {
             char filename[256];
@@ -664,6 +828,8 @@ static void ir_sd_worker_task(void *arg)
                     fprintf(f, "\n");
                 }
                 fclose(f);
+            } else {
+                ESP_LOGE(TAG, "Failed to open IR file for writing: %s (errno=%d)", filename, errno);
             }
             break;
         }
@@ -852,27 +1018,7 @@ static void back_event_cb(lv_event_t *e) {
         }
 
         // rebuild file list
-        lv_obj_clean(list);
-        num_ir_items = ir_file_count;
-        selected_ir_index = 0;
-        for (size_t i = 0; i < ir_file_count; i++) {
-            lv_obj_t *btn = lv_list_add_btn(list, NULL, ir_file_paths[i]);
-            lv_obj_set_width(btn, LV_HOR_RES);
-            lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *label = lv_obj_get_child(btn, 0);
-            if (label) {
-                lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-                lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-            }
-            lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
-        }
-#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-        add_encoder_back_btn();
-#endif
-        if (num_ir_items > 0) ir_select_item(0);
+        refresh_ir_file_list(current_dir);
         return;
     }
 
@@ -2094,49 +2240,9 @@ static void remotes_event_cb(lv_event_t *e) {
         signals = NULL;
         signal_count = 0;
     }
-    if (ir_file_paths) {
-        for (size_t i = 0; i < ir_file_count; i++) {
-            free(ir_file_paths[i]);
-        }
-        free(ir_file_paths);
-        ir_file_paths = NULL;
-        ir_file_count = 0;
-    }
+    clear_ir_file_paths();
     showing_commands = false;
-    lv_obj_clean(list);
-    bool susp = false; bool did = ir_sd_begin(&susp);
-    DIR *d = opendir(current_dir);
-    if (d) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL) {
-            const char *name = entry->d_name;
-            if (strstr(name, ".ir") || strstr(name, ".IR")) {
-                ir_file_paths = realloc(ir_file_paths, (ir_file_count + 1) * sizeof(*ir_file_paths));
-                ir_file_paths[ir_file_count] = strdup(name);
-                lv_obj_t *btn = lv_list_add_btn(list, NULL, name);
-                lv_obj_set_width(btn, LV_HOR_RES);
-                lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_t *label = lv_obj_get_child(btn, 0);
-                if (label) {
-                    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-                    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-                }
-                lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)ir_file_count);
-                ir_file_count++;
-            }
-        }
-        closedir(d);
-    }
-    if (did) ir_sd_end(susp);
-    selected_ir_index = 0;
-    num_ir_items = ir_file_count;
-#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-    add_encoder_back_btn();
-#endif
-    if (ir_file_count > 0) ir_select_item(0);
+    refresh_ir_file_list(current_dir);
 }
 
 // Remote management callback functions
@@ -2350,47 +2456,9 @@ static void universals_event_cb(lv_event_t *e) {
         signals = NULL;
         signal_count = 0;
     }
-    if (ir_file_paths) {
-        for (size_t i = 0; i < ir_file_count; i++) free(ir_file_paths[i]);
-        free(ir_file_paths);
-        ir_file_paths = NULL;
-        ir_file_count = 0;
-    }
+    clear_ir_file_paths();
     showing_commands = false;
-    lv_obj_clean(list);
-    bool susp = false; bool did = ir_sd_begin(&susp);
-    DIR *d = opendir(current_dir);
-    if (d) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL) {
-            const char *name = entry->d_name;
-            if (strstr(name, ".ir") || strstr(name, ".IR")) {
-                ir_file_paths = realloc(ir_file_paths, (ir_file_count + 1) * sizeof(*ir_file_paths));
-                ir_file_paths[ir_file_count] = strdup(name);
-                lv_obj_t *btn = lv_list_add_btn(list, NULL, name);
-                lv_obj_set_width(btn, LV_HOR_RES);
-                lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_t *label = lv_obj_get_child(btn, 0);
-                if (label) {
-                    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-                    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-                }
-                lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)ir_file_count);
-                ir_file_count++;
-            }
-        }
-        closedir(d);
-    }
-    if (did) ir_sd_end(susp);
-    selected_ir_index = 0;
-    num_ir_items = ir_file_count;
-#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-    add_encoder_back_btn();
-#endif
-    if (ir_file_count > 0) ir_select_item(0);
+    refresh_ir_file_list(current_dir);
 }
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
@@ -2891,11 +2959,19 @@ void generate_unique_remote_filename(const char* base_name, char* output_filenam
     snprintf(output_filename, output_size, "/mnt/ghostesp/infrared/remotes/learned_%s.ir", base_name);
     
     // Check if file exists
-    bool susp = false; bool did = ir_sd_begin(&susp);
+    bool need_mount = !sd_card_manager.is_initialized;
+    bool susp = false; bool did = false;
+    if (need_mount) {
+        did = ir_sd_begin(&susp);
+        if (!did) {
+            ESP_LOGE(TAG, "Failed to mount SD card while generating filename for %s", base_name);
+            return;
+        }
+    }
     FILE *test_file = fopen(output_filename, "r");
     if (!test_file) {
         // File doesn't exist, we can use the base name
-        if (did) ir_sd_end(susp);
+        if (need_mount && did) ir_sd_end(susp);
         return;
     }
     fclose(test_file);
@@ -2908,13 +2984,13 @@ void generate_unique_remote_filename(const char* base_name, char* output_filenam
         test_file = fopen(output_filename, "r");
         if (!test_file) {
             // This filename is available
-            if (did) ir_sd_end(susp);
+            if (need_mount && did) ir_sd_end(susp);
             return;
         }
         fclose(test_file);
         counter++;
     }
-    if (did) ir_sd_end(susp);
+    if (need_mount && did) ir_sd_end(susp);
     
     // If we get here, we couldn't find a unique name (very unlikely)
     // Fall back to using timestamp
@@ -3142,7 +3218,7 @@ static void save_learned_signal(const char *signal_name) {
     }
     if (ir_sd_queue) xQueueSend(ir_sd_queue, &job, 0);
     
-    ESP_LOGI(TAG, "IR signal saved to %s", filename);
+    ESP_LOGI(TAG, "Queued IR signal save to %s", filename);
     
     // Free timing data to prevent memory leaks
     if (learned_signal.payload.raw.timings) {

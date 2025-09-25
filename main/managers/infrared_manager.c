@@ -566,6 +566,17 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
     esp_err_t err = rmt_transmit(tx_chan, copy_encoder, symbols, item_count * sizeof(rmt_symbol_word_t), &(rmt_transmit_config_t){.loop_count = 0});
     if (err == ESP_OK) err = rmt_tx_wait_all_done(tx_chan, pdMS_TO_TICKS(1000));
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    // on ESP32-C5, explicitly destroy the static tx handle after transmit so
+    // the hardware resource is returned to the pool and RX can be recreated.
+    if (tx_chan) {
+        rmt_disable(tx_chan);
+        rmt_del_channel(tx_chan);
+        tx_chan = NULL;
+        chan_symbols = 0;
+    }
+#endif
+
     heap_caps_free(symbols);
     return err == ESP_OK;
 }

@@ -2055,80 +2055,95 @@ static void create_keys_popup(void) {
     if (keys_details_label) lv_obj_align(keys_details_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
     // read keys file and show (build text on heap to avoid stack pressure)
+    bool display_was_suspended = false;
+    bool sd_ready = nfc_sd_begin(&display_was_suspended);
     size_t cap = 512; size_t pos = 0;
-    char *buf = (char*)malloc(cap);
-    if (!buf) {
+    char *buf = NULL;
+    FILE *f = NULL;
+
+    if (!sd_ready) {
         lv_label_set_text(keys_details_label, "No user keys file found");
-        return;
+        goto keys_cleanup;
+    }
+
+    buf = (char*)malloc(cap);
+    if (!buf) {
+        lv_label_set_text(keys_details_label, "(Out of memory)");
+        goto keys_cleanup;
     }
     buf[0] = '\0';
-    FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "r");
+
+    f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "r");
     if (!f) {
-        free(buf);
         lv_label_set_text(keys_details_label, "No user keys file found");
-    } else {
-        char line[256];
-        int keys_on_line = 0;
-        while (fgets(line, sizeof(line), f)) {
-            // normalize: keep only hex chars, uppercase, and split into 12-length chunks
-            char hexbuf[256]; size_t h = 0;
-            for (char *p = line; *p && h < sizeof(hexbuf)-1; ++p) {
-                char c = *p;
-                if (c >= 'a' && c <= 'f') c -= 32;
-                if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) {
-                    hexbuf[h++] = c;
-                }
-            }
-            hexbuf[h] = '\0';
-            // output each 12-hex key; two per line: "KEY KEY\n"
-            size_t i = 0;
-            while (i + 12 <= h) {
-                // ensure capacity, attempt write, grow if truncated
-                for (;;) {
-                    int n;
-                    if (keys_on_line == 0) {
-                        n = snprintf(buf + pos, cap - pos, "%.*s", 12, &hexbuf[i]);
-                    } else {
-                        n = snprintf(buf + pos, cap - pos, " %.*s\n", 12, &hexbuf[i]);
-                    }
-                    if (n < 0) { break; }
-                    if ((size_t)n < (cap - pos)) { pos += (size_t)n; break; }
-                    size_t new_cap = cap * 2;
-                    char *nbuf = (char*)realloc(buf, new_cap);
-                    if (!nbuf) { fclose(f); lv_label_set_text(keys_details_label, "(Out of memory)"); free(buf); return; }
-                    buf = nbuf; cap = new_cap;
-                }
-                keys_on_line = (keys_on_line == 0) ? 1 : 0;
-                i += 12;
-            }
-            if (cap - pos < 64) {
-                size_t new_cap = cap * 2;
-                char *nbuf = (char*)realloc(buf, new_cap);
-                if (!nbuf) { fclose(f); lv_label_set_text(keys_details_label, "(Out of memory)"); free(buf); return; }
-                buf = nbuf; cap = new_cap;
+        goto keys_cleanup;
+    }
+
+    char line[256];
+    int keys_on_line = 0;
+    while (fgets(line, sizeof(line), f)) {
+        // normalize: keep only hex chars, uppercase, and split into 12-length chunks
+        char hexbuf[256]; size_t h = 0;
+        for (char *p = line; *p && h < sizeof(hexbuf)-1; ++p) {
+            char c = *p;
+            if (c >= 'a' && c <= 'f') c -= 32;
+            if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) {
+                hexbuf[h++] = c;
             }
         }
-        // if one key left without its pair, terminate the line
-        if (keys_on_line == 1) {
+        hexbuf[h] = '\0';
+        // output each 12-hex key; two per line: "KEY KEY\n"
+        size_t i = 0;
+        while (i + 12 <= h) {
+            // ensure capacity, attempt write, grow if truncated
             for (;;) {
-                int n = snprintf(buf + pos, cap - pos, "\n");
-                if (n < 0) break;
+                int n;
+                if (keys_on_line == 0) {
+                    n = snprintf(buf + pos, cap - pos, "%.*s", 12, &hexbuf[i]);
+                } else {
+                    n = snprintf(buf + pos, cap - pos, " %.*s\n", 12, &hexbuf[i]);
+                }
+                if (n < 0) { break; }
                 if ((size_t)n < (cap - pos)) { pos += (size_t)n; break; }
                 size_t new_cap = cap * 2;
                 char *nbuf = (char*)realloc(buf, new_cap);
-                if (!nbuf) { lv_label_set_text(keys_details_label, "(Out of memory)"); free(buf); fclose(f); return; }
+                if (!nbuf) { lv_label_set_text(keys_details_label, "(Out of memory)"); goto keys_cleanup; }
                 buf = nbuf; cap = new_cap;
             }
+            keys_on_line = (keys_on_line == 0) ? 1 : 0;
+            i += 12;
         }
-        fclose(f);
-        if (pos == 0) {
-            lv_label_set_text(keys_details_label, "(Empty)");
-        } else {
-            // set then free buffer (lvgl copies text)
-            lv_label_set_text(keys_details_label, buf);
+        if (cap - pos < 64) {
+            size_t new_cap = cap * 2;
+            char *nbuf = (char*)realloc(buf, new_cap);
+            if (!nbuf) { lv_label_set_text(keys_details_label, "(Out of memory)"); goto keys_cleanup; }
+            buf = nbuf; cap = new_cap;
         }
-        free(buf);
     }
+
+    // if one key left without its pair, terminate the line
+    if (keys_on_line == 1) {
+        for (;;) {
+            int n = snprintf(buf + pos, cap - pos, "\n");
+            if (n < 0) break;
+            if ((size_t)n < (cap - pos)) { pos += (size_t)n; break; }
+            size_t new_cap = cap * 2;
+            char *nbuf = (char*)realloc(buf, new_cap);
+            if (!nbuf) { lv_label_set_text(keys_details_label, "(Out of memory)"); goto keys_cleanup; }
+            buf = nbuf; cap = new_cap;
+        }
+    }
+
+    if (pos == 0) {
+        lv_label_set_text(keys_details_label, "(Empty)");
+    } else {
+        lv_label_set_text(keys_details_label, buf);
+    }
+
+keys_cleanup:
+    if (f) fclose(f);
+    if (buf) free(buf);
+    if (sd_ready) nfc_sd_end(display_was_suspended);
 
     // Bottom controls: Up | Close | Down
     int btn_w = 60, btn_h = 34; if (LV_VER_RES <= 240) { btn_w = 54; btn_h = 30; }
