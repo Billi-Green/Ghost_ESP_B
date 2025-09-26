@@ -34,7 +34,7 @@ static const char **evil_portal_options = NULL;
 
 static const char *TAG = "optionsScreen";
 
-static const char *settings_categories[] = {"Display", "Config", NULL};
+static const char *settings_categories[] = {"Display", "Hardware config", NULL};
 
 typedef enum {
     SETTINGS_CATEGORY_DISPLAY,
@@ -48,16 +48,19 @@ static int current_settings_category = -1;
 // Each sub-array lists the indices of settings_items[] that belong to a category.
 // The last element in each sub-array must be -1 to mark the end.
 //
-// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9)
-// Category 1: "Config"  (indices: 0, 6, 7, 8)
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9, 11, 12) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 10, 11) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
+// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 10) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
+// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 9) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
 // Example: settings_category_indices[0] lists settings for "Display" category.
 static int settings_category_indices[][10] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 10, 11, 12, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 9, 11, 12, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
+        {0, 6, 7, 8, 10, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #else
-        {1, 2, 5, 3, 4, 9, 10, 11, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 10, 11, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
+        {0, 6, 7, 8, 9, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #endif
-        {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
