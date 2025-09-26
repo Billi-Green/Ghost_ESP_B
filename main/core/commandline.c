@@ -1,4 +1,4 @@
-// command.c
+ // command.c
 
 #include "core/commandline.h"
 #include "core/callbacks.h"
@@ -17,6 +17,9 @@
 #include "core/esp_comm_manager.h"
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+#include "managers/zigbee_manager.h"
+#endif
 #include <esp_timer.h>
 #include <managers/gps_manager.h>
 #include <managers/views/terminal_screen.h>
@@ -27,6 +30,7 @@
 #include <vendor/dial_client.h>
 #include "esp_wifi.h"
 #include "managers/default_portal.h"
+#include "core/glog.h"
 #include <time.h>
 #include <dirent.h>
 #include "esp_chip_info.h"
@@ -114,8 +118,7 @@ CommandFunction find_command(const char *name) {
 }
 
 void handle_unknown_command(const char *cmd) {
-    printf("Unknown command: %s\n", cmd);
-    TERMINAL_VIEW_ADD_TEXT("Unknown command: %s\n", cmd);
+    glog("Unknown command: %s\n", cmd);
 }
 
 void cmd_wifi_scan_start(int argc, char **argv) {
@@ -125,8 +128,7 @@ void cmd_wifi_scan_start(int argc, char **argv) {
             return;
         }
         if (strcmp(argv[1], "-live") == 0) {
-            printf("Starting live AP scan...\n");
-            TERMINAL_VIEW_ADD_TEXT("Starting live AP scan...\n");
+            glog("Starting live AP scan...\n");
             wifi_manager_start_live_ap_scan();
             return;
         }
@@ -141,24 +143,22 @@ void cmd_wifi_scan_start(int argc, char **argv) {
 void cmd_wifi_scan_stop(int argc, char **argv) {
     // Properly stop any ongoing WiFi scan
     wifi_manager_stop_scan();
-    
+
     // Stop monitor mode
     wifi_manager_stop_monitor_mode();
-    
+
     // Close pcap file
     pcap_file_close();
-    
+
     // Reset WiFi to a good state
     esp_wifi_stop();
     esp_wifi_start();
-    
-    printf("WiFi scan stopped.\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi scan stopped.\n");
+
+    glog("WiFi scan stopped.\n");
 }
 
 void cmd_wifi_scan_results(int argc, char **argv) {
-    printf("WiFi scan results displaying with OUI matching.\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi scan results displaying with OUI matching.\n");
+    glog("WiFi scan results displaying with OUI matching.\n");
     wifi_manager_print_scan_results_with_oui();
 }
 
@@ -168,8 +168,7 @@ void handle_list(int argc, char **argv) {
         return;
     } else if (argc > 1 && strcmp(argv[1], "-s") == 0) {
         wifi_manager_list_stations();
-        printf("Listed Stations...\n");
-        TERMINAL_VIEW_ADD_TEXT("Listed Stations...\n");
+        glog("Listed Stations...\n");
         return;
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -179,29 +178,25 @@ void handle_list(int argc, char **argv) {
     }
 #endif
     else {
-        printf("Usage: list -a (for Wi-Fi scan results)\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: list -a (for Wi-Fi scan results)\n");
+        glog("Usage: list -a (for Wi-Fi scan results)\n");
     }
 }
 
 void handle_beaconspam(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-r") == 0) {
-        printf("Starting Random beacon spam...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting Random beacon spam...\n");
+        glog("Starting Random beacon spam...\n");
         wifi_manager_start_beacon(NULL);
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-rr") == 0) {
-        printf("Starting Rickroll beacon spam...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting Rickroll beacon spam...\n");
+        glog("Starting Rickroll beacon spam...\n");
         wifi_manager_start_beacon("RICKROLL");
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-l") == 0) {
-        printf("Starting AP List beacon spam...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting AP List beacon spam...\n");
+        glog("Starting AP List beacon spam...\n");
         wifi_manager_start_beacon("APLISTMODE");
         return;
     }
@@ -210,15 +205,13 @@ void handle_beaconspam(int argc, char **argv) {
         wifi_manager_start_beacon(argv[1]);
         return;
     } else {
-        printf("Usage: beaconspam -r (for Beacon Spam Random)\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: beaconspam -r (for Beacon Spam Random)\n");
+        glog("Usage: beaconspam -r (for Beacon Spam Random)\n");
     }
 }
 
 void handle_stop_spam(int argc, char **argv) {
     wifi_manager_stop_beacon();
-    printf("Beacon Spam Stopped...\n");
-    TERMINAL_VIEW_ADD_TEXT("Beacon Spam Stopped...\n");
+    glog("Beacon Spam Stopped...\n");
 }
 
 void handle_sta_scan(int argc, char **argv) {
@@ -228,45 +221,37 @@ void handle_sta_scan(int argc, char **argv) {
 void handle_attack_cmd(int argc, char **argv) {
     if (argc > 1) {
         if (strcmp(argv[1], "-d") == 0) {
-            printf("Deauthentication starting...\n");
-            TERMINAL_VIEW_ADD_TEXT("Deauthentication starting...\n");
+            glog("Deauthentication starting...\n");
             wifi_manager_deauth_station();
             return;
         } else if (strcmp(argv[1], "-e") == 0) {
-            printf("EAPOL Logoff attack starting...\n");
-            TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack starting...\n");
+            glog("EAPOL Logoff attack starting...\n");
             wifi_manager_start_eapollogoff_attack();
             return;
         } else if (strcmp(argv[1], "-s") == 0) {
             if (argc < 3) {
-                printf("Usage: attack -s <password>\n");
-                TERMINAL_VIEW_ADD_TEXT("Usage: attack -s <password>\n");
+                glog("Usage: attack -s <password>\n");
                 return;
             }
-            printf("SAE flood attack starting...\n");
-            TERMINAL_VIEW_ADD_TEXT("SAE flood attack starting...\n");
+            glog("SAE flood attack starting...\n");
             wifi_manager_start_sae_flood(argv[2]);
             return;
         }
     }
-    printf("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
+    glog("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
 }
 
 void handle_sae_flood_cmd(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: saeflood <password>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: saeflood <password>\n");
+        glog("Usage: saeflood <password>\n");
         return;
     }
-    printf("Starting SAE flood attack...\n");
-    TERMINAL_VIEW_ADD_TEXT("Starting SAE flood attack...\n");
+    glog("Starting SAE flood attack...\n");
     wifi_manager_start_sae_flood(argv[1]);
 }
 
 void handle_stop_sae_flood_cmd(int argc, char **argv) {
-    printf("Stopping SAE flood attack...\n");
-    TERMINAL_VIEW_ADD_TEXT("Stopping SAE flood attack...\n");
+    glog("Stopping SAE flood attack...\n");
     wifi_manager_stop_sae_flood();
 }
 
@@ -279,14 +264,12 @@ void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
-    printf("Deauth/EAPOL/SAE attacks stopped...\n");
-    TERMINAL_VIEW_ADD_TEXT("Deauth/EAPOL/SAE attacks stopped...\n");
+    glog("Deauth/EAPOL/SAE attacks stopped...\n");
 }
 
 void handle_select_cmd(int argc, char **argv) {
     if (argc != 3) {
-        printf("Usage: select -a <number[,number,...]> or select -s <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: select -a <number[,number,...]> or select -s <number>\n");
+        glog("Usage: select -a <number[,number,...]> or select -s <number>\n");
         return;
     }
 
@@ -300,8 +283,7 @@ void handle_select_cmd(int argc, char **argv) {
             if (*endptr == '\0') {
                 wifi_manager_select_ap(num);
             } else {
-                printf("Error: is not a valid number.\n");
-                TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
+                glog("Error: is not a valid number.\n");
             }
         } else {
             int indices[32];
@@ -314,8 +296,7 @@ void handle_select_cmd(int argc, char **argv) {
                 if (*endptr == '\0') {
                     indices[count++] = num;
                 } else {
-                    printf("Error: '%s' is not a valid number.\n", token);
-                    TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", token);
+                    glog("Error: '%s' is not a valid number.\n", token);
                     return;
                 }
                 token = strtok(NULL, ",");
@@ -324,8 +305,7 @@ void handle_select_cmd(int argc, char **argv) {
             if (count > 0) {
                 wifi_manager_select_multiple_aps(indices, count);
             } else {
-                printf("Error: No valid indices found.\n");
-                TERMINAL_VIEW_ADD_TEXT("Error: No valid indices found.\n");
+                glog("Error: No valid indices found.\n");
             }
         }
     } else if (strcmp(argv[1], "-s") == 0) {
@@ -334,8 +314,7 @@ void handle_select_cmd(int argc, char **argv) {
         if (*endptr == '\0') {
             wifi_manager_select_station(num);
         } else {
-            printf("Error: is not a valid number.\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: is not a valid number.\n");
+            glog("Error: is not a valid number.\n");
         }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     } else if (strcmp(argv[1], "-airtag") == 0) {
@@ -344,13 +323,11 @@ void handle_select_cmd(int argc, char **argv) {
         if (*endptr == '\0') {
             ble_select_airtag(num);
         } else {
-            printf("Error: '%s' is not a valid number.\n", argv[2]);
-            TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", argv[2]);
+            glog("Error: '%s' is not a valid number.\n", argv[2]);
         }
 #endif
     } else {
-        printf("Invalid option. Usage: select -a <number[,number,...]> or select -s <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Invalid option. Usage: select -a <number[,number,...]> or select -s <number>\n");
+        glog("Invalid option. Usage: select -a <number[,number,...]> or select -s <number>\n");
     }
 }
 
@@ -366,8 +343,7 @@ void discover_task(void *pvParameter) {
 
         dial_client_deinit(&client);
     } else {
-        printf("Failed to init DIAL client.\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to init DIAL client.\n");
+        glog("Failed to init DIAL client.\n");
     }
 
     vTaskDelete(NULL);
@@ -397,15 +373,19 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_dhcpstarve();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
-    printf("Stopped activities.\nClosed files.\n");
-    TERMINAL_VIEW_ADD_TEXT("Stopped activities.\nClosed files.\n");
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    // ensure zigbee capture is stopped when using generic stop
+    zigbee_manager_stop_capture();
+#endif
+    // ensure pcap is properly flushed and closed
+    pcap_file_close();
+    glog("Stopped activities.\nClosed files.\n");
 }
 
 void handle_dial_command(int argc, char **argv) {
     // Usage: dial [device_name]
     if (argc > 2) {
-        printf("Usage: %s [device_name]\n", argv[0]);
-        TERMINAL_VIEW_ADD_TEXT("Usage: %s [device_name]\n", argv[0]);
+        glog("Usage: %s [device_name]\n", argv[0]);
         return;
     }
     // If a device name is provided, set it before discovery
@@ -423,12 +403,10 @@ void handle_wifi_connection(int argc, char **argv) {
         ssid = settings_get_sta_ssid(&G_Settings);
         password = settings_get_sta_password(&G_Settings);
         if (ssid == NULL || strlen(ssid) == 0) {
-            printf("No saved SSID. Usage: %s \"<SSID>\" [\"<PASSWORD>\"]\n", argv[0]);
-            TERMINAL_VIEW_ADD_TEXT("No saved SSID. Usage: %s \"<SSID>\" [\"<PASSWORD>\"]\n", argv[0]);
+            glog("No saved SSID. Usage: %s \"<SSID>\" [\"<PASSWORD>\"]\n", argv[0]);
             return;
         }
-        printf("Connecting using saved credentials: %s\n", ssid);
-        TERMINAL_VIEW_ADD_TEXT("Connecting using saved credentials: %s\n", ssid);
+        glog("Connecting using saved credentials: %s\n", ssid);
     } else {
         char ssid_buffer[128] = {0};
         char password_buffer[128] = {0};
@@ -458,8 +436,7 @@ void handle_wifi_connection(int argc, char **argv) {
                 i++;
             }
             if (!found_end) {
-                printf("Error: Missing closing quote for SSID\n");
-                TERMINAL_VIEW_ADD_TEXT("Error: Missing closing quote for SSID\n");
+                glog("Error: Missing closing quote for SSID\n");
                 return;
             }
             ssid = ssid_buffer;
@@ -493,8 +470,7 @@ void handle_wifi_connection(int argc, char **argv) {
                     i++;
                 }
                 if (!found_end) {
-                    printf("Error: Missing closing quote for password\n");
-                    TERMINAL_VIEW_ADD_TEXT("Error: Missing closing quote for password\n");
+                    glog("Error: Missing closing quote for password\n");
                     return;
                 }
                 password = password_buffer;
@@ -532,11 +508,9 @@ void handle_wifi_disconnect(int argc, char **argv)
     wifi_manager_set_manual_disconnect(true);
     esp_err_t err = esp_wifi_disconnect();
     if (err == ESP_OK) {
-        printf("WiFi disconnect command sent successfully\n");
-        TERMINAL_VIEW_ADD_TEXT("WiFi disconnect command sent successfully\n");
+        glog("WiFi disconnect command sent successfully\n");
     } else {
-        printf("Failed to send disconnect command: %s\n", esp_err_to_name(err));
-        TERMINAL_VIEW_ADD_TEXT("Failed to send disconnect command\n");
+        glog("Failed to send disconnect command: %s\n", esp_err_to_name(err));
     }
 }
 
@@ -544,60 +518,51 @@ void handle_wifi_disconnect(int argc, char **argv)
 
 void handle_ble_scan_cmd(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-f") == 0) {
-        printf("Starting Find the Flippers.\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting Find the Flippers.\n");
+        glog("Starting Find the Flippers.\n");
         ble_start_find_flippers();
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-ds") == 0) {
-        printf("Starting BLE Spam Detector.\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting BLE Spam Detector.\n");
+        glog("Starting BLE Spam Detector.\n");
         ble_start_blespam_detector();
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-a") == 0) {
-        printf("Starting AirTag Scanner.\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting AirTag Scanner.\n");
+        glog("Starting AirTag Scanner.\n");
         ble_start_airtag_scanner();
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-r") == 0) {
-        printf("Scanning for Raw Packets\n");
-        TERMINAL_VIEW_ADD_TEXT("Scanning for Raw Packets\n");
+        glog("Scanning for Raw Packets\n");
         ble_start_raw_ble_packetscan();
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-s") == 0) {
-        printf("Stopping BLE Scan.\n");
-        TERMINAL_VIEW_ADD_TEXT("Stopping BLE Scan.\n");
+        glog("Stopping BLE Scan.\n");
         ble_stop();
         return;
     }
 
-    printf("Invalid Command Syntax.\n");
-    TERMINAL_VIEW_ADD_TEXT("Invalid Command Syntax.\n");
+    glog("Invalid Command Syntax.\n");
 }
 
 #endif
 
 void handle_start_portal(int argc, char **argv) {
     if (argc < 3 || argc > 4) { // Accept 3 or 4 arguments
-        printf("Usage: %s <FilePath> <AP_SSID> [PSK]\n", argv[0]);
-        TERMINAL_VIEW_ADD_TEXT("Usage: %s <FilePath> <AP_SSID> [PSK]\n", argv[0]);
-        printf("PSK is optional for an open AP.\n");
-        TERMINAL_VIEW_ADD_TEXT("PSK is optional for an open AP.\n");
+        glog("Usage: %s <FilePath> <AP_SSID> [PSK]\n", argv[0]);
+        glog("PSK is optional for an open AP.\n");
         return;
     }
     const char *url = argv[1];
     const char *ap_ssid = argv[2];
     const char *psk = (argc == 4) ? argv[3] : ""; // Set PSK to empty if not provided
     if (strlen(url) >= MAX_PORTAL_PATH_LEN) {
-        printf("Error: Provided Path is too long.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Path too long.\n");
+        glog("Error: Provided Path is too long.\n");
         return;
     }
     char final_url_or_path[MAX_PORTAL_PATH_LEN];
@@ -609,17 +574,15 @@ void handle_start_portal(int argc, char **argv) {
         size_t prefix_len = strlen(prefix);
         size_t current_len = strlen(final_url_or_path);
         if (current_len + prefix_len >= MAX_PORTAL_PATH_LEN) {
-            printf("Error: Path too long after prepending %s.\n", prefix);
-            TERMINAL_VIEW_ADD_TEXT("Error: Path too long.\n");
+            glog("Error: Path too long after prepending %s.\n", prefix);
             return;
         }
         memmove(final_url_or_path + prefix_len, final_url_or_path, current_len + 1);
         memcpy(final_url_or_path, prefix, prefix_len);
-        printf("Prepended %s to path: %s\n", prefix, final_url_or_path);
-        TERMINAL_VIEW_ADD_TEXT("Prepended %s to path: %s\n", prefix, final_url_or_path);
+        glog("Prepended %s to path: %s\n", prefix, final_url_or_path);
     }
     const char *domain = settings_get_portal_domain(&G_Settings);
-    printf("Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, psk, domain ? domain : "(default)");
+    glog("Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, psk, domain ? domain : "(default)");
     char log_buf[256];
     snprintf(log_buf, sizeof(log_buf), "Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, (strlen(psk) > 0 ? psk : "<Open>"), domain ? domain : "(default)");
     TERMINAL_VIEW_ADD_TEXT(log_buf);
@@ -671,8 +634,7 @@ void decrypt_tp_link_response(const uint8_t *input, char *output, size_t len) {
 
 void handle_tp_link_test(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: tp_link_test <on|off|loop>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: tp_link_test <on|off|loop>\n");
+        glog("Usage: tp_link_test <on|off|loop>\n");
         return;
     }
 
@@ -681,8 +643,7 @@ void handle_tp_link_test(int argc, char **argv) {
     if (strcmp(argv[1], "loop") == 0) {
         isloop = true;
     } else if (strcmp(argv[1], "on") != 0 && strcmp(argv[1], "off") != 0) {
-        printf("Invalid argument. Use 'on', 'off', or 'loop'.\n");
-        TERMINAL_VIEW_ADD_TEXT("Invalid argument. Use 'on', 'off', or 'loop'.\n");
+        glog("Invalid argument. Use 'on', 'off', or 'loop'.\n");
         return;
     }
 
@@ -711,8 +672,7 @@ void handle_tp_link_test(int argc, char **argv) {
 
         size_t command_len = strlen(command);
         if (command_len >= sizeof(encrypted_command)) {
-            printf("Command too large to encrypt\n");
-            TERMINAL_VIEW_ADD_TEXT("Command too large to encrypt\n");
+            glog("Command too large to encrypt\n");
             return;
         }
 
@@ -720,10 +680,7 @@ void handle_tp_link_test(int argc, char **argv) {
 
         int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (sock < 0) {
-            printf("Failed to create socket: errno %d\n", errno);
-            char err_buf[64];
-            snprintf(err_buf, sizeof(err_buf), "Failed to create socket: errno %d\n", errno);
-            TERMINAL_VIEW_ADD_TEXT(err_buf);
+            glog("Failed to create socket: errno %d\n", errno);
             return;
         }
 
@@ -733,16 +690,12 @@ void handle_tp_link_test(int argc, char **argv) {
         int err = sendto(sock, encrypted_command, command_len, 0, (struct sockaddr *)&dest_addr,
                          sizeof(dest_addr));
         if (err < 0) {
-            printf("Error occurred during sending: errno %d\n", errno);
-            char err_buf[64];
-            snprintf(err_buf, sizeof(err_buf), "Error occurred during sending: errno %d\n", errno);
-            TERMINAL_VIEW_ADD_TEXT(err_buf);
+            glog("Error occurred during sending: errno %d\n", errno);
             close(sock);
             return;
         }
 
-        printf("Broadcast message sent: %s\n", command);
-        TERMINAL_VIEW_ADD_TEXT("Broadcast message sent: %s\n", command);
+        glog("Broadcast message sent: %s\n", command);
 
         struct timeval timeout = {2, 0};
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
@@ -753,23 +706,16 @@ void handle_tp_link_test(int argc, char **argv) {
                            &addr_len);
         if (len < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                printf("No response from any device\n");
-                TERMINAL_VIEW_ADD_TEXT("No response from any device\n");
+                glog("No response from any device\n");
             } else {
-                printf("Error receiving response: errno %d\n", errno);
-                char err_buf[64];
-                snprintf(err_buf, sizeof(err_buf), "Error receiving response: errno %d\n", errno);
-                TERMINAL_VIEW_ADD_TEXT(err_buf);
+                glog("Error receiving response: errno %d\n", errno);
             }
         } else {
             recv_buf[len] = 0;
             char decrypted_response[128];
             decrypt_tp_link_response(recv_buf, decrypted_response, len);
             decrypted_response[len] = 0;
-            printf("Response: %s\n", decrypted_response);
-            char resp_buf[140];
-            snprintf(resp_buf, sizeof(resp_buf), "Response: %s\n", decrypted_response);
-            TERMINAL_VIEW_ADD_TEXT(resp_buf);
+            glog("Response: %s\n", decrypted_response);
         }
 
         close(sock);
@@ -781,34 +727,29 @@ void handle_tp_link_test(int argc, char **argv) {
 }
 
 void handle_ip_lookup(int argc, char **argv) {
-    printf("Starting IP lookup...\n");
-    TERMINAL_VIEW_ADD_TEXT("Starting IP lookup...\n");
+        glog("Starting IP lookup...\n");
     wifi_manager_start_ip_lookup();
 }
 
 void handle_capture_scan(int argc, char **argv) {
-    if (argc != 2) {
-        printf("Error: Incorrect number of arguments.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Incorrect number of arguments.\n");
+    if (argc < 2 || argc > 3) {
+        glog("Error: Incorrect number of arguments.\n");
         return;
     }
 
     char *capturetype = argv[1];
 
     if (capturetype == NULL || capturetype[0] == '\0') {
-        printf("Error: Capture Type cannot be empty.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Capture Type cannot be empty.\n");
+        glog("Error: Capture Type cannot be empty.\n");
         return;
     }
 
     if (strcmp(capturetype, "-probe") == 0) {
-        printf("Starting probe request\npacket capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting probe request\npacket capture...\n");
+        glog("Starting probe request\npacket capture...\n");
         int err = pcap_file_open("probescan", PCAP_CAPTURE_WIFI);
 
         if (err != ESP_OK) {
-            printf("Error: pcap failed to open\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: pcap failed to open\n");
+            glog("Error: pcap failed to open\n");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_probe_scan_callback);
@@ -818,87 +759,95 @@ void handle_capture_scan(int argc, char **argv) {
         int err = pcap_file_open("deauthscan", PCAP_CAPTURE_WIFI);
 
         if (err != ESP_OK) {
-            printf("Error: pcap failed to open\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: pcap failed to open\n");
+            glog("Error: pcap failed to open\n");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_deauth_scan_callback);
     }
 
     if (strcmp(capturetype, "-beacon") == 0) {
-        printf("Starting beacon\npacket capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting beacon\npacket capture...\n");
+        glog("Starting beacon\npacket capture...\n");
         int err = pcap_file_open("beaconscan", PCAP_CAPTURE_WIFI);
 
         if (err != ESP_OK) {
-            printf("Error: pcap failed to open\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: pcap failed to open\n");
+            glog("Error: pcap failed to open\n");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_beacon_scan_callback);
     }
 
     if (strcmp(capturetype, "-raw") == 0) {
-        printf("Starting raw\npacket capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting raw\npacket capture...\n");
+        glog("Starting raw\npacket capture...\n");
         int err = pcap_file_open("rawscan", PCAP_CAPTURE_WIFI);
 
         if (err != ESP_OK) {
-            printf("Error: pcap failed to open\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: pcap failed to open\n");
+            glog("Error: pcap failed to open\n");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_raw_scan_callback);
     }
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (strcmp(capturetype, "-802154") == 0) {
+        glog("Starting IEEE 802.15.4 packet capture...\n");
+        int err = pcap_file_open("802154", PCAP_CAPTURE_IEEE802154);
+        if (err != ESP_OK) {
+            glog("Warning: PCAP failed to open (will stream to UART)\n");
+        }
+        uint8_t ch = 0; // 0 means hopping by default
+        if (argc == 3 && argv[2]) {
+            const char *arg = argv[2];
+            if (strncmp(arg, "ch", 2) == 0) arg += 2;
+            int parsed = atoi(arg);
+            if (parsed >= 11 && parsed <= 26) ch = (uint8_t)parsed; // fixed channel
+        }
+        zigbee_manager_start_capture(ch);
+    }
+#endif
+
     if (strcmp(capturetype, "-eapol") == 0) {
-        printf("Starting EAPOL\npacket capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting EAPOL\npacket capture...\n");
+        glog("Starting EAPOL\npacket capture...\n");
         int err = pcap_file_open("eapolscan", PCAP_CAPTURE_WIFI);
 
         if (err != ESP_OK) {
-            printf("Error: pcap failed to open\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: pcap failed to open\n");
+            glog("Error: pcap failed to open\n");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_eapol_scan_callback);
     }
 
     if (strcmp(capturetype, "-pwn") == 0) {
-        printf("Starting PWN\npacket capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting PWN\npacket capture...\n");
+        glog("Starting PWN\npacket capture...\n");
         int err = pcap_file_open("pwnscan", PCAP_CAPTURE_WIFI);
 
         if (err != ESP_OK) {
-            printf("Error: pcap failed to open\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: pcap failed to open\n");
+            glog("Error: pcap failed to open\n");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_pwn_scan_callback);
     }
 
     if (strcmp(capturetype, "-wps") == 0) {
-        printf("Starting WPS\npacket capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting WPS\npacket capture...\n");
+        glog("Starting WPS\npacket capture...\n");
         int err = pcap_file_open("wpsscan", PCAP_CAPTURE_WIFI);
 
         should_store_wps = 0;
 
         if (err != ESP_OK) {
-            printf("Error: pcap failed to open\n");
-            TERMINAL_VIEW_ADD_TEXT("Error: pcap failed to open\n");
+            glog("Error: pcap failed to open\n");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_wps_detection_callback);
     }
 
     if (strcmp(capturetype, "-stop") == 0) {
-        printf("Stopping packet capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Stopping packet capture...\n");
+        glog("Stopping packet capture...\n");
         wifi_manager_stop_monitor_mode();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
         ble_stop();
-        ble_stop_skimmer_detection();
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        zigbee_manager_stop_capture();
 #endif
         pcap_file_close();
     }
@@ -929,13 +878,11 @@ void handle_capture_scan(int argc, char **argv) {
 
 void stop_portal(int argc, char **argv) {
     wifi_manager_stop_evil_portal();
-    printf("Stopping evil portal...\n");
-    TERMINAL_VIEW_ADD_TEXT("Stopping evil portal...\n");
+    glog("Stopping evil portal...\n");
 }
 
 void handle_reboot(int argc, char **argv) {
-    printf("Rebooting system...\n");
-    TERMINAL_VIEW_ADD_TEXT("Rebooting system...\n");
+    glog("Rebooting system...\n");
     esp_restart();
 }
 
@@ -954,27 +901,23 @@ void handle_startwd(int argc, char **argv) {
         wifi_manager_stop_monitor_mode();
         csv_flush_buffer_to_file();
         csv_file_close();
-        printf("Wardriving stopped.\n");
-        TERMINAL_VIEW_ADD_TEXT("Wardriving stopped.\n");
+        glog("Wardriving stopped.\n");
     } else {
         gps_manager_init(&g_gpsManager);
         if (sd_card_exists("/mnt/ghostesp/gps")) {
             esp_err_t err = csv_file_open("wardriving");
             if (err != ESP_OK) {
-                printf("Failed to open CSV for wardriving\n");
-                TERMINAL_VIEW_ADD_TEXT("Failed to open CSV for wardriving\n");
+                glog("Failed to open CSV for wardriving\n");
             }
         }
         wifi_manager_start_monitor_mode(wardriving_scan_callback);
-        printf("Wardriving started.\n");
-        TERMINAL_VIEW_ADD_TEXT("Wardriving started.\n");
+        glog("Wardriving started.\n");
     }
 }
 
 void handle_timezone_cmd(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: timezone <TZ_STRING>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: timezone <TZ_STRING>\n");
+        glog("Usage: timezone <TZ_STRING>\n");
         return;
     }
     const char *tz = argv[1];
@@ -982,24 +925,23 @@ void handle_timezone_cmd(int argc, char **argv) {
     settings_save(&G_Settings);
     setenv("TZ", tz, 1);
     tzset();
-    printf("Timezone set to: %s\n", tz);
-    TERMINAL_VIEW_ADD_TEXT("Timezone set to: %s\n", tz);
+    glog("Timezone set to: %s\n", tz);
 }
 
 void handle_scan_ports(int argc, char **argv) {
     if (argc < 2) {
-        TERMINAL_VIEW_ADD_TEXT("Usage:\n");
-        TERMINAL_VIEW_ADD_TEXT("  scanports local\n");
-        TERMINAL_VIEW_ADD_TEXT("  scanports <IP> [all | start-end]\n");
+        glog("Usage:\n");
+        glog("  scanports local\n");
+        glog("  scanports <IP> [all | start-end]\n");
         return;
     }
 
     // Handle local subnet scan
     if (strcmp(argv[1], "local") == 0) {
         if (argc > 2) {
-            TERMINAL_VIEW_ADD_TEXT("Info: 'local' scan does not take arguments.\n");
+            glog("Info: 'local' scan does not take arguments.\n");
         }
-        TERMINAL_VIEW_ADD_TEXT("Starting local subnet scan...\n");
+        glog("Starting local subnet scan...\n");
         wifi_manager_scan_subnet();
         return;
     }
@@ -1011,45 +953,28 @@ void handle_scan_ports(int argc, char **argv) {
     // Default to common ports if no range is specified
     if (argc < 3) {
         host_result_t result;
-        char msg_buf[64];
-        snprintf(msg_buf, sizeof(msg_buf), "Scanning common tcp ports on %s...\n", target_ip);
-        printf("%s", msg_buf);
-        TERMINAL_VIEW_ADD_TEXT(msg_buf);
+        glog("Scanning common tcp ports on %s...\n", target_ip);
         scan_ports_on_host(target_ip, &result);
 
         if (result.num_open_ports > 0) {
-            snprintf(msg_buf, sizeof(msg_buf), "Found %d open ports on %s:\n", result.num_open_ports, target_ip);
-            printf("%s", msg_buf);
-            TERMINAL_VIEW_ADD_TEXT(msg_buf);
+            glog("Found %d open ports on %s:\n", result.num_open_ports, target_ip);
             for (int i = 0; i < result.num_open_ports; i++) {
-                char port_buf[32];
-                snprintf(port_buf, sizeof(port_buf), "  Port %d\n", result.open_ports[i]);
-                printf("%s", port_buf);
-                TERMINAL_VIEW_ADD_TEXT(port_buf);
+                glog("  Port %d\n", result.open_ports[i]);
             }
         } else {
-            printf("No common open ports found.\n");
-            TERMINAL_VIEW_ADD_TEXT("No common open ports found.\n");
+            glog("No common open ports found.\n");
         }
 
         host_result_t udp_result;
-        snprintf(msg_buf, sizeof(msg_buf), "Scanning common udp ports on %s...\n", target_ip);
-        printf("%s", msg_buf);
-        TERMINAL_VIEW_ADD_TEXT(msg_buf);
+        glog("Scanning common udp ports on %s...\n", target_ip);
         scan_udp_ports_on_host(target_ip, &udp_result);
         if (udp_result.num_open_ports > 0) {
-            snprintf(msg_buf, sizeof(msg_buf), "Found %d udp ports responding on %s:\n", udp_result.num_open_ports, target_ip);
-            printf("%s", msg_buf);
-            TERMINAL_VIEW_ADD_TEXT(msg_buf);
+            glog("Found %d udp ports responding on %s:\n", udp_result.num_open_ports, target_ip);
             for (int i = 0; i < udp_result.num_open_ports; i++) {
-                char port_buf[32];
-                snprintf(port_buf, sizeof(port_buf), "  UDP %d\n", udp_result.open_ports[i]);
-                printf("%s", port_buf);
-                TERMINAL_VIEW_ADD_TEXT(port_buf);
+                glog("  UDP %d\n", udp_result.open_ports[i]);
             }
         } else {
-            printf("No common udp responses found.\n");
-            TERMINAL_VIEW_ADD_TEXT("No common udp responses found.\n");
+            glog("No common udp responses found.\n");
         }
         return;
     }
@@ -1061,32 +986,25 @@ void handle_scan_ports(int argc, char **argv) {
         end_port = 65535;
     } else if (sscanf(port_arg, "%d-%d", &start_port, &end_port) != 2 || start_port < 1 ||
                end_port > 65535 || start_port > end_port) {
-        TERMINAL_VIEW_ADD_TEXT("Error: Invalid port range. Use 'all' or 'start-end'.\n");
+        glog("Error: Invalid port range. Use 'all' or 'start-end'.\n");
         return;
     }
 
-    char msg_buf[64];
-    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s tcp ports %d-%d...\n", target_ip, start_port, end_port);
-    printf("%s", msg_buf);
-    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    glog("Scanning %s tcp ports %d-%d...\n", target_ip, start_port, end_port);
     scan_ip_port_range(target_ip, start_port, end_port);
 
-    snprintf(msg_buf, sizeof(msg_buf), "Scanning %s udp ports %d-%d...\n", target_ip, start_port, end_port);
-    printf("%s", msg_buf);
-    TERMINAL_VIEW_ADD_TEXT(msg_buf);
+    glog("Scanning %s udp ports %d-%d...\n", target_ip, start_port, end_port);
     scan_ip_udp_port_range(target_ip, start_port, end_port);
 }
 
 void handle_scan_arp(int argc, char **argv) {
-    TERMINAL_VIEW_ADD_TEXT("Starting ARP scan on local network...\n");
-    printf("Starting ARP scan on local network...\n");
+    glog("Starting ARP scan on local network...\n");
     wifi_manager_arp_scan_subnet();
 }
 
 void handle_scan_ssh(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: scanssh <IP>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: scanssh <IP>\n");
+        glog("Usage: scanssh <IP>\n");
         return;
     }
 
@@ -1094,16 +1012,14 @@ void handle_scan_ssh(int argc, char **argv) {
     host_result_t result;
     char msg_buf[64];
     
-    printf("Starting SSH scan on %s...\n", target_ip);
-    TERMINAL_VIEW_ADD_TEXT("Starting SSH scan on %s...\n", target_ip);
+    glog("Starting SSH scan on %s...\n", target_ip);
     
     scan_ssh_on_host(target_ip, &result);
     
     if (result.num_open_ports > 0) {
-        printf("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
-        TERMINAL_VIEW_ADD_TEXT("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
+        glog("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
     } else {
-        TERMINAL_VIEW_ADD_TEXT("No SSH services found.\n");
+        glog("No SSH services found.\n");
     }
 }
 
@@ -1133,8 +1049,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "wifi") == 0) {
-        printf("\nWi-Fi Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nWi-Fi Commands:\n\n");
+        glog("\nWi-Fi Commands:\n\n");
         printf("scanap\n");
         printf("    Description: Start a Wi-Fi access point (AP) scan.\n");
         printf("    Usage: scanap [seconds]\n\n");
@@ -1231,8 +1146,7 @@ void handle_help(int argc, char **argv) {
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     if (strcmp(category, "ble") == 0) {
-        printf("\nBLE Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nBLE Commands:\n\n");
+        glog("\nBLE Commands:\n\n");
         printf("blescan\n");
         printf("    Description: Handle BLE scanning with various modes.\n");
         printf("    Usage: blescan [OPTION]\n");
@@ -1270,8 +1184,7 @@ void handle_help(int argc, char **argv) {
 #endif
 
     if (strcmp(category, "comm") == 0) {
-        printf("\nCommunication Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nCommunication Commands:\n\n");
+        glog("\nCommunication Commands:\n\n");
         printf("commdiscovery\n    Check discovery status.\n    Usage: commdiscovery\n\n");
         printf("commconnect\n    Connect to a discovered peer ESP32.\n    Usage: commconnect <peer_name>\n    Example: commconnect ESP_A1B2C3\n\n");
         printf("commsend\n    Send a command to connected peer ESP32.\n    Usage: commsend <command> [data]\n    Example: commsend scanap\n    Example: commsend hello world\n\n");
@@ -1283,8 +1196,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "sd") == 0) {
-        printf("\nSD Card Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nSD Card Commands:\n\n");
+        glog("\nSD Card Commands:\n\n");
         printf("-- SD Card Pin Configuration --\n");
         printf("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
         printf("These commands configure pins for the *active* mode.\n");
@@ -1302,8 +1214,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "led") == 0) {
-        printf("\nLED & RGB Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nLED & RGB Commands:\n\n");
+        glog("\nLED & RGB Commands:\n\n");
         printf("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
         printf("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
         TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins\n");
@@ -1311,8 +1222,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "misc") == 0) {
-        printf("\nMiscellaneous Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nMiscellaneous Commands:\n\n");
+        glog("\nMiscellaneous Commands:\n\n");
         printf("help\n");
         printf("    Description: Display this help message.\n");
         printf("    Usage: help [category]\n\n");
@@ -1350,16 +1260,14 @@ void handle_help(int argc, char **argv) {
         return;
     }
     if (strcmp(category, "gps") == 0) {
-        printf("\nGPS Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nGPS Commands:\n\n");
+        glog("\nGPS Commands:\n\n");
         printf("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo\n\n");
         printf("startwd\n    Start GPS wardriving.\n    Usage: startwd [seconds]\n\n");
         TERMINAL_VIEW_ADD_TEXT("gpsinfo, startwd\n");
         return;
     }
     if (strcmp(category, "portal") == 0) {
-        printf("\nEvil Portal Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nEvil Portal Commands:\n\n");
+        glog("\nEvil Portal Commands:\n\n");
         printf("startportal\n");
         printf("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
         printf("                 /mnt/ prefix is added automatically to file paths if missing.\n");
@@ -1386,8 +1294,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "printer") == 0) {
-        printf("\nPrinter Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nPrinter Commands:\n\n");
+        glog("\nPrinter Commands:\n\n");
         printf("powerprinter\n");
         printf("    Description: Print Custom Text to a Printer on your LAN (Requires You to Run Connect First)\n");
         printf("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n");
@@ -1399,8 +1306,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "cast") == 0) {
-        printf("\nYouTube Cast Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nYouTube Cast Commands:\n\n");
+        glog("\nYouTube Cast Commands:\n\n");
         printf("dialconnect\n");
         printf("    Description: Cast a Random Youtube Video on all Smart TV's on your LAN (Requires You to Run Connect First)\n");
         printf("    Usage: dialconnect\n\n");
@@ -1411,8 +1317,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "capture") == 0) {
-        printf("\nCapture Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nCapture Commands:\n\n");
+        glog("\nCapture Commands:\n\n");
         printf("capture\n");
         printf("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
         printf("    Usage: capture [OPTION]\n");
@@ -1423,17 +1328,23 @@ void handle_help(int argc, char **argv) {
         printf("        -raw   :   Start Capturing Raw Packets\n");
         printf("        -wps   :   Start Capturing WPS Packets and there Auth Type\n");
         printf("        -pwn   :   Start Capturing Pwnagotchi Packets\n");
+        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        printf("        -802154:   Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
+        #endif
         printf("        -stop   : Stops the active capture\n\n");
         TERMINAL_VIEW_ADD_TEXT("capture\n");
         TERMINAL_VIEW_ADD_TEXT("    Start a WiFi packet capture.\n");
         TERMINAL_VIEW_ADD_TEXT("    Usage: capture [OPTION]\n");
+        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -802154, -stop\n\n");
+        #else
         TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -stop\n\n");
+        #endif
         return;
     }
 
     if (strcmp(category, "beacon") == 0) {
-        printf("\nBeacon Spam Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nBeacon Spam Commands:\n\n");
+        glog("\nBeacon Spam Commands:\n\n");
         printf("beaconadd\n    Add an SSID to the beacon spam list.\n    Usage: beaconadd <SSID>\n\n");
         printf("beaconremove\n    Remove an SSID from the beacon spam list.\n    Usage: beaconremove <SSID>\n\n");
         printf("beaconclear\n    Clear the beacon spam list.\n    Usage: beaconclear\n\n");
@@ -1444,8 +1355,7 @@ void handle_help(int argc, char **argv) {
     }
 
     if (strcmp(category, "attack") == 0) {
-        printf("\nAttack Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nAttack Commands:\n\n");
+        glog("\nAttack Commands:\n\n");
         printf("dhcpstarve\n");
         printf("    Description: DHCP starvation flood attack\n");
         printf("    Usage: dhcpstarve start [threads]\n");
@@ -1460,8 +1370,7 @@ void handle_help(int argc, char **argv) {
         return;
     }
     
-    printf("\nGhost ESP Command Categories:\n\n");
-    TERMINAL_VIEW_ADD_TEXT("\nGhost ESP Command Categories:\n\n");
+    glog("\nGhost ESP Command Categories:\n\n");
 
     printf("  help wifi      - Wi-Fi commands\n");
     printf("  help ble       - Bluetooth/BLE commands\n");
@@ -1500,14 +1409,16 @@ void handle_help(int argc, char **argv) {
 
 void handle_capture(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: capture [-probe|-beacon|-deauth|-raw|-ble]\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: capture [-probe|-beacon|-deauth|-raw|-ble]\n");
+        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        glog("Usage: capture [-probe|-beacon|-deauth|-raw|-ble|-zigbee]\n");
+        #else
+        glog("Usage: capture [-probe|-beacon|-deauth|-raw|-ble]\n");
+        #endif
         return;
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     if (strcmp(argv[1], "-ble") == 0) {
-        printf("Starting BLE packet capture...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting BLE packet capture...\n");
+        glog("Starting BLE packet capture...\n");
         ble_start_capture();
     }
 #endif
@@ -1589,8 +1500,7 @@ void handle_ble_wardriving(int argc, char **argv) {
 
 void handle_pineap_detection(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-s") == 0) {
-        printf("Stopping PineAP detection...\n");
-        TERMINAL_VIEW_ADD_TEXT("Stopping PineAP detection...\n");
+        glog("Stopping PineAP detection...\n");
         stop_pineap_detection();
         wifi_manager_stop_monitor_mode();
         pcap_file_close();
@@ -1599,25 +1509,21 @@ void handle_pineap_detection(int argc, char **argv) {
     // Open PCAP file for logging detections
     int err = pcap_file_open("pineap_detection", PCAP_CAPTURE_WIFI);
     if (err != ESP_OK) {
-        printf("Warning: Failed to open PCAP file for logging\n");
-        TERMINAL_VIEW_ADD_TEXT("Warning: Failed to open PCAP file for logging\n");
+        glog("Warning: Failed to open PCAP file for logging\n");
     }
 
     // Start PineAP detection with channel hopping
     start_pineap_detection();
     wifi_manager_start_monitor_mode(wifi_pineap_detector_callback);
 
-    printf("Monitoring for Pineapples\n");
-    TERMINAL_VIEW_ADD_TEXT("Monitoring for Pineapples\n");
+    glog("Monitoring for Pineapples\n");
 }
 
 
 void handle_apcred(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: apcred <ssid> <password>\n");
-        printf("       apcred -r (reset to defaults)\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage:\napcred <ssid> <password>\n");
-        TERMINAL_VIEW_ADD_TEXT("apcred -r\n");
+        glog("Usage: apcred <ssid> <password>\n");
+        glog("       apcred -r (reset to defaults)\n");
         return;
     }
                 
@@ -1641,8 +1547,7 @@ void handle_apcred(int argc, char **argv) {
     }
 
     if (argc != 3) {
-        printf("Error: Incorrect number of arguments.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Bad args\n");
+        glog("Error: Incorrect number of arguments.\n");
         return;
     }
 
@@ -1650,8 +1555,7 @@ void handle_apcred(int argc, char **argv) {
     const char *new_password = argv[2];
 
     if (strlen(new_password) < 8) {
-        printf("Error: Password must be at least 8 characters\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Password must\nbe 8+ chars\n");
+        glog("Error: Password must be at least 8 characters\n");
         return;
     }
 
@@ -1675,28 +1579,24 @@ void handle_apcred(int argc, char **argv) {
     const char *saved_ssid = settings_get_ap_ssid(&G_Settings);
     const char *saved_password = settings_get_ap_password(&G_Settings);
     if (strcmp(saved_ssid, new_ssid) != 0 || strcmp(saved_password, new_password) != 0) {
-        printf("Error: Failed to save AP credentials\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Failed to\nsave credentials\n");
+        glog("Error: Failed to save AP credentials\n");
         return;
     }
 
     ap_manager_stop_services();
     esp_err_t err = ap_manager_start_services();
     if (err != ESP_OK) {
-        printf("Error restarting AP: %s\n", esp_err_to_name(err));
-        TERMINAL_VIEW_ADD_TEXT("Error restart AP:\n%s\n", esp_err_to_name(err));
+        glog("Error restarting AP: %s\n", esp_err_to_name(err));
         return;
     }
 
-    printf("AP credentials updated - SSID: %s, Password: %s\n", saved_ssid, saved_password);
-    TERMINAL_VIEW_ADD_TEXT("AP updated:\nSSID: %s\n", saved_ssid);
+    glog("AP credentials updated - SSID: %s, Password: %s\n", saved_ssid, saved_password);
 }
 
 void handle_rgb_mode(int argc, char **argv) {
     static bool last_effect_is_rainbow = false;
     if (argc < 2) {
-        printf("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
+        glog("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
         return;
     }
 
@@ -1715,44 +1615,37 @@ void handle_rgb_mode(int argc, char **argv) {
     // Check for built-in modes first.
     if (strcasecmp(argv[1], "rainbow") == 0) {
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
-            printf("RGB not initialized\n");
-            TERMINAL_VIEW_ADD_TEXT("RGB not initialized\n");
+            glog("RGB not initialized\n");
             return;
         }
         xTaskCreate(rainbow_task, "rainbow_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = true;
-        printf("Rainbow mode activated\n");
-        TERMINAL_VIEW_ADD_TEXT("Rainbow mode activated\n");
+        glog("Rainbow mode activated\n");
     } else if (strcasecmp(argv[1], "police") == 0) {
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
-            printf("RGB not initialized\n");
-            TERMINAL_VIEW_ADD_TEXT("RGB not initialized\n");
+            glog("RGB not initialized\n");
             return;
         }
         xTaskCreate(police_task, "police_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = false;
-        printf("Police mode activated\n");
-        TERMINAL_VIEW_ADD_TEXT("Police mode activated\n");
+        glog("Police mode activated\n");
     } else if (strcasecmp(argv[1], "strobe") == 0) {
-        printf("SEIZURE WARNING\nPLEASE EXIT NOW IF\nYOU ARE SENSITIVE\n");
+        glog("SEIZURE WARNING\nPLEASE EXIT NOW IF\nYOU ARE SENSITIVE\n");
         vTaskDelay(pdMS_TO_TICKS(2000));
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
-            printf("RGB not initialized\n");
-            TERMINAL_VIEW_ADD_TEXT("RGB not initialized\n");
+            glog("RGB not initialized\n");
             return;
         }
         xTaskCreate(strobe_task, "strobe_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = false;
-        printf("Strobe mode activated\n");
-        TERMINAL_VIEW_ADD_TEXT("Strobe mode activated\n");
+        glog("Strobe mode activated\n");
     } else if (strcasecmp(argv[1], "off") == 0) {
         rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
         if (!rgb_manager.is_separate_pins && rgb_manager.strip) {
             led_strip_clear(rgb_manager.strip);
             led_strip_refresh(rgb_manager.strip);
         }
-        printf("RGB disabled\n");
-        TERMINAL_VIEW_ADD_TEXT("RGB disabled\n");
+        glog("RGB disabled\n");
     } else {
         // Otherwise, treat the argument as a color name.
         typedef struct {
@@ -1786,8 +1679,7 @@ void handle_rgb_mode(int argc, char **argv) {
             }
         }
         if (!found) {
-            printf("Unknown color '%s'. Supported colors: red, green, blue, yellow, purple, cyan, orange, white, pink.\n", argv[1]);
-            TERMINAL_VIEW_ADD_TEXT("Unknown color '%s'. Supported colors: red, green, blue, yellow, purple, cyan, orange, white, pink.\n", argv[1]);
+            glog("Unknown color '%s'. Supported colors: red, green, blue, yellow, purple, cyan, orange, white, pink.\n", argv[1]);
             return;
         }
         // Set each LED to the selected static color.
@@ -1795,17 +1687,14 @@ void handle_rgb_mode(int argc, char **argv) {
             rgb_manager_set_color(&rgb_manager, i, r, g, b, false);
         }
         led_strip_refresh(rgb_manager.strip);
-        printf("Static color mode activated: %s\n", argv[1]);
-        TERMINAL_VIEW_ADD_TEXT("Static color mode activated: %s\n", argv[1]);
+        glog("Static color mode activated: %s\n", argv[1]);
     }
 }
 
 void handle_setrgb(int argc, char **argv) {
     if (argc != 4) {
-        printf("Usage: setrgbpins <red> <green> <blue>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: setrgbpins <red> <green> <blue>\n");
-        printf("           (use same value for all pins for single-pin LED strips)\n\n");
-        TERMINAL_VIEW_ADD_TEXT("           (use same value for all pins for single-pin LED strips)\n\n");
+        glog("Usage: setrgbpins <red> <green> <blue>\n");
+        glog("           (use same value for all pins for single-pin LED strips)\n\n");
         return;
     }
     gpio_num_t red_pin = (gpio_num_t)atoi(argv[1]);
@@ -1821,10 +1710,7 @@ void handle_setrgb(int argc, char **argv) {
             settings_set_rgb_data_pin(&G_Settings, red_pin);
             settings_set_rgb_separate_pins(&G_Settings, -1, -1, -1);
             settings_save(&G_Settings);
-            printf("Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
-            char rgb_buf[64];
-            snprintf(rgb_buf, sizeof(rgb_buf), "Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
-            TERMINAL_VIEW_ADD_TEXT(rgb_buf);
+            glog("Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
         }
     } else {
         rgb_manager_deinit(&rgb_manager);
@@ -1834,10 +1720,7 @@ void handle_setrgb(int argc, char **argv) {
             settings_set_rgb_data_pin(&G_Settings, -1);
             settings_set_rgb_separate_pins(&G_Settings, red_pin, green_pin, blue_pin);
             settings_save(&G_Settings);
-            printf("RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
-            char rgb_buf[64];
-            snprintf(rgb_buf, sizeof(rgb_buf), "RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
-            TERMINAL_VIEW_ADD_TEXT(rgb_buf);
+            glog("RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
         }
     }
 }
@@ -1848,12 +1731,9 @@ void handle_sd_config(int argc, char **argv) {
 
 void handle_sd_pins_mmc(int argc, char **argv) {
   if (argc != 7) {
-    printf("Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
-    printf("Sets pins for SDMMC mode (only effective if compiled for MMC).\n");
-    TERMINAL_VIEW_ADD_TEXT("Sets pins for SDMMC mode (only effective if compiled for MMC).\n");
-    printf("Example: sd_pins_mmc 19 18 20 21 22 23\n");
-    TERMINAL_VIEW_ADD_TEXT("Example: sd_pins_mmc 19 18 20 21 22 23\n");
+    glog("Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
+    glog("Sets pins for SDMMC mode (only effective if compiled for MMC).\n");
+    glog("Example: sd_pins_mmc 19 18 20 21 22 23\n");
     return;
   }
   
@@ -1866,8 +1746,7 @@ void handle_sd_pins_mmc(int argc, char **argv) {
   
   if (clk < 0 || cmd < 0 || d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0 ||
       clk > 40 || cmd > 40 || d0 > 40 || d1 > 40 || d2 > 40 || d3 > 40) {
-    printf("Invalid GPIO pins. Pins must be between 0 and 40.\n");
-    TERMINAL_VIEW_ADD_TEXT("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    glog("Invalid GPIO pins. Pins must be between 0 and 40.\n");
     return;
   }
   
@@ -1876,12 +1755,9 @@ void handle_sd_pins_mmc(int argc, char **argv) {
 
 void handle_sd_pins_spi(int argc, char **argv) {
   if (argc != 5) {
-    printf("Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
-    printf("Sets pins for SPI mode (only effective if compiled for SPI).\n");
-    TERMINAL_VIEW_ADD_TEXT("Sets pins for SPI mode (only effective if compiled for SPI).\n");
-    printf("Example: sd_pins_spi 5 18 19 23\n");
-    TERMINAL_VIEW_ADD_TEXT("Example: sd_pins_spi 5 18 19 23\n");
+    glog("Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
+    glog("Sets pins for SPI mode (only effective if compiled for SPI).\n");
+    glog("Example: sd_pins_spi 5 18 19 23\n");
     return;
   }
   
@@ -1892,8 +1768,7 @@ void handle_sd_pins_spi(int argc, char **argv) {
   
   if (cs < 0 || clk < 0 || miso < 0 || mosi < 0 ||
       cs > 40 || clk > 40 || miso > 40 || mosi > 40) {
-    printf("Invalid GPIO pins. Pins must be between 0 and 40.\n");
-    TERMINAL_VIEW_ADD_TEXT("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    glog("Invalid GPIO pins. Pins must be between 0 and 40.\n");
     return;
   }
   
@@ -1913,8 +1788,7 @@ void handle_congestion_cmd(int argc, char **argv) {
     wifi_manager_get_scan_results_data(&ap_count, &ap_records);
 
     if (ap_count == 0 || ap_records == NULL) {
-        printf("No APs found during scan.\n");
-        TERMINAL_VIEW_ADD_TEXT("No APs found during scan.\n");
+        glog("No APs found during scan.\n");
         return;
     }
 
@@ -1949,19 +1823,15 @@ void handle_congestion_cmd(int argc, char **argv) {
         }
     }
 
-    printf("\nChannel Congestion:\n\n");
-    TERMINAL_VIEW_ADD_TEXT("\nChannel Congestion:\n\n");
+    glog("\nChannel Congestion:\n\n");
     const char* header = "+----+-------+------------+\n";
     const char* separator = "+----+-------+------------+\n";
     const char* row_format = "| %2d | %5d | %s |\n";
     const char* footer = "+----+-------+------------+\n";
 
-    printf("%s", header);
-    TERMINAL_VIEW_ADD_TEXT("%s", header);
-    printf("| CH | Count | Bar        |\n");
-    TERMINAL_VIEW_ADD_TEXT("| CH | Count | Bar        |\n");
-    printf("%s", separator);
-    TERMINAL_VIEW_ADD_TEXT("%s", separator);
+    glog("%s", header);
+    glog("| CH | Count | Bar        |\n");
+    glog("%s", separator);
 
     const int max_bar_length = 10;
     char display_bar[max_bar_length * 4]; // Generous buffer: 3 bytes/block + 1 space/pad + null
@@ -1983,13 +1853,11 @@ void handle_congestion_cmd(int argc, char **argv) {
             *ptr++ = ' ';
         }
         *ptr = '\0';
-        printf(row_format, ch, cnt, display_bar);
-        TERMINAL_VIEW_ADD_TEXT(row_format, ch, cnt, display_bar);
+        glog(row_format, ch, cnt, display_bar);
     }
     free(channels);
     free(counts);
-    printf("%s", footer);
-    TERMINAL_VIEW_ADD_TEXT("%s", footer);
+    glog("%s", footer);
 }
 
 // Forward declaration for the new print function
@@ -2003,36 +1871,30 @@ void handle_scanall(int argc, char **argv) {
         if (*endptr == '\0' && sec > 0) {
             total_seconds = (int)sec;
         } else {
-            printf("Invalid duration: '%s'. Using default %d seconds.\n", argv[1], total_seconds);
-            TERMINAL_VIEW_ADD_TEXT("Invalid duration: '%s'. Using default %d seconds.\n", argv[1], total_seconds);
+            glog("Invalid duration: '%s'. Using default %d seconds.\n", argv[1], total_seconds);
         }
     }
 
     int ap_scan_seconds = total_seconds / 2;
     int sta_scan_seconds = total_seconds - ap_scan_seconds; // Use remaining time
 
-    printf("Starting combined scan (%d sec AP, %d sec STA)...\n", ap_scan_seconds, sta_scan_seconds);
-    TERMINAL_VIEW_ADD_TEXT("Starting combined scan (%ds AP, %ds STA)...\n", ap_scan_seconds, sta_scan_seconds);
+    glog("Starting combined scan (%d sec AP, %d sec STA)...\n", ap_scan_seconds, sta_scan_seconds);
 
     // 1. Perform AP Scan
-    printf("--- Starting AP Scan (%d seconds) ---\n", ap_scan_seconds);
-    TERMINAL_VIEW_ADD_TEXT("--- Starting AP Scan (%ds) ---\n", ap_scan_seconds);
+    glog("--- Starting AP Scan (%d seconds) ---\n", ap_scan_seconds);
     wifi_manager_start_scan_with_time(ap_scan_seconds);
     // Results are now in scanned_aps and ap_count
 
     // 2. Perform Station Scan
-    printf("--- Starting Station Scan (%d seconds) ---\n", sta_scan_seconds);
-    TERMINAL_VIEW_ADD_TEXT("--- Starting STA Scan (%ds) ---\n", sta_scan_seconds);
+    glog("--- Starting Station Scan (%d seconds) ---\n", sta_scan_seconds);
     station_count = 0; // Reset station list before new scan
     wifi_manager_start_station_scan(); // Starts monitor mode + channel hopping
-    printf("Station scan running for %d seconds...\n", sta_scan_seconds);
-    TERMINAL_VIEW_ADD_TEXT("Station scan running for %ds...\n", sta_scan_seconds);
+    glog("Station scan running for %d seconds...\n", sta_scan_seconds);
     vTaskDelay(pdMS_TO_TICKS(sta_scan_seconds * 1000));
     wifi_manager_stop_monitor_mode(); // Stops monitor mode + channel hopping
     // Results are now in station_ap_list and station_count
 
-    printf("--- Scan Complete ---\n");
-    TERMINAL_VIEW_ADD_TEXT("--- Scan Complete ---\n");
+    glog("--- Scan Complete ---\n");
 
     // 3. Print Combined Results
     wifi_manager_scanall_chart();
@@ -2052,8 +1914,7 @@ void handle_list_airtags_cmd(int argc, char **argv) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_select_airtag(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: selectairtag <number>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: selectairtag <number>\n");
+        glog("Usage: selectairtag <number>\n");
         return;
     }
 
@@ -2062,8 +1923,7 @@ void handle_select_airtag(int argc, char **argv) {
     if (*endptr == '\0') {
         ble_select_airtag(num);
     } else {
-        printf("Error: '%s' is not a valid number.\n", argv[1]);
-        TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", argv[1]);
+        glog("Error: '%s' is not a valid number.\n", argv[1]);
     }
 }
 #endif
@@ -2090,8 +1950,7 @@ void handle_list_flippers_cmd(int argc, char **argv) {
 
 void handle_select_flipper_cmd(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: selectflipper <index>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: selectflipper <index>\n");
+        glog("Usage: selectflipper <index>\n");
         return;
     }
     char *endptr;
@@ -2099,8 +1958,7 @@ void handle_select_flipper_cmd(int argc, char **argv) {
     if (*endptr == '\0') {
         ble_select_flipper(num);
     } else {
-        printf("Error: '%s' is not a valid number.\n", argv[1]);
-        TERMINAL_VIEW_ADD_TEXT("Error: '%s' is not a valid number.\n", argv[1]);
+        glog("Error: '%s' is not a valid number.\n", argv[1]);
     }
 }
 #endif
@@ -2108,8 +1966,7 @@ void handle_select_flipper_cmd(int argc, char **argv) {
 // New beacon list command handlers
 void handle_beaconadd(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: beaconadd <SSID>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: beaconadd <SSID>\n");
+        glog("Usage: beaconadd <SSID>\n");
         return;
     }
     wifi_manager_add_beacon_ssid(argv[1]);
@@ -2117,8 +1974,7 @@ void handle_beaconadd(int argc, char **argv) {
 
 void handle_beaconremove(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: beaconremove <SSID>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: beaconremove <SSID>\n");
+        glog("Usage: beaconremove <SSID>\n");
         return;
     }
     wifi_manager_remove_beacon_ssid(argv[1]);
@@ -2153,17 +2009,14 @@ void handle_dhcpstarve_cmd(int argc, char **argv) {
 #if CONFIG_IDF_TARGET_ESP32C5
 void handle_setcountry(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: setcountry <CC>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: setcountry <CC>\n");
+        glog("Usage: setcountry <CC>\n");
         return;
     }
     esp_err_t err = esp_wifi_set_country_code(argv[1], true);
     if (err == ESP_OK) {
-        printf("country set to %s\n", argv[1]);
-        TERMINAL_VIEW_ADD_TEXT("country set to %s\n", argv[1]);
+        glog("country set to %s\n", argv[1]);
     } else {
-        printf("failed to set country: %s\n", esp_err_to_name(err));
-        TERMINAL_VIEW_ADD_TEXT("failed to set country: %s\n", esp_err_to_name(err));
+        glog("failed to set country: %s\n", esp_err_to_name(err));
     }
 }
 #endif
@@ -2173,8 +2026,7 @@ void handle_listen_probes_cmd(int argc, char **argv) {
         wifi_manager_stop_monitor_mode();
         pcap_file_close();
         g_listen_probes_save_to_sd = false;
-        printf("Probe request listening stopped.\n");
-        TERMINAL_VIEW_ADD_TEXT("Probe request listening stopped.\n");
+        glog("Probe request listening stopped.\n");
         return;
     }
 
@@ -2187,16 +2039,13 @@ void handle_listen_probes_cmd(int argc, char **argv) {
         if (*endptr == '\0' && ch >= 1 && ch <= MAX_WIFI_CHANNEL) {
             channel = (uint8_t)ch;
             channel_hopping = false;
-            printf("Starting to listen for probe requests on channel %d...\n", channel);
-            TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests on channel %d...\n", channel);
+            glog("Starting to listen for probe requests on channel %d...\n", channel);
         } else {
-            printf("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
-            TERMINAL_VIEW_ADD_TEXT("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            glog("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
             return;
         }
     } else {
-        printf("Starting to listen for probe requests (channel hopping)...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting to listen for probe requests (channel hopping)...\n");
+        glog("Starting to listen for probe requests (channel hopping)...\n");
     }
 
     bool sd_available = sd_card_exists("/mnt/ghostesp/pcaps");
@@ -2204,13 +2053,11 @@ void handle_listen_probes_cmd(int argc, char **argv) {
     if (sd_available) {
         int err = pcap_file_open("probelisten", PCAP_CAPTURE_WIFI);
         if (err != ESP_OK) {
-            printf("Warning: PCAP file open failed; probes will not be saved to SD card.\n");
-            TERMINAL_VIEW_ADD_TEXT("Warning: PCAP file open failed.\n");
+            glog("Warning: PCAP file open failed; probes will not be saved to SD card.\n");
             g_listen_probes_save_to_sd = false;
         }
     } else {
-        printf("SD card not available; probe PCAP disabled.\n");
-        TERMINAL_VIEW_ADD_TEXT("SD card not available; probe PCAP disabled.\n");
+        glog("SD card not available; probe PCAP disabled.\n");
     }
 
     if (channel_hopping) {
@@ -2223,24 +2070,20 @@ void handle_listen_probes_cmd(int argc, char **argv) {
 
 void handle_web_auth_cmd(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: webauth <on|off>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+        glog("Usage: webauth <on|off>\n");
         return;
     }
 
     if (strcmp(argv[1], "on") == 0) {
         settings_set_web_auth_enabled(&G_Settings, true);
         settings_save(&G_Settings);
-        printf("Web authentication enabled.\n");
-        TERMINAL_VIEW_ADD_TEXT("Web authentication enabled.\n");
+        glog("Web authentication enabled.\n");
     } else if (strcmp(argv[1], "off") == 0) {
         settings_set_web_auth_enabled(&G_Settings, false);
         settings_save(&G_Settings);
-        printf("Web authentication disabled.\n");
-        TERMINAL_VIEW_ADD_TEXT("Web authentication disabled.\n");
+        glog("Web authentication disabled.\n");
     } else {
-        printf("Usage: webauth <on|off>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: webauth <on|off>\n");
+        glog("Usage: webauth <on|off>\n");
     }
 }
 
@@ -2254,49 +2097,41 @@ void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
     
     if (state == COMM_STATE_SCANNING) {
-        printf("Already in discovery mode. Listening for peers...\n");
-        TERMINAL_VIEW_ADD_TEXT("Already in discovery mode. Listening for peers...\n");
+        glog("Already in discovery mode. Listening for peers...\n");
         return;
     }
     
     if (esp_comm_manager_start_discovery()) {
-        printf("Started discovery mode. Listening for peers...\n");
-        TERMINAL_VIEW_ADD_TEXT("Started discovery mode. Listening for peers...\n");
+        glog("Started discovery mode. Listening for peers...\n");
     } else {
-        printf("Failed to start discovery. Check if already connected.\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to start discovery. Check if already connected.\n");
+        glog("Failed to start discovery. Check if already connected.\n");
     }
 }
 
 void handle_comm_connect(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: commconnect <peer_name>\n");
-        printf("Example: commconnect ESP_A1B2C3\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: commconnect <peer_name>\n");
+        glog("Usage: commconnect <peer_name>\n");
+        glog("Example: commconnect ESP_A1B2C3\n");
         return;
     }
     
     if (esp_comm_manager_connect_to_peer(argv[1])) {
-        printf("Attempting to connect to peer: %s\n", argv[1]);
-        TERMINAL_VIEW_ADD_TEXT("Attempting to connect to peer...\n");
+        glog("Attempting to connect to peer: %s\n", argv[1]);
     } else {
-        printf("Failed to connect. Make sure you're in discovery mode first.\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to connect. Start discovery first.\n");
+        glog("Failed to connect. Make sure you're in discovery mode first.\n");
     }
 }
 
 void handle_comm_send(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: commsend <command> [data]\n");
-        printf("Example: commsend hello world\n");
-        printf("Example: commsend scanap\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: commsend <command> [data]\n");
+        glog("Usage: commsend <command> [data]\n");
+        glog("Example: commsend hello world\n");
+        glog("Example: commsend scanap\n");
         return;
     }
     
     if (!esp_comm_manager_is_connected()) {
-        printf("Not connected to any peer. Use 'commdiscovery' and 'commconnect' first.\n");
-        TERMINAL_VIEW_ADD_TEXT("Not connected. Connect to a peer first.\n");
+        glog("Not connected to any peer. Use 'commdiscovery' and 'commconnect' first.\n");
         return;
     }
     
@@ -2307,7 +2142,7 @@ void handle_comm_send(int argc, char **argv) {
             int remaining = sizeof(data_buffer) - offset;
             int written = snprintf(data_buffer + offset, remaining, "%s ", argv[i]);
             if (written >= remaining) {
-                printf("W: Command data truncated.\n");
+                glog("W: Command data truncated.\n");
                 break;
             }
             offset += written;
@@ -2322,14 +2157,12 @@ void handle_comm_send(int argc, char **argv) {
 
     if (esp_comm_manager_send_command(command, data)) {
         if (data && data[0] != '\0') {
-            printf("Command sent: %s %s\n", command, data);
+            glog("Command sent: %s %s\n", command, data);
         } else {
-            printf("Command sent: %s\n", command);
+            glog("Command sent: %s\n", command);
         }
-        TERMINAL_VIEW_ADD_TEXT("Command sent successfully.\n");
     } else {
-        printf("Failed to send command.\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to send command.\n");
+        glog("Failed to send command.\n");
     }
 }
 
@@ -2346,27 +2179,23 @@ void handle_comm_status(int argc, char **argv) {
         default: state_str = "UNKNOWN"; break;
     }
     
-    printf("Communication Status: %s\n", state_str);
+    glog("Communication Status: %s\n", state_str);
     if (esp_comm_manager_is_connected()) {
-        printf("Connected to peer. Ready to send commands.\n");
-        TERMINAL_VIEW_ADD_TEXT("Status: Connected\n");
+        glog("Connected to peer. Ready to send commands.\n");
     } else {
-        printf("Not connected. Use 'commdiscovery' to find peers.\n");
-        TERMINAL_VIEW_ADD_TEXT("Status: Not connected\n");
+        glog("Not connected. Use 'commdiscovery' to find peers.\n");
     }
 }
 
 void handle_comm_disconnect(int argc, char **argv) {
     esp_comm_manager_disconnect();
-    printf("Disconnected from peer.\n");
-    TERMINAL_VIEW_ADD_TEXT("Disconnected from peer.\n");
+    glog("Disconnected from peer.\n");
 }
 
 void handle_comm_setpins(int argc, char **argv) {
     if (argc != 3) {
-        printf("Usage: commsetpins <tx_pin> <rx_pin>\n");
-        printf("Example: commsetpins 4 5\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: commsetpins <tx_pin> <rx_pin>\n");
+        glog("Usage: commsetpins <tx_pin> <rx_pin>\n");
+        glog("Example: commsetpins 4 5\n");
         return;
     }
     
@@ -2374,8 +2203,7 @@ void handle_comm_setpins(int argc, char **argv) {
     int rx_pin = atoi(argv[2]);
     
     if (tx_pin < 0 || tx_pin > 48 || rx_pin < 0 || rx_pin > 48) {
-        printf("Invalid pin numbers. Must be between 0-48.\n");
-        TERMINAL_VIEW_ADD_TEXT("Invalid pin numbers.\n");
+        glog("Invalid pin numbers. Must be between 0-48.\n");
         return;
     }
     
@@ -2383,11 +2211,9 @@ void handle_comm_setpins(int argc, char **argv) {
         settings_set_esp_comm_pins(&G_Settings, tx_pin, rx_pin);
         settings_save(&G_Settings);
         
-        printf("Communication pins changed to TX:%d RX:%d and saved to NVS\n", tx_pin, rx_pin);
-        TERMINAL_VIEW_ADD_TEXT("Communication pins changed and saved.\n");
+        glog("Communication pins changed to TX:%d RX:%d and saved to NVS\n", tx_pin, rx_pin);
     } else {
-        printf("Failed to change pins. Make sure not connected or scanning.\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to change pins.\n");
+        glog("Failed to change pins. Make sure not connected or scanning.\n");
     }
 }
 
@@ -2405,10 +2231,9 @@ static void comm_command_callback(const char* command, const char* data, void* u
 }
 void handle_ap_enable_cmd(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: apenable <on|off>\n");
-        printf("Example: apenable on\n");
-        printf("         apenable off\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: apenable <on|off>\n");
+        glog("Usage: apenable <on|off>\n");
+        glog("Example: apenable on\n");
+        glog("         apenable off\n");
         return;
     }
     
@@ -2418,16 +2243,14 @@ void handle_ap_enable_cmd(int argc, char **argv) {
     } else if (strcmp(argv[1], "off") == 0) {
         enable = false;
     } else {
-        printf("Invalid argument. Use 'on' or 'off'\n");
-        TERMINAL_VIEW_ADD_TEXT("Invalid argument. Use 'on' or 'off'\n");
+        glog("Invalid argument. Use 'on' or 'off'\n");
         return;
     }
     
     settings_set_ap_enabled(&G_Settings, enable);
     settings_save(&G_Settings);
     
-    printf("Access Point %s. Restart required to take effect.\n", enable ? "enabled" : "disabled");
-    TERMINAL_VIEW_ADD_TEXT(enable ? "Access Point enabled. Restart required.\n" : "Access Point disabled. Restart required.\n");
+    glog("Access Point %s. Restart required to take effect.\n", enable ? "enabled" : "disabled");
 }
 
 void handle_chip_info_cmd(int argc, char **argv) {
@@ -2476,64 +2299,58 @@ void handle_chip_info_cmd(int argc, char **argv) {
     unsigned major_rev = chip_info.revision / 100;
     unsigned minor_rev = chip_info.revision % 100;
     
-    printf("Chip Information:\n");
-    printf("  Model: %s\n", model_name);
-    printf("  Revision: v%d.%d\n", major_rev, minor_rev);
-    printf("  CPU Cores: %d\n", chip_info.cores);
-    
-    printf("  Features: ");
+    glog("Chip Information:\n");
+    glog("  Model: %s\n", model_name);
+    glog("  Revision: v%d.%d\n", major_rev, minor_rev);
+    glog("  CPU Cores: %d\n", chip_info.cores);
+
+    char features_str[256] = "";
     bool first = true;
     if (chip_info.features & CHIP_FEATURE_WIFI_BGN) {
-        printf("WiFi");
+        strcat(features_str, "WiFi");
         first = false;
     }
     if (chip_info.features & CHIP_FEATURE_BT) {
-        if (!first) printf("/");
-        printf("BT");
+        if (!first) strcat(features_str, "/");
+        strcat(features_str, "BT");
         first = false;
     }
     if (chip_info.features & CHIP_FEATURE_BLE) {
-        if (!first) printf("/");
-        printf("BLE");
+        if (!first) strcat(features_str, "/");
+        strcat(features_str, "BLE");
         first = false;
     }
     if (chip_info.features & CHIP_FEATURE_IEEE802154) {
-        if (!first) printf("/");
-        printf("802.15.4");
+        if (!first) strcat(features_str, "/");
+        strcat(features_str, "802.15.4");
         first = false;
     }
     if (chip_info.features & CHIP_FEATURE_EMB_FLASH) {
-        if (!first) printf("/");
-        printf("Embedded Flash");
+        if (!first) strcat(features_str, "/");
+        strcat(features_str, "Embedded Flash");
         first = false;
     }
     if (chip_info.features & CHIP_FEATURE_EMB_PSRAM) {
-        if (!first) printf("/");
-        printf("Embedded PSRAM");
+        if (!first) strcat(features_str, "/");
+        strcat(features_str, "Embedded PSRAM");
         first = false;
     }
     if (first) {
-        printf("None");
+        strcat(features_str, "None");
     }
-    printf("\n");
-    
-    printf("  Free Heap: %lu bytes\n", esp_get_free_heap_size());
-    printf("  Min Free Heap: %lu bytes\n", esp_get_minimum_free_heap_size());
-    printf("  IDF Version: %s\n", esp_get_idf_version());
+    glog("  Features: %s\n", features_str);
+
+    glog("  Free Heap: %lu bytes\n", esp_get_free_heap_size());
+    glog("  Min Free Heap: %lu bytes\n", esp_get_minimum_free_heap_size());
+    glog("  IDF Version: %s\n", esp_get_idf_version());
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    printf("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+    glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
 #endif
     
-    TERMINAL_VIEW_ADD_TEXT("Chip Information:\n");
-    char info_buffer[512];
-    snprintf(info_buffer, sizeof(info_buffer), 
-             "  Model: %s\n  Revision: v%d.%d\n  CPU Cores: %d\n  Free Heap: %lu bytes\n",
-             model_name, major_rev, minor_rev, chip_info.cores, esp_get_free_heap_size());
-    TERMINAL_VIEW_ADD_TEXT(info_buffer);
+    glog("  Model: %s\n  Revision: v%d.%d\n  CPU Cores: %d\n  Free Heap: %lu bytes\n",
+          model_name, major_rev, minor_rev, chip_info.cores, esp_get_free_heap_size());
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    char build_config_buffer[128];
-    snprintf(build_config_buffer, sizeof(build_config_buffer), "  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
-    TERMINAL_VIEW_ADD_TEXT(build_config_buffer);
+    glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
 #endif
 }
 
@@ -2623,52 +2440,44 @@ void register_commands() {
     
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
     
-    printf("Registered Commands\n");
-    TERMINAL_VIEW_ADD_TEXT("Registered Commands\n");
+    glog("Registered Commands\n");
 }
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_ble_spam_cmd(int argc, char **argv) {
     if (argc > 1) {
         if (strcmp(argv[1], "-apple") == 0) {
-            printf("starting apple ble spam...\n");
-            TERMINAL_VIEW_ADD_TEXT("Starting Apple BLE spam...\n");
+            glog("starting apple ble spam...\n");
             ble_start_ble_spam(BLE_SPAM_APPLE);
             return;
         }
         if (strcmp(argv[1], "-ms") == 0 || strcmp(argv[1], "-microsoft") == 0) {
-            printf("starting microsoft ble spam...\n");
-            TERMINAL_VIEW_ADD_TEXT("Starting Microsoft BLE spam...\n");
+            glog("starting microsoft ble spam...\n");
             ble_start_ble_spam(BLE_SPAM_MICROSOFT);
             return;
         }
         if (strcmp(argv[1], "-samsung") == 0) {
-            printf("starting samsung ble spam...\n");
-            TERMINAL_VIEW_ADD_TEXT("Starting Samsung BLE spam...\n");
+            glog("starting samsung ble spam...\n");
             ble_start_ble_spam(BLE_SPAM_SAMSUNG);
             return;
         }
         if (strcmp(argv[1], "-google") == 0) {
-            printf("starting google ble spam...\n");
-            TERMINAL_VIEW_ADD_TEXT("Starting Google BLE spam...\n");
+            glog("starting google ble spam...\n");
             ble_start_ble_spam(BLE_SPAM_GOOGLE);
             return;
         }
         if (strcmp(argv[1], "-random") == 0) {
-            printf("starting random ble spam...\n");
-            TERMINAL_VIEW_ADD_TEXT("Starting Random BLE spam...\n");
+            glog("starting random ble spam...\n");
             ble_start_ble_spam(BLE_SPAM_RANDOM);
             return;
         }
         if (strcmp(argv[1], "-s") == 0) {
-            printf("stopping ble spam...\n");
-            TERMINAL_VIEW_ADD_TEXT("Stopping BLE spam...\n");
+            glog("stopping ble spam...\n");
             ble_stop_ble_spam();
             return;
         }
     }
-    printf("usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+    glog("usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
 }
 #endif
 
@@ -2677,56 +2486,44 @@ void handle_listportals(int argc, char **argv) {
     int count = get_evil_portal_list(portal_names);
 
     if (count <= 0) {
-        printf("No portals found.\n");
-        TERMINAL_VIEW_ADD_TEXT("No portals found.\n");
+        glog("No portals found.\n");
         return;
     }
 
-    printf("Available Evil Portals:\n");
-    TERMINAL_VIEW_ADD_TEXT("Available Evil Portals:\n");
+    glog("Available Evil Portals:\n");
     for (int i = 0; i < count; ++i) {
-        printf("  %.508s\n", portal_names[i]);
-        TERMINAL_VIEW_ADD_TEXT("  %.508s\n", portal_names[i]);
+        glog("  %.508s\n", portal_names[i]);
     }
 }
 
 void handle_evilportal(int argc, char **argv) {
     if (argc < 3) {
-        printf("Usage: %s -c <command>\n", argv[0]);
-        TERMINAL_VIEW_ADD_TEXT("Usage: %s -c <command>\n", argv[0]);
-        printf("Commands:\n");
-        printf("  sethtmlstr - Set HTML content from buffer (use with UART markers)\n");
-        printf("  clear - Clear HTML buffer and disable buffer mode\n");
-        TERMINAL_VIEW_ADD_TEXT("Commands:\n");
-        TERMINAL_VIEW_ADD_TEXT("  sethtmlstr - Set HTML content from buffer\n");
-        TERMINAL_VIEW_ADD_TEXT("  clear - Clear HTML buffer and disable buffer mode\n");
+        glog("Usage: %s -c <command>\n", argv[0]);
+        glog("Commands:\n");
+        glog("  sethtmlstr - Set HTML content from buffer (use with UART markers)\n");
+        glog("  clear - Clear HTML buffer and disable buffer mode\n");
         return;
     }
 
     if (strcmp(argv[1], "-c") != 0) {
-        printf("Error: Expected -c flag\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: Expected -c flag\n");
+        glog("Error: Expected -c flag\n");
         return;
     }
 
     if (strcmp(argv[2], "sethtmlstr") == 0) {
         wifi_manager_set_html_from_uart();
-        printf("HTML buffer mode enabled for evil portal\n");
-        TERMINAL_VIEW_ADD_TEXT("HTML buffer mode enabled for evil portal\n");
+        glog("HTML buffer mode enabled for evil portal\n");
     } else if (strcmp(argv[2], "clear") == 0) {
         wifi_manager_clear_html_buffer();
-        printf("HTML buffer cleared - will use default portal on next startportal\n");
-        TERMINAL_VIEW_ADD_TEXT("HTML buffer cleared - will use default portal on next startportal\n");
+        glog("HTML buffer cleared - will use default portal on next startportal\n");
     } else {
-        printf("Error: Unknown command '%s'\n", argv[2]);
-        TERMINAL_VIEW_ADD_TEXT("Error: Unknown command '%s'\n", argv[2]);
+        glog("Error: Unknown command '%s'\n", argv[2]);
     }
 }
 
 void handle_set_rgb_mode_cmd(int argc, char **argv) {
     if (argc != 2) {
-        printf("Usage: setrgbmode <normal|rainbow|stealth>\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: setrgbmode <normal|rainbow|stealth>\n");
+        glog("Usage: setrgbmode <normal|rainbow|stealth>\n");
         return;
     }
     RGBMode mode;
@@ -2737,17 +2534,10 @@ void handle_set_rgb_mode_cmd(int argc, char **argv) {
     } else if (strcasecmp(argv[1], "stealth") == 0) {
         mode = RGB_MODE_STEALTH;
     } else {
-        printf("Invalid mode '%s'. Supported modes: normal, rainbow, stealth\n", argv[1]);
-        TERMINAL_VIEW_ADD_TEXT("Invalid mode '%s'. Supported modes: normal, rainbow, stealth\n", argv[1]);
+        glog("Invalid mode '%s'. Supported modes: normal, rainbow, stealth\n", argv[1]);
         return;
     }
     settings_set_rgb_mode(&G_Settings, mode);
     settings_save(&G_Settings);
-    printf("RGB mode set to %s\n", argv[1]);
-    TERMINAL_VIEW_ADD_TEXT("RGB mode set to %s\n", argv[1]);
+    glog("RGB mode set to %s\n", argv[1]);
 }
-
-
-
-
-
