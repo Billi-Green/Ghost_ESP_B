@@ -470,6 +470,8 @@ void serial_task(void *pvParameter) {
             // Reset cursor position
             cursor_position = 0;
             process_html_line(serial_buffer);
+            // Clear the buffer completely
+            memset(serial_buffer, 0, sizeof(serial_buffer));
             index = 0;
           }
           continue;
