@@ -938,7 +938,7 @@ esp_err_t file_handler(httpd_req_t *req) {
         return stream_data_to_client(req, local_path, content_type);
     }
 
-    const char *host = get_host_from_req(req);
+    char *host = get_host_from_req(req);
     if (host == NULL) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_send(req, NULL, 0);
@@ -952,7 +952,7 @@ esp_err_t file_handler(httpd_req_t *req) {
 
     esp_err_t result = stream_data_to_client(req, file_url, content_type);
 
-    free((void *)host);
+    free(host);
 
     return result;
 }
@@ -1093,10 +1093,10 @@ esp_err_t get_info_handler(httpd_req_t *req) {
 esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Free heap at redirect handler entry: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
     // Log Host header and User-Agent for diagnostics (help debug iOS probe behavior)
-    const char *req_host = get_host_from_req(req);
+    char *req_host = get_host_from_req(req);
     if (req_host) {
         ESP_LOGI(TAG, "Redirect handler Host header: %s", req_host);
-        free((void*)req_host);
+        free(req_host);
     } else {
         ESP_LOGI(TAG, "Redirect handler: Host header not present");
     }
