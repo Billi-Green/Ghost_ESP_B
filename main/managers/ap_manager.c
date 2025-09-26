@@ -668,7 +668,7 @@ esp_err_t ap_manager_init(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    log_mutex = xSemaphoreCreateMutex();
+    log_mutex = xSemaphoreCreateRecursiveMutex();
     if (!log_mutex) {
         ESP_LOGE(TAG, "Failed to create log mutex");
         free(log_buffer);

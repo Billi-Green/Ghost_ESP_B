@@ -3713,8 +3713,7 @@ static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_re
 
 void wifi_manager_print_scan_results_with_oui() {
     if (scanned_aps == NULL) {
-        printf("AP information not available\n");
-        TERMINAL_VIEW_ADD_TEXT("AP information not available\n");
+        glog("AP information not available\n");
         return;
     }
 
@@ -3756,22 +3755,22 @@ void wifi_manager_print_scan_results_with_oui() {
             break;
         }
 
-        printf("[%u] SSID: %s,\n"
-               "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-               "     RSSI: %d,\n"
-               "     Channel: %d,\n",
-               i, sanitized_ssid, 
-               scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
-               scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
-               scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-               scanned_aps[i].rssi,
-               scanned_aps[i].primary);
+        glog("[%u] SSID: %s,\n"
+             "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
+             "     RSSI: %d,\n"
+             "     Channel: %d,\n",
+             i, sanitized_ssid, 
+             scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
+             scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
+             scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
+             scanned_aps[i].rssi,
+             scanned_aps[i].primary);
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         {
             int ch = scanned_aps[i].primary;
             const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
-            printf("     Band: %s,\n", band_str);
+            glog("     Band: %s,\n", band_str);
             
             const char *auth_str = "Unknown";
             const char *pmf_str = NULL;
@@ -3816,32 +3815,22 @@ void wifi_manager_print_scan_results_with_oui() {
             }
             
             if (pmf_str) {
-                printf("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
+                glog("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
             } else {
-                printf("     Security: %s\n", auth_str);
+                glog("     Security: %s\n", auth_str);
             }
         }
 #endif
         if (strcmp(company_str, "Unknown") != 0) {
-            printf("     Company: %s\n", company_str);
+            glog("     Company: %s\n", company_str);
         }
 
-        TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
-                               "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-                               "     RSSI: %d,\n"
-                               "     Channel: %d,\n",
-                               i, sanitized_ssid, 
-                               scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
-                               scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
-                               scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-                               scanned_aps[i].rssi,
-                               scanned_aps[i].primary);
 
 #ifdef CONFIG_IDF_TARGET_ESP32C5
         {
             int ch = scanned_aps[i].primary;
             const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
-            TERMINAL_VIEW_ADD_TEXT("     Band: %s,\n", band_str);
+            glog("     Band: %s,\n", band_str);
             
             const char *auth_str = "Unknown";
             const char *pmf_str = NULL;
@@ -3893,11 +3882,11 @@ void wifi_manager_print_scan_results_with_oui() {
                     break;
             }
             
-            TERMINAL_VIEW_ADD_TEXT("     Security: %s\n      PMF: %s,\n", auth_str, pmf_str);
+            glog("     Security: %s\n      PMF: %s,\n", auth_str, pmf_str);
         }
 #endif
         if (strcmp(company_str, "Unknown") != 0) {
-            TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+            glog("     Company: %s\n", company_str);
         }
     }
 }

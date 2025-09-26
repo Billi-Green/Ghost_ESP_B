@@ -68,7 +68,7 @@ static const lv_font_t* get_menu_font(void);
 static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn);
 static void nfc_option_event_cb(lv_event_t *e);
 static void highlight_selected(void);
-static void nfc_view_input_cb(struct InputEvent *event);
+static void nfc_view_input_cb(InputEvent *event);
 
 static lv_obj_t *root = NULL;
 static lv_obj_t *menu_container = NULL;

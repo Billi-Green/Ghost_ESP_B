@@ -45,7 +45,6 @@
 - Added NMEA handle null-checks
 - Flush PCAP header on open and close PCAP on generic stop command
 - Miscellaneous fixes and improvements
-- Use the build chip's maximum allowed RMT memory per channel instead of a hard-coded value for IR
 - Small miscellaneous memory saves
 - Fixed RMT channel allocation on C5 to prevent conflicts with IR TX
 
@@ -63,7 +62,7 @@
 
 - Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
 - Remove artificial delay in cardputer keyboard task to make more responsive
-- Improve terminal message handling
+- Improve and refactor terminal message handling
 
 ## Revival v1.7.2
 

@@ -1045,41 +1045,45 @@ bool display_manager_register_view(View *view) {
   return true;
 }
 
-void display_manager_switch_view(View *view) {
-  if (view == NULL)
-    return;
-
+static void display_manager_switch_view_internal(View *view) {
+  if (view == NULL) return;
 #ifdef CONFIG_JC3248W535EN_LCD
   bsp_display_lock(0);
 #endif
-
   if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-    ESP_LOGI(TAG, "Switching view from %s to %s",
-           dm.current_view ? dm.current_view->name : "NULL", view->name);
-
+    ESP_LOGI(TAG, "Switching view from %s to %s", dm.current_view ? dm.current_view->name : "NULL", view->name);
     if (dm.current_view && dm.current_view->root) {
-      display_manager_previous_view = dm.current_view; // Store current view as previous
+      display_manager_previous_view = dm.current_view;
       display_manager_fade_out(dm.current_view->root, fade_out_ready_cb, view);
     } else {
-      display_manager_previous_view = dm.current_view; // Store current view as previous
+      display_manager_previous_view = dm.current_view;
       dm.current_view = view;
-
       if (view->get_hardwareinput_callback) {
         view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
       }
-
       view->create();
       display_manager_fade_in(view->root);
     }
-
     xSemaphoreGive(dm.mutex);
   } else {
     ESP_LOGE(TAG, "Failed to acquire mutex for switching view\n");
   }
-
 #ifdef CONFIG_JC3248W535EN_LCD
   bsp_display_unlock();
 #endif
+}
+
+static void dm_switch_async_cb(void *param) {
+  display_manager_switch_view_internal((View *)param);
+}
+
+void display_manager_switch_view(View *view) {
+  if (view == NULL) return;
+  if (lvgl_task_handle && xTaskGetCurrentTaskHandle() != lvgl_task_handle) {
+    lv_async_call(dm_switch_async_cb, view);
+    return;
+  }
+  display_manager_switch_view_internal(view);
 }
 
 void display_manager_destroy_current_view(void) {
