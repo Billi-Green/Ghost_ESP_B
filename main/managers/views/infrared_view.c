@@ -66,6 +66,7 @@ static bool popup_style_initialized = false;
 
 #include "managers/display_manager.h"
 #include "managers/views/main_menu_screen.h"
+#include "gui/popup.h"
 #include "managers/views/keyboard_screen.h"
 #include <lvgl/lvgl.h>
 #include <dirent.h>
@@ -148,7 +149,14 @@ static int preview_selected_option = 0;
 static bool signal_decoded = false;
 static InfraredDecodedMessage *decoded_message = NULL;
 static InfraredDecoderContext *decoder_context = NULL;
+// queue carries rx_event_copy_t by value (no heap allocs in ISR)
 static QueueHandle_t ir_rx_queue = NULL;
+
+#define IR_RX_MAX_SYMBOLS 128
+typedef struct {
+    size_t num_symbols;
+    rmt_symbol_word_t symbols[IR_RX_MAX_SYMBOLS];
+} rx_event_copy_t;
 
 static bool ir_rx_done_callback(rmt_channel_handle_t channel, const rmt_rx_done_event_data_t *edata, void *user_ctx);
 #endif
@@ -919,7 +927,8 @@ void infrared_view_create(void) {
         if (ir_rx_queue) {
             vQueueDelete(ir_rx_queue);
         }
-        ir_rx_queue = xQueueCreate(1, sizeof(rmt_rx_done_event_data_t));
+        // queue will carry rx_event_copy_t by value
+        ir_rx_queue = xQueueCreate(1, sizeof(rx_event_copy_t));
         
         if (ir_rx_queue) {
             // Register RX callback
@@ -1824,9 +1833,9 @@ static void command_event_execute(int idx) {
         }
         if (idx < 0 || idx >= uni_command_count) return;
 
-        transmitting_popup = lv_obj_create(lv_scr_act());
-        lv_obj_set_size(transmitting_popup, 200, 60);
+        transmitting_popup = popup_create_container(lv_scr_act(), 200, 60);
         lv_obj_center(transmitting_popup);
+        // override to keep exact original style
         lv_obj_set_style_bg_color(transmitting_popup, lv_color_hex(0x000000), 0);
         lv_obj_set_style_border_width(transmitting_popup, 2, 0);
         lv_obj_set_style_border_color(transmitting_popup, lv_color_hex(0xFFFFFF), 0);
@@ -1981,71 +1990,45 @@ static void create_unified_learning_popup(learning_popup_type_t type, learning_p
     lv_obj_t *cancel_btn;
     lv_obj_t *skip_btn = NULL;
     lv_obj_t *instruction_label;
-    
+
     if (type == LEARNING_POPUP_STANDARD) {
-        learning_popup = lv_obj_create(lv_scr_act());
+        learning_popup = popup_create_container(lv_scr_act(), config->width, config->height);
         popup = learning_popup;
     } else {
-        easy_learn_popup = lv_obj_create(lv_scr_act());
+        easy_learn_popup = popup_create_container(lv_scr_act(), config->width, config->height);
         popup = easy_learn_popup;
     }
-    
-    lv_obj_set_size(popup, config->width, config->height);
+
     lv_obj_center(popup);
+    // keep exact original styling
     lv_obj_set_style_bg_color(popup, lv_color_hex(0x2E2E2E), 0);
     lv_obj_set_style_border_color(popup, lv_color_hex(0x555555), 0);
     lv_obj_set_style_border_width(popup, 2, 0);
     lv_obj_set_style_radius(popup, 10, 0);
-    
+
     if (config->has_skip_button) {
-        cancel_btn = lv_btn_create(popup);
-        lv_obj_set_size(cancel_btn, 80, 30);
-        lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 20, -10);
-        
-        skip_btn = lv_btn_create(popup);
-        lv_obj_set_size(skip_btn, 80, 30);
-        lv_obj_align(skip_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
-        lv_obj_set_style_bg_color(skip_btn, lv_color_hex(0x555555), 0);
-        lv_obj_t *skip_label = lv_label_create(skip_btn);
-        lv_label_set_text(skip_label, "Skip");
-        lv_obj_center(skip_label);
-        lv_obj_add_event_cb(skip_btn, config->skip_cb, LV_EVENT_CLICKED, NULL);
-        
+        cancel_btn = popup_add_styled_button(popup, "Cancel", 80, 30, LV_ALIGN_BOTTOM_LEFT, 20, -10, NULL, config->cancel_cb, NULL);
+        skip_btn = popup_add_styled_button(popup, "Skip", 80, 30, LV_ALIGN_BOTTOM_RIGHT, -20, -10, NULL, config->skip_cb, NULL);
         if (type == LEARNING_POPUP_EASY_LEARN) {
             easy_learn_cancel_btn = cancel_btn;
             easy_learn_skip_btn = skip_btn;
         }
     } else {
-        cancel_btn = lv_btn_create(popup);
-        lv_obj_set_size(cancel_btn, 80, 30);
-        lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
-        
+        cancel_btn = popup_add_styled_button(popup, "Cancel", 80, 30, LV_ALIGN_BOTTOM_MID, 0, -10, NULL, config->cancel_cb, NULL);
         if (type == LEARNING_POPUP_STANDARD) {
             learning_cancel_btn = cancel_btn;
         }
     }
-    
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x555555), 0);
-    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_center(cancel_label);
-    lv_obj_add_event_cb(cancel_btn, config->cancel_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t *title_label = lv_label_create(popup);
-    lv_label_set_text(title_label, config->title);
-    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 20);
-    
-    instruction_label = lv_label_create(popup);
-    lv_obj_set_style_text_font(instruction_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(instruction_label, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_align(instruction_label, LV_ALIGN_CENTER, 0, 0);
-    
+
+    lv_obj_t *title_label = popup_create_title_label(popup, config->title, &lv_font_montserrat_16, 20);
+    (void)title_label;
+
+    instruction_label = popup_create_body_label(popup, config->instruction, config->width - 20, true, &lv_font_montserrat_14, 60);
     if (type == LEARNING_POPUP_EASY_LEARN) {
         easy_learn_instruction_label = instruction_label;
-    } else {
-        lv_label_set_text(instruction_label, config->instruction);
+        lv_obj_align(instruction_label, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_text_color(instruction_label, lv_color_hex(0xCCCCCC), 0);
+        lv_obj_set_style_text_align(instruction_label, LV_TEXT_ALIGN_CENTER, 0);
     }
 }
 
@@ -2742,8 +2725,7 @@ void create_signal_preview_popup(void)
     }
     
     // Create popup container with compact sizing for landscape displays
-    signal_preview_popup = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(signal_preview_popup, LV_HOR_RES - 30, 160);  // Reduced height for landscape
+    signal_preview_popup = popup_create_container(lv_scr_act(), LV_HOR_RES - 30, 160);
     lv_obj_center(signal_preview_popup);
     lv_obj_add_style(signal_preview_popup, &popup_style, 0);
     
@@ -2752,48 +2734,20 @@ void create_signal_preview_popup(void)
     lv_obj_clear_flag(signal_preview_popup, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(signal_preview_popup, 8, 0);
     
-    // Create buttons first to ensure proper z-order
-    save_btn = lv_btn_create(signal_preview_popup);
-    lv_obj_set_size(save_btn, 80, 40);
-    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 35, -5);
-    lv_obj_add_event_cb(save_btn, signal_preview_save_cb, LV_EVENT_CLICKED, NULL);
-    
-    // Remove default button styling
-    lv_obj_set_style_bg_color(save_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(save_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(save_btn, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
-    lv_obj_t *save_label = lv_label_create(save_btn);
-    lv_label_set_text(save_label, "Save");
-    lv_obj_set_style_text_color(save_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_center(save_label);
-    
-    cancel_btn = lv_btn_create(signal_preview_popup);
-    lv_obj_set_size(cancel_btn, 80, 40);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -35, -5);
-    lv_obj_add_event_cb(cancel_btn, signal_preview_cancel_cb, LV_EVENT_CLICKED, NULL);
-    
-    // Remove default button styling
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(cancel_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(cancel_btn, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
-    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_center(cancel_label);
+    // Create buttons first to ensure proper z-order (styled helper)
+    // use same button size as learning popup (80x30) to keep consistent UI
+    save_btn = popup_add_styled_button(signal_preview_popup, "Save", 80, 30, LV_ALIGN_BOTTOM_LEFT, 35, -5, NULL, signal_preview_save_cb, NULL);
+    cancel_btn = popup_add_styled_button(signal_preview_popup, "Cancel", 80, 30, LV_ALIGN_BOTTOM_RIGHT, -35, -5, NULL, signal_preview_cancel_cb, NULL);
     
     // Title
-    lv_obj_t *title = lv_label_create(signal_preview_popup);
-    lv_label_set_text(title, "IR Signal Decoded");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_t *title = popup_create_title_label(signal_preview_popup, "IR Signal Decoded", &lv_font_montserrat_16, 10);
     
-    // Protocol info
-    protocol_label = lv_label_create(signal_preview_popup);
-    address_label = lv_label_create(signal_preview_popup);
-    command_label = lv_label_create(signal_preview_popup);
-    
+    // Protocol info (use popup helpers for consistent layout)
+    lv_coord_t popup_w = lv_obj_get_width(signal_preview_popup);
+    protocol_label = popup_create_body_label(signal_preview_popup, "", popup_w - 20, false, &lv_font_montserrat_14, 32);
+    address_label = popup_create_body_label(signal_preview_popup, "", popup_w - 20, false, &lv_font_montserrat_14, 48);
+    command_label = popup_create_body_label(signal_preview_popup, "", popup_w - 20, false, &lv_font_montserrat_14, 64);
+
     // Set concise text
     if (signal_decoded && decoded_message) {
         lv_label_set_text_fmt(protocol_label, "%s", infrared_protocol_to_string(decoded_message->protocol));
@@ -2804,26 +2758,18 @@ void create_signal_preview_popup(void)
         lv_label_set_text(address_label, "Unknown Protocol");
         lv_label_set_text(command_label, "");
     }
-    
-    // Style and position labels
+
+    // Style labels (popup helper already set some defaults)
     lv_obj_set_style_text_color(protocol_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_color(address_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_color(command_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(protocol_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_font(address_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_font(command_label, &lv_font_montserrat_14, 0);
     
-    lv_obj_align(protocol_label, LV_ALIGN_TOP_MID, 0, 5);
-    lv_obj_align(address_label, LV_ALIGN_TOP_MID, 0, 25);
-    lv_obj_align(command_label, LV_ALIGN_TOP_MID, 0, 45);
-    
-    // Raw signal info
-    lv_obj_t *raw_info = lv_label_create(signal_preview_popup);
-    lv_label_set_text_fmt(raw_info, "%d timings", 
-                         learned_signal.payload.raw.timings_size);
+    // Raw signal info (use popup helper for consistent layout)
+    lv_coord_t popup_w2 = lv_obj_get_width(signal_preview_popup);
+    lv_coord_t raw_y = signal_decoded ? 80 : 64; // if raw, place where cmd normally is (64)
+    lv_obj_t *raw_info = popup_create_body_label(signal_preview_popup, "", popup_w2 - 20, false, &lv_font_montserrat_14, raw_y);
+    lv_label_set_text_fmt(raw_info, "%d timings", learned_signal.payload.raw.timings_size);
     lv_obj_set_style_text_color(raw_info, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_set_style_text_font(raw_info, &lv_font_montserrat_14, 0);
-    lv_obj_align(raw_info, LV_ALIGN_TOP_MID, 0, 65);
     
     // Set initial selection
     preview_selected_option = 0;
@@ -2988,10 +2934,17 @@ static void save_learned_signal(const char *signal_name) {
 static bool ir_rx_done_callback(rmt_channel_handle_t channel, const rmt_rx_done_event_data_t *edata, void *user_ctx) {
     BaseType_t high_task_wakeup = pdFALSE;
     QueueHandle_t receive_queue = (QueueHandle_t)user_ctx;
-    
-    // Send the received RMT symbols to the parser task
-    xQueueSendFromISR(receive_queue, edata, &high_task_wakeup);
-    
+
+    if (!edata || !receive_queue) return false;
+
+    rx_event_copy_t copy;
+    copy.num_symbols = edata->num_symbols;
+    if (copy.num_symbols > IR_RX_MAX_SYMBOLS) copy.num_symbols = IR_RX_MAX_SYMBOLS;
+    if (copy.num_symbols > 0) {
+        memcpy(copy.symbols, edata->received_symbols, copy.num_symbols * sizeof(rmt_symbol_word_t));
+    }
+
+    xQueueSendFromISR(receive_queue, &copy, &high_task_wakeup);
     return high_task_wakeup == pdTRUE;
 }
 
@@ -3034,7 +2987,7 @@ static void ir_learning_task(void *arg) {
     decoded_message = NULL;
     
     // Receive buffer
-    rmt_symbol_word_t raw_symbols[64];
+    rmt_symbol_word_t raw_symbols[IR_RX_MAX_SYMBOLS];
     
     // Configure receive parameters based on ESP-IDF documentation
     // These values are suitable for typical IR remote protocols
@@ -3043,6 +2996,7 @@ static void ir_learning_task(void *arg) {
         .signal_range_max_ns = 12000000, // Maximum pulse width (larger than typical IR gap ~9ms)
     };
     
+    bool rx_active = false;
     while (!ir_learning_cancel) {
         ESP_LOGI(TAG, "Starting IR receive operation...");
         
@@ -3054,26 +3008,32 @@ static void ir_learning_task(void *arg) {
         }
         
         // Start a single receive operation (non-blocking)
+        // Try to ensure channel is enabled before starting
+        (void)rmt_enable(rx_channel);
         esp_err_t ret = rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to start RMT receive: %d", ret);
+            // Attempt recovery if not enabled or busy: disable and re-enable channel
+            rmt_disable(rx_channel);
+            rmt_enable(rx_channel);
             // Add a delay and try again
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+        rx_active = true;
         
         // Wait for IR signal with timeout (inspired by Arduino IRremote timeout handling)
-        rmt_rx_done_event_data_t rx_data;
         TickType_t timeout_ticks = pdMS_TO_TICKS(1000);  // 1 second timeout per attempt
         
-        if (xQueueReceive(ir_rx_queue, &rx_data, timeout_ticks) == pdTRUE) {
+        rx_event_copy_t rx_copy = {0};
+        if (xQueueReceive(ir_rx_queue, &rx_copy, timeout_ticks) == pdTRUE && rx_copy.num_symbols > 0) {
             // Data received, process it
-            ESP_LOGI(TAG, "IR signal received: %d symbols", rx_data.num_symbols);
-            
+            ESP_LOGI(TAG, "IR signal received: %u symbols", (unsigned)rx_copy.num_symbols);
+
             // Log first few symbols for debugging
-            for (size_t i = 0; i < rx_data.num_symbols && i < 5; i++) {
-                ESP_LOGD(TAG, "Symbol %d: duration0=%u, duration1=%u", i, 
-                         rx_data.received_symbols[i].duration0, rx_data.received_symbols[i].duration1);
+            for (size_t i = 0; i < rx_copy.num_symbols && i < 5; i++) {
+                ESP_LOGD(TAG, "Symbol %d: duration0=%u, duration1=%u", (int)i, 
+                         rx_copy.symbols[i].duration0, rx_copy.symbols[i].duration1);
             }
             
             // Enhanced signal validation inspired by Arduino IRremote
@@ -3090,16 +3050,16 @@ static void ir_learning_task(void *arg) {
             }
             
             // More robust signal validation
-            if (rx_data.num_symbols >= 6 && rx_data.num_symbols <= 200) {  // Allow wider range but still filter noise
-                
-                for (size_t i = 0; i < rx_data.num_symbols; i++) {
-                    uint32_t duration_us = rx_data.received_symbols[i].duration0 + rx_data.received_symbols[i].duration1;
+            if (rx_copy.num_symbols >= 6 && rx_copy.num_symbols <= 200) {  // Allow wider range but still filter noise
+
+                for (size_t i = 0; i < rx_copy.num_symbols; i++) {
+                    uint32_t duration_us = rx_copy.symbols[i].duration0 + rx_copy.symbols[i].duration1;
                     total_duration += duration_us;
-                    
+
                     // Analyze pulse and gap durations separately
-                    uint32_t pulse_duration = (rx_data.received_symbols[i].level0 == 1) ? rx_data.received_symbols[i].duration0 : rx_data.received_symbols[i].duration1;
-                    uint32_t gap_duration = (rx_data.received_symbols[i].level0 == 0) ? rx_data.received_symbols[i].duration0 : rx_data.received_symbols[i].duration1;
-                    
+                    uint32_t pulse_duration = (rx_copy.symbols[i].level0 == 1) ? rx_copy.symbols[i].duration0 : rx_copy.symbols[i].duration1;
+                    uint32_t gap_duration = (rx_copy.symbols[i].level0 == 0) ? rx_copy.symbols[i].duration0 : rx_copy.symbols[i].duration1;
+
                     if (pulse_duration > 0) {
                         pulse_count++;
                         if (pulse_duration > max_pulse_duration) max_pulse_duration = pulse_duration;
@@ -3119,7 +3079,7 @@ static void ir_learning_task(void *arg) {
                 if (duration_valid && pulse_valid && min_pulse_valid && structure_valid) {
                     is_valid_signal = true;
                     ESP_LOGI(TAG, "Valid IR signal: %lu symbols, %lu us total, pulse range %lu-%lu us", 
-                            rx_data.num_symbols, total_duration, min_pulse_duration, max_pulse_duration);
+                            (unsigned long)rx_copy.num_symbols, (unsigned long)total_duration, (unsigned long)min_pulse_duration, (unsigned long)max_pulse_duration);
                 } else {
                     ESP_LOGW(TAG, "Invalid signal: dur=%s, pulse=%s, min_pulse=%s, struct=%s",
                             duration_valid ? "OK" : "FAIL",
@@ -3135,21 +3095,21 @@ static void ir_learning_task(void *arg) {
                 learned_signal.is_raw = true;
                 learned_signal.payload.raw.frequency = 38000; // Default 38kHz
                 learned_signal.payload.raw.duty_cycle = 0.33f; // Default 33% duty cycle
-                learned_signal.payload.raw.timings_size = rx_data.num_symbols * 2;
-                
+                learned_signal.payload.raw.timings_size = rx_copy.num_symbols * 2;
+
                 // Validate that we have symbols to process
-                if (rx_data.num_symbols == 0) {
+                if (rx_copy.num_symbols == 0) {
                     ESP_LOGW(TAG, "Received valid signal flag but zero symbols, ignoring");
                     continue;
                 }
-                
+
                 learned_signal.payload.raw.timings = malloc(learned_signal.payload.raw.timings_size * sizeof(uint32_t));
-                
+
                 if (learned_signal.payload.raw.timings) {
                     // Copy timing data from RMT symbols
-                    for (size_t i = 0; i < rx_data.num_symbols; i++) {
-                        learned_signal.payload.raw.timings[i * 2] = rx_data.received_symbols[i].duration0;
-                        learned_signal.payload.raw.timings[i * 2 + 1] = rx_data.received_symbols[i].duration1;
+                    for (size_t i = 0; i < rx_copy.num_symbols; i++) {
+                        learned_signal.payload.raw.timings[i * 2] = rx_copy.symbols[i].duration0;
+                        learned_signal.payload.raw.timings[i * 2 + 1] = rx_copy.symbols[i].duration1;
                     }
                     
                     // Additional validation: ensure we actually copied data
@@ -3162,14 +3122,14 @@ static void ir_learning_task(void *arg) {
                         infrared_decoder_reset(decoder_context);
                         signal_decoded = false;
                         decoded_message = NULL;
-                        
+
                         // Process RMT symbols as a continuous timing stream
-                        ESP_LOGI(TAG, "Processing %d RMT symbols for decoding:", rx_data.num_symbols);
-                        
+                        ESP_LOGI(TAG, "Processing %u RMT symbols for decoding:", (unsigned)rx_copy.num_symbols);
+
                         // Convert RMT symbols to a continuous stream of level/timing pairs
                         // Each RMT symbol contains two timing periods with their respective levels
-                        for (size_t i = 0; i < rx_data.num_symbols && !signal_decoded; i++) {
-                            rmt_symbol_word_t symbol = rx_data.received_symbols[i];
+                        for (size_t i = 0; i < rx_copy.num_symbols && !signal_decoded; i++) {
+                            rmt_symbol_word_t symbol = rx_copy.symbols[i];
                             
                             ESP_LOGD(TAG, "Symbol %d: dur0=%u(lvl%d), dur1=%u(lvl%d)", 
                                      i, symbol.duration0, symbol.level0, symbol.duration1, symbol.level1);
@@ -3244,7 +3204,9 @@ static void ir_learning_task(void *arg) {
                         
                         // Don't clean up timing data here - let the callback handle it
                         // RMT channel remains active for future learning sessions
-                        
+
+                        // nothing to free; queue passed by value
+
                         ir_learning_task_handle = NULL;
                         vTaskDelete(NULL);
                         return;
@@ -3253,6 +3215,7 @@ static void ir_learning_task(void *arg) {
                         free(learned_signal.payload.raw.timings);
                         learned_signal.payload.raw.timings = NULL;
                         learned_signal.payload.raw.timings_size = 0;
+                        // nothing to free; queue passed by value
                         continue;
                     }
                 } else {
@@ -3260,17 +3223,24 @@ static void ir_learning_task(void *arg) {
                     // Ensure we don't have a dangling pointer
                     learned_signal.payload.raw.timings = NULL;
                     learned_signal.payload.raw.timings_size = 0;
-                    // Continue listening for another signal
+                    // continue listening for another signal
                     continue;
                 }
             } else {
-                ESP_LOGW(TAG, "Invalid IR signal: %d symbols, %uµs total, %uµs max - likely noise", 
-                         (int)rx_data.num_symbols, total_duration, max_pulse_duration);
+                ESP_LOGW(TAG, "Invalid IR signal: %u symbols, %uµs total, %uµs max - likely noise", 
+                         (unsigned)rx_copy.num_symbols, total_duration, max_pulse_duration);
                 // Continue listening for another signal
             }
         } else {
             // Timeout - no signal received within 1 second
             ESP_LOGD(TAG, "No IR signal received, continuing to listen...");
+        }
+
+        // If a receive was active but we didn't use/consume it properly, reset channel
+        if (rx_active) {
+            rmt_disable(rx_channel);
+            rmt_enable(rx_channel);
+            rx_active = false;
         }
     }
     

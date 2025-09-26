@@ -1,6 +1,7 @@
 #include "core/serial_manager.h"
 #include "core/system_manager.h"
 #include "driver/uart.h"
+#include "core/glog.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
@@ -53,7 +54,7 @@ static void process_html_line(const char* line) {
     if (strstr(line, "[HTML/BEGIN]") != NULL) {
         html_capture_state = HTML_STATE_CAPTURING;
         html_capture_pos = 0;
-        printf("HTML capture started\n");
+        glog("HTML capture started\n");
         return;
     }
     
@@ -61,7 +62,7 @@ static void process_html_line(const char* line) {
         if (html_capture_state == HTML_STATE_CAPTURING) {
             html_capture_state = HTML_STATE_COMPLETE;
             wifi_manager_store_html_chunk(html_capture_buffer, html_capture_pos, true);
-            printf("HTML capture completed (%zu bytes)\n", html_capture_pos);
+            glog("HTML capture completed (%zu bytes)\n", html_capture_pos);
         }
         return;
     }
@@ -181,7 +182,7 @@ void serial_manager_init() {
 
   xTaskCreate(serial_task, "SerialTask", 8192, NULL, 2, &s_serial_task_handle);
   s_serial_initialized = true;
-  printf("Serial Started...\n");
+  glog("Serial Started...\n");
 }
 
 void serial_manager_deinit() {
@@ -210,10 +211,8 @@ int handle_serial_command(const char *input) {
   if (strncmp(input, "peer:", 5) == 0) {
     const char* actual_command = input + 5;
     esp_comm_manager_set_remote_command_flag(true);
-    printf("Received command from peer: %s\n", actual_command);
-    TERMINAL_VIEW_ADD_TEXT("Received command from peer: %s\n", actual_command);
-    printf("Executing received command: %s\n", actual_command);
-    TERMINAL_VIEW_ADD_TEXT("Executing received command: %s\n", actual_command);
+    glog("Received command from peer: %s\n", actual_command);
+    glog("Executing received command: %s\n", actual_command);
     int result = handle_serial_command(actual_command);
     esp_comm_manager_set_remote_command_flag(false);
     return result;

@@ -273,7 +273,7 @@ static void parse_rmc(esp_gps_t *esp_gps) {
       esp_gps->parent.longitude *= -1;
     }
     break;
-  case 7: /* Process ground speed in unit m/s */
+  case 7: /* Process ground speed in unit km/s */
     esp_gps->parent.speed = strtof(esp_gps->item_str, NULL) * 1.852;
     break;
   case 8: /* Process true course over ground */
@@ -348,7 +348,7 @@ static void parse_vtg(esp_gps_t *esp_gps) {
     break;
   case 5: /* Process ground speed in unit m/s */
     esp_gps->parent.speed =
-        strtof(esp_gps->item_str, NULL) * 1.852; // knots to m/s
+        strtof(esp_gps->item_str, NULL) * 1.852; // knots to km/s
     break;
   case 7: /* Process ground speed in unit m/s */
     esp_gps->parent.speed = strtof(esp_gps->item_str, NULL) / 3.6; // km/h to

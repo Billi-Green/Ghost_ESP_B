@@ -13,6 +13,7 @@
 #include "host/util/util.h"
 #include "managers/ble_manager.h"
 #include "managers/views/terminal_screen.h"
+#include "core/glog.h"
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -41,6 +42,8 @@ static int airTagCount = 0;
 static bool ble_initialized = false;
 static esp_timer_handle_t flush_timer = NULL;
 static TaskHandle_t nimble_host_task_handle = NULL;
+static uint32_t ble_pcap_packet_count = 0;
+static uint32_t ble_pcap_event_total_count = 0;
 
 // Forward declarations
 static void generate_random_mac(uint8_t *mac_addr);
@@ -840,19 +843,26 @@ static bool extract_company_id(const uint8_t *payload, size_t length, uint16_t *
 }
 
 void ble_stop_skimmer_detection(void) {
-    ESP_LOGI("BLE", "Stopping skimmer detection scan...");
-    TERMINAL_VIEW_ADD_TEXT("Stopping skimmer detection scan...\n");
+    glog("Stopping skimmer detection scan...\n");
 
     // Unregister the skimmer detection callback
     ble_unregister_handler(ble_skimmer_scan_callback);
     pcap_flush_buffer_to_file(); // Final flush
     pcap_file_close();           // Close the file after final flush
 
+    /* final capture summary */
+    glog("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+         (unsigned long)ble_pcap_packet_count,
+         (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+         (unsigned long)ble_pcap_event_total_count);
+    /* reset counters for next capture */
+    ble_pcap_packet_count = 0;
+    ble_pcap_event_total_count = 0;
+
     int rc = ble_gap_disc_cancel();
 
     if (rc == 0) {
-        printf("BLE skimmer detection stopped successfully.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE skimmer detection stopped successfully.\n");
+        glog("BLE skimmer detection stopped successfully.\n");
     }
 }
 
@@ -1211,21 +1221,15 @@ void airtag_scanner_callback(struct ble_gap_event *event, size_t len) {
                      event->disc.addr.val[3], event->disc.addr.val[4], event->disc.addr.val[5]);
             int rssi = event->disc.rssi;
 
-                printf("New AirTag found! (Total: %d)\n", airTagCount);
-                printf("Index: %d\n", discovered_airtag_count - 1); // Index of the newly added tag
-            printf("MAC Address: %s\n", macAddress);
-            printf("RSSI: %d dBm\n", rssi);
-            printf("Payload Data: ");
-            for (size_t i = 0; i < payloadLength; i++) {
-                printf("%02X ", payload[i]);
-            }
-            printf("\n\n");
-
-                TERMINAL_VIEW_ADD_TEXT("New AirTag found! (Total: %d)\n", airTagCount);
-                TERMINAL_VIEW_ADD_TEXT("Index: %d\n", discovered_airtag_count - 1);
-            TERMINAL_VIEW_ADD_TEXT("MAC Address: %s\n", macAddress);
-            TERMINAL_VIEW_ADD_TEXT("RSSI: %d dBm\n", rssi);
-                TERMINAL_VIEW_ADD_TEXT("\n");
+                glog("New AirTag found! (Total: %d)\n", airTagCount);
+                glog("Index: %d\n", discovered_airtag_count - 1); // Index of the newly added tag
+                glog("MAC Address: %s\n", macAddress);
+                glog("RSSI: %d dBm\n", rssi);
+                glog("Payload Data: ");
+                for (size_t i = 0; i < payloadLength; i++) {
+                    glog("%02X ", payload[i]);
+                }
+                glog("\n\n");
             }
         }
     }
@@ -1233,11 +1237,9 @@ void airtag_scanner_callback(struct ble_gap_event *event, size_t len) {
 
 // Function to list discovered AirTags
 void ble_list_airtags(void) {
-    printf("--- Discovered AirTags (%d) ---\n", discovered_airtag_count);
-    TERMINAL_VIEW_ADD_TEXT("--- Discovered AirTags (%d) ---\n", discovered_airtag_count);
+    glog("--- Discovered AirTags (%d) ---\n", discovered_airtag_count);
     if (discovered_airtag_count == 0) {
-        printf("No AirTags discovered yet.\n");
-        TERMINAL_VIEW_ADD_TEXT("No AirTags discovered yet.\n");
+        glog("No AirTags discovered yet.\n");
         return;
     }
 
@@ -1247,12 +1249,9 @@ void ble_list_airtags(void) {
                  discovered_airtags[i].addr.val[0], discovered_airtags[i].addr.val[1], discovered_airtags[i].addr.val[2],
                  discovered_airtags[i].addr.val[3], discovered_airtags[i].addr.val[4], discovered_airtags[i].addr.val[5]);
 
-        printf("Index: %d | MAC: %s | RSSI: %d dBm %s\n",
-               i, macAddress, discovered_airtags[i].rssi,
-               (i == selected_airtag_index) ? " (Selected)" : "");
-        TERMINAL_VIEW_ADD_TEXT("Idx: %d MAC: %s RSSI: %d %s\n",
-                               i, macAddress, discovered_airtags[i].rssi,
-                               (i == selected_airtag_index) ? "(Sel)" : "");
+        glog("Index: %d | MAC: %s | RSSI: %d dBm %s\n",
+             i, macAddress, discovered_airtags[i].rssi,
+             (i == selected_airtag_index) ? " (Selected)" : "");
         // Optionally print payload too
         // printf("  Payload (%zu bytes): ", discovered_airtags[i].payload_len);
         // for(size_t j = 0; j < discovered_airtags[i].payload_len; j++) {
@@ -1260,15 +1259,13 @@ void ble_list_airtags(void) {
         // }
         // printf("\n");
     }
-    printf("-----------------------------\n");
-    TERMINAL_VIEW_ADD_TEXT("-----------------------------\n");
+    glog("-----------------------------\n");
 }
 
 // Function to select an AirTag by index
 void ble_select_airtag(int index) {
     if (index < 0 || index >= discovered_airtag_count) {
-        printf("Error: Invalid AirTag index %d. Use 'listairtags' to see valid indices.\n", index);
-        TERMINAL_VIEW_ADD_TEXT("Error: Invalid AirTag index %d.\nUse 'listairtags'.\n", index);
+        glog("Error: Invalid AirTag index %d. Use 'listairtags' to see valid indices.\n", index);
         selected_airtag_index = -1; // Unselect if index is invalid
         return;
     }
@@ -1278,15 +1275,13 @@ void ble_select_airtag(int index) {
     snprintf(macAddress, sizeof(macAddress), "%02x:%02x:%02x:%02x:%02x:%02x",
              discovered_airtags[index].addr.val[0], discovered_airtags[index].addr.val[1], discovered_airtags[index].addr.val[2],
              discovered_airtags[index].addr.val[3], discovered_airtags[index].addr.val[4], discovered_airtags[index].addr.val[5]);
-    printf("Selected AirTag at index %d: MAC %s\n", index, macAddress);
-    TERMINAL_VIEW_ADD_TEXT("Selected AirTag %d: MAC %s\n", index, macAddress);
+    glog("Selected AirTag at index %d: MAC %s\n", index, macAddress);
 }
 
 // Function to start spoofing the selected AirTag (Basic Implementation)
 void ble_start_spoofing_selected_airtag(void) {
     if (selected_airtag_index < 0 || selected_airtag_index >= discovered_airtag_count) {
-        printf("Error: No AirTag selected for spoofing. Use 'selectairtag <index>'.\n");
-        TERMINAL_VIEW_ADD_TEXT("Error: No AirTag selected.\nUse 'selectairtag <index>'.\n");
+        glog("Error: No AirTag selected for spoofing. Use 'selectairtag <index>'.\n");
         return;
     }
 
@@ -1306,18 +1301,6 @@ void ble_start_spoofing_selected_airtag(void) {
     // Set flags (General Discoverable Mode, BR/EDR Not Supported) - typical for BLE beacons
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
-    // Set the manufacturer data using the captured payload
-    // The AirTag payload IS the manufacturer data for Company ID 0x004C (Apple)
-    // We need to ensure the payload structure is correct for advertising.
-    // Usually, it starts with Length, Type (0xFF), Company ID (2 bytes), then data.
-    // We might need to slightly adjust the stored payload if it doesn't include the Length/Type/CompanyID header.
-    // Assuming tag_to_spoof->payload contains the complete Manufacturer Specific Data field content
-    // starting *after* the Company ID. Let's verify the actual AirTag payload structure.
-    // Looking at the detection pattern:
-    // 1E FF 4C 00 ... (Nearby) -> Length=0x1E, Type=0xFF, Company=0x004C
-    // 4C 00 12 19 ... (Offline Finding) -> This seems *part* of the Apple data, maybe not the whole adv packet?
-    // Need to confirm the *entire* advertisement structure.
-    // For simplicity, let's assume tag_to_spoof->payload contains the data *after* Company ID.
 
     // Find the start of the Apple Manufacturer Data (0xFF) in the payload
     uint8_t *mfg_data_start = NULL;
@@ -1339,8 +1322,7 @@ void ble_start_spoofing_selected_airtag(void) {
         if (tag_to_spoof->payload_len > 2) {
             fields.mfg_data = &tag_to_spoof->payload[2];
             fields.mfg_data_len = tag_to_spoof->payload_len - 2;
-            printf("Warning: Using raw payload data for advertisement.\n");
-            TERMINAL_VIEW_ADD_TEXT("Warn: Using raw payload for adv.\n");
+            glog("Warning: Using raw payload data for advertisement.\n");
          } else {
              return; // No data to advertise
          }
@@ -1563,17 +1545,15 @@ void ble_stop_spoofing(void) {
     if (ble_gap_adv_active()) {
         int rc = ble_gap_adv_stop();
         if (rc == 0) {
-            printf("Stopped AirTag spoofing advertisement.\n");
-            TERMINAL_VIEW_ADD_TEXT("Stopped AirTag spoofing.\n");
+            glog("Stopped AirTag spoofing advertisement.\n");
         } else {
             ESP_LOGE(TAG_BLE, "Error stopping spoofing advertisement; rc=%d", rc);
-            TERMINAL_VIEW_ADD_TEXT("Error stopping spoof adv; rc=%d\n", rc);
+            glog("Error stopping spoof adv; rc=%d\n", rc);
         }
         // Reset selected index after stopping spoof
         selected_airtag_index = -1;
     } else {
-        printf("No spoofing advertisement active.\n");
-        TERMINAL_VIEW_ADD_TEXT("No spoofing adv active.\n");
+        glog("No spoofing advertisement active.\n");
     }
 }
 
@@ -1781,6 +1761,15 @@ void ble_stop(void) {
     pcap_flush_buffer_to_file(); // Final flush
     pcap_file_close();           // Close the file after final flush
 
+    /* final capture summary */
+    glog("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+         (unsigned long)ble_pcap_packet_count,
+         (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+         (unsigned long)ble_pcap_event_total_count);
+    /* reset counters for next capture */
+    ble_pcap_packet_count = 0;
+    ble_pcap_event_total_count = 0;
+
     // Stop spoofing if it was active
     ble_stop_spoofing();
 
@@ -1788,28 +1777,22 @@ void ble_stop(void) {
 
     switch (rc) {
     case 0:
-        printf("BLE scan stopped successfully.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE scan stopped successfully.\n");
+        glog("BLE scan stopped successfully.\n");
         break;
     case BLE_HS_EBUSY:
-        printf("BLE scan is busy\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE scan is busy\n");
+        glog("BLE scan is busy\n");
         break;
     case BLE_HS_ETIMEOUT:
-        printf("BLE operation timed out.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE operation timed out.\n");
+        glog("BLE operation timed out.\n");
         break;
     case BLE_HS_ENOTCONN:
-        printf("BLE not connected.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE not connected.\n");
+        glog("BLE not connected.\n");
         break;
     case BLE_HS_EINVAL:
-        printf("BLE invalid parameter.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE invalid parameter.\n");
+        glog("BLE invalid parameter.\n");
         break;
     default:
-        printf("Error stopping BLE scan: %d\n", rc);
-        TERMINAL_VIEW_ADD_TEXT("Error stopping BLE scan: %d\n", rc);
+        glog("Error stopping BLE scan: %d\n", rc);
     }
 }
 
@@ -1858,6 +1841,9 @@ static void ble_pcap_callback(struct ble_gap_event *event, size_t len) {
     if (!event || len == 0)
         return;
 
+    /* count every callback event we receive for filtering stats */
+    ble_pcap_event_total_count++;
+
     uint8_t hci_buffer[258]; // Max HCI packet size
     size_t hci_len = 0;
 
@@ -1901,50 +1887,36 @@ static void ble_pcap_callback(struct ble_gap_event *event, size_t len) {
 
         hci_len = 15 + event->disc.length_data; // Total length
 
-        // packet logging (don't print to display terminal to prevent overwhelming)
-        printf("BLE Packet Received:\nType: 0x04 (HCI Event)\nMeta: 0x3E "
-               "(LE)\nLength: %d\n",
-               hci_len);
+        /* keep a lightweight counter and occasionally report a summary */
+
+        ble_pcap_packet_count++;
+        if ((ble_pcap_packet_count % 50) == 0) {
+            uint32_t filtered = ble_pcap_event_total_count - ble_pcap_packet_count;
+            glog("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
+                 (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
+        }
 
         pcap_write_packet_to_buffer(hci_buffer, hci_len, PCAP_CAPTURE_BLUETOOTH);
-    }
-
-    pcap_flush_buffer_to_file(); // Final flush
-    pcap_file_close();           // Close the file after final flush
-
-    // Stop spoofing if it was active
-    ble_stop_spoofing();
-
-    int rc = ble_gap_disc_cancel();
-
-    switch (rc) {
-    case 0:
-        printf("BLE scan stopped successfully.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE scan stopped successfully.\n");
-        break;
-    case BLE_HS_EBUSY:
-        printf("BLE scan is busy\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE scan is busy\n");
-        break;
-    case BLE_HS_ETIMEOUT:
-        printf("BLE operation timed out.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE operation timed out.\n");
-        break;
-    case BLE_HS_ENOTCONN:
-        printf("BLE not connected.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE not connected.\n");
-        break;
-    case BLE_HS_EINVAL:
-        printf("BLE invalid parameter.\n");
-        TERMINAL_VIEW_ADD_TEXT("BLE invalid parameter.\n");
-        break;
-    default:
-        printf("Error stopping BLE scan: %d\n", rc);
-        TERMINAL_VIEW_ADD_TEXT("Error stopping BLE scan: %d\n", rc);
     }
 }
 
 void ble_start_capture(void) {
+    /* ensure BLE stack is initialized and ready before opening PCAP and
+       starting scanning; avoids leaving a file open if scan fails */
+    if (!ble_initialized) {
+        ble_init();
+    }
+
+    if (!wait_for_ble_ready()) {
+        ESP_LOGE(TAG_BLE, "BLE stack not ready");
+        TERMINAL_VIEW_ADD_TEXT("BLE stack not ready\n");
+        return;
+    }
+
+    /* reset counters for a fresh capture session */
+    ble_pcap_packet_count = 0;
+    ble_pcap_event_total_count = 0;
+
     // Open PCAP file first
     esp_err_t err = pcap_file_open("ble_capture", PCAP_CAPTURE_BLUETOOTH);
     if (err != ESP_OK) {
@@ -1980,26 +1952,21 @@ void ble_start_skimmer_detection(void) {
 
 // Function to list discovered Flippers
 void ble_list_flippers(void) {
-    printf("--- Discovered Flippers (%d) ---\n", discovered_flipper_count);
-    TERMINAL_VIEW_ADD_TEXT("--- Discovered Flippers (%d) ---\n", discovered_flipper_count);
+    glog("--- Discovered Flippers (%d) ---\n", discovered_flipper_count);
     if (discovered_flipper_count == 0) {
-        printf("No Flippers discovered yet.\n");
-        TERMINAL_VIEW_ADD_TEXT("No Flippers discovered yet.\n");
+        glog("No Flippers discovered yet.\n");
         return;
     }
-   
+
     for (int i = 0; i < discovered_flipper_count; i++) {
         char mac[18];
         snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
                  discovered_flippers[i].addr.val[0], discovered_flippers[i].addr.val[1],
                  discovered_flippers[i].addr.val[2], discovered_flippers[i].addr.val[3],
                  discovered_flippers[i].addr.val[4], discovered_flippers[i].addr.val[5]);
-        printf("Index: %d | MAC: %s | RSSI: %d dBm%s\n",
-               i, mac, discovered_flippers[i].rssi,
-               (i == selected_flipper_index) ? " (Selected)" : "");
-        TERMINAL_VIEW_ADD_TEXT("Idx: %d MAC: %s RSSI: %d %s\n",
-                               i, mac, discovered_flippers[i].rssi,
-                               (i == selected_flipper_index) ? "(Sel)" : "");
+        glog("Index: %d | MAC: %s | RSSI: %d dBm%s\n",
+             i, mac, discovered_flippers[i].rssi,
+             (i == selected_flipper_index) ? " (Selected)" : "");
     }
 }
 void ble_start_tracking_selected_flipper(void) {
@@ -2014,16 +1981,14 @@ void ble_start_tracking_selected_flipper(void) {
     params.filter_duplicates = 0; // receive all advertisement updates
     int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params, ble_gap_event_general, NULL);
     if (rc != 0) {
-        ESP_LOGE(TAG_BLE, "Error starting tracking scan; rc=%d", rc);
-        TERMINAL_VIEW_ADD_TEXT("Error starting tracker; rc=%d\n", rc);
+        glog("Error starting tracker; rc=%d\n", rc);
     }
 }
 
 // Function to select a Flipper by index
 void ble_select_flipper(int index) {
     if (index < 0 || index >= discovered_flipper_count) {
-        printf("Error: Invalid Flipper index %d. Use 'listflippers' to see valid indices.\n", index);
-        TERMINAL_VIEW_ADD_TEXT("Error: Invalid Flipper index %d.\nUse 'listflippers'.\n", index);
+        glog("Error: Invalid Flipper index %d. Use 'listflippers' to see valid indices.\n", index);
         selected_flipper_index = -1;
         return;
     }
@@ -2034,12 +1999,10 @@ void ble_select_flipper(int index) {
              discovered_flippers[index].addr.val[0], discovered_flippers[index].addr.val[1],
              discovered_flippers[index].addr.val[2], discovered_flippers[index].addr.val[3],
              discovered_flippers[index].addr.val[4], discovered_flippers[index].addr.val[5]);
-    printf("Selected Flipper at index %d: MAC %s\n", index, mac);
-    TERMINAL_VIEW_ADD_TEXT("Selected Flipper %d: MAC %s\n", index, mac);
+    glog("Selected Flipper at index %d: MAC %s\n", index, mac);
     // Start continuous tracking scan without duplicate filtering
     ble_start_tracking_selected_flipper();
-    printf("Started tracking Flipper %d...\n", index);
-    TERMINAL_VIEW_ADD_TEXT("Track start: Flipper %d\n", index);
+    glog("Started tracking Flipper %d...\n", index);
 }
 
 static void build_microsoft_mfg(const char *name, uint8_t *buf, size_t *len) {

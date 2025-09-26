@@ -14,6 +14,7 @@
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "core/glog.h"
 #include <math.h>
 #include <mdns.h>
 #include <nvs_flash.h>
@@ -488,7 +489,7 @@ esp_err_t ap_manager_init(void) {
 
     // Check if AP is disabled in settings
     if (!settings_get_ap_enabled(&G_Settings)) {
-        printf("Access Point disabled in settings, skipping AP initialization\n");
+        glog("Access Point disabled in settings, skipping AP initialization\n");
         
         // Initialize log buffer and mutex even when AP is disabled
         log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
@@ -514,12 +515,12 @@ esp_err_t ap_manager_init(void) {
 
     ret = esp_wifi_get_mode(&mode);
     if (ret == ESP_ERR_WIFI_NOT_INIT) {
-        printf("Wi-Fi not initialized, initializing as Access Point...\n");
+        glog("Wi-Fi not initialized, initializing as Access Point...\n");
 
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         ret = esp_wifi_init(&cfg);
         if (ret != ESP_OK) {
-            printf("esp_wifi_init failed: %s\n", esp_err_to_name(ret));
+            glog("esp_wifi_init failed: %s\n", esp_err_to_name(ret));
             return ret;
         }
 
@@ -527,20 +528,20 @@ esp_err_t ap_manager_init(void) {
         if (!netif) {
             netif = esp_netif_create_default_wifi_ap();
             if (netif == NULL) {
-                printf("Failed to create default Wi-Fi AP\n");
+                glog("Failed to create default Wi-Fi AP\n");
                 return ESP_FAIL;
             }
         }
     } else if (ret == ESP_OK) {
-        printf("Wi-Fi already initialized, skipping Wi-Fi init.\n");
+        glog("Wi-Fi already initialized, skipping Wi-Fi init.\n");
     } else {
-        printf("esp_wifi_get_mode failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_get_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
     ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (ret != ESP_OK) {
-        printf("esp_wifi_set_mode failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_set_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
@@ -572,13 +573,13 @@ esp_err_t ap_manager_init(void) {
 
     ret = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
     if (ret != ESP_OK) {
-        printf("esp_wifi_set_config failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_set_config failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
     esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     if (ap_netif == NULL) {
-        printf("Failed to get the AP network interface\n");
+        glog("Failed to get the AP network interface\n");
     } else {
         // Stop DHCP server before configuring
         esp_netif_dhcps_stop(ap_netif);
@@ -591,16 +592,16 @@ esp_err_t ap_manager_init(void) {
         esp_netif_set_ip_info(ap_netif, &ip_info);
 
         esp_netif_dhcps_start(ap_netif);
-        printf("DHCP server configured successfully.\n");
+        glog("DHCP server configured successfully.\n");
     }
 
     ret = esp_wifi_start();
     if (ret != ESP_OK) {
-        printf("esp_wifi_start failed: %s\n", esp_err_to_name(ret));
+        glog("esp_wifi_start failed: %s\n", esp_err_to_name(ret));
         return ret;
     }
 
-    printf("Wi-Fi Access Point started with SSID: %s\n", ssid);
+    glog("Wi-Fi Access Point started with SSID: %s\n", ssid);
 
     // Register event handlers for Wi-Fi events if not registered already
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
@@ -619,13 +620,13 @@ esp_err_t ap_manager_init(void) {
     // Start HTTP server
     ret = load_server_config();
     if (ret != ESP_OK) {
-        printf("Error loading server config\n");
+        glog("Error loading server config\n");
         return ret;
     }
 
     ret = start_http_server();
     if (ret != ESP_OK) {
-        printf("Error starting HTTP server\n");
+        glog("Error starting HTTP server\n");
         return ret;
     }
 
@@ -633,9 +634,9 @@ esp_err_t ap_manager_init(void) {
 
     esp_netif_ip_info_t ip_info;
     if (esp_netif_get_ip_info(ap_netif, &ip_info) == ESP_OK) {
-        printf("ESP32 AP IP Address: \n" IPSTR, IP2STR(&ip_info.ip));
+        glog("ESP32 AP IP Address: \n" IPSTR, IP2STR(&ip_info.ip));
     } else {
-        printf("Failed to get IP address\n");
+        glog("Failed to get IP address\n");
     }
 
     // Initialize log buffer and mutex
@@ -739,7 +740,7 @@ esp_err_t ap_manager_start_services() {
 
     // if ap is disabled or power saving is on, do not start ap services.
     if (!settings_get_ap_enabled(&G_Settings) || settings_get_power_save_enabled(&G_Settings)) {
-        printf("ap services skipped: ap disabled or power saving mode is on\n");
+        glog("ap services skipped: ap disabled or power saving mode is on\n");
         // make sure services are stopped if they somehow started and conditions changed
         ap_manager_stop_services();
         return ESP_OK;
@@ -748,14 +749,14 @@ esp_err_t ap_manager_start_services() {
     // Set Wi-Fi mode to AP
     ret = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (ret != ESP_OK) {
-        printf("WiFi mode set failed\n");
+        glog("WiFi mode set failed\n");
         return ret;
     }
 
     // Start Wi-Fi
     ret = esp_wifi_start();
     if (ret != ESP_OK) {
-        printf("WiFi start failed\n");
+        glog("WiFi start failed\n");
         return ret;
     }
 
@@ -769,13 +770,13 @@ esp_err_t ap_manager_start_services() {
     // Start HTTPD server
     ret = load_server_config();
     if (ret != ESP_OK) {
-        printf("Error loading server config\n");
+        glog("Error loading server config\n");
         return ret;
     }
 
     ret = start_http_server();
     if (ret != ESP_OK) {
-        printf("Error starting HTTP server\n");
+        glog("Error starting HTTP server\n");
         return ret;
     }
 
@@ -808,11 +809,11 @@ void ap_manager_stop_services() {
     if (err == ESP_OK) {
         if (wifi_mode == WIFI_MODE_AP || wifi_mode == WIFI_MODE_STA ||
             wifi_mode == WIFI_MODE_APSTA) {
-            printf("Stopping Wi-Fi...\n");
+            glog("Stopping Wi-Fi...\n");
             ESP_ERROR_CHECK(esp_wifi_stop());
         }
     } else {
-        printf("Failed to get Wi-Fi mode, error: %d\n", err);
+        glog("Failed to get Wi-Fi mode, error: %d\n", err);
     }
 
     esp_err_t ret = stop_http_server();
@@ -1006,7 +1007,7 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
     int received = 0;
     char *buf = malloc(total_len + 1);
     if (!buf) {
-        printf("Failed to allocate memory for JSON payload\n");
+        glog("Failed to allocate memory for JSON payload\n");
         return ESP_FAIL;
     }
 
@@ -1014,7 +1015,7 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         received = httpd_req_recv(req, buf + cur_len, total_len - cur_len);
         if (received <= 0) {
             free(buf);
-            printf("Failed to receive JSON payload\n");
+            glog("Failed to receive JSON payload\n");
             return ESP_FAIL;
         }
         cur_len += received;
@@ -1025,7 +1026,7 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
     cJSON *root = cJSON_Parse(buf);
     free(buf);
     if (!root) {
-        printf("Failed to parse JSON\n");
+        glog("Failed to parse JSON\n");
         return ESP_FAIL;
     }
 
@@ -1054,7 +1055,7 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         printf("Debug: Passed rgb_mode_value = %d to settings_set_rgb_mode()\n", rgb_mode_value);
         settings_set_rgb_mode(settings, (RGBMode)rgb_mode_value);
     } else {
-        printf("Error: 'rgb_mode' is not a boolean.\n");
+        glog("Error: 'rgb_mode' is not a boolean.\n");
     }
 
     cJSON *rgb_speed = cJSON_GetObjectItem(root, "rgb_speed");
@@ -1162,7 +1163,7 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         settings_set_display_timeout(settings, display_timeout->valueint);
         ESP_LOGI(TAG, "Setting display timeout to: %d ms", display_timeout->valueint);
     }
-    printf("About to Save Settings\n");
+    glog("About to Save Settings\n");
 
     settings_save(settings);
 
@@ -1179,7 +1180,7 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
 
     cJSON *root = cJSON_CreateObject();
     if (!root) {
-        printf("Failed to create JSON object\n");
+        glog("Failed to create JSON object\n");
         return ESP_FAIL;
     }
 
@@ -1228,7 +1229,7 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
     const char *json_response = cJSON_Print(root);
     if (!json_response) {
         cJSON_Delete(root);
-        printf("Failed to print JSON object\n");
+        glog("Failed to print JSON object\n");
         return ESP_FAIL;
     }
 
@@ -1396,26 +1397,26 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_AP_START:
-            printf("AP_manager: AP started\n");
+            glog("AP_manager: AP started\n");
             break;
         case WIFI_EVENT_AP_STOP:
-            printf("AP_manager: AP stopped\n");
+            glog("AP_manager: AP stopped\n");
             break;
         case WIFI_EVENT_AP_STACONNECTED:
-            printf("AP_manager: Device connected to AP\n");
+            glog("AP_manager: Device connected to AP\n");
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
-            printf("AP_manager: Device disconnected from AP\n");
+            glog("AP_manager: Device disconnected from AP\n");
 
             break;
         case WIFI_EVENT_STA_START: {
             // No auto-connect here - handled by wifi_manager's wifi_event_handler
-            printf("AP_manager: STA interface started\n");
+            glog("AP_manager: STA interface started\n");
             break;
         }
         case WIFI_EVENT_STA_DISCONNECTED: {
             wifi_event_sta_disconnected_t *disconn = (wifi_event_sta_disconnected_t *) event_data;
-            printf("Disconnected\nReason: %d\n", disconn->reason);
+            glog("Disconnected\nReason: %d\n", disconn->reason);
             break;
         }
         default:
@@ -1429,17 +1430,17 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             // Get SSID from active connection
             wifi_ap_record_t ap_info;
             if(esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-                printf("\nConnected!\nSSID: %.*s\nIP: " IPSTR "\n",
-                       18, ap_info.ssid, 
-                       IP2STR(&event->ip_info.ip));
+                glog("\nConnected!\nSSID: %.*s\nIP: " IPSTR "\n",
+                     18, ap_info.ssid,
+                     IP2STR(&event->ip_info.ip));
             } else {
-                printf("\nConnected!\nIP: " IPSTR "\n",
-                       IP2STR(&event->ip_info.ip));
+                glog("\nConnected!\nIP: " IPSTR "\n",
+                     IP2STR(&event->ip_info.ip));
             }
             break;
         }
         case IP_EVENT_AP_STAIPASSIGNED:
-            printf("Assigned STA IP\n");
+            glog("Assigned STA IP\n");
             break;
         default:
             break;

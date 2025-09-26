@@ -43,7 +43,7 @@ static const char *TAG = "FuelGaugeManager";
 #define BQ27220_REG_DATA_BLOCK  0x3F
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-#define I2C_MASTER_NUM          I2C_NUM_1
+#define I2C_MASTER_NUM          I2C_NUM_0
 #else
 #define I2C_MASTER_NUM          I2C_NUM_0
 #endif
@@ -52,6 +52,7 @@ static const char *TAG = "FuelGaugeManager";
 static bool is_initialized = false;
 static bool i2c_initialized_by_us = false;
 static fuel_gauge_data_t last_data = {0};
+static volatile bool s_paused = false;
 
 #if CONFIG_PM_ENABLE
 static esp_pm_lock_handle_t fg_i2c_pm_lock = NULL;
@@ -280,7 +281,7 @@ static esp_err_t fuel_gauge_i2c_init(void) {
     };
 
     esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
-    if (ret != ESP_OK) {
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
         return ret;
     }
@@ -368,8 +369,20 @@ bool fuel_gauge_manager_init(void) {
     return true;
 }
 
+void fuel_gauge_manager_set_paused(bool paused) {
+    s_paused = paused;
+}
+
 bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     if (!is_initialized || !data) {
+        return false;
+    }
+
+    if (s_paused) {
+        if (last_data.is_initialized) {
+            memcpy(data, &last_data, sizeof(fuel_gauge_data_t));
+            return true;
+        }
         return false;
     }
 
@@ -525,5 +538,6 @@ int fuel_gauge_manager_get_percentage(void) { return -1; }
 bool fuel_gauge_manager_is_charging(void) { return false; }
 uint16_t fuel_gauge_manager_get_voltage_mv(void) { return 0; }
 void fuel_gauge_manager_deinit(void) {}
+void fuel_gauge_manager_set_paused(bool paused) { (void)paused; }
 
 #endif

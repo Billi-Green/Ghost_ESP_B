@@ -1,5 +1,61 @@
 # Ghost ESP Changelog
 
+## Revival v1.8
+
+### Added
+
+- Added support for Cardputer ADV
+- Added 802.15.4 packet capture (only on C5, C6)
+- Alternate main menu layout (Grid)
+- Added glog
+
+- **PN532 NFC Capability**
+  - **NTAG Support (Type 2)**
+    - Read NTAG213/215/216 with NDEF parsing
+    - Write NTAG213/215/216 from .nfc files
+    - Save to Flipper .nfc format (fully compatible)
+  - **MIFARE Classic Support (Mini/1K/4K)**
+    - Flipper's 1000+ key dictionary attack
+    - Magic backdoor detection (Gen1A clones)
+    - Parse and display NDEF TLV data
+  - **File Management**
+    - 'Saved' menu to browse .nfc files and rename/delete them from the UI
+    - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
+
+### Changed
+
+- Use a fixed-size active-key buffer for keyboard
+- Refactor popups to use reusable popup helpers
+- Refactor options menu to use reusable options view helpers
+- Refactor comm manager to centralize packet handling, add state mutex and handshake timeout, and guard UART driver install
+- Update main menu icons to RGB565A8
+
+### Bug Fixes
+
+#### Core
+
+- Fixed intermittent IR learning errors by properly owning and copying received RMT symbol data before passing from ISR to task.
+- Fixed memory leak, race conditions and add buffer error handling in pcap.c
+- Track SPI host/mount state and only free initialized SPI host on unmount
+- Added NMEA handle null-checks
+- Flush PCAP header on open and close PCAP on generic stop command
+- Miscellaneous fixes and improvements
+
+
+#### Network & Comms
+
+- Ignore self when discovering peers for dual comm
+- Prevent crash and spam in EAPOL Logoff attack
+- Fixed minor issues with the dns server
+- Fixed BLE capture stopping itself after recieving an event
+- Added sanity checks to IE parsing to prevent OOB reads
+- Accepted HCI packet types now include CMD, ACL, SCO, and ISO
+
+#### Input & UI
+
+- Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
+- Remove artificial delay in cardputer keyboard task to make more responsive
+
 ## Revival v1.7.2
 
 ### Added
