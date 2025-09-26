@@ -108,6 +108,12 @@ esp_err_t pcap_file_open(const char *base_file_name,
     pcap_base_name[sizeof(pcap_base_name) - 1] = '\0';
   }
 
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  bool jit_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#else
+  bool jit_template = false;
+#endif
+
   /* take mutex to protect pcap_file and buffer_offset during open */
   if (pcap_mutex == NULL) {
     ESP_LOGE(PCAP_TAG, "pcap_mutex is NULL in pcap_file_open");
@@ -151,8 +157,13 @@ esp_err_t pcap_file_open(const char *base_file_name,
       glog("PCAP: streaming over UART (SD open failed)\n");
     }
   } else {
-    ESP_LOGI(PCAP_TAG, "PCAP using serial (no file) and global header written.");
-    glog("PCAP: streaming over UART (no SD)\n");
+    if (jit_template) {
+      ESP_LOGI(PCAP_TAG, "PCAP will JIT mount SD on first flush (no file open yet).");
+      glog("PCAP: JIT mounting SD on first flush\n");
+    } else {
+      ESP_LOGI(PCAP_TAG, "PCAP using serial (no file) and global header written.");
+      glog("PCAP: streaming over UART (no SD)\n");
+    }
   }
 
   xSemaphoreGive(pcap_mutex);
