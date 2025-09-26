@@ -2092,6 +2092,8 @@ void handle_listportals(int argc, char **argv);
 void handle_evilportal(int argc, char **argv);
 void handle_wifi_disconnect(int argc, char **argv);
 void handle_set_rgb_mode_cmd(int argc, char **argv);
+void handle_set_neopixel_brightness_cmd(int argc, char **argv);
+void handle_get_neopixel_brightness_cmd(int argc, char **argv);
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -2437,6 +2439,8 @@ void register_commands() {
     register_command("blespam", handle_ble_spam_cmd);
 #endif
     register_command("setrgbmode", handle_set_rgb_mode_cmd);
+    register_command("setneopixelbrightness", handle_set_neopixel_brightness_cmd);
+    register_command("getneopixelbrightness", handle_get_neopixel_brightness_cmd);
     
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
     
@@ -2540,4 +2544,27 @@ void handle_set_rgb_mode_cmd(int argc, char **argv) {
     settings_set_rgb_mode(&G_Settings, mode);
     settings_save(&G_Settings);
     glog("RGB mode set to %s\n", argv[1]);
+}
+
+void handle_set_neopixel_brightness_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        glog("Usage: setneopixelbrightness <0-100>\n");
+        glog("Example: setneopixelbrightness 50\n");
+        return;
+    }
+    
+    int brightness = atoi(argv[1]);
+    if (brightness < 0 || brightness > 100) {
+        glog("Invalid brightness value '%s'. Must be between 0-100\n", argv[1]);
+        return;
+    }
+    
+    settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)brightness);
+    settings_save(&G_Settings);
+    glog("Neopixel max brightness set to %d%%\n", brightness);
+}
+
+void handle_get_neopixel_brightness_cmd(int argc, char **argv) {
+    uint8_t brightness = settings_get_neopixel_max_brightness(&G_Settings);
+    glog("Current neopixel max brightness: %d%%\n", brightness);
 }

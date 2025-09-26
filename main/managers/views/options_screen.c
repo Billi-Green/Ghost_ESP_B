@@ -148,16 +148,15 @@ enum {
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
     SETTING_MAX_BRIGHTNESS,
+    SETTING_NEOPIXEL_BRIGHTNESS,
     SETTING_ZEBRA_MENUS,
     SETTING_NAV_BUTTONS,
     SETTING_MENU_LAYOUT
 };
 
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
 static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
-#endif
 
 static SettingsItem settings_items[] = {
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
@@ -172,6 +171,7 @@ static SettingsItem settings_items[] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
     {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     #endif
+    {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
     {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 2, 0}
@@ -554,6 +554,9 @@ static void load_current_settings_values(void) {
             case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
                 break;
+            case SETTING_NEOPIXEL_BRIGHTNESS:
+                settings_items[i].current_value = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -622,6 +625,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             set_backlight_brightness(100); // set to 100 since brightness becomes scaled by the max
             break;
         #endif
+        case SETTING_NEOPIXEL_BRIGHTNESS:
+            settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            break;
     }
     settings_save(&G_Settings);
 }
