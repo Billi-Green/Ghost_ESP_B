@@ -8,7 +8,7 @@
 
 An Evil Portal creates a fake WiFi hotspot that looks like a real login page (like those you see at hotels or cafes). When people try to connect, they see a login page you create. This is for educational and authorized testing only!
 
-> **Important**: You need a board with SD card support (like CYD) for Evil Portal to work!
+> **Important**: An SD card is required only for serving custom portal files and for saving logs (for example, captured credentials or keystrokes). The portal can run withut an SD card by usiong the built-in page or the UART/Flipper upload method (2048 bytes max).
 
 ## Quick Start Guide
 
@@ -19,12 +19,12 @@ An Evil Portal creates a fake WiFi hotspot that looks like a real login page (li
 2. **Prepare SD Card**
    - Get an SD card (32GB or less works best)
    - Format it to FAT32
-   - Create a folder called `/ghostesp/evil_portal/portals` on the SD card
+   - Create a folder called `/ghostesp/evil_portal/portals` on the SD card. at runtime this is mounted on the board at `/mnt/ghostesp/evil_portal/portals`.
 
 3. **Create Your Login Page**
    - Copy the template at the bottom of this guide
    - Save it as `index.html`
-   - Put it in the `/ghostesp/evil_portal/portals` folder on your SD card
+   - Put it in the `/ghostesp/evil_portal/portals` folder on your SD card (runtime path: `/mnt/ghostesp/evil_portal/portals`).
 
 4. **List Available Portals**
    - To see all available HTML portals in `/ghostesp/evil_portal/portals` on your SD card, run:
@@ -39,9 +39,9 @@ An Evil Portal creates a fake WiFi hotspot that looks like a real login page (li
      ```
      to launch the built-in portal, **or**  
      ```
-     startportal myportal.html "Free WiFi"
-     ```
-     to launch a custom HTML portal you placed in `/ghostesp/evil_portal/portals/myportal.html`.
+    startportal myportal.html "Free WiFi"
+    ```
+    to launch a custom HTML portal you placed in `/ghostesp/evil_portal/portals/myportal.html` (runtime: `/mnt/ghostesp/evil_portal/portals/myportal.html`).
 
    - This creates a WiFi network called "Free WiFi"
 
@@ -90,9 +90,8 @@ If you have the GhostESP Flipper Zero App (v1.4+), you can upload simple HTML di
 ### "I see the network but no login page"
 
 1. Make sure you're not connected to any other networks
-2. Try opening your browser and going to any website
-3. If you see MSN, you're connected to real internet instead of the portal
-4. Try typing `http://domainexample.local/login` in your browser
+2. Try opening your browser and going to any website (e.g., `http://neverssl.com`)
+3. Try typing `http://192.168.4.1/login` in your browser
 
 ### "The page looks wrong on my phone"
 
@@ -144,6 +143,10 @@ Copy this exactly - it works on most devices:
 Just type:  
 ```
 stopportal
+```
+or
+```
+stop
 ```
 
 ## Important Warnings

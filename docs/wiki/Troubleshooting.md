@@ -151,7 +151,7 @@ A guide to common issues and their solutions for GhostESP firmware.
 
 If you're using the Evil Portal feature, note the following:
 
-1. **Connect to the Evil Portal AP**: Instead of connecting to "GhostNet," connect to the Evil Portal's Access Point (AP). The password for the Evil Portal AP is the same as the SSID.
+1. **Connect to the Evil Portal AP**: Instead of connecting to "GhostNet," connect to the Evil Portal's Access Point (AP). The portal AP's password is configurable and is not automatically the same as the SSID; by default the portal AP may be open (empty password). Use `startportal <file> <AP_SSID> [PSK]` to set a PSK.
 2. **Web UI Replacement**: When the Evil Portal is active, the normal web UI is replaced. You won't have access to the web UI until the board is restarted.
 3. **Refreshing Access Points**: If "GhostNet" still appears after activating the Evil Portal, turn your device off and on again.
 
