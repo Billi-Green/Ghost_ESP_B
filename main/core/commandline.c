@@ -1217,7 +1217,9 @@ void handle_help(int argc, char **argv) {
         glog("\nLED & RGB Commands:\n\n");
         printf("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
         printf("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
-        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins\n");
+        printf("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
+        printf("getneopixelbrightness\n    Show current neopixel max brightness (percent)\n    Usage: getneopixelbrightness\n\n");
+        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins, setneopixelbrightness, getneopixelbrightness\n");
         return;
     }
 
