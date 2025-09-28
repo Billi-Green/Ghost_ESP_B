@@ -58,6 +58,7 @@ static const char *NVS_ZEBRA_MENUS_KEY = "zebra_menus";
 static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
 static const char *NVS_NAV_BUTTONS_KEY = "nav_buttons";
 static const char *NVS_MENU_LAYOUT_KEY = "menu_layout";
+static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
 
 
 static const char *TAG = "SettingsManager";
@@ -152,6 +153,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->infrared_easy_mode = false; // Default to disabled
   settings->nav_buttons_enabled = true; // Default to enabled
   settings->menu_layout = 0; // Default to carousel layout
+  settings->neopixel_max_brightness = 100; // Default to 100% brightness
 }
 
 void settings_load(FSettings *settings) {
@@ -457,6 +459,14 @@ void settings_load(FSettings *settings) {
     settings->menu_layout = value_u8;
   } else {
     settings->menu_layout = 0; // Default to carousel layout if not found
+  }
+
+  // Load Neopixel Max Brightness
+  err = nvs_get_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->neopixel_max_brightness = value_u8;
+  } else {
+    settings->neopixel_max_brightness = 100; // Default to 100% if not found
   }
 }
 
@@ -767,6 +777,9 @@ void settings_save(const FSettings *settings) {
 
   err = nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, settings->menu_layout);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save menu_layout: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save neopixel_max_brightness: %s", esp_err_to_name(err));
 
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
@@ -1203,4 +1216,14 @@ void settings_set_menu_layout(FSettings *settings, uint8_t layout) {
 
 uint8_t settings_get_menu_layout(const FSettings *settings) {
     return settings->menu_layout;
+}
+
+// Neopixel brightness settings
+void settings_set_neopixel_max_brightness(FSettings *settings, uint8_t brightness) {
+    if (brightness > 100) brightness = 100;
+    settings->neopixel_max_brightness = brightness;
+}
+
+uint8_t settings_get_neopixel_max_brightness(const FSettings *settings) {
+    return settings->neopixel_max_brightness;
 }

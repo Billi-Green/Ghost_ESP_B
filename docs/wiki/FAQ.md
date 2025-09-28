@@ -18,7 +18,7 @@
 ### 3. How do I access the web interface?
 - Connect to the `GhostNet` WiFi network.
 - Open your browser and visit:  
-  - [`ghostesp.local`](http://ghostesp.local) *(mDNS required)*  
+  - [`ghostesp.local`](http://ghostesp.local)
   - or [`192.168.4.1`](http://192.168.4.1)
 
 ---
@@ -26,6 +26,8 @@
 ### 4. Why don’t the default credentials work for the web interface?
 - The web interface uses the same credentials as your WiFi AP.
 - If you’ve changed your WiFi SSID or password, your web interface credentials also change.
+
+> **Note:** The firmware has a subtle password-length mismatch: the AP code falls back to the default password unless the saved password is longer than 8 characters, while web authentication treats passwords of length 8 as valid. If you set an exactly 8‑character password you may see the web UI and AP use different credentials; use a password longer than 8 characters to avoid this.
 
 ---
 

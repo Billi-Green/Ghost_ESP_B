@@ -9,6 +9,7 @@
 - Alternate main menu layout (Grid)
 - Added glog
 - Added command history with up/down navigation and full in-line cursor editing (left/right, insert, delete, backspace) to the serial console. - @tototo31
+- Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
