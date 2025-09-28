@@ -55,10 +55,10 @@ static int current_settings_category = -1;
 // Example: settings_category_indices[0] lists settings for "Display" category.
 static int settings_category_indices[][10] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 11, 12, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 9, 11, 12, 13, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
         {0, 6, 7, 8, 10, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #else
-        {1, 2, 5, 3, 4, 10, 11, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 10, 11, 12, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
         {0, 6, 7, 8, 9, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #endif
 };
