@@ -238,9 +238,12 @@ static void delete_character_at_cursor(void) {
     for (int i = cursor_position; i < len; i++) {
         serial_buffer[i] = serial_buffer[i + 1];
     }
-    
+
+    // New length after deletion
+    int new_len = len - 1;
+
     // Display remaining characters (overwrite current position)
-    for (int i = cursor_position; i < len; i++) {
+    for (int i = cursor_position; i < new_len; i++) {
         uart_write_bytes(UART_NUM, &serial_buffer[i], 1);
 #if JTAG_SUPPORTED
         usb_serial_jtag_write_bytes((const uint8_t*)&serial_buffer[i], 1, 0);
@@ -279,9 +282,12 @@ static void backspace_at_cursor(void) {
     for (int i = cursor_position - 1; i < len; i++) {
         serial_buffer[i] = serial_buffer[i + 1];
     }
-    
+
+    // New length after deletion
+    int new_len = len - 1;
+
     // Display remaining characters from cursor position
-    for (int i = cursor_position - 1; i < len; i++) {
+    for (int i = cursor_position - 1; i < new_len; i++) {
         uart_write_bytes(UART_NUM, &serial_buffer[i], 1);
 #if JTAG_SUPPORTED
         usb_serial_jtag_write_bytes((const uint8_t*)&serial_buffer[i], 1, 0);
@@ -307,15 +313,13 @@ static void backspace_at_cursor(void) {
 }
 
 static void clear_line_from_cursor(void) {
-    // Clear from cursor to end of line
-    int len = strlen(serial_buffer);
-    for (int i = cursor_position; i < len; i++) {
-        const char backspace_seq[] = "\b \b";
-        uart_write_bytes(UART_NUM, backspace_seq, 3);
+    // Use ANSI escape to clear from cursor to end of line to avoid
+    // backspace-based visual corruption when replacing the line.
+    const char clear_to_eol[] = "\033[K";
+    uart_write_bytes(UART_NUM, clear_to_eol, 3);
 #if JTAG_SUPPORTED
-        usb_serial_jtag_write_bytes((const uint8_t*)backspace_seq, 3, 0);
+    usb_serial_jtag_write_bytes((const uint8_t*)clear_to_eol, 3, 0);
 #endif
-    }
     // Truncate buffer at cursor position
     serial_buffer[cursor_position] = '\0';
 }
