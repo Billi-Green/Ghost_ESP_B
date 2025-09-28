@@ -8,7 +8,7 @@
 - Added 802.15.4 packet capture (only on C5, C6)
 - Alternate main menu layout (Grid)
 - Added glog - a lightweight logging helper
-- Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels
+- Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
