@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "math.h"
+#include "core/utils.h"
 
 static const char *TAG = "RGBManager";
 static SemaphoreHandle_t rgb_mutex = NULL;
@@ -305,7 +306,7 @@ void set_led_column(RGBManager_t *rgb_manager, size_t column, uint8_t height) {
 
   uint8_t r = 255, g = 1, b = 1;
 
-  scale_grb_by_brightness(&g, &r, &b, 0.1);
+  scale_grb_by_neopixel_brightness(&g, &r, &b, 0.1, settings_get_neopixel_max_brightness(&G_Settings));
 
   // Light up the required number of LEDs with the selected primary color
   for (int row = 0; row < height; ++row) {
@@ -510,7 +511,7 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
             pulse_once(rgb_manager, red, green, blue);
         } else {
             uint8_t r = red, g = green, b = blue;
-            scale_grb_by_brightness(&g, &r, &b, 0.3); // Scale brightness for RMT
+            scale_grb_by_neopixel_brightness(&g, &r, &b, 0.3, settings_get_neopixel_max_brightness(&G_Settings)); // Scale brightness for RMT with neopixel setting
 
             esp_err_t ret = ESP_OK;
             if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
@@ -590,7 +591,7 @@ void rgb_manager_rainbow_effect_matrix(RGBManager_t *rgb_manager,
       blue = (uint8_t)(fmin(rgb_color.b * 255, 120));
 
       clamp_rgb(&red, &green, &blue);
-      scale_grb_by_brightness(&green, &red, &blue, 0.3);
+      scale_grb_by_neopixel_brightness(&green, &red, &blue, 0.3, settings_get_neopixel_max_brightness(&G_Settings));
 
       led_strip_set_pixel(rgb_manager->strip, i, red, green, blue);
       hue = fmod(hue + 0.5, 360.0);

@@ -34,7 +34,7 @@ static const char **evil_portal_options = NULL;
 
 static const char *TAG = "optionsScreen";
 
-static const char *settings_categories[] = {"Display", "Config", NULL};
+static const char *settings_categories[] = {"Display", "Hardware config", NULL};
 
 typedef enum {
     SETTINGS_CATEGORY_DISPLAY,
@@ -48,16 +48,19 @@ static int current_settings_category = -1;
 // Each sub-array lists the indices of settings_items[] that belong to a category.
 // The last element in each sub-array must be -1 to mark the end.
 //
-// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9)
-// Category 1: "Config"  (indices: 0, 6, 7, 8)
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9, 11, 12) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 10, 11) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
+// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 10) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
+// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 9) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
 // Example: settings_category_indices[0] lists settings for "Display" category.
 static int settings_category_indices[][10] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 10, 11, 12, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 9, 11, 12, 13, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
+        {0, 6, 7, 8, 10, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #else
-        {1, 2, 5, 3, 4, 9, 10, 11, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 10, 11, 12, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
+        {0, 6, 7, 8, 9, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #endif
-        {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -148,16 +151,15 @@ enum {
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
     SETTING_MAX_BRIGHTNESS,
+    SETTING_NEOPIXEL_BRIGHTNESS,
     SETTING_ZEBRA_MENUS,
     SETTING_NAV_BUTTONS,
     SETTING_MENU_LAYOUT
 };
 
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
 static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
-#endif
 
 static SettingsItem settings_items[] = {
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
@@ -172,6 +174,7 @@ static SettingsItem settings_items[] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
     {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     #endif
+    {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
     {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 2, 0}
@@ -554,6 +557,9 @@ static void load_current_settings_values(void) {
             case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
                 break;
+            case SETTING_NEOPIXEL_BRIGHTNESS:
+                settings_items[i].current_value = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -622,6 +628,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             set_backlight_brightness(100); // set to 100 since brightness becomes scaled by the max
             break;
         #endif
+        case SETTING_NEOPIXEL_BRIGHTNESS:
+            settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            break;
     }
     settings_save(&G_Settings);
 }
