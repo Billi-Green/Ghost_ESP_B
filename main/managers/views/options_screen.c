@@ -138,7 +138,7 @@ static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "So
 static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
-static const char *menu_layout_options[] = {"Normal", "Grid"};
+static const char *menu_layout_options[] = {"Normal", "Grid", "List"};
 
 enum {
     SETTING_RGB_MODE = 0,
@@ -177,7 +177,7 @@ static SettingsItem settings_items[] = {
     {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
-    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 2, 0}
+    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0}
 };
 
 static bool is_settings_mode = false;
@@ -552,7 +552,7 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
                 break;
             case SETTING_MENU_LAYOUT:
-                settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
+            settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
                 break;
             case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;

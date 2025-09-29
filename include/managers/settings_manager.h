@@ -103,7 +103,7 @@ typedef struct {
   
   // Navigation buttons setting
   bool nav_buttons_enabled; // Toggle for main menu navigation buttons
-  uint8_t menu_layout; // Menu layout type (0=Carousel, 1=Grid, 2=Wii Cards)
+  uint8_t menu_layout; // Menu layout type (0=Carousel, 1=Grid Cards, 2=List)
   
   // Neopixel settings
   uint8_t neopixel_max_brightness; // Max neopixel brightness (0-100)
