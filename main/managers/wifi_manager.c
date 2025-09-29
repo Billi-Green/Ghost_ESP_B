@@ -47,6 +47,11 @@
 #include "mbedtls/sha256.h"
 #include "mbedtls/hmac_drbg.h"
 #include "mbedtls/bignum.h"
+#include "core/serial_manager.h"
+#include "managers/settings_manager.h"
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+#include "managers/status_display_manager.h"
+#endif
 
 // Defines for Station Scan Channel Hopping
 #define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
@@ -494,7 +499,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
-
 // Removed old wifi_retry_timer_callback - using unified retry system
 
 static void generate_random_ssid(char *ssid, size_t length) {
@@ -697,7 +701,6 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
             }
         }
     }
-
     // If no known AP BSSID found, ignore
     if (matched_ap_index == -1) {
        // printf("DEBUG: Dropped packet - No known AP BSSID found in addresses.\n");
@@ -965,7 +968,6 @@ esp_err_t done_handler(httpd_req_t *req) {
     // no automatic shutdown
     return ESP_OK;
 }
-
 esp_err_t portal_handler(httpd_req_t *req) {
     printf("Client requested URL: %s\n", req->uri);
     ESP_LOGI(TAG, "Free heap before serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
@@ -1018,7 +1020,6 @@ esp_err_t portal_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Free heap after serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
     return ESP_OK;
 }
-
 esp_err_t get_log_handler(httpd_req_t *req) {
     char body[256] = {0};
     int received = 0;
@@ -1464,12 +1465,13 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
 
     printf("WiFi monitor started.\n");
     TERMINAL_VIEW_ADD_TEXT("WiFi monitor started.\n");
+    status_display_show_status("Monitor Started");
 }
-
 void wifi_manager_stop_monitor_mode() {
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
     printf("WiFi monitor stopped.\n");
     TERMINAL_VIEW_ADD_TEXT("WiFi monitor stopped.\n");
+    status_display_show_status("Monitor Stopped");
 
     // Stop the station scan channel hopping timer if it's active
     if (scansta_hopping_active) {
@@ -1693,7 +1695,6 @@ void wifi_manager_stop_scan() {
         TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
         initial_ap_count = MAX_SCANNED_APS;
     }
-
     if (initial_ap_count > 0) {
         if (scanned_aps != NULL) {
             free(scanned_aps);
@@ -1897,7 +1898,6 @@ esp_err_t wifi_manager_broadcast_deauth(uint8_t bssid[6], int channel, uint8_t m
 
     return ESP_OK;
 }
-
 void wifi_deauth_task(void *param) {
     if (ap_count == 0) {
         printf("No access points found\n");
@@ -1980,6 +1980,9 @@ void wifi_manager_start_deauth() {
         ap_manager_stop_services();
         esp_wifi_start();
         printf("Restarting Wi-Fi\n");
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        status_display_show_attack("Deauth", "starting");
+#endif
         
         if (selected_ap_count > 0 && selected_aps != NULL) {
             printf("Starting deauth attack on %d selected APs:\n", selected_ap_count);
@@ -1993,15 +1996,26 @@ void wifi_manager_start_deauth() {
                        selected_aps[i].bssid[0], selected_aps[i].bssid[1], selected_aps[i].bssid[2],
                        selected_aps[i].bssid[3], selected_aps[i].bssid[4], selected_aps[i].bssid[5]);
                 TERMINAL_VIEW_ADD_TEXT("  [%d] %s\n", i, sanitized_ssid);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+                if (i == 0) {
+                    status_display_show_attack("Deauth", sanitized_ssid);
+                }
+#endif
             }
         } else if (strlen((const char *)selected_ap.ssid) > 0) {
             char sanitized_ssid[33];
             sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
             printf("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
             TERMINAL_VIEW_ADD_TEXT("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            status_display_show_attack("Deauth", sanitized_ssid);
+#endif
         } else {
             printf("Starting global deauth attack on all APs\n");
             TERMINAL_VIEW_ADD_TEXT("Starting global deauth attack on all APs\n");
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            status_display_show_attack("Deauth", "all APs");
+#endif
         }
         
         xTaskCreate(wifi_deauth_task, "deauth_task", 4096, NULL, 5, &deauth_task_handle);
@@ -2012,7 +2026,6 @@ void wifi_manager_start_deauth() {
         TERMINAL_VIEW_ADD_TEXT("Deauth already running.\n");
     }
 }
-
 void wifi_manager_select_ap(int index) {
 
     if (ap_count == 0) {
@@ -2313,7 +2326,6 @@ void screen_music_visualizer_task(void *pvParameters) {
 
     vTaskDelete(NULL);
 }
-
 void animate_led_based_on_amplitude(void *pvParameters) {
     char rx_buffer[128];
     char addr_str[128];
@@ -2632,7 +2644,6 @@ bool send_arp_request(const char *target_ip) {
     if (inet_pton(AF_INET, target_ip, &target_addr) != 1) {
         return false;
     }
-
     // Create ARP request packet
     uint8_t arp_packet[42] = {
         // Ethernet header
@@ -2773,7 +2784,6 @@ bool get_arp_table_entry(const char *ip, uint8_t *mac) {
 
     return false;
 }
-
 bool wifi_manager_arp_scan_subnet(void) {
     arp_scanner_ctx_t *ctx = arp_scanner_init();
     if (!ctx) {
@@ -2952,7 +2962,6 @@ void scan_ports_on_host(const char *target_ip, host_result_t *result) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
-
 static size_t build_udp_probe(uint16_t port, uint8_t *buf, size_t bufsize) {
     if (port == 53 && bufsize >= 64) {
         uint8_t *p = buf;
@@ -3236,7 +3245,6 @@ void scanner_cleanup(scanner_ctx_t *ctx) {
         free(ctx);
     }
 }
-
 bool wifi_manager_scan_subnet() {
     scanner_ctx_t *ctx = scanner_init();
     if (!ctx) {
@@ -3286,7 +3294,6 @@ bool wifi_manager_scan_subnet() {
             ctx->num_active_hosts++;
         }
     }
-
     glog("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
 
     for (size_t i = 0; i < ctx->num_active_hosts; i++) {
@@ -3625,6 +3632,7 @@ void wifi_manager_stop_deauth() {
     if (beacon_task_running) {
         printf("Stopping deauth transmission...\n");
         TERMINAL_VIEW_ADD_TEXT("Stopping deauth transmission...\n");
+        status_display_show_status("Deauth Stopping");
         if (deauth_task_handle != NULL) {
             vTaskDelete(deauth_task_handle);
             deauth_task_handle = NULL;
@@ -3633,10 +3641,12 @@ void wifi_manager_stop_deauth() {
             wifi_manager_stop_monitor_mode();
             esp_wifi_stop();
             ap_manager_start_services();
+            status_display_show_status("Deauth Stopped");
         }
+    } else {
+        status_display_show_status("No Deauth Active");
     }
 }
-
 static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_record_t *rec, bool include_security) {
     char sanitized_ssid[33];
     sanitize_ssid_and_check_hidden((uint8_t *)rec->ssid, sanitized_ssid, sizeof(sanitized_ssid));
@@ -3710,7 +3720,6 @@ static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_re
         TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
     }
 }
-
 void wifi_manager_print_scan_results_with_oui() {
     if (scanned_aps == NULL) {
         glog("AP information not available\n");
@@ -3936,7 +3945,6 @@ static bool bssid_already_listed(const uint8_t *bssid) {
     }
     return false;
 }
-
 static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT) return;
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
@@ -4179,12 +4187,13 @@ void wifi_manager_stop_beacon() {
 
         // Now restart services
         ap_manager_init();
+        status_display_show_status("Beacon Stopped");
     } else {
         printf("No beacon transmission running.\n");
         TERMINAL_VIEW_ADD_TEXT("No beacon transmission running.\n");
+        status_display_show_status("No Beacon Active");
     }
 }
-
 void wifi_manager_start_ip_lookup() {
     wifi_ap_record_t ap_info;
     if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK || ap_info.rssi == 0) {
@@ -4272,7 +4281,6 @@ void wifi_manager_start_ip_lookup() {
     printf("IP Scan Done.\n");
     TERMINAL_VIEW_ADD_TEXT("IP Scan Done...\n");
 }
-
 void wifi_manager_connect_wifi(const char *ssid, const char *password) {
     printf("Connecting to WiFi: %s\n", ssid);
     TERMINAL_VIEW_ADD_TEXT("Connecting to WiFi: %s\n", ssid);
@@ -4403,6 +4411,7 @@ void wifi_manager_start_beacon(const char *ssid) {
         ap_manager_stop_services();
         printf("Starting beacon transmission...\n");
         TERMINAL_VIEW_ADD_TEXT("Starting beacon transmission...\n");
+        status_display_show_status("Beacon Starting");
         configure_hidden_ap();
         esp_wifi_start();
         xTaskCreate(wifi_beacon_task, "beacon_task", 2048, (void *)ssid, 5, &beacon_task_handle);
@@ -4411,6 +4420,7 @@ void wifi_manager_start_beacon(const char *ssid) {
     } else {
         printf("Beacon transmission already running.\n");
         TERMINAL_VIEW_ADD_TEXT("Beacon transmission already running.\n");
+        status_display_show_status("Beacon Active");
     }
 }
 
@@ -4631,7 +4641,6 @@ void wifi_manager_start_station_scan() {
     printf("Started Station Scan (Channel Hopping Enabled)...\n");
     TERMINAL_VIEW_ADD_TEXT("Started Station Scan (Hopping)...\n");
 }
-
 // Print combined AP/Station scan results in ASCII chart
 void wifi_manager_scanall_chart() {
     if (ap_count == 0) {
@@ -4942,7 +4951,6 @@ static const uint8_t eapol_logoff_frame_template[36] = {
     // EAPOL header: version 1, type Logoff(2), length 0
     0x01, 0x02, 0x00, 0x00
 };
-
 static void eapol_logoff_task(void *param) {
     (void)param;
     uint8_t frame[sizeof(eapol_logoff_frame_template)];
@@ -5057,6 +5065,9 @@ void wifi_manager_start_eapollogoff_attack(void) {
     }
     eapol_logoff_running = true;
     eapol_logoff_packets_sent = 0;
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_attack("EAPOL logoff", "running");
+#endif
     xTaskCreate(eapol_logoff_task, "eapol_logoff", 2048, NULL, 5, &eapol_logoff_task_handle);
     xTaskCreate(eapol_logoff_display_task, "eapol_disp", 3072, NULL, 5, &eapol_logoff_display_task_handle);
 }
@@ -5090,6 +5101,9 @@ void wifi_manager_stop_eapollogoff_attack(void) {
     
     printf("EAPOL Logoff attack stopped\n");
     TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack stopped\n");
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_status("EAPOL stopped");
+#endif
 }
 
 void wifi_manager_eapollogoff_display(void) {
@@ -5253,7 +5267,6 @@ static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1,
     
     return found ? ESP_OK : ESP_FAIL;
 }
-
 /**
  * Generate SAE commit scalar and element
  */
@@ -5551,7 +5564,6 @@ static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     }
     return err;
 }
-
 static void sae_flood_task(void *param) {
     uint8_t spoofed_mac[6];
     uint8_t base_mac[6];
@@ -5816,6 +5828,9 @@ void wifi_manager_start_sae_flood(const char *password) {
            selected_ap.ssid, bssid_str, sae_target_channel);
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack started against %s (%s) on channel %d\n", 
                           selected_ap.ssid, bssid_str, sae_target_channel);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_attack("SAE flood", "running");
+#endif
 }
 
 void wifi_manager_stop_sae_flood(void) {
@@ -5858,6 +5873,9 @@ void wifi_manager_stop_sae_flood(void) {
     sae_mac_pool_ready = false;
     printf("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_status("SAE stopped");
+#endif
 }
 
 void wifi_manager_set_html_from_uart(void) {
@@ -5918,9 +5936,6 @@ void wifi_manager_sae_flood_help(void) {
     glog("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
     glog("Commands: saeflood, stopsaeflood, saefloodhelp\n");
 }
-
-
-
 /**
  * SAE monitoring callback to handle commit/confirm responses and anti-clogging tokens
  */

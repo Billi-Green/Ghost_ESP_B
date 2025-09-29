@@ -24,6 +24,7 @@
 #include "wear_levelling.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "managers/status_display_manager.h"
 
 static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
@@ -152,6 +153,7 @@ static esp_err_t mount_virtual_storage(void) {
     s_virtual_storage_mounted = true;
     ESP_LOGI(TAG, "Virtual storage mounted successfully at /mnt");
     s_mount_type = MOUNT_VIRTUAL;
+    status_display_show_status("Virtual SD OK");
     return ESP_OK;
 }
 
@@ -165,6 +167,7 @@ static void unmount_virtual_storage(void) {
     s_wl_handle = WL_INVALID_HANDLE;
     ESP_LOGI(TAG, "Virtual storage unmounted");
     s_mount_type = MOUNT_NONE;
+    status_display_show_status("Virtual SD Off");
 }
 #endif
 
@@ -697,6 +700,7 @@ void sd_card_unmount(void) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    status_display_show_status("SD Unmounted");
     return;
   }
 #endif
@@ -708,6 +712,9 @@ void sd_card_unmount(void) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    status_display_show_status("SD Unmounted");
+  } else {
+    status_display_show_status("SD Not Mounted");
   }
 #else
   if (sd_card_manager.is_initialized) {
@@ -721,6 +728,9 @@ void sd_card_unmount(void) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    status_display_show_status("SD Unmounted");
+  } else {
+    status_display_show_status("SD Not Mounted");
   }
 #endif
 }

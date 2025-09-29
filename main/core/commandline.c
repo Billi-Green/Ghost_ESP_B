@@ -15,6 +15,7 @@
 #include "managers/wifi_manager.h"
 #include "managers/sd_card_manager.h"
 #include "core/esp_comm_manager.h"
+#include "managers/status_display_manager.h"
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
@@ -138,6 +139,7 @@ void cmd_wifi_scan_start(int argc, char **argv) {
         wifi_manager_start_scan();
     }
     wifi_manager_print_scan_results_with_oui();
+    status_display_show_status("Scan Started");
 }
 
 void cmd_wifi_scan_stop(int argc, char **argv) {
@@ -155,11 +157,13 @@ void cmd_wifi_scan_stop(int argc, char **argv) {
     esp_wifi_start();
 
     glog("WiFi scan stopped.\n");
+    status_display_show_status("Scan Stopped");
 }
 
 void cmd_wifi_scan_results(int argc, char **argv) {
     glog("WiFi scan results displaying with OUI matching.\n");
     wifi_manager_print_scan_results_with_oui();
+    status_display_show_status("Showing Results");
 }
 
 void handle_list(int argc, char **argv) {
@@ -186,36 +190,43 @@ void handle_beaconspam(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-r") == 0) {
         glog("Starting Random beacon spam...\n");
         wifi_manager_start_beacon(NULL);
+        status_display_show_status("Beacon Random");
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-rr") == 0) {
         glog("Starting Rickroll beacon spam...\n");
         wifi_manager_start_beacon("RICKROLL");
+        status_display_show_status("Beacon Rickroll");
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "-l") == 0) {
         glog("Starting AP List beacon spam...\n");
         wifi_manager_start_beacon("APLISTMODE");
+        status_display_show_status("Beacon AP List");
         return;
     }
 
     if (argc > 1) {
         wifi_manager_start_beacon(argv[1]);
+        status_display_show_status("Custom Beacon");
         return;
     } else {
         glog("Usage: beaconspam -r (for Beacon Spam Random)\n");
+        status_display_show_status("Beacon Usage");
     }
 }
 
 void handle_stop_spam(int argc, char **argv) {
     wifi_manager_stop_beacon();
     glog("Beacon Spam Stopped...\n");
+    status_display_show_status("Beacon Stopped");
 }
 
 void handle_sta_scan(int argc, char **argv) {
     wifi_manager_start_station_scan();
+    status_display_show_status("Station Scan");
 }
 
 void handle_attack_cmd(int argc, char **argv) {
@@ -223,22 +234,27 @@ void handle_attack_cmd(int argc, char **argv) {
         if (strcmp(argv[1], "-d") == 0) {
             glog("Deauthentication starting...\n");
             wifi_manager_deauth_station();
+            status_display_show_status("Deauth Start");
             return;
         } else if (strcmp(argv[1], "-e") == 0) {
             glog("EAPOL Logoff attack starting...\n");
             wifi_manager_start_eapollogoff_attack();
+            status_display_show_status("EAPOL Start");
             return;
         } else if (strcmp(argv[1], "-s") == 0) {
             if (argc < 3) {
                 glog("Usage: attack -s <password>\n");
+                status_display_show_status("Need Password");
                 return;
             }
             glog("SAE flood attack starting...\n");
             wifi_manager_start_sae_flood(argv[2]);
+            status_display_show_status("SAE Start");
             return;
         }
     }
     glog("Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
+    status_display_show_status("Attack Usage");
 }
 
 void handle_sae_flood_cmd(int argc, char **argv) {
@@ -248,15 +264,18 @@ void handle_sae_flood_cmd(int argc, char **argv) {
     }
     glog("Starting SAE flood attack...\n");
     wifi_manager_start_sae_flood(argv[1]);
+    status_display_show_status("SAE Flood On");
 }
 
 void handle_stop_sae_flood_cmd(int argc, char **argv) {
     glog("Stopping SAE flood attack...\n");
     wifi_manager_stop_sae_flood();
+    status_display_show_status("SAE Flood Off");
 }
 
 void handle_sae_flood_help_cmd(int argc, char **argv) {
     wifi_manager_sae_flood_help();
+    status_display_show_status("SAE Help");
 }
 
 void handle_stop_deauth(int argc, char **argv) {
@@ -265,6 +284,7 @@ void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
     glog("Deauth/EAPOL/SAE attacks stopped...\n");
+    status_display_show_status("Attacks Off");
 }
 
 void handle_select_cmd(int argc, char **argv) {
@@ -344,6 +364,7 @@ void discover_task(void *pvParameter) {
         dial_client_deinit(&client);
     } else {
         glog("Failed to init DIAL client.\n");
+        status_display_show_status("DIAL Failed");
     }
 
     vTaskDelete(NULL);
@@ -380,6 +401,7 @@ void handle_stop_flipper(int argc, char **argv) {
     // ensure pcap is properly flushed and closed
     pcap_file_close();
     glog("Stopped activities.\nClosed files.\n");
+    status_display_show_status("All Stopped");
 }
 
 void handle_dial_command(int argc, char **argv) {
@@ -635,6 +657,7 @@ void decrypt_tp_link_response(const uint8_t *input, char *output, size_t len) {
 void handle_tp_link_test(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: tp_link_test <on|off|loop>\n");
+        status_display_show_status("TP Link Usage");
         return;
     }
 
@@ -644,6 +667,7 @@ void handle_tp_link_test(int argc, char **argv) {
         isloop = true;
     } else if (strcmp(argv[1], "on") != 0 && strcmp(argv[1], "off") != 0) {
         glog("Invalid argument. Use 'on', 'off', or 'loop'.\n");
+        status_display_show_status("TP Arg Invalid");
         return;
     }
 
@@ -673,6 +697,7 @@ void handle_tp_link_test(int argc, char **argv) {
         size_t command_len = strlen(command);
         if (command_len >= sizeof(encrypted_command)) {
             glog("Command too large to encrypt\n");
+            status_display_show_status("TP Cmd Too Big");
             return;
         }
 
@@ -681,6 +706,7 @@ void handle_tp_link_test(int argc, char **argv) {
         int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (sock < 0) {
             glog("Failed to create socket: errno %d\n", errno);
+            status_display_show_status("TP Sock Error");
             return;
         }
 
@@ -692,10 +718,12 @@ void handle_tp_link_test(int argc, char **argv) {
         if (err < 0) {
             glog("Error occurred during sending: errno %d\n", errno);
             close(sock);
+            status_display_show_status("TP Send Error");
             return;
         }
 
         glog("Broadcast message sent: %s\n", command);
+        status_display_show_status("TP Packet Sent");
 
         struct timeval timeout = {2, 0};
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
@@ -707,8 +735,10 @@ void handle_tp_link_test(int argc, char **argv) {
         if (len < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 glog("No response from any device\n");
+                status_display_show_status("No TP Reply");
             } else {
                 glog("Error receiving response: errno %d\n", errno);
+                status_display_show_status("TP Recv Error");
             }
         } else {
             recv_buf[len] = 0;
@@ -716,6 +746,7 @@ void handle_tp_link_test(int argc, char **argv) {
             decrypt_tp_link_response(recv_buf, decrypted_response, len);
             decrypted_response[len] = 0;
             glog("Response: %s\n", decrypted_response);
+            status_display_show_status("TP Reply Recv");
         }
 
         close(sock);
@@ -729,11 +760,13 @@ void handle_tp_link_test(int argc, char **argv) {
 void handle_ip_lookup(int argc, char **argv) {
         glog("Starting IP lookup...\n");
     wifi_manager_start_ip_lookup();
+    status_display_show_status("IP Lookup");
 }
 
 void handle_capture_scan(int argc, char **argv) {
     if (argc < 2 || argc > 3) {
         glog("Error: Incorrect number of arguments.\n");
+        status_display_show_status("Capture Usage");
         return;
     }
 
@@ -741,6 +774,7 @@ void handle_capture_scan(int argc, char **argv) {
 
     if (capturetype == NULL || capturetype[0] == '\0') {
         glog("Error: Capture Type cannot be empty.\n");
+        status_display_show_status("Capture Empty");
         return;
     }
 
@@ -750,9 +784,11 @@ void handle_capture_scan(int argc, char **argv) {
 
         if (err != ESP_OK) {
             glog("Error: pcap failed to open\n");
+            status_display_show_status("PCAP Fail");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_probe_scan_callback);
+        status_display_show_status("Capture Probe");
     }
 
     if (strcmp(capturetype, "-deauth") == 0) {
@@ -760,9 +796,11 @@ void handle_capture_scan(int argc, char **argv) {
 
         if (err != ESP_OK) {
             glog("Error: pcap failed to open\n");
+            status_display_show_status("PCAP Fail");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_deauth_scan_callback);
+        status_display_show_status("Capture Deauth");
     }
 
     if (strcmp(capturetype, "-beacon") == 0) {
@@ -771,9 +809,11 @@ void handle_capture_scan(int argc, char **argv) {
 
         if (err != ESP_OK) {
             glog("Error: pcap failed to open\n");
+            status_display_show_status("PCAP Fail");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_beacon_scan_callback);
+        status_display_show_status("Capture Beacon");
     }
 
     if (strcmp(capturetype, "-raw") == 0) {
@@ -782,9 +822,11 @@ void handle_capture_scan(int argc, char **argv) {
 
         if (err != ESP_OK) {
             glog("Error: pcap failed to open\n");
+            status_display_show_status("PCAP Fail");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_raw_scan_callback);
+        status_display_show_status("Capture Raw");
     }
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
@@ -793,6 +835,7 @@ void handle_capture_scan(int argc, char **argv) {
         int err = pcap_file_open("802154", PCAP_CAPTURE_IEEE802154);
         if (err != ESP_OK) {
             glog("Warning: PCAP failed to open (will stream to UART)\n");
+            status_display_show_status("PCAP Warn");
         }
         uint8_t ch = 0; // 0 means hopping by default
         if (argc == 3 && argv[2]) {
@@ -802,6 +845,7 @@ void handle_capture_scan(int argc, char **argv) {
             if (parsed >= 11 && parsed <= 26) ch = (uint8_t)parsed; // fixed channel
         }
         zigbee_manager_start_capture(ch);
+        status_display_show_status("Capture 802154");
     }
 #endif
 
@@ -811,9 +855,11 @@ void handle_capture_scan(int argc, char **argv) {
 
         if (err != ESP_OK) {
             glog("Error: pcap failed to open\n");
+            status_display_show_status("PCAP Fail");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_eapol_scan_callback);
+        status_display_show_status("Capture EAPOL");
     }
 
     if (strcmp(capturetype, "-pwn") == 0) {
@@ -822,9 +868,11 @@ void handle_capture_scan(int argc, char **argv) {
 
         if (err != ESP_OK) {
             glog("Error: pcap failed to open\n");
+            status_display_show_status("PCAP Fail");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_pwn_scan_callback);
+        status_display_show_status("Capture PWN");
     }
 
     if (strcmp(capturetype, "-wps") == 0) {
@@ -835,9 +883,11 @@ void handle_capture_scan(int argc, char **argv) {
 
         if (err != ESP_OK) {
             glog("Error: pcap failed to open\n");
+            status_display_show_status("PCAP Fail");
             return;
         }
         wifi_manager_start_monitor_mode(wifi_wps_detection_callback);
+        status_display_show_status("Capture WPS");
     }
 
     if (strcmp(capturetype, "-stop") == 0) {
@@ -850,12 +900,14 @@ void handle_capture_scan(int argc, char **argv) {
         zigbee_manager_stop_capture();
 #endif
         pcap_file_close();
+        status_display_show_status("Capture Stop");
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     if (strcmp(capturetype, "-ble") == 0) {
         printf("Starting BLE packet capture...\n");
         TERMINAL_VIEW_ADD_TEXT("Starting BLE packet capture...\n");
         ble_start_capture();
+        status_display_show_status("Capture BLE");
     }
 
     if (strcmp(capturetype, "-skimmer") == 0) {
@@ -865,9 +917,11 @@ void handle_capture_scan(int argc, char **argv) {
         if (err != ESP_OK) {
             printf("Warning: PCAP capture failed to start\n");
             TERMINAL_VIEW_ADD_TEXT("Warning: PCAP capture failed to start\n");
+            status_display_show_status("PCAP Warn");
         } else {
             printf("PCAP capture started\nMonitoring devices\n");
             TERMINAL_VIEW_ADD_TEXT("PCAP capture started\nMonitoring devices\n");
+            status_display_show_status("Capture Skimmer");
         }
         // Start skimmer detection
         ble_start_skimmer_detection();
@@ -879,6 +933,7 @@ void handle_capture_scan(int argc, char **argv) {
 void stop_portal(int argc, char **argv) {
     wifi_manager_stop_evil_portal();
     glog("Stopping evil portal...\n");
+    status_display_show_status("Portal Stop");
 }
 
 void handle_reboot(int argc, char **argv) {
@@ -902,22 +957,26 @@ void handle_startwd(int argc, char **argv) {
         csv_flush_buffer_to_file();
         csv_file_close();
         glog("Wardriving stopped.\n");
+        status_display_show_status("Wardrive Stop");
     } else {
         gps_manager_init(&g_gpsManager);
         if (sd_card_exists("/mnt/ghostesp/gps")) {
             esp_err_t err = csv_file_open("wardriving");
             if (err != ESP_OK) {
                 glog("Failed to open CSV for wardriving\n");
+                status_display_show_status("CSV Open Fail");
             }
         }
         wifi_manager_start_monitor_mode(wardriving_scan_callback);
         glog("Wardriving started.\n");
+        status_display_show_status("Wardrive Start");
     }
 }
 
 void handle_timezone_cmd(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: timezone <TZ_STRING>\n");
+        status_display_show_status("Timezone Usage");
         return;
     }
     const char *tz = argv[1];
@@ -926,6 +985,7 @@ void handle_timezone_cmd(int argc, char **argv) {
     setenv("TZ", tz, 1);
     tzset();
     glog("Timezone set to: %s\n", tz);
+    status_display_show_status("Timezone Set");
 }
 
 void handle_scan_ports(int argc, char **argv) {
@@ -933,6 +993,7 @@ void handle_scan_ports(int argc, char **argv) {
         glog("Usage:\n");
         glog("  scanports local\n");
         glog("  scanports <IP> [all | start-end]\n");
+        status_display_show_status("Ports Usage");
         return;
     }
 
@@ -940,9 +1001,11 @@ void handle_scan_ports(int argc, char **argv) {
     if (strcmp(argv[1], "local") == 0) {
         if (argc > 2) {
             glog("Info: 'local' scan does not take arguments.\n");
+            status_display_show_status("Ports Local");
         }
         glog("Starting local subnet scan...\n");
         wifi_manager_scan_subnet();
+        status_display_show_status("Ports Local");
         return;
     }
 
@@ -976,6 +1039,7 @@ void handle_scan_ports(int argc, char **argv) {
         } else {
             glog("No common udp responses found.\n");
         }
+        status_display_show_status("Ports Common");
         return;
     }
 
@@ -987,6 +1051,7 @@ void handle_scan_ports(int argc, char **argv) {
     } else if (sscanf(port_arg, "%d-%d", &start_port, &end_port) != 2 || start_port < 1 ||
                end_port > 65535 || start_port > end_port) {
         glog("Error: Invalid port range. Use 'all' or 'start-end'.\n");
+        status_display_show_status("Range Invalid");
         return;
     }
 
@@ -995,16 +1060,19 @@ void handle_scan_ports(int argc, char **argv) {
 
     glog("Scanning %s udp ports %d-%d...\n", target_ip, start_port, end_port);
     scan_ip_udp_port_range(target_ip, start_port, end_port);
+    status_display_show_status("Ports Custom");
 }
 
 void handle_scan_arp(int argc, char **argv) {
     glog("Starting ARP scan on local network...\n");
     wifi_manager_arp_scan_subnet();
+    status_display_show_status("ARP Scan");
 }
 
 void handle_scan_ssh(int argc, char **argv) {
     if (argc < 2) {
         glog("Usage: scanssh <IP>\n");
+        status_display_show_status("SSH Usage");
         return;
     }
 
@@ -1018,8 +1086,10 @@ void handle_scan_ssh(int argc, char **argv) {
     
     if (result.num_open_ports > 0) {
         glog("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
+        status_display_show_status("SSH Found");
     } else {
         glog("No SSH services found.\n");
+        status_display_show_status("SSH None");
     }
 }
 
@@ -1416,12 +1486,14 @@ void handle_capture(int argc, char **argv) {
         #else
         glog("Usage: capture [-probe|-beacon|-deauth|-raw|-ble]\n");
         #endif
+        status_display_show_status("Capture Usage");
         return;
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     if (strcmp(argv[1], "-ble") == 0) {
         glog("Starting BLE packet capture...\n");
         ble_start_capture();
+        status_display_show_status("Capture BLE");
     }
 #endif
 }
@@ -1443,6 +1515,7 @@ void handle_gps_info(int argc, char **argv) {
             gps_manager_deinit(&g_gpsManager);
             printf("GPS info display stopped.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info display stopped.\n");
+            status_display_show_status("GPS Info Off");
         }
     } else {
         if (gps_info_task_handle == NULL) {
@@ -1455,6 +1528,7 @@ void handle_gps_info(int argc, char **argv) {
             xTaskCreate(gps_info_display_task, "gps_info", 4096, NULL, 1, &gps_info_task_handle);
             printf("GPS info started.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info started.\n");
+            status_display_show_status("GPS Info On");
         }
     }
 }
@@ -1480,6 +1554,7 @@ void handle_ble_wardriving(int argc, char **argv) {
         csv_file_close();
         printf("BLE wardriving stopped.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving stopped.\n");
+        status_display_show_status("BLE Drive Off");
     } else {
         if (!g_gpsManager.isinitilized) {
             gps_manager_init(&g_gpsManager);
@@ -1489,6 +1564,7 @@ void handle_ble_wardriving(int argc, char **argv) {
         esp_err_t err = csv_file_open("ble_wardriving");
         if (err != ESP_OK) {
             printf("Failed to open CSV file for BLE wardriving\n");
+            status_display_show_status("CSV Open Fail");
             return;
         }
 
@@ -1496,6 +1572,7 @@ void handle_ble_wardriving(int argc, char **argv) {
         ble_start_scanning();
         printf("BLE wardriving started.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving started.\n");
+        status_display_show_status("BLE Drive On");
     }
 }
 #endif
@@ -1506,12 +1583,14 @@ void handle_pineap_detection(int argc, char **argv) {
         stop_pineap_detection();
         wifi_manager_stop_monitor_mode();
         pcap_file_close();
+        status_display_show_status("PineAP Stop");
         return;
     }
     // Open PCAP file for logging detections
     int err = pcap_file_open("pineap_detection", PCAP_CAPTURE_WIFI);
     if (err != ESP_OK) {
         glog("Warning: Failed to open PCAP file for logging\n");
+        status_display_show_status("PCAP Warn");
     }
 
     // Start PineAP detection with channel hopping
@@ -1519,6 +1598,7 @@ void handle_pineap_detection(int argc, char **argv) {
     wifi_manager_start_monitor_mode(wifi_pineap_detector_callback);
 
     glog("Monitoring for Pineapples\n");
+    status_display_show_status("PineAP Watch");
 }
 
 
@@ -1526,6 +1606,7 @@ void handle_apcred(int argc, char **argv) {
     if (argc < 2) {
         glog("Usage: apcred <ssid> <password>\n");
         glog("       apcred -r (reset to defaults)\n");
+        status_display_show_status("APCred Usage");
         return;
     }
                 
@@ -1540,16 +1621,19 @@ void handle_apcred(int argc, char **argv) {
         if (err != ESP_OK) {
             printf("Error resetting AP: %s\n", esp_err_to_name(err));
             TERMINAL_VIEW_ADD_TEXT("Error resetting AP:\n%s\n", esp_err_to_name(err));
+            status_display_show_status("AP Reset Fail");
             return;
         }
 
         printf("AP credentials reset to defaults (SSID: GhostNet, Password: GhostNet)\n");
         TERMINAL_VIEW_ADD_TEXT("AP reset to defaults:\nSSID: GhostNet\nPSK: GhostNet\n");
+        status_display_show_status("AP Reset");
         return;
     }
 
     if (argc != 3) {
         glog("Error: Incorrect number of arguments.\n");
+        status_display_show_status("APCred Args");
         return;
     }
 
@@ -1558,6 +1642,7 @@ void handle_apcred(int argc, char **argv) {
 
     if (strlen(new_password) < 8) {
         glog("Error: Password must be at least 8 characters\n");
+        status_display_show_status("Password Weak");
         return;
     }
 
@@ -1582,6 +1667,7 @@ void handle_apcred(int argc, char **argv) {
     const char *saved_password = settings_get_ap_password(&G_Settings);
     if (strcmp(saved_ssid, new_ssid) != 0 || strcmp(saved_password, new_password) != 0) {
         glog("Error: Failed to save AP credentials\n");
+        status_display_show_status("Save Failed");
         return;
     }
 
@@ -1589,16 +1675,19 @@ void handle_apcred(int argc, char **argv) {
     esp_err_t err = ap_manager_start_services();
     if (err != ESP_OK) {
         glog("Error restarting AP: %s\n", esp_err_to_name(err));
+        status_display_show_status("AP Restart NG");
         return;
     }
 
     glog("AP credentials updated - SSID: %s, Password: %s\n", saved_ssid, saved_password);
+    status_display_show_status("AP Updated");
 }
 
 void handle_rgb_mode(int argc, char **argv) {
     static bool last_effect_is_rainbow = false;
     if (argc < 2) {
         glog("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
+        status_display_show_status("RGB Usage");
         return;
     }
 
@@ -1618,29 +1707,35 @@ void handle_rgb_mode(int argc, char **argv) {
     if (strcasecmp(argv[1], "rainbow") == 0) {
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
+            status_display_show_status("RGB Not Ready");
             return;
         }
         xTaskCreate(rainbow_task, "rainbow_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = true;
         glog("Rainbow mode activated\n");
+        status_display_show_status("RGB Rainbow");
     } else if (strcasecmp(argv[1], "police") == 0) {
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
+            status_display_show_status("RGB Not Ready");
             return;
         }
         xTaskCreate(police_task, "police_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = false;
         glog("Police mode activated\n");
+        status_display_show_status("RGB Police");
     } else if (strcasecmp(argv[1], "strobe") == 0) {
         glog("SEIZURE WARNING\nPLEASE EXIT NOW IF\nYOU ARE SENSITIVE\n");
         vTaskDelay(pdMS_TO_TICKS(2000));
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
+            status_display_show_status("RGB Not Ready");
             return;
         }
         xTaskCreate(strobe_task, "strobe_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
         last_effect_is_rainbow = false;
         glog("Strobe mode activated\n");
+        status_display_show_status("RGB Strobe");
     } else if (strcasecmp(argv[1], "off") == 0) {
         rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
         if (!rgb_manager.is_separate_pins && rgb_manager.strip) {
@@ -1648,6 +1743,7 @@ void handle_rgb_mode(int argc, char **argv) {
             led_strip_refresh(rgb_manager.strip);
         }
         glog("RGB disabled\n");
+        status_display_show_status("RGB Off");
     } else {
         // Otherwise, treat the argument as a color name.
         typedef struct {
@@ -1682,6 +1778,7 @@ void handle_rgb_mode(int argc, char **argv) {
         }
         if (!found) {
             glog("Unknown color '%s'. Supported colors: red, green, blue, yellow, purple, cyan, orange, white, pink.\n", argv[1]);
+            status_display_show_status("Color Invalid");
             return;
         }
         // Set each LED to the selected static color.
@@ -1690,6 +1787,7 @@ void handle_rgb_mode(int argc, char **argv) {
         }
         led_strip_refresh(rgb_manager.strip);
         glog("Static color mode activated: %s\n", argv[1]);
+        status_display_show_status("RGB Static");
     }
 }
 
@@ -1697,6 +1795,7 @@ void handle_setrgb(int argc, char **argv) {
     if (argc != 4) {
         glog("Usage: setrgbpins <red> <green> <blue>\n");
         glog("           (use same value for all pins for single-pin LED strips)\n\n");
+        status_display_show_status("SetRGB Usage");
         return;
     }
     gpio_num_t red_pin = (gpio_num_t)atoi(argv[1]);
@@ -1713,6 +1812,7 @@ void handle_setrgb(int argc, char **argv) {
             settings_set_rgb_separate_pins(&G_Settings, -1, -1, -1);
             settings_save(&G_Settings);
             glog("Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
+            status_display_show_status("RGB Single");
         }
     } else {
         rgb_manager_deinit(&rgb_manager);
@@ -1723,12 +1823,14 @@ void handle_setrgb(int argc, char **argv) {
             settings_set_rgb_separate_pins(&G_Settings, red_pin, green_pin, blue_pin);
             settings_save(&G_Settings);
             glog("RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
+            status_display_show_status("RGB Pins Set");
         }
     }
 }
 
 void handle_sd_config(int argc, char **argv) {
   sd_card_print_config();
+  status_display_show_status("SD Config");
 }
 
 void handle_sd_pins_mmc(int argc, char **argv) {
@@ -1736,6 +1838,7 @@ void handle_sd_pins_mmc(int argc, char **argv) {
     glog("Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n");
     glog("Sets pins for SDMMC mode (only effective if compiled for MMC).\n");
     glog("Example: sd_pins_mmc 19 18 20 21 22 23\n");
+    status_display_show_status("SD MMC Usage");
     return;
   }
   
@@ -1749,10 +1852,12 @@ void handle_sd_pins_mmc(int argc, char **argv) {
   if (clk < 0 || cmd < 0 || d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0 ||
       clk > 40 || cmd > 40 || d0 > 40 || d1 > 40 || d2 > 40 || d3 > 40) {
     glog("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    status_display_show_status("Pins Invalid");
     return;
   }
   
   sd_card_set_mmc_pins(clk, cmd, d0, d1, d2, d3);
+  status_display_show_status("SD MMC Set");
 }
 
 void handle_sd_pins_spi(int argc, char **argv) {
@@ -1760,6 +1865,7 @@ void handle_sd_pins_spi(int argc, char **argv) {
     glog("Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n");
     glog("Sets pins for SPI mode (only effective if compiled for SPI).\n");
     glog("Example: sd_pins_spi 5 18 19 23\n");
+    status_display_show_status("SD SPI Usage");
     return;
   }
   
@@ -1771,18 +1877,22 @@ void handle_sd_pins_spi(int argc, char **argv) {
   if (cs < 0 || clk < 0 || miso < 0 || mosi < 0 ||
       cs > 40 || clk > 40 || miso > 40 || mosi > 40) {
     glog("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+    status_display_show_status("Pins Invalid");
     return;
   }
   
   sd_card_set_spi_pins(cs, clk, miso, mosi);
+  status_display_show_status("SD SPI Set");
 }
 
 void handle_sd_save_config(int argc, char **argv) {
   sd_card_save_config();
+  status_display_show_status("SD Saved");
 }
 
 void handle_congestion_cmd(int argc, char **argv) {
     wifi_manager_start_scan();
+    status_display_show_status("Congest Scan");
 
     uint16_t ap_count = 0;
     wifi_ap_record_t *ap_records = NULL;
@@ -1791,6 +1901,7 @@ void handle_congestion_cmd(int argc, char **argv) {
 
     if (ap_count == 0 || ap_records == NULL) {
         glog("No APs found during scan.\n");
+        status_display_show_status("No AP Found");
         return;
     }
 
@@ -1874,6 +1985,7 @@ void handle_scanall(int argc, char **argv) {
             total_seconds = (int)sec;
         } else {
             glog("Invalid duration: '%s'. Using default %d seconds.\n", argv[1], total_seconds);
+            status_display_show_status("ScanAll Usage");
         }
     }
 
@@ -1881,6 +1993,7 @@ void handle_scanall(int argc, char **argv) {
     int sta_scan_seconds = total_seconds - ap_scan_seconds; // Use remaining time
 
     glog("Starting combined scan (%d sec AP, %d sec STA)...\n", ap_scan_seconds, sta_scan_seconds);
+    status_display_show_status("ScanAll Start");
 
     // 1. Perform AP Scan
     glog("--- Starting AP Scan (%d seconds) ---\n", ap_scan_seconds);
@@ -1903,12 +2016,14 @@ void handle_scanall(int argc, char **argv) {
 
     // Ensure AP mode is restored if it was stopped
     ap_manager_start_services(); // Restore AP for WebUI
+    status_display_show_status("ScanAll Done");
 }
 
 // Helper function to simplify calling list airtags
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_airtags_cmd(int argc, char **argv) {
     ble_list_airtags();
+    status_display_show_status("List AirTags");
 }
 #endif
 
@@ -1917,6 +2032,7 @@ void handle_list_airtags_cmd(int argc, char **argv) {
 void handle_select_airtag(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: selectairtag <number>\n");
+        status_display_show_status("AirTag Usage");
         return;
     }
 
@@ -1924,8 +2040,10 @@ void handle_select_airtag(int argc, char **argv) {
     int num = (int)strtol(argv[1], &endptr, 10);
     if (*endptr == '\0') {
         ble_select_airtag(num);
+        status_display_show_status("AirTag Select");
     } else {
         glog("Error: '%s' is not a valid number.\n", argv[1]);
+        status_display_show_status("AirTag Invalid");
     }
 }
 #endif
@@ -1934,6 +2052,7 @@ void handle_select_airtag(int argc, char **argv) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_spoof_airtag(int argc, char **argv) {
     ble_start_spoofing_selected_airtag();
+    status_display_show_status("AirTag Spoof");
 }
 #endif
 
@@ -1941,6 +2060,7 @@ void handle_spoof_airtag(int argc, char **argv) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_stop_spoof(int argc, char **argv) {
     ble_stop_spoofing();
+    status_display_show_status("Spoof Stop");
 }
 #endif
 
@@ -1948,19 +2068,23 @@ void handle_stop_spoof(int argc, char **argv) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_flippers_cmd(int argc, char **argv) {
     ble_list_flippers();
+    status_display_show_status("List Flipper");
 }
 
 void handle_select_flipper_cmd(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: selectflipper <index>\n");
+        status_display_show_status("Flipper Usage");
         return;
     }
     char *endptr;
     int num = (int)strtol(argv[1], &endptr, 10);
     if (*endptr == '\0') {
         ble_select_flipper(num);
+        status_display_show_status("Flipper Pick");
     } else {
         glog("Error: '%s' is not a valid number.\n", argv[1]);
+        status_display_show_status("Flipper Bad");
     }
 }
 #endif
@@ -1969,56 +2093,71 @@ void handle_select_flipper_cmd(int argc, char **argv) {
 void handle_beaconadd(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: beaconadd <SSID>\n");
+        status_display_show_status("BeaconAdd Use");
         return;
     }
     wifi_manager_add_beacon_ssid(argv[1]);
+    status_display_show_status("Beacon Added");
 }
 
 void handle_beaconremove(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: beaconremove <SSID>\n");
+        status_display_show_status("BeaconRm Use");
         return;
     }
     wifi_manager_remove_beacon_ssid(argv[1]);
+    status_display_show_status("Beacon Removed");
 }
 
 void handle_beaconclear(int argc, char **argv) {
     wifi_manager_clear_beacon_list();
+    status_display_show_status("Beacon Clear");
 }
 
 void handle_beaconshow(int argc, char **argv) {
     wifi_manager_show_beacon_list();
+    status_display_show_status("Beacon Show");
 }
 
 void handle_beaconspamlist(int argc, char **argv) {
     wifi_manager_start_beacon_list();
+    status_display_show_status("Beacon List On");
 }
 
 void handle_dhcpstarve_cmd(int argc, char **argv) {
     if (argc < 2) {
         wifi_manager_dhcpstarve_help();
+        status_display_show_status("DHCP Usage");
     } else if (strcmp(argv[1], "start") == 0) {
         int thr = (argc >= 3) ? atoi(argv[2]) : 1;
         wifi_manager_start_dhcpstarve(thr);
+        status_display_show_status("DHCP Start");
     } else if (strcmp(argv[1], "stop") == 0) {
         wifi_manager_stop_dhcpstarve();
+        status_display_show_status("DHCP Stop");
     } else if (strcmp(argv[1], "display") == 0) {
         wifi_manager_dhcpstarve_display();
+        status_display_show_status("DHCP Stats");
     } else {
         wifi_manager_dhcpstarve_help();
+        status_display_show_status("DHCP Usage");
     }
 }
 #if CONFIG_IDF_TARGET_ESP32C5
 void handle_setcountry(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: setcountry <CC>\n");
+        status_display_show_status("Country Usage");
         return;
     }
     esp_err_t err = esp_wifi_set_country_code(argv[1], true);
     if (err == ESP_OK) {
         glog("country set to %s\n", argv[1]);
+        status_display_show_status("Country Set");
     } else {
         glog("failed to set country: %s\n", esp_err_to_name(err));
+        status_display_show_status("Country Fail");
     }
 }
 #endif
@@ -2029,6 +2168,7 @@ void handle_listen_probes_cmd(int argc, char **argv) {
         pcap_file_close();
         g_listen_probes_save_to_sd = false;
         glog("Probe request listening stopped.\n");
+        status_display_show_status("Probes Stop");
         return;
     }
 
@@ -2042,12 +2182,17 @@ void handle_listen_probes_cmd(int argc, char **argv) {
             channel = (uint8_t)ch;
             channel_hopping = false;
             glog("Starting to listen for probe requests on channel %d...\n", channel);
+            char status_msg[18];
+            snprintf(status_msg, sizeof(status_msg), "Probes Ch %02d", channel);
+            status_display_show_status(status_msg);
         } else {
             glog("Invalid channel: %s. Valid range: 1-%d\n", argv[1], MAX_WIFI_CHANNEL);
+            status_display_show_status("Channel Bad");
             return;
         }
     } else {
         glog("Starting to listen for probe requests (channel hopping)...\n");
+        status_display_show_status("Probes Hop");
     }
 
     bool sd_available = sd_card_exists("/mnt/ghostesp/pcaps");
@@ -2057,9 +2202,11 @@ void handle_listen_probes_cmd(int argc, char **argv) {
         if (err != ESP_OK) {
             glog("Warning: PCAP file open failed; probes will not be saved to SD card.\n");
             g_listen_probes_save_to_sd = false;
+            status_display_show_status("PCAP Warn");
         }
     } else {
         glog("SD card not available; probe PCAP disabled.\n");
+        status_display_show_status("SD Missing");
     }
 
     if (channel_hopping) {
@@ -2102,13 +2249,16 @@ void handle_comm_discovery(int argc, char **argv) {
     
     if (state == COMM_STATE_SCANNING) {
         glog("Already in discovery mode. Listening for peers...\n");
+        status_display_show_status("Comm Scanning");
         return;
     }
     
     if (esp_comm_manager_start_discovery()) {
         glog("Started discovery mode. Listening for peers...\n");
+        status_display_show_status("Comm Discover");
     } else {
         glog("Failed to start discovery. Check if already connected.\n");
+        status_display_show_status("Comm Fail");
     }
 }
 
@@ -2116,13 +2266,16 @@ void handle_comm_connect(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: commconnect <peer_name>\n");
         glog("Example: commconnect ESP_A1B2C3\n");
+        status_display_show_status("CommConn Use");
         return;
     }
     
     if (esp_comm_manager_connect_to_peer(argv[1])) {
         glog("Attempting to connect to peer: %s\n", argv[1]);
+        status_display_show_status("Comm Connect");
     } else {
         glog("Failed to connect. Make sure you're in discovery mode first.\n");
+        status_display_show_status("Comm Fail");
     }
 }
 
@@ -2131,11 +2284,13 @@ void handle_comm_send(int argc, char **argv) {
         glog("Usage: commsend <command> [data]\n");
         glog("Example: commsend hello world\n");
         glog("Example: commsend scanap\n");
+        status_display_show_status("CommSend Use");
         return;
     }
     
     if (!esp_comm_manager_is_connected()) {
         glog("Not connected to any peer. Use 'commdiscovery' and 'commconnect' first.\n");
+        status_display_show_status("Comm NotConn");
         return;
     }
     
@@ -2165,8 +2320,10 @@ void handle_comm_send(int argc, char **argv) {
         } else {
             glog("Command sent: %s\n", command);
         }
+        status_display_show_status("Comm Sent");
     } else {
         glog("Failed to send command.\n");
+        status_display_show_status("Comm Fail");
     }
 }
 
@@ -2186,20 +2343,24 @@ void handle_comm_status(int argc, char **argv) {
     glog("Communication Status: %s\n", state_str);
     if (esp_comm_manager_is_connected()) {
         glog("Connected to peer. Ready to send commands.\n");
+        status_display_show_status("Comm Connected");
     } else {
         glog("Not connected. Use 'commdiscovery' to find peers.\n");
+        status_display_show_status("Comm Idle");
     }
 }
 
 void handle_comm_disconnect(int argc, char **argv) {
     esp_comm_manager_disconnect();
     glog("Disconnected from peer.\n");
+    status_display_show_status("Comm Closed");
 }
 
 void handle_comm_setpins(int argc, char **argv) {
     if (argc != 3) {
         glog("Usage: commsetpins <tx_pin> <rx_pin>\n");
         glog("Example: commsetpins 4 5\n");
+        status_display_show_status("Pins Usage");
         return;
     }
     
@@ -2208,6 +2369,7 @@ void handle_comm_setpins(int argc, char **argv) {
     
     if (tx_pin < 0 || tx_pin > 48 || rx_pin < 0 || rx_pin > 48) {
         glog("Invalid pin numbers. Must be between 0-48.\n");
+        status_display_show_status("Pins Invalid");
         return;
     }
     
@@ -2216,8 +2378,10 @@ void handle_comm_setpins(int argc, char **argv) {
         settings_save(&G_Settings);
         
         glog("Communication pins changed to TX:%d RX:%d and saved to NVS\n", tx_pin, rx_pin);
+        status_display_show_status("Pins Updated");
     } else {
         glog("Failed to change pins. Make sure not connected or scanning.\n");
+        status_display_show_status("Pins Failed");
     }
 }
 
@@ -2238,6 +2402,7 @@ void handle_ap_enable_cmd(int argc, char **argv) {
         glog("Usage: apenable <on|off>\n");
         glog("Example: apenable on\n");
         glog("         apenable off\n");
+        status_display_show_status("APEnable Use");
         return;
     }
     
@@ -2248,6 +2413,7 @@ void handle_ap_enable_cmd(int argc, char **argv) {
         enable = false;
     } else {
         glog("Invalid argument. Use 'on' or 'off'\n");
+        status_display_show_status("APEnable Bad");
         return;
     }
     
@@ -2255,6 +2421,7 @@ void handle_ap_enable_cmd(int argc, char **argv) {
     settings_save(&G_Settings);
     
     glog("Access Point %s. Restart required to take effect.\n", enable ? "enabled" : "disabled");
+    status_display_show_status(enable ? "AP Enabled" : "AP Disabled");
 }
 
 void handle_chip_info_cmd(int argc, char **argv) {
@@ -2356,6 +2523,7 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
 #endif
+    status_display_show_status("Chip Info");
 }
 
 void register_commands() {

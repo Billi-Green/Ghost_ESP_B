@@ -10,6 +10,7 @@
 - Added glog - a lightweight logging helper
 - Added command history with up/down navigation and full in-line cursor editing (left/right, insert, delete, backspace) to the serial console. - @tototo31
 - Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
+- Added Kconfig support for a secondary status display
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**

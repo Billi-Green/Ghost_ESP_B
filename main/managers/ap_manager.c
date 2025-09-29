@@ -27,7 +27,7 @@
 #include <unistd.h>
 #include "esp_vfs_fat.h"
 #include "esp_heap_caps.h"
-
+#include "managers/status_display_manager.h"
 
 // Forward declarations
 static esp_err_t http_get_handler(httpd_req_t *req);
@@ -763,6 +763,7 @@ esp_err_t ap_manager_start_services() {
     // if ap is disabled or power saving is on, do not start ap services.
     if (!settings_get_ap_enabled(&G_Settings) || settings_get_power_save_enabled(&G_Settings)) {
         glog("ap services skipped: ap disabled or power saving mode is on\n");
+        status_display_show_status("AP Disabled");
         // make sure services are stopped if they somehow started and conditions changed
         ap_manager_stop_services();
         return ESP_OK;
@@ -799,9 +800,11 @@ esp_err_t ap_manager_start_services() {
     ret = start_http_server();
     if (ret != ESP_OK) {
         glog("Error starting HTTP server\n");
+        status_display_show_status("AP HTTP Fail");
         return ret;
     }
 
+    status_display_show_status("AP Services On");
     return ESP_OK;
 }
 
@@ -846,6 +849,7 @@ void ap_manager_stop_services() {
     vTaskDelay(pdMS_TO_TICKS(100));
 
     teardown_mdns();
+    status_display_show_status("AP Services Off");
 }
 
 // Handler for GET requests (serves the HTML page)

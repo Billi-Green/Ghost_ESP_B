@@ -25,6 +25,9 @@
 #ifdef CONFIG_WITH_SCREEN
 #include "managers/views/splash_screen.h"
 #endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+#include "managers/status_display_manager.h"
+#endif
 
 // Helper macro for measuring RAM usage
 #define MEASURE_INIT_RAM(name, init_call) do { \
@@ -194,6 +197,12 @@ void app_main(void) {
             rainbow_timer = lv_timer_create(rainbow_effect_cb, 50, NULL);
             rainbow_hue = 0;
         }
+    }
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_init();
+    if (!status_display_is_ready()) {
+        ESP_LOGW(TAG, "Status display failed to initialize");
     }
 #endif
 

@@ -20,6 +20,7 @@
 #include <esp_mac.h>
 #include <managers/rgb_manager.h>
 #include <managers/settings_manager.h>
+#include "managers/status_display_manager.h"
 
 #define MAX_DEVICES 30
 #define MAX_HANDLERS 10
@@ -843,6 +844,7 @@ static bool extract_company_id(const uint8_t *payload, size_t length, uint16_t *
 
 void ble_stop_skimmer_detection(void) {
     glog("Stopping skimmer detection scan...\n");
+    status_display_show_status("Skimmer Stopping");
 
     // Unregister the skimmer detection callback
     ble_unregister_handler(ble_skimmer_scan_callback);
@@ -862,6 +864,10 @@ void ble_stop_skimmer_detection(void) {
 
     if (rc == 0) {
         glog("BLE skimmer detection stopped successfully.\n");
+        status_display_show_status("Skimmer Stopped");
+    } else {
+        glog("Error stopping BLE skimmer detection: %d\n", rc);
+        status_display_show_status("Skimmer Stop Fail");
     }
 }
 
@@ -1473,6 +1479,7 @@ void ble_start_spoofing_selected_airtag(void) {
              tag_to_spoof->addr.val[3], tag_to_spoof->addr.val[4], tag_to_spoof->addr.val[5]);
     printf("Started spoofing AirTag %d (MAC: %s)\n", selected_airtag_index, macAddress);
     TERMINAL_VIEW_ADD_TEXT("Started spoofing AirTag %d\nMAC: %s\n", selected_airtag_index, macAddress);
+    status_display_show_status("AirTag Spoof On");
     // Pulse green maybe?
     pulse_once(&rgb_manager, 0, 255, 0);
 }
@@ -1483,14 +1490,17 @@ void ble_stop_spoofing(void) {
         int rc = ble_gap_adv_stop();
         if (rc == 0) {
             glog("Stopped AirTag spoofing advertisement.\n");
+            status_display_show_status("AirTag Spoof Off");
         } else {
             ESP_LOGE(TAG_BLE, "Error stopping spoofing advertisement; rc=%d", rc);
             glog("Error stopping spoof adv; rc=%d\n", rc);
+            status_display_show_status("Spoof Stop Fail");
         }
         // Reset selected index after stopping spoof
         selected_airtag_index = -1;
     } else {
         glog("No spoofing advertisement active.\n");
+        status_display_show_status("No Spoof Active");
     }
 }
 
@@ -1527,6 +1537,7 @@ void ble_start_scanning(void) {
     if (!wait_for_ble_ready()) {
         ESP_LOGE(TAG_BLE, "BLE stack not ready");
         TERMINAL_VIEW_ADD_TEXT("BLE stack not ready\n");
+        status_display_show_status("BLE Not Ready");
         return;
     }
 
@@ -1541,9 +1552,11 @@ void ble_start_scanning(void) {
     if (rc != 0) {
         ESP_LOGE(TAG_BLE, "Error starting BLE scan");
         TERMINAL_VIEW_ADD_TEXT("Error starting BLE scan\n");
+        status_display_show_status("BLE Scan Fail");
     } else {
         ESP_LOGI(TAG_BLE, "Scanning started...");
         TERMINAL_VIEW_ADD_TEXT("Scanning started...\n");
+        status_display_show_status("BLE Scanning");
     }
 }
 
@@ -1678,6 +1691,8 @@ void ble_stop(void) {
         return;
     }
 
+    status_display_show_status("BLE Stopping");
+
     if (last_company_id != NULL) {
         free(last_company_id);
         last_company_id = NULL;
@@ -1715,21 +1730,27 @@ void ble_stop(void) {
     switch (rc) {
     case 0:
         glog("BLE scan stopped successfully.\n");
+        status_display_show_status("BLE Stopped");
         break;
     case BLE_HS_EBUSY:
         glog("BLE scan is busy\n");
+        status_display_show_status("BLE Busy");
         break;
     case BLE_HS_ETIMEOUT:
         glog("BLE operation timed out.\n");
+        status_display_show_status("BLE Timeout");
         break;
     case BLE_HS_ENOTCONN:
         glog("BLE not connected.\n");
+        status_display_show_status("BLE No Conn");
         break;
     case BLE_HS_EINVAL:
         glog("BLE invalid parameter.\n");
+        status_display_show_status("BLE Invalid");
         break;
     default:
         glog("Error stopping BLE scan: %d\n", rc);
+        status_display_show_status("BLE Stop Fail");
     }
 }
 
@@ -1873,6 +1894,7 @@ void ble_start_capture(void) {
     }
 
     ble_start_scanning();
+    status_display_show_status("BLE Capture On");
 }
 
 void ble_start_skimmer_detection(void) {
@@ -2071,6 +2093,7 @@ void ble_start_ble_spam(ble_spam_type_t type) {
         case BLE_SPAM_FLIPPERZERO: type_name = "flipper"; break;
     }
     printf("ble spam advertising started (%s)\n", type_name);
+    status_display_show_status("BLE Spam On");
 }
 
 void ble_stop_ble_spam(void) {
@@ -2098,6 +2121,7 @@ void ble_stop_ble_spam(void) {
     }
     
     printf("ble spam advertising stopped\n");
+    status_display_show_status("BLE Spam Off");
 }
 
 #endif

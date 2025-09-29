@@ -2,7 +2,7 @@
 #include "sdkconfig.h"
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 #include "managers/zigbee_manager.h"
-
+#include "managers/status_display_manager.h"
 #include "esp_ieee802154.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -141,6 +141,7 @@ esp_err_t zigbee_manager_start_capture(uint8_t channel) {
         }
         if (s_hop_timer) xTimerStart(s_hop_timer, 0);
     }
+    status_display_show_status("Zigbee Started");
     return ESP_OK;
 }
 
@@ -163,6 +164,7 @@ void zigbee_manager_stop_capture(void) {
         vQueueDelete(s_frame_q);
         s_frame_q = NULL;
     }
+    status_display_show_status("Zigbee Stopped");
 }
 
 bool zigbee_manager_is_capturing(void) { return s_capturing; }

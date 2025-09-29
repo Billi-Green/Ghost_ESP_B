@@ -14,6 +14,10 @@
  *      INCLUDES
  *********************/
 #include "assert.h"
+#include "esp_err.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "lvgl_i2c/i2c_manager.h"
 
@@ -130,7 +134,10 @@ void ssd1306_init(void)
     };
 
     uint8_t err = send_data(NULL, conf, sizeof(conf));
-    assert(0 == err);
+    if (err) {
+        ESP_LOGW(TAG, "ssd1306 init write failed: %u", (unsigned)err);
+        return;
+    }
 }
 
 void ssd1306_set_px_cb(lv_disp_drv_t * disp_drv, uint8_t * buf, lv_coord_t buf_w, lv_coord_t x, lv_coord_t y,
@@ -165,9 +172,20 @@ void ssd1306_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t 
     };
 
     uint8_t err = send_data(disp_drv, conf, sizeof(conf));
-    assert(0 == err);
-    err = send_pixels(disp_drv, color_p, OLED_COLUMNS * (1 + row2 - row1));
-    assert(0 == err);
+    if (err) {
+        ESP_LOGW(TAG, "ssd1306 flush command failed: %u", (unsigned)err);
+        lv_disp_flush_ready(disp_drv);
+        return;
+    }
+
+    uint16_t width = (uint16_t)((area->x2 - area->x1) + 1);
+    size_t pages = (size_t)(1 + row2 - row1);
+    err = send_pixels(disp_drv, color_p, (size_t)width * pages);
+    if (err) {
+        ESP_LOGW(TAG, "ssd1306 flush pixel transfer failed: %u", (unsigned)err);
+        lv_disp_flush_ready(disp_drv);
+        return;
+    }
 
     lv_disp_flush_ready(disp_drv);
 }
@@ -191,7 +209,9 @@ void ssd1306_sleep_in(void)
     };
 
     uint8_t err = send_data(NULL, conf, sizeof(conf));
-    assert(0 == err);
+    if (err) {
+        ESP_LOGW(TAG, "ssd1306 sleep in failed: %u", (unsigned)err);
+    }
 }
 
 void ssd1306_sleep_out(void)
@@ -202,7 +222,9 @@ void ssd1306_sleep_out(void)
     };
 
     uint8_t err = send_data(NULL, conf, sizeof(conf));
-    assert(0 == err);
+    if (err) {
+        ESP_LOGW(TAG, "ssd1306 sleep out failed: %u", (unsigned)err);
+    }
 }
 
 /**********************
@@ -221,5 +243,22 @@ static uint8_t send_pixels(lv_disp_drv_t *disp_drv, void *color_buffer, size_t b
 {
     (void) disp_drv;
 
-    return lvgl_i2c_write(OLED_I2C_PORT, OLED_I2C_ADDRESS, OLED_CONTROL_BYTE_DATA_STREAM, color_buffer, buffer_len);
+    if (!color_buffer || buffer_len == 0) {
+        return (uint8_t)ESP_ERR_INVALID_ARG;
+    }
+
+    const size_t CHUNK = 128;
+    uint8_t *ptr = (uint8_t *)color_buffer;
+    size_t remaining = buffer_len;
+    while (remaining > 0) {
+        size_t len = remaining > CHUNK ? CHUNK : remaining;
+        esp_err_t ret = lvgl_i2c_write(OLED_I2C_PORT, OLED_I2C_ADDRESS,
+                                       OLED_CONTROL_BYTE_DATA_STREAM, ptr, (uint16_t)len);
+        if (ret != ESP_OK) return (uint8_t)ret;
+        ptr += len;
+        remaining -= len;
+        taskYIELD();
+    }
+
+    return 0;
 }
