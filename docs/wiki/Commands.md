@@ -220,6 +220,12 @@
 - <code>setrgbpins &lt;red&gt; &lt;green&gt; &lt;blue&gt;</code>  
   Change RGB LED pins
 
+- <code>setneopixelbrightness &lt;0-100&gt;</code>
+  Set the maximum neopixel brightness (percent). Example: `setneopixelbrightness 50`
+
+- <code>getneopixelbrightness</code>
+  Show the current saved neopixel max brightness (percent).
+
 - <code>sd_config</code>  
   Show current SD GPIO pin configuration
 

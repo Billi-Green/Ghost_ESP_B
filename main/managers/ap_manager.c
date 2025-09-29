@@ -1085,6 +1085,11 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         settings_set_rgb_speed(settings, rgb_speed->valueint);
     }
 
+    cJSON *neopixel_brightness = cJSON_GetObjectItem(root, "neopixel_brightness");
+    if (neopixel_brightness) {
+        settings_set_neopixel_max_brightness(settings, (uint8_t)neopixel_brightness->valueint);
+    }
+
     cJSON *channel_delay = cJSON_GetObjectItem(root, "channel_delay");
     if (channel_delay) {
         settings_set_channel_delay(settings, (float)channel_delay->valuedouble);
