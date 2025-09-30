@@ -66,22 +66,35 @@ bool joystick_is_held(joystick_t *joystick) { return joystick->isheld; }
 bool joystick_get_button_state(joystick_t *joystick) {
 #ifdef CONFIG_USE_IO_EXPANDER
   if (io_expander_initialized) {
-    // For IO expander, we need to map the joystick index to the button
-    // Display manager expects: 0=Left, 1=Select, 2=Up, 3=Right, 4=Down
-    // Our hardware mapping: P00=Up, P01=Down, P02=Select, P03=Left, P04=Right
-    btn_event_t states;
-    esp_err_t ret = io_manager_get_button_states(&states);
-    if (ret == ESP_OK) {
-      // Debug: Log which button is being checked
-/*       ESP_LOGI(TAG, "Checking button %d - up: %d, down: %d, select: %d, left: %d, right: %d", 
-               joystick->pin, states.up, states.down, states.select, states.left, states.right); */
-      
+    static btn_event_t cached = {0};
+    static esp_err_t last_ret = ESP_FAIL;
+    static uint32_t next_read_ms = 0;
+    static uint32_t cooloff_until_ms = 0;
+    static uint8_t fail_count = 0;
+
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+
+    if (now_ms >= cooloff_until_ms && now_ms >= next_read_ms) {
+      last_ret = io_manager_get_button_states(&cached);
+      if (last_ret == ESP_OK) {
+        fail_count = 0;
+        next_read_ms = now_ms + 30;      // ~33 Hz
+      } else {
+        if (fail_count < 255) fail_count++;
+        // short backoff, then longer if consecutive failures
+        uint32_t backoff = (fail_count < 3) ? 50 : 200;
+        next_read_ms = now_ms + backoff;
+        cooloff_until_ms = now_ms + backoff;
+      }
+    }
+
+    if (last_ret == ESP_OK) {
       switch (joystick->pin) {
-        case 0: return states.up;     // P00: Up
-        case 1: return states.down;   // P01: Down
-        case 2: return states.select; // P02: Select
-        case 3: return states.left;   // P03: Left
-        case 4: return states.right;  // P04: Right
+        case 0: return cached.up;     // P00: Up
+        case 1: return cached.down;   // P01: Down
+        case 2: return cached.select; // P02: Select
+        case 3: return cached.left;   // P03: Left
+        case 4: return cached.right;  // P04: Right
         default: return false;
       }
     }
@@ -91,7 +104,6 @@ bool joystick_get_button_state(joystick_t *joystick) {
 
   // Fallback to GPIO mode
   int button_state = gpio_get_level(joystick->pin);
-
   if ((joystick->pullup && button_state == 0) ||
       (!joystick->pullup && button_state == 1)) {
     return true;

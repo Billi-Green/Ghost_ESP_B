@@ -16,7 +16,7 @@
 #include <string.h>
 #include <sys/cdefs.h>
 
-#define LED_STRIP_RMT_DEFAULT_RESOLUTION 10000000 // 10MHz resolution
+#define LED_STRIP_RMT_DEFAULT_RESOLUTION 5000000 // 5MHz resolution
 #define LED_STRIP_RMT_DEFAULT_TRANS_QUEUE_SIZE 4
 // the memory size of each RMT channel, in words (4 bytes)
 #if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2

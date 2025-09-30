@@ -4,8 +4,11 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "IO_MANAGER";
+static bool g_i2c_driver_installed = false; // whether this module installed the I2C driver
+static SemaphoreHandle_t g_i2c_mutex = NULL;
 
 // TCA9535 register addresses
 #define TCA9535_INPUT_PORT0     0x00
@@ -51,24 +54,40 @@ esp_err_t io_manager_init(const io_manager_config_t *config)
     // Copy configuration
     g_config = *config;
 
-    // Configure I2C
+    // create mutex for i2c bus access
+    if (!g_i2c_mutex) {
+        g_i2c_mutex = xSemaphoreCreateMutex();
+        if (!g_i2c_mutex) {
+            ESP_LOGE(TAG, "failed to create i2c mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    // Configure/Install I2C
     i2c_config_t i2c_conf = {
         .mode = I2C_MODE_MASTER,
         .sda_io_num = g_config.sda_pin,
         .scl_io_num = g_config.scl_pin,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100000,  // 100 kHz
+        .master.clk_speed = 100000,  // 100 kHz - standard i2c speed
     };
 
-    esp_err_t ret = i2c_param_config(g_config.i2c_port, &i2c_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = i2c_driver_install(g_config.i2c_port, I2C_MODE_MASTER, 0, 0, 0);
-    if (ret != ESP_OK) {
+    // Try to install the driver first; if it's already installed, skip param_config
+    esp_err_t ret = i2c_driver_install(g_config.i2c_port, I2C_MODE_MASTER, 0, 0, 0);
+    if (ret == ESP_OK) {
+        g_i2c_driver_installed = true;
+        // We own the driver: safe to configure pins/clock
+        ret = i2c_param_config(g_config.i2c_port, &i2c_conf);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
+            return ret;
+        }
+    } else if (ret == ESP_ERR_INVALID_STATE) {
+        // Driver already installed elsewhere; share without reconfiguring
+        ESP_LOGW(TAG, "I2C driver already installed on port %d; sharing", g_config.i2c_port);
+        g_i2c_driver_installed = false;
+    } else {
         ESP_LOGE(TAG, "Failed to install I2C driver: %s", esp_err_to_name(ret));
         return ret;
     }
@@ -117,10 +136,18 @@ esp_err_t io_manager_deinit(void)
         return ESP_OK;
     }
 
-    esp_err_t ret = i2c_driver_delete(g_config.i2c_port);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to delete I2C driver: %s", esp_err_to_name(ret));
-        return ret;
+    esp_err_t ret = ESP_OK;
+    if (g_i2c_driver_installed) {
+        ret = i2c_driver_delete(g_config.i2c_port);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to delete I2C driver: %s", esp_err_to_name(ret));
+            return ret;
+        }
+    }
+
+    if (g_i2c_mutex) {
+        vSemaphoreDelete(g_i2c_mutex);
+        g_i2c_mutex = NULL;
     }
 
     g_initialized = false;
@@ -139,12 +166,17 @@ esp_err_t io_manager_scan_buttons(btn_event_t *event)
     uint8_t current_state;
     esp_err_t ret = tca9535_read_port(TCA9535_INPUT_PORT0, &current_state);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read port state: %s", esp_err_to_name(ret));
+        static int64_t last_log_ms = 0;
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        if (now_ms - last_log_ms > 500) {
+            ESP_LOGE(TAG, "Failed to read port state: %s", esp_err_to_name(ret));
+            last_log_ms = now_ms;
+        }
         return ret;
     }
     
     // Debug: Log raw port state
-    ESP_LOGI(TAG, "Raw port state: 0x%02X (bit 0=up, bit 1=down, bit 2=select, bit 3=left, bit 4=right)", current_state);
+    ESP_LOGD(TAG, "Raw port state: 0x%02X (bit 0=up, bit 1=down, bit 2=select, bit 3=left, bit 4=right)", current_state);
 
     // Check if state changed
     if (current_state != g_last_state) {
@@ -244,33 +276,89 @@ static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data)
         return ESP_ERR_INVALID_ARG;
     }
 
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (g_config.i2c_addr << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (g_config.i2c_addr << 1) | I2C_MASTER_READ, true);
-    i2c_master_read_byte(cmd, data, I2C_MASTER_NACK);
-    i2c_master_stop(cmd);
+    if (!g_i2c_mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
-    esp_err_t ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(100));
-    i2c_cmd_link_delete(cmd);
+    // acquire mutex with timeout to prevent deadlock
+    if (xSemaphoreTake(g_i2c_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGW(TAG, "failed to acquire i2c mutex for read");
+        return ESP_ERR_TIMEOUT;
+    }
 
+    esp_err_t ret = ESP_FAIL;
+    
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
+        
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        if (!cmd) {
+            ret = ESP_ERR_NO_MEM;
+            break;
+        }
+        
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (g_config.i2c_addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_write_byte(cmd, reg, true);
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (g_config.i2c_addr << 1) | I2C_MASTER_READ, true);
+        i2c_master_read_byte(cmd, data, I2C_MASTER_NACK);
+        i2c_master_stop(cmd);
+        
+        ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
+        i2c_cmd_link_delete(cmd);
+        
+        if (ret == ESP_OK) {
+            break;
+        }
+    }
+
+    xSemaphoreGive(g_i2c_mutex);
     return ret;
 }
 
 // Helper function to write to TCA9535 register
 static esp_err_t tca9535_write_port(uint8_t reg, uint8_t data)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (g_config.i2c_addr << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_write_byte(cmd, data, true);
-    i2c_master_stop(cmd);
+    if (!g_i2c_mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
-    esp_err_t ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(100));
-    i2c_cmd_link_delete(cmd);
+    // acquire mutex with timeout to prevent deadlock
+    if (xSemaphoreTake(g_i2c_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGW(TAG, "failed to acquire i2c mutex for write");
+        return ESP_ERR_TIMEOUT;
+    }
 
+    esp_err_t ret = ESP_FAIL;
+    
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
+        
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        if (!cmd) {
+            ret = ESP_ERR_NO_MEM;
+            break;
+        }
+        
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (g_config.i2c_addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_write_byte(cmd, reg, true);
+        i2c_master_write_byte(cmd, data, true);
+        i2c_master_stop(cmd);
+        
+        ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
+        i2c_cmd_link_delete(cmd);
+        
+        if (ret == ESP_OK) {
+            break;
+        }
+    }
+
+    xSemaphoreGive(g_i2c_mutex);
     return ret;
 }

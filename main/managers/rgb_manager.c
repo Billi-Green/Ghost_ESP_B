@@ -275,7 +275,7 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
     // Create RMT configuration for LED strip
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,   // Default RMT clock source
-        .resolution_hz = 10 * 1000 * 1000 // 10 MHz resolution
+        .resolution_hz = 5 * 1000 * 1000 // 5 MHz resolution
     };
 
     // Initialize the LED strip with both configurations

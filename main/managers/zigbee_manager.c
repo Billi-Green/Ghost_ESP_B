@@ -170,7 +170,7 @@ void zigbee_manager_stop_capture(void) {
 bool zigbee_manager_is_capturing(void) { return s_capturing; }
 
 // ISR context callback from IEEE802.15.4 driver
-void esp_ieee802154_receive_done(uint8_t *frame, esp_ieee802154_frame_info_t *frame_info) {
+void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *frame, esp_ieee802154_frame_info_t *frame_info) {
     if (!s_capturing || !s_frame_q || !frame) {
         esp_ieee802154_receive_handle_done(frame);
         return;
@@ -198,18 +198,17 @@ void esp_ieee802154_receive_done(uint8_t *frame, esp_ieee802154_frame_info_t *fr
     BaseType_t woken = pdFALSE;
     xQueueSendFromISR(s_frame_q, &item, &woken);
     esp_ieee802154_receive_handle_done(frame);
-    if (woken == pdTRUE) portYIELD_FROM_ISR();
-
-    // Continue RX
+    // Continue RX immediately; yield (if needed) as the very last step
     esp_ieee802154_receive();
+    if (woken == pdTRUE) portYIELD_FROM_ISR();
 }
 
-void esp_ieee802154_receive_sfd_done(void) {}
-void esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info) {}
-void esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error) {}
-void esp_ieee802154_transmit_sfd_done(uint8_t *frame) {}
-void esp_ieee802154_energy_detect_done(int8_t power) {}
-void esp_ieee802154_receive_at_done(void) {}
+void IRAM_ATTR esp_ieee802154_receive_sfd_done(void) {}
+void IRAM_ATTR esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info) {}
+void IRAM_ATTR esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error) {}
+void IRAM_ATTR esp_ieee802154_transmit_sfd_done(uint8_t *frame) {}
+void IRAM_ATTR esp_ieee802154_energy_detect_done(int8_t power) {}
+void IRAM_ATTR esp_ieee802154_receive_at_done(void) {}
 
 void zigbee_manager_set_filter_zigbee_only(bool enable) { s_filter_zigbee_only = enable; }
 

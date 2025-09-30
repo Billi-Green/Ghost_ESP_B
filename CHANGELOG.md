@@ -11,6 +11,7 @@
 - Added command history with up/down navigation and full in-line cursor editing (left/right, insert, delete, backspace) to the serial console. - @tototo31
 - Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
 - Added Kconfig support for a secondary status display
+- Added Kconfig support for IO Expander - @Play2BReal
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
@@ -50,6 +51,7 @@
 - Miscellaneous fixes and improvements
 - Small miscellaneous memory saves
 - Fixed RMT channel allocation on C5 to prevent conflicts with IR TX
+- Disable duplicate filtering in general BLE scanning
 
 
 #### Network & Comms

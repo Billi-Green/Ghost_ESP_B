@@ -780,10 +780,19 @@ static void restart_ble_stack(void) {
     // Small delay before reinitializing
     vTaskDelay(pdMS_TO_TICKS(50));
     
+    // log DMA-capable internal heap info right before NimBLE re-init
+    size_t free_internal_dma_re = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+    size_t largest_internal_dma_re = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+    ESP_LOGI(TAG_BLE, "reinit pre-init dma-ram: free=%d bytes (largest block=%d)", (int)free_internal_dma_re, (int)largest_internal_dma_re);
+    TERMINAL_VIEW_ADD_TEXT("reinit pre-init dma-ram: free=%d bytes (largest=%d)\n", (int)free_internal_dma_re, (int)largest_internal_dma_re);
+
     // Reinitialize the NimBLE stack
     int ret = nimble_port_init();
     if (ret != 0) {
         ESP_LOGE(TAG_BLE, "Failed to reinit nimble port: %d", ret);
+        size_t free_dma_after_re = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        size_t largest_dma_after_re = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        ESP_LOGI(TAG_BLE, "reinit post-fail dma-ram: free=%d bytes (largest block=%d)", (int)free_dma_after_re, (int)largest_dma_after_re);
         return;
     }
     
@@ -1544,7 +1553,7 @@ void ble_start_scanning(void) {
     struct ble_gap_disc_params disc_params = {0};
     disc_params.itvl = BLE_HCI_SCAN_ITVL_DEF;
     disc_params.window = BLE_HCI_SCAN_WINDOW_DEF;
-    disc_params.filter_duplicates = 1;
+    disc_params.filter_duplicates = 0;
 
     // Start a new BLE scan
     int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &disc_params, ble_gap_event_general,
@@ -1599,6 +1608,24 @@ esp_err_t ble_unregister_handler(ble_data_handler_t handler) {
 
 void ble_init(void) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
+    // --- pre-init ram check ---
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t largest_psram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    
+    if (free_psram > 0) {
+        ESP_LOGI(TAG_BLE, "pre-init ram: internal=%d bytes (largest block=%d), psram=%d bytes (largest block=%d)", 
+                 (int)free_internal, (int)largest_internal, (int)free_psram, (int)largest_psram);
+        TERMINAL_VIEW_ADD_TEXT("pre-init ram: internal=%d bytes (largest=%d), psram=%d bytes (largest=%d)\n", 
+                               (int)free_internal, (int)largest_internal, (int)free_psram, (int)largest_psram);
+    } else {
+        ESP_LOGI(TAG_BLE, "pre-init ram: internal=%d bytes (largest block=%d), no psram", 
+                 (int)free_internal, (int)largest_internal);
+        TERMINAL_VIEW_ADD_TEXT("pre-init ram: internal=%d bytes (largest=%d), no psram\n", 
+                               (int)free_internal, (int)largest_internal);
+    }
+    
     // --- Memory check before BLE init ---
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     if (free_heap < (45 * 1024)) {
@@ -1625,9 +1652,19 @@ void ble_init(void) {
             handler_count = 0;
         }
 
+        // log DMA-capable internal heap info right before NimBLE init
+        size_t free_internal_dma = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        size_t largest_internal_dma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        ESP_LOGI(TAG_BLE, "pre-init dma-ram: free=%d bytes (largest block=%d)", (int)free_internal_dma, (int)largest_internal_dma);
+        TERMINAL_VIEW_ADD_TEXT("pre-init dma-ram: free=%d bytes (largest=%d)\n", (int)free_internal_dma, (int)largest_internal_dma);
+
         ret = nimble_port_init();
         if (ret != 0) {
             ESP_LOGE(TAG_BLE, "Failed to init nimble port: %d", ret);
+            ESP_LOGI(TAG_BLE, "Dumping DMA-capable heap info after failure");
+            size_t free_dma_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+            size_t largest_dma_after = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+            ESP_LOGI(TAG_BLE, "post-fail dma-ram: free=%d bytes (largest block=%d)", (int)free_dma_after, (int)largest_dma_after);
             free(handlers);
             handlers = NULL;
             return;
@@ -1669,13 +1706,13 @@ void ble_deinit(void) {
 
         nimble_port_stop();
         nimble_port_deinit();
-        
+
         // Wait for nimble host task to finish and clean up
         if (nimble_host_task_handle != NULL) {
             vTaskDelay(pdMS_TO_TICKS(100));
             nimble_host_task_handle = NULL;
         }
-        
+
         ble_initialized = false;
         ESP_LOGI(TAG_BLE, "BLE deinitialized successfully.");
         TERMINAL_VIEW_ADD_TEXT("BLE deinitialized successfully.\n");

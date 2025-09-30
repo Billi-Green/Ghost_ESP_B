@@ -461,6 +461,8 @@ esp_err_t sd_card_init(void) {
   bus_config.miso_io_num = sd_card_manager.spi_miso_pin;
   bus_config.mosi_io_num = sd_card_manager.spi_mosi_pin;
   bus_config.sclk_io_num = sd_card_manager.spi_clk_pin;
+  /* reduce dma pressure for sd spi */
+  bus_config.max_transfer_sz = 8192;
 
 #ifdef CONFIG_IDF_TARGET_ESP32
   int dmabus = 2;
@@ -530,7 +532,7 @@ esp_err_t sd_card_init(void) {
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
       .format_if_mount_failed = false,
       .max_files = 5,
-      .allocation_unit_size = 16 * 1024};
+      .allocation_unit_size = 4 * 1024};
 
   sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
   slot_config.gpio_cs = sd_card_manager.spi_cs_pin;
@@ -626,6 +628,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   bus_config.miso_io_num = sd_card_manager.spi_miso_pin;
   bus_config.mosi_io_num = sd_card_manager.spi_mosi_pin;
   bus_config.sclk_io_num = sd_card_manager.spi_clk_pin;
+  bus_config.max_transfer_sz = 8192;
 
 #if defined(CONFIG_IDF_TARGET_ESP32)
   int dmabus = 2;

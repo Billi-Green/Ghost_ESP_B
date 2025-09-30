@@ -8,6 +8,8 @@
 #include "managers/wifi_manager.h"
 #include "managers/display_manager.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
+#include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,13 +64,13 @@ static void terminal_push_incoming(const char *data, size_t len);
 static void clear_lines(void);
 
 // Global ring buffer for terminal bytes
-static char term_ring[MAX_TEXT_LENGTH] = {0};
+static char *term_ring = NULL;
 static size_t term_wcount = 0; // total bytes written
 static size_t term_rcount = 0; // consumption baseline for overflow tracking
 static portMUX_TYPE term_ring_mux = portMUX_INITIALIZER_UNLOCKED;
-static char terminal_viewer_buf[MAX_TEXT_LENGTH + 1] = {0};
+static char *terminal_viewer_buf = NULL;
 static size_t terminal_display_len = 0;
-static char terminal_incoming_buf[MAX_TEXT_LENGTH + 1] = {0};
+static char *terminal_incoming_buf = NULL;
 static size_t dropped_bytes_total = 0;
 static size_t dropped_bytes_notified = 0;
 static size_t last_displayed_wcount = 0;
@@ -95,8 +97,58 @@ static size_t build_cap = 0;
 static lv_coord_t cached_layout_width = -1;
 static lv_coord_t cached_total_height = 0;
 
+static void *terminal_alloc_buffer(size_t size) {
+  uint32_t caps = MALLOC_CAP_8BIT;
+#if CONFIG_SPIRAM
+  caps |= MALLOC_CAP_SPIRAM;
+#endif
+  void *ptr = heap_caps_malloc(size, caps);
+#if CONFIG_SPIRAM
+  if (!ptr) {
+    ptr = heap_caps_malloc(size, MALLOC_CAP_8BIT);
+  }
+#endif
+  return ptr;
+}
+
+static bool ensure_terminal_buffers(void) {
+  if (term_ring && terminal_viewer_buf && terminal_incoming_buf) {
+    return true;
+  }
+
+  if (!term_ring) {
+    term_ring = terminal_alloc_buffer(MAX_TEXT_LENGTH);
+    if (!term_ring) {
+      ESP_LOGE(TAG, "Failed to allocate terminal ring buffer");
+      return false;
+    }
+    memset(term_ring, 0, MAX_TEXT_LENGTH);
+  }
+
+  if (!terminal_viewer_buf) {
+    terminal_viewer_buf = terminal_alloc_buffer(MAX_TEXT_LENGTH + 1);
+    if (!terminal_viewer_buf) {
+      ESP_LOGE(TAG, "Failed to allocate terminal viewer buffer");
+      return false;
+    }
+    terminal_viewer_buf[0] = '\0';
+  }
+
+  if (!terminal_incoming_buf) {
+    terminal_incoming_buf = terminal_alloc_buffer(MAX_TEXT_LENGTH + 1);
+    if (!terminal_incoming_buf) {
+      ESP_LOGE(TAG, "Failed to allocate terminal incoming buffer");
+      return false;
+    }
+    terminal_incoming_buf[0] = '\0';
+  }
+
+  return true;
+}
+
 static inline void term_ring_write(const char *data, size_t len) {
   if (!data || len == 0) return;
+  if (!ensure_terminal_buffers()) return;
   portENTER_CRITICAL(&term_ring_mux);
   size_t wpos = term_wcount % MAX_TEXT_LENGTH;
   size_t first = len;
@@ -140,10 +192,13 @@ static void update_input_label() {
     }
 }
 static void clear_message_queue(void) {
+  if (!ensure_terminal_buffers()) {
+    return;
+  }
   portENTER_CRITICAL(&term_ring_mux);
   term_wcount = 0;
   term_rcount = 0;
-  memset(term_ring, 0, sizeof(term_ring));
+  memset(term_ring, 0, MAX_TEXT_LENGTH);
   portEXIT_CRITICAL(&term_ring_mux);
   terminal_viewer_buf[0] = '\0';
   terminal_incoming_buf[0] = '\0';
@@ -152,7 +207,12 @@ static void clear_message_queue(void) {
   dropped_bytes_notified = 0;
   last_displayed_wcount = 0;
   clear_lines();
-  if (build_line_buf) { free(build_line_buf); build_line_buf = NULL; build_len = 0; build_cap = 0; }
+  if (build_line_buf) {
+    free(build_line_buf);
+    build_line_buf = NULL;
+    build_len = 0;
+    build_cap = 0;
+  }
   cached_layout_width = -1;
   cached_total_height = 0;
   if (terminal_canvas && lv_obj_is_valid(terminal_canvas)) {
@@ -167,6 +227,7 @@ static void clear_pre_init_message_queue(void) {
 
 static void append_to_display_buffer(const char *data, size_t len) {
   if (!data || len == 0) return;
+  if (!ensure_terminal_buffers()) return;
 
   const size_t max_payload = MAX_TEXT_LENGTH - 1;
   size_t copy_len = len;
@@ -381,6 +442,7 @@ static void terminal_canvas_draw_event(lv_event_t *e) {
 }
 
 static void process_queued_messages(void) {
+  if (!ensure_terminal_buffers()) return;
   if (!terminal_active || !terminal_scroller || !terminal_canvas || is_stopping) return;
   if (!lv_obj_is_valid(terminal_scroller) || !lv_obj_is_valid(terminal_canvas)) {
     ESP_LOGW(TAG, "terminal scroller invalid, skipping queued message processing");
@@ -538,6 +600,11 @@ static void back_btn_event_cb(lv_event_t *e) {
 void terminal_view_create(void) {
     is_stopping = false;
     if (terminal_view.root != NULL) {
+        return;
+    }
+
+    if (!ensure_terminal_buffers()) {
+        ESP_LOGE(TAG, "Terminal buffers unavailable");
         return;
     }
 
