@@ -49,9 +49,7 @@
 #include "mbedtls/bignum.h"
 #include "core/serial_manager.h"
 #include "managers/settings_manager.h"
-#ifdef CONFIG_WITH_STATUS_DISPLAY
 #include "managers/status_display_manager.h"
-#endif
 
 // Defines for Station Scan Channel Hopping
 #define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
@@ -3828,70 +3826,6 @@ void wifi_manager_print_scan_results_with_oui() {
             } else {
                 glog("     Security: %s\n", auth_str);
             }
-        }
-#endif
-        if (strcmp(company_str, "Unknown") != 0) {
-            glog("     Company: %s\n", company_str);
-        }
-
-
-#ifdef CONFIG_IDF_TARGET_ESP32C5
-        {
-            int ch = scanned_aps[i].primary;
-            const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
-            glog("     Band: %s,\n", band_str);
-            
-            const char *auth_str = "Unknown";
-            const char *pmf_str = NULL;
-            
-            switch (scanned_aps[i].authmode) {
-                case WIFI_AUTH_OPEN:
-                    auth_str = "Open";
-                    pmf_str = "Not Supported";
-                    break;
-                case WIFI_AUTH_WEP:
-                    auth_str = "WEP";
-                    pmf_str = "Not Supported";
-                    break;
-                case WIFI_AUTH_WPA_PSK:
-                    auth_str = "WPA";
-                    pmf_str = "Not Supported";
-                    break;
-                case WIFI_AUTH_WPA2_PSK:
-                    auth_str = "WPA2";
-                    pmf_str = "Optional";
-                    break;
-                case WIFI_AUTH_WPA_WPA2_PSK:
-                    auth_str = "WPA/WPA2";
-                    pmf_str = "Optional";
-                    break;
-                case WIFI_AUTH_WPA2_ENTERPRISE:
-                    auth_str = "WPA2-Enterprise";
-                    pmf_str = "Optional";
-                    break;
-                case WIFI_AUTH_WPA3_PSK:
-                    auth_str = "WPA3";
-                    pmf_str = "Required";
-                    break;
-                case WIFI_AUTH_WPA2_WPA3_PSK:
-                    auth_str = "WPA2/WPA3";
-                    pmf_str = "Required (WPA3)";
-                    break;
-                case WIFI_AUTH_WAPI_PSK:
-                    auth_str = "WAPI";
-                    pmf_str = "Not Applicable";
-                    break;
-                case WIFI_AUTH_WPA3_ENTERPRISE:
-                    auth_str = "WPA3-Enterprise";
-                    pmf_str = "Required";
-                    break;
-                default:
-                    auth_str = "Unknown";
-                    pmf_str = "Unknown";
-                    break;
-            }
-            
-            glog("     Security: %s\n      PMF: %s,\n", auth_str, pmf_str);
         }
 #endif
         if (strcmp(company_str, "Unknown") != 0) {
