@@ -209,6 +209,14 @@ static void add_char_to_buffer(char c) {
     }
 }
 
+static void add_char_to_buffer_raw(char c) {
+    if (input_len < sizeof(input_buffer) - 1) {
+        input_buffer[input_len++] = c;
+        input_buffer[input_len] = '\0';
+        update_input_label();
+    }
+}
+
 static void remove_char_from_buffer() {
     if (input_len > 0) {
         input_buffer[--input_len] = '\0';
@@ -702,7 +710,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
         } else if (c == '\b' || c == '*') {
             remove_char_from_buffer();
         } else if (c >= ' ' && c <= '~') {
-            add_char_to_buffer(c);
+            add_char_to_buffer_raw(c);
         }
 #ifdef CONFIG_USE_ENCODER
     } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {

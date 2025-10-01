@@ -100,6 +100,13 @@ typedef struct {
 
   // Infrared settings
   bool infrared_easy_mode; // Easy learn mode toggle
+  
+  // Navigation buttons setting
+  bool nav_buttons_enabled; // Toggle for main menu navigation buttons
+  uint8_t menu_layout; // Menu layout type (0=Carousel, 1=Grid Cards, 2=List)
+  
+  // Neopixel settings
+  uint8_t neopixel_max_brightness; // Max neopixel brightness (0-100)
 } FSettings;
 
 // Function declarations
@@ -236,6 +243,18 @@ uint8_t settings_get_max_screen_brightness(const FSettings *settings);
 // Infrared settings
 void settings_set_infrared_easy_mode(FSettings *settings, bool enabled);
 bool settings_get_infrared_easy_mode(const FSettings *settings);
+
+// Navigation buttons settings
+void settings_set_nav_buttons_enabled(FSettings *settings, bool enabled);
+bool settings_get_nav_buttons_enabled(const FSettings *settings);
+
+// Menu layout settings
+void settings_set_menu_layout(FSettings *settings, uint8_t layout);
+uint8_t settings_get_menu_layout(const FSettings *settings);
+
+// Neopixel brightness settings
+void settings_set_neopixel_max_brightness(FSettings *settings, uint8_t brightness);
+uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
 
 extern FSettings G_Settings;
 

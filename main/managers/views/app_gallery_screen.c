@@ -3,6 +3,7 @@
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/terminal_screen.h"
+#include "managers/settings_manager.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -35,6 +36,10 @@ static app_item_t app_items[] = {
 static int num_apps = sizeof(app_items) / sizeof(app_items[0]);
 static lv_obj_t *current_app_obj = NULL;
 lv_obj_t *back_button = NULL;
+
+// Add navigation button objects
+static lv_obj_t *left_nav_btn = NULL;
+static lv_obj_t *right_nav_btn = NULL;
 static int touch_start_x;
 static int touch_start_y;
 static bool touch_started = false;
@@ -182,7 +187,7 @@ static void update_app_item(bool slide_left) {
     {
         back_button = lv_btn_create(apps_container);
         lv_obj_set_size(back_button, 40, 40);
-        lv_obj_align(back_button, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+        lv_obj_align(back_button, LV_ALIGN_BOTTOM_MID, 0, -10); // Moved to center
         lv_obj_set_style_bg_color(back_button, lv_color_hex(0x333333), LV_PART_MAIN);
         lv_obj_set_style_radius(back_button, LV_RADIUS_CIRCLE, LV_PART_MAIN);
         lv_obj_set_style_border_width(back_button, 0, LV_PART_MAIN);
@@ -190,17 +195,70 @@ static void update_app_item(bool slide_left) {
         lv_obj_set_style_shadow_color(back_button, lv_color_hex(0x000000), LV_PART_MAIN);
         
         lv_obj_t *back_label = lv_label_create(back_button);
-        lv_label_set_text(back_label, LV_SYMBOL_LEFT);
+        lv_label_set_text(back_label, LV_SYMBOL_UP); // Changed to up arrow
         lv_obj_center(back_label);
         lv_obj_set_style_text_color(back_label, lv_color_hex(0xFFFFFF), 0);
         
         lv_obj_set_user_data(back_button, (void *)(intptr_t)(-1));
     }
 
+    // Check if navigation buttons should be shown based on user setting
+    // Also respect the original logic for device capabilities
+    bool should_show_nav_buttons = settings_get_nav_buttons_enabled(&G_Settings);
+    
+    // Only show if both user wants them AND device supports them
+    if (should_show_nav_buttons && LV_HOR_RES > 239) {
+        // Create left navigation button
+        left_nav_btn = lv_btn_create(apps_container);
+        lv_obj_set_size(left_nav_btn, 40, 40);
+        lv_obj_set_style_bg_color(left_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+        lv_obj_set_style_radius(left_nav_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_border_width(left_nav_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(left_nav_btn, 3, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(left_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+        
+        // Position left button at bottom left
+        lv_obj_align(left_nav_btn, LV_ALIGN_BOTTOM_LEFT, 15, -10);
+        
+        // Add left arrow icon/text
+        lv_obj_t *left_label = lv_label_create(left_nav_btn);
+        lv_label_set_text(left_label, "<");
+        lv_obj_set_style_text_font(left_label, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(left_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(left_label, LV_ALIGN_CENTER, 0, 0);
+
+        // Create right navigation button
+        right_nav_btn = lv_btn_create(apps_container);
+        lv_obj_set_size(right_nav_btn, 40, 40);
+        lv_obj_set_style_bg_color(right_nav_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+        lv_obj_set_style_radius(right_nav_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_border_width(right_nav_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(right_nav_btn, 3, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(right_nav_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+        
+        // Position right button at bottom right
+        lv_obj_align(right_nav_btn, LV_ALIGN_BOTTOM_RIGHT, -15, -10);
+        
+        // Add right arrow icon/text
+        lv_obj_t *right_label = lv_label_create(right_nav_btn);
+        lv_label_set_text(right_label, ">");
+        lv_obj_set_style_text_font(right_label, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(right_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(right_label, LV_ALIGN_CENTER, 0, 0);
+        
+        ESP_LOGI(TAG, "Navigation buttons created for apps menu");
+    }
+
     selected_app_index = 0;
     update_app_item(false);
     if (back_button) {
         lv_obj_move_foreground(back_button);
+    }
+    if (left_nav_btn) {
+        lv_obj_move_foreground(left_nav_btn);
+    }
+    if (right_nav_btn) {
+        lv_obj_move_foreground(right_nav_btn);
     }
     display_manager_add_status_bar(LV_VER_RES > 320 ? "Apps Menu" : "Apps");
 }
@@ -215,6 +273,8 @@ void apps_menu_destroy(void) {
         apps_menu_view.root = NULL;
         current_app_obj = NULL;
         back_button = NULL;
+        left_nav_btn = NULL;
+        right_nav_btn = NULL;
     }
     // Reset state variables for a clean re-create
     selected_app_index = 0;
@@ -316,12 +376,37 @@ static void handle_keyboard_interactions(int keyValue){
             touch_start_y = data->point.y;
         } else if (data->state == LV_INDEV_STATE_REL && touch_started) {
             touch_started = false;
+            
+            // Check if touch was on back button
             if (back_button) {
                 lv_area_t back_area;
                 lv_obj_get_coords(back_button, &back_area);
                 if (data->point.x >= back_area.x1 && data->point.x <= back_area.x2 &&
                     data->point.y >= back_area.y1 && data->point.y <= back_area.y2) {
                     display_manager_switch_view(&main_menu_view);
+                    return;
+                }
+            }
+            
+            // Check if touch was on navigation buttons
+            if (left_nav_btn && right_nav_btn) {
+                lv_area_t left_area, right_area;
+                lv_obj_get_coords(left_nav_btn, &left_area);
+                lv_obj_get_coords(right_nav_btn, &right_area);
+                
+                // Check if touch point is within left button bounds
+                if (data->point.x >= left_area.x1 && data->point.x <= left_area.x2 &&
+                    data->point.y >= left_area.y1 && data->point.y <= left_area.y2) {
+                    ESP_LOGI(TAG, "Left navigation button touched");
+                    select_app_item(selected_app_index - 1, true);
+                    return;
+                }
+                
+                // Check if touch point is within right button bounds
+                if (data->point.x >= right_area.x1 && data->point.x <= right_area.x2 &&
+                    data->point.y >= right_area.y1 && data->point.y <= right_area.y2) {
+                    ESP_LOGI(TAG, "Right navigation button touched");
+                    select_app_item(selected_app_index + 1, false);
                     return;
                 }
             }

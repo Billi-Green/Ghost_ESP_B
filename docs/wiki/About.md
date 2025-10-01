@@ -4,7 +4,7 @@ GhostESP: Revival is an open source firmware for ESP32 microcontrollers.
 
 ## Supported Hardware
 
-The following ESP32 models are officially supported:
+The following ESP32 models and boards are officially supported:
 
 ### Display-Enabled Boards
 
@@ -13,24 +13,30 @@ The following ESP32 models are officially supported:
   - **CYDMicroUSB**
   - **CYDDualUSB** (Both ports)
   - **AITRIP CYD** (ESP32-2432S028R)
-  - **Compatibility Note**: Stable only with **ESP32-2432S028 (2.8 inches)**. Incompatible with **ESP32-2432S024 (2.4 inches)**.
+  - **CYD 2.4″ variants**
+  - **Compatibility Note**: All CYD variants supported
 - **Waveshare LCD (7-inch)**: 800x480 resolution, using ESP32-S3
 - **Crowtech LCD (7-inch)**: 800x480 resolution, using ESP32-S3
-- **ESP32-S3-Cardputer**: Compact design with a built-in display and keyboard
-- **MarauderV6 & AwokDual**: 240x320 touchscreen models
-- **AwokMini**: 128x128 display with joystick for navigation
+- **Sunton LCD (7-inch)**: 800x480 resolution, using ESP32-S3
+- **ESP32-S3-Cardputer**: Compact design with built-in display and keyboard
+- **ESP32-S3-Cardputer ADV**: Advanced Cardputer variant
+- **MarauderV4 & MarauderV6**: 240x320 touchscreen models
+- **AwokMini**: 128x128 display with joystick navigation
 - **Awok ESP32 v5**
 - **LilyGo T-Watch S3**
 - **LilyGo TEmbed C1101**
+- **LilyGo T-Display S3 Touch**
+- **LilyGo T-Deck**
 
-### Generic Boards
 
-- **ESP32 Wroom**: Standard model
-- **ESP32-S2**
+### Generic Development Boards
+
+- **ESP32**
+- **ESP32-S2** (WiFi only, no Bluetooth)
 - **ESP32-C3**
 - **ESP32-S3**
-- **ESP32-C6**: Partial support with limited feature availability
-- **ESP32-C5**: Partial support with limited feature availability
+- **ESP32-C5**
+- **ESP32-C6**
 
 ## Important Considerations
 
@@ -40,41 +46,45 @@ The following ESP32 models are officially supported:
 
 ## Version Status
 
-- **Current version**: v1.7dev (Revival)
+- **Current version**: v1.8 (Revival)
 - **Framework**: ESP-IDF
 
 ### Recent Feature Additions
 
-- **Dual ESP32 communication** with WebUI control
-- **Power saving mode** for up to 5X battery life on supported devices
-- **Infrared (IR) support** with FlipperZero .ir file compatibility
-- **Support for ESP32C5**: With Limitations
-- **DHCP-Starve attack**
-- **New UI** for a better user experience
-- **AirTag selection and spoofing**
+- **Complete NFC support** with PN532 including NTAG and MIFARE Classic
+- **Enhanced dual ESP32 communication** with WebUI control
+- **Advanced IR support** with FlipperZero .ir file compatibility and multiple protocols
+- **802.15.4 packet capture** (ESP32-C5/C6)
+- **Grid-based main menu layout** for better navigation
+- **DHCP Starvation attack**
+- **AirTag spoofing** and selection
 - **Direct station deauthentication**
-- **BLE Wardriving**: with GPS Logging
-- **Terminal App** for keyboard-based command input
-- **Fuel Gauge support** (BQ27220 initially)
+- **BLE Wardriving** with GPS logging
+- **Terminal application** for keyboard-based command input
+- **Fuel gauge support** (BQ27220)
+- **Power saving optimizations** for extended battery life
+- **Enhanced UI** with RGB565A8 icons and improved layouts
 
 ### Features Under Development
 
-- **Additional screen support optimizations** to improve compatibility
+- **Additional board support** and hardware compatibility improvements
 - **Enhanced SD card compatibility** for more board models
 - **BLE feature improvements** for device discovery and interaction
-- **Touch screen calibration refinements** to enhance touch accuracy
+- **Advanced touchscreen calibration** and gesture recognition
+- **Extended wireless protocol support** and packet analysis
 
 ## Acknowledgments
 
-GhostESP is based on the work of several open-source projects and developers that may or may not be listed here:
+GhostESP: Revival builds upon the work of numerous open-source projects and developers:
 
-- **JustCallMeKoKo**: ESP32 development foundations
+- **Spooky (Spooks4576)**: Original GhostESP developer
+- **JustCallMeKoKo**: ESP32Marauder foundational development
+- **Tototo31**: Large contributions including bug fixes, feature additions, and board support
 - **thibauts**: CastV2 protocol insights
 - **MarcoLucidi01**: DIAL protocol integration
-- Community contributors for board support
-- **FlipperZero**: IR support
-- **Spooky**: Original GhostESP developer
-- **Tototo31**: Bug-Fixes, Feature Additions and Board Support
+- **SpacehuhnTech**: Reference deauthentication code
+- **WillyJL**: Flipper BLE spam code, Flipper NDEF parser
+- **FlipperZero Team**: IR protocol support and reference implementations
 
 ## Project Goals
 

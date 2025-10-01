@@ -95,7 +95,9 @@ const KeyValue_t _key_value_map[4][14] = {{{'`', '~'},
                                            {'/', '?'},
                                            {' ', ' '}}};
 
-typedef struct {
+typedef struct KeysState_t KeysState_t;
+
+struct KeysState_t {
   bool tab;
   bool fn;
   bool shift;
@@ -115,7 +117,7 @@ typedef struct {
   size_t modifier_keys_len;
 
   void (*reset)(struct KeysState_t *self);
-} KeysState_t;
+};
 
 typedef struct {
   Point2D_t *key_list_buffer;

@@ -35,6 +35,7 @@
 #endif
 #include "managers/sd_card_manager.h" // Add SD card manager include
 #include "managers/views/terminal_screen.h"
+#include "core/glog.h"
 #include "core/utils.h" // Add utils include
 #include <inttypes.h>
 #include "managers/default_portal.h"
@@ -730,18 +731,11 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
              strcpy(ssid_str, "(Hidden)");
         }
 
-        printf(
+        glog(
             "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
             station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
             ssid_str, // Use SSID here
             ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
-        char station_log_buf[256];
-        snprintf(station_log_buf, sizeof(station_log_buf),
-            "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
-            station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
-            ssid_str, // Use SSID here
-            ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
-        TERMINAL_VIEW_ADD_TEXT(station_log_buf);
 
         // Add the station and the *specific AP BSSID* it was seen with to the list
         add_station_ap_pair(station_mac, ap_bssid);
@@ -3273,8 +3267,7 @@ bool wifi_manager_scan_subnet() {
         snprintf(current_ip, sizeof(current_ip), "%s%d", ctx->subnet_prefix, host);
 
         if (is_host_active(current_ip)) {
-            printf("Found active host: %s\n", current_ip);
-            TERMINAL_VIEW_ADD_TEXT("Found active host: %s\n", current_ip);
+            glog("Found active host: %s\n", current_ip);
 
             host_result_t tcp_result;
             host_result_t udp_result;
@@ -3285,108 +3278,86 @@ bool wifi_manager_scan_subnet() {
             ctx->results[ctx->num_active_hosts] = tcp_result;
 
             if (udp_result.num_open_ports > 0) {
-                printf("UDP ports responding on %s:\n", current_ip);
-                TERMINAL_VIEW_ADD_TEXT("UDP ports responding on %s:\n", current_ip);
+                glog("UDP ports responding on %s:\n", current_ip);
                 for (uint8_t k = 0; k < udp_result.num_open_ports; k++) {
                     char line[32];
                     snprintf(line, sizeof(line), "  UDP %d\n", udp_result.open_ports[k]);
-                    printf("%s", line);
-                    TERMINAL_VIEW_ADD_TEXT(line);
+                    glog("%s", line);
                 }
             } else {
-                printf("No UDP responses on %s\n", current_ip);
-                TERMINAL_VIEW_ADD_TEXT("No UDP responses on %s\n", current_ip);
+                glog("No UDP responses on %s\n", current_ip);
             }
 
             ctx->num_active_hosts++;
         }
     }
 
-    printf("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
-    TERMINAL_VIEW_ADD_TEXT("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
+    glog("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
 
     for (size_t i = 0; i < ctx->num_active_hosts; i++) {
         if (ctx->results[i].num_open_ports > 0) {
-            printf("Host %s has %d open ports:\n", ctx->results[i].ip,
-                   ctx->results[i].num_open_ports);
-            TERMINAL_VIEW_ADD_TEXT("Host %s has %d open ports:\n", ctx->results[i].ip,
-                                   ctx->results[i].num_open_ports);
+            glog("Host %s has %d open ports:\n", ctx->results[i].ip,
+                 ctx->results[i].num_open_ports);
 
-            printf("Possible services/devices:\n");
-            TERMINAL_VIEW_ADD_TEXT("Possible services/devices:\n");
+            glog("Possible services/devices:\n");
 
             for (uint8_t j = 0; j < ctx->results[i].num_open_ports; j++) {
                 uint16_t port = ctx->results[i].open_ports[j];
-                printf("  - Port %d: ", port);
-                TERMINAL_VIEW_ADD_TEXT("  - Port %d: ", port);
+                glog("  - Port %d: ", port);
 
                 switch (port) {
                 case 20:
                 case 21:
-                    printf("FTP Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("FTP Server\n");
+                    glog("FTP Server\n");
                     break;
                 case 22:
                 case 2222:
-                    printf("SSH Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("SSH Server\n");
+                    glog("SSH Server\n");
                     break;
                 case 23:
-                    printf("Telnet Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("Telnet Server\n");
+                    glog("Telnet Server\n");
                     break;
                 case 80:
                 case 8080:
                 case 8443:
                 case 443:
-                    printf("Web Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("Web Server\n");
+                    glog("Web Server\n");
                     break;
                 case 445:
                 case 139:
-                    printf("Windows File Share/Domain Controller\n");
-                    TERMINAL_VIEW_ADD_TEXT("Windows File Share/Domain Controller\n");
+                    glog("Windows File Share/Domain Controller\n");
                     break;
                 case 3389:
-                    printf("Windows Remote Desktop\n");
-                    TERMINAL_VIEW_ADD_TEXT("Windows Remote Desktop\n");
+                    glog("Windows Remote Desktop\n");
                     break;
                 case 5900:
                 case 5901:
                 case 5902:
-                    printf("VNC Remote Access\n");
-                    TERMINAL_VIEW_ADD_TEXT("VNC Remote Access\n");
+                    glog("VNC Remote Access\n");
                     break;
                 case 1521:
-                    printf("Oracle Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("Oracle Database\n");
+                    glog("Oracle Database\n");
                     break;
                 case 3306:
-                    printf("MySQL Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("MySQL Database\n");
+                    glog("MySQL Database\n");
                     break;
                 case 5432:
-                    printf("PostgreSQL Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("PostgreSQL Database\n");
+                    glog("PostgreSQL Database\n");
                     break;
                 case 27017:
-                    printf("MongoDB Database\n");
-                    TERMINAL_VIEW_ADD_TEXT("MongoDB Database\n");
+                    glog("MongoDB Database\n");
                     break;
                 case 9100:
-                    printf("Network Printer\n");
-                    TERMINAL_VIEW_ADD_TEXT("Network Printer\n");
+                    glog("Network Printer\n");
                     break;
                 case 32400:
-                    printf("Plex Media Server\n");
-                    TERMINAL_VIEW_ADD_TEXT("Plex Media Server\n");
+                    glog("Plex Media Server\n");
                     break;
                 case 2082:
                 case 2083:
                 case 2086:
                 case 2087:
-                    printf("Web Hosting Control Panel\n");
-                    TERMINAL_VIEW_ADD_TEXT("Web Hosting Control Panel\n");
+                    glog("Web Hosting Control Panel\n");
                     break;
                 case 6379:
                     printf("Redis Server\n");
@@ -5037,8 +5008,16 @@ static void eapol_logoff_task(void *param) {
             }
             if (!sent_any) {
                 // no stations found, send generic logoff with random station mac
-                printf("no stations found for this ap.\nattack more effective with discovered stations\n");
-                TERMINAL_VIEW_ADD_TEXT("no stations found for this ap.\nattack more effective with discovered stations\n");
+                static uint32_t last_warning_time = 0;
+                uint32_t current_time = xTaskGetTickCount();
+                
+                // Only print warning every 5 seconds to avoid spam
+                if (current_time - last_warning_time > pdMS_TO_TICKS(5000)) {
+                    printf("no stations found for this ap.\nattack more effective with discovered stations\n");
+                    TERMINAL_VIEW_ADD_TEXT("no stations found for this ap.\nattack more effective with discovered stations\n");
+                    last_warning_time = current_time;
+                }
+                
                 uint8_t fake_sta[6];
                 esp_fill_random(fake_sta, 6);
                 fake_sta[0] &= 0xFE; fake_sta[0] |= 0x02;
@@ -5059,21 +5038,30 @@ static void eapol_logoff_task(void *param) {
         
         vTaskDelay(pdMS_TO_TICKS(eapol_attack_delay_ms));
     }
+    eapol_logoff_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
 static void eapol_logoff_display_task(void *param) {
     (void)param;
     uint32_t prev_total = 0;
+    static char log_buf[80];
     while (eapol_logoff_running) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         uint32_t total = eapol_logoff_packets_sent;
         uint32_t interval = total - prev_total;
         prev_total = total;
         uint32_t pps = interval / 5;
-        printf("EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", (unsigned long)pps, (unsigned long)total);
-        TERMINAL_VIEW_ADD_TEXT("EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", (unsigned long)pps, (unsigned long)total);
+        
+        // Format once, use twice - reduces stack usage significantly
+        int len = snprintf(log_buf, sizeof(log_buf), "EAPOL-Logoff rate: %lu pps, Total: %lu packets\n", 
+                          (unsigned long)pps, (unsigned long)total);
+        if (len > 0 && len < sizeof(log_buf)) {
+            printf("%s", log_buf);
+            TERMINAL_VIEW_ADD_TEXT("%s", log_buf);
+        }
     }
+    eapol_logoff_display_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -5086,7 +5074,7 @@ void wifi_manager_start_eapollogoff_attack(void) {
     eapol_logoff_running = true;
     eapol_logoff_packets_sent = 0;
     xTaskCreate(eapol_logoff_task, "eapol_logoff", 2048, NULL, 5, &eapol_logoff_task_handle);
-    xTaskCreate(eapol_logoff_display_task, "eapol_disp", 2048, NULL, 5, &eapol_logoff_display_task_handle);
+    xTaskCreate(eapol_logoff_display_task, "eapol_disp", 3072, NULL, 5, &eapol_logoff_display_task_handle);
 }
 
 void wifi_manager_stop_eapollogoff_attack(void) {
@@ -5095,18 +5083,29 @@ void wifi_manager_stop_eapollogoff_attack(void) {
         TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff not running\n");
         return;
     }
-    // signal tasks to stop
+    
+    // Signal tasks to stop gracefully
     eapol_logoff_running = false;
-    // delete attack task if exists
+    
+    // Wait for tasks to finish gracefully before force deletion
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Delete attack task if still exists
     if (eapol_logoff_task_handle) {
-        vTaskDelete(eapol_logoff_task_handle);
+        TaskHandle_t temp_handle = eapol_logoff_task_handle;
         eapol_logoff_task_handle = NULL;
+        vTaskDelete(temp_handle);
     }
-    // delete display task if exists
+    
+    // Delete display task if still exists  
     if (eapol_logoff_display_task_handle) {
-        vTaskDelete(eapol_logoff_display_task_handle);
+        TaskHandle_t temp_handle = eapol_logoff_display_task_handle;
         eapol_logoff_display_task_handle = NULL;
+        vTaskDelete(temp_handle);
     }
+    
+    printf("EAPOL Logoff attack stopped\n");
+    TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack stopped\n");
 }
 
 void wifi_manager_eapollogoff_display(void) {
@@ -5929,16 +5928,11 @@ void wifi_manager_clear_html_buffer(void) {
 }
 
 void wifi_manager_sae_flood_help(void) {
-    printf("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
-    TERMINAL_VIEW_ADD_TEXT("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
-    printf("Rate: 100+ frames/sec with randomization\n");
-    TERMINAL_VIEW_ADD_TEXT("Rate: 100+ frames/sec with randomization\n");
-    printf("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
-    TERMINAL_VIEW_ADD_TEXT("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
-    printf("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
-    TERMINAL_VIEW_ADD_TEXT("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
-    printf("Commands: saeflood, stopsaeflood, saefloodhelp\n");
-    TERMINAL_VIEW_ADD_TEXT("Commands: saeflood, stopsaeflood, saefloodhelp\n");
+    glog("SAE Flood Attack - Overwhelms WPA3 APs with commit frames\n");
+    glog("Rate: 100+ frames/sec with randomization\n");
+    glog("Requirements: ESP32-C5/C6, WPA3 AP selected\n");
+    glog("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
+    glog("Commands: saeflood, stopsaeflood, saefloodhelp\n");
 }
 
 

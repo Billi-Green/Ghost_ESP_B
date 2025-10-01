@@ -61,6 +61,11 @@ esp_err_t fuel_gauge_manager_reset(void);
  */
 void fuel_gauge_manager_deinit(void);
 
+/**
+ * @brief Pause or resume I2C polling. When paused, getters return cached data.
+ */
+void fuel_gauge_manager_set_paused(bool paused);
+
 #ifdef __cplusplus
 }
 #endif

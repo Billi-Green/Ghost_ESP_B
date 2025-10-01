@@ -1,6 +1,7 @@
 #include "core/serial_manager.h"
 #include "core/system_manager.h"
 #include "driver/uart.h"
+#include "core/glog.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
@@ -34,6 +35,21 @@ char serial_buffer[SERIAL_BUFFER_SIZE];
 static TaskHandle_t s_serial_task_handle = NULL;
 static bool s_serial_initialized = false;
 
+// Cursor position tracking
+static int cursor_position = 0;
+
+// Command history instance
+static CommandHistory command_history;
+
+// Arrow key state machine
+typedef enum {
+    ARROW_STATE_NONE,
+    ARROW_STATE_ESC,
+    ARROW_STATE_BRACKET
+} arrow_state_t;
+
+static arrow_state_t arrow_state = ARROW_STATE_NONE;
+
 // HTML capture state
 typedef enum {
     HTML_STATE_IDLE,
@@ -48,12 +64,272 @@ static size_t html_capture_pos = 0;
 // Forward declaration of command handler
 int handle_serial_command(const char *command);
 
+// Command history management functions
+void command_history_init(void) {
+    command_history.current_index = 0;
+    command_history.history_count = 0;
+    command_history.display_index = -1;
+    memset(command_history.commands, 0, sizeof(command_history.commands));
+}
+
+void command_history_add(const char* command) {
+    if (command == NULL || strlen(command) == 0) {
+        return;
+    }
+    
+    // Don't add duplicate consecutive commands
+    if (command_history.history_count > 0) {
+        int last_index = (command_history.current_index - 1 + MAX_HISTORY_SIZE) % MAX_HISTORY_SIZE;
+        if (strcmp(command_history.commands[last_index], command) == 0) {
+            return;
+        }
+    }
+    
+    // Add command to current position
+    strncpy(command_history.commands[command_history.current_index], command, MAX_COMMAND_LENGTH - 1);
+    command_history.commands[command_history.current_index][MAX_COMMAND_LENGTH - 1] = '\0';
+    
+    // Move to next position
+    command_history.current_index = (command_history.current_index + 1) % MAX_HISTORY_SIZE;
+    
+    // Update history count
+    if (command_history.history_count < MAX_HISTORY_SIZE) {
+        command_history.history_count++;
+    }
+    
+    // Reset display index when new command is added
+    command_history.display_index = -1;
+}
+
+const char* command_history_get_previous(void) {
+    if (command_history.history_count == 0) {
+        return NULL;
+    }
+    
+    if (command_history.display_index == -1) {
+        // First time navigating, start from the most recent command
+        command_history.display_index = (command_history.current_index - 1 + MAX_HISTORY_SIZE) % MAX_HISTORY_SIZE;
+    } else {
+        // Move to previous command
+        command_history.display_index = (command_history.display_index - 1 + MAX_HISTORY_SIZE) % MAX_HISTORY_SIZE;
+    }
+    
+    // Additional safety check to ensure we have a valid command
+    if (command_history.display_index >= 0 && command_history.display_index < MAX_HISTORY_SIZE) {
+        const char* cmd = command_history.commands[command_history.display_index];
+        if (cmd != NULL && strlen(cmd) > 0) {
+            return cmd;
+        }
+    }
+    
+    return NULL;
+}
+
+const char* command_history_get_next(void) {
+    if (command_history.history_count == 0) {
+        return NULL;
+    }
+    
+    if (command_history.display_index == -1) {
+        return NULL; // No navigation started yet
+    }
+    
+    // Move to next command
+    command_history.display_index = (command_history.display_index + 1) % MAX_HISTORY_SIZE;
+    
+    // If we've reached the current position, we're at the end
+    if (command_history.display_index == command_history.current_index) {
+        command_history.display_index = -1;
+        return NULL;
+    }
+    
+    // Additional safety check to ensure we have a valid command
+    if (command_history.display_index >= 0 && command_history.display_index < MAX_HISTORY_SIZE) {
+        const char* cmd = command_history.commands[command_history.display_index];
+        if (cmd != NULL && strlen(cmd) > 0) {
+            return cmd;
+        }
+    }
+    
+    return NULL;
+}
+
+void command_history_reset_display_index(void) {
+    command_history.display_index = -1;
+}
+
+// Cursor management functions
+static void move_cursor_to_position(int new_pos) {
+    // Ensure cursor position is within bounds
+    if (new_pos < 0) new_pos = 0;
+    if (new_pos > strlen(serial_buffer)) new_pos = strlen(serial_buffer);
+    
+    int current_pos = cursor_position;
+    cursor_position = new_pos;
+    
+    // Calculate how many characters to move
+    int move_count = new_pos - current_pos;
+    
+    if (move_count > 0) {
+        // Move right - send right arrow sequences
+        for (int i = 0; i < move_count; i++) {
+            const char right_arrow[] = "\033[C";
+            uart_write_bytes(UART_NUM, right_arrow, 3);
+#if JTAG_SUPPORTED
+            usb_serial_jtag_write_bytes((const uint8_t*)right_arrow, 3, 0);
+#endif
+        }
+    } else if (move_count < 0) {
+        // Move left - send left arrow sequences
+        for (int i = 0; i < -move_count; i++) {
+            const char left_arrow[] = "\033[D";
+            uart_write_bytes(UART_NUM, left_arrow, 3);
+#if JTAG_SUPPORTED
+            usb_serial_jtag_write_bytes((const uint8_t*)left_arrow, 3, 0);
+#endif
+        }
+    }
+}
+
+static void insert_character_at_cursor(char c) {
+    int len = strlen(serial_buffer);
+    if (len >= SERIAL_BUFFER_SIZE - 1) return; // Buffer full
+    
+    // Shift characters to the right
+    for (int i = len; i > cursor_position; i--) {
+        serial_buffer[i] = serial_buffer[i - 1];
+    }
+    
+    // Insert character at cursor position
+    serial_buffer[cursor_position] = c;
+    serial_buffer[len + 1] = '\0';
+    
+    // Display the character and move cursor right
+    uart_write_bytes(UART_NUM, &c, 1);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)&c, 1, 0);
+#endif
+    
+    // Display remaining characters
+    for (int i = cursor_position + 1; i <= len; i++) {
+        uart_write_bytes(UART_NUM, &serial_buffer[i], 1);
+#if JTAG_SUPPORTED
+        usb_serial_jtag_write_bytes((const uint8_t*)&serial_buffer[i], 1, 0);
+#endif
+    }
+    
+    // Move cursor back to correct position
+    for (int i = len; i > cursor_position; i--) {
+        const char left_arrow[] = "\033[D";
+        uart_write_bytes(UART_NUM, left_arrow, 3);
+#if JTAG_SUPPORTED
+        usb_serial_jtag_write_bytes((const uint8_t*)left_arrow, 3, 0);
+#endif
+    }
+    
+    cursor_position++;
+}
+
+static void delete_character_at_cursor(void) {
+    int len = strlen(serial_buffer);
+    if (cursor_position >= len) return; // Nothing to delete
+    
+    // Shift characters to the left
+    for (int i = cursor_position; i < len; i++) {
+        serial_buffer[i] = serial_buffer[i + 1];
+    }
+
+    // New length after deletion
+    int new_len = len - 1;
+
+    // Display remaining characters (overwrite current position)
+    for (int i = cursor_position; i < new_len; i++) {
+        uart_write_bytes(UART_NUM, &serial_buffer[i], 1);
+#if JTAG_SUPPORTED
+        usb_serial_jtag_write_bytes((const uint8_t*)&serial_buffer[i], 1, 0);
+#endif
+    }
+    
+    // Clear the last character
+    const char space[] = " ";
+    uart_write_bytes(UART_NUM, space, 1);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)space, 1, 0);
+#endif
+    
+    // Move cursor back to correct position
+    for (int i = len - cursor_position; i > 0; i--) {
+        const char left_arrow[] = "\033[D";
+        uart_write_bytes(UART_NUM, left_arrow, 3);
+#if JTAG_SUPPORTED
+        usb_serial_jtag_write_bytes((const uint8_t*)left_arrow, 3, 0);
+#endif
+    }
+}
+
+static void backspace_at_cursor(void) {
+    int len = strlen(serial_buffer);
+    if (cursor_position <= 0) return; // Nothing to delete
+    
+    // Move cursor left first
+    const char left_arrow[] = "\033[D";
+    uart_write_bytes(UART_NUM, left_arrow, 3);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)left_arrow, 3, 0);
+#endif
+    
+    // Shift characters to the left (delete character at cursor_position - 1)
+    for (int i = cursor_position - 1; i < len; i++) {
+        serial_buffer[i] = serial_buffer[i + 1];
+    }
+
+    // New length after deletion
+    int new_len = len - 1;
+
+    // Display remaining characters from cursor position
+    for (int i = cursor_position - 1; i < new_len; i++) {
+        uart_write_bytes(UART_NUM, &serial_buffer[i], 1);
+#if JTAG_SUPPORTED
+        usb_serial_jtag_write_bytes((const uint8_t*)&serial_buffer[i], 1, 0);
+#endif
+    }
+    
+    // Clear the last character
+    const char space[] = " ";
+    uart_write_bytes(UART_NUM, space, 1);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)space, 1, 0);
+#endif
+    
+    // Move cursor back to correct position
+    for (int i = len - cursor_position + 1; i > 0; i--) {
+        uart_write_bytes(UART_NUM, left_arrow, 3);
+#if JTAG_SUPPORTED
+        usb_serial_jtag_write_bytes((const uint8_t*)left_arrow, 3, 0);
+#endif
+    }
+    
+    cursor_position--;
+}
+
+static void clear_line_from_cursor(void) {
+    // Use ANSI escape to clear from cursor to end of line to avoid
+    // backspace-based visual corruption when replacing the line.
+    const char clear_to_eol[] = "\033[K";
+    uart_write_bytes(UART_NUM, clear_to_eol, 3);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)clear_to_eol, 3, 0);
+#endif
+    // Truncate buffer at cursor position
+    serial_buffer[cursor_position] = '\0';
+}
+
 // HTML marker processing
 static void process_html_line(const char* line) {
     if (strstr(line, "[HTML/BEGIN]") != NULL) {
         html_capture_state = HTML_STATE_CAPTURING;
         html_capture_pos = 0;
-        printf("HTML capture started\n");
+        glog("HTML capture started\n");
         return;
     }
     
@@ -61,7 +337,7 @@ static void process_html_line(const char* line) {
         if (html_capture_state == HTML_STATE_CAPTURING) {
             html_capture_state = HTML_STATE_COMPLETE;
             wifi_manager_store_html_chunk(html_capture_buffer, html_capture_pos, true);
-            printf("HTML capture completed (%zu bytes)\n", html_capture_pos);
+            glog("HTML capture completed (%zu bytes)\n", html_capture_pos);
         }
         return;
     }
@@ -101,16 +377,85 @@ void serial_task(void *pvParameter) {
         char incoming_char = (char)data[i];
 
         if (incoming_char == '\b' || (unsigned char)incoming_char == 0x7F) {
-          if (index > 0) {
-            index--;
-            // Echo backspace: write backspace, space, backspace directly to UART
-            const char backspace_seq[] = "\b \b";
-            uart_write_bytes(UART_NUM, backspace_seq, 3);
-#if JTAG_SUPPORTED
-            usb_serial_jtag_write_bytes((const uint8_t*)backspace_seq, 3, 0);
-#endif
+          // Reset arrow key state when backspace is pressed
+          arrow_state = ARROW_STATE_NONE;
+          if (cursor_position > 0) {
+            // Delete character to the left of cursor
+            backspace_at_cursor();
+            index = strlen(serial_buffer);
           }
           continue;
+        }
+
+        // Handle arrow keys using state machine
+        if (arrow_state == ARROW_STATE_NONE && incoming_char == 0x1B) {
+          // Start of potential arrow key sequence
+          arrow_state = ARROW_STATE_ESC;
+          continue;
+        } else if (arrow_state == ARROW_STATE_ESC && incoming_char == '[') {
+          // Second character of arrow key sequence
+          arrow_state = ARROW_STATE_BRACKET;
+          continue;
+        } else if (arrow_state == ARROW_STATE_BRACKET) {
+          // Third character - determine if it's an arrow key
+          if (incoming_char == 'A') { // Up arrow
+            const char* history_cmd = command_history_get_previous();
+            if (history_cmd != NULL && strlen(history_cmd) > 0) {
+              // Clear current line
+              clear_line_from_cursor();
+              // Copy history command to buffer
+              strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
+              serial_buffer[SERIAL_BUFFER_SIZE - 1] = '\0';
+              index = strlen(serial_buffer);
+              cursor_position = index; // Move cursor to end
+              // Echo the history command
+              if (index > 0) {
+                uart_write_bytes(UART_NUM, history_cmd, index);
+#if JTAG_SUPPORTED
+                usb_serial_jtag_write_bytes((const uint8_t*)history_cmd, index, 0);
+#endif
+              }
+            }
+          } else if (incoming_char == 'B') { // Down arrow
+            const char* history_cmd = command_history_get_next();
+            // Clear current line
+            clear_line_from_cursor();
+            if (history_cmd != NULL && strlen(history_cmd) > 0) {
+              // Copy history command to buffer
+              strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
+              serial_buffer[SERIAL_BUFFER_SIZE - 1] = '\0';
+              index = strlen(serial_buffer);
+              cursor_position = index; // Move cursor to end
+              // Echo the history command
+              if (index > 0) {
+                uart_write_bytes(UART_NUM, history_cmd, index);
+#if JTAG_SUPPORTED
+                usb_serial_jtag_write_bytes((const uint8_t*)history_cmd, index, 0);
+#endif
+              }
+            } else {
+              // No more history, clear buffer
+              index = 0;
+              serial_buffer[0] = '\0';
+              cursor_position = 0;
+            }
+          } else if (incoming_char == 'C') { // Right arrow
+            if (cursor_position < strlen(serial_buffer)) {
+              move_cursor_to_position(cursor_position + 1);
+            }
+          } else if (incoming_char == 'D') { // Left arrow
+            if (cursor_position > 0) {
+              move_cursor_to_position(cursor_position - 1);
+            }
+          }
+          // Reset state after processing (whether it was an arrow key or not)
+          arrow_state = ARROW_STATE_NONE;
+          continue;
+        } else if (arrow_state != ARROW_STATE_NONE) {
+          // We were in the middle of an arrow key sequence but got an unexpected character
+          // Reset state and process the current character normally
+          arrow_state = ARROW_STATE_NONE;
+          // Fall through to normal character processing
         }
 
         if (incoming_char == '\n' || incoming_char == '\r') {
@@ -122,22 +467,27 @@ void serial_task(void *pvParameter) {
 #endif
           serial_buffer[index] = '\0';
           if (index > 0) {
+            // Reset history display index when entering a new command
+            command_history_reset_display_index();
+            // Reset arrow key state
+            arrow_state = ARROW_STATE_NONE;
+            // Reset cursor position
+            cursor_position = 0;
             process_html_line(serial_buffer);
+            // Clear the buffer completely
+            memset(serial_buffer, 0, sizeof(serial_buffer));
             index = 0;
           }
           continue;
         }
 
         if ((unsigned char)incoming_char >= 32 && (unsigned char)incoming_char != 127) {
-          if (index < SERIAL_BUFFER_SIZE - 1) {
-            // Echo the character immediately via direct UART write
-            uart_write_bytes(UART_NUM, &incoming_char, 1);
-#if JTAG_SUPPORTED
-            usb_serial_jtag_write_bytes((const uint8_t*)&incoming_char, 1, 0);
-#endif
-            serial_buffer[index++] = incoming_char;
-          } else {
-            index = 0;
+          // Reset arrow key state when typing normal characters
+          arrow_state = ARROW_STATE_NONE;
+          if (strlen(serial_buffer) < SERIAL_BUFFER_SIZE - 1) {
+            // Insert character at cursor position
+            insert_character_at_cursor(incoming_char);
+            index = strlen(serial_buffer);
           }
         }
       }
@@ -181,7 +531,9 @@ void serial_manager_init() {
 
   xTaskCreate(serial_task, "SerialTask", 8192, NULL, 2, &s_serial_task_handle);
   s_serial_initialized = true;
-  printf("Serial Started...\n");
+  // Initialize command history
+  command_history_init();
+  glog("Serial Started...\n");
 }
 
 void serial_manager_deinit() {
@@ -210,10 +562,8 @@ int handle_serial_command(const char *input) {
   if (strncmp(input, "peer:", 5) == 0) {
     const char* actual_command = input + 5;
     esp_comm_manager_set_remote_command_flag(true);
-    printf("Received command from peer: %s\n", actual_command);
-    TERMINAL_VIEW_ADD_TEXT("Received command from peer: %s\n", actual_command);
-    printf("Executing received command: %s\n", actual_command);
-    TERMINAL_VIEW_ADD_TEXT("Executing received command: %s\n", actual_command);
+    glog("Received command from peer: %s\n", actual_command);
+    glog("Executing received command: %s\n", actual_command);
     int result = handle_serial_command(actual_command);
     esp_comm_manager_set_remote_command_flag(false);
     return result;
@@ -277,10 +627,14 @@ int handle_serial_command(const char *input) {
 
   CommandFunction cmd_func = find_command(argv[0]);
   if (cmd_func != NULL) {
+    // Add command to history before executing
+    command_history_add(input);
     cmd_func(argc, argv);
     free(input_copy);
     return ESP_OK;
   } else {
+    // Add command to history even if unknown
+    command_history_add(input);
     handle_unknown_command(argv[0]);
     free(input_copy);
     return ESP_ERR_INVALID_ARG;
