@@ -29,6 +29,19 @@
 #define HANDSHAKE_TIMEOUT_MS 3000
 #define COMMAND_TIMEOUT_MS 500
 
+// protocol constants
+#define PACKET_START_BYTE 0xAA
+#define PACKET_HEADER_SIZE 3
+#define PACKET_CHECKSUM_SIZE 1
+#define PACKET_MAX_PAYLOAD (COMM_PACKET_SIZE - 4)
+
+// sizes for fields embedded in packets
+#define CHIP_ID_LEN 6
+#define CHIP_NAME_MAX 32           // includes null terminator
+#define CHIP_NAME_COPY_LEN 31      // max characters copied for name (excludes terminator)
+#define DISCOVERY_PAYLOAD_LEN (CHIP_ID_LEN + CHIP_NAME_MAX)
+#define MAX_CMD_LEN 32             // includes null terminator when placed in packet
+
 #if defined(CONFIG_IDF_TARGET_ESP32)
 #define DEFAULT_TX_PIN GPIO_NUM_17
 #define DEFAULT_RX_PIN GPIO_NUM_16
@@ -87,6 +100,7 @@ typedef struct {
     TaskHandle_t protocol_task_handle;
     TaskHandle_t command_executor_task_handle;
     TimerHandle_t discovery_timer;
+    TimerHandle_t handshake_timer;
     TimerHandle_t ping_timer;
     
     comm_command_callback_t command_callback;
@@ -97,10 +111,13 @@ typedef struct {
     
     bool initialized;
     bool is_executing_remote_cmd;
+    bool uart_driver_installed;
     
     packet_parse_state_t parse_state;
     comm_packet_t partial_packet;
     uint8_t data_bytes_received;
+    
+    SemaphoreHandle_t state_mutex;
 } esp_comm_manager_t;
 
 static esp_comm_manager_t* s_comm_manager = NULL;
@@ -113,9 +130,23 @@ static void rx_task(void* arg);
 static void protocol_task(void* arg);
 static void command_executor_task(void* arg);
 static void discovery_timer_callback(TimerHandle_t xTimer);
+static void handshake_timer_callback(TimerHandle_t xTimer);
 static void send_discovery_packet(void);
 static void send_handshake_request(const char* peer_name);
 static void send_handshake_ack(void);
+static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t* packet);
+
+static inline void lock_state(esp_comm_manager_t* comm) {
+    if (comm && comm->state_mutex) {
+        xSemaphoreTake(comm->state_mutex, portMAX_DELAY);
+    }
+}
+
+static inline void unlock_state(esp_comm_manager_t* comm) {
+    if (comm && comm->state_mutex) {
+        xSemaphoreGive(comm->state_mutex);
+    }
+}
 
 static uint8_t calculate_checksum(const uint8_t* data, size_t len) {
     uint8_t checksum = 0;
@@ -135,8 +166,8 @@ static bool send_packet(const comm_packet_t* packet) {
         return true;
     } else {
         // Direct transmit path used during scanning/handshake before TX task exists
-        uart_write_bytes(UART_NUM_1, (const char*)packet, 3 + packet->length);
-        uint8_t checksum = calculate_checksum((const uint8_t*)packet, 3 + packet->length);
+        uart_write_bytes(UART_NUM_1, (const char*)packet, PACKET_HEADER_SIZE + packet->length);
+        uint8_t checksum = calculate_checksum((const uint8_t*)packet, PACKET_HEADER_SIZE + packet->length);
         uart_write_bytes(UART_NUM_1, (const char*)&checksum, 1);
         if (packet->type == PACKET_TYPE_RESPONSE) {
             vTaskDelay(pdMS_TO_TICKS(2));
@@ -151,8 +182,8 @@ static void tx_task(void* arg) {
 
     while (1) {
         if (xQueueReceive(comm->tx_queue, &packet, portMAX_DELAY) == pdPASS) {
-            uart_write_bytes(UART_NUM_1, (uint8_t*)&packet, 3 + packet.length);
-            uint8_t checksum = calculate_checksum((uint8_t*)&packet, 3 + packet.length);
+            uart_write_bytes(UART_NUM_1, (uint8_t*)&packet, PACKET_HEADER_SIZE + packet.length);
+            uint8_t checksum = calculate_checksum((uint8_t*)&packet, PACKET_HEADER_SIZE + packet.length);
             uart_write_bytes(UART_NUM_1, &checksum, 1);
             if (packet.type == PACKET_TYPE_RESPONSE) {
                 vTaskDelay(pdMS_TO_TICKS(2));
@@ -174,7 +205,7 @@ static void rx_task(void* arg) {
             
             switch (comm->parse_state) {
                 case PARSE_STATE_IDLE:
-                    if (byte == 0xAA) {
+                    if (byte == PACKET_START_BYTE) {
                         comm->parse_state = PARSE_STATE_START_BYTE;
                         comm->partial_packet.start_byte = byte;
                     }
@@ -205,7 +236,7 @@ static void rx_task(void* arg) {
                 case PARSE_STATE_CHECKSUM:
                     {
                         uint8_t checksum = 0;
-                        checksum ^= 0xAA;
+                        checksum ^= PACKET_START_BYTE;
                         checksum ^= comm->partial_packet.type;
                         checksum ^= comm->partial_packet.length;
                         for (int j = 0; j < comm->partial_packet.length; j++) {
@@ -219,94 +250,7 @@ static void rx_task(void* arg) {
                                 }
                             } else {
                                 // Minimal inline handling during scanning/handshake (no protocol task yet)
-                                switch (comm->partial_packet.type) {
-                                    case PACKET_TYPE_DISCOVERY:
-                                        if (comm->state == COMM_STATE_SCANNING) {
-                                            memcpy(comm->peer.chip_id, comm->partial_packet.data, 6);
-                                            strncpy(comm->peer.chip_name, (char*)comm->partial_packet.data + 6, 32);
-                                            comm->peer.chip_name[31] = '\0';
-                                            printf("I: Discovered peer: %s\n", comm->peer.chip_name);
-                                            ap_manager_add_log("I: Discovered peer (scan)\n");
-                                            if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
-                                                printf("I: Peer has smaller name, I will initiate connection.\n");
-                                                ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
-                                                esp_comm_manager_connect_to_peer(comm->peer.chip_name);
-                                            }
-                                        }
-                                        break;
-                                    case PACKET_TYPE_HANDSHAKE_REQ:
-                                        if (comm->state == COMM_STATE_SCANNING || comm->state == COMM_STATE_IDLE) {
-                                            char requested_name[32];
-                                            strncpy(requested_name, (char*)comm->partial_packet.data, 32);
-                                            requested_name[31] = '\0';
-                                            if (strcmp(requested_name, comm->chip_name) == 0) {
-                                                comm->state = COMM_STATE_HANDSHAKE;
-                                                comm->role = COMM_ROLE_SLAVE;
-                                                if (comm->command_callback && !comm->command_queue) {
-                                                    comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
-                                                    if (comm->command_queue && !comm->command_executor_task_handle) {
-                                                        xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
-                                                    }
-                                                }
-                                                send_handshake_ack();
-                                                comm->state = COMM_STATE_CONNECTED;
-                                                if (comm->discovery_timer) {
-                                                    xTimerStop(comm->discovery_timer, 0);
-                                                    xTimerDelete(comm->discovery_timer, 0);
-                                                    comm->discovery_timer = NULL;
-                                                }
-                                                // Bring up heavy resources now that we're connected
-                                                if (!comm->tx_queue) {
-                                                    comm->tx_queue = xQueueCreate(8, sizeof(comm_packet_t));
-                                                }
-                                                if (!comm->tx_task_handle && comm->tx_queue) {
-                                                    xTaskCreate(tx_task, "comm_tx_task", 2048, comm, 11, &comm->tx_task_handle);
-                                                }
-                                                if (!comm->rx_packet_queue) {
-                                                    comm->rx_packet_queue = xQueueCreate(12, sizeof(comm_packet_t));
-                                                }
-                                                if (!comm->protocol_task_handle && comm->rx_packet_queue) {
-                                                    xTaskCreate(protocol_task, "comm_protocol_t", 3072, comm, 13, &comm->protocol_task_handle);
-                                                }
-                                                printf("I: Handshake complete - slave role\n");
-                                                ap_manager_add_log("I: Handshake complete - slave role\n");
-                                            }
-                                        }
-                                        break;
-                                    case PACKET_TYPE_HANDSHAKE_ACK:
-                                        if (comm->state == COMM_STATE_HANDSHAKE && comm->role == COMM_ROLE_MASTER) {
-                                            comm->state = COMM_STATE_CONNECTED;
-                                            if (comm->discovery_timer) {
-                                                xTimerStop(comm->discovery_timer, 0);
-                                                xTimerDelete(comm->discovery_timer, 0);
-                                                comm->discovery_timer = NULL;
-                                            }
-                                            if (comm->command_callback && !comm->command_queue) {
-                                                comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
-                                                if (comm->command_queue && !comm->command_executor_task_handle) {
-                                                    xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
-                                                }
-                                            }
-                                            if (!comm->tx_queue) {
-                                                comm->tx_queue = xQueueCreate(8, sizeof(comm_packet_t));
-                                            }
-                                            if (!comm->tx_task_handle && comm->tx_queue) {
-                                                xTaskCreate(tx_task, "comm_tx_task", 2048, comm, 11, &comm->tx_task_handle);
-                                            }
-                                            if (!comm->rx_packet_queue) {
-                                                comm->rx_packet_queue = xQueueCreate(12, sizeof(comm_packet_t));
-                                            }
-                                            if (!comm->protocol_task_handle && comm->rx_packet_queue) {
-                                                xTaskCreate(protocol_task, "comm_protocol_t", 3072, comm, 13, &comm->protocol_task_handle);
-                                            }
-                                            printf("I: Handshake complete - master role\n");
-                                            ap_manager_add_log("I: Handshake complete - master role\n");
-                                        }
-                                        break;
-                                    default:
-                                        // Unknown/ignored during scanning
-                                        break;
-                                }
+                                handle_received_packet(comm, &comm->partial_packet);
                             }
                         }
                         comm->parse_state = PARSE_STATE_IDLE;
@@ -321,13 +265,13 @@ static void send_discovery_packet(void) {
     if (!s_comm_manager) return;
     
     comm_packet_t packet = {0};
-    packet.start_byte = 0xAA;
+    packet.start_byte = PACKET_START_BYTE;
     packet.type = PACKET_TYPE_DISCOVERY;
-    packet.length = 38;
+    packet.length = DISCOVERY_PAYLOAD_LEN;
     
-    memcpy(packet.data, s_comm_manager->chip_id, 6);
-    strncpy((char*)packet.data + 6, s_comm_manager->chip_name, 31);
-    ((char*)packet.data)[37] = '\0';
+    memcpy(packet.data, s_comm_manager->chip_id, CHIP_ID_LEN);
+    strncpy((char*)packet.data + CHIP_ID_LEN, s_comm_manager->chip_name, CHIP_NAME_COPY_LEN);
+    ((char*)packet.data)[CHIP_ID_LEN + CHIP_NAME_COPY_LEN] = '\0';
     
     send_packet(&packet);
 }
@@ -336,11 +280,11 @@ static void send_handshake_request(const char* peer_name) {
     if (!s_comm_manager) return;
     
     comm_packet_t packet = {0};
-    packet.start_byte = 0xAA;
+    packet.start_byte = PACKET_START_BYTE;
     packet.type = PACKET_TYPE_HANDSHAKE_REQ;
-    packet.length = 32;
+    packet.length = MAX_CMD_LEN;
     
-    strncpy((char*)packet.data, peer_name, 32);
+    strncpy((char*)packet.data, peer_name, MAX_CMD_LEN);
     
     send_packet(&packet);
 }
@@ -349,11 +293,178 @@ static void send_handshake_ack(void) {
     if (!s_comm_manager) return;
     
     comm_packet_t packet = {0};
-    packet.start_byte = 0xAA;
+    packet.start_byte = PACKET_START_BYTE;
     packet.type = PACKET_TYPE_HANDSHAKE_ACK;
     packet.length = 0;
     
     send_packet(&packet);
+}
+
+static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t* packet) {
+    if (!comm || !packet) return;
+    static char log_buffer[128];
+
+    switch(packet->type) {
+        case PACKET_TYPE_DISCOVERY:
+            if (comm->state == COMM_STATE_SCANNING) {
+                if (memcmp(comm->chip_id, packet->data, CHIP_ID_LEN) != 0) {
+                    memcpy(comm->peer.chip_id, packet->data, CHIP_ID_LEN);
+                    strncpy(comm->peer.chip_name, (char*)packet->data + CHIP_ID_LEN, CHIP_NAME_MAX);
+                    comm->peer.chip_name[CHIP_NAME_MAX - 1] = '\0';
+                    printf("I: Discovered peer: %s\n", comm->peer.chip_name);
+                    snprintf(log_buffer, sizeof(log_buffer), "I: Discovered peer: %s\n", comm->peer.chip_name);
+                    ap_manager_add_log(log_buffer);
+
+                    if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
+                        printf("I: Peer has smaller name, I will initiate connection.\n");
+                        ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
+                        esp_comm_manager_connect_to_peer(comm->peer.chip_name);
+                    }
+                }
+            }
+            break;
+
+        case PACKET_TYPE_HANDSHAKE_REQ:
+            if (comm->state == COMM_STATE_SCANNING || comm->state == COMM_STATE_IDLE) {
+                char requested_name[CHIP_NAME_MAX];
+                strncpy(requested_name, (char*)packet->data, CHIP_NAME_MAX);
+                requested_name[CHIP_NAME_MAX - 1] = '\0';
+                if (strcmp(requested_name, comm->chip_name) == 0) {
+                    lock_state(comm);
+                    comm->state = COMM_STATE_HANDSHAKE;
+                    comm->role = COMM_ROLE_SLAVE;
+                    if (comm->handshake_timer) {
+                        xTimerStart(comm->handshake_timer, 0);
+                    }
+                    if (comm->command_callback && !comm->command_queue) {
+                        comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
+                        if (comm->command_queue && !comm->command_executor_task_handle) {
+                            xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
+                        }
+                    }
+                    send_handshake_ack();
+                    comm->state = COMM_STATE_CONNECTED;
+                    if (comm->handshake_timer) {
+                        xTimerStop(comm->handshake_timer, 0);
+                    }
+                    if (comm->discovery_timer) {
+                        xTimerStop(comm->discovery_timer, 0);
+                        xTimerDelete(comm->discovery_timer, 0);
+                        comm->discovery_timer = NULL;
+                    }
+                    if (!comm->tx_queue) {
+                        comm->tx_queue = xQueueCreate(8, sizeof(comm_packet_t));
+                    }
+                    if (!comm->tx_task_handle && comm->tx_queue) {
+                        xTaskCreate(tx_task, "comm_tx_task", 2048, comm, 11, &comm->tx_task_handle);
+                    }
+                    if (!comm->rx_packet_queue) {
+                        comm->rx_packet_queue = xQueueCreate(12, sizeof(comm_packet_t));
+                    }
+                    if (!comm->protocol_task_handle && comm->rx_packet_queue) {
+                        xTaskCreate(protocol_task, "comm_protocol_t", 3072, comm, 13, &comm->protocol_task_handle);
+                    }
+                    unlock_state(comm);
+                    printf("I: Handshake complete - slave role\n");
+                    ap_manager_add_log("I: Handshake complete - slave role\n");
+                }
+            }
+            break;
+
+        case PACKET_TYPE_HANDSHAKE_ACK:
+            if (comm->state == COMM_STATE_HANDSHAKE && comm->role == COMM_ROLE_MASTER) {
+                lock_state(comm);
+                comm->state = COMM_STATE_CONNECTED;
+                if (comm->handshake_timer) {
+                    xTimerStop(comm->handshake_timer, 0);
+                }
+                if (comm->command_callback && !comm->command_queue) {
+                    comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
+                    if (comm->command_queue && !comm->command_executor_task_handle) {
+                        xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
+                    }
+                }
+                if (comm->discovery_timer) {
+                    xTimerStop(comm->discovery_timer, 0);
+                    xTimerDelete(comm->discovery_timer, 0);
+                    comm->discovery_timer = NULL;
+                }
+                if (!comm->tx_queue) {
+                    comm->tx_queue = xQueueCreate(8, sizeof(comm_packet_t));
+                }
+                if (!comm->tx_task_handle && comm->tx_queue) {
+                    xTaskCreate(tx_task, "comm_tx_task", 2048, comm, 11, &comm->tx_task_handle);
+                }
+                if (!comm->rx_packet_queue) {
+                    comm->rx_packet_queue = xQueueCreate(12, sizeof(comm_packet_t));
+                }
+                if (!comm->protocol_task_handle && comm->rx_packet_queue) {
+                    xTaskCreate(protocol_task, "comm_protocol_t", 3072, comm, 13, &comm->protocol_task_handle);
+                }
+                unlock_state(comm);
+                printf("I: Handshake complete - master role\n");
+                ap_manager_add_log("I: Handshake complete - master role\n");
+            }
+            break;
+
+        case PACKET_TYPE_COMMAND:
+            if (comm->state == COMM_STATE_CONNECTED && comm->command_callback) {
+                if (!comm->command_queue) {
+                    comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
+                    if (comm->command_queue && !comm->command_executor_task_handle) {
+                        xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
+                    }
+                }
+                comm_command_t cmd_to_queue;
+                memset(&cmd_to_queue, 0, sizeof(comm_command_t));
+                strncpy(cmd_to_queue.command, (char*)packet->data, MAX_CMD_LEN);
+                cmd_to_queue.command[MAX_CMD_LEN] = '\0';
+                size_t cmd_len = strlen(cmd_to_queue.command);
+                size_t data_start = cmd_len + 1;
+                if (packet->length > data_start) {
+                    size_t data_len = packet->length - data_start;
+                    if (data_len > sizeof(cmd_to_queue.data) - 1) {
+                        data_len = sizeof(cmd_to_queue.data) - 1;
+                    }
+                    strncpy(cmd_to_queue.data, (char*)packet->data + data_start, data_len);
+                    cmd_to_queue.data[data_len] = '\0';
+                }
+
+                if (comm->command_queue && xQueueSend(comm->command_queue, &cmd_to_queue, pdMS_TO_TICKS(10)) != pdPASS) {
+                    printf("W: Command queue full, dropped command: %s\n", cmd_to_queue.command);
+                }
+            }
+            break;
+
+        case PACKET_TYPE_PING:
+            if (comm->state == COMM_STATE_CONNECTED) {
+                comm_packet_t pong = {0};
+                pong.start_byte = PACKET_START_BYTE;
+                pong.type = PACKET_TYPE_PONG;
+                pong.length = 0;
+                send_packet(&pong);
+            }
+            break;
+
+        case PACKET_TYPE_RESPONSE:
+            if (comm->state == COMM_STATE_CONNECTED) {
+                size_t len = packet->length;
+                if (len >= sizeof(((comm_packet_t*)0)->data)) {
+                    len = sizeof(((comm_packet_t*)0)->data) - 1;
+                }
+                char tmp[PACKET_MAX_PAYLOAD + 1];
+                memcpy(tmp, packet->data, len);
+                tmp[len] = '\0';
+                printf("ESP Comm Response: %s\n", tmp);
+                snprintf(log_buffer, sizeof(log_buffer), "ESP Comm Response: %s\n", tmp);
+                ap_manager_add_log(log_buffer);
+            }
+            break;
+
+        default:
+            printf("W: Unknown packet type: 0x%02x\n", packet->type);
+            break;
+    }
 }
 
 static void command_executor_task(void* arg) {
@@ -377,136 +488,10 @@ static void command_executor_task(void* arg) {
 static void protocol_task(void* arg) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
     comm_packet_t packet;
-    static char log_buffer[128];
     
     while(1) {
         if (xQueueReceive(comm->rx_packet_queue, &packet, pdMS_TO_TICKS(10)) == pdPASS) {
-            switch(packet.type) {
-                case PACKET_TYPE_DISCOVERY:
-                    if (comm->state == COMM_STATE_SCANNING) {
-                        memcpy(comm->peer.chip_id, packet.data, 6);
-                        strncpy(comm->peer.chip_name, (char*)packet.data + 6, 32);
-                        comm->peer.chip_name[31] = '\0';
-                        printf("I: Discovered peer: %s\n", comm->peer.chip_name);
-                        
-                        snprintf(log_buffer, sizeof(log_buffer), "I: Discovered peer: %s\n", comm->peer.chip_name);
-                        ap_manager_add_log(log_buffer);
-
-                        if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
-                            printf("I: Peer has smaller name, I will initiate connection.\n");
-                            ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
-                            esp_comm_manager_connect_to_peer(comm->peer.chip_name);
-                        }
-                    }
-                    break;
-                    
-                case PACKET_TYPE_HANDSHAKE_REQ:
-                    if (comm->state == COMM_STATE_SCANNING || comm->state == COMM_STATE_IDLE) {
-                        char requested_name[32];
-                        strncpy(requested_name, (char*)packet.data, 32);
-                        requested_name[31] = '\0';
-                        if (strcmp(requested_name, comm->chip_name) == 0) {
-                            comm->state = COMM_STATE_HANDSHAKE;
-                            comm->role = COMM_ROLE_SLAVE;
-                            if (comm->command_callback && !comm->command_queue) {
-                                comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
-                                if (comm->command_queue && !comm->command_executor_task_handle) {
-                                    xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
-                                }
-                            }
-                            send_handshake_ack();
-                            comm->state = COMM_STATE_CONNECTED;
-                            if (comm->discovery_timer) {
-                                xTimerStop(comm->discovery_timer, 0);
-                                xTimerDelete(comm->discovery_timer, 0);
-                                comm->discovery_timer = NULL;
-                            }
-                            printf("I: Handshake complete - slave role\n");
-                            ap_manager_add_log("I: Handshake complete - slave role\n");
-                        }
-                    }
-                    break;
-                    
-                case PACKET_TYPE_HANDSHAKE_ACK:
-                    if (comm->state == COMM_STATE_HANDSHAKE && comm->role == COMM_ROLE_MASTER) {
-                        comm->state = COMM_STATE_CONNECTED;
-                        printf("I: Handshake complete - master role\n");
-                        ap_manager_add_log("I: Handshake complete - master role\n");
-
-                        if (comm->command_callback && !comm->command_queue) {
-                            comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
-                            if (comm->command_queue && !comm->command_executor_task_handle) {
-                                xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
-                            }
-                        }
-                        if (comm->discovery_timer) {
-                            xTimerStop(comm->discovery_timer, 0);
-                            xTimerDelete(comm->discovery_timer, 0);
-                            comm->discovery_timer = NULL;
-                        }
-                    }
-                    break;
-                    
-                case PACKET_TYPE_COMMAND:
-                    if (comm->state == COMM_STATE_CONNECTED && comm->command_callback) {
-                        if (!comm->command_queue) {
-                            comm->command_queue = xQueueCreate(4, sizeof(comm_command_t));
-                            if (comm->command_queue && !comm->command_executor_task_handle) {
-                                xTaskCreate(command_executor_task, "comm_cmd_exec_task", 2048, comm, 5, &comm->command_executor_task_handle);
-                            }
-                        }
-                        comm_command_t cmd_to_queue;
-                        memset(&cmd_to_queue, 0, sizeof(comm_command_t));
-                        
-                        strncpy(cmd_to_queue.command, (char*)packet.data, 32);
-                        cmd_to_queue.command[32] = '\0';
-                        
-                        size_t cmd_len = strlen(cmd_to_queue.command);
-                        size_t data_start = cmd_len + 1;
-                        
-                        if (packet.length > data_start) {
-                            size_t data_len = packet.length - data_start;
-                            if (data_len > sizeof(cmd_to_queue.data) - 1) {
-                                data_len = sizeof(cmd_to_queue.data) - 1;
-                            }
-                            strncpy(cmd_to_queue.data, (char*)packet.data + data_start, data_len);
-                            cmd_to_queue.data[data_len] = '\0';
-                        }
-
-                        if (comm->command_queue && xQueueSend(comm->command_queue, &cmd_to_queue, pdMS_TO_TICKS(10)) != pdPASS) {
-                            printf("W: Command queue full, dropped command: %s\n", cmd_to_queue.command);
-                        }
-                    }
-                    break;
-                    
-                case PACKET_TYPE_PING:
-                    if (comm->state == COMM_STATE_CONNECTED) {
-                        comm_packet_t pong = {0};
-                        pong.start_byte = 0xAA;
-                        pong.type = PACKET_TYPE_PONG;
-                        pong.length = 0;
-                        
-                        send_packet(&pong);
-                    }
-                    break;
-                    
-                case PACKET_TYPE_RESPONSE:
-                    if (comm->state == COMM_STATE_CONNECTED) {
-                        size_t len = packet.length;
-                        if (len >= sizeof(packet.data)) {
-                            len = sizeof(packet.data) - 1;
-                        }
-                        ((char*)packet.data)[len] = '\0';
-                        printf("ESP Comm Response: %s\n", (char*)packet.data);
-                        snprintf(log_buffer, sizeof(log_buffer), "ESP Comm Response: %s\n", (char*)packet.data);
-                        ap_manager_add_log(log_buffer);
-                    }
-                    break;
-                    
-                default:
-                    printf("W: Unknown packet type: 0x%02x\n", packet.type);
-                    break;
-            }
+            handle_received_packet(comm, &packet);
         }
     }
 }
@@ -541,8 +526,10 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     s_comm_manager->state = COMM_STATE_IDLE;
     s_comm_manager->role = COMM_ROLE_MASTER;
     s_comm_manager->is_executing_remote_cmd = false;
+    s_comm_manager->uart_driver_installed = false;
     s_comm_manager->parse_state = PARSE_STATE_IDLE;
     s_comm_manager->data_bytes_received = 0;
+    s_comm_manager->state_mutex = xSemaphoreCreateMutex();
     
 
     s_comm_manager->command_callback = s_pending_callback;
@@ -576,7 +563,9 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     
     // Only install UART driver if not on TDECK to avoid conflicts
 #ifndef CONFIG_USE_TDECK
-    uart_driver_install(UART_NUM_1, COMM_BUFFER_SIZE * 2, 0, 0, NULL, 0);
+    if (uart_driver_install(UART_NUM_1, COMM_BUFFER_SIZE * 2, 0, 0, NULL, 0) == ESP_OK) {
+        s_comm_manager->uart_driver_installed = true;
+    }
     uart_param_config(UART_NUM_1, &uart_config);
     uart_set_pin(UART_NUM_1, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 #else
@@ -594,15 +583,13 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     s_comm_manager->discovery_timer = xTimerCreate("discovery_timer", 
                                                    pdMS_TO_TICKS(DISCOVERY_INTERVAL_MS),
                                                    pdTRUE, NULL, discovery_timer_callback);
+    s_comm_manager->handshake_timer = xTimerCreate("handshake_timer",
+                                                   pdMS_TO_TICKS(HANDSHAKE_TIMEOUT_MS),
+                                                   pdFALSE, s_comm_manager, handshake_timer_callback);
     
     s_comm_manager->initialized = true;
     
     s_comm_manager->state = COMM_STATE_SCANNING;
-    if (!s_comm_manager->discovery_timer) {
-        s_comm_manager->discovery_timer = xTimerCreate("discovery_timer",
-                                                       pdMS_TO_TICKS(DISCOVERY_INTERVAL_MS),
-                                                       pdTRUE, NULL, discovery_timer_callback);
-    }
     if (s_comm_manager->discovery_timer) {
         xTimerStart(s_comm_manager->discovery_timer, 0);
     }
@@ -654,6 +641,7 @@ bool esp_comm_manager_start_discovery(void) {
     }
 
     // release heavy resources during discovery
+    lock_state(s_comm_manager);
     if (s_comm_manager->protocol_task_handle) {
         vTaskDelete(s_comm_manager->protocol_task_handle);
         s_comm_manager->protocol_task_handle = NULL;
@@ -678,6 +666,7 @@ bool esp_comm_manager_start_discovery(void) {
         vQueueDelete(s_comm_manager->tx_queue);
         s_comm_manager->tx_queue = NULL;
     }
+    unlock_state(s_comm_manager);
 
     s_comm_manager->state = COMM_STATE_SCANNING;
     if (!s_comm_manager->discovery_timer) {
@@ -705,8 +694,12 @@ bool esp_comm_manager_connect_to_peer(const char* peer_name) {
     }
     
     xTimerStop(s_comm_manager->discovery_timer, 0);
+    lock_state(s_comm_manager);
     s_comm_manager->state = COMM_STATE_HANDSHAKE;
     s_comm_manager->role = COMM_ROLE_MASTER;
+    if (s_comm_manager->handshake_timer) {
+        xTimerStart(s_comm_manager->handshake_timer, 0);
+    }
     
     send_handshake_request(peer_name);
     
@@ -716,6 +709,7 @@ bool esp_comm_manager_connect_to_peer(const char* peer_name) {
     char log_msg[64];
     snprintf(log_msg, sizeof(log_msg), "I: Connecting to peer: %s\n", peer_name);
     ap_manager_add_log(log_msg);
+    unlock_state(s_comm_manager);
     return true;
 }
 
@@ -731,12 +725,12 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
     }
     
     comm_packet_t packet = {0};
-    packet.start_byte = 0xAA;
+    packet.start_byte = PACKET_START_BYTE;
     packet.type = PACKET_TYPE_COMMAND;
     
     size_t cmd_len = strlen(command);
-    if (cmd_len > 32) {
-        cmd_len = 32;
+    if (cmd_len > MAX_CMD_LEN) {
+        cmd_len = MAX_CMD_LEN;
     }
     
     strncpy((char*)packet.data, command, cmd_len);
@@ -777,7 +771,7 @@ bool esp_comm_manager_send_response(const uint8_t* data, size_t length) {
     }
     
     comm_packet_t packet = {0};
-    packet.start_byte = 0xAA;
+    packet.start_byte = PACKET_START_BYTE;
     packet.type = PACKET_TYPE_RESPONSE;
     
     size_t data_len = length;
@@ -824,7 +818,12 @@ void esp_comm_manager_disconnect(void) {
         if (s_comm_manager->discovery_timer) {
             xTimerStop(s_comm_manager->discovery_timer, 0);
         }
+        lock_state(s_comm_manager);
         s_comm_manager->state = COMM_STATE_IDLE;
+        if (s_comm_manager->handshake_timer) {
+            xTimerStop(s_comm_manager->handshake_timer, 0);
+        }
+        unlock_state(s_comm_manager);
         printf("I: Disconnected\n");
     }
 }
@@ -832,10 +831,16 @@ void esp_comm_manager_disconnect(void) {
 void esp_comm_manager_deinit(void) {
     if (!s_comm_manager) return;
 
-    uart_driver_delete(UART_NUM_1);
+    if (s_comm_manager->uart_driver_installed) {
+        uart_driver_delete(UART_NUM_1);
+        s_comm_manager->uart_driver_installed = false;
+    }
     
     if (s_comm_manager->discovery_timer) {
         xTimerDelete(s_comm_manager->discovery_timer, 0);
+    }
+    if (s_comm_manager->handshake_timer) {
+        xTimerDelete(s_comm_manager->handshake_timer, 0);
     }
     
     if (s_comm_manager->rx_task_handle) {
@@ -859,8 +864,26 @@ void esp_comm_manager_deinit(void) {
     if (s_comm_manager->command_queue) {
         vQueueDelete(s_comm_manager->command_queue);
     }
+    if (s_comm_manager->state_mutex) {
+        vSemaphoreDelete(s_comm_manager->state_mutex);
+    }
     
     free(s_comm_manager);
     s_comm_manager = NULL;
     printf("I: ESP Comm Manager de-initialized\n");
 } 
+
+static void handshake_timer_callback(TimerHandle_t xTimer) {
+    esp_comm_manager_t* comm = (esp_comm_manager_t*) pvTimerGetTimerID(xTimer);
+    if (!comm) return;
+    lock_state(comm);
+    if (comm->state == COMM_STATE_HANDSHAKE) {
+        printf("W: Handshake timeout\n");
+        ap_manager_add_log("W: Handshake timeout\n");
+        comm->state = COMM_STATE_SCANNING;
+        if (comm->discovery_timer) {
+            xTimerStart(comm->discovery_timer, 0);
+        }
+    }
+    unlock_state(comm);
+}

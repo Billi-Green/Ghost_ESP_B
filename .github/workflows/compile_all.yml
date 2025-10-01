@@ -11,6 +11,11 @@ on:
           - "prerelease"
           - "all"
         default: "prerelease"
+      releaseVersion:
+        description: "Release tag (e.g. v1.7.2). leave empty to auto-generate"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build:
@@ -47,7 +52,8 @@ jobs:
           - { name: "TDisplayS3-Touch",    idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.TDisplayS3-Touch",     zip_name: "LilyGo-TDisplayS3-Touch.zip" } 
           - { name: "JCMK_DevBoardPro", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.JCMK_DevBoardPro", zip_name: "JCMK_DevBoardPro.zip" }
           - { name: "RabbitLabs_Minion", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.minion", zip_name: "RabbitLabs_Minion.zip" }
-          - { name: "Lolin_S3_Pro", idf_target: "esp32", sdkconfig_file: "configs/sdkconfig.lolins3pro", zip_name: "Lolin_S3_Pro.zip" }
+          - { name: "Lolin_S3_Pro", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.lolins3pro", zip_name: "Lolin_S3_Pro.zip" }
+          - { name: "Cardputer ADV", idf_target: "esp32s3", sdkconfig_file: "configs/sdkconfig.cardputeradv", zip_name: "CardputerADV.zip" }
     steps:
       - uses: actions/checkout@v4
       
@@ -147,37 +153,23 @@ jobs:
 
 
       # -----------------------------------------
-      # 📦  Upload every zip to the LATEST release
+      # 📦  Create a new release (or use provided tag) and upload all zips
       # -----------------------------------------
-      - name: Check Existing Release Assets
-        id: check_release
+      - name: Create Release and Upload Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          latest_release=$(gh api repos/${{ github.repository }}/releases --jq '.[0]')
-          release_id=$(echo "$latest_release" | jq -r '.id')
-          assets=$(echo "$latest_release" | jq -r '.assets[].name')
-          all_exist=true
-          for file in flat_artifacts/*.zip; do
-            filename=$(basename "$file")
-            if ! echo "$assets" | grep -q "$filename"; then
-              all_exist=false
-              break
-            fi
-          done
-          echo "release_id=$release_id" >> $GITHUB_OUTPUT
-          echo "all_exist=$all_exist"   >> $GITHUB_OUTPUT
-
-      - name: Upload to Release
-        if: steps.check_release.outputs.all_exist != 'true'
-        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for file in flat_artifacts/*.zip; do
-            filename=$(basename "$file")
-            echo "Uploading $filename…"
-            curl -s -H "Authorization: token $GITHUB_TOKEN" \
-                 -H "Content-Type: application/zip"          \
-                 --data-binary @"$file"                      \
-                 "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.check_release.outputs.release_id }}/assets?name=$filename"
-          done
+          RELEASE_TAG="${{ github.event.inputs.releaseVersion }}"
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG="release-$(date +'%Y%m%d-%H%M%S')-${GITHUB_SHA::7}"
+          fi
+          echo "Using release tag: $RELEASE_TAG"
+          # try to create a new release with the provided tag and upload assets
+          if gh release create "$RELEASE_TAG" --repo "${{ github.repository }}" --title "Release $RELEASE_TAG" --notes "Automated release $RELEASE_TAG" flat_artifacts/*.zip; then
+            echo "Release $RELEASE_TAG created and assets uploaded."
+          else
+            echo "gh release create failed. a release with tag $RELEASE_TAG may already exist; aborting to avoid modifying existing release."
+            exit 1
+          fi
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT

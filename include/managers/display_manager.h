@@ -37,8 +37,8 @@ QueueHandle_tt input_queue;
 
 #define MUTEX_TIMEOUT_MS 100
 
-#define HARDWARE_INPUT_TASK_PRIORITY (4)
-#define RENDERING_TASK_PRIORITY (4)
+#define HARDWARE_INPUT_TASK_PRIORITY (14)
+#define RENDERING_TASK_PRIORITY (15)
 
 typedef struct {
   lv_obj_t *root;
@@ -100,6 +100,14 @@ void hardware_input_task(void *pvParameters);
 
 void display_manager_fill_screen(lv_color_t color);
 
+/**
+ * @brief Notify the display manager that a user input occurred (external driver/task).
+ * If the display was dimmed/off this will restore backlight and return true to indicate
+ * the input was consumed for wake purposes and should not be forwarded as a UI event.
+ * Returns true if the input woke the display (and should be swallowed), false otherwise.
+ */
+bool display_manager_notify_user_input(void);
+
 lv_color_t hex_to_lv_color(const char *hex_str);
 
 // Status Bar Functions
@@ -107,6 +115,10 @@ lv_color_t hex_to_lv_color(const char *hex_str);
 void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted, int batteryPercentage, bool power_save_enabled, bool is_ap_active);
 
 void display_manager_add_status_bar(const char *CurrentMenuName);
+
+// Reduce I2C activity (e.g., pause battery polling/logging) while other subsystems
+// such as PN532 scanning/bruteforcing are active to avoid bus contention.
+void display_manager_set_low_i2c_mode(bool on);
 
 LV_IMG_DECLARE(Ghost_ESP);
 LV_IMG_DECLARE(Map);
@@ -120,6 +132,7 @@ LV_IMG_DECLARE(clock_icon);
 LV_IMG_DECLARE(settings_icon);
 LV_IMG_DECLARE(infrared);
 LV_IMG_DECLARE(terminal_icon);
+LV_IMG_DECLARE(nfc_icon);
 
 joystick_t joysticks[5];
 #ifdef CONFIG_USE_ENCODER

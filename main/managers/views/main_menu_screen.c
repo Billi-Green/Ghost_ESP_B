@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include "managers/views/clock_screen.h"
 #include "managers/views/settings_screen.h"
+#ifdef CONFIG_HAS_NFC
+#include "managers/views/nfc_view.h"
+#endif
 #if CONFIG_HAS_INFRARED
 #include "managers/views/infrared_view.h"
 #endif
@@ -14,6 +17,14 @@
 static const char *TAG = "MainMenu";
 
 #define ANIM_DURATION 60 // Animation duration in milliseconds HIGH: 30, LOW: 120
+
+// Menu layout types
+typedef enum {
+    MENU_LAYOUT_CAROUSEL = 0, // Current single-item carousel
+    MENU_LAYOUT_GRID = 1,     // Grid layout (unused by setting)
+    MENU_LAYOUT_GRID_CARDS = 2, // Grid-style card layout
+    MENU_LAYOUT_LIST = 3      // Compact list layout
+} MenuLayoutType;
 
 lv_obj_t *menu_container;
 static int selected_item_index = 0;
@@ -23,6 +34,21 @@ static bool touch_started = false;
 static bool is_animating = false;
 static const int SWIPE_THRESHOLD = 50;
 static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
+static MenuLayoutType current_layout = MENU_LAYOUT_CAROUSEL;
+
+// Grid layout variables
+static lv_obj_t **grid_buttons = NULL;
+static int grid_rows = 0;
+static int grid_cols = 0;
+
+// Grid card layout variables
+static lv_obj_t *grid_cards_container = NULL;
+static lv_obj_t **grid_cards = NULL;
+static int grid_card_width = 0;
+static int grid_card_height = 0;
+
+// List layout variables
+static lv_obj_t **list_buttons = NULL;
 
 const View *pending_view_to_switch = NULL;
 static EOptionsMenuType pending_menu_type;
@@ -46,6 +72,9 @@ menu_item_t menu_items[] = {
 #endif
 #if CONFIG_HAS_INFRARED
     {"Infrared", &infrared, 0}, // main infrared icon
+#endif
+#ifdef CONFIG_HAS_NFC
+    {"NFC", &nfc_icon, 2},
 #endif
     {"Apps", &GESPAppGallery, 3}, // applies to all boards
 #ifdef CONFIG_HAS_RTC_CLOCK
@@ -172,6 +201,7 @@ static void animate_button_click(lv_obj_t *btn) {
     
 }
 
+// rebuild the single-item carousel card when selection changes
 static void update_menu_item(bool slide_left) {
     static lv_obj_t *prev_item_obj = NULL;
     is_animating = true; // Set flag to block input during animation
@@ -277,26 +307,73 @@ static void update_menu_item(bool slide_left) {
     // Ensure the new item is fully opaque at the end
     lv_obj_set_style_opa(current_item_obj, LV_OPA_COVER, 0); // Always fully opaque
 }
+
+// move selection vertically for list and grid layouts; direction: -1 up, +1 down
+static void navigate_vertical(int direction) {
+    if (direction == 0) return;
+    if (current_layout == MENU_LAYOUT_LIST) {
+        select_menu_item(selected_item_index + (direction > 0 ? 1 : -1), false);
+        return;
+    }
+    if (current_layout == MENU_LAYOUT_GRID || current_layout == MENU_LAYOUT_GRID_CARDS) {
+        if (grid_cols <= 0 || grid_rows <= 0) return;
+        int items_per_page = grid_cols * grid_rows;
+        int page_index = selected_item_index / items_per_page;
+        int within = selected_item_index % items_per_page;
+        int row = within / grid_cols;
+        int col = within % grid_cols;
+
+        // try moving one row in the given direction with wrap
+        for (int tries = 0; tries < grid_rows; ++tries) {
+            row = (row + (direction > 0 ? 1 : -1) + grid_rows) % grid_rows;
+            int candidate_within = row * grid_cols + col;
+            int candidate = page_index * items_per_page + candidate_within;
+            if (candidate < num_items) {
+                select_menu_item(candidate, false);
+                return;
+            }
+        }
+        // if nothing valid (shouldn't happen), keep current
+    }
+}
 /**
  *  @brief handles keyboard button presses
  */
 
 void handle_keyboard_interactions(int keyValue){
-    // Support both ASCII and LVGL key codes for h/j/k/l
-    if (keyValue == 44 || keyValue == ',' || keyValue == 'h') { // Left or 'h'
+    // arrows and vim keys: h/j/k/l, plus , /
+    if (keyValue == 44 || keyValue == ',' || keyValue == 'h') { // left
         ESP_LOGI(TAG, "Left button or 'h' pressed\n");
         select_menu_item(selected_item_index - 1, true);
-    } else if (keyValue == 47 || keyValue == '/' || keyValue == 'l') { // Right or 'l'
+    } else if (keyValue == 47 || keyValue == '/' || keyValue == 'l') { // right
         ESP_LOGI(TAG, "Right button or 'l' pressed\n");
         select_menu_item(selected_item_index + 1, false);
-    } else if (keyValue == 13 || keyValue == 'j') { // Enter or 'j' (down/select)
-        ESP_LOGI(TAG, "Enter button or 'j' pressed\n");
+    } else if (keyValue == LV_KEY_UP || keyValue == 'k' || keyValue == ';') { // up
+        ESP_LOGI(TAG, "Up arrow or 'k' pressed\n");
+        navigate_vertical(-1);
+    } else if (keyValue == LV_KEY_DOWN || keyValue == 'j' || keyValue == '.') { // down
+        ESP_LOGI(TAG, "Down arrow or 'j' pressed\n");
+        navigate_vertical(1);
+    } else if (keyValue == LV_KEY_ENTER || keyValue == 13) { // enter/select
+        ESP_LOGI(TAG, "Enter pressed\n");
         handle_menu_item_selection(selected_item_index);
-    } else if (keyValue == 29 || keyValue == '`' || keyValue == 'k') { // Esc or 'k' (up/escape)
-        ESP_LOGI(TAG, "Esc button or 'k' pressed\n");
-        // Optionally, implement up/escape action here if needed
+    } else if (keyValue == LV_KEY_ESC || keyValue == 29 || keyValue == '`') { // esc
+        ESP_LOGI(TAG, "Esc pressed\n");
+        // no-op on main menu
     }
 }
+/**
+ * @brief Handles button click events for menu items.
+ */
+static void menu_button_click_handler(lv_event_t *event) {
+    if (current_layout == MENU_LAYOUT_GRID || current_layout == MENU_LAYOUT_GRID_CARDS || current_layout == MENU_LAYOUT_LIST) {
+        int item_index = (int)(intptr_t)lv_event_get_user_data(event);
+        if (item_index >= 0 && item_index < num_items) {
+            handle_menu_item_selection(item_index);
+        }
+    }
+}
+
 /**
  * @brief Combined handler for menu item events.
  */
@@ -312,13 +389,13 @@ static void menu_item_event_handler(InputEvent *event) {
             int dx = data->point.x - touch_start_x;
             int dy = data->point.y - touch_start_y;
             touch_started = false;
-            
+
             // Check if touch was on navigation buttons
             if (left_nav_btn && right_nav_btn) {
                 lv_area_t left_area, right_area;
                 lv_obj_get_coords(left_nav_btn, &left_area);
                 lv_obj_get_coords(right_nav_btn, &right_area);
-                
+
                 // Check if touch point is within left button bounds
                 if (data->point.x >= left_area.x1 && data->point.x <= left_area.x2 &&
                     data->point.y >= left_area.y1 && data->point.y <= left_area.y2) {
@@ -327,7 +404,7 @@ static void menu_item_event_handler(InputEvent *event) {
                     select_menu_item(selected_item_index - 1, true);
                     return;
                 }
-                
+
                 // Check if touch point is within right button bounds
                 if (data->point.x >= right_area.x1 && data->point.x <= right_area.x2 &&
                     data->point.y >= right_area.y1 && data->point.y <= right_area.y2) {
@@ -337,15 +414,71 @@ static void menu_item_event_handler(InputEvent *event) {
                     return;
                 }
             }
-            
-            if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) { // Swipe detected
-                if (dx < 0) {
-                    select_menu_item(selected_item_index + 1, true);
-                } else {
-                    select_menu_item(selected_item_index - 1, false);
+
+            // Handle different layout types
+            if (current_layout == MENU_LAYOUT_CAROUSEL) {
+                if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) { // Swipe detected
+                    if (dx < 0) {
+                        select_menu_item(selected_item_index + 1, true);
+                    } else {
+                        select_menu_item(selected_item_index - 1, false);
+                    }
+                } else if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) { // Tap detected
+                    handle_menu_item_selection(selected_item_index);
                 }
-            } else if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) { // Tap detected
-                handle_menu_item_selection(selected_item_index);
+            } else if (current_layout == MENU_LAYOUT_GRID) {
+                // For grid layout, check if tap was on a grid button
+                if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
+                    // Find which grid button was tapped
+                    if (grid_buttons) {
+                        for (int i = 0; i < num_items; i++) {
+                            if (grid_buttons[i]) {
+                                lv_area_t btn_area;
+                                lv_obj_get_coords(grid_buttons[i], &btn_area);
+                                if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
+                                    data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
+                                    handle_menu_item_selection(i);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (current_layout == MENU_LAYOUT_GRID_CARDS) {
+                // For Grid card layout, check if tap was on a card
+                if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
+                    // Find which card was tapped
+                    if (grid_cards) {
+                        for (int i = 0; i < num_items; i++) {
+                            if (grid_cards[i]) {
+                                lv_area_t card_area;
+                                lv_obj_get_coords(grid_cards[i], &card_area);
+                                if (data->point.x >= card_area.x1 && data->point.x <= card_area.x2 &&
+                                    data->point.y >= card_area.y1 && data->point.y <= card_area.y2) {
+                                    handle_menu_item_selection(i);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (current_layout == MENU_LAYOUT_LIST) {
+                if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
+                    if (list_buttons) {
+                        for (int i = 0; i < num_items; i++) {
+                            if (list_buttons[i]) {
+                                lv_area_t btn_area;
+                                lv_obj_get_coords(list_buttons[i], &btn_area);
+                                if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
+                                    data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
+                                    select_menu_item(i, false);
+                                    handle_menu_item_selection(i);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
@@ -363,7 +496,12 @@ static void menu_item_event_handler(InputEvent *event) {
         }
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         ESP_LOGI(TAG, "keyboard event");
-        handle_keyboard_interactions(event->data.key_value);
+        int kv = event->data.key_value;
+        if (kv == 13) { // enter key
+            handle_menu_item_selection(selected_item_index);
+        } else {
+            handle_keyboard_interactions(kv);
+        }
 #ifdef CONFIG_USE_ENCODER
     } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
         ESP_LOGI(TAG, "IO6 exit button pressed, staying on main menu");
@@ -380,6 +518,10 @@ void handle_hardware_button_press(int ButtonPressed) {
         select_menu_item(selected_item_index - 1, true);
     } else if (ButtonPressed == 3) {
         select_menu_item(selected_item_index + 1, false);
+    } else if (ButtonPressed == 2) { // up
+        navigate_vertical(-1);
+    } else if (ButtonPressed == 4) { // down
+        navigate_vertical(1);
     } else if (ButtonPressed == 1) {
         handle_menu_item_selection(selected_item_index);
     }
@@ -394,56 +536,383 @@ static void select_menu_item(int index, bool slide_left) {
     if (is_animating) return; // Block input during animation
     if (index < 0) index = num_items - 1;
     if (index >= num_items) index = 0;
-    selected_item_index = index;
-    update_menu_item(slide_left);
+
+    // Update selection for different layouts
+    if (current_layout == MENU_LAYOUT_CAROUSEL) {
+        selected_item_index = index;
+        update_menu_item(slide_left);
+    } else if (current_layout == MENU_LAYOUT_GRID) {
+        // Update selection for grid layout
+        if (grid_buttons) {
+            // Remove highlight from previous selection
+            if (selected_item_index >= 0 && selected_item_index < num_items && grid_buttons[selected_item_index]) {
+                lv_obj_set_style_border_width(grid_buttons[selected_item_index], 2, LV_PART_MAIN);
+                lv_obj_set_style_border_color(grid_buttons[selected_item_index], lv_color_hex(0x444444), LV_PART_MAIN);
+            }
+
+            // Highlight new selection
+            selected_item_index = index;
+            if (grid_buttons[selected_item_index]) {
+                lv_obj_set_style_border_width(grid_buttons[selected_item_index], 4, LV_PART_MAIN);
+                lv_obj_set_style_border_color(grid_buttons[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+            }
+        }
+    } else if (current_layout == MENU_LAYOUT_GRID_CARDS) {
+        // Update selection for Grid card layout
+        if (grid_cards) {
+            // Remove highlight from previous selection
+            if (selected_item_index >= 0 && selected_item_index < num_items && grid_cards[selected_item_index]) {
+                // Reset to original styling
+                lv_obj_set_style_border_color(grid_cards[selected_item_index], menu_items[selected_item_index].border_color, LV_PART_MAIN);
+                lv_obj_set_style_border_width(grid_cards[selected_item_index], 2, LV_PART_MAIN); // Reset to original width
+                lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 8, LV_PART_MAIN);
+                lv_obj_set_style_shadow_color(grid_cards[selected_item_index], lv_color_hex(0x000000), LV_PART_MAIN);
+                lv_obj_set_style_shadow_opa(grid_cards[selected_item_index], LV_OPA_50, LV_PART_MAIN);
+            }
+
+            // Highlight new selection
+            selected_item_index = index;
+            if (grid_cards[selected_item_index]) {
+                // For non-touch devices, make highlight more prominent
+#ifdef CONFIG_USE_TOUCHSCREEN
+                // Touch devices: keep original border color
+                lv_obj_set_style_border_color(grid_cards[selected_item_index], menu_items[selected_item_index].border_color, LV_PART_MAIN);
+                lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 8, LV_PART_MAIN);
+#else
+                // Non-touch devices: use prominent white border and larger shadow
+                lv_obj_set_style_border_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+                lv_obj_set_style_border_width(grid_cards[selected_item_index], 4, LV_PART_MAIN);
+                lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 16, LV_PART_MAIN);
+                lv_obj_set_style_shadow_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+                lv_obj_set_style_shadow_opa(grid_cards[selected_item_index], LV_OPA_30, LV_PART_MAIN);
+#endif
+                // Ensure selected card is visible (handle pagination) without animation
+                lv_obj_scroll_to_view(grid_cards[selected_item_index], LV_ANIM_OFF);
+            }
+        }
+    } else if (current_layout == MENU_LAYOUT_LIST) {
+        if (list_buttons) {
+            if (selected_item_index >= 0 && selected_item_index < num_items && list_buttons[selected_item_index]) {
+                lv_obj_t *old_btn = list_buttons[selected_item_index];
+                lv_obj_set_style_border_color(old_btn, menu_items[selected_item_index].border_color, LV_PART_MAIN);
+                lv_obj_set_style_border_width(old_btn, 2, LV_PART_MAIN);
+            }
+            selected_item_index = index;
+            if (list_buttons[selected_item_index]) {
+                lv_obj_t *btn = list_buttons[selected_item_index];
+                lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+                lv_obj_set_style_border_width(btn, 4, LV_PART_MAIN);
+                lv_obj_scroll_to_view(btn, LV_ANIM_OFF);
+            }
+        }
+    }
 }
 
 /**
  * @brief Handles the selection of menu items.
  */
 static void handle_menu_item_selection(int item_index) {
-    if (is_animating) return; // Block input during animation
-    if (current_item_obj) {
-        menu_item_selected = true;
-        // Find the action for this menu item
-        typedef struct {
-            const char *name;
-            EOptionsMenuType type;
-            View *view;
-        } menu_action_t;
+    if (is_animating) return;
 
-        static const menu_action_t menu_actions[] = {
-    #ifndef CONFIG_IDF_TARGET_ESP32S2
-            {"BLE", OT_Bluetooth, &options_menu_view},
-    #endif
-            {"WiFi", OT_Wifi, &options_menu_view},
-    #ifdef CONFIG_HAS_GPS
-            {"GPS", OT_GPS, &options_menu_view},
-    #endif
-    #if CONFIG_HAS_INFRARED
-            {"Infrared", 0, &infrared_view},
-    #endif
-            {"Apps", 0, &apps_menu_view},
-    #ifdef CONFIG_HAS_RTC_CLOCK
-            {"Clock", 0, &clock_view},
-    #endif
-            {"Settings", OT_Settings, &options_menu_view}
-        };
+    typedef struct {
+        const char *name;
+        EOptionsMenuType type;
+        View *view;
+    } menu_action_t;
 
-        const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
-        const char *name = menu_items[item_index].name;
-        for (int i = 0; i < num_actions; ++i) {
-            if (strcmp(name, menu_actions[i].name) == 0) {
-                ESP_LOGI(TAG, "%s selected\n", menu_actions[i].name);
-                pending_view_to_switch = menu_actions[i].view;
-                pending_menu_type = menu_actions[i].type;
-                animate_button_click(current_item_obj);
-                return;
-            }
+    static const menu_action_t menu_actions[] = {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        {"BLE", OT_Bluetooth, &options_menu_view},
+#endif
+        {"WiFi", OT_Wifi, &options_menu_view},
+#ifdef CONFIG_HAS_GPS
+        {"GPS", OT_GPS, &options_menu_view},
+#endif
+#if CONFIG_HAS_INFRARED
+        {"Infrared", 0, &infrared_view},
+#endif
+#ifdef CONFIG_HAS_NFC
+        {"NFC", 0, &nfc_view},
+#endif
+        {"Apps", 0, &apps_menu_view},
+#ifdef CONFIG_HAS_RTC_CLOCK
+        {"Clock", 0, &clock_view},
+#endif
+        {"Settings", OT_Settings, &options_menu_view}
+    };
+
+    const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
+    const char *name = menu_items[item_index].name;
+    const View *target_view = NULL;
+    EOptionsMenuType target_type = 0;
+    for (int i = 0; i < num_actions; ++i) {
+        if (strcmp(name, menu_actions[i].name) == 0) {
+            ESP_LOGI(TAG, "%s selected\n", menu_actions[i].name);
+            target_view = menu_actions[i].view;
+            target_type = menu_actions[i].type;
+            break;
         }
+    }
+    if (!target_view) {
         ESP_LOGW(TAG, "Unknown menu item selected: %s\n", name);
+        return;
+    }
+
+    pending_view_to_switch = target_view;
+    pending_menu_type = target_type;
+    menu_item_selected = true;
+
+    lv_obj_t *anim_target = NULL;
+    if (current_layout == MENU_LAYOUT_CAROUSEL && current_item_obj) {
+        anim_target = current_item_obj;
+    } else if (current_layout == MENU_LAYOUT_GRID_CARDS && grid_cards && item_index >= 0 && item_index < num_items) {
+        anim_target = grid_cards[item_index];
+    } else if (current_layout == MENU_LAYOUT_GRID && grid_buttons && item_index >= 0 && item_index < num_items) {
+        anim_target = grid_buttons[item_index];
+    } else if (current_layout == MENU_LAYOUT_LIST && list_buttons && item_index >= 0 && item_index < num_items) {
+        anim_target = list_buttons[item_index];
+    }
+
+    if (anim_target) {
+        animate_button_click(anim_target);
+    } else {
+        if (pending_view_to_switch == &options_menu_view) {
+            SelectedMenuType = pending_menu_type;
+        }
+        display_manager_switch_view((View *)pending_view_to_switch);
+        pending_view_to_switch = NULL;
     }
 }
+
+/**
+ * @brief Creates the menu in Grid-style card layout.
+ */
+static void create_grid_menu(void) {
+    int screen_width = LV_HOR_RES;
+    int screen_height = LV_VER_RES;
+
+    // Target ~6 cards visible: 3 columns x 2 rows, horizontal tiles
+    int cols = 3;
+    int rows = 2;
+    // expose grid dimensions for keyboard/joystick vertical navigation
+    grid_cols = cols;
+    grid_rows = rows;
+    int margin = 6; // inner spacing between cards
+    int status_bar_height = 20; // reserve space for status bar
+    int avail_height = screen_height - status_bar_height;
+    if (avail_height < 60) avail_height = screen_height; // safety fallback
+    // Fill viewport with 3x2 cards with inner margins between them
+    grid_card_width = (screen_width - (cols - 1) * margin) / cols;
+    grid_card_height = (avail_height - (rows - 1) * margin) / rows;
+    // Reduce margin on very small displays to ensure cards still fit
+    if (screen_width <= 240 || avail_height <= 120) {
+        margin = 0;
+        grid_card_width = (screen_width - (cols - 1) * margin) / cols;
+        grid_card_height = (avail_height - (rows - 1) * margin) / rows;
+    }
+
+    // Create container for cards (grid-like)
+    grid_cards_container = lv_obj_create(menu_container);
+    int items_per_page = cols * rows; // 6 per page
+    int pages = (num_items + items_per_page - 1) / items_per_page;
+    lv_obj_set_size(grid_cards_container, screen_width, avail_height);
+    lv_obj_set_style_bg_opa(grid_cards_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(grid_cards_container, 0, 0);
+    lv_obj_set_style_pad_all(grid_cards_container, 0, 0);
+    // Top align within menu container so it sits below the status bar
+    lv_obj_align(grid_cards_container, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_scrollbar_mode(grid_cards_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(grid_cards_container, LV_DIR_HOR);
+    // Disable scroll momentum/elastic to keep paging snappy
+    lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
+
+    // Allocate cards array
+    grid_cards = malloc(num_items * sizeof(lv_obj_t*));
+    if (!grid_cards) {
+        ESP_LOGE(TAG, "Failed to allocate Grid cards array");
+        return;
+    }
+
+    // card spacing
+    int card_margin = margin;
+    // Compute remainders to distribute so we fill the area exactly
+    int total_inner_w = cols * grid_card_width + (cols - 1) * card_margin;
+    int total_inner_h = rows * grid_card_height + (rows - 1) * card_margin;
+    int w_remainder = screen_width - total_inner_w;   // add to last col width
+    int h_remainder = (avail_height) - total_inner_h; // add to last row height
+
+    for (int i = 0; i < num_items; i++) {
+        // Create card
+        grid_cards[i] = lv_btn_create(grid_cards_container);
+
+        // Position card in 3x2 per page; horizontal pages
+        int page = i / items_per_page;
+        int idx = i % items_per_page;
+        int col = idx % cols;
+        int row = idx / cols;
+        int x = page * screen_width + col * (grid_card_width + card_margin);
+        int y = row * (grid_card_height + card_margin); // start at top, no outer gap
+        // Per-cell width/height (add remainder to the last column/row)
+        int cw = grid_card_width + ((col == cols - 1) ? w_remainder : 0);
+        int ch = grid_card_height + ((row == rows - 1) ? h_remainder : 0);
+        lv_obj_set_pos(grid_cards[i], x, y);
+        lv_obj_set_size(grid_cards[i], cw, ch);
+
+        // Style card (Grid-style with rounded corners and shadows) - use theme colors
+        lv_obj_set_style_bg_color(grid_cards[i], lv_color_hex(0x1E1E1E), LV_PART_MAIN);
+        int shadow_w = (ch <= 50 ? 4 : 8);
+        lv_obj_set_style_shadow_width(grid_cards[i], shadow_w, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(grid_cards[i], lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_shadow_opa(grid_cards[i], LV_OPA_50, LV_PART_MAIN);
+        lv_obj_set_style_border_width(grid_cards[i], 2, LV_PART_MAIN);
+        lv_obj_set_style_border_color(grid_cards[i], menu_items[i].border_color, LV_PART_MAIN);
+        lv_obj_set_style_radius(grid_cards[i], 15, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(grid_cards[i], 0, LV_PART_MAIN);
+
+        // Add icon (dynamic sizing to fit with label below)
+        lv_obj_t *icon = lv_img_create(grid_cards[i]);
+        lv_img_set_src(icon, menu_items[i].icon);
+        // Dynamic label reserve to ensure text fits without pushing icon off-screen
+        int reserved_for_label = (ch <= 50 ? 14 : 20);
+        int avail_w = (int)(cw * 0.78f);
+        int avail_h = (int)((ch - reserved_for_label) * 0.78f);
+        if (avail_h < 10) avail_h = ch - reserved_for_label;
+        lv_img_set_antialias(icon, false);
+
+        // Color icons according to theme like other layouts
+        if (strcmp(menu_items[i].name, "Clock")) {
+            lv_obj_set_style_img_recolor(icon, menu_items[i].border_color, 0);
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        }
+        lv_obj_set_style_clip_corner(icon, false, 0);
+
+        // Scale icon using zoom to fit into available area
+        lv_coord_t img_w = menu_items[i].icon->header.w;
+        lv_coord_t img_h = menu_items[i].icon->header.h;
+        int zoom_w = (img_w > 0) ? (avail_w * 256) / img_w : 256;
+        int zoom_h = (img_h > 0) ? (avail_h * 256) / img_h : 256;
+        int zoom = LV_MIN(zoom_w, zoom_h);
+        if (zoom > 256) zoom = 256;      // cap at 1x
+        if (zoom < 64)  zoom = 64;       // don't get too small
+        lv_img_set_zoom(icon, zoom);
+
+        // Place icon above center within the icon area to make room for text below
+        int icon_draw_h = (img_h * zoom) / 256;
+        int icon_area_h = ch - reserved_for_label;
+        int top_offset = (icon_area_h - icon_draw_h) / 2 - (ch <= 50 ? 15 : 18);
+        if (top_offset < 0) top_offset = 0;
+        lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, top_offset);
+
+        // Add label
+        lv_obj_t *label = lv_label_create(grid_cards[i]);
+        lv_label_set_text(label, menu_items[i].name);
+        // smaller font on small tiles
+        const lv_font_t *lbl_font = (ch <= 50 ? &lv_font_montserrat_10 : &lv_font_montserrat_12);
+        lv_obj_set_style_text_font(label, lbl_font, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+        // Center label within the card and ensure proper centering of text
+        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(label, cw - 8);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -2);
+
+        // Add click event
+        lv_obj_add_event_cb(grid_cards[i], menu_button_click_handler, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    }
+
+    // Highlight selected card
+    if (grid_cards[selected_item_index]) {
+        // For non-touch devices, make highlight more prominent
+#ifdef CONFIG_USE_TOUCHSCREEN
+        // Touch devices: keep original border color
+        lv_obj_set_style_border_color(grid_cards[selected_item_index], menu_items[selected_item_index].border_color, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 8, LV_PART_MAIN);
+#else
+        // Non-touch devices: use prominent white border and larger shadow
+        lv_obj_set_style_border_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_set_style_border_width(grid_cards[selected_item_index], 4, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 16, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_set_style_shadow_opa(grid_cards[selected_item_index], LV_OPA_30, LV_PART_MAIN);
+#endif
+        lv_obj_scroll_to_view(grid_cards[selected_item_index], LV_ANIM_OFF);
+    }
+
+    // horizontal scrolling pages
+}
+
+static void create_list_menu(void) {
+    int button_height = (LV_VER_RES <= 160 || LV_HOR_RES <= 160) ? 36 : 48;
+    int icon_target = button_height <= 38 ? 20 : 26;
+
+    lv_obj_set_flex_flow(menu_container, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(menu_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(menu_container, LV_HOR_RES > 200 ? 16 : 10, 0);
+    lv_obj_set_style_pad_row(menu_container, 10, 0);
+    lv_obj_set_scroll_dir(menu_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(menu_container, LV_SCROLLBAR_MODE_AUTO);
+
+    if (list_buttons) {
+        free(list_buttons);
+        list_buttons = NULL;
+    }
+
+    list_buttons = calloc(num_items, sizeof(lv_obj_t *));
+    if (!list_buttons) {
+        ESP_LOGE(TAG, "failed to alloc list buttons");
+        return;
+    }
+
+    for (int i = 0; i < num_items; i++) {
+        lv_obj_t *btn = lv_btn_create(menu_container);
+        list_buttons[i] = btn;
+        lv_obj_set_width(btn, LV_PCT(100));
+        lv_obj_set_height(btn, button_height);
+        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
+        lv_obj_set_style_border_width(btn, 2, LV_PART_MAIN);
+        lv_obj_set_style_border_color(btn, menu_items[i].border_color, LV_PART_MAIN);
+        lv_obj_set_style_radius(btn, 8, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(btn, 10, LV_PART_MAIN);
+        lv_obj_set_style_pad_column(btn, 12, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(btn, 6, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_shadow_opa(btn, LV_OPA_40, LV_PART_MAIN);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+
+        lv_obj_t *icon = lv_img_create(btn);
+        lv_img_set_src(icon, menu_items[i].icon);
+        lv_img_set_antialias(icon, false);
+        if (strcmp(menu_items[i].name, "Clock") != 0) {
+            lv_obj_set_style_img_recolor(icon, menu_items[i].border_color, 0);
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        }
+        lv_coord_t img_w = menu_items[i].icon->header.w;
+        lv_coord_t img_h = menu_items[i].icon->header.h;
+        int zoom_w = img_w > 0 ? (icon_target * 256) / img_w : 256;
+        int zoom_h = img_h > 0 ? (icon_target * 256) / img_h : 256;
+        int zoom = LV_MIN(zoom_w, zoom_h);
+        if (zoom > 256) zoom = 256;
+        if (zoom < 64) zoom = 64;
+        lv_img_set_zoom(icon, zoom);
+
+        lv_obj_t *label = lv_label_create(btn);
+        lv_label_set_text(label, menu_items[i].name);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+        const lv_font_t *lbl_font = (button_height <= 38) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+        lv_obj_set_style_text_font(label, lbl_font, 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+        lv_obj_set_flex_grow(label, 1);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+
+        lv_obj_add_event_cb(btn, menu_button_click_handler, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    }
+
+    select_menu_item(selected_item_index, false);
+}
+
 
 /**
  * @brief Creates the main menu screen view.
@@ -452,21 +921,46 @@ void main_menu_create(void) {
     display_manager_fill_screen(lv_color_hex(0x121212));
     init_menu_colors(); // Initialize colors at runtime
 
+    // Set current layout from settings (0 = Normal/Carousel, 1 = Grid)
+    uint8_t layout_setting = settings_get_menu_layout(&G_Settings);
+    switch (layout_setting) {
+        case 1:
+            current_layout = MENU_LAYOUT_GRID_CARDS;
+            break;
+        case 2:
+            current_layout = MENU_LAYOUT_LIST;
+            break;
+        default:
+            current_layout = MENU_LAYOUT_CAROUSEL;
+            break;
+    }
+
     menu_container = lv_obj_create(lv_scr_act());
     main_menu_view.root = menu_container;
     lv_obj_set_size(menu_container, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_style_bg_opa(menu_container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(menu_container, 0, 0);
+    lv_obj_set_style_pad_all(menu_container, 0, 0);
     lv_obj_set_scrollbar_mode(menu_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_align(menu_container, LV_ALIGN_CENTER, 0, 0);
 
-    update_menu_item(false);
+    // Create menu based on layout
+    if (current_layout == MENU_LAYOUT_GRID) {
+        create_grid_menu();
+    } else if (current_layout == MENU_LAYOUT_GRID_CARDS) {
+        create_grid_menu();
+    } else if (current_layout == MENU_LAYOUT_LIST) {
+        create_list_menu();
+    } else {
+        // Default carousel layout
+        update_menu_item(false);
+    }
 
     // Check if navigation buttons should be shown based on user setting
     // Also respect the original logic for device capabilities
     bool should_show_nav_buttons = settings_get_nav_buttons_enabled(&G_Settings);
-    
-    // Only show if both user wants them AND device supports them
+
+    // Only show if both user wants them AND device supports them AND not grid layout
     if (should_show_nav_buttons) {
 #ifdef CONFIG_LVGL_TOUCH
         should_show_nav_buttons = true;
@@ -475,6 +969,11 @@ void main_menu_create(void) {
         int screen_width = lv_disp_get_hor_res(lv_disp_get_default());
         should_show_nav_buttons = (screen_width > 200);
 #endif
+    }
+
+    // Don't show navigation buttons for grid layout since cards are clickable
+    if (should_show_nav_buttons && (current_layout == MENU_LAYOUT_GRID_CARDS || current_layout == MENU_LAYOUT_LIST)) {
+        should_show_nav_buttons = false;
     }
 
     if (should_show_nav_buttons) {
@@ -542,6 +1041,30 @@ void main_menu_create(void) {
     }
 
     display_manager_add_status_bar(LV_HOR_RES > 128 ? "Main Menu" : "");
+
+    // Position the menu relative to the status bar
+    int status_bar_height = 20; // set in display_manager_add_status_bar()
+    if (menu_container) {
+        if (current_layout == MENU_LAYOUT_GRID_CARDS) {
+        // Position directly below the status bar with no extra gap
+        lv_obj_align(menu_container, LV_ALIGN_TOP_MID, 0, status_bar_height);
+        // Also reduce container height so there is no bottom gap
+        lv_obj_set_size(menu_container, LV_HOR_RES, LV_VER_RES - status_bar_height);
+    } else {
+        // Center for carousel/grid
+        lv_obj_align(menu_container, LV_ALIGN_CENTER, 0, status_bar_height / 2);
+    }
+    }
+
+    // also shift nav buttons down so they remain vertically centered with the menu
+    if (left_nav_btn) {
+        lv_coord_t old_y = lv_obj_get_y(left_nav_btn);
+        lv_obj_set_y(left_nav_btn, old_y + status_bar_height / 2);
+    }
+    if (right_nav_btn) {
+        lv_coord_t old_y = lv_obj_get_y(right_nav_btn);
+        lv_obj_set_y(right_nav_btn, old_y + status_bar_height / 2);
+    }
 }
 
 /**
@@ -554,8 +1077,27 @@ void main_menu_destroy(void) {
         menu_container = NULL;
         main_menu_view.root = NULL;
         current_item_obj = NULL;
+        // Children (including Grid container/buttons) are deleted with parent
+        grid_cards_container = NULL;
     }
-    
+
+    // Clean up grid layout
+    if (grid_buttons) {
+        free(grid_buttons);
+        grid_buttons = NULL;
+    }
+
+    // Clean up Grid layout array; container already deleted with parent
+    if (grid_cards) {
+        free(grid_cards);
+        grid_cards = NULL;
+    }
+
+    if (list_buttons) {
+        free(list_buttons);
+        list_buttons = NULL;
+    }
+
     // Clean up navigation buttons
     if (left_nav_btn) {
         lv_obj_del(left_nav_btn);
