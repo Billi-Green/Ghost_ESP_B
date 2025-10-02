@@ -30,6 +30,8 @@
 #define DISCOVERY_INTERVAL_MS 3000
 #define HANDSHAKE_TIMEOUT_MS 3000
 #define COMMAND_TIMEOUT_MS 500
+#define PING_INTERVAL_MS 1000
+#define LINK_TIMEOUT_MS 4000
 
 // protocol constants
 #define PACKET_START_BYTE 0xAA
@@ -149,6 +151,7 @@ typedef struct {
     psram_task_resources_t tx_task_res;
     psram_task_resources_t protocol_task_res;
     psram_task_resources_t command_task_res;
+    TickType_t last_rx_tick;
 } esp_comm_manager_t;
 
 static esp_comm_manager_t* s_comm_manager = NULL;
@@ -163,10 +166,12 @@ static void protocol_task(void* arg);
 static void command_executor_task(void* arg);
 static void discovery_timer_callback(TimerHandle_t xTimer);
 static void handshake_timer_callback(TimerHandle_t xTimer);
+static void ping_timer_callback(TimerHandle_t xTimer);
 static void send_discovery_packet(void);
 static void send_handshake_request(const char* peer_name);
 static void send_handshake_ack(void);
 static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t* packet);
+static void handle_connection_loss(esp_comm_manager_t* comm, const char* reason);
 
 static inline void lock_state(esp_comm_manager_t* comm) {
     if (comm && comm->state_mutex) {
@@ -441,6 +446,7 @@ static void rx_task(void* arg) {
                         }
 
                         if (valid) {
+                            comm->last_rx_tick = now;
                             if (comm->rx_packet_queue) {
                                 if (xQueueSend(comm->rx_packet_queue, &comm->partial_packet, pdMS_TO_TICKS(2)) != pdPASS) {
                                     comm->rx_queue_dropped_packets++;
@@ -596,6 +602,7 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                     comm->rx_seq_initialized = false;
                     comm->rx_expected_seq = 0;
                     comm->rx_drop_until_newline = false;
+                    comm->last_rx_tick = xTaskGetTickCount();
                     if (comm->handshake_timer) {
                         xTimerStop(comm->handshake_timer, 0);
                     }
@@ -603,6 +610,12 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                         xTimerStop(comm->discovery_timer, 0);
                         xTimerDelete(comm->discovery_timer, 0);
                         comm->discovery_timer = NULL;
+                    }
+                    if (!comm->ping_timer) {
+                        comm->ping_timer = xTimerCreate("ping_timer", pdMS_TO_TICKS(PING_INTERVAL_MS), pdTRUE, NULL, ping_timer_callback);
+                    }
+                    if (comm->ping_timer) {
+                        xTimerStart(comm->ping_timer, 0);
                     }
                     if (!comm->tx_queue) {
                         comm->tx_queue = xQueueCreate(16, sizeof(comm_packet_t));
@@ -644,6 +657,7 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                 comm->rx_seq_initialized = false;
                 comm->rx_expected_seq = 0;
                 comm->rx_drop_until_newline = false;
+                comm->last_rx_tick = xTaskGetTickCount();
                 if (comm->handshake_timer) {
                     xTimerStop(comm->handshake_timer, 0);
                 }
@@ -663,6 +677,12 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                     xTimerStop(comm->discovery_timer, 0);
                     xTimerDelete(comm->discovery_timer, 0);
                     comm->discovery_timer = NULL;
+                }
+                if (!comm->ping_timer) {
+                    comm->ping_timer = xTimerCreate("ping_timer", pdMS_TO_TICKS(PING_INTERVAL_MS), pdTRUE, NULL, ping_timer_callback);
+                }
+                if (comm->ping_timer) {
+                    xTimerStart(comm->ping_timer, 0);
                 }
                 if (!comm->tx_queue) {
                     comm->tx_queue = xQueueCreate(16, sizeof(comm_packet_t));
@@ -737,6 +757,10 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                 pong.length = 0;
                 send_packet(&pong);
             }
+            break;
+
+        case PACKET_TYPE_PONG:
+            // nothing to do; last_rx_tick is already bumped at byte-parse stage
             break;
 
         case PACKET_TYPE_RESPONSE:
@@ -900,6 +924,24 @@ static void discovery_timer_callback(TimerHandle_t xTimer) {
     if (s_comm_manager && s_comm_manager->state == COMM_STATE_SCANNING) {
         send_discovery_packet();
     }
+}
+
+static void ping_timer_callback(TimerHandle_t xTimer) {
+    esp_comm_manager_t* comm = s_comm_manager;
+    if (!comm) return;
+    if (comm->state != COMM_STATE_CONNECTED) return;
+
+    TickType_t now = xTaskGetTickCount();
+    if ((now - comm->last_rx_tick) > pdMS_TO_TICKS(LINK_TIMEOUT_MS)) {
+        handle_connection_loss(comm, "link timeout");
+        return;
+    }
+
+    comm_packet_t ping = {0};
+    ping.start_byte = PACKET_START_BYTE;
+    ping.type = PACKET_TYPE_PING;
+    ping.length = 0;
+    send_packet(&ping);
 }
 
 void esp_comm_manager_init_with_defaults(void) {
@@ -1078,6 +1120,12 @@ bool esp_comm_manager_start_discovery(void) {
     // release heavy resources during discovery
     lock_state(s_comm_manager);
     s_comm_manager->use_crc = true;
+    // stop ping timer if running
+    if (s_comm_manager->ping_timer) {
+        xTimerStop(s_comm_manager->ping_timer, 0);
+        xTimerDelete(s_comm_manager->ping_timer, 0);
+        s_comm_manager->ping_timer = NULL;
+    }
     if (s_comm_manager->protocol_task_handle) {
         vTaskDelete(s_comm_manager->protocol_task_handle);
         s_comm_manager->protocol_task_handle = NULL;
@@ -1287,6 +1335,11 @@ void esp_comm_manager_disconnect(void) {
         if (s_comm_manager->handshake_timer) {
             xTimerStop(s_comm_manager->handshake_timer, 0);
         }
+        if (s_comm_manager->ping_timer) {
+            xTimerStop(s_comm_manager->ping_timer, 0);
+            xTimerDelete(s_comm_manager->ping_timer, 0);
+            s_comm_manager->ping_timer = NULL;
+        }
         unlock_state(s_comm_manager);
         printf("I: Disconnected\n");
     }
@@ -1305,6 +1358,10 @@ void esp_comm_manager_deinit(void) {
     }
     if (s_comm_manager->handshake_timer) {
         xTimerDelete(s_comm_manager->handshake_timer, 0);
+    }
+    if (s_comm_manager->ping_timer) {
+        xTimerDelete(s_comm_manager->ping_timer, 0);
+        s_comm_manager->ping_timer = NULL;
     }
     
     if (s_comm_manager->rx_task_handle) {
@@ -1356,6 +1413,64 @@ static void handshake_timer_callback(TimerHandle_t xTimer) {
         if (comm->discovery_timer) {
             xTimerStart(comm->discovery_timer, 0);
         }
+    }
+    unlock_state(comm);
+}
+
+static void handle_connection_loss(esp_comm_manager_t* comm, const char* reason) {
+    if (!comm) return;
+    lock_state(comm);
+    if (comm->state != COMM_STATE_CONNECTED) {
+        unlock_state(comm);
+        return;
+    }
+    printf("W: Connection lost (%s)\n", reason ? reason : "unknown");
+    ap_manager_add_log("W: Connection lost, restarting discovery\n");
+
+    comm->state = COMM_STATE_SCANNING;
+
+    // stop ping timer
+    if (comm->ping_timer) {
+        xTimerStop(comm->ping_timer, 0);
+        xTimerDelete(comm->ping_timer, 0);
+        comm->ping_timer = NULL;
+    }
+
+    // teardown protocol resources to a lightweight scanning mode
+    if (comm->protocol_task_handle) {
+        vTaskDelete(comm->protocol_task_handle);
+        comm->protocol_task_handle = NULL;
+        free_task_resources(&comm->protocol_task_res);
+    }
+    if (comm->command_executor_task_handle) {
+        vTaskDelete(comm->command_executor_task_handle);
+        comm->command_executor_task_handle = NULL;
+        free_task_resources(&comm->command_task_res);
+    }
+    if (comm->rx_packet_queue) {
+        vQueueDelete(comm->rx_packet_queue);
+        comm->rx_packet_queue = NULL;
+    }
+    if (comm->command_queue) {
+        vQueueDelete(comm->command_queue);
+        comm->command_queue = NULL;
+    }
+    if (comm->tx_task_handle) {
+        vTaskDelete(comm->tx_task_handle);
+        comm->tx_task_handle = NULL;
+        free_task_resources(&comm->tx_task_res);
+    }
+    if (comm->tx_queue) {
+        vQueueDelete(comm->tx_queue);
+        comm->tx_queue = NULL;
+    }
+
+    // restart discovery timer
+    if (!comm->discovery_timer) {
+        comm->discovery_timer = xTimerCreate("discovery_timer", pdMS_TO_TICKS(DISCOVERY_INTERVAL_MS), pdTRUE, NULL, discovery_timer_callback);
+    }
+    if (comm->discovery_timer) {
+        xTimerStart(comm->discovery_timer, 0);
     }
     unlock_state(comm);
 }

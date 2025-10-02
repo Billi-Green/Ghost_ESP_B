@@ -12,6 +12,7 @@
 - Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
 - Added Kconfig support for a secondary status display
 - Added Kconfig support for IO Expander - @Play2BReal
+- Added heartbeat-based auto-reconnect for dual communication
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
