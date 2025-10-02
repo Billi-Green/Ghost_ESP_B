@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
 #include "i2c_bus_lock.h"
+#include "managers/settings_manager.h"
 
 static esp_err_t status_display_send(uint8_t control, const uint8_t *data, size_t len);
 
@@ -35,15 +36,23 @@ static char s_line1[24];
 static char s_line2[24];
 static const int SCALE_Y = 2; // simple vertical scaling factor
 // idle animation settings
-static const TickType_t IDLE_TIMEOUT_TICKS = pdMS_TO_TICKS(5000); // 5 seconds
-static const TickType_t ANIM_INTERVAL_TICKS = pdMS_TO_TICKS(500);  // 500 ms
-
 static TimerHandle_t s_idle_timer;
 static TickType_t s_last_update_tick;
+static const TickType_t ANIM_INTERVAL_TICKS = pdMS_TO_TICKS(500);  // 500 ms
+
+static bool status_idle_delay_elapsed(TickType_t now)
+{
+    uint32_t timeout_ms = settings_get_status_idle_timeout_ms(&G_Settings);
+    if (timeout_ms == 0 || timeout_ms == UINT32_MAX) {
+        return false; // never start
+    }
+    TickType_t required = pdMS_TO_TICKS(timeout_ms);
+    return (now - s_last_update_tick) >= required;
+}
 static int s_anim_frame;
 static TaskHandle_t s_anim_task;
 static TickType_t s_next_anim_allowed_tick;
-static int s_i2c_error_streak;
+// static int s_i2c_error_streak; // unused
 
 // conway's life state
 #define LIFE_COLS 32
@@ -52,6 +61,19 @@ static int s_i2c_error_streak;
 static uint8_t s_life_grid[LIFE_ROWS][LIFE_COLS];
 static uint8_t s_life_next[LIFE_ROWS][LIFE_COLS];
 static bool s_life_active;
+// ghost sprite (24x30), 1bpp, row-major MSB-first
+static const int GHOST_W = 24;
+static const int GHOST_H = 30;
+static const uint8_t ghostidle_bits[] = {
+    0x00, 0x3f, 0x00, 0x00, 0xc0, 0xc0, 0x01, 0x00, 0x20, 0x02, 0x00, 0x10, 0x02, 0x00, 0x10, 0x02,
+    0x00, 0x08, 0x02, 0x0c, 0xc8, 0x02, 0x0c, 0xc8, 0x04, 0x1c, 0xc8, 0x04, 0x00, 0x08, 0x04, 0x01,
+    0x88, 0x04, 0x03, 0x88, 0x04, 0x00, 0x08, 0x04, 0x1c, 0x0e, 0x04, 0x62, 0x31, 0x08, 0x82, 0x41,
+    0x08, 0x0c, 0x02, 0x08, 0x30, 0x0c, 0x10, 0x40, 0x30, 0x10, 0x00, 0x10, 0x10, 0x00, 0x10, 0x10,
+    0x00, 0x20, 0x20, 0x00, 0x40, 0x20, 0x01, 0x80, 0x4e, 0x06, 0x00, 0xf1, 0xf0, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xff, 0x80
+};
+static int s_ghost_x;
+static int s_ghost_dir = 1; // 1:right, -1:left
 
 static const uint8_t font_5x7[][5] = {
     {0x00,0x00,0x00,0x00,0x00}, {0x00,0x00,0x5f,0x00,0x00}, {0x00,0x07,0x00,0x07,0x00},
@@ -185,20 +207,37 @@ static void status_display_render(const char *line_one, const char *line_two) {
     xSemaphoreGive(s_mutex);
 }
 
-// draw an idle animation frame (a moving dot on the bottom row)
-static void status_display_draw_idle_frame(void) {
-    if (!s_ready) return;
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
-    // preserve current lines while drawing animation
-    status_display_render_locked(s_line1, s_line2);
-    // draw dot at bottom row
-    int y = 64 - 2; // near bottom
-    int range = 120; // travel range
-    int x = 4 + (s_anim_frame % range);
-    status_display_plot_pixel(x, y, true);
-    status_display_flush();
-    xSemaphoreGive(s_mutex);
+static void draw_sprite_msb(int x, int y, const uint8_t *bits, int w, int h, bool flip_h)
+{
+    // bits are packed MSB-first per byte, row-major left-to-right
+    int bytes_per_row = (w + 7) / 8;
+    for (int row = 0; row < h; ++row) {
+        const uint8_t *rowptr = bits + row * bytes_per_row;
+        for (int col = 0; col < w; ++col) {
+            int byte_idx = col >> 3;
+            int bit_idx = 7 - (col & 7);
+            bool on = ((rowptr[byte_idx] >> bit_idx) & 1) != 0;
+            if (!on) continue;
+            int draw_x = flip_h ? (x + (w - 1 - col)) : (x + col);
+            status_display_plot_pixel(draw_x, y + row, true);
+        }
+    }
 }
+
+// draw an idle animation frame (a moving dot on the bottom row) - unused
+// static void status_display_draw_idle_frame(void) {
+//     if (!s_ready) return;
+//     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+//     // preserve current lines while drawing animation
+//     status_display_render_locked(s_line1, s_line2);
+//     // draw dot at bottom row
+//     int y = 64 - 2; // near bottom
+//     int range = 120; // travel range
+//     int x = 4 + (s_anim_frame % range);
+//     status_display_plot_pixel(x, y, true);
+//     status_display_flush();
+//     xSemaphoreGive(s_mutex);
+// }
 
 static void status_display_idle_timer_cb(TimerHandle_t t) {
     (void)t;
@@ -213,61 +252,87 @@ static void status_display_anim_task(void *arg) {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         TickType_t now = xTaskGetTickCount();
-        if (now - s_last_update_tick < IDLE_TIMEOUT_TICKS) {
+        if (!status_idle_delay_elapsed(now)) {
             s_life_active = false;
             continue;
         }
         if (now < s_next_anim_allowed_tick) continue;
         s_next_anim_allowed_tick = now + ANIM_INTERVAL_TICKS;
 
-        if (!s_life_active) {
-            // seed life with pseudo-random pattern
-            uint32_t seed = (uint32_t)now;
-            seed ^= (uint32_t)((uintptr_t)&now);
-            seed = seed * 1664525u + 1013904223u;
-            for (int r = 0; r < LIFE_ROWS; ++r) {
-                for (int c = 0; c < LIFE_COLS; ++c) {
-                    seed = seed * 1664525u + 1013904223u;
-                    s_life_grid[r][c] = (seed >> 28) & 1;
+        if (settings_get_status_idle_animation(&G_Settings) == IDLE_ANIM_GAME_OF_LIFE) {
+            if (!s_life_active) {
+                uint32_t seed = (uint32_t)now;
+                seed ^= (uint32_t)((uintptr_t)&now);
+                seed = seed * 1664525u + 1013904223u;
+                for (int r = 0; r < LIFE_ROWS; ++r) {
+                    for (int c = 0; c < LIFE_COLS; ++c) {
+                        seed = seed * 1664525u + 1013904223u;
+                        s_life_grid[r][c] = (seed >> 28) & 1;
+                    }
                 }
-            }
-            s_life_active = true;
-        } else {
-            // step life
-            for (int r = 0; r < LIFE_ROWS; ++r) {
-                for (int c = 0; c < LIFE_COLS; ++c) {
-                    int live_neighbors = 0;
-                    for (int dr = -1; dr <= 1; ++dr) {
-                        for (int dc = -1; dc <= 1; ++dc) {
-                            if (dr == 0 && dc == 0) continue;
-                            int rr = (r + dr + LIFE_ROWS) % LIFE_ROWS;
-                            int cc = (c + dc + LIFE_COLS) % LIFE_COLS;
-                            live_neighbors += s_life_grid[rr][cc] ? 1 : 0;
+                s_life_active = true;
+            } else {
+                for (int r = 0; r < LIFE_ROWS; ++r) {
+                    for (int c = 0; c < LIFE_COLS; ++c) {
+                        int live_neighbors = 0;
+                        for (int dr = -1; dr <= 1; ++dr) {
+                            for (int dc = -1; dc <= 1; ++dc) {
+                                if (dr == 0 && dc == 0) continue;
+                                int rr = (r + dr + LIFE_ROWS) % LIFE_ROWS;
+                                int cc = (c + dc + LIFE_COLS) % LIFE_COLS;
+                                live_neighbors += s_life_grid[rr][cc] ? 1 : 0;
+                            }
+                        }
+                        if (s_life_grid[r][c]) {
+                            s_life_next[r][c] = (live_neighbors == 2 || live_neighbors == 3) ? 1 : 0;
+                        } else {
+                            s_life_next[r][c] = (live_neighbors == 3) ? 1 : 0;
                         }
                     }
-                    if (s_life_grid[r][c]) {
-                        s_life_next[r][c] = (live_neighbors == 2 || live_neighbors == 3) ? 1 : 0;
-                    } else {
-                        s_life_next[r][c] = (live_neighbors == 3) ? 1 : 0;
-                    }
                 }
+                for (int r = 0; r < LIFE_ROWS; ++r) memcpy(s_life_grid[r], s_life_next[r], LIFE_COLS);
             }
-            for (int r = 0; r < LIFE_ROWS; ++r) memcpy(s_life_grid[r], s_life_next[r], LIFE_COLS);
+        } else {
+            // ghost sprite horizontal walk with gentle vertical float
+            int speed = 4; // pixels per tick
+            if (s_ghost_dir > 0) {
+                s_ghost_x += speed;
+                if (s_ghost_x + GHOST_W >= 128) { s_ghost_x = 128 - GHOST_W; s_ghost_dir = -1; }
+            } else {
+                s_ghost_x -= speed;
+                if (s_ghost_x <= 0) { s_ghost_x = 0; s_ghost_dir = 1; }
+            }
         }
 
         if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             status_display_clear_buffer();
-            for (int r = 0; r < LIFE_ROWS; ++r) {
-                for (int c = 0; c < LIFE_COLS; ++c) {
-                    if (!s_life_grid[r][c]) continue;
-                    int sx = c * LIFE_CELL_SIZE;
-                    int sy = r * LIFE_CELL_SIZE;
-                    for (int yy = 0; yy < LIFE_CELL_SIZE; ++yy) {
-                        for (int xx = 0; xx < LIFE_CELL_SIZE; ++xx) {
-                            status_display_plot_pixel(sx + xx, sy + yy, true);
+            if (settings_get_status_idle_animation(&G_Settings) == IDLE_ANIM_GAME_OF_LIFE) {
+                for (int r = 0; r < LIFE_ROWS; ++r) {
+                    for (int c = 0; c < LIFE_COLS; ++c) {
+                        if (!s_life_grid[r][c]) continue;
+                        int sx = c * LIFE_CELL_SIZE;
+                        int sy = r * LIFE_CELL_SIZE;
+                        for (int yy = 0; yy < LIFE_CELL_SIZE; ++yy) {
+                            for (int xx = 0; xx < LIFE_CELL_SIZE; ++xx) {
+                                status_display_plot_pixel(sx + xx, sy + yy, true);
+                            }
                         }
                     }
                 }
+            } else {
+                bool flip = (s_ghost_dir < 0);
+                // vertical float: sine-like using a small lookup via s_anim_frame
+                // amplitude 6px, base line near bottom
+                int base_y = 64 - GHOST_H - 6;
+                if (base_y < 0) base_y = 0;
+                int phase = s_anim_frame & 0x1F; // 0..31
+                // cheap triangle wave: 0..6..0..-6..0
+                int tri = phase < 16 ? phase : (32 - phase);
+                int y_offset = tri - 8; // -8..7 approx
+                if (y_offset < -6) y_offset = -6;
+                if (y_offset > 6) y_offset = 6;
+                int y = base_y + y_offset;
+                draw_sprite_msb(s_ghost_x, y, ghostidle_bits, GHOST_W, GHOST_H, flip);
             }
             status_display_flush();
             xSemaphoreGive(s_mutex);
@@ -381,6 +446,8 @@ void status_display_init(void) {
     }
     // create animation worker task
     s_next_anim_allowed_tick = 0;
+    s_ghost_x = 0;
+    s_ghost_dir = 1;
     if (s_anim_task == NULL) {
         xTaskCreate(status_display_anim_task, "status_anim", 2048, NULL, tskIDLE_PRIORITY + 1, &s_anim_task);
     }
