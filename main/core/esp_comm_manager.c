@@ -489,14 +489,14 @@ static void rx_task(void* arg) {
             UBaseType_t queue_free = comm->rx_packet_queue
                 ? uxQueueSpacesAvailable(comm->rx_packet_queue)
                 : 0;
-            printf("I: RX stats crc_err=%lu rx_queue_drop=%lu tx_drop=%lu fifo=%u high_water=%u high_alerts=%lu queue_free=%u\n",
-                   (unsigned long)comm->rx_crc_error_count,
-                   (unsigned long)comm->rx_queue_dropped_packets,
-                   (unsigned long)comm->tx_dropped_packets,
-                   (unsigned)fifo_bytes,
-                   (unsigned)comm->rx_buffer_high_watermark,
-                   (unsigned long)comm->rx_high_water_alerts,
-                   (unsigned)queue_free);
+            // printf("I: RX stats crc_err=%lu rx_queue_drop=%lu tx_drop=%lu fifo=%u high_water=%u high_alerts=%lu queue_free=%u\n",
+            //        (unsigned long)comm->rx_crc_error_count,
+            //        (unsigned long)comm->rx_queue_dropped_packets,
+            //        (unsigned long)comm->tx_dropped_packets,
+            //        (unsigned)fifo_bytes,
+            //        (unsigned)comm->rx_buffer_high_watermark,
+            //        (unsigned long)comm->rx_high_water_alerts,
+            //        (unsigned)queue_free);
             last_stats_log = now;
         }
     }
