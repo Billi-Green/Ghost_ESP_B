@@ -38,6 +38,7 @@
 - Changed the C5 to use a single display buffer to save memory
 - Reduced VFS allocation unit size to 4KB
 - Size popup buttons based on what's in them
+- Refactored dualcomm logic to be more robust
 
 ### Bug Fixes
 
