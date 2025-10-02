@@ -1,8 +1,20 @@
-#include <string.h>
+#if defined(__has_include)
+#  if __has_include(<string.h>)
+#    include <string.h>
+#  else
+#    include <stddef.h>
+     // minimal declarations for lint-only environments
+     void *memcpy(void *dest, const void *src, size_t n);
+     size_t strlen(const char *s);
+#  endif
+#else
+#  include <string.h>
+#endif
 #include <stdbool.h>
 #include "pn532_driver.h"
 #include "pn532_driver_i2c.h"
 #include "esp_log.h"
+#include "i2c_bus_lock.h"
 
 static const char TAG[] = "pn532_driver_i2c_legacy";
 
@@ -138,7 +150,9 @@ esp_err_t pn532_is_ready(pn532_io_handle_t io_handle)
     }
     pn532_i2c_driver_config *driver_config = (pn532_i2c_driver_config *)io_handle->driver_data;
     uint8_t status = 0;
+    bool locked = i2c_bus_lock((int)driver_config->i2c_port_number, 60);
     esp_err_t res = i2c_master_read_from_device(driver_config->i2c_port_number, 0x24, &status, 1, 30 / portTICK_PERIOD_MS);
+    if (locked) i2c_bus_unlock((int)driver_config->i2c_port_number);
     if (res != ESP_OK) return res;
     return (status == 0x01) ? ESP_OK : ESP_FAIL;
 }
@@ -150,7 +164,9 @@ esp_err_t pn532_read(pn532_io_handle_t io_handle, uint8_t *read_buffer, size_t r
     uint8_t rx_buffer[256];
     if (read_size + 1 > sizeof(rx_buffer)) return ESP_ERR_INVALID_SIZE;
     int timeout = (xfer_timeout_ms > 0) ? xfer_timeout_ms / portTICK_PERIOD_MS : 100 / portTICK_PERIOD_MS;
+    bool locked = i2c_bus_lock((int)driver_config->i2c_port_number, 120);
     esp_err_t res = i2c_master_read_from_device(driver_config->i2c_port_number, 0x24, rx_buffer, read_size + 1, timeout);
+    if (locked) i2c_bus_unlock((int)driver_config->i2c_port_number);
     if (res != ESP_OK) return res;
     if (rx_buffer[0] != 0x01) return ESP_ERR_TIMEOUT;
     memcpy(read_buffer, rx_buffer + 1, read_size);
@@ -169,7 +185,10 @@ esp_err_t pn532_write(pn532_io_handle_t io_handle, const uint8_t *write_buffer, 
     memcpy(driver_config->frame_buffer + 1, write_buffer, write_size);
     driver_config->frame_buffer[write_size + 1] = 0;
     int timeout = (xfer_timeout_ms > 0) ? xfer_timeout_ms / portTICK_PERIOD_MS : 100 / portTICK_PERIOD_MS;
-    return i2c_master_write_to_device(driver_config->i2c_port_number, 0x24, driver_config->frame_buffer, write_size + 2, timeout);
+    bool locked = i2c_bus_lock((int)driver_config->i2c_port_number, 120);
+    esp_err_t r = i2c_master_write_to_device(driver_config->i2c_port_number, 0x24, driver_config->frame_buffer, write_size + 2, timeout);
+    if (locked) i2c_bus_unlock((int)driver_config->i2c_port_number);
+    return r;
 }
 
 

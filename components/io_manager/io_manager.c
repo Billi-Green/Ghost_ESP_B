@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "i2c_bus_lock.h"
 
 static const char *TAG = "IO_MANAGER";
 static bool g_i2c_driver_installed = false; // whether this module installed the I2C driver
@@ -292,10 +293,11 @@ static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data)
         if (attempt > 0) {
             vTaskDelay(pdMS_TO_TICKS(2));
         }
-        
+        bool global_locked = i2c_bus_lock(g_config.i2c_port, 60);
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         if (!cmd) {
             ret = ESP_ERR_NO_MEM;
+            if (global_locked) i2c_bus_unlock(g_config.i2c_port);
             break;
         }
         
@@ -309,6 +311,7 @@ static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data)
         
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
+        if (global_locked) i2c_bus_unlock(g_config.i2c_port);
         
         if (ret == ESP_OK) {
             break;
@@ -338,10 +341,11 @@ static esp_err_t tca9535_write_port(uint8_t reg, uint8_t data)
         if (attempt > 0) {
             vTaskDelay(pdMS_TO_TICKS(2));
         }
-        
+        bool global_locked = i2c_bus_lock(g_config.i2c_port, 60);
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         if (!cmd) {
             ret = ESP_ERR_NO_MEM;
+            if (global_locked) i2c_bus_unlock(g_config.i2c_port);
             break;
         }
         
@@ -353,6 +357,7 @@ static esp_err_t tca9535_write_port(uint8_t reg, uint8_t data)
         
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
+        if (global_locked) i2c_bus_unlock(g_config.i2c_port);
         
         if (ret == ESP_OK) {
             break;
