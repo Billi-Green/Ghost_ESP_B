@@ -21,6 +21,9 @@ static bool is_valid_tag_length(uint8_t tag_num, uint8_t tag_len);
 static bool is_valid_beacon_fixed_params(const uint8_t *frame, size_t offset,
                                          size_t max_len);
 static esp_err_t _pcap_flush_buffer_to_file_nolock();
+static char pcap_file_path[MAX_FILE_NAME_LENGTH];
+static char pcap_base_name[32] = "capture";
+static volatile pcap_capture_type_t s_capture_type = PCAP_CAPTURE_WIFI;
 
 typedef struct {
   uint8_t packet_type; // HCI packet type (1 byte)
@@ -100,6 +103,16 @@ esp_err_t pcap_file_open(const char *base_file_name,
   }
   char file_name[MAX_FILE_NAME_LENGTH];
   file_name[0] = '\0';
+  if (base_file_name && *base_file_name) {
+    strncpy(pcap_base_name, base_file_name, sizeof(pcap_base_name) - 1);
+    pcap_base_name[sizeof(pcap_base_name) - 1] = '\0';
+  }
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  bool jit_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#else
+  bool jit_template = false;
+#endif
 
   /* take mutex to protect pcap_file and buffer_offset during open */
   if (pcap_mutex == NULL) {
@@ -117,6 +130,10 @@ esp_err_t pcap_file_open(const char *base_file_name,
     pcap_file = fopen(file_name, "wb");
     if (!pcap_file) {
       ESP_LOGW(PCAP_TAG, "PCAP file is not open, will flush to serial");
+    }
+    if (file_name[0] != '\0') {
+      strncpy(pcap_file_path, file_name, sizeof(pcap_file_path) - 1);
+      pcap_file_path[sizeof(pcap_file_path) - 1] = '\0';
     }
   }
 
@@ -140,8 +157,13 @@ esp_err_t pcap_file_open(const char *base_file_name,
       glog("PCAP: streaming over UART (SD open failed)\n");
     }
   } else {
-    ESP_LOGI(PCAP_TAG, "PCAP using serial (no file) and global header written.");
-    glog("PCAP: streaming over UART (no SD)\n");
+    if (jit_template) {
+      ESP_LOGI(PCAP_TAG, "PCAP will JIT mount SD on first flush (no file open yet).");
+      glog("PCAP: JIT mounting SD on first flush\n");
+    } else {
+      ESP_LOGI(PCAP_TAG, "PCAP using serial (no file) and global header written.");
+      glog("PCAP: streaming over UART (no SD)\n");
+    }
   }
 
   xSemaphoreGive(pcap_mutex);
@@ -356,6 +378,7 @@ static bool is_valid_beacon_fixed_params(const uint8_t *frame, size_t offset,
 
 esp_err_t pcap_write_packet_to_buffer(const void *packet, size_t length,
                                       pcap_capture_type_t capture_type) {
+  s_capture_type = capture_type;
   if (packet == NULL || length < 2) {
     ESP_LOGE(PCAP_TAG, "Invalid packet data");
     return ESP_ERR_INVALID_ARG;
@@ -508,15 +531,52 @@ static esp_err_t _pcap_flush_buffer_to_file_nolock() {
       if (written < buffer_offset) {
         ESP_LOGE(PCAP_TAG, "Failed to write buffered data to PCAP file.");
       }
-    } else { // If no file, write to UART
-      const char *mark_begin = "[BUF/BEGIN]";
-      const size_t mark_begin_len = strlen(mark_begin);
-      const char *mark_close = "[BUF/CLOSE]";
-      const size_t mark_close_len = strlen(mark_close);
+    } else { // If no file, try JIT mount for somethingsomething, else UART
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+      bool gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#else
+      bool gating_template = false;
+#endif
 
-      uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
-      uart_write_bytes(UART_NUM_0, (const char *)pcap_buffer, buffer_offset);
-      uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
+      if (gating_template) {
+        bool display_was_suspended = false;
+        if (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK) {
+          if (pcap_file_path[0] == '\0') {
+            get_next_pcap_file_name(pcap_file_path, pcap_base_name);
+          }
+          FILE *f = fopen(pcap_file_path, "ab+");
+          if (f) {
+            fseek(f, 0, SEEK_END);
+            long sz = ftell(f);
+            if (sz == 0) {
+              // write global header on first write
+              pcap_write_global_header(f, s_capture_type);
+            }
+            size_t written = fwrite(pcap_buffer, 1, buffer_offset, f);
+            fclose(f);
+            if (written < buffer_offset) {
+              ESP_LOGE(PCAP_TAG, "Failed to write buffered data to PCAP file (JIT).");
+            }
+          }
+          sd_card_unmount_after_flush(display_was_suspended);
+        } else {
+          const char *mark_begin = "[BUF/BEGIN]";
+          const size_t mark_begin_len = strlen(mark_begin);
+          const char *mark_close = "[BUF/CLOSE]";
+          const size_t mark_close_len = strlen(mark_close);
+          uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+          uart_write_bytes(UART_NUM_0, (const char *)pcap_buffer, buffer_offset);
+          uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
+        }
+      } else {
+        const char *mark_begin = "[BUF/BEGIN]";
+        const size_t mark_begin_len = strlen(mark_begin);
+        const char *mark_close = "[BUF/CLOSE]";
+        const size_t mark_close_len = strlen(mark_close);
+        uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+        uart_write_bytes(UART_NUM_0, (const char *)pcap_buffer, buffer_offset);
+        uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
+      }
     }
     buffer_offset = 0; // Reset buffer
   }

@@ -34,6 +34,7 @@
 char serial_buffer[SERIAL_BUFFER_SIZE];
 static TaskHandle_t s_serial_task_handle = NULL;
 static bool s_serial_initialized = false;
+static bool s_uart_disabled = false; // disable main serial UART for certain templates
 
 // Cursor position tracking
 static int cursor_position = 0;
@@ -362,8 +363,12 @@ void serial_task(void *pvParameter) {
   while (1) {
     int length = 0;
 
-    // Read data from the main UART
-    length = uart_read_bytes(UART_NUM, data, BUF_SIZE, 10 / portTICK_PERIOD_MS);
+#ifndef CONFIG_USE_IO_EXPANDER
+    // Read data from the main UART (if not disabled)
+    if (!s_uart_disabled) {
+      length = uart_read_bytes(UART_NUM, data, BUF_SIZE, 10 / portTICK_PERIOD_MS);
+    }
+#endif
 
 #if JTAG_SUPPORTED
     if (length <= 0) {
@@ -461,7 +466,7 @@ void serial_task(void *pvParameter) {
         if (incoming_char == '\n' || incoming_char == '\r') {
           // Echo newline directly to UART
           const char newline[] = "\n";
-          uart_write_bytes(UART_NUM, newline, 1);
+          if (!s_uart_disabled) uart_write_bytes(UART_NUM, newline, 1);
 #if JTAG_SUPPORTED
           usb_serial_jtag_write_bytes((const uint8_t*)newline, 1, 0);
 #endif
@@ -507,6 +512,12 @@ void serial_task(void *pvParameter) {
 
 // Initialize the SerialManager
 void serial_manager_init() {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+    s_uart_disabled = true;
+  }
+#endif
+#ifndef CONFIG_USE_IO_EXPANDER
   // UART configuration for main UART
   const uart_config_t uart_config = {
       .baud_rate = 115200,
@@ -516,8 +527,11 @@ void serial_manager_init() {
       .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
   };
 
-  uart_param_config(UART_NUM, &uart_config);
-  uart_driver_install(UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0);
+  if (!s_uart_disabled) {
+    uart_param_config(UART_NUM, &uart_config);
+    uart_driver_install(UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0);
+  }
+#endif
 
 #if JTAG_SUPPORTED
   usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
@@ -531,9 +545,12 @@ void serial_manager_init() {
 
   xTaskCreate(serial_task, "SerialTask", 8192, NULL, 2, &s_serial_task_handle);
   s_serial_initialized = true;
-  // Initialize command history
-  command_history_init();
-  glog("Serial Started...\n");
+  if (!s_uart_disabled) {
+    command_history_init();
+    glog("Serial Started...\n");
+  } else {
+    glog("Serial Disabled (template: somethingsomething)\n");
+  }
 }
 
 void serial_manager_deinit() {
@@ -547,7 +564,9 @@ void serial_manager_deinit() {
 #if JTAG_SUPPORTED
   usb_serial_jtag_driver_uninstall();
 #endif
+#ifndef CONFIG_USE_IO_EXPANDER
   uart_driver_delete(UART_NUM);
+#endif
   if (commandQueue) {
     vQueueDelete(commandQueue);
     commandQueue = NULL;
@@ -555,7 +574,13 @@ void serial_manager_deinit() {
   s_serial_initialized = false;
 }
 
-int serial_manager_get_uart_num() { return (int)UART_NUM; }
+int serial_manager_get_uart_num() {
+#ifdef CONFIG_USE_IO_EXPANDER
+    return -1; // No UART in use when IO expander is configured
+#else
+    return (int)UART_NUM;
+#endif
+}
 
 int handle_serial_command(const char *input) {
   // Handle peer commands with logging and proper remote flag management

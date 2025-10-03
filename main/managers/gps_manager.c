@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "core/esp_comm_manager.h"
+#include "managers/status_display_manager.h"
 
 static const char *GPS_TAG = "GPS";
 static bool has_valid_cached_date = false;
@@ -129,10 +130,12 @@ void gps_manager_init(GPSManager *manager) {
     }
     nmea_parser_add_handler(nmea_hdl, gps_event_handler, NULL);
     manager->isinitilized = true;
-    BaseType_t task_created = xTaskCreate(check_gps_connection_task, "gps_check", 2048, NULL, 1, &gps_check_task_handle);
+    status_display_show_status("GPS Initialized");
+    BaseType_t task_created = xTaskCreate(check_gps_connection_task, "gps_check", 3072, NULL, 1, &gps_check_task_handle);
     if (task_created != pdPASS) {
         ESP_LOGW(GPS_TAG, "Failed to create gps_check task");
         gps_check_task_handle = NULL;
+        status_display_show_status("GPS Task Fail");
         // proceed without the connection-check task; parser remains initialized
     }
 }
@@ -192,7 +195,10 @@ void gps_manager_deinit(GPSManager *manager) {
         }
         manager->isinitilized = false;
         gps_connection_logged = false;
+        status_display_show_status("GPS Deinit");
         esp_comm_manager_init_with_defaults();
+    } else {
+        status_display_show_status("GPS Not Init");
     }
 }
 
