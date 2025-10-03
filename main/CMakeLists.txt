@@ -13,7 +13,7 @@ file(GLOB_RECURSE axs15231b_sources "${CMAKE_SOURCE_DIR}/components/axs15231b/*.
 list(APPEND app_sources ${axs15231b_sources} ${image_sources})
 
 
-set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp-idf-pn532 esp_timer io_manager)
+set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp_timer io_manager)
 
 # Optionally add extra include directories
 set(extra_includes "")
@@ -25,6 +25,21 @@ endif()
 set(sources ${app_sources})
 
 
+
+## nfc build control: only include pn532 + nfc sources when enabled
+if(CONFIG_HAS_NFC)
+    # add pn532 component only when nfc is enabled
+    list(APPEND required_components esp-idf-pn532)
+    # ensure pn532 headers are on the include path for main sources
+    list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/esp-idf-pn532/include")
+else()
+    # remove nfc ui + nfc manager sources from globbed list when nfc is disabled
+    list(REMOVE_ITEM sources "${CMAKE_SOURCE_DIR}/main/managers/views/nfc_view.c")
+    file(GLOB_RECURSE _nfc_mgr_sources "${CMAKE_SOURCE_DIR}/main/managers/nfc/*.c")
+    if(_nfc_mgr_sources)
+        list(REMOVE_ITEM sources ${_nfc_mgr_sources})
+    endif()
+endif()
 
 if("${IDF_TARGET}" STREQUAL "esp32s3")
     # Add the M5GFX wrapper source file
