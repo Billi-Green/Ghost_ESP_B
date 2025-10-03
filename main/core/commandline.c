@@ -37,11 +37,26 @@
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_heap_caps.h"
+#include "esp_heap_trace.h"
+
+static const char *TAG = "Commandline";
+
 #if !defined(MAX_WIFI_CHANNEL)
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
 #define MAX_WIFI_CHANNEL 165
 #else
 #define MAX_WIFI_CHANNEL 13
+#endif
+#endif
+
+#ifndef DISCOVER_TASK_STACK
+#if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
+#define DISCOVER_TASK_STACK 4096
+#else
+#define DISCOVER_TASK_STACK 6144
 #endif
 #endif
 
@@ -367,6 +382,10 @@ void discover_task(void *pvParameter) {
         status_display_show_status("DIAL Failed");
     }
 
+    {
+        UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+        glog("discover_task min stack free: %u words\n", (unsigned)hwm);
+    }
     vTaskDelete(NULL);
 }
 
@@ -414,7 +433,65 @@ void handle_dial_command(int argc, char **argv) {
     if (argc == 2) {
         dial_manager_set_device_name(argv[1]);
     }
-    xTaskCreate(&discover_task, "discover_task", 10240, NULL, 5, NULL);
+    xTaskCreate(&discover_task, "discover_task", DISCOVER_TASK_STACK, NULL, 5, NULL);
+}
+
+static void dump_task_stacks(void) {
+#if defined(CONFIG_FREERTOS_USE_TRACE_FACILITY)
+    UBaseType_t num = uxTaskGetNumberOfTasks();
+    TaskStatus_t *list = (TaskStatus_t *)pvPortMalloc(num * sizeof(TaskStatus_t));
+    if (!list) return;
+    UBaseType_t out = uxTaskGetSystemState(list, num, NULL);
+    for (UBaseType_t i = 0; i < out; i++) {
+        printf("task=%s min_free_stack=%u words\n", list[i].pcTaskName, (unsigned)list[i].usStackHighWaterMark);
+    }
+    vPortFree(list);
+#else
+    glog("task stack snapshot unavailable: enable CONFIG_FREERTOS_USE_TRACE_FACILITY in sdkconfig\n");
+#endif
+}
+
+void handle_mem_cmd(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "dump") == 0) {
+        ESP_LOGI(TAG, "heap(8bit) free=%u, largest=%u, min_free=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+        heap_caps_dump(MALLOC_CAP_8BIT);
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "trace") == 0) {
+#if defined(CONFIG_HEAP_TRACING) || defined(CONFIG_HEAP_TRACING_STANDALONE)
+        static heap_trace_record_t recs[256];
+        if (argc > 2 && strcmp(argv[2], "start") == 0) {
+            esp_err_t e = heap_trace_init_standalone(recs, 256);
+            if (e == ESP_OK) heap_trace_start(HEAP_TRACE_LEAKS | HEAP_TRACE_ALLOCATIONS);
+            glog("heap trace start: %s\n", e == ESP_OK ? "ok" : "err");
+            return;
+        }
+        if (argc > 2 && strcmp(argv[2], "stop") == 0) {
+            heap_trace_stop();
+            glog("heap trace stop\n");
+            return;
+        }
+        if (argc > 2 && strcmp(argv[2], "dump") == 0) {
+            heap_trace_dump(true);
+            return;
+        }
+        glog("usage: mem trace <start|stop|dump>\n");
+        return;
+#else
+        glog("heap tracing not enabled\n");
+        return;
+#endif
+    }
+
+    ESP_LOGI(TAG, "heap(8bit) free=%u, largest=%u, min_free=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+    dump_task_stacks();
 }
 
 void handle_wifi_connection(int argc, char **argv) {
@@ -2529,6 +2606,7 @@ void handle_chip_info_cmd(int argc, char **argv) {
 void register_commands() {
     command_init();
     register_command("help", handle_help);
+    register_command("mem", handle_mem_cmd);
     register_command("scanap", cmd_wifi_scan_start);
     register_command("scansta", handle_sta_scan);
     register_command("scanlocal", handle_ip_lookup);

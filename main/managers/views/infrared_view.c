@@ -1,4 +1,5 @@
 #include "managers/views/infrared_view.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
@@ -86,12 +87,13 @@ static bool popup_style_initialized = false;
 #include <ctype.h>
 #include <inttypes.h>
 #include <errno.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #ifdef CONFIG_HAS_INFRARED_RX
-#include "driver/rmt_rx.h"
 #include <time.h>
+#include "driver/rmt_rx.h"
 #include "driver/gpio.h"
 #endif
 
@@ -682,6 +684,7 @@ static void rebuild_ir_file_list_ui(void) {
         return;
     }
 
+    ESP_LOGI(TAG, "mem[ir_ui_pre]: free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     lv_obj_clean(list);
     num_ir_items = ir_file_count;
     selected_ir_index = 0;
@@ -708,6 +711,7 @@ static void rebuild_ir_file_list_ui(void) {
     if (ir_file_count > 0) {
         ir_select_item(0);
     }
+    ESP_LOGI(TAG, "mem[ir_ui_post]: free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
 static void refresh_ir_file_list(const char *dir) {
@@ -1472,6 +1476,17 @@ static void ir_select_item(int index) {
 }
 
 void infrared_view_input_cb(InputEvent *event) {
+    // allow enter/esc to cancel universals transmit popup immediately
+    if (transmitting_popup && lv_obj_is_valid(transmitting_popup)) {
+        if (event->type == INPUT_TYPE_KEYBOARD) {
+            uint8_t key = event->data.key_value;
+            if (key == 13 || key == 10 || key == 27 || key == 'c' || key == 'C') {
+                universal_transmit_cancel = true;
+                cleanup_transmit_popup(NULL);
+                return;
+            }
+        }
+    }
 #ifdef CONFIG_HAS_INFRARED_RX
     // Handle learn remote popup input
     if (learning_popup && lv_obj_is_valid(learning_popup)) {
@@ -2185,7 +2200,13 @@ static void command_event_execute(int idx) {
         args->path[sizeof(args->path)-1] = '\0';
         strncpy(args->command, uni_command_names[idx], sizeof(args->command)-1);
         args->command[sizeof(args->command)-1] = '\0';
-        xTaskCreate(universal_transmit_task, "uni_tx_task", 4096, args, tskIDLE_PRIORITY + 1, &universal_task_handle);
+        if (xTaskCreate(universal_transmit_task, "uni_tx_task", 4096, args, tskIDLE_PRIORITY + 1, &universal_task_handle) != pdPASS) {
+            printf("universals job task create failed\n");
+            cleanup_transmit_popup(NULL);
+            free(args);
+            universal_task_handle = NULL;
+            return;
+        }
         printf("universals job task created\n");
         return;
     }
@@ -2948,6 +2969,9 @@ const char* get_next_available_button_name(const char* remote_path)
     return common_button_names[0];
 }
 
+// end rx-only block to expose filename generator for tx-only builds
+#endif
+
 // --- Generate unique remote filename by auto-incrementing if file exists ---
 void generate_unique_remote_filename(const char* base_name, char* output_filename, size_t output_size)
 {
@@ -2997,6 +3021,9 @@ void generate_unique_remote_filename(const char* base_name, char* output_filenam
     time_t now = time(NULL);
     snprintf(output_filename, output_size, "/mnt/ghostesp/infrared/remotes/learned_%s_%ld.ir", base_name, (long)now);
 }
+
+// resume rx-only block
+#ifdef CONFIG_HAS_INFRARED_RX
 
 void create_easy_learn_popup(void)
 {
