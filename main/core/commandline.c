@@ -36,6 +36,7 @@
 #include <dirent.h>
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
+#include <stddef.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -173,6 +174,255 @@ void cmd_wifi_scan_stop(int argc, char **argv) {
 
     glog("WiFi scan stopped.\n");
     status_display_show_status("Scan Stopped");
+}
+
+// settings registry to avoid ridiculously long strcmp chains, fuck that lmaooo.
+typedef enum {
+    ST_I32,
+    ST_U32,
+    ST_U16,
+    ST_U8,
+    ST_BOOL,
+    ST_FLOAT,
+    ST_ENUM8,
+    ST_STRING,
+    ST_COLOR_HEX
+} SettingType;
+
+typedef struct {
+    const char *name;
+    SettingType type;
+    size_t offset;
+    const char *category;
+    uint16_t str_capacity; // only for ST_STRING
+    int min_i; // for *_U8/_U16/_I32/_ENUM8 bounds (simple)
+    int max_i;
+} SettingDescriptor;
+
+#define OFF(field) offsetof(FSettings, field)
+
+static const SettingDescriptor k_settings_desc[] = {
+    {"rgb_mode", ST_ENUM8, OFF(rgb_mode), "RGB", 0, 0, 2},
+    {"rgb_speed", ST_U8, OFF(rgb_speed), "RGB", 0, 0, 255},
+    {"rgb_data_pin", ST_I32, OFF(rgb_data_pin), "RGB", 0, 0, 0},
+    {"rgb_red_pin", ST_I32, OFF(rgb_red_pin), "RGB", 0, 0, 0},
+    {"rgb_green_pin", ST_I32, OFF(rgb_green_pin), "RGB", 0, 0, 0},
+    {"rgb_blue_pin", ST_I32, OFF(rgb_blue_pin), "RGB", 0, 0, 0},
+    {"neopixel_bright", ST_U8, OFF(neopixel_max_brightness), "RGB", 0, 0, 100},
+
+    {"ap_ssid", ST_STRING, OFF(ap_ssid), "WiFi", 33, 0, 0},
+    {"ap_password", ST_STRING, OFF(ap_password), "WiFi", 65, 0, 0},
+    {"ap_enabled", ST_BOOL, OFF(ap_enabled), "WiFi", 0, 0, 0},
+    {"sta_ssid", ST_STRING, OFF(sta_ssid), "WiFi", 65, 0, 0},
+    {"sta_password", ST_STRING, OFF(sta_password), "WiFi", 65, 0, 0},
+
+    {"portal_url", ST_STRING, OFF(portal_url), "Portal", 129, 0, 0},
+    {"portal_ssid", ST_STRING, OFF(portal_ssid), "Portal", 33, 0, 0},
+    {"portal_password", ST_STRING, OFF(portal_password), "Portal", 65, 0, 0},
+    {"portal_ap_ssid", ST_STRING, OFF(portal_ap_ssid), "Portal", 33, 0, 0},
+    {"portal_domain", ST_STRING, OFF(portal_domain), "Portal", 65, 0, 0},
+    {"portal_offline", ST_BOOL, OFF(portal_offline_mode), "Portal", 0, 0, 0},
+
+    {"printer_ip", ST_STRING, OFF(printer_ip), "Printer", 16, 0, 0},
+    {"printer_text", ST_STRING, OFF(printer_text), "Printer", 257, 0, 0},
+    {"printer_font_size", ST_U8, OFF(printer_font_size), "Printer", 0, 1, 255},
+    {"printer_alignment", ST_ENUM8, OFF(printer_alignment), "Printer", 0, 0, 4},
+
+    {"display_timeout", ST_U32, OFF(display_timeout_ms), "Display", 0, 0, 0},
+    {"max_bright", ST_U8, OFF(max_screen_brightness), "Display", 0, 0, 100},
+    {"invert_colors", ST_BOOL, OFF(invert_colors), "Display", 0, 0, 0},
+    {"terminal_color", ST_COLOR_HEX, OFF(terminal_text_color), "Display", 0, 0, 0},
+    {"menu_theme", ST_U8, OFF(menu_theme), "Display", 0, 0, 255},
+
+    {"channel_delay", ST_FLOAT, OFF(channel_delay), "System", 0, 0, 0},
+    {"broadcast_speed", ST_U16, OFF(broadcast_speed), "System", 0, 0, 65535},
+    {"gps_rx_pin", ST_I32, OFF(gps_rx_pin), "System", 0, 0, 0},
+    {"power_save", ST_BOOL, OFF(power_save_enabled), "System", 0, 0, 0},
+    {"zebra_menus", ST_BOOL, OFF(zebra_menus_enabled), "System", 0, 0, 0},
+    {"nav_buttons", ST_BOOL, OFF(nav_buttons_enabled), "System", 0, 0, 0},
+    {"menu_layout", ST_U8, OFF(menu_layout), "System", 0, 0, 2},
+    {"infrared_easy", ST_BOOL, OFF(infrared_easy_mode), "System", 0, 0, 0},
+    {"web_auth", ST_BOOL, OFF(web_auth_enabled), "System", 0, 0, 0},
+    {"rts_enabled", ST_BOOL, OFF(rts_enabled), "System", 0, 0, 0},
+    {"third_ctrl", ST_BOOL, OFF(third_control_enabled), "System", 0, 0, 0},
+
+    {"flappy_name", ST_STRING, OFF(flappy_ghost_name), "Custom", 65, 0, 0},
+    {"timezone", ST_STRING, OFF(selected_timezone), "Custom", 25, 0, 0},
+    {"accent_color", ST_STRING, OFF(selected_hex_accent_color), "Custom", 25, 0, 0},
+};
+
+static const SettingDescriptor *find_setting_desc(const char *name) {
+    for (size_t i = 0; i < (sizeof(k_settings_desc)/sizeof(k_settings_desc[0])); ++i) {
+        if (strcmp(k_settings_desc[i].name, name) == 0) return &k_settings_desc[i];
+    }
+    return NULL;
+}
+
+static void print_setting_value(const SettingDescriptor *d, const FSettings *s) {
+    const uint8_t *base = (const uint8_t *)s;
+    const void *ptr = base + d->offset;
+    if (d->type == ST_STRING) {
+        glog("%s = \"%s\"\n", d->name, (const char *)ptr);
+        return;
+    }
+    switch (d->type) {
+        case ST_BOOL: {
+            bool v = *(const bool *)ptr;
+            glog("%s = %s\n", d->name, v ? "true" : "false");
+        } break;
+        case ST_U8: {
+            glog("%s = %d\n", d->name, *(const uint8_t *)ptr);
+        } break;
+        case ST_U16: {
+            glog("%s = %d\n", d->name, *(const uint16_t *)ptr);
+        } break;
+        case ST_U32: {
+            glog("%s = %lu\n", d->name, (unsigned long)*(const uint32_t *)ptr);
+        } break;
+        case ST_I32: {
+            glog("%s = %ld\n", d->name, (long)*(const int32_t *)ptr);
+        } break;
+        case ST_FLOAT: {
+            glog("%s = %.2f\n", d->name, *(const float *)ptr);
+        } break;
+        case ST_ENUM8: {
+            glog("%s = %d\n", d->name, *(const uint8_t *)ptr);
+        } break;
+        case ST_COLOR_HEX: {
+            unsigned long v = (unsigned long)*(const uint32_t *)ptr;
+            glog("%s = 0x%06lX\n", d->name, v);
+        } break;
+        default: {
+            glog("%s = ?\n", d->name);
+        } break;
+    }
+}
+
+static bool set_setting_value(const SettingDescriptor *d, FSettings *s, const char *value) {
+    uint8_t *base = (uint8_t *)s;
+    void *ptr = base + d->offset;
+    switch (d->type) {
+        case ST_STRING: {
+            if (d->str_capacity == 0) return false;
+            strncpy((char *)ptr, value, d->str_capacity - 1);
+            ((char *)ptr)[d->str_capacity - 1] = '\0';
+            return true;
+        }
+        case ST_BOOL: {
+            if (strcmp(value, "true") == 0) {
+                *(bool *)ptr = true; return true;
+            } else if (strcmp(value, "false") == 0) {
+                *(bool *)ptr = false; return true;
+            }
+            return false;
+        }
+        case ST_U8: {
+            int v = atoi(value);
+            if (d->max_i > d->min_i) {
+                if (v < d->min_i || v > d->max_i) return false;
+            }
+            *(uint8_t *)ptr = (uint8_t)v; return true;
+        }
+        case ST_U16: {
+            int v = atoi(value);
+            if (d->max_i > d->min_i) {
+                if (v < d->min_i || v > d->max_i) return false;
+            }
+            *(uint16_t *)ptr = (uint16_t)v; return true;
+        }
+        case ST_U32: {
+            unsigned long v = strtoul(value, NULL, 10);
+            *(uint32_t *)ptr = (uint32_t)v; return true;
+        }
+        case ST_I32: {
+            long v = strtol(value, NULL, 10);
+            *(int32_t *)ptr = (int32_t)v; return true;
+        }
+        case ST_FLOAT: {
+            float v = atof(value);
+            *(float *)ptr = v; return true;
+        }
+        case ST_ENUM8: {
+            int v = atoi(value);
+            if (d->max_i > d->min_i) {
+                if (v < d->min_i || v > d->max_i) return false;
+            }
+            *(uint8_t *)ptr = (uint8_t)v; return true;
+        }
+        case ST_COLOR_HEX: {
+            unsigned long v = strtoul(value, NULL, 16);
+            *(uint32_t *)ptr = (uint32_t)v; return true;
+        }
+        default:
+            return false;
+    }
+}
+
+static void reset_setting_value(const SettingDescriptor *d, FSettings *s, const FSettings *defaults) {
+    const uint8_t *db = (const uint8_t *)defaults;
+    const void *src = db + d->offset;
+    uint8_t *sb = (uint8_t *)s;
+    void *dst = sb + d->offset;
+    switch (d->type) {
+        case ST_STRING:
+            strncpy((char *)dst, (const char *)src, d->str_capacity - 1), ((char *)dst)[d->str_capacity - 1] = '\0';
+            break;
+        case ST_BOOL:
+            *(bool *)dst = *(const bool *)src; break;
+        case ST_U8:
+            *(uint8_t *)dst = *(const uint8_t *)src; break;
+        case ST_U16:
+            *(uint16_t *)dst = *(const uint16_t *)src; break;
+        case ST_U32:
+            *(uint32_t *)dst = *(const uint32_t *)src; break;
+        case ST_I32:
+            *(int32_t *)dst = *(const int32_t *)src; break;
+        case ST_FLOAT:
+            *(float *)dst = *(const float *)src; break;
+        case ST_ENUM8:
+            *(uint8_t *)dst = *(const uint8_t *)src; break;
+        case ST_COLOR_HEX:
+            *(uint32_t *)dst = *(const uint32_t *)src; break;
+        default: break;
+    }
+}
+
+static void log_set_confirmation(const SettingDescriptor *d, const FSettings *s) {
+    const uint8_t *base = (const uint8_t *)s;
+    const void *ptr = base + d->offset;
+    switch (d->type) {
+        case ST_STRING:
+            glog("Set %s to \"%s\"\n", d->name, (const char *)ptr);
+            break;
+        case ST_BOOL:
+            glog("Set %s to %s\n", d->name, (*(const bool *)ptr) ? "true" : "false");
+            break;
+        case ST_U8:
+            glog("Set %s to %d\n", d->name, *(const uint8_t *)ptr);
+            break;
+        case ST_U16:
+            glog("Set %s to %d\n", d->name, *(const uint16_t *)ptr);
+            break;
+        case ST_U32:
+            glog("Set %s to %lu\n", d->name, (unsigned long)*(const uint32_t *)ptr);
+            break;
+        case ST_I32:
+            glog("Set %s to %ld\n", d->name, (long)*(const int32_t *)ptr);
+            break;
+        case ST_FLOAT:
+            glog("Set %s to %.2f\n", d->name, *(const float *)ptr);
+            break;
+        case ST_ENUM8:
+            glog("Set %s to %d\n", d->name, *(const uint8_t *)ptr);
+            break;
+        case ST_COLOR_HEX: {
+            unsigned long v = (unsigned long)*(const uint32_t *)ptr;
+            glog("Set %s to 0x%06lX\n", d->name, v);
+        } break;
+        default:
+            glog("Set %s\n", d->name);
+            break;
+    }
 }
 
 void cmd_wifi_scan_results(int argc, char **argv) {
@@ -1405,7 +1655,21 @@ void handle_help(int argc, char **argv) {
         printf("scanarp\n");
         printf("    Description: Perform ARP scan on local network to discover active hosts\n");
         printf("    Usage: scanarp\n\n");
-        TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp\n");
+        printf("settings\n");
+        printf("    Description: Manage NVS stored settings via command line\n");
+        printf("    Usage: settings <command> [arguments]\n");
+        printf("    Commands:\n");
+        printf("        list                    - List all available settings\n");
+        printf("        get <setting>           - Get current value of a setting\n");
+        printf("        set <setting> <value>   - Set a setting to a value\n");
+        printf("        reset [setting]         - Reset setting(s) to defaults\n");
+        printf("        help                    - Show settings help\n");
+        printf("    Examples:\n");
+        printf("        settings list\n");
+        printf("        settings get ap_ssid\n");
+        printf("        settings set rgb_mode 1\n");
+        printf("        settings reset\n\n");
+        TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp, settings\n");
         return;
     }
     if (strcmp(category, "gps") == 0) {
@@ -2603,6 +2867,150 @@ void handle_chip_info_cmd(int argc, char **argv) {
     status_display_show_status("Chip Info");
 }
 
+// Settings command handler
+void handle_settings_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Settings Management Commands:\n");
+        glog("  settings list                    - List all available settings\n");
+        glog("  settings get <setting>           - Get current value of a setting\n");
+        glog("  settings set <setting> <value>   - Set a setting to a value\n");
+        glog("  settings reset [setting]         - Reset setting(s) to defaults\n");
+        glog("  settings help                    - Show this help\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "help") == 0) {
+        glog("Settings Management Commands:\n");
+        glog("  settings list                    - List all available settings\n");
+        glog("  settings get <setting>           - Get current value of a setting\n");
+        glog("  settings set <setting> <value>   - Set a setting to a value\n");
+        glog("  settings reset [setting]         - Reset setting(s) to defaults\n");
+        glog("  settings help                    - Show this help\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "list") == 0) {
+        glog("Available Settings:\n");
+        glog("  RGB Settings:\n");
+        glog("    rgb_mode          - RGB mode (0=Normal, 1=Rainbow, 2=Stealth)\n");
+        glog("    rgb_speed         - RGB animation speed (0-255)\n");
+        glog("    rgb_data_pin      - RGB data pin (-1 if not used)\n");
+        glog("    rgb_red_pin       - RGB red pin (-1 if not used)\n");
+        glog("    rgb_green_pin     - RGB green pin (-1 if not used)\n");
+        glog("    rgb_blue_pin      - RGB blue pin (-1 if not used)\n");
+        glog("    neopixel_bright   - Neopixel max brightness (0-100)\n");
+        glog("  WiFi Settings:\n");
+        glog("    ap_ssid           - Access Point SSID\n");
+        glog("    ap_password       - Access Point password\n");
+        glog("    ap_enabled        - Enable AP on boot (true/false)\n");
+        glog("    sta_ssid          - Station mode SSID\n");
+        glog("    sta_password      - Station mode password\n");
+        glog("  Evil Portal Settings:\n");
+        glog("    portal_url        - Portal URL or file path\n");
+        glog("    portal_ssid       - Portal SSID\n");
+        glog("    portal_password   - Portal password\n");
+        glog("    portal_ap_ssid    - Portal AP SSID\n");
+        glog("    portal_domain     - Portal domain\n");
+        glog("    portal_offline    - Portal offline mode (true/false)\n");
+        glog("  Printer Settings:\n");
+        glog("    printer_ip        - Printer IP address\n");
+        glog("    printer_text      - Last printed text\n");
+        glog("    printer_font_size - Printer font size\n");
+        glog("    printer_alignment - Printer alignment (0-4)\n");
+        glog("  Display Settings:\n");
+        glog("    display_timeout   - Display timeout in ms\n");
+        glog("    max_bright        - Max screen brightness (0-100)\n");
+        glog("    invert_colors     - Invert screen colors (true/false)\n");
+        glog("    terminal_color    - Terminal text color (hex)\n");
+        glog("    menu_theme        - Menu theme (0=Default)\n");
+        glog("  System Settings:\n");
+        glog("    channel_delay     - Channel delay in ms\n");
+        glog("    broadcast_speed   - Broadcast speed\n");
+        glog("    gps_rx_pin        - GPS RX pin\n");
+        glog("    power_save        - Power save mode (true/false)\n");
+        glog("    zebra_menus       - Zebra menus (true/false)\n");
+        glog("    nav_buttons       - Navigation buttons (true/false)\n");
+        glog("    menu_layout       - Menu layout (0=Carousel, 1=Grid, 2=List)\n");
+        glog("    infrared_easy     - Infrared easy mode (true/false)\n");
+        glog("    web_auth          - Web authentication (true/false)\n");
+        glog("    rts_enabled       - RTS enabled (true/false)\n");
+        glog("    third_ctrl        - Third control enabled (true/false)\n");
+        glog("  Custom Settings:\n");
+        glog("    flappy_name       - Flappy Ghost name\n");
+        glog("    timezone          - Selected timezone\n");
+        glog("    accent_color      - Accent color (hex)\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "get") == 0) {
+        if (argc < 3) { glog("Usage: settings get <setting>\n"); return; }
+        const char *setting = argv[2];
+        const SettingDescriptor *d = find_setting_desc(setting);
+        if (!d) {
+            glog("Unknown setting: %s\n", setting);
+            glog("Use 'settings list' to see available settings\n");
+            return;
+        }
+        print_setting_value(d, &G_Settings);
+        return;
+    }
+
+    if (strcmp(argv[1], "set") == 0) {
+        if (argc < 4) { glog("Usage: settings set <setting> <value>\n"); return; }
+        const char *setting = argv[2];
+        const char *value = argv[3];
+        const SettingDescriptor *d = find_setting_desc(setting);
+        if (!d) {
+            glog("Unknown setting: %s\n", setting);
+            glog("Use 'settings list' to see available settings\n");
+            return;
+        }
+        FSettings *settings = &G_Settings;
+        if (!set_setting_value(d, settings, value)) {
+            if (d->type == ST_BOOL) {
+                glog("Invalid %s. Use true or false\n", d->name);
+            } else if (d->type == ST_U8 || d->type == ST_U16 || d->type == ST_ENUM8) {
+                if (d->max_i > d->min_i) glog("Invalid %s. Use %d-%d\n", d->name, d->min_i, d->max_i);
+                else glog("Invalid %s value\n", d->name);
+            } else if (d->type == ST_COLOR_HEX) {
+                glog("Invalid %s. Use hex like 00FF00\n", d->name);
+            } else {
+                glog("Invalid %s value\n", d->name);
+            }
+            return;
+        }
+        settings_save(settings);
+        log_set_confirmation(d, settings);
+        return;
+    }
+
+    if (strcmp(argv[1], "reset") == 0) {
+        if (argc == 2) {
+            settings_set_defaults(&G_Settings);
+            settings_save(&G_Settings);
+            glog("Reset all settings to defaults\n");
+        } else if (argc == 3) {
+            const char *setting = argv[2];
+            const SettingDescriptor *d = find_setting_desc(setting);
+            if (!d) {
+                glog("Unknown setting: %s\n", setting);
+                glog("Use 'settings list' to see available settings\n");
+                return;
+            }
+            FSettings defaults; settings_set_defaults(&defaults);
+            reset_setting_value(d, &G_Settings, &defaults);
+            settings_save(&G_Settings);
+            glog("Reset %s to default\n", d->name);
+        } else {
+            glog("Usage: settings reset [setting]\n");
+        }
+        return;
+    }
+
+    glog("Unknown settings command: %s\n", argv[1]);
+    glog("Use 'settings help' for available commands\n");
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -2639,6 +3047,7 @@ void register_commands() {
     register_command("scanssh", handle_scan_ssh);
     register_command("congestion", handle_congestion_cmd);
     register_command("listenprobes", handle_listen_probes_cmd);
+    register_command("settings", handle_settings_cmd);
     register_command("listportals", handle_listportals);
     register_command("evilportal", handle_evilportal);
     register_command("commdiscovery", handle_comm_discovery);

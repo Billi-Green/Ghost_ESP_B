@@ -14,6 +14,7 @@
 - Added Kconfig support for IO Expander - @Play2BReal
 - Added heartbeat-based auto-reconnect for dual communication
 - Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
+- Added ability to set settings via cli - @tototo31
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
