@@ -26,4 +26,7 @@ extern TaskHandle_t VisualizerHandle;
 
 void register_commands();
 
+// Settings command handler
+void handle_settings_cmd(int argc, char **argv);
+
 #endif // COMMAND_H

@@ -10,6 +10,11 @@
 - Added glog - a lightweight logging helper
 - Added command history with up/down navigation and full in-line cursor editing (left/right, insert, delete, backspace) to the serial console. - @tototo31
 - Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
+- Added Kconfig support for a secondary status display
+- Added Kconfig support for IO Expander - @Play2BReal
+- Added heartbeat-based auto-reconnect for dual communication
+- Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
+- Added ability to set settings via cli - @tototo31
 
 - **PN532 NFC Capability**
   - **NTAG Support (Type 2)**
@@ -31,6 +36,12 @@
 - Refactor options menu to use reusable options view helpers
 - Refactor comm manager to centralize packet handling, add state mutex and handshake timeout, and guard UART driver install
 - Update main menu icons to RGB565A8
+- Enabled software back buttons made for encoder controls on joystick too
+- Joystick builds now use touch keyboard layout with selection highlighting and navigation
+- Changed the C5 to use a single display buffer to save memory
+- Reduced VFS allocation unit size to 4KB
+- Size popup buttons based on what's in them
+- Refactored dualcomm logic to be more robust
 
 ### Bug Fixes
 
@@ -42,6 +53,9 @@
 - Added NMEA handle null-checks
 - Flush PCAP header on open and close PCAP on generic stop command
 - Miscellaneous fixes and improvements
+- Small miscellaneous memory saves
+- Fixed RMT channel allocation on C5 to prevent conflicts with IR TX
+- Disable duplicate filtering in general BLE scanning
 
 
 #### Network & Comms
@@ -57,6 +71,7 @@
 
 - Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
 - Remove artificial delay in cardputer keyboard task to make more responsive
+- Improve and refactor terminal message handling
 
 ## Revival v1.7.2
 
@@ -85,6 +100,7 @@
 - Apply existing wroom display memory optimizations to c5
 - Fix incorrect usage of mDNS
 - Update setcountry command on the C5 to use the official esp_wifi_set_country_code function
+
 
 ## Revival v1.7
 

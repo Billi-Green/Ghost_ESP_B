@@ -55,12 +55,20 @@ static int current_settings_category = -1;
 // Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 10) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
 // Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 9) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
 // Example: settings_category_indices[0] lists settings for "Display" category.
-static int settings_category_indices[][10] = {
+static int settings_category_indices[][11] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 11, 12, 13, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 9, 11, 12, 13,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        14, 15,
+#endif
+        -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout, Idle Animation
         {0, 6, 7, 8, 10, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #else
-        {1, 2, 5, 3, 4, 10, 11, 12, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 10, 11, 12,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        13, 14,
+#endif
+        -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout, Idle Animation
         {0, 6, 7, 8, 9, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #endif
 };
@@ -149,6 +157,12 @@ static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
 static const char *menu_layout_options[] = {"Normal", "Grid", "List"};
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+static const char *idle_animation_options[] = {"Game of Life", "Ghost"};
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
+#endif
 
 enum {
     SETTING_RGB_MODE = 0,
@@ -164,7 +178,13 @@ enum {
     SETTING_NEOPIXEL_BRIGHTNESS,
     SETTING_ZEBRA_MENUS,
     SETTING_NAV_BUTTONS,
-    SETTING_MENU_LAYOUT
+    SETTING_MENU_LAYOUT,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    SETTING_IDLE_ANIMATION
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    , SETTING_IDLE_ANIM_DELAY
+#endif
 };
 
 static const char *brightness_options[] = {
@@ -187,7 +207,13 @@ static SettingsItem settings_items[] = {
     {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
-    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0}
+    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0},
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 2, 0},
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    {"Idle Anim Delay", SETTING_IDLE_ANIM_DELAY, idle_delay_options, 4, 0},
+#endif
 };
 
 static bool is_settings_mode = false;
@@ -570,6 +596,23 @@ static void load_current_settings_values(void) {
             case SETTING_NEOPIXEL_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
                 break;
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            case SETTING_IDLE_ANIMATION:
+                settings_items[i].current_value = (int)settings_get_status_idle_animation(&G_Settings);
+                break;
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            case SETTING_IDLE_ANIM_DELAY: {
+                uint32_t ms = settings_get_status_idle_timeout_ms(&G_Settings);
+                int idx = 0;
+                if (ms == 0 || ms == UINT32_MAX) idx = 0;
+                else if (ms < 7500) idx = 1; // 5s
+                else if (ms < 20000) idx = 2; // 10s
+                else idx = 3; // 30s
+                settings_items[i].current_value = idx;
+                break;
+            }
+#endif
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -641,6 +684,25 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_NEOPIXEL_BRIGHTNESS:
             settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
             break;
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        case SETTING_IDLE_ANIMATION:
+            settings_set_status_idle_animation(&G_Settings, (IdleAnimation)new_value);
+            break;
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        case SETTING_IDLE_ANIM_DELAY: {
+            uint32_t ms = 0;
+            switch (new_value) {
+                case 0: ms = UINT32_MAX; break; // Never
+                case 1: ms = 5000; break;
+                case 2: ms = 10000; break;
+                case 3: ms = 30000; break;
+                default: ms = 5000; break;
+            }
+            settings_set_status_idle_timeout_ms(&G_Settings, ms);
+            break;
+        }
+#endif
     }
     settings_save(&G_Settings);
 }
@@ -653,8 +715,12 @@ static void change_current_row(bool increment)
 
     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
     if (!sel) return;
-
-    int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+    void *udata = lv_obj_get_user_data(sel);
+    if (udata == (void *)"__BACK_OPTION__") {
+        // back isn't a setting
+        return;
+    }
+    int setting_idx = (int)(intptr_t)udata;
     change_setting_value(setting_idx, increment);
 }
 
@@ -796,13 +862,18 @@ void handle_hardware_button_press_options(InputEvent *event) {
                         if (current_settings_category < 0) {
                             switch_to_settings_category(i);
                         } else {
-                            // leaf setting: change value
+                            // leaf setting or back row
                             int center_x = (btn_area.x1 + btn_area.x2) / 2;
                             bool increment = data->point.x >= center_x;
                             lv_obj_t *sel = lv_obj_get_child(menu_container, i);
                             if (sel) {
-                                int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
-                                change_setting_value(setting_idx, increment);
+                                void *udata = lv_obj_get_user_data(sel);
+                                if (udata == (void *)"__BACK_OPTION__") {
+                                    back_event_cb(NULL);
+                                } else {
+                                    int setting_idx = (int)(intptr_t)udata;
+                                    change_setting_value(setting_idx, increment);
+                                }
                             }
                         }
                     } else {
@@ -829,11 +900,16 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     // Enter settings category
                     switch_to_settings_category(selected_item_index);
                 } else { // current_settings_category >= 0
-                    // Change setting value
+                    // Change setting value or handle back
                     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
                     if (sel) {
-                        int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
-                        change_setting_value(setting_idx, true);
+                        void *udata = lv_obj_get_user_data(sel);
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else {
+                            int setting_idx = (int)(intptr_t)udata;
+                            change_setting_value(setting_idx, true);
+                        }
                     }
                 }
             } else {
@@ -903,8 +979,16 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     // We're at the top level ("Display", "Config", ...) -> open submenu
                     switch_to_settings_category(selected_item_index);
                 } else { // current_settings_category >= 0
-                    // Inside a submenu -> cycle the value
-                    change_current_row(true);
+                    // Inside a submenu -> back row goes back, else cycle the value
+                    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                    if (sel) {
+                        void *udata = lv_obj_get_user_data(sel);
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else {
+                            change_current_row(true);
+                        }
+                    }
                 }
             } else {
                 lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
@@ -1649,6 +1733,11 @@ display_manager_switch_view(&terminal_view);
 
 void handle_option_directly(const char *Selected_Option) {
     if (is_settings_mode) {
+        if (Selected_Option == (const char *)"__BACK_OPTION__") {
+            // back is navigation, not a setting
+            back_event_cb(NULL);
+            return;
+        }
         int setting_index = (int)(intptr_t)Selected_Option;
         change_setting_value(setting_index, true);
         return;
@@ -1940,7 +2029,7 @@ static void menu_builder_cb(lv_timer_t *t)
 
     // Now, handle adding the "Back" button and stopping the timer
     if (all_current_options_processed) {
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         if (!back_option_was_added_in_previous_tick) { // Add back button only once
             lv_obj_t *btn = options_view_add_item(g_options_view, LV_SYMBOL_LEFT " Back", option_event_cb, (void *)"__BACK_OPTION__");
             if (btn) {
@@ -1955,12 +2044,12 @@ static void menu_builder_cb(lv_timer_t *t)
             }
         }
 #endif
-        // Timer should stop if all options are processed AND (if encoder, the back option is now added, OR if no encoder)
+        // Timer should stop if all options are processed AND (if encoder/joystick, the back option is now added, OR if neither)
         if (
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             (bool)(intptr_t)t->user_data
 #else
-            true // If no encoder, we stop as soon as regular options are done
+            true // If neither encoder nor joystick, stop as soon as regular options are done
 #endif
         ) {
             lv_timer_del(t);
