@@ -36,6 +36,7 @@
 #include <dirent.h>
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
+#include <stddef.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -173,6 +174,255 @@ void cmd_wifi_scan_stop(int argc, char **argv) {
 
     glog("WiFi scan stopped.\n");
     status_display_show_status("Scan Stopped");
+}
+
+// settings registry to avoid ridiculously long strcmp chains, fuck that lmaooo.
+typedef enum {
+    ST_I32,
+    ST_U32,
+    ST_U16,
+    ST_U8,
+    ST_BOOL,
+    ST_FLOAT,
+    ST_ENUM8,
+    ST_STRING,
+    ST_COLOR_HEX
+} SettingType;
+
+typedef struct {
+    const char *name;
+    SettingType type;
+    size_t offset;
+    const char *category;
+    uint16_t str_capacity; // only for ST_STRING
+    int min_i; // for *_U8/_U16/_I32/_ENUM8 bounds (simple)
+    int max_i;
+} SettingDescriptor;
+
+#define OFF(field) offsetof(FSettings, field)
+
+static const SettingDescriptor k_settings_desc[] = {
+    {"rgb_mode", ST_ENUM8, OFF(rgb_mode), "RGB", 0, 0, 2},
+    {"rgb_speed", ST_U8, OFF(rgb_speed), "RGB", 0, 0, 255},
+    {"rgb_data_pin", ST_I32, OFF(rgb_data_pin), "RGB", 0, 0, 0},
+    {"rgb_red_pin", ST_I32, OFF(rgb_red_pin), "RGB", 0, 0, 0},
+    {"rgb_green_pin", ST_I32, OFF(rgb_green_pin), "RGB", 0, 0, 0},
+    {"rgb_blue_pin", ST_I32, OFF(rgb_blue_pin), "RGB", 0, 0, 0},
+    {"neopixel_bright", ST_U8, OFF(neopixel_max_brightness), "RGB", 0, 0, 100},
+
+    {"ap_ssid", ST_STRING, OFF(ap_ssid), "WiFi", 33, 0, 0},
+    {"ap_password", ST_STRING, OFF(ap_password), "WiFi", 65, 0, 0},
+    {"ap_enabled", ST_BOOL, OFF(ap_enabled), "WiFi", 0, 0, 0},
+    {"sta_ssid", ST_STRING, OFF(sta_ssid), "WiFi", 65, 0, 0},
+    {"sta_password", ST_STRING, OFF(sta_password), "WiFi", 65, 0, 0},
+
+    {"portal_url", ST_STRING, OFF(portal_url), "Portal", 129, 0, 0},
+    {"portal_ssid", ST_STRING, OFF(portal_ssid), "Portal", 33, 0, 0},
+    {"portal_password", ST_STRING, OFF(portal_password), "Portal", 65, 0, 0},
+    {"portal_ap_ssid", ST_STRING, OFF(portal_ap_ssid), "Portal", 33, 0, 0},
+    {"portal_domain", ST_STRING, OFF(portal_domain), "Portal", 65, 0, 0},
+    {"portal_offline", ST_BOOL, OFF(portal_offline_mode), "Portal", 0, 0, 0},
+
+    {"printer_ip", ST_STRING, OFF(printer_ip), "Printer", 16, 0, 0},
+    {"printer_text", ST_STRING, OFF(printer_text), "Printer", 257, 0, 0},
+    {"printer_font_size", ST_U8, OFF(printer_font_size), "Printer", 0, 1, 255},
+    {"printer_alignment", ST_ENUM8, OFF(printer_alignment), "Printer", 0, 0, 4},
+
+    {"display_timeout", ST_U32, OFF(display_timeout_ms), "Display", 0, 0, 0},
+    {"max_bright", ST_U8, OFF(max_screen_brightness), "Display", 0, 0, 100},
+    {"invert_colors", ST_BOOL, OFF(invert_colors), "Display", 0, 0, 0},
+    {"terminal_color", ST_COLOR_HEX, OFF(terminal_text_color), "Display", 0, 0, 0},
+    {"menu_theme", ST_U8, OFF(menu_theme), "Display", 0, 0, 255},
+
+    {"channel_delay", ST_FLOAT, OFF(channel_delay), "System", 0, 0, 0},
+    {"broadcast_speed", ST_U16, OFF(broadcast_speed), "System", 0, 0, 65535},
+    {"gps_rx_pin", ST_I32, OFF(gps_rx_pin), "System", 0, 0, 0},
+    {"power_save", ST_BOOL, OFF(power_save_enabled), "System", 0, 0, 0},
+    {"zebra_menus", ST_BOOL, OFF(zebra_menus_enabled), "System", 0, 0, 0},
+    {"nav_buttons", ST_BOOL, OFF(nav_buttons_enabled), "System", 0, 0, 0},
+    {"menu_layout", ST_U8, OFF(menu_layout), "System", 0, 0, 2},
+    {"infrared_easy", ST_BOOL, OFF(infrared_easy_mode), "System", 0, 0, 0},
+    {"web_auth", ST_BOOL, OFF(web_auth_enabled), "System", 0, 0, 0},
+    {"rts_enabled", ST_BOOL, OFF(rts_enabled), "System", 0, 0, 0},
+    {"third_ctrl", ST_BOOL, OFF(third_control_enabled), "System", 0, 0, 0},
+
+    {"flappy_name", ST_STRING, OFF(flappy_ghost_name), "Custom", 65, 0, 0},
+    {"timezone", ST_STRING, OFF(selected_timezone), "Custom", 25, 0, 0},
+    {"accent_color", ST_STRING, OFF(selected_hex_accent_color), "Custom", 25, 0, 0},
+};
+
+static const SettingDescriptor *find_setting_desc(const char *name) {
+    for (size_t i = 0; i < (sizeof(k_settings_desc)/sizeof(k_settings_desc[0])); ++i) {
+        if (strcmp(k_settings_desc[i].name, name) == 0) return &k_settings_desc[i];
+    }
+    return NULL;
+}
+
+static void print_setting_value(const SettingDescriptor *d, const FSettings *s) {
+    const uint8_t *base = (const uint8_t *)s;
+    const void *ptr = base + d->offset;
+    if (d->type == ST_STRING) {
+        glog("%s = \"%s\"\n", d->name, (const char *)ptr);
+        return;
+    }
+    switch (d->type) {
+        case ST_BOOL: {
+            bool v = *(const bool *)ptr;
+            glog("%s = %s\n", d->name, v ? "true" : "false");
+        } break;
+        case ST_U8: {
+            glog("%s = %d\n", d->name, *(const uint8_t *)ptr);
+        } break;
+        case ST_U16: {
+            glog("%s = %d\n", d->name, *(const uint16_t *)ptr);
+        } break;
+        case ST_U32: {
+            glog("%s = %lu\n", d->name, (unsigned long)*(const uint32_t *)ptr);
+        } break;
+        case ST_I32: {
+            glog("%s = %ld\n", d->name, (long)*(const int32_t *)ptr);
+        } break;
+        case ST_FLOAT: {
+            glog("%s = %.2f\n", d->name, *(const float *)ptr);
+        } break;
+        case ST_ENUM8: {
+            glog("%s = %d\n", d->name, *(const uint8_t *)ptr);
+        } break;
+        case ST_COLOR_HEX: {
+            unsigned long v = (unsigned long)*(const uint32_t *)ptr;
+            glog("%s = 0x%06lX\n", d->name, v);
+        } break;
+        default: {
+            glog("%s = ?\n", d->name);
+        } break;
+    }
+}
+
+static bool set_setting_value(const SettingDescriptor *d, FSettings *s, const char *value) {
+    uint8_t *base = (uint8_t *)s;
+    void *ptr = base + d->offset;
+    switch (d->type) {
+        case ST_STRING: {
+            if (d->str_capacity == 0) return false;
+            strncpy((char *)ptr, value, d->str_capacity - 1);
+            ((char *)ptr)[d->str_capacity - 1] = '\0';
+            return true;
+        }
+        case ST_BOOL: {
+            if (strcmp(value, "true") == 0) {
+                *(bool *)ptr = true; return true;
+            } else if (strcmp(value, "false") == 0) {
+                *(bool *)ptr = false; return true;
+            }
+            return false;
+        }
+        case ST_U8: {
+            int v = atoi(value);
+            if (d->max_i > d->min_i) {
+                if (v < d->min_i || v > d->max_i) return false;
+            }
+            *(uint8_t *)ptr = (uint8_t)v; return true;
+        }
+        case ST_U16: {
+            int v = atoi(value);
+            if (d->max_i > d->min_i) {
+                if (v < d->min_i || v > d->max_i) return false;
+            }
+            *(uint16_t *)ptr = (uint16_t)v; return true;
+        }
+        case ST_U32: {
+            unsigned long v = strtoul(value, NULL, 10);
+            *(uint32_t *)ptr = (uint32_t)v; return true;
+        }
+        case ST_I32: {
+            long v = strtol(value, NULL, 10);
+            *(int32_t *)ptr = (int32_t)v; return true;
+        }
+        case ST_FLOAT: {
+            float v = atof(value);
+            *(float *)ptr = v; return true;
+        }
+        case ST_ENUM8: {
+            int v = atoi(value);
+            if (d->max_i > d->min_i) {
+                if (v < d->min_i || v > d->max_i) return false;
+            }
+            *(uint8_t *)ptr = (uint8_t)v; return true;
+        }
+        case ST_COLOR_HEX: {
+            unsigned long v = strtoul(value, NULL, 16);
+            *(uint32_t *)ptr = (uint32_t)v; return true;
+        }
+        default:
+            return false;
+    }
+}
+
+static void reset_setting_value(const SettingDescriptor *d, FSettings *s, const FSettings *defaults) {
+    const uint8_t *db = (const uint8_t *)defaults;
+    const void *src = db + d->offset;
+    uint8_t *sb = (uint8_t *)s;
+    void *dst = sb + d->offset;
+    switch (d->type) {
+        case ST_STRING:
+            strncpy((char *)dst, (const char *)src, d->str_capacity - 1), ((char *)dst)[d->str_capacity - 1] = '\0';
+            break;
+        case ST_BOOL:
+            *(bool *)dst = *(const bool *)src; break;
+        case ST_U8:
+            *(uint8_t *)dst = *(const uint8_t *)src; break;
+        case ST_U16:
+            *(uint16_t *)dst = *(const uint16_t *)src; break;
+        case ST_U32:
+            *(uint32_t *)dst = *(const uint32_t *)src; break;
+        case ST_I32:
+            *(int32_t *)dst = *(const int32_t *)src; break;
+        case ST_FLOAT:
+            *(float *)dst = *(const float *)src; break;
+        case ST_ENUM8:
+            *(uint8_t *)dst = *(const uint8_t *)src; break;
+        case ST_COLOR_HEX:
+            *(uint32_t *)dst = *(const uint32_t *)src; break;
+        default: break;
+    }
+}
+
+static void log_set_confirmation(const SettingDescriptor *d, const FSettings *s) {
+    const uint8_t *base = (const uint8_t *)s;
+    const void *ptr = base + d->offset;
+    switch (d->type) {
+        case ST_STRING:
+            glog("Set %s to \"%s\"\n", d->name, (const char *)ptr);
+            break;
+        case ST_BOOL:
+            glog("Set %s to %s\n", d->name, (*(const bool *)ptr) ? "true" : "false");
+            break;
+        case ST_U8:
+            glog("Set %s to %d\n", d->name, *(const uint8_t *)ptr);
+            break;
+        case ST_U16:
+            glog("Set %s to %d\n", d->name, *(const uint16_t *)ptr);
+            break;
+        case ST_U32:
+            glog("Set %s to %lu\n", d->name, (unsigned long)*(const uint32_t *)ptr);
+            break;
+        case ST_I32:
+            glog("Set %s to %ld\n", d->name, (long)*(const int32_t *)ptr);
+            break;
+        case ST_FLOAT:
+            glog("Set %s to %.2f\n", d->name, *(const float *)ptr);
+            break;
+        case ST_ENUM8:
+            glog("Set %s to %d\n", d->name, *(const uint8_t *)ptr);
+            break;
+        case ST_COLOR_HEX: {
+            unsigned long v = (unsigned long)*(const uint32_t *)ptr;
+            glog("Set %s to 0x%06lX\n", d->name, v);
+        } break;
+        default:
+            glog("Set %s\n", d->name);
+            break;
+    }
 }
 
 void cmd_wifi_scan_results(int argc, char **argv) {
@@ -2693,604 +2943,64 @@ void handle_settings_cmd(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "get") == 0) {
-        if (argc < 3) {
-            glog("Usage: settings get <setting>\n");
-            return;
-        }
-        
-        const char* setting = argv[2];
-        FSettings* settings = &G_Settings;
-        
-        if (strcmp(setting, "rgb_mode") == 0) {
-            glog("rgb_mode = %d\n", settings->rgb_mode);
-        } else if (strcmp(setting, "rgb_speed") == 0) {
-            glog("rgb_speed = %d\n", settings->rgb_speed);
-        } else if (strcmp(setting, "rgb_data_pin") == 0) {
-            glog("rgb_data_pin = %ld\n", settings->rgb_data_pin);
-        } else if (strcmp(setting, "rgb_red_pin") == 0) {
-            glog("rgb_red_pin = %ld\n", settings->rgb_red_pin);
-        } else if (strcmp(setting, "rgb_green_pin") == 0) {
-            glog("rgb_green_pin = %ld\n", settings->rgb_green_pin);
-        } else if (strcmp(setting, "rgb_blue_pin") == 0) {
-            glog("rgb_blue_pin = %ld\n", settings->rgb_blue_pin);
-        } else if (strcmp(setting, "neopixel_bright") == 0) {
-            glog("neopixel_bright = %d\n", settings->neopixel_max_brightness);
-        } else if (strcmp(setting, "ap_ssid") == 0) {
-            glog("ap_ssid = \"%s\"\n", settings->ap_ssid);
-        } else if (strcmp(setting, "ap_password") == 0) {
-            glog("ap_password = \"%s\"\n", settings->ap_password);
-        } else if (strcmp(setting, "ap_enabled") == 0) {
-            glog("ap_enabled = %s\n", settings->ap_enabled ? "true" : "false");
-        } else if (strcmp(setting, "sta_ssid") == 0) {
-            glog("sta_ssid = \"%s\"\n", settings->sta_ssid);
-        } else if (strcmp(setting, "sta_password") == 0) {
-            glog("sta_password = \"%s\"\n", settings->sta_password);
-        } else if (strcmp(setting, "portal_url") == 0) {
-            glog("portal_url = \"%s\"\n", settings->portal_url);
-        } else if (strcmp(setting, "portal_ssid") == 0) {
-            glog("portal_ssid = \"%s\"\n", settings->portal_ssid);
-        } else if (strcmp(setting, "portal_password") == 0) {
-            glog("portal_password = \"%s\"\n", settings->portal_password);
-        } else if (strcmp(setting, "portal_ap_ssid") == 0) {
-            glog("portal_ap_ssid = \"%s\"\n", settings->portal_ap_ssid);
-        } else if (strcmp(setting, "portal_domain") == 0) {
-            glog("portal_domain = \"%s\"\n", settings->portal_domain);
-        } else if (strcmp(setting, "portal_offline") == 0) {
-            glog("portal_offline = %s\n", settings->portal_offline_mode ? "true" : "false");
-        } else if (strcmp(setting, "printer_ip") == 0) {
-            glog("printer_ip = \"%s\"\n", settings->printer_ip);
-        } else if (strcmp(setting, "printer_text") == 0) {
-            glog("printer_text = \"%s\"\n", settings->printer_text);
-        } else if (strcmp(setting, "printer_font_size") == 0) {
-            glog("printer_font_size = %d\n", settings->printer_font_size);
-        } else if (strcmp(setting, "printer_alignment") == 0) {
-            glog("printer_alignment = %d\n", settings->printer_alignment);
-        } else if (strcmp(setting, "display_timeout") == 0) {
-            glog("display_timeout = %lu\n", settings->display_timeout_ms);
-        } else if (strcmp(setting, "max_bright") == 0) {
-            glog("max_bright = %d\n", settings->max_screen_brightness);
-        } else if (strcmp(setting, "invert_colors") == 0) {
-            glog("invert_colors = %s\n", settings->invert_colors ? "true" : "false");
-        } else if (strcmp(setting, "terminal_color") == 0) {
-            glog("terminal_color = 0x%06lX\n", settings->terminal_text_color);
-        } else if (strcmp(setting, "menu_theme") == 0) {
-            glog("menu_theme = %d\n", settings->menu_theme);
-        } else if (strcmp(setting, "channel_delay") == 0) {
-            glog("channel_delay = %.2f\n", settings->channel_delay);
-        } else if (strcmp(setting, "broadcast_speed") == 0) {
-            glog("broadcast_speed = %d\n", settings->broadcast_speed);
-        } else if (strcmp(setting, "gps_rx_pin") == 0) {
-            glog("gps_rx_pin = %d\n", settings->gps_rx_pin);
-        } else if (strcmp(setting, "power_save") == 0) {
-            glog("power_save = %s\n", settings->power_save_enabled ? "true" : "false");
-        } else if (strcmp(setting, "zebra_menus") == 0) {
-            glog("zebra_menus = %s\n", settings->zebra_menus_enabled ? "true" : "false");
-        } else if (strcmp(setting, "nav_buttons") == 0) {
-            glog("nav_buttons = %s\n", settings->nav_buttons_enabled ? "true" : "false");
-        } else if (strcmp(setting, "menu_layout") == 0) {
-            glog("menu_layout = %d\n", settings->menu_layout);
-        } else if (strcmp(setting, "infrared_easy") == 0) {
-            glog("infrared_easy = %s\n", settings->infrared_easy_mode ? "true" : "false");
-        } else if (strcmp(setting, "web_auth") == 0) {
-            glog("web_auth = %s\n", settings->web_auth_enabled ? "true" : "false");
-        } else if (strcmp(setting, "rts_enabled") == 0) {
-            glog("rts_enabled = %s\n", settings->rts_enabled ? "true" : "false");
-        } else if (strcmp(setting, "third_ctrl") == 0) {
-            glog("third_ctrl = %s\n", settings->third_control_enabled ? "true" : "false");
-        } else if (strcmp(setting, "flappy_name") == 0) {
-            glog("flappy_name = \"%s\"\n", settings->flappy_ghost_name);
-        } else if (strcmp(setting, "timezone") == 0) {
-            glog("timezone = \"%s\"\n", settings->selected_timezone);
-        } else if (strcmp(setting, "accent_color") == 0) {
-            glog("accent_color = \"%s\"\n", settings->selected_hex_accent_color);
-        } else {
+        if (argc < 3) { glog("Usage: settings get <setting>\n"); return; }
+        const char *setting = argv[2];
+        const SettingDescriptor *d = find_setting_desc(setting);
+        if (!d) {
             glog("Unknown setting: %s\n", setting);
             glog("Use 'settings list' to see available settings\n");
+            return;
         }
+        print_setting_value(d, &G_Settings);
         return;
     }
 
     if (strcmp(argv[1], "set") == 0) {
-        if (argc < 4) {
-            glog("Usage: settings set <setting> <value>\n");
-            return;
-        }
-        
-        const char* setting = argv[2];
-        const char* value = argv[3];
-        FSettings* settings = &G_Settings;
-        
-        if (strcmp(setting, "rgb_mode") == 0) {
-            int mode = atoi(value);
-            if (mode >= 0 && mode <= 2) {
-                settings->rgb_mode = (RGBMode)mode;
-                settings_save(settings);
-                glog("Set rgb_mode to %d\n", mode);
-            } else {
-                glog("Invalid rgb_mode. Use 0=Normal, 1=Rainbow, 2=Stealth\n");
-            }
-        } else if (strcmp(setting, "rgb_speed") == 0) {
-            int speed = atoi(value);
-            if (speed >= 0 && speed <= 255) {
-                settings->rgb_speed = speed;
-                settings_save(settings);
-                glog("Set rgb_speed to %d\n", speed);
-            } else {
-                glog("Invalid rgb_speed. Use 0-255\n");
-            }
-        } else if (strcmp(setting, "rgb_data_pin") == 0) {
-            int pin = atoi(value);
-            settings->rgb_data_pin = pin;
-            settings_save(settings);
-            glog("Set rgb_data_pin to %d\n", pin);
-        } else if (strcmp(setting, "rgb_red_pin") == 0) {
-            int pin = atoi(value);
-            settings->rgb_red_pin = pin;
-            settings_save(settings);
-            glog("Set rgb_red_pin to %d\n", pin);
-        } else if (strcmp(setting, "rgb_green_pin") == 0) {
-            int pin = atoi(value);
-            settings->rgb_green_pin = pin;
-            settings_save(settings);
-            glog("Set rgb_green_pin to %d\n", pin);
-        } else if (strcmp(setting, "rgb_blue_pin") == 0) {
-            int pin = atoi(value);
-            settings->rgb_blue_pin = pin;
-            settings_save(settings);
-            glog("Set rgb_blue_pin to %d\n", pin);
-        } else if (strcmp(setting, "neopixel_bright") == 0) {
-            int bright = atoi(value);
-            if (bright >= 0 && bright <= 100) {
-                settings->neopixel_max_brightness = bright;
-                settings_save(settings);
-                glog("Set neopixel_bright to %d\n", bright);
-            } else {
-                glog("Invalid neopixel_bright. Use 0-100\n");
-            }
-        } else if (strcmp(setting, "ap_ssid") == 0) {
-            strncpy(settings->ap_ssid, value, sizeof(settings->ap_ssid) - 1);
-            settings->ap_ssid[sizeof(settings->ap_ssid) - 1] = '\0';
-            settings_save(settings);
-            glog("Set ap_ssid to \"%s\"\n", value);
-        } else if (strcmp(setting, "ap_password") == 0) {
-            strncpy(settings->ap_password, value, sizeof(settings->ap_password) - 1);
-            settings->ap_password[sizeof(settings->ap_password) - 1] = '\0';
-            settings_save(settings);
-            glog("Set ap_password to \"%s\"\n", value);
-        } else if (strcmp(setting, "ap_enabled") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->ap_enabled = true;
-                settings_save(settings);
-                glog("Set ap_enabled to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->ap_enabled = false;
-                settings_save(settings);
-                glog("Set ap_enabled to false\n");
-            } else {
-                glog("Invalid ap_enabled. Use true or false\n");
-            }
-        } else if (strcmp(setting, "sta_ssid") == 0) {
-            strncpy(settings->sta_ssid, value, sizeof(settings->sta_ssid) - 1);
-            settings->sta_ssid[sizeof(settings->sta_ssid) - 1] = '\0';
-            settings_save(settings);
-            glog("Set sta_ssid to \"%s\"\n", value);
-        } else if (strcmp(setting, "sta_password") == 0) {
-            strncpy(settings->sta_password, value, sizeof(settings->sta_password) - 1);
-            settings->sta_password[sizeof(settings->sta_password) - 1] = '\0';
-            settings_save(settings);
-            glog("Set sta_password to \"%s\"\n", value);
-        } else if (strcmp(setting, "portal_url") == 0) {
-            strncpy(settings->portal_url, value, sizeof(settings->portal_url) - 1);
-            settings->portal_url[sizeof(settings->portal_url) - 1] = '\0';
-            settings_save(settings);
-            glog("Set portal_url to \"%s\"\n", value);
-        } else if (strcmp(setting, "portal_ssid") == 0) {
-            strncpy(settings->portal_ssid, value, sizeof(settings->portal_ssid) - 1);
-            settings->portal_ssid[sizeof(settings->portal_ssid) - 1] = '\0';
-            settings_save(settings);
-            glog("Set portal_ssid to \"%s\"\n", value);
-        } else if (strcmp(setting, "portal_password") == 0) {
-            strncpy(settings->portal_password, value, sizeof(settings->portal_password) - 1);
-            settings->portal_password[sizeof(settings->portal_password) - 1] = '\0';
-            settings_save(settings);
-            glog("Set portal_password to \"%s\"\n", value);
-        } else if (strcmp(setting, "portal_ap_ssid") == 0) {
-            strncpy(settings->portal_ap_ssid, value, sizeof(settings->portal_ap_ssid) - 1);
-            settings->portal_ap_ssid[sizeof(settings->portal_ap_ssid) - 1] = '\0';
-            settings_save(settings);
-            glog("Set portal_ap_ssid to \"%s\"\n", value);
-        } else if (strcmp(setting, "portal_domain") == 0) {
-            strncpy(settings->portal_domain, value, sizeof(settings->portal_domain) - 1);
-            settings->portal_domain[sizeof(settings->portal_domain) - 1] = '\0';
-            settings_save(settings);
-            glog("Set portal_domain to \"%s\"\n", value);
-        } else if (strcmp(setting, "portal_offline") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->portal_offline_mode = true;
-                settings_save(settings);
-                glog("Set portal_offline to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->portal_offline_mode = false;
-                settings_save(settings);
-                glog("Set portal_offline to false\n");
-            } else {
-                glog("Invalid portal_offline. Use true or false\n");
-            }
-        } else if (strcmp(setting, "printer_ip") == 0) {
-            strncpy(settings->printer_ip, value, sizeof(settings->printer_ip) - 1);
-            settings->printer_ip[sizeof(settings->printer_ip) - 1] = '\0';
-            settings_save(settings);
-            glog("Set printer_ip to \"%s\"\n", value);
-        } else if (strcmp(setting, "printer_text") == 0) {
-            strncpy(settings->printer_text, value, sizeof(settings->printer_text) - 1);
-            settings->printer_text[sizeof(settings->printer_text) - 1] = '\0';
-            settings_save(settings);
-            glog("Set printer_text to \"%s\"\n", value);
-        } else if (strcmp(setting, "printer_font_size") == 0) {
-            int size = atoi(value);
-            if (size > 0 && size <= 255) {
-                settings->printer_font_size = size;
-                settings_save(settings);
-                glog("Set printer_font_size to %d\n", size);
-            } else {
-                glog("Invalid printer_font_size. Use 1-255\n");
-            }
-        } else if (strcmp(setting, "printer_alignment") == 0) {
-            int align = atoi(value);
-            if (align >= 0 && align <= 4) {
-                settings->printer_alignment = (PrinterAlignment)align;
-                settings_save(settings);
-                glog("Set printer_alignment to %d\n", align);
-            } else {
-                glog("Invalid printer_alignment. Use 0-4\n");
-            }
-        } else if (strcmp(setting, "display_timeout") == 0) {
-            unsigned long timeout = strtoul(value, NULL, 10);
-            settings->display_timeout_ms = timeout;
-            settings_save(settings);
-            glog("Set display_timeout to %lu\n", timeout);
-        } else if (strcmp(setting, "max_bright") == 0) {
-            int bright = atoi(value);
-            if (bright >= 0 && bright <= 100) {
-                settings->max_screen_brightness = bright;
-                settings_save(settings);
-                glog("Set max_bright to %d\n", bright);
-            } else {
-                glog("Invalid max_bright. Use 0-100\n");
-            }
-        } else if (strcmp(setting, "invert_colors") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->invert_colors = true;
-                settings_save(settings);
-                glog("Set invert_colors to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->invert_colors = false;
-                settings_save(settings);
-                glog("Set invert_colors to false\n");
-            } else {
-                glog("Invalid invert_colors. Use true or false\n");
-            }
-        } else if (strcmp(setting, "terminal_color") == 0) {
-            unsigned long color = strtoul(value, NULL, 16);
-            settings->terminal_text_color = color;
-            settings_save(settings);
-            glog("Set terminal_color to 0x%06lX\n", color);
-        } else if (strcmp(setting, "menu_theme") == 0) {
-            int theme = atoi(value);
-            settings->menu_theme = theme;
-            settings_save(settings);
-            glog("Set menu_theme to %d\n", theme);
-        } else if (strcmp(setting, "channel_delay") == 0) {
-            float delay = atof(value);
-            settings->channel_delay = delay;
-            settings_save(settings);
-            glog("Set channel_delay to %.2f\n", delay);
-        } else if (strcmp(setting, "broadcast_speed") == 0) {
-            int speed = atoi(value);
-            settings->broadcast_speed = speed;
-            settings_save(settings);
-            glog("Set broadcast_speed to %d\n", speed);
-        } else if (strcmp(setting, "gps_rx_pin") == 0) {
-            int pin = atoi(value);
-            settings->gps_rx_pin = pin;
-            settings_save(settings);
-            glog("Set gps_rx_pin to %d\n", pin);
-        } else if (strcmp(setting, "power_save") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->power_save_enabled = true;
-                settings_save(settings);
-                glog("Set power_save to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->power_save_enabled = false;
-                settings_save(settings);
-                glog("Set power_save to false\n");
-            } else {
-                glog("Invalid power_save. Use true or false\n");
-            }
-        } else if (strcmp(setting, "zebra_menus") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->zebra_menus_enabled = true;
-                settings_save(settings);
-                glog("Set zebra_menus to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->zebra_menus_enabled = false;
-                settings_save(settings);
-                glog("Set zebra_menus to false\n");
-            } else {
-                glog("Invalid zebra_menus. Use true or false\n");
-            }
-        } else if (strcmp(setting, "nav_buttons") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->nav_buttons_enabled = true;
-                settings_save(settings);
-                glog("Set nav_buttons to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->nav_buttons_enabled = false;
-                settings_save(settings);
-                glog("Set nav_buttons to false\n");
-            } else {
-                glog("Invalid nav_buttons. Use true or false\n");
-            }
-        } else if (strcmp(setting, "menu_layout") == 0) {
-            int layout = atoi(value);
-            if (layout >= 0 && layout <= 2) {
-                settings->menu_layout = layout;
-                settings_save(settings);
-                glog("Set menu_layout to %d\n", layout);
-            } else {
-                glog("Invalid menu_layout. Use 0=Carousel, 1=Grid, 2=List\n");
-            }
-        } else if (strcmp(setting, "infrared_easy") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->infrared_easy_mode = true;
-                settings_save(settings);
-                glog("Set infrared_easy to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->infrared_easy_mode = false;
-                settings_save(settings);
-                glog("Set infrared_easy to false\n");
-            } else {
-                glog("Invalid infrared_easy. Use true or false\n");
-            }
-        } else if (strcmp(setting, "web_auth") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->web_auth_enabled = true;
-                settings_save(settings);
-                glog("Set web_auth to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->web_auth_enabled = false;
-                settings_save(settings);
-                glog("Set web_auth to false\n");
-            } else {
-                glog("Invalid web_auth. Use true or false\n");
-            }
-        } else if (strcmp(setting, "rts_enabled") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->rts_enabled = true;
-                settings_save(settings);
-                glog("Set rts_enabled to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->rts_enabled = false;
-                settings_save(settings);
-                glog("Set rts_enabled to false\n");
-            } else {
-                glog("Invalid rts_enabled. Use true or false\n");
-            }
-        } else if (strcmp(setting, "third_ctrl") == 0) {
-            if (strcmp(value, "true") == 0) {
-                settings->third_control_enabled = true;
-                settings_save(settings);
-                glog("Set third_ctrl to true\n");
-            } else if (strcmp(value, "false") == 0) {
-                settings->third_control_enabled = false;
-                settings_save(settings);
-                glog("Set third_ctrl to false\n");
-            } else {
-                glog("Invalid third_ctrl. Use true or false\n");
-            }
-        } else if (strcmp(setting, "flappy_name") == 0) {
-            strncpy(settings->flappy_ghost_name, value, sizeof(settings->flappy_ghost_name) - 1);
-            settings->flappy_ghost_name[sizeof(settings->flappy_ghost_name) - 1] = '\0';
-            settings_save(settings);
-            glog("Set flappy_name to \"%s\"\n", value);
-        } else if (strcmp(setting, "timezone") == 0) {
-            strncpy(settings->selected_timezone, value, sizeof(settings->selected_timezone) - 1);
-            settings->selected_timezone[sizeof(settings->selected_timezone) - 1] = '\0';
-            settings_save(settings);
-            glog("Set timezone to \"%s\"\n", value);
-        } else if (strcmp(setting, "accent_color") == 0) {
-            strncpy(settings->selected_hex_accent_color, value, sizeof(settings->selected_hex_accent_color) - 1);
-            settings->selected_hex_accent_color[sizeof(settings->selected_hex_accent_color) - 1] = '\0';
-            settings_save(settings);
-            glog("Set accent_color to \"%s\"\n", value);
-        } else {
+        if (argc < 4) { glog("Usage: settings set <setting> <value>\n"); return; }
+        const char *setting = argv[2];
+        const char *value = argv[3];
+        const SettingDescriptor *d = find_setting_desc(setting);
+        if (!d) {
             glog("Unknown setting: %s\n", setting);
             glog("Use 'settings list' to see available settings\n");
+            return;
         }
+        FSettings *settings = &G_Settings;
+        if (!set_setting_value(d, settings, value)) {
+            if (d->type == ST_BOOL) {
+                glog("Invalid %s. Use true or false\n", d->name);
+            } else if (d->type == ST_U8 || d->type == ST_U16 || d->type == ST_ENUM8) {
+                if (d->max_i > d->min_i) glog("Invalid %s. Use %d-%d\n", d->name, d->min_i, d->max_i);
+                else glog("Invalid %s value\n", d->name);
+            } else if (d->type == ST_COLOR_HEX) {
+                glog("Invalid %s. Use hex like 00FF00\n", d->name);
+            } else {
+                glog("Invalid %s value\n", d->name);
+            }
+            return;
+        }
+        settings_save(settings);
+        log_set_confirmation(d, settings);
         return;
     }
 
     if (strcmp(argv[1], "reset") == 0) {
         if (argc == 2) {
-            // Reset all settings to defaults
             settings_set_defaults(&G_Settings);
             settings_save(&G_Settings);
             glog("Reset all settings to defaults\n");
         } else if (argc == 3) {
-            // Reset specific setting
-            const char* setting = argv[2];
-            FSettings* settings = &G_Settings;
-            FSettings defaults;
-            settings_set_defaults(&defaults);
-            
-            if (strcmp(setting, "rgb_mode") == 0) {
-                settings->rgb_mode = defaults.rgb_mode;
-                settings_save(settings);
-                glog("Reset rgb_mode to default\n");
-            } else if (strcmp(setting, "rgb_speed") == 0) {
-                settings->rgb_speed = defaults.rgb_speed;
-                settings_save(settings);
-                glog("Reset rgb_speed to default\n");
-            } else if (strcmp(setting, "rgb_data_pin") == 0) {
-                settings->rgb_data_pin = defaults.rgb_data_pin;
-                settings_save(settings);
-                glog("Reset rgb_data_pin to default\n");
-            } else if (strcmp(setting, "rgb_red_pin") == 0) {
-                settings->rgb_red_pin = defaults.rgb_red_pin;
-                settings_save(settings);
-                glog("Reset rgb_red_pin to default\n");
-            } else if (strcmp(setting, "rgb_green_pin") == 0) {
-                settings->rgb_green_pin = defaults.rgb_green_pin;
-                settings_save(settings);
-                glog("Reset rgb_green_pin to default\n");
-            } else if (strcmp(setting, "rgb_blue_pin") == 0) {
-                settings->rgb_blue_pin = defaults.rgb_blue_pin;
-                settings_save(settings);
-                glog("Reset rgb_blue_pin to default\n");
-            } else if (strcmp(setting, "neopixel_bright") == 0) {
-                settings->neopixel_max_brightness = defaults.neopixel_max_brightness;
-                settings_save(settings);
-                glog("Reset neopixel_bright to default\n");
-            } else if (strcmp(setting, "ap_ssid") == 0) {
-                strcpy(settings->ap_ssid, defaults.ap_ssid);
-                settings_save(settings);
-                glog("Reset ap_ssid to default\n");
-            } else if (strcmp(setting, "ap_password") == 0) {
-                strcpy(settings->ap_password, defaults.ap_password);
-                settings_save(settings);
-                glog("Reset ap_password to default\n");
-            } else if (strcmp(setting, "ap_enabled") == 0) {
-                settings->ap_enabled = defaults.ap_enabled;
-                settings_save(settings);
-                glog("Reset ap_enabled to default\n");
-            } else if (strcmp(setting, "sta_ssid") == 0) {
-                strcpy(settings->sta_ssid, defaults.sta_ssid);
-                settings_save(settings);
-                glog("Reset sta_ssid to default\n");
-            } else if (strcmp(setting, "sta_password") == 0) {
-                strcpy(settings->sta_password, defaults.sta_password);
-                settings_save(settings);
-                glog("Reset sta_password to default\n");
-            } else if (strcmp(setting, "portal_url") == 0) {
-                strcpy(settings->portal_url, defaults.portal_url);
-                settings_save(settings);
-                glog("Reset portal_url to default\n");
-            } else if (strcmp(setting, "portal_ssid") == 0) {
-                strcpy(settings->portal_ssid, defaults.portal_ssid);
-                settings_save(settings);
-                glog("Reset portal_ssid to default\n");
-            } else if (strcmp(setting, "portal_password") == 0) {
-                strcpy(settings->portal_password, defaults.portal_password);
-                settings_save(settings);
-                glog("Reset portal_password to default\n");
-            } else if (strcmp(setting, "portal_ap_ssid") == 0) {
-                strcpy(settings->portal_ap_ssid, defaults.portal_ap_ssid);
-                settings_save(settings);
-                glog("Reset portal_ap_ssid to default\n");
-            } else if (strcmp(setting, "portal_domain") == 0) {
-                strcpy(settings->portal_domain, defaults.portal_domain);
-                settings_save(settings);
-                glog("Reset portal_domain to default\n");
-            } else if (strcmp(setting, "portal_offline") == 0) {
-                settings->portal_offline_mode = defaults.portal_offline_mode;
-                settings_save(settings);
-                glog("Reset portal_offline to default\n");
-            } else if (strcmp(setting, "printer_ip") == 0) {
-                strcpy(settings->printer_ip, defaults.printer_ip);
-                settings_save(settings);
-                glog("Reset printer_ip to default\n");
-            } else if (strcmp(setting, "printer_text") == 0) {
-                strcpy(settings->printer_text, defaults.printer_text);
-                settings_save(settings);
-                glog("Reset printer_text to default\n");
-            } else if (strcmp(setting, "printer_font_size") == 0) {
-                settings->printer_font_size = defaults.printer_font_size;
-                settings_save(settings);
-                glog("Reset printer_font_size to default\n");
-            } else if (strcmp(setting, "printer_alignment") == 0) {
-                settings->printer_alignment = defaults.printer_alignment;
-                settings_save(settings);
-                glog("Reset printer_alignment to default\n");
-            } else if (strcmp(setting, "display_timeout") == 0) {
-                settings->display_timeout_ms = defaults.display_timeout_ms;
-                settings_save(settings);
-                glog("Reset display_timeout to default\n");
-            } else if (strcmp(setting, "max_bright") == 0) {
-                settings->max_screen_brightness = defaults.max_screen_brightness;
-                settings_save(settings);
-                glog("Reset max_bright to default\n");
-            } else if (strcmp(setting, "invert_colors") == 0) {
-                settings->invert_colors = defaults.invert_colors;
-                settings_save(settings);
-                glog("Reset invert_colors to default\n");
-            } else if (strcmp(setting, "terminal_color") == 0) {
-                settings->terminal_text_color = defaults.terminal_text_color;
-                settings_save(settings);
-                glog("Reset terminal_color to default\n");
-            } else if (strcmp(setting, "menu_theme") == 0) {
-                settings->menu_theme = defaults.menu_theme;
-                settings_save(settings);
-                glog("Reset menu_theme to default\n");
-            } else if (strcmp(setting, "channel_delay") == 0) {
-                settings->channel_delay = defaults.channel_delay;
-                settings_save(settings);
-                glog("Reset channel_delay to default\n");
-            } else if (strcmp(setting, "broadcast_speed") == 0) {
-                settings->broadcast_speed = defaults.broadcast_speed;
-                settings_save(settings);
-                glog("Reset broadcast_speed to default\n");
-            } else if (strcmp(setting, "gps_rx_pin") == 0) {
-                settings->gps_rx_pin = defaults.gps_rx_pin;
-                settings_save(settings);
-                glog("Reset gps_rx_pin to default\n");
-            } else if (strcmp(setting, "power_save") == 0) {
-                settings->power_save_enabled = defaults.power_save_enabled;
-                settings_save(settings);
-                glog("Reset power_save to default\n");
-            } else if (strcmp(setting, "zebra_menus") == 0) {
-                settings->zebra_menus_enabled = defaults.zebra_menus_enabled;
-                settings_save(settings);
-                glog("Reset zebra_menus to default\n");
-            } else if (strcmp(setting, "nav_buttons") == 0) {
-                settings->nav_buttons_enabled = defaults.nav_buttons_enabled;
-                settings_save(settings);
-                glog("Reset nav_buttons to default\n");
-            } else if (strcmp(setting, "menu_layout") == 0) {
-                settings->menu_layout = defaults.menu_layout;
-                settings_save(settings);
-                glog("Reset menu_layout to default\n");
-            } else if (strcmp(setting, "infrared_easy") == 0) {
-                settings->infrared_easy_mode = defaults.infrared_easy_mode;
-                settings_save(settings);
-                glog("Reset infrared_easy to default\n");
-            } else if (strcmp(setting, "web_auth") == 0) {
-                settings->web_auth_enabled = defaults.web_auth_enabled;
-                settings_save(settings);
-                glog("Reset web_auth to default\n");
-            } else if (strcmp(setting, "rts_enabled") == 0) {
-                settings->rts_enabled = defaults.rts_enabled;
-                settings_save(settings);
-                glog("Reset rts_enabled to default\n");
-            } else if (strcmp(setting, "third_ctrl") == 0) {
-                settings->third_control_enabled = defaults.third_control_enabled;
-                settings_save(settings);
-                glog("Reset third_ctrl to default\n");
-            } else if (strcmp(setting, "flappy_name") == 0) {
-                strcpy(settings->flappy_ghost_name, defaults.flappy_ghost_name);
-                settings_save(settings);
-                glog("Reset flappy_name to default\n");
-            } else if (strcmp(setting, "timezone") == 0) {
-                strcpy(settings->selected_timezone, defaults.selected_timezone);
-                settings_save(settings);
-                glog("Reset timezone to default\n");
-            } else if (strcmp(setting, "accent_color") == 0) {
-                strcpy(settings->selected_hex_accent_color, defaults.selected_hex_accent_color);
-                settings_save(settings);
-                glog("Reset accent_color to default\n");
-            } else {
+            const char *setting = argv[2];
+            const SettingDescriptor *d = find_setting_desc(setting);
+            if (!d) {
                 glog("Unknown setting: %s\n", setting);
                 glog("Use 'settings list' to see available settings\n");
+                return;
             }
+            FSettings defaults; settings_set_defaults(&defaults);
+            reset_setting_value(d, &G_Settings, &defaults);
+            settings_save(&G_Settings);
+            glog("Reset %s to default\n", d->name);
         } else {
             glog("Usage: settings reset [setting]\n");
         }
