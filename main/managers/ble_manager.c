@@ -20,6 +20,7 @@
 #include <esp_mac.h>
 #include <managers/rgb_manager.h>
 #include <managers/settings_manager.h>
+#include "managers/status_display_manager.h"
 
 #define MAX_DEVICES 30
 #define MAX_HANDLERS 10
@@ -779,10 +780,19 @@ static void restart_ble_stack(void) {
     // Small delay before reinitializing
     vTaskDelay(pdMS_TO_TICKS(50));
     
+    // log DMA-capable internal heap info right before NimBLE re-init
+    size_t free_internal_dma_re = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+    size_t largest_internal_dma_re = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+    ESP_LOGI(TAG_BLE, "reinit pre-init dma-ram: free=%d bytes (largest block=%d)", (int)free_internal_dma_re, (int)largest_internal_dma_re);
+    TERMINAL_VIEW_ADD_TEXT("reinit pre-init dma-ram: free=%d bytes (largest=%d)\n", (int)free_internal_dma_re, (int)largest_internal_dma_re);
+
     // Reinitialize the NimBLE stack
     int ret = nimble_port_init();
     if (ret != 0) {
         ESP_LOGE(TAG_BLE, "Failed to reinit nimble port: %d", ret);
+        size_t free_dma_after_re = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        size_t largest_dma_after_re = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        ESP_LOGI(TAG_BLE, "reinit post-fail dma-ram: free=%d bytes (largest block=%d)", (int)free_dma_after_re, (int)largest_dma_after_re);
         return;
     }
     
@@ -843,6 +853,7 @@ static bool extract_company_id(const uint8_t *payload, size_t length, uint16_t *
 
 void ble_stop_skimmer_detection(void) {
     glog("Stopping skimmer detection scan...\n");
+    status_display_show_status("Skimmer Stopping");
 
     // Unregister the skimmer detection callback
     ble_unregister_handler(ble_skimmer_scan_callback);
@@ -862,6 +873,10 @@ void ble_stop_skimmer_detection(void) {
 
     if (rc == 0) {
         glog("BLE skimmer detection stopped successfully.\n");
+        status_display_show_status("Skimmer Stopped");
+    } else {
+        glog("Error stopping BLE skimmer detection: %d\n", rc);
+        status_display_show_status("Skimmer Stop Fail");
     }
 }
 
@@ -1473,6 +1488,7 @@ void ble_start_spoofing_selected_airtag(void) {
              tag_to_spoof->addr.val[3], tag_to_spoof->addr.val[4], tag_to_spoof->addr.val[5]);
     printf("Started spoofing AirTag %d (MAC: %s)\n", selected_airtag_index, macAddress);
     TERMINAL_VIEW_ADD_TEXT("Started spoofing AirTag %d\nMAC: %s\n", selected_airtag_index, macAddress);
+    status_display_show_status("AirTag Spoof On");
     // Pulse green maybe?
     pulse_once(&rgb_manager, 0, 255, 0);
 }
@@ -1483,14 +1499,17 @@ void ble_stop_spoofing(void) {
         int rc = ble_gap_adv_stop();
         if (rc == 0) {
             glog("Stopped AirTag spoofing advertisement.\n");
+            status_display_show_status("AirTag Spoof Off");
         } else {
             ESP_LOGE(TAG_BLE, "Error stopping spoofing advertisement; rc=%d", rc);
             glog("Error stopping spoof adv; rc=%d\n", rc);
+            status_display_show_status("Spoof Stop Fail");
         }
         // Reset selected index after stopping spoof
         selected_airtag_index = -1;
     } else {
         glog("No spoofing advertisement active.\n");
+        status_display_show_status("No Spoof Active");
     }
 }
 
@@ -1527,13 +1546,14 @@ void ble_start_scanning(void) {
     if (!wait_for_ble_ready()) {
         ESP_LOGE(TAG_BLE, "BLE stack not ready");
         TERMINAL_VIEW_ADD_TEXT("BLE stack not ready\n");
+        status_display_show_status("BLE Not Ready");
         return;
     }
 
     struct ble_gap_disc_params disc_params = {0};
     disc_params.itvl = BLE_HCI_SCAN_ITVL_DEF;
     disc_params.window = BLE_HCI_SCAN_WINDOW_DEF;
-    disc_params.filter_duplicates = 1;
+    disc_params.filter_duplicates = 0;
 
     // Start a new BLE scan
     int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &disc_params, ble_gap_event_general,
@@ -1541,9 +1561,11 @@ void ble_start_scanning(void) {
     if (rc != 0) {
         ESP_LOGE(TAG_BLE, "Error starting BLE scan");
         TERMINAL_VIEW_ADD_TEXT("Error starting BLE scan\n");
+        status_display_show_status("BLE Scan Fail");
     } else {
         ESP_LOGI(TAG_BLE, "Scanning started...");
         TERMINAL_VIEW_ADD_TEXT("Scanning started...\n");
+        status_display_show_status("BLE Scanning");
     }
 }
 
@@ -1586,6 +1608,24 @@ esp_err_t ble_unregister_handler(ble_data_handler_t handler) {
 
 void ble_init(void) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
+    // --- pre-init ram check ---
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t largest_psram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    
+    if (free_psram > 0) {
+        ESP_LOGI(TAG_BLE, "pre-init ram: internal=%d bytes (largest block=%d), psram=%d bytes (largest block=%d)", 
+                 (int)free_internal, (int)largest_internal, (int)free_psram, (int)largest_psram);
+        TERMINAL_VIEW_ADD_TEXT("pre-init ram: internal=%d bytes (largest=%d), psram=%d bytes (largest=%d)\n", 
+                               (int)free_internal, (int)largest_internal, (int)free_psram, (int)largest_psram);
+    } else {
+        ESP_LOGI(TAG_BLE, "pre-init ram: internal=%d bytes (largest block=%d), no psram", 
+                 (int)free_internal, (int)largest_internal);
+        TERMINAL_VIEW_ADD_TEXT("pre-init ram: internal=%d bytes (largest=%d), no psram\n", 
+                               (int)free_internal, (int)largest_internal);
+    }
+    
     // --- Memory check before BLE init ---
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     if (free_heap < (45 * 1024)) {
@@ -1612,9 +1652,19 @@ void ble_init(void) {
             handler_count = 0;
         }
 
+        // log DMA-capable internal heap info right before NimBLE init
+        size_t free_internal_dma = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        size_t largest_internal_dma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+        ESP_LOGI(TAG_BLE, "pre-init dma-ram: free=%d bytes (largest block=%d)", (int)free_internal_dma, (int)largest_internal_dma);
+        TERMINAL_VIEW_ADD_TEXT("pre-init dma-ram: free=%d bytes (largest=%d)\n", (int)free_internal_dma, (int)largest_internal_dma);
+
         ret = nimble_port_init();
         if (ret != 0) {
             ESP_LOGE(TAG_BLE, "Failed to init nimble port: %d", ret);
+            ESP_LOGI(TAG_BLE, "Dumping DMA-capable heap info after failure");
+            size_t free_dma_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+            size_t largest_dma_after = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+            ESP_LOGI(TAG_BLE, "post-fail dma-ram: free=%d bytes (largest block=%d)", (int)free_dma_after, (int)largest_dma_after);
             free(handlers);
             handlers = NULL;
             return;
@@ -1656,13 +1706,13 @@ void ble_deinit(void) {
 
         nimble_port_stop();
         nimble_port_deinit();
-        
+
         // Wait for nimble host task to finish and clean up
         if (nimble_host_task_handle != NULL) {
             vTaskDelay(pdMS_TO_TICKS(100));
             nimble_host_task_handle = NULL;
         }
-        
+
         ble_initialized = false;
         ESP_LOGI(TAG_BLE, "BLE deinitialized successfully.");
         TERMINAL_VIEW_ADD_TEXT("BLE deinitialized successfully.\n");
@@ -1677,6 +1727,8 @@ void ble_stop(void) {
     if (!ble_gap_disc_active()) {
         return;
     }
+
+    status_display_show_status("BLE Stopping");
 
     if (last_company_id != NULL) {
         free(last_company_id);
@@ -1715,21 +1767,27 @@ void ble_stop(void) {
     switch (rc) {
     case 0:
         glog("BLE scan stopped successfully.\n");
+        status_display_show_status("BLE Stopped");
         break;
     case BLE_HS_EBUSY:
         glog("BLE scan is busy\n");
+        status_display_show_status("BLE Busy");
         break;
     case BLE_HS_ETIMEOUT:
         glog("BLE operation timed out.\n");
+        status_display_show_status("BLE Timeout");
         break;
     case BLE_HS_ENOTCONN:
         glog("BLE not connected.\n");
+        status_display_show_status("BLE No Conn");
         break;
     case BLE_HS_EINVAL:
         glog("BLE invalid parameter.\n");
+        status_display_show_status("BLE Invalid");
         break;
     default:
         glog("Error stopping BLE scan: %d\n", rc);
+        status_display_show_status("BLE Stop Fail");
     }
 }
 
@@ -1873,6 +1931,7 @@ void ble_start_capture(void) {
     }
 
     ble_start_scanning();
+    status_display_show_status("BLE Capture On");
 }
 
 void ble_start_skimmer_detection(void) {
@@ -2071,6 +2130,7 @@ void ble_start_ble_spam(ble_spam_type_t type) {
         case BLE_SPAM_FLIPPERZERO: type_name = "flipper"; break;
     }
     printf("ble spam advertising started (%s)\n", type_name);
+    status_display_show_status("BLE Spam On");
 }
 
 void ble_stop_ble_spam(void) {
@@ -2098,6 +2158,7 @@ void ble_stop_ble_spam(void) {
     }
     
     printf("ble spam advertising stopped\n");
+    status_display_show_status("BLE Spam Off");
 }
 
 #endif

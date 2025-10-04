@@ -881,7 +881,11 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
    Single buffer increases flush frequency but greatly reduces RAM usage. */
 #if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
-#elif defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32C5)
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+  /* Use a single buffer on ESP32-C5 sized to provide a responsive feel on 240x320 displays */
+  /* width * 8 gives ~8 lines of buffer which balances responsiveness and RAM use */
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
+#elif defined(CONFIG_IDF_TARGET_ESP32)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
 #else
@@ -902,10 +906,15 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #endif
 
   static lv_disp_draw_buf_t disp_buf;
+/* Initialize draw buffer: prefer single-buffer on cardputer and ESP32-C5 */
 #if defined(CONFIG_USE_CARDPUTER)
-  /* single buffer mode: pass NULL for second buffer and set size accordingly */
+  /* single buffer mode: small buffer for low-memory cardputer */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 2);
+#elif defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32S2)
+  /* single buffer mode: use width * 8 for responsive drawing without excessive RAM */
+  lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
 #else
+  /* default: double buffer for smoother drawing */
   lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);
 #endif
 
@@ -1036,41 +1045,45 @@ bool display_manager_register_view(View *view) {
   return true;
 }
 
-void display_manager_switch_view(View *view) {
-  if (view == NULL)
-    return;
-
+static void display_manager_switch_view_internal(View *view) {
+  if (view == NULL) return;
 #ifdef CONFIG_JC3248W535EN_LCD
   bsp_display_lock(0);
 #endif
-
   if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-    ESP_LOGI(TAG, "Switching view from %s to %s",
-           dm.current_view ? dm.current_view->name : "NULL", view->name);
-
+    ESP_LOGI(TAG, "Switching view from %s to %s", dm.current_view ? dm.current_view->name : "NULL", view->name);
     if (dm.current_view && dm.current_view->root) {
-      display_manager_previous_view = dm.current_view; // Store current view as previous
+      display_manager_previous_view = dm.current_view;
       display_manager_fade_out(dm.current_view->root, fade_out_ready_cb, view);
     } else {
-      display_manager_previous_view = dm.current_view; // Store current view as previous
+      display_manager_previous_view = dm.current_view;
       dm.current_view = view;
-
       if (view->get_hardwareinput_callback) {
         view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
       }
-
       view->create();
       display_manager_fade_in(view->root);
     }
-
     xSemaphoreGive(dm.mutex);
   } else {
     ESP_LOGE(TAG, "Failed to acquire mutex for switching view\n");
   }
-
 #ifdef CONFIG_JC3248W535EN_LCD
   bsp_display_unlock();
 #endif
+}
+
+static void dm_switch_async_cb(void *param) {
+  display_manager_switch_view_internal((View *)param);
+}
+
+void display_manager_switch_view(View *view) {
+  if (view == NULL) return;
+  if (lvgl_task_handle && xTaskGetCurrentTaskHandle() != lvgl_task_handle) {
+    lv_async_call(dm_switch_async_cb, view);
+    return;
+  }
+  display_manager_switch_view_internal(view);
 }
 
 void display_manager_destroy_current_view(void) {
@@ -1092,6 +1105,16 @@ void display_manager_fill_screen(lv_color_t color) {
   lv_style_set_bg_opa(&style, LV_OPA_COVER);
   lv_obj_set_scrollbar_mode(lv_scr_act(), LV_SCROLLBAR_MODE_OFF);
   lv_obj_add_style(lv_scr_act(), &style, LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+void display_manager_suspend_lvgl_task(void) {
+  if (!lvgl_task_handle) return;
+  if (xTaskGetCurrentTaskHandle() == lvgl_task_handle) return;
+  vTaskSuspend(lvgl_task_handle);
+}
+
+void display_manager_resume_lvgl_task(void) {
+  if (lvgl_task_handle) vTaskResume(lvgl_task_handle);
 }
 
 void set_backlight_brightness(uint8_t percentage) {

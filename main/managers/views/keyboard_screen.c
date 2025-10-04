@@ -81,8 +81,15 @@ static void update_input_label();
 static void update_key_labels();
 static void recreate_keyboard_buttons();
 static void get_key_position(int row, int col, int *x, int *width, bool symbols_mode);
+static void ensure_valid_cursor(void);
+static lv_obj_t *get_key_button_at(int row, int col);
+static void apply_selection_highlight(void);
+static void activate_selected_key(void);
 
 static lv_obj_t *pressed_key_btn = NULL;
+static lv_obj_t *selected_key_btn = NULL;
+static int cursor_row = 0;
+static int cursor_col = 0;
 
 static bool is_shift_key(const char *key) {
     return strcmp(key, "SHIFT") == 0;
@@ -237,7 +244,7 @@ static void update_input_label() {
 }
 
 static void update_key_labels() {
-#ifdef CONFIG_USE_TOUCHSCREEN
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
     if (!root) return;
 
     int key_index = 0;
@@ -273,10 +280,13 @@ static void update_key_labels() {
         }
     }
 #endif
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
+    apply_selection_highlight();
+#endif
 }
 
 static void recreate_keyboard_buttons() {
-#ifdef CONFIG_USE_TOUCHSCREEN
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
     if (!root) return;
 
     // Remove all existing key buttons (skip input_label at index 0)
@@ -324,6 +334,9 @@ static void recreate_keyboard_buttons() {
         key_y += key_height + 2;
     }
 #endif
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
+    apply_selection_highlight();
+#endif
 }
 
 static void keyboard_create() {
@@ -356,7 +369,7 @@ static void keyboard_create() {
     lv_label_set_long_mode(input_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     update_input_label();
 
-#ifdef CONFIG_USE_TOUCHSCREEN
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
     int keys_start_y = status_bar_height + display_height + padding * 2;
     int keys_area_height = screen_height - keys_start_y;
     int key_height = (keys_area_height / num_rows) - 4;
@@ -443,6 +456,8 @@ static void keyboard_create() {
         }
         key_y += key_height + 2;
     }
+    cursor_row = 0;
+    cursor_col = 0;
 #elif defined(CONFIG_USE_ENCODER)
     encoder_cont = lv_obj_create(root);
     lv_obj_remove_style_all(encoder_cont);
@@ -489,6 +504,9 @@ static void keyboard_create() {
     display_manager_add_status_bar("Keyboard");
 
     update_key_labels();
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
+    apply_selection_highlight();
+#endif
 }
 
 static void keyboard_destroy() {
@@ -510,6 +528,9 @@ static void keyboard_destroy() {
         encoder_item_spacing = 0;
         encoder_sym_mode = false;
 #endif
+        selected_key_btn = NULL;
+        cursor_row = 0;
+        cursor_col = 0;
     }
 }
 
@@ -595,7 +616,29 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
         return;
     }
 #endif
-    if (event->type == INPUT_TYPE_TOUCH && event->data.touch_data.state == LV_INDEV_STATE_PR) {
+    if (event->type == INPUT_TYPE_JOYSTICK) {
+        int button = event->data.joystick_index;
+        const int *row_lens = get_current_row_lengths();
+        int prev_row = cursor_row;
+        int prev_col = cursor_col;
+        if (button == 0) { // left
+            if (cursor_col > 0) cursor_col--; else cursor_col = row_lens[cursor_row] - 1;
+        } else if (button == 3) { // right
+            if (cursor_col < row_lens[cursor_row] - 1) cursor_col++; else cursor_col = 0;
+        } else if (button == 2) { // up
+            cursor_row = (cursor_row > 0) ? cursor_row - 1 : num_rows - 1;
+            if (cursor_col >= row_lens[cursor_row]) cursor_col = row_lens[cursor_row] - 1;
+        } else if (button == 4) { // down
+            cursor_row = (cursor_row < num_rows - 1) ? cursor_row + 1 : 0;
+            if (cursor_col >= row_lens[cursor_row]) cursor_col = row_lens[cursor_row] - 1;
+        } else if (button == 1) { // select
+            activate_selected_key();
+            return;
+        }
+        if (prev_row != cursor_row || prev_col != cursor_col) {
+            apply_selection_highlight();
+        }
+    } else if (event->type == INPUT_TYPE_TOUCH && event->data.touch_data.state == LV_INDEV_STATE_PR) {
         int touch_x = event->data.touch_data.point.x;
         int touch_y = event->data.touch_data.point.y;
         
@@ -700,6 +743,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
             pressed_key_btn = NULL;
             // Always update key labels to refresh SHIFT key highlight
             update_key_labels();
+            apply_selection_highlight();
         }
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         char c = (char)event->data.key_value;
@@ -793,4 +837,108 @@ static void get_key_position(int row, int col, int *x, int *width, bool symbols_
     }
     *x = key_x;
     *width = current_key_width;
+}
+
+static void ensure_valid_cursor(void) {
+    const int *row_lens = get_current_row_lengths();
+    if (cursor_row < 0) cursor_row = 0;
+    if (cursor_row >= num_rows) cursor_row = num_rows - 1;
+    int max_col = row_lens[cursor_row] - 1;
+    if (max_col < 0) max_col = 0;
+    if (cursor_col < 0) cursor_col = 0;
+    if (cursor_col > max_col) cursor_col = max_col;
+}
+
+static lv_obj_t *get_key_button_at(int row, int col) {
+    if (!root) return NULL;
+    int key_index = 0;
+    for (int rr = 0; rr < row; rr++) key_index += max_row_lengths[rr];
+    key_index += col;
+    uint32_t child_count = lv_obj_get_child_cnt(root);
+    int child_idx = 1 + key_index; // skip input_label at 0
+    if (child_idx >= 0 && (uint32_t)child_idx < child_count) {
+        return lv_obj_get_child(root, child_idx);
+    }
+    return NULL;
+}
+
+static void apply_selection_highlight(void) {
+    if (!root) return;
+    ensure_valid_cursor();
+    // reset all key borders to default
+    int key_index = 0;
+    uint32_t child_count = lv_obj_get_child_cnt(root);
+    for (int r = 0; r < num_rows; r++) {
+        for (int c = 0; c < max_row_lengths[r]; c++) {
+            int child_idx = 1 + key_index;
+            if ((uint32_t)child_idx < child_count) {
+                lv_obj_t *btn = lv_obj_get_child(root, child_idx);
+                if (btn) {
+                    lv_obj_set_style_border_color(btn, lv_color_hex(0x444444), 0);
+                    lv_obj_set_style_border_width(btn, 1, 0);
+                }
+            }
+            key_index++;
+        }
+    }
+    // highlight current cursor key
+    lv_obj_t *btn = get_key_button_at(cursor_row, cursor_col);
+    if (btn) {
+        lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_border_width(btn, 2, 0);
+        selected_key_btn = btn;
+    } else {
+        selected_key_btn = NULL;
+    }
+}
+
+static void activate_selected_key(void) {
+    const char *(*current_keys)[10] = get_current_keys();
+    const int *current_row_lengths = get_current_row_lengths();
+    if (cursor_row < 0 || cursor_row >= num_rows) return;
+    if (cursor_col < 0 || cursor_col >= current_row_lengths[cursor_row]) return;
+    const char *key = current_keys[cursor_row][cursor_col];
+    if (strcmp(key, "SHIFT") == 0) {
+        if (is_caps) {
+            is_capslock = !is_capslock;
+            is_caps = is_capslock;
+        } else {
+            is_caps = true;
+        }
+        update_key_labels();
+        apply_selection_highlight();
+    } else if (strcmp(key, "SYM") == 0) {
+        pressed_key_btn = NULL;
+        is_symbols_mode = true;
+        recreate_keyboard_buttons();
+        ensure_valid_cursor();
+        apply_selection_highlight();
+    } else if (strcmp(key, "ABC") == 0) {
+        pressed_key_btn = NULL;
+        is_symbols_mode = false;
+        recreate_keyboard_buttons();
+        ensure_valid_cursor();
+        apply_selection_highlight();
+    } else if (strcmp(key, "Exit") == 0) {
+        if (keyboard_return_view) {
+            display_manager_switch_view(keyboard_return_view);
+        } else {
+            display_manager_switch_view(&options_menu_view);
+        }
+    } else if (strcmp(key, "Done") == 0) {
+        submit_text();
+    } else if (strcmp(key, "DEL") == 0) {
+        remove_char_from_buffer();
+        apply_selection_highlight();
+    } else if (strcmp(key, " ") == 0) {
+        add_char_to_buffer(' ');
+        apply_selection_highlight();
+    } else if (strlen(key) == 1) {
+        char adjusted_char = key[0];
+        if (!is_symbols_mode && isalpha((unsigned char)adjusted_char)) {
+            adjusted_char = is_caps ? (char)toupper((unsigned char)adjusted_char) : (char)tolower((unsigned char)adjusted_char);
+        }
+        add_char_to_buffer(adjusted_char);
+        apply_selection_highlight();
+    }
 }

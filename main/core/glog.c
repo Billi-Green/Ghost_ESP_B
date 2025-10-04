@@ -10,29 +10,39 @@
 void glog(const char *fmt, ...) {
     if (!fmt) return;
 
+    char buf[GLOG_BUF_SIZE];
+
     va_list ap;
     va_start(ap, fmt);
-    va_list ap_copy;
-    va_copy(ap_copy, ap);
-
-    vprintf(fmt, ap);
+    int written = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
 
-    char buf[GLOG_BUF_SIZE];
-    int written = vsnprintf(buf, sizeof(buf), fmt, ap_copy);
     if (written < 0) {
-        va_end(ap_copy);
         return;
     }
-    buf[sizeof(buf)-1] = '\0';
+
+    if (written >= (int)sizeof(buf)) {
+        written = (int)sizeof(buf) - 1;
+    }
+
+    if (written == 0 || buf[written - 1] != '\n') {
+        if (written < (int)sizeof(buf) - 1) {
+            buf[written++] = '\n';
+            buf[written] = '\0';
+        } else {
+            buf[sizeof(buf) - 2] = '\n';
+            buf[sizeof(buf) - 1] = '\0';
+            written = (int)sizeof(buf) - 1;
+        }
+    }
+
+    printf("%s", buf);
+
     if (esp_comm_manager_is_remote_command()) {
-        esp_comm_manager_send_response((const uint8_t*)buf, strlen(buf));
+        esp_comm_manager_send_response((const uint8_t *)buf, strlen(buf));
     }
     terminal_view_add_text(buf);
     ap_manager_add_log(buf);
-
-    va_end(ap_copy);
-
 }
 
 
