@@ -4,20 +4,31 @@
 
 ### Added
 
-- Added support for Cardputer ADV
-- Added 802.15.4 packet capture (only on C5, C6)
-- Added 2 alternate main menu layouts (Grid and List)
-- Added glog - a lightweight logging helper
-- Added command history with up/down navigation and full in-line cursor editing (left/right, insert, delete, backspace) to the serial console. - @tototo31
-- Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
-- Added Kconfig support for a secondary status display
-- Added Kconfig support for IO Expander - @Play2BReal
-- Added heartbeat-based auto-reconnect for dual communication
-- Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
-- Added ability to set settings via cli - @tototo31
-- Add joystick support for keyboard input in terminal view - @tototo31
-  
-- **PN532 NFC Capability**
+- **Hardware**
+  - Added support for Cardputer ADV
+  - Added Kconfig support for IO Expander - @Play2BReal
+
+- **Networking & Capture**
+  - Added 802.15.4 packet capture (only on C5, C6)
+  - Added heartbeat-based auto-reconnect for dual communication
+
+- **Display & UI**
+  - Added 2 alternate main menu layouts (Grid and List)
+  - Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
+  - Added Kconfig support for a secondary status display
+
+- **Input**
+  - Added command history with up/down navigation and full in-line cursor editing to the serial console. - @tototo31
+  - Add joystick support for keyboard input in terminal view - @tototo31
+
+- **Commands**
+  - Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
+  - Added ability to set settings via cli - @tototo31
+
+- **Tools**
+  - Added glog - a lightweight logging helper
+
+- **NFC (PN532)**
   - **NTAG Support (Type 2)**
     - Read NTAG213/215/216 with NDEF parsing
     - Write NTAG213/215/216 from .nfc files
