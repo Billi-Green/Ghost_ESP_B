@@ -1188,7 +1188,7 @@ httpd_handle_t start_portal_webserver(void) {
     config.max_uri_handlers = 32;
     config.max_open_sockets = 13; // Increased from 7
     config.backlog_conn = 10;     // Increased from 7
-    config.stack_size = 8192;
+    config.stack_size = 6144;
     if (httpd_start(&evilportal_server, &config) == ESP_OK) {
         httpd_uri_t portal_uri = {
             .uri = "/login", .method = HTTP_GET, .handler = portal_handler, .user_ctx = NULL};
