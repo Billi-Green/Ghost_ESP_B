@@ -72,6 +72,7 @@
 - Added deletions for VisualizerHandle on disconnect/stop and rgb_effect_task_handle on rgb off/stop to prevent lingering tasks 
 - Removed second mdns init call
 - Preallocate handlers array, remove reallocs; replace last_company_id malloc with value+flag in BLE manager
+- Free all LED strip resources on deinit
 
 #### Network & Comms
 
