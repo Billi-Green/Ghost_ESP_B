@@ -70,6 +70,7 @@
 - Disable duplicate filtering in general BLE scanning
 - Removed heap alloc per command
 - Added deletions for VisualizerHandle on disconnect/stop and rgb_effect_task_handle on rgb off/stop to prevent lingering tasks 
+- Removed second mdns init call
 
 #### Network & Comms
 

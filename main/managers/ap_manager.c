@@ -797,12 +797,7 @@ esp_err_t ap_manager_start_services() {
         return ret;
     }
 
-    // Start mDNS
-    ret = setup_mdns();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to setup mDNS");
-        return ret;
-    }
+    // mDNS is already set up during initial AP bring-up
 
     // Start HTTPD server
     ret = load_server_config();
