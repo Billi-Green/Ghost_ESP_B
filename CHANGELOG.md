@@ -12,34 +12,19 @@
   - Added 802.15.4 packet capture (only on C5, C6)
   - Added heartbeat-based auto-reconnect for dual communication
 
-- **Display & UI**
+- **User Interface**
   - Added 2 alternate main menu layouts (Grid and List)
   - Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
   - Added Kconfig support for a secondary status display
+  - Added command history with up/down navigation and full in-line cursor editing to the serial console - @tototo31
+  - Added joystick support for keyboard input in terminal view - @tototo31
+  - Added 'set/getneopixelbrightness' commands and ability to set settings via CLI - @tototo31
 
-- **Input**
-  - Added command history with up/down navigation and full in-line cursor editing to the serial console. - @tototo31
-  - Add joystick support for keyboard input in terminal view - @tototo31
-
-- **Commands**
-  - Added 'set/getneopixelbrightness' commands to set or get the max brightness of the neopixels - @tototo31
-  - Added ability to set settings via cli - @tototo31
-
-- **Tools**
+- **NFC & Tools**
+  - NTAG (Type 2) support: read/write NTAG213/215/216 with NDEF parsing and save to Flipper .nfc format
+  - MIFARE Classic support (Mini/1K/4K): Flipper dictionary attack, magic backdoor detection, and NDEF TLV parsing
+  - File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
   - Added glog - a lightweight logging helper
-
-- **NFC (PN532)**
-  - **NTAG Support (Type 2)**
-    - Read NTAG213/215/216 with NDEF parsing
-    - Write NTAG213/215/216 from .nfc files
-    - Save to Flipper .nfc format (fully compatible)
-  - **MIFARE Classic Support (Mini/1K/4K)**
-    - Flipper's 1000+ key dictionary attack
-    - Magic backdoor detection (Gen1A clones)
-    - Parse and display NDEF TLV data
-  - **File Management**
-    - 'Saved' menu to browse .nfc files and rename/delete them from the UI
-    - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
 
 ### Changed
 
@@ -55,6 +40,7 @@
 - Size popup buttons based on what's in them
 - Refactored dualcomm logic to be more robust
 - Lowered pineap task size
+- WebUI redesign (Part 2)
 
 ### Bug Fixes
 
