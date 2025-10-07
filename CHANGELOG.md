@@ -54,6 +54,7 @@
 - Reduced VFS allocation unit size to 4KB
 - Size popup buttons based on what's in them
 - Refactored dualcomm logic to be more robust
+- Lowered pineap task size
 
 ### Bug Fixes
 
