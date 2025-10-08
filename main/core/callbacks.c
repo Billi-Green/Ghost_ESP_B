@@ -292,7 +292,7 @@ static void start_log_task(pineap_network_t *network, const char *new_ssid, int8
     log_data->channel = channel;
     log_data->rssi = rssi;
     log_data->network = network;
-    BaseType_t result = xTaskCreate(log_pineap_detection, "pineap_log", 4096, log_data, 1,
+    BaseType_t result = xTaskCreate(log_pineap_detection, "pineap_log", 1024, log_data, 1,
                                     &network->log_task_handle);
     if (result != pdPASS) {
         free(log_data);
@@ -412,7 +412,7 @@ void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) 
                 memcpy(log_data->bssid, network->bssid, 6);
                 log_data->network = network; // Pass network pointer for up-to-date info
 
-                BaseType_t result = xTaskCreate(log_pineap_detection, "pineap_log", 4096, log_data,
+                BaseType_t result = xTaskCreate(log_pineap_detection, "pineap_log", 1024, log_data,
                                                 1, &network->log_task_handle);
                 if (result != pdPASS) {
                     free(log_data);
