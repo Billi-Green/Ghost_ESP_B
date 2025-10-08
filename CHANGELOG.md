@@ -76,6 +76,7 @@
 - Fixed BLE capture stopping itself after recieving an event
 - Added sanity checks to IE parsing to prevent OOB reads
 - Accepted HCI packet types now include CMD, ACL, SCO, and ISO
+- Reduce heap churn by reusing a single 4KB transfer buffer in wifi managerstreaming
 
 #### Input & UI
 

