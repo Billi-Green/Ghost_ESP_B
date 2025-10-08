@@ -554,8 +554,8 @@ void serial_manager_init() {
   commandQueue = xQueueCreate(6, sizeof(SerialCommand));
   ESP_LOGI("SerialManager", "Command queue created: depth=6, item_size=%u bytes", sizeof(SerialCommand));
 
-  xTaskCreate(serial_task, "SerialTask", 4096, NULL, 2, &s_serial_task_handle);
-  ESP_LOGI("SerialManager", "Serial task created: stack=4096 words (16KB)");
+  xTaskCreate(serial_task, "SerialTask",  5120, NULL, 2, &s_serial_task_handle);
+  ESP_LOGI("SerialManager", "Serial task created");
   s_serial_initialized = true;
   if (!s_uart_disabled) {
     command_history_init();
