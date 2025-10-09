@@ -16,7 +16,7 @@
    - File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
    - Added glog - a lightweight logging helper
 
- - **User Interface**
+ - **UI**
    - Added 2 alternate main menu layouts (Grid and List)
    - Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
    - Added command history with up/down navigation and full in-line cursor editing to the serial console - @tototo31
@@ -29,16 +29,16 @@
 
 ### Changed
 
- - **User Interface**
+ - **UI**
    - Use a fixed-size active-key buffer for keyboard
    - Refactor popups to use reusable popup helpers
    - Refactor options menu to use reusable options view helpers
    - Update main menu icons to RGB565A8
    - Enabled software back buttons made for encoder controls on joystick too
-   - Joystick builds now use touch keyboard layout with selection highlighting and navigation
    - Changed the C5 to use a single display buffer to save memory
    - Size popup buttons based on what's in them
    - WebUI redesign (Part 2)
+   - Organise BLE menu into hierarchical sub-menus - @tototo31
 
  - **Attacks & Misc**
    - Refactored dualcomm logic to be more robust
@@ -46,7 +46,6 @@
    - Update main menu icons to RGB565A8
    - Flush PCAP and CSV data to SD Card on a timer
    - Cap displayed WiFi APs to 50 for 'scanap' output
-   - Organise BLE menu into hierarchical sub-menus - @tototo31
    - If dualcomm is set to pins used by the serial UART, disable the serial UART
    - Refactor comm manager to centralize packet handling, add state mutex and handshake timeout, and guard UART driver install
    - Reduce VFS allocation unit size to 4KB
@@ -77,6 +76,11 @@
 - Added sanity checks to IE parsing to prevent OOB reads
 - Accepted HCI packet types now include CMD, ACL, SCO, and ISO
 - Reduce heap churn by reusing a single 4KB transfer buffer in wifi managerstreaming
+
+#### Display
+
+- Possible fix for random rotation of ST7789 displays upon flashing
+- Joystick builds now use touch keyboard layout with selection highlighting and navigation
 
 #### Input & UI
 
