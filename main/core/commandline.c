@@ -1461,6 +1461,7 @@ void handle_help(int argc, char **argv) {
         return;
     }
 
+
     if (strcmp(category, "wifi") == 0) {
         glog("\nWi-Fi Commands:\n\n");
         printf("scanap\n");
@@ -1540,6 +1541,17 @@ void handle_help(int argc, char **argv) {
         printf("    Arguments:\n");
         printf("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
         printf("        stop      : Stop probe request listening\n\n");
+        printf("karma\n");
+        printf("    Description: Start or stop the Karma attack (responds to probe requests with specified or all SSIDs).\n");
+        printf("    Usage: karma start [ssid1 ssid2 ...]\n");
+        printf("           karma stop\n");
+        printf("    Arguments:\n");
+        printf("        start : Begin Karma attack. Optionally specify SSIDs to respond with (default: all known SSIDs).\n");
+        printf("        stop  : Stop Karma attack.\n");
+        printf("    Examples:\n");
+        printf("        karma start\n");
+        printf("        karma start FreeWiFi Starbucks\n");
+        printf("        karma stop\n\n");
 #if CONFIG_IDF_TARGET_ESP32C5
         printf("setcountry\n");
         printf("    Description: Set the Wi-Fi country code.\n");
@@ -1553,7 +1565,7 @@ void handle_help(int argc, char **argv) {
 #if CONFIG_IDF_TARGET_ESP32C5
         TERMINAL_VIEW_ADD_TEXT(", setcountry");
 #endif
-        TERMINAL_VIEW_ADD_TEXT("\n");
+        TERMINAL_VIEW_ADD_TEXT(", karma\n");
         return;
     }
 
@@ -2602,8 +2614,10 @@ void handle_listportals(int argc, char **argv);
 void handle_evilportal(int argc, char **argv);
 void handle_wifi_disconnect(int argc, char **argv);
 void handle_set_rgb_mode_cmd(int argc, char **argv);
+void handle_karma_cmd(int argc, char **argv);
 void handle_set_neopixel_brightness_cmd(int argc, char **argv);
 void handle_get_neopixel_brightness_cmd(int argc, char **argv);
+
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -3116,6 +3130,7 @@ void register_commands() {
     register_command("blespam", handle_ble_spam_cmd);
 #endif
     register_command("setrgbmode", handle_set_rgb_mode_cmd);
+    register_command("karma", handle_karma_cmd);
     register_command("setneopixelbrightness", handle_set_neopixel_brightness_cmd);
     register_command("getneopixelbrightness", handle_get_neopixel_brightness_cmd);
     
@@ -3221,6 +3236,40 @@ void handle_set_rgb_mode_cmd(int argc, char **argv) {
     settings_set_rgb_mode(&G_Settings, mode);
     settings_save(&G_Settings);
     glog("RGB mode set to %s\n", argv[1]);
+}
+
+void handle_karma_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: karma <start|stop> [ssid1 ssid2 ...]\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: karma <start|stop> [ssid1 ssid2 ...]\n");
+        return;
+    }
+    if (strcmp(argv[1], "start") == 0) {
+        if (argc > 2) {
+            // User specified SSIDs
+            const char *ssid_list[32];
+            int ssid_count = 0;
+            for (int i = 2; i < argc && ssid_count < 32; ++i) {
+                if (strlen(argv[i]) > 0 && strlen(argv[i]) < 33) {
+                    ssid_list[ssid_count++] = argv[i];
+                }
+            }
+            if (ssid_count > 0) {
+                wifi_manager_set_karma_ssid_list(ssid_list, ssid_count);
+                printf("Karma SSID list set (%d):\n", ssid_count);
+                for (int i = 0; i < ssid_count; ++i) {
+                    printf("  %s\n", ssid_list[i]);
+                    TERMINAL_VIEW_ADD_TEXT("  %s\n", ssid_list[i]);
+                }
+            }
+        }
+        wifi_manager_start_karma();
+    } else if (strcmp(argv[1], "stop") == 0) {
+        wifi_manager_stop_karma();
+    } else {
+        printf("Usage: karma <start|stop> [ssid1 ssid2 ...]\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: karma <start|stop> [ssid1 ssid2 ...]\n");
+    }
 }
 
 void handle_set_neopixel_brightness_cmd(int argc, char **argv) {

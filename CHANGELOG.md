@@ -25,6 +25,7 @@
 
  - **Attacks**
    - Added 802.15.4 packet capture (only on C5, C6)
+   - Added karma attack - @tototo31 in #108
 
 
 ### Changed

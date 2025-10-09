@@ -11,6 +11,7 @@ Welcome to the official wiki for GhostESP Firmware, a powerful firmware solution
 - [Installation Guide](https://github.com/jaylikesbunda/Ghost_ESP/wiki/Installation)
 - [Features Overview](https://github.com/jaylikesbunda/Ghost_ESP/wiki/Features)
 - [Commands](https://github.com/jaylikesbunda/Ghost_ESP/wiki/Commands)
+- [Karma Attack Guide](https://github.com/jaylikesbunda/Ghost_ESP/wiki/Karma-Attack-Guide)
 - [Troubleshooting](https://github.com/jaylikesbunda/Ghost_ESP/wiki/Troubleshooting)
 - [Board-Specific Guide](https://github.com/jaylikesbunda/Ghost_ESP/wiki/Board%E2%80%90Specific%E2%80%90Guide)
 - [Rave Mode](https://github.com/jaylikesbunda/Ghost_ESP/wiki/Rave-Mode)
