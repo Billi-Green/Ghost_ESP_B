@@ -114,6 +114,8 @@ int beacon_task_running = 0;
 
 static bool karma_portal_active = false;
 
+static volatile bool ap_sta_has_ip = false;
+
 
 const uint16_t COMMON_PORTS[] = {
     7,     // echo
@@ -433,7 +435,10 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             if (ap_connection_count > 0) ap_connection_count--;
             printf("WiFi_manager: Station disconnected from AP\n");
             login_done = false;
-            if (ap_connection_count == 0) esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+            if (ap_connection_count == 0) {
+                esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+                ap_sta_has_ip = false;
+            }
             break;
         case WIFI_EVENT_STA_START:
             printf("STA started\n");
@@ -457,6 +462,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         case IP_EVENT_AP_STAIPASSIGNED:
             printf("Assigned IP to STA\n");
+            ap_sta_has_ip = true;
             break;
         default:
             break;
@@ -4119,9 +4125,21 @@ esp_err_t wifi_manager_broadcast_ap(const char *ssid) {
         0x64, 0x00,                                     // Beacon interval (100 TU)
         0x11, 0x04,                                     // Capability info (ESS)
     };
+    // if a station on the AP has an IP, don't hop channels; send on current channel only
+    int start_channel = 1;
+    int end_channel = 11;
+    if (ap_sta_has_ip) {
+        uint8_t primary_channel;
+        wifi_second_chan_t second_channel;
+        esp_wifi_get_channel(&primary_channel, &second_channel);
+        start_channel = primary_channel;
+        end_channel = primary_channel;
+    }
 
-    for (int ch = 1; ch <= 11; ch++) {
-        esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    for (int ch = start_channel; ch <= end_channel; ch++) {
+        if (!ap_sta_has_ip) {
+            esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+        }
         generate_random_mac(&packet[10]);
         memcpy(&packet[16], &packet[10], 6);
 
@@ -4184,7 +4202,8 @@ esp_err_t wifi_manager_broadcast_ap(const char *ssid) {
             return err;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay between channel hops
+        vTaskDelay(pdMS_TO_TICKS(10));
+        if (ap_sta_has_ip) break; // only one transmit when a client has IP
     }
 
     return ESP_OK;
@@ -6245,7 +6264,7 @@ static void karma_task(void *param) {
     while (karma_running) {
         uint32_t now = esp_timer_get_time() / 1000;
         // Only rotate if more than one SSID
-        if (karma_ssid_count > 1 && (now - last_ssid_change_time > 5000)) {
+        if (!ap_sta_has_ip && karma_ssid_count > 1 && (now - last_ssid_change_time > 5000)) {
             wifi_config_t ap_config = {
                 .ap = {
                     .ssid = "",
@@ -6257,9 +6276,7 @@ static void karma_task(void *param) {
                 }
             };
             strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[karma_ssid_index], 32);
-            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
             ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-            ESP_ERROR_CHECK(esp_wifi_start());
             printf("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
             TERMINAL_VIEW_ADD_TEXT("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
             karma_start_portal_for_ssid(karma_ssid_cache[karma_ssid_index]);
@@ -6268,9 +6285,11 @@ static void karma_task(void *param) {
         }
     
         // Send beacon frames for all cached SSIDs (every 500ms)
-        for (int i = 0; i < karma_ssid_count; ++i) {
-            wifi_manager_broadcast_ap(karma_ssid_cache[i]);
-            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between beacons
+        if (!ap_sta_has_ip) {
+            for (int i = 0; i < karma_ssid_count; ++i) {
+                wifi_manager_broadcast_ap(karma_ssid_cache[i]);
+                vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between beacons
+            }
         }
     
         vTaskDelay(pdMS_TO_TICKS(500));
