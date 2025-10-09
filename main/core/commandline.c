@@ -671,6 +671,16 @@ void handle_stop_flipper(int argc, char **argv) {
     pcap_file_close();
     glog("Stopped activities.\nClosed files.\n");
     status_display_show_status("All Stopped");
+
+    // kill any feature tasks we spawned that may still be around
+    if (VisualizerHandle != NULL) {
+        vTaskDelete(VisualizerHandle);
+        VisualizerHandle = NULL;
+    }
+    if (rgb_effect_task_handle != NULL) {
+        vTaskDelete(rgb_effect_task_handle);
+        rgb_effect_task_handle = NULL;
+    }
 }
 
 void handle_dial_command(int argc, char **argv) {
@@ -716,7 +726,7 @@ void handle_mem_cmd(int argc, char **argv) {
         static heap_trace_record_t recs[256];
         if (argc > 2 && strcmp(argv[2], "start") == 0) {
             esp_err_t e = heap_trace_init_standalone(recs, 256);
-            if (e == ESP_OK) heap_trace_start(HEAP_TRACE_LEAKS | HEAP_TRACE_ALLOCATIONS);
+            if (e == ESP_OK) heap_trace_start(HEAP_TRACE_ALL);
             glog("heap trace start: %s\n", e == ESP_OK ? "ok" : "err");
             return;
         }
@@ -726,7 +736,7 @@ void handle_mem_cmd(int argc, char **argv) {
             return;
         }
         if (argc > 2 && strcmp(argv[2], "dump") == 0) {
-            heap_trace_dump(true);
+            heap_trace_dump();
             return;
         }
         glog("usage: mem trace <start|stop|dump>\n");
@@ -860,6 +870,12 @@ void handle_wifi_disconnect(int argc, char **argv)
         glog("WiFi disconnect command sent successfully\n");
     } else {
         glog("Failed to send disconnect command: %s\n", esp_err_to_name(err));
+    }
+
+    // kill any lingering visualizer task started on connect
+    if (VisualizerHandle != NULL) {
+        vTaskDelete(VisualizerHandle);
+        VisualizerHandle = NULL;
     }
 }
 
@@ -2097,6 +2113,10 @@ void handle_rgb_mode(int argc, char **argv) {
         }
         glog("RGB disabled\n");
         status_display_show_status("RGB Off");
+        if (rgb_effect_task_handle != NULL) {
+            vTaskDelete(rgb_effect_task_handle);
+            rgb_effect_task_handle = NULL;
+        }
     } else {
         // Otherwise, treat the argument as a color name.
         typedef struct {

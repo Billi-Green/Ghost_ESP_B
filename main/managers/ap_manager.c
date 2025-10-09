@@ -28,6 +28,7 @@
 #include "esp_vfs_fat.h"
 #include "esp_heap_caps.h"
 #include "managers/status_display_manager.h"
+#include "core/utils.h"
 
 // Forward declarations
 static esp_err_t http_get_handler(httpd_req_t *req);
@@ -512,13 +513,17 @@ esp_err_t ap_manager_init(void) {
     // Check if AP is disabled in settings
     if (!settings_get_ap_enabled(&G_Settings)) {
         glog("Access Point disabled in settings, skipping AP initialization\n");
+        log_heap_status(TAG, "ap_init_disabled_pre_logbuf");
         
         // Initialize log buffer and mutex even when AP is disabled
+        ESP_LOGI(TAG, "Allocating log buffer: %d bytes", MAX_LOG_BUFFER_SIZE);
         log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
         if(!log_buffer){
             ESP_LOGE(TAG, "failed to alloc log buffer");
+            log_heap_status(TAG, "ap_logbuf_alloc_fail");
             return ESP_ERR_NO_MEM;
         }
+        log_heap_status(TAG, "ap_init_disabled_post_logbuf");
 
         log_mutex = xSemaphoreCreateRecursiveMutex();
         if (!log_mutex) {
@@ -531,6 +536,7 @@ esp_err_t ap_manager_init(void) {
         if(log_buffer){
             memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
         }
+        log_heap_status(TAG, "ap_init_disabled_complete");
         
         return ESP_OK;
     }
@@ -646,11 +652,14 @@ esp_err_t ap_manager_init(void) {
         return ret;
     }
 
+    log_heap_status(TAG, "ap_init_pre_httpd");
     ret = start_http_server();
     if (ret != ESP_OK) {
         glog("Error starting HTTP server\n");
+        log_heap_status(TAG, "ap_httpd_start_fail");
         return ret;
     }
+    log_heap_status(TAG, "ap_init_post_httpd");
 
     esp_wifi_set_ps(WIFI_PS_NONE);
 
@@ -662,11 +671,15 @@ esp_err_t ap_manager_init(void) {
     }
 
     // Initialize log buffer and mutex
+    log_heap_status(TAG, "ap_init_enabled_pre_logbuf");
+    ESP_LOGI(TAG, "Allocating log buffer: %d bytes", MAX_LOG_BUFFER_SIZE);
     log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
     if(!log_buffer){
         ESP_LOGE(TAG, "failed to alloc log buffer");
+        log_heap_status(TAG, "ap_logbuf_alloc_fail");
         return ESP_ERR_NO_MEM;
     }
+    log_heap_status(TAG, "ap_init_enabled_post_logbuf");
 
     log_mutex = xSemaphoreCreateRecursiveMutex();
     if (!log_mutex) {
@@ -680,6 +693,7 @@ esp_err_t ap_manager_init(void) {
         memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
     }
 
+    log_heap_status(TAG, "ap_init_complete");
     return ESP_OK;
 }
 
@@ -783,12 +797,7 @@ esp_err_t ap_manager_start_services() {
         return ret;
     }
 
-    // Start mDNS
-    ret = setup_mdns();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to setup mDNS");
-        return ret;
-    }
+    // mDNS is already set up during initial AP bring-up
 
     // Start HTTPD server
     ret = load_server_config();
@@ -809,6 +818,7 @@ esp_err_t ap_manager_start_services() {
 }
 
 void ap_manager_stop_services() {
+    log_heap_status(TAG, "ap_stop_pre");
     wifi_mode_t wifi_mode;
     esp_err_t err = esp_wifi_get_mode(&wifi_mode);
 
@@ -849,6 +859,7 @@ void ap_manager_stop_services() {
     vTaskDelay(pdMS_TO_TICKS(100));
 
     teardown_mdns();
+    log_heap_status(TAG, "ap_stop_post");
     status_display_show_status("AP Services Off");
 }
 
@@ -1494,7 +1505,7 @@ static esp_err_t load_server_config(void) {
     server_config.server_port = 80;
     server_config.ctrl_port = 32768;
     server_config.max_uri_handlers = 60;
-    server_config.stack_size = 8192;
+    server_config.stack_size = 6144;
     server_config.recv_wait_timeout = 10;
     server_config.send_wait_timeout = 10;
 
