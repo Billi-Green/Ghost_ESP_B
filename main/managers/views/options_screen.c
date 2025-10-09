@@ -1065,8 +1065,8 @@ static void karma_custom_ssids_cb(const char *input) {
     }
 
     // Parse comma-separated SSIDs
-    static const char *ssids[KARMA_MAX_SSIDS];
-    static char ssid_buf[33 * KARMA_MAX_SSIDS];
+    const char *ssids[KARMA_MAX_SSIDS];
+    char ssid_buf[33 * KARMA_MAX_SSIDS];
     int count = 0;
 
     // Copy input to buffer for strtok
