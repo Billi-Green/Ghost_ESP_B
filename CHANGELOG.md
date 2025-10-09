@@ -89,6 +89,7 @@
 - Accepted HCI packet types now include CMD, ACL, SCO, and ISO
 - Reduce heap churn by reusing a single 4KB transfer buffer in wifi managerstreaming
 - Significantly improve reliability of capturing wifi frames
+- Remove arbitrary limitation on the lines of text in the webUI dual comm terminal
 
 #### Display
 

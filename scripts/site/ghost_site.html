@@ -3414,12 +3414,6 @@
         // Function to add message to dual communication terminal
         function addCommTerminalMessage(message) {
             commTerminalMessages.push(message);
-            
-            // Keep only last 100 messages
-            if (commTerminalMessages.length > 100) {
-                commTerminalMessages = commTerminalMessages.slice(-100);
-            }
-            
             updateCommTerminalDisplay();
         }
 
