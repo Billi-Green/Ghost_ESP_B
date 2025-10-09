@@ -101,6 +101,7 @@
 - Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
 - Remove artificial delay in cardputer keyboard task to make more responsive
 - Improve and refactor terminal message handling
+- Fixed duplicate back button and wrong red styling in universals IR view
 
 ## Revival v1.7.2
 
