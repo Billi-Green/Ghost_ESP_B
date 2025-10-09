@@ -45,7 +45,6 @@
 
  - **Attacks & Misc**
    - Refactored dualcomm logic to be more robust
-   - Added heartbeat-based auto-reconnect for dual communication
    - Update main menu icons to RGB565A8
    - Flush PCAP and CSV data to SD Card on a timer
    - Cap displayed WiFi APs to 50 for 'scanap' output
