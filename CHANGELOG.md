@@ -13,8 +13,7 @@
  - **NFC**
    - NTAG (Type 2) support: read/write NTAG213/215/216 with NDEF parsing and save to Flipper .nfc format
    - MIFARE Classic support (Mini/1K/4K): Flipper dictionary attack, magic backdoor detection, and NDEF TLV parsing
-   - File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
-   - Added glog - a lightweight logging helper
+   - File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc
 
  - **UI**
    - Added 2 alternate main menu layouts (Grid and List)
@@ -26,6 +25,9 @@
  - **Attacks**
    - Added 802.15.4 packet capture (only on C5, C6)
    - Added karma attack - @tototo31 in #108
+
+- **Misc**
+   - Added glog - a lightweight logging helper
 
 
 ### Changed
