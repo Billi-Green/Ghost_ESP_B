@@ -4,54 +4,64 @@
 
 ### Added
 
- - **Hardware**
-   - Added support for Cardputer ADV
-   - Added Kconfig support for a secondary status display
-   - Added Kconfig support for IO Expander - @Play2BReal
-   - Added heartbeat-based auto-reconnect for dual communication
+#### Hardware
 
- - **NFC**
-   - NTAG (Type 2) support: read/write NTAG213/215/216 with NDEF parsing and save to Flipper .nfc format
-   - MIFARE Classic support (Mini/1K/4K): Flipper dictionary attack, magic backdoor detection, and NDEF TLV parsing
-   - File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc
+- Added support for Cardputer ADV
+- Added Kconfig support for a secondary status display
+- Added Kconfig support for IO Expander - @Play2BReal
+- Added heartbeat-based auto-reconnect for dual communication
 
- - **UI**
-   - Added 2 alternate main menu layouts (Grid and List)
-   - Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
-   - Added command history with up/down navigation and full in-line cursor editing to the serial console - @tototo31
-   - Added joystick support for keyboard input in terminal view - @tototo31
-   - Added 'set/getneopixelbrightness' commands and ability to set settings via CLI - @tototo31
+#### NFC
 
- - **Attacks**
-   - Added 802.15.4 packet capture (only on C5, C6)
-   - Added karma attack - @tototo31 in #108
+- NTAG (Type 2) support: read/write NTAG213/215/216 with NDEF parsing and save to Flipper .nfc format
+- MIFARE Classic support (Mini/1K/4K): Flipper dictionary attack, magic backdoor detection, and NDEF TLV parsing
+- File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc
 
-- **Misc**
-   - Added glog - a lightweight logging helper
+#### UI
 
+- Added 2 alternate main menu layouts (Grid and List)
+- Ghost (asset by @the1anonlypr3) and Game of Life idle animations for status display
+- Added command history with up/down navigation and full in-line cursor editing to the serial console - @tototo31
+- Added joystick support for keyboard input in terminal view - @tototo31
+- Added 'set/getneopixelbrightness' commands and ability to set settings via CLI - @tototo31
+
+#### Attacks
+
+- Added 802.15.4 packet capture (only on C5, C6)
+- Added karma attack - @tototo31 in #108
+
+#### Misc
+
+- Added glog - a lightweight logging helper
 
 ### Changed
 
- - **UI**
-   - Use a fixed-size active-key buffer for keyboard
-   - Refactor popups to use reusable popup helpers
-   - Refactor options menu to use reusable options view helpers
-   - Update main menu icons to RGB565A8
-   - Enabled software back buttons made for encoder controls on joystick too
-   - Changed the C5 to use a single display buffer to save memory
-   - Size popup buttons based on what's in them
-   - WebUI redesign (Part 2)
-   - Organise BLE menu into hierarchical sub-menus - @tototo31
+#### UI
 
- - **Attacks & Misc**
-   - Refactored dualcomm logic to be more robust
-   - Update main menu icons to RGB565A8
-   - Flush PCAP and CSV data to SD Card on a timer
-   - Cap displayed WiFi APs to 50 for 'scanap' output
-   - If dualcomm is set to pins used by the serial UART, disable the serial UART
-   - Refactor comm manager to centralize packet handling, add state mutex and handshake timeout, and guard UART driver install
-   - Reduce VFS allocation unit size to 4KB
-   - Lowered pineap task size
+- Use a fixed-size active-key buffer for keyboard
+- Refactor popups to use reusable popup helpers
+- Refactor options menu to use reusable options view helpers
+- Enabled software back buttons made for encoder controls on joystick too
+- Size popup buttons based on what's in them
+- WebUI redesign (Part 2)
+- Organise BLE menu into hierarchical sub-menus - @tototo31
+
+#### Attacks
+
+- Flush PCAP and CSV data to SD Card on a timer
+- EAPOL capture now captures extra packet types for cracking and detects when a crackable handshake is found
+- Added a summary log when starting a packet capture and reduce filter stats frequency
+
+#### Misc
+
+- Lowered pineap task size
+- Changed the C5 to use a single display buffer to save memory
+- Reduce VFS allocation unit size to 4KB
+- Cap displayed WiFi APs to 50 for 'scanap' output
+- Refactor comm manager to centralize packet handling, add state mutex and handshake timeout, and guard UART driver install
+- If dualcomm is set to pins used by the serial UART, disable the serial UART
+- Update main menu icons to RGB565A8
+- Refactored dualcomm logic to be more robust
 
 ### Bug Fixes
 
@@ -78,6 +88,7 @@
 - Added sanity checks to IE parsing to prevent OOB reads
 - Accepted HCI packet types now include CMD, ACL, SCO, and ISO
 - Reduce heap churn by reusing a single 4KB transfer buffer in wifi managerstreaming
+- Significantly improve reliability of capturing wifi frames
 
 #### Display
 

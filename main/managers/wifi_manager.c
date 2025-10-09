@@ -1514,8 +1514,18 @@ void wifi_manager_clear_scan_results(void) {
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    if (callback == wifi_eapol_scan_callback) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        // lock to selected AP channel if available
+        extern wifi_ap_record_t selected_ap; // declared elsewhere in this module
+        if (selected_ap.ssid[0] != '\0' && selected_ap.primary > 0) {
+            esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+        }
+    } else {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_start());
+    }
 
     // Set hardware-level promiscuous filter based on callback type
     wifi_promiscuous_filter_t filter = {0};
@@ -1528,8 +1538,8 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
         // Management frames only
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
     } else if (callback == wifi_eapol_scan_callback) {
-        // Data frames only for EAPOL
-        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA;
+        // capture both mgmt and data for eapol + context frames
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
     } else if (callback == sae_monitor_callback) {
         // Management frames for SAE
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
@@ -1545,8 +1555,30 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(callback));
 
-    printf("WiFi monitor started.\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi monitor started.\n");
+    const char *cap_desc = "monitor";
+    if (callback == wifi_eapol_scan_callback) cap_desc = "EAPOL";
+    else if (callback == wifi_beacon_scan_callback) cap_desc = "beacon";
+    else if (callback == wifi_probe_scan_callback) cap_desc = "probe";
+    else if (callback == wifi_deauth_scan_callback) cap_desc = "deauth";
+    else if (callback == wifi_wps_detection_callback) cap_desc = "wps";
+    else if (callback == wifi_raw_scan_callback) cap_desc = "raw";
+
+    uint8_t ch_primary = 0; wifi_second_chan_t ch_second = WIFI_SECOND_CHAN_NONE;
+    (void)esp_wifi_get_channel(&ch_primary, &ch_second);
+
+    const char *filter_desc = "all";
+    if (filter.filter_mask == WIFI_PROMIS_FILTER_MASK_MGMT) filter_desc = "mgmt";
+    else if (filter.filter_mask == WIFI_PROMIS_FILTER_MASK_DATA) filter_desc = "data";
+    else if (filter.filter_mask == (WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA)) filter_desc = "mgmt+data";
+
+    printf("WiFi capture started.\n");
+    TERMINAL_VIEW_ADD_TEXT("WiFi capture started.\n");
+    printf("Type: %s\n", cap_desc);
+    TERMINAL_VIEW_ADD_TEXT("Type: %s\n", cap_desc);
+    printf("Channel: %u\n", (unsigned)ch_primary);
+    TERMINAL_VIEW_ADD_TEXT("Channel: %u\n", (unsigned)ch_primary);
+    printf("Filter: %s\n", filter_desc);
+    TERMINAL_VIEW_ADD_TEXT("Filter: %s\n", filter_desc);
     status_display_show_status("Monitor Started");
 }
 void wifi_manager_stop_monitor_mode() {
