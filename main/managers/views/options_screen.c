@@ -55,7 +55,7 @@ static int current_settings_category = -1;
 // Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 10) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
 // Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 9) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
 // Example: settings_category_indices[0] lists settings for "Display" category.
-static int settings_category_indices[][11] = {
+static int settings_category_indices[][16] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
         {1, 2, 5, 3, 4, 9, 11, 12, 13,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
