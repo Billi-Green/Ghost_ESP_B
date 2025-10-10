@@ -1,266 +1,130 @@
 # Chameleon Ultra Integration Guide
 
-The Ghost ESP now includes comprehensive support for the **Chameleon Ultra**, a powerful 13.56MHz NFC/RFID research tool. This integration allows you to control your Chameleon Ultra remotely via Bluetooth and perform advanced card analysis and attacks.
+The Ghost ESP includes support for the Chameleon Ultra, a 13.56MHz NFC/RFID research tool. This integration lets you control a Chameleon Ultra over Bluetooth and collect scan results and dump files to the local storage on the Ghost ESP.
 
-## 🔗 Quick Start
+## Quick start
 
 ### Prerequisites
-- **Chameleon Ultra** device with Bluetooth enabled
-- **SD Card** in Ghost ESP (for saving scan results and dumps)
-- Both devices powered on and in range
+- Chameleon Ultra device with Bluetooth enabled
+- SD card or internal virtual storage present and mounted by Ghost ESP
+- Both devices powered on and within wireless range
 
-### Basic Connection
+### Basic connection
 ```bash
-chameleon connect      # Scan and connect to Chameleon Ultra
-chameleon status       # Verify connection and device info
-chameleon battery      # Check battery level
+chameleon connect      # scan and connect to Chameleon Ultra
+chameleon status       # verify connection and device information
+chameleon battery      # check Chameleon battery level
 ```
 
-## 📡 Core Operations
+## Core operations
 
-### Device Management
+### Device management
 ```bash
-chameleon connect         # Connect to Chameleon Ultra
-chameleon disconnect      # Disconnect from device
-chameleon status          # Show connection and device info
-chameleon battery         # Display battery level
-chameleon firmware        # Show firmware version
-chameleon devicemode      # Display current mode (Reader/Emulator)
+chameleon connect         # connect to Chameleon Ultra
+chameleon disconnect      # disconnect
+chameleon status          # show connection and device info
+chameleon battery         # display battery level
+chameleon firmware        # show firmware/firmware version
+chameleon devicemode      # display current mode (reader/emulator)
 ```
 
-### Mode Switching
+### Mode switching
 ```bash
-chameleon reader          # Switch to reader mode (for scanning cards)
-chameleon emulator        # Switch to emulator mode (for card simulation)
+chameleon reader          # switch device to reader mode
+chameleon emulator        # switch device to emulator mode
 ```
 
-## 🎯 HF (13.56MHz) Operations
+## HF (13.56 MHz) operations
 
-### Basic Scanning
+### Scanning and saving
 ```bash
-chameleon scanhf          # Scan for HF cards (MIFARE, NTAG, ISO14443)
-chameleon savehf          # Save scan results with auto-generated filename
-chameleon savehf mycard   # Save with custom filename
+chameleon scanhf          # scan for HF tags (MIFARE, NTAG, ISO14443)
+chameleon savehf          # save most recent HF scan (auto filename)
+chameleon savehf mycard   # save with custom filename
 ```
 
-**Supported Card Types:**
-- MIFARE Classic (1K, 4K)
-- MIFARE Ultralight
-- NTAG213/215/216
-- ISO14443 Type A/B cards
+Supported HF card types include MIFARE Classic (1K/4K), MIFARE Ultralight, NTAG213/215/216 and other ISO14443 Type A/B tags.
 
-### Advanced MIFARE Classic Analysis
+### MIFARE Classic analysis
 ```bash
-chameleon readhf          # Comprehensive automated analysis:
-                         #   - Default key testing (12 common keys)
-                         #   - Complete data dumping
-
-chameleon savedump        # Save complete analysis results
+chameleon readhf          # automated analysis: default key testing and data collection
+chameleon savedump        # save detailed analysis results
 ```
 
-**The `readhf` command performs automated analysis:**
+The `readhf` command performs basic card detection, attempts default-key authentication where applicable, and collects card metadata and (when available) a sector/block dump for analysis.
 
-1. **Basic Card Detection**
-   - Identifies card type and reads UID
-   - Displays basic card information
-
-2. **Data Collection**
-   - Saves basic card information to file
-   - Creates timestamped dump files
-
-## 🏷️ NTAG Operations
-
-### NTAG Detection and Analysis
-```bash
-chameleon ntagdetect      # Intelligent NTAG type detection
-chameleon ntagdump        # Analyze card structure and read accessible data
-chameleon saventralag     # Save analysis results
-```
-
-**Special Features:**
-- **Protected Card Support**: Handles password-protected NTAG cards gracefully
-- **Multi-Method Detection**: Uses GET_VERSION and memory structure analysis
-- **Professional Reports**: Creates detailed forensic analysis documents
-
-**Example NTAG215 Analysis Output:**
-```
-NTAG Card Analysis Report
-========================
-Card Type: NTAG215 (Password Protected)
-UID (7 bytes): 04 8A EE 1B C3 2A 81
-
-Analysis Results:
-================
-- Card detected as NTAG type (likely NTAG215)
-- Standard commands return authentication error (0x60)
-- Card appears to be password protected or locked
-- Access requires proper authentication credentials
-
-Recommendations:
-===============
-1. This card requires a 4-byte password for access
-2. Try common default passwords: 00000000, FFFFFFFF
-3. Check if this is a custom application with known passwords
-4. Consider using specialized NTAG cracking tools
-```
-
-## 🔓 Advanced MIFARE Classic Operations
-
-### Manual MIFARE Commands
-```bash
-# MIFARE Detection
-chameleon mfdetect        # Detect MIFARE Classic support
-chameleon mfprng          # Test PRNG weakness
-```
-
-### Default Keys Tested
-The system automatically tests these common MIFARE keys:
-```
-FFFFFFFFFFFF  (Factory default)
-A0A1A2A3A4A5  (Transport key)
-D3F7D3F7D3F7  (MAD key)
-000000000000  (Blank key)
-B0B1B2B3B4B5  (Alternative transport)
-4D3A99C351DD  (Hotel cards)
-1A982C7E459A  (Campus cards)
-AABBCCDDEEFF  (Test key)
-714C5C886E97  (Generic)
-587EE5F9350F  (Conference badges)
-A0478CC39091  (Access control)
-533CB6C723F6  (Parking systems)
-```
-
-## 📊 LF (125KHz) Operations
-
-### Low Frequency Scanning
-```bash
-chameleon scanlf          # Scan for EM410X tags
-chameleon scanhidprox     # Scan for HID Proximity cards  
-chameleon scanlfall       # Try both EM410X and HID Prox
-chameleon savelf          # Save LF scan results
-chameleon readlf          # Read LF card data
-```
-
-**Supported LF Formats:**
-- EM410X (64-bit ID cards)
-- HID Proximity (125KHz access cards)
-- Various proprietary formats
-
-## 🎰 Slot Management
-
-The Chameleon Ultra has 8 card slots for emulation:
+## NTAG operations
 
 ```bash
-chameleon activeslot      # Show current active slot (1-8)
-chameleon setslot 3       # Switch to slot 3
-chameleon slotinfo 5      # Show info for slot 5
+chameleon ntagdetect      # detect NTAG family/version
+chameleon ntagdump        # read accessible memory and gather metadata
+chameleon saventalag      # save NTAG analysis results
 ```
 
-**Note**: Slot numbers are displayed as 1-8 for user convenience (device uses 0-7 internally).
+The integration attempts GET_VERSION and memory checks to identify NTAG types and whether the tag is password-protected.
 
-## 💾 File Management
+## LF (125 kHz) operations
 
-### Save Locations
-All files are saved to `/mnt/ghostesp/chameleon/` on the SD card:
-
-```
-/mnt/ghostesp/chameleon/
-├── hf_scan_04AB1234_20241216_143022.txt      # HF scan results
-├── mifare_dump_04AB1234_20241216_143055.txt  # Complete MIFARE dumps
-├── ntag_protected_048AEE1B_20241216.txt      # NTAG analysis
-└── lf_scan_em410x_20241216_143101.txt        # LF scan results
-```
-
-### Filename Formats
-- **Auto-generated**: Include UID, timestamp, and card type
-- **Custom**: Use optional filename parameter: `chameleon savehf mycard`
-- **Timestamped**: All files include creation date/time
-
-## 🛠️ Troubleshooting
-
-### Connection Issues
 ```bash
-# Check available memory
-chameleon status          # Memory info included in status
-
-# Reconnection sequence
-chameleon disconnect
-# Wait 5 seconds
-chameleon connect
+chameleon scanlf          # scan EM410x tags
+chameleon scanhidprox     # scan HID Prox
+chameleon savelf          # save LF scan results
+chameleon readlf          # read LF data (when supported)
 ```
 
-### Memory Requirements
-- **Minimum**: 20KB free heap for stable operation
-- **Recommended**: 40KB+ for complex operations
-- System automatically checks memory before initialization
+Supported LF formats include EM410x and common proprietary 125 kHz formats where applicable.
 
-### Common Issues
+## File management and formats
 
-**"Not connected to Chameleon Ultra"**
-- Ensure device is powered on and in range
-- Try reconnecting: `chameleon disconnect` then `chameleon connect`
+Files created by Chameleon-related commands are saved under the Ghost ESP storage at the following location:
 
-**"Insufficient memory"**
-- Restart Ghost ESP: `reboot`
-- Close other applications consuming memory
+- Primary save directory: `/mnt/ghostesp/nfc/`
 
-**"Card detection failed"**
-- Ensure card is properly positioned
-- Try switching to reader mode: `chameleon reader`
-- Check battery level: `chameleon battery`
 
-**"Authentication required (Status 0x60)"**
-- Card is password-protected (normal for NTAG)
-- Use analysis commands for professional documentation
-- Consider specialized tools for password recovery
+Filename and format details:
+- HF scans and simple reports: text files with a `CU_hf_scan_<YYYYMMDD>_<HHMMSS>.nfc` or `.txt` name, containing a short human-readable summary (timestamp, UID, tag type, ATQA/SAK).
+- Card dumps and Flipper-compatible files: when possible the tool emits Flipper NFC file headers (``Filetype: Flipper NFC device``) and then appends tag-specific content (UID, ATQA/SAK, pages/blocks) so these files can be opened in other NFC tools that support Flipper formats.
+- MIFARE Classic full dumps: saved as sector/block listings and, where available, include recovered keys in the dump (if permitted by the analysis results).
 
-### Status Codes
-- **0x00**: Success (tag found)
-- **0x68**: General success
-- **0x60**: Authentication required
-- **0x66**: Wrong device mode
-- **0x41**: No LF tag found
+Notes on storage usage
+- On devices where a virtual internal storage partition is used (some watch builds), files are saved to the same `/mnt` mount point.
+- The SD and display hardware may share SPI lines on some boards. When that is the case, the firmware will mount the SD just-in-time and suspend display SPI activity during SD I/O to avoid bus contention. If you see SD-related errors, check whether the display and SD pins are shared for your board.
 
-## 🚀 Pro Tips
+## Troubleshooting
 
-### Efficient Workflow
-1. **Initial Setup**:
-   ```bash
-   chameleon connect
-   chameleon battery      # Ensure sufficient power
-   chameleon reader       # Set appropriate mode
-   ```
+### Common issues
 
-2. **Card Analysis**:
-   ```bash
-   chameleon scanhf       # Quick scan first
-   chameleon readhf       # Full automated analysis
-   chameleon savedump     # Save comprehensive results
-   ```
+"Not connected to Chameleon Ultra"
+- Ensure the Chameleon is powered on and in Bluetooth range.
+- Run `chameleon disconnect` then `chameleon connect` to re-establish.
 
-3. **NTAG Cards**:
-   ```bash
-   chameleon ntagdetect   # Identify type and protection
-   chameleon ntagdump     # Analyze structure
-   chameleon saventralag  # Document findings
-   ```
+"Insufficient memory"
+- Reboot the Ghost ESP (`reboot`) and close other tasks.
+- The firmware prefers >20 KB free heap for basic operations and recommends 40 KB+ for complex scans.
 
-### Security Research Best Practices
-- Always document your findings with save commands
-- Use custom filenames for organized research projects
-- Review generated reports for detailed technical information
-- Use `readhf` for basic card detection and information collection
+"SD read/write failures or UI freezes"
+- If the board uses an SPI display that shares MOSI/MISO/SCLK with the SD card, the firmware suspends display SPI during SD operations. If the UI appears to freeze after a save operation, the JIT mount/unmount path may not have completed; reboot or check logs for `sdmmc_read_sectors` errors.
+- Avoid removing the SD card while writes are in progress.
 
-### Integration with External Tools
-- **Card dumps**: Standard format for analysis software
-- **Professional reports**: Suitable for security assessments
+"Authentication required (Status 0x60)"
+- The tag requires authentication (normal for protected NTAGs). Use the NTAG analysis commands for more detail.
 
-## 📚 Additional Resources
+## Status codes returned by Chameleon
+- `0x00` — success (tag found)
+- `0x68` — command success / OK
+- `0x60` — authentication required
+- `0x66` — wrong device mode
+- `0x41` — no LF tag found
 
-- [Chameleon Ultra Official Documentation](https://github.com/RfidResearchGroup/ChameleonUltra)
-- [MIFARE Classic Attacks Reference](https://github.com/RfidResearchGroup/ChameleonUltra/wiki/protocol)
-- [NTAG Password Protection Guide](https://www.nxp.com/docs/en/application-note/AN11495.pdf)
+## Best practices
+- Connect and set reader mode before scanning: `chameleon connect` → `chameleon reader` → `chameleon scanhf`.
+- Save scan results promptly; files are timestamped and include UID where available to make organization easier.
+- When using shared SPI boards, prefer saving when the UI is idle to reduce I/O contention.
+
+## References
+- Chameleon Ultra project: `https://github.com/RfidResearchGroup/ChameleonUltra`
+- NTAG documentation: NXP AN11495 and related datasheets
 
 ---
 
-**Note**: This integration is designed for security research and educational purposes. Always ensure you have proper authorization before testing with any cards or systems.
+This guide is intended to help you get started with the Chameleon Ultra integration on Ghost ESP. If you want more detailed examples for specific card types or to add Flipper-compatible full dumps from the Chameleon protocol, tell me which formats you need and I will add examples and the exact output layouts.
