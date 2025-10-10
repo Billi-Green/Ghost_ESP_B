@@ -16,6 +16,7 @@
 #include <dirent.h>
 #include "managers/sd_card_manager.h"
 #include "managers/fuel_gauge_manager.h"
+#include "core/glog.h"
 
 // popup helper forward declarations
 lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height);
@@ -31,6 +32,7 @@ lv_obj_t *popup_create_title_label(lv_obj_t *container, const char *title, const
 lv_obj_t *popup_create_body_label(lv_obj_t *container, const char *text, lv_coord_t width, bool wrap, const lv_font_t *font, lv_coord_t y_ofs);
 #include "managers/nfc/mifare_classic.h"
 #include "managers/nfc/ndef.h"
+#include "managers/chameleon_manager.h"
 #ifdef CONFIG_HAS_NFC
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -325,6 +327,42 @@ static void update_keys_buttons_layout(void);
 static void update_keys_buttons_layout(void);
 static void keys_scroll_up_cb(lv_event_t *e);
 static void keys_scroll_down_cb(lv_event_t *e);
+
+// chameleon ultra popup (basic controls)
+static lv_obj_t *cu_popup = NULL;
+static lv_obj_t *cu_title_label = NULL;
+static lv_obj_t *cu_details_label = NULL;
+static lv_obj_t *cu_close_btn = NULL;
+static lv_obj_t *cu_connect_btn = NULL;
+static lv_obj_t *cu_disconnect_btn = NULL;
+static lv_obj_t *cu_reader_btn = NULL;
+static lv_obj_t *cu_scan_hf_btn = NULL;
+static lv_obj_t *cu_save_hf_btn = NULL;
+static lv_obj_t *cu_more_btn = NULL;
+static int cu_popup_selected = 0;
+static bool cu_save_visible = false;
+static volatile bool cu_busy = false;
+static bool cu_more_expanded = false;
+static void cu_state_timer_cb(lv_timer_t *t);
+static lv_timer_t *cu_state_timer = NULL;
+
+static void create_cu_popup(void);
+static void cleanup_cu_popup(void *obj);
+static void update_cu_buttons_layout(void);
+static void update_cu_popup_selection(void);
+static void cu_close_cb(lv_event_t *e);
+static void cu_connect_cb(lv_event_t *e);
+static void cu_disconnect_cb(lv_event_t *e);
+static void cu_reader_cb(lv_event_t *e);
+static void cu_scan_hf_cb(lv_event_t *e);
+static void cu_save_hf_cb(lv_event_t *e);
+static void cu_more_cb(lv_event_t *e);
+static void cu_connect_task(void *arg);
+static void cu_disconnect_task(void *arg);
+static void cu_reader_task(void *arg);
+static void cu_scan_hf_task(void *arg);
+static void cu_save_hf_task(void *arg);
+static void cu_bool_done_async(void *ptr);
 #ifdef CONFIG_HAS_NFC
 static bool ensure_pn532_ready(void);
 static void nfc_write_task(void *arg);
@@ -976,6 +1014,87 @@ static void nfc_view_input_cb(InputEvent *event) {
         }
         return;
     }
+    // Handle Chameleon Ultra popup input
+    if (cu_popup && lv_obj_is_valid(cu_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_PR) return;
+            if (cu_close_btn && lv_obj_is_valid(cu_close_btn)) {
+                lv_area_t a; lv_obj_get_coords(cu_close_btn, &a);
+                if (d->point.x >= a.x1 && d->point.x <= a.x2 && d->point.y >= a.y1 && d->point.y <= a.y2) { cu_close_cb(NULL); return; }
+            }
+            if (cu_connect_btn && lv_obj_is_valid(cu_connect_btn)) {
+                lv_area_t b; lv_obj_get_coords(cu_connect_btn, &b);
+                if (d->point.x >= b.x1 && d->point.x <= b.x2 && d->point.y >= b.y1 && d->point.y <= b.y2) { cu_connect_cb(NULL); return; }
+            }
+            if (cu_disconnect_btn && lv_obj_is_valid(cu_disconnect_btn)) {
+                lv_area_t c; lv_obj_get_coords(cu_disconnect_btn, &c);
+                if (d->point.x >= c.x1 && d->point.x <= c.x2 && d->point.y >= c.y1 && d->point.y <= c.y2) { cu_disconnect_cb(NULL); return; }
+            }
+            if (cu_reader_btn && lv_obj_is_valid(cu_reader_btn)) {
+                lv_area_t r; lv_obj_get_coords(cu_reader_btn, &r);
+                if (d->point.x >= r.x1 && d->point.x <= r.x2 && d->point.y >= r.y1 && d->point.y <= r.y2) { cu_reader_cb(NULL); return; }
+            }
+            if (cu_scan_hf_btn && lv_obj_is_valid(cu_scan_hf_btn)) {
+                lv_area_t s; lv_obj_get_coords(cu_scan_hf_btn, &s);
+                if (d->point.x >= s.x1 && d->point.x <= s.x2 && d->point.y >= s.y1 && d->point.y <= s.y2) { cu_scan_hf_cb(NULL); return; }
+            }
+            if (cu_save_visible && cu_save_hf_btn && lv_obj_is_valid(cu_save_hf_btn)) {
+                lv_area_t sv; lv_obj_get_coords(cu_save_hf_btn, &sv);
+                if (d->point.x >= sv.x1 && d->point.x <= sv.x2 && d->point.y >= sv.y1 && d->point.y <= sv.y2) { cu_save_hf_cb(NULL); return; }
+            }
+            update_cu_popup_selection();
+        }
+#ifdef CONFIG_USE_ENCODER
+        else if (event->type == INPUT_TYPE_EXIT_BUTTON) { cu_close_cb(NULL); return; }
+#endif
+        else if (event->type == INPUT_TYPE_JOYSTICK) {
+            int ji = event->data.joystick_index;
+            lv_obj_t *btns[8];
+            int total = 0;
+            if (cu_close_btn && lv_obj_is_valid(cu_close_btn) && !lv_obj_has_flag(cu_close_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_close_btn;
+            if (chameleon_manager_is_connected()) {
+                if (cu_disconnect_btn && lv_obj_is_valid(cu_disconnect_btn) && !lv_obj_has_flag(cu_disconnect_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_disconnect_btn;
+            } else {
+                if (cu_connect_btn && lv_obj_is_valid(cu_connect_btn) && !lv_obj_has_flag(cu_connect_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_connect_btn;
+            }
+            if (cu_more_btn && lv_obj_is_valid(cu_more_btn)) btns[total++] = cu_more_btn;
+            if (cu_more_expanded && chameleon_manager_is_connected()) {
+                if (cu_reader_btn && lv_obj_is_valid(cu_reader_btn) && !lv_obj_has_flag(cu_reader_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_reader_btn;
+                if (cu_scan_hf_btn && lv_obj_is_valid(cu_scan_hf_btn) && !lv_obj_has_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_scan_hf_btn;
+                if (cu_save_hf_btn && lv_obj_is_valid(cu_save_hf_btn) && !lv_obj_has_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_save_hf_btn;
+            }
+            if (ji == 0) { if (total > 1) { cu_popup_selected = (cu_popup_selected + total - 1) % total; update_cu_popup_selection(); } }
+            else if (ji == 3) { if (total > 1) { cu_popup_selected = (cu_popup_selected + 1) % total; update_cu_popup_selection(); } }
+            else if (ji == 1) {
+                if (cu_popup_selected >= 0 && cu_popup_selected < total) { lv_event_send(btns[cu_popup_selected], LV_EVENT_CLICKED, NULL); return; }
+            }
+        } else if (event->type == INPUT_TYPE_ENCODER) {
+            lv_obj_t *btns[8]; int total = 0;
+            if (cu_close_btn && lv_obj_is_valid(cu_close_btn) && !lv_obj_has_flag(cu_close_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_close_btn;
+            if (chameleon_manager_is_connected()) {
+                if (cu_disconnect_btn && lv_obj_is_valid(cu_disconnect_btn) && !lv_obj_has_flag(cu_disconnect_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_disconnect_btn;
+            } else {
+                if (cu_connect_btn && lv_obj_is_valid(cu_connect_btn) && !lv_obj_has_flag(cu_connect_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_connect_btn;
+            }
+            if (cu_more_btn && lv_obj_is_valid(cu_more_btn)) btns[total++] = cu_more_btn;
+            if (cu_more_expanded && chameleon_manager_is_connected()) {
+                if (cu_reader_btn && lv_obj_is_valid(cu_reader_btn) && !lv_obj_has_flag(cu_reader_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_reader_btn;
+                if (cu_scan_hf_btn && lv_obj_is_valid(cu_scan_hf_btn) && !lv_obj_has_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_scan_hf_btn;
+                if (cu_save_hf_btn && lv_obj_is_valid(cu_save_hf_btn) && !lv_obj_has_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[total++] = cu_save_hf_btn;
+            }
+            if (event->data.encoder.button) {
+                if (cu_popup_selected >= 0 && cu_popup_selected < total) { lv_event_send(btns[cu_popup_selected], LV_EVENT_CLICKED, NULL); return; }
+            }
+            if (event->data.encoder.direction != 0 && total > 1) {
+                if (event->data.encoder.direction > 0) cu_popup_selected = (cu_popup_selected + total - 1) % total;
+                else cu_popup_selected = (cu_popup_selected + 1) % total;
+            }
+            update_cu_popup_selection();
+        }
+        return;
+    }
+
     // Handle NFC write popup input
     if (nfc_write_popup && lv_obj_is_valid(nfc_write_popup)) {
         if (event->type == INPUT_TYPE_TOUCH) {
@@ -1122,6 +1241,11 @@ static void nfc_option_event_cb(lv_event_t *e) {
         return;
     }
 
+    if (strcmp(opt, "Chameleon Ultra") == 0) {
+        create_cu_popup();
+        return;
+    }
+
 
 }
 
@@ -1260,7 +1384,23 @@ static void nfc_scan_save_cb(lv_event_t *e) {
 #ifdef CONFIG_HAS_NFC
     mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
 #endif
-    xTaskCreate(nfc_save_task, "nfc_save", 6144, NULL, 5, NULL);
+    BaseType_t rc = xTaskCreate(nfc_save_task, "nfc_save", 4096, NULL, 5, NULL);
+    if (rc != pdPASS) {
+        rc = xTaskCreate(nfc_save_task, "nfc_save", 3072, NULL, 5, NULL);
+    }
+    if (rc != pdPASS) {
+        nfc_save_in_progress = false;
+        if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+            lv_label_set_text(nfc_title_label, "NFC Tag");
+        }
+        if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
+            lv_obj_clear_state(nfc_scan_save_btn, LV_STATE_DISABLED);
+        }
+#ifdef CONFIG_HAS_NFC
+        mfc_set_progress_callback(NULL, NULL);
+#endif
+        ESP_LOGE(TAG, "nfc_save_task create failed");
+    }
 }
 
 static bool write_flipper_nfc_file(void) {
@@ -1767,10 +1907,23 @@ static void back_to_root_menu(void) {
     lv_obj_set_user_data(keys_btn, (void *)"User Keys");
     lv_obj_add_event_cb(keys_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"User Keys");
 
+    // Add Chameleon Ultra button
+    lv_obj_t *cu_btn = lv_list_add_btn(menu_container, NULL, "Chameleon Ultra");
+    lv_obj_set_height(cu_btn, button_height_global);
+    lv_obj_add_style(cu_btn, get_zebra_style(3), 0);
+    lv_obj_t *culabel = lv_obj_get_child(cu_btn, 0);
+    if (culabel) {
+        lv_obj_set_style_text_font(culabel, get_menu_font(), 0);
+        vertically_center_label(culabel, cu_btn);
+        lv_obj_add_style(culabel, &style_menu_label, 0);
+    }
+    lv_obj_set_user_data(cu_btn, (void *)"Chameleon Ultra");
+    lv_obj_add_event_cb(cu_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Chameleon Ultra");
+
     // Add Write button
     emulate_btn = lv_list_add_btn(menu_container, NULL, "Write");
     lv_obj_set_height(emulate_btn, button_height_global);
-    lv_obj_add_style(emulate_btn, get_zebra_style(3), 0);
+    lv_obj_add_style(emulate_btn, get_zebra_style(4), 0);
     lv_obj_t *elabel = lv_obj_get_child(emulate_btn, 0);
     if (elabel) {
         lv_obj_set_style_text_font(elabel, get_menu_font(), 0);
@@ -1780,14 +1933,14 @@ static void back_to_root_menu(void) {
     lv_obj_set_user_data(emulate_btn, (void *)"Write");
     lv_obj_add_event_cb(emulate_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Write");
 
-    num_items = 4;
+    num_items = 5;
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     // Ensure hardware back row exists on main menu (encoder/joystick builds)
     lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
     if (back_row) {
         lv_obj_set_height(back_row, button_height_global);
-        lv_obj_add_style(back_row, get_zebra_style(4), 0);
+        lv_obj_add_style(back_row, get_zebra_style(5), 0);
         lv_obj_t *blabel = lv_obj_get_child(back_row, 0);
         if (blabel) {
             lv_obj_set_style_text_font(blabel, get_menu_font(), 0);
@@ -2165,6 +2318,272 @@ keys_cleanup:
     keys_popup_selected = 1; // default focus on Close
     update_keys_popup_selection();
 }
+
+// ---- chameleon ultra basic popup ----
+static void cleanup_cu_popup(void *obj) {
+    (void)obj;
+    if (cu_popup) { lv_obj_del(cu_popup); cu_popup = NULL; }
+    cu_title_label = NULL;
+    cu_details_label = NULL;
+    cu_close_btn = NULL;
+    cu_connect_btn = NULL;
+    cu_disconnect_btn = NULL;
+    cu_reader_btn = NULL;
+    cu_scan_hf_btn = NULL;
+    cu_save_hf_btn = NULL;
+    cu_more_btn = NULL;
+    cu_popup_selected = 0;
+    cu_save_visible = false;
+    cu_busy = false;
+    cu_more_expanded = false;
+    if (cu_state_timer) { lv_timer_del(cu_state_timer); cu_state_timer = NULL; }
+}
+
+static void cu_close_cb(lv_event_t *e) { (void)e; cleanup_cu_popup(NULL); }
+
+static void cu_bool_done_async(void *ptr) {
+    bool ok = ptr ? *((bool*)ptr) : false;
+    if (ptr) free(ptr);
+    cu_busy = false;
+    if (cu_title_label && lv_obj_is_valid(cu_title_label)) {
+        lv_label_set_text(cu_title_label, "Chameleon Ultra");
+    }
+    if (cu_details_label && lv_obj_is_valid(cu_details_label)) {
+        lv_label_set_text(cu_details_label, chameleon_manager_is_connected() ? "Connected" : "Not connected");
+    }
+    // refresh connected state buttons visibility/text
+    update_cu_buttons_layout();
+    update_cu_popup_selection();
+}
+
+static void cu_connect_task(void *arg) {
+    (void)arg;
+    bool ok = chameleon_manager_connect(10, NULL);
+    bool *res = (bool*)malloc(sizeof(bool));
+    if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
+    else { lv_async_call(cu_bool_done_async, NULL); }
+    vTaskDelete(NULL);
+}
+
+static void cu_disconnect_task(void *arg) {
+    (void)arg;
+    chameleon_manager_disconnect();
+    bool ok = !chameleon_manager_is_connected();
+    bool *res = (bool*)malloc(sizeof(bool));
+    if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
+    else { lv_async_call(cu_bool_done_async, NULL); }
+    vTaskDelete(NULL);
+}
+
+static void cu_reader_task(void *arg) {
+    (void)arg;
+    bool ok = chameleon_manager_set_reader_mode();
+    bool *res = (bool*)malloc(sizeof(bool));
+    if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
+    else { lv_async_call(cu_bool_done_async, NULL); }
+    vTaskDelete(NULL);
+}
+
+static void cu_scan_hf_task(void *arg) {
+    (void)arg;
+    bool ok = chameleon_manager_scan_hf();
+    // if success, enable save
+    if (ok) cu_save_visible = true;
+    bool *res = (bool*)malloc(sizeof(bool));
+    if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
+    else { lv_async_call(cu_bool_done_async, NULL); }
+    vTaskDelete(NULL);
+}
+
+static void cu_save_hf_task(void *arg) {
+    (void)arg;
+    bool ok = false;
+    glog("Saving last HF scan header...");
+    ok = chameleon_manager_save_last_hf_scan(NULL);
+    bool *res = (bool*)malloc(sizeof(bool));
+    if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
+    else { lv_async_call(cu_bool_done_async, NULL); }
+    vTaskDelete(NULL);
+}
+
+static void update_cu_buttons_layout(void) {
+    if (!cu_popup) return;
+    // visibility based on connection, readiness and expand state
+    bool connected = chameleon_manager_is_connected();
+    bool ready = chameleon_manager_is_ready();
+    if (connected) {
+        if (cu_connect_btn) lv_obj_add_flag(cu_connect_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_disconnect_btn) lv_obj_add_flag(cu_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_reader_btn) lv_obj_add_flag(cu_reader_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_scan_hf_btn) { if (cu_more_expanded && ready) lv_obj_clear_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN); }
+        if (cu_save_hf_btn) { if (cu_more_expanded && cu_save_visible && ready) lv_obj_clear_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN); }
+    } else {
+        if (cu_connect_btn) lv_obj_clear_flag(cu_connect_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_disconnect_btn) lv_obj_add_flag(cu_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_reader_btn) lv_obj_add_flag(cu_reader_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_scan_hf_btn) lv_obj_add_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_save_hf_btn) lv_obj_add_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN);
+        cu_save_visible = false;
+    }
+
+    // collect visible buttons in order: Close, Connect/Disconnect, More, then advanced
+    lv_obj_t *btns[8]; int count = 0;
+    if (cu_close_btn && lv_obj_is_valid(cu_close_btn)) btns[count++] = cu_close_btn;
+    if (!chameleon_manager_is_connected()) {
+        if (cu_connect_btn && lv_obj_is_valid(cu_connect_btn) && !lv_obj_has_flag(cu_connect_btn, LV_OBJ_FLAG_HIDDEN)) btns[count++] = cu_connect_btn;
+    }
+    if (cu_more_btn && lv_obj_is_valid(cu_more_btn)) btns[count++] = cu_more_btn;
+    if (cu_more_expanded && chameleon_manager_is_connected()) {
+        if (cu_scan_hf_btn && lv_obj_is_valid(cu_scan_hf_btn) && !lv_obj_has_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[count++] = cu_scan_hf_btn;
+        if (cu_save_hf_btn && lv_obj_is_valid(cu_save_hf_btn) && !lv_obj_has_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[count++] = cu_save_hf_btn;
+    }
+    if (count == 0) return;
+    if (count <= 3) { popup_layout_buttons_responsive(cu_popup, btns, count, -8, NULL); return; }
+    lv_coord_t btn_h = lv_obj_get_height(btns[0]); if (btn_h <= 0) btn_h = (LV_HOR_RES <= 240) ? 30 : 34;
+    int bottom_cnt = 3; int top_cnt = count - bottom_cnt;
+    lv_obj_t *bottom_row[3]; for (int i=0;i<bottom_cnt;++i) bottom_row[i] = btns[i];
+    lv_obj_t *top_row[5]; for (int i=0;i<top_cnt;++i) top_row[i] = btns[bottom_cnt+i];
+    // recalc button width for each row independently to better fit labels
+    // bottom row
+    lv_coord_t bottom_min = (LV_HOR_RES <= 240) ? 54 : 60;
+    lv_coord_t bottom_max = (LV_HOR_RES <= 240) ? 100 : 130;
+    layout_popup_buttons_row(cu_popup, bottom_row, bottom_cnt,
+                             bottom_min, bottom_max,
+                             40, 8, -8);
+    // top row
+    // tighten min width so short labels like "Less" don't get oversized
+    lv_coord_t top_min = (LV_HOR_RES <= 240) ? 48 : 54;
+    lv_coord_t top_max = (LV_HOR_RES <= 240) ? 100 : 120;
+    layout_popup_buttons_row(cu_popup, top_row, top_cnt,
+                             top_min, top_max,
+                             36, 8, (lv_coord_t)(-8 - btn_h - 6));
+}
+
+static void update_cu_popup_selection(void) {
+    lv_obj_t *btns[8]; int count = 0;
+    if (cu_close_btn && lv_obj_is_valid(cu_close_btn)) btns[count++] = cu_close_btn;
+    if (!chameleon_manager_is_connected()) {
+        if (cu_connect_btn && lv_obj_is_valid(cu_connect_btn) && !lv_obj_has_flag(cu_connect_btn, LV_OBJ_FLAG_HIDDEN)) btns[count++] = cu_connect_btn;
+    }
+    if (cu_more_btn && lv_obj_is_valid(cu_more_btn)) btns[count++] = cu_more_btn;
+    if (cu_more_expanded && chameleon_manager_is_connected()) {
+        if (cu_scan_hf_btn && lv_obj_is_valid(cu_scan_hf_btn) && !lv_obj_has_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[count++] = cu_scan_hf_btn;
+        if (cu_save_hf_btn && lv_obj_is_valid(cu_save_hf_btn) && !lv_obj_has_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN)) btns[count++] = cu_save_hf_btn;
+    }
+    for (int i = 0; i < count; ++i) popup_set_button_selected(btns[i], cu_popup_selected == i);
+    update_cu_buttons_layout();
+}
+
+static void cu_connect_cb(lv_event_t *e) {
+    (void)e; if (cu_busy) return; cu_busy = true;
+    if (cu_title_label && lv_obj_is_valid(cu_title_label)) lv_label_set_text(cu_title_label, "Connecting...");
+    xTaskCreate(cu_connect_task, "cu_connect", 4096, NULL, 5, NULL);
+}
+
+static void cu_disconnect_cb(lv_event_t *e) {
+    (void)e; if (cu_busy) return; cu_busy = true;
+    if (cu_title_label && lv_obj_is_valid(cu_title_label)) lv_label_set_text(cu_title_label, "Chameleon Ultra");
+    xTaskCreate(cu_disconnect_task, "cu_disconnect", 4096, NULL, 5, NULL);
+}
+
+static void cu_reader_cb(lv_event_t *e) {
+    (void)e; if (cu_busy) return; cu_busy = true;
+    if (cu_title_label && lv_obj_is_valid(cu_title_label)) lv_label_set_text(cu_title_label, "Setting reader mode...");
+    xTaskCreate(cu_reader_task, "cu_reader", 4096, NULL, 5, NULL);
+}
+
+static void cu_scan_hf_cb(lv_event_t *e) {
+    (void)e; if (cu_busy) return; cu_busy = true;
+    if (cu_title_label && lv_obj_is_valid(cu_title_label)) lv_label_set_text(cu_title_label, "Scanning HF...");
+    xTaskCreate(cu_scan_hf_task, "cu_scan_hf", 4096, NULL, 5, NULL);
+}
+
+static void cu_save_hf_cb(lv_event_t *e) {
+    (void)e; if (cu_busy) return; cu_busy = true;
+    if (cu_title_label && lv_obj_is_valid(cu_title_label)) lv_label_set_text(cu_title_label, "Saving...");
+    BaseType_t rc = xTaskCreate(cu_save_hf_task, "cu_save_hf", 4096, NULL, 5, NULL);
+    if (rc != pdPASS) {
+        rc = xTaskCreate(cu_save_hf_task, "cu_save_hf", 3072, NULL, 5, NULL);
+    }
+    if (rc != pdPASS) {
+        cu_busy = false;
+        if (cu_title_label && lv_obj_is_valid(cu_title_label)) lv_label_set_text(cu_title_label, "Save failed");
+        ESP_LOGE(TAG, "cu_save_hf_task create failed");
+    }
+}
+
+static void cu_more_cb(lv_event_t *e) {
+    (void)e;
+    cu_more_expanded = !cu_more_expanded;
+    if (cu_more_btn && lv_obj_is_valid(cu_more_btn)) {
+        lv_obj_t *lbl = lv_obj_get_child(cu_more_btn, 0);
+        if (lbl) lv_label_set_text(lbl, cu_more_expanded ? "Less" : "More");
+    }
+    update_cu_buttons_layout();
+    cu_popup_selected = 2; // focus More
+    update_cu_popup_selection();
+}
+
+static void create_cu_popup(void) {
+    if (!root) return;
+    if (cu_popup && lv_obj_is_valid(cu_popup)) cleanup_cu_popup(NULL);
+    int popup_w = (LV_HOR_RES <= 240) ? (LV_HOR_RES - 20) : (LV_HOR_RES - 30);
+    int popup_h = (LV_VER_RES <= 240) ? 140 : 160;
+    cu_popup = popup_create_container(root, popup_w, popup_h);
+    lv_obj_center(cu_popup);
+
+    const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
+    const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+
+    cu_title_label = popup_create_title_label(cu_popup, "Chameleon Ultra", title_font, 10);
+    cu_details_label = popup_create_body_label(cu_popup, "", LV_HOR_RES - 50, true, body_font, 26);
+    if (cu_details_label) {
+        lv_label_set_text(cu_details_label, chameleon_manager_is_connected() ? "Connected" : "Not connected");
+        lv_obj_set_style_text_align(cu_details_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(cu_details_label, LV_ALIGN_TOP_MID, 0, 26);
+    }
+
+    int btn_w = (LV_HOR_RES <= 240) ? 80 : 90; int btn_h = (LV_HOR_RES <= 240) ? 30 : 34;
+    cu_close_btn = popup_add_styled_button(cu_popup, "Close", btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, 10, -8, body_font, cu_close_cb, NULL);
+    cu_connect_btn = popup_add_styled_button(cu_popup, "Connect", btn_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, -8, body_font, cu_connect_cb, NULL);
+    cu_disconnect_btn = popup_add_styled_button(cu_popup, "Disconnect", btn_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, -8, body_font, cu_disconnect_cb, NULL);
+    cu_more_btn = popup_add_styled_button(cu_popup, "More", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, -10, -8, body_font, cu_more_cb, NULL);
+    // reader mode button removed (handled automatically)
+    // cu_reader_btn = popup_add_styled_button(cu_popup, "Reader Mode", btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, 10, -8, body_font, cu_reader_cb, NULL);
+    cu_scan_hf_btn = popup_add_styled_button(cu_popup, "Scan HF", btn_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, -8, body_font, cu_scan_hf_cb, NULL);
+    cu_save_hf_btn = popup_add_styled_button(cu_popup, "Save", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, -10, -8, body_font, cu_save_hf_cb, NULL);
+
+    cu_more_expanded = false;
+    if (!chameleon_manager_is_connected()) {
+        if (cu_disconnect_btn) lv_obj_add_flag(cu_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_scan_hf_btn) lv_obj_add_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_save_hf_btn) lv_obj_add_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN);
+        cu_save_visible = false;
+    } else {
+        if (cu_disconnect_btn) lv_obj_clear_flag(cu_disconnect_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_scan_hf_btn) lv_obj_add_flag(cu_scan_hf_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cu_save_hf_btn) lv_obj_add_flag(cu_save_hf_btn, LV_OBJ_FLAG_HIDDEN);
+        cu_save_visible = false;
+    }
+
+    cu_popup_selected = 0;
+    update_cu_buttons_layout();
+    update_cu_popup_selection();
+
+    // start lightweight state refresh timer to keep popup live without reopening
+    if (cu_state_timer) { lv_timer_del(cu_state_timer); cu_state_timer = NULL; }
+    cu_state_timer = lv_timer_create(cu_state_timer_cb, 300, NULL);
+}
+
+static void cu_state_timer_cb(lv_timer_t *t) {
+    (void)t;
+    if (!cu_popup || !lv_obj_is_valid(cu_popup)) return;
+    if (cu_details_label && lv_obj_is_valid(cu_details_label)) {
+        lv_label_set_text(cu_details_label, chameleon_manager_is_connected() ? "Connected" : "Not connected");
+    }
+    update_cu_buttons_layout();
+}
+
 
 static void cleanup_nfc_write_popup(void *obj) {
     (void)obj;
@@ -2913,10 +3332,23 @@ static void nfc_view_create(void) {
     lv_obj_set_user_data(keys_btn, (void *)"User Keys");
     lv_obj_add_event_cb(keys_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"User Keys");
 
+    // Add Chameleon Ultra button
+    lv_obj_t *cu_btn = lv_list_add_btn(menu_container, NULL, "Chameleon Ultra");
+    lv_obj_set_height(cu_btn, button_height_global);
+    lv_obj_add_style(cu_btn, get_zebra_style(3), 0);
+    lv_obj_t *culabel = lv_obj_get_child(cu_btn, 0);
+    if (culabel) {
+        lv_obj_set_style_text_font(culabel, get_menu_font(), 0);
+        vertically_center_label(culabel, cu_btn);
+        lv_obj_add_style(culabel, &style_menu_label, 0);
+    }
+    lv_obj_set_user_data(cu_btn, (void *)"Chameleon Ultra");
+    lv_obj_add_event_cb(cu_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Chameleon Ultra");
+
     // Add Write button
     emulate_btn = lv_list_add_btn(menu_container, NULL, "Write");
     lv_obj_set_height(emulate_btn, button_height_global);
-    lv_obj_add_style(emulate_btn, get_zebra_style(3), 0);
+    lv_obj_add_style(emulate_btn, get_zebra_style(4), 0);
     lv_obj_t *elabel = lv_obj_get_child(emulate_btn, 0);
     if (elabel) {
         lv_obj_set_style_text_font(elabel, get_menu_font(), 0);
@@ -2926,14 +3358,14 @@ static void nfc_view_create(void) {
     lv_obj_set_user_data(emulate_btn, (void *)"Write");
     lv_obj_add_event_cb(emulate_btn, nfc_option_event_cb, LV_EVENT_CLICKED, (void *)"Write");
 
-    num_items = 4;
+    num_items = 5;
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     // Add Back option row for hardware users, mirroring options_screen behavior
     lv_obj_t *back_row = lv_list_add_btn(menu_container, NULL, LV_SYMBOL_LEFT " Back");
     if (back_row) {
         lv_obj_set_height(back_row, button_height_global);
-        lv_obj_add_style(back_row, get_zebra_style(4), 0);
+        lv_obj_add_style(back_row, get_zebra_style(5), 0);
         lv_obj_t *blabel = lv_obj_get_child(back_row, 0);
         if (blabel) {
             lv_obj_set_style_text_font(blabel, get_menu_font(), 0);
@@ -2999,6 +3431,8 @@ static void nfc_view_destroy(void) {
     // Cancel any active write and cleanup popup
     nfc_write_cancel = true;
     cleanup_nfc_write_popup(NULL);
+    // cleanup chameleon popup
+    cleanup_cu_popup(NULL);
     // Cleanup saved popup and list
     cleanup_saved_details_popup(NULL);
     saved_clear_list();

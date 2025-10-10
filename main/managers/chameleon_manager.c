@@ -6,6 +6,7 @@
 #include "managers/chameleon_manager.h"
 #include "managers/ble_manager.h"
 #include "host/ble_hs.h"
+#include "host/ble_hs_id.h"
 #include "host/ble_uuid.h"
 #include "host/ble_gatt.h"
 #include "host/ble_gap.h"
@@ -16,6 +17,7 @@
 #include "freertos/semphr.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/sd_card_manager.h"
+#include "managers/display_manager.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -40,6 +42,9 @@ static SemaphoreHandle_t g_response_sem = NULL;
 // PIN support
 char g_chameleon_pin[7] = {0}; // Store PIN as string (max 6 digits + null terminator)
 bool g_pin_required = false;
+
+// Track current device HW mode to avoid redundant mode switches
+static uint8_t g_cached_hw_mode = 0xFF; // unknown
 
 // Chameleon Ultra command constants (from official protocol documentation)
 // Basic device commands (1000-1099)
@@ -114,6 +119,8 @@ typedef struct {
     uint8_t uid_size;
     char tag_type[32];
     time_t timestamp;
+    uint16_t atqa;
+    uint8_t sak;
 } last_scan_data_t;
 
 // Full card dump storage
@@ -226,9 +233,14 @@ static int chameleon_service_discovery_cb(uint16_t conn_handle, const struct ble
 static int chameleon_char_discovery_cb(uint16_t conn_handle, const struct ble_gatt_error *error, const struct ble_gatt_chr *chr, void *arg);
 static int chameleon_notification_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
 static bool send_command(uint16_t cmd, uint8_t *data, size_t data_len);
+static bool wait_for_cmd_data(uint16_t cmd, size_t min_len, uint32_t timeout_ms);
 static uint8_t calculate_lrc(const uint8_t *data, size_t length);
 static void start_service_discovery(void);
 static int chameleon_sm_io_cb(uint16_t conn_handle, const struct ble_sm_io *io, void *arg);
+
+bool chameleon_manager_is_ready(void) {
+    return g_is_connected && (g_tx_char_handle != 0);
+}
 
 static uint8_t calculate_lrc(const uint8_t *data, size_t length) {
     uint8_t lrc = 0;
@@ -375,6 +387,25 @@ static bool send_command(uint16_t cmd, uint8_t *data, size_t data_len) {
     return (rc == 0);
 }
 
+// some firmwares ack with a short frame first (status 0x60, len 0) and send data in a follow-up notification
+static bool wait_for_cmd_data(uint16_t cmd, size_t min_len, uint32_t timeout_ms) {
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    for (;;) {
+        TickType_t now = xTaskGetTickCount();
+        if ((int32_t)(deadline - now) <= 0) return false;
+        TickType_t slice = pdMS_TO_TICKS(200);
+        if (slice > (deadline - now)) slice = (deadline - now);
+        if (xSemaphoreTake(g_response_sem, slice) == pdTRUE) {
+            // allow a small yield for notification copy completion
+            vTaskDelay(pdMS_TO_TICKS(10));
+            if (g_last_response.command == cmd) {
+                if (g_last_response.data_size >= min_len) return true;
+                // got ack or short frame; keep waiting for the data frame
+            }
+        }
+    }
+}
+
 static void chameleon_ble_scan_callback(struct ble_gap_event *event, size_t len) {
     if (event->type == BLE_GAP_EVENT_DISC) {
         // Check if this is a Chameleon Ultra device
@@ -445,6 +476,7 @@ static int chameleon_gap_event_handler(struct ble_gap_event *event, void *arg) {
             g_tx_char_handle = 0;
             g_rx_char_handle = 0;
             g_is_connected = false;
+            g_cached_hw_mode = 0xFF; // unknown
             break;
             
         case BLE_GAP_EVENT_NOTIFY_RX:
@@ -578,9 +610,31 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
             
             // Unregister scan callback
             ble_unregister_handler(chameleon_ble_scan_callback);
-            
-            // Try to connect
-            int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &g_discovered_device.addr, 
+
+            // Ensure scanning is fully stopped before attempting to connect
+            (void)ble_gap_disc_cancel();
+            for (int i = 0; i < 10; ++i) { // wait up to ~500ms
+                if (!ble_gap_disc_active()) break;
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+
+            // Give controller a bit more time to free resources
+            vTaskDelay(pdMS_TO_TICKS(100));
+
+            // Try to connect (infer own address type to avoid rc=519 errors on some boards)
+            uint8_t own_addr_type = BLE_OWN_ADDR_PUBLIC;
+            int rc_id = ble_hs_id_infer_auto(0, &own_addr_type);
+            if (rc_id != 0) {
+                ESP_LOGW(TAG, "ble_hs_id_infer_auto failed rc=%d, falling back to PUBLIC", rc_id);
+                own_addr_type = BLE_OWN_ADDR_PUBLIC;
+            }
+
+            // Log internal/spiram free memory around connect for debugging
+            size_t free_int = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+            size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+            ESP_LOGI(TAG, "pre-connect free: int=%u psram=%u", (unsigned)free_int, (unsigned)free_psram);
+
+            int rc = ble_gap_connect(own_addr_type, &g_discovered_device.addr,
                                    30000, NULL, chameleon_gap_event_handler, NULL);
             if (rc == 0) {
                 // Wait for connection
@@ -593,6 +647,34 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
                 }
             } else {
                 ESP_LOGE(TAG, "Failed to start connection, rc=%d", rc);
+                // quick retry with alternate own address type after cooldown
+                vTaskDelay(pdMS_TO_TICKS(600));
+                uint8_t retry_addr_type = own_addr_type;
+                uint8_t alt_addr_type = retry_addr_type;
+                int rc_id2 = ble_hs_id_infer_auto(1, &alt_addr_type);
+                if (rc_id2 != 0) {
+                    alt_addr_type = BLE_OWN_ADDR_RANDOM;
+                }
+                if (alt_addr_type == retry_addr_type) {
+                    alt_addr_type = (retry_addr_type == BLE_OWN_ADDR_PUBLIC) ? BLE_OWN_ADDR_RANDOM : BLE_OWN_ADDR_PUBLIC;
+                }
+                ESP_LOGW(TAG, "Retrying connect with own_addr_type=%u", (unsigned)alt_addr_type);
+                rc = ble_gap_connect(alt_addr_type, &g_discovered_device.addr,
+                                     30000, NULL, chameleon_gap_event_handler, NULL);
+                if (rc == 0) {
+                    if (xSemaphoreTake(g_connect_sem, pdMS_TO_TICKS(10000)) == pdTRUE) {
+                        if (g_is_connected) {
+                            printf("Successfully connected to Chameleon Ultra\n");
+                            TERMINAL_VIEW_ADD_TEXT("Successfully connected to Chameleon Ultra\n");
+                            return true;
+                        }
+                    }
+                } else {
+                    ESP_LOGE(TAG, "Retry connect failed, rc=%d", rc);
+                }
+                free_int = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+                free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+                ESP_LOGI(TAG, "post-fail free: int=%u psram=%u", (unsigned)free_int, (unsigned)free_psram);
             }
         }
     }
@@ -615,43 +697,42 @@ void chameleon_manager_disconnect(void) {
 }
 
 bool chameleon_manager_is_connected(void) {
+    // report BLE link state; command readiness is exposed via chameleon_manager_is_ready()
     return g_is_connected;
 }
 
 bool chameleon_manager_scan_hf(void) {
-    if (!g_is_connected) {
-        printf("Not connected to Chameleon Ultra\n");
-        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
+    if (!g_is_connected || g_tx_char_handle == 0) {
+        printf("Chameleon not ready (connection or TX characteristic missing)\n");
+        TERMINAL_VIEW_ADD_TEXT("Chameleon not ready; please wait a moment and try again.\n");
         return false;
     }
     
-    // First, ensure we're in reader mode for scanning
-    printf("Setting reader mode...\n");
-    TERMINAL_VIEW_ADD_TEXT("Setting reader mode...\n");
-    
-    g_response_received = false;
-    uint8_t mode_data = HW_MODE_READER;
-    if (!send_command(CMD_CHANGE_DEVICE_MODE, &mode_data, 1)) {
-        printf("Failed to set reader mode\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode\n");
-        return false;
+    // Ensure reader mode only if not already set
+    if (g_cached_hw_mode != HW_MODE_READER) {
+        printf("Setting reader mode...\n");
+        TERMINAL_VIEW_ADD_TEXT("Setting reader mode...\n");
+        g_response_received = false;
+        uint8_t mode_data = HW_MODE_READER;
+        if (!send_command(CMD_CHANGE_DEVICE_MODE, &mode_data, 1)) {
+            printf("Failed to set reader mode\n");
+            TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode\n");
+            return false;
+        }
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE || !g_response_received) {
+            printf("Mode change timeout\n");
+            TERMINAL_VIEW_ADD_TEXT("Mode change timeout\n");
+            return false;
+        }
+        if (g_last_response.status != STATUS_SUCCESS) {
+            printf("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+            TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
+            return false;
+        }
+        g_cached_hw_mode = HW_MODE_READER;
     }
-    
-    // Wait for mode change response
-    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE || !g_response_received) {
-        printf("Mode change timeout\n");
-        TERMINAL_VIEW_ADD_TEXT("Mode change timeout\n");
-        return false;
-    }
-    
-    if (g_last_response.status != 0x68) { // SUCCESS status
-        printf("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
-        TERMINAL_VIEW_ADD_TEXT("Failed to set reader mode, status: 0x%02X\n", g_last_response.status);
-        return false;
-    }
-    
-    printf("Reader mode set successfully, scanning for HF tags...\n");
-    TERMINAL_VIEW_ADD_TEXT("Reader mode set successfully, scanning for HF tags...\n");
+    printf("Scanning for HF tags...\n");
+    TERMINAL_VIEW_ADD_TEXT("Scanning for HF tags...\n");
     
     g_response_received = false;
     bool result = send_command(CMD_HF14A_SCAN, NULL, 0);
@@ -693,6 +774,8 @@ bool chameleon_manager_scan_hf(void) {
                         g_last_hf_scan.valid = true;
                         g_last_hf_scan.uid_size = uid_size;
                         memcpy(g_last_hf_scan.uid, &g_last_response.data[1], uid_size);
+                        g_last_hf_scan.atqa = ((uint16_t)atqa_hi << 8) | atqa_lo;
+                        g_last_hf_scan.sak = sak;
                         
                         // Identify card type based on ATQA and SAK
                         uint16_t atqa = (atqa_hi << 8) | atqa_lo;
@@ -916,6 +999,9 @@ bool chameleon_manager_set_reader_mode(void) {
     if (result) {
         printf("Reader mode command sent\n");
         TERMINAL_VIEW_ADD_TEXT("Reader mode command sent\n");
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE && g_response_received && g_last_response.status == STATUS_SUCCESS) {
+            g_cached_hw_mode = HW_MODE_READER;
+        }
     } else {
         printf("Failed to send reader mode command\n");
         TERMINAL_VIEW_ADD_TEXT("Failed to send reader mode command\n");
@@ -939,6 +1025,9 @@ bool chameleon_manager_set_emulator_mode(void) {
     if (result) {
         printf("Emulator mode command sent\n");
         TERMINAL_VIEW_ADD_TEXT("Emulator mode command sent\n");
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE && g_response_received && g_last_response.status == STATUS_SUCCESS) {
+            g_cached_hw_mode = HW_MODE_EMULATOR;
+        }
     } else {
         printf("Failed to send emulator mode command\n");
         TERMINAL_VIEW_ADD_TEXT("Failed to send emulator mode command\n");
@@ -1042,6 +1131,7 @@ bool chameleon_manager_get_device_mode(void) {
                 } else {
                     mode_str = "Unknown";
                 }
+                g_cached_hw_mode = mode;
                 
                 printf("Device Mode: %s (0x%02X)\n", mode_str, mode);
                 TERMINAL_VIEW_ADD_TEXT("Device Mode: %s (0x%02X)\n", mode_str, mode);
@@ -1468,49 +1558,53 @@ bool chameleon_manager_save_card_dump(const char* filename) {
         return false;
     }
     
-    // Create filename if not provided
-    char file_path[128];
+    // Create filename if not provided (unified under /mnt/ghostesp/nfc)
+    char file_path[192];
     if (filename == NULL) {
         struct tm* time_info = localtime(&g_last_card_dump.timestamp);
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/card_dump_%04d%02d%02d_%02d%02d%02d.bin",
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/CU_card_dump_%04d%02d%02d_%02d%02d%02d.nfc",
                 time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
                 time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
     } else {
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
     }
     
-    // Ensure directory exists
-    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    // Ensure directory exists handled at boot
     
-    // Create basic dump content
-    char content[1024];
-    int len = snprintf(content, sizeof(content),
-        "Chameleon Ultra Card Dump\n"
-        "=========================\n"
-        "Timestamp: %s"
-        "Tag Type: %s\n"
-        "UID Size: %d bytes\n"
-        "UID: ",
-        ctime(&g_last_card_dump.timestamp),
-        g_last_card_dump.tag_type,
-        g_last_card_dump.uid_size);
-    
-    // Add UID
+    // Flipper-format minimal header (align with PN532 saves)
+    bool is_classic = (g_last_hf_scan.valid && (g_last_hf_scan.sak == 0x08 || g_last_hf_scan.sak == 0x18 || g_last_hf_scan.sak == 0x09));
+    char content[512]; int len = 0;
+    len += snprintf(content + len, sizeof(content) - len, "Filetype: Flipper NFC device\n");
+    len += snprintf(content + len, sizeof(content) - len, "Version: 4\n");
+    len += snprintf(content + len, sizeof(content) - len, "Device type: %s\n", is_classic ? "Mifare Classic" : "NTAG/Ultralight");
+    len += snprintf(content + len, sizeof(content) - len, "UID:");
     for (int i = 0; i < g_last_card_dump.uid_size && i < 20; i++) {
-        len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_card_dump.uid[i]);
+        len += snprintf(content + len, sizeof(content) - len, " %02X", g_last_card_dump.uid[i]);
     }
-    
-    len += snprintf(content + len, sizeof(content) - len, 
-        "\nNote: Basic card information only. For detailed analysis, use specialized tools.\n");
-    
+    len += snprintf(content + len, sizeof(content) - len, "\n");
+    if (g_last_hf_scan.valid) {
+        len += snprintf(content + len, sizeof(content) - len, "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
+        len += snprintf(content + len, sizeof(content) - len, "SAK: %02X\n", g_last_hf_scan.sak);
+    }
+    len += snprintf(content + len, sizeof(content) - len, "Data format version: 2\n");
+
+    // JIT mount for SPI/shared-bus stability
+    bool display_was_suspended = false; bool did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    if (!did_mount) {
+        // mount_for_flush already resumed display on failure; don't resume again here
+        return false;
+    }
+
     // Write to file
-    if (sd_card_write_file(file_path, content, len)) {
+    if (sd_card_write_file(file_path, content, (size_t)len) == ESP_OK) {
         printf("Card dump saved to: %s\n", file_path);
         TERMINAL_VIEW_ADD_TEXT("Card dump saved successfully\n");
+        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return true;
     } else {
         printf("Failed to save card dump to: %s\n", file_path);
         TERMINAL_VIEW_ADD_TEXT("Failed to save card dump\n");
+        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return false;
     }
 }
@@ -1522,49 +1616,51 @@ bool chameleon_manager_save_last_hf_scan(const char* filename) {
         return false;
     }
     
-    // Create filename if not provided
-    char file_path[128];
+    // Create filename if not provided (unified under /mnt/ghostesp/nfc)
+    char file_path[192];
     if (filename == NULL) {
         struct tm* time_info = localtime(&g_last_hf_scan.timestamp);
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/hf_scan_%04d%02d%02d_%02d%02d%02d.txt",
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/CU_hf_scan_%04d%02d%02d_%02d%02d%02d.nfc",
                 time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
                 time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
     } else {
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
     }
     
-    // Ensure directory exists
-    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    // Ensure directory exists handled at boot
     
-    // Create scan report content
-    char content[1024];
-    int len = snprintf(content, sizeof(content),
-        "Chameleon Ultra HF Scan Report\n"
-        "==============================\n"
-        "Timestamp: %s"
-        "Tag Type: %s\n"
-        "UID Size: %d bytes\n"
-        "UID: ",
-        ctime(&g_last_hf_scan.timestamp),
-        g_last_hf_scan.tag_type,
-        g_last_hf_scan.uid_size);
-    
-    // Add UID
+    // Flipper-format minimal header (same style as PN532 saves)
+    bool is_classic = (g_last_hf_scan.sak == 0x08 || g_last_hf_scan.sak == 0x18 || g_last_hf_scan.sak == 0x09);
+    char content[512]; int len = 0;
+    len += snprintf(content + len, sizeof(content) - len, "Filetype: Flipper NFC device\n");
+    len += snprintf(content + len, sizeof(content) - len, "Version: 4\n");
+    len += snprintf(content + len, sizeof(content) - len, "Device type: %s\n", is_classic ? "Mifare Classic" : "NTAG/Ultralight");
+    len += snprintf(content + len, sizeof(content) - len, "UID:");
     for (int i = 0; i < g_last_hf_scan.uid_size && i < 20; i++) {
-        len += snprintf(content + len, sizeof(content) - len, "%02X ", g_last_hf_scan.uid[i]);
+        len += snprintf(content + len, sizeof(content) - len, " %02X", g_last_hf_scan.uid[i]);
     }
-    
-    len += snprintf(content + len, sizeof(content) - len, 
-        "\nNote: Basic scan information only. For detailed analysis, use specialized tools.\n");
-    
+    len += snprintf(content + len, sizeof(content) - len, "\n");
+    len += snprintf(content + len, sizeof(content) - len, "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
+    len += snprintf(content + len, sizeof(content) - len, "SAK: %02X\n", g_last_hf_scan.sak);
+    len += snprintf(content + len, sizeof(content) - len, "Data format version: 2\n");
+
+    // JIT mount for SPI/shared-bus stability (SD layer handles SPI gating)
+    bool display_was_suspended = false; bool did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    if (!did_mount) {
+        if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended);
+        return false;
+    }
+
     // Write to file
-    if (sd_card_write_file(file_path, content, len)) {
+    if (sd_card_write_file(file_path, content, (size_t)len) == ESP_OK) {
         printf("HF scan saved to: %s\n", file_path);
         TERMINAL_VIEW_ADD_TEXT("HF scan saved successfully\n");
+        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return true;
     } else {
         printf("Failed to save HF scan to: %s\n", file_path);
         TERMINAL_VIEW_ADD_TEXT("Failed to save HF scan\n");
+        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return false;
     }
 }
@@ -1576,19 +1672,24 @@ bool chameleon_manager_save_last_lf_scan(const char* filename) {
         return false;
     }
     
-    // Create filename if not provided
-    char file_path[128];
+    // Create filename if not provided (unified under /mnt/ghostesp/nfc)
+    char file_path[192];
     if (filename == NULL) {
         struct tm* time_info = localtime(&g_last_lf_scan.timestamp);
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/lf_scan_%04d%02d%02d_%02d%02d%02d.txt",
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/CU_lf_scan_%04d%02d%02d_%02d%02d%02d.nfc",
                 time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
                 time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
     } else {
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/chameleon/%s", filename);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
     }
     
-    // Ensure directory exists
-    sd_card_create_directory("/mnt/ghostesp/chameleon");
+    // Ensure directory exists (handled at boot; avoid per-save checks)
+    bool display_was_suspended = false; bool did_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    }
+#endif
     
     // Create scan report content
     char content[1024];
@@ -1615,10 +1716,12 @@ bool chameleon_manager_save_last_lf_scan(const char* filename) {
     if (sd_card_write_file(file_path, content, len)) {
         printf("LF scan saved to: %s\n", file_path);
         TERMINAL_VIEW_ADD_TEXT("LF scan saved successfully\n");
+        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return true;
     } else {
         printf("Failed to save LF scan to: %s\n", file_path);
         TERMINAL_VIEW_ADD_TEXT("Failed to save LF scan\n");
+        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return false;
     }
 }
@@ -1770,16 +1873,81 @@ bool chameleon_manager_ntag_authenticate(uint32_t password) {
     }
     
 bool chameleon_manager_read_ntag_card(void) {
-    if (!g_is_connected) {
-        printf("Not connected to Chameleon Ultra\n");
-        TERMINAL_VIEW_ADD_TEXT("Not connected to Chameleon Ultra\n");
-            return false;
+    if (!chameleon_manager_is_ready()) {
+        printf("Chameleon not ready\n");
+        TERMINAL_VIEW_ADD_TEXT("Chameleon not ready\n");
+        return false;
+    }
+
+    // Ensure we are in reader mode
+    if (g_cached_hw_mode != HW_MODE_READER) {
+        uint8_t mode = HW_MODE_READER;
+        if (!send_command(CMD_CHANGE_DEVICE_MODE, &mode, 1)) return false;
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE || !g_response_received || g_last_response.status != STATUS_SUCCESS) return false;
+        g_cached_hw_mode = HW_MODE_READER;
+    }
+
+    // Pre-select/anticollision data to help some firmwares route RAW to the tag
+    if (g_last_hf_scan.valid && g_last_hf_scan.uid_size > 0 && g_last_hf_scan.uid_size <= 10) {
+        uint8_t ac_buf[11];
+        ac_buf[0] = g_last_hf_scan.uid_size;
+        memcpy(&ac_buf[1], g_last_hf_scan.uid, g_last_hf_scan.uid_size);
+        g_response_received = false;
+        (void)send_command(CMD_HF14A_SET_ANTI_COLL_DATA, ac_buf, (size_t)g_last_hf_scan.uid_size + 1);
+        // wait briefly for ack; ignore failure as some firmwares may not support this
+        (void)xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(500));
+    }
+
+    // Try GET_VERSION to determine total pages
+    int total_pages = NTAG215_TOTAL_PAGES; // default safe fallback
+    uint8_t ver_cmd[1] = { NTAG_GET_VERSION_CMD };
+    g_response_received = false;
+    if (send_command(CMD_HF14A_RAW, ver_cmd, 1)) {
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE && g_response_received && g_last_response.command == CMD_HF14A_RAW && g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 5) {
+            uint8_t product_type = g_last_response.data[1];
+            uint8_t product_subtype = g_last_response.data[2];
+            (void)product_type;
+            if (product_subtype == 0x02) total_pages = NTAG213_TOTAL_PAGES;
+            else if (product_subtype == 0x0E) total_pages = NTAG215_TOTAL_PAGES;
+            else if (product_subtype == 0x0F) total_pages = NTAG216_TOTAL_PAGES;
         }
-        
-    // NTAG reading not implemented in simplified version
-    printf("NTAG reading not implemented in simplified version\n");
-    TERMINAL_VIEW_ADD_TEXT("NTAG reading not implemented\n");
-            return false;
+    }
+
+    // Clear previous dump
+    memset(&g_last_ntag_dump, 0, sizeof(g_last_ntag_dump));
+    g_last_ntag_dump.total_pages = total_pages;
+    g_last_ntag_dump.readable_pages = 0;
+    g_last_ntag_dump.valid = false;
+
+    // Read pages in 4-page chunks using 0x30
+    for (int page = 0; page < total_pages; page += 4) {
+        uint8_t cmd[2] = { NTAG_READ_CMD, (uint8_t)page };
+        g_response_received = false;
+        if (!send_command(CMD_HF14A_RAW, cmd, 2)) {
+            continue;
+        }
+        // handle firmwares that first reply with 0x60/len=0 before sending the 16-byte read
+        bool got = wait_for_cmd_data(CMD_HF14A_RAW, 16, 1200);
+        if (got && (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK) && g_last_response.data_size >= 16) {
+            for (int off = 0; off < 4 && (page + off) < total_pages; ++off) {
+                memcpy(g_last_ntag_dump.pages[page + off], &g_last_response.data[off * 4], 4);
+                g_last_ntag_dump.page_valid[page + off] = true;
+                g_last_ntag_dump.readable_pages++;
+            }
+        }
+    }
+
+    // Fill meta
+    if (g_last_hf_scan.valid) {
+        memcpy(g_last_ntag_dump.uid, g_last_hf_scan.uid, g_last_hf_scan.uid_size);
+        g_last_ntag_dump.uid_size = g_last_hf_scan.uid_size;
+        snprintf(g_last_ntag_dump.card_type, sizeof(g_last_ntag_dump.card_type), "%s", strstr(g_last_hf_scan.tag_type, "NTAG") ? g_last_hf_scan.tag_type : "NTAG/Ultralight");
+    } else {
+        snprintf(g_last_ntag_dump.card_type, sizeof(g_last_ntag_dump.card_type), "NTAG/Ultralight");
+    }
+    g_last_ntag_dump.timestamp = time(NULL);
+    g_last_ntag_dump.valid = (g_last_ntag_dump.readable_pages > 0);
+    return g_last_ntag_dump.valid;
 }
 
 bool chameleon_manager_save_ntag_dump(const char* filename) {
@@ -1788,11 +1956,61 @@ bool chameleon_manager_save_ntag_dump(const char* filename) {
         TERMINAL_VIEW_ADD_TEXT("No NTAG dump data to save\n");
         return false;
     }
-    
-    // NTAG dump saving not implemented in simplified version
-    printf("NTAG dump saving not implemented in simplified version\n");
-    TERMINAL_VIEW_ADD_TEXT("NTAG dump saving not implemented\n");
+
+    // Build filename
+    char file_path[192];
+    if (!filename || !*filename) {
+        struct tm* t = localtime(&g_last_ntag_dump.timestamp);
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/CU_ntag_dump_%04d%02d%02d_%02d%02d%02d.nfc",
+            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
+    }
+
+    // JIT mount (match PN532 saves style)
+    bool display_was_suspended = false; bool did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    if (!did_mount) {
+        if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended);
         return false;
+    }
+
+    char header[512]; int pos = 0;
+    pos += snprintf(header + pos, sizeof(header) - pos, "Filetype: Flipper NFC device\n");
+    pos += snprintf(header + pos, sizeof(header) - pos, "Version: 4\n");
+    pos += snprintf(header + pos, sizeof(header) - pos, "Device type: NTAG/Ultralight\n");
+    pos += snprintf(header + pos, sizeof(header) - pos, "UID:");
+    for (int i = 0; i < g_last_ntag_dump.uid_size && i < 10; ++i) pos += snprintf(header + pos, sizeof(header) - pos, " %02X", g_last_ntag_dump.uid[i]);
+    pos += snprintf(header + pos, sizeof(header) - pos, "\n");
+    if (g_last_hf_scan.valid) {
+        pos += snprintf(header + pos, sizeof(header) - pos, "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
+        pos += snprintf(header + pos, sizeof(header) - pos, "SAK: %02X\n", g_last_hf_scan.sak);
+    }
+    pos += snprintf(header + pos, sizeof(header) - pos, "Data format version: 2\n");
+    pos += snprintf(header + pos, sizeof(header) - pos, "NTAG/Ultralight type: %s\n", g_last_ntag_dump.card_type);
+    if (sd_card_write_file(file_path, header, (size_t)pos) != ESP_OK) {
+        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
+        return false;
+    }
+
+    // Pages meta
+    char meta[128];
+    int m = snprintf(meta, sizeof(meta), "Pages total: %u\nPages read: %u\n", (unsigned)g_last_ntag_dump.total_pages, (unsigned)g_last_ntag_dump.readable_pages);
+    sd_card_append_file(file_path, meta, (size_t)m);
+
+    // Dump pages
+    char line[64];
+    for (uint16_t pg = 0; pg < g_last_ntag_dump.total_pages; ++pg) {
+        uint8_t *p = (uint8_t*)g_last_ntag_dump.pages[pg];
+        int lp = snprintf(line, sizeof(line), "Page %u: %02X %02X %02X %02X\n", (unsigned)pg, p[0], p[1], p[2], p[3]);
+        sd_card_append_file(file_path, line, (size_t)lp);
+    }
+
+    const char *footer = "Failed authentication attempts: 0\n";
+    sd_card_append_file(file_path, footer, strlen(footer));
+    if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
+    printf("NTAG dump saved to: %s\n", file_path);
+    TERMINAL_VIEW_ADD_TEXT("NTAG dump saved successfully\n");
+    return true;
 }
 
 bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* key_hex) {
@@ -1819,6 +2037,13 @@ bool chameleon_manager_test_both_keys(uint8_t block, const char* key_hex) {
     printf("Both keys testing not implemented in simplified version\n");
     TERMINAL_VIEW_ADD_TEXT("Both keys testing not implemented\n");
         return false;
+}
+
+bool chameleon_manager_last_scan_is_ntag(void) {
+    if (!g_last_hf_scan.valid) return false;
+    if (strstr(g_last_hf_scan.tag_type, "NTAG") != NULL) return true;
+    if (g_last_hf_scan.atqa == 0x0044 && g_last_hf_scan.sak == 0x00) return true;
+    return false;
 }
 
 bool chameleon_manager_enable_mfkey32_mode(void) {

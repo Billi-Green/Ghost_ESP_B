@@ -38,6 +38,12 @@ void chameleon_manager_disconnect(void);
 bool chameleon_manager_is_connected(void);
 
 /**
+ * @brief Check if connection is ready for commands (TX characteristic resolved)
+ * @return true if BLE link is up and TX handle is available
+ */
+bool chameleon_manager_is_ready(void);
+
+/**
  * @brief Scan for HF tags using the connected Chameleon Ultra
  * @return true if scan was successful, false otherwise
  */
@@ -201,6 +207,12 @@ bool chameleon_manager_ntag_authenticate(uint32_t password);
  * @return true if page read successfully, false otherwise
  */
 bool chameleon_manager_read_ntag_page(int page);
+
+/**
+ * @brief Helper indicating if the last HF scan detected an NTAG card
+ * @return true if last scan indicates NTAG/Ultralight
+ */
+bool chameleon_manager_last_scan_is_ntag(void);
 
 // Debug and testing functions
 bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* key_hex);
