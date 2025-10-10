@@ -124,7 +124,3 @@ Notes on storage usage
 ## References
 - Chameleon Ultra project: `https://github.com/RfidResearchGroup/ChameleonUltra`
 - NTAG documentation: NXP AN11495 and related datasheets
-
----
-
-This guide is intended to help you get started with the Chameleon Ultra integration on Ghost ESP. If you want more detailed examples for specific card types or to add Flipper-compatible full dumps from the Chameleon protocol, tell me which formats you need and I will add examples and the exact output layouts.
