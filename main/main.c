@@ -25,6 +25,9 @@
 #ifdef CONFIG_WITH_SCREEN
 #include "managers/views/splash_screen.h"
 #endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+#include "managers/status_display_manager.h"
+#endif
 
 // Helper macro for measuring RAM usage
 #define MEASURE_INIT_RAM(name, init_call) do { \
@@ -156,19 +159,40 @@ void app_main(void) {
 #ifdef CONFIG_WITH_SCREEN
 
 #ifdef CONFIG_USE_JOYSTICK
-
-    joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);
-    joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);
-
-    printf("Joystick GPIO Setup Successfully...\n");
+#ifdef CONFIG_USE_IO_EXPANDER
+    esp_err_t io_ret;
+    MEASURE_INIT_RAM("Joystick IO Expander init", io_ret = joystick_io_expander_init());
+    if (io_ret == ESP_OK) {
+        printf("IO Expander initialized successfully for joystick input\n");
+        // Map to display manager expectations: [0]=Left, [1]=Select, [2]=Up, [3]=Right, [4]=Down
+        joystick_init(&joysticks[0], 3, HOLD_LIMIT, true);  // Left button (P03) -> joysticks[0]
+        joystick_init(&joysticks[1], 2, HOLD_LIMIT, true);  // Select button (P02) -> joysticks[1]
+        joystick_init(&joysticks[2], 0, HOLD_LIMIT, true);  // Up button (P00) -> joysticks[2]
+        joystick_init(&joysticks[3], 4, HOLD_LIMIT, true);  // Right button (P04) -> joysticks[3]
+        joystick_init(&joysticks[4], 1, HOLD_LIMIT, true);  // Down button (P01) -> joysticks[4]
+    } else {
+        printf("IO Expander initialization failed, falling back to GPIO mode\n");
+        // Fallback to GPIO mode - map to display manager expectations: [0]=Left, [1]=Select, [2]=Up, [3]=Right, [4]=Down
+        joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);  // Left
+        joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);  // Select
+        joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);  // Up
+        joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);  // Right
+        joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);  // Down
+    }
+#else
+    // Standard GPIO joystick mode - map to display manager expectations: [0]=Left, [1]=Select, [2]=Up, [3]=Right, [4]=Down
+    joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);  // Left
+    joystick_init(&joysticks[1], CONFIG_C_BTN, HOLD_LIMIT, true);  // Select
+    joystick_init(&joysticks[2], CONFIG_U_BTN, HOLD_LIMIT, true);  // Up
+    joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);  // Right
+    joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);  // Down
+#endif
+    printf("Joystick Setup Successfully...\n");
 #endif
     ESP_LOGI(TAG, "Initializing display manager");
     MEASURE_INIT_RAM("Display Manager", display_manager_init() );
     ESP_LOGI(TAG, "Presenting splash screen");
-    display_manager_switch_view(&splash_view);
+    MEASURE_INIT_RAM("Switch to splash view", display_manager_switch_view(&splash_view));
     if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
         if (rainbow_timer == NULL) {
             rainbow_timer = lv_timer_create(rainbow_effect_cb, 50, NULL);
@@ -176,8 +200,15 @@ void app_main(void) {
         }
     }
 #endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    MEASURE_INIT_RAM("Status display init", status_display_init());
+    if (!status_display_is_ready()) {
+        ESP_LOGW(TAG, "Status display failed to initialize");
+    }
+#endif
 
-    esp_err_t err = sd_card_init();
+    esp_err_t err = 0;
+    MEASURE_INIT_RAM("SD Card init", err = sd_card_init());
 
     // Initialize RGB Manager based on persisted settings or compile-time defaults
     {
@@ -186,27 +217,31 @@ void app_main(void) {
         int32_t red_pin, green_pin, blue_pin;
         settings_get_rgb_separate_pins(&G_Settings, &red_pin, &green_pin, &blue_pin);
         if (data_pin != GPIO_NUM_NC) {
-            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, data_pin, CONFIG_NUM_LEDS, LED_PIXEL_FORMAT_GRB,
-                                                 LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+            esp_err_t rgb_err;
+            MEASURE_INIT_RAM("RGB Manager (data pin) init", rgb_err = rgb_manager_init(&rgb_manager, data_pin, CONFIG_NUM_LEDS, LED_PIXEL_FORMAT_GRB,
+                                                 LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC));
             initialized = (rgb_err == ESP_OK);
         } else if (red_pin != GPIO_NUM_NC && green_pin != GPIO_NUM_NC && blue_pin != GPIO_NUM_NC) {
-            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
-                                                 LED_MODEL_WS2812, red_pin, green_pin, blue_pin);
+            esp_err_t rgb_err;
+            MEASURE_INIT_RAM("RGB Manager (separate pins) init", rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
+                                                 LED_MODEL_WS2812, red_pin, green_pin, blue_pin));
             initialized = (rgb_err == ESP_OK);
         }
-        if (!initialized) {
+            if (!initialized) {
     #ifdef CONFIG_LED_DATA_PIN
-            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, CONFIG_LED_DATA_PIN, CONFIG_NUM_LEDS, LED_ORDER,
-                                                 LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+            esp_err_t rgb_err;
+            MEASURE_INIT_RAM("RGB Manager (fallback) init", rgb_err = rgb_manager_init(&rgb_manager, CONFIG_LED_DATA_PIN, CONFIG_NUM_LEDS, LED_ORDER,
+                                                 LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC));
             initialized = (rgb_err == ESP_OK);
     #elif defined(CONFIG_RED_RGB_PIN) && defined(CONFIG_GREEN_RGB_PIN) && defined(CONFIG_BLUE_RGB_PIN)
-            esp_err_t rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
-                                                 LED_MODEL_WS2812, CONFIG_RED_RGB_PIN, CONFIG_GREEN_RGB_PIN, CONFIG_BLUE_RGB_PIN);
+            esp_err_t rgb_err;
+            MEASURE_INIT_RAM("RGB Manager (fallback separate pins) init", rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
+                                                 LED_MODEL_WS2812, CONFIG_RED_RGB_PIN, CONFIG_GREEN_RGB_PIN, CONFIG_BLUE_RGB_PIN));
             initialized = (rgb_err == ESP_OK);
     #endif
         }
         if (initialized && settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
-            xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1,
+            xTaskCreate(rainbow_task, "Rainbow Task", 3072, &rgb_manager, 1,
                         &rgb_effect_task_handle);
         }
     }

@@ -7,6 +7,8 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "math.h"
+#include "core/utils.h"
+#include "managers/status_display_manager.h"
 
 static const char *TAG = "RGBManager";
 static SemaphoreHandle_t rgb_mutex = NULL;
@@ -254,6 +256,7 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
 
     ESP_LOGI(TAG, "RGBManager initialized for separate R/G/B pins: %d, %d, %d\n",
            red_pin, green_pin, blue_pin);
+    status_display_show_status("RGB Init OK");
     return ESP_OK;
   } else {
     // Single pin for LED strip
@@ -272,7 +275,7 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
     // Create RMT configuration for LED strip
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,   // Default RMT clock source
-        .resolution_hz = 10 * 1000 * 1000 // 10 MHz resolution
+        .resolution_hz = 5 * 1000 * 1000 // 5 MHz resolution
     };
 
     // Initialize the LED strip with both configurations
@@ -280,6 +283,7 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
                                              &rgb_manager->strip);
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "Failed to initialize the LED strip\n");
+      status_display_show_status("RGB Strip Fail");
       return ret;
     }
 
@@ -287,6 +291,7 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
     led_strip_clear(rgb_manager->strip);
 
     ESP_LOGI(TAG, "RGBManager initialized for pin %d with %d LEDs\n", pin, num_leds);
+    status_display_show_status("RGB Strip OK");
     return ESP_OK;
   }
 }
@@ -305,7 +310,7 @@ void set_led_column(RGBManager_t *rgb_manager, size_t column, uint8_t height) {
 
   uint8_t r = 255, g = 1, b = 1;
 
-  scale_grb_by_brightness(&g, &r, &b, 0.1);
+  scale_grb_by_neopixel_brightness(&g, &r, &b, 0.1, settings_get_neopixel_max_brightness(&G_Settings));
 
   // Light up the required number of LEDs with the selected primary color
   for (int row = 0; row < height; ++row) {
@@ -510,7 +515,7 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
             pulse_once(rgb_manager, red, green, blue);
         } else {
             uint8_t r = red, g = green, b = blue;
-            scale_grb_by_brightness(&g, &r, &b, 0.3); // Scale brightness for RMT
+            scale_grb_by_neopixel_brightness(&g, &r, &b, 0.3, settings_get_neopixel_max_brightness(&G_Settings)); // Scale brightness for RMT with neopixel setting
 
             esp_err_t ret = ESP_OK;
             if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
@@ -590,7 +595,7 @@ void rgb_manager_rainbow_effect_matrix(RGBManager_t *rgb_manager,
       blue = (uint8_t)(fmin(rgb_color.b * 255, 120));
 
       clamp_rgb(&red, &green, &blue);
-      scale_grb_by_brightness(&green, &red, &blue, 0.3);
+      scale_grb_by_neopixel_brightness(&green, &red, &blue, 0.3, settings_get_neopixel_max_brightness(&G_Settings));
 
       led_strip_set_pixel(rgb_manager->strip, i, red, green, blue);
       hue = fmod(hue + 0.5, 360.0);
@@ -721,10 +726,15 @@ esp_err_t rgb_manager_deinit(RGBManager_t *rgb_manager) {
     gpio_set_level(rgb_manager->green_pin, 0);
     gpio_set_level(rgb_manager->blue_pin, 0);
     ESP_LOGI(TAG, "RGBManager deinitialized (separate pins)\n");
+    status_display_show_status("RGB Pins Off");
   } else {
     // Clear the LED strip and deinitialize
     led_strip_clear(rgb_manager->strip);
+    led_strip_refresh(rgb_manager->strip);
+    led_strip_del(rgb_manager->strip);
+    rgb_manager->strip = NULL;
     ESP_LOGI(TAG, "RGBManager deinitialized (LED strip)\n");
+    status_display_show_status("RGB Strip Off");
   }
 
   // Clean up mutex if it exists

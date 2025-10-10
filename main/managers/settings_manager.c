@@ -58,6 +58,11 @@ static const char *NVS_ZEBRA_MENUS_KEY = "zebra_menus";
 static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
 static const char *NVS_NAV_BUTTONS_KEY = "nav_buttons";
 static const char *NVS_MENU_LAYOUT_KEY = "menu_layout";
+static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
+static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
+#endif
 
 
 static const char *TAG = "SettingsManager";
@@ -152,6 +157,11 @@ void settings_set_defaults(FSettings *settings) {
   settings->infrared_easy_mode = false; // Default to disabled
   settings->nav_buttons_enabled = true; // Default to enabled
   settings->menu_layout = 0; // Default to carousel layout
+  settings->neopixel_max_brightness = 100; // Default to 100% brightness
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+  settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
+  settings->status_idle_timeout_ms = 5000; // default 5s
+#endif
 }
 
 void settings_load(FSettings *settings) {
@@ -458,6 +468,39 @@ void settings_load(FSettings *settings) {
   } else {
     settings->menu_layout = 0; // Default to carousel layout if not found
   }
+
+  // Load Neopixel Max Brightness
+  err = nvs_get_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->neopixel_max_brightness = value_u8;
+  } else {
+    settings->neopixel_max_brightness = 100; // Default to 100% if not found
+  }
+
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+  err = nvs_get_u8(nvsHandle, NVS_STATUS_IDLE_ANIM_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->status_idle_animation = (IdleAnimation)value_u8;
+  } else {
+    // try legacy key that exceeded length (for migration, if it ever existed)
+    const char *legacy_key = "status_idle_anim";
+    esp_err_t err2 = nvs_get_u8(nvsHandle, legacy_key, &value_u8);
+    if (err2 == ESP_OK) {
+      settings->status_idle_animation = (IdleAnimation)value_u8;
+      // re-save under the new shorter key
+      nvs_set_u8(nvsHandle, NVS_STATUS_IDLE_ANIM_KEY, value_u8);
+    } else {
+      settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
+    }
+  }
+  // load idle timeout
+  err = nvs_get_u32(nvsHandle, NVS_STATUS_IDLE_TIMEOUT_KEY, &value_u32);
+  if (err == ESP_OK) {
+    settings->status_idle_timeout_ms = value_u32;
+  } else {
+    settings->status_idle_timeout_ms = 5000; // default 5s
+  }
+#endif
 }
 
 static void update_rainbow_effect(const FSettings *settings) {
@@ -696,7 +739,7 @@ void settings_save(const FSettings *settings) {
   
   if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
       // Rainbow: animated
-      xTaskCreate(rainbow_task, "Rainbow Task", 8192, &rgb_manager, 1, &rgb_effect_task_handle);
+      xTaskCreate(rainbow_task, "Rainbow Task", 3072, &rgb_manager, 1, &rgb_effect_task_handle);
   } else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
       // Stealth: LEDs always off
       rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false); // Turn off all LEDs
@@ -767,6 +810,16 @@ void settings_save(const FSettings *settings) {
 
   err = nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, settings->menu_layout);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save menu_layout: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save neopixel_max_brightness: %s", esp_err_to_name(err));
+
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+  err = nvs_set_u8(nvsHandle, NVS_STATUS_IDLE_ANIM_KEY, (uint8_t)settings->status_idle_animation);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save status_idle_animation: %s", esp_err_to_name(err));
+  err = nvs_set_u32(nvsHandle, NVS_STATUS_IDLE_TIMEOUT_KEY, settings->status_idle_timeout_ms);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save status_idle_timeout_ms: %s", esp_err_to_name(err));
+#endif
 
   err = nvs_commit(nvsHandle);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
@@ -1204,3 +1257,31 @@ void settings_set_menu_layout(FSettings *settings, uint8_t layout) {
 uint8_t settings_get_menu_layout(const FSettings *settings) {
     return settings->menu_layout;
 }
+
+// Neopixel brightness settings
+void settings_set_neopixel_max_brightness(FSettings *settings, uint8_t brightness) {
+    if (brightness > 100) brightness = 100;
+    settings->neopixel_max_brightness = brightness;
+}
+
+uint8_t settings_get_neopixel_max_brightness(const FSettings *settings) {
+    return settings->neopixel_max_brightness;
+}
+
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+void settings_set_status_idle_animation(FSettings *settings, IdleAnimation anim) {
+  settings->status_idle_animation = anim;
+}
+
+IdleAnimation settings_get_status_idle_animation(const FSettings *settings) {
+  return settings->status_idle_animation;
+}
+
+void settings_set_status_idle_timeout_ms(FSettings *settings, uint32_t timeout_ms) {
+  settings->status_idle_timeout_ms = timeout_ms;
+}
+
+uint32_t settings_get_status_idle_timeout_ms(const FSettings *settings) {
+  return settings->status_idle_timeout_ms;
+}
+#endif

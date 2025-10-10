@@ -13,6 +13,13 @@
 
 typedef struct popup_t popup_t;
 
+typedef struct {
+    lv_coord_t min_w;
+    lv_coord_t max_w;
+    lv_coord_t min_threshold;
+    lv_coord_t gap;
+} PopupButtonLayoutConfig;
+
 popup_t *popup_create(lv_obj_t *parent, int width, int height);
 void popup_set_title(popup_t *p, const char *title);
 void popup_set_body(popup_t *p, const char *body);
@@ -41,3 +48,4 @@ lv_obj_t *popup_create_scroll_area(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
 
 // layout buttons in an evenly-spaced row
 void popup_layout_buttons_row(lv_obj_t *container, lv_obj_t **btns, int count, lv_coord_t btn_w, lv_coord_t btn_h, lv_coord_t y, lv_coord_t gap);
+void popup_layout_buttons_responsive(lv_obj_t *popup, lv_obj_t **btns, int count, lv_coord_t yoff, const PopupButtonLayoutConfig *config);

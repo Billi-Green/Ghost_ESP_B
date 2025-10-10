@@ -25,6 +25,19 @@ void scale_grb_by_brightness(uint8_t *g, uint8_t *r, uint8_t *b, float brightnes
     *b = (uint8_t)(*b * brightness);
 }
 
+void scale_grb_by_neopixel_brightness(uint8_t *g, uint8_t *r, uint8_t *b, float base_brightness, uint8_t max_brightness_percent) {
+    // First apply the base brightness scaling
+    *g = (uint8_t)(*g * base_brightness);
+    *r = (uint8_t)(*r * base_brightness); 
+    *b = (uint8_t)(*b * base_brightness);
+    
+    // Then apply the neopixel max brightness setting (0-100%)
+    float neopixel_scale = max_brightness_percent / 100.0f;
+    *g = (uint8_t)(*g * neopixel_scale);
+    *r = (uint8_t)(*r * neopixel_scale);
+    *b = (uint8_t)(*b * neopixel_scale);
+}
+
 bool is_in_task_context(void);
 
 void url_decode(char *decoded, const char *encoded);
@@ -37,6 +50,8 @@ int get_next_pcap_file_index(const char *base_name);
 int get_next_csv_file_index(const char *base_name);
 
 int get_next_file_index(const char *dir_path, const char *base_name, const char *extension);
+
+void log_heap_status(const char *tag, const char *event);
 
 #define WRAP_MESSAGE(msg) wrap_message(msg, __FILE__, __LINE__)
 

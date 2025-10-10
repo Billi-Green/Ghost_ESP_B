@@ -355,32 +355,37 @@ static bool mfc_auth_with_dict(pn532_io_handle_t io,uint8_t block,bool use_key_b
             return true;
         }
     }
-
-    // Load and iterate cached keys
-    mfc_dict_ensure_loaded();
-    const int total = g_dict_key_count;
-    ESP_LOGI("MFC", "Dict: start auth blk=%u keyB=%d total=%d", (unsigned)block, (int)use_key_b, total);
-    if (g_prog_cb) g_prog_cb(0, total, g_prog_user);
-    int idx = 0; int last_cb = 0;
-    for (; idx < total; ++idx) {
-        if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) { ESP_LOGW("MFC", "Dict: cancelled/skip blk=%u keyB=%d at idx=%d", (unsigned)block, (int)use_key_b, idx); return false; }
-        const uint8_t *key = &g_dict_keys[idx*6];
-        if (mfc_auth_block(io, block, use_key_b, key, uid, uid_len) == ESP_OK) {
-            ESP_LOGI("MFC", "Dict: success blk=%u keyB=%d idx=%d key=%02X%02X%02X%02X%02X%02X",
-                    (unsigned)block, (int)use_key_b, idx+1, key[0],key[1],key[2],key[3],key[4],key[5]);
-            if (use_key_b) { memcpy(g_last_key_b, key, 6); g_last_key_b_valid = true; }
-            else { memcpy(g_last_key_a, key, 6); g_last_key_a_valid = true; }
-            mfc_record_working_key(key, use_key_b);
-            return true;
+    // Iterate embedded blob directly without caching into RAM
+    {
+        const int total = mfc_dict_total_keys();
+        ESP_LOGI("MFC", "Dict: start auth blk=%u keyB=%d total=%d", (unsigned)block, (int)use_key_b, total);
+        if (g_prog_cb) g_prog_cb(0, total, g_prog_user);
+        int idx = 0; int last_cb = 0;
+        const char *p = s; uint8_t key[6];
+        while (p < e) {
+            if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) { ESP_LOGW("MFC", "Dict: cancelled/skip blk=%u keyB=%d at idx=%d", (unsigned)block, (int)use_key_b, idx); return false; }
+            const char *nl = memchr(p,'\n',(size_t)(e - p));
+            const char *ln_end = nl ? nl : e;
+            if (parse_key_line(p, ln_end, key)) {
+                if (mfc_auth_block(io, block, use_key_b, key, uid, uid_len) == ESP_OK) {
+                    ESP_LOGI("MFC", "Dict: success blk=%u keyB=%d idx=%d key=%02X%02X%02X%02X%02X%02X",
+                            (unsigned)block, (int)use_key_b, idx+1, key[0],key[1],key[2],key[3],key[4],key[5]);
+                    if (use_key_b) { memcpy(g_last_key_b, key, 6); g_last_key_b_valid = true; }
+                    else { memcpy(g_last_key_a, key, 6); g_last_key_a_valid = true; }
+                    mfc_record_working_key(key, use_key_b);
+                    return true;
+                }
+                idx++;
+                if (g_prog_cb) {
+                    int pct = (total > 0) ? ((idx * 100) / total) : 0;
+                    if (pct > last_cb) { g_prog_cb(idx, total, g_prog_user); last_cb = pct; }
+                }
+            }
+            p = nl ? (nl + 1) : e;
         }
-        // Throttle progress callbacks to reduce UI overhead
-        if (g_prog_cb) {
-            int pct = ((idx+1) * 100) / (total > 0 ? total : 1);
-            if (pct > last_cb) { g_prog_cb(idx+1, total, g_prog_user); last_cb = pct; }
-        }
+        ESP_LOGI("MFC", "Dict: failed blk=%u keyB=%d", (unsigned)block, (int)use_key_b);
+        return false;
     }
-    ESP_LOGI("MFC", "Dict: failed blk=%u keyB=%d", (unsigned)block, (int)use_key_b);
-    return false;
 }
 
  
@@ -547,20 +552,48 @@ static void mfc_user_dict_ensure_loaded(void){
         ESP_LOGD("MFC", "User dict: using cached version (%d keys)", g_user_key_count);
         return;
     }
-    
+
+    bool mounted_here = false;
+    bool display_was_suspended = false;
+    bool needs_jit_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        needs_jit_mount = true;
+    }
+#endif
+    if (needs_jit_mount && !sd_card_manager.is_initialized) {
+        if (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK) {
+            mounted_here = true;
+        } else {
+            ESP_LOGW("MFC", "User dict: failed to mount storage; using empty dictionary this scan");
+            g_user_loaded = true;
+            g_user_dict_cached_for_scan = true;
+            return;
+        }
+    }
+
     // Clear existing cache
     if (g_user_keys) { free(g_user_keys); g_user_keys = NULL; }
     g_user_key_count = 0;
-    
+
     ESP_LOGI("MFC", "User dict: loading from SD card");
+    if (sd_card_manager.is_initialized) {
+        (void)sd_card_create_directory("/mnt/ghostesp/nfc");
+    }
+
     FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "r");
     if (!f) {
-        ESP_LOGW("MFC", "User dict: file not found, using empty dictionary");
+        ESP_LOGW("MFC", "User dict: file not found, creating empty dictionary");
+        if (sd_card_manager.is_initialized) {
+            FILE *cf = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "a");
+            if (cf) fclose(cf);
+        }
         g_user_loaded = true;
         g_user_dict_cached_for_scan = true;
+        if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
         return;
     }
-    
+
     char line[96]; uint8_t key[6];
     while (fgets(line, sizeof(line), f)){
         const char *ls = line; const char *le = line + strlen(line);
@@ -572,10 +605,12 @@ static void mfc_user_dict_ensure_loaded(void){
         }
     }
     fclose(f);
-    
+
     g_user_loaded = true;
     g_user_dict_cached_for_scan = true;
     ESP_LOGI("MFC", "User dict: loaded and cached %d keys for scan session", g_user_key_count);
+
+    if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
 }
 
 // Force reload user dictionary (for external changes detection)
@@ -591,23 +626,45 @@ static void mfc_user_dict_force_reload(void) {
 static void mfc_user_dict_append_unique(const uint8_t key[6]){
     mfc_user_dict_ensure_loaded();
     if (list_contains_u(g_user_keys, g_user_key_count, key)) return;
-    
+
+    bool mounted_here = false;
+    bool display_was_suspended = false;
+    bool needs_jit_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        needs_jit_mount = true;
+    }
+#endif
+    if (needs_jit_mount && !sd_card_manager.is_initialized) {
+        if (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK) {
+            mounted_here = true;
+        } else {
+            ESP_LOGW("MFC", "User dict: append skipped, failed to mount storage");
+            return;
+        }
+    }
+
     // Append to SD card file
-    sd_card_create_directory("/mnt/ghostesp/nfc");
+    if (sd_card_manager.is_initialized) {
+        sd_card_create_directory("/mnt/ghostesp/nfc");
+    }
     FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "a");
     if (!f) {
         ESP_LOGW("MFC", "User dict: failed to open file for append");
+        if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
         return;
     }
     fprintf(f, "%02X%02X%02X%02X%02X%02X\n", key[0],key[1],key[2],key[3],key[4],key[5]);
     fclose(f);
-    
+
     // Add to cached dictionary for this session
     if (!list_append_unique_u(&g_user_keys, &g_user_key_count, key)) {
         ESP_LOGW("MFC", "User dict: failed to add new key to cache (OOM?)");
     } else {
         ESP_LOGI("MFC", "User dict: added new key to cache (now %d keys)", g_user_key_count);
     }
+
+    if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
 }
 static void session_add_key(bool use_key_b, const uint8_t key[6]){
     if (use_key_b) list_append_unique_u(&g_sess_b_keys, &g_sess_b_count, key);

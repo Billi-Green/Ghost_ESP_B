@@ -32,9 +32,11 @@ static const char **evil_portal_options = NULL;
 #include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
 
+#define KARMA_MAX_SSIDS 64
+
 static const char *TAG = "optionsScreen";
 
-static const char *settings_categories[] = {"Display", "Config", NULL};
+static const char *settings_categories[] = {"Display", "Hardware config", NULL};
 
 typedef enum {
     SETTINGS_CATEGORY_DISPLAY,
@@ -48,16 +50,27 @@ static int current_settings_category = -1;
 // Each sub-array lists the indices of settings_items[] that belong to a category.
 // The last element in each sub-array must be -1 to mark the end.
 //
-// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9)
-// Category 1: "Config"  (indices: 0, 6, 7, 8)
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9, 11, 12) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
+// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 10, 11) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
+// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 10) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
+// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 9) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
 // Example: settings_category_indices[0] lists settings for "Display" category.
-static int settings_category_indices[][10] = {
+static int settings_category_indices[][16] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 10, 11, 12, -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 9, 11, 12, 13,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        14, 15,
+#endif
+        -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout, Idle Animation
+        {0, 6, 7, 8, 10, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #else
-        {1, 2, 5, 3, 4, 9, 10, 11, -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout
+        {1, 2, 5, 3, 4, 10, 11, 12,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        13, 14,
+#endif
+        -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout, Idle Animation
+        {0, 6, 7, 8, 9, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
     #endif
-        {0, 6, 7, 8, -1}, // Config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode
 };
 
 typedef enum {
@@ -74,8 +87,16 @@ typedef enum {
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
 
 static const char *wifi_attacks_options[] = {
-    "Start Deauth Attack", "Beacon Spam - Random", "Beacon Spam - Rickroll",
-    "Beacon Spam - List", "Start EAPOL Logoff", "Start DHCP-Starve", "Stop DHCP-Starve",
+    "Start Deauth Attack",
+    "Beacon Spam - Random",
+    "Beacon Spam - Rickroll",
+    "Beacon Spam - List",
+    "Start EAPOL Logoff",
+    "Start DHCP-Starve",
+    "Stop DHCP-Starve",
+    "Start Karma Attack",
+    "Start Karma Attack (Custom SSIDs)", // <-- Add this line
+    "Stop Karma Attack",       
     NULL
 };
 
@@ -135,7 +156,13 @@ static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "So
 static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
-static const char *menu_layout_options[] = {"Normal", "Grid"};
+static const char *menu_layout_options[] = {"Normal", "Grid", "List"};
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+static const char *idle_animation_options[] = {"Game of Life", "Ghost"};
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
+#endif
 
 enum {
     SETTING_RGB_MODE = 0,
@@ -148,16 +175,21 @@ enum {
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
     SETTING_MAX_BRIGHTNESS,
+    SETTING_NEOPIXEL_BRIGHTNESS,
     SETTING_ZEBRA_MENUS,
     SETTING_NAV_BUTTONS,
-    SETTING_MENU_LAYOUT
+    SETTING_MENU_LAYOUT,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    SETTING_IDLE_ANIMATION
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    , SETTING_IDLE_ANIM_DELAY
+#endif
 };
 
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
 static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
-#endif
 
 static SettingsItem settings_items[] = {
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
@@ -172,9 +204,16 @@ static SettingsItem settings_items[] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
     {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     #endif
+    {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
-    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 2, 0}
+    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0},
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 2, 0},
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    {"Idle Anim Delay", SETTING_IDLE_ANIM_DELAY, idle_delay_options, 4, 0},
+#endif
 };
 
 static bool is_settings_mode = false;
@@ -549,11 +588,31 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
                 break;
             case SETTING_MENU_LAYOUT:
-                settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
+            settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
                 break;
             case SETTING_MAX_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
                 break;
+            case SETTING_NEOPIXEL_BRIGHTNESS:
+                settings_items[i].current_value = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
+                break;
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            case SETTING_IDLE_ANIMATION:
+                settings_items[i].current_value = (int)settings_get_status_idle_animation(&G_Settings);
+                break;
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            case SETTING_IDLE_ANIM_DELAY: {
+                uint32_t ms = settings_get_status_idle_timeout_ms(&G_Settings);
+                int idx = 0;
+                if (ms == 0 || ms == UINT32_MAX) idx = 0;
+                else if (ms < 7500) idx = 1; // 5s
+                else if (ms < 20000) idx = 2; // 10s
+                else idx = 3; // 30s
+                settings_items[i].current_value = idx;
+                break;
+            }
+#endif
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -622,6 +681,28 @@ static void apply_setting_change(int setting_index, int new_value) {
             set_backlight_brightness(100); // set to 100 since brightness becomes scaled by the max
             break;
         #endif
+        case SETTING_NEOPIXEL_BRIGHTNESS:
+            settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            break;
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        case SETTING_IDLE_ANIMATION:
+            settings_set_status_idle_animation(&G_Settings, (IdleAnimation)new_value);
+            break;
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        case SETTING_IDLE_ANIM_DELAY: {
+            uint32_t ms = 0;
+            switch (new_value) {
+                case 0: ms = UINT32_MAX; break; // Never
+                case 1: ms = 5000; break;
+                case 2: ms = 10000; break;
+                case 3: ms = 30000; break;
+                default: ms = 5000; break;
+            }
+            settings_set_status_idle_timeout_ms(&G_Settings, ms);
+            break;
+        }
+#endif
     }
     settings_save(&G_Settings);
 }
@@ -634,8 +715,12 @@ static void change_current_row(bool increment)
 
     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
     if (!sel) return;
-
-    int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
+    void *udata = lv_obj_get_user_data(sel);
+    if (udata == (void *)"__BACK_OPTION__") {
+        // back isn't a setting
+        return;
+    }
+    int setting_idx = (int)(intptr_t)udata;
     change_setting_value(setting_idx, increment);
 }
 
@@ -777,13 +862,18 @@ void handle_hardware_button_press_options(InputEvent *event) {
                         if (current_settings_category < 0) {
                             switch_to_settings_category(i);
                         } else {
-                            // leaf setting: change value
+                            // leaf setting or back row
                             int center_x = (btn_area.x1 + btn_area.x2) / 2;
                             bool increment = data->point.x >= center_x;
                             lv_obj_t *sel = lv_obj_get_child(menu_container, i);
                             if (sel) {
-                                int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
-                                change_setting_value(setting_idx, increment);
+                                void *udata = lv_obj_get_user_data(sel);
+                                if (udata == (void *)"__BACK_OPTION__") {
+                                    back_event_cb(NULL);
+                                } else {
+                                    int setting_idx = (int)(intptr_t)udata;
+                                    change_setting_value(setting_idx, increment);
+                                }
                             }
                         }
                     } else {
@@ -810,11 +900,16 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     // Enter settings category
                     switch_to_settings_category(selected_item_index);
                 } else { // current_settings_category >= 0
-                    // Change setting value
+                    // Change setting value or handle back
                     lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
                     if (sel) {
-                        int setting_idx = (int)(intptr_t)lv_obj_get_user_data(sel);
-                        change_setting_value(setting_idx, true);
+                        void *udata = lv_obj_get_user_data(sel);
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else {
+                            int setting_idx = (int)(intptr_t)udata;
+                            change_setting_value(setting_idx, true);
+                        }
                     }
                 }
             } else {
@@ -884,8 +979,16 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     // We're at the top level ("Display", "Config", ...) -> open submenu
                     switch_to_settings_category(selected_item_index);
                 } else { // current_settings_category >= 0
-                    // Inside a submenu -> cycle the value
-                    change_current_row(true);
+                    // Inside a submenu -> back row goes back, else cycle the value
+                    lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                    if (sel) {
+                        void *udata = lv_obj_get_user_data(sel);
+                        if (udata == (void *)"__BACK_OPTION__") {
+                            back_event_cb(NULL);
+                        } else {
+                            change_current_row(true);
+                        }
+                    }
                 }
             } else {
                 lv_obj_t *selected_obj = lv_obj_get_child(menu_container, selected_item_index);
@@ -953,6 +1056,51 @@ void handle_hardware_button_press_options(InputEvent *event) {
         display_manager_switch_view(&main_menu_view);
 #endif
     }
+}
+
+static void karma_custom_ssids_cb(const char *input) {
+    if (!input || strlen(input) == 0) {
+        error_popup_create("Please enter at least one SSID.");
+        return;
+    }
+
+    // Parse comma-separated SSIDs
+    const char *ssids[KARMA_MAX_SSIDS];
+    char ssid_buf[33 * KARMA_MAX_SSIDS];
+    int count = 0;
+
+    // Copy input to buffer for strtok
+    strncpy(ssid_buf, input, sizeof(ssid_buf) - 1);
+    ssid_buf[sizeof(ssid_buf) - 1] = '\0';
+
+    char *token = strtok(ssid_buf, ",");
+    while (token && count < KARMA_MAX_SSIDS) {
+        // Trim leading/trailing spaces
+        while (*token == ' ') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && (*end == ' ' || *end == '\n' || *end == '\r')) {
+            *end = '\0';
+            end--;
+        }
+        if (strlen(token) > 0 && strlen(token) < 33) {
+            ssids[count++] = token;
+        }
+        token = strtok(NULL, ",");
+    }
+
+    if (count == 0) {
+        error_popup_create("No valid SSIDs entered.");
+        return;
+    }
+
+    // Set SSID list and start Karma attack
+    wifi_manager_set_karma_ssid_list(ssids, count);
+    wifi_manager_start_karma();
+
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    TERMINAL_VIEW_ADD_TEXT("Karma attack started with custom SSIDs\n");
+    keyboard_view_set_submit_callback(NULL);
 }
 
 void option_event_cb(lv_event_t *e) {
@@ -1054,15 +1202,15 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "Scan All (AP & Station)") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("scanall");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start Deauth Attack") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         if (!scanned_aps) {
             glog("No APs scanned. Please run 'Scan Access Points' first.\\n");
         } else {
@@ -1072,15 +1220,15 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Scan Stations") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("scansta");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "List Stations") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("list -s");
         view_switched = true;
     }
@@ -1092,22 +1240,22 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - Random") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("beaconspam -r");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Beacon Spam - Rickroll") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("beaconspam -rr");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan LAN Devices") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("scanlocal");
         view_switched = true;
     }
@@ -1121,8 +1269,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "Beacon Spam - List") == 0) {
         if (scanned_aps) {
-        terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
             simulateCommand("beaconspam -l");
             view_switched = true;
         } else {
@@ -1132,36 +1280,37 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Capture Deauth") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("capture -deauth");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Probe") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("capture -probe");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Beacon") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("capture -beacon");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Raw") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("capture -raw");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Capture Eapol") == 0) {
-    terminal_set_return_view(&options_menu_view);
-    display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+
         simulateCommand("capture -eapol");
         view_switched = true;
     }
@@ -1182,50 +1331,71 @@ display_manager_switch_view(&terminal_view);
 #endif
 
     else if (strcmp(Selected_Option, "Listen for Probes") == 0) {
-    terminal_set_return_view(&options_menu_view);
-    display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("listenprobes");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start EAPOL Logoff") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("attack -e");
         view_switched = true;
     }
 
+    else if (strcmp(Selected_Option, "Start Karma Attack") == 0) {
+        wifi_manager_start_karma();
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        TERMINAL_VIEW_ADD_TEXT("Karma attack started\n");
+        view_switched = true;
+    }
+    else if (strcmp(Selected_Option, "Stop Karma Attack") == 0) {
+        wifi_manager_stop_karma();
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
+        view_switched = true;
+    }
+    else if (strcmp(Selected_Option, "Start Karma Attack (Custom SSIDs)") == 0) {
+        keyboard_view_set_submit_callback(karma_custom_ssids_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("SSID1,SSID2,SSID3");
+        return;
+    }
+
     else if (strcmp(Selected_Option, "Capture WPS") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("capture -wps");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "TV Cast (Dial Connect)") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("dialconnect");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Power Printer") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("powerprinter");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start Evil Portal") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("startportal default FreeWiFi");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop Evil Portal") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("stopportal");
         view_switched = true;
     }
@@ -1246,23 +1416,23 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("startwd");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop Wardriving") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("startwd -s");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start AirTag Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -a");
         view_switched = true;
 #else
@@ -1273,8 +1443,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "Find Flippers") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -f");
         view_switched = true;
 #else
@@ -1283,8 +1453,8 @@ display_manager_switch_view(&terminal_view);
 #endif
     } else if (strcmp(Selected_Option, "List Flippers") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("listflippers");
         view_switched = true;
 #else
@@ -1302,8 +1472,8 @@ display_manager_switch_view(&terminal_view);
 #endif
     } else if (strcmp(Selected_Option, "List AirTags") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("listairtags");
         view_switched = true;
 #else
@@ -1323,8 +1493,8 @@ display_manager_switch_view(&terminal_view);
 
      else if (strcmp(Selected_Option, "Spoof Selected AirTag") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("spoofairtag");
         view_switched = true;
 #else
@@ -1335,8 +1505,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "Stop Spoofing") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("stopspoof");
         view_switched = true;
 #else
@@ -1348,23 +1518,23 @@ display_manager_switch_view(&terminal_view);
 
 
     else if (strcmp(Selected_Option, "Capture PWN") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("capture -pwn");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "TP Link Test") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("tplinktest");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Raw BLE Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blescan -r");
         view_switched = true;
 #else
@@ -1375,8 +1545,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "BLE Skimmer Detect") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("capture -skimmer");
         view_switched = true;
 #else
@@ -1386,16 +1556,16 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "GPS Info") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("gpsinfo");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "BLE Wardriving") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blewardriving");
         view_switched = true;
 #else
@@ -1405,15 +1575,15 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "PineAP Detection") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("pineap");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Scan Open Ports") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("scanports local -C");
         view_switched = true;
     }
@@ -1426,8 +1596,8 @@ display_manager_switch_view(&terminal_view);
     }
     
     else if (strcmp(Selected_Option, "Reset AP Credentials") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("apcred -r");
         view_switched = true;
     }
@@ -1450,22 +1620,22 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Channel Congestion") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("congestion");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start DHCP-Starve") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("dhcpstarve start");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Stop DHCP-Starve") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("dhcpstarve stop");
         view_switched = true;
     }
@@ -1478,16 +1648,16 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Connect to saved WiFi") == 0) {
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("connect");
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "BLE Spam - Apple") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -apple");
         view_switched = true;
 #else
@@ -1497,8 +1667,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "BLE Spam - Microsoft") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -ms");
         view_switched = true;
 #else
@@ -1508,8 +1678,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "BLE Spam - Samsung") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -samsung");
         view_switched = true;
 #else
@@ -1519,8 +1689,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "BLE Spam - Google") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -google");
         view_switched = true;
 #else
@@ -1530,8 +1700,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "BLE Spam - Random") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -random");
         view_switched = true;
 #else
@@ -1541,8 +1711,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "Stop BLE Spam") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    terminal_set_return_view(&options_menu_view);
-display_manager_switch_view(&terminal_view);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
         simulateCommand("blespam -s");
         view_switched = true;
 #else
@@ -1563,6 +1733,11 @@ display_manager_switch_view(&terminal_view);
 
 void handle_option_directly(const char *Selected_Option) {
     if (is_settings_mode) {
+        if (Selected_Option == (const char *)"__BACK_OPTION__") {
+            // back is navigation, not a setting
+            back_event_cb(NULL);
+            return;
+        }
         int setting_index = (int)(intptr_t)Selected_Option;
         change_setting_value(setting_index, true);
         return;
@@ -1805,6 +1980,9 @@ static void menu_builder_cb(lv_timer_t *t)
 #endif
                 }
                 if (settings_categories[build_item_index] == NULL) { // End of categories list
+
+
+
                     all_current_options_processed = true;
                 }
             } else { // Submenu of a settings category (e.g., "RGB Mode", "Display Timeout")
@@ -1851,7 +2029,7 @@ static void menu_builder_cb(lv_timer_t *t)
 
     // Now, handle adding the "Back" button and stopping the timer
     if (all_current_options_processed) {
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         if (!back_option_was_added_in_previous_tick) { // Add back button only once
             lv_obj_t *btn = options_view_add_item(g_options_view, LV_SYMBOL_LEFT " Back", option_event_cb, (void *)"__BACK_OPTION__");
             if (btn) {
@@ -1866,12 +2044,12 @@ static void menu_builder_cb(lv_timer_t *t)
             }
         }
 #endif
-        // Timer should stop if all options are processed AND (if encoder, the back option is now added, OR if no encoder)
+        // Timer should stop if all options are processed AND (if encoder/joystick, the back option is now added, OR if neither)
         if (
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             (bool)(intptr_t)t->user_data
 #else
-            true // If no encoder, we stop as soon as regular options are done
+            true // If neither encoder nor joystick, stop as soon as regular options are done
 #endif
         ) {
             lv_timer_del(t);

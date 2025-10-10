@@ -2,6 +2,7 @@
 #include "managers/ghost_esp_site.h"
 #include "managers/settings_manager.h"
 #include "core/esp_comm_manager.h"
+#include "sdkconfig.h"
 #include <cJSON.h>
 #include <core/serial_manager.h>
 #include <ctype.h>
@@ -26,7 +27,8 @@
 #include <unistd.h>
 #include "esp_vfs_fat.h"
 #include "esp_heap_caps.h"
-
+#include "managers/status_display_manager.h"
+#include "core/utils.h"
 
 // Forward declarations
 static esp_err_t http_get_handler(httpd_req_t *req);
@@ -71,6 +73,17 @@ static httpd_config_t server_config;
 static httpd_uri_t uri_handlers[20];
 static int handler_count = 0;
 static bool config_loaded = false;
+
+// Checks if the AP enabled key exists in NVS. Used to decide whether to apply a default override.
+static bool settings_ap_enabled_key_exists(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("storage", NVS_READONLY, &h);
+    if (err != ESP_OK) return false;
+    uint8_t val;
+    err = nvs_get_u8(h, "ap_enabled", &val);
+    nvs_close(h);
+    return (err == ESP_OK);
+}
 
 static esp_err_t scan_directory(const char *base_path, cJSON *json_array) {
     DIR *dir = opendir(base_path);
@@ -480,6 +493,16 @@ esp_err_t ap_manager_init(void) {
     esp_err_t ret;
     wifi_mode_t mode;
 
+    // Default override: For ESP32-C5 with build template "somethingsomething",
+    // default AP to OFF on first boot (when key not present in NVS)
+#if defined(CONFIG_IDF_TARGET_ESP32C5) && defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (!settings_ap_enabled_key_exists()) {
+            G_Settings.ap_enabled = false;
+        }
+    }
+#endif
+
     // --- Memory check before AP init ---
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     if (free_heap < (45 * 1024)) {
@@ -490,13 +513,17 @@ esp_err_t ap_manager_init(void) {
     // Check if AP is disabled in settings
     if (!settings_get_ap_enabled(&G_Settings)) {
         glog("Access Point disabled in settings, skipping AP initialization\n");
+        log_heap_status(TAG, "ap_init_disabled_pre_logbuf");
         
         // Initialize log buffer and mutex even when AP is disabled
+        ESP_LOGI(TAG, "Allocating log buffer: %d bytes", MAX_LOG_BUFFER_SIZE);
         log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
         if(!log_buffer){
             ESP_LOGE(TAG, "failed to alloc log buffer");
+            log_heap_status(TAG, "ap_logbuf_alloc_fail");
             return ESP_ERR_NO_MEM;
         }
+        log_heap_status(TAG, "ap_init_disabled_post_logbuf");
 
         log_mutex = xSemaphoreCreateRecursiveMutex();
         if (!log_mutex) {
@@ -509,6 +536,7 @@ esp_err_t ap_manager_init(void) {
         if(log_buffer){
             memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
         }
+        log_heap_status(TAG, "ap_init_disabled_complete");
         
         return ESP_OK;
     }
@@ -624,11 +652,14 @@ esp_err_t ap_manager_init(void) {
         return ret;
     }
 
+    log_heap_status(TAG, "ap_init_pre_httpd");
     ret = start_http_server();
     if (ret != ESP_OK) {
         glog("Error starting HTTP server\n");
+        log_heap_status(TAG, "ap_httpd_start_fail");
         return ret;
     }
+    log_heap_status(TAG, "ap_init_post_httpd");
 
     esp_wifi_set_ps(WIFI_PS_NONE);
 
@@ -640,13 +671,17 @@ esp_err_t ap_manager_init(void) {
     }
 
     // Initialize log buffer and mutex
+    log_heap_status(TAG, "ap_init_enabled_pre_logbuf");
+    ESP_LOGI(TAG, "Allocating log buffer: %d bytes", MAX_LOG_BUFFER_SIZE);
     log_buffer = malloc(MAX_LOG_BUFFER_SIZE);
     if(!log_buffer){
         ESP_LOGE(TAG, "failed to alloc log buffer");
+        log_heap_status(TAG, "ap_logbuf_alloc_fail");
         return ESP_ERR_NO_MEM;
     }
+    log_heap_status(TAG, "ap_init_enabled_post_logbuf");
 
-    log_mutex = xSemaphoreCreateMutex();
+    log_mutex = xSemaphoreCreateRecursiveMutex();
     if (!log_mutex) {
         ESP_LOGE(TAG, "Failed to create log mutex");
         free(log_buffer);
@@ -658,6 +693,7 @@ esp_err_t ap_manager_init(void) {
         memset(log_buffer, 0, MAX_LOG_BUFFER_SIZE);
     }
 
+    log_heap_status(TAG, "ap_init_complete");
     return ESP_OK;
 }
 
@@ -741,6 +777,7 @@ esp_err_t ap_manager_start_services() {
     // if ap is disabled or power saving is on, do not start ap services.
     if (!settings_get_ap_enabled(&G_Settings) || settings_get_power_save_enabled(&G_Settings)) {
         glog("ap services skipped: ap disabled or power saving mode is on\n");
+        status_display_show_status("AP Disabled");
         // make sure services are stopped if they somehow started and conditions changed
         ap_manager_stop_services();
         return ESP_OK;
@@ -760,12 +797,7 @@ esp_err_t ap_manager_start_services() {
         return ret;
     }
 
-    // Start mDNS
-    ret = setup_mdns();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to setup mDNS");
-        return ret;
-    }
+    // mDNS is already set up during initial AP bring-up
 
     // Start HTTPD server
     ret = load_server_config();
@@ -777,13 +809,16 @@ esp_err_t ap_manager_start_services() {
     ret = start_http_server();
     if (ret != ESP_OK) {
         glog("Error starting HTTP server\n");
+        status_display_show_status("AP HTTP Fail");
         return ret;
     }
 
+    status_display_show_status("AP Services On");
     return ESP_OK;
 }
 
 void ap_manager_stop_services() {
+    log_heap_status(TAG, "ap_stop_pre");
     wifi_mode_t wifi_mode;
     esp_err_t err = esp_wifi_get_mode(&wifi_mode);
 
@@ -824,6 +859,8 @@ void ap_manager_stop_services() {
     vTaskDelay(pdMS_TO_TICKS(100));
 
     teardown_mdns();
+    log_heap_status(TAG, "ap_stop_post");
+    status_display_show_status("AP Services Off");
 }
 
 // Handler for GET requests (serves the HTML page)
@@ -1061,6 +1098,11 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
     cJSON *rgb_speed = cJSON_GetObjectItem(root, "rgb_speed");
     if (rgb_speed) {
         settings_set_rgb_speed(settings, rgb_speed->valueint);
+    }
+
+    cJSON *neopixel_brightness = cJSON_GetObjectItem(root, "neopixel_brightness");
+    if (neopixel_brightness) {
+        settings_set_neopixel_max_brightness(settings, (uint8_t)neopixel_brightness->valueint);
     }
 
     cJSON *channel_delay = cJSON_GetObjectItem(root, "channel_delay");
@@ -1463,7 +1505,7 @@ static esp_err_t load_server_config(void) {
     server_config.server_port = 80;
     server_config.ctrl_port = 32768;
     server_config.max_uri_handlers = 60;
-    server_config.stack_size = 8192;
+    server_config.stack_size = 6144;
     server_config.recv_wait_timeout = 10;
     server_config.send_wait_timeout = 10;
 

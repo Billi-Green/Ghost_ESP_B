@@ -24,6 +24,9 @@
 
 static const char *TAG_IR_MANAGER = "infrared_manager";
 
+/* optional hook provided by infrared_view.c to pause RX while TX allocates a channel */
+__attribute__((weak)) void infrared_rx_pause_for_tx(bool pause) { (void)pause; }
+
 bool infrared_manager_init(void) {
     bool ok = sd_card_manager.is_initialized;
 #ifdef CONFIG_HAS_INFRARED
@@ -506,6 +509,9 @@ static const InfraredCommonProtocolSpec* infrared_manager_get_protocol_spec(cons
 static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float duty) {
     size_t item_count = (count + 1) / 2;
     size_t block_symbols = item_count < 48 ? 48 : item_count;
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    if (block_symbols > 96) block_symbols = 96; // leave room for RX on c5
+#endif
     if (block_symbols % 2) block_symbols++;
 
     static rmt_channel_handle_t tx_chan = NULL;
@@ -530,7 +536,11 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
             .mem_block_symbols = block_symbols,
             .resolution_hz = 1000000,
             .trans_queue_depth = 1,
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+            .flags = {.with_dma = false, .invert_out = false}
+#else
             .flags = {.with_dma = true, .invert_out = false}
+#endif
         };
         if (rmt_new_tx_channel(&cfg, &tx_chan) != ESP_OK) return false;
         if (rmt_enable(tx_chan) != ESP_OK) return false;
@@ -556,6 +566,17 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
     esp_err_t err = rmt_transmit(tx_chan, copy_encoder, symbols, item_count * sizeof(rmt_symbol_word_t), &(rmt_transmit_config_t){.loop_count = 0});
     if (err == ESP_OK) err = rmt_tx_wait_all_done(tx_chan, pdMS_TO_TICKS(1000));
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    // on ESP32-C5, explicitly destroy the static tx handle after transmit so
+    // the hardware resource is returned to the pool and RX can be recreated.
+    if (tx_chan) {
+        rmt_disable(tx_chan);
+        rmt_del_channel(tx_chan);
+        tx_chan = NULL;
+        chan_symbols = 0;
+    }
+#endif
+
     heap_caps_free(symbols);
     return err == ESP_OK;
 }
@@ -569,10 +590,12 @@ bool infrared_manager_transmit(const infrared_signal_t *signal) {
     rgb_manager_set_color(&rgb_manager, -1, 255, 0, 255, false);
     bool ok = false;
     if (signal->is_raw) {
+        infrared_rx_pause_for_tx(true);
         ok = send_rmt(signal->payload.raw.timings,
                       signal->payload.raw.timings_size,
                       signal->payload.raw.frequency,
                       signal->payload.raw.duty_cycle);
+        infrared_rx_pause_for_tx(false);
     } else {
         const InfraredCommonProtocolSpec* protocol_spec = infrared_manager_get_protocol_spec(signal->payload.message.protocol);
         if (protocol_spec) {
@@ -604,9 +627,11 @@ bool infrared_manager_transmit(const infrared_signal_t *signal) {
                     }
                 }
                 if (timing_count > 0) {
+                    infrared_rx_pause_for_tx(true);
                     ok = send_rmt(timings, timing_count,
                                   protocol_spec->carrier_frequency,
                                   protocol_spec->duty_cycle);
+                    infrared_rx_pause_for_tx(false);
                 }
                 free(timings);
             }
