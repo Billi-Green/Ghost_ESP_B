@@ -239,6 +239,31 @@ static uint8_t calculate_lrc(const uint8_t *data, size_t length);
 static void start_service_discovery(void);
 static int chameleon_sm_io_cb(uint16_t conn_handle, const struct ble_sm_io *io, void *arg);
 
+// build and send a proper hf14a raw frame per protocol (options|timeout|bitlen|data)
+static bool cu_send_hf14a_raw(const uint8_t *tx, uint16_t tx_len,
+                              bool activate_rf, bool keep_rf, bool auto_select,
+                              bool append_crc, bool wait_resp, bool check_crc,
+                              uint16_t timeout_ms, uint16_t bitlen_override) {
+    if (!tx || tx_len == 0) return false;
+    uint8_t buf[5 + 32];
+    if ((size_t)(5 + tx_len) > sizeof(buf)) return false;
+    uint8_t opts = 0;
+    if (activate_rf) opts |= 0x80;
+    if (wait_resp)   opts |= 0x40;
+    if (append_crc)  opts |= 0x20;
+    if (auto_select) opts |= 0x10;
+    if (keep_rf)     opts |= 0x08;
+    if (check_crc)   opts |= 0x04;
+    buf[0] = opts;
+    buf[1] = (uint8_t)((timeout_ms >> 8) & 0xFF);
+    buf[2] = (uint8_t)(timeout_ms & 0xFF);
+    uint16_t bitlen = bitlen_override ? bitlen_override : (uint16_t)(tx_len * 8);
+    buf[3] = (uint8_t)((bitlen >> 8) & 0xFF);
+    buf[4] = (uint8_t)(bitlen & 0xFF);
+    memcpy(&buf[5], tx, tx_len);
+    return send_command(CMD_HF14A_RAW, buf, (size_t)(5 + tx_len));
+}
+
 bool chameleon_manager_is_ready(void) {
     return g_is_connected && (g_tx_char_handle != 0);
 }
@@ -1856,14 +1881,20 @@ bool chameleon_manager_detect_ntag(void) {
         }
 
         // Use HF14A_RAW to send the NTAG GET_VERSION command to the physical card
-        uint8_t version_cmd[1] = {0x60}; // NTAG GET_VERSION command
-        
+        uint8_t version_cmd[1] = { NTAG_GET_VERSION_CMD };
         g_response_received = false;
-        
-        if (send_command(CMD_HF14A_RAW, version_cmd, 1)) {
+        if (cu_send_hf14a_raw(version_cmd, 1,
+                              true,  /* activate_rf */
+                              true,  /* keep_rf */
+                              true,  /* auto_select */
+                              true,  /* append_crc */
+                              true,  /* wait_resp */
+                              false, /* check_crc */
+                              1500,  /* timeout */
+                              0)) {  /* bitlen */
             if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
                 if (g_response_received && g_last_response.command == CMD_HF14A_RAW && 
-                    g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 4) {
+                    (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK) && g_last_response.data_size >= 5) {
                     
                     uint8_t vendor_id = g_last_response.data[0];
                     uint8_t product_type = g_last_response.data[1];
@@ -2001,8 +2032,8 @@ bool chameleon_manager_read_ntag_card(void) {
     int total_pages = NTAG215_TOTAL_PAGES; // default safe fallback
     uint8_t ver_cmd[1] = { NTAG_GET_VERSION_CMD };
     g_response_received = false;
-    if (send_command(CMD_HF14A_RAW, ver_cmd, 1)) {
-        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE && g_response_received && g_last_response.command == CMD_HF14A_RAW && g_last_response.status == STATUS_SUCCESS && g_last_response.data_size >= 5) {
+    if (cu_send_hf14a_raw(ver_cmd, 1, true, true, true, true, true, false, 1500, 0)) {
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) == pdTRUE && g_response_received && g_last_response.command == CMD_HF14A_RAW && (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK) && g_last_response.data_size >= 5) {
             uint8_t product_type = g_last_response.data[1];
             uint8_t product_subtype = g_last_response.data[2];
             (void)product_type;
@@ -2022,7 +2053,7 @@ bool chameleon_manager_read_ntag_card(void) {
     for (int page = 0; page < total_pages; page += 4) {
         uint8_t cmd[2] = { NTAG_READ_CMD, (uint8_t)page };
         g_response_received = false;
-        if (!send_command(CMD_HF14A_RAW, cmd, 2)) {
+        if (!cu_send_hf14a_raw(cmd, 2, false, true, true, true, true, false, 2000, 0)) {
             continue;
         }
         // handle firmwares that first reply with 0x60/len=0 before sending the 16-byte read
@@ -2056,27 +2087,43 @@ bool chameleon_manager_save_ntag_dump(const char* filename) {
         return false;
     }
 
-    // Build filename
+    // Build filename using UID like other dumps: <Type>_<UID>.nfc
     char file_path[192];
     if (!filename || !*filename) {
-        struct tm* t = localtime(&g_last_ntag_dump.timestamp);
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/CU_ntag_dump_%04d%02d%02d_%02d%02d%02d.nfc",
-            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+        char uid_part[40] = {0};
+        int up = 0;
+        for (uint8_t i = 0; i < g_last_ntag_dump.uid_size && up < (int)sizeof(uid_part) - 3; ++i) {
+            up += snprintf(uid_part + up, sizeof(uid_part) - up, "%02X", g_last_ntag_dump.uid[i]);
+            if (i + 1 < g_last_ntag_dump.uid_size) up += snprintf(uid_part + up, sizeof(uid_part) - up, "-");
+        }
+        const char *prefix = "NTAG";
+        if (strstr(g_last_ntag_dump.card_type, "NTAG213")) prefix = "NTAG213";
+        else if (strstr(g_last_ntag_dump.card_type, "NTAG215")) prefix = "NTAG215";
+        else if (strstr(g_last_ntag_dump.card_type, "NTAG216")) prefix = "NTAG216";
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s_%s.nfc", prefix, uid_part);
     } else {
         snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
     }
 
-    // JIT mount (match PN532 saves style)
+    // JIT mount when required by specific template; otherwise require SD pre-mounted (same policy as HF save)
     bool display_was_suspended = false; bool did_mount = false;
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
         did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+        if (!did_mount) {
+            if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended);
+            return false;
+        }
+    } else {
+        if (!sd_card_manager.is_initialized) {
+            return false;
+        }
     }
-#endif
-    if (!did_mount) {
-        if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended);
+#else
+    if (!sd_card_manager.is_initialized) {
         return false;
     }
+#endif
 
     char header[512]; int pos = 0;
     pos += snprintf(header + pos, sizeof(header) - pos, "Filetype: Flipper NFC device\n");

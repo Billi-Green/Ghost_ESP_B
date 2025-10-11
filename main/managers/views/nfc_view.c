@@ -43,9 +43,11 @@ lv_obj_t *popup_create_body_label(lv_obj_t *container, const char *text, lv_coor
 #include "driver/i2c.h"
 #include "pn532_driver.h"
 #include "pn532_driver_i2c.h"
+#endif
+
+// always needed for parsing .nfc files and displaying details, even without PN532
 #include "managers/nfc/ntag_t2.h"
 #include "managers/nfc/write_ntag.h"
-#endif
 
 // UI hook from MIFARE Classic layer to indicate sector/block/key phase
 // (implementation declared later after static variables are defined)
@@ -695,7 +697,16 @@ static void nfc_scan_cu_task(void *arg) {
 
 static void nfc_save_cu_task(void *arg) {
     (void)arg;
-    bool ok = chameleon_manager_save_last_hf_scan(NULL);
+    bool ok = false;
+    // try full ntag dump first if last scan looks like ntag
+    if (chameleon_manager_last_scan_is_ntag()) {
+        if (chameleon_manager_read_ntag_card()) {
+            ok = chameleon_manager_save_ntag_dump(NULL);
+        }
+    }
+    if (!ok) {
+        ok = chameleon_manager_save_last_hf_scan(NULL);
+    }
     bool *res = (bool*)malloc(sizeof(bool));
     if (res) { *res = ok; lv_async_call(nfc_save_done_async, res); }
     else { lv_async_call(nfc_save_done_async, NULL); }
@@ -2466,6 +2477,7 @@ void cleanup_cu_popup(void *obj) {
 static void cu_close_cb(lv_event_t *e) { (void)e; cleanup_cu_popup(NULL); }
 
 static void cu_bool_done_async(void *ptr) {
+    (void)ptr;
     bool ok = ptr ? *((bool*)ptr) : false;
     if (ptr) free(ptr);
     cu_busy = false;
@@ -2669,7 +2681,6 @@ void cleanup_nfc_write_popup(void *obj) {
     #endif
 }
 
-#ifdef CONFIG_NFC_PN532
 static char* build_compact_write_details(const ntag_file_image_t *img) {
     if (!img) return NULL;
     size_t cap = 768;
@@ -2732,7 +2743,6 @@ static char* build_compact_write_details(const ntag_file_image_t *img) {
     }
     return out;
 }
-#endif
 
 // Very lightweight Flipper MIFARE Classic parser for Saved popup
 #ifdef CONFIG_NFC_PN532
@@ -3041,13 +3051,13 @@ static void saved_rename_cb(lv_event_t *e) {
 static void saved_delete_cb(lv_event_t *e) {
     (void)e;
     if (g_saved_current_path[0] == '\0') return;
-    bool susp = false; bool did = nfc_sd_begin(&susp);
+    bool susp = false; nfc_sd_begin(&susp);
     if (remove(g_saved_current_path) == 0) {
         ESP_LOGI(TAG, "deleted file: %s", g_saved_current_path);
     } else {
         ESP_LOGE(TAG, "failed delete: %s", g_saved_current_path);
     }
-    if (did) nfc_sd_end(susp);
+    nfc_sd_end(susp);
     cleanup_saved_details_popup(NULL);
     // refresh list
     if (!in_saved_list) saved_enter_list(); else saved_enter_list();
@@ -3158,18 +3168,19 @@ static void create_saved_details_popup(const char *path) {
     // parse file and show details (supports NTAG and MIFARE Classic)
     bool susp_load = false; bool did_load = nfc_sd_begin(&susp_load);
     char *title = NULL;
+    char *mfc_det = NULL;
 #ifdef CONFIG_NFC_PN532
-    char *mfc_det = build_mfc_details_from_file(path, &title);
+    mfc_det = build_mfc_details_from_file(path, &title);
+#endif
     if (mfc_det) {
         if (title) { lv_label_set_text(saved_title_label, title); free(title); title = NULL; }
         lv_label_set_text(saved_details_label, mfc_det);
         free(mfc_det);
     } else {
-    #ifdef CONFIG_NFC_PN532
+        // Always allow NTAG file parsing, even without PN532
         ntag_file_image_t img; memset(&img, 0, sizeof(img));
         bool ok = ntag_file_load(path, &img);
         if (ok) {
-            // Title from model string
             const char *label = ntag_t2_model_str(img.model);
             lv_label_set_text(saved_title_label, label);
             char *det = build_compact_write_details(&img);
@@ -3179,14 +3190,7 @@ static void create_saved_details_popup(const char *path) {
         } else {
             lv_label_set_text(saved_details_label, "Failed to parse .nfc file");
         }
-    #else
-        lv_label_set_text(saved_details_label, "Saved file details require NFC support to parse NTAG format");
-    #endif
     }
-#else
-    (void)title;
-    lv_label_set_text(saved_details_label, "Saved file details require NFC support");
-#endif
     if (did_load) nfc_sd_end(susp_load);
 
     int btn_w = 90, btn_h = 34; if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 30; }

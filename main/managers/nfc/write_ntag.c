@@ -127,6 +127,7 @@ char *ntag_file_build_details(const ntag_file_image_t *img) {
     return out;
 }
 
+#ifdef CONFIG_NFC_PN532
 bool ntag_write_to_tag(pn532_io_handle_t io,
                        const ntag_file_image_t *img,
                        bool (*progress_cb)(int current, int total, void *user),
@@ -156,3 +157,4 @@ bool ntag_write_to_tag(pn532_io_handle_t io,
     if (progress_cb) progress_cb(total, total, user);
     return true;
 }
+#endif

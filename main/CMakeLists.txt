@@ -34,9 +34,7 @@ if(CONFIG_HAS_NFC)
     else()
         # PN532 is disabled: drop only PN532-specific sources; keep PN532-agnostic utils (e.g., ndef.c)
         list(REMOVE_ITEM sources
-            "${CMAKE_SOURCE_DIR}/main/managers/nfc/mifare_classic.c"
-            "${CMAKE_SOURCE_DIR}/main/managers/nfc/ntag_t2.c"
-            "${CMAKE_SOURCE_DIR}/main/managers/nfc/write_ntag.c")
+            "${CMAKE_SOURCE_DIR}/main/managers/nfc/mifare_classic.c")
     endif()
 endif()
 
