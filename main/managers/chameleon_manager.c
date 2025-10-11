@@ -23,6 +23,7 @@
 #include <time.h>
 #include <inttypes.h>
 #include "esp_heap_caps.h"
+#include "core/glog.h"
 
 static const char *TAG = "chameleon_manager";
 
@@ -686,6 +687,20 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
     printf("Failed to connect to Chameleon Ultra\n");
     TERMINAL_VIEW_ADD_TEXT("Failed to connect to Chameleon Ultra\n");
     return false;
+}
+
+bool chameleon_manager_get_last_hf_scan(uint8_t *uid, uint8_t *uid_len,
+                                        uint16_t *atqa, uint8_t *sak) {
+    if (!g_last_hf_scan.valid) return false;
+    if (uid && uid_len) {
+        *uid_len = g_last_hf_scan.uid_size;
+        if (*uid_len > 0) memcpy(uid, g_last_hf_scan.uid, *uid_len);
+    } else if (uid_len) {
+        *uid_len = g_last_hf_scan.uid_size;
+    }
+    if (atqa) *atqa = g_last_hf_scan.atqa;
+    if (sak) *sak = g_last_hf_scan.sak;
+    return true;
 }
 
 void chameleon_manager_disconnect(void) {
@@ -1573,23 +1588,28 @@ bool chameleon_manager_save_card_dump(const char* filename) {
     
     // Flipper-format minimal header (align with PN532 saves)
     bool is_classic = (g_last_hf_scan.valid && (g_last_hf_scan.sak == 0x08 || g_last_hf_scan.sak == 0x18 || g_last_hf_scan.sak == 0x09));
-    char content[512]; int len = 0;
-    len += snprintf(content + len, sizeof(content) - len, "Filetype: Flipper NFC device\n");
-    len += snprintf(content + len, sizeof(content) - len, "Version: 4\n");
-    len += snprintf(content + len, sizeof(content) - len, "Device type: %s\n", is_classic ? "Mifare Classic" : "NTAG/Ultralight");
-    len += snprintf(content + len, sizeof(content) - len, "UID:");
+    int cap = 512; char *content = (char*)malloc(cap); if (!content) return false; int len = 0;
+    len += snprintf(content + len, cap - len, "Filetype: Flipper NFC device\n");
+    len += snprintf(content + len, cap - len, "Version: 4\n");
+    len += snprintf(content + len, cap - len, "Device type: %s\n", is_classic ? "Mifare Classic" : "NTAG/Ultralight");
+    len += snprintf(content + len, cap - len, "UID:");
     for (int i = 0; i < g_last_card_dump.uid_size && i < 20; i++) {
-        len += snprintf(content + len, sizeof(content) - len, " %02X", g_last_card_dump.uid[i]);
+        len += snprintf(content + len, cap - len, " %02X", g_last_card_dump.uid[i]);
     }
-    len += snprintf(content + len, sizeof(content) - len, "\n");
+    len += snprintf(content + len, cap - len, "\n");
     if (g_last_hf_scan.valid) {
-        len += snprintf(content + len, sizeof(content) - len, "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
-        len += snprintf(content + len, sizeof(content) - len, "SAK: %02X\n", g_last_hf_scan.sak);
+        len += snprintf(content + len, cap - len, "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
+        len += snprintf(content + len, cap - len, "SAK: %02X\n", g_last_hf_scan.sak);
     }
-    len += snprintf(content + len, sizeof(content) - len, "Data format version: 2\n");
+    len += snprintf(content + len, cap - len, "Data format version: 2\n");
 
     // JIT mount for SPI/shared-bus stability
-    bool display_was_suspended = false; bool did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    bool display_was_suspended = false; bool did_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    }
+#endif
     if (!did_mount) {
         // mount_for_flush already resumed display on failure; don't resume again here
         return false;
@@ -1597,13 +1617,13 @@ bool chameleon_manager_save_card_dump(const char* filename) {
 
     // Write to file
     if (sd_card_write_file(file_path, content, (size_t)len) == ESP_OK) {
-        printf("Card dump saved to: %s\n", file_path);
-        TERMINAL_VIEW_ADD_TEXT("Card dump saved successfully\n");
+        glog("Card dump saved to: %s\n", file_path);
+        free(content);
         if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return true;
     } else {
-        printf("Failed to save card dump to: %s\n", file_path);
-        TERMINAL_VIEW_ADD_TEXT("Failed to save card dump\n");
+        glog("Failed to save card dump to: %s\n", file_path);
+        free(content);
         if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return false;
     }
@@ -1611,58 +1631,127 @@ bool chameleon_manager_save_card_dump(const char* filename) {
 
 bool chameleon_manager_save_last_hf_scan(const char* filename) {
     if (!g_last_hf_scan.valid) {
-        printf("No HF scan data to save\n");
-        TERMINAL_VIEW_ADD_TEXT("No HF scan data to save\n");
+        glog("No HF scan data to save\n");
         return false;
     }
     
     // Create filename if not provided (unified under /mnt/ghostesp/nfc)
     char file_path[192];
-    if (filename == NULL) {
-        struct tm* time_info = localtime(&g_last_hf_scan.timestamp);
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/CU_hf_scan_%04d%02d%02d_%02d%02d%02d.nfc",
-                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
-                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
+    if (filename == NULL || !*filename) {
+        // Build PN532-style names: Classic{1K|4K|Mini}_<UID>.nfc or NTAG{213|215|216}_<UID>.nfc
+        char uid_part[40] = {0};
+        int up = 0;
+        for (uint8_t i = 0; i < g_last_hf_scan.uid_size && up < (int)sizeof(uid_part) - 3; ++i) {
+            up += snprintf(uid_part + up, sizeof(uid_part) - up, "%02X", g_last_hf_scan.uid[i]);
+            if (i + 1 < g_last_hf_scan.uid_size) up += snprintf(uid_part + up, sizeof(uid_part) - up, "-");
+        }
+        const char *prefix = NULL; int pages_total = 0;
+        // Classic quick map
+        if (g_last_hf_scan.sak == 0x08) { prefix = "Classic1K"; }
+        else if (g_last_hf_scan.sak == 0x18) { prefix = "Classic4K"; }
+        else if (g_last_hf_scan.sak == 0x09) { prefix = "ClassicMini"; }
+        // NTAG: try to detect exact model via GET_VERSION
+        if (!prefix && g_last_hf_scan.atqa == 0x0044 && g_last_hf_scan.sak == 0x00) {
+            // Best effort refinement
+            if (chameleon_manager_detect_ntag()) {
+                if (strstr(g_last_hf_scan.tag_type, "NTAG213")) { prefix = "NTAG213"; pages_total = 45; }
+                else if (strstr(g_last_hf_scan.tag_type, "NTAG215")) { prefix = "NTAG215"; pages_total = 135; }
+                else if (strstr(g_last_hf_scan.tag_type, "NTAG216")) { prefix = "NTAG216"; pages_total = 231; }
+                else { prefix = "NTAG"; pages_total = 135; }
+            } else {
+                prefix = "NTAG"; pages_total = 135;
+            }
+        }
+        if (!prefix) {
+            // Fallback: HF-14A
+            prefix = "HF14A";
+        }
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s_%s.nfc", prefix, uid_part);
     } else {
         snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
     }
     
     // Ensure directory exists handled at boot
     
-    // Flipper-format minimal header (same style as PN532 saves)
+    // Flipper-format minimal header (same style as PN532 saves) — stream to disk to reduce RAM
     bool is_classic = (g_last_hf_scan.sak == 0x08 || g_last_hf_scan.sak == 0x18 || g_last_hf_scan.sak == 0x09);
-    char content[512]; int len = 0;
-    len += snprintf(content + len, sizeof(content) - len, "Filetype: Flipper NFC device\n");
-    len += snprintf(content + len, sizeof(content) - len, "Version: 4\n");
-    len += snprintf(content + len, sizeof(content) - len, "Device type: %s\n", is_classic ? "Mifare Classic" : "NTAG/Ultralight");
-    len += snprintf(content + len, sizeof(content) - len, "UID:");
-    for (int i = 0; i < g_last_hf_scan.uid_size && i < 20; i++) {
-        len += snprintf(content + len, sizeof(content) - len, " %02X", g_last_hf_scan.uid[i]);
-    }
-    len += snprintf(content + len, sizeof(content) - len, "\n");
-    len += snprintf(content + len, sizeof(content) - len, "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
-    len += snprintf(content + len, sizeof(content) - len, "SAK: %02X\n", g_last_hf_scan.sak);
-    len += snprintf(content + len, sizeof(content) - len, "Data format version: 2\n");
-
-    // JIT mount for SPI/shared-bus stability (SD layer handles SPI gating)
-    bool display_was_suspended = false; bool did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
-    if (!did_mount) {
-        if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended);
-        return false;
+    const char *ntag_type = NULL; int pages_total = 0;
+    if (!is_classic) {
+        if (strstr(g_last_hf_scan.tag_type, "NTAG213")) { ntag_type = "NTAG213"; pages_total = 45; }
+        else if (strstr(g_last_hf_scan.tag_type, "NTAG215")) { ntag_type = "NTAG215"; pages_total = 135; }
+        else if (strstr(g_last_hf_scan.tag_type, "NTAG216")) { ntag_type = "NTAG216"; pages_total = 231; }
+        else { ntag_type = "NTAG"; pages_total = 135; }
     }
 
-    // Write to file
-    if (sd_card_write_file(file_path, content, (size_t)len) == ESP_OK) {
-        printf("HF scan saved to: %s\n", file_path);
-        TERMINAL_VIEW_ADD_TEXT("HF scan saved successfully\n");
-        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
-        return true;
+    // remount only on specific template; otherwise require SD already mounted
+    bool display_was_suspended = false;
+    bool did_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        esp_err_t mret = sd_card_mount_for_flush(&display_was_suspended);
+        did_mount = (mret == ESP_OK);
+        if (!did_mount) {
+            if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended);
+            glog("Save failed: SD mount_for_flush error\n");
+            return false;
+        }
     } else {
-        printf("Failed to save HF scan to: %s\n", file_path);
-        TERMINAL_VIEW_ADD_TEXT("Failed to save HF scan\n");
-        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
+        if (!sd_card_manager.is_initialized) {
+            glog("Save failed: SD not mounted\n");
+            return false;
+        }
+    }
+#else
+    if (!sd_card_manager.is_initialized) {
+        glog("Save failed: SD not mounted\n");
         return false;
     }
+#endif
+    bool require_jit = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        require_jit = true;
+    }
+#endif
+    bool mounted_now = did_mount; // true only when we JIT-mounted above
+
+    // Stream header incrementally
+    {
+        char line[128]; int n;
+        n = snprintf(line, sizeof(line), "Filetype: Flipper NFC device\n");
+        if (sd_card_write_file(file_path, line, (size_t)n) != ESP_OK) { glog("Save failed: cannot create %s\n", file_path); if (did_mount) sd_card_unmount_after_flush(display_was_suspended); return false; }
+        n = snprintf(line, sizeof(line), "Version: 4\n");
+        sd_card_append_file(file_path, line, (size_t)n);
+        n = snprintf(line, sizeof(line), "Device type: %s\n", is_classic ? "Mifare Classic" : "NTAG/Ultralight");
+        sd_card_append_file(file_path, line, (size_t)n);
+        // UID
+        n = snprintf(line, sizeof(line), "UID:");
+        sd_card_append_file(file_path, line, (size_t)n);
+        for (int i = 0; i < g_last_hf_scan.uid_size && i < 20; i++) {
+            n = snprintf(line, sizeof(line), " %02X", g_last_hf_scan.uid[i]);
+            sd_card_append_file(file_path, line, (size_t)n);
+        }
+        n = snprintf(line, sizeof(line), "\n");
+        sd_card_append_file(file_path, line, (size_t)n);
+        // ATQA / SAK
+        n = snprintf(line, sizeof(line), "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
+        sd_card_append_file(file_path, line, (size_t)n);
+        n = snprintf(line, sizeof(line), "SAK: %02X\n", g_last_hf_scan.sak);
+        sd_card_append_file(file_path, line, (size_t)n);
+        n = snprintf(line, sizeof(line), "Data format version: 2\n");
+        sd_card_append_file(file_path, line, (size_t)n);
+        // NTAG meta so Saved parser can read it
+        if (!is_classic) {
+            n = snprintf(line, sizeof(line), "NTAG/Ultralight type: %s\n", ntag_type);
+            sd_card_append_file(file_path, line, (size_t)n);
+            n = snprintf(line, sizeof(line), "Pages total: %d\nPages read: 0\n", pages_total);
+            sd_card_append_file(file_path, line, (size_t)n);
+        }
+    }
+
+    glog("HF scan saved to: %s\n", file_path);
+    if (require_jit && mounted_now) sd_card_unmount_after_flush(display_was_suspended);
+    return true;
 }
 
 bool chameleon_manager_save_last_lf_scan(const char* filename) {
@@ -1736,11 +1825,13 @@ bool chameleon_manager_detect_ntag(void) {
     printf("Detecting NTAG card...\n");
     TERMINAL_VIEW_ADD_TEXT("Detecting NTAG card...\n");
     
-    // First, scan for HF cards to detect NTAG
-    if (!chameleon_manager_scan_hf()) {
-        printf("No HF card detected\n");
-        TERMINAL_VIEW_ADD_TEXT("No HF card detected\n");
-        return false;
+    // ensure we have recent HF scan; avoid rescanning if already valid
+    if (!g_last_hf_scan.valid) {
+        if (!chameleon_manager_scan_hf()) {
+            printf("No HF card detected\n");
+            TERMINAL_VIEW_ADD_TEXT("No HF card detected\n");
+            return false;
+        }
     }
     
     // Check if the detected card is an NTAG by looking at tag type
@@ -1756,6 +1847,14 @@ bool chameleon_manager_detect_ntag(void) {
         printf("Reading NTAG version...\n");
         TERMINAL_VIEW_ADD_TEXT("Reading NTAG version...\n");
         
+        // ensure reader mode is set before RAW
+        if (g_cached_hw_mode != HW_MODE_READER) {
+            uint8_t mode = HW_MODE_READER;
+            if (!send_command(CMD_CHANGE_DEVICE_MODE, &mode, 1)) return false;
+            if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE || !g_response_received || g_last_response.status != STATUS_SUCCESS) return false;
+            g_cached_hw_mode = HW_MODE_READER;
+        }
+
         // Use HF14A_RAW to send the NTAG GET_VERSION command to the physical card
         uint8_t version_cmd[1] = {0x60}; // NTAG GET_VERSION command
         
@@ -1968,7 +2067,12 @@ bool chameleon_manager_save_ntag_dump(const char* filename) {
     }
 
     // JIT mount (match PN532 saves style)
-    bool display_was_suspended = false; bool did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    bool display_was_suspended = false; bool did_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+    }
+#endif
     if (!did_mount) {
         if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended);
         return false;

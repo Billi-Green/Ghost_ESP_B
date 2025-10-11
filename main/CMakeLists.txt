@@ -26,18 +26,17 @@ set(sources ${app_sources})
 
 
 
-## nfc build control: only include pn532 + nfc sources when enabled
+## nfc build control: only include pn532 component/sources when pn532 is enabled
 if(CONFIG_HAS_NFC)
-    # add pn532 component only when nfc is enabled
-    list(APPEND required_components esp-idf-pn532)
-    # ensure pn532 headers are on the include path for main sources
-    list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/esp-idf-pn532/include")
-else()
-    # remove nfc ui + nfc manager sources from globbed list when nfc is disabled
-    list(REMOVE_ITEM sources "${CMAKE_SOURCE_DIR}/main/managers/views/nfc_view.c")
-    file(GLOB_RECURSE _nfc_mgr_sources "${CMAKE_SOURCE_DIR}/main/managers/nfc/*.c")
-    if(_nfc_mgr_sources)
-        list(REMOVE_ITEM sources ${_nfc_mgr_sources})
+    if(CONFIG_NFC_PN532)
+        list(APPEND required_components esp-idf-pn532)
+        list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/esp-idf-pn532/include")
+    else()
+        # PN532 is disabled: drop only PN532-specific sources; keep PN532-agnostic utils (e.g., ndef.c)
+        list(REMOVE_ITEM sources
+            "${CMAKE_SOURCE_DIR}/main/managers/nfc/mifare_classic.c"
+            "${CMAKE_SOURCE_DIR}/main/managers/nfc/ntag_t2.c"
+            "${CMAKE_SOURCE_DIR}/main/managers/nfc/write_ntag.c")
     endif()
 endif()
 

@@ -149,6 +149,17 @@ bool chameleon_manager_scan_hidprox(void);
 bool chameleon_manager_save_last_hf_scan(const char* filename);
 
 /**
+ * @brief Get the last HF scan summary
+ * @param uid Output buffer for UID bytes (optional)
+ * @param uid_len Output for UID length (optional)
+ * @param atqa Output for ATQA (optional)
+ * @param sak Output for SAK (optional)
+ * @return true if a last HF scan is available, false otherwise
+ */
+bool chameleon_manager_get_last_hf_scan(uint8_t *uid, uint8_t *uid_len,
+                                        uint16_t *atqa, uint8_t *sak);
+
+/**
  * @brief Save last LF scan data to SD card
  * @param filename Custom filename (optional, can be NULL for auto-naming)
  * @return true if data was saved successfully, false otherwise
