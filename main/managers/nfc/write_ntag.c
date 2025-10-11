@@ -1,4 +1,7 @@
 #include "managers/nfc/write_ntag.h"
+#ifdef CONFIG_NFC_PN532
+#include "pn532.h"
+#endif
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

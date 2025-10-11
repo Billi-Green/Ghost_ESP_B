@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sdkconfig.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -9,6 +10,7 @@
 // pn532 disabled: provide minimal stand-ins so parsing APIs compile
 typedef int NTAG2XX_MODEL;
 enum { NTAG2XX_UNKNOWN = 0, NTAG2XX_NTAG213 = 1, NTAG2XX_NTAG215 = 2, NTAG2XX_NTAG216 = 3 };
+typedef void* pn532_io_handle_t;
 #endif
 
 #ifdef __cplusplus
