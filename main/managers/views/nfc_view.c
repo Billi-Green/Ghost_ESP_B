@@ -728,8 +728,10 @@ static void nfc_scan_task(void *arg) {
         i2c_port_t try_ports[2] = { I2C_NUM_0, I2C_NUM_0 };
     #elif defined(CONFIG_IDF_TARGET_ESP32C5)
         i2c_port_t try_ports[2] = { I2C_NUM_0, I2C_NUM_0 };
-    #else
+    #elif defined(I2C_NUM_1)
         i2c_port_t try_ports[2] = { I2C_NUM_0, I2C_NUM_1 };
+    #else
+        i2c_port_t try_ports[2] = { I2C_NUM_0, I2C_NUM_0 };
     #endif
         bool ok = false;
         for (int pi = 0; pi < 2 && !ok; ++pi) {
