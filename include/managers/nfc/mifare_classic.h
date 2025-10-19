@@ -1,7 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#ifdef CONFIG_NFC_PN532
 #include "pn532.h"
+#endif
 
 typedef enum {
     MFC_UNKNOWN = 0,
@@ -18,6 +20,7 @@ int mfc_first_block_of_sector(MFC_TYPE t, int sector);
 
 // Builds a compact summary. Tries default keys, does not write.
 // Returns malloc'd string which caller must free.
+#ifdef CONFIG_NFC_PN532
 char* mfc_build_details_summary(pn532_io_handle_t io,
                                 const uint8_t* uid,
                                 uint8_t uid_len,
@@ -34,6 +37,7 @@ bool mfc_save_flipper_file(pn532_io_handle_t io,
                            const char* out_dir,
                            char* out_path,
                            size_t out_path_len);
+#endif
 
 // Optional progress callback for dictionary attack attempts.
 // UI can set this to receive coarse progress updates (current/total keys)

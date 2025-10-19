@@ -12,12 +12,16 @@
 #include "host/ble_gap.h"
 #include "host/ble_sm.h"
 #include "esp_log.h"
+#include "esp_err.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/sd_card_manager.h"
 #include "managers/display_manager.h"
+#include "managers/ap_manager.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -33,12 +37,14 @@ static bool g_device_found = false;
 static bool g_is_connected = false;
 static bool g_scanning = false;
 static struct ble_gap_disc_desc g_discovered_device;
+
 static uint16_t g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t g_tx_char_handle = 0;
 static uint16_t g_rx_char_handle = 0;
 static SemaphoreHandle_t g_scan_sem = NULL;
 static SemaphoreHandle_t g_connect_sem = NULL;
 static SemaphoreHandle_t g_response_sem = NULL;
+static SemaphoreHandle_t g_disconnect_sem = NULL;
 
 // PIN support
 char g_chameleon_pin[7] = {0}; // Store PIN as string (max 6 digits + null terminator)
@@ -46,6 +52,37 @@ bool g_pin_required = false;
 
 // Track current device HW mode to avoid redundant mode switches
 static uint8_t g_cached_hw_mode = 0xFF; // unknown
+
+static bool g_ap_was_running = false;
+
+static void chameleon_suspend_ap(void) {
+    bool server_running = false;
+    ap_manager_get_status(&server_running, NULL, NULL);
+    if (server_running) {
+        ESP_LOGI(TAG, "Suspending GhostNet AP services for Chameleon");
+        printf("Suspending GhostNet AP...\n");
+        TERMINAL_VIEW_ADD_TEXT("Suspending GhostNet AP...\n");
+        ap_manager_stop_services();
+        g_ap_was_running = true;
+    } else {
+        g_ap_was_running = false;
+    }
+}
+
+static void chameleon_resume_ap(void) {
+    if (g_ap_was_running) {
+        ESP_LOGI(TAG, "Restoring GhostNet AP services after Chameleon session");
+        printf("Restoring GhostNet AP...\n");
+        TERMINAL_VIEW_ADD_TEXT("Restoring GhostNet AP...\n");
+        ble_deinit();
+        vTaskDelay(pdMS_TO_TICKS(50));
+        esp_err_t err = ap_manager_start_services();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to restore GhostNet AP services: 0x%X", (unsigned int)err);
+        }
+        g_ap_was_running = false;
+    }
+}
 
 // Chameleon Ultra command constants (from official protocol documentation)
 // Basic device commands (1000-1099)
@@ -185,7 +222,6 @@ static last_scan_data_t g_last_lf_scan = {0};
 static card_dump_data_t g_last_card_dump = {0};
 static ntag_dump_data_t g_last_ntag_dump = {0};
 
-
 // Key types for authentication
 #define MF_KEY_A 0x60
 #define MF_KEY_B 0x61
@@ -202,7 +238,6 @@ typedef struct {
     bool auth_success_a;
     bool auth_success_b;
 } sector_auth_t;
-
 
 // Sector authentication tracking (16 sectors for MIFARE Classic 1K)
 #define MAX_SECTORS 16
@@ -497,12 +532,16 @@ static int chameleon_gap_event_handler(struct ble_gap_event *event, void *arg) {
             ESP_LOGI(TAG, "Disconnected from Chameleon Ultra");
             printf("Disconnected from Chameleon Ultra\n");
             TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
-            
+
             g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             g_tx_char_handle = 0;
             g_rx_char_handle = 0;
             g_is_connected = false;
             g_cached_hw_mode = 0xFF; // unknown
+            chameleon_resume_ap();
+            if (g_disconnect_sem) {
+                xSemaphoreGive(g_disconnect_sem);
+            }
             break;
             
         case BLE_GAP_EVENT_NOTIFY_RX:
@@ -548,8 +587,9 @@ void chameleon_manager_init(void) {
     g_scan_sem = xSemaphoreCreateBinary();
     g_connect_sem = xSemaphoreCreateBinary();
     g_response_sem = xSemaphoreCreateBinary();
-    
-    if (!g_scan_sem || !g_connect_sem || !g_response_sem) {
+    g_disconnect_sem = xSemaphoreCreateBinary();
+
+    if (!g_scan_sem || !g_connect_sem || !g_response_sem || !g_disconnect_sem) {
         ESP_LOGE(TAG, "Failed to create semaphores");
         printf("Failed to initialize Chameleon Ultra manager\n");
         TERMINAL_VIEW_ADD_TEXT("Failed to initialize Chameleon Ultra manager\n");
@@ -568,13 +608,23 @@ void chameleon_manager_init(void) {
 }
 
 bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
+    chameleon_suspend_ap();
+
     if (!g_is_initialized) {
         chameleon_manager_init();
+        if (!g_is_initialized) {
+            chameleon_resume_ap();
+            return false;
+        }
     }
-    
+
+    // Ensure BLE stack is initialized (we may have deinitialized it after last session)
+    ble_init();
+
     if (g_is_connected) {
         printf("Already connected to Chameleon Ultra\n");
         TERMINAL_VIEW_ADD_TEXT("Already connected to Chameleon Ultra\n");
+        chameleon_resume_ap();
         return true;
     }
     
@@ -585,6 +635,7 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
         if (pin_len < 4 || pin_len > 6) {
             printf("Invalid PIN: must be 4-6 digits\n");
             TERMINAL_VIEW_ADD_TEXT("Invalid PIN: must be 4-6 digits\n");
+            chameleon_resume_ap();
             return false;
         }
         
@@ -593,6 +644,7 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
             if (pin[i] < '0' || pin[i] > '9') {
                 printf("Invalid PIN: must contain only digits\n");
                 TERMINAL_VIEW_ADD_TEXT("Invalid PIN: must contain only digits\n");
+                chameleon_resume_ap();
                 return false;
             }
         }
@@ -622,6 +674,7 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
     if (err != ESP_OK) {
         printf("Failed to register BLE handler\n");
         TERMINAL_VIEW_ADD_TEXT("Failed to register BLE handler\n");
+        chameleon_resume_ap();
         return false;
     }
     
@@ -707,8 +760,9 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
     
     // Cleanup on failure
     ble_unregister_handler(chameleon_ble_scan_callback);
-    ble_stop();
-    
+    ble_deinit();
+    chameleon_resume_ap();
+
     printf("Failed to connect to Chameleon Ultra\n");
     TERMINAL_VIEW_ADD_TEXT("Failed to connect to Chameleon Ultra\n");
     return false;
@@ -730,9 +784,62 @@ bool chameleon_manager_get_last_hf_scan(uint8_t *uid, uint8_t *uid_len,
 
 void chameleon_manager_disconnect(void) {
     if (g_is_connected && g_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-        ble_gap_terminate(g_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-        printf("Disconnected from Chameleon Ultra\n");
-        TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
+        if (g_disconnect_sem) {
+            xSemaphoreTake(g_disconnect_sem, 0);
+        }
+        int rc = ble_gap_terminate(g_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        if (rc != 0) {
+            if (rc == BLE_HS_EALREADY) {
+                ESP_LOGW(TAG, "ble_gap_terminate already pending");
+            } else if (rc == BLE_HS_ENOTCONN) {
+                ESP_LOGW(TAG, "ble_gap_terminate: not connected");
+                g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+                g_tx_char_handle = 0;
+                g_rx_char_handle = 0;
+                g_is_connected = false;
+                g_cached_hw_mode = 0xFF;
+                chameleon_resume_ap();
+                printf("Disconnected from Chameleon Ultra\n");
+                TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
+                return;
+            } else {
+                ESP_LOGW(TAG, "ble_gap_terminate failed rc=%d", rc);
+            }
+        }
+        if (g_disconnect_sem) {
+            if (xSemaphoreTake(g_disconnect_sem, pdMS_TO_TICKS(5000)) != pdTRUE) {
+                ESP_LOGW(TAG, "Timeout waiting for disconnect event");
+                struct ble_gap_conn_desc desc;
+                int fr = ble_gap_conn_find(g_conn_handle, &desc);
+                if (fr != 0) {
+                    // Not connected according to stack; clear local state
+                    g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+                    g_tx_char_handle = 0;
+                    g_rx_char_handle = 0;
+                    g_is_connected = false;
+                    g_cached_hw_mode = 0xFF;
+                    chameleon_resume_ap();
+                    printf("Disconnected from Chameleon Ultra\n");
+                    TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
+                } else {
+                    ESP_LOGW(TAG, "Connection still active after terminate request");
+                    return;
+                }
+            } else {
+                printf("Disconnected from Chameleon Ultra\n");
+                TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
+            }
+        } else {
+            // No semaphore; best-effort local cleanup
+            g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            g_tx_char_handle = 0;
+            g_rx_char_handle = 0;
+            g_is_connected = false;
+            g_cached_hw_mode = 0xFF;
+            chameleon_resume_ap();
+            printf("Disconnected from Chameleon Ultra\n");
+            TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
+        }
     }
 }
 

@@ -886,8 +886,7 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
   /* width * 8 gives ~8 lines of buffer which balances responsiveness and RAM use */
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
 #elif defined(CONFIG_IDF_TARGET_ESP32)
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
-  static lv_color_t buf2[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
 #else
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
@@ -906,13 +905,16 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #endif
 
   static lv_disp_draw_buf_t disp_buf;
-/* Initialize draw buffer: prefer single-buffer on cardputer and ESP32-C5 */
+/* Initialize draw buffer: prefer single-buffer on cardputer, ESP32, and ESP32-C5 */
 #if defined(CONFIG_USE_CARDPUTER)
   /* single buffer mode: small buffer for low-memory cardputer */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 2);
 #elif defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32S2)
-  /* single buffer mode: use width * 8 for responsive drawing without excessive RAM */
+  /* single buffer mode: use width * 5 for responsive drawing without excessive RAM */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
+#elif defined(CONFIG_IDF_TARGET_ESP32)
+  /* single buffer mode: use width * 3 for ESP32 to save DRAM */
+  lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 3);
 #else
   /* default: double buffer for smoother drawing */
   lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);

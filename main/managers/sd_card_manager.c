@@ -868,7 +868,9 @@ esp_err_t sd_card_setup_directory_structure() {
   const char *evil_portal_dir = "/mnt/ghostesp/evil_portal";
   const char *evil_portal_portals_dir = "/mnt/ghostesp/evil_portal/portals"; 
   const char *universals_dir = "/mnt/ghostesp/infrared/universals";
+#if defined(CONFIG_NFC_PN532) || defined(CONFIG_NFC_CHAMELEON)
   const char *nfc_dir = "/mnt/ghostesp/nfc";
+#endif
 
   if (!sd_card_exists(root_dir)) {
     printf("Creating directory: %s\n", root_dir);
@@ -1002,6 +1004,19 @@ esp_err_t sd_card_setup_directory_structure() {
   } else {
     printf("Directory %s already exists\n", universals_dir);
   }
+
+#if defined(CONFIG_NFC_PN532) || defined(CONFIG_NFC_CHAMELEON)
+  if (!sd_card_exists(nfc_dir)) {
+    printf("Creating directory: %s\n", nfc_dir);
+    esp_err_t ret = sd_card_create_directory(nfc_dir);
+    if (ret != ESP_OK) {
+      printf("Failed to create directory %s: %s\n", nfc_dir, esp_err_to_name(ret));
+      return ret;
+    }
+  } else {
+    printf("Directory %s already exists\n", nfc_dir);
+  }
+#endif
 
   printf("Directory structure successfully set up.\n");
   return ESP_OK;

@@ -4,7 +4,9 @@
 #include "managers/nfc/mifare_classic.h"
 #include "managers/sd_card_manager.h"
 #include "esp_log.h"
+#ifdef CONFIG_NFC_PN532
 #include "pn532.h"
+#endif
 #include "managers/fuel_gauge_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -119,6 +121,7 @@ static inline void mfc_cache_record_sector_key(int sector, bool usedB, const uin
     }
 }
 
+#ifdef CONFIG_NFC_PN532
 // Minimal PRNG analysis: try to capture a few nonces; if duplicates appear quickly, mark as weak
 static bool g_prng_checked = false;
 static bool g_prng_weak = false;
@@ -1282,6 +1285,7 @@ bool mfc_save_flipper_file(pn532_io_handle_t io,
     }
     return true;
 }
+#endif // CONFIG_NFC_PN532
 
 MFC_TYPE mfc_type_from_sak(uint8_t sak) {
     if (sak == 0x18) return MFC_4K;
@@ -1312,6 +1316,7 @@ int mfc_first_block_of_sector(MFC_TYPE t, int sector) {
     return sector * 4;
 }
 
+#ifdef CONFIG_NFC_PN532
 static esp_err_t mfc_auth_block(pn532_io_handle_t io, uint8_t block, bool use_key_b,
                                 const uint8_t key[6], const uint8_t *uid, uint8_t uid_len) {
     if (!io || !uid || uid_len < 4) return ESP_ERR_INVALID_ARG;
@@ -1909,3 +1914,4 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
     fuel_gauge_manager_set_paused(false);
     return out;
 }
+#endif // CONFIG_NFC_PN532

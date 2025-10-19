@@ -395,12 +395,13 @@ menu "Ghost ESP Options"
 
             config NFC_PN532
                 bool "Enable PN532 NFC"
-                default y
+                default n
                 help
                     Enable PN532 NFC support.
 
             config NFC_CHAMELEON
                 bool "Enable Chameleon Ultra NFC"
+                default y if BT_BLE_ENABLED
                 default n
                 help
                     Enable using Chameleon Ultra as an NFC backend over BLE.

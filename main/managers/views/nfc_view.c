@@ -1127,11 +1127,11 @@ void nfc_view_input_cb(InputEvent *event) {
                 lv_area_t a; lv_obj_get_coords(cu_close_btn, &a);
                 if (d->point.x >= a.x1 && d->point.x <= a.x2 && d->point.y >= a.y1 && d->point.y <= a.y2) { cu_close_cb(NULL); return; }
             }
-            if (cu_connect_btn && lv_obj_is_valid(cu_connect_btn)) {
+            if (cu_connect_btn && lv_obj_is_valid(cu_connect_btn) && !lv_obj_has_flag(cu_connect_btn, LV_OBJ_FLAG_HIDDEN)) {
                 lv_area_t b; lv_obj_get_coords(cu_connect_btn, &b);
                 if (d->point.x >= b.x1 && d->point.x <= b.x2 && d->point.y >= b.y1 && d->point.y <= b.y2) { cu_connect_cb(NULL); return; }
             }
-            if (cu_disconnect_btn && lv_obj_is_valid(cu_disconnect_btn)) {
+            if (cu_disconnect_btn && lv_obj_is_valid(cu_disconnect_btn) && !lv_obj_has_flag(cu_disconnect_btn, LV_OBJ_FLAG_HIDDEN)) {
                 lv_area_t c; lv_obj_get_coords(cu_disconnect_btn, &c);
                 if (d->point.x >= c.x1 && d->point.x <= c.x2 && d->point.y >= c.y1 && d->point.y <= c.y2) { cu_disconnect_cb(NULL); return; }
             }

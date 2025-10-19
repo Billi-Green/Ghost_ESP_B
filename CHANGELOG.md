@@ -62,6 +62,7 @@
 - If dualcomm is set to pins used by the serial UART, disable the serial UART
 - Update main menu icons to RGB565A8
 - Refactored dualcomm logic to be more robust
+- lower all CYD LVGL memory buffers to 16KB and swap to single buffer for display
 
 ### Bug Fixes
 
@@ -95,9 +96,6 @@
 
 - Possible fix for random rotation of ST7789 displays upon flashing
 - Joystick builds now use touch keyboard layout with selection highlighting and navigation
-
-#### Input & UI
-
 - Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
 - Remove artificial delay in cardputer keyboard task to make more responsive
 - Improve and refactor terminal message handling

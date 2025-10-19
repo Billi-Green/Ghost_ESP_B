@@ -31,9 +31,6 @@ if(CONFIG_HAS_NFC)
     if(CONFIG_NFC_PN532)
         list(APPEND required_components esp-idf-pn532)
         list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/esp-idf-pn532/include")
-    else()
-        list(REMOVE_ITEM sources
-            "${CMAKE_SOURCE_DIR}/main/managers/nfc/mifare_classic.c")
     endif()
 endif()
 
