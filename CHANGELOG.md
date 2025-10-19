@@ -13,9 +13,17 @@
 
 #### NFC
 
+##### PN532
+
 - NTAG (Type 2) support: read/write NTAG213/215/216 with NDEF parsing and save to Flipper .nfc format
 - MIFARE Classic support (Mini/1K/4K): Flipper dictionary attack, magic backdoor detection, and NDEF TLV parsing
-- File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc
+- File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
+
+##### Chameleon Ultra
+
+- Command support: connect/disconnect, status/battery, reader/emulator toggles
+- UI support: PN532 parity with cached details, More/Save flows and dictionary attack.
+- NTAG and Mifare Classic NDEF parsing, Flipper `.nfc` exports from `chameleon savehf/savedump/saventag`
 
 #### UI
 
