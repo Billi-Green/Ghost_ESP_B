@@ -480,6 +480,7 @@ static pn532_io_t g_pn532_instance;
 #endif
 static TaskHandle_t nfc_scan_task_handle = NULL;
 static char *nfc_details_text = NULL;
+static uint32_t nfc_details_session = 0;
 static uint8_t g_uid[10] = {0};
 static uint8_t g_uid_len = 0;
 static uint16_t g_atqa = 0;
@@ -641,6 +642,27 @@ typedef struct {
     uint8_t sak;
 } cu_scan_result_t;
 
+#if defined(CONFIG_NFC_CHAMELEON)
+static void nfc_refresh_cu_details_from_cache(void) {
+    uint32_t current = chameleon_manager_get_cached_details_session();
+    if (nfc_details_ready && nfc_details_text && nfc_details_session == current) {
+        return;
+    }
+    if (nfc_details_text) {
+        free(nfc_details_text);
+        nfc_details_text = NULL;
+    }
+    const char *cached = chameleon_manager_get_cached_details();
+    if (cached) {
+        nfc_details_text = strdup(cached);
+        nfc_details_ready = (nfc_details_text != NULL);
+    } else {
+        nfc_details_ready = false;
+    }
+    nfc_details_session = current;
+}
+#endif
+
 static void nfc_set_cu_scan_async(void *ptr) {
     cu_scan_result_t *r = (cu_scan_result_t*)ptr;
     if (!r) return;
@@ -670,7 +692,11 @@ static void nfc_set_cu_scan_async(void *ptr) {
     }
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
-    nfc_details_ready = true; // minimal details ready
+#if defined(CONFIG_NFC_CHAMELEON)
+    if (using_chameleon_backend()) {
+        nfc_refresh_cu_details_from_cache();
+    }
+#endif
     free(r);
 }
 
@@ -698,11 +724,12 @@ static void nfc_scan_cu_task(void *arg) {
 static void nfc_save_cu_task(void *arg) {
     (void)arg;
     bool ok = false;
-    // try full ntag dump first if last scan looks like ntag
-    if (chameleon_manager_last_scan_is_ntag()) {
-        if (chameleon_manager_read_ntag_card()) {
-            ok = chameleon_manager_save_ntag_dump(NULL);
-        }
+    // Prefer cached NTAG dump (works without tag present)
+    if (chameleon_manager_has_cached_ntag_dump()) {
+        ok = chameleon_manager_save_ntag_dump(NULL);
+    } else if (chameleon_manager_last_scan_is_ntag()) {
+        // Fallback: try to read now if possible
+        if (chameleon_manager_read_ntag_card()) ok = chameleon_manager_save_ntag_dump(NULL);
     }
     if (!ok) {
         ok = chameleon_manager_save_last_hf_scan(NULL);
@@ -1472,8 +1499,14 @@ static void nfc_scan_more_cb(lv_event_t *e) {
         return;
     }
     // Otherwise toggle details view
-    if (!nfc_details_visible) nfc_show_details_view(true);
-    else nfc_show_details_view(false);
+    if (!nfc_details_visible) {
+#if defined(CONFIG_NFC_CHAMELEON)
+        if (using_chameleon_backend()) {
+            nfc_refresh_cu_details_from_cache();
+        }
+#endif
+        nfc_show_details_view(true);
+    } else nfc_show_details_view(false);
 }
 
 static void nfc_scan_save_cb(lv_event_t *e) {
@@ -1486,7 +1519,7 @@ static void nfc_scan_save_cb(lv_event_t *e) {
         lv_obj_add_state(nfc_scan_save_btn, LV_STATE_DISABLED);
     }
 #if defined(CONFIG_NFC_CHAMELEON)
-    if (chameleon_manager_is_ready()) {
+    if (using_chameleon_backend()) {
         BaseType_t rc = xTaskCreate(nfc_save_cu_task, "nfc_save_cu", 6144, NULL, 5, NULL);
         if (rc != pdPASS) rc = xTaskCreate(nfc_save_cu_task, "nfc_save_cu", 4096, NULL, 5, NULL);
         if (rc != pdPASS) rc = xTaskCreate(nfc_save_cu_task, "nfc_save_cu", 3072, NULL, 5, NULL);
@@ -1919,14 +1952,9 @@ static void nfc_show_details_view(bool show) {
         // Set details text
         #if defined(CONFIG_NFC_CHAMELEON)
         if (using_chameleon_backend()) {
-        // minimal details under cu: uid/atqa/sak only
-            char buf[128];
-            uint8_t uid[10]={0}; uint8_t ul=0; uint16_t atqa=0; uint8_t sak=0;
-            if (chameleon_manager_get_last_hf_scan(uid, &ul, &atqa, &sak) && ul>0) {
-                int p = snprintf(buf, sizeof(buf), "UID:");
-                for (int i=0; i<ul && p < (int)sizeof(buf)-4; ++i) p += snprintf(buf+p, sizeof(buf)-p, " %02X", uid[i]);
-                snprintf(buf+p, sizeof(buf)-p, "\nATQA: %02X %02X | SAK: %02X", (atqa>>8)&0xFF, atqa&0xFF, sak);
-                lv_label_set_text(nfc_details_label, buf);
+            nfc_refresh_cu_details_from_cache();
+            if (nfc_details_ready && nfc_details_text) {
+                lv_label_set_text(nfc_details_label, nfc_details_text);
             } else {
                 lv_label_set_text(nfc_details_label, "Reading tag data...");
             }

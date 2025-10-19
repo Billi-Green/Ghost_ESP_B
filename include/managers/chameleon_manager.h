@@ -185,6 +185,31 @@ bool chameleon_manager_read_lf_card(void);
  */
 bool chameleon_manager_save_card_dump(const char* filename);
 
+/**
+ * @brief Return true if a cached NTAG dump is available.
+ */
+bool chameleon_manager_has_cached_ntag_dump(void);
+
+/**
+ * @brief Return true if a cached full HF card dump is available.
+ */
+bool chameleon_manager_has_cached_card_dump(void);
+
+/**
+ * @brief Build a heap-allocated details string for the last cached tag.
+ * @return Newly allocated string or NULL on failure. Caller takes ownership.
+ */
+char *chameleon_manager_build_cached_details(void);
+
+/**
+ * @brief Get pointer to cached detail text (owned by manager).
+ */
+const char *chameleon_manager_get_cached_details(void);
+
+/**
+ * @brief Monotonic counter that increments whenever cached details change.
+ */
+uint32_t chameleon_manager_get_cached_details_session(void);
 
 /**
  * @brief Detect and identify NTAG card type and version

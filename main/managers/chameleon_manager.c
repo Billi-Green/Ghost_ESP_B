@@ -21,11 +21,13 @@
 #include "managers/sd_card_manager.h"
 #include "managers/display_manager.h"
 #include "managers/ap_manager.h"
+#include "managers/nfc/ntag_t2.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <inttypes.h>
+#include <stdlib.h>
 #include "esp_heap_caps.h"
 #include "core/glog.h"
 
@@ -242,6 +244,9 @@ typedef struct {
 // Sector authentication tracking (16 sectors for MIFARE Classic 1K)
 #define MAX_SECTORS 16
 static sector_auth_t g_sector_auth[MAX_SECTORS] = {0};
+
+static char *g_cached_details_text = NULL;
+static uint32_t g_cached_details_session = 0;
 
 // Service and characteristic UUIDs for Chameleon Ultra
 // Service: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
@@ -721,6 +726,19 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
                     if (g_is_connected) {
                         printf("Successfully connected to Chameleon Ultra\n");
                         TERMINAL_VIEW_ADD_TEXT("Successfully connected to Chameleon Ultra\n");
+                        // After UID discovery attempt a full dump to populate caches
+                        if (g_last_hf_scan.valid) {
+                            (void)chameleon_manager_read_ntag_card();
+                            if (!chameleon_manager_has_cached_ntag_dump()) {
+                                (void)chameleon_manager_read_hf_card();
+                            }
+                            if (g_cached_details_text) {
+                                free(g_cached_details_text);
+                                g_cached_details_text = NULL;
+                            }
+                            g_cached_details_text = chameleon_manager_build_cached_details();
+                            g_cached_details_session++;
+                        }
                         return true;
                     }
                 }
@@ -818,6 +836,11 @@ void chameleon_manager_disconnect(void) {
                     g_rx_char_handle = 0;
                     g_is_connected = false;
                     g_cached_hw_mode = 0xFF;
+                    if (g_cached_details_text) {
+                        free(g_cached_details_text);
+                        g_cached_details_text = NULL;
+                        g_cached_details_session++;
+                    }
                     chameleon_resume_ap();
                     printf("Disconnected from Chameleon Ultra\n");
                     TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
@@ -836,6 +859,11 @@ void chameleon_manager_disconnect(void) {
             g_rx_char_handle = 0;
             g_is_connected = false;
             g_cached_hw_mode = 0xFF;
+            if (g_cached_details_text) {
+                free(g_cached_details_text);
+                g_cached_details_text = NULL;
+                g_cached_details_session++;
+            }
             chameleon_resume_ap();
             printf("Disconnected from Chameleon Ultra\n");
             TERMINAL_VIEW_ADD_TEXT("Disconnected from Chameleon Ultra\n");
@@ -935,7 +963,27 @@ bool chameleon_manager_scan_hf(void) {
                                     "HF-14A (ATQA:%02X%02X SAK:%02X)", atqa_hi, atqa_lo, sak);
                         }
                         g_last_hf_scan.timestamp = time(NULL);
-                        
+
+                        bool details_refreshed = false;
+                        if (chameleon_manager_last_scan_is_ntag()) {
+                            if (chameleon_manager_read_ntag_card()) {
+                                details_refreshed = true;
+                            } else {
+                                memset(&g_last_ntag_dump, 0, sizeof(g_last_ntag_dump));
+                            }
+                        } else {
+                            memset(&g_last_ntag_dump, 0, sizeof(g_last_ntag_dump));
+                        }
+
+                        if (!details_refreshed) {
+                            if (g_cached_details_text) {
+                                free(g_cached_details_text);
+                                g_cached_details_text = NULL;
+                            }
+                            g_cached_details_text = chameleon_manager_build_cached_details();
+                            g_cached_details_session++;
+                        }
+
                         return true;
                     }
                 } else if (g_last_response.status == 0x01) { // HF_TAG_NO
@@ -1645,9 +1693,6 @@ bool chameleon_manager_scan_hidprox(void) {
     return false;
 }
 
-
-
-
 bool chameleon_manager_read_hf_card(void) {
     if (!g_is_connected) {
         printf("Not connected to Chameleon Ultra\n");
@@ -1680,14 +1725,21 @@ bool chameleon_manager_read_hf_card(void) {
         printf("UID: ");
         for (int i = 0; i < g_last_card_dump.uid_size; i++) {
             printf("%02X", g_last_card_dump.uid[i]);
-                            }
-                            printf("\n");
+        }
+        printf("\n");
         TERMINAL_VIEW_ADD_TEXT("Card detected: %s\n", g_last_card_dump.tag_type);
     }
     
     printf("Basic card information collected successfully.\n");
     printf("Note: For detailed MIFARE Classic analysis, use specialized tools.\n");
     TERMINAL_VIEW_ADD_TEXT("Basic card reading completed\n");
+    
+    if (g_cached_details_text) {
+        free(g_cached_details_text);
+        g_cached_details_text = NULL;
+    }
+    g_cached_details_text = chameleon_manager_build_cached_details();
+    g_cached_details_session++;
     
     return true;
 }
@@ -1759,6 +1811,69 @@ bool chameleon_manager_save_card_dump(const char* filename) {
         if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
         return false;
     }
+}
+
+bool chameleon_manager_has_cached_ntag_dump(void) {
+    return g_last_ntag_dump.valid;
+}
+
+bool chameleon_manager_has_cached_card_dump(void) {
+    return g_last_card_dump.valid;
+}
+
+char *chameleon_manager_build_cached_details(void) {
+    if (g_last_ntag_dump.valid) {
+        uint8_t *buf = NULL;
+        size_t mem_len = 0;
+        if (g_last_ntag_dump.total_pages > 4) {
+            mem_len = (size_t)(g_last_ntag_dump.total_pages - 4) * NTAG_PAGE_SIZE;
+            buf = (uint8_t*)malloc(mem_len);
+            if (buf) {
+                memset(buf, 0x00, mem_len);
+                for (uint16_t pg = 4; pg < g_last_ntag_dump.total_pages; ++pg) {
+                    size_t off = (size_t)(pg - 4) * NTAG_PAGE_SIZE;
+                    if (g_last_ntag_dump.page_valid[pg]) memcpy(buf + off, g_last_ntag_dump.pages[pg], NTAG_PAGE_SIZE);
+                }
+            }
+        }
+        char *ret = ntag_t2_build_details_from_mem(buf, mem_len,
+                                                   g_last_ntag_dump.uid,
+                                                   g_last_ntag_dump.uid_size,
+                                                   NTAG2XX_UNKNOWN);
+        if (buf) free(buf);
+        return ret;
+    }
+    if (g_last_card_dump.valid) {
+        size_t cap = 1024;
+        char *text = (char*)malloc(cap);
+        if (!text) return NULL;
+        int len = snprintf(text, cap, "UID:");
+        for (uint8_t i = 0; i < g_last_card_dump.uid_size && len < (int)cap - 4; ++i) {
+            len += snprintf(text + len, cap - (size_t)len, " %02X", g_last_card_dump.uid[i]);
+        }
+        len += snprintf(text + len, cap - (size_t)len, "\nCard type: %s\n", g_last_card_dump.tag_type);
+        if (len < (int)cap - 32) {
+            len += snprintf(text + len, cap - (size_t)len, "Blocks read: %u/%u\n",
+                            (unsigned)g_last_card_dump.total_blocks_read,
+                            (unsigned)g_last_card_dump.card_size_blocks);
+        }
+        return text;
+    }
+    if (g_last_hf_scan.valid) {
+        size_t cap = 256;
+        char *text = (char*)malloc(cap);
+        if (!text) return NULL;
+        int len = snprintf(text, cap, "UID:");
+        for (uint8_t i = 0; i < g_last_hf_scan.uid_size && len < (int)cap - 4; ++i) {
+            len += snprintf(text + len, cap - (size_t)len, " %02X", g_last_hf_scan.uid[i]);
+        }
+        snprintf(text + len, cap - (size_t)len, "\nATQA: %02X %02X | SAK: %02X\n",
+                 (g_last_hf_scan.atqa >> 8) & 0xFF,
+                 g_last_hf_scan.atqa & 0xFF,
+                 g_last_hf_scan.sak);
+        return text;
+    }
+    return NULL;
 }
 
 bool chameleon_manager_save_last_hf_scan(const char* filename) {
@@ -2156,15 +2271,32 @@ bool chameleon_manager_read_ntag_card(void) {
     g_last_ntag_dump.readable_pages = 0;
     g_last_ntag_dump.valid = false;
 
-    // Read pages in 4-page chunks using 0x30
-    for (int page = 0; page < total_pages; page += 4) {
+    // Read user memory first (pages >= 4) so NDEF is available early
+    for (int page = 4; page < total_pages; page += 4) {
         uint8_t cmd[2] = { NTAG_READ_CMD, (uint8_t)page };
         g_response_received = false;
-        if (!cu_send_hf14a_raw(cmd, 2, false, true, true, true, true, false, 2000, 0)) {
+        if (!cu_send_hf14a_raw(cmd, 2, true, true, true, true, true, false, 2500, 0)) {
             continue;
         }
         // handle firmwares that first reply with 0x60/len=0 before sending the 16-byte read
-        bool got = wait_for_cmd_data(CMD_HF14A_RAW, 16, 1200);
+        bool got = wait_for_cmd_data(CMD_HF14A_RAW, 16, 1800);
+        if (got && (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK) && g_last_response.data_size >= 16) {
+            for (int off = 0; off < 4 && (page + off) < total_pages; ++off) {
+                memcpy(g_last_ntag_dump.pages[page + off], &g_last_response.data[off * 4], 4);
+                g_last_ntag_dump.page_valid[page + off] = true;
+                g_last_ntag_dump.readable_pages++;
+            }
+        }
+    }
+
+    // Then read header pages (0..3) last
+    for (int page = 0; page < 4 && page < total_pages; page += 4) {
+        uint8_t cmd[2] = { NTAG_READ_CMD, (uint8_t)page };
+        g_response_received = false;
+        if (!cu_send_hf14a_raw(cmd, 2, true, true, true, true, true, false, 2500, 0)) {
+            continue;
+        }
+        bool got = wait_for_cmd_data(CMD_HF14A_RAW, 16, 1800);
         if (got && (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK) && g_last_response.data_size >= 16) {
             for (int off = 0; off < 4 && (page + off) < total_pages; ++off) {
                 memcpy(g_last_ntag_dump.pages[page + off], &g_last_response.data[off * 4], 4);
@@ -2184,6 +2316,14 @@ bool chameleon_manager_read_ntag_card(void) {
     }
     g_last_ntag_dump.timestamp = time(NULL);
     g_last_ntag_dump.valid = (g_last_ntag_dump.readable_pages > 0);
+    if (g_last_ntag_dump.valid) {
+        if (g_cached_details_text) {
+            free(g_cached_details_text);
+            g_cached_details_text = NULL;
+        }
+        g_cached_details_text = chameleon_manager_build_cached_details();
+        g_cached_details_session++;
+    }
     return g_last_ntag_dump.valid;
 }
 
@@ -2302,6 +2442,21 @@ bool chameleon_manager_last_scan_is_ntag(void) {
     if (strstr(g_last_hf_scan.tag_type, "NTAG") != NULL) return true;
     if (g_last_hf_scan.atqa == 0x0044 && g_last_hf_scan.sak == 0x00) return true;
     return false;
+}
+
+const char *chameleon_manager_get_cached_details(void) {
+    if (!g_cached_details_text) {
+        char *t = chameleon_manager_build_cached_details();
+        if (t) {
+            g_cached_details_text = t;
+            g_cached_details_session++;
+        }
+    }
+    return g_cached_details_text;
+}
+
+uint32_t chameleon_manager_get_cached_details_session(void) {
+    return g_cached_details_session;
 }
 
 bool chameleon_manager_enable_mfkey32_mode(void) {
