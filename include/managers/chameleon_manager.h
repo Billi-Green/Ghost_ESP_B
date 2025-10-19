@@ -250,6 +250,31 @@ bool chameleon_manager_read_ntag_page(int page);
  */
 bool chameleon_manager_last_scan_is_ntag(void);
 
+/**
+ * progress callback for long-running chameleon ultra classic operations
+ */
+typedef void (*chameleon_progress_cb_t)(int current, int total, void *user);
+
+/**
+ * set progress callback for chameleon ultra operations (e.g., classic dict scan)
+ */
+void chameleon_manager_set_progress_callback(chameleon_progress_cb_t cb, void *user);
+
+/**
+ * perform mifare classic read using defaults + user + embedded dict; set skip_dict to bypass dict
+ */
+bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict);
+
+/**
+ * return true if a classic dump is cached from the last read
+ */
+bool chameleon_manager_mf1_has_cache(void);
+
+/**
+ * save cached classic dump as flipper v2 format (like pn532 path)
+ */
+bool chameleon_manager_mf1_save_flipper_dump(const char* filename);
+
 // Debug and testing functions
 bool chameleon_manager_test_auth(uint8_t block, uint8_t key_type, const char* key_hex);
 bool chameleon_manager_test_both_keys(uint8_t block, const char* key_hex);

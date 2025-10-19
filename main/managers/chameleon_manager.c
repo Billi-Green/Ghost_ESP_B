@@ -22,16 +22,36 @@
 #include "managers/display_manager.h"
 #include "managers/ap_manager.h"
 #include "managers/nfc/ntag_t2.h"
+#include "managers/nfc/mifare_classic.h"
+#include "managers/nfc/ndef.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <inttypes.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include "esp_heap_caps.h"
 #include "core/glog.h"
 
 static const char *TAG = "chameleon_manager";
+
+static const char *cu_mfc_type_str(MFC_TYPE t) {
+    switch (t) {
+        case MFC_MINI: return "Mifare Classic Mini";
+        case MFC_1K:   return "Mifare Classic 1K";
+        case MFC_4K:   return "Mifare Classic 4K";
+        default:       return "Mifare Classic";
+    }
+}
+
+// embedded flipper-format mifare classic dictionary (same as PN532 path)
+extern const uint8_t _binary_mf_classic_dict_nfc_start[] asm("_binary_mf_classic_dict_nfc_start");
+extern const uint8_t _binary_mf_classic_dict_nfc_end[]   asm("_binary_mf_classic_dict_nfc_end");
+
+// ui hooks from nfc view (weak)
+extern void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) __attribute__((weak));
+extern void mfc_ui_set_cache_mode(bool on) __attribute__((weak));
 
 // Global state
 static bool g_is_initialized = false;
@@ -39,6 +59,9 @@ static bool g_device_found = false;
 static bool g_is_connected = false;
 static bool g_scanning = false;
 static struct ble_gap_disc_desc g_discovered_device;
+
+static bool g_cu_backdoor_checked = false;
+static bool g_cu_backdoor_enabled = false;
 
 static uint16_t g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t g_tx_char_handle = 0;
@@ -110,6 +133,8 @@ static void chameleon_resume_ap(void) {
 #define CMD_MF1_READ_ONE_BLOCK      2008  // 0x07D8 - Read MIFARE Classic block SUCCESS: OFFICIAL
 #define CMD_MF1_WRITE_ONE_BLOCK     2009  // 0x07D9 - Write MIFARE Classic block SUCCESS: OFFICIAL  
 #define CMD_HF14A_RAW           2010  // 0x07DA - Send raw HF command
+// toolbox helpers
+#define CMD_MF1_CHECK_KEYS_ON_BLOCK 2015  // 0x07DF - Check a list of keys on a single block
 
 // LF commands (3000-3999)
 #define CMD_EM410X_SCAN         3000  // 0x0BB8 - Official EM410X_SCAN command
@@ -224,6 +249,14 @@ static last_scan_data_t g_last_lf_scan = {0};
 static card_dump_data_t g_last_card_dump = {0};
 static ntag_dump_data_t g_last_ntag_dump = {0};
 
+// progress callback for long-running classic ops
+static chameleon_progress_cb_t g_progress_cb = NULL;
+static void *g_progress_user = NULL;
+void chameleon_manager_set_progress_callback(chameleon_progress_cb_t cb, void *user) {
+    g_progress_cb = cb;
+    g_progress_user = user;
+}
+
 // Key types for authentication
 #define MF_KEY_A 0x60
 #define MF_KEY_B 0x61
@@ -244,6 +277,286 @@ typedef struct {
 // Sector authentication tracking (16 sectors for MIFARE Classic 1K)
 #define MAX_SECTORS 16
 static sector_auth_t g_sector_auth[MAX_SECTORS] = {0};
+
+// classic cache for CU path (separate from PN532 internals)
+static struct {
+    bool valid;
+    MFC_TYPE type;
+    uint8_t uid[10];
+    uint8_t uid_len;
+    uint16_t atqa;
+    uint8_t sak;
+    int total_blocks;
+    uint8_t *blocks;     // total_blocks * 16
+    uint8_t *known_bits; // bitset for blocks
+    uint8_t *key_a;      // sectors*6
+    uint8_t *key_b;      // sectors*6
+    uint8_t *key_a_valid;// bitset per sector
+    uint8_t *key_b_valid;// bitset per sector
+} g_cu_mfc_cache = {0};
+
+static bool cu_details_append(char **buf, size_t *cap, size_t *len, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    va_list copy;
+    va_copy(copy, args);
+    int needed = vsnprintf(NULL, 0, fmt, copy);
+    va_end(copy);
+    if (needed < 0) {
+        va_end(args);
+        return false;
+    }
+    size_t required = *len + (size_t)needed + 1;
+    if (required > *cap) {
+        size_t new_cap = *cap ? *cap : 256;
+        while (required > new_cap) new_cap *= 2;
+        char *n = (char*)realloc(*buf, new_cap);
+        if (!n) {
+            va_end(args);
+            return false;
+        }
+        *buf = n;
+        *cap = new_cap;
+    }
+    vsnprintf(*buf + *len, *cap - *len, fmt, args);
+    *len += (size_t)needed;
+    va_end(args);
+    return true;
+}
+
+static void cu_format_key_hex(const uint8_t *key, char out[13]) {
+    for (int i = 0; i < 6; ++i) {
+        snprintf(out + (i * 2), 3, "%02X", key[i]);
+    }
+    out[12] = '\0';
+}
+
+static void cu_mfc_cache_reset(void) {
+    g_cu_mfc_cache.valid = false;
+    if (g_cu_mfc_cache.blocks) { free(g_cu_mfc_cache.blocks); g_cu_mfc_cache.blocks = NULL; }
+    if (g_cu_mfc_cache.known_bits) { free(g_cu_mfc_cache.known_bits); g_cu_mfc_cache.known_bits = NULL; }
+    if (g_cu_mfc_cache.key_a) { free(g_cu_mfc_cache.key_a); g_cu_mfc_cache.key_a = NULL; }
+    if (g_cu_mfc_cache.key_b) { free(g_cu_mfc_cache.key_b); g_cu_mfc_cache.key_b = NULL; }
+    if (g_cu_mfc_cache.key_a_valid) { free(g_cu_mfc_cache.key_a_valid); g_cu_mfc_cache.key_a_valid = NULL; }
+    if (g_cu_mfc_cache.key_b_valid) { free(g_cu_mfc_cache.key_b_valid); g_cu_mfc_cache.key_b_valid = NULL; }
+    g_cu_mfc_cache.total_blocks = 0;
+    g_cu_mfc_cache.type = MFC_UNKNOWN;
+    g_cu_mfc_cache.uid_len = 0;
+    g_cu_mfc_cache.atqa = 0;
+    g_cu_mfc_cache.sak = 0;
+}
+
+static void cu_mfc_cache_begin(MFC_TYPE t, const uint8_t *uid, uint8_t uid_len, uint16_t atqa, uint8_t sak) {
+    cu_mfc_cache_reset();
+    g_cu_backdoor_checked = false;
+    g_cu_backdoor_enabled = false;
+    g_cu_mfc_cache.type = t;
+    g_cu_mfc_cache.uid_len = uid_len;
+    if (uid && uid_len) memcpy(g_cu_mfc_cache.uid, uid, uid_len);
+    g_cu_mfc_cache.atqa = atqa;
+    g_cu_mfc_cache.sak = sak;
+    int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+    int blocks = 0; for (int s = 0; s < sectors; ++s) blocks += mfc_blocks_in_sector(t, s);
+    g_cu_mfc_cache.total_blocks = blocks;
+    g_cu_mfc_cache.blocks = (uint8_t*)calloc((size_t)blocks, 16);
+    int known_bytes = (blocks + 7) >> 3;
+    g_cu_mfc_cache.known_bits = (uint8_t*)calloc((size_t)known_bytes, 1);
+    g_cu_mfc_cache.key_a = (uint8_t*)calloc((size_t)sectors, 6);
+    g_cu_mfc_cache.key_b = (uint8_t*)calloc((size_t)sectors, 6);
+    int sec_bits = (sectors + 7) >> 3;
+    g_cu_mfc_cache.key_a_valid = (uint8_t*)calloc((size_t)sec_bits, 1);
+    g_cu_mfc_cache.key_b_valid = (uint8_t*)calloc((size_t)sec_bits, 1);
+}
+
+static inline void cu_bitset_set(uint8_t *arr, int idx) { arr[(unsigned)idx >> 3] |= (uint8_t)(1u << (idx & 7)); }
+static inline bool cu_bitset_test(const uint8_t *arr, int idx) { return (arr[(unsigned)idx >> 3] & (uint8_t)(1u << (idx & 7))) != 0; }
+
+static void cu_mfc_cache_store_block(int abs_block, const uint8_t data[16]) {
+    if (!g_cu_mfc_cache.blocks || !g_cu_mfc_cache.known_bits) return;
+    if (abs_block < 0 || abs_block >= g_cu_mfc_cache.total_blocks) return;
+    memcpy(&g_cu_mfc_cache.blocks[abs_block * 16], data, 16);
+    cu_bitset_set(g_cu_mfc_cache.known_bits, abs_block);
+}
+
+static void cu_mfc_cache_record_sector_key(int sector, bool usedB, const uint8_t key[6]) {
+    int sectors = mfc_sector_count(g_cu_mfc_cache.type); if (sectors == 0) sectors = 16;
+    if (sector < 0 || sector >= sectors) return;
+    if (usedB) {
+        memcpy(&g_cu_mfc_cache.key_b[sector * 6], key, 6);
+        cu_bitset_set(g_cu_mfc_cache.key_b_valid, sector);
+    } else {
+        memcpy(&g_cu_mfc_cache.key_a[sector * 6], key, 6);
+        cu_bitset_set(g_cu_mfc_cache.key_a_valid, sector);
+    }
+}
+
+static bool cu_mf1_auth_one_block(uint8_t block, bool use_key_b, const uint8_t key[6]);
+static bool cu_mf1_read_one_block(uint8_t block, bool use_key_b, const uint8_t key[6], uint8_t out16[16]);
+static bool cu_mf1_check_keys_on_block(uint8_t block, bool use_key_b, const uint8_t *keys6, uint8_t keys_len, uint8_t out_key[6]);
+static void cu_key_reuse_sweep(MFC_TYPE t, bool use_key_b, const uint8_t key[6], int current_sector);
+static bool cu_sector_key_known(int sector, bool key_b);
+static void cu_progress(int current, int total);
+static int cu_known_key_attempts(MFC_TYPE t, int exclude_sector);
+static bool cu_try_known_keys_first(MFC_TYPE t, int target_sector, uint8_t auth_blk,
+                                    bool *authed, bool *usedB, const uint8_t **used_key,
+                                    int *tried, int *total_attempts);
+static bool wait_for_cmd_data(uint16_t cmd, size_t min_len, uint32_t timeout_ms);
+static bool cu_send_hf14a_raw(const uint8_t *tx, uint16_t tx_len,
+                              bool activate_rf, bool keep_rf, bool auto_select,
+                              bool append_crc, bool wait_resp, bool check_crc,
+                              uint16_t timeout_ms, uint16_t bitlen_override);
+extern bool nfc_is_scan_cancelled(void) __attribute__((weak));
+extern bool nfc_is_dict_skip_requested(void) __attribute__((weak));
+
+static uint8_t g_swept_keys_a[32][6];
+static uint8_t g_swept_keys_b[32][6];
+static int g_swept_a_count = 0;
+static int g_swept_b_count = 0;
+static bool cu_key_in_list(const uint8_t list[][6], int count, const uint8_t key[6]){
+    for (int i = 0; i < count; ++i) { if (memcmp(list[i], key, 6) == 0) return true; }
+    return false;
+}
+static bool cu_sweep_already(bool use_key_b, const uint8_t key[6]){
+    return use_key_b ? cu_key_in_list(g_swept_keys_b, g_swept_b_count, key)
+                     : cu_key_in_list(g_swept_keys_a, g_swept_a_count, key);
+}
+static void cu_sweep_mark(bool use_key_b, const uint8_t key[6]){
+    if (use_key_b) {
+        if (g_swept_b_count < 32 && !cu_key_in_list(g_swept_keys_b, g_swept_b_count, key)) {
+            memcpy(g_swept_keys_b[g_swept_b_count++], key, 6);
+        }
+    } else {
+        if (g_swept_a_count < 32 && !cu_key_in_list(g_swept_keys_a, g_swept_a_count, key)) {
+            memcpy(g_swept_keys_a[g_swept_a_count++], key, 6);
+        }
+    }
+}
+static void cu_sweep_reset(void){ g_swept_a_count = 0; g_swept_b_count = 0; }
+
+static int cu_known_key_attempts(MFC_TYPE t, int exclude_sector) {
+    int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+    int count = 0;
+    if (g_cu_mfc_cache.key_a_valid) {
+        for (int s = 0; s < sectors; ++s) {
+            if (s == exclude_sector) continue;
+            if (cu_sector_key_known(s, false)) count++;
+        }
+    }
+    if (g_cu_mfc_cache.key_b_valid) {
+        for (int s = 0; s < sectors; ++s) {
+            if (s == exclude_sector) continue;
+            if (cu_sector_key_known(s, true)) count++;
+        }
+    }
+    return count;
+}
+
+static bool cu_try_known_keys_first(MFC_TYPE t, int target_sector, uint8_t auth_blk,
+                                    bool *authed, bool *usedB, const uint8_t **used_key,
+                                    int *tried, int *total_attempts) {
+    if (!authed || !usedB || !used_key) return false;
+    int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+    for (int type_idx = 0; type_idx < 2 && !*authed; ++type_idx) {
+        bool is_b = (type_idx == 1);
+        if (is_b && !g_cu_mfc_cache.key_b_valid) continue;
+        if (!is_b && !g_cu_mfc_cache.key_a_valid) continue;
+        for (int s = 0; s < sectors && !*authed; ++s) {
+            if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) return true;
+            if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) return true;
+            if (s == target_sector) continue;
+            if (!cu_sector_key_known(s, is_b)) continue;
+            const uint8_t *kptr = is_b ? &g_cu_mfc_cache.key_b[s * 6] : &g_cu_mfc_cache.key_a[s * 6];
+            if (!kptr) continue;
+            if (total_attempts && (*total_attempts) <= (tried ? (*tried) : 0)) (*total_attempts)++;
+            if (cu_mf1_auth_one_block(auth_blk, is_b, kptr)) {
+                *authed = true;
+                *usedB = is_b;
+                *used_key = kptr;
+            }
+            if (tried) {
+                (*tried)++;
+                cu_progress(*tried, (total_attempts && *total_attempts > 0) ? *total_attempts : *tried);
+            }
+        }
+    }
+    return false;
+}
+
+static bool cu_sector_key_known(int sector, bool key_b) {
+    int sectors = mfc_sector_count(g_cu_mfc_cache.type); if (sectors == 0) sectors = 16;
+    if (sector < 0 || sector >= sectors) return false;
+    if (key_b) {
+        if (!g_cu_mfc_cache.key_b_valid) return false;
+        return cu_bitset_test(g_cu_mfc_cache.key_b_valid, sector);
+    }
+    if (!g_cu_mfc_cache.key_a_valid) return false;
+    return cu_bitset_test(g_cu_mfc_cache.key_a_valid, sector);
+}
+
+static bool cu_sector_any_key_known(int sector) {
+    return cu_sector_key_known(sector, false) || cu_sector_key_known(sector, true);
+}
+
+static void cu_read_sector_blocks(MFC_TYPE t, int sector) {
+    int first = mfc_first_block_of_sector(t, sector);
+    int blocks = mfc_blocks_in_sector(t, sector);
+    if (blocks <= 0) return;
+    uint8_t trailer[16]; bool have_trailer = false;
+    /* cache-fill UI handled at higher level to avoid flicker between sectors */
+    for (int b = 0; b < blocks; ++b) {
+        uint8_t outb[16];
+        uint8_t blk = (uint8_t)(first + b);
+        // Choose known key for this sector; prefer A if available
+        bool haveA = g_cu_mfc_cache.key_a_valid && cu_bitset_test(g_cu_mfc_cache.key_a_valid, sector);
+        bool haveB = g_cu_mfc_cache.key_b_valid && cu_bitset_test(g_cu_mfc_cache.key_b_valid, sector);
+        const uint8_t *kA = haveA ? &g_cu_mfc_cache.key_a[sector * 6] : NULL;
+        const uint8_t *kB = haveB ? &g_cu_mfc_cache.key_b[sector * 6] : NULL;
+        bool ok = false;
+        if (kA) ok = cu_mf1_read_one_block(blk, false, kA, outb);
+        if (!ok && kB) ok = cu_mf1_read_one_block(blk, true, kB, outb);
+        if (ok) {
+            cu_mfc_cache_store_block(first + b, outb);
+            if (b == blocks - 1) { memcpy(trailer, outb, 16); have_trailer = true; }
+        }
+        if ((b & 0x7) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    /* cache-fill UI handled at higher level to avoid flicker between sectors */
+    if (have_trailer) {
+        uint8_t key_a[6]; memcpy(key_a, trailer, 6);
+        uint8_t key_b[6]; memcpy(key_b, trailer + 10, 6);
+        int auth_blk = first;
+        if (sector == 0) auth_blk = first + 1;
+        if (cu_mf1_auth_one_block((uint8_t)auth_blk, false, key_a)) {
+            cu_mfc_cache_record_sector_key(sector, false, key_a);
+            cu_key_reuse_sweep(t, false, key_a, sector);
+        }
+        if (cu_mf1_auth_one_block((uint8_t)auth_blk, true,  key_b)) {
+            cu_mfc_cache_record_sector_key(sector, true,  key_b);
+            cu_key_reuse_sweep(t, true, key_b, sector);
+        }
+    }
+}
+
+static void cu_key_reuse_sweep(MFC_TYPE t, bool use_key_b, const uint8_t key[6], int current_sector) {
+    if (!key) return;
+    if (cu_sweep_already(use_key_b, key)) return;
+    cu_sweep_mark(use_key_b, key);
+    int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+    for (int s = 0; s < sectors; ++s) {
+        if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
+        if (s == current_sector) continue;
+        if (cu_sector_key_known(s, use_key_b)) continue;
+        int auth_blk = mfc_first_block_of_sector(t, s);
+        if (s == 0) auth_blk = auth_blk + 1;
+        if (cu_mf1_auth_one_block((uint8_t)auth_blk, use_key_b, key)) {
+            cu_mfc_cache_record_sector_key(s, use_key_b, key);
+            if (mfc_ui_set_phase) mfc_ui_set_phase(s, mfc_first_block_of_sector(t, s), use_key_b, 0);
+            cu_read_sector_blocks(t, s);
+        }
+        if ((s & 0x3) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
 
 static char *g_cached_details_text = NULL;
 static uint32_t g_cached_details_session = 0;
@@ -266,6 +579,35 @@ typedef struct {
 
 static chameleon_response_t g_last_response;
 static bool g_response_received = false;
+
+static bool cu_send_magic_raw(const uint8_t *cmd, size_t len, bool append_crc, uint16_t timeout_ms) {
+    if (!cmd || len == 0) return false;
+    g_response_received = false;
+    if (!cu_send_hf14a_raw(cmd, (uint16_t)len, true, true, true, append_crc, true, false, timeout_ms, 0)) {
+        return false;
+    }
+    if (!wait_for_cmd_data(CMD_HF14A_RAW, 0, timeout_ms)) {
+        return false;
+    }
+    return (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK);
+}
+
+static void cu_try_magic_backdoor_once(void) {
+    if (g_cu_backdoor_checked) return;
+    g_cu_backdoor_checked = true;
+    if (!chameleon_manager_is_ready() || !g_last_hf_scan.valid) return;
+    uint8_t halt_cmd[2] = {0x50, 0x00};
+    (void)cu_send_magic_raw(halt_cmd, sizeof(halt_cmd), true, 600);
+    uint8_t cmd40 = 0x40;
+    uint8_t cmd43 = 0x43;
+    bool ok40 = cu_send_magic_raw(&cmd40, 1, false, 600);
+    bool ok43 = cu_send_magic_raw(&cmd43, 1, false, 600);
+    if (ok40 && ok43) {
+        g_cu_backdoor_enabled = true;
+        ESP_LOGI(TAG, "Magic backdoor likely enabled");
+    }
+    (void)chameleon_manager_scan_hf();
+}
 
 // Forward declarations
 static void chameleon_ble_scan_callback(struct ble_gap_event *event, size_t len);
@@ -1822,6 +2164,97 @@ bool chameleon_manager_has_cached_card_dump(void) {
 }
 
 char *chameleon_manager_build_cached_details(void) {
+    if (g_cu_mfc_cache.valid) {
+        size_t cap = 512; size_t len = 0; char *out = (char*)malloc(cap); if (!out) return NULL; out[0] = '\0';
+        MFC_TYPE t = g_cu_mfc_cache.type; int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+        // Header like PN532
+        if (!cu_details_append(&out, &cap, &len, "Card: %s | UID:", cu_mfc_type_str(t))) { free(out); return NULL; }
+        for (uint8_t i = 0; i < g_cu_mfc_cache.uid_len; ++i) {
+            if (!cu_details_append(&out, &cap, &len, " %02X", g_cu_mfc_cache.uid[i])) { free(out); return NULL; }
+        }
+        if (!cu_details_append(&out, &cap, &len, "\nATQA: %02X %02X | SAK: %02X\n",
+                               (g_cu_mfc_cache.atqa >> 8) & 0xFF,
+                               g_cu_mfc_cache.atqa & 0xFF,
+                               g_cu_mfc_cache.sak)) { free(out); return NULL; }
+        // Key and sector counts
+        int found_a = 0, found_b = 0, readable = 0;
+        for (int s = 0; s < sectors; ++s) {
+            if (g_cu_mfc_cache.key_a_valid && cu_bitset_test(g_cu_mfc_cache.key_a_valid, s)) found_a++;
+            if (g_cu_mfc_cache.key_b_valid && cu_bitset_test(g_cu_mfc_cache.key_b_valid, s)) found_b++;
+            // Consider sector readable if any data block (non-trailer) is known
+            int first = mfc_first_block_of_sector(t, s); int blocks = mfc_blocks_in_sector(t, s); if (blocks <= 1) continue;
+            bool any_known = false;
+            for (int b = 0; b < blocks - 1 && !any_known; ++b) {
+                int absb = first + b; if (g_cu_mfc_cache.known_bits && cu_bitset_test(g_cu_mfc_cache.known_bits, absb)) any_known = true;
+            }
+            if (any_known) readable++;
+        }
+        int keys_total = sectors * 2;
+        if (!cu_details_append(&out, &cap, &len, "Keys %d/%d | Sectors %d/%d\n", found_a + found_b, keys_total, readable, sectors)) { free(out); return NULL; }
+        // Try to locate and summarize NDEF from data blocks (same approach as PN532)
+        for (int s = 0; s < sectors; ++s) {
+            if (s == 16 && sectors > 16) continue; // skip MAD2 on 4K
+            int first = mfc_first_block_of_sector(t, s);
+            int blocks = mfc_blocks_in_sector(t, s);
+            int data_blocks = blocks - 1; if (data_blocks <= 0) continue;
+            size_t sec_bytes = (size_t)data_blocks * 16;
+            uint8_t *sec_buf = (uint8_t*)malloc(sec_bytes);
+            if (!sec_buf) break;
+            size_t woff = 0;
+            for (int b = 0; b < data_blocks; ++b) {
+                int absb = first + b;
+                if (g_cu_mfc_cache.known_bits && cu_bitset_test(g_cu_mfc_cache.known_bits, absb)) memcpy(sec_buf + woff, &g_cu_mfc_cache.blocks[absb * 16], 16);
+                else memset(sec_buf + woff, 0, 16);
+                woff += 16;
+            }
+            size_t off = 0, mlen = 0;
+            if (ntag_t2_find_ndef(sec_buf, sec_bytes, &off, &mlen) && off < sec_bytes && mlen > 0) {
+                // Build contiguous window across subsequent sectors to cover full message
+                size_t need = off + mlen; size_t have = sec_bytes; int ss = s + 1;
+                while (have < need && ss < sectors) {
+                    if (ss == 16 && sectors > 16) { ss++; continue; }
+                    int bl2 = mfc_blocks_in_sector(t, ss);
+                    have += (size_t)(bl2 - 1) * 16; ss++;
+                }
+                size_t total_cap = have;
+                uint8_t *cat = (uint8_t*)malloc(total_cap);
+                if (cat) {
+                    memcpy(cat, sec_buf, sec_bytes);
+                    size_t cat_off = sec_bytes;
+                    for (int s2 = s + 1; cat_off < total_cap && s2 < sectors; ++s2) {
+                        if (s2 == 16 && sectors > 16) continue;
+                        int f2 = mfc_first_block_of_sector(t, s2);
+                        int bl2 = mfc_blocks_in_sector(t, s2);
+                        for (int b2 = 0; b2 < bl2 - 1 && cat_off < total_cap; ++b2) {
+                            int absb2 = f2 + b2;
+                            if (g_cu_mfc_cache.known_bits && cu_bitset_test(g_cu_mfc_cache.known_bits, absb2)) memcpy(cat + cat_off, &g_cu_mfc_cache.blocks[absb2 * 16], 16);
+                            else memset(cat + cat_off, 0, 16);
+                            cat_off += 16;
+                        }
+                    }
+                    char *ndef_text = ndef_build_details_from_message(cat + off, mlen, g_cu_mfc_cache.uid, g_cu_mfc_cache.uid_len, cu_mfc_type_str(t));
+                    if (ndef_text) {
+                        // Extract and append first record single-line summary
+                        const char *p = strstr(ndef_text, "\nR"); if (!p) { if (ndef_text[0] == 'R') p = ndef_text; } else { p++; }
+                        if (p && p[0] == 'R') {
+                            const char *colon = strchr(p, ':'); const char *start = NULL; if (colon) { start = colon + 1; if (*start == ' ') start++; }
+                            if (start) {
+                                const char *end = strchr(start, '\n'); size_t linelen = end ? (size_t)(end - start) : strlen(start);
+                                if (!cu_details_append(&out, &cap, &len, "NDEF: ")) { free(ndef_text); free(cat); free(sec_buf); free(out); return NULL; }
+                                if (linelen + 2 > cap - len) { size_t used = len; size_t newcap = (cap * 2) + linelen + 256; char *n = (char*)realloc(out, newcap); if (n) { out = n; cap = newcap; len = used; } }
+                                size_t to_copy = (linelen < cap - len - 1) ? linelen : cap - len - 1; memcpy(out + len, start, to_copy); len += to_copy; out[len++] = '\n'; out[len] = '\0';
+                            }
+                        }
+                        free(ndef_text); free(cat); free(sec_buf);
+                        return out; // same behavior as PN532: return after first found message
+                    }
+                    free(cat);
+                }
+            }
+            free(sec_buf);
+        }
+        return out;
+    }
     if (g_last_ntag_dump.valid) {
         uint8_t *buf = NULL;
         size_t mem_len = 0;
@@ -2408,6 +2841,355 @@ bool chameleon_manager_save_ntag_dump(const char* filename) {
     if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
     printf("NTAG dump saved to: %s\n", file_path);
     TERMINAL_VIEW_ADD_TEXT("NTAG dump saved successfully\n");
+    return true;
+}
+
+// ---- CU MIFARE Classic dictionary/read/save ----
+
+static inline int cu_hexn(char c){ if(c>='0'&&c<='9')return c-'0'; c|=0x20; if(c>='a'&&c<='f')return 10+(c-'a'); return -1; }
+static bool cu_parse_key_line(const char* s,const char* e,uint8_t out[6]){
+    uint8_t b[6]; int bi=0; int hi=-1; for(const char* p=s;p<e && bi<6; ++p){ int v=cu_hexn(*p); if(v<0){ if(*p=='#') return false; else continue; } if(hi<0){ hi=v; } else { b[bi++]=(uint8_t)((hi<<4)|v); hi=-1; } }
+    if(bi==6){ for(int i=0;i<6;i++) out[i]=b[i]; return true; } return false;
+}
+
+static int cu_load_user_keys(uint8_t **keys_out){
+    *keys_out = NULL; int count = 0;
+    FILE *f = fopen("/mnt/ghostesp/nfc/mfc_user_dict.nfc", "r");
+    if (!f) return 0;
+    char line[96]; uint8_t key[6];
+    long pos = ftell(f);
+    while (fgets(line, sizeof(line), f)) { const char *ls=line; const char *le=line+strlen(line); if (cu_parse_key_line(ls, le, key)) count++; }
+    if (count <= 0) { fclose(f); return 0; }
+    *keys_out = (uint8_t*)malloc((size_t)count * 6); if (!*keys_out) { fclose(f); return 0; }
+    fseek(f, pos, SEEK_SET); int idx = 0;
+    while (fgets(line, sizeof(line), f) && idx < count) { const char *ls=line; const char *le=line+strlen(line); if (cu_parse_key_line(ls, le, key)) { memcpy(&(*keys_out)[idx*6], key, 6); idx++; } }
+    fclose(f);
+    return idx;
+}
+
+static int cu_count_embedded_dict_lines(void){
+    const char *s = (const char*)_binary_mf_classic_dict_nfc_start;
+    const char *e = (const char*)_binary_mf_classic_dict_nfc_end;
+    if (!s || !e || e <= s) return 0;
+    int cnt = 0; const char *p = s; uint8_t tmp[6];
+    while (p < e) { const char* nl = memchr(p, '\n', (size_t)(e - p)); const char* ln_end = nl ? nl : e; if (cu_parse_key_line(p, ln_end, tmp)) cnt++; p = nl ? nl + 1 : e; }
+    return cnt;
+}
+
+static int cu_load_embedded_keys(uint8_t **keys_out){
+    *keys_out = NULL; int total = cu_count_embedded_dict_lines(); if (total <= 0) return 0;
+    *keys_out = (uint8_t*)malloc((size_t)total * 6); if (!*keys_out) return 0;
+    const char *s = (const char*)_binary_mf_classic_dict_nfc_start;
+    const char *e = (const char*)_binary_mf_classic_dict_nfc_end;
+    const char *p = s; int idx = 0; uint8_t key[6];
+    while (p < e && idx < total) {
+        const char* nl = memchr(p, '\n', (size_t)(e - p)); const char* ln_end = nl ? nl : e;
+        if (cu_parse_key_line(p, ln_end, key)) { memcpy(&(*keys_out)[idx * 6], key, 6); idx++; }
+        p = nl ? nl + 1 : e;
+    }
+    return idx;
+}
+
+static const uint8_t CU_DEFAULT_KEYS[][6] = {
+    {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
+    {0xA0,0xA1,0xA2,0xA3,0xA4,0xA5},
+    {0x00,0x00,0x00,0x00,0x00,0x00},
+    {0xD3,0xF7,0xD3,0xF7,0xD3,0xF7},
+    {0x4D,0x3A,0x99,0xC3,0x51,0xDD},
+    {0x1A,0x98,0x2C,0x7E,0x45,0x9A}
+};
+
+static bool cu_mf1_auth_one_block(uint8_t block, bool use_key_b, const uint8_t key[6]){
+    // CU firmware expects payload: [type, block, key[6]]; type: 0=A, 1=B
+    uint8_t payload[1 + 1 + 6];
+    payload[0] = use_key_b ? MF_KEY_B : MF_KEY_A;
+    payload[1] = block;
+    memcpy(&payload[2], key, 6);
+    if (!send_command(CMD_MF1_AUTH_ONE_KEY_BLOCK, payload, sizeof(payload))) return false;
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(1500)) != pdTRUE) return false;
+    if (!g_response_received || g_last_response.command != CMD_MF1_AUTH_ONE_KEY_BLOCK) return false;
+    bool ok = (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK);
+    if (!ok) {
+        // Fallback: some fw builds interpret type as 0/1 instead of 0x60/0x61
+        vTaskDelay(pdMS_TO_TICKS(1));
+        payload[0] = use_key_b ? 1 : 0;
+        if (!send_command(CMD_MF1_AUTH_ONE_KEY_BLOCK, payload, sizeof(payload))) return false;
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(1500)) != pdTRUE) return false;
+        if (!g_response_received || g_last_response.command != CMD_MF1_AUTH_ONE_KEY_BLOCK) return false;
+        ok = (g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK);
+    }
+    return ok;
+}
+
+static bool cu_mf1_read_one_block(uint8_t block, bool use_key_b, const uint8_t key[6], uint8_t out16[16]){
+    // CU firmware expects payload: [type, block, key[6]]; type: 0=A, 1=B
+    uint8_t payload[1 + 1 + 6];
+    payload[0] = use_key_b ? MF_KEY_B : MF_KEY_A;
+    payload[1] = block;
+    memcpy(&payload[2], key, 6);
+    if (!send_command(CMD_MF1_READ_ONE_BLOCK, payload, sizeof(payload))) return false;
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) != pdTRUE) return false;
+    if (!g_response_received || g_last_response.command != CMD_MF1_READ_ONE_BLOCK) return false;
+    bool ok = ((g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK) && g_last_response.data_size >= 16);
+    if (!ok) {
+        // Fallback type encoding 0/1
+        vTaskDelay(pdMS_TO_TICKS(1));
+        payload[0] = use_key_b ? 1 : 0;
+        if (!send_command(CMD_MF1_READ_ONE_BLOCK, payload, sizeof(payload))) return false;
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) != pdTRUE) return false;
+        if (!g_response_received || g_last_response.command != CMD_MF1_READ_ONE_BLOCK) return false;
+        ok = ((g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK) && g_last_response.data_size >= 16);
+    }
+    if (!ok) return false;
+    memcpy(out16, g_last_response.data, 16);
+    return ok;
+}
+
+static bool cu_mf1_check_keys_on_block(uint8_t block, bool use_key_b, const uint8_t *keys6, uint8_t keys_len, uint8_t out_key[6]){
+    if (!keys6 || keys_len == 0) return false;
+    // payload: [block(1), key_type(1), keys_len(1), keys(keys_len*6)]
+    uint8_t hdr[3] = { block, (use_key_b ? MF_KEY_B : MF_KEY_A), keys_len };
+    size_t total = sizeof(hdr) + (size_t)keys_len * 6;
+    if (total > 3 + 6 * 32) return false;
+    uint8_t buf[3 + 6 * 32];
+    memcpy(buf, hdr, 3);
+    memcpy(buf + 3, keys6, (size_t)keys_len * 6);
+    if (!send_command(CMD_MF1_CHECK_KEYS_ON_BLOCK, buf, total)) return false;
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(2000)) != pdTRUE) return false;
+    if (!g_response_received || g_last_response.command != CMD_MF1_CHECK_KEYS_ON_BLOCK) return false;
+    if (!(g_last_response.status == STATUS_SUCCESS || g_last_response.status == STATUS_HF_TAG_OK)) return false;
+    if (g_last_response.data_size < 1) return false;
+    uint8_t found = g_last_response.data[0];
+    if (!found) return false;
+    if (g_last_response.data_size >= 7 && out_key) memcpy(out_key, &g_last_response.data[1], 6);
+    return true;
+}
+
+bool chameleon_manager_mf1_has_cache(void){
+    return g_cu_mfc_cache.valid;
+}
+
+static void cu_progress(int current, int total){ if (g_progress_cb) g_progress_cb(current, total, g_progress_user); }
+
+bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
+    if (!chameleon_manager_is_ready()) return false;
+    if (!g_last_hf_scan.valid) { if (!chameleon_manager_scan_hf()) return false; }
+    if (!(g_last_hf_scan.sak == 0x08 || g_last_hf_scan.sak == 0x18 || g_last_hf_scan.sak == 0x09)) return false;
+    if (g_cached_hw_mode != HW_MODE_READER) {
+        uint8_t mode = HW_MODE_READER;
+        if (!send_command(CMD_CHANGE_DEVICE_MODE, &mode, 1)) return false;
+        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(3000)) != pdTRUE || !g_response_received || g_last_response.status != STATUS_SUCCESS) return false;
+        g_cached_hw_mode = HW_MODE_READER;
+    }
+    MFC_TYPE t = mfc_type_from_sak(g_last_hf_scan.sak);
+    cu_mfc_cache_begin(t, g_last_hf_scan.uid, g_last_hf_scan.uid_size, g_last_hf_scan.atqa, g_last_hf_scan.sak);
+    cu_sweep_reset();
+    cu_try_magic_backdoor_once();
+    bool cache_mode_on = false;
+
+    uint8_t *user_keys = NULL; int user_count = 0; bool user_loaded = false;
+    uint8_t *emb_keys = NULL; int emb_count = 0; bool emb_loaded = false;
+
+    int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+    for (int s = 0; s < sectors; ++s) {
+        if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
+        if (cu_sector_any_key_known(s)) continue;
+        int first = mfc_first_block_of_sector(t, s);
+        int blocks_in_sector = mfc_blocks_in_sector(t, s);
+        uint8_t auth_blk = (uint8_t)(first + blocks_in_sector - 1); // use trailer block for probing/auth
+        bool authed = false; bool usedB = false; const uint8_t *used_key = NULL;
+
+        int def_count = (int)(sizeof(CU_DEFAULT_KEYS) / 6);
+        int total_attempts = def_count * 2; if (total_attempts <= 0) total_attempts = 1;
+        int known_attempts = cu_known_key_attempts(t, s);
+        if (known_attempts > 0) total_attempts += known_attempts;
+        int tried = 0;
+
+        if (g_cu_backdoor_enabled) {
+            authed = true;
+            tried = total_attempts;
+        }
+
+        if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts);
+        cu_progress(0, total_attempts);
+
+        // Fast-path: ask firmware to try all default keys at once on trailer block
+        if (!authed && def_count > 0) {
+            uint8_t found_key[6];
+            // Try Key A list quickly
+            if (cu_mf1_check_keys_on_block(auth_blk, false, &CU_DEFAULT_KEYS[0][0], (uint8_t)def_count, found_key)) {
+                cu_mfc_cache_record_sector_key(s, false, found_key);
+                authed = true; usedB = false; used_key = &g_cu_mfc_cache.key_a[s * 6];
+                tried += def_count; cu_progress(tried, total_attempts);
+            } else if (cu_mf1_check_keys_on_block(auth_blk, true, &CU_DEFAULT_KEYS[0][0], (uint8_t)def_count, found_key)) {
+                cu_mfc_cache_record_sector_key(s, true, found_key);
+                authed = true; usedB = true; used_key = &g_cu_mfc_cache.key_b[s * 6];
+                tried += def_count; cu_progress(tried, total_attempts);
+            }
+        }
+
+        if (!authed) {
+            cu_try_known_keys_first(t, s, auth_blk, &authed, &usedB, &used_key, &tried, &total_attempts);
+            if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
+            if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break;
+        }
+
+        for (int k = 0; !authed && k < def_count; ++k) {
+            if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
+            if (cu_mf1_auth_one_block(auth_blk, false, CU_DEFAULT_KEYS[k])) { authed = true; usedB = false; used_key = CU_DEFAULT_KEYS[k]; }
+            tried++; cu_progress(tried, total_attempts);
+            if (!authed) {
+                if (cu_mf1_auth_one_block(auth_blk, true,  CU_DEFAULT_KEYS[k])) { authed = true; usedB = true;  used_key = CU_DEFAULT_KEYS[k]; }
+                tried++; cu_progress(tried, total_attempts);
+            }
+            if ((tried & 0x3F) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+        }
+
+        if (!authed && !skip_dict) {
+            if (!user_loaded) { user_count = cu_load_user_keys(&user_keys); user_loaded = true; total_attempts += (user_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts); }
+            if (!emb_loaded) { emb_count = cu_load_embedded_keys(&emb_keys); emb_loaded = true; total_attempts += (emb_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts); }
+        }
+
+        if (!authed && user_count > 0 && !skip_dict) {
+            for (int i = 0; i < user_count && !authed; ++i) {
+                if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) break;
+                if (cu_mf1_auth_one_block(auth_blk, false, &user_keys[i*6])) { authed = true; usedB = false; used_key = &user_keys[i*6]; }
+                tried++; cu_progress(tried, total_attempts);
+                if (!authed) {
+                    if (cu_mf1_auth_one_block(auth_blk, true, &user_keys[i*6]))  { authed = true; usedB = true;  used_key = &user_keys[i*6]; }
+                    tried++; cu_progress(tried, total_attempts);
+                }
+                if ((tried & 0x3F) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+                if (authed) break;
+            }
+        }
+
+        if (!authed && emb_count > 0 && !skip_dict) {
+            for (int i = 0; i < emb_count && !authed; ++i) {
+                if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) break;
+                if (cu_mf1_auth_one_block(auth_blk, false, &emb_keys[i*6])) { authed = true; usedB = false; used_key = &emb_keys[i*6]; }
+                tried++; cu_progress(tried, total_attempts);
+                if (!authed) {
+                    if (cu_mf1_auth_one_block(auth_blk, true,  &emb_keys[i*6])) { authed = true; usedB = true;  used_key = &emb_keys[i*6]; }
+                    tried++; cu_progress(tried, total_attempts);
+                }
+                if ((tried & 0x3F) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+                if (authed) break;
+            }
+        }
+
+        if (authed) {
+            if (used_key) {
+                cu_mfc_cache_record_sector_key(s, usedB, used_key);
+            }
+            if (!cache_mode_on && mfc_ui_set_cache_mode) { mfc_ui_set_cache_mode(true); cache_mode_on = true; }
+            if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, usedB, 0);
+            cu_read_sector_blocks(t, s);
+            if (used_key) {
+                cu_key_reuse_sweep(t, usedB, used_key, s);
+            }
+            if (tried > 0 && total_attempts != tried) cu_progress(tried, total_attempts);
+            int final_total = (tried > 0) ? tried : total_attempts;
+            cu_progress(final_total, final_total);
+        }
+    }
+    if (user_keys) free(user_keys);
+    if (emb_keys) free(emb_keys);
+    if (mfc_ui_set_phase) mfc_ui_set_phase(-1, -1, false, 0);
+    g_cu_mfc_cache.valid = true;
+    if (cache_mode_on && mfc_ui_set_cache_mode) mfc_ui_set_cache_mode(false);
+    if (g_cached_details_text) { free(g_cached_details_text); g_cached_details_text = NULL; }
+    g_cached_details_text = chameleon_manager_build_cached_details();
+    g_cached_details_session++;
+    return true;
+}
+
+bool chameleon_manager_mf1_save_flipper_dump(const char* filename){
+    if (!g_cu_mfc_cache.valid) return false;
+    char file_path[192];
+    if (!filename || !*filename) {
+        char uid_part[40] = {0}; int up = 0;
+        for (uint8_t i = 0; i < g_cu_mfc_cache.uid_len && up < (int)sizeof(uid_part) - 3; ++i) {
+            up += snprintf(uid_part + up, sizeof(uid_part) - up, "%02X", g_cu_mfc_cache.uid[i]);
+            if (i + 1 < g_cu_mfc_cache.uid_len) up += snprintf(uid_part + up, sizeof(uid_part) - up, "-");
+        }
+        const char *mtype = "Classic";
+        switch (g_cu_mfc_cache.type) { case MFC_MINI: mtype = "ClassicMini"; break; case MFC_1K: mtype = "Classic1K"; break; case MFC_4K: mtype = "Classic4K"; break; default: break; }
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s_%s.nfc", mtype, uid_part);
+    } else {
+        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
+    }
+
+    // ensure sd present (same policy as NTAG save)
+    bool display_was_suspended = false; bool did_mount = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
+        if (!did_mount) { if (display_was_suspended) sd_card_unmount_after_flush(display_was_suspended); return false; }
+    } else { if (!sd_card_manager.is_initialized) { return false; } }
+#else
+    if (!sd_card_manager.is_initialized) { return false; }
+#endif
+
+    char buf[256]; int pos = 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Filetype: Flipper NFC device\n");
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Version: 4\n");
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Device type: Mifare Classic\n");
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "UID:");
+    for (uint8_t i = 0; i < g_cu_mfc_cache.uid_len && pos < (int)sizeof(buf) - 4; ++i) pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", g_cu_mfc_cache.uid[i]);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "\n");
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "ATQA: %02X %02X\n", (g_cu_mfc_cache.atqa>>8)&0xFF, g_cu_mfc_cache.atqa&0xFF);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "SAK: %02X\n", g_cu_mfc_cache.sak);
+    const char *tstr = (g_cu_mfc_cache.type==MFC_4K?"4K":(g_cu_mfc_cache.type==MFC_1K?"1K":(g_cu_mfc_cache.type==MFC_MINI?"Mini":"Unknown")));
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Mifare Classic type: %s\n", tstr);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Data format version: 2\n");
+    if (sd_card_write_file(file_path, buf, (size_t)pos) != ESP_OK) { if (did_mount) sd_card_unmount_after_flush(display_was_suspended); return false; }
+
+    MFC_TYPE t = g_cu_mfc_cache.type; int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+    int total_blocks = mfc_total_blocks(t);
+    if (total_blocks <= 0) total_blocks = sectors * 4;
+    int known_blocks = 0;
+    if (g_cu_mfc_cache.known_bits) {
+        for (int b = 0; b < total_blocks; ++b) {
+            if (cu_bitset_test(g_cu_mfc_cache.known_bits, b)) known_blocks++;
+        }
+    }
+    int key_slots = sectors * 2;
+    int keys_found = 0;
+    if (g_cu_mfc_cache.key_a_valid) {
+        for (int s = 0; s < sectors; ++s) if (cu_bitset_test(g_cu_mfc_cache.key_a_valid, s)) keys_found++;
+    }
+    if (g_cu_mfc_cache.key_b_valid) {
+        for (int s = 0; s < sectors; ++s) if (cu_bitset_test(g_cu_mfc_cache.key_b_valid, s)) keys_found++;
+    }
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Blocks total: %d\n", total_blocks);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Blocks read: %d\n", known_blocks);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "Keys found: %d/%d\n", keys_found, key_slots);
+    if (sd_card_write_file(file_path, buf, (size_t)pos) != ESP_OK) { if (did_mount) sd_card_unmount_after_flush(display_was_suspended); return false; }
+
+    // Append blocks
+    for (int s = 0; s < sectors; ++s) {
+        int first = mfc_first_block_of_sector(t, s);
+        int blocks = mfc_blocks_in_sector(t, s);
+        int trailer = first + blocks - 1;
+        for (int b = 0; b < blocks; ++b) {
+            int absb = first + b; char line[128]; int lpos = 0;
+            lpos += snprintf(line + lpos, sizeof(line) - lpos, "Block %d:", absb);
+            if (cu_bitset_test(g_cu_mfc_cache.known_bits, absb)) {
+                uint8_t outb[16]; memcpy(outb, &g_cu_mfc_cache.blocks[absb * 16], 16);
+                if (absb == trailer) {
+                    if (cu_bitset_test(g_cu_mfc_cache.key_a_valid, s)) memcpy(outb + 0, &g_cu_mfc_cache.key_a[s * 6], 6);
+                    if (cu_bitset_test(g_cu_mfc_cache.key_b_valid, s)) memcpy(outb + 10, &g_cu_mfc_cache.key_b[s * 6], 6);
+                }
+                for (int i = 0; i < 16 && lpos < (int)sizeof(line) - 4; ++i) lpos += snprintf(line + lpos, sizeof(line) - lpos, " %02X", outb[i]);
+            } else {
+                for (int i = 0; i < 16 && lpos < (int)sizeof(line) - 4; ++i) lpos += snprintf(line + lpos, sizeof(line) - lpos, " ??");
+            }
+            lpos += snprintf(line + lpos, sizeof(line) - lpos, "\n");
+            if (sd_card_append_file(file_path, line, (size_t)lpos) != ESP_OK) { if (did_mount) sd_card_unmount_after_flush(display_was_suspended); return false; }
+        }
+    }
+    if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
     return true;
 }
 

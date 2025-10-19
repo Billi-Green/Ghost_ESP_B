@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <strings.h>
 #include <errno.h>
 #include <dirent.h>
@@ -216,6 +217,15 @@ static bool nfc_details_ready = false;
 static uint32_t nfc_scan_session = 0;
 // Simple boolean event payload for async calls
 typedef struct { bool on; uint32_t session; } nfc_bool_evt_t;
+static bool nfc_skip_label_applied = false;
+
+static void nfc_reset_more_button_label(void) {
+    if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+        lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
+        if (lbl) lv_label_set_text(lbl, "More");
+    }
+    nfc_skip_label_applied = false;
+}
 
 // Async setter for paused title/state
 static void nfc_set_paused_async(void *ptr) {
@@ -420,28 +430,33 @@ static void nfc_progress_update_async(void *ptr) {
     } else {
         phase[0] = '\0';
     }
-    // Update title with progress only (no phase in title)
+    // Update title with progress; prefer active phases over details-ready
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
         char title[80];
+        bool bruteforce_active = (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested && (mfc_phase_total > 0));
         if (nfc_paused) snprintf(title, sizeof(title), "Paused - present tag to continue");
         else if (nfc_cache_fill_phase) snprintf(title, sizeof(title), "Reading sectors... %d%%", percent);
         else if (nfc_dict_skip_requested) snprintf(title, sizeof(title), "Basic read (skipping dict) ...");
+        else if (bruteforce_active) snprintf(title, sizeof(title), "Bruteforcing keys... %d%%", percent);
         else if (nfc_details_ready) snprintf(title, sizeof(title), "NFC Tag");
-        else snprintf(title, sizeof(title), "Bruteforcing keys... %d%%", percent);
+        else snprintf(title, sizeof(title), "Scanning NFC...");
         lv_label_set_text(nfc_title_label, title);
-        if (nfc_details_ready) lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
+        if (nfc_details_ready && !bruteforce_active && !nfc_cache_fill_phase) lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
     }
     // While bruteforcing, repurpose More button as Skip (label only; callback decides behavior)
     // Only show Skip button if we're actively bruteforcing (not completed)
-    if (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested && !nfc_details_ready && 
+    if (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested &&
+        mfc_phase_total > 0 &&
         nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
-        lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
-        nfc_more_visible = true;
-        // Change label to "Skip"
-        lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
-        if (lbl) lv_label_set_text(lbl, "Skip");
-        update_nfc_buttons_layout();
-        update_nfc_popup_selection();
+        if (!nfc_skip_label_applied) {
+            lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
+            nfc_more_visible = true;
+            lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
+            if (lbl) lv_label_set_text(lbl, "Skip");
+            update_nfc_buttons_layout();
+            update_nfc_popup_selection();
+            nfc_skip_label_applied = true;
+        }
     }
     // Replace UID/Type lines with sector/block and key when phase is valid
     if (mfc_phase_sector >= 0 && mfc_phase_first_block >= 0) {
@@ -529,6 +544,7 @@ static void nfc_set_details_async(void *ptr) {
     }
     // Reset dict-skip flag for next scans
     nfc_dict_skip_requested = false;
+    nfc_skip_label_applied = false;
 
     // Reveal Save button now that details (and cache) are ready
     if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn) && !nfc_save_visible) {
@@ -660,6 +676,7 @@ static void nfc_refresh_cu_details_from_cache(void) {
         nfc_details_ready = false;
     }
     nfc_details_session = current;
+    nfc_reset_more_button_label();
 }
 #endif
 
@@ -692,11 +709,7 @@ static void nfc_set_cu_scan_async(void *ptr) {
     }
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
-#if defined(CONFIG_NFC_CHAMELEON)
-    if (using_chameleon_backend()) {
-        nfc_refresh_cu_details_from_cache();
-    }
-#endif
+    // Defer CU details refresh until after Classic read completes to match PN532 behavior
     free(r);
 }
 
@@ -716,6 +729,23 @@ static void nfc_scan_cu_task(void *arg) {
                 res->atqa = atqa; res->sak = sak;
                 lv_async_call(nfc_set_cu_scan_async, res);
             }
+            // If MIFARE Classic (0x08/0x18/0x09), perform dict-based read on CU
+            if (sak == 0x08 || sak == 0x18 || sak == 0x09) {
+                // Reuse PN532 UI progress callback wiring for CU
+                chameleon_manager_set_progress_callback(mfc_dict_progress_cb, NULL);
+                (void)chameleon_manager_mf1_read_classic_with_dict(false);
+                // Refresh details text from CU cache
+#if defined(CONFIG_NFC_CHAMELEON)
+                nfc_refresh_cu_details_from_cache();
+#endif
+                // Ensure Save button is visible
+                if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
+                    lv_obj_clear_flag(nfc_scan_save_btn, LV_OBJ_FLAG_HIDDEN);
+                    nfc_save_visible = true;
+                    update_nfc_buttons_layout();
+                    update_nfc_popup_selection();
+                }
+            }
         }
     }
     vTaskDelete(NULL);
@@ -730,6 +760,12 @@ static void nfc_save_cu_task(void *arg) {
     } else if (chameleon_manager_last_scan_is_ntag()) {
         // Fallback: try to read now if possible
         if (chameleon_manager_read_ntag_card()) ok = chameleon_manager_save_ntag_dump(NULL);
+    } else if (chameleon_manager_mf1_has_cache()) {
+        ok = chameleon_manager_mf1_save_flipper_dump(NULL);
+    } else {
+        // Try reading Classic now, then save
+        (void)chameleon_manager_mf1_read_classic_with_dict(false);
+        if (chameleon_manager_mf1_has_cache()) ok = chameleon_manager_mf1_save_flipper_dump(NULL);
     }
     if (!ok) {
         ok = chameleon_manager_save_last_hf_scan(NULL);
