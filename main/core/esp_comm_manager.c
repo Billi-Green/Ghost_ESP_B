@@ -56,7 +56,6 @@
 #define DEFAULT_TX_PIN GPIO_NUM_6
 #define DEFAULT_RX_PIN GPIO_NUM_7
 #endif
-#define DEFAULT_BAUD_RATE 115200
 
 static const char* TAG = "esp_comm_manager";
 
