@@ -6,12 +6,13 @@
   --bg-alt: #f5f5f7;
   --fg: #1f2933;
   --fg-muted: #52606d;
-  --accent: #3b82f6;
-  --accent-strong: #1d4ed8;
+  --accent: #111111;
+  --accent-strong: #000000;
+  --accent-rgb: 17, 17, 17;
   --border: #d9dde3;
   --surface: #ffffff;
   --code-bg: #f1f5f9;
-  --blockquote-bg: rgba(59, 130, 246, 0.08);
+  --blockquote-bg: rgba(var(--accent-rgb), 0.08);
   --font-sans: "Inter", "Segoe UI", sans-serif;
   --font-mono: "Share Tech Mono", monospace;
 }
@@ -23,10 +24,11 @@ html[data-theme="dark"] {
   --fg-muted: #b0b0b0;
   --accent: #f0f0f0;
   --accent-strong: #ffffff;
+  --accent-rgb: 255, 255, 255;
   --border: #1a1a1a;
   --surface: #0d0d0d;
   --code-bg: #111111;
-  --blockquote-bg: rgba(255, 255, 255, 0.06);
+  --blockquote-bg: rgba(var(--accent-rgb), 0.06);
 }
 
 * {
@@ -166,7 +168,7 @@ html[data-theme="dark"] .sidebar__result--active {
 }
 
 .sidebar__result mark {
-  background-color: rgba(59, 130, 246, 0.3);
+  background-color: rgba(var(--accent-rgb), 0.3);
   color: inherit;
   padding: 0.1rem 0.2rem;
   border-radius: 0.25rem;
@@ -299,7 +301,7 @@ html[data-theme="dark"] .sidebar__link--active {
 
 .sidebar__sublink:hover,
 .sidebar__sublink--active {
-  background-color: rgba(59, 130, 246, 0.12);
+  background-color: rgba(var(--accent-rgb), 0.12);
   color: var(--accent-strong);
 }
 
@@ -398,7 +400,7 @@ html[data-theme="dark"] .sidebar__sublink--active {
 
 .doc__card:hover {
   border-color: var(--accent);
-  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 8px 20px rgba(var(--accent-rgb), 0.15);
 }
 
 html[data-theme="dark"] .doc__card {
@@ -485,7 +487,7 @@ html[data-theme="dark"] .doc__toc {
 
 html[data-theme="dark"] .doc__toc a:hover,
 html[data-theme="dark"] .doc__toc a:focus {
-  background-color: rgba(59, 130, 246, 0.35);
+  background-color: rgba(var(--accent-rgb), 0.35);
   color: var(--bg);
 }
 
