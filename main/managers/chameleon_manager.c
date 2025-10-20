@@ -13,6 +13,8 @@
 #include "host/ble_sm.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include <esp_wifi.h>
+#include "managers/wifi_manager.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -79,6 +81,7 @@ bool g_pin_required = false;
 static uint8_t g_cached_hw_mode = 0xFF; // unknown
 
 static bool g_ap_was_running = false;
+static bool g_wifi_was_running = false;
 
 static void chameleon_suspend_ap(void) {
     bool server_running = false;
@@ -87,10 +90,20 @@ static void chameleon_suspend_ap(void) {
         ESP_LOGI(TAG, "Suspending GhostNet AP services for Chameleon");
         printf("Suspending GhostNet AP...\n");
         TERMINAL_VIEW_ADD_TEXT("Suspending GhostNet AP...\n");
-        ap_manager_stop_services();
+        ap_manager_deinit();
         g_ap_was_running = true;
+        g_wifi_was_running = false;
     } else {
         g_ap_was_running = false;
+        wifi_mode_t mode;
+        if (esp_wifi_get_mode(&mode) == ESP_OK && mode != WIFI_MODE_NULL) {
+            ESP_LOGI(TAG, "Suspending Wi-Fi for Chameleon (AP disabled)");
+            esp_wifi_stop();
+            esp_wifi_deinit();
+            g_wifi_was_running = true;
+        } else {
+            g_wifi_was_running = false;
+        }
     }
 }
 
@@ -101,11 +114,29 @@ static void chameleon_resume_ap(void) {
         TERMINAL_VIEW_ADD_TEXT("Restoring GhostNet AP...\n");
         ble_deinit();
         vTaskDelay(pdMS_TO_TICKS(50));
-        esp_err_t err = ap_manager_start_services();
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to restore GhostNet AP services: 0x%X", (unsigned int)err);
+        esp_err_t err_init = ap_manager_init();
+        if (err_init == ESP_OK) {
+            (void)ap_manager_start_services();
+        }
+        if (err_init != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to restore GhostNet AP services: 0x%X", (unsigned int)err_init);
         }
         g_ap_was_running = false;
+    } else if (g_wifi_was_running) {
+        ESP_LOGI(TAG, "Restoring Wi-Fi after Chameleon session");
+        ble_deinit();
+        vTaskDelay(pdMS_TO_TICKS(50));
+        
+        // Re-init just the Wi-Fi driver (netif/event loop already exist)
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        esp_err_t err = esp_wifi_init(&cfg);
+        if (err == ESP_OK) {
+            esp_wifi_set_mode(WIFI_MODE_APSTA);
+            wifi_manager_configure_sta_from_settings();
+        } else {
+            ESP_LOGE(TAG, "Failed to reinit Wi-Fi driver: 0x%X", (unsigned int)err);
+        }
+        g_wifi_was_running = false;
     }
 }
 

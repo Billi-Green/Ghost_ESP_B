@@ -22,6 +22,7 @@
 #include <managers/rgb_manager.h>
 #include <managers/settings_manager.h>
 #include "managers/status_display_manager.h"
+#include "esp_bt.h"
 
 #define MAX_DEVICES 30
 #define MAX_HANDLERS 10
@@ -695,6 +696,8 @@ static void notify_handlers(struct ble_gap_event *event, int len) {
 void nimble_host_task(void *param) {
     nimble_port_run();
     nimble_port_freertos_deinit();
+    // Ensure the task fully exits to avoid lingering stack usage
+    vTaskDelete(NULL);
 }
 
 static int8_t generate_random_rssi() { return (esp_random() % 121) - 100; }
@@ -798,7 +801,7 @@ static void restart_ble_stack(void) {
         return;
     }
     
-    // Restart the NimBLE host task
+    // Restart the NimBLE host task (larger stack)
     xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, &nimble_host_task_handle);
     
     // Wait for NimBLE stack to be ready
@@ -1319,6 +1322,7 @@ void ble_start_spoofing_selected_airtag(void) {
     size_t current_index = 0;
     while (current_index < tag_to_spoof->payload_len) {
         uint8_t field_len = tag_to_spoof->payload[current_index];
+
         if (field_len == 0 || current_index + field_len >= tag_to_spoof->payload_len) break;
         uint8_t field_type = tag_to_spoof->payload[current_index + 1];
         if (field_type == 0xFF && field_len >= 3) { // Manufacturer Specific Data
@@ -1700,6 +1704,10 @@ void ble_init(void) {
             handler_count = 0;
         }
 
+        // Release Classic BT controller memory on non-ESP32 targets too to free RAM for NimBLE
+        // Safe to call multiple times; ignore return if already released
+        (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+
         // log DMA-capable internal heap info right before NimBLE init
         size_t free_internal_dma = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
         size_t largest_internal_dma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
@@ -1718,8 +1726,8 @@ void ble_init(void) {
             return;
         }
 
-        // Configure and start the NimBLE host task
-        xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, &nimble_host_task_handle);
+        // Configure and start the NimBLE host task (larger stack to avoid overflow on S3)
+        xTaskCreate(nimble_host_task, "nimble_host", 6144, NULL, 5, &nimble_host_task_handle);
         
         // Wait for NimBLE stack to be ready
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -1752,14 +1760,24 @@ void ble_deinit(void) {
             handler_count = 0;
         }
 
+        // Stop NimBLE host and wait for the host task to exit
         nimble_port_stop();
-        nimble_port_deinit();
-
-        // Wait for nimble host task to finish and clean up
         if (nimble_host_task_handle != NULL) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            int wait_iterations = 0;
+            // Give the host task time to exit gracefully
+            while (eTaskGetState(nimble_host_task_handle) != eDeleted && wait_iterations < 25) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                wait_iterations++;
+            }
+            // If it still hasn't exited, force-delete it
+            if (eTaskGetState(nimble_host_task_handle) != eDeleted) {
+                vTaskDelete(nimble_host_task_handle);
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
             nimble_host_task_handle = NULL;
         }
+        // Now deinitialize the NimBLE port (controller + host deinit)
+        nimble_port_deinit();
 
         ble_initialized = false;
         ESP_LOGI(TAG_BLE, "BLE deinitialized successfully.");

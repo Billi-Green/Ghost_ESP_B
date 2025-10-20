@@ -36,7 +36,7 @@ popup_t *popup_create(lv_obj_t *parent, int width, int height) {
 	p->height = height;
 	p->container = lv_obj_create(parent);
 	lv_obj_set_size(p->container, width, height);
-	lv_obj_align(p->container, LV_ALIGN_TOP_MID, 0, 24);
+	lv_obj_align(p->container, LV_ALIGN_TOP_MID, 0, 0);
 	lv_obj_set_style_bg_color(p->container, lv_color_hex(0x2E2E2E), 0);
 	lv_obj_set_style_border_color(p->container, lv_color_hex(0x555555), 0);
 	lv_obj_set_style_border_width(p->container, 2, 0);
@@ -96,10 +96,14 @@ static lv_coord_t popup_measure_button_text_width(lv_obj_t *btn, lv_coord_t padd
 }
 
 lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height) {
+    return popup_create_container_with_offset(parent, width, height, 0);
+}
+
+lv_obj_t *popup_create_container_with_offset(lv_obj_t *parent, int width, int height, lv_coord_t y_offset) {
     if (!parent) parent = lv_scr_act();
     lv_obj_t *container = lv_obj_create(parent);
     lv_obj_set_size(container, width, height);
-    lv_obj_align(container, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_align(container, LV_ALIGN_CENTER, 0, y_offset);
     lv_obj_set_style_bg_color(container, lv_color_hex(0x2E2E2E), 0);
     lv_obj_set_style_border_color(container, lv_color_hex(0x555555), 0);
     lv_obj_set_style_border_width(container, 2, 0);
@@ -109,6 +113,7 @@ lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height) {
     lv_obj_set_style_pad_bottom(container, 4, 0);
     lv_obj_set_style_pad_left(container, DEFAULT_MARGIN, 0);
     lv_obj_set_style_pad_right(container, DEFAULT_MARGIN, 0);
+    lv_obj_move_foreground(container);
     return container;
 }
 
@@ -200,6 +205,7 @@ lv_obj_t *popup_add_button(popup_t *p, const char *label, lv_event_cb_t event_cb
 void popup_show(popup_t *p) {
 	if (!p || !p->container) return;
 	lv_obj_clear_flag(p->container, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_move_foreground(p->container);
 }
 
 void popup_hide(popup_t *p) {

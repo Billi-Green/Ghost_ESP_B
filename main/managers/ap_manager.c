@@ -703,6 +703,25 @@ void ap_manager_deinit(void) {
     
     stop_http_server();
     reset_server_config();
+
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister WIFI_EVENT handler: %s", esp_err_to_name(err_reg));
+        }
+    }
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister IP_EVENT_AP_STAIPASSIGNED handler: %s", esp_err_to_name(err_reg));
+        }
+    }
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister IP_EVENT_STA_GOT_IP handler: %s", esp_err_to_name(err_reg));
+        }
+    }
     
     esp_wifi_stop();
     esp_wifi_deinit();
