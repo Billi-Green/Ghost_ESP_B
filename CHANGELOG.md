@@ -24,6 +24,7 @@
 - Command support: connect/disconnect, status/battery, reader/emulator toggles
 - UI support: PN532 parity with cached details, More/Save flows and dictionary attack.
 - NTAG and Mifare Classic NDEF parsing, Flipper `.nfc` exports from `chameleon savehf/savedump/saventag`
+- MIFARE Classic dictionary attack persists recovered keys to `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
 
 #### UI
 

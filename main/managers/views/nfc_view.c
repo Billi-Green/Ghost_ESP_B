@@ -397,7 +397,7 @@ void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) {
     mfc_phase_key_b = key_b;
     mfc_phase_total = total_keys;
     typedef struct { int c; int t; uint32_t s; } dict_prog_t;
-    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
+    dict_prog_t *dp = (dict_prog_t*)lv_mem_alloc(sizeof(dict_prog_t));
     if (dp) { dp->c = 0; dp->t = total_keys; dp->s = nfc_scan_session; lv_async_call(nfc_progress_update_async, dp); }
 }
 static void mfc_dict_progress_cb(int current, int total, void *user) {
@@ -410,7 +410,7 @@ static void mfc_dict_progress_cb(int current, int total, void *user) {
     if (percent == last_percent) return;
     last_percent = percent;
     typedef struct { int c; int t; uint32_t s; } dict_prog_t;
-    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
+    dict_prog_t *dp = (dict_prog_t*)lv_mem_alloc(sizeof(dict_prog_t));
     if (!dp) return;
     dp->c = current; dp->t = total; dp->s = nfc_scan_session;
     lv_async_call(nfc_progress_update_async, dp);
@@ -420,8 +420,8 @@ static void nfc_progress_update_async(void *ptr) {
     if (!ptr) return;
     typedef struct { int c; int t; uint32_t s; } dict_prog_t;
     dict_prog_t *dp = (dict_prog_t*)ptr;
-    if (dp->s != nfc_scan_session) { free(dp); return; }
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(dp); return; }
+    if (dp->s != nfc_scan_session) { lv_mem_free(dp); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { lv_mem_free(dp); return; }
     int percent = 0; if (dp->t > 0) percent = (dp->c * 100) / dp->t; if (percent > 100) percent = 100; if (percent < 0) percent = 0;
     // Compose phase suffix e.g., "Sec 3 Blk 12 Key A"
     char phase[40];
@@ -478,7 +478,7 @@ static void nfc_progress_update_async(void *ptr) {
         else snprintf(info, sizeof(info), "Dictionary: %d (unknown total)%s", dp->c, phase);
         lv_label_set_text(nfc_details_label, info);
     }
-    free(dp);
+    lv_mem_free(dp);
 }
 
 static volatile bool nfc_scan_cancel = false;

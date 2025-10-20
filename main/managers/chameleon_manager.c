@@ -371,6 +371,8 @@ static void cu_mfc_cache_begin(MFC_TYPE t, const uint8_t *uid, uint8_t uid_len, 
 static inline void cu_bitset_set(uint8_t *arr, int idx) { arr[(unsigned)idx >> 3] |= (uint8_t)(1u << (idx & 7)); }
 static inline bool cu_bitset_test(const uint8_t *arr, int idx) { return (arr[(unsigned)idx >> 3] & (uint8_t)(1u << (idx & 7))) != 0; }
 
+static bool cu_parse_key_line(const char* s, const char* e, uint8_t out[6]);
+
 static void cu_mfc_cache_store_block(int abs_block, const uint8_t data[16]) {
     if (!g_cu_mfc_cache.blocks || !g_cu_mfc_cache.known_bits) return;
     if (abs_block < 0 || abs_block >= g_cu_mfc_cache.total_blocks) return;
@@ -378,16 +380,64 @@ static void cu_mfc_cache_store_block(int abs_block, const uint8_t data[16]) {
     cu_bitset_set(g_cu_mfc_cache.known_bits, abs_block);
 }
 
+static void cu_record_working_key(const uint8_t key[6], bool use_key_b);
+
 static void cu_mfc_cache_record_sector_key(int sector, bool usedB, const uint8_t key[6]) {
     int sectors = mfc_sector_count(g_cu_mfc_cache.type); if (sectors == 0) sectors = 16;
     if (sector < 0 || sector >= sectors) return;
     if (usedB) {
+        if (!g_cu_mfc_cache.key_b) return;
         memcpy(&g_cu_mfc_cache.key_b[sector * 6], key, 6);
         cu_bitset_set(g_cu_mfc_cache.key_b_valid, sector);
     } else {
+        if (!g_cu_mfc_cache.key_a) return;
         memcpy(&g_cu_mfc_cache.key_a[sector * 6], key, 6);
         cu_bitset_set(g_cu_mfc_cache.key_a_valid, sector);
     }
+    cu_record_working_key(key, usedB);
+}
+
+static void cu_record_working_key(const uint8_t key[6], bool use_key_b) {
+    if (!key) return;
+    const char *path = "/mnt/ghostesp/nfc/mfc_user_dict.nfc";
+    bool mounted_here = false;
+    bool display_was_suspended = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 && !sd_card_manager.is_initialized) {
+        if (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK) {
+            mounted_here = true;
+        } else {
+            ESP_LOGW(TAG, "CU dict: skip append, mount failed");
+            return;
+        }
+    }
+#endif
+    if (sd_card_manager.is_initialized) {
+        sd_card_create_directory("/mnt/ghostesp/nfc");
+    }
+    FILE *f = fopen(path, "a+");
+    if (!f) {
+        ESP_LOGW(TAG, "CU dict: failed to open %s", path);
+        if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
+        return;
+    }
+    bool present = false;
+    fseek(f, 0, SEEK_SET);
+    char line[96]; uint8_t parsed[6];
+    while (fgets(line, sizeof(line), f)) {
+        if (cu_parse_key_line(line, line + strlen(line), parsed)) {
+            if (memcmp(parsed, key, 6) == 0) {
+                present = true;
+                break;
+            }
+        }
+    }
+    if (!present) {
+        fprintf(f, "%02X%02X%02X%02X%02X%02X\n", key[0], key[1], key[2], key[3], key[4], key[5]);
+        ESP_LOGI(TAG, "CU dict: added new %c key", use_key_b ? 'B' : 'A');
+    }
+    fclose(f);
+    if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
 }
 
 static bool cu_mf1_auth_one_block(uint8_t block, bool use_key_b, const uint8_t key[6]);
@@ -3081,6 +3131,7 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
         if (authed) {
             if (used_key) {
                 cu_mfc_cache_record_sector_key(s, usedB, used_key);
+                cu_record_working_key(used_key, usedB);
             }
             if (!cache_mode_on && mfc_ui_set_cache_mode) { mfc_ui_set_cache_mode(true); cache_mode_on = true; }
             if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, usedB, 0);
@@ -3146,7 +3197,11 @@ bool chameleon_manager_mf1_save_flipper_dump(const char* filename){
     if (sd_card_write_file(file_path, buf, (size_t)pos) != ESP_OK) { if (did_mount) sd_card_unmount_after_flush(display_was_suspended); return false; }
 
     MFC_TYPE t = g_cu_mfc_cache.type; int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
-    int total_blocks = mfc_total_blocks(t);
+    int total_blocks = 0;
+    for (int s = 0; s < sectors; ++s) {
+        int blocks = mfc_blocks_in_sector(t, s);
+        if (blocks > 0) total_blocks += blocks;
+    }
     if (total_blocks <= 0) total_blocks = sectors * 4;
     int known_blocks = 0;
     if (g_cu_mfc_cache.known_bits) {
