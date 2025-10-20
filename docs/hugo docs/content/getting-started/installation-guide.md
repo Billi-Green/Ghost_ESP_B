@@ -128,8 +128,6 @@ As soon as the flash finishes, GhostESP boots its default access point so you ca
 
 ### Common Installation Issues
 
-Refer to the [Troubleshooting](Troubleshooting.md) page for solutions to common issues:
-
 - **Boot loops**: Usually power or board-target mismatches—verify you flashed the right image and try a known-good USB-C cable.
 - **Flash errors**: Ensure the chip is in bootloader mode; swap USB ports or hubs if `esptool.py` times out.
 - **Connection issues**: Install the correct USB-to-UART driver (CP210x, CH34x, etc.) before expecting the web UI or CLI to appear.
