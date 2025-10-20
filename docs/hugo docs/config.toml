@@ -1,0 +1,39 @@
+baseURL = "/"
+title = "GhostESP: Revival"
+theme = "ghostesp"
+defaultContentLanguage = "en"
+canonifyURLs = false
+enableRobotsTXT = true
+
+[params]
+  subtitle = ""
+
+[outputs]
+  home = ["HTML", "JSON"]
+  section = ["HTML", "JSON"]
+  page = ["HTML"]
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+
+[[menu.sidebar]]
+  name = "Overview"
+  url = "/"
+  weight = 1
+
+[[menu.sidebar]]
+  name = "Getting Started"
+  url = "/docs/getting-started/"
+  weight = 2
+
+[[menu.sidebar]]
+  name = "Hardware Setup"
+  url = "/docs/hardware/"
+  weight = 3
+
+[[menu.sidebar]]
+  name = "Firmware"
+  url = "/docs/firmware/"
+  weight = 4

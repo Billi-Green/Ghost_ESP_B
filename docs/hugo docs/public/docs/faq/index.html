@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head><script src="/livereload.js?mindelay=10&amp;v=2&amp;port=1313&amp;path=livereload" data-no-instant defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting Started FAQ · GhostESP: Revival</title>
+  
+  <link rel="stylesheet" href="/css/main.min.4ca84785a7ca8a1184b8ed20dded5ddb3fe8f944888d7aad25837156342138b6.css" integrity="sha256-TKhHhafKihGEuO0g3e1d2z/o&#43;USIjXqtJYNxVjQhOLY=">
+  <script>
+    (function() {
+      const theme = localStorage.getItem('ghostesp-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+
+      if (window.innerWidth >= 992) {
+        if (localStorage.getItem('sidebarState') === 'open') {
+          document.write('<style id="sidebar-pre-init">.sidebar { margin-left: 0; }</style>');
+        }
+      }
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <button class="topbar__toggle" type="button" onclick="toggleSidebar()" aria-label="Toggle navigation"></button>
+    <a href="/" class="topbar__brand">
+      
+      <span>GhostESP: Revival</span>
+    </a>
+    <div class="topbar__actions">
+      <button class="topbar__theme" type="button" data-theme-toggle aria-label="Toggle theme">
+        <span data-theme-toggle-icon>•</span>
+      </button>
+    </div>
+  </header>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__brand">
+        <a href="/" class="sidebar__title">GhostESP: Revival</a>
+        <p class="sidebar__subtitle">Documentation</p>
+      </div>
+      <div class="sidebar__search">
+        <input type="search" placeholder="Search" autocomplete="off" data-search-input data-search-index="/index.json">
+        <div class="sidebar__search-results" data-search-results role="listbox"></div>
+      </div>
+      <nav class="sidebar__nav">
+        <a href="/" class="sidebar__link">Home</a>
+        
+        
+          
+          
+          
+            
+            
+            <div class="sidebar__group" data-group>
+              <button class="sidebar__group-toggle" type="button" data-group-toggle aria-expanded="false" aria-controls="group-/getting-started/">
+                <span>Getting Started</span>
+                <span class="sidebar__group-icon" aria-hidden="true"></span>
+              </button>
+              <div class="sidebar__group-items" id="group-/getting-started/" data-group-items>
+                <a href="/getting-started/" class="sidebar__sublink">Overview</a>
+                
+                  <a href="/getting-started/installation-guide/" class="sidebar__sublink">Installation Guide</a>
+                
+                
+              </div>
+            </div>
+          
+        
+          
+          
+          
+            
+            
+            <div class="sidebar__group group--open" data-group>
+              <button class="sidebar__group-toggle sidebar__group-toggle--active" type="button" data-group-toggle aria-expanded="true" aria-controls="group-/docs/">
+                <span>Docs</span>
+                <span class="sidebar__group-icon" aria-hidden="true"></span>
+              </button>
+              <div class="sidebar__group-items group-items--open" id="group-/docs/" data-group-items>
+                <a href="/docs/" class="sidebar__sublink">Overview</a>
+                
+                  <a href="/docs/faq/" class="sidebar__sublink sidebar__sublink--active">Getting Started FAQ</a>
+                
+                
+              </div>
+            </div>
+          
+        
+        
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content__body">
+        
+<article class="doc">
+  <header>
+    <h1>Getting Started FAQ</h1>
+    <p>Frequently asked questions about GhostESP setup, credentials, and troubleshooting.</p>
+  </header>
+  <h1 id="frequently-asked-questions">Frequently Asked Questions</h1>
+<hr>
+<h3 id="1-what-are-the-default-network-credentials">1. What are the default network credentials?</h3>
+<ul>
+<li><strong>SSID:</strong> <code>GhostNet</code></li>
+<li><strong>Password:</strong> <code>GhostNet</code></li>
+</ul>
+<hr>
+<h3 id="2-what-are-the-default-credentials-for-the-web-interface">2. What are the default credentials for the web interface?</h3>
+<ul>
+<li><strong>Username:</strong> <code>GhostNet</code></li>
+<li><strong>Password:</strong> <code>GhostNet</code></li>
+</ul>
+<hr>
+<h3 id="3-how-do-i-access-the-web-interface">3. How do I access the web interface?</h3>
+<ul>
+<li>Connect to the <code>GhostNet</code> WiFi network.</li>
+<li>Open your browser and visit:
+<ul>
+<li><a href="http://ghostesp.local"><code>ghostesp.local</code></a></li>
+<li>or <a href="http://192.168.4.1"><code>192.168.4.1</code></a></li>
+</ul>
+</li>
+</ul>
+<hr>
+<h3 id="4-why-dont-the-default-credentials-work-for-the-web-interface">4. Why don’t the default credentials work for the web interface?</h3>
+<ul>
+<li>The web interface uses the same credentials as your WiFi AP.</li>
+<li>If you’ve changed your WiFi SSID or password, your web interface credentials also change.</li>
+</ul>
+<blockquote>
+<p><strong>Note:</strong> The firmware has a subtle password-length mismatch: the AP code falls back to the default password unless the saved password is longer than 8 characters, while web authentication treats passwords of length 8 as valid. If you set an exactly 8-character password you may see the web UI and AP use different credentials; use a password longer than 8 characters to avoid this.</p></blockquote>
+<hr>
+<h3 id="5-how-do-i-flash-my-board">5. How do I flash my board?</h3>
+<ul>
+<li>See the <a href="https://github.com/jaylikesbunda/Ghost_ESP/wiki/Installation#installation-guide">Installation Guide</a>.</li>
+<li>Use the web flasher at: <a href="https://flasher.ghostesp.net/">https://flasher.ghostesp.net/</a></li>
+</ul>
+<hr>
+<h3 id="6-can-i-upload-custom-evil-portal-html-over-serial-or-from-my-flipper-zero">6. Can I upload custom Evil Portal HTML over Serial or from my Flipper Zero?</h3>
+<ul>
+<li><strong>SD Card:</strong> Place custom HTML in <code>/ghostesp/evil_portal/portals</code> on your SD card.</li>
+<li><strong>Flipper Zero App:</strong> You can upload simple HTML (max 2048 bytes) directly via the app (v1.4+ and firmware v1.7+).</li>
+</ul>
+<hr>
+<h3 id="7-my-board-isnt-currently-supported-will-you-add-support">7. My board isn’t currently supported. Will you add support?</h3>
+<ul>
+<li>Unless something is said otherwise, no. Feel free to do it yourself—we accept and appreciate PRs.</li>
+</ul>
+<hr>
+<h3 id="8-why-does-my-connection-to-the-ghostesp-ap-drop-when-issuing-wifi-commands">8. Why does my connection to the GhostESP AP drop when issuing WiFi commands?</h3>
+<ul>
+<li>The ESP32 can’t operate as both an Access Point and WiFi Client at the same time.
+Switching modes will disconnect your device from the AP.</li>
+</ul>
+<hr>
+<h3 id="9-im-not-seeing-any-output-when-connecting-via-serial">9. I’m not seeing any output when connecting via Serial.</h3>
+<ul>
+<li>The firmware is silent unless a command is running.</li>
+<li>Try sending the <code>help</code> command to verify your connection or reconnecting; sometimes you will have a bad connection.</li>
+</ul>
+<hr>
+<h3 id="10-why-wont-my-sd-card-work">10. Why won’t my SD card work?</h3>
+<ul>
+<li>&ldquo;Generic&rdquo; firmware builds include SD card support by default; use <code>sd_config</code> to see the pins or <code>sd_pins_spi &lt;cs&gt; &lt;clk&gt; &lt;miso&gt; &lt;mosi&gt;</code> to set SPI pins and <code>sd_save_config</code> to save the pin config to SD card.</li>
+<li>Ensure your SD card is formatted as <strong>FAT32</strong>.</li>
+<li>Try using a SanDisk brand SD card 32GB or less.</li>
+</ul>
+
+  
+    <aside class="doc__toc">
+      <h2>On this page</h2>
+      <nav id="TableOfContents">
+  <ul>
+    <li>
+      <ul>
+        <li><a href="#1-what-are-the-default-network-credentials">1. What are the default network credentials?</a></li>
+        <li><a href="#2-what-are-the-default-credentials-for-the-web-interface">2. What are the default credentials for the web interface?</a></li>
+        <li><a href="#3-how-do-i-access-the-web-interface">3. How do I access the web interface?</a></li>
+        <li><a href="#4-why-dont-the-default-credentials-work-for-the-web-interface">4. Why don’t the default credentials work for the web interface?</a></li>
+        <li><a href="#5-how-do-i-flash-my-board">5. How do I flash my board?</a></li>
+        <li><a href="#6-can-i-upload-custom-evil-portal-html-over-serial-or-from-my-flipper-zero">6. Can I upload custom Evil Portal HTML over Serial or from my Flipper Zero?</a></li>
+        <li><a href="#7-my-board-isnt-currently-supported-will-you-add-support">7. My board isn’t currently supported. Will you add support?</a></li>
+        <li><a href="#8-why-does-my-connection-to-the-ghostesp-ap-drop-when-issuing-wifi-commands">8. Why does my connection to the GhostESP AP drop when issuing WiFi commands?</a></li>
+        <li><a href="#9-im-not-seeing-any-output-when-connecting-via-serial">9. I’m not seeing any output when connecting via Serial.</a></li>
+        <li><a href="#10-why-wont-my-sd-card-work">10. Why won’t my SD card work?</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+    </aside>
+  
+  
+</article>
+
+      </main>
+      <footer class="content__footer">
+        <p>© 2025 GhostESP: Revival</p>
+      </footer>
+    </div>
+  </div>
+  <div class="sidebar__overlay" id="overlay" onclick="toggleSidebar()"></div>
+  
+    
+    <script src="/js/search.044adc42c52317b9ecbd478a29039bc4438caf1e7089edba6002d23626ac1fe3.js" integrity="sha256-BErcQsUjF7nsvUeKKQObxEOMrx5wie26YALSNiasH&#43;M=" defer></script>
+  
+  
+    
+    <script src="/js/sidebar.a1e39f9580752466cc8871ebb2e4442c7078f18887ab0d8d68e457359187bb2c.js" integrity="sha256-oeOflYB1JGbMiHHrsuRELHB48YiHqw2NaORXNZGHuyw=" defer></script>
+  
+  
+    
+    <script src="/js/theme.616d584b413f144589d2ef28fcf44629dcbabc9dc1bac1c8428089336728c8a4.js" integrity="sha256-YW1YS0E/FEWJ0u8o/PRGKdy6vJ3BusHIQoCJM2coyKQ=" defer></script>
+  
+</body>
+</html>

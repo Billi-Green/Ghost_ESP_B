@@ -1,0 +1,21 @@
+{{ define "main" }}
+<section class="doc">
+  <header>
+    <h1>{{ .Title }}</h1>
+    {{ with .Params.description }}<p>{{ . }}</p>{{ end }}
+  </header>
+  {{ if .Content }}
+    <div class="doc__intro">
+      {{ .Content }}
+    </div>
+  {{ end }}
+  <div class="doc__list">
+    {{ range .Pages.ByWeight }}
+      <article class="doc__item">
+        <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2>
+        {{ with .Params.description }}<p>{{ . }}</p>{{ end }}
+      </article>
+    {{ end }}
+  </div>
+</section>
+{{ end }}
