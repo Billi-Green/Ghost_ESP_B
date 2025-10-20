@@ -7,14 +7,12 @@ toc: true
 
 ## Prerequisites
 
-Before starting, ensure you have:
+Before starting, make sure you have:
 
 - A compatible ESP32 board (see [Supported Hardware](About.md#supported-hardware))
-- A modern web browser (Google Chrome recommended, as Firefox doesn't support WebSerial)
-- Appropriate USB cable (Micro USB or USB-C, ensure it's a data cable, not a charge-only cable)
-- **File Extraction Tool**: Install [7-Zip](https://www.7-zip.org/download.html) or a similar program for extracting firmware files.
-- Internet connection for downloading firmware
-- If using a Flipper Zero, ensure it has the latest firmware for compatibility
+- A modern web browser (Google Chrome, Brave, or Microsoft Edge is recommended, as Firefox doesn't support WebSerial)
+- An appropriate USB cable (Micro USB or USB-C, ensure it's a data cable, not a charge-only cable)
+- **File Extraction Tool**: Install [7-Zip](https://www.7-zip.org/download.html) or a similar program for extracting .zip bundles.
 
 > <p class="note-heading"><strong>Note</strong></p>
 > <p>For best results, disable any VPN or firewall that might block the flashing process, as some network configurations may interfere with the web flasher.</p>
@@ -25,106 +23,81 @@ Choose your preferred method:
 
 - [Web Flasher Method](#web-flasher-method) (Recommended)
 - [USB Connection Method](#usb-connection-method)
-- [Flipper Zero Method](#flipper-zero-method)
+- [Flipper Zero Method](#flipper-zero-method) (Doesn't require a PC)
 
 ### Web Flasher Method
 
-1. **Prepare for Flashing**
-   - Visit [Ghost ESP Web Flasher](https://flasher.ghostesp.net/)
-   - If the site doesn't load correctly, clear your browser cache and try again.
-   - Use **Google Chrome** as Firefox does not support WebSerial.
-   - Ensure your ESP32 is disconnected from other software or tools to avoid port conflicts.
+1. **Prepare**
+   - Open **[flasher.ghostesp.net](https://flasher.ghostesp.net/)** in Chrome.
+   - Close apps using the serial port. If the site glitches, clear cache.
 
-2. **Enter Bootloader Mode**
+2. **Enter Bootloader**
+   - Hold **BOOT** → plug USB → release.  
+   - If needed: hold **BOOT**, tap **RESET**, keep holding **BOOT** 1–2 s, release.
 
-   - **Method 1: Boot Button and USB Connection** (most boards):
-     - **Step 1**: Hold down the **BOOT** button on your ESP32 board.
-     - **Step 2**: While holding the **BOOT** button, plug in the USB cable to connect the ESP32 to your computer.
-     - **Step 3**: Keep holding the **BOOT** button for a few seconds, then release it. Your board should now be in bootloader mode.
+3. **Flash**
+   - Pick your the ESP32 variant your board uses, click **Connect**, and follow the prompts.
 
-   - **Method 2: Boot and Reset Button Sequence**:
-     - **Step 1**: Press and hold the **BOOT** button on your ESP32.
-     - **Step 2**: While holding the **BOOT** button, press and release the **RESET** button.
-     - **Step 3**: Continue holding the **BOOT** button for an additional second or two, then release it. This sequence will also put the ESP32 into bootloader mode.
-
-3. **Flash Process**
-   - Select your board type from the dropdown menu on the flasher site. If you're unsure of your specific ESP model, check the engraving on the chip.
-   - Follow the on-screen instructions to initiate flashing.
-   - Wait until the process is complete.
-
-4. **Verify the Flash**
-   - After flashing, disconnect and reconnect your board to ensure the firmware update was successful.
-   - Verify that the firmware boots correctly by accessing the control options described in the [Post-Installation](#post-installation) section.
+4. **Verify**
+   - Unplug and replug. Continue with [Post-Installation](#post-installation).
 
 > **Tips**: After flashing, you may need to restart the device to initialize the new firmware. To ensure a clean start, disconnect and reconnect your ESP32.
 
 ### USB Connection Method
 
-This method is suitable for boards equipped with either a Micro USB or USB-C port and involves using the ESP flashing tool.
+Use when selecting files and offsets manually.
 
-1. **Download and Extract the Firmware**
-   - Visit the [GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases) page to download the latest firmware version for your board.
-   - Extract the downloaded `.tar.gz` or `.zip` file using [7-Zip](https://www.7-zip.org/download.html) or another extraction tool.
+1. **Download**
+   - Get firmware from **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
+   - Extract the `.zip` with your preferred tool.
 
-2. **Connect Your Board**
-   - Identify the boot button on your board. For Flipper Dev Boards, it's the button closest to the USB port. On other boards, this button should be labeled "Boot" or "Select," but it can vary, especially if your board has a case.
-   - Enter the board's bootloader mode by holding the identified boot button while connecting the board to your PC via a Micro USB or USB-C cable.
+2. **Connect**
+   - Enter bootloader
+   - Hold **BOOT** → plug USB → release.  
+   - If needed: hold **BOOT**, tap **RESET**, keep holding **BOOT** 1–2 s, release.
 
-3. **Flash the Firmware**
-   - Go to [ESP Huhn Flashing Tool](https://esp.huhn.me/) and click on "Connect".
-   - Select the COM port that your board is connected to. It should be labeled with your board's chipset, like "ESP32-S2".
-   - **Important Offsets:**
-     - For **ESP32-S2** and similar boards, use the following offsets:
-       - `bootloader.bin` at `0x1000`
-       - `partitions.bin` at `0x8000`
-       - `firmware.bin` at `0x10000`
-     - For **ESP32-S3, C3 or C6** boards, the bootloader offset changes to:
-       - `bootloader.bin` at `0x0`
-       - Continue using `0x8000` for `partitions.bin` and `0x10000` for `firmware.bin`.
-   - Click "Flash" and wait until the process completes.
 
-4. **Verify the Flash**
-   - After flashing, disconnect and reconnect your board to ensure the firmware update was successful.
+3. **Flash** via **[ESP Huhn Tool](https://esp.huhn.me/)**
+   - Click **Connect**, select the COM port labeled with your chipset.
+   - Load binaries with offsets:
 
-## Flipper Zero Method
+   | Chip family          | `bootloader.bin` | `partitions.bin (Partition table)` | `firmware.bin (GhostESP_IDF)` |
+   |----------------------|------------------|------------------|----------------|
+   | ESP32-S2 and similar | `0x1000`         | `0x8000`         | `0x10000`      |
+   | ESP32-S3 / C3 / C6   | `0x0`            | `0x8000`         | `0x10000`      |
 
-1. **Download Required Files**
-   - Download the latest GhostESP `.fap` file from the [flipper app store](https://lab.flipper.net/apps)!
-     - or Obtain the latest GhostESP `.fap` file from [this link](https://github.com/jaylikesbunda/ghost_esp_app/releases/latest) and manually upload it to your flipper.
-   - Download the latest firmware files from the [GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases) page for the GhostESP project.
+   - Click **Flash** and wait.
 
-2. **Prepare the Firmware Files**
-   - Extract the downloaded firmware files using [7-Zip](https://www.7-zip.org/download.html) or a similar tool.
-   - Use the firmware file that aligns with the ESP chip your board uses! ex. Flipper zero dev board is esp32s2 generic.
+4. **Verify**
+   - Replug the board and connect to a **[serial console](https://ghostesp.net/serial)** to see logs from your device.
 
-3. **Transfer Files to Flipper Zero**
-   - Ensure you have [qFlipper](https://flipperzero.one/update) installed on your PC.
-   - Connect the Flipper Zero to your PC and use qFlipper to transfer the firmware files.
-   - Place the firmware files into the following directory on the Flipper Zero `SDCard/apps_data/esp_flasher`
-     **Important**: Do not place the files in the `assets` or other folders to ensure correct functionality.
 
-4. **Connect the Board to Flipper Zero**
-   - Connect your ESP32 to the Flipper Zero using the GPIO header.
-   - Enter **bootloader mode** on your ESP32 as described in the [Web Flasher Method](#web-flasher-method).
+### Flipper Zero Method
 
-5. **Flashing Process**
-   - Open the ESP flasher app on your Flipper Zero.
-   - Select **Manual Flash** to flash each firmware component:
-     - Choose the appropriate `bootloader.bin`, `partitions.bin`, and `GhostESP.bin` files.
-     - **Important Offsets:**
-        - For **ESP32-S2** and similar boards, use the following offsets:
-           - `bootloader.bin` at `0x1000`
-           - `partitions.bin` at `0x8000`
-           - `firmware.bin` at `0x10000`
-        - For **ESP32-S3, C3 or C6** boards, the bootloader offset changes to:
-           - `bootloader.bin` at `0x0`
-           - Continue using `0x8000` for `partitions.bin` and `0x10000` for `firmware.bin`.
-   - Initiate the flash process and wait until it completes.
-   - Reset your ESP32 after completion to finalize the installation.
+1. **Download**
+   - Install GhostESP app (`.fap`) from the [Flipper app store](https://lab.flipper.net/apps)  
+     or **[releases](https://github.com/jaylikesbunda/ghost_esp_app/releases/latest)**.
+   - Download firmware from **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
+
+2. **Prepare**
+   - Extract archives. Choose the firmware that matches your chip  
+     (e.g., Flipper Dev Board = ESP32-S2 generic).
+
+3. **Copy to Flipper**
+   - Use **qFlipper** (either the mobile app or the desktop app) or pull out the sd card and use the sd card directly. Put the `.bin` files in `SDCard/apps_data/esp_flasher/`.  
+   - Do not use `assets/`.
+
+4. **Connect Hardware**
+   - Wire ESP32 to Flipper GPIO. Enter bootloader (see Web Flasher Method).
+
+5. **Flash on Flipper**
+   - Open **ESP flasher** → **Manual Flash**.
+   - Select `bootloader.bin`, `partitions.bin`, `GhostESP.bin` and make sure to check the option if your device is one of the specified variants.
+   - Start flash. Reset the ESP32 when done.
 
 ## Post-Installation
 
-After flashing, you have several control options to configure and interact with GhostESP.
+As soon as the flash finishes, GhostESP boots its default access point so you can pick the control surface that fits your hardware and workflow.
 
 ### Control Options
 
@@ -153,14 +126,14 @@ After flashing, you have several control options to configure and interact with 
    - Access all major features through the graphical interface
    - Terminal App available for keyboard-based command input on boards with keyboards
 
-## Common Installation Issues
+### Common Installation Issues
 
 Refer to the [Troubleshooting](Troubleshooting.md) page for solutions to common issues:
 
-- **Boot loops**: Check your board model and USB cable for compatibility.
-- **Flash errors**: Ensure you are in bootloader mode, and try a different USB port if flashing fails.
-- **Connection issues**: Ensure proper drivers are installed, especially on Windows.
-- **Power supply problems**: Use a stable USB power source to avoid disconnection during flashing.
-- **Cache-related issues with the web flasher**: Clear your browser cache or try a different browser if problems persist.
+- **Boot loops**: Usually power or board-target mismatches—verify you flashed the right image and try a known-good USB-C cable.
+- **Flash errors**: Ensure the chip is in bootloader mode; swap USB ports or hubs if `esptool.py` times out.
+- **Connection issues**: Install the correct USB-to-UART driver (CP210x, CH34x, etc.) before expecting the web UI or CLI to appear.
+- **Power brownouts**: Radio-heavy workloads spike draw, so use a stable 5 V supply or powered hub.
+- **Browser cache conflicts**: If the web flasher misbehaves, clear cached site data or switch to a fresh browser session.
 
-> **Troubleshooting Tip**: For the Flipper Zero method, ensure the GPIO connections are secure, and the `.bin`  file is correctly placed in `SDCard/apps_data/esp_flasher`.
+> **Troubleshooting Tip**: When flashing from the Flipper Zero app, double-check GPIO wiring and confirm every firmware blob lives under `SDCard/apps_data/esp_flasher/` before you start the transfer.

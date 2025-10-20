@@ -265,10 +265,10 @@ html[data-theme="dark"] .sidebar__link--active {
 }
 
 .sidebar__group-icon {
-  width: 1rem;
-  height: 1rem;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
   transform: rotate(-45deg);
   transition: transform 0.2s ease;
 }
@@ -334,6 +334,15 @@ html[data-theme="dark"] .sidebar__sublink--active {
   color: var(--fg);
 }
 
+.content__body h1[id],
+.content__body h2[id],
+.content__body h3[id],
+.content__body h4[id],
+.content__body h5[id],
+.content__body h6[id] {
+  scroll-margin-top: calc(var(--topbar-height) + 1rem);
+}
+
 .content__body h1 {
   font-size: 2.4rem;
   margin-bottom: 1.5rem;
@@ -376,6 +385,11 @@ html[data-theme="dark"] .sidebar__sublink--active {
   max-width: 840px;
   margin: 0 auto;
   padding: 2rem;
+}
+
+.doc__item h2 a {
+  color: inherit;
+  text-decoration: none;
 }
 
 .doc__cards {
@@ -447,6 +461,7 @@ html[data-theme="dark"] .doc__card:hover {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  margin-top: 1rem;
 }
 
 .doc__toc ul ul {
