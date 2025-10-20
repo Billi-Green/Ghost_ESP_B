@@ -16,7 +16,8 @@ Before starting, ensure you have:
 - Internet connection for downloading firmware
 - If using a Flipper Zero, ensure it has the latest firmware for compatibility
 
-> **Note**: For best results, disable any VPN or firewall that might block the flashing process, as some network configurations may interfere with the web flasher.
+> <p class="note-heading"><strong>Note</strong></p>
+> <p>For best results, disable any VPN or firewall that might block the flashing process, as some network configurations may interfere with the web flasher.</p>
 
 ## Flashing Methods
 

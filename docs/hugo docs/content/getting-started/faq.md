@@ -32,7 +32,8 @@ description: Frequently asked questions about GhostESP setup, credentials, and t
 - The web interface uses the same credentials as your WiFi AP.
 - If you’ve changed your WiFi SSID or password, your web interface credentials also change.
 
-> **Note:** The firmware has a subtle password-length mismatch: the AP code falls back to the default password unless the saved password is longer than 8 characters, while web authentication treats passwords of length 8 as valid. If you set an exactly 8-character password you may see the web UI and AP use different credentials; use a password longer than 8 characters to avoid this.
+> <p class="note-heading"><strong>Note</strong></p>
+> <p>The firmware has a subtle password-length mismatch: the AP code falls back to the default password unless the saved password is longer than 8 characters, while web authentication treats passwords of length 8 as valid. If you set an exactly 8-character password you may see the web UI and AP use different credentials; use a password longer than 8 characters to avoid this.</p>
 
 ---
 

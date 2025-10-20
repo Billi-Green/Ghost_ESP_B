@@ -1,5 +1,5 @@
 baseURL = "/"
-title = "GhostESP: Revival"
+title = "GhostESP Documentation"
 theme = "ghostesp"
 defaultContentLanguage = "en"
 canonifyURLs = false
