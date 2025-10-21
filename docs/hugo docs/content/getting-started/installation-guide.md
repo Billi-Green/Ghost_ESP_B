@@ -9,7 +9,7 @@ toc: true
 
 Before starting, make sure you have:
 
-- A compatible ESP32 board (see [Supported Hardware](About.md#supported-hardware))
+- A compatible ESP32 board (see [Supported Hardware]({{< relref "supported-hardware.md" >}}))
 - A modern web browser (Google Chrome, Brave, or Microsoft Edge is recommended, as Firefox doesn't support WebSerial)
 - An appropriate USB cable (Micro USB or USB-C, ensure it's a data cable, not a charge-only cable)
 - **File Extraction Tool**: Install [7-Zip](https://www.7-zip.org/download.html) or a similar program for extracting .zip bundles.
@@ -104,7 +104,7 @@ As soon as the flash finishes, GhostESP boots its default access point so you ca
 1. **Web Interface**
    - Connect to the `GhostNet` AP with the password `GhostNet`
    - Open a browser and connect to either `ghostesp.local` (requires mDNS support) or `192.168.4.1` to access device settings.
-   - Sign in with the default credentials `GhostNet` / `GhostNet`. Run `webauth off` in the serial/Web CLI if you want to disable authentication temporarily.
+   - Sign in with the default credentials `GhostNet` / `GhostNet`. Run `webauth off` in the serial/Web CLI if you want to disable the WebUI authentication.
    - Use the auto-updating configuration panel to manage settings, Evil Portal controls, and device info.
 
 2. **Qt6 Control App**
@@ -114,7 +114,7 @@ As soon as the flash finishes, GhostESP boots its default access point so you ca
 3. **Serial Command Line**
    - Connect via a serial interface for direct command-line control.
    - Provides full access to GhostESP's command suite and is ideal for advanced users or troubleshooting.
-   - Refer to the [Command Line Interface Documentation](https://github.com/jaylikesbunda/Ghost_ESP/blob/main/main/core/commandline.c) for available commands and usage examples.
+   - Refer to the [Command Line Reference]({{< relref "command-line-reference.md" >}}) for available commands and examples.
    - Android devices can interface with the serial command line directly using the [Serial USB Terminal app](https://play.google.com/store/apps/details?id=de.kai_morich.serial_usb_terminal&hl=en-US)
 
 4. **Flipper Zero App**

@@ -6,7 +6,7 @@ weight: 10
 
 ## Before you start
 
-- **Hardware**: Use a board with IR RX support (see `infrared/hardware.md`).
+- **Hardware**: Use a board with IR RX support (see [hardware requirements]({{< relref "hardware.md" >}})).
 - **SD card**: Inserted and mounted so GhostESP can save `.ir` files under `/ghostesp/infrared/`.
 - **Easy Learn**: Optional assistant that suggests button names; toggle it via `infrared_easy` in the command line config or the settings menu.
 

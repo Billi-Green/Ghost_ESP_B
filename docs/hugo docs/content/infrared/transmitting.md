@@ -8,7 +8,7 @@ weight: 20
 
 1. Open the Infrared view and browse the *Remotes* list to see `.ir` files stored on the SD card.
 2. Pick a Flipper-compatible `.ir` file. GhostESP parses the sections inside the file and lists every named button.
-3. Tap a button entry to transmit. A popup shows "Transmitting" while the protocol encoder recreates the waveform on the configured IR TX pin.
+3. Tap a button entry to transmit. The configured LED should flash pink if not in stealth mode.
 
 ### Universal libraries
 
