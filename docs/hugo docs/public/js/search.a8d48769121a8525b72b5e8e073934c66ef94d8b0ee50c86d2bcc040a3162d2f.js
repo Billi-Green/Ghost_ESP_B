@@ -44,15 +44,11 @@
         const lowerValue = value.toLowerCase();
         const matchIndex = lowerValue.indexOf(lowerQuery);
         if (matchIndex !== -1) {
-          const segment = value.slice(Math.max(0, matchIndex - 60), Math.min(value.length, matchIndex + trimmedQuery.length + 60));
-          const snippet = segment.replace(/\s+/g, ' ').trim();
-          if (snippet) {
-            return {
-              snippet,
-              leading: matchIndex > 0,
-              trailing: matchIndex + trimmedQuery.length < value.length
-            };
-          }
+          return {
+            snippet: value.slice(Math.max(0, matchIndex - 60), Math.min(value.length, matchIndex + trimmedQuery.length + 60)).replace(/\s+/g, ' ').trim(),
+            leading: matchIndex > 0,
+            trailing: matchIndex + trimmedQuery.length < value.length
+          };
         }
       }
       return null;
@@ -96,25 +92,12 @@
 
   const buildResultHref = (result, query) => {
     const permalink = result.item.permalink;
-    if (permalink.includes('#')) {
-      return permalink;
-    }
-
     const fragment = extractMatchFragment(result, query);
     if (!fragment) {
       return permalink;
     }
 
-    let fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
-    const trimmedQuery = query.trim();
-    if (trimmedQuery) {
-      const lowerFragment = fragmentText.toLowerCase();
-      const lowerQuery = trimmedQuery.toLowerCase();
-      const phraseIndex = lowerFragment.indexOf(lowerQuery);
-      if (phraseIndex !== -1) {
-        fragmentText = fragmentText.substring(phraseIndex, phraseIndex + trimmedQuery.length);
-      }
-    }
+    const fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
     if (!fragmentText) {
       return permalink;
     }

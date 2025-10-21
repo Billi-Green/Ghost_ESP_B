@@ -20,107 +20,26 @@
 
   const highlightMatches = (text, query) => {
     if (!query) return escapeHtml(text);
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escaped})`, 'gi');
+    const regex = new RegExp(`(${query.split(' ').map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
     return escapeHtml(text).replace(regex, '<mark>$1</mark>');
   };
 
-  const extractMatchFragment = (result, query) => {
-    const content = result.item.content || '';
-    const trimmedQuery = query.trim();
-    if (!content || !trimmedQuery) {
-      return null;
-    }
-
-    const lowerQuery = trimmedQuery.toLowerCase();
-    const lowerContent = content.toLowerCase();
-    let index = lowerContent.indexOf(lowerQuery);
-
-    if (index === -1) {
-      const matches = result.matches || [];
-      const fallback = matches.find(match => match.key === 'content' && match.value);
-      if (fallback) {
-        const value = fallback.value;
-        const lowerValue = value.toLowerCase();
-        const matchIndex = lowerValue.indexOf(lowerQuery);
-        if (matchIndex !== -1) {
-          const segment = value.slice(Math.max(0, matchIndex - 60), Math.min(value.length, matchIndex + trimmedQuery.length + 60));
-          const snippet = segment.replace(/\s+/g, ' ').trim();
-          if (snippet) {
-            return {
-              snippet,
-              leading: matchIndex > 0,
-              trailing: matchIndex + trimmedQuery.length < value.length
-            };
-          }
-        }
-      }
-      return null;
-    }
-
-    const totalLength = content.length;
-    const start = Math.max(0, index - 60);
-    const end = Math.min(totalLength, index + trimmedQuery.length + 60);
-    const snippet = content.slice(start, end).replace(/\s+/g, ' ').trim();
-    if (!snippet) {
-      return null;
-    }
-
-    return {
-      snippet,
-      leading: start > 0,
-      trailing: end < totalLength
-    };
-  };
-
-  const buildMatchSnippet = (result, query) => {
-    const fragment = extractMatchFragment(result, query);
-    if (fragment) {
-      let text = fragment.snippet;
-      if (fragment.leading) {
-        text = `…${text}`;
-      }
-      if (fragment.trailing) {
-        text = `${text}…`;
-      }
-      return highlightMatches(text, query);
-    }
-
-    const description = result.item.description || '';
-    if (description) {
-      return highlightMatches(description.substring(0, 120), query);
-    }
-
-    return '';
-  };
-
-  const buildResultHref = (result, query) => {
+  const buildResultHref = (result) => {
     const permalink = result.item.permalink;
-    if (permalink.includes('#')) {
+    const matches = result.matches || [];
+    const contentMatch = matches.find(match => match.key === 'content') || matches[0];
+    if (!contentMatch || !contentMatch.indices || !contentMatch.indices.length || !contentMatch.value) {
       return permalink;
     }
 
-    const fragment = extractMatchFragment(result, query);
-    if (!fragment) {
+    const [start, end] = contentMatch.indices[0];
+    const matchedText = contentMatch.value.slice(start, end + 1).trim();
+    if (!matchedText) {
       return permalink;
     }
 
-    let fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
-    const trimmedQuery = query.trim();
-    if (trimmedQuery) {
-      const lowerFragment = fragmentText.toLowerCase();
-      const lowerQuery = trimmedQuery.toLowerCase();
-      const phraseIndex = lowerFragment.indexOf(lowerQuery);
-      if (phraseIndex !== -1) {
-        fragmentText = fragmentText.substring(phraseIndex, phraseIndex + trimmedQuery.length);
-      }
-    }
-    if (!fragmentText) {
-      return permalink;
-    }
-
-    const encoded = encodeURIComponent(fragmentText);
-    return `${permalink}#:~:text=${encoded}`;
+    const fragment = encodeURIComponent(matchedText.replace(/\s+/g, ' '));
+    return `${permalink}#:~:text=${fragment}`;
   };
 
   const updateSelection = () => {
@@ -148,14 +67,14 @@
       const match = result.item;
       const item = document.createElement('a');
       item.className = 'sidebar__result';
-      item.href = buildResultHref(result, query);
+      item.href = buildResultHref(result);
       item.setAttribute('role', 'option');
       item.dataset.index = idx;
       
       const title = highlightMatches(match.title, query);
-      const snippet = buildMatchSnippet(result, query);
+      const description = match.description ? highlightMatches(match.description.substring(0, 100), query) : '';
       
-      item.innerHTML = `<strong>${title}</strong>${snippet ? `<span>${snippet}</span>` : ''}`;
+      item.innerHTML = `<strong>${title}</strong>${description ? `<span>${description}...</span>` : ''}`;
       resultsContainer.appendChild(item);
     });
 
@@ -177,18 +96,8 @@
       return;
     }
 
-    const phrase = q.toLowerCase();
     const results = fuse.search(q);
-    let filteredResults = results.filter(result => {
-      const item = result.item;
-      return [item.content, item.description, item.title].some(field => field && field.toLowerCase().includes(phrase));
-    });
-
-    if (!filteredResults.length) {
-      filteredResults = results;
-    }
-
-    renderResults(filteredResults, q);
+    renderResults(results, q);
   };
 
   const debouncedSearch = (query) => {

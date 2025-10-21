@@ -20,61 +20,50 @@
 
   const highlightMatches = (text, query) => {
     if (!query) return escapeHtml(text);
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escaped})`, 'gi');
+    const regex = new RegExp(`(${query.split(' ').map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
     return escapeHtml(text).replace(regex, '<mark>$1</mark>');
   };
 
-  const extractMatchFragment = (result, query) => {
-    const content = result.item.content || '';
-    const trimmedQuery = query.trim();
-    if (!content || !trimmedQuery) {
+  const extractMatchFragment = (result) => {
+    const matches = result.matches || [];
+    const contentMatch = matches.find(match => match.key === 'content') || matches[0];
+    if (!contentMatch || !contentMatch.value) {
       return null;
     }
 
-    const lowerQuery = trimmedQuery.toLowerCase();
-    const lowerContent = content.toLowerCase();
-    let index = lowerContent.indexOf(lowerQuery);
+    const value = contentMatch.value;
+    const totalLength = value.length;
+    let start = 0;
+    let end = totalLength;
+    let leading = false;
+    let trailing = false;
 
-    if (index === -1) {
-      const matches = result.matches || [];
-      const fallback = matches.find(match => match.key === 'content' && match.value);
-      if (fallback) {
-        const value = fallback.value;
-        const lowerValue = value.toLowerCase();
-        const matchIndex = lowerValue.indexOf(lowerQuery);
-        if (matchIndex !== -1) {
-          const segment = value.slice(Math.max(0, matchIndex - 60), Math.min(value.length, matchIndex + trimmedQuery.length + 60));
-          const snippet = segment.replace(/\s+/g, ' ').trim();
-          if (snippet) {
-            return {
-              snippet,
-              leading: matchIndex > 0,
-              trailing: matchIndex + trimmedQuery.length < value.length
-            };
-          }
-        }
-      }
-      return null;
+    if (contentMatch.indices && contentMatch.indices.length) {
+      const first = contentMatch.indices[0][0];
+      const last = contentMatch.indices[contentMatch.indices.length - 1][1];
+      start = Math.max(0, first - 60);
+      end = Math.min(totalLength, last + 60);
+      leading = start > 0;
+      trailing = end < totalLength;
+    } else {
+      end = Math.min(totalLength, 120);
+      trailing = end < totalLength;
     }
 
-    const totalLength = content.length;
-    const start = Math.max(0, index - 60);
-    const end = Math.min(totalLength, index + trimmedQuery.length + 60);
-    const snippet = content.slice(start, end).replace(/\s+/g, ' ').trim();
+    const snippet = value.slice(start, end).replace(/\s+/g, ' ').trim();
     if (!snippet) {
       return null;
     }
 
     return {
       snippet,
-      leading: start > 0,
-      trailing: end < totalLength
+      leading,
+      trailing
     };
   };
 
   const buildMatchSnippet = (result, query) => {
-    const fragment = extractMatchFragment(result, query);
+    const fragment = extractMatchFragment(result);
     if (fragment) {
       let text = fragment.snippet;
       if (fragment.leading) {
@@ -94,27 +83,14 @@
     return '';
   };
 
-  const buildResultHref = (result, query) => {
+  const buildResultHref = (result) => {
     const permalink = result.item.permalink;
-    if (permalink.includes('#')) {
-      return permalink;
-    }
-
-    const fragment = extractMatchFragment(result, query);
+    const fragment = extractMatchFragment(result);
     if (!fragment) {
       return permalink;
     }
 
-    let fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
-    const trimmedQuery = query.trim();
-    if (trimmedQuery) {
-      const lowerFragment = fragmentText.toLowerCase();
-      const lowerQuery = trimmedQuery.toLowerCase();
-      const phraseIndex = lowerFragment.indexOf(lowerQuery);
-      if (phraseIndex !== -1) {
-        fragmentText = fragmentText.substring(phraseIndex, phraseIndex + trimmedQuery.length);
-      }
-    }
+    const fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
     if (!fragmentText) {
       return permalink;
     }
@@ -148,7 +124,7 @@
       const match = result.item;
       const item = document.createElement('a');
       item.className = 'sidebar__result';
-      item.href = buildResultHref(result, query);
+      item.href = buildResultHref(result);
       item.setAttribute('role', 'option');
       item.dataset.index = idx;
       
@@ -177,15 +153,19 @@
       return;
     }
 
-    const phrase = q.toLowerCase();
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
     const results = fuse.search(q);
-    let filteredResults = results.filter(result => {
-      const item = result.item;
-      return [item.content, item.description, item.title].some(field => field && field.toLowerCase().includes(phrase));
-    });
+    let filteredResults = results;
 
-    if (!filteredResults.length) {
-      filteredResults = results;
+    if (terms.length > 1) {
+      filteredResults = results.filter(result => {
+        const matchTexts = (result.matches || []).map(match => (match.value || '').toLowerCase());
+        return terms.every(term => matchTexts.some(text => text.includes(term)));
+      });
+
+      if (!filteredResults.length) {
+        filteredResults = results;
+      }
     }
 
     renderResults(filteredResults, q);

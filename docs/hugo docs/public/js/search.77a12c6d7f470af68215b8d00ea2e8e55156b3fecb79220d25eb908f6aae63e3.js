@@ -96,10 +96,6 @@
 
   const buildResultHref = (result, query) => {
     const permalink = result.item.permalink;
-    if (permalink.includes('#')) {
-      return permalink;
-    }
-
     const fragment = extractMatchFragment(result, query);
     if (!fragment) {
       return permalink;

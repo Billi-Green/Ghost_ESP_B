@@ -32,29 +32,10 @@
       return null;
     }
 
-    const lowerQuery = trimmedQuery.toLowerCase();
     const lowerContent = content.toLowerCase();
-    let index = lowerContent.indexOf(lowerQuery);
-
+    const lowerQuery = trimmedQuery.toLowerCase();
+    const index = lowerContent.indexOf(lowerQuery);
     if (index === -1) {
-      const matches = result.matches || [];
-      const fallback = matches.find(match => match.key === 'content' && match.value);
-      if (fallback) {
-        const value = fallback.value;
-        const lowerValue = value.toLowerCase();
-        const matchIndex = lowerValue.indexOf(lowerQuery);
-        if (matchIndex !== -1) {
-          const segment = value.slice(Math.max(0, matchIndex - 60), Math.min(value.length, matchIndex + trimmedQuery.length + 60));
-          const snippet = segment.replace(/\s+/g, ' ').trim();
-          if (snippet) {
-            return {
-              snippet,
-              leading: matchIndex > 0,
-              trailing: matchIndex + trimmedQuery.length < value.length
-            };
-          }
-        }
-      }
       return null;
     }
 
@@ -94,27 +75,39 @@
     return '';
   };
 
-  const buildResultHref = (result, query) => {
+  const buildResultHref = (result) => {
     const permalink = result.item.permalink;
-    if (permalink.includes('#')) {
-      return permalink;
-    }
-
-    const fragment = extractMatchFragment(result, query);
+    const fragment = extractMatchFragment(result, queryForHref);
     if (!fragment) {
       return permalink;
     }
 
-    let fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
-    const trimmedQuery = query.trim();
-    if (trimmedQuery) {
-      const lowerFragment = fragmentText.toLowerCase();
-      const lowerQuery = trimmedQuery.toLowerCase();
-      const phraseIndex = lowerFragment.indexOf(lowerQuery);
-      if (phraseIndex !== -1) {
-        fragmentText = fragmentText.substring(phraseIndex, phraseIndex + trimmedQuery.length);
-      }
+    const fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
+    if (!fragmentText) {
+      return permalink;
     }
+
+    const encoded = encodeURIComponent(fragmentText);
+    return `${permalink}#:~:text=${encoded}`;
+  };
+
+  let queryForHref = '';
+
+  const buildResultHrefWithQuery = (result, query) => {
+    queryForHref = query;
+    const href = buildResultHref(result);
+    queryForHref = '';
+    return href;
+  };
+
+  const buildResultHref = (result) => {
+    const permalink = result.item.permalink;
+    const fragment = extractMatchFragment(result, queryForHref);
+    if (!fragment) {
+      return permalink;
+    }
+
+    const fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
     if (!fragmentText) {
       return permalink;
     }
@@ -148,7 +141,7 @@
       const match = result.item;
       const item = document.createElement('a');
       item.className = 'sidebar__result';
-      item.href = buildResultHref(result, query);
+      item.href = buildResultHrefWithQuery(result, query);
       item.setAttribute('role', 'option');
       item.dataset.index = idx;
       
@@ -180,8 +173,8 @@
     const phrase = q.toLowerCase();
     const results = fuse.search(q);
     let filteredResults = results.filter(result => {
-      const item = result.item;
-      return [item.content, item.description, item.title].some(field => field && field.toLowerCase().includes(phrase));
+      const content = result.item.content || '';
+      return content.toLowerCase().includes(phrase);
     });
 
     if (!filteredResults.length) {

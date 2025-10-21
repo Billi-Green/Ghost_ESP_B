@@ -29,9 +29,9 @@ GhostESP’s PN532 stack focuses on ISO14443A tags. This page summarizes what th
   - Built-in common keys.
   - Flipper Zero dictionary pre-compiled in.
 
-- **Key caching:** Successful keys are cached for the session and appended to the user dictionary so future scans start with known values.
+- **User Dictionary:** Successful keys are appended to the user dictionary on the mounted sd card so future scans start with known values.
 
-- **Save:** Cached sectors and recovered keys stored in `.nfc` files for later use.
+- **Save:** Unlocked sectors and recovered keys are stored in Flipper formatted `.nfc` files.
 
 - **Write:** Not currently supported from GhostESP.
 

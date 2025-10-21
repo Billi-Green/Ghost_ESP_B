@@ -96,25 +96,12 @@
 
   const buildResultHref = (result, query) => {
     const permalink = result.item.permalink;
-    if (permalink.includes('#')) {
-      return permalink;
-    }
-
     const fragment = extractMatchFragment(result, query);
     if (!fragment) {
       return permalink;
     }
 
-    let fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
-    const trimmedQuery = query.trim();
-    if (trimmedQuery) {
-      const lowerFragment = fragmentText.toLowerCase();
-      const lowerQuery = trimmedQuery.toLowerCase();
-      const phraseIndex = lowerFragment.indexOf(lowerQuery);
-      if (phraseIndex !== -1) {
-        fragmentText = fragmentText.substring(phraseIndex, phraseIndex + trimmedQuery.length);
-      }
-    }
+    const fragmentText = fragment.snippet.replace(/\s+/g, ' ').trim();
     if (!fragmentText) {
       return permalink;
     }
