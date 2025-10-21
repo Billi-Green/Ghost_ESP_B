@@ -1,6 +1,6 @@
 ---
 title: "NFC"
-description: "Short introduction to GhostESP's NFC tooling"
+description: "Information about GhostESP's NFC capabilities"
 weight: 40
 aliases:
   - "/nfc/"
