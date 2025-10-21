@@ -75,6 +75,55 @@
   </script>
 </head>
 <body>
+  {{ $scratch := newScratch }}
+  {{ $versionConfig := .Site.Params.versioning }}
+  {{ $scratch.Set "versionOptions" (slice) }}
+  {{ $scratch.Set "currentVersion" "" }}
+  {{ with $versionConfig }}
+    {{ $scratch.Set "versionOptions" (default (slice) .options) }}
+    {{ $scratch.Set "currentVersion" (default "latest" .default) }}
+    {{ $rel := $.RelPermalink }}
+    {{ if strings.HasPrefix $rel "/docs/" }}
+      {{ $parts := split (strings.TrimPrefix "/docs/" $rel) "/" }}
+      {{ if ge (len $parts) 1 }}
+        {{ $candidate := index $parts 0 }}
+        {{ range (default (slice) .options) }}
+          {{ if eq (index . "id") $candidate }}
+            {{ $scratch.Set "currentVersion" $candidate }}
+          {{ end }}
+        {{ end }}
+      {{ end }}
+    {{ end }}
+  {{ end }}
+  {{ $versionOptions := $scratch.Get "versionOptions" }}
+  {{ $currentVersion := $scratch.Get "currentVersion" }}
+  {{ $hasVersioning := and (gt (len (default (slice) $versionOptions)) 0) (ne $currentVersion "") }}
+  {{ $scratch.Set "versionRoot" nil }}
+  {{ if $hasVersioning }}
+    {{ with $.Site.GetPage (printf "docs/%s" $currentVersion) }}
+      {{ $scratch.Set "versionRoot" . }}
+    {{ end }}
+    {{ if not ($scratch.Get "versionRoot") }}
+      {{ range $versionOptions }}
+        {{ if not ($scratch.Get "versionRoot") }}
+          {{ with $.Site.GetPage (printf "docs/%s" (index . "id")) }}
+            {{ $scratch.Set "versionRoot" . }}
+            {{ $scratch.Set "currentVersion" (index . "id") }}
+          {{ end }}
+        {{ end }}
+      {{ end }}
+    {{ end }}
+  {{ end }}
+  {{ $versionRoot := $scratch.Get "versionRoot" }}
+  {{ $currentVersion := $scratch.Get "currentVersion" }}
+  {{ $hasVersioning := and $versionRoot (gt (len (default (slice) $versionOptions)) 0) }}
+  {{ $scratch.Set "homeLink" "/" }}
+  {{ if $versionRoot }}
+    {{ $scratch.Set "homeLink" $versionRoot.RelPermalink }}
+  {{ else if and (ne $currentVersion "") ($hasVersioning) }}
+    {{ $scratch.Set "homeLink" (printf "/docs/%s/" $currentVersion) }}
+  {{ end }}
+  {{ $homeLink := $scratch.Get "homeLink" }}
   {{ $logo := resources.Get "images/ghostesp.png" | fingerprint }}
   <header class="topbar">
     <button class="topbar__toggle" type="button" onclick="toggleSidebar()" aria-label="Toggle navigation" aria-expanded="false">
@@ -113,7 +162,7 @@
     </div>
   </header>
   <div class="app">
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar"{{ if $hasVersioning }} data-current-version="{{ $currentVersion }}"{{ end }}>
       <div class="sidebar__brand">
         <a href="{{ "/" | relURL }}" class="sidebar__title">
           {{ with $logo }}
@@ -122,36 +171,75 @@
         </a>
         {{ with .Site.Params.subtitle }}<p class="sidebar__subtitle">{{ . }}</p>{{ end }}
       </div>
+      {{ if $hasVersioning }}
+        <div class="sidebar__version">
+          <label for="sidebar-version" class="sidebar__version-label">Firmware version</label>
+          <select id="sidebar-version" class="sidebar__version-select" data-version-select>
+            {{ range $versionOptions }}
+              <option value="{{ index . "id" }}"{{ if eq (index . "id") $currentVersion }} selected{{ end }}>{{ index . "name" }}</option>
+            {{ end }}
+          </select>
+        </div>
+      {{ end }}
       <div class="sidebar__search">
         <input type="search" placeholder="Search" autocomplete="off" data-search-input data-search-index="{{ "index.json" | relURL }}">
         <div class="sidebar__search-results" data-search-results role="listbox"></div>
       </div>
       <nav class="sidebar__nav">
-        <a href="{{ "/" | relURL }}" class="sidebar__link{{ if .IsHome }} sidebar__link--active{{ end }}">Home</a>
-        {{ $current := . }}
-        {{ range .Site.Sections.ByWeight }}
-          {{ $pages := where .Pages "Draft" false }}
-          {{ $isSectionWithPages := gt (len $pages) 0 }}
-          {{ if $isSectionWithPages }}
-            {{ $isActive := or (eq $current .) ($current.IsDescendant .) }}
-            {{ $rel := .RelPermalink }}
-            {{ $groupID := printf "collapse-%s" (anchorize (strings.TrimPrefix "/" $rel)) }}
-            <div class="sidebar__group{{ if $isActive }} group--open{{ end }}">
-              <button class="sidebar__group-toggle{{ if $isActive }} sidebar__group-toggle--active{{ end }}{{ if not $isActive }} collapsed{{ end }}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ $groupID }}" aria-expanded="{{ if $isActive }}true{{ else }}false{{ end }}" aria-controls="{{ $groupID }}">
-                <span>{{ .LinkTitle }}</span>
-                <span class="sidebar__group-icon" aria-hidden="true"></span>
-              </button>
-              <div class="collapse{{ if $isActive }} show{{ end }} sidebar__group-items" id="{{ $groupID }}">
-                <a href="{{ .RelPermalink }}" class="sidebar__sublink{{ if eq $current . }} sidebar__sublink--active{{ end }}">Overview</a>
-                {{ range (where $pages "File" "!=" nil).ByWeight }}
-                  <a href="{{ .RelPermalink }}" class="sidebar__sublink{{ if eq . $current }} sidebar__sublink--active{{ end }}">{{ .LinkTitle }}</a>
-                {{ end }}
+        {{ $currentPage := . }}
+        {{ $currentPath := strings.TrimSuffix $currentPage.RelPermalink "/" }}
+        {{ $homePath := strings.TrimSuffix ($homeLink | relURL) "/" }}
+        <a href="{{ $homeLink | relURL }}" class="sidebar__link{{ if eq $currentPath $homePath }} sidebar__link--active{{ end }}">Home</a>
+        {{ if $versionRoot }}
+          {{ range $versionRoot.Sections.ByWeight }}
+            {{ $section := . }}
+            {{ $sectionRel := $section.RelPermalink }}
+            {{ $pages := where $section.Pages "Draft" false }}
+            {{ if gt (len $pages) 0 }}
+              {{ $isActive := or (eq $currentPage $section) ($currentPage.IsDescendant $section) }}
+              {{ $groupID := printf "collapse-%s" (anchorize (strings.TrimPrefix "/" $sectionRel)) }}
+              <div class="sidebar__group{{ if $isActive }} group--open{{ end }}">
+                <button class="sidebar__group-toggle{{ if $isActive }} sidebar__group-toggle--active{{ end }}{{ if not $isActive }} collapsed{{ end }}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ $groupID }}" aria-expanded="{{ if $isActive }}true{{ else }}false{{ end }}" aria-controls="{{ $groupID }}">
+                  <span>{{ $section.LinkTitle }}</span>
+                  <span class="sidebar__group-icon" aria-hidden="true"></span>
+                </button>
+                <div class="collapse{{ if $isActive }} show{{ end }} sidebar__group-items" id="{{ $groupID }}">
+                  <a href="{{ $section.RelPermalink }}" class="sidebar__sublink{{ if eq $currentPage $section }} sidebar__sublink--active{{ end }}">Overview</a>
+                  {{ range (where $pages "File" "!=" nil).ByWeight }}
+                    <a href="{{ .RelPermalink }}" class="sidebar__sublink{{ if eq . $currentPage }} sidebar__sublink--active{{ end }}">{{ .LinkTitle }}</a>
+                  {{ end }}
+                </div>
               </div>
-            </div>
+            {{ end }}
           {{ end }}
-        {{ end }}
-        {{ range (where (where .Site.RegularPages "Section" "") "File" "!=" nil).ByWeight }}
-          <a href="{{ .RelPermalink }}" class="sidebar__link{{ if eq . $current }} sidebar__link--active{{ end }}">{{ .LinkTitle }}</a>
+          {{ range $versionRoot.RegularPages.ByWeight }}
+            <a href="{{ .RelPermalink }}" class="sidebar__link{{ if eq . $currentPage }} sidebar__link--active{{ end }}">{{ .LinkTitle }}</a>
+          {{ end }}
+        {{ else }}
+          {{ range .Site.Sections.ByWeight }}
+            {{ $section := . }}
+            {{ $pages := where $section.Pages "Draft" false }}
+            {{ if gt (len $pages) 0 }}
+              {{ $isActive := or (eq $currentPage $section) ($currentPage.IsDescendant $section) }}
+              {{ $sectionRel := $section.RelPermalink }}
+              {{ $groupID := printf "collapse-%s" (anchorize (strings.TrimPrefix "/" $sectionRel)) }}
+              <div class="sidebar__group{{ if $isActive }} group--open{{ end }}">
+                <button class="sidebar__group-toggle{{ if $isActive }} sidebar__group-toggle--active{{ end }}{{ if not $isActive }} collapsed{{ end }}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ $groupID }}" aria-expanded="{{ if $isActive }}true{{ else }}false{{ end }}" aria-controls="{{ $groupID }}">
+                  <span>{{ $section.LinkTitle }}</span>
+                  <span class="sidebar__group-icon" aria-hidden="true"></span>
+                </button>
+                <div class="collapse{{ if $isActive }} show{{ end }} sidebar__group-items" id="{{ $groupID }}">
+                  <a href="{{ $section.RelPermalink }}" class="sidebar__sublink{{ if eq $currentPage $section }} sidebar__sublink--active{{ end }}">Overview</a>
+                  {{ range (where $pages "File" "!=" nil).ByWeight }}
+                    <a href="{{ .RelPermalink }}" class="sidebar__sublink{{ if eq . $currentPage }} sidebar__sublink--active{{ end }}">{{ .LinkTitle }}</a>
+                  {{ end }}
+                </div>
+              </div>
+            {{ end }}
+          {{ end }}
+          {{ range (where (where .Site.RegularPages "Section" "") "File" "!=" nil).ByWeight }}
+            <a href="{{ .RelPermalink }}" class="sidebar__link{{ if eq . $currentPage }} sidebar__link--active{{ end }}">{{ .LinkTitle }}</a>
+          {{ end }}
         {{ end }}
       </nav>
     </aside>

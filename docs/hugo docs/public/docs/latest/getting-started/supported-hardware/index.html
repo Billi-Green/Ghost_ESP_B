@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head><script src="/livereload.js?mindelay=10&amp;v=2&amp;port=1313&amp;path=livereload" data-no-instant defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Supported Hardware · GhostESP Documentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  
+  <link rel="stylesheet" href="/css/main.min.7863a37f454e0310ae10e3a5e7453fd98d3f146119b3133fa53210668f4ac659.css" integrity="sha256-eGOjf0VOAxCuEOOl50U/2Y0/FGEZsxM/pTIQZo9Kxlk=">
+  
+  
+  
+
+  
+    
+  
+  
+
+  
+    
+  
+
+  
+    
+      
+    
+  
+
+  
+  
+    
+  
+
+  
+  
+
+  <meta name="description" content="Boards and ESP32 variants officially supported by GhostESP">
+  <meta property="og:site_name" content="GhostESP Documentation">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Supported Hardware">
+  <meta property="og:description" content="Boards and ESP32 variants officially supported by GhostESP">
+  <meta property="og:url" content="//localhost:1313/docs/latest/getting-started/supported-hardware/">
+  <meta property="og:locale" content="en">
+  <meta property="og:image" content="//localhost:1313/images/ghostesp.1c3d9c47d752a1754fc78c41fddb238546a26cfcf2b07ddfe7a934b15cefba02.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Supported Hardware">
+  <meta name="twitter:description" content="Boards and ESP32 variants officially supported by GhostESP">
+  <meta name="twitter:image" content="//localhost:1313/images/ghostesp.1c3d9c47d752a1754fc78c41fddb238546a26cfcf2b07ddfe7a934b15cefba02.png">
+  <script>
+    (function() {
+      const theme = localStorage.getItem('ghostesp-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+
+      if (window.innerWidth >= 992) {
+        if (localStorage.getItem('sidebarState') === 'open') {
+          document.write('<style id="sidebar-pre-init">.sidebar { margin-left: 0; }</style>');
+        }
+      }
+    })();
+  </script>
+</head>
+<body>
+  
+  
+  
+  
+  
+    
+    
+    
+      
+    
+    
+    
+      
+      
+        
+        
+          
+            
+          
+        
+          
+        
+      
+    
+  
+  
+  
+  
+  
+  <header class="topbar">
+    <button class="topbar__toggle" type="button" onclick="toggleSidebar()" aria-label="Toggle navigation" aria-expanded="false">
+      <svg class="icon icon-menu" viewBox="0 0 24 24" aria-hidden="true">
+        <line class="icon-menu__line icon-menu__line--top" x1="5" y1="7" x2="19" y2="7"></line>
+        <line class="icon-menu__line icon-menu__line--middle" x1="5" y1="12" x2="19" y2="12"></line>
+        <line class="icon-menu__line icon-menu__line--bottom" x1="5" y1="17" x2="19" y2="17"></line>
+      </svg>
+    </button>
+    <a href="/" class="topbar__brand">
+      
+        <img src="/images/ghostesp.1c3d9c47d752a1754fc78c41fddb238546a26cfcf2b07ddfe7a934b15cefba02.png" alt="GhostESP: Revival" class="topbar__logo">
+      
+    </a>
+    <div class="topbar__actions">
+      <button class="topbar__theme" type="button" data-theme-toggle aria-label="Toggle theme">
+        <svg class="icon icon-theme" viewBox="0 0 24 24" data-theme-icon aria-hidden="true">
+          <g class="icon-theme__sun">
+            <circle cx="12" cy="12" r="5"></circle>
+            <g class="icon-theme__sun-rays">
+              <line x1="12" y1="2.5" x2="12" y2="5.5"></line>
+              <line x1="12" y1="18.5" x2="12" y2="21.5"></line>
+              <line x1="4.5" y1="12" x2="7.5" y2="12"></line>
+              <line x1="16.5" y1="12" x2="19.5" y2="12"></line>
+              <line x1="5.6" y1="5.6" x2="7.8" y2="7.8"></line>
+              <line x1="16.2" y1="16.2" x2="18.4" y2="18.4"></line>
+              <line x1="5.6" y1="18.4" x2="7.8" y2="16.2"></line>
+              <line x1="16.2" y1="7.8" x2="18.4" y2="5.6"></line>
+            </g>
+          </g>
+          <g class="icon-theme__moon">
+            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path>
+          </g>
+        </svg>
+      </button>
+    </div>
+  </header>
+  <div class="app">
+    <aside class="sidebar" id="sidebar" data-current-version="latest">
+      <div class="sidebar__brand">
+        <a href="/" class="sidebar__title">
+          
+            <img src="/images/ghostesp.1c3d9c47d752a1754fc78c41fddb238546a26cfcf2b07ddfe7a934b15cefba02.png" alt="GhostESP: Revival" class="sidebar__logo">
+          
+        </a>
+        
+      </div>
+      
+        <div class="sidebar__version">
+          <label for="sidebar-version" class="sidebar__version-label">Firmware version</label>
+          <select id="sidebar-version" class="sidebar__version-select" data-version-select>
+            
+              <option value="latest" selected>Latest</option>
+            
+              <option value="v1.8">v1.8</option>
+            
+          </select>
+        </div>
+      
+      <div class="sidebar__search">
+        <input type="search" placeholder="Search" autocomplete="off" data-search-input data-search-index="/index.json">
+        <div class="sidebar__search-results" data-search-results role="listbox"></div>
+      </div>
+      <nav class="sidebar__nav">
+        
+        
+        
+        
+          
+        
+        
+        <a href="/docs/latest/" class="sidebar__link sidebar__link--active">Home</a>
+        
+          
+          
+          
+            
+            
+            
+              
+              
+                
+              
+            
+            
+          
+        
+        
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content__body">
+        
+<article class="doc">
+  <header>
+    <h1>Supported Hardware</h1>
+    <p>Boards and ESP32 variants officially supported by GhostESP</p>
+  </header>
+  
+    <aside class="doc__toc">
+      <h2>On this page</h2>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#display-enabled-boards">Display-enabled boards</a></li>
+    <li><a href="#generic-development-boards">Generic development boards</a></li>
+    <li><a href="#notes">Notes</a></li>
+  </ul>
+</nav>
+    </aside>
+  
+  <p>GhostESP runs on a range of ESP32 development boards and consumer devices. Confirm your hardware is listed here before flashing.</p>
+
+
+
+<h2 id="display-enabled-boards">
+  Display-enabled boards
+  <a class="heading-anchor" href="#display-enabled-boards" aria-label="Copy link to this section">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none" transform="rotate(45 12 12)">
+        <path d="M14 12c0 2.761-2.239 5-5 5H7a5 5 0 110-10h.5"></path>
+        <path d="M10 12c0-2.761 2.239-5 5-5h2a5 5 0 010 10h-.5"></path>
+      </g>
+    </svg>
+  </a>
+</h2>
+
+<ul>
+<li><strong>Cheap Yellow Display (CYD) family</strong>
+<ul>
+<li>CYD2USB (USB-C)</li>
+<li>CYDMicroUSB</li>
+<li>CYDDualUSB (dual connectors)</li>
+<li>AITRIP CYD (ESP32-2432S028R)</li>
+<li>CYD 2.4″ variants</li>
+</ul>
+</li>
+<li><strong>Large-format displays</strong>
+<ul>
+<li>Waveshare 7&quot; LCD (ESP32-S3)</li>
+<li>Crowtech 7&quot; LCD (ESP32-S3)</li>
+<li>Sunton 7&quot; LCD (ESP32-S3)</li>
+</ul>
+</li>
+<li><strong>Handheld displays</strong>
+<ul>
+<li>ESP32-S3 Cardputer / Cardputer ADV</li>
+<li>Marauder V4 / V6 (240×320 touchscreen)</li>
+<li>Awok Mini (128×128 display)</li>
+<li>Awok ESP32 v5</li>
+<li>LilyGo T-Watch S3</li>
+<li>LilyGo T-Embed C1101</li>
+<li>LilyGo T-Display S3 Touch</li>
+<li>LilyGo T-Deck</li>
+</ul>
+</li>
+</ul>
+
+
+
+<h2 id="generic-development-boards">
+  Generic development boards
+  <a class="heading-anchor" href="#generic-development-boards" aria-label="Copy link to this section">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none" transform="rotate(45 12 12)">
+        <path d="M14 12c0 2.761-2.239 5-5 5H7a5 5 0 110-10h.5"></path>
+        <path d="M10 12c0-2.761 2.239-5 5-5h2a5 5 0 010 10h-.5"></path>
+      </g>
+    </svg>
+  </a>
+</h2>
+
+<ul>
+<li>ESP32 (original dual-core)</li>
+<li>ESP32-S2 (Wi-Fi only)</li>
+<li>ESP32-S3</li>
+<li>ESP32-C3</li>
+<li>ESP32-C5</li>
+<li>ESP32-C6</li>
+</ul>
+
+
+
+<h2 id="notes">
+  Notes
+  <a class="heading-anchor" href="#notes" aria-label="Copy link to this section">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none" transform="rotate(45 12 12)">
+        <path d="M14 12c0 2.761-2.239 5-5 5H7a5 5 0 110-10h.5"></path>
+        <path d="M10 12c0-2.761 2.239-5 5-5h2a5 5 0 010 10h-.5"></path>
+      </g>
+    </svg>
+  </a>
+</h2>
+
+<ul>
+<li>Some boards only expose IR transmit or lack SD card slots; check the board-specific guide before flashing.</li>
+<li>Performance and available features depend on the ESP32 variant and peripherals.</li>
+<li>Beta firmware builds may add experimental hardware—review the release notes for the latest additions.</li>
+</ul>
+
+  
+    <nav class="doc__nav" aria-label="Document navigation">
+      
+        <a class="doc__nav-link doc__nav-link--prev" href="/docs/latest/getting-started/installation-guide/">
+          <span>← Previous</span>
+          <span>Installation Guide</span>
+        </a>
+      
+      
+        <a class="doc__nav-link doc__nav-link--next" href="/docs/latest/getting-started/command-line-reference/">
+          <span>Next →</span>
+          <span>Command Line Reference</span>
+        </a>
+      
+    </nav>
+  
+</article>
+
+      </main>
+      <footer class="content__footer">
+        <p>made with love &lt;3</p>
+      </footer>
+    </div>
+  </div>
+  <div class="sidebar__overlay" id="overlay" onclick="toggleSidebar()"></div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+  
+    
+    <script src="/js/search.8ad7cae1b50e63ef6906d133f6bcedc7e76dca92a5fa385781c1fbf5a58857fb.js" integrity="sha256-itfK4bUOY&#43;9pBtEz9rztx&#43;dtypKl&#43;jhXgcH79aWIV/s=" defer></script>
+  
+  
+    
+    <script src="/js/sidebar.ac84632f874a496a0a812fcad87bae7fdcc09d45a9fd4c3186e2adf5e4de40f2.js" integrity="sha256-rIRjL4dKSWoKgS/K2Huuf9zAnUWp/UwxhuKt9eTeQPI=" defer></script>
+  
+  
+    
+    <script src="/js/theme.f8496df9250aa179fc0d91f6ac046dfe73cc9b262d34b68d12691b6ed1453754.js" integrity="sha256-&#43;Elt&#43;SUKoXn8DZH2rARt/nPMmyYtNLaNEmkbbtFFN1Q=" defer></script>
+  
+</body>
+</html>

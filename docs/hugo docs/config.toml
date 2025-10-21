@@ -8,6 +8,17 @@ enableRobotsTXT = true
 [params]
   subtitle = ""
 
+[params.versioning]
+  default = "latest"
+
+[[params.versioning.options]]
+  id = "latest"
+  name = "Latest"
+
+[[params.versioning.options]]
+  id = "v1.8"
+  name = "v1.8"
+
 [outputs]
   home = ["HTML", "JSON"]
   section = ["HTML", "JSON"]

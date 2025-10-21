@@ -9,7 +9,7 @@ toc: true
 
 Before starting, make sure you have:
 
-- A compatible ESP32 board (see [Supported Hardware]({{< relref "supported-hardware.md" >}}))
+- A compatible ESP32 board (see [Supported Hardware](#supported-hardware))
 - A modern web browser (Google Chrome, Brave, or Microsoft Edge is recommended, as Firefox doesn't support WebSerial)
 - An appropriate USB cable (Micro USB or USB-C, ensure it's a data cable, not a charge-only cable)
 - **File Extraction Tool**: Install [7-Zip](https://www.7-zip.org/download.html) or a similar program for extracting .zip bundles.

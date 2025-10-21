@@ -113,6 +113,41 @@ html[data-theme="light"] .sidebar__logo {
   font-size: 0.9rem;
 }
 
+.sidebar__version {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sidebar__version-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+}
+
+.sidebar__version-select {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg-alt);
+  color: inherit;
+  font-weight: 600;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sidebar__version-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2);
+}
+
+html[data-theme="dark"] .sidebar__version-select {
+  background-color: var(--surface);
+}
+
 .sidebar__search input {
   width: 100%;
   padding: 0.6rem 0.75rem;
