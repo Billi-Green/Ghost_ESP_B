@@ -83,7 +83,8 @@
           {{ $isSectionWithPages := gt (len $pages) 0 }}
           {{ if $isSectionWithPages }}
             {{ $isActive := or (eq $current .) ($current.IsDescendant .) }}
-            {{ $groupID := printf "collapse-%s" (cond (isset .File "UniqueID") .File.UniqueID .Kind) }}
+            {{ $rel := .RelPermalink }}
+            {{ $groupID := printf "collapse-%s" (anchorize (strings.TrimPrefix "/" $rel)) }}
             <div class="sidebar__group{{ if $isActive }} group--open{{ end }}">
               <button class="sidebar__group-toggle{{ if $isActive }} sidebar__group-toggle--active{{ end }}{{ if not $isActive }} collapsed{{ end }}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ $groupID }}" aria-expanded="{{ if $isActive }}true{{ else }}false{{ end }}" aria-controls="{{ $groupID }}">
                 <span>{{ .LinkTitle }}</span>
