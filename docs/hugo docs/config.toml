@@ -31,20 +31,20 @@ enableRobotsTXT = true
 
 [[menu.sidebar]]
   name = "Overview"
-  url = "/"
+  url = "/latest/"
   weight = 1
 
 [[menu.sidebar]]
   name = "Getting Started"
-  url = "/docs/getting-started/"
+  url = "/latest/getting-started/"
   weight = 2
 
 [[menu.sidebar]]
   name = "Hardware Setup"
-  url = "/docs/hardware/"
+  url = "/latest/hardware/"
   weight = 3
 
 [[menu.sidebar]]
   name = "Firmware"
-  url = "/docs/firmware/"
+  url = "/latest/firmware/"
   weight = 4

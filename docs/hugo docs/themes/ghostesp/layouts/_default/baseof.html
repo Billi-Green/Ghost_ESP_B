@@ -80,35 +80,31 @@
   {{ $scratch.Set "versionOptions" (slice) }}
   {{ $scratch.Set "currentVersion" "" }}
   {{ with $versionConfig }}
-    {{ $scratch.Set "versionOptions" (default (slice) .options) }}
+    {{ $opts := default (slice) .options }}
+    {{ $scratch.Set "versionOptions" $opts }}
     {{ $scratch.Set "currentVersion" (default "latest" .default) }}
     {{ $rel := $.RelPermalink }}
-    {{ if strings.HasPrefix $rel "/docs/" }}
-      {{ $parts := split (strings.TrimPrefix "/docs/" $rel) "/" }}
-      {{ if ge (len $parts) 1 }}
-        {{ $candidate := index $parts 0 }}
-        {{ range (default (slice) .options) }}
-          {{ if eq (index . "id") $candidate }}
-            {{ $scratch.Set "currentVersion" $candidate }}
-          {{ end }}
-        {{ end }}
+    {{ range $opts }}
+      {{ $id := index . "id" }}
+      {{ if or (strings.HasPrefix $rel (printf "/%s/" $id)) (eq $rel (printf "/%s" $id)) (eq $rel (printf "/%s/" $id)) }}
+        {{ $scratch.Set "currentVersion" $id }}
       {{ end }}
     {{ end }}
   {{ end }}
   {{ $versionOptions := $scratch.Get "versionOptions" }}
   {{ $currentVersion := $scratch.Get "currentVersion" }}
-  {{ $hasVersioning := and (gt (len (default (slice) $versionOptions)) 0) (ne $currentVersion "") }}
   {{ $scratch.Set "versionRoot" nil }}
-  {{ if $hasVersioning }}
-    {{ with $.Site.GetPage (printf "docs/%s" $currentVersion) }}
+  {{ if and (gt (len (default (slice) $versionOptions)) 0) (ne $currentVersion "") }}
+    {{ with $.Site.GetPage "section" $currentVersion }}
       {{ $scratch.Set "versionRoot" . }}
     {{ end }}
     {{ if not ($scratch.Get "versionRoot") }}
       {{ range $versionOptions }}
         {{ if not ($scratch.Get "versionRoot") }}
-          {{ with $.Site.GetPage (printf "docs/%s" (index . "id")) }}
+          {{ $candidate := index . "id" }}
+          {{ with $.Site.GetPage "section" $candidate }}
             {{ $scratch.Set "versionRoot" . }}
-            {{ $scratch.Set "currentVersion" (index . "id") }}
+            {{ $scratch.Set "currentVersion" $candidate }}
           {{ end }}
         {{ end }}
       {{ end }}
@@ -116,12 +112,13 @@
   {{ end }}
   {{ $versionRoot := $scratch.Get "versionRoot" }}
   {{ $currentVersion := $scratch.Get "currentVersion" }}
+  {{ $versionOptions := $scratch.Get "versionOptions" }}
   {{ $hasVersioning := and $versionRoot (gt (len (default (slice) $versionOptions)) 0) }}
   {{ $scratch.Set "homeLink" "/" }}
   {{ if $versionRoot }}
     {{ $scratch.Set "homeLink" $versionRoot.RelPermalink }}
-  {{ else if and (ne $currentVersion "") ($hasVersioning) }}
-    {{ $scratch.Set "homeLink" (printf "/docs/%s/" $currentVersion) }}
+  {{ else if and $hasVersioning (ne $currentVersion "") }}
+    {{ $scratch.Set "homeLink" (printf "/%s/" $currentVersion) }}
   {{ end }}
   {{ $homeLink := $scratch.Get "homeLink" }}
   {{ $logo := resources.Get "images/ghostesp.png" | fingerprint }}
