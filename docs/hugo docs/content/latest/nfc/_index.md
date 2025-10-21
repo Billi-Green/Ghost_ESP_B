@@ -1,7 +1,9 @@
 ---
 title: "NFC"
-description: "Overview of GhostESP's NFC capabilities"
-weight: 50
+description: "Short introduction to GhostESP's NFC tooling"
+weight: 40
+aliases:
+  - "/nfc/"
 toc: false
 ---
 
