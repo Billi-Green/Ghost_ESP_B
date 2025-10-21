@@ -9,12 +9,12 @@
       {{ .Content }}
     </div>
   {{ end }}
-  <div class="doc__list">
+  <div class="doc__cards">
     {{ range .Pages.ByWeight }}
-      <article class="doc__item">
-        <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2>
+      <a class="doc__card" href="{{ .RelPermalink }}">
+        <h2>{{ .Title }}</h2>
         {{ with .Params.description }}<p>{{ . }}</p>{{ end }}
-      </article>
+      </a>
     {{ end }}
   </div>
 </section>
