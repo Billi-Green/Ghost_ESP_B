@@ -8,8 +8,8 @@ Save live Wi-Fi traffic to the SD card so you can review it in desktop tools or 
 
 ## Prerequisites
 
-- GhostESP flashed device with an SD card inserted and mounted.
-- Or: A Flipper Zero with a microSD card if you plan to save captures there.
+- GhostESP flashed device.
+- Mounted SD Card or a Flipper Zero with a microSD card if you plan to save captures there.
 
 ## Steps
 

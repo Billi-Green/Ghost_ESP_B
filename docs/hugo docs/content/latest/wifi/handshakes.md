@@ -41,4 +41,4 @@ Use GhostESP to spot WPA/WPA2 handshakes, save them, and move the capture into y
 
 ## Troubleshooting
 - **No handshake found**: Force a client reconnect (toggle Wi-Fi on the target device or send a deauth) and make sure GhostESP is locked to the correct channel when starting the capture.
-- **Capture stops immediately**: Verify an SD card is present; otherwise GhostESP streams packets over UART to the Flipper Zero whether attached or not.
+- **Capture isn't showing up!**: Verify an SD card is present; otherwise GhostESP streams packets over UART to the Flipper Zero whether attached or not. 

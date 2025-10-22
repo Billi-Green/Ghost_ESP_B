@@ -8,11 +8,10 @@ Spin up a fake access point that shows a captive portal page, records form submi
 
 ## Prerequisites
 - SD card inserted and mounted so GhostESP can read portal files and store logs under `/mnt/ghostesp/evil_portal/`.
-- Portal HTML saved in `/mnt/ghostesp/evil_portal/portals/` or ready to paste via the Flipper app.
-- Optional: GhostNet WebUI for easier file transfers.
+- Portal HTML saved in `/mnt/ghostesp/evil_portal/portals/` or on your Flipper Zero's SD under "/ext/apps_data/ghost_esp".
 
 ## Pick a portal
-1. From the launcher open **WiFi → Evil Portal → Start Evil Portal**.
+1. From the main menu open **WiFi → Evil Portal → Start Evil Portal**.
    You should see GhostESP launch the default portal (`default FreeWiFi`).
 2. To use a custom page, choose **Start Custom Evil Portal** instead.
    You should see a list of HTML files populated from `/mnt/ghostesp/evil_portal/portals/`.
@@ -50,7 +49,7 @@ Spin up a fake access point that shows a captive portal page, records form submi
 ## Tips
 - Use the GhostNet WebUI or a card reader to upload large portals quickly.
 - Keep portals lightweight—mobile browsers may struggle with heavy assets.
-- When the portal is active, the Wi-Fi status badge turns blue in the launcher (`display_manager.c`).
+- When the portal is active, the Wi-Fi status badge turns blue on the status bar on the on-board display UI.
 
 ## Troubleshooting
 - **No portal files listed**: Ensure `/mnt/ghostesp/evil_portal/portals/` exists and the SD card mounted correctly at boot.

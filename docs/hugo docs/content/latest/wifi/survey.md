@@ -16,17 +16,16 @@ Map the nearby Wi-Fi landscape so you can pick interesting targets or confirm co
 1. Open **Menu → WiFi → Scanning**.
    You should see options including **Scan Access Points**, **Scan APs Live**, **List Access Points**, and **Select AP**.
 2. Choose **Scan Access Points**.
-   You should see the terminal view open and report that a scan has started. Wait until the log prints that the scan finished.
+   You should see the terminal view open and report that a scan has started. Wait until the summary of APs is listed.
 3. Back out and select **List Access Points**.
    You should see each discovered network listed with SSID, channel, signal strength, and vendor information.
 4. (Optional) Pick **Scan APs Live** to monitor in real time.
-   You should see new entries stream into the terminal until you return to the submenu.
+   You should see new entries stream into the terminal until you exit.
 
 ### CLI
-1. Open the GhostESP terminal (serial, telnet, or on-device terminal view).
-   You should see the command prompt ready for input.
+1. Open the GhostESP terminal (you can use a [serial console](https://ghostesp.net/serial) or the on-device terminal view).
 2. Run `scanap`.
-   You should see the scanner start, print progress, and finish with a summary once results are cached.
+   You should see the scan start, and finish with a summary once it's done.
 3. Run `list -a`.
    You should see the cached access points with SSID, RSSI, and vendor information.
 4. (Optional) Run `scanap -live` to watch new results continuously.

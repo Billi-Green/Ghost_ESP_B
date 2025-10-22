@@ -13,7 +13,7 @@ weight: 30
 ### Flipper IR libraries
 
 - GhostESP reads the standard Flipper `.ir` format, so you can copy files from community packs.
-- A large collection is available at [Lucaslhm/Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB); place downloaded files under `infrared/universals` for universal files or `infrared/remotes`.
+- A large collection is available at [Lucaslhm/Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB); place downloaded files under `infrared/remote` or `infrared/universals` for universal files which you can find in [Momentum custom Flipper Zero firmware](https://github.com/Next-Flip/Momentum-Firmware/tree/dev/applications/main/infrared/resources/infrared/assets).
 
 ### Append new signals
 
@@ -23,11 +23,11 @@ weight: 30
 ## Web UI management
 
 - Connect to the GhostNet AP and open the web UI.
-- Browse to the file manager and navigate to `/ghostesp/infrared/`.
+- Browse to the file manager tab and navigate to `/ghostesp/infrared/`.
 - Upload `.ir` files to the appropriate folder or download existing ones for backups.
 
 ### Tips
 
 - Keep file names short; the UI truncates long names in lists.
-- After mass uploads, reload the Infrared view to refresh the cache.
+- After mass uploads, back out of the infrared file view on the on-board display UI to refresh the list.
 - Back up your IR folder before flashing new firmware or reformatting the SD card.

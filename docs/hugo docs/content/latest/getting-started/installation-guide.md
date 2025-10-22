@@ -41,7 +41,7 @@ Choose your preferred method:
 4. **Verify**
    - Unplug and replug. Continue with [Post-Installation](#post-installation).
 
-> **Tips**: After flashing, you may need to restart the device to initialize the new firmware. To ensure a clean start, disconnect and reconnect your ESP32.
+> <a id="web-flasher-timeout"></a>**Tips**: After flashing, you will need to restart the device to initialize the new firmware. Disconnect and reconnect your ESP32. If the flasher times out, retry after a fresh USB reconnection.
 
 ### USB Connection Method
 
@@ -130,9 +130,7 @@ As soon as the flash finishes, GhostESP boots its default access point so you ca
 ### Common Installation Issues
 
 - **Boot loops**: Usually power or board-target mismatches—verify you flashed the right image and try a known-good USB-C cable.
-- **Flash errors**: Ensure the chip is in bootloader mode; swap USB ports or hubs if `esptool.py` times out.
-- **Connection issues**: Install the correct USB-to-UART driver (CP210x, CH34x, etc.) before expecting the web UI or CLI to appear.
-- **Power brownouts**: Radio-heavy workloads spike draw, so use a stable 5 V supply or powered hub.
-- **Browser cache conflicts**: If the web flasher misbehaves, clear cached site data or switch to a fresh browser session.
-
+- **Flash errors**: Ensure the chip is in bootloader mode (Refer back to the [Web Flasher section](#web-flasher-timeout)) ; swap USB ports or hubs if it times out. 
+- **Connection issues**: Try installing the [USB-to-UART driver](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers?tab=downloads).
+- **Browser issues**: If the web flasher misbehaves, reload the page, clear cached site data or switch to a different broswer like Chrome, Brave or Microsoft Edge.
 > **Troubleshooting Tip**: When flashing from the Flipper Zero app, double-check GPIO wiring and confirm every firmware blob lives under `SDCard/apps_data/esp_flasher/` before you start the transfer.
