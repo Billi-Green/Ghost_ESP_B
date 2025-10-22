@@ -31,17 +31,6 @@ Both devices need power.
 
 ## Basic usage
 
-### On-device UI
-
-1. Open **Menu → Connection → Dual Comm**.
-   You should see the connection status.
-2. Once connected, use the **Dual Comm** tab to:
-   - View connection status with visual indicator.
-   - Send commands to the other device.
-   - Configure pins if needed.
-
-### Command line
-
 Once wired and powered on, devices automatically find each other:
 
 - `commstatus` - Check if connected
