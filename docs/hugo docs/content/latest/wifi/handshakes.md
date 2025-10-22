@@ -1,44 +1,42 @@
 ---
-title: "Crackable Handshakes"
-description: "Detect WPA handshakes with GhostESP and prepare them for offline cracking."
+title: "Capturing handshakes"
+description: "Record Wi-Fi authentication data for analysis."
 weight: 30
 ---
 
-Use GhostESP to spot WPA/WPA2 handshakes, save them, and move the capture into your cracking toolchain.
+Capture Wi-Fi authentication handshakes from nearby networks.
+
+> **Legal note**: Only capture traffic from networks you own or have explicit permission to test. Unauthorized network testing is illegal in most jurisdictions.
 
 ## Prerequisites
-- GhostESP with SD card mounted and enough space under `/mnt/ghostesp/pcaps/`.
-- Target access point visible from your location.
-- Optional: Laptop with Wireshark/hashcat or Flipper Zero with the GhostESP app installed.
+- GhostESP with SD card mounted (for saving captures).
+- A device to connect to the target network (so it can authenticate and create a handshake).
 
-## Steps
+## Capturing a handshake
 
 ### On-device UI
-1. Select the target AP from **Menu → WiFi → Scanning → Select AP**.
-   You should see a confirmation showing the SSID and channel of the chosen network.
-2. Open **Menu → WiFi → Capture → Capture Eapol**.
-   You should see your device log the capture has started and on what channel the capture is locked to if you selected an AP.
-3. Leave GhostESP listening while a client connects or reconnects to the target AP.
-   You should see `Handshake found!` logged when the 4-way exchange completes.
-4. Back out of the terminal view once you record the handshake.
-5. Remove the SD card or browse to `/mnt/ghostesp/pcaps/` from the device to copy the capture.
-   You should see the PCAP ready for transfer.
+1. Open **Menu → WiFi → Scanning** and find your target network.
+2. Select it with **Select AP** to lock onto that channel.
+3. Open **Menu → WiFi → Capture → Capture Eapol**.
+   The device will start listening for authentication activity.
+4. Wait for a device to connect or reconnect to the network.
+   You should see `Handshake found!` when the capture succeeds.
+5. Back out to stop capturing.
+6. The capture is saved to the SD card under `/mnt/ghostesp/pcaps/`.
 
-### CLI
-1. Run `select -a <index>` using the access point number from the most recent scan (`list -a`).
-   You should see "Selected Access Point" confirmation along with the channel that will be locked.
-2. Run `capture -eapol` from the GhostESP terminal.
-   You should see logging that EAPOL capture has started.
-3. Wait while stations authenticate to the network.
-   You should see per-handshake `Handshake found!` messages as they are detected.
-4. Run `stop` when you collect a handshake.
-   You should see confirmation that the capture ended and where the PCAP was stored.
+### Command line
+1. Run `list -a` to see nearby networks.
+2. Run `select -a <number>` to lock onto your target network.
+3. Run `capture -eapol` to start listening.
+4. Wait for a device to authenticate to the network.
+   You should see `Handshake found!` when successful.
+5. Run `stop` to finish capturing.
+   The file location will be shown in the log.
 
-## Export and crack
-- Copy the `.pcap` to your machine and convert it to `hccapx` with [cap2hccapx](https://hashcat.net/cap2hccapx/) before running `hashcat`.
-- Feed the resulting `hccapx` into `hashcat` or use the original `.pcap` with `aircrack-ng` for verification.
-- For Flipper Zero, create `/ext/apps_data/ghost_esp/pcaps/` if needed, copy the file, then open **Apps → WiFi Sniffer → GhostESP** to view the handshake.
+## Next steps
+- Copy the `.pcap` file from the device to your computer for further analysis.
+- For Flipper Zero saved files, copy the file from `/ext/apps_data/ghost_esp/pcaps/` on the Flipper's SD card.
 
 ## Troubleshooting
-- **No handshake found**: Force a client reconnect (toggle Wi-Fi on the target device or send a deauth) and make sure GhostESP is locked to the correct channel when starting the capture.
-- **Capture isn't showing up!**: Verify an SD card is present; otherwise GhostESP streams packets over UART to the Flipper Zero whether attached or not. 
+- **No handshake found**: Make sure a device is actually connecting to the network. Try toggling Wi-Fi off and on on a connected device to trigger a new authentication.
+- **Capture file missing**: Verify the SD card is mounted and has free space. Check that you stopped the capture. 

@@ -4,34 +4,32 @@ description: "Record Wi-Fi traffic to a PCAP for later analysis."
 weight: 20
 ---
 
-Save live Wi-Fi traffic to the SD card so you can review it in desktop tools or on a Flipper Zero.
+Record Wi-Fi network traffic and save it to the SD card. You can then review the captured data on your computer or Flipper Zero.
 
 ## Prerequisites
 
-- GhostESP flashed device.
-- Mounted SD Card or a Flipper Zero with a microSD card if you plan to save captures there.
+- GhostESP flashed device with an SD card mounted.
+- Optional: Flipper Zero with a microSD card if you want to save captures to the flipper.
 
-## Steps
+## Capturing traffic
 
 ### On-device UI
 1. Open **Menu → WiFi → Capture**.
-   You should see options such as **Capture Probe**, **Capture Deauth**, **Capture Beacon**, and **Capture Raw**.
-2. Choose the capture you need.
-   You should see the terminal view open and report that capture has started. Leave the device running until you have enough traffic.
-3. Back out of the terminal view to stop capture.
-   You should see a serial log confirming the capture finished and the file path on the SD card.
-4. Remove the SD card or open the GhostNet WebUI file browser to retrieve the PCAP.
-   You should see the capture saved under `/mnt/ghostesp/pcaps/` with a name such as `probescan_3.pcap`.
+   You should see a list of capture types to choose from.
+2. Select the type of traffic you want to record (see capture types below).
+   The device will start recording. Leave it running until you have enough data.
+3. Back out of the terminal view to stop recording.
+   The device will save the file to the SD card and show the file path.
+4. Retrieve the file from the SD card using the GhostNet WebUI file browser or by removing the card.
+   Files are saved under `/mnt/ghostesp/pcaps/` with names like `probescan_3.pcap`.
 
-### CLI
-1. Open the GhostESP terminal (serial, telnet, or on-device terminal view).
-   You should see the command prompt ready for input.
-2. Run `capture -probe` (or `-deauth`, `-beacon`, `-raw`, etc.).
-   You should see logging that the capture has started and which packets are being recorded.
-3. Let the command run while traffic is collected.
-   You should see packets listed until you are ready to stop.
-4. Run `capture -stop` when you are finished.
-   You should see confirmation that the capture ended and where the file was written.
+### Command line
+1. Open the GhostESP terminal.
+2. Run `capture -<type>` where type is one of the capture types below (for example, `capture -probe`).
+   The device will start recording.
+3. Let it run while traffic is collected.
+4. Run `capture -stop` when you're done.
+   The device will save the file and show where it was saved.
 
 ### Capture modes
 - **-probe**: Records probe requests so you can see devices searching for known SSIDs.
@@ -54,6 +52,7 @@ Save live Wi-Fi traffic to the SD card so you can review it in desktop tools or 
 - Large captures can take time to copy. Use a card reader instead of QFlipper or the WebUI for faster transfers.
 
 ## Troubleshooting
-
-- **File missing after capture**: Reboot the device with the SD Card inserted and make sure it logs that the SD Card is mounted at boot using a [Serial Console](https://ghostesp.net/serial) and that you exited through the back button or using the `stop` CLI command to trigger the save.
+- **Capture file not saved**: Make sure the SD card is mounted and has free space. Always use `stop` or back out through the menu to properly save the file.
+- **SD card not recognized**: Reboot the device with the SD card already inserted. Check that the card is properly seated and not corrupted.
+- **File transfer is slow**: Use a card reader connected to your computer instead of the WebUI or other methods for faster transfers.
 

@@ -1,45 +1,77 @@
 ---
 title: "Scanning networks"
-description: "Scan and review Wi-Fi access points from GhostESP."
+description: "Find and review Wi-Fi networks in your area."
 weight: 10
 ---
 
-Map the nearby Wi-Fi landscape so you can pick interesting targets or confirm coverage.
+Discover nearby Wi-Fi networks and gather information about them. You can scan passively without connecting, or connect to a network and explore devices on it.
 
 ## Prerequisites
 
 - GhostESP flashed device, powered on with a wireless antenna.
 
-## Steps
+## Finding nearby networks
 
 ### On-device UI
 1. Open **Menu → WiFi → Scanning**.
-   You should see options including **Scan Access Points**, **Scan APs Live**, **List Access Points**, and **Select AP**.
+   You should see a menu with scan options.
 2. Choose **Scan Access Points**.
-   You should see the terminal view open and report that a scan has started. Wait until the summary of APs is listed.
-3. Back out and select **List Access Points**.
-   You should see each discovered network listed with SSID, channel, signal strength, and vendor information.
-4. (Optional) Pick **Scan APs Live** to monitor in real time.
-   You should see new entries stream into the terminal until you exit.
+   The device will search for networks. Wait for the scan to finish and see a summary.
+3. Select **List Access Points**.
+   You should see each network listed with its name, channel, signal strength, and device manufacturer.
 
-### CLI
-1. Open the GhostESP terminal (you can use a [serial console](https://ghostesp.net/serial) or the on-device terminal view).
-2. Run `scanap`.
-   You should see the scan start, and finish with a summary once it's done.
-3. Run `list -a`.
-   You should see the cached access points with SSID, RSSI, and vendor information.
-4. (Optional) Run `scanap -live` to watch new results continuously.
-   You should see networks appear line by line until you press the back button or cancel the command.
+### On-device UI — Optional features
+- **Scan APs Live**: Watch new networks appear in real time as they're discovered.
+- **Channel Congestion**: See how busy the wireless channels are in your area.
 
-## Verify
-- Confirm that **List Access Points** or `list -a` shows the networks captured during the latest scan.
-- Confirm that **Scan APs Live** or `scanap -live` continues printing new rows without freezing.
+### Command line
+1. Open the GhostESP terminal (serial connection or on-device terminal).
+2. Run `scanap` to start a scan.
+   Wait for it to finish and show results.
+3. Run `list -a` to see the cached list of networks.
+
+### Command line — Optional features
+- Run `scanap -live` to watch networks appear as they're discovered.
+
+## Exploring a network
+
+Once you connect to a network, you can discover devices and services on it.
+
+### Connect to a network
+1. Open **Menu → WiFi → Connection → Connect to WiFi**.
+   Enter the network name and password when prompted.
+2. Wait for the connection to complete. The terminal will show status updates.
+3. To disconnect later, go to **Menu → WiFi → Connection → Disconnect**.
+
+### Connect via command line
+1. Run `connect "SSID" "password"` (use quotes if the name or password has spaces).
+   The terminal will show connection progress and confirm when connected.
+2. Run `connect` with no arguments to reconnect to the last network you used.
+3. Run `disconnect` to leave the network.
+
+### Find devices on the network
+1. Open **Menu → WiFi → Scanning** while connected.
+2. Choose **Scan LAN Devices**.
+   You should see a list of devices and services on the network.
+
+### Find devices via command line
+1. Run `scanlocal` to discover devices and services.
+   You should see hostnames, service types, and ports.
+2. Run `scanarp` to find all active devices on the network.
+   You should see IP addresses and device information.
+
+### Check for open ports
+1. From the UI, select a device with **Select LAN**, then choose **Scan Open Ports**.
+   You should see which ports are responding on that device.
+2. From the command line, run `scanports <ip>` to check a specific device.
+   You should see open ports listed. Add `all` to check all ports, or `start-end` (like `20-1024`) for a range.
+3. Run `scanssh <ip>` to specifically check if a device has SSH enabled.
 
 ## Troubleshooting
-- **No networks listed**: The terminal prints `AP information not available` if nothing was captured. Move closer to wireless routers and repeat Step 2.
-- **Selection warning**: The UI shows “You Need to Scan APs First...” when you try to choose **Select AP** before scanning. Run **Scan Access Points** and try again.
-- **Live scan stops immediately**: Make sure no other Wi-Fi attack or portal is running. Stop those tasks from the Wi-Fi menu, then retry Step 4.
+- **No networks found**: Move closer to wireless routers and try scanning again.
+- **"You Need to Scan APs First" message**: Run a scan before trying to select a network.
+- **Live scan stops right away**: Stop any active Wi-Fi attacks or portals from the menu and try again.
 
 ## FAQ
-- **Can I scan while connected to Wi-Fi?** Yes. The device temporarily switches into scan mode and then resumes normal operation once the list is ready.
-- **Where do the vendor names come from?** GhostESP matches each network’s hardware address against its built-in manufacturer database during the listing phase.
+- **Can I scan while connected to a network?** Yes. The device will pause the connection briefly to scan, then resume.
+- **Where do the device vendor names come from?** GhostESP looks up the device's hardware address in a small built-in database to potentially identify the manufacturer.

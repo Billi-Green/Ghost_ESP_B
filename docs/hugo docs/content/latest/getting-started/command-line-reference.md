@@ -1,6 +1,6 @@
 ---
 title: "Command Line Reference"
-description: "Common GhostESP CLI commands grouped by task."
+description: "Common GhostESP CLI commands grouped by category."
 weight: 20
 toc: true
 ---
