@@ -66,7 +66,6 @@ Device names are auto-generated based on MAC address (format: `ESP_XXXXXX`).
 
 - **Not connecting**: Check wiring (TX→RX, RX→TX, GND connected). Make sure both devices are powered. Reboot them simultaneously and wait 30 seconds for discovery. Run `commstatus` to check.
 - **Commands not working**: Verify connection with `commstatus`. Use exact GhostESP command syntax.
-- **Discovery not finding devices**: Ensure both devices are powered on and within range. Try rebooting both devices.
 
 ## Use cases
 

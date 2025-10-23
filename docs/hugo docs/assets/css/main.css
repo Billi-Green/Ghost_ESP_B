@@ -245,6 +245,7 @@ html[data-theme="dark"] .sidebar__result mark {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  padding-bottom: 3rem;
 }
 
 .sidebar__link {
