@@ -47,9 +47,10 @@ static const char *cu_mfc_type_str(MFC_TYPE t) {
     }
 }
 
-// embedded flipper-format mifare classic dictionary (same as PN532 path)
+#ifdef CONFIG_HAS_NFC
 extern const uint8_t _binary_mf_classic_dict_nfc_start[] asm("_binary_mf_classic_dict_nfc_start");
 extern const uint8_t _binary_mf_classic_dict_nfc_end[]   asm("_binary_mf_classic_dict_nfc_end");
+#endif
 
 // ui hooks from nfc view (weak)
 extern void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) __attribute__((weak));
@@ -2945,6 +2946,7 @@ static int cu_load_user_keys(uint8_t **keys_out){
     return idx;
 }
 
+#ifdef CONFIG_HAS_NFC
 static int cu_count_embedded_dict_lines(void){
     const char *s = (const char*)_binary_mf_classic_dict_nfc_start;
     const char *e = (const char*)_binary_mf_classic_dict_nfc_end;
@@ -2967,6 +2969,7 @@ static int cu_load_embedded_keys(uint8_t **keys_out){
     }
     return idx;
 }
+#endif
 
 static const uint8_t CU_DEFAULT_KEYS[][6] = {
     {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
@@ -3125,7 +3128,9 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
 
         if (!authed && !skip_dict) {
             if (!user_loaded) { user_count = cu_load_user_keys(&user_keys); user_loaded = true; total_attempts += (user_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts); }
+#ifdef CONFIG_HAS_NFC
             if (!emb_loaded) { emb_count = cu_load_embedded_keys(&emb_keys); emb_loaded = true; total_attempts += (emb_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts); }
+#endif
         }
 
         if (!authed && user_count > 0 && !skip_dict) {
@@ -3142,6 +3147,7 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
             }
         }
 
+#ifdef CONFIG_HAS_NFC
         if (!authed && emb_count > 0 && !skip_dict) {
             for (int i = 0; i < emb_count && !authed; ++i) {
                 if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) break;
@@ -3155,6 +3161,7 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
                 if (authed) break;
             }
         }
+#endif
 
         if (authed) {
             if (used_key) {
