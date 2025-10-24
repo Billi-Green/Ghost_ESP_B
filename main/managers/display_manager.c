@@ -1100,6 +1100,8 @@ void display_manager_destroy_current_view(void) {
 
 View *display_manager_get_current_view(void) { return dm.current_view; }
 
+bool display_manager_is_available(void) { return display_manager_init_success; }
+
 void display_manager_fill_screen(lv_color_t color) {
   static lv_style_t style;
   lv_style_init(&style);

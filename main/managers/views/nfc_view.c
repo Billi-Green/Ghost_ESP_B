@@ -233,6 +233,7 @@ static void nfc_set_paused_async(void *ptr) {
     nfc_bool_evt_t *ev = (nfc_bool_evt_t*)ptr;
     if (!ev) return;
     if (ev->session != nfc_scan_session) { free(ev); return; }
+    if (!display_manager_is_available()) { free(ev); return; }
     nfc_paused = ev->on;
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
         if (ev->on) {
@@ -249,6 +250,7 @@ static void nfc_set_paused_async(void *ptr) {
 
 // Exposed to MFC layer
 void mfc_ui_set_paused(bool on) {
+    if (!display_manager_is_available()) return;
     nfc_bool_evt_t *ev = (nfc_bool_evt_t*)malloc(sizeof(nfc_bool_evt_t));
     if (!ev) return;
     ev->on = on;
@@ -261,6 +263,7 @@ static void nfc_set_cache_mode_async(void *ptr) {
     nfc_bool_evt_t *ev = (nfc_bool_evt_t*)ptr;
     if (!ev) return;
     if (ev->session != nfc_scan_session) { free(ev); return; }
+    if (!display_manager_is_available()) { free(ev); return; }
     bool on = ev->on;
     nfc_cache_fill_phase = on;
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
@@ -272,6 +275,7 @@ static void nfc_set_cache_mode_async(void *ptr) {
 
 // Exposed to MFC layer to toggle cache-fill phase
 void mfc_ui_set_cache_mode(bool on) {
+    if (!display_manager_is_available()) return;
     nfc_bool_evt_t *ev = (nfc_bool_evt_t*)malloc(sizeof(nfc_bool_evt_t));
     if (!ev) return;
     ev->on = on;
@@ -392,17 +396,19 @@ static void nfc_write_done_async(void *ptr);
 static void nfc_progress_update_async(void *ptr);
 // UI hook from MIFARE Classic layer to indicate sector/block/key phase (implementation)
 void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) {
-    // just update phase state and schedule a 0%% progress update on LVGL thread
+    if (!display_manager_is_available()) return;
+    // just update phase state and schedule a 0% progress update on LVGL thread
     mfc_phase_sector = sector;
     mfc_phase_first_block = first_block;
     mfc_phase_key_b = key_b;
     mfc_phase_total = total_keys;
     typedef struct { int c; int t; uint32_t s; } dict_prog_t;
-    dict_prog_t *dp = (dict_prog_t*)lv_mem_alloc(sizeof(dict_prog_t));
+    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
     if (dp) { dp->c = 0; dp->t = total_keys; dp->s = nfc_scan_session; lv_async_call(nfc_progress_update_async, dp); }
 }
 static void mfc_dict_progress_cb(int current, int total, void *user) {
     (void)user;
+    if (!display_manager_is_available()) return;
     if (total <= 0) return;
     int percent = (current * 100) / total;
     if (percent < 0) { percent = 0; }
@@ -411,7 +417,7 @@ static void mfc_dict_progress_cb(int current, int total, void *user) {
     if (percent == last_percent) return;
     last_percent = percent;
     typedef struct { int c; int t; uint32_t s; } dict_prog_t;
-    dict_prog_t *dp = (dict_prog_t*)lv_mem_alloc(sizeof(dict_prog_t));
+    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
     if (!dp) return;
     dp->c = current; dp->t = total; dp->s = nfc_scan_session;
     lv_async_call(nfc_progress_update_async, dp);
@@ -421,8 +427,8 @@ static void nfc_progress_update_async(void *ptr) {
     if (!ptr) return;
     typedef struct { int c; int t; uint32_t s; } dict_prog_t;
     dict_prog_t *dp = (dict_prog_t*)ptr;
-    if (dp->s != nfc_scan_session) { lv_mem_free(dp); return; }
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { lv_mem_free(dp); return; }
+    if (dp->s != nfc_scan_session) { free(dp); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(dp); return; }
     int percent = 0; if (dp->t > 0) percent = (dp->c * 100) / dp->t; if (percent > 100) percent = 100; if (percent < 0) percent = 0;
     // Compose phase suffix e.g., "Sec 3 Blk 12 Key A"
     char phase[40];
@@ -479,7 +485,7 @@ static void nfc_progress_update_async(void *ptr) {
         else snprintf(info, sizeof(info), "Dictionary: %d (unknown total)%s", dp->c, phase);
         lv_label_set_text(nfc_details_label, info);
     }
-    lv_mem_free(dp);
+    free(dp);
 }
 
 static volatile bool nfc_scan_cancel = false;
@@ -581,7 +587,8 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
         ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
         if (!res) { free(text); return; }
         res->text = text; res->text_len = strlen(text); res->session = nfc_scan_session;
-        lv_async_call(nfc_set_details_async, res);
+        if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
+        else { if (res->text) free(res->text); free(res); }
         mfc_set_progress_callback(NULL, NULL);
         return;
     }
@@ -596,9 +603,10 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
         res->text_len = cap; res->session = nfc_scan_session;
         if (!res->text) { free(res); return; }
         char *w = res->text; snprintf(w, cap, "UID:"); size_t used = strlen(w); w += used; cap -= used;
-        for (uint8_t i = 0; i < uid_len && cap > 3; ++i) { int n = snprintf(w, cap, " %02X", uid[i]); if (n>0){ w+=n; cap-=n; } }
+        for (uint8_t i = 0; i < uid_len && cap > 3; ++i) { int n = snprintf(w, cap, " %02X", uid[i]); if (n > 0) { w += n; cap -= n; } }
         snprintf(w, cap, "\nNo NDEF data\n");
-        lv_async_call(nfc_set_details_async, res);
+        if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
+        else { if (res->text) free(res->text); free(res); }
         return;
     }
     char *text = ntag_t2_build_details_from_mem(mem, mem_len, uid, uid_len, model);
@@ -608,38 +616,11 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
     ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
     if (!res) { free(text); return; }
     res->text = text; res->text_len = strlen(text); res->session = nfc_scan_session;
-    lv_async_call(nfc_set_details_async, res);
+    if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
+    else { if (res->text) free(res->text); free(res); }
+    return;
 }
 #endif
-
-typedef struct { uint32_t session; uint8_t uid_len; uint8_t uid[10]; } nfc_uid_evt_t;
-static void nfc_update_labels_async(void *ptr) {
-    if (!ptr) return;
-    nfc_uid_evt_t *ev = (nfc_uid_evt_t*)ptr;
-    if (ev->session != nfc_scan_session) { free(ev); return; }
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(ev); return; }
-    char uid_text[64];
-    int pos = 0;
-    pos += snprintf(uid_text, sizeof(uid_text), "UID:");
-    for (int i = 0; i < ev->uid_len && pos < (int)sizeof(uid_text) - 4; ++i) {
-        pos += snprintf(uid_text + pos, sizeof(uid_text) - pos, " %02X", ev->uid[i]);
-    }
-    lv_label_set_text(nfc_uid_label, uid_text);
-    lv_label_set_text(nfc_type_label, "Type: ISO14443A");
-    if (!nfc_details_visible && nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
-        lv_label_set_text(nfc_title_label, "NFC Tag");
-        lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
-    }
-    // Reveal buttons once a tag has been scanned
-    if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn) && !nfc_more_visible) {
-        lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
-        nfc_more_visible = true;
-    }
-    // Save remains hidden until details are ready (shown in nfc_set_details_async)
-    update_nfc_buttons_layout();
-    update_nfc_popup_selection();
-    free(ev);
-}
 
 // backend switch helper
 static bool using_chameleon_backend(void) {
