@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include "ff.h"
 #include "freertos/FreeRTOS.h"
@@ -58,11 +59,28 @@ esp_err_t csv_write_header(FILE *f) {
     if (f == NULL) {
         const char *mark_begin = "[BUF/BEGIN]";
         const char *mark_close = "[BUF/CLOSE]";
-        uart_write_bytes(UART_NUM_0, mark_begin, strlen(mark_begin));
-        uart_write_bytes(UART_NUM_0, pre_header, strlen(pre_header));
-        uart_write_bytes(UART_NUM_0, header, strlen(header));
-        uart_write_bytes(UART_NUM_0, mark_close, strlen(mark_close));
-        uart_write_bytes(UART_NUM_0, "\n", 1);
+        size_t mark_begin_len = strlen(mark_begin);
+        size_t mark_close_len = strlen(mark_close);
+        size_t pre_len = strlen(pre_header);
+        size_t hdr_len = strlen(header);
+        size_t out_len = mark_begin_len + pre_len + hdr_len + mark_close_len + 1;
+        uint8_t *out = (uint8_t *)malloc(out_len);
+        if (out) {
+            size_t off = 0;
+            memcpy(out + off, mark_begin, mark_begin_len); off += mark_begin_len;
+            memcpy(out + off, pre_header, pre_len); off += pre_len;
+            memcpy(out + off, header, hdr_len); off += hdr_len;
+            memcpy(out + off, mark_close, mark_close_len); off += mark_close_len;
+            out[off++] = '\n';
+            uart_write_bytes(UART_NUM_0, (const char *)out, off);
+            free(out);
+        } else {
+            uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+            uart_write_bytes(UART_NUM_0, pre_header, pre_len);
+            uart_write_bytes(UART_NUM_0, header, hdr_len);
+            uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
+            uart_write_bytes(UART_NUM_0, "\n", 1);
+        }
         return ESP_OK;
     } else {
         size_t written = fwrite(pre_header, 1, strlen(pre_header), f);
@@ -260,11 +278,24 @@ esp_err_t csv_flush_buffer_to_file() {
         glog("Streaming CSV buffer over UART\n");
         const char *mark_begin = "[BUF/BEGIN]";
         const char *mark_close = "[BUF/CLOSE]";
-
-        uart_write_bytes(UART_NUM_0, mark_begin, strlen(mark_begin));
-        uart_write_bytes(UART_NUM_0, csv_buffer, buffer_offset);
-        uart_write_bytes(UART_NUM_0, mark_close, strlen(mark_close));
-        uart_write_bytes(UART_NUM_0, "\n", 1);
+        size_t mark_begin_len = strlen(mark_begin);
+        size_t mark_close_len = strlen(mark_close);
+        size_t out_len = mark_begin_len + buffer_offset + mark_close_len + 1;
+        uint8_t *out = (uint8_t *)malloc(out_len);
+        if (out) {
+            size_t off = 0;
+            memcpy(out + off, mark_begin, mark_begin_len); off += mark_begin_len;
+            memcpy(out + off, csv_buffer, buffer_offset); off += buffer_offset;
+            memcpy(out + off, mark_close, mark_close_len); off += mark_close_len;
+            out[off++] = '\n';
+            uart_write_bytes(UART_NUM_0, (const char *)out, off);
+            free(out);
+        } else {
+            uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+            uart_write_bytes(UART_NUM_0, csv_buffer, buffer_offset);
+            uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
+            uart_write_bytes(UART_NUM_0, "\n", 1);
+        }
 
         buffer_offset = 0;
         if (csv_mutex) xSemaphoreGive(csv_mutex);

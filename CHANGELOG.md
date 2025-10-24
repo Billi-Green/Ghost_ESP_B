@@ -90,6 +90,7 @@
 - Reduce heap churn by reusing a single 4KB transfer buffer in wifi managerstreaming
 - Significantly improve reliability of capturing wifi frames
 - Remove arbitrary limitation on the lines of text in the webUI dual comm terminal
+- Fixed an issue causing potential corruption of pcaps saved to the Flipper Zero
 
 #### Display
 
