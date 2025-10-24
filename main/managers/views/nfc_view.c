@@ -218,6 +218,8 @@ static bool nfc_details_ready = false;
 static uint32_t nfc_scan_session = 0;
 // Simple boolean event payload for async calls
 typedef struct { bool on; uint32_t session; } nfc_bool_evt_t;
+// PN532 UID event payload for async label updates
+typedef struct { uint32_t session; uint8_t uid[10]; uint8_t uid_len; } nfc_uid_evt_t;
 static bool nfc_skip_label_applied = false;
 
 static void nfc_reset_more_button_label(void) {
@@ -394,6 +396,8 @@ static void nfc_write_done_async(void *ptr);
 
 // Dictionary progress callback -> UI updater
 static void nfc_progress_update_async(void *ptr);
+// PN532 UID/type updater forward declaration
+static void nfc_update_labels_async(void *ptr);
 // UI hook from MIFARE Classic layer to indicate sector/block/key phase (implementation)
 void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) {
     if (!display_manager_is_available()) return;
@@ -423,21 +427,49 @@ static void mfc_dict_progress_cb(int current, int total, void *user) {
     lv_async_call(nfc_progress_update_async, dp);
 }
 
+// Async updater for PN532 UID/type summary lines
+static void nfc_update_labels_async(void *ptr) {
+    if (!ptr) return;
+    nfc_uid_evt_t *ev = (nfc_uid_evt_t*)ptr;
+    if (ev->session != nfc_scan_session) { free(ev); return; }
+    if (!display_manager_is_available()) { free(ev); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(ev); return; }
+    char uid_text[64]; int pos = 0; pos += snprintf(uid_text, sizeof(uid_text), "UID:");
+    for (int i = 0; i < ev->uid_len && pos < (int)sizeof(uid_text) - 4; ++i) {
+        pos += snprintf(uid_text + pos, sizeof(uid_text) - pos, " %02X", ev->uid[i]);
+    }
+    if (nfc_uid_label && lv_obj_is_valid(nfc_uid_label)) {
+        lv_label_set_text(nfc_uid_label, uid_text);
+    }
+    if (nfc_type_label && lv_obj_is_valid(nfc_type_label)) {
+        lv_label_set_text(nfc_type_label, "Type: ISO14443A");
+    }
+    if (!nfc_details_visible && nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+        lv_label_set_text(nfc_title_label, "NFC Tag");
+        lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
+    }
+    update_nfc_buttons_layout();
+    update_nfc_popup_selection();
+    free(ev);
+}
+
 static void nfc_progress_update_async(void *ptr) {
     if (!ptr) return;
     typedef struct { int c; int t; uint32_t s; } dict_prog_t;
     dict_prog_t *dp = (dict_prog_t*)ptr;
     if (dp->s != nfc_scan_session) { free(dp); return; }
+    if (!display_manager_is_available()) { free(dp); return; }
     if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(dp); return; }
-    int percent = 0; if (dp->t > 0) percent = (dp->c * 100) / dp->t; if (percent > 100) percent = 100; if (percent < 0) percent = 0;
-    // Compose phase suffix e.g., "Sec 3 Blk 12 Key A"
+    int percent = 0;
+    if (dp->t > 0) percent = (dp->c * 100) / dp->t;
+    if (percent > 100) percent = 100;
+    if (percent < 0) percent = 0;
     char phase[40];
     if (mfc_phase_sector >= 0 && mfc_phase_first_block >= 0) {
         snprintf(phase, sizeof(phase), " | Sec %d Blk %d Key %c", mfc_phase_sector, mfc_phase_first_block, mfc_phase_key_b ? 'B' : 'A');
     } else {
         phase[0] = '\0';
     }
-    // Update title with progress; prefer active phases over details-ready
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
         char title[80];
         bool bruteforce_active = (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested && (mfc_phase_total > 0));
@@ -450,11 +482,7 @@ static void nfc_progress_update_async(void *ptr) {
         lv_label_set_text(nfc_title_label, title);
         if (nfc_details_ready && !bruteforce_active && !nfc_cache_fill_phase) lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
     }
-    // While bruteforcing, repurpose More button as Skip (label only; callback decides behavior)
-    // Only show Skip button if we're actively bruteforcing (not completed)
-    if (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested &&
-        mfc_phase_total > 0 &&
-        nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+    if (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested && mfc_phase_total > 0 && nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
         if (!nfc_skip_label_applied) {
             lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
             nfc_more_visible = true;
@@ -465,7 +493,6 @@ static void nfc_progress_update_async(void *ptr) {
             nfc_skip_label_applied = true;
         }
     }
-    // Replace UID/Type lines with sector/block and key when phase is valid
     if (mfc_phase_sector >= 0 && mfc_phase_first_block >= 0) {
         if (nfc_uid_label && lv_obj_is_valid(nfc_uid_label)) {
             char l1[32];
@@ -478,7 +505,6 @@ static void nfc_progress_update_async(void *ptr) {
             lv_label_set_text(nfc_type_label, l2);
         }
     }
-    // If details text is visible, show numeric progress and phase too
     if (nfc_details_label && lv_obj_is_valid(nfc_details_label)) {
         char info[96];
         if (dp->t > 0) snprintf(info, sizeof(info), "Dictionary: %d/%d (%d%%)%s", dp->c, dp->t, percent, phase);
@@ -853,8 +879,10 @@ static void nfc_scan_task(void *arg) {
                 ev->uid_len = uid_len;
                 if (uid_len > sizeof(ev->uid)) ev->uid_len = sizeof(ev->uid);
                 memcpy(ev->uid, uid + 1, ev->uid_len);
-                lv_async_call(nfc_update_labels_async, ev);
+                if (display_manager_is_available()) lv_async_call(nfc_update_labels_async, ev);
+                else free(ev);
             }
+
             // Build detailed info synchronously before exiting the task
             if (nfc_scan_cancel) break;
             g_uid_len = uid_len; memcpy(g_uid, uid + 1, uid_len); g_atqa = atqa; g_sak = sak; g_model = NTAG2XX_UNKNOWN;
@@ -2586,10 +2614,8 @@ void cleanup_cu_popup(void *obj) {
 static void cu_close_cb(lv_event_t *e) { (void)e; cleanup_cu_popup(NULL); }
 
 static void cu_bool_done_async(void *ptr) {
-    (void)ptr;
-    bool ok = ptr ? *((bool*)ptr) : false;
-    if (ptr) free(ptr);
     cu_busy = false;
+
     if (cu_title_label && lv_obj_is_valid(cu_title_label)) {
         lv_label_set_text(cu_title_label, "Chameleon Ultra");
     }
