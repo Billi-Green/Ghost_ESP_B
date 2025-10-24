@@ -52,11 +52,15 @@ static int pineap_network_count = 0;
 static bool pineap_detection_active = false;
 static uint8_t current_channel = 1;
 static esp_timer_handle_t channel_hop_timer = NULL;
+static bool wardriving_hopping_active = false;
+static uint8_t wardrive_channel = 1;
+static esp_timer_handle_t wardrive_hop_timer = NULL;
 static uint32_t hash_ssid(const char *ssid);
 static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash);
 static void trim_trailing(char *str);
 static bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2);
 static bool is_beacon_packet(const wifi_promiscuous_pkt_t *pkt);
+static pineap_network_t *find_or_create_network(const uint8_t *bssid);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #endif
 
@@ -322,7 +326,6 @@ static void add_to_blacklist(const uint8_t *bssid) {
     }
 }
 
-
 static void channel_hop_timer_callback(void *arg) {
     if (!pineap_detection_active)
         return;
@@ -361,7 +364,6 @@ static pineap_network_t *find_or_create_network(const uint8_t *bssid) {
         }
     }
 
-    // If not found and we have space, create new entry
     if (pineap_network_count < MAX_PINEAP_NETWORKS) {
         pineap_network_t *network = &pineap_networks[pineap_network_count++];
         memcpy(network->bssid, bssid, 6);
@@ -378,7 +380,7 @@ static uint32_t hash_ssid(const char *ssid) {
     uint32_t hash = 5381;
     int c;
     while ((c = *ssid++))
-        hash = ((hash << 5) + hash) + c; // hash * 33 + c
+        hash = ((hash << 5) + hash) + c;
     return hash;
 }
 
@@ -389,6 +391,40 @@ static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash) {
         }
     }
     return false;
+}
+
+static void wardrive_hop_timer_callback(void *arg) {
+    if (!wardriving_hopping_active)
+        return;
+
+    uint8_t start = wardrive_channel;
+    do {
+        wardrive_channel = (wardrive_channel % MAX_WIFI_CHANNEL) + 1;
+        if (esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
+            break;
+    } while (wardrive_channel != start);
+}
+
+static esp_err_t start_wardrive_channel_hopping(void) {
+    esp_timer_create_args_t timer_args = {.callback = wardrive_hop_timer_callback,
+                                          .name = "wardrive_hop"};
+
+    if (wardrive_hop_timer == NULL) {
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &wardrive_hop_timer));
+    }
+
+    wardriving_hopping_active = true;
+    wardrive_channel = 1;
+    return esp_timer_start_periodic(wardrive_hop_timer, CHANNEL_HOP_INTERVAL_MS * 1000);
+}
+
+static void stop_wardrive_channel_hopping(void) {
+    wardriving_hopping_active = false;
+    if (wardrive_hop_timer) {
+        esp_timer_stop(wardrive_hop_timer);
+        esp_timer_delete(wardrive_hop_timer);
+        wardrive_hop_timer = NULL;
+    }
 }
 
 void start_pineap_detection(void) {
@@ -402,6 +438,14 @@ void start_pineap_detection(void) {
 void stop_pineap_detection(void) {
     pineap_detection_active = false;
     stop_channel_hopping();
+}
+
+void start_wardriving(void) {
+    start_wardrive_channel_hopping();
+}
+
+void stop_wardriving(void) {
+    stop_wardrive_channel_hopping();
 }
 
 #define IRAM_PRINTF(fmt, ...) do { \
@@ -746,7 +790,9 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
 
     const uint8_t *payload = pkt->payload;
     int len = pkt->rx_ctrl.sig_len;
@@ -765,6 +811,15 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     int channel = pkt->rx_ctrl.channel;
 
     char encryption_type[8] = "OPEN";
+    bool found_wpa = false;
+    bool found_rsn = false;
+
+    uint16_t capability_info = 0;
+    bool privacy_required = false;
+    if (len >= 36) {
+        capability_info = payload[34] | (payload[35] << 8);
+        privacy_required = (capability_info & (1 << 4)) != 0;
+    }
 
     while (index + 1 < len) {
         uint8_t id = payload[index];
@@ -782,19 +837,71 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         }
 
         if (id == 48) {
-            strncpy(encryption_type, "WPA2", sizeof(encryption_type));
+            size_t copy_len = sizeof(encryption_type) - 1;
+            strncpy(encryption_type, "WPA2", copy_len);
+            encryption_type[copy_len] = '\0';
+            found_rsn = true;
+
+            if (ie_len >= 8) {
+                const uint8_t *rsn = &payload[index + 2];
+                size_t pos = 0;
+                pos += 2; // version
+                if (pos + 4 > ie_len) goto rsn_done;
+                pos += 4; // group cipher
+                if (pos + 2 > ie_len) goto rsn_done;
+                uint16_t pairwise_count = rsn[pos] | (rsn[pos + 1] << 8);
+                pos += 2;
+                size_t pairwise_len = pairwise_count * 4;
+                if (pos + pairwise_len > ie_len) goto rsn_done;
+                pos += pairwise_len;
+                if (pos + 2 > ie_len) goto rsn_done;
+                uint16_t akm_count = rsn[pos] | (rsn[pos + 1] << 8);
+                pos += 2;
+                for (uint16_t i = 0; i < akm_count; i++) {
+                    if (pos + 4 > ie_len) break;
+                    uint32_t akm = rsn[pos] | (rsn[pos + 1] << 8) | (rsn[pos + 2] << 16) |
+                                    (rsn[pos + 3] << 24);
+                    if (akm == 0x000FAC08) {
+                        strncpy(encryption_type, "WPA3", copy_len);
+                        encryption_type[copy_len] = '\0';
+                        break;
+                    } else if (akm == 0x000FAC09) {
+                        strncpy(encryption_type, "OWE", copy_len);
+                        encryption_type[copy_len] = '\0';
+                        break;
+                    }
+                    pos += 4;
+                }
+            }
+rsn_done:
+            
         } else if (id == 221) {
             uint32_t oui =
                 (payload[index + 2] << 16) | (payload[index + 3] << 8) | payload[index + 4];
             uint8_t oui_type = payload[index + 5];
             if (oui == 0x0050f2 && oui_type == 0x01) {
-                strncpy(encryption_type, "WPA", sizeof(encryption_type));
-            } else if (oui == 0x0050f2 && oui_type == 0x02) {
-                strncpy(encryption_type, "WEP", sizeof(encryption_type));
+                size_t copy_len = sizeof(encryption_type) - 1;
+                strncpy(encryption_type, "WPA", copy_len);
+                encryption_type[copy_len] = '\0';
+                found_wpa = true;
             }
         }
 
         index += (2 + ie_len);
+    }
+
+    if (ssid[0] == '\0') {
+        return;
+    }
+
+    if (!found_rsn && !found_wpa) {
+        size_t copy_len = sizeof(encryption_type) - 1;
+        if (privacy_required) {
+            strncpy(encryption_type, "WEP", copy_len);
+        } else {
+            strncpy(encryption_type, "OPEN", copy_len);
+        }
+        encryption_type[copy_len] = '\0';
     }
 
     double latitude = 0;
