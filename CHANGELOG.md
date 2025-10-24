@@ -91,6 +91,8 @@
 - Significantly improve reliability of capturing wifi frames
 - Remove arbitrary limitation on the lines of text in the webUI dual comm terminal
 - Fixed an issue causing potential corruption of pcaps saved to the Flipper Zero
+- Fixed wardriving encryption detection
+- Wardriving now properly hops channels for AP scanning
 
 #### Display
 
