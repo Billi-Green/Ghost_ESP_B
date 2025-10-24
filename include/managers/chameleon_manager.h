@@ -62,6 +62,14 @@ bool chameleon_manager_scan_lf(void);
 bool chameleon_manager_get_battery_info(void);
 
 /**
+ * @brief Query battery status without printing (for UI display)
+ * @param out_mv Pointer to store voltage in millivolts (can be NULL)
+ * @param out_percent Pointer to store battery percentage (can be NULL)
+ * @return true if battery info was retrieved successfully, false otherwise
+ */
+bool chameleon_manager_query_battery(uint16_t *out_mv, uint8_t *out_percent);
+
+/**
  * @brief Set the Chameleon Ultra to reader mode
  * @return true if mode was set successfully, false otherwise
  */

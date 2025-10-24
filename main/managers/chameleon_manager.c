@@ -36,7 +36,7 @@
 #include "esp_heap_caps.h"
 #include "core/glog.h"
 
-static const char *TAG = "chameleon_manager";
+static const char *TAG = "ChameleonManager";
 
 static const char *cu_mfc_type_str(MFC_TYPE t) {
     switch (t) {
@@ -82,6 +82,8 @@ static uint8_t g_cached_hw_mode = 0xFF; // unknown
 
 static bool g_ap_was_running = false;
 static bool g_wifi_was_running = false;
+
+static bool g_cu_nfc_dir_ready = false;
 
 static void chameleon_suspend_ap(void) {
     bool server_running = false;
@@ -443,9 +445,12 @@ static void cu_record_working_key(const uint8_t key[6], bool use_key_b) {
         }
     }
 #endif
-    if (sd_card_manager.is_initialized) {
-        sd_card_create_directory("/mnt/ghostesp/nfc");
+    if (sd_card_manager.is_initialized && !g_cu_nfc_dir_ready) {
+        if (sd_card_create_directory("/mnt/ghostesp/nfc") == ESP_OK) {
+            g_cu_nfc_dir_ready = true;
+        }
     }
+
     FILE *f = fopen(path, "a+");
     if (!f) {
         ESP_LOGW(TAG, "CU dict: failed to open %s", path);
@@ -486,6 +491,7 @@ static bool cu_send_hf14a_raw(const uint8_t *tx, uint16_t tx_len,
                               bool activate_rf, bool keep_rf, bool auto_select,
                               bool append_crc, bool wait_resp, bool check_crc,
                               uint16_t timeout_ms, uint16_t bitlen_override);
+static bool cu_query_battery_status(uint16_t *out_mv, uint8_t *out_percent);
 extern bool nfc_is_scan_cancelled(void) __attribute__((weak));
 extern bool nfc_is_dict_skip_requested(void) __attribute__((weak));
 
@@ -687,7 +693,6 @@ static void cu_try_magic_backdoor_once(void) {
         g_cu_backdoor_enabled = true;
         ESP_LOGI(TAG, "Magic backdoor likely enabled");
     }
-    (void)chameleon_manager_scan_hf();
 }
 
 // Forward declarations
@@ -1162,6 +1167,11 @@ bool chameleon_manager_connect(uint32_t timeout_seconds, const char* pin) {
                             g_cached_details_text = chameleon_manager_build_cached_details();
                             g_cached_details_session++;
                         }
+                        uint16_t batt_mv = 0;
+                        uint8_t batt_pct = 0;
+                        if (cu_query_battery_status(&batt_mv, &batt_pct)) {
+                            glog("Chameleon Ultra battery: %dmV (%d%%)\n", batt_mv, batt_pct);
+                        }
                         return true;
                     }
                 }
@@ -1395,6 +1405,7 @@ bool chameleon_manager_scan_hf(void) {
                                 memset(&g_last_ntag_dump, 0, sizeof(g_last_ntag_dump));
                             }
                         } else {
+                            // Not NTAG: do not start Classic dict read from within scan to avoid nested scans on CLI
                             memset(&g_last_ntag_dump, 0, sizeof(g_last_ntag_dump));
                         }
 
@@ -1556,6 +1567,24 @@ bool chameleon_manager_scan_lf(void) {
     return false;
 }
 
+static bool cu_query_battery_status(uint16_t *out_mv, uint8_t *out_percent) {
+    if (!g_is_connected) return false;
+    g_response_received = false;
+    if (!send_command(CMD_GET_BATTERY_INFO, NULL, 0)) return false;
+    if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) != pdTRUE) return false;
+    if (!g_response_received) return false;
+    if (g_last_response.command != CMD_GET_BATTERY_INFO) return false;
+    if (g_last_response.status != STATUS_SUCCESS) return false;
+    if (g_last_response.data_size < 3) return false;
+    if (out_mv) {
+        *out_mv = (uint16_t)((g_last_response.data[0] << 8) | g_last_response.data[1]);
+    }
+    if (out_percent) {
+        *out_percent = g_last_response.data[2];
+    }
+    return true;
+}
+
 bool chameleon_manager_get_battery_info(void) {
     if (!g_is_connected) {
         printf("Not connected to Chameleon Ultra\n");
@@ -1566,40 +1595,21 @@ bool chameleon_manager_get_battery_info(void) {
     printf("Getting battery information...\n");
     TERMINAL_VIEW_ADD_TEXT("Getting battery information...\n");
     
-    bool result = send_command(CMD_GET_BATTERY_INFO, NULL, 0);
-    if (result) {
-        printf("Battery information command sent, waiting for response...\n");
-        TERMINAL_VIEW_ADD_TEXT("Battery information command sent, waiting for response...\n");
-        
-        // Wait for response
-        if (xSemaphoreTake(g_response_sem, pdMS_TO_TICKS(5000)) == pdTRUE) {
-            if (g_response_received && g_last_response.command == CMD_GET_BATTERY_INFO) {
-                if (g_last_response.status == 0x68) { // SUCCESS
-                    if (g_last_response.data_size >= 3) {
-                        uint16_t voltage = (g_last_response.data[0] << 8) | g_last_response.data[1];
-                        uint8_t percentage = g_last_response.data[2];
-                        printf("Battery: %dmV (%d%%)\n", voltage, percentage);
-                        TERMINAL_VIEW_ADD_TEXT("Battery: %dmV (%d%%)\n", voltage, percentage);
-                        return true;
-                    } else {
-                        printf("Battery data too short: %d bytes\n", g_last_response.data_size);
-                        TERMINAL_VIEW_ADD_TEXT("Battery data too short: %d bytes\n", g_last_response.data_size);
-                    }
-                } else {
-                    printf("Battery command failed with status: 0x%02X\n", g_last_response.status);
-                    TERMINAL_VIEW_ADD_TEXT("Battery command failed with status: 0x%02X\n", g_last_response.status);
-                }
-            }
-        } else {
-            printf("Battery command timed out\n");
-            TERMINAL_VIEW_ADD_TEXT("Battery command timed out\n");
-        }
-    } else {
-        printf("Failed to send battery information command\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to send battery information command\n");
+    uint16_t voltage = 0;
+    uint8_t percentage = 0;
+    if (cu_query_battery_status(&voltage, &percentage)) {
+        printf("Battery: %dmV (%d%%)\n", voltage, percentage);
+        TERMINAL_VIEW_ADD_TEXT("Battery: %dmV (%d%%)\n", voltage, percentage);
+        return true;
     }
-    
+
+    printf("Failed to retrieve battery information\n");
+    TERMINAL_VIEW_ADD_TEXT("Failed to retrieve battery information\n");
     return false;
+}
+
+bool chameleon_manager_query_battery(uint16_t *out_mv, uint8_t *out_percent) {
+    return cu_query_battery_status(out_mv, out_percent);
 }
 
 bool chameleon_manager_set_reader_mode(void) {
@@ -2174,66 +2184,53 @@ bool chameleon_manager_read_lf_card(void) {
 }
 
 bool chameleon_manager_save_card_dump(const char* filename) {
-    if (!g_last_card_dump.valid) {
-        printf("No card dump data to save\n");
-        TERMINAL_VIEW_ADD_TEXT("No card dump data to save\n");
-        return false;
-    }
-    
-    // Create filename if not provided (unified under /mnt/ghostesp/nfc)
-    char file_path[192];
-    if (filename == NULL) {
-        struct tm* time_info = localtime(&g_last_card_dump.timestamp);
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/CU_card_dump_%04d%02d%02d_%02d%02d%02d.nfc",
-                time_info->tm_year + 1900, time_info->tm_mon + 1, time_info->tm_mday,
-                time_info->tm_hour, time_info->tm_min, time_info->tm_sec);
-    } else {
-        snprintf(file_path, sizeof(file_path), "/mnt/ghostesp/nfc/%s", filename);
-    }
-    
-    // Ensure directory exists handled at boot
-    
-    // Flipper-format minimal header (align with PN532 saves)
-    bool is_classic = (g_last_hf_scan.valid && (g_last_hf_scan.sak == 0x08 || g_last_hf_scan.sak == 0x18 || g_last_hf_scan.sak == 0x09));
-    int cap = 512; char *content = (char*)malloc(cap); if (!content) return false; int len = 0;
-    len += snprintf(content + len, cap - len, "Filetype: Flipper NFC device\n");
-    len += snprintf(content + len, cap - len, "Version: 4\n");
-    len += snprintf(content + len, cap - len, "Device type: %s\n", is_classic ? "Mifare Classic" : "NTAG/Ultralight");
-    len += snprintf(content + len, cap - len, "UID:");
-    for (int i = 0; i < g_last_card_dump.uid_size && i < 20; i++) {
-        len += snprintf(content + len, cap - len, " %02X", g_last_card_dump.uid[i]);
-    }
-    len += snprintf(content + len, cap - len, "\n");
-    if (g_last_hf_scan.valid) {
-        len += snprintf(content + len, cap - len, "ATQA: %02X %02X\n", (g_last_hf_scan.atqa >> 8) & 0xFF, g_last_hf_scan.atqa & 0xFF);
-        len += snprintf(content + len, cap - len, "SAK: %02X\n", g_last_hf_scan.sak);
-    }
-    len += snprintf(content + len, cap - len, "Data format version: 2\n");
+    // Mirror UI save flow: prefer cached NTAG, then try NTAG read+save,
+    // then Mifare Classic cache save (read+save if needed), finally HF header.
+    bool ok = false;
 
-    // JIT mount for SPI/shared-bus stability
-    bool display_was_suspended = false; bool did_mount = false;
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        did_mount = (sd_card_mount_for_flush(&display_was_suspended) == ESP_OK);
-    }
-#endif
-    if (!did_mount) {
-        // mount_for_flush already resumed display on failure; don't resume again here
-        return false;
+    if (chameleon_manager_has_cached_ntag_dump()) {
+        ok = chameleon_manager_save_ntag_dump(filename);
+        if (ok) {
+            glog("Saved NTAG dump from cache\n");
+            return true;
+        }
     }
 
-    // Write to file
-    if (sd_card_write_file(file_path, content, (size_t)len) == ESP_OK) {
-        glog("Card dump saved to: %s\n", file_path);
-        free(content);
-        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
-        return true;
-    } else {
-        glog("Failed to save card dump to: %s\n", file_path);
-        free(content);
-        if (did_mount) sd_card_unmount_after_flush(display_was_suspended);
-        return false;
+    if (!ok && chameleon_manager_last_scan_is_ntag()) {
+        if (chameleon_manager_read_ntag_card()) {
+            ok = chameleon_manager_save_ntag_dump(filename);
+            if (ok) {
+                glog("Saved NTAG dump after rescan\n");
+                return true;
+            }
+        }
     }
+
+    if (!ok && chameleon_manager_mf1_has_cache()) {
+        ok = chameleon_manager_mf1_save_flipper_dump(filename);
+        if (ok) {
+            glog("Saved Mifare Classic dump from cache\n");
+            return true;
+        }
+    }
+
+    if (!ok) {
+        (void)chameleon_manager_mf1_read_classic_with_dict(false);
+        if (chameleon_manager_mf1_has_cache()) {
+            ok = chameleon_manager_mf1_save_flipper_dump(filename);
+            if (ok) {
+                glog("Saved Mifare Classic dump after dict read\n");
+                return true;
+            }
+        }
+    }
+
+    // Fallback to minimal HF scan header if nothing else available
+    ok = chameleon_manager_save_last_hf_scan(filename);
+    if (ok) {
+        glog("Saved minimal HF scan header\n");
+    }
+    return ok;
 }
 
 bool chameleon_manager_has_cached_ntag_dump(void) {

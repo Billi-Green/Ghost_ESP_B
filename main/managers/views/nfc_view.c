@@ -2613,7 +2613,19 @@ static void cu_bool_done_async(void *ptr) {
         lv_label_set_text(cu_title_label, "Chameleon Ultra");
     }
     if (cu_details_label && lv_obj_is_valid(cu_details_label)) {
-        lv_label_set_text(cu_details_label, chameleon_manager_is_connected() ? "Connected" : "Not connected");
+        if (chameleon_manager_is_connected()) {
+            uint16_t batt_mv = 0;
+            uint8_t batt_pct = 0;
+            if (chameleon_manager_query_battery(&batt_mv, &batt_pct)) {
+                char status_text[64];
+                snprintf(status_text, sizeof(status_text), "Connected\nBattery: %dmV (%d%%)", batt_mv, batt_pct);
+                lv_label_set_text(cu_details_label, status_text);
+            } else {
+                lv_label_set_text(cu_details_label, "Connected");
+            }
+        } else {
+            lv_label_set_text(cu_details_label, "Not connected");
+        }
     }
     // refresh connected state buttons visibility/text
     update_cu_buttons_layout();
@@ -2771,7 +2783,19 @@ static void create_cu_popup(void) {
     cu_title_label = popup_create_title_label(cu_popup, "Chameleon Ultra", title_font, 10);
     cu_details_label = popup_create_body_label(cu_popup, "", LV_HOR_RES - 50, true, body_font, 26);
     if (cu_details_label) {
-        lv_label_set_text(cu_details_label, chameleon_manager_is_connected() ? "Connected" : "Not connected");
+        if (chameleon_manager_is_connected()) {
+            uint16_t batt_mv = 0;
+            uint8_t batt_pct = 0;
+            if (chameleon_manager_query_battery(&batt_mv, &batt_pct)) {
+                char status_text[64];
+                snprintf(status_text, sizeof(status_text), "Connected\nBattery: %dmV (%d%%)", batt_mv, batt_pct);
+                lv_label_set_text(cu_details_label, status_text);
+            } else {
+                lv_label_set_text(cu_details_label, "Connected");
+            }
+        } else {
+            lv_label_set_text(cu_details_label, "Not connected");
+        }
         lv_obj_set_style_text_align(cu_details_label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(cu_details_label, LV_ALIGN_TOP_MID, 0, 26);
     }
@@ -2801,7 +2825,19 @@ static void cu_state_timer_cb(lv_timer_t *t) {
     (void)t;
     if (!cu_popup || !lv_obj_is_valid(cu_popup)) return;
     if (cu_details_label && lv_obj_is_valid(cu_details_label)) {
-        lv_label_set_text(cu_details_label, chameleon_manager_is_connected() ? "Connected" : "Not connected");
+        if (chameleon_manager_is_connected()) {
+            uint16_t batt_mv = 0;
+            uint8_t batt_pct = 0;
+            if (chameleon_manager_query_battery(&batt_mv, &batt_pct)) {
+                char status_text[64];
+                snprintf(status_text, sizeof(status_text), "Connected\nBattery: %dmV (%d%%)", batt_mv, batt_pct);
+                lv_label_set_text(cu_details_label, status_text);
+            } else {
+                lv_label_set_text(cu_details_label, "Connected");
+            }
+        } else {
+            lv_label_set_text(cu_details_label, "Not connected");
+        }
     }
     update_cu_buttons_layout();
 }

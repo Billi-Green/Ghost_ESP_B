@@ -8,7 +8,7 @@ weight: 30
 
 - An NTAG `.nfc` file on the SD card under `/mnt/ghostesp/nfc/` created from a previous scan or copied manually.
 - NTAG21x or Ultralight tag compatible with the captured image size (NTAG213/215/216 page counts).
-- A PN532 enabled build with a connected PN532 module.
+- A PN532 or Chameleon Ultra enabled build with a connected PN532 module or Chameleon Ultra.
 
 ## Steps
 
@@ -23,6 +23,10 @@ weight: 30
 
 4. **Present the blank tag.** Hold the target NTAG on the antenna until the title updates.
    You should see “Writing… X%” as each page is written, finishing at “Write complete”.
+
+## Chameleon Ultra Writing
+
+- **No remote writes.** GhostESP cannot program tags through the Chameleon Ultra; use the PN532 workflow above.
 
 ## Verify
 

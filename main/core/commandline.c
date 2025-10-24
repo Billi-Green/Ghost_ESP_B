@@ -77,6 +77,34 @@ void handle_ble_spam_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+
+typedef struct {
+    int last_percent;
+    int last_total;
+} chameleon_cli_progress_state_t;
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+
+static void chameleon_cli_progress_cb(int current, int total, void *user) {
+    chameleon_cli_progress_state_t *state = (chameleon_cli_progress_state_t *)user;
+    if (!state || total <= 0) return;
+    if (current < 0) current = 0;
+    if (current > total) current = total;
+    if (total != state->last_total) state->last_percent = -1;
+    int percent = (int)((current * 100) / total);
+    if (percent != state->last_percent) {
+        glog("Classic dictionary progress: %d%% (%d/%d)\n", percent, current, total);
+        state->last_percent = percent;
+        state->last_total = total;
+    }
+}
+
 void command_init() { command_list_head = NULL; }
 
 void register_command(const char *name, CommandFunction function) {
@@ -3200,7 +3228,65 @@ void handle_chameleon_cmd(int argc, char **argv) {
         }
     }
     else if (strcmp(subcommand, "scanhf") == 0) {
-        chameleon_manager_scan_hf();
+        bool skip_dict = false;
+        for (int i = 2; i < argc; ++i) {
+            if (strcmp(argv[i], "--skip-dict") == 0 || strcmp(argv[i], "--skipdict") == 0) {
+                skip_dict = true;
+            } else {
+                printf("Unknown option for scanhf: %s\n", argv[i]);
+                TERMINAL_VIEW_ADD_TEXT("Unknown option for scanhf\n");
+                return;
+            }
+        }
+
+        if (!chameleon_manager_scan_hf()) {
+            return;
+        }
+
+        bool classic_tag = false;
+        uint8_t uid_len = 0;
+        uint16_t atqa = 0;
+        uint8_t sak = 0;
+        if (chameleon_manager_get_last_hf_scan(NULL, &uid_len, &atqa, &sak)) {
+            if (sak == 0x08 || sak == 0x09 || sak == 0x18) {
+                classic_tag = true;
+            }
+        }
+
+        if (classic_tag) {
+            chameleon_cli_progress_state_t progress_state = {0};
+            progress_state.last_percent = -1;
+            chameleon_manager_set_progress_callback(chameleon_cli_progress_cb, &progress_state);
+
+            if (skip_dict) {
+                glog("Reading MIFARE Classic without dictionary brute-force...\n");
+                glog("Dictionary brute-force skipped by user flag.\n");
+            } else {
+                glog("Reading MIFARE Classic with dictionary brute-force...\n");
+            }
+
+            bool classic_ok = chameleon_manager_mf1_read_classic_with_dict(skip_dict);
+            chameleon_manager_set_progress_callback(NULL, NULL);
+
+            if (!classic_ok) {
+                glog("MIFARE Classic read failed.\n");
+            } else {
+                glog("MIFARE Classic read complete.\n");
+            }
+        } else if (chameleon_manager_last_scan_is_ntag()) {
+            glog("Refreshing NTAG cache...\n");
+
+            if (!chameleon_manager_read_ntag_card()) {
+                glog("Failed to read NTAG card.\n");
+            } else {
+                glog("NTAG read complete.\n");
+            }
+        }
+
+        const char *details = chameleon_manager_get_cached_details();
+        if (details && details[0]) {
+            glog("%s\n", details);
+        }
     }
     else if (strcmp(subcommand, "scanlf") == 0) {
         chameleon_manager_scan_lf();
