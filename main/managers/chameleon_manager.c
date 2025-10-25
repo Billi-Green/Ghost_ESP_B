@@ -5,12 +5,14 @@
 
 #include "managers/chameleon_manager.h"
 #include "managers/ble_manager.h"
+#ifdef CONFIG_NFC_CHAMELEON
 #include "host/ble_hs.h"
 #include "host/ble_hs_id.h"
 #include "host/ble_uuid.h"
 #include "host/ble_gatt.h"
 #include "host/ble_gap.h"
 #include "host/ble_sm.h"
+#endif
 #include "esp_log.h"
 #include "esp_err.h"
 #include <esp_wifi.h>
@@ -37,6 +39,8 @@
 #include "core/glog.h"
 
 static const char *TAG = "ChameleonManager";
+
+#ifdef CONFIG_NFC_CHAMELEON
 
 static const char *cu_mfc_type_str(MFC_TYPE t) {
     switch (t) {
@@ -3356,4 +3360,5 @@ bool chameleon_manager_collect_nonces(void) {
     TERMINAL_VIEW_ADD_TEXT("Nonce collection not implemented\n");
         return false;
     }
-    
+
+#endif

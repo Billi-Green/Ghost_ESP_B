@@ -1,5 +1,5 @@
 ---
-title: "Adjusting Kconfig with build.py"
+title: "Adjusting build options"
 description: "Use the build helper to edit GhostESP configuration options."
 weight: 10
 ---
