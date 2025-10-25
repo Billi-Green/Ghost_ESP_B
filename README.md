@@ -16,7 +16,7 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 1. Visit our [Official Website](https://ghostesp.net) to stay in touch!
 
-**Making content about GhostESP?** Check out the [Press Kit](https://github.com/jaylikesbunda/Ghost_ESP/blob/Development-deki/presskit.zip) for resources.
+> **Making content about GhostESP?** Check out the [Press Kit](https://github.com/jaylikesbunda/Ghost_ESP/blob/Development-deki/presskit.zip) for resources.
 
 ---
 
