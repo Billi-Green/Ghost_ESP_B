@@ -13,6 +13,34 @@ GhostESP can control a Chameleon Ultra over Bluetooth Low Energy. Once paired yo
 - **Firmware:** GhostESP build with BLE enabled and the Chameleon Ultra features compiled in.
 - **Hardware:** A powered Chameleon Ultra advertising over BLE and charged enough for the session.
 
+## Supported Devices
+
+Chameleon Ultra support is available on the following GhostESP builds:
+
+- esp32-generic.zip
+- esp32s3-generic.zip
+- esp32c3-generic.zip
+- esp32c5-generic-v01.zip
+- esp32c6-generic.zip
+- MarauderV4_FlipperHub.zip
+- MarauderV6_AwokDual.zip
+- ghostboard.zip
+- ESP32-S3-Cardputer.zip
+- CYD2USB.zip
+- CYDMicroUSB.zip
+- CYDDualUSB.zip
+- CYD2USB2.4Inch.zip
+- CYD2USB2.4Inch_C.zip
+- CYD2432S028R.zip
+- LilyGo-T-Deck.zip
+- LilyGo-TEmbedC1101.zip
+- LilyGo-S3TWatch-2020.zip
+- LilyGo-TDisplayS3-Touch.zip
+- JCMK_DevBoardPro.zip
+- RabbitLabs_Minion.zip
+- Lolin_S3_Pro.zip
+- CardputerADV.zip
+
 ## Connecting to Chameleon Ultra
 
 > **Note:** GhostESP automatically suspends the access point and Wi-Fi services during the connection to free memory for BLE operations. Services restore when you disconnect.
