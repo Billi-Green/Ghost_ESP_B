@@ -667,7 +667,7 @@ void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) 
             }
 
             // Write to PCAP if capture is active
-            if (pcap_file != NULL) {
+            if (pcap_is_capturing()) {
                 enqueue_pcap_write(ppkt->payload, ppkt->rx_ctrl.sig_len);
             }
         }
@@ -1347,7 +1347,7 @@ void ble_skimmer_scan_callback(struct ble_gap_event *event, void *arg) {
                 pulse_once(&rgb_manager, 255, 0, 0);
 
                 // Create enhanced PCAP packet with metadata
-                if (pcap_file != NULL) {
+                if (pcap_is_capturing()) {
                     // Format: [Timestamp][MAC][RSSI][Name][Raw Data]
                     uint8_t enhanced_packet[256] = {0};
                     size_t packet_len = 0;

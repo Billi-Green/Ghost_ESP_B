@@ -38,6 +38,10 @@ static SemaphoreHandle_t csv_mutex = NULL;
 static TaskHandle_t csv_flush_task = NULL;
 static bool csv_header_pending_uart = false;
 
+bool csv_buffer_has_pending_data(void) {
+    return buffer_offset > 0;
+}
+
 static void csv_flush_task_fn(void *arg) {
     for (;;) {
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE

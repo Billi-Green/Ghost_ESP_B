@@ -673,7 +673,7 @@ void handle_stop_flipper(int argc, char **argv) {
     ble_stop();
     ble_stop_ble_spam();
 #endif
-    if (buffer_offset > 0) { // Only flush if there's data in buffer
+    if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
     }
     csv_file_close();                  // Close any open CSV files
@@ -1326,7 +1326,9 @@ void handle_startwd(int argc, char **argv) {
         stop_wardriving();
         gps_manager_deinit(&g_gpsManager);
         wifi_manager_stop_monitor_mode();
-        csv_flush_buffer_to_file();
+        if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
+            csv_flush_buffer_to_file();
+        }
         csv_file_close();
         glog("Wardriving stopped.\n");
         status_display_show_status("Wardrive Stop");
@@ -1979,7 +1981,7 @@ void handle_ble_wardriving(int argc, char **argv) {
     if (stop_flag) {
         ble_stop();
         gps_manager_deinit(&g_gpsManager);
-        if (buffer_offset > 0) { // Only flush if there's data in buffer
+        if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
             csv_flush_buffer_to_file();
         }
         csv_file_close();

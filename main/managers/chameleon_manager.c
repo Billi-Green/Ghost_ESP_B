@@ -234,8 +234,8 @@ typedef struct {
     time_t timestamp;
     
     // Card data
-    uint8_t blocks[MAX_CARD_BLOCKS][BLOCK_SIZE];
-    bool block_valid[MAX_CARD_BLOCKS];
+    uint8_t *blocks;
+    bool *block_valid;
     uint16_t total_blocks_read;
     uint16_t card_size_blocks;
     
