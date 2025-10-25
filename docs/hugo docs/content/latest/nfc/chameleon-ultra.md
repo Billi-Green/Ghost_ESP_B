@@ -68,23 +68,11 @@ Chameleon Ultra support is available on the following GhostESP builds:
 4. Run `chameleon disconnect` when finished.
    BLE releases and the Wi-Fi services will restore automatically.
 
-## Using the Chameleon Ultra
-
-### Scanning Tags
-
-- **Switch to reader mode:** Run `chameleon reader` in the CLI or select **Reader Mode** in the UI.
-- **Scan HF tags:** Use `chameleon scanhf` in the CLI while holding the tag near the antenna. The terminal shows UID, ATQA, SAK, and brute-force progress for MIFARE Classic cards.
-- **View details:** Results appear in both the CLI and the on-device terminal view with the same formatting as PN532 scans.
-
-See [Scanning with Chameleon Ultra]({{< relref "scanning.md#chameleon-ultra-scanning" >}}) for complete workflow details.
-
 ### Saving Dumps
 
 - **Save HF scans:** After `chameleon scanhf` completes, run `chameleon savehf <name>` to write the dump to `/mnt/ghostesp/chameleon/`.
 - **Name files clearly:** Use short descriptive names without spaces, for example `office_door`.
-- **Skip the UI:** Chameleon Ultra dumps cache in RAM immediately; no need to reopen the PN532 scan popup.
 
-See [Saving from Chameleon Ultra]({{< relref "saving.md#chameleon-ultra-saves" >}}) for storage details.
 
 ## Troubleshooting
 

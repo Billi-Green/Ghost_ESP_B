@@ -118,6 +118,15 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
     - 'Saved' menu to browse `.nfc` files and rename/delete them from the UI
     - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
 
+- **Chameleon Ultra Support**
+  - **CLI & UI Integration**
+    - Connect/disconnect and status/battery commands
+  - **Card Support**
+    - NTAG and MIFARE Classic NDEF parsing
+    - Flipper `.nfc` exports via `chameleon savehf/savedump/saventag` and UI
+    - Dictionary attack capability
+
+
 </details>
 
 
