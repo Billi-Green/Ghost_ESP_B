@@ -461,6 +461,17 @@ void display_manager_fade_in(lv_obj_t *obj) {
   lv_anim_start(&anim);
 }
 
+// recursively set radius for obj and its children (used to avoid mask draws during heavy transitions)
+static void set_radius_recursive(lv_obj_t *obj, lv_coord_t r) {
+  if (!obj) return;
+  lv_obj_set_style_radius(obj, r, 0);
+  uint32_t cnt = lv_obj_get_child_cnt(obj);
+  for (uint32_t i = 0; i < cnt; i++) {
+    lv_obj_t *c = lv_obj_get_child(obj, i);
+    if (c) set_radius_recursive(c, r);
+  }
+}
+
 void fade_out_ready_cb(lv_anim_t *anim) {
   display_manager_destroy_current_view();
 
@@ -474,8 +485,22 @@ void fade_out_ready_cb(lv_anim_t *anim) {
     }
 
     new_view->create();
-    display_manager_fade_in(new_view->root);
-    display_manager_fade_in(status_bar);
+
+    // Avoid running the per-tick fade animation for the keyboard view because
+    // the opacity animation forces heavy draw work (masks/labels) and can
+    // starve the LVGL tick/watchdog during the keyboard fade-in.
+    if (new_view->name && strcmp(new_view->name, "Keyboard Screen") == 0) {
+      if (new_view->root) {
+        // make fully opaque immediately
+        lv_obj_set_style_opa(new_view->root, LV_OPA_COVER, 0);
+        // temporarily remove rounded radii to avoid expensive mask draws
+        set_radius_recursive(new_view->root, 0);
+      }
+      if (status_bar) lv_obj_set_style_opa(status_bar, LV_OPA_COVER, 0);
+    } else {
+      display_manager_fade_in(new_view->root);
+      display_manager_fade_in(status_bar);
+    }
   }
 }
 

@@ -41,10 +41,12 @@
 - Use a fixed-size active-key buffer for keyboard
 - Refactor popups to use reusable popup helpers
 - Refactor options menu to use reusable options view helpers
+- Refactor touch keyboard view to significantly reduce memory usage
 - Enabled software back buttons made for encoder controls on joystick too
 - Size popup buttons based on what's in them
 - WebUI redesign (Part 2)
 - Organise BLE menu into hierarchical sub-menus - @tototo31
+- Lowered LV_MEM_SIZE from 32KB to 16KB on most display configs
 
 #### Attacks
 
@@ -93,6 +95,7 @@
 - Fixed an issue causing potential corruption of pcaps saved to the Flipper Zero
 - Fixed wardriving encryption detection
 - Wardriving now properly hops channels for AP scanning
+- Remove key highlight on touch only devices for the keyboard view
 
 #### Display
 
