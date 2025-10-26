@@ -87,12 +87,19 @@ static uint8_t g_cached_hw_mode = 0xFF; // unknown
 
 static bool g_ap_was_running = false;
 static bool g_wifi_was_running = false;
+static wifi_mode_t g_prev_wifi_mode = WIFI_MODE_NULL;
 
 static bool g_cu_nfc_dir_ready = false;
 
 static void chameleon_suspend_ap(void) {
     bool server_running = false;
     ap_manager_get_status(&server_running, NULL, NULL);
+    wifi_mode_t _cur_mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&_cur_mode) == ESP_OK) {
+        g_prev_wifi_mode = _cur_mode;
+    } else {
+        g_prev_wifi_mode = WIFI_MODE_NULL;
+    }
     if (server_running) {
         ESP_LOGI(TAG, "Suspending GhostNet AP services for Chameleon");
         printf("Suspending GhostNet AP...\n");
@@ -138,11 +145,16 @@ static void chameleon_resume_ap(void) {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         esp_err_t err = esp_wifi_init(&cfg);
         if (err == ESP_OK) {
-            esp_wifi_set_mode(WIFI_MODE_APSTA);
-            wifi_manager_configure_sta_from_settings();
+            wifi_mode_t m = (g_prev_wifi_mode == WIFI_MODE_NULL) ? WIFI_MODE_STA : g_prev_wifi_mode;
+            esp_wifi_set_mode(m);
+            esp_wifi_start();
+            if ((m & WIFI_MODE_STA) != 0) {
+                wifi_manager_configure_sta_from_settings();
+            }
         } else {
             ESP_LOGE(TAG, "Failed to reinit Wi-Fi driver: 0x%X", (unsigned int)err);
         }
+        g_prev_wifi_mode = WIFI_MODE_NULL;
         g_wifi_was_running = false;
     }
 }

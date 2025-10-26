@@ -552,7 +552,7 @@ esp_err_t ap_manager_init(void) {
             return ret;
         }
 
-        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
         if (!netif) {
             netif = esp_netif_create_default_wifi_ap();
             if (netif == NULL) {
@@ -562,6 +562,17 @@ esp_err_t ap_manager_init(void) {
         }
     } else if (ret == ESP_OK) {
         glog("Wi-Fi already initialized, skipping Wi-Fi init.\n");
+        // Ensure our static AP netif handle is set (and exists)
+        if (!netif) {
+            netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        }
+        if (!netif) {
+            netif = esp_netif_create_default_wifi_ap();
+            if (!netif) {
+                glog("Failed to create default Wi-Fi AP when Wi-Fi already initialized\n");
+                return ESP_FAIL;
+            }
+        }
     } else {
         glog("esp_wifi_get_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
