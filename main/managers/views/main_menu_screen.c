@@ -843,13 +843,13 @@ static void create_grid_menu(void) {
 }
 
 static void create_list_menu(void) {
-    int button_height = (LV_VER_RES <= 160 || LV_HOR_RES <= 160) ? 36 : 48;
+    int button_height = (LV_VER_RES <= 160 || LV_HOR_RES <= 160) ? 32 : 44;
     int icon_target = button_height <= 38 ? 20 : 26;
 
     lv_obj_set_flex_flow(menu_container, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(menu_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(menu_container, LV_HOR_RES > 200 ? 16 : 10, 0);
-    lv_obj_set_style_pad_row(menu_container, 10, 0);
+    lv_obj_set_style_pad_row(menu_container, 6, 0);
     lv_obj_set_scroll_dir(menu_container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(menu_container, LV_SCROLLBAR_MODE_AUTO);
 
@@ -875,7 +875,7 @@ static void create_list_menu(void) {
         lv_obj_set_style_border_width(btn, 2, LV_PART_MAIN);
         lv_obj_set_style_border_color(btn, menu_items[i].border_color, LV_PART_MAIN);
         lv_obj_set_style_radius(btn, 8, LV_PART_MAIN);
-        lv_obj_set_style_pad_all(btn, 10, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(btn, 8, LV_PART_MAIN);
         lv_obj_set_style_pad_column(btn, 12, LV_PART_MAIN);
         lv_obj_set_style_shadow_width(btn, 6, LV_PART_MAIN);
         lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), LV_PART_MAIN);
