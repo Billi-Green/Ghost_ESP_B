@@ -717,6 +717,21 @@ static void keyboard_create() {
             encoder_offset_x + i * encoder_item_spacing + (encoder_item_spacing - lbl_w) / 2,
             (display_height - lbl_h) / 2);
     }
+    // ensure encoder builds unhide the root and restore radii
+    if (radius_override_active) {
+        lv_style_set_radius(&style_key_btn, saved_key_radius);
+        if (input_label) lv_obj_set_style_radius(input_label, saved_input_label_radius, 0);
+        radius_override_active = false;
+    }
+    lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
+#else
+    // non-touch, non-encoder devices (e.g., cardputer keyboard): unhide and restore radii
+    if (radius_override_active) {
+        lv_style_set_radius(&style_key_btn, saved_key_radius);
+        if (input_label) lv_obj_set_style_radius(input_label, saved_input_label_radius, 0);
+        radius_override_active = false;
+    }
+    lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
 #endif
     
     display_manager_add_status_bar("Keyboard");
