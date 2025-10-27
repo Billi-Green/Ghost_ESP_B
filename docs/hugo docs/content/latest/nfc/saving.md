@@ -6,7 +6,7 @@ weight: 20
 
 ## Prerequisites
 
-- A PN532 enabled build.
+- A PN532 or Chameleon Ultra enabled build.
 - SD card mounted with free space.
 
 ## Steps
@@ -22,6 +22,12 @@ weight: 20
    
 4. **Repeat as needed.** Saved files remain accessible even after you leave the scan popup.
    You should see the filename follow the pattern `<Model>_<UID>.nfc` in `/mnt/ghostesp/nfc/`.
+
+## Chameleon Ultra Saves
+
+- **Use the CLI.** After finishing `chameleon scanhf`, stay in the terminal and run `chameleon savehf <name>`. Files land in `/mnt/ghostesp/chameleon/`.
+- **Name files clearly.** Pick short descriptive filenames without spaces, for example `office_door`.
+- **Verify later.** Saved Chameleon dumps can be copied to a PC from your SD Card exactly like PN532 captures.
 
 ## Verify
 

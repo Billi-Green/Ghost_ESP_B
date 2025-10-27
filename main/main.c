@@ -150,7 +150,7 @@ void app_main(void) {
     {
         int32_t comm_tx = G_Settings.esp_comm_tx_pin;
         int32_t comm_rx = G_Settings.esp_comm_rx_pin;
-        MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, 921600));
+        MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, DEFAULT_BAUD_RATE));
     }
 
     ESP_LOGI(TAG, "Initializing AP Manager");

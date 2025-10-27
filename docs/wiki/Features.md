@@ -85,6 +85,60 @@ GhostESP comes packed with various features for wireless network exploration and
   - Apple, Microsoft, Samsung, Google, and random BLE spam modes
   - Stop BLE spam at any time
 
+## Chameleon Ultra Integration
+
+### NFC/RFID Research Tool Support
+
+- **Bluetooth Connectivity**
+  - Wireless control of Chameleon Ultra device
+  - Real-time status monitoring and battery level checking
+  - Remote mode switching (Reader/Emulator)
+
+### HF (13.56MHz) Capabilities
+
+- **MIFARE Classic Analysis**
+  - Automated comprehensive analysis
+  - Basic card detection and UID reading
+  - Professional forensic reporting
+
+- **NTAG Support**
+  - Intelligent NTAG213/215/216 detection
+  - Password-protected card analysis
+  - Professional security assessment reports
+  - Multi-method detection algorithms
+
+- **General HF Operations**
+  - ISO14443 Type A/B card scanning
+  - Complete card data dumping with authentication summary
+  - Slot management (8 emulation slots)
+
+### LF (125KHz) Capabilities
+
+- **Low Frequency Scanning**
+  - EM410X tag detection and reading
+  - HID Proximity card support
+  - Multi-format LF scanning
+
+### Advanced Security Features
+
+- **Professional Security Analysis**
+  - Comprehensive card analysis and reporting
+  - Compatible with standard security research tools
+
+- **Data Management**
+  - Automatic file organization with UID-based naming
+  - Timestamped forensic reports
+  - SD card storage in `/mnt/ghostesp/chameleon/`
+  - Custom filename support for organized research
+
+### Memory Safety & Stability
+
+- **Robust Operation**
+  - Memory monitoring and validation (20KB minimum requirement)
+  - Crash protection with graceful error handling
+  - Automatic connection management
+  - Professional error reporting
+
 ## Infrared (IR) Functions
 
 ### IR Receive Support

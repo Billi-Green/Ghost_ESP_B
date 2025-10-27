@@ -24,7 +24,10 @@ static esp_err_t _pcap_flush_buffer_to_file_nolock();
 static char pcap_file_path[MAX_FILE_NAME_LENGTH];
 static char pcap_base_name[32] = "capture";
 static volatile pcap_capture_type_t s_capture_type = PCAP_CAPTURE_WIFI;
-static uint8_t pcap_uart_outbuf[PCAP_BUFFER_SIZE + 64];
+static uint8_t pcap_buffer[PCAP_BUFFER_SIZE];
+static size_t buffer_offset = 0;
+static FILE *pcap_file = NULL;
+static SemaphoreHandle_t pcap_mutex = NULL;
 
 typedef struct {
   uint8_t packet_type; // HCI packet type (1 byte)
@@ -70,12 +73,11 @@ esp_err_t pcap_write_global_header(FILE *f, pcap_capture_type_t capture_type) {
     const size_t mark_close_len = strlen(mark_close);
 
     glog_set_defer(1);
-    size_t off = 0;
-    memcpy(pcap_uart_outbuf + off, mark_begin, mark_begin_len); off += mark_begin_len;
-    memcpy(pcap_uart_outbuf + off, &header, sizeof(header)); off += sizeof(header);
-    memcpy(pcap_uart_outbuf + off, mark_close, mark_close_len); off += mark_close_len;
-    pcap_uart_outbuf[off++] = '\n';
-    uart_write_bytes(UART_NUM_0, (const char *)pcap_uart_outbuf, off);
+    uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+    uart_write_bytes(UART_NUM_0, (const char *)&header, sizeof(header));
+    uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
+    const char newline = '\n';
+    uart_write_bytes(UART_NUM_0, &newline, 1);
     glog_set_defer(0);
     glog_flush_deferred();
     return ESP_OK;
@@ -567,11 +569,9 @@ static esp_err_t _pcap_flush_buffer_to_file_nolock() {
           const char *mark_close = "[BUF/CLOSE]";
           const size_t mark_close_len = strlen(mark_close);
           glog_set_defer(1);
-          size_t off = 0;
-          memcpy(pcap_uart_outbuf + off, mark_begin, mark_begin_len); off += mark_begin_len;
-          memcpy(pcap_uart_outbuf + off, pcap_buffer, buffer_offset); off += buffer_offset;
-          memcpy(pcap_uart_outbuf + off, mark_close, mark_close_len); off += mark_close_len;
-          uart_write_bytes(UART_NUM_0, (const char *)pcap_uart_outbuf, off);
+          uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+          uart_write_bytes(UART_NUM_0, (const char *)pcap_buffer, buffer_offset);
+          uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
           glog_set_defer(0);
           glog_flush_deferred();
         }
@@ -581,11 +581,9 @@ static esp_err_t _pcap_flush_buffer_to_file_nolock() {
         const char *mark_close = "[BUF/CLOSE]";
         const size_t mark_close_len = strlen(mark_close);
         glog_set_defer(1);
-        size_t off = 0;
-        memcpy(pcap_uart_outbuf + off, mark_begin, mark_begin_len); off += mark_begin_len;
-        memcpy(pcap_uart_outbuf + off, pcap_buffer, buffer_offset); off += buffer_offset;
-        memcpy(pcap_uart_outbuf + off, mark_close, mark_close_len); off += mark_close_len;
-        uart_write_bytes(UART_NUM_0, (const char *)pcap_uart_outbuf, off);
+        uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+        uart_write_bytes(UART_NUM_0, (const char *)pcap_buffer, buffer_offset);
+        uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
         glog_set_defer(0);
         glog_flush_deferred();
       }
@@ -604,6 +602,10 @@ esp_err_t pcap_flush_buffer_to_file() {
     xSemaphoreGive(pcap_mutex);
   }
   return ESP_OK;
+}
+
+bool pcap_is_capturing(void) {
+  return pcap_file != NULL;
 }
 
 void pcap_file_close() {

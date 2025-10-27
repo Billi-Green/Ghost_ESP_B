@@ -4,18 +4,26 @@
 
 ### Added
 
+#### NFC
+
+##### PN532
+
+- NTAG (Type 2) support: read/write NTAG213/215/216 with NDEF parsing and save to Flipper .nfc format
+- MIFARE Classic support (Mini/1K/4K): Flipper dictionary attack, magic backdoor detection, and NDEF TLV parsing
+- File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc`
+
+##### Chameleon Ultra
+
+- CLI support: connect/disconnect, status/battery, reader/emulator toggles - @tototo31
+- UI support: PN532 parity with cached details, More/Save flows and dictionary attack
+- NTAG and Mifare Classic NDEF parsing, Flipper `.nfc` exports from `chameleon savehf/savedump/saventag` - @tototo31, @jaylikesbunda
+
 #### Hardware
 
 - Added support for Cardputer ADV
 - Added Kconfig support for a secondary status display
 - Added Kconfig support for IO Expander - @Play2BReal
 - Added heartbeat-based auto-reconnect for dual communication
-
-#### NFC
-
-- NTAG (Type 2) support: read/write NTAG213/215/216 with NDEF parsing and save to Flipper .nfc format
-- MIFARE Classic support (Mini/1K/4K): Flipper dictionary attack, magic backdoor detection, and NDEF TLV parsing
-- File management: 'Saved' menu for .nfc files and 'User Keys' view for `/mnt/ghostesp/nfc/mfc_user_dict.nfc
 
 #### UI
 
@@ -64,6 +72,7 @@
 - If dualcomm is set to pins used by the serial UART, disable the serial UART
 - Update main menu icons to RGB565A8
 - Refactored dualcomm logic to be more robust
+- lower all CYD LVGL memory buffers to 16KB and swap to single buffer for display
 
 ### Bug Fixes
 
@@ -89,24 +98,21 @@
 - Fixed BLE capture stopping itself after recieving an event
 - Added sanity checks to IE parsing to prevent OOB reads
 - Accepted HCI packet types now include CMD, ACL, SCO, and ISO
-- Reduce heap churn by reusing a single 4KB transfer buffer in wifi managerstreaming
+- Reduce heap churn by reusing a single 4KB transfer buffer in wifi manager streaming
 - Significantly improve reliability of capturing wifi frames
 - Remove arbitrary limitation on the lines of text in the webUI dual comm terminal
 - Fixed an issue causing potential corruption of pcaps saved to the Flipper Zero
 - Fixed wardriving encryption detection
 - Wardriving now properly hops channels for AP scanning
-- Remove key highlight on touch only devices for the keyboard view
 
 #### Display
 
 - Possible fix for random rotation of ST7789 displays upon flashing
 - Joystick builds now use touch keyboard layout with selection highlighting and navigation
-
-#### Input & UI
-
 - Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
 - Remove artificial delay in cardputer keyboard task to make more responsive
 - Improve and refactor terminal message handling
+- Remove key highlight on touch only devices for the keyboard view
 - Fixed duplicate back button and wrong red styling in universals IR view
 
 ## Revival v1.7.2

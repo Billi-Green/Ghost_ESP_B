@@ -308,14 +308,22 @@ static bool portal_sd_jit_mounted = false;
 static bool portal_display_suspended = false;
 
 // single reusable transfer buffer for streaming to reduce heap churn
-static char g_stream_buf[CHUNK_SIZE + 1];
+static char *g_stream_buf = NULL;
 static SemaphoreHandle_t g_stream_buf_mutex = NULL;
 static inline bool stream_buf_lock(void) {
     if (g_stream_buf_mutex == NULL) {
         g_stream_buf_mutex = xSemaphoreCreateMutex();
         if (g_stream_buf_mutex == NULL) return false;
     }
-    return xSemaphoreTake(g_stream_buf_mutex, portMAX_DELAY) == pdTRUE;
+    if (xSemaphoreTake(g_stream_buf_mutex, portMAX_DELAY) != pdTRUE) return false;
+    if (g_stream_buf == NULL) {
+        g_stream_buf = (char *)heap_caps_malloc(CHUNK_SIZE + 1, MALLOC_CAP_8BIT);
+        if (g_stream_buf == NULL) {
+            xSemaphoreGive(g_stream_buf_mutex);
+            return false;
+        }
+    }
+    return true;
 }
 static inline void stream_buf_unlock(void) {
     if (g_stream_buf_mutex) {

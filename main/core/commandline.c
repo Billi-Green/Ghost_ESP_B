@@ -36,8 +36,8 @@
 #include <dirent.h>
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
+#include "managers/chameleon_manager.h"
 #include <stddef.h>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
@@ -76,6 +76,34 @@ void handle_ble_spam_cmd(int argc, char **argv);
 #endif
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
+
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+
+typedef struct {
+    int last_percent;
+    int last_total;
+} chameleon_cli_progress_state_t;
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+
+static void chameleon_cli_progress_cb(int current, int total, void *user) {
+    chameleon_cli_progress_state_t *state = (chameleon_cli_progress_state_t *)user;
+    if (!state || total <= 0) return;
+    if (current < 0) current = 0;
+    if (current > total) current = total;
+    if (total != state->last_total) state->last_percent = -1;
+    int percent = (int)((current * 100) / total);
+    if (percent != state->last_percent) {
+        glog("Classic dictionary progress: %d%% (%d/%d)\n", percent, current, total);
+        state->last_percent = percent;
+        state->last_total = total;
+    }
+}
 
 void command_init() { command_list_head = NULL; }
 
@@ -645,7 +673,7 @@ void handle_stop_flipper(int argc, char **argv) {
     ble_stop();
     ble_stop_ble_spam();
 #endif
-    if (buffer_offset > 0) { // Only flush if there's data in buffer
+    if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
     }
     csv_file_close();                  // Close any open CSV files
@@ -1298,7 +1326,9 @@ void handle_startwd(int argc, char **argv) {
         stop_wardriving();
         gps_manager_deinit(&g_gpsManager);
         wifi_manager_stop_monitor_mode();
-        csv_flush_buffer_to_file();
+        if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
+            csv_flush_buffer_to_file();
+        }
         csv_file_close();
         glog("Wardriving stopped.\n");
         status_display_show_status("Wardrive Stop");
@@ -1448,7 +1478,7 @@ void handle_help(int argc, char **argv) {
 
     // List of all categories to print in order
     const char *all_categories[] = {
-        "wifi", "ble", "comm", "sd", "led", "gps", "misc", "portal", "printer", "cast", "capture", "beacon", "attack"
+        "wifi", "ble", "chameleon", "comm", "sd", "led", "gps", "misc", "portal", "printer", "cast", "capture", "beacon", "attack"
     };
     int num_categories = sizeof(all_categories) / sizeof(all_categories[0]);
 
@@ -1604,6 +1634,40 @@ void handle_help(int argc, char **argv) {
         printf("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
         printf("    Usage: blescan [seconds]\n\n");
         TERMINAL_VIEW_ADD_TEXT("blescan, blespam, blewardriving, list -airtags, select -airtag\n");
+        return;
+    }
+
+    if (strcmp(category, "chameleon") == 0) {
+        printf("\nChameleon Ultra Commands:\n\n");
+        TERMINAL_VIEW_ADD_TEXT("\nChameleon Ultra Commands:\n\n");
+        printf("chameleon connect [timeout] [pin]\n");
+        printf("    Description: Connect to a Chameleon Ultra device via BLE\n");
+        printf("    Usage: chameleon connect [timeout_seconds] [pin]\n");
+        printf("    Arguments:\n");
+        printf("        timeout_seconds : Connection timeout (default: 10)\n");
+        printf("        pin            : PIN for authentication (4-6 digits, optional)\n\n");
+        printf("chameleon disconnect\n");
+        printf("    Description: Disconnect from the Chameleon Ultra device\n");
+        printf("    Usage: chameleon disconnect\n\n");
+        printf("chameleon status\n");
+        printf("    Description: Check connection status with Chameleon Ultra\n");
+        printf("    Usage: chameleon status\n\n");
+        printf("chameleon scanhf\n");
+        printf("    Description: Scan for High Frequency (HF) RFID tags\n");
+        printf("    Usage: chameleon scanhf\n\n");
+        printf("chameleon scanlf\n");
+        printf("    Description: Scan for Low Frequency (LF) RFID tags\n");
+        printf("    Usage: chameleon scanlf\n\n");
+        printf("chameleon battery\n");
+        printf("    Description: Get battery information from Chameleon Ultra\n");
+        printf("    Usage: chameleon battery\n\n");
+        printf("chameleon reader\n");
+        printf("    Description: Set Chameleon Ultra to reader mode\n");
+        printf("    Usage: chameleon reader\n\n");
+        printf("chameleon emulator\n");
+        printf("    Description: Set Chameleon Ultra to emulator mode\n");
+        printf("    Usage: chameleon emulator\n\n");
+        TERMINAL_VIEW_ADD_TEXT("chameleon connect, chameleon disconnect, chameleon status, chameleon scanhf, chameleon scanlf, chameleon battery, chameleon reader, chameleon emulator\n");
         return;
     }
 #endif
@@ -1917,7 +1981,7 @@ void handle_ble_wardriving(int argc, char **argv) {
     if (stop_flag) {
         ble_stop();
         gps_manager_deinit(&g_gpsManager);
-        if (buffer_offset > 0) { // Only flush if there's data in buffer
+        if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
             csv_flush_buffer_to_file();
         }
         csv_file_close();
@@ -3045,6 +3109,297 @@ void handle_settings_cmd(int argc, char **argv) {
     glog("Use 'settings help' for available commands\n");
 }
 
+void handle_chameleon_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: chameleon <command>\n");
+        printf("Commands:\n");
+        printf("Connection:\n");
+        printf("  connect [timeout] [pin] - Connect to Chameleon Ultra (default timeout: 10s)\n");
+        printf("  disconnect        - Disconnect from Chameleon Ultra\n");
+        printf("  status           - Check connection status\n");
+        printf("Device Info:\n");
+        printf("  firmware         - Get firmware version\n");
+        printf("  devicemode       - Get current device mode\n");
+        printf("  activeslot       - Get active slot number\n");
+        printf("  setslot <1-8>    - Set active slot number\n");
+        printf("  slotinfo <1-8>   - Get slot information\n");
+        printf("  battery          - Get battery information\n");
+        printf("Scanning:\n");
+        printf("  scanhf           - Scan for HF tags\n");
+        printf("  scanlf           - Scan for LF EM410X tags\n");
+        printf("  scanlfall        - Scan for all LF tag types\n");
+        printf("  scanhidprox      - Scan for HID Prox tags\n");
+        printf("MIFARE Classic:\n");
+        printf("  mfdetect         - Detect MIFARE Classic support\n");
+        printf("  mfprng           - Detect MIFARE Classic PRNG type\n");
+        printf("NTAG Cards:\n");
+        printf("  ntagdetect       - Detect and identify NTAG card type\n");
+        printf("  ntagdump         - Dump complete NTAG card data\n");
+        printf("  saventag [filename] - Save NTAG dump to SD card\n");
+        printf("Mode Control:\n");
+        printf("  reader           - Set to reader mode\n");
+        printf("  emulator         - Set to emulator mode\n");
+        printf("Data Management:\n");
+        printf("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        printf("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        printf("  readhf           - Basic MIFARE Classic card detection and information collection\n");
+        printf("  savedump [filename] - Save last card dump to SD card\n");
+        TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
+        TERMINAL_VIEW_ADD_TEXT("Commands:\n");
+        TERMINAL_VIEW_ADD_TEXT("Connection:\n");
+        TERMINAL_VIEW_ADD_TEXT("  connect [timeout] [pin] - Connect to Chameleon Ultra (default timeout: 10s)\n");
+        TERMINAL_VIEW_ADD_TEXT("  disconnect        - Disconnect from Chameleon Ultra\n");
+        TERMINAL_VIEW_ADD_TEXT("  status           - Check connection status\n");
+        TERMINAL_VIEW_ADD_TEXT("Device Info:\n");
+        TERMINAL_VIEW_ADD_TEXT("  firmware         - Get firmware version\n");
+        TERMINAL_VIEW_ADD_TEXT("  devicemode       - Get current device mode\n");
+        TERMINAL_VIEW_ADD_TEXT("  activeslot       - Get active slot number\n");
+        TERMINAL_VIEW_ADD_TEXT("  setslot <1-8>    - Set active slot number\n");
+        TERMINAL_VIEW_ADD_TEXT("  slotinfo <1-8>   - Get slot information\n");
+        TERMINAL_VIEW_ADD_TEXT("  battery          - Get battery information\n");
+        TERMINAL_VIEW_ADD_TEXT("Scanning:\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanhf           - Scan for HF tags\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanlf           - Scan for LF EM410X tags\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanlfall        - Scan for all LF tag types\n");
+        TERMINAL_VIEW_ADD_TEXT("  scanhidprox      - Scan for HID Prox tags\n");
+        TERMINAL_VIEW_ADD_TEXT("MIFARE Classic:\n");
+        TERMINAL_VIEW_ADD_TEXT("  mfdetect         - Detect MIFARE Classic support\n");
+        TERMINAL_VIEW_ADD_TEXT("  mfprng           - Detect MIFARE Classic PRNG type\n");
+        TERMINAL_VIEW_ADD_TEXT("NTAG Cards:\n");
+        TERMINAL_VIEW_ADD_TEXT("  ntagdetect       - Detect and identify NTAG card type\n");
+        TERMINAL_VIEW_ADD_TEXT("  ntagdump         - Dump complete NTAG card data\n");
+        TERMINAL_VIEW_ADD_TEXT("  saventag [filename] - Save NTAG dump to SD card\n");
+        TERMINAL_VIEW_ADD_TEXT("Mode Control:\n");
+        TERMINAL_VIEW_ADD_TEXT("  reader           - Set to reader mode\n");
+        TERMINAL_VIEW_ADD_TEXT("  emulator         - Set to emulator mode\n");
+        TERMINAL_VIEW_ADD_TEXT("Data Management:\n");
+        TERMINAL_VIEW_ADD_TEXT("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        TERMINAL_VIEW_ADD_TEXT("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        TERMINAL_VIEW_ADD_TEXT("  readhf           - Basic MIFARE Classic card detection and information collection\n");
+        TERMINAL_VIEW_ADD_TEXT("  savedump [filename] - Save last card dump to SD card\n");
+        return;
+    }
+
+    const char *subcommand = argv[1];
+
+    if (strcmp(subcommand, "connect") == 0) {
+        uint32_t timeout = 10; // Default timeout of 10 seconds
+        const char* pin = NULL;
+        
+        // Parse arguments: connect [timeout] [pin]
+        if (argc > 2) {
+            // Check if second argument is a number (timeout) or PIN
+            if (strlen(argv[2]) <= 2 && atoi(argv[2]) > 0) {
+                // Second argument is timeout
+                timeout = (uint32_t)atoi(argv[2]);
+                if (timeout == 0) {
+                    timeout = 10;
+                }
+                // Check for PIN as third argument
+                if (argc > 3) {
+                    pin = argv[3];
+                }
+            } else {
+                // Second argument is PIN, use default timeout
+                pin = argv[2];
+            }
+        }
+        
+        if (pin != NULL) {
+            printf("Connecting to Chameleon Ultra with %lu second timeout and PIN...\n", timeout);
+            TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra with PIN...\n");
+        } else {
+            printf("Connecting to Chameleon Ultra with %lu second timeout...\n", timeout);
+            TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra...\n");
+        }
+        
+        chameleon_manager_connect(timeout, pin);
+    }
+    else if (strcmp(subcommand, "disconnect") == 0) {
+        printf("Disconnecting from Chameleon Ultra...\n");
+        TERMINAL_VIEW_ADD_TEXT("Disconnecting from Chameleon Ultra...\n");
+        chameleon_manager_disconnect();
+    }
+    else if (strcmp(subcommand, "status") == 0) {
+        if (chameleon_manager_is_connected()) {
+            printf("Status: Connected to Chameleon Ultra\n");
+            TERMINAL_VIEW_ADD_TEXT("Status: Connected to Chameleon Ultra\n");
+        } else {
+            printf("Status: Not connected to Chameleon Ultra\n");
+            TERMINAL_VIEW_ADD_TEXT("Status: Not connected to Chameleon Ultra\n");
+        }
+    }
+    else if (strcmp(subcommand, "scanhf") == 0) {
+        bool skip_dict = false;
+        for (int i = 2; i < argc; ++i) {
+            if (strcmp(argv[i], "--skip-dict") == 0 || strcmp(argv[i], "--skipdict") == 0) {
+                skip_dict = true;
+            } else {
+                printf("Unknown option for scanhf: %s\n", argv[i]);
+                TERMINAL_VIEW_ADD_TEXT("Unknown option for scanhf\n");
+                return;
+            }
+        }
+
+        if (!chameleon_manager_scan_hf()) {
+            return;
+        }
+
+        bool classic_tag = false;
+        uint8_t uid_len = 0;
+        uint16_t atqa = 0;
+        uint8_t sak = 0;
+        if (chameleon_manager_get_last_hf_scan(NULL, &uid_len, &atqa, &sak)) {
+            if (sak == 0x08 || sak == 0x09 || sak == 0x18) {
+                classic_tag = true;
+            }
+        }
+
+        if (classic_tag) {
+            chameleon_cli_progress_state_t progress_state = {0};
+            progress_state.last_percent = -1;
+            chameleon_manager_set_progress_callback(chameleon_cli_progress_cb, &progress_state);
+
+            if (skip_dict) {
+                glog("Reading MIFARE Classic without dictionary brute-force...\n");
+                glog("Dictionary brute-force skipped by user flag.\n");
+            } else {
+                glog("Reading MIFARE Classic with dictionary brute-force...\n");
+            }
+
+            bool classic_ok = chameleon_manager_mf1_read_classic_with_dict(skip_dict);
+            chameleon_manager_set_progress_callback(NULL, NULL);
+
+            if (!classic_ok) {
+                glog("MIFARE Classic read failed.\n");
+            } else {
+                glog("MIFARE Classic read complete.\n");
+            }
+        } else if (chameleon_manager_last_scan_is_ntag()) {
+            glog("Refreshing NTAG cache...\n");
+
+            if (!chameleon_manager_read_ntag_card()) {
+                glog("Failed to read NTAG card.\n");
+            } else {
+                glog("NTAG read complete.\n");
+            }
+        }
+
+        const char *details = chameleon_manager_get_cached_details();
+        if (details && details[0]) {
+            glog("%s\n", details);
+        }
+    }
+    else if (strcmp(subcommand, "scanlf") == 0) {
+        chameleon_manager_scan_lf();
+    }
+    else if (strcmp(subcommand, "scanlfall") == 0) {
+        // Try multiple LF scan types
+        printf("Scanning for all LF tag types...\n");
+        TERMINAL_VIEW_ADD_TEXT("Scanning for all LF tag types...\n");
+        
+        // First try EM410X
+        printf("1. Trying EM410X scan...\n");
+        TERMINAL_VIEW_ADD_TEXT("1. Trying EM410X scan...\n");
+        if (chameleon_manager_scan_lf()) {
+            return;  // Found something, stop here
+        }
+        
+        // Then try HID Prox
+        printf("2. Trying HID Prox scan...\n");
+        TERMINAL_VIEW_ADD_TEXT("2. Trying HID Prox scan...\n");
+        chameleon_manager_scan_hidprox();
+    }
+    else if (strcmp(subcommand, "battery") == 0) {
+        chameleon_manager_get_battery_info();
+    }
+    else if (strcmp(subcommand, "reader") == 0) {
+        chameleon_manager_set_reader_mode();
+    }
+    else if (strcmp(subcommand, "emulator") == 0) {
+        chameleon_manager_set_emulator_mode();
+    }
+    else if (strcmp(subcommand, "savehf") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_last_hf_scan(filename);
+    }
+    else if (strcmp(subcommand, "savelf") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_last_lf_scan(filename);
+    }
+    else if (strcmp(subcommand, "readhf") == 0) {
+        chameleon_manager_read_hf_card();
+    }
+    else if (strcmp(subcommand, "savedump") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_card_dump(filename);
+    }
+    else if (strcmp(subcommand, "firmware") == 0) {
+        chameleon_manager_get_firmware_version();
+    }
+    else if (strcmp(subcommand, "devicemode") == 0) {
+        chameleon_manager_get_device_mode();
+    }
+    else if (strcmp(subcommand, "activeslot") == 0) {
+        chameleon_manager_get_active_slot();
+    }
+    else if (strcmp(subcommand, "setslot") == 0) {
+        if (argc < 3) {
+            printf("Usage: chameleon setslot <1-8>\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon setslot <1-8>\n");
+            return;
+        }
+        uint8_t user_slot = (uint8_t)atoi(argv[2]);
+        if (user_slot < 1 || user_slot > 8) {
+            printf("Error: Slot must be between 1-8\n");
+            TERMINAL_VIEW_ADD_TEXT("Error: Slot must be between 1-8\n");
+            return;
+        }
+        uint8_t device_slot = user_slot - 1; // Convert 1-8 to 0-7
+        chameleon_manager_set_active_slot(device_slot);
+    }
+    else if (strcmp(subcommand, "slotinfo") == 0) {
+        if (argc < 3) {
+            printf("Usage: chameleon slotinfo <1-8>\n");
+            TERMINAL_VIEW_ADD_TEXT("Usage: chameleon slotinfo <1-8>\n");
+            return;
+        }
+        uint8_t user_slot = (uint8_t)atoi(argv[2]);
+        if (user_slot < 1 || user_slot > 8) {
+            printf("Error: Slot must be between 1-8\n");
+            TERMINAL_VIEW_ADD_TEXT("Error: Slot must be between 1-8\n");
+            return;
+        }
+        uint8_t device_slot = user_slot - 1; // Convert 1-8 to 0-7
+        chameleon_manager_get_slot_info(device_slot);
+    }
+    else if (strcmp(subcommand, "scanhidprox") == 0) {
+        chameleon_manager_scan_hidprox();
+    }
+    else if (strcmp(subcommand, "mfdetect") == 0) {
+        chameleon_manager_mf1_detect_support();
+    }
+    else if (strcmp(subcommand, "mfprng") == 0) {
+        chameleon_manager_mf1_detect_prng();
+    }
+    else if (strcmp(subcommand, "ntagdetect") == 0) {
+        chameleon_manager_detect_ntag();
+    }
+    else if (strcmp(subcommand, "ntagdump") == 0) {
+        chameleon_manager_read_ntag_card();
+    }
+    else if (strcmp(subcommand, "saventag") == 0) {
+        const char* filename = (argc > 2) ? argv[2] : NULL;
+        chameleon_manager_save_ntag_dump(filename);
+    }
+    else {
+        printf("Unknown chameleon command: %s\n", subcommand);
+        TERMINAL_VIEW_ADD_TEXT("Unknown chameleon command: %s\n", subcommand);
+        printf("Use 'chameleon' without arguments to see available commands.\n");
+        TERMINAL_VIEW_ADD_TEXT("Use 'chameleon' without arguments to see available commands.\n");
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -3098,6 +3453,7 @@ void register_commands() {
     register_command("selectairtag", handle_select_airtag);
     register_command("spoofairtag", handle_spoof_airtag);
     register_command("stopspoof", handle_stop_spoof);
+    register_command("chameleon", handle_chameleon_cmd);
 #endif
 #ifdef DEBUG
     register_command("crash", handle_crash);

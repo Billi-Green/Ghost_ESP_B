@@ -552,7 +552,7 @@ esp_err_t ap_manager_init(void) {
             return ret;
         }
 
-        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
         if (!netif) {
             netif = esp_netif_create_default_wifi_ap();
             if (netif == NULL) {
@@ -562,6 +562,17 @@ esp_err_t ap_manager_init(void) {
         }
     } else if (ret == ESP_OK) {
         glog("Wi-Fi already initialized, skipping Wi-Fi init.\n");
+        // Ensure our static AP netif handle is set (and exists)
+        if (!netif) {
+            netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        }
+        if (!netif) {
+            netif = esp_netif_create_default_wifi_ap();
+            if (!netif) {
+                glog("Failed to create default Wi-Fi AP when Wi-Fi already initialized\n");
+                return ESP_FAIL;
+            }
+        }
     } else {
         glog("esp_wifi_get_mode failed: %s\n", esp_err_to_name(ret));
         return ret;
@@ -703,6 +714,25 @@ void ap_manager_deinit(void) {
     
     stop_http_server();
     reset_server_config();
+
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister WIFI_EVENT handler: %s", esp_err_to_name(err_reg));
+        }
+    }
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister IP_EVENT_AP_STAIPASSIGNED handler: %s", esp_err_to_name(err_reg));
+        }
+    }
+    {
+        esp_err_t err_reg = esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler);
+        if (err_reg != ESP_OK && err_reg != ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to unregister IP_EVENT_STA_GOT_IP handler: %s", esp_err_to_name(err_reg));
+        }
+    }
     
     esp_wifi_stop();
     esp_wifi_deinit();
@@ -797,9 +827,27 @@ esp_err_t ap_manager_start_services() {
         return ret;
     }
 
-    // mDNS is already set up during initial AP bring-up
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
+
+    if (server != NULL) {
+        ESP_LOGI(TAG, "HTTP server already running; skipping restart");
+        status_display_show_status("AP Services On");
+        return ESP_OK;
+    }
+
+    if (mdns_freed) {
+        ret = setup_mdns();
+        if (ret != ESP_OK) {
+            return ret;
+        }
+    }
 
     // Start HTTPD server
+    if (config_loaded) {
+        reset_server_config();
+    }
     ret = load_server_config();
     if (ret != ESP_OK) {
         glog("Error loading server config\n");
@@ -821,6 +869,12 @@ void ap_manager_stop_services() {
     log_heap_status(TAG, "ap_stop_pre");
     wifi_mode_t wifi_mode;
     esp_err_t err = esp_wifi_get_mode(&wifi_mode);
+
+    esp_err_t http_ret = stop_http_server();
+    if (http_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to stop HTTP server: %s", esp_err_to_name(http_ret));
+    }
+    reset_server_config();
 
     {
         esp_err_t err_reg = esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler);
@@ -849,11 +903,6 @@ void ap_manager_stop_services() {
         }
     } else {
         glog("Failed to get Wi-Fi mode, error: %d\n", err);
-    }
-
-    esp_err_t ret = stop_http_server();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to stop HTTP server: %s", esp_err_to_name(ret));
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -1556,13 +1605,20 @@ static esp_err_t start_http_server(void) {
         return ESP_OK;
     }
 
-    esp_err_t ret = httpd_start(&server, &server_config);
-    if (ret == ESP_ERR_HTTPD_TASK && server_config.stack_size > 4096) {
-        server_config.stack_size = 4096;
+    esp_err_t ret = ESP_FAIL;
+    for (int attempt = 0; attempt < 3; attempt++) {
         ret = httpd_start(&server, &server_config);
+        if (ret == ESP_ERR_HTTPD_TASK && server_config.stack_size > 4096) {
+            server_config.stack_size = 4096;
+            ret = httpd_start(&server, &server_config);
+        }
+        if (ret == ESP_OK) {
+            break;
+        }
+        ESP_LOGE(TAG, "Failed to start HTTP server (attempt %d): %s", attempt + 1, esp_err_to_name(ret));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(ret));
         return ret;
     }
 

@@ -9,6 +9,7 @@
 #include "esp_random.h"
 #include "host/ble_gap.h"
 #include "host/ble_hs.h"
+#include "host/ble_sm.h"
 #include "host/util/util.h"
 #include "managers/ble_manager.h"
 #include "managers/views/terminal_screen.h"
@@ -21,6 +22,7 @@
 #include <managers/rgb_manager.h>
 #include <managers/settings_manager.h>
 #include "managers/status_display_manager.h"
+#include "esp_bt.h"
 
 #define MAX_DEVICES 30
 #define MAX_HANDLERS 10
@@ -694,6 +696,8 @@ static void notify_handlers(struct ble_gap_event *event, int len) {
 void nimble_host_task(void *param) {
     nimble_port_run();
     nimble_port_freertos_deinit();
+    // Ensure the task fully exits to avoid lingering stack usage
+    vTaskDelete(NULL);
 }
 
 static int8_t generate_random_rssi() { return (esp_random() % 121) - 100; }
@@ -797,7 +801,7 @@ static void restart_ble_stack(void) {
         return;
     }
     
-    // Restart the NimBLE host task
+    // Restart the NimBLE host task (larger stack)
     xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, &nimble_host_task_handle);
     
     // Wait for NimBLE stack to be ready
@@ -955,11 +959,73 @@ static void parse_service_uuids(const uint8_t *data, uint8_t data_len, ble_servi
     }
 }
 
+static int handle_passkey_action(struct ble_gap_event *event) {
+    if (event->type != BLE_GAP_EVENT_PASSKEY_ACTION) {
+        return 0;
+    }
+
+    ESP_LOGI(TAG_BLE, "Passkey action required: %d", event->passkey.params.action);
+    
+    if (event->passkey.params.action == BLE_SM_IOACT_INPUT) {
+        // Device is requesting PIN input
+        ESP_LOGI(TAG_BLE, "PIN input required for connection %d", event->passkey.conn_handle);
+        
+        // Check if we have a PIN stored for Chameleon Ultra
+        extern char g_chameleon_pin[];
+        extern bool g_pin_required;
+        
+        if (g_pin_required && strlen(g_chameleon_pin) > 0) {
+            ESP_LOGI(TAG_BLE, "Providing PIN for authentication");
+            printf("Providing PIN for Chameleon Ultra authentication...\n");
+            TERMINAL_VIEW_ADD_TEXT("Providing PIN for authentication...\n");
+
+            // Convert PIN string to uint32_t for the passkey field
+            uint32_t passkey = 0;
+            int pin_len = strlen(g_chameleon_pin);
+            for (int i = 0; i < pin_len && i < 6; i++) {
+                passkey = passkey * 10 + (g_chameleon_pin[i] - '0');
+            }
+
+            // Create the IO structure with the passkey
+            struct ble_sm_io io_data = {
+                .action = BLE_SM_IOACT_INPUT,
+                .passkey = passkey
+            };
+
+            // Provide the PIN to the security manager
+            int rc = ble_sm_inject_io(event->passkey.conn_handle, &io_data);
+            if (rc != 0) {
+                ESP_LOGE(TAG_BLE, "Failed to inject PIN: %d", rc);
+                printf("Failed to provide PIN for authentication\n");
+                TERMINAL_VIEW_ADD_TEXT("Failed to provide PIN\n");
+                return -1;
+            }
+
+            ESP_LOGI(TAG_BLE, "PIN provided successfully");
+            return 0;
+        } else {
+            ESP_LOGW(TAG_BLE, "PIN required but not set");
+            printf("PIN required but not provided\n");
+            TERMINAL_VIEW_ADD_TEXT("PIN required but not provided\n");
+            return -1;
+        }
+    } else if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
+        // Device is displaying a PIN (we don't need to handle this for Chameleon Ultra)
+        ESP_LOGI(TAG_BLE, "Device displaying PIN (not needed for Chameleon Ultra)");
+        return 0;
+    }
+
+    return 0;
+}
+
 static int ble_gap_event_general(struct ble_gap_event *event, void *arg) {
     switch (event->type) {
     case BLE_GAP_EVENT_DISC:
         notify_handlers(event, event->disc.length_data);
+        break;
 
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+        handle_passkey_action(event);
         break;
 
     default:
@@ -1256,6 +1322,7 @@ void ble_start_spoofing_selected_airtag(void) {
     size_t current_index = 0;
     while (current_index < tag_to_spoof->payload_len) {
         uint8_t field_len = tag_to_spoof->payload[current_index];
+
         if (field_len == 0 || current_index + field_len >= tag_to_spoof->payload_len) break;
         uint8_t field_type = tag_to_spoof->payload[current_index + 1];
         if (field_type == 0xFF && field_len >= 3) { // Manufacturer Specific Data
@@ -1637,6 +1704,10 @@ void ble_init(void) {
             handler_count = 0;
         }
 
+        // Release Classic BT controller memory on non-ESP32 targets too to free RAM for NimBLE
+        // Safe to call multiple times; ignore return if already released
+        (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+
         // log DMA-capable internal heap info right before NimBLE init
         size_t free_internal_dma = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
         size_t largest_internal_dma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
@@ -1655,8 +1726,8 @@ void ble_init(void) {
             return;
         }
 
-        // Configure and start the NimBLE host task
-        xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, &nimble_host_task_handle);
+        // Configure and start the NimBLE host task (larger stack to avoid overflow on S3)
+        xTaskCreate(nimble_host_task, "nimble_host", 6144, NULL, 5, &nimble_host_task_handle);
         
         // Wait for NimBLE stack to be ready
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -1689,14 +1760,24 @@ void ble_deinit(void) {
             handler_count = 0;
         }
 
+        // Stop NimBLE host and wait for the host task to exit
         nimble_port_stop();
-        nimble_port_deinit();
-
-        // Wait for nimble host task to finish and clean up
         if (nimble_host_task_handle != NULL) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            int wait_iterations = 0;
+            // Give the host task time to exit gracefully
+            while (eTaskGetState(nimble_host_task_handle) != eDeleted && wait_iterations < 25) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                wait_iterations++;
+            }
+            // If it still hasn't exited, force-delete it
+            if (eTaskGetState(nimble_host_task_handle) != eDeleted) {
+                vTaskDelete(nimble_host_task_handle);
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
             nimble_host_task_handle = NULL;
         }
+        // Now deinitialize the NimBLE port (controller + host deinit)
+        nimble_port_deinit();
 
         ble_initialized = false;
         ESP_LOGI(TAG_BLE, "BLE deinitialized successfully.");
