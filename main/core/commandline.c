@@ -3109,6 +3109,7 @@ void handle_settings_cmd(int argc, char **argv) {
     glog("Use 'settings help' for available commands\n");
 }
 
+#ifdef CONFIG_NFC_CHAMELEON
 void handle_chameleon_cmd(int argc, char **argv) {
     if (argc < 2) {
         printf("Usage: chameleon <command>\n");
@@ -3399,6 +3400,14 @@ void handle_chameleon_cmd(int argc, char **argv) {
         TERMINAL_VIEW_ADD_TEXT("Use 'chameleon' without arguments to see available commands.\n");
     }
 }
+#else
+void handle_chameleon_cmd(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    printf("Chameleon support is disabled in this build.\n");
+    TERMINAL_VIEW_ADD_TEXT("Chameleon support is disabled in this build.\n");
+}
+#endif
 
 void register_commands() {
     command_init();

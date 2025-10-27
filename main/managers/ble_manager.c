@@ -971,6 +971,7 @@ static int handle_passkey_action(struct ble_gap_event *event) {
         ESP_LOGI(TAG_BLE, "PIN input required for connection %d", event->passkey.conn_handle);
         
         // Check if we have a PIN stored for Chameleon Ultra
+        #ifdef CONFIG_NFC_CHAMELEON
         extern char g_chameleon_pin[];
         extern bool g_pin_required;
         
@@ -1009,6 +1010,10 @@ static int handle_passkey_action(struct ble_gap_event *event) {
             TERMINAL_VIEW_ADD_TEXT("PIN required but not provided\n");
             return -1;
         }
+        #else
+        ESP_LOGW(TAG_BLE, "PIN input requested but NFC Chameleon is disabled");
+        return -1;
+        #endif
     } else if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
         // Device is displaying a PIN (we don't need to handle this for Chameleon Ultra)
         ESP_LOGI(TAG_BLE, "Device displaying PIN (not needed for Chameleon Ultra)");
