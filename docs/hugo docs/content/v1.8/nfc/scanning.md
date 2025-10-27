@@ -6,7 +6,7 @@ weight: 10
 
 ## Prerequisites
 
-- GhostESP firmware compiled with NFC support and a connected PN532 module wired to the configured SDA/SCL/IRQ/RST pins.
+- GhostESP firmware compiled with NFC support and a connected PN532 module or chameleon ultra.
 - (Optional) SD card if you plan to save tag dumps.
 
 ## Steps
@@ -46,6 +46,14 @@ weight: 10
 - **Caching and saves.** All pages remain in RAM for the current session; saving writes the entire image to `/mnt/ghostesp/nfc/<Model>_<UID>.nfc` for later writes.
 
 - **Verification.** Re-scan immediately after to confirm the data matches or to check the signature for authenticity.
+
+## Chameleon Ultra Scanning
+
+- **Connect first.** Complete the [Chameleon Ultra setup]({{< relref "chameleon-ultra.md" >}}) so GhostESP is paired over BLE.
+- **Switch to reader.** Run `chameleon reader` in the CLI; the terminal confirms the device is ready to scan.
+- **Start HF scans.** Use `chameleon scanhf` while holding the tag near the Chameleon Ultra antenna. The CLI mirrors the familiar popup summaries, including brute-force percentages for MIFARE Classic cards.
+- **Start LF scans.** Use `chameleon scanlf` (or `scanlfall` to sweep profiles) for low-frequency tags; results appear in the CLI and the on-device terminal view.
+- **Reuse cached data.** Once a scan finishes, you can proceed directly to the save flow without rescanning on the PN532.
 
 ## Verify
 

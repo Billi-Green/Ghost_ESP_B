@@ -2,6 +2,8 @@
 title: "Infrared"
 description: "Overview of GhostESP's infrared capabilities"
 weight: 30
+aliases:
+  - "/infrared/"
 ---
 
 GhostESP lets you learn IR signals, store them on the SD card, and retransmit them using the onboard LED.

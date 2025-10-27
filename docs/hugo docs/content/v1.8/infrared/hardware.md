@@ -8,8 +8,8 @@ weight: 40
 
 GhostESP exposes Infrared features only when the target board is built with Infrared RX or TX enabled
 
-- LilyGo S3TWatch — IR transmit and receive
-- ESP32-S3 Cardputer — IR transmit
+- LilyGo S3TWatch — IR transmit
+- ESP32-S3 Cardputer / Cardputer ADV — IR transmit
 - LilyGo TEmbed C1101 — IR transmit and receive
 
 Other boards may ship with TX-only support or no IR hardware at all. Look for infrared support listed in the release notes or above before flashing.

@@ -30,5 +30,4 @@ weight: 10
 ### Tips
 
 - Keep the remote within a few centimeters of the receiver and avoid direct sunlight.
-- If learning fails, exit and re-open the Infrared view to reinitialize the RMT RX channel.
-- Large universal files can consume RAM; learn and save remotes in smaller groups if you run into memory warnings.
+- If learning fails, exit and re-open the Infrared learning popup to try to reinitialize the RMT RX channel.
