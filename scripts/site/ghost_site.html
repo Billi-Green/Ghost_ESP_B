@@ -2399,6 +2399,8 @@
         let navigationStack = [];     // Keeps track of the navigation path
         let logOffset = 0;
         const termOutput = document.getElementById('terminalOutput');
+        const COMM_STATUS_POLL_INTERVAL_MS = 1000;
+        const COMM_LOG_POLL_INTERVAL_MS = 500;
 
         async function uploadFile() {
             const fileInput = document.getElementById('sdcard-upload');
@@ -2697,17 +2699,21 @@
             if (tabName === "SDCard") {
                 fetchSDCardData();
             } else if (tabName === "DualComm") {
-                // Initialize terminal content baseline to avoid showing historical logs
+                lastProcessedLineCount = 0;
+                lastLogLine = null;
+                clearCommTerminal(); // Start with clean terminal
                 fetch('/api/logs')
                     .then(response => response.text())
                     .then(logs => {
-                        lastTerminalContent = logs;
+                        const lines = logs.split(/\r?\n/).filter(line => line.trim().length > 0);
+                        lastProcessedLineCount = lines.length;
+                        lastLogLine = lines.length ? lines[lines.length - 1] : null;
                     })
-                    .catch(error => console.error('Error initializing terminal baseline:', error));
-                
-                startCommStatusPolling();
-                addCommTerminalMessage('Dual Communication tab activated');
-                clearCommTerminal(); // Start with clean terminal
+                    .catch(error => console.error('Error initializing terminal baseline:', error))
+                    .finally(() => {
+                        startCommStatusPolling();
+                        addCommTerminalMessage('Dual Communication tab activated');
+                    });
             } else if (tabName === "Settings") {
                 showSettingsHome();
             } else if (tabName === "Help") {
@@ -3287,7 +3293,10 @@
 
         // Dual Communication JavaScript Functions
         let commStatusInterval = null;
+        let commLogInterval = null;
         let commTerminalMessages = [];
+        let lastLogLine = null;
+        let lastProcessedLineCount = 0;
 
         // Function to update dual communication status
         function updateCommStatus() {
@@ -3414,6 +3423,9 @@
         // Function to add message to dual communication terminal
         function addCommTerminalMessage(message) {
             commTerminalMessages.push(message);
+            if (commTerminalMessages.length > 500) {
+                commTerminalMessages = commTerminalMessages.slice(-500);
+            }
             updateCommTerminalDisplay();
         }
 
@@ -3438,44 +3450,76 @@
             if (commStatusInterval) {
                 clearInterval(commStatusInterval);
             }
-            updateCommStatus(); // Initial update
-            commStatusInterval = setInterval(() => {
-                updateCommStatus();
-                updateCommLogFromTerminal();
-            }, 2000); // Update every 2 seconds
+            if (commLogInterval) {
+                clearInterval(commLogInterval);
+            }
+            updateCommStatus();
+            updateCommLogFromTerminal();
+            commStatusInterval = setInterval(updateCommStatus, COMM_STATUS_POLL_INTERVAL_MS);
+            commLogInterval = setInterval(updateCommLogFromTerminal, COMM_LOG_POLL_INTERVAL_MS);
         }
 
         // Function to check terminal logs for dual comm responses
-        let lastTerminalContent = '';
         function updateCommLogFromTerminal() {
             fetch('/api/logs')
                 .then(response => response.text())
                 .then(logs => {
-                    if (logs !== lastTerminalContent) {
-                        // Find new ESP Comm responses
-                        const newContent = logs.substring(lastTerminalContent.length);
-                        const lines = newContent.split('\n');
-                        
-                        lines.forEach(line => {
-                            if (line.includes('ESP Comm Response:')) {
-                                // Extract the response part
-                                const responseText = line.replace(/^.*ESP Comm Response:\s*/, '').trim();
-                                if (responseText) {
-                                    addCommTerminalMessage(responseText);
-                                }
-                            } else if (line.includes('Discovered peer:')) {
-                                addCommTerminalMessage(line.trim());
-                            } else if (line.includes('Handshake complete')) {
-                                addCommTerminalMessage(line.trim());
-                            } else if (line.includes('Connecting to peer:')) {
-                                addCommTerminalMessage(line.trim());
-                            } else if (line.includes('Sent command:')) {
-                                addCommTerminalMessage(line.trim());
-                            }
-                        });
-                        
-                        lastTerminalContent = logs;
+                    const lines = logs.split(/\r?\n/).filter(line => line.trim().length > 0);
+                    if (lines.length === 0) {
+                        lastProcessedLineCount = 0;
+                        lastLogLine = null;
+                        return;
                     }
+
+                    let startIndex = 0;
+                    let resetBeforeAppend = false;
+
+                    if (lines.length < lastProcessedLineCount) {
+                        resetBeforeAppend = true;
+                    } else {
+                        startIndex = lastProcessedLineCount;
+                        if (lastLogLine !== null) {
+                            const lastIdx = lines.lastIndexOf(lastLogLine);
+                            if (lastIdx !== -1 && lastIdx + 1 > startIndex) {
+                                startIndex = lastIdx + 1;
+                            }
+                        }
+                    }
+
+                    if (startIndex < 0 || startIndex > lines.length) {
+                        startIndex = lines.length;
+                    }
+
+                    const newLines = lines.slice(startIndex);
+                    if (newLines.length === 0) {
+                        lastProcessedLineCount = lines.length;
+                        lastLogLine = lines[lines.length - 1];
+                        return;
+                    }
+
+                    if (resetBeforeAppend) {
+                        commTerminalMessages = [];
+                    }
+
+                    newLines.forEach(line => {
+                        if (line.includes('ESP Comm Response:')) {
+                            const responseText = line.replace(/^.*ESP Comm Response:\s*/, '').trim();
+                            if (responseText) {
+                                addCommTerminalMessage(responseText);
+                            }
+                        } else if (line.includes('Discovered peer:')) {
+                            addCommTerminalMessage(line.trim());
+                        } else if (line.includes('Handshake complete')) {
+                            addCommTerminalMessage(line.trim());
+                        } else if (line.includes('Connecting to peer:')) {
+                            addCommTerminalMessage(line.trim());
+                        } else if (line.includes('Sent command:')) {
+                            addCommTerminalMessage(line.trim());
+                        }
+                    });
+
+                    lastProcessedLineCount = lines.length;
+                    lastLogLine = lines[lines.length - 1];
                 })
                 .catch(error => {
                     console.error('Error fetching terminal logs for dual comm:', error);
@@ -3487,6 +3531,10 @@
             if (commStatusInterval) {
                 clearInterval(commStatusInterval);
                 commStatusInterval = null;
+            }
+            if (commLogInterval) {
+                clearInterval(commLogInterval);
+                commLogInterval = null;
             }
         }
 
