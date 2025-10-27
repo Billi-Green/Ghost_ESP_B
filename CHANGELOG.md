@@ -4,13 +4,6 @@
 
 ### Added
 
-#### Hardware
-
-- Added support for Cardputer ADV
-- Added Kconfig support for a secondary status display
-- Added Kconfig support for IO Expander - @Play2BReal
-- Added heartbeat-based auto-reconnect for dual communication
-
 #### NFC
 
 ##### PN532
@@ -24,6 +17,13 @@
 - CLI support: connect/disconnect, status/battery, reader/emulator toggles - @tototo31
 - UI support: PN532 parity with cached details, More/Save flows and dictionary attack
 - NTAG and Mifare Classic NDEF parsing, Flipper `.nfc` exports from `chameleon savehf/savedump/saventag` - @tototo31, @jaylikesbunda
+
+#### Hardware
+
+- Added support for Cardputer ADV
+- Added Kconfig support for a secondary status display
+- Added Kconfig support for IO Expander - @Play2BReal
+- Added heartbeat-based auto-reconnect for dual communication
 
 #### UI
 
@@ -98,13 +98,12 @@
 - Fixed BLE capture stopping itself after recieving an event
 - Added sanity checks to IE parsing to prevent OOB reads
 - Accepted HCI packet types now include CMD, ACL, SCO, and ISO
-- Reduce heap churn by reusing a single 4KB transfer buffer in wifi managerstreaming
+- Reduce heap churn by reusing a single 4KB transfer buffer in wifi manager streaming
 - Significantly improve reliability of capturing wifi frames
 - Remove arbitrary limitation on the lines of text in the webUI dual comm terminal
 - Fixed an issue causing potential corruption of pcaps saved to the Flipper Zero
 - Fixed wardriving encryption detection
 - Wardriving now properly hops channels for AP scanning
-- Remove key highlight on touch only devices for the keyboard view
 
 #### Display
 
@@ -113,6 +112,7 @@
 - Fix keyboard not using SHIFT correctly and the keyboard view forcing lowercase
 - Remove artificial delay in cardputer keyboard task to make more responsive
 - Improve and refactor terminal message handling
+- Remove key highlight on touch only devices for the keyboard view
 - Fixed duplicate back button and wrong red styling in universals IR view
 
 ## Revival v1.7.2
