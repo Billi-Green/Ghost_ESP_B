@@ -2,6 +2,15 @@
 
 ## Revival v1.8
 
+### TL;DR
+
+- PN532 and Chameleon Ultra support for NTAG and MIFARE Classic (read/write, NDEF, Flipper exports)
+- Cardputer ADV, optional secondary status display and IO expander support
+- WebUI redesign, 2 new main menu layouts
+- Karma attack and 802.15.4 packet capture on C5/C6
+- Heartbeat-based auto-reconnect for dual communication, stability fixes, and QoL improvements
+- Miscellaneous fixes across core, display, Wi‑Fi/BLE, DNS, IR, and wardriving
+
 ### Added
 
 #### NFC
