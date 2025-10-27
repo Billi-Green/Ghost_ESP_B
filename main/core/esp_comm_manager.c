@@ -313,7 +313,7 @@ static bool send_packet(const comm_packet_t* packet) {
         if (xQueueSend(s_comm_manager->tx_queue, packet, wait) != pdPASS) {
             s_comm_manager->tx_dropped_packets++;
             if ((s_comm_manager->tx_dropped_packets & 0x0F) == 1) {
-                printf("W: TX queue full, dropped packet type 0x%02x (drops=%lu)\n",
+                printf("TX queue full, dropped packet type 0x%02x (drops=%lu)\n",
                        packet->type, (unsigned long)s_comm_manager->tx_dropped_packets);
             }
             return false;
@@ -386,7 +386,7 @@ static void rx_task(void* arg) {
                 if (buffered_len > alert_threshold) {
                     comm->rx_high_water_alerts++;
                     if ((comm->rx_high_water_alerts & 0x0F) == 1) {
-                        printf("W: UART RX buffered %u bytes (alerts=%lu)\n",
+                        printf("UART RX buffered %u bytes (alerts=%lu)\n",
                                (unsigned)buffered_len, (unsigned long)comm->rx_high_water_alerts);
                     }
                 }
@@ -434,14 +434,14 @@ static void rx_task(void* arg) {
                             if (valid) {
                                 if (!comm->use_crc) {
                                     comm->use_crc = true;
-                                    printf("I: Peer supports CRC-8, upgrading TX checksum\n");
+                                    printf("Peer supports CRC-8, upgrading TX checksum\n");
                                 }
                             } else {
                                 uint8_t legacy = calculate_legacy_checksum(frame_bytes, frame_len);
                                 if (legacy == byte) {
                                     if (comm->use_crc) {
                                         comm->use_crc = false;
-                                        printf("W: Peer using legacy checksum, downgrading to XOR\n");
+                                        printf("Peer using legacy checksum, downgrading to XOR\n");
                                     }
                                     valid = true;
                                 }
@@ -453,7 +453,7 @@ static void rx_task(void* arg) {
                                     if (xQueueSend(comm->rx_packet_queue, &comm->partial_packet, pdMS_TO_TICKS(2)) != pdPASS) {
                                         comm->rx_queue_dropped_packets++;
                                         if ((comm->rx_queue_dropped_packets & 0x0F) == 1) {
-                                            printf("W: RX packet queue full, dropped type 0x%02x (drops=%lu)\n",
+                                            printf("RX packet queue full, dropped type 0x%02x (drops=%lu)\n",
                                                    comm->partial_packet.type,
                                                    (unsigned long)comm->rx_queue_dropped_packets);
                                         }
@@ -476,7 +476,7 @@ static void rx_task(void* arg) {
                                     UBaseType_t queue_free = comm->rx_packet_queue
                                         ? uxQueueSpacesAvailable(comm->rx_packet_queue)
                                         : 0;
-                                    printf("W: CRC error on packet type 0x%02x (errors=%lu, fifo=%u, rx_queue_free=%u)\n",
+                                    printf("CRC error on packet type 0x%02x (errors=%lu, fifo=%u, rx_queue_free=%u)\n",
                                            comm->partial_packet.type,
                                            (unsigned long)comm->rx_crc_error_count,
                                            (unsigned)fifo_bytes,
@@ -569,12 +569,12 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                     memcpy(comm->peer.chip_id, packet->data, CHIP_ID_LEN);
                     strncpy(comm->peer.chip_name, (char*)packet->data + CHIP_ID_LEN, CHIP_NAME_MAX);
                     comm->peer.chip_name[CHIP_NAME_MAX - 1] = '\0';
-                    printf("I: Discovered peer: %s\n", comm->peer.chip_name);
+                    printf("Discovered peer: %s\n", comm->peer.chip_name);
                     snprintf(log_buffer, sizeof(log_buffer), "I: Discovered peer: %s\n", comm->peer.chip_name);
                     ap_manager_add_log(log_buffer);
 
                     if (strcmp(comm->chip_name, comm->peer.chip_name) > 0) {
-                        printf("I: Peer has smaller name, I will initiate connection.\n");
+                        printf("Peer has smaller name, I will initiate connection.\n");
                         ap_manager_add_log("I: Peer has smaller name, I will initiate connection.\n");
                         esp_comm_manager_connect_to_peer(comm->peer.chip_name);
                     }
@@ -653,8 +653,8 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                         comm->protocol_task_handle = t;
                     }
                     unlock_state(comm);
-                    printf("I: Handshake complete - slave role\n");
-                    ap_manager_add_log("I: Handshake complete - slave role\n");
+                    printf("Handshake complete!\n");
+                    ap_manager_add_log("Handshake completed!\n");
                 }
             }
             break;
@@ -720,8 +720,8 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                     comm->protocol_task_handle = t;
                 }
                 unlock_state(comm);
-                printf("I: Handshake complete - master role\n");
-                ap_manager_add_log("I: Handshake complete - master role\n");
+                printf("Handshake complete!\n");
+                ap_manager_add_log("Handshake completed!\n");
             }
             break;
 
@@ -755,7 +755,7 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                 }
 
                 if (comm->command_queue && xQueueSend(comm->command_queue, &cmd_to_queue, pdMS_TO_TICKS(10)) != pdPASS) {
-                    printf("W: Command queue full, dropped command: %s\n", cmd_to_queue.command);
+                    printf("Command queue full, dropped command: %s\n", cmd_to_queue.command);
                 }
             }
             break;
@@ -905,7 +905,7 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
             break;
 
         default:
-            printf("W: Unknown packet type: 0x%02x\n", packet->type);
+            printf("Unknown packet type: 0x%02x\n", packet->type);
             break;
     }
 }
@@ -969,7 +969,7 @@ void esp_comm_manager_init_with_defaults(void) {
 
 void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_rate) {
     if (s_comm_manager) {
-        printf("W: Already initialized\n");
+        printf("Already initialized\n");
         return;
     }
 
@@ -1053,7 +1053,7 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     uart_param_config(s_uart_num, &uart_config);
     uart_set_pin(s_uart_num, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 #else
-    printf("W: ESP Comm Manager disabled on TDECK to avoid UART conflicts\n");
+    printf("ESP Comm Manager disabled on TDECK to avoid UART conflicts\n");
 #endif
 
     s_comm_manager->tx_queue = NULL;
@@ -1090,7 +1090,7 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
         xTimerStart(s_comm_manager->discovery_timer, 0);
     }
 
-    printf("I: ESP Comm Manager initialized as '%s' on TX:%d RX:%d at %lu baud - Auto-listening for peers\n", 
+    printf("ESP Comm Manager initialized as '%s' on TX:%d RX:%d at %lu baud - Auto-listening for peers\n", 
              s_comm_manager->chip_name, tx_pin, rx_pin, (unsigned long)baud_rate);
 }
 
@@ -1100,9 +1100,18 @@ bool esp_comm_manager_set_pins(gpio_num_t tx_pin, gpio_num_t rx_pin) {
         return false;
     }
 
-    if (s_comm_manager->state != COMM_STATE_IDLE) {
-        printf("W: Cannot change pins while connected or scanning\n");
+    // allow changing pins in IDLE; if SCANNING, temporarily pause discovery and resume after
+    if (s_comm_manager->state != COMM_STATE_IDLE && s_comm_manager->state != COMM_STATE_SCANNING) {
+        printf("Cannot change pins during handshake or while connected\n");
         return false;
+    }
+
+    bool paused_scanning = false;
+    if (s_comm_manager->state == COMM_STATE_SCANNING) {
+        if (s_comm_manager->discovery_timer) {
+            xTimerStop(s_comm_manager->discovery_timer, 0);
+        }
+        paused_scanning = true;
     }
 
     s_comm_manager->tx_pin = tx_pin;
@@ -1121,7 +1130,13 @@ bool esp_comm_manager_set_pins(gpio_num_t tx_pin, gpio_num_t rx_pin) {
 
     uart_set_pin(s_uart_num, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
-    printf("I: Changed pins to TX:%d RX:%d\n", tx_pin, rx_pin);
+    printf("Changed pins to TX:%d RX:%d\n", tx_pin, rx_pin);
+
+    if (paused_scanning) {
+        if (s_comm_manager->discovery_timer) {
+            xTimerStart(s_comm_manager->discovery_timer, 0);
+        }
+    }
     return true;
 }
 
@@ -1132,7 +1147,7 @@ bool esp_comm_manager_start_discovery(void) {
     }
 
     if (s_comm_manager->state != COMM_STATE_IDLE) {
-        printf("W: Already in discovery or connected\n");
+        printf("Already in discovery or connected\n");
         return false;
     }
 
@@ -1184,7 +1199,7 @@ bool esp_comm_manager_start_discovery(void) {
         xTimerStart(s_comm_manager->discovery_timer, 0);
     }
 
-    printf("I: Started discovery as '%s'\n", s_comm_manager->chip_name);
+    printf("Started discovery as '%s'\n", s_comm_manager->chip_name);
     return true;
 }
 
@@ -1195,7 +1210,7 @@ bool esp_comm_manager_connect_to_peer(const char* peer_name) {
     }
 
     if (s_comm_manager->state != COMM_STATE_SCANNING) {
-        printf("W: Not in scanning state\n");
+        printf("Not in scanning state\n");
         return false;
     }
 
@@ -1209,7 +1224,7 @@ bool esp_comm_manager_connect_to_peer(const char* peer_name) {
 
     send_handshake_request(peer_name);
 
-    printf("I: Connecting to peer: %s\n", peer_name);
+    printf("Connecting to peer: %s\n", peer_name);
 
     // Log to web UI
     char log_msg[64];
@@ -1226,7 +1241,7 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
     }
 
     if (s_comm_manager->state != COMM_STATE_CONNECTED) {
-        printf("W: Not connected\n");
+        printf("Not connected\n");
         return false;
     }
 
@@ -1255,7 +1270,7 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
 
     bool result = send_packet(&packet);
     if (result) {
-        printf("I: Sent command: %s\n", command);
+        printf("Sent command: %s\n", command);
         char log_msg[64];
         snprintf(log_msg, sizeof(log_msg), "I: Sent command: %s\n", command);
         ap_manager_add_log(log_msg);
@@ -1269,7 +1284,7 @@ bool esp_comm_manager_send_response(const uint8_t* data, size_t length) {
         return false;
     }
     if (s_comm_manager->state != COMM_STATE_CONNECTED) {
-        printf("W: Not connected, can't send response\n");
+        printf("Not connected, can't send response\n");
         return false;
     }
     const uint8_t* p = data;
@@ -1345,6 +1360,7 @@ bool esp_comm_manager_is_remote_command(void) {
 
 void esp_comm_manager_disconnect(void) {
     if (s_comm_manager) {
+        comm_state_t previous_state = s_comm_manager->state;
         if (s_comm_manager->discovery_timer) {
             xTimerStop(s_comm_manager->discovery_timer, 0);
         }
@@ -1359,7 +1375,13 @@ void esp_comm_manager_disconnect(void) {
             s_comm_manager->ping_timer = NULL;
         }
         unlock_state(s_comm_manager);
-        printf("I: Disconnected\n");
+        if (previous_state == COMM_STATE_SCANNING) {
+            printf("Stopped discovery\n");
+        } else if (previous_state == COMM_STATE_CONNECTED || previous_state == COMM_STATE_HANDSHAKE) {
+            printf("Disconnected\n");
+        } else {
+            printf("Idle\n");
+        }
     }
 }
 
@@ -1417,7 +1439,7 @@ void esp_comm_manager_deinit(void) {
     
     free(s_comm_manager);
     s_comm_manager = NULL;
-    printf("I: ESP Comm Manager de-initialized\n");
+    printf("ESP Comm Manager de-initialized\n");
 } 
 
 static void handshake_timer_callback(TimerHandle_t xTimer) {
@@ -1425,7 +1447,7 @@ static void handshake_timer_callback(TimerHandle_t xTimer) {
     if (!comm) return;
     lock_state(comm);
     if (comm->state == COMM_STATE_HANDSHAKE) {
-        printf("W: Handshake timeout\n");
+        printf("Handshake timeout\n");
         ap_manager_add_log("W: Handshake timeout\n");
         comm->state = COMM_STATE_SCANNING;
         if (comm->discovery_timer) {
@@ -1442,7 +1464,7 @@ static void handle_connection_loss(esp_comm_manager_t* comm, const char* reason)
         unlock_state(comm);
         return;
     }
-    printf("W: Connection lost (%s)\n", reason ? reason : "unknown");
+    printf("Connection lost (%s)\n", reason ? reason : "unknown");
     ap_manager_add_log("W: Connection lost, restarting discovery\n");
 
     comm->state = COMM_STATE_SCANNING;
