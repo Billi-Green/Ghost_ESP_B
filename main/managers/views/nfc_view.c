@@ -444,10 +444,7 @@ static void nfc_update_labels_async(void *ptr) {
     if (nfc_type_label && lv_obj_is_valid(nfc_type_label)) {
         lv_label_set_text(nfc_type_label, "Type: ISO14443A");
     }
-    if (!nfc_details_visible && nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
-        lv_label_set_text(nfc_title_label, "NFC Tag");
-        lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
-    }
+    // avoid forcing a premature title here to prevent flicker; phase handlers will set title/alignment
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
     free(ev);
@@ -482,7 +479,7 @@ static void nfc_progress_update_async(void *ptr) {
         lv_label_set_text(nfc_title_label, title);
         if (nfc_details_ready && !bruteforce_active && !nfc_cache_fill_phase) lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
     }
-    if (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested && mfc_phase_total > 0 && nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+    if (!nfc_paused && !nfc_cache_fill_phase && !nfc_dict_skip_requested && !nfc_details_ready && mfc_phase_total > 0 && nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
         if (!nfc_skip_label_applied) {
             lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
             nfc_more_visible = true;
@@ -553,19 +550,17 @@ static void nfc_set_details_async(void *ptr) {
     if (nfc_details_text) { free(nfc_details_text); nfc_details_text = NULL; }
     nfc_details_text = res->text;
     nfc_details_ready = true;
-    // Reset phase state and update summary labels to indicate completion
+    // reset phase state and update summary labels to indicate completion
     mfc_phase_sector = -1;
     mfc_phase_first_block = -1;
+    mfc_phase_total = 0;
     // Revert label back to More after bruteforce completes
     if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
         lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
         if (lbl) lv_label_set_text(lbl, "More");
         lv_obj_clear_state(nfc_scan_more_btn, LV_STATE_DISABLED);
     }
-    if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
-        lv_label_set_text(nfc_title_label, "NFC Tag");
-        lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
-    }
+    // don't stomp the title here; let scan/progress or details phases set it to avoid flicker
     if (!nfc_details_visible) {
         if (nfc_type_label && lv_obj_is_valid(nfc_type_label)) {
             lv_label_set_text(nfc_type_label, "Scan complete - press More");
@@ -578,6 +573,16 @@ static void nfc_set_details_async(void *ptr) {
     // Reset dict-skip flag for next scans
     nfc_dict_skip_requested = false;
     nfc_skip_label_applied = false;
+
+    // ensure the More button is available once details are ready (ntag and classic)
+    if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+        lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
+        nfc_more_visible = true;
+        lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
+        if (lbl) lv_label_set_text(lbl, "More");
+        update_nfc_buttons_layout();
+        update_nfc_popup_selection();
+    }
 
     // Reveal Save button now that details (and cache) are ready
     if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn) && !nfc_save_visible) {
