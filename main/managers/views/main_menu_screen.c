@@ -222,7 +222,7 @@ static void anim_set_bg_color(void *obj, int32_t v) {
     if (curr_color.full == new_color.full) return;
 #else
     /* fallback compare for other color depths */
-    if (lv_color_to16(curr_color).full == lv_color_to16(new_color).full) return;
+    if (lv_color_to16(curr_color) == lv_color_to16(new_color)) return;
 #endif
     lv_obj_set_style_bg_color(o, new_color, LV_PART_MAIN);
 }

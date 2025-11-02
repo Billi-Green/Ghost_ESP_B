@@ -6,6 +6,7 @@
 - IR remotes and universals menus now show “No .ir files” placeholder when no IR files are found.
 - Only show touchscreen scroll buttons when the options list is scrollable
 - Refactored the standard mainmenu to reduce memory usage and improve performance
+- Changed default UI theme to 'Bright'
 
 ## Revival v1.8
 
