@@ -4,6 +4,7 @@
 ## Revival v1.8.1
 
 - Updated mfc dictionary with new additions
+- IR remotes and universals menus now show “No .ir files” placeholder when no IR files are found.
 
 ## Revival v1.8
 

@@ -16,8 +16,14 @@ enableRobotsTXT = true
   name = "Latest"
 
 [[params.versioning.options]]
+  id = "v1.8.1"
+  name = "v1.8.1"
+
+
+[[params.versioning.options]]
   id = "v1.8"
   name = "v1.8"
+
 
 [outputs]
   home = ["HTML", "JSON"]

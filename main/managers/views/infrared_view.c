@@ -593,6 +593,7 @@ static void file_event_open(int idx);
 static void command_event_execute(int idx);
 static void file_event_cb(lv_event_t *e);
 static void command_event_cb(lv_event_t *e);
+static void placeholder_event_cb(lv_event_t *e);
 static void remotes_event_cb(lv_event_t *e);
 static void universals_event_cb(lv_event_t *e);
 #ifdef CONFIG_HAS_INFRARED_RX
@@ -630,7 +631,8 @@ static bool load_ir_file_list_from_dir(const char *dir) {
         if (did) {
             ir_sd_end(susp);
         }
-        return false;
+        // Treat missing or inaccessible directories as empty so callers can show placeholders
+        return true;
     }
 
     struct dirent *entry;
@@ -704,13 +706,28 @@ static void rebuild_ir_file_list_ui(void) {
         lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
 
+    if (ir_file_count == 0) {
+        lv_obj_t *placeholder = lv_list_add_btn(list, NULL, "No .ir files");
+        lv_obj_set_width(placeholder, LV_HOR_RES);
+        lv_obj_set_style_bg_color(placeholder, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_width(placeholder, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(placeholder, 0, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(placeholder, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *placeholder_label = lv_obj_get_child(placeholder, 0);
+        if (placeholder_label) {
+            lv_obj_set_style_text_font(placeholder_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(placeholder_label, lv_color_hex(0xFFFFFF), 0);
+        }
+        lv_obj_add_event_cb(placeholder, placeholder_event_cb, LV_EVENT_CLICKED, NULL);
+        // Count placeholder as an item so it's selectable but does nothing
+        num_ir_items = 1;
+    }
+
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
 #endif
 
-    if (ir_file_count > 0) {
-        ir_select_item(0);
-    }
+    ir_select_item(0);
     ESP_LOGI(TAG, "mem[ir_ui_post]: free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
@@ -2216,6 +2233,10 @@ static void command_event_execute(int idx) {
 static void file_event_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     file_event_open(idx);
+}
+
+static void placeholder_event_cb(lv_event_t *e) {
+    // No-op for placeholder row
 }
 
 static void command_event_cb(lv_event_t *e) {
