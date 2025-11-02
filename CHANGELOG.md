@@ -1,11 +1,11 @@
 # Ghost ESP Changelog
 
-
 ## Revival v1.8.1
 
 - Updated mfc dictionary with new additions
 - IR remotes and universals menus now show “No .ir files” placeholder when no IR files are found.
 - Only show touchscreen scroll buttons when the options list is scrollable
+- Refactored the standard mainmenu to reduce memory usage and improve performance
 
 ## Revival v1.8
 

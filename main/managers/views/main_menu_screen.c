@@ -32,8 +32,9 @@ static int touch_start_x;
 static int touch_start_y;
 static bool touch_started = false;
 static bool is_animating = false;
-static const int SWIPE_THRESHOLD = 50;
-static const int TAP_THRESHOLD = 10; // Add a threshold for tap detection
+// touch gesture thresholds
+#define SWIPE_THRESHOLD 50
+#define TAP_THRESHOLD 10 // Add a threshold for tap detection
 static MenuLayoutType current_layout = MENU_LAYOUT_CAROUSEL;
 
 // Grid layout variables
@@ -64,27 +65,29 @@ typedef struct {
 // Define colors as compile-time constants
 menu_item_t menu_items[] = {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    {"BLE", &bluetooth, 0},
+    {"BLE", &bluetooth, 0, {{0}}},
 #endif
-    {"WiFi", &wifi, 1}, // applies to all boards
+    {"WiFi", &wifi, 1, {{0}}}, // applies to all boards
 #ifdef CONFIG_HAS_GPS
-    {"GPS", &Map, 2},
+    {"GPS", &Map, 2, {{0}}},
 #endif
 #if CONFIG_HAS_INFRARED
-    {"Infrared", &infrared, 0}, // main infrared icon
+    {"Infrared", &infrared, 0, {{0}}}, // main infrared icon
 #endif
 #ifdef CONFIG_HAS_NFC
-    {"NFC", &nfc_icon, 2},
+    {"NFC", &nfc_icon, 2, {{0}}},
 #endif
-    {"Apps", &GESPAppGallery, 3}, // applies to all boards
+    {"Apps", &GESPAppGallery, 3, {{0}}}, // applies to all boards
 #ifdef CONFIG_HAS_RTC_CLOCK
-    {"Clock", &clock_icon, 4},
+    {"Clock", &clock_icon, 4, {{0}}},
 #endif
-    {"Settings", &settings_icon, 5} // applies to all boards
+    {"Settings", &settings_icon, 5, {{0}}} // applies to all boards
 };
 
 static int num_items = sizeof(menu_items) / sizeof(menu_items[0]);
 lv_obj_t *current_item_obj = NULL;
+// track slide direction for carousel reuse callback
+static bool carousel_next_slide_left = false;
 
 // Add navigation button objects at file scope
 static lv_obj_t *left_nav_btn = NULL;
@@ -119,30 +122,109 @@ static void init_menu_colors(void) {
 
 // Animation callback wrapper
 static void anim_set_x(void *obj, int32_t v) {
-    lv_obj_set_x((lv_obj_t *)obj, (lv_coord_t)v);
+    lv_obj_t *o = (lv_obj_t *)obj;
+    /* avoid redundant calls: only update when position actually changed */
+    lv_coord_t curr_x = lv_obj_get_x(o);
+    if (curr_x == (lv_coord_t)v) return;
+    lv_obj_set_x(o, (lv_coord_t)v);
 }
 
 // Add this helper at file scope if not present:
 static void fade_out_ready_cb(lv_anim_t *a) {
+    // default behavior: delete object when animation completes
     lv_obj_del((lv_obj_t *)a->var);
+}
+
+// forward declarations needed by carousel_fade_out_ready_cb
+static void anim_set_opa(void *obj, int32_t v);
+static void fade_in_ready_cb(lv_anim_t *a);
+
+// ready callback used when we fade out the persistent carousel card.
+// It updates the card contents and starts the slide+fade-in animations.
+static void carousel_fade_out_ready_cb(lv_anim_t *a) {
+    lv_obj_t *obj = (lv_obj_t *)a->var;
+    int start_x = carousel_next_slide_left ? LV_HOR_RES : -LV_HOR_RES;
+
+    // update styling/content for new selection
+    lv_obj_set_style_border_color(obj, menu_items[selected_item_index].border_color, LV_PART_MAIN);
+    // child 0 is expected to be the icon image
+    lv_obj_t *icon = lv_obj_get_child(obj, 0);
+    if (icon) {
+        lv_img_set_src(icon, menu_items[selected_item_index].icon);
+        if (strcmp(menu_items[selected_item_index].name, "Clock")) {
+            lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0);
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        } else {
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_TRANSP, 0);
+        }
+    }
+
+    // child 1 (if present) is the label
+    lv_obj_t *label = lv_obj_get_child(obj, 1);
+    if (label) {
+        lv_label_set_text(label, menu_items[selected_item_index].name);
+    }
+
+    // position off-screen at start_x then animate into center
+    lv_obj_set_x(obj, start_x);
+    lv_obj_set_style_opa(obj, LV_OPA_TRANSP, 0);
+
+    lv_anim_t anim_in;
+    lv_anim_init(&anim_in);
+    lv_anim_set_var(&anim_in, obj);
+    lv_anim_set_values(&anim_in, start_x, 0);
+    lv_anim_set_time(&anim_in, ANIM_DURATION);
+    lv_anim_set_path_cb(&anim_in, lv_anim_path_ease_in_out);
+    lv_anim_set_exec_cb(&anim_in, anim_set_x);
+    lv_anim_start(&anim_in);
+
+    lv_anim_t fade_in;
+    lv_anim_init(&fade_in);
+    lv_anim_set_var(&fade_in, obj);
+    lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_time(&fade_in, ANIM_DURATION);
+    lv_anim_set_exec_cb(&fade_in, anim_set_opa);
+    lv_anim_set_ready_cb(&fade_in, fade_in_ready_cb);
+    lv_anim_start(&fade_in);
 }
 
 static void fade_in_ready_cb(lv_anim_t *a) {
     is_animating = false;
 }
 
+// forward declarations used by carousel_fade_out_ready_cb
+static void anim_set_opa(void *obj, int32_t v);
+static void fade_in_ready_cb(lv_anim_t *a);
+
 static void anim_set_opa(void *obj, int32_t v) {
-    lv_obj_set_style_opa((lv_obj_t *)obj, v, 0);
+    lv_obj_t *o = (lv_obj_t *)obj;
+    /* read current opacity and skip update when identical to reduce paint churn */
+    lv_opa_t curr = lv_obj_get_style_opa(o, 0);
+    if (curr == (lv_opa_t)v) return;
+    lv_obj_set_style_opa(o, v, 0);
 }
 
 static void anim_set_scale(void *obj, int32_t v) {
-    lv_obj_set_style_transform_zoom((lv_obj_t *)obj, v, 0);
+    lv_obj_t *o = (lv_obj_t *)obj;
+    /* avoid redundant zoom updates */
+    lv_coord_t curr = lv_obj_get_style_transform_zoom(o, 0);
+    if (curr == (lv_coord_t)v) return;
+    lv_obj_set_style_transform_zoom(o, v, 0);
 }
 
 static void anim_set_bg_color(void *obj, int32_t v) {
-    // v is a 24-bit RGB value
-    lv_color_t color = lv_color_hex(v);
-    lv_obj_set_style_bg_color((lv_obj_t *)obj, color, LV_PART_MAIN);
+    /* v is a 24-bit RGB value. Only change bg color if different to avoid extra repaints */
+    lv_obj_t *o = (lv_obj_t *)obj;
+    lv_color_t new_color = lv_color_hex(v);
+    lv_color_t curr_color = lv_obj_get_style_bg_color(o, LV_PART_MAIN);
+    /* compare raw values to skip redundant style updates */
+#if LV_COLOR_DEPTH == 32
+    if (curr_color.full == new_color.full) return;
+#else
+    /* fallback compare for other color depths */
+    if (lv_color_to16(curr_color).full == lv_color_to16(new_color).full) return;
+#endif
+    lv_obj_set_style_bg_color(o, new_color, LV_PART_MAIN);
 }
 
 // Timer callback to restore button color
@@ -204,8 +286,9 @@ static void animate_button_click(lv_obj_t *btn) {
 // rebuild the single-item carousel card when selection changes
 static void update_menu_item(bool slide_left) {
     static lv_obj_t *prev_item_obj = NULL;
+    carousel_next_slide_left = slide_left;
     is_animating = true; // Set flag to block input during animation
-    // Animate out old item if it exists
+    // If there is an existing card, animate it out and reuse it in the ready-cb
     if (current_item_obj) {
         prev_item_obj = current_item_obj;
         // Slide out
@@ -217,12 +300,11 @@ static void update_menu_item(bool slide_left) {
         lv_anim_set_time(&anim_out, ANIM_DURATION);
         lv_anim_set_path_cb(&anim_out, lv_anim_path_ease_in_out);
         lv_anim_set_exec_cb(&anim_out, anim_set_x);
-        if (!menu_item_selected) { // Only delete if not selecting
-            lv_anim_set_ready_cb(&anim_out, fade_out_ready_cb);
-        }
+        // When slide-out finishes, update the same object and animate it back in
+        lv_anim_set_ready_cb(&anim_out, carousel_fade_out_ready_cb);
         lv_anim_start(&anim_out);
 
-        // Fade out
+        // Fade out (keep object, we'll reuse it)
         lv_anim_t fade_out;
         lv_anim_init(&fade_out);
         lv_anim_set_var(&fade_out, prev_item_obj);
@@ -230,9 +312,11 @@ static void update_menu_item(bool slide_left) {
         lv_anim_set_time(&fade_out, ANIM_DURATION);
         lv_anim_set_exec_cb(&fade_out, anim_set_opa);
         lv_anim_start(&fade_out);
+
+        return; // update will be completed in carousel_fade_out_ready_cb
     }
 
-    // Create new item (off-screen, transparent)
+    // First time: create persistent carousel card, icon and label
     current_item_obj = lv_btn_create(menu_container);
     lv_obj_set_style_bg_color(current_item_obj, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
     lv_obj_set_style_shadow_width(current_item_obj, 3, LV_PART_MAIN);
@@ -249,33 +333,25 @@ static void update_menu_item(bool slide_left) {
     }
     lv_obj_set_size(current_item_obj, btn_size, btn_size);
 
-    // Start new item off-screen (opposite direction of swipe)
-    int start_x = slide_left ? LV_HOR_RES : -LV_HOR_RES;
+    // initial state already visible
     lv_obj_align(current_item_obj, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_opa(current_item_obj, LV_OPA_TRANSP, 0); // Start transparent
 
+    // icon
     lv_obj_t *icon = lv_img_create(current_item_obj);
     lv_img_set_src(icon, menu_items[selected_item_index].icon);
-
     const int icon_size = 50;
     lv_obj_set_size(icon, icon_size, icon_size);
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
     lv_img_set_antialias(icon, false);
-    if (strcmp(menu_items[selected_item_index].name,"Clock")) {
+    if (strcmp(menu_items[selected_item_index].name, "Clock")) {
         lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
     }
-    lv_obj_set_style_clip_corner(icon, false, 0);
-
     int icon_x_offset = -3;
     int icon_y_offset = -5;
     int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
     int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
     lv_obj_set_pos(icon, x_pos, y_pos);
-    lv_coord_t img_width = menu_items[selected_item_index].icon->header.w;
-    lv_coord_t img_height = menu_items[selected_item_index].icon->header.h;
-    ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
-           btn_size, btn_size, icon_size, icon_size, img_width, img_height, x_pos, y_pos);
 
     if (LV_HOR_RES > 150) {
         lv_obj_t *label = lv_label_create(current_item_obj);
@@ -285,27 +361,8 @@ static void update_menu_item(bool slide_left) {
         lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
     }
 
-    // Animate in new item (slide and fade)
-    lv_anim_t anim_in;
-    lv_anim_init(&anim_in);
-    lv_anim_set_var(&anim_in, current_item_obj);
-    lv_anim_set_values(&anim_in, start_x, 0);
-    lv_anim_set_time(&anim_in, ANIM_DURATION);
-    lv_anim_set_path_cb(&anim_in, lv_anim_path_ease_in_out);
-    lv_anim_set_exec_cb(&anim_in, anim_set_x);
-    lv_anim_start(&anim_in);
-
-    lv_anim_t fade_in;
-    lv_anim_init(&fade_in);
-    lv_anim_set_var(&fade_in, current_item_obj);
-    lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_time(&fade_in, ANIM_DURATION);
-    lv_anim_set_exec_cb(&fade_in, anim_set_opa);
-    lv_anim_set_ready_cb(&fade_in, fade_in_ready_cb);
-    lv_anim_start(&fade_in);
-
-    // Ensure the new item is fully opaque at the end
-    lv_obj_set_style_opa(current_item_obj, LV_OPA_COVER, 0); // Always fully opaque
+    // initial state already visible
+    is_animating = false;
 }
 
 // move selection vertically for list and grid layouts; direction: -1 up, +1 down
@@ -1038,6 +1095,9 @@ void main_menu_create(void) {
         lv_obj_align(right_label, LV_ALIGN_CENTER, 0, 0);
         
         ESP_LOGI(TAG, "Navigation buttons created - size: %d, margin: %d", btn_size, btn_margin);
+        // ensure nav buttons are above other screen content (e.g., scrollable menu_container)
+        lv_obj_move_foreground(left_nav_btn);
+        lv_obj_move_foreground(right_nav_btn);
     }
 
     display_manager_add_status_bar(LV_HOR_RES > 128 ? "Main Menu" : "");
@@ -1060,10 +1120,14 @@ void main_menu_create(void) {
     if (left_nav_btn) {
         lv_coord_t old_y = lv_obj_get_y(left_nav_btn);
         lv_obj_set_y(left_nav_btn, old_y + status_bar_height / 2);
+        // ensure nav button remains on top after repositioning
+        lv_obj_move_foreground(left_nav_btn);
     }
     if (right_nav_btn) {
         lv_coord_t old_y = lv_obj_get_y(right_nav_btn);
         lv_obj_set_y(right_nav_btn, old_y + status_bar_height / 2);
+        // ensure nav button remains on top after repositioning
+        lv_obj_move_foreground(right_nav_btn);
     }
 }
 
