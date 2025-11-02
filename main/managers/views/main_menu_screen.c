@@ -447,42 +447,64 @@ static void menu_item_event_handler(InputEvent *event) {
             int dy = data->point.y - touch_start_y;
             touch_started = false;
 
-            // Check if touch was on navigation buttons
-            if (left_nav_btn && right_nav_btn) {
-                lv_area_t left_area, right_area;
-                lv_obj_get_coords(left_nav_btn, &left_area);
-                lv_obj_get_coords(right_nav_btn, &right_area);
-
-                // Check if touch point is within left button bounds
-                if (data->point.x >= left_area.x1 && data->point.x <= left_area.x2 &&
-                    data->point.y >= left_area.y1 && data->point.y <= left_area.y2) {
-                    ESP_LOGI(TAG, "Left navigation button touched");
-                    animate_nav_button_press(left_nav_btn);
-                    select_menu_item(selected_item_index - 1, true);
-                    return;
-                }
-
-                // Check if touch point is within right button bounds
-                if (data->point.x >= right_area.x1 && data->point.x <= right_area.x2 &&
-                    data->point.y >= right_area.y1 && data->point.y <= right_area.y2) {
-                    ESP_LOGI(TAG, "Right navigation button touched");
-                    animate_nav_button_press(right_nav_btn);
-                    select_menu_item(selected_item_index + 1, false);
-                    return;
-                }
-            }
+            // NOTE: nav button hit-tests were here previously, but that caused
+            // accidental taps when a swipe ended over the nav button. We now
+            // handle swipes first and perform stricter nav hit-tests below
+            // (require both press and release inside the button and minimal movement).
 
             // Handle different layout types
             if (current_layout == MENU_LAYOUT_CAROUSEL) {
+                // Prioritize swipe detection for carousel; if a horizontal
+                // swipe is detected, act on it and return immediately so a
+                // release-over-button doesn't trigger it.
                 if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) { // Swipe detected
                     if (dx < 0) {
                         select_menu_item(selected_item_index + 1, true);
                     } else {
                         select_menu_item(selected_item_index - 1, false);
                     }
-                } else if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) { // Tap detected
-                    handle_menu_item_selection(selected_item_index);
+                    return;
                 }
+
+                // If the touch both started and ended inside a nav button and
+                // the movement was small, treat it as a nav tap. Checking this
+                // here prevents the carousel tap handler from capturing nav
+                // button presses.
+                if (left_nav_btn && right_nav_btn) {
+                    lv_area_t left_area, right_area;
+                    lv_obj_get_coords(left_nav_btn, &left_area);
+                    lv_obj_get_coords(right_nav_btn, &right_area);
+
+                    bool start_in_left = (touch_start_x >= left_area.x1 && touch_start_x <= left_area.x2 &&
+                                           touch_start_y >= left_area.y1 && touch_start_y <= left_area.y2);
+                    bool end_in_left = (data->point.x >= left_area.x1 && data->point.x <= left_area.x2 &&
+                                        data->point.y >= left_area.y1 && data->point.y <= left_area.y2);
+                    if (start_in_left && end_in_left && abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
+                        ESP_LOGI(TAG, "Left navigation button tapped (press+release inside)");
+                        animate_nav_button_press(left_nav_btn);
+                        select_menu_item(selected_item_index - 1, true);
+                        return;
+                    }
+
+                    bool start_in_right = (touch_start_x >= right_area.x1 && touch_start_x <= right_area.x2 &&
+                                            touch_start_y >= right_area.y1 && touch_start_y <= right_area.y2);
+                    bool end_in_right = (data->point.x >= right_area.x1 && data->point.x <= right_area.x2 &&
+                                         data->point.y >= right_area.y1 && data->point.y <= right_area.y2);
+                    if (start_in_right && end_in_right && abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
+                        ESP_LOGI(TAG, "Right navigation button tapped (press+release inside)");
+                        animate_nav_button_press(right_nav_btn);
+                        select_menu_item(selected_item_index + 1, false);
+                        return;
+                    }
+                }
+
+                // If not a nav tap, treat a very small movement as a carousel tap
+                if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) { // Tap detected
+                    handle_menu_item_selection(selected_item_index);
+                    return;
+                }
+                // fallthrough: small movement or non-horizontal movement - continue
+                // to layout-specific hit-tests below
             } else if (current_layout == MENU_LAYOUT_GRID) {
                 // For grid layout, check if tap was on a grid button
                 if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
@@ -536,6 +558,10 @@ static void menu_item_event_handler(InputEvent *event) {
                         }
                     }
                 }
+
+            // nav buttons handled earlier for the carousel case; for other
+            // layouts they will be considered as part of layout-specific hit-
+            // tests or are intentionally ignored.
             }
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {

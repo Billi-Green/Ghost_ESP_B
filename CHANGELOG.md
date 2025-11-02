@@ -7,6 +7,8 @@
 - Only show touchscreen scroll buttons when the options list is scrollable
 - Refactored the standard mainmenu to reduce memory usage and improve performance
 - Changed default UI theme to 'Bright'
+- Fix to prevent accidental mainmenu nav button activation during swipes
+- Nav buttons now align to the midpoint between carousel card and screen edge
 
 ## Revival v1.8
 
