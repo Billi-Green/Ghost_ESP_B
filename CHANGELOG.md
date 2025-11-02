@@ -8,6 +8,7 @@
 - Refactored the standard mainmenu to reduce memory usage and improve performance
 - Changed default UI theme to 'Bright'
 - Fix to prevent accidental mainmenu nav button activation during swipes
+- Default to WebUI authentication disabled
 
 ## Revival v1.8
 

@@ -143,7 +143,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->third_control_enabled = false;
   settings->terminal_text_color = 0x00FF00;
   settings->invert_colors = false;
-  settings->web_auth_enabled = true;
+  settings->web_auth_enabled = false;
 #ifdef CONFIG_IDF_TARGET_ESP32
   settings->esp_comm_tx_pin = 17;
   settings->esp_comm_rx_pin = 16;
