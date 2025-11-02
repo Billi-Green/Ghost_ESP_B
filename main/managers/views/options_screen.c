@@ -512,6 +512,8 @@ void options_menu_create() {
     lv_obj_t *up_label = lv_label_create(scroll_up_btn);
     lv_label_set_text(up_label, LV_SYMBOL_UP);
     lv_obj_center(up_label);
+    /* hide scroll buttons until the menu is built and we know if scrolling is required */
+    lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
 
     scroll_down_btn = lv_btn_create(root);
     lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
@@ -524,6 +526,7 @@ void options_menu_create() {
     lv_obj_t *down_label = lv_label_create(scroll_down_btn);
     lv_label_set_text(down_label, LV_SYMBOL_DOWN);
     lv_obj_center(down_label);
+    lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
 
     back_btn = lv_btn_create(root);
     lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
@@ -2053,6 +2056,18 @@ static void menu_builder_cb(lv_timer_t *t)
 #endif
         ) {
             lv_timer_del(t);
+            /* menu build complete -- show or hide touch scroll buttons depending on scrollable content */
+            if (menu_container && lv_obj_is_valid(menu_container)) {
+                lv_coord_t scroll_bottom = lv_obj_get_scroll_bottom(menu_container);
+                lv_coord_t scroll_top = lv_obj_get_scroll_top(menu_container);
+                if (scroll_bottom > 0 || scroll_top > 0) {
+                    if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) lv_obj_clear_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+                    if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) lv_obj_clear_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+                    if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
             menu_build_timer = NULL;
         }
     }

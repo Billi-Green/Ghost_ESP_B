@@ -1350,6 +1350,8 @@ void infrared_view_create(void) {
     lv_obj_t *up_label = lv_label_create(ir_scroll_up_btn);
     lv_label_set_text(up_label, LV_SYMBOL_UP);
     lv_obj_center(up_label);
+    /* hide IR scroll buttons until we know whether the list is scrollable */
+    lv_obj_add_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
 
     ir_scroll_down_btn = lv_btn_create(root);
     lv_obj_set_size(ir_scroll_down_btn, IR_SCROLL_BTN_SIZE, IR_SCROLL_BTN_SIZE);
@@ -1360,6 +1362,7 @@ void infrared_view_create(void) {
     lv_obj_t *down_label = lv_label_create(ir_scroll_down_btn);
     lv_label_set_text(down_label, LV_SYMBOL_DOWN);
     lv_obj_center(down_label);
+    lv_obj_add_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
 
     ir_back_btn = lv_btn_create(root);
     lv_obj_set_size(ir_back_btn, IR_SCROLL_BTN_SIZE + 20, IR_SCROLL_BTN_SIZE);
@@ -1372,6 +1375,20 @@ void infrared_view_create(void) {
     lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
     #endif
+    /* reveal IR scroll buttons only if the list is actually scrollable */
+#ifdef CONFIG_USE_TOUCHSCREEN
+    if (list && lv_obj_is_valid(list)) {
+        lv_coord_t scroll_bottom = lv_obj_get_scroll_bottom(list);
+        lv_coord_t scroll_top = lv_obj_get_scroll_top(list);
+        if (scroll_bottom > 0 || scroll_top > 0) {
+            if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) lv_obj_clear_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+            if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) lv_obj_clear_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) lv_obj_add_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+            if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) lv_obj_add_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+#endif
 }
 
 void infrared_view_destroy(void) {
