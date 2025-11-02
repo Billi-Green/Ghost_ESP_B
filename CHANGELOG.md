@@ -1,5 +1,10 @@
 # Ghost ESP Changelog
 
+
+## Revival v1.8.1
+
+- Updated mfc dictionary with new additions
+
 ## Revival v1.8
 
 ### TL;DR
