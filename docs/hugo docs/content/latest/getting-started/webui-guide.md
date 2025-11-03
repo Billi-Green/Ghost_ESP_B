@@ -26,10 +26,10 @@ The GhostNet WebUI is a browser-based control panel for managing GhostESP settin
      - `ghostesp.local` (requires mDNS support; works on most networks)
      - `192.168.4.1` (direct IP; always works)
 
-3. **Log in**
-   - Username: `GhostNet`
-   - Password: `GhostNet`
-   - To disable authentication, run `webauth off` in the serial CLI or WebUI terminal.
+3. **Authentication (optional)**
+   - WebUI authentication is **disabled by default** for faster access.
+   - To enable it, run `webauth on` in the serial CLI or WebUI terminal.
+   - When enabled, the default credentials are `GhostNet` / `GhostNet`, protected by HTTP Digest (RFC2617) with signed nonces.
 
 ## Tabs and Features
 
@@ -125,17 +125,10 @@ The WebUI cannot directly run Wi-Fi or BLE commands (e.g., `scanap`, `karma star
 - Use a card reader connected to your computer instead of the WebUI for faster PCAP and file transfers.
 - The WebUI file manager is convenient but slower over Wi-Fi.
 
-### Disable Authentication for Local Networks
+### Toggle Authentication When Needed
 
-If you're on a trusted local network:
-```
-webauth off
-```
-This removes the login requirement and speeds up access.
-
-### Access from Mobile
-
-The WebUI is fully responsive and works on phones and tablets. Connect to GhostNet and navigate to `ghostesp.local` or `192.168.4.1`.
+- `webauth on` — enable HTTP Digest authentication for the WebUI.
+- `webauth off` — return to the default open-access mode.
 
 ## Troubleshooting
 
@@ -153,9 +146,9 @@ The WebUI is fully responsive and works on phones and tablets. Connect to GhostN
 
 ### Login fails
 
-- **Credentials rejected**: Default is `GhostNet` / `GhostNet` (case-sensitive).
+- **Authentication prompts unexpectedly**: Run `webauth off` to confirm the feature is disabled.
+- **Credentials rejected**: If you enabled auth, defaults are `GhostNet` / `GhostNet` (case-sensitive).
 - **Forgot credentials**: Reboot the device to reset to defaults.
-- **Can't disable auth**: Run `webauth off` from the serial CLI, not the WebUI terminal.
 
 ### Wi-Fi commands don't work
 

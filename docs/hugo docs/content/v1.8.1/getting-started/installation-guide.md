@@ -104,7 +104,7 @@ As soon as the flash finishes, GhostESP boots its default access point so you ca
 1. **Web Interface**
    - Connect to the `GhostNet` AP with the password `GhostNet`
    - Open a browser and connect to either `ghostesp.local` (requires mDNS support) or `192.168.4.1` to access device settings.
-   - Sign in with the default credentials `GhostNet` / `GhostNet`. Run `webauth off` in the serial/Web CLI if you want to disable the WebUI authentication.
+   - WebUI authentication starts **disabled**. Run `webauth on` in the serial/Web CLI if you want to enable HTTP Digest login (defaults: `GhostNet` / `GhostNet`).
    - Use the auto-updating configuration panel to manage settings, Evil Portal controls, and device info.
 
 2. **Qt6 Control App**
