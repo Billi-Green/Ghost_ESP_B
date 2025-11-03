@@ -4,7 +4,6 @@
 
 - Firmware now includes TURNHISTVOFF universal IR file
 - Updated mfc dictionary with new additions
-- Moved update_universal_ir.py to scripts directory for better organization
 - WebUI is now served as a gzipped file to reduce loading times
 - IR remotes and universals menus now show “No .ir files” placeholder when no IR files are found
 - Only show touchscreen scroll buttons when the options list is scrollable
