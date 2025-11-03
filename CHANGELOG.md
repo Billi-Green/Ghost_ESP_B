@@ -7,8 +7,10 @@
 - Only show touchscreen scroll buttons when the options list is scrollable
 - Refactored the standard mainmenu to reduce memory usage and improve performance
 - Changed default UI theme to 'Bright'
-- Fix to prevent accidental mainmenu nav button activation during swipes
+- Prevent accidental mainmenu nav button activation during swipes
 - Default to WebUI authentication disabled
+- Replaced Basic HTTP auth with HTTP Digest (RFC2617) using HMAC-signed stateless nonces to avoid sending plaintext credentials
+- Default AP authmode changed to WPA2/WPA3 mixed for ESP32‑C5 and ESP32‑C6
 
 ## Revival v1.8
 
