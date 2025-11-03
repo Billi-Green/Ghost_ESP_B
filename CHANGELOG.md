@@ -17,6 +17,7 @@
 - Correct ADC battery percentage scaling math to prevent incorrect readings
 - Fixed BQ27220 reset/reseal flow to more accurately reflect battery state
 - Refactor NFC to use static pools instead of heap allocations for less fragmentation and better performance
+- WebUI is now served as a gzipped file to reduce loading times
 
 ## Revival v1.8
 

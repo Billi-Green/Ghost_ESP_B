@@ -1,5 +1,8 @@
 #include "managers/ap_manager.h"
-#include "managers/ghost_esp_site.h"
+#include "managers/ghost_esp_site_gz.h"
+#define GHOST_SITE_PAYLOAD ghost_site_html_gz
+#define GHOST_SITE_PAYLOAD_SIZE ghost_site_html_gz_size
+#define GHOST_SITE_IS_GZ 1
 #include "managers/settings_manager.h"
 #include "core/esp_comm_manager.h"
 #include "sdkconfig.h"
@@ -31,6 +34,14 @@
 #include "managers/status_display_manager.h"
 #include "core/utils.h"
 #include "managers/auth_digest.h"
+
+static esp_err_t respond_with_site(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html");
+#if GHOST_SITE_IS_GZ
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+#endif
+    return httpd_resp_send(req, (const char *)GHOST_SITE_PAYLOAD, GHOST_SITE_PAYLOAD_SIZE);
+}
 
 // Forward declarations
 static esp_err_t http_get_handler(httpd_req_t *req);
@@ -985,9 +996,7 @@ static esp_err_t http_get_handler(httpd_req_t *req) {
     printf("Received HTTP GET request: %s\n", req->uri);
 
     if (!settings_get_web_auth_enabled(&G_Settings)) {
-        httpd_resp_set_type(req, "text/html");
-        return httpd_resp_send(req, (const char *)ghost_site_html,
-                               ghost_site_html_size);
+        return respond_with_site(req);
     }
 
     char auth_buffer[AUTH_MAX_HDR_LEN] = {0};
@@ -1026,8 +1035,7 @@ static esp_err_t http_get_handler(httpd_req_t *req) {
                 if (si > 0) {
                     if (validate_stateless_nonce(expected_password_local, strlen(expected_password_local), session_token, 300) == 0) {
                         // valid session cookie -> serve page
-                        httpd_resp_set_type(req, "text/html");
-                        return httpd_resp_send(req, (const char *)ghost_site_html, ghost_site_html_size);
+                        return respond_with_site(req);
                     }
                 }
             }
@@ -1127,8 +1135,7 @@ static esp_err_t http_get_handler(httpd_req_t *req) {
                     snprintf(cookie, sizeof(cookie), "session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=300", session_token);
                     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
                 }
-                httpd_resp_set_type(req, "text/html");
-                return httpd_resp_send(req, (const char *)ghost_site_html, ghost_site_html_size);
+                return respond_with_site(req);
             }
         }
     }
