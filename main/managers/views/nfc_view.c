@@ -71,12 +71,12 @@ static lv_style_t style_menu_label;
 static bool styles_initialized = false;
 
 // forward declarations for helpers used throughout this file
-void init_styles(void);
-lv_style_t *get_zebra_style(int idx);
-const lv_font_t* get_menu_font(void);
-void vertically_center_label(lv_obj_t *label, lv_obj_t *btn);
+static void init_styles(void);
+static lv_style_t *get_zebra_style(int idx);
+static const lv_font_t* get_menu_font(void);
+static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn);
 void nfc_option_event_cb(lv_event_t *e);
-void highlight_selected(void);
+static void highlight_selected(void);
 void nfc_view_input_cb(InputEvent *event);
 
 static lv_obj_t *root = NULL;
@@ -220,6 +220,14 @@ static uint32_t nfc_scan_session = 0;
 typedef struct { bool on; uint32_t session; } nfc_bool_evt_t;
 // PN532 UID event payload for async label updates
 typedef struct { uint32_t session; uint8_t uid[10]; uint8_t uid_len; } nfc_uid_evt_t;
+// Dictionary progress payload for async calls
+typedef struct { int c; int t; uint32_t s; } dict_prog_t;
+// Static event pool to eliminate per-event malloc
+#define NFC_EVENT_POOL_SIZE 8
+static nfc_bool_evt_t nfc_bool_pool[NFC_EVENT_POOL_SIZE];
+static dict_prog_t nfc_dict_pool[NFC_EVENT_POOL_SIZE];
+static uint32_t nfc_bool_pool_mask = 0;
+static uint32_t nfc_dict_pool_mask = 0;
 static bool nfc_skip_label_applied = false;
 
 static void nfc_reset_more_button_label(void) {
@@ -230,30 +238,63 @@ static void nfc_reset_more_button_label(void) {
     nfc_skip_label_applied = false;
 }
 
+// Pool allocation helpers
+static nfc_bool_evt_t* nfc_bool_pool_alloc(void) {
+    for (int i = 0; i < NFC_EVENT_POOL_SIZE; i++) {
+        if (!(nfc_bool_pool_mask & (1U << i))) {
+            nfc_bool_pool_mask |= (1U << i);
+            return &nfc_bool_pool[i];
+        }
+    }
+    return NULL;
+}
+static void nfc_bool_pool_free(nfc_bool_evt_t *ptr) {
+    if (!ptr) return;
+    int idx = ptr - nfc_bool_pool;
+    if (idx >= 0 && idx < NFC_EVENT_POOL_SIZE) {
+        nfc_bool_pool_mask &= ~(1U << idx);
+    }
+}
+static dict_prog_t* nfc_dict_pool_alloc(void) {
+    for (int i = 0; i < NFC_EVENT_POOL_SIZE; i++) {
+        if (!(nfc_dict_pool_mask & (1U << i))) {
+            nfc_dict_pool_mask |= (1U << i);
+            return &nfc_dict_pool[i];
+        }
+    }
+    return NULL;
+}
+static void nfc_dict_pool_free(dict_prog_t *ptr) {
+    if (!ptr) return;
+    int idx = ptr - nfc_dict_pool;
+    if (idx >= 0 && idx < NFC_EVENT_POOL_SIZE) {
+        nfc_dict_pool_mask &= ~(1U << idx);
+    }
+}
+
 // Async setter for paused title/state
 static void nfc_set_paused_async(void *ptr) {
     nfc_bool_evt_t *ev = (nfc_bool_evt_t*)ptr;
     if (!ev) return;
-    if (ev->session != nfc_scan_session) { free(ev); return; }
-    if (!display_manager_is_available()) { free(ev); return; }
+    if (ev->session != nfc_scan_session) { nfc_bool_pool_free(ev); return; }
+    if (!display_manager_is_available()) { nfc_bool_pool_free(ev); return; }
     nfc_paused = ev->on;
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
         if (ev->on) {
             lv_label_set_text(nfc_title_label, "Paused - present tag to continue");
         } else {
-            // Restore appropriate title depending on phase
             if (nfc_cache_fill_phase) lv_label_set_text(nfc_title_label, "Reading sectors... 0%");
             else if (!nfc_details_visible) lv_label_set_text(nfc_title_label, "Bruteforcing keys... 0%");
             else { lv_label_set_text(nfc_title_label, "NFC Tag"); lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22); }
         }
     }
-    free(ev);
+    nfc_bool_pool_free(ev);
 }
 
 // Exposed to MFC layer
 void mfc_ui_set_paused(bool on) {
     if (!display_manager_is_available()) return;
-    nfc_bool_evt_t *ev = (nfc_bool_evt_t*)malloc(sizeof(nfc_bool_evt_t));
+    nfc_bool_evt_t *ev = nfc_bool_pool_alloc();
     if (!ev) return;
     ev->on = on;
     ev->session = nfc_scan_session;
@@ -264,21 +305,21 @@ void mfc_ui_set_paused(bool on) {
 static void nfc_set_cache_mode_async(void *ptr) {
     nfc_bool_evt_t *ev = (nfc_bool_evt_t*)ptr;
     if (!ev) return;
-    if (ev->session != nfc_scan_session) { free(ev); return; }
-    if (!display_manager_is_available()) { free(ev); return; }
+    if (ev->session != nfc_scan_session) { nfc_bool_pool_free(ev); return; }
+    if (!display_manager_is_available()) { nfc_bool_pool_free(ev); return; }
     bool on = ev->on;
     nfc_cache_fill_phase = on;
     if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
         if (on) lv_label_set_text(nfc_title_label, "Reading sectors... 0%");
         else { lv_label_set_text(nfc_title_label, "NFC Tag"); lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22); }
     }
-    free(ev);
+    nfc_bool_pool_free(ev);
 }
 
 // Exposed to MFC layer to toggle cache-fill phase
 void mfc_ui_set_cache_mode(bool on) {
     if (!display_manager_is_available()) return;
-    nfc_bool_evt_t *ev = (nfc_bool_evt_t*)malloc(sizeof(nfc_bool_evt_t));
+    nfc_bool_evt_t *ev = nfc_bool_pool_alloc();
     if (!ev) return;
     ev->on = on;
     ev->session = nfc_scan_session;
@@ -401,13 +442,11 @@ static void nfc_update_labels_async(void *ptr);
 // UI hook from MIFARE Classic layer to indicate sector/block/key phase (implementation)
 void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) {
     if (!display_manager_is_available()) return;
-    // just update phase state and schedule a 0% progress update on LVGL thread
     mfc_phase_sector = sector;
     mfc_phase_first_block = first_block;
     mfc_phase_key_b = key_b;
     mfc_phase_total = total_keys;
-    typedef struct { int c; int t; uint32_t s; } dict_prog_t;
-    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
+    dict_prog_t *dp = nfc_dict_pool_alloc();
     if (dp) { dp->c = 0; dp->t = total_keys; dp->s = nfc_scan_session; lv_async_call(nfc_progress_update_async, dp); }
 }
 static void mfc_dict_progress_cb(int current, int total, void *user) {
@@ -420,20 +459,41 @@ static void mfc_dict_progress_cb(int current, int total, void *user) {
     static int last_percent = -1;
     if (percent == last_percent) return;
     last_percent = percent;
-    typedef struct { int c; int t; uint32_t s; } dict_prog_t;
-    dict_prog_t *dp = (dict_prog_t*)malloc(sizeof(dict_prog_t));
+    dict_prog_t *dp = nfc_dict_pool_alloc();
     if (!dp) return;
     dp->c = current; dp->t = total; dp->s = nfc_scan_session;
     lv_async_call(nfc_progress_update_async, dp);
+}
+
+// Static pool for UID events to eliminate malloc
+#define NFC_UID_POOL_SIZE 4
+static nfc_uid_evt_t nfc_uid_pool[NFC_UID_POOL_SIZE];
+static uint32_t nfc_uid_pool_mask = 0;
+
+static nfc_uid_evt_t* nfc_uid_pool_alloc(void) {
+    for (int i = 0; i < NFC_UID_POOL_SIZE; i++) {
+        if (!(nfc_uid_pool_mask & (1U << i))) {
+            nfc_uid_pool_mask |= (1U << i);
+            return &nfc_uid_pool[i];
+        }
+    }
+    return NULL;
+}
+static void nfc_uid_pool_free(nfc_uid_evt_t *ptr) {
+    if (!ptr) return;
+    int idx = ptr - nfc_uid_pool;
+    if (idx >= 0 && idx < NFC_UID_POOL_SIZE) {
+        nfc_uid_pool_mask &= ~(1U << idx);
+    }
 }
 
 // Async updater for PN532 UID/type summary lines
 static void nfc_update_labels_async(void *ptr) {
     if (!ptr) return;
     nfc_uid_evt_t *ev = (nfc_uid_evt_t*)ptr;
-    if (ev->session != nfc_scan_session) { free(ev); return; }
-    if (!display_manager_is_available()) { free(ev); return; }
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(ev); return; }
+    if (ev->session != nfc_scan_session) { nfc_uid_pool_free(ev); return; }
+    if (!display_manager_is_available()) { nfc_uid_pool_free(ev); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { nfc_uid_pool_free(ev); return; }
     char uid_text[64]; int pos = 0; pos += snprintf(uid_text, sizeof(uid_text), "UID:");
     for (int i = 0; i < ev->uid_len && pos < (int)sizeof(uid_text) - 4; ++i) {
         pos += snprintf(uid_text + pos, sizeof(uid_text) - pos, " %02X", ev->uid[i]);
@@ -444,19 +504,17 @@ static void nfc_update_labels_async(void *ptr) {
     if (nfc_type_label && lv_obj_is_valid(nfc_type_label)) {
         lv_label_set_text(nfc_type_label, "Type: ISO14443A");
     }
-    // avoid forcing a premature title here to prevent flicker; phase handlers will set title/alignment
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
-    free(ev);
+    nfc_uid_pool_free(ev);
 }
 
 static void nfc_progress_update_async(void *ptr) {
     if (!ptr) return;
-    typedef struct { int c; int t; uint32_t s; } dict_prog_t;
     dict_prog_t *dp = (dict_prog_t*)ptr;
-    if (dp->s != nfc_scan_session) { free(dp); return; }
-    if (!display_manager_is_available()) { free(dp); return; }
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(dp); return; }
+    if (dp->s != nfc_scan_session) { nfc_dict_pool_free(dp); return; }
+    if (!display_manager_is_available()) { nfc_dict_pool_free(dp); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { nfc_dict_pool_free(dp); return; }
     int percent = 0;
     if (dp->t > 0) percent = (dp->c * 100) / dp->t;
     if (percent > 100) percent = 100;
@@ -508,7 +566,7 @@ static void nfc_progress_update_async(void *ptr) {
         else snprintf(info, sizeof(info), "Dictionary: %d (unknown total)%s", dp->c, phase);
         lv_label_set_text(nfc_details_label, info);
     }
-    free(dp);
+    nfc_dict_pool_free(dp);
 }
 
 static volatile bool nfc_scan_cancel = false;
@@ -693,11 +751,33 @@ static void nfc_refresh_cu_details_from_cache(void) {
 }
 #endif
 
+// Static pool for Chameleon scan results to eliminate malloc
+#define CU_SCAN_POOL_SIZE 4
+static cu_scan_result_t cu_scan_pool[CU_SCAN_POOL_SIZE];
+static uint32_t cu_scan_pool_mask = 0;
+
+static cu_scan_result_t* cu_scan_pool_alloc(void) {
+    for (int i = 0; i < CU_SCAN_POOL_SIZE; i++) {
+        if (!(cu_scan_pool_mask & (1U << i))) {
+            cu_scan_pool_mask |= (1U << i);
+            return &cu_scan_pool[i];
+        }
+    }
+    return NULL;
+}
+static void cu_scan_pool_free(cu_scan_result_t *ptr) {
+    if (!ptr) return;
+    int idx = ptr - cu_scan_pool;
+    if (idx >= 0 && idx < CU_SCAN_POOL_SIZE) {
+        cu_scan_pool_mask &= ~(1U << idx);
+    }
+}
+
 static void nfc_set_cu_scan_async(void *ptr) {
     cu_scan_result_t *r = (cu_scan_result_t*)ptr;
     if (!r) return;
-    if (r->session != nfc_scan_session) { free(r); return; }
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { free(r); return; }
+    if (r->session != nfc_scan_session) { cu_scan_pool_free(r); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { cu_scan_pool_free(r); return; }
     // Update summary labels
     if (nfc_uid_label && lv_obj_is_valid(nfc_uid_label)) {
         char uid_text[64]; int pos = 0; pos += snprintf(uid_text, sizeof(uid_text), "UID:");
@@ -722,8 +802,7 @@ static void nfc_set_cu_scan_async(void *ptr) {
     }
     update_nfc_buttons_layout();
     update_nfc_popup_selection();
-    // Defer CU details refresh until after Classic read completes to match PN532 behavior
-    free(r);
+    cu_scan_pool_free(r);
 }
 
 // cu worker tasks
@@ -734,7 +813,7 @@ static void nfc_scan_cu_task(void *arg) {
     if (ok && !nfc_scan_cancel) {
         uint8_t uid[10] = {0}; uint8_t ul = 0; uint16_t atqa = 0; uint8_t sak = 0;
         if (chameleon_manager_get_last_hf_scan(uid, &ul, &atqa, &sak)) {
-            cu_scan_result_t *res = (cu_scan_result_t*)malloc(sizeof(cu_scan_result_t));
+            cu_scan_result_t *res = cu_scan_pool_alloc();
             if (res) {
                 res->session = nfc_scan_session;
                 res->uid_len = ul; if (ul > sizeof(res->uid)) res->uid_len = sizeof(res->uid);
@@ -783,7 +862,7 @@ static void nfc_save_cu_task(void *arg) {
     if (!ok) {
         ok = chameleon_manager_save_last_hf_scan(NULL);
     }
-    bool *res = (bool*)malloc(sizeof(bool));
+    bool *res = (bool*)nfc_bool_pool_alloc();
     if (res) { *res = ok; lv_async_call(nfc_save_done_async, res); }
     else { lv_async_call(nfc_save_done_async, NULL); }
     nfc_save_in_progress = false;
@@ -821,7 +900,6 @@ static void nfc_scan_task(void *arg) {
                     port,
                     g_pn532) != ESP_OK) {
                 ESP_LOGE(TAGT, "pn532_new_driver_i2c failed (port=%d)", (int)port);
-                // ensure clean slate before next attempt
                 pn532_delete_driver(g_pn532);
                 continue;
             }
@@ -837,35 +915,6 @@ static void nfc_scan_task(void *arg) {
         }
         if (!ok) {
             ESP_LOGE(TAGT, "PN532 init failed on all ports, running i2c scan then exiting");
-            {
-                // do a quick i2c scan on the configured bus to see what's alive
-                i2c_config_t conf = {
-                    .mode = I2C_MODE_MASTER,
-                    .sda_io_num = (gpio_num_t)CONFIG_NFC_SDA_PIN,
-                    .scl_io_num = (gpio_num_t)CONFIG_NFC_SCL_PIN,
-                    .sda_pullup_en = GPIO_PULLUP_ENABLE,
-                    .scl_pullup_en = GPIO_PULLUP_ENABLE,
-                    .master.clk_speed = 100000,
-                    .clk_flags = 0,
-                };
-
-                // best effort config/install; ignore errors if already installed
-                (void)i2c_param_config(I2C_NUM_0, &conf);
-                (void)i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
-
-                ESP_LOGW(TAGT, "i2c scan on port %d (sda=%d scl=%d)", (int)I2C_NUM_0, (int)CONFIG_NFC_SDA_PIN, (int)CONFIG_NFC_SCL_PIN);
-                for (int addr = 0x03; addr <= 0x77; ++addr) {
-                    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-                    i2c_master_start(cmd);
-                    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
-                    i2c_master_stop(cmd);
-                    esp_err_t res = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(30));
-                    i2c_cmd_link_delete(cmd);
-                    if (res == ESP_OK) {
-                        ESP_LOGW(TAGT, "i2c device found at 0x%02X", addr);
-                    }
-                }
-            }
             nfc_scan_task_handle = NULL;
             vTaskDelete(NULL);
         }
@@ -878,17 +927,15 @@ static void nfc_scan_task(void *arg) {
         esp_err_t r = pn532_read_passive_target_id_ex(g_pn532, 0x00, uid + 1, &uid_len, &atqa, &sak, 200);
         if (r == ESP_OK && uid_len > 0 && uid_len <= 7) {
             uid[0] = uid_len;
-            nfc_uid_evt_t *ev = (nfc_uid_evt_t*)malloc(sizeof(nfc_uid_evt_t));
+            nfc_uid_evt_t *ev = nfc_uid_pool_alloc();
             if (ev) {
                 ev->session = nfc_scan_session;
                 ev->uid_len = uid_len;
                 if (uid_len > sizeof(ev->uid)) ev->uid_len = sizeof(ev->uid);
                 memcpy(ev->uid, uid + 1, ev->uid_len);
                 if (display_manager_is_available()) lv_async_call(nfc_update_labels_async, ev);
-                else free(ev);
+                else nfc_uid_pool_free(ev);
             }
-
-            // Build detailed info synchronously before exiting the task
             if (nfc_scan_cancel) break;
             g_uid_len = uid_len; memcpy(g_uid, uid + 1, uid_len); g_atqa = atqa; g_sak = sak; g_model = NTAG2XX_UNKNOWN;
             ESP_LOGI(TAGT, "scan_task: UID found, building details (len=%u)", uid_len);
@@ -898,7 +945,6 @@ static void nfc_scan_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // Release PN532 resources when scan stops (either by cancel or completion)
     if (g_pn532) {
         if (nfc_scan_cancel) {
             ESP_LOGI(TAGT, "scan_task: releasing PN532 (cancel=%d)", nfc_scan_cancel);
@@ -915,6 +961,45 @@ static void nfc_scan_task(void *arg) {
 }
 #endif
 
+static void execute_selected(void) { /* no bottom status text in this view */ }
+
+static void init_styles(void) {
+    if (styles_initialized) return;
+    lv_style_init(&style_menu_item);
+    lv_style_set_bg_color(&style_menu_item, lv_color_hex(0x1E1E1E));
+    lv_style_set_bg_opa(&style_menu_item, LV_OPA_COVER);
+    lv_style_set_border_width(&style_menu_item, 0);
+    lv_style_set_radius(&style_menu_item, 0);
+
+    lv_style_init(&style_menu_item_alt);
+    lv_style_set_bg_color(&style_menu_item_alt, lv_color_hex(0x232323));
+    lv_style_set_bg_opa(&style_menu_item_alt, LV_OPA_COVER);
+    lv_style_set_border_width(&style_menu_item_alt, 0);
+    lv_style_set_radius(&style_menu_item_alt, 0);
+
+    lv_style_init(&style_selected_item);
+    lv_style_set_bg_color(&style_selected_item, lv_color_hex(0x3A3A3A));
+    lv_style_set_bg_opa(&style_selected_item, LV_OPA_COVER);
+    lv_style_set_border_width(&style_selected_item, 0);
+    lv_style_set_radius(&style_selected_item, 0);
+
+    styles_initialized = true;
+}
+
+static const lv_font_t* get_menu_font(void) {
+    return (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
+}
+
+static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
+    if (!label) return;
+    lv_coord_t btn_h = lv_obj_get_height(btn ? btn : lv_obj_get_parent(label));
+    lv_coord_t label_h = lv_obj_get_height(label);
+    lv_coord_t btn_y_center_pad = (btn_h - label_h) / 2;
+    if (btn_y_center_pad < 0) btn_y_center_pad = 0;
+    lv_obj_set_style_pad_top(label, btn_y_center_pad, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+}
+
 static void update_selected_style_from_theme(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     lv_color_t theme_bg = lv_color_hex(theme_palettes[theme][0]);
@@ -923,7 +1008,7 @@ static void update_selected_style_from_theme(void) {
     lv_style_set_bg_grad_color(&style_selected_item, theme_bg);
 }
 
-void highlight_selected(void) {
+static void highlight_selected(void) {
     if (!menu_container) return;
     for (int i = 0; i < num_items; ++i) {
         lv_obj_t *child = lv_obj_get_child(menu_container, i);
@@ -943,43 +1028,6 @@ void highlight_selected(void) {
             if (label) lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
         }
     }
-}
-
-static void execute_selected(void) { /* no bottom status text in this view */ }
-
-void init_styles(void) {
-    if (styles_initialized) return;
-    lv_style_init(&style_menu_item);
-    lv_style_set_bg_color(&style_menu_item, lv_color_hex(0x1E1E1E));
-    lv_style_set_bg_opa(&style_menu_item, LV_OPA_COVER);
-    lv_style_set_border_width(&style_menu_item, 0);
-    lv_style_set_radius(&style_menu_item, 0);
-
-    lv_style_init(&style_menu_item_alt);
-    lv_style_set_bg_color(&style_menu_item_alt, lv_color_hex(0x232323));
-    lv_style_set_bg_opa(&style_menu_item_alt, LV_OPA_COVER);
-    lv_style_set_border_width(&style_menu_item_alt, 0);
-    lv_style_set_radius(&style_menu_item_alt, 0);
-
-    lv_style_init(&style_selected_item);
-    lv_style_set_bg_opa(&style_selected_item, LV_OPA_COVER);
-    lv_style_set_radius(&style_selected_item, 0);
-
-    lv_style_init(&style_menu_label);
-    lv_style_set_text_color(&style_menu_label, lv_color_hex(0xFFFFFF));
-
-    styles_initialized = true;
-}
-
-const lv_font_t* get_menu_font(void) { return is_small_screen_global ? &lv_font_montserrat_12 : &lv_font_montserrat_14; }
-
-void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
-    if (!label || !btn) return;
-    lv_obj_set_style_pad_top(btn, 0, 0);
-    float btn_y_center_pad = (button_height_global - lv_font_get_line_height(get_menu_font())) / 2;
-    if (btn_y_center_pad < 0) btn_y_center_pad = 0;
-    lv_obj_set_style_pad_top(label, btn_y_center_pad, 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
 }
 
 // forward declare back_event_cb so it can be used before its definition
@@ -1924,7 +1972,7 @@ static void nfc_try_start_scan_timer_cb(lv_timer_t *t) {
 static void nfc_save_task(void *arg) {
     bool ok = write_flipper_nfc_file();
     // Notify UI on completion with result
-    bool *res = (bool*)malloc(sizeof(bool));
+    bool *res = (bool*)nfc_bool_pool_alloc();
     if (res) { *res = ok; lv_async_call(nfc_save_done_async, res); }
     else { lv_async_call(nfc_save_done_async, NULL); }
     nfc_save_in_progress = false;
@@ -1942,7 +1990,7 @@ static void nfc_save_done_async(void *ptr) {
 #ifdef CONFIG_NFC_PN532
     mfc_set_progress_callback(NULL, NULL);
 #endif
-    if (ptr) free(ptr);
+    if (ptr) nfc_bool_pool_free(ptr);
 }
 
 static void update_nfc_popup_selection(void) {
@@ -2639,15 +2687,15 @@ static void cu_bool_done_async(void *ptr) {
             lv_label_set_text(cu_details_label, "Not connected");
         }
     }
-    // refresh connected state buttons visibility/text
     update_cu_buttons_layout();
     update_cu_popup_selection();
+    if (ptr) nfc_bool_pool_free(ptr);
 }
 
 static void cu_connect_task(void *arg) {
     (void)arg;
     bool ok = chameleon_manager_connect(10, NULL);
-    bool *res = (bool*)malloc(sizeof(bool));
+    bool *res = (bool*)nfc_bool_pool_alloc();
     if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
     else { lv_async_call(cu_bool_done_async, NULL); }
     vTaskDelete(NULL);
@@ -2657,7 +2705,7 @@ static void cu_disconnect_task(void *arg) {
     (void)arg;
     chameleon_manager_disconnect();
     bool ok = !chameleon_manager_is_connected();
-    bool *res = (bool*)malloc(sizeof(bool));
+    bool *res = (bool*)nfc_bool_pool_alloc();
     if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
     else { lv_async_call(cu_bool_done_async, NULL); }
     vTaskDelete(NULL);
@@ -2666,7 +2714,7 @@ static void cu_disconnect_task(void *arg) {
 static void cu_reader_task(void *arg) {
     (void)arg;
     bool ok = chameleon_manager_set_reader_mode();
-    bool *res = (bool*)malloc(sizeof(bool));
+    bool *res = (bool*)nfc_bool_pool_alloc();
     if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
     else { lv_async_call(cu_bool_done_async, NULL); }
     vTaskDelete(NULL);
@@ -2675,9 +2723,8 @@ static void cu_reader_task(void *arg) {
 static void cu_scan_hf_task(void *arg) {
     (void)arg;
     bool ok = chameleon_manager_scan_hf();
-    // if success, enable save
     if (ok) cu_save_visible = true;
-    bool *res = (bool*)malloc(sizeof(bool));
+    bool *res = (bool*)nfc_bool_pool_alloc();
     if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
     else { lv_async_call(cu_bool_done_async, NULL); }
     vTaskDelete(NULL);
@@ -2688,7 +2735,7 @@ static void cu_save_hf_task(void *arg) {
     bool ok = false;
     glog("Saving last HF scan header...");
     ok = chameleon_manager_save_last_hf_scan(NULL);
-    bool *res = (bool*)malloc(sizeof(bool));
+    bool *res = (bool*)nfc_bool_pool_alloc();
     if (res) { *res = ok; lv_async_call(cu_bool_done_async, res); }
     else { lv_async_call(cu_bool_done_async, NULL); }
     vTaskDelete(NULL);

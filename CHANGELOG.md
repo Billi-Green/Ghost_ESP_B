@@ -3,7 +3,7 @@
 ## Revival v1.8.1
 
 - Updated mfc dictionary with new additions
-- IR remotes and universals menus now show “No .ir files” placeholder when no IR files are found.
+- IR remotes and universals menus now show “No .ir files” placeholder when no IR files are found
 - Only show touchscreen scroll buttons when the options list is scrollable
 - Refactored the standard mainmenu to reduce memory usage and improve performance
 - Changed default UI theme to 'Bright'
@@ -11,6 +11,12 @@
 - Default to WebUI authentication disabled
 - Replaced Basic HTTP auth with HTTP Digest (RFC2617) using HMAC-signed stateless nonces to avoid sending plaintext credentials
 - Default AP authmode changed to WPA2/WPA3 mixed for ESP32‑C5 and ESP32‑C6
+- Fixed main menu color theming to match actually enabled items
+- Fixed potential status bar display issues during screen transitions
+- Fixed potential issue with menu navigation after clearing lists
+- Correct ADC battery percentage scaling math to prevent incorrect readings
+- Fixed BQ27220 reset/reseal flow to more accurately reflect battery state
+- Refactor NFC to use static pools instead of heap allocations for less fragmentation and better performance
 
 ## Revival v1.8
 

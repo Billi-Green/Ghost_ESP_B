@@ -313,12 +313,20 @@ int getBattery() {
     }
     last_mv = mv;
 
-    ESP_LOGI(TAG, "Battery ADC mV: %d", mv);
+    ESP_LOGD(TAG, "Battery ADC mV: %d", mv);
 
-    // percentage between 3300 and 4150 mV
-    percent = (mv - 3300) * 100 / (float)(4150 - 3350);
+    // Map 3.3V-4.15V range into 0-100% with saturation
+    const int min_mv = 3300;
+    const int max_mv = 4150;
+    if (mv <= min_mv) {
+        percent = 0;
+    } else if (mv >= max_mv) {
+        percent = 100;
+    } else {
+        percent = (uint8_t)(((mv - min_mv) * 100) / (max_mv - min_mv));
+    }
 
-    return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
+    return percent;
 }
 bool isCharging() { return _isCharging; }
 
@@ -695,11 +703,22 @@ static const uint32_t theme_palettes[15][6] = {
     };
 
 void display_manager_add_status_bar(const char *CurrentMenuName) {
-    if (status_bar != NULL && lv_obj_is_valid(status_bar)) {
-        lv_label_set_text(mainlabel, CurrentMenuName);
-        lv_obj_move_foreground(status_bar);
-        lv_obj_invalidate(status_bar);
-        return;
+    const char *label_text = CurrentMenuName ? CurrentMenuName : "";
+    if (status_bar && lv_obj_is_valid(status_bar)) {
+        if (mainlabel && lv_obj_is_valid(mainlabel)) {
+            lv_label_set_text(mainlabel, label_text);
+            lv_obj_move_foreground(status_bar);
+            lv_obj_invalidate(status_bar);
+            return;
+        }
+        lv_obj_t *old_bar = status_bar;
+        status_bar = NULL;
+        mainlabel = NULL;
+        wifi_label = NULL;
+        bt_label = NULL;
+        sd_label = NULL;
+        battery_label = NULL;
+        lv_obj_del(old_bar);
     }
     status_bar = lv_obj_create(lv_scr_act());
   lv_obj_set_size(status_bar, LV_HOR_RES, 20);
@@ -723,7 +742,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_align(left_container, LV_ALIGN_LEFT_MID, 5, 0);
   // fill left container
   mainlabel = lv_label_create(left_container);
-  lv_label_set_text(mainlabel, CurrentMenuName);
+  lv_label_set_text(mainlabel, label_text);
   lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
   lv_obj_set_style_text_font(mainlabel, &lv_font_montserrat_14, 0);
 

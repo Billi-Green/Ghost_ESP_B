@@ -113,10 +113,10 @@ static void init_menu_colors(void) {
         {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854}, // Sunset
         {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}  // Forest
     };
-    for (int i = 0; i < num_items; i++) { 
-        // bug here - we used to assume that the index of each menu item never changes. By removing options we dont need their index can change
-        // perhaps this could be fixed by adding an enabled bool for each menu item, and only drawing the menu icon if enabled
-        menu_items[i].border_color = lv_color_hex(palettes[theme][menu_items[i].palette_index]);
+    const int palette_len = (int)(sizeof(palettes[0]) / sizeof(palettes[0][0]));
+    for (int i = 0; i < num_items; i++) {
+        int slot = i % palette_len;
+        menu_items[i].border_color = lv_color_hex(palettes[theme][slot]);
     }
 }
 
