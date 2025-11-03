@@ -5,6 +5,7 @@
 #include "managers/views/app_gallery_screen.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "managers/views/clock_screen.h"
 #include "managers/views/settings_screen.h"
 #ifdef CONFIG_HAS_NFC
@@ -93,6 +94,27 @@ static bool carousel_next_slide_left = false;
 static lv_obj_t *left_nav_btn = NULL;
 static lv_obj_t *right_nav_btn = NULL;
 
+typedef struct {
+    lv_obj_t *card;
+    lv_obj_t *icon;
+    lv_obj_t *label;
+    const lv_img_dsc_t *icon_src;
+    const char *label_text;
+    lv_color_t border_color;
+    bool icon_recolor_enabled;
+    int item_index;
+} carousel_card_cache_t;
+
+static carousel_card_cache_t carousel_cache = {0};
+
+static bool colors_equal(lv_color_t a, lv_color_t b) {
+#if LV_COLOR_DEPTH == 32
+    return a.full == b.full;
+#else
+    return lv_color_to16(a) == lv_color_to16(b);
+#endif
+}
+
 static void init_menu_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     const uint32_t palettes[15][6] = { // if more menu items are added this will need to expand, or reuse colors
@@ -145,25 +167,52 @@ static void carousel_fade_out_ready_cb(lv_anim_t *a) {
     lv_obj_t *obj = (lv_obj_t *)a->var;
     int start_x = carousel_next_slide_left ? LV_HOR_RES : -LV_HOR_RES;
 
-    // update styling/content for new selection
-    lv_obj_set_style_border_color(obj, menu_items[selected_item_index].border_color, LV_PART_MAIN);
+    carousel_cache.card = obj;
+
+    lv_color_t new_border = menu_items[selected_item_index].border_color;
+    bool border_changed = !colors_equal(carousel_cache.border_color, new_border);
+    if (border_changed) {
+        lv_obj_set_style_border_color(obj, new_border, LV_PART_MAIN);
+        carousel_cache.border_color = new_border;
+    }
+
     // child 0 is expected to be the icon image
-    lv_obj_t *icon = lv_obj_get_child(obj, 0);
+    lv_obj_t *icon = carousel_cache.icon;
+    if (!icon) {
+        icon = lv_obj_get_child(obj, 0);
+        carousel_cache.icon = icon;
+    }
     if (icon) {
-        lv_img_set_src(icon, menu_items[selected_item_index].icon);
-        if (strcmp(menu_items[selected_item_index].name, "Clock")) {
-            lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0);
-            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
-        } else {
+        const lv_img_dsc_t *new_icon = menu_items[selected_item_index].icon;
+        if (carousel_cache.icon_src != new_icon) {
+            lv_img_set_src(icon, new_icon);
+        }
+        carousel_cache.icon_src = new_icon;
+
+        bool wants_recolor = strcmp(menu_items[selected_item_index].name, "Clock") != 0;
+        if (wants_recolor) {
+            if (!carousel_cache.icon_recolor_enabled || border_changed) {
+                lv_obj_set_style_img_recolor(icon, new_border, 0);
+                lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+            }
+        } else if (carousel_cache.icon_recolor_enabled) {
             lv_obj_set_style_img_recolor_opa(icon, LV_OPA_TRANSP, 0);
         }
+        carousel_cache.icon_recolor_enabled = wants_recolor;
     }
 
     // child 1 (if present) is the label
-    lv_obj_t *label = lv_obj_get_child(obj, 1);
-    if (label) {
-        lv_label_set_text(label, menu_items[selected_item_index].name);
+    lv_obj_t *label = carousel_cache.label;
+    if (!label) {
+        label = lv_obj_get_child(obj, 1);
+        carousel_cache.label = label;
     }
+    const char *new_label = menu_items[selected_item_index].name;
+    if (label && carousel_cache.label_text != new_label) {
+        lv_label_set_text(label, new_label);
+    }
+    carousel_cache.label_text = new_label;
+    carousel_cache.item_index = selected_item_index;
 
     // position off-screen at start_x then animate into center
     lv_obj_set_x(obj, start_x);
@@ -217,13 +266,7 @@ static void anim_set_bg_color(void *obj, int32_t v) {
     lv_obj_t *o = (lv_obj_t *)obj;
     lv_color_t new_color = lv_color_hex(v);
     lv_color_t curr_color = lv_obj_get_style_bg_color(o, LV_PART_MAIN);
-    /* compare raw values to skip redundant style updates */
-#if LV_COLOR_DEPTH == 32
-    if (curr_color.full == new_color.full) return;
-#else
-    /* fallback compare for other color depths */
-    if (lv_color_to16(curr_color) == lv_color_to16(new_color)) return;
-#endif
+    if (colors_equal(curr_color, new_color)) return;
     lv_obj_set_style_bg_color(o, new_color, LV_PART_MAIN);
 }
 
@@ -318,6 +361,7 @@ static void update_menu_item(bool slide_left) {
 
     // First time: create persistent carousel card, icon and label
     current_item_obj = lv_btn_create(menu_container);
+    carousel_cache.card = current_item_obj;
     lv_obj_set_style_bg_color(current_item_obj, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
     lv_obj_set_style_shadow_width(current_item_obj, 3, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(current_item_obj, lv_color_hex(0x000000), LV_PART_MAIN);
@@ -326,6 +370,8 @@ static void update_menu_item(bool slide_left) {
     lv_obj_set_style_radius(current_item_obj, 10, LV_PART_MAIN);
     lv_obj_set_style_pad_all(current_item_obj, 0, LV_PART_MAIN);
     lv_obj_set_style_clip_corner(current_item_obj, false, 0);
+    carousel_cache.border_color = menu_items[selected_item_index].border_color;
+    carousel_cache.item_index = selected_item_index;
 
     int btn_size = LV_MIN(LV_HOR_RES, LV_VER_RES) * 0.6;
     if (LV_HOR_RES <= 128 && LV_VER_RES <= 128) {
@@ -339,14 +385,18 @@ static void update_menu_item(bool slide_left) {
     // icon
     lv_obj_t *icon = lv_img_create(current_item_obj);
     lv_img_set_src(icon, menu_items[selected_item_index].icon);
+    carousel_cache.icon = icon;
+    carousel_cache.icon_src = menu_items[selected_item_index].icon;
     const int icon_size = 50;
     lv_obj_set_size(icon, icon_size, icon_size);
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
     lv_img_set_antialias(icon, false);
-    if (strcmp(menu_items[selected_item_index].name, "Clock")) {
+    bool recolor_enabled = strcmp(menu_items[selected_item_index].name, "Clock") != 0;
+    if (recolor_enabled) {
         lv_obj_set_style_img_recolor(icon, menu_items[selected_item_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
     }
+    carousel_cache.icon_recolor_enabled = recolor_enabled;
     int icon_x_offset = -3;
     int icon_y_offset = -5;
     int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
@@ -359,7 +409,10 @@ static void update_menu_item(bool slide_left) {
         lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
+        carousel_cache.label = label;
     }
+
+    carousel_cache.label_text = menu_items[selected_item_index].name;
 
     // initial state already visible
     is_animating = false;
@@ -622,6 +675,7 @@ static void select_menu_item(int index, bool slide_left) {
 
     // Update selection for different layouts
     if (current_layout == MENU_LAYOUT_CAROUSEL) {
+        if (index == selected_item_index && current_item_obj) return;
         selected_item_index = index;
         update_menu_item(slide_left);
     } else if (current_layout == MENU_LAYOUT_GRID) {
@@ -1167,6 +1221,7 @@ void main_menu_destroy(void) {
         menu_container = NULL;
         main_menu_view.root = NULL;
         current_item_obj = NULL;
+        carousel_cache = (carousel_card_cache_t){0};
         // Children (including Grid container/buttons) are deleted with parent
         grid_cards_container = NULL;
     }
