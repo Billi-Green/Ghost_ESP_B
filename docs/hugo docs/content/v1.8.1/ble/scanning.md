@@ -6,6 +6,8 @@ weight: 10
 
 Discover nearby BLE devices and gather information about them.
 
+> **Wi-Fi impact:** Starting any BLE scan temporarily suspends the GhostNet access point. Wi-Fi services resume automatically once you stop scanning (for example by running `stop` or pressing **Back** in the UI).
+
 ## Prerequisites
 
 - GhostESP flashed device, powered on with a wireless antenna.
@@ -74,6 +76,6 @@ After scanning, you can interact with discovered devices:
 ## Troubleshooting
 
 - **No devices found**: Move closer to BLE devices and try scanning again.
-- **Scanning stops immediately**: Check that your device has Bluetooth enabled, try turning the GhostNet AP off and rebooting to conserve memory.
+- **Scanning stops immediately**: Check that your device has Bluetooth enabled. Remember that the AP pauses during scans—wait a moment after stopping for Wi-Fi to return.
 - **Device not responding**: Some devices may be in sleep mode or have BLE disabled. Try scanning again or move closer.
 - **Bluetooth not supported**: Ensure you're using a device other than ESP32-S2, which does not have Bluetooth support.

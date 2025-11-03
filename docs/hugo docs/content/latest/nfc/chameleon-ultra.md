@@ -43,7 +43,7 @@ Chameleon Ultra support is available on the following GhostESP builds:
 
 ## Connecting to Chameleon Ultra
 
-> **Note:** GhostESP automatically suspends the access point and Wi-Fi services during the connection to free memory for BLE operations. Services restore when you disconnect.
+> **Note:** GhostESP suspends the access point and Wi-Fi services during BLE sessions (including Chameleon connections) to free memory. The radio comes back automatically after you disconnect or run `stop`.
 
 ### On-Device UI
 

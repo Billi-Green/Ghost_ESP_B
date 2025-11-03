@@ -6,6 +6,8 @@ weight: 20
 
 Broadcast fake BLE advertisements to simulate nearby devices or spoof Apple AirTags and other Find My devices.
 
+> **Wi-Fi impact:** Starting a BLE spam or spoofing session pauses the GhostNet AP until you run `stop` (or the task ends). Wi-Fi resumes automatically when BLE deinitializes.
+
 ## Prerequisites
 
 - GhostESP flashed device, powered on with a wireless antenna.
@@ -131,7 +133,7 @@ Spoof Apple AirTags and other Find My devices to broadcast their location. This 
 
 ## Troubleshooting
 
-- **Attacks not working**: Check that your device has Bluetooth enabled and sufficient free memory. Try turning off the GhostNet AP and rebooting to conserve memory.
+- **Attacks not working**: Check that your device has Bluetooth enabled and sufficient free memory. The AP pauses during attacks—if you need the web UI during testing, stop BLE first or use Dual Communication.
 - **No AirTags found**: Move closer to Apple devices with Find My enabled or try scanning again.
 - **Spoofing doesn't appear on Apple devices**: Ensure you've selected a valid AirTag before starting spoofing. Try stopping and restarting the spoof.
 - **Bluetooth not supported**: Ensure you're using a device other than ESP32-S2, which does not have Bluetooth support.

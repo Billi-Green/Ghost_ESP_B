@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "esp_heap_caps.h"  // Add this include at the top if not already present
+#include <esp_wifi.h>
+#include "esp_heap_caps.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "core/callbacks.h"
 #include "esp_random.h"
@@ -20,13 +21,16 @@
 #include "vendor/pcap.h"
 #include <esp_mac.h>
 #include <managers/rgb_manager.h>
-#include <managers/settings_manager.h>
+#include "managers/settings_manager.h"
 #include "managers/status_display_manager.h"
 #include "esp_bt.h"
+#include "managers/ap_manager.h"
+#include "managers/wifi_manager.h"
 
 #define MAX_DEVICES 30
 #define MAX_HANDLERS 10
 #define MAX_PACKET_SIZE 31
+#define NIMBLE_HOST_TASK_STACK_SIZE 6144
 
 // Flipper tracking definitions
 #define MAX_FLIPPERS 50
@@ -42,14 +46,27 @@ static int selected_flipper_index = -1; // Index of the Flipper selected for tra
 static const char *TAG_BLE = "BLE_MANAGER";
 static int airTagCount = 0;
 static bool ble_initialized = false;
+static volatile bool ble_stack_ready = false;
+
 static esp_timer_handle_t flush_timer = NULL;
 static TaskHandle_t nimble_host_task_handle = NULL;
 static uint32_t ble_pcap_packet_count = 0;
 static uint32_t ble_pcap_event_total_count = 0;
 
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+static bool ble_ap_suspended = false;
+static bool ble_wifi_suspended = false;
+static wifi_mode_t ble_prev_wifi_mode = WIFI_MODE_NULL;
+#endif
+
 // Forward declarations
 static void generate_random_mac(uint8_t *mac_addr);
 static void restart_ble_stack(void);
+static void ble_prepare_hs_config(void);
+static void ble_on_sync(void);
+static void ble_on_reset(int reason);
+static void ble_suspend_networking(void);
+static void ble_resume_networking(void);
 
 typedef struct {
     ble_data_handler_t handler;
@@ -69,7 +86,7 @@ static AirTagDevice discovered_airtags[MAX_AIRTAGS];
 static int discovered_airtag_count = 0;
 static int selected_airtag_index = -1; // Index of the AirTag selected for spoofing
 
-static ble_handler_t *handlers = NULL;
+static ble_handler_t handlers[MAX_HANDLERS];
 static int handler_count = 0;
 static int spam_counter = 0;
 static bool last_company_id_valid = false;
@@ -746,19 +763,106 @@ static void generate_random_mac(uint8_t *mac_addr) {
     } while (ones == 0 || ones == 46);
 }
 
+// Function to prepare BLE host config
+static void ble_prepare_hs_config(void) {
+    ble_hs_cfg.sync_cb = ble_on_sync;
+    ble_hs_cfg.reset_cb = ble_on_reset;
+    ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
+}
+
+static void ble_on_sync(void) {
+    ble_stack_ready = true;
+    ESP_LOGI(TAG_BLE, "BLE host synced");
+}
+
+static void ble_on_reset(int reason) {
+    ble_stack_ready = false;
+    ESP_LOGW(TAG_BLE, "BLE host reset, reason=%d", reason);
+}
+
+static void ble_suspend_networking(void) {
+    if (ble_ap_suspended || ble_wifi_suspended) {
+        return;
+    }
+
+    bool server_running = false;
+    ap_manager_get_status(&server_running, NULL, NULL);
+    wifi_mode_t cur_mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&cur_mode) != ESP_OK) {
+        cur_mode = WIFI_MODE_NULL;
+    }
+
+    if (server_running) {
+        ESP_LOGI(TAG_BLE, "Suspending GhostNet AP before BLE init");
+        TERMINAL_VIEW_ADD_TEXT("Suspending AP for BLE\n");
+        ap_manager_deinit();
+        ble_ap_suspended = true;
+        ble_wifi_suspended = false;
+        ble_prev_wifi_mode = WIFI_MODE_AP;
+    } else if (cur_mode != WIFI_MODE_NULL) {
+        ESP_LOGI(TAG_BLE, "Stopping Wi-Fi (mode=%d) before BLE init", cur_mode);
+        esp_wifi_stop();
+        esp_wifi_deinit();
+        ble_wifi_suspended = true;
+        ble_prev_wifi_mode = cur_mode;
+        ble_ap_suspended = false;
+    } else {
+        ble_ap_suspended = false;
+        ble_wifi_suspended = false;
+        ble_prev_wifi_mode = WIFI_MODE_NULL;
+    }
+}
+
+static void ble_resume_networking(void) {
+    if (ble_ap_suspended) {
+        ESP_LOGI(TAG_BLE, "Restoring GhostNet AP after BLE deinit");
+        TERMINAL_VIEW_ADD_TEXT("Restoring AP after BLE\n");
+        ble_ap_suspended = false;
+        ble_prev_wifi_mode = WIFI_MODE_AP;
+        ble_stack_ready = false;
+
+        if (ble_initialized) {
+            return;
+        }
+
+        esp_err_t err = ap_manager_init();
+        if (err == ESP_OK) {
+            (void)ap_manager_start_services();
+        } else {
+            ESP_LOGE(TAG_BLE, "Failed to reinit AP manager: 0x%X", (unsigned int)err);
+        }
+    } else if (ble_wifi_suspended) {
+        ESP_LOGI(TAG_BLE, "Restoring Wi-Fi (mode=%d) after BLE deinit", ble_prev_wifi_mode);
+        ble_wifi_suspended = false;
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        esp_err_t err = esp_wifi_init(&cfg);
+        if (err == ESP_OK) {
+            wifi_mode_t mode = (ble_prev_wifi_mode == WIFI_MODE_NULL) ? WIFI_MODE_STA : ble_prev_wifi_mode;
+            esp_wifi_set_mode(mode);
+            esp_wifi_start();
+            if (mode & WIFI_MODE_STA) {
+                wifi_manager_configure_sta_from_settings();
+            }
+        } else {
+            ESP_LOGE(TAG_BLE, "Failed to reinit Wi-Fi driver: 0x%X", (unsigned int)err);
+        }
+        ble_prev_wifi_mode = WIFI_MODE_NULL;
+    }
+}
+
 // Function to restart the NimBLE stack after MAC address change
 static void restart_ble_stack(void) {
     if (!ble_initialized) {
         return;
     }
-    
+
+    ble_stack_ready = false;
+
     // Stop any active advertising
     if (ble_gap_adv_active()) {
         ble_gap_adv_stop();
     }
-    
-    // Small delay to let stack settle
-    vTaskDelay(pdMS_TO_TICKS(10));
     
     // Stop the NimBLE stack and wait for the host task to exit before deinit
     nimble_port_stop();
@@ -784,7 +888,7 @@ static void restart_ble_stack(void) {
     
     // Small delay before reinitializing
     vTaskDelay(pdMS_TO_TICKS(50));
-    
+
     // log DMA-capable internal heap info right before NimBLE re-init
     size_t free_internal_dma_re = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
     size_t largest_internal_dma_re = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
@@ -792,6 +896,7 @@ static void restart_ble_stack(void) {
     TERMINAL_VIEW_ADD_TEXT("reinit pre-init dma-ram: free=%d bytes (largest=%d)\n", (int)free_internal_dma_re, (int)largest_internal_dma_re);
 
     // Reinitialize the NimBLE stack
+    ble_prepare_hs_config();
     int ret = nimble_port_init();
     if (ret != 0) {
         ESP_LOGE(TAG_BLE, "Failed to reinit nimble port: %d", ret);
@@ -800,16 +905,12 @@ static void restart_ble_stack(void) {
         ESP_LOGI(TAG_BLE, "reinit post-fail dma-ram: free=%d bytes (largest block=%d)", (int)free_dma_after_re, (int)largest_dma_after_re);
         return;
     }
-    
+
     // Restart the NimBLE host task (larger stack)
-    xTaskCreate(nimble_host_task, "nimble_host", 4096, NULL, 5, &nimble_host_task_handle);
+    xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE, NULL, 5, &nimble_host_task_handle);
     
     // Wait for NimBLE stack to be ready
     vTaskDelay(pdMS_TO_TICKS(100));
-    
-    // Reconfigure BLE stack for random addresses
-    ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
-    ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
     
     ESP_LOGI(TAG_BLE, "BLE stack restarted successfully");
 }
@@ -916,9 +1017,11 @@ static void parse_service_uuids(const uint8_t *data, uint8_t data_len, ble_servi
 
     while (index < data_len) {
         uint8_t length = data[index];
-        if (length == 0) {
+
+        if (length == 0 || index + length >= data_len) {
             break;
         }
+
         uint8_t type = data[index + 1];
 
         // Check for 16-bit UUIDs
@@ -1586,14 +1689,18 @@ static bool wait_for_ble_ready(void) {
     int retry_count = 0;
     const int max_retries = 50; // 5 seconds total timeout
 
-    while (!ble_hs_synced() && retry_count < max_retries) {
+    while (!ble_stack_ready && !ble_hs_synced() && retry_count < max_retries) {
         vTaskDelay(pdMS_TO_TICKS(100)); // Wait for 100ms
         retry_count++;
     }
 
-    if (retry_count >= max_retries) {
+    if (!ble_stack_ready && !ble_hs_synced()) {
         ESP_LOGE(TAG_BLE, "Timeout waiting for BLE stack sync");
         return false;
+    }
+
+    if (ble_hs_synced()) {
+        ble_stack_ready = true;
     }
 
     uint8_t own_addr_type;
@@ -1638,9 +1745,6 @@ void ble_start_scanning(void) {
 }
 
 esp_err_t ble_register_handler(ble_data_handler_t handler) {
-    if (!handlers) {
-        return ESP_ERR_INVALID_STATE;
-    }
     if (handler_count >= MAX_HANDLERS) {
         return ESP_ERR_NO_MEM;
     }
@@ -1691,6 +1795,7 @@ void ble_init(void) {
     }
 
     if (!ble_initialized) {
+        ble_stack_ready = false;
         esp_err_t ret = nvs_flash_init();
         if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
             // NVS partition was truncated and needs to be erased
@@ -1699,15 +1804,10 @@ void ble_init(void) {
         }
         ESP_ERROR_CHECK(ret);
 
-        if (handlers == NULL) {
-            handlers = malloc(sizeof(ble_handler_t) * MAX_HANDLERS);
-            if (handlers == NULL) {
-                ESP_LOGE(TAG_BLE, "Failed to allocate handlers array");
-                return;
-            }
-            memset(handlers, 0, sizeof(ble_handler_t) * MAX_HANDLERS);
-            handler_count = 0;
-        }
+        ble_suspend_networking();
+
+        memset(handlers, 0, sizeof(handlers));
+        handler_count = 0;
 
         // Release Classic BT controller memory on non-ESP32 targets too to free RAM for NimBLE
         // Safe to call multiple times; ignore return if already released
@@ -1719,6 +1819,7 @@ void ble_init(void) {
         ESP_LOGI(TAG_BLE, "pre-init dma-ram: free=%d bytes (largest block=%d)", (int)free_internal_dma, (int)largest_internal_dma);
         TERMINAL_VIEW_ADD_TEXT("pre-init dma-ram: free=%d bytes (largest=%d)\n", (int)free_internal_dma, (int)largest_internal_dma);
 
+        ble_prepare_hs_config();
         ret = nimble_port_init();
         if (ret != 0) {
             ESP_LOGE(TAG_BLE, "Failed to init nimble port: %d", ret);
@@ -1726,22 +1827,15 @@ void ble_init(void) {
             size_t free_dma_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
             size_t largest_dma_after = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
             ESP_LOGI(TAG_BLE, "post-fail dma-ram: free=%d bytes (largest block=%d)", (int)free_dma_after, (int)largest_dma_after);
-            free(handlers);
-            handlers = NULL;
+            ble_resume_networking();
             return;
         }
 
         // Configure and start the NimBLE host task (larger stack to avoid overflow on S3)
-        xTaskCreate(nimble_host_task, "nimble_host", 6144, NULL, 5, &nimble_host_task_handle);
+        xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE, NULL, 5, &nimble_host_task_handle);
         
         // Wait for NimBLE stack to be ready
         vTaskDelay(pdMS_TO_TICKS(100));
-        
-        // Configure BLE stack to use random addresses by default for spam functionality
-        // This is equivalent to NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM)
-        // and fixes MAC randomization issues
-        ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
-        ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
         
         ESP_LOGI(TAG_BLE, "BLE configured for random address support");
 
@@ -1759,11 +1853,7 @@ void ble_start_find_flippers(void) {
 
 void ble_deinit(void) {
     if (ble_initialized) {
-        if (handlers != NULL) {
-            free(handlers);
-            handlers = NULL;
-            handler_count = 0;
-        }
+        handler_count = 0;
 
         // Stop NimBLE host and wait for the host task to exit
         nimble_port_stop();
@@ -1784,9 +1874,12 @@ void ble_deinit(void) {
         // Now deinitialize the NimBLE port (controller + host deinit)
         nimble_port_deinit();
 
+        ble_stack_ready = false;
         ble_initialized = false;
         ESP_LOGI(TAG_BLE, "BLE deinitialized successfully.");
         TERMINAL_VIEW_ADD_TEXT("BLE deinitialized successfully.\n");
+
+        ble_resume_networking();
     }
 }
 
@@ -1857,6 +1950,8 @@ void ble_stop(void) {
         glog("Error stopping BLE scan: %d\n", rc);
         status_display_show_status("BLE Stop Fail");
     }
+
+    ble_deinit();
 }
 
 void ble_start_blespam_detector(void) {

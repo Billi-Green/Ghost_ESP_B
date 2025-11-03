@@ -19,6 +19,7 @@
 - Correct ADC battery percentage scaling math to prevent incorrect readings
 - Fixed BQ27220 reset/reseal flow to more accurately reflect battery state
 - Refactor NFC to use static pools instead of heap allocations for less fragmentation and better performance
+- Suspend Wi-Fi services during BLE commands to guarantee enough free memory for NimBLE to initialize successfully
 
 ## Revival v1.8
 

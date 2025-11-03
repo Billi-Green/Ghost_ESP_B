@@ -6,7 +6,7 @@ weight: 35
 
 The GhostNet WebUI is a browser-based control panel for managing GhostESP settings and controlling certain features. It runs on the device's built-in access point and is accessible from any device on the same network.
 
-> **Note**: Wi-Fi and BLE commands cannot be run directly through the WebUI because the device's radio is in use hosting the access point. Use [Dual Communication]({{< relref "dual-communication.md" >}}) to run these commands remotely.
+> **Note**: Wi-Fi and BLE commands cannot be run directly through the WebUI because the device's radio is in use hosting the access point. When you launch those commands from the device or serial CLI, the GhostNet AP is paused until the radio work finishes. Use [Dual Communication]({{< relref "dual-communication.md" >}}) to run them remotely without losing the AP.
 
 ## Connecting to the WebUI
 
@@ -64,7 +64,7 @@ Execute commands directly from the browser:
 - View command output in real time
 - Useful for quick diagnostics and file transfers
 
-> **Limitation**: Wi-Fi and BLE commands (e.g., `scanap`, `karma start`, `blescan`) cannot run here because the device's radio is hosting the access point. Use the Dual Comm tab to send these commands to a paired device instead.
+> **Limitation**: Wi-Fi and BLE commands (e.g., `scanap`, `karma start`, `blescan`) cannot run here because the device's radio is hosting the access point. Running them locally temporarily suspends the AP; to keep GhostNet online, use the Dual Comm tab to send these commands to a paired device instead.
 
 ### Help
 

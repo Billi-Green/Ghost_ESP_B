@@ -8,7 +8,7 @@ toc: true
 ## Connecting to the CLI interface
 
 - Use a [serial console](https://ghostesp.net/serial) (115200 baud is recommended) with a USB data cable or the built-in Terminal app on touch-enabled boards.
-- From the web UI, open the Terminal panel for remote access (running Wi-Fi/BLE operations will drop the GhostNet AP while the single radio switches modes).
+- From the web UI, open the Terminal panel for remote access. When you launch a Wi-Fi or BLE command, the device suspends the GhostNet AP until the radio work finishes; once you run `stop` (or the command completes), BLE deinitializes and Wi-Fi returns automatically.
 - Send `help` to confirm connectivity; output appears prefixed with `>` in the console.
 
 ## Core
@@ -18,7 +18,7 @@ toc: true
 - (for developers) **`mem [dump|trace <start|stop|dump>]`** — Print heap stats, dump allocation state, or control heap tracing.
 - **`reboot`** — Soft restart the device.
 - **`timezone <TZ>`** — Set timezone, e.g., `timezone EST5EDT,M3.2.0,M11.1.0`.
-- **`stop`** — Global kill switch: halt Wi-Fi attacks, BLE/BLE spam, GPS logging, wardriving, PCAP/CSV captures, RGB effects, and other background timers, returning the device to idle.
+- **`stop`** — Global kill switch: halt Wi-Fi attacks, BLE/BLE spam, GPS logging, wardriving, PCAP/CSV captures, RGB effects, and other background timers. It also tears down the BLE stack so suspended Wi-Fi/AP services come back online.
 
 ## WiFi
 
