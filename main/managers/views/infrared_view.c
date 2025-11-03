@@ -78,6 +78,7 @@ static bool popup_style_initialized = false;
 #include <string.h>
 #include "managers/infrared_manager.h"
 #include "managers/infrared_decoder.h"
+#include "core/universal_ir.h"
 #include "managers/rgb_manager.h"
 #include "sdkconfig.h"
 #include "managers/sd_card_manager.h"
@@ -631,6 +632,22 @@ static bool load_ir_file_list_from_dir(const char *dir) {
         if (did) {
             ir_sd_end(susp);
         }
+        
+        // Still add TURNHISTVOFF for universals directory even if SD is not available
+        if (strcmp(dir, "/mnt/ghostesp/infrared/universals") == 0) {
+            char *turnthistvoff_name = strdup("TURNHISTVOFF.ir");
+            if (turnthistvoff_name) {
+                char **new_paths = realloc(ir_file_paths, (ir_file_count + 1) * sizeof(*ir_file_paths));
+                if (new_paths) {
+                    ir_file_paths = new_paths;
+                    ir_file_paths[ir_file_count] = turnthistvoff_name;
+                    ir_file_count++;
+                } else {
+                    free(turnthistvoff_name);
+                }
+            }
+        }
+        
         // Treat missing or inaccessible directories as empty so callers can show placeholders
         return true;
     }
@@ -678,6 +695,22 @@ static bool load_ir_file_list_from_dir(const char *dir) {
     if (did) {
         ir_sd_end(susp);
     }
+    
+    // Add TURNTHISTVOFF to universals directory
+    if (strcmp(dir, "/mnt/ghostesp/infrared/universals") == 0) {
+        char *turnthistvoff_name = strdup("TURNHISTVOFF.ir");
+        if (turnthistvoff_name) {
+            char **new_paths = realloc(ir_file_paths, (ir_file_count + 1) * sizeof(*ir_file_paths));
+            if (new_paths) {
+                ir_file_paths = new_paths;
+                ir_file_paths[ir_file_count] = turnthistvoff_name;
+                ir_file_count++;
+            } else {
+                free(turnthistvoff_name);
+            }
+        }
+    }
+    
     return true;
 }
 
@@ -915,6 +948,33 @@ static void universal_transmit_task(void *arg) {
     free(args);
 
     printf("universal_transmit_task: start %s -> %s\n", path, command);
+    
+    // Special handling for TURNHISTVOFF - use universal IR system
+    if (strcmp(path, "TURNHISTVOFF") == 0) {
+        printf("Using universal IR system for TURNHISTVOFF transmission\n");
+        
+        // Get signal count and cycle through all universal power signals
+        size_t signal_count = universal_ir_get_signal_count();
+        universal_transmit_cancel = false;
+        
+        for (size_t i = 0; i < signal_count; i++) {
+            if (universal_transmit_cancel) break;
+            
+            infrared_signal_t signal;
+            if (universal_ir_get_signal(i, &signal)) {
+                printf("Transmitting TURNHISTVOFF signal %zu: %s\n", i, signal.name);
+                infrared_manager_transmit(&signal);
+                infrared_manager_free_signal(&signal);
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+        }
+        
+        lv_async_call(cleanup_transmit_popup, NULL);
+        universal_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
     bool susp = false; bool did = ir_sd_begin(&susp);
     FILE *f = fopen(path, "r");
     if (!f) {
@@ -2018,51 +2078,66 @@ void infrared_view_input_cb(InputEvent *event) {
 // open selected IR file and list commands
 static void file_event_open(int idx) {
     if (in_universals_mode) {
+        
         // clear previous unique names
         for (size_t i = 0; i < uni_command_count; i++) free(uni_command_names[i]);
         free(uni_command_names);
         uni_command_names = NULL;
         uni_command_count = 0;
-        // build full file path
-        char path[256];
-        size_t base_len = strlen(current_dir);
-        if (base_len >= sizeof(path) - 1) base_len = sizeof(path) - 1;
-        memcpy(path, current_dir, base_len);
-        path[base_len] = '\0';
-        if (base_len + 1 < sizeof(path)) strcat(path, "/");
-        strcat(path, ir_file_paths[idx]);
-        // remember for transmit
-        strncpy(current_universal_file, path, sizeof(current_universal_file) - 1);
-        current_universal_file[sizeof(current_universal_file) - 1] = '\0';
-        printf("scanning universal file: %s\n", current_universal_file);
-        // scan file for unique command names
-        bool susp = false; bool did = ir_sd_begin(&susp);
-        FILE *f = fopen(path, "r"); if (!f) { if (did) ir_sd_end(susp); return; }
-        char buf[256], last[256] = "";
-        while (fgets(buf, sizeof(buf), f)) {
-            char *s = buf;
-            while (*s && isspace((unsigned char)*s)) s++;
-            if (*s == '#' || *s == '\0') continue;
-            if (strncmp(s, "name:", 5) == 0) {
-                char *v = s + 5; while (*v && isspace((unsigned char)*v)) v++;
-                char *e = v + strlen(v) - 1; while (e > v && isspace((unsigned char)*e)) *e-- = '\0';
-                if (strcmp(v, last) != 0) {
-                    bool dup = false;
-                    for (size_t j = 0; j < uni_command_count; j++) {
-                        if (strcmp(uni_command_names[j], v) == 0) { dup = true; break; }
+        // Check if this is TURNHISTVOFF.ir - use universal IR system
+        if (strcmp(ir_file_paths[idx], "TURNHISTVOFF.ir") == 0) {
+            // Set up for universal IR transmission
+            strcpy(current_universal_file, "TURNHISTVOFF");
+            printf("Using universal IR system for TURNHISTVOFF\n");
+            
+            // Create a single command entry for universal transmission
+            uni_command_names = malloc(sizeof(*uni_command_names));
+            if (uni_command_names) {
+                uni_command_names[0] = strdup("Power Off");
+                uni_command_count = 1;
+            }
+        } else {
+            // build full file path for regular universal files
+            char path[256];
+            size_t base_len = strlen(current_dir);
+            if (base_len >= sizeof(path) - 1) base_len = sizeof(path) - 1;
+            memcpy(path, current_dir, base_len);
+            path[base_len] = '\0';
+            if (base_len + 1 < sizeof(path)) strcat(path, "/");
+            strcat(path, ir_file_paths[idx]);
+            // remember for transmit
+            strncpy(current_universal_file, path, sizeof(current_universal_file) - 1);
+            current_universal_file[sizeof(current_universal_file) - 1] = '\0';
+            printf("scanning universal file: %s\n", current_universal_file);
+            // scan file for unique command names
+            bool susp = false; bool did = ir_sd_begin(&susp);
+            FILE *f = fopen(path, "r"); if (!f) { if (did) ir_sd_end(susp); return; }
+            char buf[256], last[256] = "";
+            while (fgets(buf, sizeof(buf), f)) {
+                char *s = buf;
+                while (*s && isspace((unsigned char)*s)) s++;
+                if (*s == '#' || *s == '\0') continue;
+                if (strncmp(s, "name:", 5) == 0) {
+                    char *v = s + 5; while (*v && isspace((unsigned char)*v)) v++;
+                    char *e = v + strlen(v) - 1; while (e > v && isspace((unsigned char)*e)) *e-- = '\0';
+                    if (strcmp(v, last) != 0) {
+                        bool dup = false;
+                        for (size_t j = 0; j < uni_command_count; j++) {
+                            if (strcmp(uni_command_names[j], v) == 0) { dup = true; break; }
+                        }
+                        if (!dup) {
+                            uni_command_names = realloc(uni_command_names, (uni_command_count + 1) * sizeof(*uni_command_names));
+                            uni_command_names[uni_command_count] = strdup(v);
+                            uni_command_count++;
+                        }
+                        strcpy(last, v);
                     }
-                    if (!dup) {
-                        uni_command_names = realloc(uni_command_names, (uni_command_count + 1) * sizeof(*uni_command_names));
-                        uni_command_names[uni_command_count] = strdup(v);
-                        uni_command_count++;
-                    }
-                    strcpy(last, v);
                 }
             }
+            fclose(f);
+            if (did) ir_sd_end(susp);
+            printf("found %zu unique commands\n", uni_command_count);
         }
-        fclose(f);
-        if (did) ir_sd_end(susp);
-        printf("found %zu unique commands\n", uni_command_count);
         // show unique commands
         lv_obj_clean(list);
         showing_commands = true;

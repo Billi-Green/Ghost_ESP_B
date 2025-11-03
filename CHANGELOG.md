@@ -2,7 +2,10 @@
 
 ## Revival v1.8.1
 
+- Firmware now includes TURNHISTVOFF universal IR file
 - Updated mfc dictionary with new additions
+- Moved update_universal_ir.py to scripts directory for better organization
+- WebUI is now served as a gzipped file to reduce loading times
 - IR remotes and universals menus now show “No .ir files” placeholder when no IR files are found
 - Only show touchscreen scroll buttons when the options list is scrollable
 - Refactored the standard mainmenu to reduce memory usage and improve performance
@@ -17,7 +20,6 @@
 - Correct ADC battery percentage scaling math to prevent incorrect readings
 - Fixed BQ27220 reset/reseal flow to more accurately reflect battery state
 - Refactor NFC to use static pools instead of heap allocations for less fragmentation and better performance
-- WebUI is now served as a gzipped file to reduce loading times
 
 ## Revival v1.8
 
