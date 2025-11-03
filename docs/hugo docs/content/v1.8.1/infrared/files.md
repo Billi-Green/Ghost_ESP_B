@@ -15,6 +15,11 @@ weight: 30
 - GhostESP reads the standard Flipper `.ir` format, so you can copy files from community packs.
 - A large collection is available at [Lucaslhm/Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB); place downloaded files under `infrared/remote` or `infrared/universals` for universal files which you can find in [Momentum custom Flipper Zero firmware](https://github.com/Next-Flip/Momentum-Firmware/tree/dev/applications/main/infrared/resources/infrared/assets).
 
+### Built-in Universal IR file
+
+In addition to SD card files, GhostESP includes a built-in Universal IR file with popular TV POWER signals. This file doesn't require an SD card.
+
+
 ### Append new signals
 
 - Choose *Add Signal* while a remote is open to append a newly learned button.

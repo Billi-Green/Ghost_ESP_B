@@ -19,6 +19,10 @@ weight: 20
 - Parsing very large libraries (for example, community dumps) can take several seconds; wait for the list to finish populating before selecting.
 - You can find supported universals at [Momentum Flipper Firmware](https://github.com/Next-Flip/Momentum-Firmware/tree/dev/applications/main/infrared/resources/infrared/assets). Download and place the files under `infrared/universals`.
 
+### Universal IR Database
+
+GhostESP also includes a built-in Universal IR file with popular TV POWER signals. Use the `TURNHISTVOFF` universal to turn on or off many different TVs.
+
 ### Tips
 
 - Aim the device’s IR LED directly at the target device’s receiver window and stay within a few meters.
