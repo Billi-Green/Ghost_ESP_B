@@ -2084,7 +2084,11 @@ void handle_apcred(int argc, char **argv) {
         .ap = {
             .ssid_len = strlen(new_ssid),
             .max_connection = 4,
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+            .authmode = WIFI_AUTH_WPA2_WPA3_PSK
+#else
             .authmode = WIFI_AUTH_WPA2_PSK
+#endif
         },
     };
     strcpy((char *)ap_config.ap.ssid, new_ssid);

@@ -1,6 +1,7 @@
 file(GLOB_RECURSE app_sources 
     "${CMAKE_SOURCE_DIR}/main/*.c"
     "${CMAKE_SOURCE_DIR}/main/core/esp_comm_manager.c"
+    "${CMAKE_SOURCE_DIR}/main/core/universal_ir.c"
 )
 # Explicitly include infrared view implementation
 list(APPEND app_sources "${CMAKE_SOURCE_DIR}/main/managers/views/infrared_view.c")

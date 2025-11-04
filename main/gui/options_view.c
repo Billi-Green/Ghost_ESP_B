@@ -194,6 +194,9 @@ void options_view_update_item_text(options_view_t *ov, int index, const char *ne
 void options_view_clear(options_view_t *ov) {
     if (!ov || !ov->list) return;
     lv_obj_clean(ov->list);
+    for (int i = 0; i < ov->count; ++i) {
+        ov->items[i] = NULL;
+    }
     ov->count = 0;
     ov->selected = -1;
 }

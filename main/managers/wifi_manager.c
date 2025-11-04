@@ -1590,6 +1590,17 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     status_display_show_status("Monitor Started");
 }
 void wifi_manager_stop_monitor_mode() {
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    esp_err_t wifi_status = esp_wifi_get_mode(&mode);
+    if (wifi_status == ESP_ERR_WIFI_NOT_INIT || mode == WIFI_MODE_NULL) {
+        ESP_LOGW("WIFI_MANAGER", "Monitor stop called while Wi-Fi driver inactive (status=%s, mode=%d)",
+                 esp_err_to_name(wifi_status), mode);
+        return;
+    } else if (wifi_status != ESP_OK) {
+        ESP_LOGE("WIFI_MANAGER", "Failed to query Wi-Fi driver state: %s", esp_err_to_name(wifi_status));
+        return;
+    }
+
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
     printf("WiFi monitor stopped.\n");
     TERMINAL_VIEW_ADD_TEXT("WiFi monitor stopped.\n");

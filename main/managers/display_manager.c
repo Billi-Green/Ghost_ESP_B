@@ -242,6 +242,50 @@ void set_backlight_brightness(uint8_t percentage); // forward declaration
 #ifdef CONFIG_USE_CARDPUTER
 #define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
 
+#define CARDPUTER_SOC_TABLE_SIZE 11
+typedef struct {
+    int mv;
+    uint8_t percent;
+} cardputer_soc_point_t;
+
+static const cardputer_soc_point_t s_cardputer_soc_table[CARDPUTER_SOC_TABLE_SIZE] = {
+    {3200, 0},
+    {3300, 3},
+    {3400, 8},
+    {3500, 15},
+    {3600, 30},
+    {3700, 45},
+    {3800, 60},
+    {3900, 75},
+    {4000, 88},
+    {4100, 96},
+    {4200, 100},
+};
+
+static uint8_t cardputer_voltage_to_percent(int mv) {
+    if (mv <= s_cardputer_soc_table[0].mv) {
+        return s_cardputer_soc_table[0].percent;
+    }
+    if (mv >= s_cardputer_soc_table[CARDPUTER_SOC_TABLE_SIZE - 1].mv) {
+        return s_cardputer_soc_table[CARDPUTER_SOC_TABLE_SIZE - 1].percent;
+    }
+
+    for (int i = 1; i < CARDPUTER_SOC_TABLE_SIZE; i++) {
+        if (mv <= s_cardputer_soc_table[i].mv) {
+            const cardputer_soc_point_t *low = &s_cardputer_soc_table[i - 1];
+            const cardputer_soc_point_t *high = &s_cardputer_soc_table[i];
+            int range_mv = high->mv - low->mv;
+            if (range_mv <= 0) {
+                return high->percent;
+            }
+            int range_percent = high->percent - low->percent;
+            int offset_mv = mv - low->mv;
+            return (uint8_t)(low->percent + (range_percent * offset_mv) / range_mv);
+        }
+    }
+    return s_cardputer_soc_table[CARDPUTER_SOC_TABLE_SIZE - 1].percent;
+}
+
 #elif CONFIG_USE_TDECK
 #define _batAdcCh ADC1_GPIO4_CHANNEL
 #elif CONFIG_USE_TDISPLAY_S3
@@ -256,6 +300,11 @@ bool _isCharging = false;
 
 // track previous battery millivolt for charging detection
 static int last_mv = 0;
+
+#ifdef CONFIG_USE_CARDPUTER
+static int s_filtered_mv = -1;
+static int s_display_percent = -1;
+#endif
 
 // threshold to ignore ADC noise
 #define CHARGE_THRESH_MV 15
@@ -292,18 +341,34 @@ int getBattery() {
 
     // raw ADC → calibrated millivolt
     int raw = 0;
-    ESP_ERROR_CHECK(adc_oneshot_read(handle, _batAdcCh, &raw));
+    esp_err_t ret = adc_oneshot_read(handle, _batAdcCh, &raw);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "ADC read failed: %s", esp_err_to_name(ret));
+        return -1;
+    }
+
+    // Check for invalid ADC readings
+    if (raw < 0 || raw > 4095) {
+        ESP_LOGW(TAG, "Invalid ADC reading: %d", raw);
+        return -1;
+    }
 
     int mv = 0;
     if (cali_handle) {
         if (adc_cali_raw_to_voltage(cali_handle, raw, &mv) != ESP_OK) {
             ESP_LOGE(TAG, "Calibration raw_to_voltage failed");
-            mv = raw;  // fallback to raw
+            mv = raw * 3300 / 4095;  // fallback to raw count
         }
     } else {
         // rough estimate if no calibration
         mv = raw * 3300 / 4095;
     }
+
+#ifdef CONFIG_USE_CARDPUTER
+    // Cardputer divides the battery voltage roughly in half with a resistor divider.
+    // Scale the measured voltage back up to actual battery voltage.
+    mv = (mv * 2);
+#endif
 
     // -- charging detection by comparing to last reading --
     if (last_mv != 0) {
@@ -313,12 +378,60 @@ int getBattery() {
     }
     last_mv = mv;
 
-    ESP_LOGI(TAG, "Battery ADC mV: %d", mv);
+    ESP_LOGD(TAG, "Battery ADC raw: %d, mV: %d", raw, mv);
 
-    // percentage between 3300 and 4150 mV
-    percent = (mv - 3300) * 100 / (float)(4150 - 3350);
+    // Check for unrealistic voltage values
+    if (mv < 2500 || mv > 5000) {
+        ESP_LOGW(TAG, "Battery voltage out of range: %d mV", mv);
+        return -1;
+    }
 
-    return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
+    int mv_for_percent = mv;
+
+#ifdef CONFIG_USE_CARDPUTER
+    if (s_filtered_mv < 0) {
+        s_filtered_mv = mv;
+    } else {
+        // Faster exponential smoothing to follow charging curve without sudden jumps
+        s_filtered_mv = (s_filtered_mv * 7 + mv) / 8;
+    }
+    mv_for_percent = s_filtered_mv;
+#endif
+
+    // Map measured voltage to a percentage
+#ifdef CONFIG_USE_CARDPUTER
+    percent = cardputer_voltage_to_percent(mv_for_percent);
+#else
+    const int min_mv = 3300;
+    const int max_mv = 4200;
+    if (mv_for_percent <= min_mv) {
+        percent = 0;
+    } else if (mv_for_percent >= max_mv) {
+        percent = 100;
+    } else {
+        percent = (uint8_t)(((mv_for_percent - min_mv) * 100) / (max_mv - min_mv));
+    }
+#endif
+
+#ifdef CONFIG_USE_CARDPUTER
+    if (s_display_percent < 0) {
+        s_display_percent = percent;
+    } else {
+        int diff = percent - s_display_percent;
+        int threshold = _isCharging ? 4 : 3;
+        if (diff >= threshold) {
+            s_display_percent++;
+        } else if (diff <= -threshold) {
+            s_display_percent--;
+        }
+        if (s_display_percent < 0) s_display_percent = 0;
+        if (s_display_percent > 100) s_display_percent = 100;
+    }
+    percent = (uint8_t)s_display_percent;
+#endif
+
+    ESP_LOGD(TAG, "Battery percentage: %d%%", percent);
+    return percent;
 }
 bool isCharging() { return _isCharging; }
 
@@ -373,9 +486,19 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
     result = true;
 #elif defined(CONFIG_HAS_BATTERY_ADC)
     // Fallback to ADC
-    *percentage = (uint8_t)getBattery();
-    *is_charging = isCharging();
-    result = true;
+    int battery_percent = getBattery();
+    if (battery_percent >= 0) {
+        *percentage = (uint8_t)battery_percent;
+        *is_charging = isCharging();
+        result = true;
+    } else {
+        ESP_LOGW(TAG, "ADC battery read failed, using cached values if available");
+        if (last_valid_cache) {
+            *percentage = last_pct_cache;
+            *is_charging = last_chg_cache;
+            result = true;
+        }
+    }
 #endif
     ESP_LOGD(TAG, "get_battery_info %d%%, Charging: %d", *percentage, *is_charging);
 
@@ -695,11 +818,22 @@ static const uint32_t theme_palettes[15][6] = {
     };
 
 void display_manager_add_status_bar(const char *CurrentMenuName) {
-    if (status_bar != NULL && lv_obj_is_valid(status_bar)) {
-        lv_label_set_text(mainlabel, CurrentMenuName);
-        lv_obj_move_foreground(status_bar);
-        lv_obj_invalidate(status_bar);
-        return;
+    const char *label_text = CurrentMenuName ? CurrentMenuName : "";
+    if (status_bar && lv_obj_is_valid(status_bar)) {
+        if (mainlabel && lv_obj_is_valid(mainlabel)) {
+            lv_label_set_text(mainlabel, label_text);
+            lv_obj_move_foreground(status_bar);
+            lv_obj_invalidate(status_bar);
+            return;
+        }
+        lv_obj_t *old_bar = status_bar;
+        status_bar = NULL;
+        mainlabel = NULL;
+        wifi_label = NULL;
+        bt_label = NULL;
+        sd_label = NULL;
+        battery_label = NULL;
+        lv_obj_del(old_bar);
     }
     status_bar = lv_obj_create(lv_scr_act());
   lv_obj_set_size(status_bar, LV_HOR_RES, 20);
@@ -723,7 +857,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_align(left_container, LV_ALIGN_LEFT_MID, 5, 0);
   // fill left container
   mainlabel = lv_label_create(left_container);
-  lv_label_set_text(mainlabel, CurrentMenuName);
+  lv_label_set_text(mainlabel, label_text);
   lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
   lv_obj_set_style_text_font(mainlabel, &lv_font_montserrat_14, 0);
 

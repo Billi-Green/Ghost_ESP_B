@@ -78,6 +78,7 @@ static bool popup_style_initialized = false;
 #include <string.h>
 #include "managers/infrared_manager.h"
 #include "managers/infrared_decoder.h"
+#include "core/universal_ir.h"
 #include "managers/rgb_manager.h"
 #include "sdkconfig.h"
 #include "managers/sd_card_manager.h"
@@ -593,6 +594,7 @@ static void file_event_open(int idx);
 static void command_event_execute(int idx);
 static void file_event_cb(lv_event_t *e);
 static void command_event_cb(lv_event_t *e);
+static void placeholder_event_cb(lv_event_t *e);
 static void remotes_event_cb(lv_event_t *e);
 static void universals_event_cb(lv_event_t *e);
 #ifdef CONFIG_HAS_INFRARED_RX
@@ -630,7 +632,24 @@ static bool load_ir_file_list_from_dir(const char *dir) {
         if (did) {
             ir_sd_end(susp);
         }
-        return false;
+        
+        // Still add TURNHISTVOFF for universals directory even if SD is not available
+        if (strcmp(dir, "/mnt/ghostesp/infrared/universals") == 0) {
+            char *turnthistvoff_name = strdup("TURNHISTVOFF.ir");
+            if (turnthistvoff_name) {
+                char **new_paths = realloc(ir_file_paths, (ir_file_count + 1) * sizeof(*ir_file_paths));
+                if (new_paths) {
+                    ir_file_paths = new_paths;
+                    ir_file_paths[ir_file_count] = turnthistvoff_name;
+                    ir_file_count++;
+                } else {
+                    free(turnthistvoff_name);
+                }
+            }
+        }
+        
+        // Treat missing or inaccessible directories as empty so callers can show placeholders
+        return true;
     }
 
     struct dirent *entry;
@@ -676,6 +695,22 @@ static bool load_ir_file_list_from_dir(const char *dir) {
     if (did) {
         ir_sd_end(susp);
     }
+    
+    // Add TURNTHISTVOFF to universals directory
+    if (strcmp(dir, "/mnt/ghostesp/infrared/universals") == 0) {
+        char *turnthistvoff_name = strdup("TURNHISTVOFF.ir");
+        if (turnthistvoff_name) {
+            char **new_paths = realloc(ir_file_paths, (ir_file_count + 1) * sizeof(*ir_file_paths));
+            if (new_paths) {
+                ir_file_paths = new_paths;
+                ir_file_paths[ir_file_count] = turnthistvoff_name;
+                ir_file_count++;
+            } else {
+                free(turnthistvoff_name);
+            }
+        }
+    }
+    
     return true;
 }
 
@@ -704,13 +739,28 @@ static void rebuild_ir_file_list_ui(void) {
         lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
 
+    if (ir_file_count == 0) {
+        lv_obj_t *placeholder = lv_list_add_btn(list, NULL, "No .ir files");
+        lv_obj_set_width(placeholder, LV_HOR_RES);
+        lv_obj_set_style_bg_color(placeholder, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_width(placeholder, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(placeholder, 0, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(placeholder, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *placeholder_label = lv_obj_get_child(placeholder, 0);
+        if (placeholder_label) {
+            lv_obj_set_style_text_font(placeholder_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(placeholder_label, lv_color_hex(0xFFFFFF), 0);
+        }
+        lv_obj_add_event_cb(placeholder, placeholder_event_cb, LV_EVENT_CLICKED, NULL);
+        // Count placeholder as an item so it's selectable but does nothing
+        num_ir_items = 1;
+    }
+
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
 #endif
 
-    if (ir_file_count > 0) {
-        ir_select_item(0);
-    }
+    ir_select_item(0);
     ESP_LOGI(TAG, "mem[ir_ui_post]: free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
@@ -898,6 +948,33 @@ static void universal_transmit_task(void *arg) {
     free(args);
 
     printf("universal_transmit_task: start %s -> %s\n", path, command);
+    
+    // Special handling for TURNHISTVOFF - use universal IR system
+    if (strcmp(path, "TURNHISTVOFF") == 0) {
+        printf("Using universal IR system for TURNHISTVOFF transmission\n");
+        
+        // Get signal count and cycle through all universal power signals
+        size_t signal_count = universal_ir_get_signal_count();
+        universal_transmit_cancel = false;
+        
+        for (size_t i = 0; i < signal_count; i++) {
+            if (universal_transmit_cancel) break;
+            
+            infrared_signal_t signal;
+            if (universal_ir_get_signal(i, &signal)) {
+                printf("Transmitting TURNHISTVOFF signal %zu: %s\n", i, signal.name);
+                infrared_manager_transmit(&signal);
+                infrared_manager_free_signal(&signal);
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+        }
+        
+        lv_async_call(cleanup_transmit_popup, NULL);
+        universal_task_handle = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+    
     bool susp = false; bool did = ir_sd_begin(&susp);
     FILE *f = fopen(path, "r");
     if (!f) {
@@ -1333,6 +1410,8 @@ void infrared_view_create(void) {
     lv_obj_t *up_label = lv_label_create(ir_scroll_up_btn);
     lv_label_set_text(up_label, LV_SYMBOL_UP);
     lv_obj_center(up_label);
+    /* hide IR scroll buttons until we know whether the list is scrollable */
+    lv_obj_add_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
 
     ir_scroll_down_btn = lv_btn_create(root);
     lv_obj_set_size(ir_scroll_down_btn, IR_SCROLL_BTN_SIZE, IR_SCROLL_BTN_SIZE);
@@ -1343,6 +1422,7 @@ void infrared_view_create(void) {
     lv_obj_t *down_label = lv_label_create(ir_scroll_down_btn);
     lv_label_set_text(down_label, LV_SYMBOL_DOWN);
     lv_obj_center(down_label);
+    lv_obj_add_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
 
     ir_back_btn = lv_btn_create(root);
     lv_obj_set_size(ir_back_btn, IR_SCROLL_BTN_SIZE + 20, IR_SCROLL_BTN_SIZE);
@@ -1355,6 +1435,20 @@ void infrared_view_create(void) {
     lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
     #endif
+    /* reveal IR scroll buttons only if the list is actually scrollable */
+#ifdef CONFIG_USE_TOUCHSCREEN
+    if (list && lv_obj_is_valid(list)) {
+        lv_coord_t scroll_bottom = lv_obj_get_scroll_bottom(list);
+        lv_coord_t scroll_top = lv_obj_get_scroll_top(list);
+        if (scroll_bottom > 0 || scroll_top > 0) {
+            if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) lv_obj_clear_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+            if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) lv_obj_clear_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) lv_obj_add_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+            if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) lv_obj_add_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+#endif
 }
 
 void infrared_view_destroy(void) {
@@ -1984,51 +2078,66 @@ void infrared_view_input_cb(InputEvent *event) {
 // open selected IR file and list commands
 static void file_event_open(int idx) {
     if (in_universals_mode) {
+        
         // clear previous unique names
         for (size_t i = 0; i < uni_command_count; i++) free(uni_command_names[i]);
         free(uni_command_names);
         uni_command_names = NULL;
         uni_command_count = 0;
-        // build full file path
-        char path[256];
-        size_t base_len = strlen(current_dir);
-        if (base_len >= sizeof(path) - 1) base_len = sizeof(path) - 1;
-        memcpy(path, current_dir, base_len);
-        path[base_len] = '\0';
-        if (base_len + 1 < sizeof(path)) strcat(path, "/");
-        strcat(path, ir_file_paths[idx]);
-        // remember for transmit
-        strncpy(current_universal_file, path, sizeof(current_universal_file) - 1);
-        current_universal_file[sizeof(current_universal_file) - 1] = '\0';
-        printf("scanning universal file: %s\n", current_universal_file);
-        // scan file for unique command names
-        bool susp = false; bool did = ir_sd_begin(&susp);
-        FILE *f = fopen(path, "r"); if (!f) { if (did) ir_sd_end(susp); return; }
-        char buf[256], last[256] = "";
-        while (fgets(buf, sizeof(buf), f)) {
-            char *s = buf;
-            while (*s && isspace((unsigned char)*s)) s++;
-            if (*s == '#' || *s == '\0') continue;
-            if (strncmp(s, "name:", 5) == 0) {
-                char *v = s + 5; while (*v && isspace((unsigned char)*v)) v++;
-                char *e = v + strlen(v) - 1; while (e > v && isspace((unsigned char)*e)) *e-- = '\0';
-                if (strcmp(v, last) != 0) {
-                    bool dup = false;
-                    for (size_t j = 0; j < uni_command_count; j++) {
-                        if (strcmp(uni_command_names[j], v) == 0) { dup = true; break; }
+        // Check if this is TURNHISTVOFF.ir - use universal IR system
+        if (strcmp(ir_file_paths[idx], "TURNHISTVOFF.ir") == 0) {
+            // Set up for universal IR transmission
+            strcpy(current_universal_file, "TURNHISTVOFF");
+            printf("Using universal IR system for TURNHISTVOFF\n");
+            
+            // Create a single command entry for universal transmission
+            uni_command_names = malloc(sizeof(*uni_command_names));
+            if (uni_command_names) {
+                uni_command_names[0] = strdup("Power Off");
+                uni_command_count = 1;
+            }
+        } else {
+            // build full file path for regular universal files
+            char path[256];
+            size_t base_len = strlen(current_dir);
+            if (base_len >= sizeof(path) - 1) base_len = sizeof(path) - 1;
+            memcpy(path, current_dir, base_len);
+            path[base_len] = '\0';
+            if (base_len + 1 < sizeof(path)) strcat(path, "/");
+            strcat(path, ir_file_paths[idx]);
+            // remember for transmit
+            strncpy(current_universal_file, path, sizeof(current_universal_file) - 1);
+            current_universal_file[sizeof(current_universal_file) - 1] = '\0';
+            printf("scanning universal file: %s\n", current_universal_file);
+            // scan file for unique command names
+            bool susp = false; bool did = ir_sd_begin(&susp);
+            FILE *f = fopen(path, "r"); if (!f) { if (did) ir_sd_end(susp); return; }
+            char buf[256], last[256] = "";
+            while (fgets(buf, sizeof(buf), f)) {
+                char *s = buf;
+                while (*s && isspace((unsigned char)*s)) s++;
+                if (*s == '#' || *s == '\0') continue;
+                if (strncmp(s, "name:", 5) == 0) {
+                    char *v = s + 5; while (*v && isspace((unsigned char)*v)) v++;
+                    char *e = v + strlen(v) - 1; while (e > v && isspace((unsigned char)*e)) *e-- = '\0';
+                    if (strcmp(v, last) != 0) {
+                        bool dup = false;
+                        for (size_t j = 0; j < uni_command_count; j++) {
+                            if (strcmp(uni_command_names[j], v) == 0) { dup = true; break; }
+                        }
+                        if (!dup) {
+                            uni_command_names = realloc(uni_command_names, (uni_command_count + 1) * sizeof(*uni_command_names));
+                            uni_command_names[uni_command_count] = strdup(v);
+                            uni_command_count++;
+                        }
+                        strcpy(last, v);
                     }
-                    if (!dup) {
-                        uni_command_names = realloc(uni_command_names, (uni_command_count + 1) * sizeof(*uni_command_names));
-                        uni_command_names[uni_command_count] = strdup(v);
-                        uni_command_count++;
-                    }
-                    strcpy(last, v);
                 }
             }
+            fclose(f);
+            if (did) ir_sd_end(susp);
+            printf("found %zu unique commands\n", uni_command_count);
         }
-        fclose(f);
-        if (did) ir_sd_end(susp);
-        printf("found %zu unique commands\n", uni_command_count);
         // show unique commands
         lv_obj_clean(list);
         showing_commands = true;
@@ -2216,6 +2325,10 @@ static void command_event_execute(int idx) {
 static void file_event_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     file_event_open(idx);
+}
+
+static void placeholder_event_cb(lv_event_t *e) {
+    // No-op for placeholder row
 }
 
 static void command_event_cb(lv_event_t *e) {
