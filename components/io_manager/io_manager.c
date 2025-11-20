@@ -38,9 +38,9 @@ static SemaphoreHandle_t g_i2c_mutex = NULL;
 
 // Debouncing constants
 #define DEBOUNCE_MS            16
-#define IO_MANAGER_POLL_MS     5
+#define IO_MANAGER_POLL_MS     10
 #define IO_MANAGER_TASK_STACK  3072
-#define IO_MANAGER_TASK_PRIO   14
+#define IO_MANAGER_TASK_PRIO   5
 
 // Global variables
 static io_manager_config_t g_config;
@@ -92,7 +92,8 @@ esp_err_t io_manager_init(const io_manager_config_t *config)
         .scl_io_num = g_config.scl_pin,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,  // 400 kHz - Fast Mode (needed for shared bus with Status Display)
+        // Keep shared port at 100 kHz so PN532 modules can coexist with the expander/status display.
+        .master.clk_speed = 100000,
     };
 
     // Try to install the driver first; if it's already installed, skip param_config
@@ -105,7 +106,7 @@ esp_err_t io_manager_init(const io_manager_config_t *config)
             ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
             return ret;
         }
-    } else if (ret == ESP_ERR_INVALID_STATE) {
+    } else if (ret == ESP_ERR_INVALID_STATE || ret == ESP_FAIL) {
         // Driver already installed elsewhere; share without reconfiguring
         ESP_LOGW(TAG, "I2C driver already installed on port %d; sharing", g_config.i2c_port);
         g_i2c_driver_installed = false;
@@ -359,10 +360,14 @@ static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data)
             vTaskDelay(pdMS_TO_TICKS(2));
         }
         bool global_locked = i2c_bus_lock(g_config.i2c_port, 60);
+        if (!global_locked) {
+            ret = ESP_ERR_TIMEOUT;
+            continue;
+        }
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         if (!cmd) {
             ret = ESP_ERR_NO_MEM;
-            if (global_locked) i2c_bus_unlock(g_config.i2c_port);
+            i2c_bus_unlock(g_config.i2c_port);
             break;
         }
         
@@ -376,11 +381,14 @@ static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data)
         
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
-        if (global_locked) i2c_bus_unlock(g_config.i2c_port);
+        i2c_bus_unlock(g_config.i2c_port);
         
         if (ret == ESP_OK) {
             break;
         }
+    }
+    if (ret == ESP_ERR_TIMEOUT) {
+        ESP_LOGW(TAG, "failed to lock shared i2c bus for read reg 0x%02X", reg);
     }
 
     xSemaphoreGive(g_i2c_mutex);
@@ -471,6 +479,11 @@ static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1)
 
     esp_err_t ret = ESP_FAIL;
     bool global_locked = i2c_bus_lock(g_config.i2c_port, 60);
+    if (!global_locked) {
+        xSemaphoreGive(g_i2c_mutex);
+        ESP_LOGW(TAG, "failed to lock shared i2c bus for input read");
+        return ESP_ERR_TIMEOUT;
+    }
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     if (cmd) {
         i2c_master_start(cmd);
@@ -486,10 +499,7 @@ static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1)
     } else {
         ret = ESP_ERR_NO_MEM;
     }
-
-    if (global_locked) {
-        i2c_bus_unlock(g_config.i2c_port);
-    }
+    i2c_bus_unlock(g_config.i2c_port);
 
     xSemaphoreGive(g_i2c_mutex);
     return ret;
@@ -515,10 +525,14 @@ static esp_err_t tca9535_write_port(uint8_t reg, uint8_t data)
             vTaskDelay(pdMS_TO_TICKS(2));
         }
         bool global_locked = i2c_bus_lock(g_config.i2c_port, 60);
+        if (!global_locked) {
+            ret = ESP_ERR_TIMEOUT;
+            continue;
+        }
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         if (!cmd) {
             ret = ESP_ERR_NO_MEM;
-            if (global_locked) i2c_bus_unlock(g_config.i2c_port);
+            i2c_bus_unlock(g_config.i2c_port);
             break;
         }
         
@@ -530,11 +544,14 @@ static esp_err_t tca9535_write_port(uint8_t reg, uint8_t data)
         
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
-        if (global_locked) i2c_bus_unlock(g_config.i2c_port);
+        i2c_bus_unlock(g_config.i2c_port);
         
         if (ret == ESP_OK) {
             break;
         }
+    }
+    if (ret == ESP_ERR_TIMEOUT) {
+        ESP_LOGW(TAG, "failed to lock shared i2c bus for write reg 0x%02X", reg);
     }
 
     xSemaphoreGive(g_i2c_mutex);

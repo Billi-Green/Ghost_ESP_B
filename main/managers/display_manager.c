@@ -27,6 +27,7 @@
 #include "managers/wifi_manager.h"
 #include "driver/i2c.h"
 #include "soc/soc_caps.h"
+#include "io_manager/i2c_bus_lock.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -956,6 +957,12 @@ void apply_power_management_config(bool power_save_enabled) {
 
 void display_manager_init(void) {
 
+  static bool lvgl_lock_registered = false;
+  if (!lvgl_lock_registered) {
+    lvgl_i2c_locking(i2c_bus_get_lock_handle());
+    lvgl_lock_registered = true;
+  }
+
   esp_pm_config_esp32_t pm_cfg = {
     .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
     .min_freq_mhz = 80,
@@ -1481,7 +1488,7 @@ void hardware_input_task(void *pvParameters) {
     /* direction events */
     int8_t dir = encoder_get_direction(&g_encoder);
     if (dir) {
-        // treat an encoder turn as “touch”
+        // treat an encoder turn as "touch"
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
           set_backlight_brightness(100);
@@ -1497,9 +1504,9 @@ void hardware_input_task(void *pvParameters) {
         }
     }
 
-    /* push-switch -> treat like “button” */
+    /* push-switch -> treat like "button" */
     if (joystick_just_pressed(&enc_button)) {
-        // treat an encoder click as “touch”
+        // treat an encoder click as "touch"
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
           set_backlight_brightness(100);

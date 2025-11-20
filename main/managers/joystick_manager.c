@@ -20,6 +20,12 @@ void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
   joystick->hold_init = 0;
   joystick->deep_sleep_triggered = false;
 
+#ifdef CONFIG_USE_IO_EXPANDER
+  if (io_expander_initialized && pin >= 0 && pin <= 7) {
+    return;
+  }
+#endif
+
   gpio_config_t io_conf = {
       .pin_bit_mask = (1ULL << pin),
       .mode = GPIO_MODE_INPUT,
