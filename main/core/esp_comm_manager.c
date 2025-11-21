@@ -1028,12 +1028,19 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
             tx_pin = U0TXD_GPIO_NUM;
             rx_pin = U0RXD_GPIO_NUM;
         }
+    } else if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0) {
+        s_uart_num = UART_NUM_1;
+        if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
+            tx_pin = GPIO_NUM_1;
+            rx_pin = GPIO_NUM_2;
+        }
     } else {
         s_uart_num = UART_NUM_1;
     }
 #else
     s_uart_num = UART_NUM_1;
 #endif
+
     // Don't deinitialize serial manager on TDECK to avoid UART conflicts
 #ifndef CONFIG_USE_TDECK
     if (serial_manager_get_uart_num() == (int)UART_NUM_1) {
