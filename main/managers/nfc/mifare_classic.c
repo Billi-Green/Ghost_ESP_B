@@ -123,6 +123,18 @@ static void mfc_cache_store_block(int abs_block, const uint8_t data[16]){
     memcpy(&g_mfc_cache[abs_block * 16], data, 16);
     BITSET_SET(g_mfc_known, abs_block);
 }
+// Check if all blocks in a sector are already present in the cache
+static bool mfc_sector_all_blocks_known(MFC_TYPE t, int sector) {
+    if (!g_mfc_known || sector < 0) return false;
+    int first = mfc_first_block_of_sector(t, sector);
+    int blocks = mfc_blocks_in_sector(t, sector);
+    for (int b = 0; b < blocks; ++b) {
+        int idx = first + b;
+        if (idx < 0 || idx >= g_mfc_blocks) return false;
+        if (!BITSET_TEST(g_mfc_known, idx)) return false;
+    }
+    return true;
+}
 static bool mfc_cache_matches(const uint8_t* uid, uint8_t uid_len){
     if (!g_mfc_cache || !g_mfc_known || g_mfc_uid_len != uid_len) return false;
     return (uid_len == 0) ? false : (memcmp(g_mfc_uid, uid, uid_len) == 0);
@@ -1453,6 +1465,12 @@ static void mfc_cache_complete_with_save_logic(pn532_io_handle_t io,
     for (int s = 0; s < sectors; ++s) {
         if (mfc_call_should_skip_dict()) break;
         if (mfc_call_should_cancel()) break;
+        // If every block in this sector is already cached from the first pass,
+        // avoid re-auth and re-reading for this sector in the second pass.
+        if (mfc_sector_all_blocks_known(t, s)) {
+            if (g_prog_cb) g_prog_cb(s + 1, sectors, g_prog_user);
+            continue;
+        }
         int first = mfc_first_block_of_sector(t, s);
         int blocks = mfc_blocks_in_sector(t, s);
         uint8_t auth_blk = mfc_auth_target_block(t, s);
@@ -1482,41 +1500,6 @@ static void mfc_cache_complete_with_save_logic(pn532_io_handle_t io,
             authed = true; usedB_cur = true; used_key_cur = s_last_key_b;
         }
         if (!authed) {
-            bool usedB = false; const uint8_t *uk = NULL;
-            if (mfc_auth_with_user_interleaved(io, auth_blk, uid, uid_len, &usedB, &uk)) {
-                authed = true; usedB_cur = usedB; used_key_cur = uk;
-            }
-        }
-        for (int k = 0; k < (int)(sizeof(DEFAULT_KEYS)/6) && !authed; ++k) {
-            if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break; // skip defaults on fast-finish
-            if (mfc_auth_block(io, auth_blk, false, DEFAULT_KEYS[k], uid, uid_len) == ESP_OK) {
-                authed = true; mfc_record_working_key(DEFAULT_KEYS[k], false);
-                usedB_cur = false; used_key_cur = DEFAULT_KEYS[k];
-            }
-        }
-        for (int k = 0; k < (int)(sizeof(DEFAULT_KEYS)/6) && !authed; ++k) {
-            if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break; // skip defaults on fast-finish
-            if (mfc_auth_block(io, auth_blk, true, DEFAULT_KEYS[k], uid, uid_len) == ESP_OK) {
-                authed = true; mfc_record_working_key(DEFAULT_KEYS[k], true);
-                usedB_cur = true; used_key_cur = DEFAULT_KEYS[k];
-            }
-        }
-#if defined(CONFIG_HAS_NFC) && defined(CONFIG_MFC_DICT_EMBEDDED)
-        if (!authed) {
-            bool skip_dict = false;
-            #ifdef CONFIG_HAS_NFC
-            if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) skip_dict = true;
-            #endif
-            if (!skip_dict) {
-                bool usedB = false;
-                if (mfc_auth_with_dict_interleaved(io, auth_blk, uid, uid_len, &usedB)) {
-                    authed = true; usedB_cur = usedB;
-                    if (usedB && g_last_key_b_valid) used_key_cur = g_last_key_b; else if (!usedB && g_last_key_a_valid) used_key_cur = g_last_key_a;
-                }
-            }
-        }
-#endif
-        if (!authed) {
             if (g_sector_key_a_valid && BITSET_TEST(g_sector_key_a_valid, s)) {
                 const uint8_t *ka = &g_sector_key_a[s*6];
                 if (mfc_auth_block(io, trailer_blk, false, ka, uid, uid_len) == ESP_OK) {
@@ -1535,41 +1518,6 @@ static void mfc_cache_complete_with_save_logic(pn532_io_handle_t io,
             if (!authed && mfc_auth_with_known(io, trailer_blk, true, uid, uid_len)) {
                 authed = true; usedB_cur = true; used_key_cur = s_last_key_b;
             }
-            if (!authed) {
-                bool usedB = false; const uint8_t *uk = NULL;
-                if (mfc_auth_with_user_interleaved(io, trailer_blk, uid, uid_len, &usedB, &uk)) {
-                    authed = true; usedB_cur = usedB; used_key_cur = uk;
-                }
-            }
-            for (int k = 0; k < (int)(sizeof(DEFAULT_KEYS)/6) && !authed; ++k) {
-                if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break; // skip defaults on fast-finish
-                if (mfc_auth_block(io, trailer_blk, false, DEFAULT_KEYS[k], uid, uid_len) == ESP_OK) {
-                    authed = true; mfc_record_working_key(DEFAULT_KEYS[k], false);
-                    usedB_cur = false; used_key_cur = DEFAULT_KEYS[k];
-                }
-            }
-            for (int k = 0; k < (int)(sizeof(DEFAULT_KEYS)/6) && !authed; ++k) {
-                if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break; // skip defaults on fast-finish
-                if (mfc_auth_block(io, trailer_blk, true, DEFAULT_KEYS[k], uid, uid_len) == ESP_OK) {
-                    authed = true; mfc_record_working_key(DEFAULT_KEYS[k], true);
-                    usedB_cur = true; used_key_cur = DEFAULT_KEYS[k];
-                }
-            }
-#if defined(CONFIG_HAS_NFC) && defined(CONFIG_MFC_DICT_EMBEDDED)
-            if (!authed) {
-                bool skip_dict = false;
-                #ifdef CONFIG_HAS_NFC
-                if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) skip_dict = true;
-                #endif
-                if (!skip_dict) {
-                    bool usedB = false;
-                    if (mfc_auth_with_dict_interleaved(io, trailer_blk, uid, uid_len, &usedB)) {
-                        authed = true; usedB_cur = usedB;
-                        if (usedB && g_last_key_b_valid) used_key_cur = g_last_key_b; else if (!usedB && g_last_key_a_valid) used_key_cur = g_last_key_a;
-                    }
-                }
-            }
-#endif
         }
         if (authed && used_key_cur) mfc_cache_record_sector_key(s, usedB_cur, used_key_cur);
         if (authed && used_key_cur) mfc_key_reuse_sweep(io, t, uid, uid_len, usedB_cur, used_key_cur, s);
