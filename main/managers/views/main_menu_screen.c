@@ -8,12 +8,15 @@
 #include <string.h>
 #include "managers/views/clock_screen.h"
 #include "managers/views/settings_screen.h"
+#include "core/esp_comm_manager.h"
 #ifdef CONFIG_HAS_NFC
 #include "managers/views/nfc_view.h"
 #endif
 #if CONFIG_HAS_INFRARED
 #include "managers/views/infrared_view.h"
 #endif
+
+LV_IMG_DECLARE(dualcomm);
 
 static const char *TAG = "MainMenu";
 
@@ -82,7 +85,8 @@ menu_item_t menu_items[] = {
 #ifdef CONFIG_HAS_RTC_CLOCK
     {"Clock", &clock_icon, 4, {{0}}},
 #endif
-    {"Settings", &settings_icon, 5, {{0}}} // applies to all boards
+    {"Dual Comm", &dualcomm, 1, {{0}}},
+    {"Settings", &settings_icon, 5, {{0}}}, // applies to all boards
 };
 
 static int num_items = sizeof(menu_items) / sizeof(menu_items[0]);
@@ -775,7 +779,8 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_RTC_CLOCK
         {"Clock", 0, &clock_view},
 #endif
-        {"Settings", OT_Settings, &options_menu_view}
+        {"Settings", OT_Settings, &options_menu_view},
+        {"Dual Comm", OT_DualComm, &options_menu_view}
     };
 
     const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
@@ -1051,11 +1056,63 @@ static void create_list_menu(void) {
 }
 
 
+static void cleanup_layout_arrays(void) {
+    if (grid_buttons) {
+        free(grid_buttons);
+        grid_buttons = NULL;
+    }
+    if (grid_cards) {
+        free(grid_cards);
+        grid_cards = NULL;
+    }
+    if (list_buttons) {
+        free(list_buttons);
+        list_buttons = NULL;
+    }
+    current_item_obj = NULL;
+    carousel_cache = (carousel_card_cache_t){0};
+    grid_cards_container = NULL;
+}
+
+static lv_timer_t *menu_refresh_timer = NULL;
+static bool was_dual_comm_connected = false;
+
+static void menu_refresh_timer_cb(lv_timer_t *t) {
+    bool connected = esp_comm_manager_is_connected();
+    if (connected != was_dual_comm_connected) {
+        was_dual_comm_connected = connected;
+        
+        cleanup_layout_arrays();
+        if (menu_container && lv_obj_is_valid(menu_container)) {
+            lv_obj_clean(menu_container);
+        }
+        
+        int total_menu_items = (int)(sizeof(menu_items) / sizeof(menu_items[0]));
+        num_items = connected ? total_menu_items : (total_menu_items - 1);
+        if (selected_item_index >= num_items) selected_item_index = num_items - 1;
+        
+        init_menu_colors();
+        
+        if (current_layout == MENU_LAYOUT_GRID) create_grid_menu();
+        else if (current_layout == MENU_LAYOUT_GRID_CARDS) create_grid_menu();
+        else if (current_layout == MENU_LAYOUT_LIST) create_list_menu();
+        else update_menu_item(false);
+    }
+}
+
 /**
  * @brief Creates the main menu screen view.
  */
 void main_menu_create(void) {
     display_manager_fill_screen(lv_color_hex(0x121212));
+    int total_menu_items = (int)(sizeof(menu_items) / sizeof(menu_items[0]));
+    bool dual_comm_connected = esp_comm_manager_is_connected();
+    was_dual_comm_connected = dual_comm_connected;
+    
+    if (!menu_refresh_timer) {
+        menu_refresh_timer = lv_timer_create(menu_refresh_timer_cb, 1000, NULL);
+    }
+    num_items = dual_comm_connected ? total_menu_items : (total_menu_items - 1);
     init_menu_colors(); // Initialize colors at runtime
 
     // Set current layout from settings (0 = Normal/Carousel, 1 = Grid)
@@ -1215,33 +1272,20 @@ void main_menu_create(void) {
  * @brief Destroys the main menu screen view.
  */
 void main_menu_destroy(void) {
+    if (menu_refresh_timer) {
+        lv_timer_del(menu_refresh_timer);
+        menu_refresh_timer = NULL;
+    }
+
     if (menu_container) {
         lv_obj_clean(menu_container);
         lv_obj_del(menu_container);
         menu_container = NULL;
         main_menu_view.root = NULL;
-        current_item_obj = NULL;
-        carousel_cache = (carousel_card_cache_t){0};
-        // Children (including Grid container/buttons) are deleted with parent
-        grid_cards_container = NULL;
+        // arrays cleaned up below via helper
     }
 
-    // Clean up grid layout
-    if (grid_buttons) {
-        free(grid_buttons);
-        grid_buttons = NULL;
-    }
-
-    // Clean up Grid layout array; container already deleted with parent
-    if (grid_cards) {
-        free(grid_cards);
-        grid_cards = NULL;
-    }
-
-    if (list_buttons) {
-        free(list_buttons);
-        list_buttons = NULL;
-    }
+    cleanup_layout_arrays();
 
     // Clean up navigation buttons
     if (left_nav_btn) {

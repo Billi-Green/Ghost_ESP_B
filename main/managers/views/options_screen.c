@@ -140,6 +140,130 @@ static const char *bluetooth_options[] = {"Find Flippers", "List Flippers", "Sel
 static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
                                     "BLE Wardriving",   NULL};
 
+// Dual Comm is split into a small state machine with submenus to avoid
+// one giant list that can starve LVGL.
+
+typedef enum {
+    DUALCOMM_MENU_MAIN = 0,
+    DUALCOMM_MENU_SESSION,
+    DUALCOMM_MENU_SCAN,
+    DUALCOMM_MENU_WIFI,
+    DUALCOMM_MENU_ATTACKS,
+    DUALCOMM_MENU_CAPTURE,
+    DUALCOMM_MENU_TOOLS,
+    DUALCOMM_MENU_BLE,
+    DUALCOMM_MENU_GPS
+} DualCommMenuState;
+
+static DualCommMenuState current_dualcomm_menu_state = DUALCOMM_MENU_MAIN;
+
+static const char *dual_comm_main_options[] = {
+    "Status",
+    "Discovery / Session",
+    "Scanning",
+    "WiFi",
+    "Attacks",
+    "Capture",
+    "Tools",
+    "BLE",
+    "GPS",
+    NULL
+};
+
+static const char *dual_comm_session_options[] = {
+    "Status",
+    "Start Discovery",
+    "Connect to Peer",
+    "Disconnect",
+    "Send Remote Command",
+    NULL
+};
+
+static const char *dual_comm_scan_options[] = {
+    "Scan Access Points",
+    "Scan APs Live",
+    "Scan Stations",
+    "Scan All (AP & Station)",
+    "Scan LAN Devices",
+    "ARP Scan Network",
+    "Scan Open Ports",
+    "PineAP Detection",
+    "Channel Congestion",
+    "List Access Points",
+    "List Stations",
+    "Select AP",
+    "Select Station",
+    "Select LAN",
+    NULL
+};
+
+static const char *dual_comm_wifi_options[] = {
+    "Connect to WiFi",
+    "Connect to saved WiFi",
+    "Reset AP Credentials",
+    NULL
+};
+
+static const char *dual_comm_attacks_options[] = {
+    "Start Deauth Attack",
+    "Start EAPOL Logoff",
+    "Start DHCP-Starve",
+    "Stop DHCP-Starve",
+    "Start Karma Attack",
+    "Start Karma Attack (Custom SSIDs)",
+    "Stop Karma Attack",
+    NULL
+};
+
+static const char *dual_comm_capture_options[] = {
+    "Capture Deauth",
+    "Capture Probe",
+    "Capture Beacon",
+    "Capture Raw",
+    "Capture Eapol",
+    "Capture WPS",
+    "Capture PWN",
+    "Listen for Probes",
+    NULL
+};
+
+static const char *dual_comm_tools_options[] = {
+    "Start Evil Portal",
+    "Stop Evil Portal",
+    "Start Wardriving",
+    "Stop Wardriving",
+    "TV Cast (Dial Connect)",
+    "Power Printer",
+    "Scan SSH",
+    NULL
+};
+
+static const char *dual_comm_ble_options[] = {
+    "Start AirTag Scanner",
+    "List AirTags",
+    "Select AirTag",
+    "Spoof Selected AirTag",
+    "Stop Spoofing",
+    "Find Flippers",
+    "List Flippers",
+    "Select Flipper",
+    "Raw BLE Scanner",
+    "BLE Skimmer Detect",
+    "BLE Spam - Apple",
+    "BLE Spam - Microsoft",
+    "BLE Spam - Samsung",
+    "BLE Spam - Google",
+    "BLE Spam - Random",
+    "Stop BLE Spam",
+    NULL
+};
+
+static const char *dual_comm_gps_options[] = {
+    "GPS Info",
+    "BLE Wardriving",
+    NULL
+};
+
 static void load_current_settings_values(void);
 
 typedef struct {
@@ -315,6 +439,10 @@ static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wifi_connect_kb_cb(const char *text);
 static void ssh_scan_kb_cb(const char *text);
+static void dual_comm_connect_kb_cb(const char *text);
+static void dual_comm_send_kb_cb(const char *text);
+static void dual_comm_wifi_connect_kb_cb(const char *text);
+static void dual_comm_karma_custom_ssids_cb(const char *text);
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 static void zigbee_capture_kb_cb(const char *text);
 #endif
@@ -389,6 +517,8 @@ const char *options_menu_type_to_string(EOptionsMenuType menuType) {
         return "BLE";
     case OT_GPS:
         return "GPS";
+    case OT_DualComm:
+        return "Dual Comm";
     case OT_Settings:
         return "Settings";
     default:
@@ -435,10 +565,7 @@ void options_menu_create() {
     lv_obj_align(menu_container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT);
 #endif
 
-    // update scroll buttons visibility when list children/size change
-    lv_obj_add_event_cb(menu_container, (lv_event_cb_t)update_scroll_buttons_visibility, LV_EVENT_CHILD_CHANGED, NULL);
-    lv_obj_add_event_cb(menu_container, (lv_event_cb_t)update_scroll_buttons_visibility, LV_EVENT_SIZE_CHANGED, NULL);
-    
+    // Scroll button visibility is updated once after the menu is fully built
 
     const char **options = NULL;
     is_settings_mode = false;
@@ -490,6 +617,19 @@ void options_menu_create() {
         }
         break;
     case OT_GPS: options = gps_options; break;
+    case OT_DualComm:
+        switch (current_dualcomm_menu_state) {
+            case DUALCOMM_MENU_MAIN:     options = dual_comm_main_options; break;
+            case DUALCOMM_MENU_SESSION:  options = dual_comm_session_options; break;
+            case DUALCOMM_MENU_SCAN:     options = dual_comm_scan_options; break;
+            case DUALCOMM_MENU_WIFI:     options = dual_comm_wifi_options; break;
+            case DUALCOMM_MENU_ATTACKS:  options = dual_comm_attacks_options; break;
+            case DUALCOMM_MENU_CAPTURE:  options = dual_comm_capture_options; break;
+            case DUALCOMM_MENU_TOOLS:    options = dual_comm_tools_options; break;
+            case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
+            case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
+        }
+        break;
     case OT_Settings: 
         is_settings_mode = true;
         load_current_settings_values();
@@ -1167,10 +1307,10 @@ void option_event_cb(lv_event_t *e) {
         option_invoked = false;
         return;
     }
-    
+
     const char *Selected_Option = (const char *)lv_event_get_user_data(e);
 
-    // Handle the "Back" option specifically
+    // Handle the "Back" option specifically (for encoder/joystick modes)
     if (strcmp(Selected_Option, "__BACK_OPTION__") == 0) {
         if (menu_build_timer) {
             lv_timer_del(menu_build_timer);
@@ -1178,6 +1318,489 @@ void option_event_cb(lv_event_t *e) {
         }
         back_event_cb(NULL);
         option_invoked = false;
+        return;
+    }
+
+    if (SelectedMenuType == OT_DualComm) {
+        if (current_dualcomm_menu_state == DUALCOMM_MENU_MAIN) {
+            if (strcmp(Selected_Option, "Status") == 0) {
+                // Allow quick access to Status from main
+                terminal_set_return_view(&options_menu_view);
+                terminal_set_dualcomm_filter(true);
+                display_manager_switch_view(&terminal_view);
+                simulateCommand("commsend commstatus");
+                view_switched = true;
+            } else if (strcmp(Selected_Option, "Discovery / Session") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_SESSION;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            } else if (strcmp(Selected_Option, "Scanning") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_SCAN;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            } else if (strcmp(Selected_Option, "WiFi") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_WIFI;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            } else if (strcmp(Selected_Option, "Attacks") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_ATTACKS;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            } else if (strcmp(Selected_Option, "Capture") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_CAPTURE;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            } else if (strcmp(Selected_Option, "Tools") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_TOOLS;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            } else if (strcmp(Selected_Option, "BLE") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_BLE;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            } else if (strcmp(Selected_Option, "GPS") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_GPS;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
+            }
+        }
+
+        if (strcmp(Selected_Option, "Status") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend commstatus");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start Discovery") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend commdiscovery");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Connect to Peer") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_connect_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("Peer name (e.g. ESP_XXXXXX)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Disconnect") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend commdisconnect");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Send Remote Command") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_send_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("Command to run on peer");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Scan Access Points") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scanap");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Scan APs Live") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scanap -live");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Scan Stations") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scansta");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Scan All (AP & Station)") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scanall");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Scan LAN Devices") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scanlocal");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "ARP Scan Network") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scanarp");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Scan Open Ports") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scanports local -C");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "PineAP Detection") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend pineap");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Channel Congestion") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend congestion");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "List Access Points") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend list -a");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "List Stations") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend list -s");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Select Station") == 0) {
+            set_number_pad_mode(NP_MODE_STA_REMOTE);
+            display_manager_switch_view(&number_pad_view);
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Select AP") == 0) {
+            set_number_pad_mode(NP_MODE_AP_REMOTE);
+            display_manager_switch_view(&number_pad_view);
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Select LAN") == 0) {
+            set_number_pad_mode(NP_MODE_LAN_REMOTE);
+            display_manager_switch_view(&number_pad_view);
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Connect to WiFi") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_wifi_connect_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("\"SSID\" \"PASSWORD\"");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Connect to saved WiFi") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend connect");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Reset AP Credentials") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend apcred -r");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start Deauth Attack") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend attack -d");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start EAPOL Logoff") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend attack -e");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start DHCP-Starve") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend dhcpstarve start");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Stop DHCP-Starve") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend dhcpstarve stop");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start Karma Attack") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend karma start");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Stop Karma Attack") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend karma stop");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start Karma Attack (Custom SSIDs)") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_karma_custom_ssids_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("SSID1 SSID2 SSID3");
+            return;
+        } else if (strcmp(Selected_Option, "Capture Deauth") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -deauth");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Capture Probe") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -probe");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Capture Beacon") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -beacon");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Capture Raw") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -raw");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Capture Eapol") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -eapol");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Capture WPS") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -wps");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Capture PWN") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -pwn");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Listen for Probes") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend listenprobes");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start Evil Portal") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend startportal default FreeWiFi");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Stop Evil Portal") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend stopportal");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend startwd");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Stop Wardriving") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend startwd -s");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "TV Cast (Dial Connect)") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend dialconnect");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Power Printer") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend powerprinter");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Scan SSH") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend scanssh");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Start AirTag Scanner") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blescan -a");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "List AirTags") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend listairtags");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "Select AirTag") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            set_number_pad_mode(NP_MODE_AIRTAG_REMOTE);
+            display_manager_switch_view(&number_pad_view);
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "Spoof Selected AirTag") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend spoofairtag");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "Stop Spoofing") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend stopspoof");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "Find Flippers") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blescan -f");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "List Flippers") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend listflippers");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "Select Flipper") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            set_number_pad_mode(NP_MODE_FLIPPER_REMOTE);
+            display_manager_switch_view(&number_pad_view);
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "Raw BLE Scanner") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blescan -r");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "BLE Skimmer Detect") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend capture -skimmer");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "BLE Spam - Apple") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blespam -apple");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "BLE Spam - Microsoft") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blespam -ms");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "BLE Spam - Samsung") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blespam -samsung");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "BLE Spam - Google") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blespam -google");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "BLE Spam - Random") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blespam -random");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "Stop BLE Spam") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blespam -s");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        } else if (strcmp(Selected_Option, "GPS Info") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend gpsinfo");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "BLE Wardriving") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend blewardriving");
+            view_switched = true;
+#else
+            error_popup_create("Device Does not Support Bluetooth...");
+#endif
+        }
+
+        if (!view_switched) {
+            option_invoked = false;
+        }
         return;
     }
 
@@ -1849,6 +2472,12 @@ static void back_event_cb(lv_event_t *e) {
         display_manager_switch_view(&options_menu_view);
         return;
     }
+    // If in a Dual Comm submenu (but not main), go back to main Dual Comm menu
+    if (SelectedMenuType == OT_DualComm && current_dualcomm_menu_state != DUALCOMM_MENU_MAIN) {
+        current_dualcomm_menu_state = DUALCOMM_MENU_MAIN;
+        display_manager_switch_view(&options_menu_view);
+        return;
+    }
     // If in a settings submenu, go back to category selection
     if (is_settings_mode && current_settings_category >= 0) {
         current_settings_category = -1;
@@ -1915,6 +2544,38 @@ static void ssh_scan_kb_cb(const char *text) {
     keyboard_view_set_submit_callback(NULL);
 }
 
+static void dual_comm_connect_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Enter peer name");
+        return;
+    }
+
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "commsend commconnect %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_send_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Enter command to send");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 static void zigbee_capture_kb_cb(const char *text) {
     if (!text) {
@@ -1962,6 +2623,45 @@ static void wifi_connect_kb_cb(const char *text){
     }
     char cmd[256];
     snprintf(cmd,sizeof(cmd),"connect \"%s\" \"%s\"",ssid,pass);
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_wifi_connect_kb_cb(const char *text) {
+    const char *p = text;
+    while (*p && *p != '"') p++;
+    if (!*p) { error_popup_create("format: \"SSID\" \"PASSWORD\""); return; }
+    p++; const char *start = p;
+    while (*p && *p != '"') p++;
+    if (!*p) { error_popup_create("format: \"SSID\" \"PASSWORD\""); return; }
+    size_t len = p - start; if (len == 0 || len >= 64) { error_popup_create("ssid too long"); return; }
+    char ssid[64] = {0}; memcpy(ssid, start, len); ssid[len] = '\0';
+    p++; while (*p == ' ') { p++; }
+    char pass[64] = {0};
+    if (*p == '"') {
+        p++; start = p; while (*p && *p != '"') p++; if (!*p) { error_popup_create("format: \"SSID\" \"PASSWORD\""); return; }
+        len = p - start; if (len >= 64) { error_popup_create("pass too long"); return; }
+        memcpy(pass, start, len); pass[len] = '\0';
+    }
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend connect \"%s\" \"%s\"", ssid, pass);
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_karma_custom_ssids_cb(const char *input) {
+    if (!input || strlen(input) == 0) {
+        error_popup_create("Please enter at least one SSID.");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend karma start %s", input);
+
     terminal_set_return_view(&options_menu_view);
     display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);

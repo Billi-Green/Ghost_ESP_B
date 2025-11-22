@@ -5,6 +5,7 @@
 - Fixed TEmbed C1101-specific hardware initialization running on all encoder configs
 - Refactors to NFC logic to make more maintainable
 - After scanning, NFC popup title now specifies the tag type
+- Added dualcomm display menu when connected to a peer with split view terminal showing normal/peer response logs
 
 ## Revival v1.8.1
 

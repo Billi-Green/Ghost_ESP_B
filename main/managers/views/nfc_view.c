@@ -877,14 +877,13 @@ static void nfc_scan_cu_task(void *arg) {
                 lv_async_call(nfc_set_cu_scan_async, res);
             }
             // If MIFARE Classic (0x08/0x18/0x09), perform dict-based read on CU
+#if defined(CONFIG_NFC_CHAMELEON)
             if (sak == 0x08 || sak == 0x18 || sak == 0x09) {
                 chameleon_manager_set_attack_hooks(&nfc_ui_attack_hooks);
                 chameleon_manager_set_progress_callback(mfc_dict_progress_cb, NULL);
                 (void)chameleon_manager_mf1_read_classic_with_dict(false);
                 // Refresh details text from CU cache
-#if defined(CONFIG_NFC_CHAMELEON)
                 nfc_refresh_cu_details_from_cache();
-#endif
                 // Ensure Save button is visible
                 if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
                     lv_obj_clear_flag(nfc_scan_save_btn, LV_OBJ_FLAG_HIDDEN);
@@ -893,6 +892,7 @@ static void nfc_scan_cu_task(void *arg) {
                     update_nfc_popup_selection();
                 }
             }
+#endif
         }
     }
     vTaskDelete(NULL);

@@ -303,6 +303,7 @@ static void handle_app_item_selection(int item_index) {
     // If launching the terminal, set its return view to the apps menu
     if (app_items[item_index].view == &terminal_view) {
         terminal_set_return_view(&apps_menu_view);
+        terminal_set_dualcomm_filter(false);
     }
 
     display_manager_switch_view(app_items[item_index].view);

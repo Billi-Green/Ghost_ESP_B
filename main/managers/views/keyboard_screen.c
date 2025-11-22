@@ -673,9 +673,9 @@ static void keyboard_create() {
     }
     keyboard_build_phase = 0;
 
-#if defined(CONFIG_USE_TOUCHSCREEN)
-    // use a single btnmatrix to render the keyboard for touch builds
-    build_key_matrix();
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
+    // use a single btnmatrix to render the keyboard for touch/joystick builds
+    recreate_keyboard_buttons();
 #elif defined(CONFIG_USE_ENCODER)
     encoder_cont = lv_obj_create(root);
     lv_obj_remove_style_all(encoder_cont);
@@ -779,8 +779,9 @@ static void keyboard_destroy() {
 }
 
 static void handle_hardware_button_press_keyboard(InputEvent *event) {
-#ifdef CONFIG_USE_ENCODER
+#if defined(CONFIG_USE_ENCODER) && !defined(CONFIG_USE_JOYSTICK)
     if (event->type == INPUT_TYPE_ENCODER) {
+        if (!encoder_cont) return;
         int dir = event->data.encoder.direction;
         int prev = encoder_sel_idx;
         encoder_sel_idx = (encoder_sel_idx + dir + encoder_item_count) % encoder_item_count;
