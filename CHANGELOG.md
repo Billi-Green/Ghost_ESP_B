@@ -8,6 +8,7 @@
 - Added dualcomm display menu when connected to a peer with split view terminal showing normal/peer response logs
 - IR and NFC display views and popups now properly use active set UI theme
 - Main menu app colors are now consistent across devices
+- Added Flipper NFC parser compatibility layer and SmartRider card support
 
 ## Revival v1.8.1
 
