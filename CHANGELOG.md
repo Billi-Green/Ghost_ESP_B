@@ -10,6 +10,7 @@
 - Main menu app colors are now consistent across devices
 - Added Flipper NFC parser compatibility layer and SmartRider card support
 - Avoid redundant PN532 Mifare Classic reads for a minor speed up
+- Apps menu now follows main menu theme, controls, and layout
 
 ## Revival v1.8.1
 
