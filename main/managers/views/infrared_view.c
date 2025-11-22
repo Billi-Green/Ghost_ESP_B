@@ -23,6 +23,12 @@ static void ir_sd_end(bool display_was_suspended);
 
 static const char *TAG = "infrared_view";
 
+static const uint32_t ir_theme_accent_colors[15] = {
+    0x1976D2,0xFFCDD2,0x263238,0xFFFFFF,0x002B36,
+    0x888888,0xE91E63,0x9C27B0,0x2196F3,0xFFA500,
+    0x39FF14,0xFF00FF,0x0077BE,0xFF4500,0x556B2F
+};
+
 #ifdef CONFIG_HAS_INFRARED_RX
 void cleanup_signal_preview_popup(void *obj);
 void signal_preview_save_cb(lv_event_t *e);
@@ -1533,6 +1539,7 @@ static void ir_select_item(int index) {
     // clear previous selection
     lv_obj_t *prev = lv_obj_get_child(list, selected_ir_index);
     if(prev) {
+        lv_obj_t *prev_label = lv_obj_get_child(prev, 0);
         // Check if this is one of the management buttons that have special styling
         if (showing_commands && !in_universals_mode && selected_ir_index >= signal_count) {
             // This is a management button, restore its special styling
@@ -1553,17 +1560,36 @@ static void ir_select_item(int index) {
             // Regular command button
             lv_obj_set_style_bg_color(prev, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
         }
+        if (prev_label) {
+            lv_obj_set_style_text_color(prev_label, lv_color_hex(0xFFFFFF), 0);
+        }
     }
     
     selected_ir_index = index;
     lv_obj_t *cur = lv_obj_get_child(list, selected_ir_index);
     if(cur) {
+        lv_obj_t *cur_label = lv_obj_get_child(cur, 0);
         // If the currently selected item is the Delete Remote management option,
         // highlight it with a lighter red instead of the default gray.
         if (showing_commands && !in_universals_mode && selected_ir_index >= signal_count && selected_ir_index == signal_count + 2) {
             lv_obj_set_style_bg_color(cur, lv_color_hex(0xB22222), LV_PART_MAIN);
+            if (cur_label) {
+                lv_obj_set_style_text_color(cur_label, lv_color_hex(0xFFFFFF), 0);
+            }
         } else {
-            lv_obj_set_style_bg_color(cur, lv_color_hex(0x555555), LV_PART_MAIN);
+            uint8_t theme = settings_get_menu_theme(&G_Settings);
+            if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) {
+                theme = 0;
+            }
+            lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+            lv_obj_set_style_bg_color(cur, accent, LV_PART_MAIN);
+            if (cur_label) {
+                if (theme == 3) {
+                    lv_obj_set_style_text_color(cur_label, lv_color_hex(0x000000), 0);
+                } else {
+                    lv_obj_set_style_text_color(cur_label, lv_color_hex(0xFFFFFF), 0);
+                }
+            }
         }
         lv_obj_scroll_to_view(cur, LV_ANIM_OFF);
     }
@@ -2284,11 +2310,6 @@ static void command_event_execute(int idx) {
 
         transmitting_popup = popup_create_container(lv_scr_act(), 200, 60);
         lv_obj_center(transmitting_popup);
-        // override to keep exact original style
-        lv_obj_set_style_bg_color(transmitting_popup, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_border_width(transmitting_popup, 2, 0);
-        lv_obj_set_style_border_color(transmitting_popup, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_radius(transmitting_popup, 5, 0);
         lv_obj_clear_flag(transmitting_popup, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t *label = lv_label_create(transmitting_popup);
@@ -2421,11 +2442,6 @@ static void create_unified_learning_popup(learning_popup_type_t type, learning_p
     }
 
     lv_obj_center(popup);
-    // keep exact original styling
-    lv_obj_set_style_bg_color(popup, lv_color_hex(0x2E2E2E), 0);
-    lv_obj_set_style_border_color(popup, lv_color_hex(0x555555), 0);
-    lv_obj_set_style_border_width(popup, 2, 0);
-    lv_obj_set_style_radius(popup, 10, 0);
 
     // compute responsive button sizes/positions to avoid overlap on small screens
     lv_coord_t pw = lv_obj_get_width(popup);
@@ -2877,12 +2893,19 @@ void update_signal_preview_selection(void)
     if (!save_btn || !cancel_btn) return;
     
     // Update button styles based on selection
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
+    lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+
     if (preview_selected_option == 0) {
-        // Save selected - white background, black text
-        lv_obj_set_style_bg_color(save_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(save_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        // Save selected - theme accent background
+        lv_obj_set_style_bg_color(save_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(save_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *save_label = lv_obj_get_child(save_btn, 0);
-        if (save_label) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
+        if (save_label) {
+            if (theme == 3) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
+            else lv_obj_set_style_text_color(save_label, lv_color_hex(0xFFFFFF), 0);
+        }
         
         // Cancel unselected - dark background, white text
         lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2890,11 +2913,14 @@ void update_signal_preview_selection(void)
         lv_obj_t *cancel_label = lv_obj_get_child(cancel_btn, 0);
         if (cancel_label) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
     } else {
-        // Cancel selected - white background, black text
-        lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        // Cancel selected - theme accent background
+        lv_obj_set_style_bg_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(cancel_btn, 0);
-        if (cancel_label) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+        if (cancel_label) {
+            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
+        }
         
         // Save unselected - dark background, white text
         lv_obj_set_style_bg_color(save_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2909,11 +2935,17 @@ void update_learning_popup_selection(void)
 {
     if (!learning_cancel_btn) return;
     if (preview_selected_option == 1) {
-        // Cancel selected - white background, black text
-        lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(learning_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        // Cancel selected - theme accent background
+        uint8_t theme = settings_get_menu_theme(&G_Settings);
+        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
+        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_obj_set_style_bg_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(learning_cancel_btn, 0);
-        if (cancel_label) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+        if (cancel_label) {
+            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
+        }
     } else {
         // Cancel unselected - dark background, white text
         lv_obj_set_style_bg_color(learning_cancel_btn, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2930,11 +2962,17 @@ void update_easy_learn_popup_selection(void)
     
     // Update Cancel button
     if (easy_learn_selected_option == 0) {
-        // Cancel selected - white background, black text
-        lv_obj_set_style_bg_color(easy_learn_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(easy_learn_cancel_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        // Cancel selected - theme accent background
+        uint8_t theme = settings_get_menu_theme(&G_Settings);
+        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
+        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_obj_set_style_bg_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(easy_learn_cancel_btn, 0);
-        if (cancel_label) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+        if (cancel_label) {
+            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
+        }
     } else {
         // Cancel unselected - dark background, white text
         lv_obj_set_style_bg_color(easy_learn_cancel_btn, lv_color_hex(0x555555), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2945,11 +2983,17 @@ void update_easy_learn_popup_selection(void)
     
     // Update Skip button
     if (easy_learn_selected_option == 1) {
-        // Skip selected - white background, black text
-        lv_obj_set_style_bg_color(easy_learn_skip_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(easy_learn_skip_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        // Skip selected - theme accent background
+        uint8_t theme = settings_get_menu_theme(&G_Settings);
+        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
+        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_obj_set_style_bg_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *skip_label = lv_obj_get_child(easy_learn_skip_btn, 0);
-        if (skip_label) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
+        if (skip_label) {
+            if (theme == 3) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
+            else lv_obj_set_style_text_color(skip_label, lv_color_hex(0xFFFFFF), 0);
+        }
     } else {
         // Skip unselected - dark background, white text
         lv_obj_set_style_bg_color(easy_learn_skip_btn, lv_color_hex(0x555555), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -3175,16 +3219,6 @@ void create_easy_learn_popup(void)
 
 void create_signal_preview_popup(void)
 {
-    // Initialize popup style if not already done
-    if (!popup_style_initialized) {
-        lv_style_init(&popup_style);
-        lv_style_set_bg_color(&popup_style, lv_color_hex(0x222222));
-        lv_style_set_border_color(&popup_style, lv_color_hex(0xFFFFFF));
-        lv_style_set_border_width(&popup_style, 1);
-        lv_style_set_radius(&popup_style, 8);
-        popup_style_initialized = true;
-    }
-    
     // Create popup container responsively (works for both landscape and vertical)
     lv_coord_t scr_w = LV_HOR_RES;
     lv_coord_t scr_h = LV_VER_RES;
@@ -3196,7 +3230,6 @@ void create_signal_preview_popup(void)
     if (base_h < 120) base_h = 120;
     signal_preview_popup = popup_create_container(lv_scr_act(), base_w, base_h);
     lv_obj_center(signal_preview_popup);
-    lv_obj_add_style(signal_preview_popup, &popup_style, 0);
     
     // Remove scrollbars and ensure content fits
     lv_obj_set_scrollbar_mode(signal_preview_popup, LV_SCROLLBAR_MODE_OFF);

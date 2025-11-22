@@ -1071,16 +1071,19 @@ static void highlight_selected(void) {
         if (!child) continue;
         lv_obj_t *label = lv_obj_get_child(child, 0);
         if (i == selected_index) {
-            update_selected_style_from_theme();
-            lv_obj_add_style(child, &style_selected_item, 0);
+            uint8_t theme = settings_get_menu_theme(&G_Settings);
+            if (theme >= 15) theme = 0;
+            lv_color_t accent = lv_color_hex(theme_palettes[theme][0]);
+            lv_obj_set_style_bg_color(child, accent, LV_PART_MAIN);
             if (label) {
-                uint8_t theme = settings_get_menu_theme(&G_Settings);
                 if (theme == 3) lv_obj_set_style_text_color(label, lv_color_hex(0x000000), 0);
                 else lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
             }
             lv_obj_scroll_to_view(child, LV_ANIM_OFF);
         } else {
-            lv_obj_remove_style(child, &style_selected_item, 0);
+            bool zebra = settings_get_zebra_menus_enabled(&G_Settings);
+            uint32_t base = zebra && (i % 2) ? 0x232323 : 0x1E1E1E;
+            lv_obj_set_style_bg_color(child, lv_color_hex(base), LV_PART_MAIN);
             if (label) lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
         }
     }
