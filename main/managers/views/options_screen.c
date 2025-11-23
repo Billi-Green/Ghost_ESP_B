@@ -34,9 +34,9 @@ static const char **evil_portal_options = NULL;
 
 #define KARMA_MAX_SSIDS 64
 
-static const char *TAG = "optionsScreen";
+ static const char *TAG = "optionsScreen";
 
-static const char *settings_categories[] = {"Display", "Hardware config", NULL};
+static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
 
 typedef enum {
     SETTINGS_CATEGORY_DISPLAY,
@@ -50,26 +50,24 @@ static int current_settings_category = -1;
 // Each sub-array lists the indices of settings_items[] that belong to a category.
 // The last element in each sub-array must be -1 to mark the end.
 //
-// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 9, 11, 12) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
-// Category 0: "Display" (indices: 1, 2, 5, 3, 4, 10, 11) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
-// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 10) when CONFIG_LV_DISP_BACKLIGHT_PWM enabled
-// Category 1: "Hardware config"  (indices: 0, 6, 7, 8, 9) when CONFIG_LV_DISP_BACKLIGHT_PWM disabled
-// Example: settings_category_indices[0] lists settings for "Display" category.
+// Category 0: "Display & UI" groups visual and navigation-related options.
+// Category 1: "System & Hardware" groups network, power, LED and control options.
+// Example: settings_category_indices[0] lists settings for category index 0.
 static int settings_category_indices[][16] = {
     #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 2, 5, 3, 4, 9, 11, 12, 13,
+        {1, 9, 2, 13, 4, 5, 11, 12,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         14, 15,
 #endif
-        -1}, // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Max Brightness, Zebra Menus, Navigation Buttons, Menu Layout, Idle Animation
-        {0, 6, 7, 8, 10, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
+        -1}, // Display & UI (PWM): Display Timeout, Max Brightness, Menu Theme, Menu Layout, Terminal Color, Invert Colors, Zebra Menus, Navigation Buttons, Idle Animation, Idle Anim Delay
+        {6, 7, 8, 0, 10, 3, -1}, // System & Hardware (PWM): Web Auth, AP Enabled, Power Saving Mode, RGB Mode, Neopixel Brightness, Third Control
     #else
-        {1, 2, 5, 3, 4, 10, 11, 12,
+        {1, 2, 12, 4, 5, 10, 11,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         13, 14,
 #endif
-        -1},     // Display: Display Timeout, Menu Theme, Invert Colors, Third Control, Terminal Color, Zebra Menus, Navigation Buttons, Menu Layout, Idle Animation
-        {0, 6, 7, 8, 9, -1}, // Hardware config: RGB Mode, Web Auth, AP Enabled, Power Saving Mode, Neopixel Brightness
+        -1}, // Display & UI (no PWM): Display Timeout, Menu Theme, Menu Layout, Terminal Color, Invert Colors, Zebra Menus, Navigation Buttons, Idle Animation, Idle Anim Delay
+        {6, 7, 8, 0, 9, 3, -1}, // System & Hardware (no PWM): Web Auth, AP Enabled, Power Saving Mode, RGB Mode, Neopixel Brightness, Third Control
     #endif
 };
 
@@ -411,6 +409,42 @@ static const char **current_options_list = NULL;
 static int build_item_index = 0;
 static int button_height_global = 0;
 static bool is_small_screen_global = false;
+
+static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
+    if (!btn || !lv_obj_is_valid(btn)) return;
+
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    if (!label) return;
+
+    lv_obj_t *left = lv_label_create(btn);
+    lv_label_set_text(left, LV_SYMBOL_LEFT);
+
+    lv_obj_t *right = lv_label_create(btn);
+    lv_label_set_text(right, LV_SYMBOL_RIGHT);
+
+    lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_left(btn, 8, 0);
+    lv_obj_set_style_pad_right(btn, 8, 0);
+
+    const lv_font_t *font = (button_height_global <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+    lv_obj_set_style_text_font(left, font, 0);
+    lv_obj_set_style_text_font(right, font, 0);
+
+    lv_obj_set_user_data(left, (void *)2);
+    lv_obj_set_user_data(right, (void *)2);
+
+#ifndef CONFIG_USE_TOUCHSCREEN
+    lv_obj_add_flag(left, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(right, LV_OBJ_FLAG_HIDDEN);
+#endif
+
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label, LV_SIZE_CONTENT);
+
+    lv_obj_move_to_index(left, 0);
+    lv_obj_move_to_index(label, 1);
+}
 
 // helper to show/hide touch scroll buttons based on list overflow
 static void update_scroll_buttons_visibility(void) {
@@ -905,12 +939,22 @@ static void change_setting_value(int setting_index, bool increment) {
     
     lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
     if (current_item) {
-        lv_obj_t *label = lv_obj_get_child(current_item, 0);
+        lv_obj_t *label = NULL;
+        uint32_t child_cnt = lv_obj_get_child_cnt(current_item);
+        for (uint32_t i = 0; i < child_cnt; ++i) {
+            lv_obj_t *child = lv_obj_get_child(current_item, (int32_t)i);
+            if (!child) continue;
+            if (lv_obj_get_user_data(child) == (void *)1) {
+                label = child;
+                break;
+            }
+        }
+        if (!label && child_cnt > 0) {
+            label = lv_obj_get_child(current_item, 0);
+        }
         if (label) {
             char buf[128];
-            snprintf(buf, sizeof(buf), "%s %s: %s %s", 
-                    LV_SYMBOL_LEFT, item->label, 
-                    item->value_options[new_value], LV_SYMBOL_RIGHT);
+            snprintf(buf, sizeof(buf), "%s: %s", item->label, item->value_options[new_value]);
             lv_label_set_text(label, buf);
         }
     }
@@ -2718,11 +2762,12 @@ static void menu_builder_cb(lv_timer_t *t)
                     int setting_idx = indices[build_item_index];
                     SettingsItem *item = &settings_items[setting_idx];
                     char buf[128];
-                    snprintf(buf, sizeof(buf), "%s %s: %s %s", LV_SYMBOL_LEFT, item->label, item->value_options[item->current_value], LV_SYMBOL_RIGHT);
+                    snprintf(buf, sizeof(buf), "%s: %s", item->label, item->value_options[item->current_value]);
                     lv_obj_t *btn = options_view_add_item(g_options_view, buf, option_event_cb, (void *)(intptr_t)setting_idx);
                     if (!btn) break;
                     lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
                     lv_obj_set_height(btn, button_height_global);
+                    decorate_settings_row_with_arrows(btn);
                     num_items++;
                     built_this_tick++;
                     build_item_index++;

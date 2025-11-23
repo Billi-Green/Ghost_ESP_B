@@ -12,6 +12,7 @@
 - Added Flipper NFC parser compatibility layer and SmartRider card support
 - Avoid redundant PN532 Mifare Classic reads for a minor speed up
 - Apps menu now follows main menu theme, controls and layout
+- Reorganised the settings menu and adjusted styling
 
 ## Revival v1.8.1
 
