@@ -2,6 +2,7 @@
 
 ## Revival v1.9
 
+- Added IR CLI support
 - Fixed TEmbed C1101-specific hardware initialization running on all encoder configs
 - Refactors to NFC logic to make more maintainable
 - After scanning, NFC popup title now specifies the tag type
@@ -10,7 +11,7 @@
 - Main menu app colors are now consistent across devices
 - Added Flipper NFC parser compatibility layer and SmartRider card support
 - Avoid redundant PN532 Mifare Classic reads for a minor speed up
-- Apps menu now follows main menu theme, controls, and layout
+- Apps menu now follows main menu theme, controls and layout
 
 ## Revival v1.8.1
 
