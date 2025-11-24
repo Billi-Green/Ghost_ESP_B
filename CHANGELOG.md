@@ -10,7 +10,7 @@
   - Metromoney
   - Bip
   - CharlieCard
-  - Disney Infinity
+  - Disney Infinity (Verified working)
   - HI!
   - HID PACS
   - H World
