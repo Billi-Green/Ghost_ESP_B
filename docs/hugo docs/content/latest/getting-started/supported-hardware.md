@@ -259,10 +259,10 @@ The following table lists the vendor-specific boards supported by GhostESP with 
       <tr><td>Lolin S3 Pro</td><td><code>Lolin_S3_Pro.zip</code></td><td><img src="../images/lolin_s3_pro.jpg" alt="Lolin S3 Pro"></td></tr>
       <tr><td>Flipper JCMK GPS</td><td><code>Flipper_JCMK_GPS.zip</code></td><td><img src="../images/flipper_wifi_devboard.jpg" alt="Flipper Wifi Dev Board + JCMK GPS Mod"></td></tr>
       <tr><td>JC3248W535EN</td><td><code>JC3248W535EN_LCD.zip</code></td><td></td></tr>
-      <tr><td>Wired Hatters ESPRocket</td><td><code>ESP32S3-Generic.zip</code></td><td><img src="../images/wired_hatters_rocket.jpg" alt="Wired Hatters ESPRocket"></td></tr>
-      <tr><td>Wired Hatters Ultimate Marauder</td><td>Red Port: <code>ESP32-Generic.zip</code> and Blue Port: <code>MarauderV4_FlipperHub.zip</code></td><td><img src="../images/wired_hatters_ultimate_marauder.jpg" alt="Wired Hatters Ultimate Marauder"></td></tr>
+      <tr><td>Wired Hatters ESPRocket</td><td><code>esp32-generic.zip</code></td><td><img src="../images/wired_hatters_rocket.jpg" alt="Wired Hatters ESPRocket"></td></tr>
+      <tr><td>Wired Hatters Ultimate Marauder</td><td>Red Port: <code>esp32-generic.zip</code> and Blue Port: <code>MarauderV4_FlipperHub.zip</code></td><td><img src="../images/wired_hatters_ultimate_marauder.jpg" alt="Wired Hatters Ultimate Marauder"></td></tr>
     </tbody>
   </table>
 </div>
 
-*Note: Images are being added as they become available. Build names are the exact .zip filenames from the [v1.8 release assets](https://github.com/jaylikesbunda/Ghost_ESP/releases/tag/v1.8).*
+> **Note:** Images are being added as they become available.
