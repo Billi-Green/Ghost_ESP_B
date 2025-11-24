@@ -13,6 +13,10 @@
 - Avoid redundant PN532 Mifare Classic reads for a minor speed up
 - Apps menu now follows main menu theme, controls and layout
 - Reorganised the settings menu and adjusted styling
+- Fixed BLE scanning not being reliable
+- Added AirTag RSSI update logging so existing tags report RSSI changes every few seconds
+
+
 
 ## Revival v1.8.1
 
