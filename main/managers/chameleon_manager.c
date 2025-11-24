@@ -786,7 +786,7 @@ static int chameleon_notification_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
     
     uint16_t data_len = ctxt->om->om_len;
-    ESP_LOGI(TAG, "Notification received, length: %d", data_len);
+    ESP_LOGD(TAG, "Notification received, length: %d", data_len);
     
     // Minimum Chameleon Ultra response is 10 bytes
     if (data_len >= 10) {
@@ -797,7 +797,7 @@ static int chameleon_notification_cb(uint16_t conn_handle, uint16_t attr_handle,
         g_last_response.status = data[5];
         g_last_response.data_size = data[7];
         
-        ESP_LOGI(TAG, "Response - Command: 0x%04X, Status: 0x%02X, Data size: %d", 
+        ESP_LOGD(TAG, "Response - Command: 0x%04X, Status: 0x%02X, Data size: %d", 
                 g_last_response.command, g_last_response.status, g_last_response.data_size);
         
         // Safely copy data if present and valid
@@ -905,7 +905,7 @@ static bool send_command(uint16_t cmd, uint8_t *data, size_t data_len) {
     
     size_t total_len = 10 + data_len;
     
-    ESP_LOGI(TAG, "Sending command 0x%04X with %d bytes data", cmd, (int)data_len);
+    ESP_LOGD(TAG, "Sending command 0x%04X with %d bytes data", cmd, (int)data_len);
     
     // Reset response flag
     g_response_received = false;
@@ -1011,7 +1011,7 @@ static int chameleon_gap_event_handler(struct ble_gap_event *event, void *arg) {
             break;
             
         case BLE_GAP_EVENT_NOTIFY_RX:
-            ESP_LOGI(TAG, "Notification received on handle 0x%04X", event->notify_rx.attr_handle);
+            ESP_LOGD(TAG, "Notification received on handle 0x%04X", event->notify_rx.attr_handle);
             
             // Check if this is from our RX characteristic
             if (event->notify_rx.attr_handle == g_rx_char_handle) {
