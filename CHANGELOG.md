@@ -18,7 +18,7 @@
   - Microel
   - MiZIP
   - Plantain
-  - Saflok
+  - Saflok (Verified working)
   - Skylanders (Verified working)
   - SmartRider (Verified working)
   - Social Moscow
