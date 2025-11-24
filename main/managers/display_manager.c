@@ -26,6 +26,8 @@
 #include "core/serial_manager.h"
 #include "managers/wifi_manager.h"
 #include "driver/i2c.h"
+#include "soc/soc_caps.h"
+#include "io_manager/i2c_bus_lock.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -609,14 +611,22 @@ void fade_out_ready_cb(lv_anim_t *anim) {
 
     new_view->create();
 
-    // Avoid running the per-tick fade animation for the keyboard view because
-    // the opacity animation forces heavy draw work (masks/labels) and can
-    // starve the LVGL tick/watchdog during the keyboard fade-in.
+    // Avoid running the per-tick fade animation for specific heavy views
+    // because the opacity animation forces heavy draw work (masks/labels)
+    // and can starve the LVGL tick/watchdog during the fade-in.
     if (new_view->name && strcmp(new_view->name, "Keyboard Screen") == 0) {
       if (new_view->root) {
         // make fully opaque immediately
         lv_obj_set_style_opa(new_view->root, LV_OPA_COVER, 0);
         // temporarily remove rounded radii to avoid expensive mask draws
+        set_radius_recursive(new_view->root, 0);
+      }
+      if (status_bar) lv_obj_set_style_opa(status_bar, LV_OPA_COVER, 0);
+    } else if (new_view->name && strcmp(new_view->name, "Options Screen") == 0 && SelectedMenuType == OT_DualComm) {
+      if (new_view->root) {
+        // For the large Dual Comm options list, skip fade-in to keep
+        // LVGL's tick task lightweight.
+        lv_obj_set_style_opa(new_view->root, LV_OPA_COVER, 0);
         set_radius_recursive(new_view->root, 0);
       }
       if (status_bar) lv_obj_set_style_opa(status_bar, LV_OPA_COVER, 0);
@@ -955,6 +965,12 @@ void apply_power_management_config(bool power_save_enabled) {
 
 void display_manager_init(void) {
 
+  static bool lvgl_lock_registered = false;
+  if (!lvgl_lock_registered) {
+    lvgl_i2c_locking(i2c_bus_get_lock_handle());
+    lvgl_lock_registered = true;
+  }
+
   esp_pm_config_esp32_t pm_cfg = {
     .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
     .min_freq_mhz = 80,
@@ -1147,6 +1163,17 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 #endif
 
 #ifdef CONFIG_USE_ENCODER
+#ifdef CONFIG_USE_IO_EXPANDER
+    // Encoder on IO expander - use virtual pin numbers (P05=5, P06=6, P07=7)
+    // These are IO expander pins, not ESP32 GPIOs
+    encoder_init(&g_encoder,
+                 5,  // P05 = encoder A on IO expander
+                 6,  // P06 = encoder B on IO expander  
+                 false,  // pullups handled by TCA9535
+                 ENCODER_LATCH_FOUR3);
+    joystick_init(&enc_button, 7, 500 /*hold ms*/, false); // P07 = encoder button
+#else
+    // Direct GPIO encoder (TEmbed C1101)
     encoder_init(&g_encoder,
                  CONFIG_ENCODER_INA,
                  CONFIG_ENCODER_INB,
@@ -1155,8 +1182,13 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
     joystick_init(&enc_button, CONFIG_ENCODER_KEY,
                   500 /*hold ms*/, true);
 
-    // initialize IO6 exit button
-    joystick_init(&exit_button, 6, 500 /*hold ms*/, true);
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    // GPIO 6 exit button is TEmbed C1101 only
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "LilyGo TEmbedC1101") == 0) {
+        joystick_init(&exit_button, 6, 500 /*hold ms*/, true);
+    }
+#endif
+#endif
 #endif
 // initialize wake button interrupt
 #ifdef CONFIG_IS_S3TWATCH
@@ -1464,7 +1496,7 @@ void hardware_input_task(void *pvParameters) {
     /* direction events */
     int8_t dir = encoder_get_direction(&g_encoder);
     if (dir) {
-        // treat an encoder turn as “touch”
+        // treat an encoder turn as "touch"
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
           set_backlight_brightness(100);
@@ -1480,9 +1512,9 @@ void hardware_input_task(void *pvParameters) {
         }
     }
 
-    /* push-switch -> treat like “button” */
+    /* push-switch -> treat like "button" */
     if (joystick_just_pressed(&enc_button)) {
-        // treat an encoder click as “touch”
+        // treat an encoder click as "touch"
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
           set_backlight_brightness(100);
@@ -1499,30 +1531,31 @@ void hardware_input_task(void *pvParameters) {
     }
 #endif
 
-#ifdef CONFIG_USE_ENCODER
-    // check IO6 exit button
-    if (joystick_just_pressed(&exit_button)) {
-        last_touch_time = xTaskGetTickCount();
-        if (is_backlight_dimmed) {
-          set_backlight_brightness(100);
-          is_backlight_dimmed = false;
-        } else {
-          InputEvent ev = {
-              .type = INPUT_TYPE_EXIT_BUTTON,
-              .data.exit_pressed = true
-          };
-          xQueueSend(input_queue, &ev, 0);
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "LilyGo TEmbedC1101") == 0) {
+        // check IO6 exit button (TEmbed C1101 only)
+        if (joystick_just_pressed(&exit_button)) {
+            last_touch_time = xTaskGetTickCount();
+            if (is_backlight_dimmed) {
+              set_backlight_brightness(100);
+              is_backlight_dimmed = false;
+            } else {
+              InputEvent ev = {
+                  .type = INPUT_TYPE_EXIT_BUTTON,
+                  .data.exit_pressed = true
+              };
+              xQueueSend(input_queue, &ev, 0);
+            }
         }
-    }
 
-    // Check for 7-second hold to enter deep sleep
-    if (joystick_get_button_state(&exit_button) && exit_button.pressed) {
+        // Check for 7-second hold to enter deep sleep
+        if (joystick_get_button_state(&exit_button) && exit_button.pressed) {
         uint32_t elapsed = (esp_timer_get_time() / 1000) - exit_button.hold_init;
         if (elapsed >= 7000 && !exit_button.deep_sleep_triggered) { // 7 seconds
             ESP_LOGI("DeepSleep", "IO6 held for 7 seconds, preparing for deep sleep");
             exit_button.deep_sleep_triggered = true;
 
-            // Pull IO15 low before sleep
+            // Pull IO15 low before sleep (TEmbed C1101 power control)
             gpio_set_level(15, 0);
             ESP_LOGI("DeepSleep", "IO15 pulled low");
 
@@ -1551,15 +1584,20 @@ void hardware_input_task(void *pvParameters) {
             io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
             gpio_config(&io_conf);
 
-            // Configure IO6 as wake source for a new press using EXT0
-            esp_err_t ret = esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 0); // Wake on low level (button press)
+#if SOC_PM_SUPPORT_EXT0_WAKEUP
+            esp_err_t ret = esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 0);
+#elif SOC_PM_SUPPORT_EXT1_WAKEUP
+            esp_err_t ret = esp_sleep_enable_ext1_wakeup_io(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ALL_LOW);
+#else
+            esp_err_t ret = ESP_ERR_NOT_SUPPORTED;
+#endif
             if (ret != ESP_OK) {
                 ESP_LOGE("DeepSleep", "Failed to configure wake-up source: %s", esp_err_to_name(ret));
                 exit_button.deep_sleep_triggered = false;
                 gpio_set_level(15, 1); // Restore IO15 high
                 return;
             }
-            ESP_LOGI("DeepSleep", "Wake-up source configured for new button press using EXT0");
+            ESP_LOGI("DeepSleep", "Wake-up source configured for new button press");
 
             ESP_LOGI("DeepSleep", "Entering deep sleep now...");
             vTaskDelay(pdMS_TO_TICKS(200)); // Give time for log to print
@@ -1571,9 +1609,10 @@ void hardware_input_task(void *pvParameters) {
             // Enter deep sleep
             esp_deep_sleep_start();
         }
-    } else {
-        // Reset deep sleep trigger when button is released
-        exit_button.deep_sleep_triggered = false;
+        } else {
+            // Reset deep sleep trigger when button is released
+            exit_button.deep_sleep_triggered = false;
+        }
     }
 #endif
 

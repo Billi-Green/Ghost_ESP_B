@@ -4,6 +4,7 @@
  */
 
 #include "managers/chameleon_manager.h"
+#include "managers/nfc/mifare_attack.h"
 #include "managers/ble_manager.h"
 #ifdef CONFIG_NFC_CHAMELEON
 #include "host/ble_hs.h"
@@ -28,6 +29,7 @@
 #include "managers/nfc/ntag_t2.h"
 #include "managers/nfc/mifare_classic.h"
 #include "managers/nfc/ndef.h"
+#include "managers/nfc/flipper_nfc_compat.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -59,6 +61,21 @@ extern const uint8_t _binary_mf_classic_dict_nfc_end[]   asm("_binary_mf_classic
 // ui hooks from nfc view (weak)
 extern void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) __attribute__((weak));
 extern void mfc_ui_set_cache_mode(bool on) __attribute__((weak));
+
+static const mfc_attack_hooks_t *g_cu_attack_hooks = NULL;
+
+static inline void cu_call_on_phase(int sector, int first_block, bool key_b, int total_keys) {
+    if (g_cu_attack_hooks && g_cu_attack_hooks->on_phase) g_cu_attack_hooks->on_phase(sector, first_block, key_b, total_keys);
+}
+static inline void cu_call_on_cache_mode(bool on) {
+    if (g_cu_attack_hooks && g_cu_attack_hooks->on_cache_mode) g_cu_attack_hooks->on_cache_mode(on);
+}
+static inline bool cu_call_should_cancel(void) {
+    return (g_cu_attack_hooks && g_cu_attack_hooks->should_cancel) ? g_cu_attack_hooks->should_cancel() : false;
+}
+static inline bool cu_call_should_skip_dict(void) {
+    return (g_cu_attack_hooks && g_cu_attack_hooks->should_skip_dict) ? g_cu_attack_hooks->should_skip_dict() : false;
+}
 
 // Global state
 static bool g_is_initialized = false;
@@ -565,8 +582,8 @@ static bool cu_try_known_keys_first(MFC_TYPE t, int target_sector, uint8_t auth_
         if (is_b && !g_cu_mfc_cache.key_b_valid) continue;
         if (!is_b && !g_cu_mfc_cache.key_a_valid) continue;
         for (int s = 0; s < sectors && !*authed; ++s) {
-            if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) return true;
-            if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) return true;
+            if (cu_call_should_cancel()) return true;
+            if (cu_call_should_skip_dict()) return true;
             if (s == target_sector) continue;
             if (!cu_sector_key_known(s, is_b)) continue;
             const uint8_t *kptr = is_b ? &g_cu_mfc_cache.key_b[s * 6] : &g_cu_mfc_cache.key_a[s * 6];
@@ -647,20 +664,19 @@ static void cu_key_reuse_sweep(MFC_TYPE t, bool use_key_b, const uint8_t key[6],
     cu_sweep_mark(use_key_b, key);
     int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
     for (int s = 0; s < sectors; ++s) {
-        if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
+        if (cu_call_should_cancel()) break;
         if (s == current_sector) continue;
         if (cu_sector_key_known(s, use_key_b)) continue;
         int auth_blk = mfc_first_block_of_sector(t, s);
         if (s == 0) auth_blk = auth_blk + 1;
         if (cu_mf1_auth_one_block((uint8_t)auth_blk, use_key_b, key)) {
             cu_mfc_cache_record_sector_key(s, use_key_b, key);
-            if (mfc_ui_set_phase) mfc_ui_set_phase(s, mfc_first_block_of_sector(t, s), use_key_b, 0);
+            cu_call_on_phase(s, mfc_first_block_of_sector(t, s), use_key_b, 0);
             cu_read_sector_blocks(t, s);
         }
         if ((s & 0x3) == 0) vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
-
 
 static char *g_cached_details_text = NULL;
 static uint32_t g_cached_details_session = 0;
@@ -770,7 +786,7 @@ static int chameleon_notification_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
     
     uint16_t data_len = ctxt->om->om_len;
-    ESP_LOGI(TAG, "Notification received, length: %d", data_len);
+    ESP_LOGD(TAG, "Notification received, length: %d", data_len);
     
     // Minimum Chameleon Ultra response is 10 bytes
     if (data_len >= 10) {
@@ -781,7 +797,7 @@ static int chameleon_notification_cb(uint16_t conn_handle, uint16_t attr_handle,
         g_last_response.status = data[5];
         g_last_response.data_size = data[7];
         
-        ESP_LOGI(TAG, "Response - Command: 0x%04X, Status: 0x%02X, Data size: %d", 
+        ESP_LOGD(TAG, "Response - Command: 0x%04X, Status: 0x%02X, Data size: %d", 
                 g_last_response.command, g_last_response.status, g_last_response.data_size);
         
         // Safely copy data if present and valid
@@ -889,7 +905,7 @@ static bool send_command(uint16_t cmd, uint8_t *data, size_t data_len) {
     
     size_t total_len = 10 + data_len;
     
-    ESP_LOGI(TAG, "Sending command 0x%04X with %d bytes data", cmd, (int)data_len);
+    ESP_LOGD(TAG, "Sending command 0x%04X with %d bytes data", cmd, (int)data_len);
     
     // Reset response flag
     g_response_received = false;
@@ -995,7 +1011,7 @@ static int chameleon_gap_event_handler(struct ble_gap_event *event, void *arg) {
             break;
             
         case BLE_GAP_EVENT_NOTIFY_RX:
-            ESP_LOGI(TAG, "Notification received on handle 0x%04X", event->notify_rx.attr_handle);
+            ESP_LOGD(TAG, "Notification received on handle 0x%04X", event->notify_rx.attr_handle);
             
             // Check if this is from our RX characteristic
             if (event->notify_rx.attr_handle == g_rx_char_handle) {
@@ -2262,8 +2278,62 @@ char *chameleon_manager_build_cached_details(void) {
     if (g_cu_mfc_cache.valid) {
         size_t cap = 512; size_t len = 0; char *out = (char*)malloc(cap); if (!out) return NULL; out[0] = '\0';
         MFC_TYPE t = g_cu_mfc_cache.type; int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
+
+        // Try Flipper parsers first (heap allocation to avoid stack overflow)
+        MfClassicData* flipper_data = (MfClassicData*)calloc(1, sizeof(MfClassicData));
+        if (!flipper_data) goto skip_flipper_parse;
+        flipper_data->type = (t == MFC_4K) ? MfClassicType4k : (t == MFC_MINI) ? MfClassicTypeMini : MfClassicType1k;
+        
+        // Copy blocks
+        if (g_cu_mfc_cache.blocks && g_cu_mfc_cache.known_bits) {
+            int max_blocks = g_cu_mfc_cache.total_blocks;
+            if (max_blocks > 256) max_blocks = 256;
+            for (int b = 0; b < max_blocks; b++) {
+                if (cu_bitset_test(g_cu_mfc_cache.known_bits, b)) {
+                    memcpy(flipper_data->block[b].data, &g_cu_mfc_cache.blocks[b * 16], 16);
+                    flipper_data->block_read_mask[b / 8] |= (1 << (b % 8));
+                }
+            }
+        }
+        // Copy keys into synthetic trailers
+        for (int s = 0; s < sectors; s++) {
+            int trailer_idx = mfc_first_block_of_sector(t, s) + mfc_blocks_in_sector(t, s) - 1;
+            if (trailer_idx < 256) {
+                bool haveA = g_cu_mfc_cache.key_a_valid && cu_bitset_test(g_cu_mfc_cache.key_a_valid, s);
+                bool haveB = g_cu_mfc_cache.key_b_valid && cu_bitset_test(g_cu_mfc_cache.key_b_valid, s);
+                if (haveA && g_cu_mfc_cache.key_a) {
+                    memcpy(flipper_data->block[trailer_idx].data, &g_cu_mfc_cache.key_a[s * 6], 6);
+                } else {
+                    memset(flipper_data->block[trailer_idx].data, 0xFF, 6);
+                }
+                // Access bits default
+                flipper_data->block[trailer_idx].data[6] = 0xFF;
+                flipper_data->block[trailer_idx].data[7] = 0x07;
+                flipper_data->block[trailer_idx].data[8] = 0x80;
+                flipper_data->block[trailer_idx].data[9] = 0x69;
+                if (haveB && g_cu_mfc_cache.key_b) {
+                    memcpy(flipper_data->block[trailer_idx].data + 10, &g_cu_mfc_cache.key_b[s * 6], 6);
+                } else {
+                    memset(flipper_data->block[trailer_idx].data + 10, 0xFF, 6);
+                }
+                // Mark trailer as read so plugin sees it
+                flipper_data->block_read_mask[trailer_idx / 8] |= (1 << (trailer_idx % 8));
+            }
+        }
+
+        char* plugin_text = flipper_nfc_try_parse_mfclassic_from_cache(flipper_data);
+        free(flipper_data); // Done with flipper_data
+        flipper_data = NULL;
+        
+        if (plugin_text) {
+            if (!cu_details_append(&out, &cap, &len, "%s\n", plugin_text)) { free(plugin_text); free(out); return NULL; }
+            free(plugin_text);
+        }
+
+skip_flipper_parse:
         // Header like PN532
         if (!cu_details_append(&out, &cap, &len, "Card: %s | UID:", cu_mfc_type_str(t))) { free(out); return NULL; }
+
         for (uint8_t i = 0; i < g_cu_mfc_cache.uid_len; ++i) {
             if (!cu_details_append(&out, &cap, &len, " %02X", g_cu_mfc_cache.uid[i])) { free(out); return NULL; }
         }
@@ -3068,6 +3138,10 @@ bool chameleon_manager_mf1_has_cache(void){
 
 static void cu_progress(int current, int total){ if (g_progress_cb) g_progress_cb(current, total, g_progress_user); }
 
+void chameleon_manager_set_attack_hooks(const mfc_attack_hooks_t *hooks) {
+    g_cu_attack_hooks = hooks;
+}
+
 bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
     if (!chameleon_manager_is_ready()) return false;
     if (!g_last_hf_scan.valid) { if (!chameleon_manager_scan_hf()) return false; }
@@ -3089,7 +3163,7 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
 
     int sectors = mfc_sector_count(t); if (sectors == 0) sectors = 16;
     for (int s = 0; s < sectors; ++s) {
-        if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
+        if (cu_call_should_cancel()) break;
         if (cu_sector_any_key_known(s)) continue;
         int first = mfc_first_block_of_sector(t, s);
         int blocks_in_sector = mfc_blocks_in_sector(t, s);
@@ -3107,7 +3181,7 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
             tried = total_attempts;
         }
 
-        if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts);
+        cu_call_on_phase(s, first, false, total_attempts);
         cu_progress(0, total_attempts);
 
         // Fast-path: ask firmware to try all default keys at once on trailer block
@@ -3127,12 +3201,12 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
 
         if (!authed) {
             cu_try_known_keys_first(t, s, auth_blk, &authed, &usedB, &used_key, &tried, &total_attempts);
-            if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
-            if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break;
+            if (cu_call_should_cancel()) break;
+            if (cu_call_should_skip_dict()) break;
         }
 
         for (int k = 0; !authed && k < def_count; ++k) {
-            if (&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) break;
+            if (cu_call_should_cancel()) break;
             if (cu_mf1_auth_one_block(auth_blk, false, CU_DEFAULT_KEYS[k])) { authed = true; usedB = false; used_key = CU_DEFAULT_KEYS[k]; }
             tried++; cu_progress(tried, total_attempts);
             if (!authed) {
@@ -3143,15 +3217,15 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
         }
 
         if (!authed && !skip_dict) {
-            if (!user_loaded) { user_count = cu_load_user_keys(&user_keys); user_loaded = true; total_attempts += (user_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts); }
+            if (!user_loaded) { user_count = cu_load_user_keys(&user_keys); user_loaded = true; total_attempts += (user_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; cu_call_on_phase(s, first, false, total_attempts); }
 #ifdef CONFIG_HAS_NFC
-            if (!emb_loaded) { emb_count = cu_load_embedded_keys(&emb_keys); emb_loaded = true; total_attempts += (emb_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, false, total_attempts); }
+            if (!emb_loaded) { emb_count = cu_load_embedded_keys(&emb_keys); emb_loaded = true; total_attempts += (emb_count * 2); if (total_attempts <= 0) total_attempts = tried > 0 ? tried : 1; cu_call_on_phase(s, first, false, total_attempts); }
 #endif
         }
 
         if (!authed && user_count > 0 && !skip_dict) {
             for (int i = 0; i < user_count && !authed; ++i) {
-                if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) break;
+                if (cu_call_should_cancel() || cu_call_should_skip_dict()) break;
                 if (cu_mf1_auth_one_block(auth_blk, false, &user_keys[i*6])) { authed = true; usedB = false; used_key = &user_keys[i*6]; }
                 tried++; cu_progress(tried, total_attempts);
                 if (!authed) {
@@ -3166,7 +3240,7 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
 #ifdef CONFIG_HAS_NFC
         if (!authed && emb_count > 0 && !skip_dict) {
             for (int i = 0; i < emb_count && !authed; ++i) {
-                if ((&nfc_is_scan_cancelled && nfc_is_scan_cancelled()) || (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested())) break;
+                if (cu_call_should_cancel() || cu_call_should_skip_dict()) break;
                 if (cu_mf1_auth_one_block(auth_blk, false, &emb_keys[i*6])) { authed = true; usedB = false; used_key = &emb_keys[i*6]; }
                 tried++; cu_progress(tried, total_attempts);
                 if (!authed) {
@@ -3184,8 +3258,8 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
                 cu_mfc_cache_record_sector_key(s, usedB, used_key);
                 cu_record_working_key(used_key, usedB);
             }
-            if (!cache_mode_on && mfc_ui_set_cache_mode) { mfc_ui_set_cache_mode(true); cache_mode_on = true; }
-            if (mfc_ui_set_phase) mfc_ui_set_phase(s, first, usedB, 0);
+            if (!cache_mode_on) { cu_call_on_cache_mode(true); cache_mode_on = true; }
+            cu_call_on_phase(s, first, usedB, 0);
             cu_read_sector_blocks(t, s);
             if (used_key) {
                 cu_key_reuse_sweep(t, usedB, used_key, s);
@@ -3197,9 +3271,9 @@ bool chameleon_manager_mf1_read_classic_with_dict(bool skip_dict){
     }
     if (user_keys) free(user_keys);
     if (emb_keys) free(emb_keys);
-    if (mfc_ui_set_phase) mfc_ui_set_phase(-1, -1, false, 0);
+    cu_call_on_phase(-1, -1, false, 0);
     g_cu_mfc_cache.valid = true;
-    if (cache_mode_on && mfc_ui_set_cache_mode) mfc_ui_set_cache_mode(false);
+    if (cache_mode_on) cu_call_on_cache_mode(false);
     if (g_cached_details_text) { free(g_cached_details_text); g_cached_details_text = NULL; }
     g_cached_details_text = chameleon_manager_build_cached_details();
     g_cached_details_session++;
