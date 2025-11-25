@@ -157,6 +157,7 @@ static lv_obj_t *saved_details_label = NULL;
 static lv_obj_t *saved_scroll = NULL;
 static int saved_popup_selected = 0;
 static bool saved_details_parsed_view = false;
+static bool saved_has_extra_details = false;
 static char *saved_details_text = NULL;
 static char g_saved_current_path[256] = {0};
 
@@ -2217,7 +2218,13 @@ static void update_saved_buttons_layout(void) {
 static void saved_update_button_labels(void) {
     if (saved_close_btn && lv_obj_is_valid(saved_close_btn)) {
         lv_obj_t *lbl = lv_obj_get_child(saved_close_btn, 0);
-        if (lbl) lv_label_set_text(lbl, saved_details_parsed_view ? "Close" : "More");
+        if (lbl) {
+            if (!saved_has_extra_details) {
+                lv_label_set_text(lbl, "Cancel");
+            } else {
+                lv_label_set_text(lbl, saved_details_parsed_view ? "Close" : "More");
+            }
+        }
     }
     if (saved_rename_btn && lv_obj_is_valid(saved_rename_btn)) {
         lv_obj_t *lbl = lv_obj_get_child(saved_rename_btn, 0);
@@ -3702,6 +3709,10 @@ static void saved_close_cb(lv_event_t *e) { (void)e; cleanup_saved_details_popup
 
 static void saved_more_cb(lv_event_t *e) {
     (void)e;
+    if (!saved_has_extra_details) {
+        saved_close_cb(NULL);
+        return;
+    }
     if (!saved_details_parsed_view) {
         saved_show_parsed_view(true);
     } else {
@@ -3826,6 +3837,7 @@ void cleanup_saved_details_popup(void *obj) {
     saved_scroll = NULL;
     saved_popup_selected = 0;
     saved_details_parsed_view = false;
+    saved_has_extra_details = false;
     if (saved_details_text) { free(saved_details_text); saved_details_text = NULL; }
 }
 
@@ -3904,6 +3916,8 @@ static void create_saved_details_popup(const char *path) {
     }
     if (did_load) nfc_sd_end(susp_load);
 
+    saved_has_extra_details = has_extra_details(saved_details_text);
+
     if (saved_details_text) {
         // start in summary view using stored text
         saved_show_parsed_view(false);
@@ -3916,6 +3930,7 @@ static void create_saved_details_popup(const char *path) {
     saved_delete_btn = popup_add_styled_button(saved_popup, "Delete", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, -10, -8, body_font, saved_delete_cb, NULL);
 
     saved_popup_selected = 0;
+    saved_update_button_labels();
     update_saved_popup_selection();
 }
 
