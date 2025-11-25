@@ -6,13 +6,13 @@
 - Added Flipper Zero NFC parser compatibility layer with support for:
   - Aime
   - CSC Service Works
-  - WashCity
+  - WashCity (Verified working)
   - Metromoney
   - Bip
   - CharlieCard
   - Disney Infinity (Verified working)
   - HI!
-  - HID PACS
+  - HID PACS (Verified working)
   - H World
   - Kazan
   - Microel
