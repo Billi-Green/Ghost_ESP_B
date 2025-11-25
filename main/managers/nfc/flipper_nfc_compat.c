@@ -507,6 +507,7 @@ static const NfcSupportedCardsPlugin* s_plugins[] = {
 
 char* flipper_nfc_try_parse_mfclassic_from_cache(const MfClassicData* data) {
     if (!data) return NULL;
+    if (data->uid_len == 0) return NULL;
 
     // Setup a temporary device wrapper
     NfcDevice dev;

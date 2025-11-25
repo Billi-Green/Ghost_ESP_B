@@ -40,7 +40,7 @@
 - Fixed BLE scanning not being reliable
 - Added AirTag RSSI update logging so existing tags report RSSI changes every few seconds
 - Add vendor board support and images to documentation - @tototo31
-
+- Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
 
 
 ## Revival v1.8.1

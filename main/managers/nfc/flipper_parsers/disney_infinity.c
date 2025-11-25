@@ -25,15 +25,19 @@ void di_key(const uint8_t* uid, MfClassicKey* key) {
 static bool disney_infinity_read(Nfc* nfc, NfcDevice* device) {
     furi_assert(nfc);
     furi_assert(device);
-    size_t* uid_len = 0;
+    size_t uid_len = 0;
     bool is_read = false;
     MfClassicData* data = mf_classic_alloc();
 
     nfc_device_copy_data(device, NfcProtocolMfClassic, data);
-    const uint8_t* uid_bytes = mf_classic_get_uid(data, uid_len);
+    const uint8_t* uid_bytes = mf_classic_get_uid(data, &uid_len);
     MfClassicDeviceKeys keys = {};
 
     do {
+        if(!uid_bytes || uid_len < UID_LEN) {
+            FURI_LOG_W(TAG, "Invalid UID for Disney Infinity read (len=%u)", (unsigned)uid_len);
+            break;
+        }
         MfClassicType type = MfClassicTypeMini;
         MfClassicError error = mf_classic_poller_sync_detect_type(nfc, &type);
         if(error != MfClassicErrorNone) break;
@@ -64,18 +68,22 @@ static bool disney_infinity_read(Nfc* nfc, NfcDevice* device) {
 
 static bool disney_infinity_parse(const NfcDevice* device, FuriString* parsed_data) {
     furi_assert(device);
-    size_t* uid_len = 0;
+    size_t uid_len = 0;
     bool parsed = false;
     const uint8_t verify_sector = 0;
     MfClassicKey key = {};
 
     const MfClassicData* data = nfc_device_get_data(device, NfcProtocolMfClassic);
-    const uint8_t* uid_bytes = mf_classic_get_uid(data, uid_len);
+    const uint8_t* uid_bytes = mf_classic_get_uid(data, &uid_len);
 
     do {
-        // verify key
+        if(!uid_bytes || uid_len < UID_LEN) {
+            FURI_LOG_W(TAG, "Invalid UID for Disney Infinity parse (len=%u)", (unsigned)uid_len);
+            break;
+        }
         MfClassicSectorTrailer* sec_tr =
             mf_classic_get_sector_trailer_by_sector(data, verify_sector);
+        if(!sec_tr) break;
 
         di_key(uid_bytes, &key);
         if(memcmp(key.data, sec_tr->key_a.data, 6) != 0) break;

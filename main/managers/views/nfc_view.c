@@ -822,10 +822,39 @@ static void nfc_refresh_cu_details_from_cache(void) {
         }
     } else {
         nfc_details_ready = false;
-    nfc_detected_title[0] = '\0';
+        nfc_detected_title[0] = '\0';
     }
     nfc_details_session = current;
-    nfc_reset_more_button_label();
+
+    if (nfc_details_ready) {
+        // Reset dict/skip state now that details are ready (mirror PN532 flow)
+        mfc_phase_sector = -1;
+        mfc_phase_first_block = -1;
+        mfc_phase_total = 0;
+        nfc_dict_skip_requested = false;
+        nfc_skip_label_applied = false;
+
+        // Ensure the More button is restored after any Skip state
+        if (nfc_scan_more_btn && lv_obj_is_valid(nfc_scan_more_btn)) {
+            lv_obj_clear_flag(nfc_scan_more_btn, LV_OBJ_FLAG_HIDDEN);
+            nfc_more_visible = true;
+            lv_obj_t *lbl = lv_obj_get_child(nfc_scan_more_btn, 0);
+            if (lbl) lv_label_set_text(lbl, "More");
+            lv_obj_clear_state(nfc_scan_more_btn, LV_STATE_DISABLED);
+        }
+
+        if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
+            lv_label_set_text(nfc_title_label, nfc_get_detected_title());
+            lv_obj_align(nfc_title_label, LV_ALIGN_TOP_MID, 0, 22);
+        }
+        if (!nfc_details_visible && nfc_type_label && lv_obj_is_valid(nfc_type_label)) {
+            lv_label_set_text(nfc_type_label, "Scan complete - press More");
+        }
+
+        // Refresh layout/selection now that button set has changed
+        update_nfc_buttons_layout();
+        update_nfc_popup_selection();
+    }
 }
 #endif
 
@@ -2394,7 +2423,7 @@ static void nfc_show_details_view(bool show) {
         if (!nfc_details_scroll || !lv_obj_is_valid(nfc_details_scroll)) {
             lv_coord_t popup_w = lv_obj_get_width(nfc_scan_popup);
             lv_coord_t popup_h = lv_obj_get_height(nfc_scan_popup);
-            lv_coord_t scroll_h = popup_h - 75; // Leave room for title and buttons
+            lv_coord_t scroll_h = popup_h - 90; // Leave a bit more room for title and buttons
             if (scroll_h < 50) scroll_h = 50;
             nfc_details_scroll = popup_create_scroll_area(nfc_scan_popup, popup_w - 20, scroll_h, LV_ALIGN_TOP_MID, 0, 35);
         }
@@ -2419,7 +2448,6 @@ static void nfc_show_details_view(bool show) {
         const char *source_text = NULL;
         #if defined(CONFIG_NFC_CHAMELEON)
         if (using_chameleon_backend()) {
-            nfc_refresh_cu_details_from_cache();
             source_text = nfc_details_text;
         } else
         #endif
@@ -2477,6 +2505,7 @@ static void nfc_show_details_view(bool show) {
         if (tmp_text) free(tmp_text);
 
         if (nfc_details_scroll && lv_obj_is_valid(nfc_details_scroll)) {
+            lv_obj_scroll_to_y(nfc_details_scroll, 0, LV_ANIM_OFF);
             lv_obj_clear_flag(nfc_details_scroll, LV_OBJ_FLAG_HIDDEN);
         }
         lv_obj_clear_flag(nfc_details_label, LV_OBJ_FLAG_HIDDEN);
