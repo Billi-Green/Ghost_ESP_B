@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include "ff.h"
 #include "freertos/FreeRTOS.h"
@@ -20,6 +21,8 @@
 
 static const char *GPS_TAG = "GPS";
 static const char *CSV_TAG = "CSV";
+static const char *CSV_PRE_HEADER = "WigleWifi-1.6,appRelease=1.0,model=ESP32,release=1.0,device=GhostESP,display=NONE,board=ESP32,brand=Espressif,star=Sol,body=3,subBody=0\n";
+static const char *CSV_HEADER = "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type\n";
 
 static bool is_valid_date(const gps_date_t *date);
 
@@ -29,52 +32,41 @@ static FILE *csv_file = NULL;
 static char csv_buffer[GPS_BUFFER_SIZE];
 static size_t buffer_offset = 0;
 static char csv_file_path[GPS_MAX_FILE_NAME_LENGTH];
+static char csv_base_name[32] = "wardriving";
 static bool gps_connection_logged = false;
 static SemaphoreHandle_t csv_mutex = NULL;
 static TaskHandle_t csv_flush_task = NULL;
+static bool csv_header_pending_uart = false;
+
+bool csv_buffer_has_pending_data(void) {
+    return buffer_offset > 0;
+}
 
 static void csv_flush_task_fn(void *arg) {
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(2000));
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+        bool gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#else
+        bool gating_template = false;
+#endif
+        vTaskDelay(pdMS_TO_TICKS(gating_template ? 10000 : 2000));
         csv_flush_buffer_to_file();
     }
 }
 
 esp_err_t csv_write_header(FILE *f) {
-    // Wigle pre-header
-    const char *pre_header = "WigleWifi-1.6,appRelease=1.0,model=ESP32,release=1.0,device=GhostESP,"
-                             "display=NONE,board=ESP32,brand=Espressif,star=Sol,body=3,subBody=0\n";
-
-    // Wigle main header
-    const char *header = "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,"
-                         "CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type\n";
-
-    // Add Bluetooth header after WiFi header
-    const char *ble_header = "# Bluetooth\n"
-                             "MAC,Name,RSSI,FirstSeen,CurrentLatitude,CurrentLongitude,"
-                             "AltitudeMeters,AccuracyMeters,Type\n";
-
     if (f == NULL) {
-        const char *mark_begin = "[BUF/BEGIN]";
-        const char *mark_close = "[BUF/CLOSE]";
-        uart_write_bytes(UART_NUM_0, mark_begin, strlen(mark_begin));
-        uart_write_bytes(UART_NUM_0, pre_header, strlen(pre_header));
-        uart_write_bytes(UART_NUM_0, header, strlen(header));
-        uart_write_bytes(UART_NUM_0, ble_header, strlen(ble_header));
-        uart_write_bytes(UART_NUM_0, mark_close, strlen(mark_close));
-        uart_write_bytes(UART_NUM_0, "\n", 1);
+        csv_header_pending_uart = true;
         return ESP_OK;
     } else {
-        size_t written = fwrite(pre_header, 1, strlen(pre_header), f);
-        if (written != strlen(pre_header)) {
+        size_t pre_len = strlen(CSV_PRE_HEADER);
+        size_t hdr_len = strlen(CSV_HEADER);
+        size_t written = fwrite(CSV_PRE_HEADER, 1, pre_len, f);
+        if (written != pre_len) {
             return ESP_FAIL;
         }
-        written = fwrite(header, 1, strlen(header), f);
-        if (written != strlen(header)) {
-            return ESP_FAIL;
-        }
-        written = fwrite(ble_header, 1, strlen(ble_header), f);
-        if (written != strlen(ble_header)) {
+        written = fwrite(CSV_HEADER, 1, hdr_len, f);
+        if (written != hdr_len) {
             return ESP_FAIL;
         }
         return ESP_OK;
@@ -90,12 +82,30 @@ void get_next_csv_file_name(char *file_name_buffer, const char *base_name) {
 esp_err_t csv_file_open(const char *base_file_name) {
     char file_name[GPS_MAX_FILE_NAME_LENGTH];
 
+    // remember base name for later just-in-time open on somethingsomething
+    if (base_file_name && *base_file_name) {
+        strncpy(csv_base_name, base_file_name, sizeof(csv_base_name) - 1);
+        csv_base_name[sizeof(csv_base_name) - 1] = '\0';
+    }
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    bool gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#else
+    bool gating_template = false;
+#endif
+
     if (sd_card_exists("/mnt/ghostesp/gps")) {
         get_next_csv_file_name(file_name, base_file_name);
         strncpy(csv_file_path, file_name, GPS_MAX_FILE_NAME_LENGTH);
         csv_file = fopen(file_name, "w");
     } else {
-        csv_file = NULL;
+        // on somethingsomething, we will mount just-in-time during flush
+        if (gating_template) {
+            csv_file = NULL;
+            csv_file_path[0] = '\0';
+        } else {
+            csv_file = NULL;
+        }
     }
 
     if (csv_mutex == NULL) {
@@ -118,6 +128,7 @@ esp_err_t csv_file_open(const char *base_file_name) {
         glog("Streaming CSV buffer to SD card\n");
     } else {
         glog("Streaming CSV buffer over UART\n");
+        // Header will be emitted with the first non-empty flush via csv_flush_buffer_to_file()
     }
     return ESP_OK;
 }
@@ -179,12 +190,24 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
         buffer_offset = 0;
     }
 
-    // For BLE entries, ensure we're past the headers
+    if (csv_file == NULL && csv_header_pending_uart && buffer_offset == 0) {
+        size_t pre_len = strlen(CSV_PRE_HEADER);
+        size_t hdr_len = strlen(CSV_HEADER);
+        if (pre_len + hdr_len < GPS_BUFFER_SIZE) {
+            memcpy(csv_buffer, CSV_PRE_HEADER, pre_len);
+            memcpy(csv_buffer + pre_len, CSV_HEADER, hdr_len);
+            buffer_offset = pre_len + hdr_len;
+            csv_header_pending_uart = false;
+        }
+    }
+
+    // For BLE entries, ensure we're past the WiFi header: inject Bluetooth header once
     if (data->ble_data.is_ble_device && buffer_offset == 0) {
-        // Skip to Bluetooth section if this is the first entry after a flush
-        const char *ble_section = "# Bluetooth\n";
-        size_t section_len = strlen(ble_section);
-        memcpy(csv_buffer, ble_section, section_len);
+        const char *ble_header = "# Bluetooth\n"
+                                 "MAC,Name,RSSI,FirstSeen,CurrentLatitude,CurrentLongitude,"
+                                 "AltitudeMeters,AccuracyMeters,Type\n";
+        size_t section_len = strlen(ble_header);
+        memcpy(csv_buffer, ble_header, section_len);
         buffer_offset = section_len;
     }
 
@@ -205,14 +228,80 @@ esp_err_t csv_flush_buffer_to_file() {
     }
 
     if (csv_file == NULL) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+        bool gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#else
+        bool gating_template = false;
+#endif
+
+        if (gating_template) {
+            bool display_was_suspended = false;
+            esp_err_t mret = sd_card_mount_for_flush(&display_was_suspended);
+            if (mret == ESP_OK) {
+                // lazily choose file name on first flush if not set
+                if (csv_file_path[0] == '\0') {
+                    get_next_csv_file_name(csv_file_path, csv_base_name);
+                }
+                FILE *f = fopen(csv_file_path, "ab+");
+                if (f) {
+                    // if new file (size 0), write header
+                    fseek(f, 0, SEEK_END);
+                    long sz = ftell(f);
+                    if (sz == 0) {
+                        csv_write_header(f);
+                    }
+                    size_t written = fwrite(csv_buffer, 1, buffer_offset, f);
+                    fclose(f);
+                    if (written != buffer_offset) {
+                        glog("Failed to write buffer to file.\n");
+                    } else {
+                        glog("Flushed %zu bytes to CSV file.\n", buffer_offset);
+                        buffer_offset = 0;
+                    }
+                }
+                sd_card_unmount_after_flush(display_was_suspended);
+                if (csv_mutex) xSemaphoreGive(csv_mutex);
+                return ESP_OK;
+            }
+        }
+
+        glog_set_defer(1);
         glog("Streaming CSV buffer over UART\n");
         const char *mark_begin = "[BUF/BEGIN]";
         const char *mark_close = "[BUF/CLOSE]";
-
-        uart_write_bytes(UART_NUM_0, mark_begin, strlen(mark_begin));
-        uart_write_bytes(UART_NUM_0, csv_buffer, buffer_offset);
-        uart_write_bytes(UART_NUM_0, mark_close, strlen(mark_close));
-        uart_write_bytes(UART_NUM_0, "\n", 1);
+        size_t mark_begin_len = strlen(mark_begin);
+        size_t mark_close_len = strlen(mark_close);
+        size_t header_len = csv_header_pending_uart ? (strlen(CSV_PRE_HEADER) + strlen(CSV_HEADER)) : 0;
+        size_t out_len = mark_begin_len + header_len + buffer_offset + mark_close_len + 1;
+        uint8_t *out = (uint8_t *)malloc(out_len);
+        if (out) {
+            size_t off = 0;
+            memcpy(out + off, mark_begin, mark_begin_len); off += mark_begin_len;
+            if (csv_header_pending_uart) {
+                size_t pre_len = strlen(CSV_PRE_HEADER);
+                size_t hdr_len = strlen(CSV_HEADER);
+                memcpy(out + off, CSV_PRE_HEADER, pre_len); off += pre_len;
+                memcpy(out + off, CSV_HEADER, hdr_len); off += hdr_len;
+                csv_header_pending_uart = false;
+            }
+            memcpy(out + off, csv_buffer, buffer_offset); off += buffer_offset;
+            memcpy(out + off, mark_close, mark_close_len); off += mark_close_len;
+            out[off++] = '\n';
+            uart_write_bytes(UART_NUM_0, (const char *)out, off);
+            free(out);
+        } else {
+            uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
+            if (csv_header_pending_uart) {
+                uart_write_bytes(UART_NUM_0, CSV_PRE_HEADER, strlen(CSV_PRE_HEADER));
+                uart_write_bytes(UART_NUM_0, CSV_HEADER, strlen(CSV_HEADER));
+                csv_header_pending_uart = false;
+            }
+            uart_write_bytes(UART_NUM_0, csv_buffer, buffer_offset);
+            uart_write_bytes(UART_NUM_0, mark_close, mark_close_len);
+            uart_write_bytes(UART_NUM_0, "\n", 1);
+        }
+        glog_set_defer(0);
+        glog_flush_deferred();
 
         buffer_offset = 0;
         if (csv_mutex) xSemaphoreGive(csv_mutex);

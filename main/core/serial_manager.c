@@ -4,11 +4,13 @@
 #include "core/glog.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_task_wdt.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "managers/gps_manager.h"
 #include "managers/wifi_manager.h"
+#include "managers/infrared_manager.h"
 #include "managers/views/terminal_screen.h"
 #include <core/commandline.h>
 #include <ctype.h>
@@ -22,18 +24,18 @@
 #else
 #define JTAG_SUPPORTED 0
 #endif
-
 #ifndef CONFIG_USE_TDECK
 #define UART_NUM UART_NUM_0
 #else
 #define UART_NUM UART_NUM_1
 #endif
-#define BUF_SIZE (1024)
-#define SERIAL_BUFFER_SIZE 528
+#define BUF_SIZE (512)
+#define SERIAL_BUFFER_SIZE 256
 
 char serial_buffer[SERIAL_BUFFER_SIZE];
 static TaskHandle_t s_serial_task_handle = NULL;
 static bool s_serial_initialized = false;
+static bool s_uart_disabled = false; // disable main serial UART for certain templates
 
 // Cursor position tracking
 static int cursor_position = 0;
@@ -60,6 +62,16 @@ typedef enum {
 static html_capture_state_t html_capture_state = HTML_STATE_IDLE;
 static char html_capture_buffer[2048];
 static size_t html_capture_pos = 0;
+
+// IR capture state
+typedef enum {
+    IR_STATE_IDLE,
+    IR_STATE_CAPTURING
+} ir_capture_state_t;
+
+static ir_capture_state_t ir_capture_state = IR_STATE_IDLE;
+static char ir_capture_buffer[2048];
+static size_t ir_capture_pos = 0;
 
 // Forward declaration of command handler
 int handle_serial_command(const char *command);
@@ -324,8 +336,65 @@ static void clear_line_from_cursor(void) {
     serial_buffer[cursor_position] = '\0';
 }
 
-// HTML marker processing
+// HTML marker processing and IR inline handling
 static void process_html_line(const char* line) {
+    if (strstr(line, "[IR/BEGIN]") != NULL) {
+        ir_capture_state = IR_STATE_CAPTURING;
+        ir_capture_pos = 0;
+        return;
+    }
+
+    if (strstr(line, "[IR/CLOSE]") != NULL) {
+        if (ir_capture_state == IR_STATE_CAPTURING) {
+            ir_capture_state = IR_STATE_IDLE;
+            if (ir_capture_pos >= sizeof(ir_capture_buffer)) {
+                ir_capture_pos = sizeof(ir_capture_buffer) - 1;
+            }
+            ir_capture_buffer[ir_capture_pos] = '\0';
+            infrared_signal_t sig;
+            memset(&sig, 0, sizeof(sig));
+            if (infrared_manager_parse_buffer_single(ir_capture_buffer, &sig)) {
+                bool ok = infrared_manager_transmit(&sig);
+                glog("IR: send %s\n", ok ? "OK" : "FAIL");
+                if (sig.is_raw) {
+                    if (sig.payload.raw.timings && sig.payload.raw.timings_size > 0) {
+                        glog("IR: signal raw len=%u freq=%luHz duty=%.2f\n",
+                             (unsigned)sig.payload.raw.timings_size,
+                             (unsigned long)sig.payload.raw.frequency,
+                             (double)sig.payload.raw.duty_cycle);
+                    }
+                } else {
+                    const char *proto = sig.payload.message.protocol;
+                    if (proto && proto[0] != '\0') {
+                        uint32_t addr = sig.payload.message.address;
+                        uint32_t cmd = sig.payload.message.command;
+                        if (sig.name[0] != '\0') {
+                            glog("IR: signal [%s] protocol=%s addr=0x%08lX cmd=0x%08lX\n",
+                                 sig.name, proto, (unsigned long)addr, (unsigned long)cmd);
+                        } else {
+                            glog("IR: signal protocol=%s addr=0x%08lX cmd=0x%08lX\n",
+                                 proto, (unsigned long)addr, (unsigned long)cmd);
+                        }
+                    }
+                }
+                infrared_manager_free_signal(&sig);
+            } else {
+                glog("IR inline parse failed\n");
+            }
+        }
+        return;
+    }
+
+    if (ir_capture_state == IR_STATE_CAPTURING) {
+        size_t line_len = strlen(line);
+        if (ir_capture_pos + line_len + 1 < sizeof(ir_capture_buffer)) {
+            memcpy(ir_capture_buffer + ir_capture_pos, line, line_len);
+            ir_capture_pos += line_len;
+            ir_capture_buffer[ir_capture_pos++] = '\n';
+        }
+        return;
+    }
+
     if (strstr(line, "[HTML/BEGIN]") != NULL) {
         html_capture_state = HTML_STATE_CAPTURING;
         html_capture_pos = 0;
@@ -358,12 +427,24 @@ static void process_html_line(const char* line) {
 void serial_task(void *pvParameter) {
   uint8_t *data = (uint8_t *)malloc(BUF_SIZE);
   int index = 0;
+  static uint32_t hwm_log_counter = 0;
 
   while (1) {
+    if (++hwm_log_counter >= 6000) {
+      UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+      ESP_LOGI("SerialTask", "Stack HWM: %u words (%u bytes free)", hwm, hwm * 4);
+      UBaseType_t queue_avail = uxQueueSpacesAvailable(commandQueue);
+      ESP_LOGI("SerialTask", "Command queue available: %u/%u", queue_avail, 6);
+      hwm_log_counter = 0;
+    }
     int length = 0;
 
-    // Read data from the main UART
-    length = uart_read_bytes(UART_NUM, data, BUF_SIZE, 10 / portTICK_PERIOD_MS);
+#ifndef CONFIG_USE_IO_EXPANDER
+    // Read data from the main UART (if not disabled)
+    if (!s_uart_disabled) {
+      length = uart_read_bytes(UART_NUM, data, BUF_SIZE, 10 / portTICK_PERIOD_MS);
+    }
+#endif
 
 #if JTAG_SUPPORTED
     if (length <= 0) {
@@ -461,7 +542,7 @@ void serial_task(void *pvParameter) {
         if (incoming_char == '\n' || incoming_char == '\r') {
           // Echo newline directly to UART
           const char newline[] = "\n";
-          uart_write_bytes(UART_NUM, newline, 1);
+          if (!s_uart_disabled) uart_write_bytes(UART_NUM, newline, 1);
 #if JTAG_SUPPORTED
           usb_serial_jtag_write_bytes((const uint8_t*)newline, 1, 0);
 #endif
@@ -507,6 +588,12 @@ void serial_task(void *pvParameter) {
 
 // Initialize the SerialManager
 void serial_manager_init() {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+  if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+    s_uart_disabled = true;
+  }
+#endif
+#ifndef CONFIG_USE_IO_EXPANDER
   // UART configuration for main UART
   const uart_config_t uart_config = {
       .baud_rate = 115200,
@@ -516,8 +603,12 @@ void serial_manager_init() {
       .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
   };
 
-  uart_param_config(UART_NUM, &uart_config);
-  uart_driver_install(UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0);
+  if (!s_uart_disabled) {
+    uart_param_config(UART_NUM, &uart_config);
+    uart_driver_install(UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0);
+    ESP_LOGI("SerialManager", "UART installed: RX buffer=%d bytes", BUF_SIZE * 2);
+  }
+#endif
 
 #if JTAG_SUPPORTED
   usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
@@ -525,15 +616,21 @@ void serial_manager_init() {
       .tx_buffer_size = BUF_SIZE,
   };
   usb_serial_jtag_driver_install(&usb_serial_jtag_config);
+  ESP_LOGI("SerialManager", "USB-JTAG installed: RX=%d TX=%d bytes", BUF_SIZE, BUF_SIZE);
 #endif
 
-  commandQueue = xQueueCreate(10, sizeof(SerialCommand));
+  commandQueue = xQueueCreate(6, sizeof(SerialCommand));
+  ESP_LOGI("SerialManager", "Command queue created: depth=6, item_size=%u bytes", sizeof(SerialCommand));
 
-  xTaskCreate(serial_task, "SerialTask", 8192, NULL, 2, &s_serial_task_handle);
+  xTaskCreate(serial_task, "SerialTask",  5120, NULL, 2, &s_serial_task_handle);
+  ESP_LOGI("SerialManager", "Serial task created");
   s_serial_initialized = true;
-  // Initialize command history
-  command_history_init();
-  glog("Serial Started...\n");
+  if (!s_uart_disabled) {
+    command_history_init();
+    glog("Serial Started...\n");
+  } else {
+    glog("Serial Disabled (template: somethingsomething)\n");
+  }
 }
 
 void serial_manager_deinit() {
@@ -547,7 +644,9 @@ void serial_manager_deinit() {
 #if JTAG_SUPPORTED
   usb_serial_jtag_driver_uninstall();
 #endif
+#ifndef CONFIG_USE_IO_EXPANDER
   uart_driver_delete(UART_NUM);
+#endif
   if (commandQueue) {
     vQueueDelete(commandQueue);
     commandQueue = NULL;
@@ -555,7 +654,13 @@ void serial_manager_deinit() {
   s_serial_initialized = false;
 }
 
-int serial_manager_get_uart_num() { return (int)UART_NUM; }
+int serial_manager_get_uart_num() {
+#ifdef CONFIG_USE_IO_EXPANDER
+    return -1; // No UART in use when IO expander is configured
+#else
+    return (int)UART_NUM;
+#endif
+}
 
 int handle_serial_command(const char *input) {
   // Handle peer commands with logging and proper remote flag management
@@ -569,11 +674,13 @@ int handle_serial_command(const char *input) {
     return result;
   }
   
-  char *input_copy = strdup(input);
-  if (input_copy == NULL) {
-    printf("Memory allocation error\n");
-    return ESP_ERR_INVALID_ARG;
+  char input_copy[SERIAL_BUFFER_SIZE];
+  size_t input_len = strlen(input);
+  if (input_len >= sizeof(input_copy)) {
+    input_len = sizeof(input_copy) - 1;
   }
+  memcpy(input_copy, input, input_len);
+  input_copy[input_len] = '\0';
   char *argv[10];
   int argc = 0;
   char *p = input_copy;
@@ -602,7 +709,6 @@ int handle_serial_command(const char *input) {
       } else {
         // Handle missing closing quote
         printf("Error: Missing closing quote\n");
-        free(input_copy);
         return ESP_ERR_INVALID_ARG;
       }
     } else {
@@ -621,7 +727,6 @@ int handle_serial_command(const char *input) {
   }
 
   if (argc == 0) {
-    free(input_copy);
     return ESP_ERR_INVALID_ARG;
   }
 
@@ -630,13 +735,11 @@ int handle_serial_command(const char *input) {
     // Add command to history before executing
     command_history_add(input);
     cmd_func(argc, argv);
-    free(input_copy);
     return ESP_OK;
   } else {
     // Add command to history even if unknown
     command_history_add(input);
     handle_unknown_command(argv[0]);
-    free(input_copy);
     return ESP_ERR_INVALID_ARG;
   }
 }

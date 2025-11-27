@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "core/esp_comm_manager.h"
+#include "managers/status_display_manager.h"
 
 static const char *GPS_TAG = "GPS";
 static bool has_valid_cached_date = false;
@@ -129,10 +130,12 @@ void gps_manager_init(GPSManager *manager) {
     }
     nmea_parser_add_handler(nmea_hdl, gps_event_handler, NULL);
     manager->isinitilized = true;
-    BaseType_t task_created = xTaskCreate(check_gps_connection_task, "gps_check", 2048, NULL, 1, &gps_check_task_handle);
+    status_display_show_status("GPS Initialized");
+    BaseType_t task_created = xTaskCreate(check_gps_connection_task, "gps_check", 3072, NULL, 1, &gps_check_task_handle);
     if (task_created != pdPASS) {
         ESP_LOGW(GPS_TAG, "Failed to create gps_check task");
         gps_check_task_handle = NULL;
+        status_display_show_status("GPS Task Fail");
         // proceed without the connection-check task; parser remains initialized
     }
 }
@@ -192,7 +195,10 @@ void gps_manager_deinit(GPSManager *manager) {
         }
         manager->isinitilized = false;
         gps_connection_logged = false;
+        status_display_show_status("GPS Deinit");
         esp_comm_manager_init_with_defaults();
+    } else {
+        status_display_show_status("GPS Not Init");
     }
 }
 
@@ -263,7 +269,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
             gps->sats_in_use >= 3 &&
             gps->sats_in_use <= GPS_MAX_SATELLITES_IN_USE && // Should be ≤ 12
             rand() % 100 == 0) {
-            printf("Warning: GPS date is out of range despite good fix: %04d-%02d-%02d "
+            glog("Warning: GPS date is out of range despite good fix: %04d-%02d-%02d "
                    "(Fix: %d, Mode: %d, Sats: %d)\n",
                    gps_get_absolute_year(gps->date.year), gps->date.month, gps->date.day, gps->fix,
                    gps->fix_mode, gps->sats_in_use);
@@ -279,7 +285,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
 
     if (gps->tim.hour > 23 || gps->tim.minute > 59 || gps->tim.second > 59) {
         if (rand() % 20 == 0) {
-            printf("Warning: GPS time is invalid: %02d:%02d:%02d\n", gps->tim.hour, gps->tim.minute,
+            glog("Warning: GPS time is invalid: %02d:%02d:%02d\n", gps->tim.hour, gps->tim.minute,
                    gps->tim.second);
         }
         return ESP_OK;
@@ -288,7 +294,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (gps->latitude < -90.0 || gps->latitude > 90.0 || gps->longitude < -180.0 ||
         gps->longitude > 180.0) {
         if (rand() % 20 == 0) {
-            printf("GPS Error: Invalid location detected (Lat: %f, Lon: %f)\n", gps->latitude,
+            glog("GPS Error: Invalid location detected (Lat: %f, Lon: %f)\n", gps->latitude,
                    gps->longitude);
         }
         return ESP_OK;
@@ -296,7 +302,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
 
     if (gps->speed < 0.0 || gps->speed > 340.0) {
         if (rand() % 20 == 0) {
-            printf("Warning: GPS speed is out of range: %f m/s\n", gps->speed);
+            glog("Warning: GPS speed is out of range: %f m/s\n", gps->speed);
         }
         return ESP_OK;
     }
@@ -304,7 +310,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (gps->dop_h < 0.0 || gps->dop_p < 0.0 || gps->dop_v < 0.0 || gps->dop_h > 50.0 ||
         gps->dop_p > 50.0 || gps->dop_v > 50.0) {
         if (rand() % 20 == 0) {
-            printf("Warning: GPS DOP values are out of range: HDOP: %f, PDOP: %f, "
+            glog("Warning: GPS DOP values are out of range: HDOP: %f, PDOP: %f, "
                    "VDOP: %f\n",
                    gps->dop_h, gps->dop_p, gps->dop_v);
         }

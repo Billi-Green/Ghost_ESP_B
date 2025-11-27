@@ -15,6 +15,15 @@ typedef enum {
     // ...add more modes here if needed
 } RGBMode;
 
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+// idle/status oled animation mode
+typedef enum {
+  IDLE_ANIM_GAME_OF_LIFE = 0,
+  IDLE_ANIM_GHOST = 1
+} IdleAnimation;
+#endif
+
+
 typedef enum {
   ALIGNMENT_CM, // Center Middle
   ALIGNMENT_TL, // Top Left
@@ -107,6 +116,10 @@ typedef struct {
   
   // Neopixel settings
   uint8_t neopixel_max_brightness; // Max neopixel brightness (0-100)
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+  IdleAnimation status_idle_animation; // idle animation for status display
+  uint32_t status_idle_timeout_ms; // delay before starting idle animation
+#endif
 } FSettings;
 
 // Function declarations
@@ -255,6 +268,14 @@ uint8_t settings_get_menu_layout(const FSettings *settings);
 // Neopixel brightness settings
 void settings_set_neopixel_max_brightness(FSettings *settings, uint8_t brightness);
 uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
+
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+// Status display idle animation accessors
+void settings_set_status_idle_animation(FSettings *settings, IdleAnimation anim);
+IdleAnimation settings_get_status_idle_animation(const FSettings *settings);
+void settings_set_status_idle_timeout_ms(FSettings *settings, uint32_t timeout_ms);
+uint32_t settings_get_status_idle_timeout_ms(const FSettings *settings);
+#endif
 
 extern FSettings G_Settings;
 

@@ -3,6 +3,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#ifdef CONFIG_USE_IO_EXPANDER
+#include "esp_log.h"
+static const char *TAG = "JOYSTICK_IO";
+static bool io_expander_initialized = false;
+#endif
+
 void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
                    bool pullup) {
   joystick->pin = pin;
@@ -14,6 +20,12 @@ void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
   joystick->hold_init = 0;
   joystick->deep_sleep_triggered = false;
 
+#ifdef CONFIG_USE_IO_EXPANDER
+  if (io_expander_initialized && pin >= 0 && pin <= 7) {
+    return;
+  }
+#endif
+
   gpio_config_t io_conf = {
       .pin_bit_mask = (1ULL << pin),
       .mode = GPIO_MODE_INPUT,
@@ -24,11 +36,63 @@ void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
   gpio_config(&io_conf);
 }
 
+#ifdef CONFIG_USE_IO_EXPANDER
+esp_err_t joystick_io_expander_init(void)
+{
+    if (io_expander_initialized) {
+        ESP_LOGW(TAG, "IO expander already initialized");
+        return ESP_OK;
+    }
+
+    // Configure IO expander with the settings from Kconfig
+    io_manager_config_t config = {
+        .sda_pin = CONFIG_IO_EXPANDER_SDA_PIN,
+        .scl_pin = CONFIG_IO_EXPANDER_SCL_PIN,
+        .i2c_addr = CONFIG_IO_EXPANDER_I2C_ADDR,
+        .i2c_port = 0
+    };
+
+    esp_err_t ret = io_manager_init(&config);
+    if (ret == ESP_OK) {
+        io_expander_initialized = true;
+        ESP_LOGI(TAG, "IO expander initialized successfully");
+        
+        // Debug: Check initial button states
+        io_manager_debug_states();
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize IO expander: %s", esp_err_to_name(ret));
+    }
+
+    return ret;
+}
+#endif
+
 bool joystick_is_held(joystick_t *joystick) { return joystick->isheld; }
 
 bool joystick_get_button_state(joystick_t *joystick) {
-  int button_state = gpio_get_level(joystick->pin);
+#ifdef CONFIG_USE_IO_EXPANDER
+  if (io_expander_initialized) {
+    if (joystick->pin == 7) {
+      return io_manager_get_encoder_button();
+    }
 
+    btn_event_t cached = {0};
+    if (io_manager_get_cached_button_states(&cached) == ESP_OK) {
+      switch (joystick->pin) {
+        case 0: return cached.up;     // P00: Up
+        case 1: return cached.down;   // P01: Down
+        case 2: return cached.select; // P02: Select
+        case 3: return cached.left;   // P03: Left
+        case 4: return cached.right;  // P04: Right
+        default: return false;
+      }
+    }
+    return false;
+  }
+#endif
+
+  // Fallback to GPIO mode
+  int button_state = gpio_get_level(joystick->pin);
   if ((joystick->pullup && button_state == 0) ||
       (!joystick->pullup && button_state == 1)) {
     return true;

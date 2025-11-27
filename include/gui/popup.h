@@ -13,6 +13,13 @@
 
 typedef struct popup_t popup_t;
 
+typedef struct {
+    lv_coord_t min_w;
+    lv_coord_t max_w;
+    lv_coord_t min_threshold;
+    lv_coord_t gap;
+} PopupButtonLayoutConfig;
+
 popup_t *popup_create(lv_obj_t *parent, int width, int height);
 void popup_set_title(popup_t *p, const char *title);
 void popup_set_body(popup_t *p, const char *body);
@@ -26,6 +33,7 @@ popup_t *popup_show_simple(lv_obj_t *parent, int width, int height, const char *
 
 // create a styled container suitable for popups (returns an lv_obj_t* container)
 lv_obj_t *popup_create_container(lv_obj_t *parent, int width, int height);
+lv_obj_t *popup_create_container_with_offset(lv_obj_t *parent, int width, int height, lv_coord_t y_offset);
 
 // create styled buttons and labels for popups
 lv_obj_t *popup_add_styled_button(lv_obj_t *container, const char *label_text, int btn_w, int btn_h, lv_align_t align, lv_coord_t x_ofs, lv_coord_t y_ofs, const lv_font_t *font, lv_event_cb_t cb, void *user_data);
@@ -41,3 +49,4 @@ lv_obj_t *popup_create_scroll_area(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
 
 // layout buttons in an evenly-spaced row
 void popup_layout_buttons_row(lv_obj_t *container, lv_obj_t **btns, int count, lv_coord_t btn_w, lv_coord_t btn_h, lv_coord_t y, lv_coord_t gap);
+void popup_layout_buttons_responsive(lv_obj_t *popup, lv_obj_t **btns, int count, lv_coord_t yoff, const PopupButtonLayoutConfig *config);

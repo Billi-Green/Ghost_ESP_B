@@ -322,4 +322,3 @@ static void IRAM_ATTR spi_ready(spi_transaction_t *trans)
         chained_post_cb(trans);
     }
 }
-
