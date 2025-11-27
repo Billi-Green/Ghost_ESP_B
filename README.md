@@ -110,6 +110,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **Timezone Configuration** – Change system timezone string (`timezone`).
 
 </details>
+<img width="1200" height="950" alt="image" src="https://github.com/user-attachments/assets/2857723c-7276-4e2f-b911-9dd2bd7d6894" />
+
 
 ---
 
