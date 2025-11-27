@@ -41,6 +41,8 @@
 - Added AirTag RSSI update logging so existing tags report RSSI changes every few seconds
 - Add vendor board support and images to documentation - @tototo31
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
+- Route evil portal HTML requests through the UART HTML buffer when active instead of the SD-backed file handler.
+
 
 
 ## Revival v1.8.1
