@@ -153,6 +153,14 @@ menu "Ghost ESP Options"
         help
             Set the I2C address for the status OLED.
 
+    config STATUS_DISPLAY_ROTATE_180
+        bool "Rotate status display 180 degrees"
+        default n
+        depends on WITH_STATUS_DISPLAY
+        help
+            Rotate only the secondary status OLED by 180 degrees. Does not
+            affect the primary TFT/touch display.
+
     endmenu
 
     menu "Misc Options"

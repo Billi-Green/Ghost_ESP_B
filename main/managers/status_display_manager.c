@@ -25,6 +25,14 @@ static esp_err_t status_display_send(uint8_t control, const uint8_t *data, size_
 #define STATUS_CMD 0x00
 #define STATUS_DATA 0x40
 
+#if CONFIG_STATUS_DISPLAY_ROTATE_180
+#define STATUS_SEGMENT_REMAP_CMD 0xA1
+#define STATUS_COM_SCAN_CMD 0xC8
+#else
+#define STATUS_SEGMENT_REMAP_CMD 0xA0
+#define STATUS_COM_SCAN_CMD 0xC0
+#endif
+
 static const char *TAG = "StatusDisplay";
 
 static SemaphoreHandle_t s_mutex;
@@ -420,8 +428,8 @@ void status_display_init(void) {
 
     uint8_t init_cmds[] = {
         // addressing mode: PAGE addressing (matches per-page flush)
-        0x20, 0x02, 0xB0, 0xC0, 0x00, 0x10, 0x40,
-        0x81, 0x8F, 0xA0, 0xA6, 0xA8, 0x3F, 0xA4, 0xD3,
+        0x20, 0x02, 0xB0, STATUS_COM_SCAN_CMD, 0x00, 0x10, 0x40,
+        0x81, 0x8F, STATUS_SEGMENT_REMAP_CMD, 0xA6, 0xA8, 0x3F, 0xA4, 0xD3,
         0x00, 0xD5, 0x80, 0xD9, 0xF1, 0xDA, 0x12, 0xDB,
         0x40, 0x8D, 0x14, 0xAF
     };
