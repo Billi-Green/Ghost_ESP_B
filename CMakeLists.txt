@@ -9,12 +9,6 @@ endif()
 # Partition table settings
 add_link_options("-Wl,-z,muldefs")
 
-if(DEFINED ENV{FLAPPY_GHOST_WEB_HOOK})
-    set(FLAPPY_GHOST_WEB_HOOK "$ENV{FLAPPY_GHOST_WEB_HOOK}")
-    add_compile_definitions(FLAPPY_GHOST_WEB_HOOK=\"${FLAPPY_GHOST_WEB_HOOK}\")
-endif()
-
-
 set(SDKCONFIG_DEFAULTS "sdkconfig.defaults")
 add_compile_definitions(HOLD_LIMIT=1000) # For joystick hold duration
 add_compile_definitions(LED_ORDER=0)     # 2 for RGB, 0 for GRB

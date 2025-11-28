@@ -103,7 +103,7 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 <summary><strong>Additional Features</strong></summary>
 
 - **DIAL & Chromecast V2 Support** – Interact with DIAL-capable devices (e.g., Roku, Chromecast).
-- **Flappy Ghost and Rave Modes** – Extra apps for boards with displays.
+- **Rave Mode** – Extra visualizer app for boards with displays.
 - **GPS Integration** – Retrieve location info via the `gpsinfo` command *(on supported hardware)*.
 - **Network Printer Output** – Print custom text to a LAN printer (`powerprinter`).
 - **RGB LED Modes** – Customizable LED feedback (Stealth, Normal, Rainbow).

@@ -46,6 +46,7 @@
 - Added starfield idle animation for the status display
 - Added CLI commands for changing the status display animations
 - Reset AirTag and Flipper discovery lists at the start of scans to avoid stale entries
+- Removed Flappy Ghost app and related build/docs references
 
 ## Revival v1.8.1
 

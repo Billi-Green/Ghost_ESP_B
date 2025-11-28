@@ -1,8 +1,8 @@
 #include "managers/views/app_gallery_screen.h"
-#include "managers/views/flappy_ghost_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/terminal_screen.h"
+
 #include "managers/settings_manager.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -27,7 +27,6 @@ typedef struct {
 } app_item_t;
 
 static app_item_t app_items[] = {
-    {"Flap", &GESPFlappyghost, 3, {{0}}, &flappy_bird_view},
     {"Rave", &rave, 4, {{0}}, &music_visualizer_view},
     {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view},
     {"Back", NULL, 0, {{0}}, NULL},
@@ -182,10 +181,8 @@ static void update_app_item(bool slide_left) {
         lv_obj_set_size(icon, icon_size, icon_size);
         lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
         lv_img_set_antialias(icon, false);
-        if (strcmp(app_items[selected_app_index].name,"Flap")) {
-            lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0);
-            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
-        }
+        lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0);
+        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
         lv_obj_set_style_clip_corner(icon, false, 0);
 
         int icon_x_offset = -3;
