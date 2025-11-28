@@ -1865,6 +1865,10 @@ void ble_start_find_flippers(void) {
         ble_init();
     }
 
+    memset(discovered_flippers, 0, sizeof(discovered_flippers));
+    discovered_flipper_count = 0;
+    selected_flipper_index = -1;
+
     ESP_LOGI(TAG_BLE, "Find Flippers: registering handler and starting BLE scan");
     ble_register_handler(ble_findtheflippers_callback);
     ble_start_scanning();
@@ -1993,6 +1997,12 @@ void ble_start_raw_ble_packetscan(void) {
 
 void ble_start_airtag_scanner(void) {
     ESP_LOGI(TAG_BLE, "Starting AirTag scanner: active scan, duplicates allowed, larger window");
+
+    memset(discovered_airtags, 0, sizeof(discovered_airtags));
+    memset(airtag_last_rssi_log, 0, sizeof(airtag_last_rssi_log));
+    discovered_airtag_count = 0;
+    selected_airtag_index = -1;
+    airTagCount = 0;
 
     if (!ble_initialized) {
         ble_init();
