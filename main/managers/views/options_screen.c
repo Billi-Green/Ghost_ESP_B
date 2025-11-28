@@ -904,9 +904,11 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_NEOPIXEL_BRIGHTNESS:
             settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
             break;
+        #ifdef CONFIG_USE_ENCODER
         case SETTING_ENCODER_INVERT:
             settings_set_encoder_invert_direction(&G_Settings, new_value == 1);
             break;
+        #endif
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         case SETTING_IDLE_ANIMATION:
             settings_set_status_idle_animation(&G_Settings, (IdleAnimation)new_value);
