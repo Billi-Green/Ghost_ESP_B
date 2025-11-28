@@ -1495,6 +1495,9 @@ void hardware_input_task(void *pvParameters) {
 
     /* direction events */
     int8_t dir = encoder_get_direction(&g_encoder);
+    if (settings_get_encoder_invert_direction(&G_Settings)) {
+        dir = (int8_t)-dir;
+    }
     if (dir) {
         // treat an encoder turn as "touch"
         last_touch_time = xTaskGetTickCount();

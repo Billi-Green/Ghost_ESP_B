@@ -36,7 +36,7 @@ static const char **evil_portal_options = NULL;
 
  static const char *TAG = "optionsScreen";
 
-static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
+ static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
 
 typedef enum {
     SETTINGS_CATEGORY_DISPLAY,
@@ -54,21 +54,33 @@ static int current_settings_category = -1;
 // Category 1: "System & Hardware" groups network, power, LED and control options.
 // Example: settings_category_indices[0] lists settings for category index 0.
 static int settings_category_indices[][16] = {
-    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
         {1, 9, 2, 13, 4, 5, 11, 12,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         14, 15,
 #endif
-        -1}, // Display & UI (PWM): Display Timeout, Max Brightness, Menu Theme, Menu Layout, Terminal Color, Invert Colors, Zebra Menus, Navigation Buttons, Idle Animation, Idle Anim Delay
-        {6, 7, 8, 0, 10, 3, -1}, // System & Hardware (PWM): Web Auth, AP Enabled, Power Saving Mode, RGB Mode, Neopixel Brightness, Third Control
-    #else
+        -1},
+        {6, 7, 8, 0, 10, 3,
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        16,
+#elif defined(CONFIG_USE_ENCODER)
+        14,
+#endif
+        -1},
+#else
         {1, 2, 12, 4, 5, 10, 11,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         13, 14,
 #endif
-        -1}, // Display & UI (no PWM): Display Timeout, Menu Theme, Menu Layout, Terminal Color, Invert Colors, Zebra Menus, Navigation Buttons, Idle Animation, Idle Anim Delay
-        {6, 7, 8, 0, 9, 3, -1}, // System & Hardware (no PWM): Web Auth, AP Enabled, Power Saving Mode, RGB Mode, Neopixel Brightness, Third Control
-    #endif
+        -1},
+        {6, 7, 8, 0, 9, 3,
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        15,
+#elif defined(CONFIG_USE_ENCODER)
+        14,
+#endif
+        -1},
+#endif
 };
 
 typedef enum {
@@ -302,10 +314,11 @@ enum {
     SETTING_NAV_BUTTONS,
     SETTING_MENU_LAYOUT,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
-    SETTING_IDLE_ANIMATION
+    SETTING_IDLE_ANIMATION,
+    SETTING_IDLE_ANIM_DELAY,
 #endif
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-    , SETTING_IDLE_ANIM_DELAY
+#ifdef CONFIG_USE_ENCODER
+    SETTING_ENCODER_INVERT,
 #endif
 };
 
@@ -330,12 +343,13 @@ static SettingsItem settings_items[] = {
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
     {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0},
-#ifdef CONFIG_WITH_STATUS_DISPLAY
+    #ifdef CONFIG_WITH_STATUS_DISPLAY
     {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 2, 0},
-#endif
-#ifdef CONFIG_WITH_STATUS_DISPLAY
     {"Idle Anim Delay", SETTING_IDLE_ANIM_DELAY, idle_delay_options, 4, 0},
-#endif
+    #endif
+    #ifdef CONFIG_USE_ENCODER
+    {"Invert Encoder", SETTING_ENCODER_INVERT, bool_options, 2, 0},
+    #endif
 };
 
 static bool is_settings_mode = false;
@@ -797,6 +811,11 @@ static void load_current_settings_values(void) {
             case SETTING_NEOPIXEL_BRIGHTNESS:
                 settings_items[i].current_value = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
                 break;
+#ifdef CONFIG_USE_ENCODER
+            case SETTING_ENCODER_INVERT:
+                settings_items[i].current_value = settings_get_encoder_invert_direction(&G_Settings) ? 1 : 0;
+                break;
+#endif
 #ifdef CONFIG_WITH_STATUS_DISPLAY
             case SETTING_IDLE_ANIMATION:
                 settings_items[i].current_value = (int)settings_get_status_idle_animation(&G_Settings);
@@ -884,6 +903,9 @@ static void apply_setting_change(int setting_index, int new_value) {
         #endif
         case SETTING_NEOPIXEL_BRIGHTNESS:
             settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            break;
+        case SETTING_ENCODER_INVERT:
+            settings_set_encoder_invert_direction(&G_Settings, new_value == 1);
             break;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         case SETTING_IDLE_ANIMATION:

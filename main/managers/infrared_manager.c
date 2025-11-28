@@ -30,20 +30,6 @@
 
 static const char *TAG_IR_MANAGER = "infrared_manager";
 
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-static bool ir_mgr_io24_configured = false;
-
-static void infrared_manager_io24_ensure_configured(void) {
-    if (!ir_mgr_io24_configured && strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
-        gpio_reset_pin(GPIO_NUM_24);
-        gpio_set_direction(GPIO_NUM_24, GPIO_MODE_OUTPUT);
-        gpio_set_level(GPIO_NUM_24, 0);
-        ir_mgr_io24_configured = true;
-        ESP_LOGI(TAG_IR_MANAGER, "IO24 configured for poltergeist template");
-    }
-}
-#endif
-
 /* optional hook provided by infrared_view.c to pause RX while TX allocates a channel */
 __attribute__((weak)) void infrared_rx_pause_for_tx(bool pause) { (void)pause; }
 
@@ -58,7 +44,12 @@ bool infrared_manager_init(void) {
     }
 #endif
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    infrared_manager_io24_ensure_configured();
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
+        gpio_reset_pin(24);
+        gpio_set_direction(24, GPIO_MODE_OUTPUT);
+        gpio_set_level(24, 0);
+        ESP_LOGI(TAG_IR_MANAGER, "IO24 configured for poltergeist template");
+    }
 #endif
     return ok;
 }
@@ -599,9 +590,10 @@ bool infrared_manager_transmit(const infrared_signal_t *signal) {
     if (!signal) return false;
     ESP_LOGI(TAG_IR_MANAGER, "transmitting IR signal (name: %s)", signal->name);
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    infrared_manager_io24_ensure_configured();
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
-        gpio_set_level(GPIO_NUM_24, 1);
+        gpio_reset_pin(24);
+        gpio_set_direction(24, GPIO_MODE_OUTPUT);
+        gpio_set_level(24, 1);
         vTaskDelay(pdMS_TO_TICKS(250));
     }
 #endif
@@ -668,7 +660,7 @@ bool infrared_manager_transmit(const infrared_signal_t *signal) {
 #endif
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
-        gpio_set_level(GPIO_NUM_24, 0);
+        gpio_set_level(24, 0);
     }
 #endif
 
@@ -818,7 +810,12 @@ bool infrared_manager_rx_init(void) {
     if (ir_mgr_rx_channel) return true; // already initialized
 
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    infrared_manager_io24_ensure_configured();
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
+        gpio_reset_pin(24);
+        gpio_set_direction(24, GPIO_MODE_OUTPUT);
+        gpio_set_level(24, 0);
+        ESP_LOGI(TAG_IR_MANAGER, "IO24 configured for poltergeist template");
+    }
 #endif
 
     rmt_rx_channel_config_t rx_config = {
