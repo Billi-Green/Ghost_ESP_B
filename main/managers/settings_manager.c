@@ -59,6 +59,7 @@ static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
 static const char *NVS_NAV_BUTTONS_KEY = "nav_buttons";
 static const char *NVS_MENU_LAYOUT_KEY = "menu_layout";
 static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
+static const char *NVS_ENCODER_INVERT_KEY = "enc_inv";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
 static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
@@ -159,6 +160,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->nav_buttons_enabled = true; // Default to enabled
   settings->menu_layout = 0; // Default to carousel layout
   settings->neopixel_max_brightness = 100; // Default to 100% brightness
+  settings->encoder_invert_direction = false;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -476,6 +478,14 @@ void settings_load(FSettings *settings) {
     settings->neopixel_max_brightness = value_u8;
   } else {
     settings->neopixel_max_brightness = 100; // Default to 100% if not found
+  }
+
+  // Load encoder direction inversion
+  err = nvs_get_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->encoder_invert_direction = (bool)value_u8;
+  } else {
+    settings->encoder_invert_direction = false;
   }
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -814,6 +824,9 @@ void settings_save(const FSettings *settings) {
 
   err = nvs_set_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save neopixel_max_brightness: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, settings->encoder_invert_direction);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save encoder_invert_direction: %s", esp_err_to_name(err));
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   err = nvs_set_u8(nvsHandle, NVS_STATUS_IDLE_ANIM_KEY, (uint8_t)settings->status_idle_animation);
@@ -1267,6 +1280,14 @@ void settings_set_neopixel_max_brightness(FSettings *settings, uint8_t brightnes
 
 uint8_t settings_get_neopixel_max_brightness(const FSettings *settings) {
     return settings->neopixel_max_brightness;
+}
+
+void settings_set_encoder_invert_direction(FSettings *settings, bool enabled) {
+  settings->encoder_invert_direction = enabled;
+}
+
+bool settings_get_encoder_invert_direction(const FSettings *settings) {
+  return settings->encoder_invert_direction;
 }
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY

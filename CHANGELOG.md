@@ -42,7 +42,7 @@
 - Add vendor board support and images to documentation - @tototo31
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
 - Route evil portal HTML requests through the UART HTML buffer when active instead of the SD-backed file handler.
-
+- Added 'Invert Encoder' setting to display UI for configs with encoders
 
 
 ## Revival v1.8.1

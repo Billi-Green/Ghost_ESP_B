@@ -120,6 +120,7 @@ typedef struct {
   IdleAnimation status_idle_animation; // idle animation for status display
   uint32_t status_idle_timeout_ms; // delay before starting idle animation
 #endif
+  bool encoder_invert_direction;
 } FSettings;
 
 // Function declarations
@@ -268,6 +269,10 @@ uint8_t settings_get_menu_layout(const FSettings *settings);
 // Neopixel brightness settings
 void settings_set_neopixel_max_brightness(FSettings *settings, uint8_t brightness);
 uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
+
+// Encoder direction inversion settings
+void settings_set_encoder_invert_direction(FSettings *settings, bool enabled);
+bool settings_get_encoder_invert_direction(const FSettings *settings);
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 // Status display idle animation accessors
