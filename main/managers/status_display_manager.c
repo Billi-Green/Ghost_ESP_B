@@ -46,7 +46,7 @@ static const int SCALE_Y = 2; // simple vertical scaling factor
 // idle animation settings
 static TimerHandle_t s_idle_timer;
 static TickType_t s_last_update_tick;
-static const TickType_t ANIM_INTERVAL_TICKS = pdMS_TO_TICKS(500);  // 500 ms
+static const TickType_t ANIM_INTERVAL_TICKS = pdMS_TO_TICKS(150);
 
 static bool status_idle_delay_elapsed(TickType_t now)
 {
@@ -69,6 +69,17 @@ static TickType_t s_next_anim_allowed_tick;
 static uint8_t s_life_grid[LIFE_ROWS][LIFE_COLS];
 static uint8_t s_life_next[LIFE_ROWS][LIFE_COLS];
 static bool s_life_active;
+
+#define STAR_COUNT 96
+typedef struct {
+    int x;
+    int y;
+    int dx;
+    int dy;
+    uint8_t trail;
+} Star;
+static Star s_stars[STAR_COUNT];
+static bool s_starfield_inited;
 // ghost sprite (24x30), 1bpp, row-major MSB-first
 static const int GHOST_W = 24;
 static const int GHOST_H = 30;
@@ -272,7 +283,9 @@ static void status_display_anim_task(void *arg) {
         if (now < s_next_anim_allowed_tick) continue;
         s_next_anim_allowed_tick = now + ANIM_INTERVAL_TICKS;
 
-        if (settings_get_status_idle_animation(&G_Settings) == IDLE_ANIM_GAME_OF_LIFE) {
+        IdleAnimation anim = settings_get_status_idle_animation(&G_Settings);
+
+        if (anim == IDLE_ANIM_GAME_OF_LIFE) {
             if (!s_life_active) {
                 uint32_t seed = (uint32_t)now;
                 seed ^= (uint32_t)((uintptr_t)&now);
@@ -285,6 +298,8 @@ static void status_display_anim_task(void *arg) {
                 }
                 s_life_active = true;
             } else {
+                bool any_alive = false;
+                bool any_change = false;
                 for (int r = 0; r < LIFE_ROWS; ++r) {
                     for (int c = 0; c < LIFE_COLS; ++c) {
                         int live_neighbors = 0;
@@ -301,9 +316,99 @@ static void status_display_anim_task(void *arg) {
                         } else {
                             s_life_next[r][c] = (live_neighbors == 3) ? 1 : 0;
                         }
+                        if (s_life_next[r][c]) {
+                            any_alive = true;
+                        }
+                        if (s_life_next[r][c] != s_life_grid[r][c]) {
+                            any_change = true;
+                        }
                     }
                 }
-                for (int r = 0; r < LIFE_ROWS; ++r) memcpy(s_life_grid[r], s_life_next[r], LIFE_COLS);
+                if (!any_alive || !any_change) {
+                    s_life_active = false;
+                } else {
+                    for (int r = 0; r < LIFE_ROWS; ++r) memcpy(s_life_grid[r], s_life_next[r], LIFE_COLS);
+                }
+            }
+        } else if (anim == IDLE_ANIM_STARFIELD) {
+            if (!s_starfield_inited) {
+                uint32_t seed = (uint32_t)now ^ (uint32_t)((uintptr_t)&now);
+                for (int i = 0; i < STAR_COUNT; ++i) {
+                    seed = seed * 1664525u + 1013904223u;
+                    int cx = 64;
+                    int cy = 32;
+                    int jitter_x = ((int)(seed & 0x0F)) - 8;
+                    seed = seed * 1664525u + 1013904223u;
+                    int jitter_y = ((int)(seed & 0x0F)) - 8;
+                    s_stars[i].x = cx + jitter_x;
+                    s_stars[i].y = cy + jitter_y;
+
+                    int dx = 0;
+                    int dy = 0;
+                    int mag2 = 0;
+                    do {
+                        seed = seed * 1664525u + 1013904223u;
+                        dx = (int)(((seed >> 28) & 0x07) - 3);
+                        seed = seed * 1664525u + 1013904223u;
+                        dy = (int)(((seed >> 28) & 0x07) - 3);
+                        mag2 = dx * dx + dy * dy;
+                    } while (mag2 < 2 || mag2 > 18);
+
+                    int vx = s_stars[i].x - cx;
+                    int vy = s_stars[i].y - cy;
+                    if (vx * dx + vy * dy <= 0) {
+                        dx = -dx;
+                        dy = -dy;
+                    }
+
+                    s_stars[i].dx = dx;
+                    s_stars[i].dy = dy;
+
+                    seed = seed * 1664525u + 1013904223u;
+                    s_stars[i].trail = (uint8_t)(5 + (seed % 3));
+                }
+                s_starfield_inited = true;
+            } else {
+                for (int i = 0; i < STAR_COUNT; ++i) {
+                    s_stars[i].x += s_stars[i].dx;
+                    s_stars[i].y += s_stars[i].dy;
+                    if (s_stars[i].x < 0 || s_stars[i].x >= 128 ||
+                        s_stars[i].y < 0 || s_stars[i].y >= 64) {
+                        uint32_t seed = (uint32_t)now ^ (uint32_t)((uintptr_t)&s_stars[i]);
+                        seed = seed * 1664525u + 1013904223u;
+                        int cx = 64;
+                        int cy = 32;
+                        int jitter_x = ((int)(seed & 0x0F)) - 8;
+                        seed = seed * 1664525u + 1013904223u;
+                        int jitter_y = ((int)(seed & 0x0F)) - 8;
+                        s_stars[i].x = cx + jitter_x;
+                        s_stars[i].y = cy + jitter_y;
+
+                        int dx = 0;
+                        int dy = 0;
+                        int mag2 = 0;
+                        do {
+                            seed = seed * 1664525u + 1013904223u;
+                            dx = (int)(((seed >> 28) & 0x07) - 3);
+                            seed = seed * 1664525u + 1013904223u;
+                            dy = (int)(((seed >> 28) & 0x07) - 3);
+                            mag2 = dx * dx + dy * dy;
+                        } while (mag2 < 2 || mag2 > 18);
+
+                        int vx = s_stars[i].x - cx;
+                        int vy = s_stars[i].y - cy;
+                        if (vx * dx + vy * dy <= 0) {
+                            dx = -dx;
+                            dy = -dy;
+                        }
+
+                        s_stars[i].dx = dx;
+                        s_stars[i].dy = dy;
+
+                        seed = seed * 1664525u + 1013904223u;
+                        s_stars[i].trail = (uint8_t)(5 + (seed % 3));
+                    }
+                }
             }
         } else {
             // ghost sprite horizontal walk with gentle vertical float
@@ -319,7 +424,7 @@ static void status_display_anim_task(void *arg) {
 
         if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             status_display_clear_buffer();
-            if (settings_get_status_idle_animation(&G_Settings) == IDLE_ANIM_GAME_OF_LIFE) {
+            if (anim == IDLE_ANIM_GAME_OF_LIFE) {
                 for (int r = 0; r < LIFE_ROWS; ++r) {
                     for (int c = 0; c < LIFE_COLS; ++c) {
                         if (!s_life_grid[r][c]) continue;
@@ -330,6 +435,19 @@ static void status_display_anim_task(void *arg) {
                                 status_display_plot_pixel(sx + xx, sy + yy, true);
                             }
                         }
+                    }
+                }
+            } else if (anim == IDLE_ANIM_STARFIELD) {
+                for (int i = 0; i < STAR_COUNT; ++i) {
+                    int x = s_stars[i].x;
+                    int y = s_stars[i].y;
+                    int dx = s_stars[i].dx;
+                    int dy = s_stars[i].dy;
+                    int len = s_stars[i].trail;
+                    for (int t = 0; t < len; ++t) {
+                        int px = x - dx * t;
+                        int py = y - dy * t;
+                        status_display_plot_pixel(px, py, true);
                     }
                 }
             } else {

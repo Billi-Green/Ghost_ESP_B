@@ -78,6 +78,9 @@ void handle_spoof_airtag(int argc, char **argv);
 void handle_stop_spoof(int argc, char **argv);
 void handle_ble_spam_cmd(int argc, char **argv);
 #endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+void handle_status_idle_cmd(int argc, char **argv);
+#endif
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -1150,6 +1153,81 @@ void handle_ip_lookup(int argc, char **argv) {
     status_display_show_status("IP Lookup");
 }
 
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+static const char *idle_anim_to_name(IdleAnimation anim) {
+    switch (anim) {
+        case IDLE_ANIM_GAME_OF_LIFE: return "life";
+        case IDLE_ANIM_GHOST: return "ghost";
+        case IDLE_ANIM_STARFIELD: return "starfield";
+        default: return "unknown";
+    }
+}
+
+static bool parse_idle_anim_arg(const char *arg, IdleAnimation *out) {
+    if (!arg || !out) return false;
+    if (strcmp(arg, "0") == 0 || strcmp(arg, "life") == 0 || strcmp(arg, "gameoflife") == 0) {
+        *out = IDLE_ANIM_GAME_OF_LIFE;
+        return true;
+    }
+    if (strcmp(arg, "1") == 0 || strcmp(arg, "ghost") == 0) {
+        *out = IDLE_ANIM_GHOST;
+        return true;
+    }
+    if (strcmp(arg, "2") == 0 || strcmp(arg, "starfield") == 0 || strcmp(arg, "startfield") == 0) {
+        *out = IDLE_ANIM_STARFIELD;
+        return true;
+    }
+    return false;
+}
+
+void handle_status_idle_cmd(int argc, char **argv) {
+    if (!status_display_is_ready()) {
+        glog("Status display not ready; check wiring and CONFIG_WITH_STATUS_DISPLAY.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        IdleAnimation current = settings_get_status_idle_animation(&G_Settings);
+        uint32_t timeout = settings_get_status_idle_timeout_ms(&G_Settings);
+        const char *name = idle_anim_to_name(current);
+        const char *timeout_desc = (timeout == 0 || timeout == UINT32_MAX) ? "never" : "delayed";
+        glog("Current idle animation: %s (%d)\n", name, (int)current);
+        glog("Idle timeout: %lu ms (%s)\n", (unsigned long)timeout, timeout_desc);
+        status_display_show_status("Idle Anim Info");
+        return;
+    }
+
+    if (strcmp(argv[1], "list") == 0) {
+        glog("Available idle animations:\n");
+        glog("  0 - life      (Game of Life)\n");
+        glog("  1 - ghost     (Ghost sprite)\n");
+        glog("  2 - starfield (Starfield effect)\n");
+        status_display_show_status("Idle Anim List");
+        return;
+    }
+
+    if (strcmp(argv[1], "set") == 0) {
+        if (argc < 3) {
+            glog("Usage: statusidle set <life|ghost|starfield|0|1|2>\n");
+            return;
+        }
+        IdleAnimation anim;
+        if (!parse_idle_anim_arg(argv[2], &anim)) {
+            glog("Unknown idle animation: %s\n", argv[2]);
+            glog("Use 'statusidle list' to see options.\n");
+            return;
+        }
+        settings_set_status_idle_animation(&G_Settings, anim);
+        settings_save(&G_Settings);
+        glog("Idle animation set to %s (%d)\n", idle_anim_to_name(anim), (int)anim);
+        status_display_show_status("Idle Anim Set");
+        return;
+    }
+
+    glog("Usage: statusidle [list|set <life|ghost|starfield|0|1|2>]\n");
+}
+#endif
+
 void handle_capture_scan(int argc, char **argv) {
     if (argc < 2 || argc > 3) {
         glog("Error: Incorrect number of arguments.\n");
@@ -1780,7 +1858,10 @@ void handle_help(int argc, char **argv) {
         printf("        settings get ap_ssid\n");
         printf("        settings set rgb_mode 1\n");
         printf("        settings reset\n\n");
-        TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp, settings\n");
+        printf("statusidle\n");
+        printf("    Description: View or change the status display idle animation (status OLED only).\n");
+        printf("    Usage: statusidle [list|set <life|ghost|0|1>]\n\n");
+        TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp, settings, statusidle\n");
         return;
     }
     if (strcmp(category, "gps") == 0) {
@@ -4214,6 +4295,9 @@ void register_commands() {
     register_command("listflippers", handle_list_flippers_cmd);
     register_command("selectflipper", handle_select_flipper_cmd);
 #endif
+    #ifdef CONFIG_WITH_STATUS_DISPLAY
+    register_command("statusidle", handle_status_idle_cmd);
+    #endif
     register_command("dhcpstarve", handle_dhcpstarve_cmd);
     register_command("saeflood", handle_sae_flood_cmd);
     register_command("stopsaeflood", handle_stop_sae_flood_cmd);

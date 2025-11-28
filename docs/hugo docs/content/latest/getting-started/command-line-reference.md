@@ -109,6 +109,13 @@ toc: true
 - **`setrgbpins <r> <g> <b>`** — Override discrete RGB GPIOs; pass the same pin for all three values to switch into single-wire NeoPixel mode on that data pin.
 - **`setneopixelbrightness <0-100>`** / **`getneopixelbrightness`** — Control NeoPixel intensity.
 
+## Status display (if present)
+
+- **`statusidle [list|set <life|ghost|0|1>]`** — View or change the status OLED idle animation when `CONFIG_WITH_STATUS_DISPLAY` and a status display are enabled.
+  - `statusidle` — Show the current idle animation and timeout.
+  - `statusidle list` — List available idle animations.
+  - `statusidle set <life|ghost|0|1>` — Select the idle animation mode.
+
 ## Infrared
 
 - **`ir list [path]`** — List `.ir` files (default: `/mnt/ghostesp/infrared/remotes`).

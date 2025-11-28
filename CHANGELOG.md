@@ -43,7 +43,8 @@
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
 - Route evil portal HTML requests through the UART HTML buffer when active instead of the SD-backed file handler.
 - Added 'Invert Encoder' setting to display UI for configs with encoders
-
+- Added starfield idle animation for the status display
+- Added CLI commands for changing the status display animations
 
 ## Revival v1.8.1
 
