@@ -47,6 +47,7 @@
 - Added CLI commands for changing the status display animations
 - Reset AirTag and Flipper discovery lists at the start of scans to avoid stale entries
 - Removed Flappy Ghost app and related build/docs references
+- Removed unused buffer to save 8KB ram
 
 ## Revival v1.8.1
 
