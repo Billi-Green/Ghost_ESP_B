@@ -1883,6 +1883,144 @@ void handle_eth_ports_cmd(int argc, char **argv) {
 
     glog("\nPort scan complete. Found %d open port(s) on %s\n", open_ports, target_ip);
 }
+
+// ICMP packet structure for ping (local definition for Ethernet ping)
+typedef struct {
+    uint8_t type;
+    uint8_t code;
+    uint16_t checksum;
+    uint16_t id;
+    uint16_t seqno;
+} eth_icmp_packet_t;
+
+// Calculate ICMP checksum
+static uint16_t calculate_icmp_checksum(uint16_t *buf, int len) {
+    uint32_t sum = 0;
+    while (len > 1) {
+        sum += *buf++;
+        len -= 2;
+    }
+    if (len > 0) {
+        sum += *(uint8_t *)buf;
+    }
+    while (sum >> 16) {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    return (uint16_t)(~sum);
+}
+
+// Check if a host responds to ping
+static bool ping_host(const char *ip_addr, uint32_t timeout_ms) {
+    struct sockaddr_in addr;
+    int sock;
+    struct timeval timeout;
+    fd_set readset;
+    uint8_t buf[sizeof(eth_icmp_packet_t)];
+    bool is_active = false;
+
+    sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sock < 0) {
+        return false;
+    }
+
+    // Prepare ICMP packet
+    eth_icmp_packet_t *icmp = (eth_icmp_packet_t *)buf;
+    icmp->type = 8; // ICMP Echo Request
+    icmp->code = 0;
+    icmp->checksum = 0;
+    icmp->id = 0xAFAF;
+    icmp->seqno = htons(1);
+    
+    uint16_t aligned_buf[(sizeof(eth_icmp_packet_t) + 1) / 2];
+    memcpy(aligned_buf, icmp, sizeof(eth_icmp_packet_t));
+    icmp->checksum = calculate_icmp_checksum(aligned_buf, sizeof(eth_icmp_packet_t));
+
+    addr.sin_family = AF_INET;
+    if (inet_pton(AF_INET, ip_addr, &addr.sin_addr.s_addr) != 1) {
+        close(sock);
+        return false;
+    }
+
+    sendto(sock, buf, sizeof(eth_icmp_packet_t), 0, (struct sockaddr *)&addr, sizeof(addr));
+
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+
+    FD_ZERO(&readset);
+    FD_SET(sock, &readset);
+
+    if (select(sock + 1, &readset, NULL, NULL, &timeout) > 0) {
+        is_active = true;
+    }
+
+    close(sock);
+    return is_active;
+}
+
+void handle_eth_ping_cmd(int argc, char **argv) {
+    // Check if Ethernet is connected
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    // Get Ethernet IP info to determine subnet
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK) {
+        glog("Failed to get Ethernet IP information\n");
+        return;
+    }
+
+    if (ip_info.ip.addr == 0) {
+        glog("Ethernet IP address not assigned yet. Please wait for DHCP.\n");
+        return;
+    }
+
+    // Calculate subnet prefix (e.g., "192.168.1.")
+    char subnet_prefix[16];
+    uint32_t ip = ip_info.ip.addr;
+    uint32_t netmask = ip_info.netmask.addr;
+    uint32_t network = ip & netmask;
+    
+    snprintf(subnet_prefix, sizeof(subnet_prefix), "%d.%d.%d.",
+             (int)((network >> 0) & 0xFF),
+             (int)((network >> 8) & 0xFF),
+             (int)((network >> 16) & 0xFF));
+
+    glog("Starting ping scan on Ethernet network %s0/24\n", subnet_prefix);
+    glog("Scanning network using ICMP ping...\n");
+
+    const int START_HOST = 1;
+    const int END_HOST = 254;
+    const uint32_t PING_TIMEOUT_MS = 300; // Reduced timeout since we're pinging directly
+    int num_found = 0;
+
+    glog("Pinging hosts directly (network stack will handle ARP automatically)...\n");
+
+    // Ping all hosts directly - the network stack will handle ARP resolution automatically
+    // and cache the results, so subsequent pings to the same subnet will be faster
+    for (int host = START_HOST; host <= END_HOST; host++) {
+        char current_ip[26];
+        snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
+        
+        // Send ping directly - ARP will be handled automatically by the network stack
+        if (ping_host(current_ip, PING_TIMEOUT_MS)) {
+            num_found++;
+            glog("  %s - ALIVE\n", current_ip);
+        }
+        
+        // Small delay to avoid overwhelming the network stack
+        vTaskDelay(pdMS_TO_TICKS(5));
+        
+        // Progress update every 50 hosts
+        if (host % 50 == 0 || host == END_HOST) {
+            glog("Progress: Scanned %d/%d hosts, found %d alive hosts\n", 
+                 host - START_HOST + 1, END_HOST - START_HOST + 1, num_found);
+        }
+    }
+
+    glog("\nPing scan complete. Found %d alive host(s) on the network.\n", num_found);
+}
 #endif
 
 void handle_startwd(int argc, char **argv) {
@@ -4801,6 +4939,7 @@ void register_commands() {
     register_command("ethinfo", handle_eth_info_cmd);
     register_command("etharp", handle_eth_arp_cmd);
     register_command("ethports", handle_eth_ports_cmd);
+    register_command("ethping", handle_eth_ping_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
