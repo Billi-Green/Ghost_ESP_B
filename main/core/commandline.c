@@ -21,6 +21,10 @@
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 #include "managers/zigbee_manager.h"
 #endif
+#ifdef CONFIG_WITH_ETHERNET
+#include "managers/ethernet_manager.h"
+#include "lwip/ip4_addr.h"
+#endif
 #include <esp_timer.h>
 #include <managers/gps_manager.h>
 #include <managers/views/terminal_screen.h>
@@ -1411,6 +1415,62 @@ void handle_reboot(int argc, char **argv) {
     glog("Rebooting system...\n");
     esp_restart();
 }
+
+#ifdef CONFIG_WITH_ETHERNET
+void handle_eth_up_cmd(int argc, char **argv) {
+    glog("Bringing up Ethernet Manager...\n");
+    esp_err_t ret = ethernet_manager_init();
+    if (ret == ESP_OK) {
+        glog("Ethernet Manager initialized successfully\n");
+        
+        // Wait a moment for link to establish and DHCP to complete
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        
+        // Check connection status
+        if (ethernet_manager_is_connected()) {
+            glog("Ethernet link is UP\n");
+            
+            // Get and display IP info
+            esp_netif_ip_info_t ip_info;
+            if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK) {
+                char ip_str[16], netmask_str[16], gw_str[16];
+                ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+                ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+                ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+                
+                // Check if IP is actually assigned (not 0.0.0.0)
+                if (ip_info.ip.addr == 0) {
+                    glog("IP Address: Not assigned yet (waiting for DHCP...)\n");
+                    glog("Netmask: Not assigned\n");
+                    glog("Gateway: Not assigned\n");
+                    glog("Note: DHCP may take a few more seconds. Check again shortly.\n");
+                } else {
+                    glog("IP Address: %s\n", ip_str);
+                    glog("Netmask: %s\n", netmask_str);
+                    glog("Gateway: %s\n", gw_str);
+                }
+            } else {
+                glog("Failed to get IP information\n");
+            }
+        } else {
+            glog("Ethernet link is DOWN - waiting for cable connection...\n");
+            glog("Please connect an Ethernet cable to the W5500 module\n");
+        }
+    } else {
+        glog("Ethernet Manager initialization failed: %s\n", esp_err_to_name(ret));
+    }
+}
+
+void handle_eth_down_cmd(int argc, char **argv) {
+    glog("Bringing down Ethernet Manager...\n");
+    esp_err_t ret = ethernet_manager_deinit();
+    if (ret == ESP_OK) {
+        glog("Ethernet Manager deinitialized successfully\n");
+    } else {
+        glog("Ethernet Manager deinitialization failed: %s\n", esp_err_to_name(ret));
+    }
+}
+#endif
 
 void handle_startwd(int argc, char **argv) {
     bool stop_flag = false;
@@ -4321,6 +4381,10 @@ void register_commands() {
     register_command("getneopixelbrightness", handle_get_neopixel_brightness_cmd);
 #ifdef CONFIG_HAS_INFRARED
     register_command("ir", handle_ir_cmd);
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+    register_command("ethup", handle_eth_up_cmd);
+    register_command("ethdown", handle_eth_down_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);

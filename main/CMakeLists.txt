@@ -88,6 +88,12 @@ if("${IDF_TARGET}" STREQUAL "esp32c5" OR "${IDF_TARGET}" STREQUAL "esp32c6")
     list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/zigbee_manager.c")
 endif()
 
+# Add Ethernet component when Ethernet is enabled
+if(CONFIG_WITH_ETHERNET)
+    list(APPEND required_components esp_eth)
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/ethernet_manager.c")
+endif()
+
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}

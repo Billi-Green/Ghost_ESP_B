@@ -1,0 +1,433 @@
+// ethernet_manager.c
+
+#include "sdkconfig.h"
+
+#ifdef CONFIG_WITH_ETHERNET
+
+#include "managers/ethernet_manager.h"
+#include "esp_log.h"
+#include "esp_netif.h"
+#include "esp_eth.h"
+#include "esp_eth_mac.h"
+#include "esp_eth_phy.h"
+#include "esp_eth_mac_spi.h"
+#include "esp_event.h"
+#include "esp_mac.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lwip/ip4_addr.h"
+
+static const char *TAG = "EthernetManager";
+
+static esp_eth_handle_t s_eth_handle = NULL;
+static esp_netif_t *s_eth_netif = NULL;
+static bool s_eth_connected = false;
+static bool s_eth_initialized = false;
+static esp_eth_mac_t *s_eth_mac = NULL;
+static esp_eth_phy_t *s_eth_phy = NULL;
+static spi_host_device_t s_spi_host = SPI3_HOST;
+static bool s_spi_bus_initialized_by_us = false;
+
+// Event handler for Ethernet events
+static void eth_event_handler(void *arg, esp_event_base_t event_base,
+                              int32_t event_id, void *event_data)
+{
+    uint8_t mac_addr[6] = {0};
+    esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
+
+    switch (event_id) {
+    case ETHERNET_EVENT_CONNECTED:
+        s_eth_connected = true;
+        esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
+        ESP_LOGI(TAG, "Ethernet Link Up");
+        ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
+                 mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+        break;
+    case ETHERNET_EVENT_DISCONNECTED:
+        s_eth_connected = false;
+        ESP_LOGI(TAG, "Ethernet Link Down");
+        break;
+    case ETHERNET_EVENT_START:
+        ESP_LOGI(TAG, "Ethernet Started");
+        break;
+    case ETHERNET_EVENT_STOP:
+        ESP_LOGI(TAG, "Ethernet Stopped");
+        break;
+    default:
+        break;
+    }
+}
+
+// Event handler for IP events
+static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
+                                 int32_t event_id, void *event_data)
+{
+    ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+    const esp_netif_ip_info_t *ip_info = &event->ip_info;
+
+    ESP_LOGI(TAG, "Ethernet Got IP Address");
+    ESP_LOGI(TAG, "~~~~~~~~~~~");
+    ESP_LOGI(TAG, "ETHIP:" IPSTR, IP2STR(&ip_info->ip));
+    ESP_LOGI(TAG, "ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
+    ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
+    ESP_LOGI(TAG, "~~~~~~~~~~~");
+}
+
+esp_err_t ethernet_manager_init(void)
+{
+    // Check if already initialized
+    if (s_eth_initialized) {
+        ESP_LOGW(TAG, "Ethernet Manager already initialized");
+        if (s_eth_handle != NULL && s_eth_netif != NULL) {
+            ESP_LOGI(TAG, "Ethernet is already running");
+            return ESP_OK;
+        } else {
+            ESP_LOGW(TAG, "Ethernet was initialized but handles are NULL, re-initializing...");
+            s_eth_initialized = false;
+        }
+    }
+
+    ESP_LOGI(TAG, "Initializing Ethernet Manager with W5500");
+    ESP_LOGI(TAG, "W5500 Pins: MOSI=%d, MISO=%d, SCK=%d, CS=%d, INT=%d",
+             CONFIG_ETH_W5500_MOSI_PIN, CONFIG_ETH_W5500_MISO_PIN,
+             CONFIG_ETH_W5500_SCK_PIN, CONFIG_ETH_W5500_CS_PIN, CONFIG_ETH_W5500_INT_PIN);
+
+    // Validate GPIO pins are valid
+    if (CONFIG_ETH_W5500_MOSI_PIN < 0 || CONFIG_ETH_W5500_MISO_PIN < 0 || 
+        CONFIG_ETH_W5500_SCK_PIN < 0 || CONFIG_ETH_W5500_CS_PIN < 0) {
+        ESP_LOGE(TAG, "Invalid GPIO pin configuration. All pins must be >= 0");
+        ESP_LOGE(TAG, "MOSI=%d, MISO=%d, SCK=%d, CS=%d",
+                 CONFIG_ETH_W5500_MOSI_PIN, CONFIG_ETH_W5500_MISO_PIN,
+                 CONFIG_ETH_W5500_SCK_PIN, CONFIG_ETH_W5500_CS_PIN);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // On ESP32-S3, check if pins might be in use
+    // GPIO 6 on ESP32-S3 can be used for SPI, but verify it's not strapping pin or flash
+    #ifdef CONFIG_IDF_TARGET_ESP32S3
+    ESP_LOGI(TAG, "ESP32-S3 detected - GPIO 6 should be valid for SPI");
+    ESP_LOGI(TAG, "Note: If SD card uses SPI2_HOST, Ethernet should use SPI3_HOST");
+    
+    // Verify GPIO validity using ESP-IDF macros before attempting SPI init
+    if (!GPIO_IS_VALID_OUTPUT_GPIO(CONFIG_ETH_W5500_MOSI_PIN)) {
+        ESP_LOGE(TAG, "GPIO %d (MOSI) is not a valid output GPIO!", CONFIG_ETH_W5500_MOSI_PIN);
+        ESP_LOGE(TAG, "This pin cannot be used for SPI MOSI on ESP32-S3");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!GPIO_IS_VALID_OUTPUT_GPIO(CONFIG_ETH_W5500_SCK_PIN)) {
+        ESP_LOGE(TAG, "GPIO %d (SCK) is not a valid output GPIO!", CONFIG_ETH_W5500_SCK_PIN);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (CONFIG_ETH_W5500_MISO_PIN >= 0 && !GPIO_IS_VALID_GPIO(CONFIG_ETH_W5500_MISO_PIN)) {
+        ESP_LOGE(TAG, "GPIO %d (MISO) is not a valid GPIO!", CONFIG_ETH_W5500_MISO_PIN);
+        return ESP_ERR_INVALID_ARG;
+    }
+    ESP_LOGI(TAG, "GPIO pin validation passed - all pins are valid for SPI");
+    #endif
+
+    // Install GPIO ISR handler for SPI Ethernet module interrupts (ignore if already installed)
+    esp_err_t isr_ret = gpio_install_isr_service(0);
+    if (isr_ret != ESP_OK && isr_ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "GPIO ISR service installation failed: %s", esp_err_to_name(isr_ret));
+        return isr_ret;
+    }
+
+    // Configure SPI bus
+    spi_bus_config_t buscfg = {
+        .miso_io_num = CONFIG_ETH_W5500_MISO_PIN,
+        .mosi_io_num = CONFIG_ETH_W5500_MOSI_PIN,
+        .sclk_io_num = CONFIG_ETH_W5500_SCK_PIN,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+    };
+    
+    ESP_LOGI(TAG, "Configuring SPI bus with MOSI=%d, MISO=%d, SCK=%d",
+             buscfg.mosi_io_num, buscfg.miso_io_num, buscfg.sclk_io_num);
+
+    // On ESP32-S3, try SPI3_HOST first (less likely to be used by SD card/display)
+    // Then try SPI2_HOST if SPI3 fails
+    // SD card and display often use SPI2_HOST, so we prefer SPI3_HOST for Ethernet
+    spi_host_device_t spi_host = SPI3_HOST;
+    s_spi_bus_initialized_by_us = false;
+    ESP_LOGI(TAG, "Attempting to initialize SPI3_HOST for W5500...");
+    esp_err_t ret = spi_bus_initialize(spi_host, &buscfg, SPI_DMA_CH_AUTO);
+    
+    // If SPI3 fails with invalid pin or already initialized, try SPI2
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "SPI3_HOST initialization failed: %s, trying SPI2_HOST...", esp_err_to_name(ret));
+        spi_host = SPI2_HOST;
+        ESP_LOGI(TAG, "Attempting to initialize SPI2_HOST for W5500...");
+        ret = spi_bus_initialize(spi_host, &buscfg, SPI_DMA_CH_AUTO);
+    }
+    
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "SPI bus initialization failed on both SPI2 and SPI3: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "This usually means one or more GPIO pins are invalid for SPI");
+        ESP_LOGE(TAG, "On ESP32-S3, GPIO 6 should be valid, but may conflict with:");
+        ESP_LOGE(TAG, "  - An already initialized SPI bus with different pins");
+        ESP_LOGE(TAG, "  - Flash/PSRAM configuration");
+        ESP_LOGE(TAG, "  - Another peripheral using GPIO 6");
+        ESP_LOGE(TAG, "Check if SPI2_HOST or SPI3_HOST is already in use by SD card or display");
+        ESP_LOGE(TAG, "You may need to use a different SPI host or ensure pins don't conflict");
+        return ret;
+    }
+    if (ret == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "SPI%d bus already initialized with different pins, will try to add device...", spi_host + 1);
+        ESP_LOGW(TAG, "Note: If pins conflict, this may fail. Ensure W5500 pins don't conflict");
+        ESP_LOGW(TAG, "with existing SPI devices (SD card, display, etc.)");
+        s_spi_bus_initialized_by_us = false; // We didn't initialize it
+        // Check if the existing bus configuration matches our pins
+        // If not, we might need to use a different SPI host or handle the conflict
+    } else {
+        ESP_LOGI(TAG, "SPI%d bus initialized successfully with MOSI=%d, MISO=%d, SCK=%d",
+                 spi_host + 1, buscfg.mosi_io_num, buscfg.miso_io_num, buscfg.sclk_io_num);
+        s_spi_bus_initialized_by_us = true; // We initialized it
+    }
+    s_spi_host = spi_host; // Store for deinit
+
+    // Configure SPI device
+    spi_device_interface_config_t spi_devcfg = {
+        .mode = 0,
+        .clock_speed_hz = 20 * 1000 * 1000, // 20 MHz
+        .spics_io_num = CONFIG_ETH_W5500_CS_PIN,
+        .queue_size = 20
+    };
+
+    // Configure W5500 (use the SPI host that was successfully initialized)
+    eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(spi_host, &spi_devcfg);
+    w5500_config.int_gpio_num = (CONFIG_ETH_W5500_INT_PIN >= 0) ? CONFIG_ETH_W5500_INT_PIN : -1;
+    w5500_config.poll_period_ms = (CONFIG_ETH_W5500_INT_PIN >= 0) ? 0 : 100; // Use polling if no INT pin
+
+    // Configure MAC
+    eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+    s_eth_mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
+    if (s_eth_mac == NULL) {
+        ESP_LOGE(TAG, "Failed to create W5500 MAC instance");
+        // Don't free SPI bus if it was already initialized
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(spi_host);
+        }
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "W5500 MAC instance created");
+
+    // Configure PHY
+    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+    #ifdef CONFIG_ETH_W5500_RST_PIN
+    phy_config.reset_gpio_num = (CONFIG_ETH_W5500_RST_PIN >= 0) ? CONFIG_ETH_W5500_RST_PIN : -1;
+    #else
+    phy_config.reset_gpio_num = -1; // No reset pin configured
+    #endif
+    phy_config.reset_timeout_ms = 100; // Increase reset timeout
+    phy_config.autonego_timeout_ms = 4000; // Increase autonego timeout
+    ESP_LOGI(TAG, "W5500 PHY config: reset_gpio=%d, reset_timeout=%dms, autonego_timeout=%dms",
+             phy_config.reset_gpio_num, phy_config.reset_timeout_ms, phy_config.autonego_timeout_ms);
+    s_eth_phy = esp_eth_phy_new_w5500(&phy_config);
+    if (s_eth_phy == NULL) {
+        ESP_LOGE(TAG, "Failed to create W5500 PHY instance");
+        s_eth_mac->del(s_eth_mac);
+        s_eth_mac = NULL;
+        // Don't free SPI bus if it was already initialized
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(spi_host);
+        }
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "W5500 PHY instance created");
+
+    // Install Ethernet driver
+    esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(s_eth_mac, s_eth_phy);
+    ret = esp_eth_driver_install(&eth_config, &s_eth_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Ethernet driver installation failed: %s", esp_err_to_name(ret));
+        s_eth_phy->del(s_eth_phy);
+        s_eth_phy = NULL;
+        s_eth_mac->del(s_eth_mac);
+        s_eth_mac = NULL;
+        // Don't free SPI bus if it was already initialized
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(spi_host);
+        }
+        return ret;
+    }
+    ESP_LOGI(TAG, "Ethernet driver installed");
+
+    // Set MAC address for W5500 (SPI Ethernet modules don't have factory MAC)
+    uint8_t eth_mac[6] = {0};
+    esp_err_t mac_ret = esp_read_mac(eth_mac, ESP_MAC_ETH);
+    if (mac_ret == ESP_OK) {
+        ret = esp_eth_ioctl(s_eth_handle, ETH_CMD_S_MAC_ADDR, eth_mac);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Ethernet MAC address set: %02x:%02x:%02x:%02x:%02x:%02x",
+                     eth_mac[0], eth_mac[1], eth_mac[2], eth_mac[3], eth_mac[4], eth_mac[5]);
+        } else {
+            ESP_LOGW(TAG, "Failed to set Ethernet MAC address: %s", esp_err_to_name(ret));
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to read Ethernet MAC address: %s", esp_err_to_name(mac_ret));
+    }
+
+    // Create default Ethernet netif
+    esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
+    s_eth_netif = esp_netif_new(&cfg);
+    if (s_eth_netif == NULL) {
+        ESP_LOGE(TAG, "Failed to create Ethernet netif");
+        esp_eth_driver_uninstall(s_eth_handle);
+        s_eth_handle = NULL;
+        s_eth_phy->del(s_eth_phy);
+        s_eth_phy = NULL;
+        s_eth_mac->del(s_eth_mac);
+        s_eth_mac = NULL;
+        // Don't free SPI bus if it was already initialized
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(s_spi_host);
+        }
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Ethernet netif created");
+
+    // Attach Ethernet driver to netif
+    esp_netif_attach(s_eth_netif, esp_eth_new_netif_glue(s_eth_handle));
+    ESP_LOGI(TAG, "Ethernet driver attached to netif");
+
+    // Register event handlers
+    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
+    ESP_LOGI(TAG, "Ethernet event handlers registered");
+
+    // Start Ethernet driver
+    ret = esp_eth_start(s_eth_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Ethernet driver start failed: %s", esp_err_to_name(ret));
+        esp_netif_destroy(s_eth_netif);
+        s_eth_netif = NULL;
+        esp_eth_driver_uninstall(s_eth_handle);
+        s_eth_handle = NULL;
+        s_eth_phy->del(s_eth_phy);
+        s_eth_phy = NULL;
+        s_eth_mac->del(s_eth_mac);
+        s_eth_mac = NULL;
+        // Don't free SPI bus if it was already initialized
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(spi_host);
+        }
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "Ethernet driver started - waiting for link...");
+    
+    s_eth_initialized = true;
+    ESP_LOGI(TAG, "Ethernet Manager initialized successfully");
+    return ESP_OK;
+}
+
+bool ethernet_manager_is_connected(void)
+{
+    return s_eth_connected;
+}
+
+esp_err_t ethernet_manager_get_ip_info(esp_netif_ip_info_t *ip_info)
+{
+    if (ip_info == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_eth_netif == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    return esp_netif_get_ip_info(s_eth_netif, ip_info);
+}
+
+esp_err_t ethernet_manager_deinit(void)
+{
+    if (!s_eth_initialized) {
+        ESP_LOGW(TAG, "Ethernet Manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "Deinitializing Ethernet Manager...");
+
+    // Stop Ethernet driver
+    if (s_eth_handle != NULL) {
+        esp_eth_stop(s_eth_handle);
+        ESP_LOGI(TAG, "Ethernet driver stopped");
+    }
+
+    // Unregister event handlers
+    esp_event_handler_unregister(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler);
+    esp_event_handler_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler);
+    ESP_LOGI(TAG, "Ethernet event handlers unregistered");
+
+    // Destroy netif
+    if (s_eth_netif != NULL) {
+        esp_netif_destroy(s_eth_netif);
+        s_eth_netif = NULL;
+        ESP_LOGI(TAG, "Ethernet netif destroyed");
+    }
+
+    // Uninstall Ethernet driver
+    if (s_eth_handle != NULL) {
+        esp_eth_driver_uninstall(s_eth_handle);
+        s_eth_handle = NULL;
+        ESP_LOGI(TAG, "Ethernet driver uninstalled");
+    }
+
+    // Delete PHY instance
+    if (s_eth_phy != NULL) {
+        s_eth_phy->del(s_eth_phy);
+        s_eth_phy = NULL;
+        ESP_LOGI(TAG, "W5500 PHY instance deleted");
+    }
+
+    // Delete MAC instance
+    if (s_eth_mac != NULL) {
+        s_eth_mac->del(s_eth_mac);
+        s_eth_mac = NULL;
+        ESP_LOGI(TAG, "W5500 MAC instance deleted");
+    }
+
+    // Free SPI bus only if we initialized it
+    if (s_spi_bus_initialized_by_us) {
+        spi_bus_free(s_spi_host);
+        s_spi_bus_initialized_by_us = false;
+        ESP_LOGI(TAG, "SPI%d bus freed", s_spi_host + 1);
+    }
+
+    s_eth_connected = false;
+    s_eth_initialized = false;
+
+    ESP_LOGI(TAG, "Ethernet Manager deinitialized successfully");
+    return ESP_OK;
+}
+
+#else // CONFIG_WITH_ETHERNET not defined
+
+// Stub implementations when Ethernet is disabled
+#include "managers/ethernet_manager.h"
+#include "esp_err.h"
+#include "esp_log.h"
+
+static const char *TAG = "EthernetManager";
+
+esp_err_t ethernet_manager_init(void)
+{
+    ESP_LOGW(TAG, "Ethernet support not enabled in configuration");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+bool ethernet_manager_is_connected(void)
+{
+    return false;
+}
+
+esp_err_t ethernet_manager_get_ip_info(esp_netif_ip_info_t *ip_info)
+{
+    (void)ip_info;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+#endif // CONFIG_WITH_ETHERNET
+

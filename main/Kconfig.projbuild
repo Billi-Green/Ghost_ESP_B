@@ -330,7 +330,42 @@ menu "Ghost ESP Options"
             bool "Enable Ethernet Support"
             default n
             help
-                Enable Ethernet Support.   
+                Enable Ethernet Support.
+                
+        config ETH_W5500_MOSI_PIN
+            int "W5500 MOSI Pin"
+            default 6
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 MOSI (Master Out Slave In).
+                
+        config ETH_W5500_MISO_PIN
+            int "W5500 MISO Pin"
+            default 5
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 MISO (Master In Slave Out).
+                
+        config ETH_W5500_SCK_PIN
+            int "W5500 SCK Pin"
+            default 4
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 SCK (Serial Clock).
+                
+        config ETH_W5500_CS_PIN
+            int "W5500 CS Pin"
+            default 15
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 CS (Chip Select).
+                
+        config ETH_W5500_INT_PIN
+            int "W5500 INT Pin (optional, use -1 to disable)"
+            default 7
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 INT (Interrupt). Use -1 if not connected.
             
         config IS_GHOST_BOARD
             bool "Enable Ghost Board Configuration"

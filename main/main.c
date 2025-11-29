@@ -138,9 +138,6 @@ void app_main(void) {
     }
 #endif
 
-#ifdef CONFIG_WITH_ETHERNET
-
-#endif
     ESP_LOGI(TAG, "Initializing Commands");
     MEASURE_INIT_RAM("Commands init", command_init());
 
