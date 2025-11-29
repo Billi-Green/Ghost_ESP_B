@@ -36,6 +36,9 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
 #include <vendor/dial_client.h>
 #include "esp_wifi.h"
 #include "managers/default_portal.h"
@@ -1699,6 +1702,186 @@ void handle_eth_arp_cmd(int argc, char **argv) {
     }
 
     glog("\nARP scan complete. Found %d active host(s) on the network.\n", num_found);
+}
+
+void handle_eth_ports_cmd(int argc, char **argv) {
+    // Check if Ethernet is connected
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    // Get Ethernet IP info
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK) {
+        glog("Failed to get Ethernet IP information\n");
+        return;
+    }
+
+    if (ip_info.ip.addr == 0) {
+        glog("Ethernet IP address not assigned yet. Please wait for DHCP.\n");
+        return;
+    }
+
+    char target_ip[16];
+    uint16_t start_port = 1;
+    uint16_t end_port = 1024;
+    bool scan_all = false;
+
+    // Parse arguments
+    if (argc < 2) {
+        // Default: scan local network gateway
+        ip4addr_ntoa_r(&ip_info.gw, target_ip, sizeof(target_ip));
+        if (ip_info.gw.addr == 0) {
+            glog("No gateway configured. Usage: ethports <IP> [all | start-end]\n");
+            return;
+        }
+        // Default to common ports when no arguments
+        start_port = 1;
+        end_port = 1024;
+    } else if (strcmp(argv[1], "local") == 0) {
+        // Scan local network (gateway)
+        ip4addr_ntoa_r(&ip_info.gw, target_ip, sizeof(target_ip));
+        if (ip_info.gw.addr == 0) {
+            glog("No gateway configured.\n");
+            return;
+        }
+        // Check if "all" is specified after "local"
+        if (argc >= 3 && strcmp(argv[2], "all") == 0) {
+            scan_all = true;
+            start_port = 1;
+            end_port = 65535;
+        }
+    } else {
+        strncpy(target_ip, argv[1], sizeof(target_ip) - 1);
+        target_ip[sizeof(target_ip) - 1] = '\0';
+
+        if (argc >= 3) {
+            if (strcmp(argv[2], "all") == 0) {
+                scan_all = true;
+                start_port = 1;
+                end_port = 65535;
+            } else {
+                // Parse range like "80-443"
+                if (sscanf(argv[2], "%hu-%hu", &start_port, &end_port) != 2) {
+                    glog("Invalid port range. Use format: start-end (e.g., 80-443)\n");
+                    return;
+                }
+                if (start_port > end_port || start_port == 0 || end_port > 65535) {
+                    glog("Invalid port range. Ports must be 1-65535 and start <= end.\n");
+                    return;
+                }
+            }
+        }
+    }
+
+    glog("Scanning TCP ports on %s\n", target_ip);
+    if (scan_all) {
+        glog("Scanning all ports (1-65535)...\n");
+    } else {
+        glog("Scanning ports %d-%d...\n", start_port, end_port);
+    }
+
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr.s_addr) != 1) {
+        glog("Invalid IP address: %s\n", target_ip);
+        return;
+    }
+
+    // Common ports to scan if no range specified
+    static const uint16_t COMMON_PORTS[] = {
+        21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080
+    };
+    const size_t NUM_COMMON_PORTS = sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]);
+    const uint32_t SCAN_TIMEOUT_MS = 500;
+
+    int ports_scanned = 0;
+    int open_ports = 0;
+    uint32_t total_ports = scan_all ? (end_port - start_port + 1) : 
+                          (argc >= 3 ? (end_port - start_port + 1) : NUM_COMMON_PORTS);
+
+    if (scan_all || (argc >= 3 && !scan_all)) {
+        // Scan port range
+        // Use uint32_t for port to handle full range including 65535
+        for (uint32_t port = start_port; port <= end_port && port <= 65535; port++) {
+            ports_scanned++;
+            if (ports_scanned % 100 == 0) {
+                glog("Progress: %d/%d ports scanned (%.1f%%)\n", ports_scanned, total_ports,
+                     (float)ports_scanned / total_ports * 100);
+            }
+
+            int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (sock < 0) {
+                continue;
+            }
+
+            int flags = fcntl(sock, F_GETFL, 0);
+            fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+            server_addr.sin_port = htons(port);
+            int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+            if (scan_result < 0 && errno == EINPROGRESS) {
+                struct timeval timeout = {
+                    .tv_sec = SCAN_TIMEOUT_MS / 1000,
+                    .tv_usec = (SCAN_TIMEOUT_MS % 1000) * 1000
+                };
+                fd_set fdset;
+                FD_ZERO(&fdset);
+                FD_SET(sock, &fdset);
+
+                if (select(sock + 1, NULL, &fdset, NULL, &timeout) > 0) {
+                    int error = 0;
+                    socklen_t len = sizeof(error);
+                    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                        open_ports++;
+                        glog("  %s:%d - OPEN\n", target_ip, port);
+                    }
+                }
+            }
+            close(sock);
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    } else {
+        // Scan common ports
+        for (size_t i = 0; i < NUM_COMMON_PORTS; i++) {
+            uint16_t port = COMMON_PORTS[i];
+            int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (sock < 0) {
+                continue;
+            }
+
+            int flags = fcntl(sock, F_GETFL, 0);
+            fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+            server_addr.sin_port = htons(port);
+            int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+            if (scan_result < 0 && errno == EINPROGRESS) {
+                struct timeval timeout = {
+                    .tv_sec = SCAN_TIMEOUT_MS / 1000,
+                    .tv_usec = (SCAN_TIMEOUT_MS % 1000) * 1000
+                };
+                fd_set fdset;
+                FD_ZERO(&fdset);
+                FD_SET(sock, &fdset);
+
+                if (select(sock + 1, NULL, &fdset, NULL, &timeout) > 0) {
+                    int error = 0;
+                    socklen_t len = sizeof(error);
+                    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                        open_ports++;
+                        glog("  %s:%d - OPEN\n", target_ip, port);
+                    }
+                }
+            }
+            close(sock);
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+
+    glog("\nPort scan complete. Found %d open port(s) on %s\n", open_ports, target_ip);
 }
 #endif
 
@@ -4617,6 +4800,7 @@ void register_commands() {
     register_command("ethdown", handle_eth_down_cmd);
     register_command("ethinfo", handle_eth_info_cmd);
     register_command("etharp", handle_eth_arp_cmd);
+    register_command("ethports", handle_eth_ports_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
