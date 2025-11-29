@@ -39,6 +39,7 @@
 - Fixed an issue that would cause MFC dictionary attack to not try all possible keys
 - Fixed BLE scanning not being reliable
 - Added AirTag RSSI update logging so existing tags report RSSI changes every few seconds
+- Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
 - Add vendor board support and images to documentation - @tototo31
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
 - Route evil portal HTML requests through the UART HTML buffer when active instead of the SD-backed file handler.
