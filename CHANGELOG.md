@@ -50,6 +50,8 @@
 - Added JTAG support for ESP32C5
 - Removed unused buffer to save 8KB ram
 - Added basic Mifare Desfire detection
+- Renamed Dual Comm UI and documentation branding to GhostLink
+
 ## Revival v1.8.1
 
 ### Added

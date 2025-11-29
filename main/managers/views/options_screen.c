@@ -566,7 +566,7 @@ const char *options_menu_type_to_string(EOptionsMenuType menuType) {
     case OT_GPS:
         return "GPS";
     case OT_DualComm:
-        return "Dual Comm";
+        return "GhostLink";
     case OT_Settings:
         return "Settings";
     default:
