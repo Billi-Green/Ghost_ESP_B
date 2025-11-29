@@ -26,6 +26,17 @@
 #include "lwip/ip4_addr.h"
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
+#include "lwip/stats.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
+#include "lwip/dns.h"
+#include "lwip/ip.h"
+#include "lwip/icmp.h"
+#include "lwip/inet.h"
+#include "esp_netif.h"
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <sys/time.h>
 // Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
 void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #endif
@@ -2049,6 +2060,511 @@ void handle_eth_ping_cmd(int argc, char **argv) {
     }
     glog("Timeout per ping: %lums\n", (unsigned long)PING_TIMEOUT_MS);
     glog("========================\n");
+}
+
+// ethdns - DNS lookup/resolution
+void handle_eth_dns_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethdns <hostname> [reverse]\n");
+        glog("  hostname: Domain name to resolve\n");
+        glog("  reverse:  IP address for reverse DNS lookup\n");
+        glog("Example: ethdns google.com\n");
+        glog("Example: ethdns reverse 8.8.8.8\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "reverse") == 0) {
+        // Reverse DNS lookup
+        if (argc < 3) {
+            glog("Usage: ethdns reverse <ip_address>\n");
+            return;
+        }
+
+        struct sockaddr_in sa;
+        if (inet_pton(AF_INET, argv[2], &sa.sin_addr) != 1) {
+            glog("Invalid IP address: %s\n", argv[2]);
+            return;
+        }
+
+        // Note: Reverse DNS may not be fully supported in lwIP
+        // This is a simplified implementation
+        glog("Reverse DNS lookup for %s:\n", argv[2]);
+        glog("  Note: Reverse DNS (PTR records) may not be fully supported.\n");
+        glog("  Use forward DNS lookup (ethdns <hostname>) instead.\n");
+    } else {
+        // Forward DNS lookup
+        const char *hostname = argv[1];
+        glog("Resolving %s...\n", hostname);
+
+        struct addrinfo hints = {0};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        struct addrinfo *result = NULL;
+        int ret = getaddrinfo(hostname, NULL, &hints, &result);
+        if (ret != 0) {
+            const char *err_msg = "Unknown error";
+            switch (ret) {
+                case EAI_NONAME: err_msg = "Name does not resolve"; break;
+                case EAI_FAIL: err_msg = "Non-recoverable failure"; break;
+                case EAI_MEMORY: err_msg = "Memory allocation failure"; break;
+                default: err_msg = "DNS lookup failed"; break;
+            }
+            glog("DNS lookup failed: %s\n", err_msg);
+            return;
+        }
+
+        glog("DNS resolution for %s:\n", hostname);
+        int count = 0;
+        for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
+            if (rp->ai_family == AF_INET) {
+                struct sockaddr_in *sin = (struct sockaddr_in *)rp->ai_addr;
+                char ip_str[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &sin->sin_addr, ip_str, sizeof(ip_str));
+                glog("  IP: %s\n", ip_str);
+                count++;
+            }
+        }
+
+        if (count == 0) {
+            glog("  No IPv4 addresses found\n");
+        }
+
+        freeaddrinfo(result);
+    }
+}
+
+// ethtrace - Traceroute
+void handle_eth_trace_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethtrace <hostname_or_ip> [max_hops]\n");
+        glog("Example: ethtrace 8.8.8.8\n");
+        glog("Example: ethtrace google.com 30\n");
+        return;
+    }
+
+    const char *target = argv[1];
+    int max_hops = (argc >= 3) ? atoi(argv[2]) : 30;
+    if (max_hops < 1 || max_hops > 64) {
+        glog("Max hops must be between 1 and 64\n");
+        return;
+    }
+
+    // Resolve hostname if needed
+    struct sockaddr_in target_addr = {0};
+    target_addr.sin_family = AF_INET;
+
+    if (inet_pton(AF_INET, target, &target_addr.sin_addr) != 1) {
+        // Try DNS lookup
+        struct hostent *he = gethostbyname(target);
+        if (he == NULL || he->h_addr_list[0] == NULL) {
+            glog("Failed to resolve %s\n", target);
+            return;
+        }
+        memcpy(&target_addr.sin_addr, he->h_addr_list[0], sizeof(struct in_addr));
+        char resolved_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &target_addr.sin_addr, resolved_ip, sizeof(resolved_ip));
+        glog("Tracing route to %s (%s) [max %d hops]:\n", target, resolved_ip, max_hops);
+    } else {
+        glog("Tracing route to %s [max %d hops]:\n", target, max_hops);
+    }
+
+    // Traceroute using ICMP with increasing TTL
+    for (int ttl = 1; ttl <= max_hops; ttl++) {
+        int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+        if (sock < 0) {
+            glog("Failed to create raw socket: %d\n", errno);
+            return;
+        }
+
+        // Set TTL
+        if (setsockopt(sock, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) < 0) {
+            close(sock);
+            continue;
+        }
+
+        // Set timeout
+        struct timeval timeout = {.tv_sec = 3, .tv_usec = 0};
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+        // Send ICMP echo request
+        typedef struct {
+            uint8_t type;
+            uint8_t code;
+            uint16_t checksum;
+            uint16_t id;
+            uint16_t seq;
+        } icmp_hdr_t;
+
+        icmp_hdr_t icmp = {0};
+        icmp.type = 8; // Echo request
+        icmp.code = 0;
+        icmp.id = 0xAFAF;
+        icmp.seq = htons(ttl);
+
+        // Calculate checksum
+        uint16_t *buf = (uint16_t *)&icmp;
+        uint32_t sum = 0;
+        for (int i = 0; i < sizeof(icmp) / 2; i++) {
+            sum += buf[i];
+        }
+        sum = (sum >> 16) + (sum & 0xFFFF);
+        sum += (sum >> 16);
+        icmp.checksum = ~sum;
+
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+
+        sendto(sock, &icmp, sizeof(icmp), 0, (struct sockaddr *)&target_addr, sizeof(target_addr));
+
+        // Wait for response
+        char recv_buf[1024];
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        ssize_t recv_len = recvfrom(sock, recv_buf, sizeof(recv_buf), 0, 
+                                     (struct sockaddr *)&from_addr, &from_len);
+
+        gettimeofday(&end, NULL);
+        long elapsed = ((end.tv_sec - start.tv_sec) * 1000) + 
+                       ((end.tv_usec - start.tv_usec) / 1000);
+
+        close(sock);
+
+        if (recv_len > 0) {
+            char from_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &from_addr.sin_addr, from_ip, sizeof(from_ip));
+            glog("  %2d  %s  %ldms\n", ttl, from_ip, elapsed);
+
+            // Check if we reached the target
+            if (from_addr.sin_addr.s_addr == target_addr.sin_addr.s_addr) {
+                glog("Trace complete.\n");
+                break;
+            }
+        } else {
+            glog("  %2d  *  (timeout)\n", ttl);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+// ethstats - Network statistics
+void handle_eth_stats_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    esp_netif_t *netif = ethernet_manager_get_netif();
+    if (netif == NULL) {
+        glog("Failed to get Ethernet netif\n");
+        return;
+    }
+
+    struct netif *lwip_netif = (struct netif *)esp_netif_get_netif_impl(netif);
+    if (lwip_netif == NULL) {
+        glog("Failed to get LWIP netif\n");
+        return;
+    }
+
+    glog("=== Ethernet Statistics ===\n");
+
+    // Link status
+    glog("Link Status: %s\n", ethernet_manager_is_connected() ? "UP" : "DOWN");
+
+    // IP info
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK) {
+        char ip_str[16], netmask_str[16], gw_str[16];
+        ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+        ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+        ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+        glog("IP Address: %s\n", ip_str);
+        glog("Netmask: %s\n", netmask_str);
+        glog("Gateway: %s\n", gw_str);
+    }
+
+    // MAC address
+    uint8_t mac[6];
+    if (esp_netif_get_mac(netif, mac) == ESP_OK) {
+        glog("MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+
+    // LWIP statistics (using global stats)
+    glog("\n--- Packet Statistics ---\n");
+#if LWIP_STATS
+    extern struct stats_ lwip_stats;
+    glog("RX Packets: %lu\n", (unsigned long)STATS_GET(link.recv));
+    glog("TX Packets: %lu\n", (unsigned long)STATS_GET(link.xmit));
+    glog("RX Errors: %lu\n", (unsigned long)STATS_GET(link.err));
+    glog("RX Drops: %lu\n", (unsigned long)STATS_GET(link.drop));
+    glog("TX Errors: %lu\n", (unsigned long)STATS_GET(link.chkerr));
+    glog("TX Drops: %lu\n", (unsigned long)STATS_GET(link.memerr));
+#else
+    glog("Statistics not available (LWIP_STATS disabled)\n");
+#endif
+
+    // ARP statistics
+    glog("\n--- ARP Statistics ---\n");
+#if LWIP_STATS && ETHARP_STATS
+    glog("ARP Requests: %lu\n", (unsigned long)STATS_GET(etharp.xmit));
+    glog("ARP Replies: %lu\n", (unsigned long)STATS_GET(etharp.recv));
+#endif
+
+    glog("===================\n");
+}
+
+// ethconfig - Static IP configuration
+void handle_eth_config_cmd(int argc, char **argv) {
+    esp_netif_t *netif = ethernet_manager_get_netif();
+    if (netif == NULL) {
+        glog("Ethernet interface is not initialized. Please run 'ethup' first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethconfig <command>\n");
+        glog("Commands:\n");
+        glog("  dhcp          - Use DHCP (automatic IP)\n");
+        glog("  static <ip> <netmask> <gateway> - Set static IP\n");
+        glog("  show          - Show current configuration\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "dhcp") == 0) {
+        esp_err_t ret = esp_netif_dhcpc_start(netif);
+        if (ret == ESP_OK) {
+            glog("DHCP client started. Waiting for IP assignment...\n");
+        } else {
+            glog("Failed to start DHCP client: %s\n", esp_err_to_name(ret));
+        }
+    } else if (strcmp(argv[1], "static") == 0) {
+        if (argc < 5) {
+            glog("Usage: ethconfig static <ip> <netmask> <gateway>\n");
+            glog("Example: ethconfig static 192.168.1.100 255.255.255.0 192.168.1.1\n");
+            return;
+        }
+
+        // Stop DHCP first
+        esp_netif_dhcpc_stop(netif);
+
+        esp_netif_ip_info_t ip_info;
+        if (inet_aton(argv[2], &ip_info.ip) == 0 ||
+            inet_aton(argv[3], &ip_info.netmask) == 0 ||
+            inet_aton(argv[4], &ip_info.gw) == 0) {
+            glog("Invalid IP address format\n");
+            return;
+        }
+
+        esp_err_t ret = esp_netif_dhcpc_stop(netif);
+        if (ret != ESP_OK && ret != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+            glog("Failed to stop DHCP: %s\n", esp_err_to_name(ret));
+            return;
+        }
+
+        ret = esp_netif_set_ip_info(netif, &ip_info);
+        if (ret == ESP_OK) {
+            glog("Static IP configured:\n");
+            char ip_str[16], netmask_str[16], gw_str[16];
+            ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+            ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+            ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+            glog("  IP: %s\n", ip_str);
+            glog("  Netmask: %s\n", netmask_str);
+            glog("  Gateway: %s\n", gw_str);
+        } else {
+            glog("Failed to set static IP: %s\n", esp_err_to_name(ret));
+        }
+    } else if (strcmp(argv[1], "show") == 0) {
+        esp_netif_ip_info_t ip_info;
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            char ip_str[16], netmask_str[16], gw_str[16];
+            ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+            ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+            ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+            glog("Current IP Configuration:\n");
+            glog("  IP: %s\n", ip_str);
+            glog("  Netmask: %s\n", netmask_str);
+            glog("  Gateway: %s\n", gw_str);
+        }
+    } else {
+        glog("Unknown command: %s\n", argv[1]);
+    }
+}
+
+// ethmac - MAC address management
+void handle_eth_mac_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    esp_netif_t *netif = ethernet_manager_get_netif();
+    if (netif == NULL) {
+        glog("Failed to get Ethernet netif\n");
+        return;
+    }
+
+    if (argc < 2) {
+        // Show current MAC
+        uint8_t mac[6];
+        if (esp_netif_get_mac(netif, mac) == ESP_OK) {
+            glog("Current MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        } else {
+            glog("Failed to get MAC address\n");
+        }
+        glog("\nUsage: ethmac set <xx:xx:xx:xx:xx:xx>\n");
+        glog("Note: MAC address changes require reinitialization\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "set") == 0) {
+        if (argc < 3) {
+            glog("Usage: ethmac set <xx:xx:xx:xx:xx:xx>\n");
+            glog("Example: ethmac set 02:00:00:00:00:01\n");
+            return;
+        }
+
+        uint8_t new_mac[6];
+        if (sscanf(argv[2], "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+                   &new_mac[0], &new_mac[1], &new_mac[2],
+                   &new_mac[3], &new_mac[4], &new_mac[5]) != 6) {
+            glog("Invalid MAC address format. Use xx:xx:xx:xx:xx:xx\n");
+            return;
+        }
+
+        esp_err_t ret = esp_netif_set_mac(netif, new_mac);
+        if (ret == ESP_OK) {
+            glog("MAC address set to: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                 new_mac[0], new_mac[1], new_mac[2], new_mac[3], new_mac[4], new_mac[5]);
+            glog("Note: You may need to restart Ethernet for changes to take effect.\n");
+        } else {
+            glog("Failed to set MAC address: %s\n", esp_err_to_name(ret));
+        }
+    } else {
+        glog("Unknown command: %s\n", argv[1]);
+    }
+}
+
+// ethserv - Service discovery and banner grabbing
+void handle_eth_serv_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    char target_ip[16];
+    if (argc < 2) {
+        esp_netif_ip_info_t ip_info;
+        if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK && ip_info.gw.addr != 0) {
+            ip4addr_ntoa_r(&ip_info.gw, target_ip, sizeof(target_ip));
+        } else {
+            glog("Usage: ethserv <ip_address>\n");
+            return;
+        }
+    } else {
+        strncpy(target_ip, argv[1], sizeof(target_ip) - 1);
+        target_ip[sizeof(target_ip) - 1] = '\0';
+    }
+
+    glog("Service discovery for %s\n", target_ip);
+    glog("==========================================\n\n");
+
+    // Common services to check
+    struct {
+        uint16_t port;
+        const char *name;
+        const char *probe;
+    } services[] = {
+        {21, "FTP", "USER anonymous\r\n"},
+        {22, "SSH", ""},
+        {23, "Telnet", ""},
+        {25, "SMTP", "EHLO test\r\n"},
+        {80, "HTTP", "GET / HTTP/1.0\r\n\r\n"},
+        {110, "POP3", "USER test\r\n"},
+        {143, "IMAP", "a001 LOGIN test test\r\n"},
+        {443, "HTTPS", ""},
+        {445, "SMB", ""},
+        {3306, "MySQL", ""},
+        {3389, "RDP", ""},
+        {5432, "PostgreSQL", ""},
+        {8080, "HTTP-Proxy", "GET / HTTP/1.0\r\n\r\n"},
+    };
+
+    const size_t num_services = sizeof(services) / sizeof(services[0]);
+
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr) != 1) {
+        glog("Invalid IP address: %s\n", target_ip);
+        return;
+    }
+
+    int found_count = 0;
+    for (size_t i = 0; i < num_services; i++) {
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            continue;
+        }
+
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+        server_addr.sin_port = htons(services[i].port);
+        int result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+        if (result < 0 && errno == EINPROGRESS) {
+            struct timeval timeout = {.tv_sec = 2, .tv_usec = 0};
+            fd_set fdset;
+            FD_ZERO(&fdset);
+            FD_SET(sock, &fdset);
+
+            if (select(sock + 1, NULL, &fdset, NULL, &timeout) > 0) {
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                    glog("[OPEN] %s:%d (%s)\n", target_ip, services[i].port, services[i].name);
+                    found_count++;
+
+                    // Try banner grabbing for some services
+                    if (strlen(services[i].probe) > 0) {
+                        send(sock, services[i].probe, strlen(services[i].probe), 0);
+                        vTaskDelay(pdMS_TO_TICKS(100));
+
+                        char banner[256];
+                        ssize_t recv_len = recv(sock, banner, sizeof(banner) - 1, MSG_DONTWAIT);
+                        if (recv_len > 0) {
+                            banner[recv_len] = '\0';
+                            // Clean up banner (remove newlines, limit length)
+                            for (int j = 0; j < recv_len && j < 200; j++) {
+                                if (banner[j] == '\n' || banner[j] == '\r') {
+                                    banner[j] = ' ';
+                                }
+                            }
+                            banner[200] = '\0';
+                            glog("      Banner: %.200s\n", banner);
+                        }
+                    }
+                }
+            }
+        }
+        close(sock);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    glog("\nFound %d open service(s)\n", found_count);
 }
 #endif
 
@@ -4969,6 +5485,12 @@ void register_commands() {
     register_command("etharp", handle_eth_arp_cmd);
     register_command("ethports", handle_eth_ports_cmd);
     register_command("ethping", handle_eth_ping_cmd);
+    register_command("ethdns", handle_eth_dns_cmd);
+    register_command("ethtrace", handle_eth_trace_cmd);
+    register_command("ethstats", handle_eth_stats_cmd);
+    register_command("ethconfig", handle_eth_config_cmd);
+    register_command("ethmac", handle_eth_mac_cmd);
+    register_command("ethserv", handle_eth_serv_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
