@@ -1701,7 +1701,14 @@ void handle_eth_arp_cmd(int argc, char **argv) {
         }
     }
 
-    glog("\nARP scan complete. Found %d active host(s) on the network.\n", num_found);
+    glog("\n=== ARP Scan Summary ===\n");
+    glog("Network: %s0/24\n", subnet_prefix);
+    glog("Hosts scanned: %d (1-254)\n", END_HOST - START_HOST + 1);
+    glog("Active hosts found: %d\n", num_found);
+    if (num_found > 0) {
+        glog("Success rate: %.1f%%\n", (float)num_found / (END_HOST - START_HOST + 1) * 100.0f);
+    }
+    glog("=======================\n");
 }
 
 void handle_eth_ports_cmd(int argc, char **argv) {
@@ -1881,7 +1888,21 @@ void handle_eth_ports_cmd(int argc, char **argv) {
         }
     }
 
-    glog("\nPort scan complete. Found %d open port(s) on %s\n", open_ports, target_ip);
+    glog("\n=== Port Scan Summary ===\n");
+    glog("Target: %s\n", target_ip);
+    if (scan_all) {
+        glog("Port range: 1-65535 (all ports)\n");
+    } else if (argc >= 3) {
+        glog("Port range: %d-%d\n", start_port, end_port);
+    } else {
+        glog("Ports scanned: %zu common ports\n", NUM_COMMON_PORTS);
+    }
+    glog("Total ports scanned: %lu\n", (unsigned long)total_ports);
+    glog("Open ports found: %d\n", open_ports);
+    if (total_ports > 0) {
+        glog("Open port rate: %.1f%%\n", (float)open_ports / total_ports * 100.0f);
+    }
+    glog("========================\n");
 }
 
 // ICMP packet structure for ping (local definition for Ethernet ping)
@@ -2019,7 +2040,15 @@ void handle_eth_ping_cmd(int argc, char **argv) {
         }
     }
 
-    glog("\nPing scan complete. Found %d alive host(s) on the network.\n", num_found);
+    glog("\n=== Ping Scan Summary ===\n");
+    glog("Network: %s0/24\n", subnet_prefix);
+    glog("Hosts scanned: %d (1-254)\n", END_HOST - START_HOST + 1);
+    glog("Alive hosts found: %d\n", num_found);
+    if (num_found > 0) {
+        glog("Success rate: %.1f%%\n", (float)num_found / (END_HOST - START_HOST + 1) * 100.0f);
+    }
+    glog("Timeout per ping: %lums\n", (unsigned long)PING_TIMEOUT_MS);
+    glog("========================\n");
 }
 #endif
 
