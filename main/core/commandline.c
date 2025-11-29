@@ -1448,6 +1448,41 @@ void handle_eth_up_cmd(int argc, char **argv) {
                     glog("IP Address: %s\n", ip_str);
                     glog("Netmask: %s\n", netmask_str);
                     glog("Gateway: %s\n", gw_str);
+                    
+                    // Get and display DNS server information and DHCP server
+                    esp_netif_t *netif = ethernet_manager_get_netif();
+                    if (netif != NULL) {
+                        esp_netif_dns_info_t dns_main, dns_backup, dns_fallback;
+                        char dns_str[16];
+                        
+                        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK) {
+                            if (dns_main.ip.type == ESP_IPADDR_TYPE_V4 && dns_main.ip.u_addr.ip4.addr != 0) {
+                                ip4addr_ntoa_r(&dns_main.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                                glog("DNS Main: %s\n", dns_str);
+                            }
+                        }
+                        
+                        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
+                            if (dns_backup.ip.type == ESP_IPADDR_TYPE_V4 && dns_backup.ip.u_addr.ip4.addr != 0) {
+                                ip4addr_ntoa_r(&dns_backup.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                                glog("DNS Backup: %s\n", dns_str);
+                            }
+                        }
+                        
+                        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
+                            if (dns_fallback.ip.type == ESP_IPADDR_TYPE_V4 && dns_fallback.ip.u_addr.ip4.addr != 0) {
+                                ip4addr_ntoa_r(&dns_fallback.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                                glog("DNS Fallback: %s\n", dns_str);
+                            }
+                        }
+                        
+                        // Get DHCP server IP address
+                        ip4_addr_t dhcp_server_ip;
+                        if (ethernet_manager_get_dhcp_server_ip(&dhcp_server_ip) == ESP_OK) {
+                            ip4addr_ntoa_r(&dhcp_server_ip, dns_str, sizeof(dns_str));
+                            glog("DHCP Server: %s\n", dns_str);
+                        }
+                    }
                 }
             } else {
                 glog("Failed to get IP information\n");
@@ -1469,6 +1504,89 @@ void handle_eth_down_cmd(int argc, char **argv) {
     } else {
         glog("Ethernet Manager deinitialization failed: %s\n", esp_err_to_name(ret));
     }
+}
+
+void handle_eth_info_cmd(int argc, char **argv) {
+    glog("Ethernet Information\n");
+    glog("===================\n");
+    
+    // Check connection status
+    if (!ethernet_manager_is_connected()) {
+        glog("Status: DOWN\n");
+        glog("Ethernet link is not established\n");
+        return;
+    }
+    
+    glog("Status: UP\n");
+    
+    // Get and display IP info
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK) {
+        char ip_str[16], netmask_str[16], gw_str[16];
+        ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+        ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+        ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+        
+        // Check if IP is actually assigned (not 0.0.0.0)
+        if (ip_info.ip.addr == 0) {
+            glog("IP Address: Not assigned yet (waiting for DHCP...)\n");
+            glog("Netmask: Not assigned\n");
+            glog("Gateway: Not assigned\n");
+        } else {
+            glog("IP Address: %s\n", ip_str);
+            glog("Netmask: %s\n", netmask_str);
+            glog("Gateway: %s\n", gw_str);
+            
+            // Get and display DNS server information and DHCP server
+            esp_netif_t *netif = ethernet_manager_get_netif();
+            if (netif != NULL) {
+                esp_netif_dns_info_t dns_main, dns_backup, dns_fallback;
+                char dns_str[16];
+                
+                if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK) {
+                    if (dns_main.ip.type == ESP_IPADDR_TYPE_V4 && dns_main.ip.u_addr.ip4.addr != 0) {
+                        ip4addr_ntoa_r(&dns_main.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                        glog("DNS Main: %s\n", dns_str);
+                    } else {
+                        glog("DNS Main: Not assigned\n");
+                    }
+                } else {
+                    glog("DNS Main: Not assigned\n");
+                }
+                
+                if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
+                    if (dns_backup.ip.type == ESP_IPADDR_TYPE_V4 && dns_backup.ip.u_addr.ip4.addr != 0) {
+                        ip4addr_ntoa_r(&dns_backup.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                        glog("DNS Backup: %s\n", dns_str);
+                    } else {
+                        glog("DNS Backup: Not assigned\n");
+                    }
+                } else {
+                    glog("DNS Backup: Not assigned\n");
+                }
+                
+                if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
+                    if (dns_fallback.ip.type == ESP_IPADDR_TYPE_V4 && dns_fallback.ip.u_addr.ip4.addr != 0) {
+                        ip4addr_ntoa_r(&dns_fallback.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                        glog("DNS Fallback: %s\n", dns_str);
+                    }
+                }
+                
+                // Get DHCP server IP address
+                ip4_addr_t dhcp_server_ip;
+                if (ethernet_manager_get_dhcp_server_ip(&dhcp_server_ip) == ESP_OK) {
+                    ip4addr_ntoa_r(&dhcp_server_ip, dns_str, sizeof(dns_str));
+                    glog("DHCP Server: %s\n", dns_str);
+                } else {
+                    glog("DHCP Server: Not available\n");
+                }
+            }
+        }
+    } else {
+        glog("Failed to get IP information\n");
+    }
+    
+    glog("===================\n");
 }
 #endif
 
@@ -4385,6 +4503,7 @@ void register_commands() {
 #ifdef CONFIG_WITH_ETHERNET
     register_command("ethup", handle_eth_up_cmd);
     register_command("ethdown", handle_eth_down_cmd);
+    register_command("ethinfo", handle_eth_info_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);

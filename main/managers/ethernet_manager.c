@@ -18,11 +18,19 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/ip4_addr.h"
+#include "lwip/netif.h"
+#include "lwip/dhcp.h"
+#include "lwip/ip_addr.h"
+#include "esp_eth_netif_glue.h"
+
+// Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
+void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 
 static const char *TAG = "EthernetManager";
 
 static esp_eth_handle_t s_eth_handle = NULL;
 static esp_netif_t *s_eth_netif = NULL;
+static esp_eth_netif_glue_handle_t s_eth_netif_glue = NULL; // Store netif glue handle
 static bool s_eth_connected = false;
 static bool s_eth_initialized = false;
 static esp_eth_mac_t *s_eth_mac = NULL;
@@ -66,12 +74,53 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
 {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
     const esp_netif_ip_info_t *ip_info = &event->ip_info;
+    esp_netif_t *netif = event->esp_netif;
 
     ESP_LOGI(TAG, "Ethernet Got IP Address");
     ESP_LOGI(TAG, "~~~~~~~~~~~");
     ESP_LOGI(TAG, "ETHIP:" IPSTR, IP2STR(&ip_info->ip));
     ESP_LOGI(TAG, "ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
     ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
+    
+    // Get DNS server information
+    if (netif != NULL) {
+        esp_netif_dns_info_t dns_main, dns_backup, dns_fallback;
+        
+        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK) {
+            if (dns_main.ip.type == ESP_IPADDR_TYPE_V4) {
+                ESP_LOGI(TAG, "DNS Main: " IPSTR, IP2STR(&dns_main.ip.u_addr.ip4));
+            }
+        }
+        
+        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
+            if (dns_backup.ip.type == ESP_IPADDR_TYPE_V4 && dns_backup.ip.u_addr.ip4.addr != 0) {
+                ESP_LOGI(TAG, "DNS Backup: " IPSTR, IP2STR(&dns_backup.ip.u_addr.ip4));
+            }
+        }
+        
+        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
+            if (dns_fallback.ip.type == ESP_IPADDR_TYPE_V4 && dns_fallback.ip.u_addr.ip4.addr != 0) {
+                ESP_LOGI(TAG, "DNS Fallback: " IPSTR, IP2STR(&dns_fallback.ip.u_addr.ip4));
+            }
+        }
+        
+        // Get DHCP server IP address from LWIP netif
+        struct netif *lwip_netif = (struct netif *)esp_netif_get_netif_impl(netif);
+        if (lwip_netif != NULL) {
+            struct dhcp *dhcp = netif_dhcp_data(lwip_netif);
+            if (dhcp != NULL) {
+                // server_ip_addr is ip_addr_t, need to access u_addr.ip4 for IPv4
+                if (IP_IS_V4_VAL(dhcp->server_ip_addr) && !ip4_addr_isany_val(dhcp->server_ip_addr.u_addr.ip4)) {
+                    ESP_LOGI(TAG, "DHCP Server: " IPSTR, IP2STR(&dhcp->server_ip_addr.u_addr.ip4));
+                }
+            }
+        }
+    }
+    
+    if (event->ip_changed) {
+        ESP_LOGI(TAG, "IP Address Changed: Yes");
+    }
+    
     ESP_LOGI(TAG, "~~~~~~~~~~~");
 }
 
@@ -289,7 +338,23 @@ esp_err_t ethernet_manager_init(void)
     ESP_LOGI(TAG, "Ethernet netif created");
 
     // Attach Ethernet driver to netif
-    esp_netif_attach(s_eth_netif, esp_eth_new_netif_glue(s_eth_handle));
+    s_eth_netif_glue = esp_eth_new_netif_glue(s_eth_handle);
+    if (s_eth_netif_glue == NULL) {
+        ESP_LOGE(TAG, "Failed to create netif glue");
+        esp_netif_destroy(s_eth_netif);
+        s_eth_netif = NULL;
+        esp_eth_driver_uninstall(s_eth_handle);
+        s_eth_handle = NULL;
+        s_eth_phy->del(s_eth_phy);
+        s_eth_phy = NULL;
+        s_eth_mac->del(s_eth_mac);
+        s_eth_mac = NULL;
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(s_spi_host);
+        }
+        return ESP_FAIL;
+    }
+    esp_netif_attach(s_eth_netif, s_eth_netif_glue);
     ESP_LOGI(TAG, "Ethernet driver attached to netif");
 
     // Register event handlers
@@ -341,6 +406,43 @@ esp_err_t ethernet_manager_get_ip_info(esp_netif_ip_info_t *ip_info)
     return esp_netif_get_ip_info(s_eth_netif, ip_info);
 }
 
+esp_netif_t *ethernet_manager_get_netif(void)
+{
+    return s_eth_netif;
+}
+
+esp_err_t ethernet_manager_get_dhcp_server_ip(ip4_addr_t *server_ip)
+{
+    if (server_ip == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_eth_netif == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Get the underlying LWIP netif
+    struct netif *lwip_netif = (struct netif *)esp_netif_get_netif_impl(s_eth_netif);
+    if (lwip_netif == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Get DHCP data
+    struct dhcp *dhcp = netif_dhcp_data(lwip_netif);
+    if (dhcp == NULL) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    // Check if server IP is valid (server_ip_addr is ip_addr_t, need to access u_addr.ip4 for IPv4)
+    if (!IP_IS_V4_VAL(dhcp->server_ip_addr) || ip4_addr_isany_val(dhcp->server_ip_addr.u_addr.ip4)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    // Copy the server IP address
+    ip4_addr_copy(*server_ip, dhcp->server_ip_addr.u_addr.ip4);
+    return ESP_OK;
+}
+
 esp_err_t ethernet_manager_deinit(void)
 {
     if (!s_eth_initialized) {
@@ -360,6 +462,13 @@ esp_err_t ethernet_manager_deinit(void)
     esp_event_handler_unregister(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler);
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler);
     ESP_LOGI(TAG, "Ethernet event handlers unregistered");
+
+    // Delete netif glue before destroying netif
+    if (s_eth_netif_glue != NULL) {
+        esp_eth_del_netif_glue(s_eth_netif_glue);
+        s_eth_netif_glue = NULL;
+        ESP_LOGI(TAG, "Ethernet netif glue deleted");
+    }
 
     // Destroy netif
     if (s_eth_netif != NULL) {
@@ -426,6 +535,23 @@ bool ethernet_manager_is_connected(void)
 esp_err_t ethernet_manager_get_ip_info(esp_netif_ip_info_t *ip_info)
 {
     (void)ip_info;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_netif_t *ethernet_manager_get_netif(void)
+{
+    return NULL;
+}
+
+esp_err_t ethernet_manager_get_dhcp_server_ip(ip4_addr_t *server_ip)
+{
+    (void)server_ip;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t ethernet_manager_deinit(void)
+{
+    ESP_LOGW(TAG, "Ethernet support not enabled in configuration");
     return ESP_ERR_NOT_SUPPORTED;
 }
 
