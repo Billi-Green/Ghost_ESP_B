@@ -1008,7 +1008,15 @@ void display_manager_init(void) {
       .hpoint = 0,
       .sleep_mode = LEDC_SLEEP_MODE_KEEP_ALIVE,
   };
+  #ifdef CONFIG_USE_TDISPLAY_S3
   ledc_channel_config(&ledc_channel);
+  #else
+  if (CONFIG_LV_DISP_PIN_BCKL >= 0) {
+    ledc_channel_config(&ledc_channel);
+  } else {
+    ESP_LOGI(TAG, "Backlight GPIO not configured; skipping LEDC channel init");
+  }
+  #endif
 
 #ifdef CONFIG_USE_TDECK
 set_keyboard_brightness(0xFF); // Set to 100% brightness
@@ -1330,16 +1338,24 @@ void set_backlight_brightness(uint8_t percentage) {
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
     ESP_LOGI(TAG, "TDisplay S3 backlight: %d%% (LEDC PWM)", percentage);
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
-    uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    if (CONFIG_LV_DISP_PIN_BCKL >= 0) {
+        uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    } else {
+        ESP_LOGD(TAG, "Backlight GPIO not configured; skipping PWM backlight");
+    }
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_SWITCH)
     // ----- switch mode -----
     // make sure the pin is configured as a GPIO output
 
-    gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
-    gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
-    gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage > 0 ? 1 : 0);
+    if (CONFIG_LV_DISP_PIN_BCKL >= 0) {
+        gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
+        gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
+        gpio_set_level(CONFIG_LV_DISP_PIN_BCKL, percentage > 0 ? 1 : 0);
+    } else {
+        ESP_LOGD(TAG, "Backlight GPIO not configured; skipping switch backlight");
+    }
 #else
 # error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
 #endif
@@ -1348,6 +1364,7 @@ void set_backlight_brightness(uint8_t percentage) {
 
 #ifdef CONFIG_USE_TDECK
     // Synchronize keyboard backlight with screen backlight
+    // ...
     set_keyboard_brightness(percentage == max_brightness ? 0xFF : 0x00);
 #endif
 
