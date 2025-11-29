@@ -24,6 +24,10 @@
 #ifdef CONFIG_WITH_ETHERNET
 #include "managers/ethernet_manager.h"
 #include "lwip/ip4_addr.h"
+#include "lwip/etharp.h"
+#include "lwip/netif.h"
+// Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
+void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #endif
 #include <esp_timer.h>
 #include <managers/gps_manager.h>
@@ -1587,6 +1591,114 @@ void handle_eth_info_cmd(int argc, char **argv) {
     }
     
     glog("===================\n");
+}
+
+void handle_eth_arp_cmd(int argc, char **argv) {
+    // Check if Ethernet is connected
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    // Get Ethernet IP info to determine subnet
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK) {
+        glog("Failed to get Ethernet IP information\n");
+        return;
+    }
+
+    if (ip_info.ip.addr == 0) {
+        glog("Ethernet IP address not assigned yet. Please wait for DHCP.\n");
+        return;
+    }
+
+    // Get Ethernet netif
+    esp_netif_t *eth_netif = ethernet_manager_get_netif();
+    if (eth_netif == NULL) {
+        glog("Failed to get Ethernet netif\n");
+        return;
+    }
+
+    // Get underlying LWIP netif
+    struct netif *lwip_netif = (struct netif *)esp_netif_get_netif_impl(eth_netif);
+    if (lwip_netif == NULL) {
+        glog("Failed to get LWIP netif\n");
+        return;
+    }
+
+    // Calculate subnet prefix (e.g., "192.168.1.")
+    char subnet_prefix[16];
+    uint32_t ip = ip_info.ip.addr;
+    uint32_t netmask = ip_info.netmask.addr;
+    uint32_t network = ip & netmask;
+    
+    snprintf(subnet_prefix, sizeof(subnet_prefix), "%d.%d.%d.",
+             (int)((network >> 0) & 0xFF),
+             (int)((network >> 8) & 0xFF),
+             (int)((network >> 16) & 0xFF));
+
+    glog("Starting ARP scan on Ethernet network %s0/24\n", subnet_prefix);
+    glog("Scanning network using ARP requests...\n");
+
+    const int START_HOST = 1;
+    const int END_HOST = 254;
+    const int batch_size = 10;
+    int num_found = 0;
+
+    // Scan the subnet in batches
+    for (int batch_start = START_HOST; batch_start <= END_HOST; batch_start += batch_size) {
+        int batch_end = (batch_start + batch_size - 1 > END_HOST) ? END_HOST : batch_start + batch_size - 1;
+        
+        // Send batch of ARP requests
+        for (int host = batch_start; host <= batch_end; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
+            
+            // Parse IP address
+            ip4_addr_t target_addr;
+            if (ip4addr_aton(current_ip, &target_addr)) {
+                // Send ARP request using lwIP
+                etharp_request(lwip_netif, &target_addr);
+            }
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between requests
+        }
+        
+        // Wait for responses to arrive
+        vTaskDelay(pdMS_TO_TICKS(250));
+        
+        // Check ARP table for this batch
+        for (int host = batch_start; host <= batch_end; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
+            
+            // Parse IP address
+            ip4_addr_t target_addr;
+            if (!ip4addr_aton(current_ip, &target_addr)) {
+                continue;
+            }
+            
+            // Search ARP table
+            struct eth_addr *eth_ret = NULL;
+            const ip4_addr_t *ip_ret = NULL;
+            s8_t arp_idx = etharp_find_addr(lwip_netif, &target_addr, &eth_ret, &ip_ret);
+            
+            if (arp_idx >= 0 && eth_ret) {
+                num_found++;
+                glog("  %-15s %02x:%02x:%02x:%02x:%02x:%02x\n",
+                     current_ip,
+                     eth_ret->addr[0], eth_ret->addr[1], eth_ret->addr[2],
+                     eth_ret->addr[3], eth_ret->addr[4], eth_ret->addr[5]);
+            }
+        }
+        
+        // Progress update
+        if (batch_end % 50 == 0 || batch_end == END_HOST) {
+            glog("Progress: Scanned %d/%d hosts, found %d active hosts\n", 
+                 batch_end - START_HOST + 1, END_HOST - START_HOST + 1, num_found);
+        }
+    }
+
+    glog("\nARP scan complete. Found %d active host(s) on the network.\n", num_found);
 }
 #endif
 
@@ -4504,6 +4616,7 @@ void register_commands() {
     register_command("ethup", handle_eth_up_cmd);
     register_command("ethdown", handle_eth_down_cmd);
     register_command("ethinfo", handle_eth_info_cmd);
+    register_command("etharp", handle_eth_arp_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
