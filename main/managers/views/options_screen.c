@@ -162,7 +162,8 @@ typedef enum {
     DUALCOMM_MENU_CAPTURE,
     DUALCOMM_MENU_TOOLS,
     DUALCOMM_MENU_BLE,
-    DUALCOMM_MENU_GPS
+    DUALCOMM_MENU_GPS,
+    DUALCOMM_MENU_ETHERNET
 } DualCommMenuState;
 
 static DualCommMenuState current_dualcomm_menu_state = DUALCOMM_MENU_MAIN;
@@ -177,6 +178,7 @@ static const char *dual_comm_main_options[] = {
     "Tools",
     "BLE",
     "GPS",
+    "Ethernet",
     NULL
 };
 
@@ -271,6 +273,21 @@ static const char *dual_comm_ble_options[] = {
 static const char *dual_comm_gps_options[] = {
     "GPS Info",
     "BLE Wardriving",
+    NULL
+};
+
+static const char *dual_comm_ethernet_options[] = {
+    "Ethernet Up",
+    "Ethernet Down",
+    "Ethernet Info",
+    "ARP Scan",
+    "Port Scan Local",
+    "Port Scan All",
+    "Ping Scan",
+    "DNS Lookup",
+    "Traceroute",
+    "Network Stats",
+    "Show Config",
     NULL
 };
 
@@ -491,6 +508,8 @@ static void dual_comm_connect_kb_cb(const char *text);
 static void dual_comm_send_kb_cb(const char *text);
 static void dual_comm_wifi_connect_kb_cb(const char *text);
 static void dual_comm_karma_custom_ssids_cb(const char *text);
+static void dual_comm_dns_lookup_kb_cb(const char *text);
+static void dual_comm_traceroute_kb_cb(const char *text);
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 static void zigbee_capture_kb_cb(const char *text);
 #endif
@@ -676,6 +695,7 @@ void options_menu_create() {
             case DUALCOMM_MENU_TOOLS:    options = dual_comm_tools_options; break;
             case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
             case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
+            case DUALCOMM_MENU_ETHERNET: options = dual_comm_ethernet_options; break;
         }
         break;
     case OT_Settings: 
@@ -1438,6 +1458,11 @@ void option_event_cb(lv_event_t *e) {
                 display_manager_switch_view(&options_menu_view);
                 option_invoked = false;
                 return;
+            } else if (strcmp(Selected_Option, "Ethernet") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_ETHERNET;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
             }
         }
 
@@ -1864,6 +1889,70 @@ void option_event_cb(lv_event_t *e) {
 #else
             error_popup_create("Device Does not Support Bluetooth...");
 #endif
+        } else if (strcmp(Selected_Option, "Ethernet Up") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethup");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Ethernet Down") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethdown");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Ethernet Info") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethinfo");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "ARP Scan") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend etharp");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Port Scan Local") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethports local");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Port Scan All") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethports local all");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Ping Scan") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethping");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "DNS Lookup") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_dns_lookup_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("Hostname (e.g. google.com)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Traceroute") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_traceroute_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("Hostname or IP (e.g. 8.8.8.8)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Network Stats") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethstats");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Show Config") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethconfig show");
+            view_switched = true;
         }
 
         if (!view_switched) {
@@ -2731,6 +2820,38 @@ static void dual_comm_karma_custom_ssids_cb(const char *input) {
     snprintf(cmd, sizeof(cmd), "commsend karma start %s", input);
 
     terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_dns_lookup_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a hostname");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend ethdns %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_traceroute_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a hostname or IP address");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend ethtrace %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
     display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);
