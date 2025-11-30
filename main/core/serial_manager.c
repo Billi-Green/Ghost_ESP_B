@@ -43,6 +43,11 @@ static int cursor_position = 0;
 // Command history instance
 static CommandHistory command_history;
 
+// Prompt display tracking
+static bool prompt_displayed = false;
+static bool prompt_pending = false;
+static uint32_t prompt_delay_ticks = 0;
+
 // Arrow key state machine
 typedef enum {
     ARROW_STATE_NONE,
@@ -351,6 +356,15 @@ static void clear_entire_line(void) {
 #endif
 }
 
+static void display_prompt(void) {
+    const char prompt[] = "ghost-cli> ";
+    uart_write_bytes(UART_NUM, prompt, sizeof(prompt) - 1);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)prompt, sizeof(prompt) - 1, 0);
+#endif
+    prompt_displayed = true;
+}
+
 // HTML marker processing and IR inline handling
 static void process_html_line(const char* line) {
     if (strstr(line, "[IR/BEGIN]") != NULL) {
@@ -444,6 +458,12 @@ void serial_task(void *pvParameter) {
   int index = 0;
   static uint32_t hwm_log_counter = 0;
 
+  // Display initial prompt
+  if (!s_uart_disabled) {
+    vTaskDelay(200 / portTICK_PERIOD_MS); // Wait for UART to be ready
+    display_prompt();
+  }
+
   while (1) {
     if (++hwm_log_counter >= 6000) {
       UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
@@ -499,6 +519,8 @@ void serial_task(void *pvParameter) {
             if (history_cmd != NULL && strlen(history_cmd) > 0) {
               // Clear entire line to remove any existing text
               clear_entire_line();
+              // Display prompt
+              display_prompt();
               // Copy history command to buffer
               strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
               serial_buffer[SERIAL_BUFFER_SIZE - 1] = '\0';
@@ -516,6 +538,8 @@ void serial_task(void *pvParameter) {
             const char* history_cmd = command_history_get_next();
             // Clear entire line to remove any existing text
             clear_entire_line();
+            // Display prompt
+            display_prompt();
             if (history_cmd != NULL && strlen(history_cmd) > 0) {
               // Copy history command to buffer
               strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
@@ -574,12 +598,21 @@ void serial_task(void *pvParameter) {
             memset(serial_buffer, 0, sizeof(serial_buffer));
             index = 0;
           }
+          // Schedule prompt to be displayed after command output completes
+          // This allows time for command output to flush before showing the prompt
+          prompt_displayed = false;
+          prompt_pending = true;
+          prompt_delay_ticks = xTaskGetTickCount() + pdMS_TO_TICKS(50); // 50ms delay
           continue;
         }
 
         if ((unsigned char)incoming_char >= 32 && (unsigned char)incoming_char != 127) {
           // Reset arrow key state when typing normal characters
           arrow_state = ARROW_STATE_NONE;
+          // Display prompt if not already displayed
+          if (!prompt_displayed) {
+            display_prompt();
+          }
           if (strlen(serial_buffer) < SERIAL_BUFFER_SIZE - 1) {
             // Insert character at cursor position
             insert_character_at_cursor(incoming_char);
@@ -593,6 +626,18 @@ void serial_task(void *pvParameter) {
     SerialCommand command;
     if (xQueueReceive(commandQueue, &command, 0) == pdTRUE) {
       handle_serial_command(command.command);
+      // Schedule prompt after simulated command too
+      prompt_displayed = false;
+      prompt_pending = true;
+      prompt_delay_ticks = xTaskGetTickCount() + pdMS_TO_TICKS(50);
+    }
+
+    // Check if we need to display a pending prompt
+    if (prompt_pending && xTaskGetTickCount() >= prompt_delay_ticks) {
+      // Flush any pending output before displaying prompt
+      fflush(stdout);
+      display_prompt();
+      prompt_pending = false;
     }
 
     vTaskDelay(10 / portTICK_PERIOD_MS);
