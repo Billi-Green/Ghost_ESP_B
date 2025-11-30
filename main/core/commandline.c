@@ -2738,6 +2738,9 @@ void handle_help(int argc, char **argv) {
 #ifdef CONFIG_HAS_INFRARED
         , "ir"
 #endif
+#ifdef CONFIG_WITH_ETHERNET
+        , "ethernet"
+#endif
     };
     int num_categories = sizeof(all_categories) / sizeof(all_categories[0]);
 
@@ -3167,6 +3170,92 @@ void handle_help(int argc, char **argv) {
     }
 #endif
 
+#ifdef CONFIG_WITH_ETHERNET
+    if (strcmp(category, "ethernet") == 0) {
+        glog("\nEthernet Commands:\n\n");
+        printf("ethup\n");
+        printf("    Description: Initialize and bring up Ethernet interface.\n");
+        printf("    Usage: ethup\n");
+        printf("    Note: Waits for link establishment and DHCP assignment.\n\n");
+        printf("ethdown\n");
+        printf("    Description: Deinitialize and bring down Ethernet interface.\n");
+        printf("    Usage: ethdown\n\n");
+        printf("ethinfo\n");
+        printf("    Description: Display Ethernet connection information.\n");
+        printf("    Usage: ethinfo\n");
+        printf("    Shows: Status, IP address, netmask, gateway, DNS servers, DHCP server\n\n");
+        printf("etharp\n");
+        printf("    Description: Perform ARP scan on local Ethernet network.\n");
+        printf("    Usage: etharp\n");
+        printf("    Scans: Local subnet (1-254) to discover active hosts\n\n");
+        printf("ethports\n");
+        printf("    Description: Scan TCP ports on a target IP address.\n");
+        printf("    Usage: ethports [IP] [all | start-end]\n");
+        printf("    Arguments:\n");
+        printf("        [IP]      : Target IP address (default: gateway)\n");
+        printf("        all       : Scan all ports (1-65535)\n");
+        printf("        start-end  : Custom port range (e.g., 80-443)\n");
+        printf("        (no range): Scan common ports (default)\n");
+        printf("    Examples:\n");
+        printf("        ethports\n");
+        printf("        ethports 192.168.1.1\n");
+        printf("        ethports 192.168.1.1 all\n");
+        printf("        ethports 192.168.1.1 80-443\n\n");
+        printf("ethping\n");
+        printf("    Description: Perform ICMP ping scan on local Ethernet network.\n");
+        printf("    Usage: ethping\n");
+        printf("    Scans: Local subnet (1-254) to find alive hosts\n\n");
+        printf("ethdns\n");
+        printf("    Description: Perform DNS lookup or reverse DNS lookup.\n");
+        printf("    Usage: ethdns <hostname>\n");
+        printf("           ethdns reverse <ip_address>\n");
+        printf("    Examples:\n");
+        printf("        ethdns google.com\n");
+        printf("        ethdns reverse 8.8.8.8\n\n");
+        printf("ethtrace\n");
+        printf("    Description: Perform traceroute to a target host.\n");
+        printf("    Usage: ethtrace <hostname_or_ip> [max_hops]\n");
+        printf("    Arguments:\n");
+        printf("        hostname_or_ip : Target hostname or IP address\n");
+        printf("        max_hops       : Maximum number of hops (default: 30, max: 64)\n");
+        printf("    Examples:\n");
+        printf("        ethtrace 8.8.8.8\n");
+        printf("        ethtrace google.com 30\n\n");
+        printf("ethstats\n");
+        printf("    Description: Display Ethernet network statistics.\n");
+        printf("    Usage: ethstats\n");
+        printf("    Shows: Link status, IP info, MAC address, packet statistics, ARP statistics\n\n");
+        printf("ethconfig\n");
+        printf("    Description: Configure Ethernet IP settings (DHCP or static).\n");
+        printf("    Usage: ethconfig <command>\n");
+        printf("    Commands:\n");
+        printf("        dhcp                    - Use DHCP (automatic IP)\n");
+        printf("        static <ip> <netmask> <gateway> - Set static IP\n");
+        printf("        show                    - Show current configuration\n");
+        printf("    Examples:\n");
+        printf("        ethconfig dhcp\n");
+        printf("        ethconfig static 192.168.1.100 255.255.255.0 192.168.1.1\n");
+        printf("        ethconfig show\n\n");
+        printf("ethmac\n");
+        printf("    Description: View or set Ethernet MAC address.\n");
+        printf("    Usage: ethmac\n");
+        printf("           ethmac set <xx:xx:xx:xx:xx:xx>\n");
+        printf("    Examples:\n");
+        printf("        ethmac\n");
+        printf("        ethmac set 02:00:00:00:00:01\n");
+        printf("    Note: MAC address changes may require reinitialization\n\n");
+        printf("ethserv\n");
+        printf("    Description: Service discovery and banner grabbing on a target IP.\n");
+        printf("    Usage: ethserv [ip_address]\n");
+        printf("    Arguments:\n");
+        printf("        [ip_address] : Target IP address (default: gateway)\n");
+        printf("    Scans: Common services (FTP, SSH, Telnet, SMTP, HTTP, HTTPS, etc.)\n");
+        printf("    Example: ethserv 192.168.1.1\n\n");
+        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv\n");
+        return;
+    }
+#endif
+
     glog("\nGhost ESP Command Categories:\n\n");
 
     printf("  help wifi      - Wi-Fi commands\n");
@@ -3184,6 +3273,9 @@ void handle_help(int argc, char **argv) {
     printf("  help attack    - Attack/flood commands\n");
 #ifdef CONFIG_HAS_INFRARED
     printf("  help ir        - Infrared commands\n");
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+    printf("  help ethernet  - Ethernet commands\n");
 #endif
     printf("  help all      - All commands\n\n");
 
@@ -3203,6 +3295,9 @@ void handle_help(int argc, char **argv) {
                       "  help attack    - Attack/flood commands\n"
 #ifdef CONFIG_HAS_INFRARED
                       "  help ir        - Infrared commands\n"
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+                      "  help ethernet  - Ethernet commands\n"
 #endif
                       "  help all      - All commands\n\n");
 
