@@ -13,7 +13,7 @@ toc: true
 
 ## Core
 
-- **`help [category|all]`** — List commands by category (`wifi`, `ble`, `portal`, `comm`, `sd`, `led`, `gps`, `misc`, `printer`, `cast`, `capture`, `beacon`, `attack`).
+- **`help [category|all]`** — List commands by category (`wifi`, `ble`, `portal`, `comm`, `sd`, `led`, `gps`, `misc`, `printer`, `cast`, `capture`, `beacon`, `attack`, `ethernet`).
 - **`chipinfo`** — Print SoC model, cores, features, and IDF version.
 - (for developers) **`mem [dump|trace <start|stop|dump>]`** — Print heap stats, dump allocation state, or control heap tracing.
 - **`reboot`** — Soft restart the device.
@@ -156,6 +156,46 @@ toc: true
 
 - **`gpsinfo [-s]`** — Stream current fix, satellites, and speed; pass `-s` to stop the display task.
 - **`startwd [-s]`** — Begin Wi-Fi wardriving with GPS logging, CSV output, and monitor mode; pass `-s` to stop and flush logs.
+
+## Ethernet
+*(Requires `CONFIG_WITH_ETHERNET`)*
+
+### Connection Management
+
+- **`ethup`** — Initialize and bring up Ethernet interface; waits for link establishment and DHCP assignment.
+- **`ethdown`** — Deinitialize and bring down Ethernet interface.
+- **`ethinfo`** — Display Ethernet connection information (status, IP address, netmask, gateway, DNS servers, DHCP server).
+
+### Network Scanning
+
+- **`etharp`** — Perform ARP scan on local Ethernet network subnet (1-254) to discover active hosts.
+- **`ethping`** — Perform ICMP ping scan on local Ethernet network subnet (1-254) to find alive hosts.
+- **`ethports [ip] [all|start-end]`** — Scan TCP ports on a target IP address.
+  - Without arguments: scans common ports on gateway.
+  - `all`: scan all ports (1-65535).
+  - `start-end`: custom port range (e.g., `80-443`).
+  - Examples: `ethports`, `ethports 192.168.1.1`, `ethports 192.168.1.1 all`, `ethports 192.168.1.1 80-443`.
+
+### Network Tools
+
+- **`ethdns <hostname>`** — Perform forward DNS lookup.
+- **`ethdns reverse <ip_address>`** — Perform reverse DNS lookup.
+- **`ethtrace <hostname_or_ip> [max_hops]`** — Perform traceroute to a target host (default: 30 hops, max: 64).
+- **`ethserv [ip_address]`** — Service discovery and banner grabbing on a target IP (default: gateway). Scans common services (FTP, SSH, Telnet, SMTP, HTTP, HTTPS, etc.).
+
+### Configuration
+
+- **`ethconfig dhcp`** — Use DHCP for automatic IP assignment.
+- **`ethconfig static <ip> <netmask> <gateway>`** — Set static IP configuration.
+  - Example: `ethconfig static 192.168.1.100 255.255.255.0 192.168.1.1`
+- **`ethconfig show`** — Show current IP configuration.
+- **`ethmac`** — Display current MAC address.
+- **`ethmac set <xx:xx:xx:xx:xx:xx>`** — Set Ethernet MAC address (may require reinitialization).
+  - Example: `ethmac set 02:00:00:00:00:01`
+
+### Statistics
+
+- **`ethstats`** — Display Ethernet network statistics (link status, IP info, MAC address, packet statistics, ARP statistics).
 
 ## Settings
 
