@@ -18,6 +18,8 @@ typedef struct {
     int ram_free_kb;
     int ram_total_kb;
     int cpu_used_pct;
+    int heap_free_kb;
+    int heap_free_pct;
     bool sd_ok;
 } HudStats;
 
@@ -60,6 +62,16 @@ static void hud_collect_stats(HudStats *out)
     if (cpu_pct < 0) cpu_pct = 0;
     if (cpu_pct > 100) cpu_pct = 100;
     out->cpu_used_pct = cpu_pct;
+
+    // Free heap stats (using internal RAM like CPU)
+    out->heap_free_kb = (int)(ifree_bytes / 1024);
+    int heap_free_pct = 0;
+    if (itotal_bytes > 0 && ifree_bytes <= itotal_bytes) {
+        heap_free_pct = (int)((ifree_bytes * 100) / itotal_bytes);
+    }
+    if (heap_free_pct < 0) heap_free_pct = 0;
+    if (heap_free_pct > 100) heap_free_pct = 100;
+    out->heap_free_pct = heap_free_pct;
 
     out->sd_ok = sd_card_manager.is_initialized;
 }
@@ -132,13 +144,44 @@ void status_anim_hud_step(TickType_t now, int frame, const StatusAnimGfx *gfx)
     }
     gfx->draw_text(gfx->user, 2, 2, buf);
 
+    // RAM text and bar
     snprintf(buf, sizeof(buf), "RAM %3d%%", stats.ram_used_pct);
-    gfx->draw_text(gfx->user, 2, 18, buf);
+    int ram_text_y = 18;
+    gfx->draw_text(gfx->user, 2, ram_text_y, buf);
+    // Bar graph next to RAM percentage (text is ~48 pixels wide, bar starts at x=50)
+    // Center bar vertically with text, adjusted down by half character height
+    int ram_bar_x = 50;
+    int ram_bar_w = 60;
+    int ram_bar_h = 10;
+    int ram_text_center_y = ram_text_y + gfx->font_char_height / 2;
+    int ram_bar_y = ram_text_center_y - ram_bar_h / 2 + 3; // Move down by ~half character height
+    draw_bar(gfx, ram_bar_x, ram_bar_y, ram_bar_w, ram_bar_h, stats.ram_used_pct);
 
+    // CPU text and bar
     snprintf(buf, sizeof(buf), "CPU %3d%%", stats.cpu_used_pct);
-    gfx->draw_text(gfx->user, 2, 34, buf);
+    int cpu_text_y = 34;
+    gfx->draw_text(gfx->user, 2, cpu_text_y, buf);
+    // Bar graph next to CPU percentage
+    // Center bar vertically with text, adjusted down by half character height
+    int cpu_bar_x = 50;
+    int cpu_bar_w = 60;
+    int cpu_bar_h = 10;
+    int cpu_text_center_y = cpu_text_y + gfx->font_char_height / 2;
+    int cpu_bar_y = cpu_text_center_y - cpu_bar_h / 2 + 3; // Move down by ~half character height
+    draw_bar(gfx, cpu_bar_x, cpu_bar_y, cpu_bar_w, cpu_bar_h, stats.cpu_used_pct);
 
-    draw_bar(gfx, 8, gfx->height - 8, gfx->width - 16, 5, stats.cpu_used_pct);
+    // Free heap text and bar
+    snprintf(buf, sizeof(buf), "HEAP%3d%%", stats.heap_free_pct);
+    int heap_text_y = 50;
+    gfx->draw_text(gfx->user, 2, heap_text_y, buf);
+    // Bar graph next to free heap (showing percentage of free space)
+    // Center bar vertically with text, adjusted down by half character height
+    int heap_bar_x = 50; // Aligned with RAM and CPU bars
+    int heap_bar_w = 60; // Same width as RAM and CPU bars
+    int heap_bar_h = 10;
+    int heap_text_center_y = heap_text_y + gfx->font_char_height / 2;
+    int heap_bar_y = heap_text_center_y - heap_bar_h / 2 + 3; // Move down by ~half character height
+    draw_bar(gfx, heap_bar_x, heap_bar_y, heap_bar_w, heap_bar_h, stats.heap_free_pct);
 
     const char *vert = "GhostESP: Revival";
     int len = (int)strlen(vert);
