@@ -458,13 +458,21 @@ void serial_task(void *pvParameter) {
   int index = 0;
   static uint32_t hwm_log_counter = 0;
 
-  // Display initial prompt
+  // Display initial prompt after startup messages have time to print
   if (!s_uart_disabled) {
-    vTaskDelay(200 / portTICK_PERIOD_MS); // Wait for UART to be ready
+    vTaskDelay(500 / portTICK_PERIOD_MS); // Wait for UART to be ready and startup messages to print
+    fflush(stdout); // Ensure any buffered output is flushed
     display_prompt();
   }
 
+  bool first_iteration = true;
   while (1) {
+    // Ensure prompt is displayed on first iteration if it wasn't shown during init
+    if (first_iteration && !s_uart_disabled && !prompt_displayed) {
+      fflush(stdout);
+      display_prompt();
+    }
+    first_iteration = false;
     if (++hwm_log_counter >= 6000) {
       UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
       ESP_LOGI("SerialTask", "Stack HWM: %u words (%u bytes free)", hwm, hwm * 4);
