@@ -48,6 +48,11 @@ static bool prompt_displayed = false;
 static bool prompt_pending = false;
 static uint32_t prompt_delay_ticks = 0;
 
+// Output deferral tracking for typing interruption prevention
+static bool output_deferred = false;
+static uint32_t last_typing_activity_tick = 0;
+static const uint32_t TYPING_IDLE_TIMEOUT_MS = 200;
+
 // Arrow key state machine
 typedef enum {
     ARROW_STATE_NONE,
@@ -503,6 +508,14 @@ void serial_task(void *pvParameter) {
         if (incoming_char == '\b' || (unsigned char)incoming_char == 0x7F) {
           // Reset arrow key state when backspace is pressed
           arrow_state = ARROW_STATE_NONE;
+          
+          // Enable output deferral when user is editing
+          if (!output_deferred) {
+            glog_set_defer(1);
+            output_deferred = true;
+          }
+          last_typing_activity_tick = xTaskGetTickCount();
+          
           if (cursor_position > 0) {
             // Delete character to the left of cursor
             backspace_at_cursor();
@@ -525,6 +538,13 @@ void serial_task(void *pvParameter) {
           if (incoming_char == 'A') { // Up arrow
             const char* history_cmd = command_history_get_previous();
             if (history_cmd != NULL && strlen(history_cmd) > 0) {
+              // Enable output deferral when navigating history
+              if (!output_deferred) {
+                glog_set_defer(1);
+                output_deferred = true;
+              }
+              last_typing_activity_tick = xTaskGetTickCount();
+              
               // Clear entire line to remove any existing text
               clear_entire_line();
               // Display prompt
@@ -544,6 +564,14 @@ void serial_task(void *pvParameter) {
             }
           } else if (incoming_char == 'B') { // Down arrow
             const char* history_cmd = command_history_get_next();
+            
+            // Enable output deferral when navigating history
+            if (!output_deferred) {
+              glog_set_defer(1);
+              output_deferred = true;
+            }
+            last_typing_activity_tick = xTaskGetTickCount();
+            
             // Clear entire line to remove any existing text
             clear_entire_line();
             // Display prompt
@@ -568,10 +596,24 @@ void serial_task(void *pvParameter) {
               cursor_position = 0;
             }
           } else if (incoming_char == 'C') { // Right arrow
+            // Enable output deferral when navigating cursor
+            if (!output_deferred) {
+              glog_set_defer(1);
+              output_deferred = true;
+            }
+            last_typing_activity_tick = xTaskGetTickCount();
+            
             if (cursor_position < strlen(serial_buffer)) {
               move_cursor_to_position(cursor_position + 1);
             }
           } else if (incoming_char == 'D') { // Left arrow
+            // Enable output deferral when navigating cursor
+            if (!output_deferred) {
+              glog_set_defer(1);
+              output_deferred = true;
+            }
+            last_typing_activity_tick = xTaskGetTickCount();
+            
             if (cursor_position > 0) {
               move_cursor_to_position(cursor_position - 1);
             }
@@ -587,6 +629,13 @@ void serial_task(void *pvParameter) {
         }
 
         if (incoming_char == '\n' || incoming_char == '\r') {
+          // Flush any deferred output before processing command
+          if (output_deferred) {
+            glog_set_defer(0);
+            glog_flush_deferred();
+            output_deferred = false;
+          }
+          
           // Echo newline directly to UART
           const char newline[] = "\n";
           if (!s_uart_disabled) uart_write_bytes(UART_NUM, newline, 1);
@@ -621,6 +670,14 @@ void serial_task(void *pvParameter) {
           if (!prompt_displayed) {
             display_prompt();
           }
+          
+          // Enable output deferral when user starts typing
+          if (!output_deferred) {
+            glog_set_defer(1);
+            output_deferred = true;
+          }
+          last_typing_activity_tick = xTaskGetTickCount();
+          
           if (strlen(serial_buffer) < SERIAL_BUFFER_SIZE - 1) {
             // Insert character at cursor position
             insert_character_at_cursor(incoming_char);
@@ -646,6 +703,18 @@ void serial_task(void *pvParameter) {
       fflush(stdout);
       display_prompt();
       prompt_pending = false;
+    }
+
+    // Check if user has stopped typing and flush deferred output
+    if (output_deferred && last_typing_activity_tick > 0) {
+      uint32_t time_since_typing = xTaskGetTickCount() - last_typing_activity_tick;
+      if (time_since_typing >= pdMS_TO_TICKS(TYPING_IDLE_TIMEOUT_MS)) {
+        // User has been idle for 200ms, flush deferred output
+        glog_set_defer(0);
+        glog_flush_deferred();
+        output_deferred = false;
+        last_typing_activity_tick = 0;
+      }
     }
 
     vTaskDelay(10 / portTICK_PERIOD_MS);
