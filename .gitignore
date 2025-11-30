@@ -32,3 +32,4 @@ __pycache__
 *.pyc
 local_builds
 dependencies.lock
+venv
