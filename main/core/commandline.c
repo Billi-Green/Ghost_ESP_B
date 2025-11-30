@@ -3639,6 +3639,7 @@ static void ir_universal_send_task(void *arg) {
     IrUniversalSendArgs *args = (IrUniversalSendArgs *)arg;
     bool use_builtin = args->use_builtin;
     uint32_t delay_ms = args->delay_ms ? args->delay_ms : 150;
+
     char path[256];
     char button[64];
     path[0] = '\0';
@@ -3652,9 +3653,18 @@ static void ir_universal_send_task(void *arg) {
 
     g_ir_universal_send_cancel = false;
 
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    bool poltergeist_held = false;
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
+        infrared_manager_poltergeist_hold_io24_begin();
+        poltergeist_held = true;
+    }
+#endif
+
     if (use_builtin) {
         size_t total = universal_ir_get_signal_count();
         size_t sent = 0;
+
         if (total == 0) {
             glog("IR: no built-in universal signals.\n");
         } else {
@@ -3669,7 +3679,6 @@ static void ir_universal_send_task(void *arg) {
                 glog("IR: universal sendall %s [builtin %d]\n", button, (int)i);
                 bool ok = infrared_manager_transmit(&sig);
                 glog("IR: universal sendall %s -> %s\n", button, ok ? "OK" : "FAIL");
-                infrared_manager_free_signal(&sig);
                 sent++;
                 vTaskDelay(pdMS_TO_TICKS(delay_ms));
             }
@@ -3677,6 +3686,7 @@ static void ir_universal_send_task(void *arg) {
                 glog("IR: no builtin signals named '%s'\n", button);
             }
         }
+
     } else {
         infrared_signal_t *signals = NULL;
         size_t count = 0;
@@ -3708,6 +3718,12 @@ static void ir_universal_send_task(void *arg) {
     } else {
         glog("IR: universal sendall finished.\n");
     }
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (poltergeist_held) {
+        infrared_manager_poltergeist_hold_io24_end();
+    }
+#endif
 
     g_ir_universal_send_task = NULL;
     vTaskDelete(NULL);
