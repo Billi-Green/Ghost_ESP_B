@@ -336,6 +336,21 @@ static void clear_line_from_cursor(void) {
     serial_buffer[cursor_position] = '\0';
 }
 
+static void clear_entire_line(void) {
+    // Move cursor to beginning of line
+    const char cr[] = "\r";
+    uart_write_bytes(UART_NUM, cr, 1);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)cr, 1, 0);
+#endif
+    // Clear entire line using ANSI escape sequence
+    const char clear_line[] = "\033[2K";
+    uart_write_bytes(UART_NUM, clear_line, 4);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)clear_line, 4, 0);
+#endif
+}
+
 // HTML marker processing and IR inline handling
 static void process_html_line(const char* line) {
     if (strstr(line, "[IR/BEGIN]") != NULL) {
@@ -482,8 +497,8 @@ void serial_task(void *pvParameter) {
           if (incoming_char == 'A') { // Up arrow
             const char* history_cmd = command_history_get_previous();
             if (history_cmd != NULL && strlen(history_cmd) > 0) {
-              // Clear current line
-              clear_line_from_cursor();
+              // Clear entire line to remove any existing text
+              clear_entire_line();
               // Copy history command to buffer
               strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
               serial_buffer[SERIAL_BUFFER_SIZE - 1] = '\0';
@@ -499,8 +514,8 @@ void serial_task(void *pvParameter) {
             }
           } else if (incoming_char == 'B') { // Down arrow
             const char* history_cmd = command_history_get_next();
-            // Clear current line
-            clear_line_from_cursor();
+            // Clear entire line to remove any existing text
+            clear_entire_line();
             if (history_cmd != NULL && strlen(history_cmd) > 0) {
               // Copy history command to buffer
               strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
