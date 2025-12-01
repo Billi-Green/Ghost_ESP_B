@@ -23,17 +23,17 @@ typedef struct {
     bool sd_ok;
 } HudStats;
 
-static bool hud_get_wifi_ssid(char *out, size_t len)
+static bool hud_get_ap_ssid(char *out, size_t len)
 {
     if (!out || len == 0) return false;
-    wifi_ap_record_t ap;
-    memset(&ap, 0, sizeof(ap));
-    esp_err_t err = esp_wifi_sta_get_ap_info(&ap);
+    wifi_config_t wifi_config;
+    memset(&wifi_config, 0, sizeof(wifi_config));
+    esp_err_t err = esp_wifi_get_config(ESP_IF_WIFI_AP, &wifi_config);
     if (err != ESP_OK) return false;
-    size_t slen = strnlen((const char *)ap.ssid, sizeof(ap.ssid));
+    size_t slen = strnlen((const char *)wifi_config.ap.ssid, sizeof(wifi_config.ap.ssid));
     if (slen == 0) return false;
     if (slen >= len) slen = len - 1;
-    memcpy(out, ap.ssid, slen);
+    memcpy(out, wifi_config.ap.ssid, slen);
     out[slen] = '\0';
     return true;
 }
@@ -116,36 +116,50 @@ void status_anim_hud_step(TickType_t now, int frame, const StatusAnimGfx *gfx)
     HudStats stats;
     hud_collect_stats(&stats);
 
-    char buf[32];
-    uint32_t hud_phase = (uint32_t)frame;
-    uint32_t top_mode = (hud_phase / 8U) % 3U;
-
-    if (top_mode == 0) {
-        char ssid[20];
-        if (hud_get_wifi_ssid(ssid, sizeof(ssid))) {
-            snprintf(buf, sizeof(buf), "AP  %.16s", ssid);
-        } else {
-            snprintf(buf, sizeof(buf), "AP Not connected");
-        }
-    } else if (top_mode == 1) {
-        if (!stats.sd_ok) {
-            snprintf(buf, sizeof(buf), "SD FAIL");
-        } else {
-            snprintf(buf, sizeof(buf), "SD OK");
-        }
-    } else {
-        bool ap_enabled = false;
-        bool server_running = false;
-        int sta_count = hud_get_webui_sta_count(&ap_enabled, &server_running);
-        if (!ap_enabled) {
-            snprintf(buf, sizeof(buf), "WebUI: OFF");
-        } else if (!server_running) {
-            snprintf(buf, sizeof(buf), "WebUI: STOP");
-        } else {
-            snprintf(buf, sizeof(buf), "WebUI: %d STA", sta_count);
+    char buf[32], buf1[32], buf2[32];
+    
+    // AP status (left side) - show device's own AP SSID
+    char ssid[20];
+    wifi_mode_t mode;
+    bool ap_running = false;
+    if (esp_wifi_get_mode(&mode) == ESP_OK) {
+        // Check if AP mode is enabled
+        if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
+            if (hud_get_ap_ssid(ssid, sizeof(ssid))) {
+                snprintf(buf1, sizeof(buf1), "AP %.10s", ssid);
+                ap_running = true;
+            }
         }
     }
-    gfx->draw_text(gfx->user, 2, 2, buf);
+    if (!ap_running) {
+        snprintf(buf1, sizeof(buf1), "AP OFF");
+    }
+    
+    // WebUI status (right side)
+    bool ap_enabled = false;
+    bool server_running = false;
+    int sta_count = hud_get_webui_sta_count(&ap_enabled, &server_running);
+    if (!ap_enabled) {
+        snprintf(buf2, sizeof(buf2), "WUI:OFF");
+    } else if (!server_running) {
+        snprintf(buf2, sizeof(buf2), "WUI:STOP");
+    } else {
+        snprintf(buf2, sizeof(buf2), "WUI:%d", sta_count);
+    }
+    
+    // Draw both on the same line, splitting the width
+    // Left side starts at x=2, right side positioned to avoid vertical scrolling text
+    gfx->draw_text(gfx->user, 2, 2, buf1);
+    
+    // Calculate right side position - vertical text starts at width-8 (x=120)
+    // Position right side text to end before the vertical text area
+    // Each character is ~6 pixels wide
+    int right_text_len = (int)strlen(buf2);
+    int right_text_width = right_text_len * 6;
+    int vertical_text_start = gfx->width - 8; // Vertical text starts here
+    int right_text_x = vertical_text_start - right_text_width - 4; // Leave 4px gap
+    if (right_text_x < 2) right_text_x = 2; // Safety check
+    gfx->draw_text(gfx->user, right_text_x, 2, buf2);
 
     // RAM text and bar
     snprintf(buf, sizeof(buf), "RAM %3d%%", stats.ram_used_pct);
