@@ -53,6 +53,8 @@
 - Removed unused buffer to save 8KB ram
 - Added basic Mifare Desfire detection
 - Renamed Dual Comm UI and documentation branding to GhostLink
+- Fixed IR send failing with long raw signals
+
 
 ## Revival v1.8.1
 
