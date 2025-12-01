@@ -10,6 +10,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_wifi.h"
+#include "esp_vfs_fat.h"
 #include "managers/sd_card_manager.h"
 #include "managers/ap_manager.h"
 
@@ -18,8 +19,7 @@ typedef struct {
     int ram_free_kb;
     int ram_total_kb;
     int cpu_used_pct;
-    int heap_free_kb;
-    int heap_free_pct;
+    int sd_used_pct;
     bool sd_ok;
 } HudStats;
 
@@ -63,17 +63,20 @@ static void hud_collect_stats(HudStats *out)
     if (cpu_pct > 100) cpu_pct = 100;
     out->cpu_used_pct = cpu_pct;
 
-    // Free heap stats (using internal RAM like CPU)
-    out->heap_free_kb = (int)(ifree_bytes / 1024);
-    int heap_free_pct = 0;
-    if (itotal_bytes > 0 && ifree_bytes <= itotal_bytes) {
-        heap_free_pct = (int)((ifree_bytes * 100) / itotal_bytes);
-    }
-    if (heap_free_pct < 0) heap_free_pct = 0;
-    if (heap_free_pct > 100) heap_free_pct = 100;
-    out->heap_free_pct = heap_free_pct;
-
+    // SD card used space stats
     out->sd_ok = sd_card_manager.is_initialized;
+    int sd_used_pct = 0;
+    if (out->sd_ok) {
+        uint64_t total_bytes = 0, free_bytes = 0;
+        esp_err_t ret = esp_vfs_fat_info("/mnt", &total_bytes, &free_bytes);
+        if (ret == ESP_OK && total_bytes > 0) {
+            uint64_t used_bytes = total_bytes - free_bytes;
+            sd_used_pct = (int)((used_bytes * 100) / total_bytes);
+            if (sd_used_pct < 0) sd_used_pct = 0;
+            if (sd_used_pct > 100) sd_used_pct = 100;
+        }
+    }
+    out->sd_used_pct = sd_used_pct;
 }
 
 static int hud_get_webui_sta_count(bool *ap_enabled, bool *server_running)
@@ -170,18 +173,24 @@ void status_anim_hud_step(TickType_t now, int frame, const StatusAnimGfx *gfx)
     int cpu_bar_y = cpu_text_center_y - cpu_bar_h / 2 + 3; // Move down by ~half character height
     draw_bar(gfx, cpu_bar_x, cpu_bar_y, cpu_bar_w, cpu_bar_h, stats.cpu_used_pct);
 
-    // Free heap text and bar
-    snprintf(buf, sizeof(buf), "HEAP%3d%%", stats.heap_free_pct);
-    int heap_text_y = 50;
-    gfx->draw_text(gfx->user, 2, heap_text_y, buf);
-    // Bar graph next to free heap (showing percentage of free space)
+    // SD card used space text and bar
+    if (stats.sd_ok) {
+        snprintf(buf, sizeof(buf), "SD %3d%%", stats.sd_used_pct);
+    } else {
+        snprintf(buf, sizeof(buf), "SD   N/A");
+    }
+    int sd_text_y = 50;
+    gfx->draw_text(gfx->user, 2, sd_text_y, buf);
+    // Bar graph next to SD card used space (showing percentage of used space)
     // Center bar vertically with text, adjusted down by half character height
-    int heap_bar_x = 50; // Aligned with RAM and CPU bars
-    int heap_bar_w = 60; // Same width as RAM and CPU bars
-    int heap_bar_h = 10;
-    int heap_text_center_y = heap_text_y + gfx->font_char_height / 2;
-    int heap_bar_y = heap_text_center_y - heap_bar_h / 2 + 3; // Move down by ~half character height
-    draw_bar(gfx, heap_bar_x, heap_bar_y, heap_bar_w, heap_bar_h, stats.heap_free_pct);
+    int sd_bar_x = 50; // Aligned with RAM and CPU bars
+    int sd_bar_w = 60; // Same width as RAM and CPU bars
+    int sd_bar_h = 10;
+    int sd_text_center_y = sd_text_y + gfx->font_char_height / 2;
+    int sd_bar_y = sd_text_center_y - sd_bar_h / 2 + 3; // Move down by ~half character height
+    if (stats.sd_ok) {
+        draw_bar(gfx, sd_bar_x, sd_bar_y, sd_bar_w, sd_bar_h, stats.sd_used_pct);
+    }
 
     const char *vert = "GhostESP: Revival";
     int len = (int)strlen(vert);
