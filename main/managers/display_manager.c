@@ -828,6 +828,21 @@ static const uint32_t theme_palettes[15][6] = {
         {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}  // Forest
     };
 
+void display_manager_update_status_bar_color(void) {
+  if (!status_bar || !lv_obj_is_valid(status_bar)) {
+    return;
+  }
+
+  uint8_t theme = settings_get_menu_theme(&G_Settings);
+  lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palettes[theme][0]), LV_PART_MAIN);
+
+  if (mainlabel && lv_obj_is_valid(mainlabel)) {
+    lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
+  }
+
+  status_update_cb(NULL);
+}
+
 void display_manager_add_status_bar(const char *CurrentMenuName) {
     const char *label_text = CurrentMenuName ? CurrentMenuName : "";
     if (status_bar && lv_obj_is_valid(status_bar)) {
@@ -1925,30 +1940,3 @@ void set_keyboard_brightness(uint8_t brightness) {
     lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, kb_brightness, 2);
 }
 #endif
-
-void display_manager_update_status_bar_color(void) {
-    if (!status_bar || !lv_obj_is_valid(status_bar)) return;
-    uint8_t theme = settings_get_menu_theme(&G_Settings);
-    lv_color_t color = lv_color_hex(theme_palettes[theme][0]);
-    lv_obj_set_style_border_color(status_bar, color, 0);
-
-    // Reset label colors as well
-    lv_color_t default_color = lv_color_hex(0xCCCCCC);
-    if (wifi_label && lv_obj_is_valid(wifi_label)) {
-        lv_obj_set_style_text_color(wifi_label, default_color, 0);
-    }
-    if (bt_label && lv_obj_is_valid(bt_label)) {
-        lv_obj_set_style_text_color(bt_label, default_color, 0);
-    }
-    if (sd_label && lv_obj_is_valid(sd_label)) {
-        lv_obj_set_style_text_color(sd_label, default_color, 0);
-    }
-    if (battery_label && lv_obj_is_valid(battery_label)) {
-        lv_obj_set_style_text_color(battery_label, default_color, 0);
-    }
-    if (mainlabel && lv_obj_is_valid(mainlabel)) {
-        lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
-    }
-    lv_obj_invalidate(status_bar);
-}
-
