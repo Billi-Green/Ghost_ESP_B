@@ -252,8 +252,10 @@ void app_main(void) {
 #endif
         }
         if (initialized && settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
-            xTaskCreate(rainbow_task, "Rainbow Task", 3072, &rgb_manager, 1,
-                        &rgb_effect_task_handle);
+            xTaskCreatePinnedToCore(rainbow_task, "Rainbow Task", 3072,
+                                    &rgb_manager, RGB_EFFECT_TASK_PRIORITY,
+                                    &rgb_effect_task_handle,
+                                    RGB_EFFECT_TASK_CORE);
         }
     }
 

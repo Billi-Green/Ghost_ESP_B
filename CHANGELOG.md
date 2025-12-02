@@ -54,6 +54,7 @@
 ### Fixed
 
 - Fixed an issue where setting rgb pins would fail on configs with no leds set
+- Wrapped power-management transitions with RGB pause/resume to prevent a crash
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
 - Apps menu now follows main menu theme, controls and layout
 - Main menu app colors are now consistent across devices
@@ -64,6 +65,7 @@
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
 - Fixed IR send failing with long raw signals
 - Fixed a crash when entering SYM menu on keyboard view - @dagnazty
+- Fixed issues causing glitches with rainbow modes on certain devices and flicker when the RGB rainbow effect runs with power saving disabled
 
 ## Revival v1.8.1
 

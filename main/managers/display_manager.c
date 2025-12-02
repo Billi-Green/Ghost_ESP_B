@@ -25,6 +25,7 @@
 #include "managers/ap_manager.h"
 #include "core/serial_manager.h"
 #include "managers/wifi_manager.h"
+#include "managers/rgb_manager.h"
 #include "driver/i2c.h"
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
@@ -932,15 +933,17 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
 }
 
 void apply_power_management_config(bool power_save_enabled) {
-  esp_pm_config_esp32_t pm_cfg = {
+  esp_pm_config_t pm_cfg = {
       .max_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .min_freq_mhz = 20,
-      .light_sleep_enable = true,
+      .min_freq_mhz = power_save_enabled ? 20 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+      .light_sleep_enable = power_save_enabled,
   };
+  rgb_manager_power_transition_begin();
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
   if (pm_err != ESP_OK) {
     ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
   }
+  rgb_manager_power_transition_end();
 
 #if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
   // Reconfigure LEDC timer after power management changes to maintain stable PWM
@@ -971,7 +974,7 @@ void display_manager_init(void) {
     lvgl_lock_registered = true;
   }
 
-  esp_pm_config_esp32_t pm_cfg = {
+  esp_pm_config_t pm_cfg = {
     .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
     .min_freq_mhz = 80,
     .light_sleep_enable = true,

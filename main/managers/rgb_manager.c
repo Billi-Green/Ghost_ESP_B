@@ -12,6 +12,8 @@
 
 static const char *TAG = "RGBManager";
 static SemaphoreHandle_t rgb_mutex = NULL;
+static bool rgb_power_transition_active = false;
+static int rgb_power_transition_lock_depth = 0;
 
 void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms);
 
@@ -102,12 +104,15 @@ void rainbow_task(void *pvParameter) {
       break;
     }
 
+    int delay_ms = (int)settings_get_rgb_speed(&G_Settings);
+    if (delay_ms < 30) {
+      delay_ms = 30;
+    }
+
     if (rgb_manager->num_leds > 1) {
-      rgb_manager_rainbow_effect_matrix(rgb_manager,
-                                        settings_get_rgb_speed(&G_Settings));
+      rgb_manager_rainbow_effect_matrix(rgb_manager, delay_ms);
     } else {
-      rgb_manager_rainbow_effect(rgb_manager,
-                                 settings_get_rgb_speed(&G_Settings));
+      rgb_manager_rainbow_effect(rgb_manager, delay_ms);
     }
 
     // Check flag again after effect
@@ -173,6 +178,40 @@ void clamp_rgb(uint8_t *r, uint8_t *g, uint8_t *b) {
   *r = (*r > 255) ? 255 : *r;
   *g = (*g > 255) ? 255 : *g;
   *b = (*b > 255) ? 255 : *b;
+}
+
+void rgb_manager_power_transition_begin(void) {
+  if (!rgb_mutex) {
+    return;
+  }
+
+  if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+    rgb_power_transition_lock_depth++;
+    rgb_power_transition_active = true;
+    if (rgb_manager.strip) {
+      led_strip_clear(rgb_manager.strip);
+      led_strip_refresh(rgb_manager.strip);
+    }
+  }
+}
+
+void rgb_manager_power_transition_end(void) {
+  if (!rgb_mutex || !rgb_power_transition_active) {
+    return;
+  }
+
+  if (rgb_manager.strip) {
+    led_strip_refresh(rgb_manager.strip);
+  }
+
+  if (rgb_power_transition_lock_depth > 0) {
+    rgb_power_transition_lock_depth--;
+    xSemaphoreGiveRecursive(rgb_mutex);
+  }
+
+  if (rgb_power_transition_lock_depth == 0) {
+    rgb_power_transition_active = false;
+  }
 }
 
 // Initialize the RGB LED manager
@@ -273,8 +312,9 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
     // Create RMT configuration for LED strip
 
     led_strip_rmt_config_t rmt_config = {
-        .clk_src = RMT_CLK_SRC_DEFAULT,   // Default RMT clock source
-        .resolution_hz = 5 * 1000 * 1000 // 5 MHz resolution
+        .clk_src = RMT_CLK_SRC_DEFAULT,   // Portable default clock source
+        .resolution_hz = 5 * 1000 * 1000, // 5 MHz resolution
+        .flags.with_dma = 1               // Use DMA to reduce flicker under load
     };
 
     // Initialize the LED strip with both configurations
@@ -401,7 +441,7 @@ void update_led_visualizer(uint8_t *amplitudes, size_t num_bars, bool square_mod
 
 void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
                 uint8_t blue) {
-  uint8_t brightness = 0;
+  int brightness = 0;
   int direction = 1;
 
   while ((brightness <= 255 && direction > 0) ||
@@ -587,102 +627,189 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
   return ESP_OK;
 }
 
+#define RGB_COLOR_WHEEL_STEPS 1536
+#define RGB_COLOR_WHEEL_Q16_RANGE ((uint32_t)RGB_COLOR_WHEEL_STEPS << 16)
+
+static inline void rgb_color_wheel(uint16_t pos, uint8_t *r, uint8_t *g,
+                                   uint8_t *b) {
+  uint8_t segment = pos >> 8;
+  uint8_t offset = pos & 0xFF;
+
+  switch (segment) {
+  case 0:
+    *r = 255;
+    *g = offset;
+    *b = 0;
+    break;
+  case 1:
+    *r = 255 - offset;
+    *g = 255;
+    *b = 0;
+    break;
+  case 2:
+    *r = 0;
+    *g = 255;
+    *b = offset;
+    break;
+  case 3:
+    *r = 0;
+    *g = 255 - offset;
+    *b = 255;
+    break;
+  case 4:
+    *r = offset;
+    *g = 0;
+    *b = 255;
+    break;
+  default:
+    *r = 255;
+    *g = 0;
+    *b = 255 - offset;
+    break;
+  }
+}
+
 void rgb_manager_rainbow_effect_matrix(RGBManager_t *rgb_manager,
                                        int delay_ms) {
-  double hue = 0.0;
+  if (!rgb_manager || !rgb_manager->strip || rgb_manager->num_leds <= 0) {
+    return;
+  }
+
+  const uint32_t hue_step_q16 = RGB_COLOR_WHEEL_Q16_RANGE /
+                                (uint32_t)rgb_manager->num_leds;
+  const uint32_t frame_increment_q16 = RGB_COLOR_WHEEL_Q16_RANGE / 360u;
+  uint32_t base_pos_q16 = 0;
+  TickType_t last_wake = xTaskGetTickCount();
 
   while (!rainbow_task_should_exit) {
-    // Check termination flag before each LED update
-
     if (rainbow_task_should_exit) {
       return;
     }
+    if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+      uint32_t pixel_pos_q16 = base_pos_q16;
 
-    for (int i = 0; i < rgb_manager->num_leds; i++) {
-      // Check flag during LED loop for faster response
+      for (int i = 0; i < rgb_manager->num_leds; i++) {
+        if (rainbow_task_should_exit) {
+          xSemaphoreGiveRecursive(rgb_mutex);
+          return;
+        }
 
-      if (rainbow_task_should_exit) {
-        return;
+        uint8_t red, green, blue;
+        rgb_color_wheel((uint16_t)(pixel_pos_q16 >> 16), &red, &green, &blue);
+
+        scale_grb_by_neopixel_brightness(&green, &red, &blue, 0.3,
+                                         settings_get_neopixel_max_brightness(
+                                             &G_Settings));
+
+        led_strip_set_pixel(rgb_manager->strip, i, red, green, blue);
+
+        pixel_pos_q16 += hue_step_q16;
+        if (pixel_pos_q16 >= RGB_COLOR_WHEEL_Q16_RANGE) {
+          pixel_pos_q16 -= RGB_COLOR_WHEEL_Q16_RANGE;
+        }
       }
 
-      uint8_t red, green, blue;
+      if (!rgb_manager->is_separate_pins && rgb_manager->strip) {
+        esp_err_t ret;
+        int attempts = 0;
+        do {
+          ret = led_strip_refresh(rgb_manager->strip);
+          if (ret == ESP_ERR_INVALID_STATE) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+          }
+        } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
 
-      double hue_offset =
-          fmod(hue + i * (360.0 / rgb_manager->num_leds), 360.0);
+        if (ret != ESP_OK) {
+          ESP_LOGE(TAG,
+                   "Failed to refresh LED strip (matrix) after %d attempts: %s",
+                   attempts, esp_err_to_name(ret));
+          led_strip_clear(rgb_manager->strip);
+        }
+      }
 
-      hsv hsv_color = {.h = hue_offset, .s = 1.0, .v = 0.5};
-      rgb rgb_color = hsv2rgb(hsv_color);
-
-      red = (uint8_t)(fmin(rgb_color.r * 255, 120));
-      green = (uint8_t)(fmin(rgb_color.g * 255, 120));
-      blue = (uint8_t)(fmin(rgb_color.b * 255, 120));
-
-      clamp_rgb(&red, &green, &blue);
-      scale_grb_by_neopixel_brightness(&green, &red, &blue, 0.3, settings_get_neopixel_max_brightness(&G_Settings));
-
-      led_strip_set_pixel(rgb_manager->strip, i, red, green, blue);
-      hue = fmod(hue + 0.5, 360.0);
+      xSemaphoreGiveRecursive(rgb_mutex);
     }
 
-    // Single refresh at end of frame to avoid overlapping RMT transfers
-
-    if (!rgb_manager->is_separate_pins) {
-      led_strip_refresh(rgb_manager->strip);
+    base_pos_q16 += frame_increment_q16;
+    if (base_pos_q16 >= RGB_COLOR_WHEEL_Q16_RANGE) {
+      base_pos_q16 -= RGB_COLOR_WHEEL_Q16_RANGE;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(delay_ms));
   }
 }
 
 void rgb_manager_rainbow_effect(RGBManager_t *rgb_manager, int delay_ms) {
-  double hue = 0.0;
+  if (!rgb_manager || rgb_manager->num_leds <= 0) {
+    return;
+  }
+
+  const uint32_t hue_step_q16 = RGB_COLOR_WHEEL_Q16_RANGE /
+                                (uint32_t)rgb_manager->num_leds;
+  const uint32_t frame_increment_q16 = RGB_COLOR_WHEEL_Q16_RANGE / 360u;
+  uint32_t base_pos_q16 = 0;
+  TickType_t last_wake = xTaskGetTickCount();
+  const bool single_pixel = (rgb_manager->num_leds == 1);
 
   while (!rainbow_task_should_exit) {
-    // Check termination flag before each LED update
-
     if (rainbow_task_should_exit) {
       return;
     }
+    if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+      uint32_t pixel_pos_q16 = base_pos_q16;
 
-    for (int i = 0; i < rgb_manager->num_leds; i++) {
-      // Check flag during LED loop for faster response
+      for (int i = 0; i < rgb_manager->num_leds; i++) {
+        if (rainbow_task_should_exit) {
+          xSemaphoreGiveRecursive(rgb_mutex);
+          return;
+        }
 
-      if (rainbow_task_should_exit) {
-        return;
+        uint8_t red, green, blue;
+        rgb_color_wheel((uint16_t)(pixel_pos_q16 >> 16), &red, &green, &blue);
+
+        if (rgb_manager->is_separate_pins) {
+          uint8_t ired = (uint8_t)(255 - red);
+          uint8_t igreen = (uint8_t)(255 - green);
+          uint8_t iblue = (uint8_t)(255 - blue);
+          rgb_manager_set_color(rgb_manager, i, ired, igreen, iblue, false);
+        } else if (rgb_manager->strip) {
+          led_strip_set_pixel(rgb_manager->strip, single_pixel ? 0 : i, red,
+                              green, blue);
+        }
+
+        pixel_pos_q16 += hue_step_q16;
+        if (pixel_pos_q16 >= RGB_COLOR_WHEEL_Q16_RANGE) {
+          pixel_pos_q16 -= RGB_COLOR_WHEEL_Q16_RANGE;
+        }
       }
 
-      uint8_t red, green, blue;
+      if (!rgb_manager->is_separate_pins && rgb_manager->strip) {
+        esp_err_t ret;
+        int attempts = 0;
+        do {
+          ret = led_strip_refresh(rgb_manager->strip);
+          if (ret == ESP_ERR_INVALID_STATE) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+          }
+        } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
 
-      double hue_offset =
-          fmod(hue + i * (360.0 / rgb_manager->num_leds), 360.0);
-
-      hsv hsv_color = {.h = hue_offset, .s = 1.0, .v = 1.0};
-      rgb rgb_color = hsv2rgb(hsv_color);
-
-      red = (uint8_t)(rgb_color.r * 255);
-      green = (uint8_t)(rgb_color.g * 255);
-      blue = (uint8_t)(rgb_color.b * 255);
-
-      clamp_rgb(&red, &green, &blue);
-
-      if (rgb_manager->is_separate_pins) {
-        uint8_t ired = (uint8_t)(255 - red);
-        uint8_t igreen = (uint8_t)(255 - green);
-        uint8_t iblue = (uint8_t)(255 - blue);
-        rgb_manager_set_color(rgb_manager, i, ired, igreen, iblue, false);
-      } else {
-        led_strip_set_pixel(rgb_manager->strip,
-                            (rgb_manager->num_leds == 1 ? 0 : i), red, green, blue);
+        if (ret != ESP_OK) {
+          ESP_LOGE(TAG,
+                   "Failed to refresh LED strip (rainbow) after %d attempts: %s",
+                   attempts, esp_err_to_name(ret));
+          led_strip_clear(rgb_manager->strip);
+        }
       }
+
+      xSemaphoreGiveRecursive(rgb_mutex);
     }
 
-    if (!rgb_manager->is_separate_pins) {
-      led_strip_refresh(rgb_manager->strip);
+    base_pos_q16 += frame_increment_q16;
+    if (base_pos_q16 >= RGB_COLOR_WHEEL_Q16_RANGE) {
+      base_pos_q16 -= RGB_COLOR_WHEEL_Q16_RANGE;
     }
 
-    hue = fmod(hue + 1, 360.0);
-
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(delay_ms));
   }
 }
 
@@ -690,8 +817,8 @@ void rgb_manager_policesiren_effect(RGBManager_t *rgb_manager, int delay_ms) {
   if (!rgb_manager || rgb_manager->num_leds <= 0) {
     return;
   }
-  if (rgb_manager->is_separate_pins && rgb_manager->num_leds > 1) {
 
+  if (rgb_manager->is_separate_pins && rgb_manager->num_leds > 1) {
     ESP_LOGW(TAG, "Police siren effect designed for single LED or strip treated as one.");
     // Optionally, you could set all LEDs to the same color here if desired for strips
   }
@@ -706,18 +833,6 @@ void rgb_manager_policesiren_effect(RGBManager_t *rgb_manager, int delay_ms) {
       } else {
         rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, 0, 0, brightness, false);
       }
-      // Refresh is handled by set_color for RMT now
-      vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    }
-    vTaskDelay(pdMS_TO_TICKS(50)); // Hold
-    for (int pulse_step = 255; pulse_step >= 0; pulse_step -= 5) {
-      double ratio = ((double)pulse_step) / 255.0;
-      uint8_t brightness = (uint8_t)(255 * sin(ratio * (M_PI / 2)));
-      if (is_red) {
-        rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, brightness, 0, 0, false);
-      } else {
-        rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, 0, 0, brightness, false);
-      }
       vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
     vTaskDelay(pdMS_TO_TICKS(50)); // Off pause
@@ -726,23 +841,27 @@ void rgb_manager_policesiren_effect(RGBManager_t *rgb_manager, int delay_ms) {
 }
 
 void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms) {
-  if (!rgb_manager || rgb_manager->num_leds <= 0) {
+  if (!rgb_manager) {
     return;
   }
-  if (rgb_manager->is_separate_pins && rgb_manager->num_leds > 1) {
 
-    ESP_LOGW(TAG, "Strobe effect designed for single LED or strip treated as one.");
-    // Optionally, you could set all LEDs to the same color here if desired for strips
-  }
+  const int target = rgb_manager->is_separate_pins ? 0 : -1;
+  const int on_delay = (delay_ms > 0) ? delay_ms : 1;
+  const int off_delay = on_delay * 3;
+
   while (!rainbow_task_should_exit) {
-    // Strobe ON: Pass -1 to set all LEDs on a strip, 0 for single LED
-    rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, 255, 255, 255, false);
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    rgb_manager_set_color(rgb_manager, target, 255, 255, 255, false);
+    vTaskDelay(pdMS_TO_TICKS(on_delay));
 
-    // Strobe OFF
-    rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, 0, 0, 0, false);
-    vTaskDelay(pdMS_TO_TICKS(delay_ms * 3));
+    if (rainbow_task_should_exit) {
+      break;
+    }
+
+    rgb_manager_set_color(rgb_manager, target, 0, 0, 0, false);
+    vTaskDelay(pdMS_TO_TICKS(off_delay));
   }
+
+  rgb_manager_set_color(rgb_manager, target, 0, 0, 0, false);
 }
 
 // Deinitialize the RGB LED manager
