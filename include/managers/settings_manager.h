@@ -23,7 +23,8 @@ typedef enum {
   IDLE_ANIM_STARFIELD = 2,
   IDLE_ANIM_HUD = 3,
   IDLE_ANIM_MATRIX = 4,
-  IDLE_ANIM_FLYING_GHOSTS = 5
+  IDLE_ANIM_FLYING_GHOSTS = 5,
+  IDLE_ANIM_SPIRAL = 6
 } IdleAnimation;
 #endif
 
