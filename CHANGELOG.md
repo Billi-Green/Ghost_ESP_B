@@ -66,6 +66,7 @@
 - Fixed IR send failing with long raw signals
 - Fixed a crash when entering SYM menu on keyboard view - @dagnazty
 - Fixed issues causing glitches with rainbow modes on certain devices and flicker when the RGB rainbow effect runs with power saving disabled
+- Raise sys event task size to prevent intermittent crashes
 
 ## Revival v1.8.1
 
