@@ -292,7 +292,7 @@ static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yell
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
 static const char *menu_layout_options[] = {"Normal", "Grid", "List"};
 #ifdef CONFIG_WITH_STATUS_DISPLAY
-static const char *idle_animation_options[] = {"Game of Life", "Ghost", "Starfield", "HUD", "Matrix", "Flying Toaster"};
+static const char *idle_animation_options[] = {"Game of Life", "Ghost", "Starfield", "HUD", "Matrix", "Flying Ghosts"};
 #endif
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};

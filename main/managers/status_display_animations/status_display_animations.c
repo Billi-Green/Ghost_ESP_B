@@ -22,8 +22,8 @@ void status_anim_hud_step(TickType_t now, int frame, const StatusAnimGfx *gfx);
 void status_anim_matrix_reset(void);
 void status_anim_matrix_step(TickType_t now, int frame, const StatusAnimGfx *gfx);
 
-void status_anim_flying_toaster_reset(void);
-void status_anim_flying_toaster_step(TickType_t now, int frame, const StatusAnimGfx *gfx);
+void status_anim_flying_ghosts_reset(void);
+void status_anim_flying_ghosts_step(TickType_t now, int frame, const StatusAnimGfx *gfx);
 
 typedef struct {
     void (*reset)(void);
@@ -36,7 +36,7 @@ static const AnimOps s_anim_ops[] = {
     { status_anim_starfield_reset,    status_anim_starfield_step    },
     { status_anim_hud_reset,          status_anim_hud_step          },
     { status_anim_matrix_reset,       status_anim_matrix_step       },
-    { status_anim_flying_toaster_reset, status_anim_flying_toaster_step },
+    { status_anim_flying_ghosts_reset, status_anim_flying_ghosts_step },
 };
 
 static IdleAnimation s_current_anim = (IdleAnimation)(-1);

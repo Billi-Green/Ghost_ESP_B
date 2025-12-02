@@ -40,13 +40,13 @@ typedef struct {
 static Ghost s_ghosts[MAX_GHOSTS];
 static bool s_initialized = false;
 
-void status_anim_flying_toaster_reset(void)
+void status_anim_flying_ghosts_reset(void)
 {
     s_initialized = false;
     memset(s_ghosts, 0, sizeof(s_ghosts));
 }
 
-void status_anim_flying_toaster_step(TickType_t now, int frame, const StatusAnimGfx *gfx)
+void status_anim_flying_ghosts_step(TickType_t now, int frame, const StatusAnimGfx *gfx)
 {
     (void)now;
     if (!gfx) return;
