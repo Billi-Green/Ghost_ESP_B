@@ -36,6 +36,7 @@
 - Added CLI commands for changing the status display animations
 - Added JTAG support for ESP32C5
 - Added basic Mifare Desfire detection
+- Added command to set amount of rgb leds
 
 ### Changed
 
@@ -52,6 +53,7 @@
 
 ### Fixed
 
+- Fixed an issue where setting rgb pins would fail on configs with no leds set
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
 - Apps menu now follows main menu theme, controls and layout
 - Main menu app colors are now consistent across devices

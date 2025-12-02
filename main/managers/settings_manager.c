@@ -59,6 +59,7 @@ static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
 static const char *NVS_NAV_BUTTONS_KEY = "nav_buttons";
 static const char *NVS_MENU_LAYOUT_KEY = "menu_layout";
 static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
+static const char *NVS_RGB_LED_COUNT_KEY = "rgb_led_cnt";
 static const char *NVS_ENCODER_INVERT_KEY = "enc_inv";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
@@ -161,6 +162,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->menu_layout = 0; // Default to carousel layout
   settings->neopixel_max_brightness = 100; // Default to 100% brightness
   settings->encoder_invert_direction = false;
+  settings->rgb_led_count = CONFIG_NUM_LEDS;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -217,6 +219,12 @@ void settings_load(FSettings *settings) {
   err = nvs_get_u8(nvsHandle, NVS_RGB_SPEED_KEY, &value_u8);
   if (err == ESP_OK) {
     settings->rgb_speed = value_u8;
+  }
+
+  // Load RGB LED Count
+  err = nvs_get_u16(nvsHandle, NVS_RGB_LED_COUNT_KEY, &value_u16);
+  if (err == ESP_OK && value_u16 != 0) {
+    settings->rgb_led_count = value_u16;
   }
 
   // Load Evil Portal settings
@@ -579,6 +587,12 @@ void settings_save(const FSettings *settings) {
   err = nvs_set_u8(nvsHandle, NVS_RGB_SPEED_KEY, settings->rgb_speed);
   if (err != ESP_OK) {
     printf("Failed to save RGB Speed\n");
+  }
+
+  // Save RGB LED Count
+  err = nvs_set_u16(nvsHandle, NVS_RGB_LED_COUNT_KEY, settings->rgb_led_count);
+  if (err != ESP_OK) {
+    printf("Failed to save RGB LED count\n");
   }
 
   // Save RTS Enabled
@@ -1082,6 +1096,14 @@ void settings_get_rgb_separate_pins(const FSettings *settings, int32_t *red, int
   if (red) *red = settings->rgb_red_pin;
   if (green) *green = settings->rgb_green_pin;
   if (blue) *blue = settings->rgb_blue_pin;
+}
+
+void settings_set_rgb_led_count(FSettings *settings, uint16_t count) {
+  settings->rgb_led_count = count;
+}
+
+uint16_t settings_get_rgb_led_count(const FSettings *settings) {
+  return settings->rgb_led_count;
 }
 
 void settings_set_thirds_control_enabled(FSettings *settings, bool enabled) {
