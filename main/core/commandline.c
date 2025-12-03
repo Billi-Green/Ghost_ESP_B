@@ -1163,6 +1163,7 @@ static const char *idle_anim_to_name(IdleAnimation anim) {
         case IDLE_ANIM_MATRIX: return "matrix";
         case IDLE_ANIM_FLYING_GHOSTS: return "ghosts";
         case IDLE_ANIM_SPIRAL: return "spiral";
+        case IDLE_ANIM_FALLING_LEAVES: return "leaves";
         default: return "unknown";
     }
 }
@@ -1197,6 +1198,10 @@ static bool parse_idle_anim_arg(const char *arg, IdleAnimation *out) {
         *out = IDLE_ANIM_SPIRAL;
         return true;
     }
+    if (strcmp(arg, "7") == 0 || strcmp(arg, "leaves") == 0 || strcmp(arg, "fallingleaves") == 0 || strcmp(arg, "falling_leaves") == 0) {
+        *out = IDLE_ANIM_FALLING_LEAVES;
+        return true;
+    }
     return false;
 }
 
@@ -1226,13 +1231,14 @@ void handle_status_idle_cmd(int argc, char **argv) {
         glog("  4 - matrix     (Matrix code rain)\n");
         glog("  5 - ghosts     (Flying Ghosts)\n");
         glog("  6 - spiral    (Hypnotic Spiral)\n");
+        glog("  7 - leaves    (Falling Leaves)\n");
         status_display_show_status("Idle Anim List");
         return;
     }
 
     if (strcmp(argv[1], "set") == 0) {
         if (argc < 3) {
-            glog("Usage: statusidle set <life|ghost|starfield|hud|matrix|ghosts|spiral|0|1|2|3|4|5|6>\n");
+            glog("Usage: statusidle set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|0|1|2|3|4|5|6|7>\n");
             return;
         }
         IdleAnimation anim;
@@ -1248,7 +1254,7 @@ void handle_status_idle_cmd(int argc, char **argv) {
         return;
     }
 
-    glog("Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|0|1|2|3|4|5|6>]\n");
+    glog("Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|0|1|2|3|4|5|6|7>]\n");
 }
 #endif
 
