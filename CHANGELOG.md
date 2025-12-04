@@ -67,7 +67,8 @@
 - Fixed a crash when entering SYM menu on keyboard view - @dagnazty
 - Fixed issues causing glitches with rainbow modes on certain devices and flicker when the RGB rainbow effect runs with power saving disabled
 - Raise sys event task size to prevent intermittent crashes
- - Fixed status bar not resetting from rainbow styling when switching RGB mode back to normal
+- Fixed status bar not resetting from rainbow styling when switching RGB mode back to normal
+- Fixed apps menu not using the correct directions for joystick control
 
 ## Revival v1.8.1
 
