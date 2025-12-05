@@ -12,8 +12,10 @@
 #include "host/ble_hs.h"
 #include "host/ble_sm.h"
 #include "host/util/util.h"
+#include "store/config/ble_store_config.h"
 #include "managers/ble_manager.h"
 #include "managers/views/terminal_screen.h"
+#include "host/ble_gatt.h"
 #include "core/glog.h"
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
@@ -43,6 +45,40 @@ static FlipperDevice discovered_flippers[MAX_FLIPPERS];
 static int discovered_flipper_count = 0;
 static int selected_flipper_index = -1; // Index of the Flipper selected for tracking
 
+#define MAX_GATT_DEVICES 50
+#define MAX_GATT_SERVICES 20
+
+typedef enum {
+    TRACKER_NONE = 0,
+    TRACKER_APPLE_AIRTAG,
+    TRACKER_APPLE_FINDMY,
+    TRACKER_SAMSUNG_SMARTTAG,
+    TRACKER_TILE,
+    TRACKER_CHIPOLO,
+    TRACKER_GENERIC_FINDMY,
+} TrackerType;
+
+typedef struct {
+    ble_uuid_any_t uuid;
+    uint16_t start_handle;
+    uint16_t end_handle;
+} GattService;
+typedef struct {
+    ble_addr_t addr;
+    char name[32];
+    int8_t rssi;
+    bool connectable;
+    TrackerType tracker_type;
+    GattService services[MAX_GATT_SERVICES];
+    int service_count;
+    bool services_enumerated;
+} GattDevice;
+static GattDevice discovered_gatt_devices[MAX_GATT_DEVICES];
+static int discovered_gatt_device_count = 0;
+static int selected_gatt_device_index = -1;
+static uint16_t gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static volatile bool gatt_enum_in_progress = false;
+
 static const char *TAG_BLE = "BLE_MANAGER";
 static int airTagCount = 0;
 static bool ble_initialized = false;
@@ -50,6 +86,7 @@ static volatile bool ble_stack_ready = false;
 
 static esp_timer_handle_t flush_timer = NULL;
 static TaskHandle_t nimble_host_task_handle = NULL;
+static SemaphoreHandle_t nimble_host_exit_sem = NULL;
 static uint32_t ble_pcap_packet_count = 0;
 static uint32_t ble_pcap_event_total_count = 0;
 
@@ -741,7 +778,9 @@ static int ble_gap_event_general(struct ble_gap_event *event, void *arg) {
 void nimble_host_task(void *param) {
     nimble_port_run();
     nimble_port_freertos_deinit();
-    // Ensure the task fully exits to avoid lingering stack usage
+    if (nimble_host_exit_sem) {
+        xSemaphoreGive(nimble_host_exit_sem);
+    }
     vTaskDelete(NULL);
 }
 
@@ -795,8 +834,15 @@ static void generate_random_mac(uint8_t *mac_addr) {
 static void ble_prepare_hs_config(void) {
     ble_hs_cfg.sync_cb = ble_on_sync;
     ble_hs_cfg.reset_cb = ble_on_reset;
-    ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
-    ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.store_read_cb = ble_store_config_read;
+    ble_hs_cfg.store_write_cb = ble_store_config_write;
+    ble_hs_cfg.store_delete_cb = ble_store_config_delete;
+    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_KEYBOARD_DISP;
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_mitm = 0;
+    ble_hs_cfg.sm_sc = 0;
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
 }
 
 static void ble_on_sync(void) {
@@ -863,17 +909,40 @@ static void ble_resume_networking(void) {
     } else if (ble_wifi_suspended) {
         ESP_LOGI(TAG_BLE, "Restoring Wi-Fi (mode=%d) after BLE deinit", ble_prev_wifi_mode);
         ble_wifi_suspended = false;
+
+        vTaskDelay(pdMS_TO_TICKS(200));
+
+        size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ESP_LOGI(TAG_BLE, "Pre Wi-Fi init heap: free=%u, largest=%u", (unsigned)free_heap, (unsigned)largest_block);
+
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        if (largest_block < 40000) {
+            cfg.static_rx_buf_num = 4;
+            cfg.dynamic_rx_buf_num = 8;
+            ESP_LOGW(TAG_BLE, "Heap fragmented, using reduced Wi-Fi buffers");
+        }
+
         esp_err_t err = esp_wifi_init(&cfg);
         if (err == ESP_OK) {
             wifi_mode_t mode = (ble_prev_wifi_mode == WIFI_MODE_NULL) ? WIFI_MODE_STA : ble_prev_wifi_mode;
-            esp_wifi_set_mode(mode);
-            esp_wifi_start();
-            if (mode & WIFI_MODE_STA) {
-                wifi_manager_configure_sta_from_settings();
+            if (mode == WIFI_MODE_APSTA) {
+                mode = WIFI_MODE_STA;
+            }
+            err = esp_wifi_set_mode(mode);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG_BLE, "Failed to set Wi-Fi mode: %s", esp_err_to_name(err));
+            } else {
+                err = esp_wifi_start();
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG_BLE, "Failed to start Wi-Fi: %s", esp_err_to_name(err));
+                } else if (mode & WIFI_MODE_STA) {
+                    wifi_manager_configure_sta_from_settings();
+                }
             }
         } else {
-            ESP_LOGE(TAG_BLE, "Failed to reinit Wi-Fi driver: 0x%X", (unsigned int)err);
+            ESP_LOGE(TAG_BLE, "Failed to reinit Wi-Fi driver: %s (heap: free=%u, largest=%u)", 
+                     esp_err_to_name(err), (unsigned)free_heap, (unsigned)largest_block);
         }
         ble_prev_wifi_mode = WIFI_MODE_NULL;
     }
@@ -892,24 +961,15 @@ static void restart_ble_stack(void) {
         ble_gap_adv_stop();
     }
     
-    // Stop the NimBLE stack and wait for the host task to exit before deinit
+    // Stop the NimBLE stack and wait for the host task to signal exit via semaphore
     nimble_port_stop();
-
-    // Wait for the nimble host task to exit (give it some time)
-    if (nimble_host_task_handle != NULL) {
-        int wait_iterations = 0;
-        while (eTaskGetState(nimble_host_task_handle) != eDeleted && wait_iterations < 25) {
-            vTaskDelay(pdMS_TO_TICKS(20));
-            wait_iterations++;
-        }
-
-        if (eTaskGetState(nimble_host_task_handle) != eDeleted) {
-            ESP_LOGW(TAG_BLE, "nimble_host_task did not exit in time, deleting task");
-            vTaskDelete(nimble_host_task_handle);
-            vTaskDelay(pdMS_TO_TICKS(20));
+    if (nimble_host_task_handle != NULL && nimble_host_exit_sem != NULL) {
+        if (xSemaphoreTake(nimble_host_exit_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
+            ESP_LOGW(TAG_BLE, "nimble_host_task did not signal exit in time");
         }
         nimble_host_task_handle = NULL;
     }
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     // Now deinitialize the port
     nimble_port_deinit();
@@ -932,6 +992,11 @@ static void restart_ble_stack(void) {
         size_t largest_dma_after_re = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
         ESP_LOGI(TAG_BLE, "reinit post-fail dma-ram: free=%d bytes (largest block=%d)", (int)free_dma_after_re, (int)largest_dma_after_re);
         return;
+    }
+
+    // Create exit semaphore for safe task synchronization
+    if (nimble_host_exit_sem == NULL) {
+        nimble_host_exit_sem = xSemaphoreCreateBinary();
     }
 
     // Restart the NimBLE host task (larger stack)
@@ -1845,6 +1910,11 @@ void ble_init(void) {
             return;
         }
 
+        // Create exit semaphore for safe task synchronization
+        if (nimble_host_exit_sem == NULL) {
+            nimble_host_exit_sem = xSemaphoreCreateBinary();
+        }
+
         // Configure and start the NimBLE host task (larger stack to avoid overflow on S3)
         xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE, NULL, 5, &nimble_host_task_handle);
         
@@ -1878,24 +1948,29 @@ void ble_deinit(void) {
     if (ble_initialized) {
         handler_count = 0;
 
-        // Stop NimBLE host and wait for the host task to exit
         nimble_port_stop();
-        if (nimble_host_task_handle != NULL) {
-            int wait_iterations = 0;
-            // Give the host task time to exit gracefully
-            while (eTaskGetState(nimble_host_task_handle) != eDeleted && wait_iterations < 25) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                wait_iterations++;
-            }
-            // If it still hasn't exited, force-delete it
-            if (eTaskGetState(nimble_host_task_handle) != eDeleted) {
-                vTaskDelete(nimble_host_task_handle);
-                vTaskDelay(pdMS_TO_TICKS(10));
+        if (nimble_host_task_handle != NULL && nimble_host_exit_sem != NULL) {
+            if (xSemaphoreTake(nimble_host_exit_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
+                ESP_LOGW(TAG_BLE, "nimble_host_task did not signal exit in time");
             }
             nimble_host_task_handle = NULL;
         }
-        // Now deinitialize the NimBLE port (controller + host deinit)
+        vTaskDelay(pdMS_TO_TICKS(50));
+
         nimble_port_deinit();
+
+        if (nimble_host_exit_sem != NULL) {
+            vSemaphoreDelete(nimble_host_exit_sem);
+            nimble_host_exit_sem = NULL;
+        }
+
+        for (int i = 0; i < 5; i++) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+
+        size_t post_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        size_t post_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ESP_LOGI(TAG_BLE, "Post BLE deinit heap: free=%u, largest=%u", (unsigned)post_free, (unsigned)post_largest);
 
         ble_stack_ready = false;
         ble_initialized = false;
@@ -1911,11 +1986,12 @@ void ble_stop(void) {
         return;
     }
 
+    status_display_show_status("BLE Stopping");
+
     if (!ble_gap_disc_active()) {
+        ble_deinit();
         return;
     }
-
-    status_display_show_status("BLE Stopping");
 
     last_company_id_valid = false;
 
@@ -2372,6 +2448,840 @@ void ble_stop_ble_spam(void) {
     
     printf("ble spam advertising stopped\n");
     status_display_show_status("BLE Spam Off");
+}
+
+static void gatt_uuid_to_str(const ble_uuid_any_t *uuid, char *buf, size_t buf_len) {
+    if (uuid->u.type == BLE_UUID_TYPE_16) {
+        snprintf(buf, buf_len, "0x%04X", uuid->u16.value);
+    } else if (uuid->u.type == BLE_UUID_TYPE_32) {
+        snprintf(buf, buf_len, "0x%08lX", (unsigned long)uuid->u32.value);
+    } else if (uuid->u.type == BLE_UUID_TYPE_128) {
+        snprintf(buf, buf_len, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                 uuid->u128.value[15], uuid->u128.value[14], uuid->u128.value[13], uuid->u128.value[12],
+                 uuid->u128.value[11], uuid->u128.value[10], uuid->u128.value[9], uuid->u128.value[8],
+                 uuid->u128.value[7], uuid->u128.value[6], uuid->u128.value[5], uuid->u128.value[4],
+                 uuid->u128.value[3], uuid->u128.value[2], uuid->u128.value[1], uuid->u128.value[0]);
+    } else {
+        snprintf(buf, buf_len, "Unknown");
+    }
+}
+
+static const char* gatt_svc_uuid_to_name(const ble_uuid_any_t *uuid) {
+    if (uuid->u.type != BLE_UUID_TYPE_16) {
+        return NULL;
+    }
+    
+    switch (uuid->u16.value) {
+        case 0x1800: return "Generic Access";
+        case 0x1801: return "Generic Attribute";
+        case 0x1802: return "Immediate Alert";
+        case 0x1803: return "Link Loss";
+        case 0x1804: return "Tx Power";
+        case 0x1805: return "Current Time";
+        case 0x1806: return "Reference Time Update";
+        case 0x1807: return "Next DST Change";
+        case 0x1808: return "Glucose";
+        case 0x1809: return "Health Thermometer";
+        case 0x180A: return "Device Information";
+        case 0x180D: return "Heart Rate";
+        case 0x180E: return "Phone Alert Status";
+        case 0x180F: return "Battery";
+        case 0x1810: return "Blood Pressure";
+        case 0x1811: return "Alert Notification";
+        case 0x1812: return "Human Interface Device";
+        case 0x1813: return "Scan Parameters";
+        case 0x1814: return "Running Speed and Cadence";
+        case 0x1815: return "Automation IO";
+        case 0x1816: return "Cycling Speed and Cadence";
+        case 0x1818: return "Cycling Power";
+        case 0x1819: return "Location and Navigation";
+        case 0x181A: return "Environmental Sensing";
+        case 0x181B: return "Body Composition";
+        case 0x181C: return "User Data";
+        case 0x181D: return "Weight Scale";
+        case 0x181E: return "Bond Management";
+        case 0x181F: return "Continuous Glucose Monitoring";
+        case 0x1820: return "Internet Protocol Support";
+        case 0x1821: return "Indoor Positioning";
+        case 0x1822: return "Pulse Oximeter";
+        case 0x1823: return "HTTP Proxy";
+        case 0x1824: return "Transport Discovery";
+        case 0x1825: return "Object Transfer";
+        case 0x1826: return "Fitness Machine";
+        case 0x1827: return "Mesh Provisioning";
+        case 0x1828: return "Mesh Proxy";
+        case 0x1829: return "Reconnection Configuration";
+        // Common Vendor Specific
+        case 0xFEAA: return "Google Eddystone";
+        case 0xFE9F: return "Google Nearby";
+        case 0xFEE0: return "Xiaomi/Amazfit";
+        case 0xFE95: return "Xiaomi";
+        case 0xFE07: return "Sonos";
+        case 0xFEB8: return "Meta/Oculus";
+        case 0xFDAC: return "Tencent";
+        case 0xFE2C: return "Google";
+        case 0xFD6F: return "Exposure Notification (COVID-19)";
+        default: return NULL;
+    }
+}
+
+#define GATT_SVC_DEVICE_INFO  0x180A
+#define GATT_SVC_BATTERY      0x180F
+#define GATT_SVC_CURRENT_TIME 0x1805
+
+#define GATT_CHR_MANUFACTURER  0x2A29
+#define GATT_CHR_MODEL_NUMBER  0x2A24
+#define GATT_CHR_SERIAL_NUMBER 0x2A25
+#define GATT_CHR_FIRMWARE_REV  0x2A26
+#define GATT_CHR_HARDWARE_REV  0x2A27
+#define GATT_CHR_SOFTWARE_REV  0x2A28
+#define GATT_CHR_BATTERY_LEVEL 0x2A19
+#define GATT_CHR_CURRENT_TIME  0x2A2B
+
+static uint16_t gatt_read_svc_uuid = 0;
+static volatile bool gatt_svc_discovery_done = false;
+static volatile bool gatt_encryption_done = false;
+static volatile int gatt_encryption_status = -1;
+
+static struct {
+    uint16_t handle;
+    uint16_t uuid;
+} gatt_chrs_to_read[10];
+static int gatt_chrs_to_read_count = 0;
+static volatile bool gatt_chr_discovery_done = false;
+static volatile bool gatt_read_done = false;
+
+static void decode_device_info_char(uint16_t chr_uuid, const uint8_t *data, uint16_t len) {
+    if (len == 0 || data == NULL) return;
+    
+    char str[128];
+    size_t copy_len = (len < sizeof(str) - 1) ? len : sizeof(str) - 1;
+    memcpy(str, data, copy_len);
+    str[copy_len] = '\0';
+    
+    const char *label = NULL;
+    switch (chr_uuid) {
+        case GATT_CHR_MANUFACTURER:  label = "Manufacturer"; break;
+        case GATT_CHR_MODEL_NUMBER:  label = "Model Number"; break;
+        case GATT_CHR_SERIAL_NUMBER: label = "Serial Number"; break;
+        case GATT_CHR_FIRMWARE_REV:  label = "Firmware"; break;
+        case GATT_CHR_HARDWARE_REV:  label = "Hardware"; break;
+        case GATT_CHR_SOFTWARE_REV:  label = "Software"; break;
+    }
+    
+    if (label) {
+        glog("    %s: %s\n", label, str);
+    }
+}
+
+static void decode_battery_level(const uint8_t *data, uint16_t len) {
+    if (len < 1 || data == NULL) return;
+    glog("    Battery: %d%%\n", data[0]);
+}
+
+static void decode_current_time(const uint8_t *data, uint16_t len) {
+    if (len < 7 || data == NULL) return;
+    
+    uint16_t year = data[0] | (data[1] << 8);
+    uint8_t month = data[2];
+    uint8_t day = data[3];
+    uint8_t hours = data[4];
+    uint8_t minutes = data[5];
+    uint8_t seconds = data[6];
+    
+    const char *day_of_week = "";
+    if (len >= 8 && data[7] >= 1 && data[7] <= 7) {
+        const char *days[] = {"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+        day_of_week = days[data[7]];
+    }
+    
+    if (day_of_week[0]) {
+        glog("    Time: %04d-%02d-%02d %02d:%02d:%02d (%s)\n",
+             year, month, day, hours, minutes, seconds, day_of_week);
+    } else {
+        glog("    Time: %04d-%02d-%02d %02d:%02d:%02d\n",
+             year, month, day, hours, minutes, seconds);
+    }
+}
+
+static int gatt_read_chr_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                            struct ble_gatt_attr *attr, void *arg) {
+    uint16_t chr_uuid = (uint16_t)(uintptr_t)arg;
+    
+    if (error->status == 0 && attr != NULL) {
+        uint16_t len = OS_MBUF_PKTLEN(attr->om);
+        uint8_t *data = malloc(len);
+        if (data) {
+            os_mbuf_copydata(attr->om, 0, len, data);
+            
+            if (gatt_read_svc_uuid == GATT_SVC_DEVICE_INFO) {
+                decode_device_info_char(chr_uuid, data, len);
+            } else if (gatt_read_svc_uuid == GATT_SVC_BATTERY && chr_uuid == GATT_CHR_BATTERY_LEVEL) {
+                decode_battery_level(data, len);
+            } else if (gatt_read_svc_uuid == GATT_SVC_CURRENT_TIME && chr_uuid == GATT_CHR_CURRENT_TIME) {
+                decode_current_time(data, len);
+            }
+            
+            free(data);
+        }
+    } else {
+        glog("Read failed for uuid 0x%04x: status=%d\n", chr_uuid, error->status);
+    }
+    
+    gatt_read_done = true;
+    return 0;
+}
+
+static int gatt_disc_chr_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                            const struct ble_gatt_chr *chr, void *arg) {
+    if (error->status == 0 && chr != NULL) {
+        if (chr->uuid.u.type == BLE_UUID_TYPE_16) {
+            uint16_t uuid16 = chr->uuid.u16.value;
+            
+            bool should_read = false;
+            if (gatt_read_svc_uuid == GATT_SVC_DEVICE_INFO) {
+                should_read = (uuid16 == GATT_CHR_MANUFACTURER || 
+                               uuid16 == GATT_CHR_MODEL_NUMBER ||
+                               uuid16 == GATT_CHR_SERIAL_NUMBER ||
+                               uuid16 == GATT_CHR_FIRMWARE_REV ||
+                               uuid16 == GATT_CHR_HARDWARE_REV ||
+                               uuid16 == GATT_CHR_SOFTWARE_REV);
+            } else if (gatt_read_svc_uuid == GATT_SVC_BATTERY) {
+                should_read = (uuid16 == GATT_CHR_BATTERY_LEVEL);
+            } else if (gatt_read_svc_uuid == GATT_SVC_CURRENT_TIME) {
+                should_read = (uuid16 == GATT_CHR_CURRENT_TIME);
+            }
+            
+            if (should_read && (chr->properties & BLE_GATT_CHR_PROP_READ)) {
+                if (gatt_chrs_to_read_count < 10) {
+                    gatt_chrs_to_read[gatt_chrs_to_read_count].handle = chr->val_handle;
+                    gatt_chrs_to_read[gatt_chrs_to_read_count].uuid = uuid16;
+                    gatt_chrs_to_read_count++;
+                }
+            }
+        }
+    } else if (error->status == BLE_HS_EDONE) {
+        gatt_chr_discovery_done = true;
+    }
+    return 0;
+}
+
+static void gatt_read_known_services(uint16_t conn_handle, GattDevice *dev) {
+    for (int i = 0; i < dev->service_count; i++) {
+        GattService *svc = &dev->services[i];
+        if (svc->uuid.u.type != BLE_UUID_TYPE_16) continue;
+        
+        uint16_t svc_uuid = svc->uuid.u16.value;
+        if (svc_uuid == GATT_SVC_DEVICE_INFO || 
+            svc_uuid == GATT_SVC_BATTERY || 
+            svc_uuid == GATT_SVC_CURRENT_TIME) {
+            
+            gatt_read_svc_uuid = svc_uuid;
+            glog("  Reading %s data:\n", gatt_svc_uuid_to_name(&svc->uuid));
+            
+            gatt_chrs_to_read_count = 0;
+            gatt_chr_discovery_done = false;
+            
+            int rc = ble_gattc_disc_all_chrs(conn_handle, svc->start_handle, svc->end_handle, 
+                                    gatt_disc_chr_cb, NULL);
+            if (rc != 0) {
+                glog("Failed to start char discovery: %d\n", rc);
+                continue;
+            }
+            
+            // Wait for discovery to complete
+            int timeout = 0;
+            while (!gatt_chr_discovery_done && timeout < 50) { // 5 seconds max
+                vTaskDelay(pdMS_TO_TICKS(100));
+                timeout++;
+            }
+            
+            if (timeout >= 50) {
+                glog("Char discovery timed out\n");
+                continue;
+            }
+            
+            // Read discovered characteristics
+            for (int j = 0; j < gatt_chrs_to_read_count; j++) {
+                gatt_read_done = false;
+                rc = ble_gattc_read(conn_handle, gatt_chrs_to_read[j].handle, 
+                                  gatt_read_chr_cb, (void*)(uintptr_t)gatt_chrs_to_read[j].uuid);
+                
+                if (rc == 0) {
+                    timeout = 0;
+                    while (!gatt_read_done && timeout < 20) { // 2 seconds max per read
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        timeout++;
+                    }
+                } else {
+                    glog("Failed to initiate read for 0x%04x: %d\n", gatt_chrs_to_read[j].uuid, rc);
+                }
+                
+                // Small delay between reads
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        }
+    }
+}
+
+static int gatt_disc_svc_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                            const struct ble_gatt_svc *service, void *arg) {
+    if (error->status == 0 && service != NULL) {
+        if (selected_gatt_device_index >= 0 && selected_gatt_device_index < discovered_gatt_device_count) {
+            GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
+            if (dev->service_count < MAX_GATT_SERVICES) {
+                GattService *svc = &dev->services[dev->service_count];
+                memcpy(&svc->uuid, &service->uuid, sizeof(ble_uuid_any_t));
+                svc->start_handle = service->start_handle;
+                svc->end_handle = service->end_handle;
+                dev->service_count++;
+                
+                char uuid_str[48];
+                gatt_uuid_to_str(&service->uuid, uuid_str, sizeof(uuid_str));
+                
+                const char *svc_name = gatt_svc_uuid_to_name(&service->uuid);
+                if (svc_name) {
+                    glog("  Service: %s (%s) handles %d-%d\n", svc_name, uuid_str, service->start_handle, service->end_handle);
+                } else {
+                    glog("  Service: %s handles %d-%d\n", uuid_str, service->start_handle, service->end_handle);
+                }
+            }
+        }
+    } else if (error->status == BLE_HS_EDONE) {
+        if (selected_gatt_device_index >= 0 && selected_gatt_device_index < discovered_gatt_device_count) {
+            GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
+            dev->services_enumerated = true;
+            
+            for (int i = 0; i < dev->service_count; i++) {
+                if (dev->services[i].uuid.u.type == BLE_UUID_TYPE_128) {
+                    static const uint8_t tile_base[] = {0x6c, 0xd6, 0xf8, 0x28, 0x97, 0x8d, 0xaa, 0x86, 0x51, 0x49, 0x1c, 0x7d};
+                    if (memcmp(dev->services[i].uuid.u128.value, tile_base, 12) == 0) {
+                        if (dev->tracker_type != TRACKER_TILE) {
+                            glog("Corrected device type: Tile (detected via GATT services)\n");
+                            dev->tracker_type = TRACKER_TILE;
+                        }
+                        break;
+                    }
+                }
+            }
+            
+            glog("Service discovery complete. Found %d services.\n", dev->service_count);
+        }
+        gatt_svc_discovery_done = true;
+    } else {
+        const char *err_msg = "Unknown";
+        switch (error->status) {
+            case BLE_HS_ENOTCONN: err_msg = "Disconnected during discovery"; break;
+            case BLE_HS_ETIMEOUT: err_msg = "Timeout"; break;
+            case BLE_HS_EOS: err_msg = "OS error"; break;
+            case BLE_HS_ECONTROLLER: err_msg = "Controller error"; break;
+            case BLE_HS_ENOTSUP: err_msg = "Not supported by device"; break;
+            default:
+                if (error->status >= 0x100 && error->status < 0x200) {
+                    err_msg = "ATT error (device may require pairing)";
+                }
+                break;
+        }
+        glog("Service discovery failed: %s (code %d)\n", err_msg, error->status);
+        if (selected_gatt_device_index >= 0 && selected_gatt_device_index < discovered_gatt_device_count) {
+            GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
+            if (dev->service_count > 0) {
+                dev->services_enumerated = true;
+                glog("Partial discovery: found %d services before error.\n", dev->service_count);
+            }
+        }
+        gatt_enum_in_progress = false;
+        ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    }
+    return 0;
+}
+
+static int gatt_gap_event_cb(struct ble_gap_event *event, void *arg) {
+    switch (event->type) {
+    case BLE_GAP_EVENT_CONNECT:
+        if (event->connect.status == 0) {
+            gatt_conn_handle = event->connect.conn_handle;
+            glog("Connected! Discovering services...\n");
+            int rc = ble_gattc_disc_all_svcs(gatt_conn_handle, gatt_disc_svc_cb, NULL);
+            if (rc != 0) {
+                glog("Failed to start service discovery: %d\n", rc);
+                gatt_enum_in_progress = false;
+                ble_gap_terminate(gatt_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            }
+        } else {
+            glog("Connection failed: %d\n", event->connect.status);
+            gatt_enum_in_progress = false;
+            gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+        }
+        break;
+    case BLE_GAP_EVENT_DISCONNECT:
+        glog("Disconnected.\n");
+        gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+        gatt_enum_in_progress = false;
+        break;
+    case BLE_GAP_EVENT_CONN_UPDATE:
+        break;
+    case BLE_GAP_EVENT_PASSKEY_ACTION: {
+        struct ble_sm_io pk;
+        pk.action = event->passkey.params.action;
+        
+        switch (event->passkey.params.action) {
+        case BLE_SM_IOACT_NONE:
+            break;
+        case BLE_SM_IOACT_NUMCMP:
+            glog("Numeric comparison: %lu - auto-confirming\n", 
+                 (unsigned long)event->passkey.params.numcmp);
+            pk.numcmp_accept = 1;
+            ble_sm_inject_io(event->passkey.conn_handle, &pk);
+            break;
+        case BLE_SM_IOACT_OOB:
+            glog("OOB pairing requested - not supported\n");
+            break;
+        case BLE_SM_IOACT_INPUT:
+            glog("PIN input required - using default 000000\n");
+            pk.passkey = 0;
+            ble_sm_inject_io(event->passkey.conn_handle, &pk);
+            break;
+        case BLE_SM_IOACT_DISP:
+            glog("Display passkey: %06lu\n", (unsigned long)event->passkey.params.numcmp);
+            break;
+        }
+        break;
+    }
+    case BLE_GAP_EVENT_ENC_CHANGE:
+        gatt_encryption_status = event->enc_change.status;
+        gatt_encryption_done = true;
+        if (event->enc_change.status == 0) {
+            glog("Encryption enabled\n");
+        } else {
+            int sm_err = event->enc_change.status & 0xFF;
+            if (sm_err == 4) {
+                glog("Pairing failed: wrong PIN (default 000000 rejected)\n");
+            } else {
+                glog("Encryption failed: %d\n", event->enc_change.status);
+            }
+        }
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+
+static const char* tracker_type_to_string(TrackerType type) {
+    switch (type) {
+        case TRACKER_APPLE_AIRTAG:    return "AirTag";
+        case TRACKER_APPLE_FINDMY:    return "Apple FindMy";
+        case TRACKER_SAMSUNG_SMARTTAG: return "SmartTag";
+        case TRACKER_TILE:            return "Tile";
+        case TRACKER_CHIPOLO:         return "Chipolo";
+        case TRACKER_GENERIC_FINDMY:  return "FindMy Clone";
+        default:                      return NULL;
+    }
+}
+
+static TrackerType detect_tracker_type(const uint8_t *data, size_t len, const char *name) {
+    if (!data || len < 4) {
+        if (name && name[0]) {
+            if (strstr(name, "Tile") || strstr(name, "TILE")) return TRACKER_TILE;
+            if (strstr(name, "Chipolo")) return TRACKER_CHIPOLO;
+            if (strstr(name, "SmartTag")) return TRACKER_SAMSUNG_SMARTTAG;
+        }
+        return TRACKER_NONE;
+    }
+    
+    TrackerType detected = TRACKER_NONE;
+    
+    size_t i = 0;
+    while (i < len) {
+        uint8_t field_len = data[i];
+        if (field_len == 0 || i + field_len >= len) break;
+        
+        uint8_t field_type = data[i + 1];
+        
+        if ((field_type == 0x02 || field_type == 0x03) && field_len >= 3) {
+            uint16_t svc_uuid = data[i + 2] | (data[i + 3] << 8);
+            if (svc_uuid == 0xFEED || svc_uuid == 0xFEEC) {
+                return TRACKER_TILE;
+            }
+        }
+        
+        if (field_type == 0x16 && field_len >= 3) {
+            uint16_t svc_uuid = data[i + 2] | (data[i + 3] << 8);
+            if (svc_uuid == 0xFEED || svc_uuid == 0xFEEC) {
+                return TRACKER_TILE;
+            }
+        }
+        
+        if (field_type == 0xFF && field_len >= 3) {
+            uint16_t company_id = data[i + 2] | (data[i + 3] << 8);
+            const uint8_t *mfg_data = &data[i + 4];
+            size_t mfg_len = field_len - 3;
+            
+            if (company_id == 0x00D8) {
+                return TRACKER_TILE;
+            }
+            else if (company_id == 0x0075) {
+                detected = TRACKER_SAMSUNG_SMARTTAG;
+            }
+            else if (company_id == 0x0231) {
+                detected = TRACKER_CHIPOLO;
+            }
+            else if (company_id == 0x004C && mfg_len >= 3) {
+                uint8_t type_byte = mfg_data[0];
+                uint8_t type_len = mfg_data[1];
+                if (type_byte == 0x12 && type_len == 0x19 && mfg_len >= 25) {
+                    detected = TRACKER_APPLE_AIRTAG;
+                } else if (type_byte == 0x07 || type_byte == 0x10) {
+                    detected = TRACKER_APPLE_FINDMY;
+                }
+            }
+            else if (company_id == 0x004F && mfg_len >= 2 && mfg_data[0] == 0x12) {
+                detected = TRACKER_GENERIC_FINDMY;
+            }
+        }
+        i += field_len + 1;
+    }
+    
+    if (detected != TRACKER_NONE) return detected;
+    
+    if (name && name[0]) {
+        if (strstr(name, "Tile") || strstr(name, "TILE")) return TRACKER_TILE;
+        if (strstr(name, "Chipolo")) return TRACKER_CHIPOLO;
+        if (strstr(name, "SmartTag")) return TRACKER_SAMSUNG_SMARTTAG;
+        if (strstr(name, "FindMy") || strstr(name, "Find My")) return TRACKER_GENERIC_FINDMY;
+    }
+    
+    return TRACKER_NONE;
+}
+
+void ble_gatt_scan_callback(struct ble_gap_event *event, size_t len) {
+    if (event->type != BLE_GAP_EVENT_DISC) return;
+    
+    uint8_t event_type = event->disc.event_type;
+    bool connectable = (event_type == BLE_HCI_ADV_RPT_EVTYPE_ADV_IND || 
+                        event_type == BLE_HCI_ADV_RPT_EVTYPE_DIR_IND);
+    
+    if (!connectable) return;
+    
+    bool already = false;
+    for (int i = 0; i < discovered_gatt_device_count; i++) {
+        if (memcmp(discovered_gatt_devices[i].addr.val, event->disc.addr.val, 6) == 0) {
+            already = true;
+            discovered_gatt_devices[i].rssi = event->disc.rssi;
+            break;
+        }
+    }
+    
+    if (!already && discovered_gatt_device_count < MAX_GATT_DEVICES) {
+        GattDevice *dev = &discovered_gatt_devices[discovered_gatt_device_count];
+        memcpy(&dev->addr, &event->disc.addr, sizeof(ble_addr_t));
+        dev->rssi = event->disc.rssi;
+        dev->connectable = true;
+        dev->service_count = 0;
+        dev->services_enumerated = false;
+        
+        parse_device_name(event->disc.data, event->disc.length_data, dev->name, sizeof(dev->name));
+        dev->tracker_type = detect_tracker_type(event->disc.data, event->disc.length_data, dev->name);
+        
+        char mac[18];
+        snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+                 dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
+                 dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+        
+        const char *tracker_str = tracker_type_to_string(dev->tracker_type);
+        if (tracker_str) {
+            glog("[%d] %s (%s) RSSI: %d [%s]\n", 
+                 discovered_gatt_device_count, 
+                 dev->name[0] ? dev->name : "<unknown>", 
+                 mac, dev->rssi, tracker_str);
+        } else {
+            glog("[%d] %s (%s) RSSI: %d\n", 
+                 discovered_gatt_device_count, 
+                 dev->name[0] ? dev->name : "<unknown>", 
+                 mac, dev->rssi);
+        }
+        
+        discovered_gatt_device_count++;
+    }
+}
+
+void ble_start_gatt_scan(void) {
+    if (!ble_initialized) {
+        ble_init();
+    }
+    
+    memset(discovered_gatt_devices, 0, sizeof(discovered_gatt_devices));
+    discovered_gatt_device_count = 0;
+    selected_gatt_device_index = -1;
+    gatt_enum_in_progress = false;
+    
+    glog("Starting GATT device scan...\n");
+    status_display_show_status("GATT Scanning");
+    
+    ble_register_handler(ble_gatt_scan_callback);
+    ble_start_scanning();
+}
+
+void ble_list_gatt_devices(void) {
+    glog("--- GATT Devices (%d) ---\n", discovered_gatt_device_count);
+    if (discovered_gatt_device_count == 0) {
+        glog("No GATT devices discovered. Run 'blescan -g' first.\n");
+        return;
+    }
+    
+    for (int i = 0; i < discovered_gatt_device_count; i++) {
+        GattDevice *dev = &discovered_gatt_devices[i];
+        char mac[18];
+        snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+                 dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
+                 dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+        
+        const char *tracker_str = tracker_type_to_string(dev->tracker_type);
+        char info[64] = "";
+        if (i == selected_gatt_device_index) strcat(info, " *");
+        if (dev->services_enumerated) strcat(info, " [E]");
+        if (tracker_str) {
+            char tmp[32];
+            snprintf(tmp, sizeof(tmp), " [%s]", tracker_str);
+            strcat(info, tmp);
+        }
+        
+        glog("[%d] %s (%s) %d dBm%s\n", 
+             i, 
+             dev->name[0] ? dev->name : "<unknown>",
+             mac, 
+             dev->rssi,
+             info);
+    }
+}
+
+void ble_select_gatt_device(int index) {
+    if (index < 0 || index >= discovered_gatt_device_count) {
+        glog("Invalid index %d. Use 'listgatt' to see valid indices.\n", index);
+        selected_gatt_device_index = -1;
+        return;
+    }
+    
+    selected_gatt_device_index = index;
+    GattDevice *dev = &discovered_gatt_devices[index];
+    
+    char mac[18];
+    snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+             dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
+             dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+    
+    glog("Selected GATT device [%d]: %s (%s)\n", index, 
+         dev->name[0] ? dev->name : "<unknown>", mac);
+}
+
+void ble_enumerate_gatt_services(void) {
+    if (selected_gatt_device_index < 0 || selected_gatt_device_index >= discovered_gatt_device_count) {
+        glog("No GATT device selected. Use 'selectgatt <index>' first.\n");
+        return;
+    }
+    
+    if (gatt_enum_in_progress) {
+        glog("Service enumeration already in progress.\n");
+        return;
+    }
+    
+    GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
+    
+    if (dev->services_enumerated) {
+        glog("Services already enumerated for this device:\n");
+        for (int i = 0; i < dev->service_count; i++) {
+            char uuid_str[48];
+            gatt_uuid_to_str(&dev->services[i].uuid, uuid_str, sizeof(uuid_str));
+            
+            const char *svc_name = gatt_svc_uuid_to_name(&dev->services[i].uuid);
+            if (svc_name) {
+                glog("  [%d] %s (%s) handles %d-%d\n", i, svc_name, uuid_str, 
+                     dev->services[i].start_handle, dev->services[i].end_handle);
+            } else {
+                glog("  [%d] %s handles %d-%d\n", i, uuid_str, 
+                     dev->services[i].start_handle, dev->services[i].end_handle);
+            }
+        }
+        return;
+    }
+    
+    ble_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    if (!ble_initialized) {
+        ble_init();
+    }
+    
+    if (!wait_for_ble_ready()) {
+        glog("BLE stack not ready\n");
+        return;
+    }
+    
+    dev->service_count = 0;
+    gatt_enum_in_progress = true;
+    gatt_svc_discovery_done = false;
+    gatt_encryption_done = false;
+    gatt_encryption_status = -1;
+    
+    char mac[18];
+    snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+             dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
+             dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+    glog("Connecting to %s (%s) for service enumeration...\n",
+         dev->name[0] ? dev->name : "<unknown>", mac);
+    status_display_show_status("GATT Connect");
+    
+    uint8_t own_addr_type;
+    int rc = ble_hs_id_infer_auto(0, &own_addr_type);
+    if (rc != 0) {
+        glog("Failed to infer address type: %d\n", rc);
+        gatt_enum_in_progress = false;
+        return;
+    }
+    
+    rc = ble_gap_connect(own_addr_type, &dev->addr, 10000, NULL, gatt_gap_event_cb, NULL);
+    if (rc != 0) {
+        glog("Failed to initiate connection: %d\n", rc);
+        gatt_enum_in_progress = false;
+        return;
+    }
+    
+    int timeout = 0;
+    while (!gatt_svc_discovery_done && timeout < 100) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        timeout++;
+    }
+    
+    if (gatt_svc_discovery_done && gatt_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        struct ble_gap_conn_desc conn_desc;
+        rc = ble_gap_conn_find(gatt_conn_handle, &conn_desc);
+        bool try_security = true;
+        
+        if (rc == 0 && conn_desc.sec_state.encrypted) {
+            glog("Already encrypted\n");
+            try_security = false;
+        }
+        
+        if (try_security) {
+            glog("Initiating pairing...\n");
+            rc = ble_gap_security_initiate(gatt_conn_handle);
+            if (rc == 0) {
+                timeout = 0;
+                while (!gatt_encryption_done && timeout < 100) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    timeout++;
+                }
+                if (gatt_encryption_status != 0) {
+                    glog("Pairing completed with status: %d\n", gatt_encryption_status);
+                }
+            } else if (rc == BLE_HS_EALREADY) {
+                glog("Security already in progress\n");
+            } else if (rc == BLE_HS_ENOTSUP) {
+                glog("Security not supported (device may use incompatible address type)\n");
+            } else {
+                glog("Security initiate failed: %d\n", rc);
+            }
+        }
+        
+        gatt_read_known_services(gatt_conn_handle, dev);
+        ble_gap_terminate(gatt_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    }
+    
+    gatt_enum_in_progress = false;
+}
+
+static volatile bool gatt_tracking_active = false;
+static ble_addr_t gatt_tracking_addr;
+static int8_t gatt_tracking_last_rssi = 0;
+static int8_t gatt_tracking_min_rssi = 0;
+static int8_t gatt_tracking_max_rssi = -127;
+
+static void ble_track_scan_callback(struct ble_gap_event *event, size_t len) {
+    if (event->type != BLE_GAP_EVENT_DISC || !gatt_tracking_active) return;
+    
+    if (memcmp(event->disc.addr.val, gatt_tracking_addr.val, 6) == 0) {
+        int8_t rssi = event->disc.rssi;
+        int8_t delta = rssi - gatt_tracking_last_rssi;
+        
+        if (rssi > gatt_tracking_max_rssi) gatt_tracking_max_rssi = rssi;
+        if (rssi < gatt_tracking_min_rssi) gatt_tracking_min_rssi = rssi;
+        
+        const char *direction = "";
+        if (delta > 5) direction = " ↑ CLOSER";
+        else if (delta < -5) direction = " ↓ FARTHER";
+        
+        int bars = 0;
+        if (rssi > -50) bars = 5;
+        else if (rssi > -60) bars = 4;
+        else if (rssi > -70) bars = 3;
+        else if (rssi > -80) bars = 2;
+        else if (rssi > -90) bars = 1;
+        
+        char bar_str[8] = "";
+        for (int i = 0; i < bars; i++) {
+            strcat(bar_str, "#");
+        }
+        
+        glog("%s %d dBm (min:%d max:%d)%s\n", bar_str, rssi, gatt_tracking_min_rssi, gatt_tracking_max_rssi, direction);
+        gatt_tracking_last_rssi = rssi;
+    }
+}
+void ble_track_gatt_device(void) {
+    if (selected_gatt_device_index < 0 || selected_gatt_device_index >= discovered_gatt_device_count) {
+        glog("No GATT device selected. Use 'selectgatt <index>' first.\n");
+        return;
+    }
+    
+    GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
+    
+    char mac[18];
+    snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+             dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
+             dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+    
+    const char *tracker_str = tracker_type_to_string(dev->tracker_type);
+    glog("=== Tracking %s (%s) ===\n", dev->name[0] ? dev->name : "<unknown>", mac);
+    if (tracker_str) glog("Type: %s\n", tracker_str);
+    glog("Move closer to increase signal. Press back to stop.\n\n");
+    
+    ble_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    if (!ble_initialized) {
+        ble_init();
+    }
+    
+    memcpy(&gatt_tracking_addr, &dev->addr, sizeof(ble_addr_t));
+    gatt_tracking_last_rssi = dev->rssi;
+    gatt_tracking_min_rssi = dev->rssi;
+    gatt_tracking_max_rssi = dev->rssi;
+    gatt_tracking_active = true;
+    
+    status_display_show_status("Tracking...");
+    ble_register_handler(ble_track_scan_callback);
+    ble_start_scanning();
+}
+
+void ble_stop_tracking(void) {
+    if (gatt_tracking_active) {
+        gatt_tracking_active = false;
+        ble_unregister_handler(ble_track_scan_callback);
+        ble_stop();
+        glog("Tracking stopped.\n");
+        status_display_show_status("Track Stopped");
+    }
+}
+
+void ble_stop_gatt_scan(void) {
+    ble_unregister_handler(ble_gatt_scan_callback);
+    if (gatt_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        ble_gap_terminate(gatt_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+        gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    }
+    gatt_enum_in_progress = false;
+    glog("GATT scan stopped.\n");
+    status_display_show_status("GATT Stopped");
 }
 
 #endif

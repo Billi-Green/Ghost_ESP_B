@@ -78,6 +78,14 @@ toc: true
 - **`listairtags`** — Discover nearby AirTags.
 - **`selectairtag <idx>`** — Choose an AirTag for follow-up actions.
 
+### GATT
+
+- **`blescan -g`** — Scan for connectable BLE devices for GATT enumeration.
+- **`listgatt`** — List discovered GATT devices with tracker type detection.
+- **`selectgatt <idx>`** — Select a device by index for enumeration or tracking.
+- **`enumgatt`** — Connect to the selected device and enumerate its GATT services.
+- **`trackgatt`** — Track the selected device using real-time RSSI signal strength.
+
 ## Portal
 
 - **`startportal <path|default> <AP_SSID> [PSK]`** — Serve an Evil Portal bundle from SD or flash (`default` uses the built-in portal).

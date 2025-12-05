@@ -1781,8 +1781,32 @@ void wifi_manager_start_scan() {
         ap_count = 0;
     }
     ap_manager_stop_services();
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+
+    wifi_mode_t current_mode;
+    esp_err_t err = esp_wifi_get_mode(&current_mode);
+    if (err == ESP_ERR_WIFI_NOT_INIT) {
+        ESP_LOGW(TAG, "Wi-Fi not initialized, reinitializing driver...");
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        err = esp_wifi_init(&cfg);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to reinit Wi-Fi: %s", esp_err_to_name(err));
+            TERMINAL_VIEW_ADD_TEXT("WiFi init failed: %s\n", esp_err_to_name(err));
+            return;
+        }
+    }
+
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set STA mode: %s", esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("WiFi mode set failed: %s\n", esp_err_to_name(err));
+        return;
+    }
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start Wi-Fi: %s", esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("WiFi start failed: %s\n", esp_err_to_name(err));
+        return;
+    }
 
     wifi_scan_config_t scan_config = {
         .ssid = NULL,
@@ -1801,7 +1825,7 @@ void wifi_manager_start_scan() {
         printf("Please wait 5 Seconds...\n");
         TERMINAL_VIEW_ADD_TEXT("Please wait 5 Seconds...\n");
     #endif
-    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+    err = esp_wifi_scan_start(&scan_config, true);
 
     if (err != ESP_OK) {
         printf("WiFi scan failed to start: %s", esp_err_to_name(err));
@@ -1812,8 +1836,8 @@ void wifi_manager_start_scan() {
 
     wifi_manager_stop_scan();
     log_heap_status(TAG, "scan_start_post");
-    ESP_ERROR_CHECK(esp_wifi_stop());
-    ESP_ERROR_CHECK(ap_manager_start_services());
+    esp_wifi_stop();
+    ap_manager_start_services();
 }
 
 // Stop scanning for networks

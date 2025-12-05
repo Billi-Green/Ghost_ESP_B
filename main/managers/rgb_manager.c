@@ -1,3 +1,4 @@
+#include "soc/soc_caps.h"
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "vendor/led/led_strip.h"
@@ -314,7 +315,11 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,   // Portable default clock source
         .resolution_hz = 5 * 1000 * 1000, // 5 MHz resolution
+#if SOC_RMT_SUPPORT_DMA
         .flags.with_dma = 1               // Use DMA to reduce flicker under load
+#else
+        .flags.with_dma = 0
+#endif
     };
 
     // Initialize the LED strip with both configurations

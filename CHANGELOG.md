@@ -38,6 +38,7 @@
 - Added basic Mifare Desfire detection
 - Added command to set amount of rgb leds
 
+- Added GATT scanning, service scanning and rssi tracking
 ### Changed
 
 - Refactors to NFC logic to make more maintainable
@@ -69,6 +70,7 @@
 - Raise sys event task size to prevent intermittent crashes
 - Fixed status bar not resetting from rainbow styling when switching RGB mode back to normal
 - Fixed apps menu not using the correct directions for joystick control
+- Fixed crash after BLE deinit and during WiFi init
 
 ## Revival v1.8.1
 

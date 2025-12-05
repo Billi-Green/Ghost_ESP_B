@@ -953,9 +953,16 @@ void handle_ble_scan_cmd(int argc, char **argv) {
         return;
     }
 
+    if (argc > 1 && strcmp(argv[1], "-g") == 0) {
+        glog("Starting GATT Device Scan.\n");
+        ble_start_gatt_scan();
+        return;
+    }
+
     if (argc > 1 && strcmp(argv[1], "-s") == 0) {
         glog("Stopping BLE Scan.\n");
         ble_stop();
+        ble_stop_gatt_scan();
         return;
     }
 
@@ -2744,6 +2751,38 @@ void handle_select_flipper_cmd(int argc, char **argv) {
         status_display_show_status("Flipper Bad");
     }
 }
+
+void handle_list_gatt_cmd(int argc, char **argv) {
+    ble_list_gatt_devices();
+    status_display_show_status("List GATT");
+}
+
+void handle_select_gatt_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        glog("Usage: selectgatt <index>\n");
+        status_display_show_status("GATT Usage");
+        return;
+    }
+    char *endptr;
+    int num = (int)strtol(argv[1], &endptr, 10);
+    if (*endptr == '\0') {
+        ble_select_gatt_device(num);
+        status_display_show_status("GATT Pick");
+    } else {
+        glog("Error: '%s' is not a valid number.\n", argv[1]);
+        status_display_show_status("GATT Bad");
+    }
+}
+
+void handle_enum_gatt_cmd(int argc, char **argv) {
+    ble_enumerate_gatt_services();
+    status_display_show_status("GATT Enum");
+}
+
+void handle_track_gatt_cmd(int argc, char **argv) {
+    ble_track_gatt_device();
+}
+
 #endif
 
 // New beacon list command handlers
@@ -4391,6 +4430,10 @@ void register_commands() {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("listflippers", handle_list_flippers_cmd);
     register_command("selectflipper", handle_select_flipper_cmd);
+    register_command("listgatt", handle_list_gatt_cmd);
+    register_command("selectgatt", handle_select_gatt_cmd);
+    register_command("enumgatt", handle_enum_gatt_cmd);
+    register_command("trackgatt", handle_track_gatt_cmd);
 #endif
     #ifdef CONFIG_WITH_STATUS_DISPLAY
     register_command("statusidle", handle_status_idle_cmd);

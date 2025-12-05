@@ -384,7 +384,7 @@ static lv_obj_t *back_btn = NULL;
 
 // --- Add Bluetooth submenu arrays and state ---
 static const char *bluetooth_main_options[] = {
-    "AirTag", "Flipper", "Spam", "Raw", "Skimmer", NULL
+    "AirTag", "Flipper", "GATT Scan", "Spam", "Raw", "Skimmer", NULL
 };
 static const char *bluetooth_airtag_options[] = {
     "Start AirTag Scanner", "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing", NULL
@@ -402,6 +402,9 @@ static const char *bluetooth_raw_options[] = {
 static const char *bluetooth_skimmer_options[] = {
     "BLE Skimmer Detect", NULL
 };
+static const char *bluetooth_gatt_options[] = {
+    "Start GATT Scan", "List GATT Devices", "Select GATT Device", "Enumerate Services", "Track Device", NULL
+};
 
 typedef enum {
     BLUETOOTH_MENU_MAIN,
@@ -409,7 +412,8 @@ typedef enum {
     BLUETOOTH_MENU_FLIPPER,
     BLUETOOTH_MENU_SPAM,
     BLUETOOTH_MENU_RAW,
-    BLUETOOTH_MENU_SKIMMER
+    BLUETOOTH_MENU_SKIMMER,
+    BLUETOOTH_MENU_GATT
 } BluetoothMenuState;
 
 static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
@@ -662,6 +666,7 @@ void options_menu_create() {
             case BLUETOOTH_MENU_SPAM: options = bluetooth_spam_options; break;
             case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
             case BLUETOOTH_MENU_SKIMMER: options = bluetooth_skimmer_options; break;
+            case BLUETOOTH_MENU_GATT: options = bluetooth_gatt_options; break;
         }
         break;
     case OT_GPS: options = gps_options; break;
@@ -1890,6 +1895,7 @@ void option_event_cb(lv_event_t *e) {
         if (current_bluetooth_menu_state == BLUETOOTH_MENU_MAIN) {
             if (strcmp(Selected_Option, "AirTag") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_AIRTAG;
             else if (strcmp(Selected_Option, "Flipper") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_FLIPPER;
+            else if (strcmp(Selected_Option, "GATT Scan") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_GATT;
             else if (strcmp(Selected_Option, "Spam") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SPAM;
             else if (strcmp(Selected_Option, "Raw") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_RAW;
             else if (strcmp(Selected_Option, "Skimmer") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SKIMMER;
@@ -2270,6 +2276,60 @@ display_manager_switch_view(&terminal_view);
 #else
         error_popup_create("Device Does not Support Bluetooth...");
         
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Start GATT Scan") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blescan -g");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "List GATT Devices") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("listgatt");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Select GATT Device") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        set_number_pad_mode(NP_MODE_GATT);
+        display_manager_switch_view(&number_pad_view);
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Enumerate Services") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("enumgatt");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Track Device") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("trackgatt");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
 #endif
     }
 

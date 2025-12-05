@@ -37,7 +37,7 @@ You can transmit signals using the command line interface, which is useful for s
 
 Use `ir send` to transmit a signal from an existing `.ir` file:
 
-```bash
+```
 # Send the first signal in the file
 ir send /ghostesp/infrared/remotes/TV.ir
 
