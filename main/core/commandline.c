@@ -46,6 +46,9 @@
 #include <dirent.h>
 #include "managers/infrared_manager.h"
 #include "core/universal_ir.h"
+#include "core/screen_mirror.h"
+#include "managers/display_manager.h"
+#include "freertos/queue.h"
 
 static const char *TAG = "Commandline";
 
@@ -4356,6 +4359,57 @@ void handle_ir_cmd(int argc, char **argv) {
     glog("Unknown ir subcommand: %s\n", sub);
 }
 
+void handle_mirror_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: mirror <on|off|refresh|status>\n");
+        return;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        screen_mirror_set_enabled(true);
+        glog("Screen mirror enabled\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        screen_mirror_set_enabled(false);
+        glog("Screen mirror disabled\n");
+    } else if (strcmp(argv[1], "refresh") == 0) {
+        screen_mirror_refresh();
+    } else if (strcmp(argv[1], "status") == 0) {
+        glog("Screen mirror: %s\n", screen_mirror_is_enabled() ? "on" : "off");
+    } else {
+        glog("Usage: mirror <on|off|refresh|status>\n");
+    }
+}
+
+void handle_identify_cmd(int argc, char **argv) {
+    (void)argc; (void)argv;
+    glog("GHOSTESP_OK\n");
+}
+
+void handle_input_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: input <left|right|up|down|select>\n");
+        return;
+    }
+    int joystick_index = -1;
+    if (strcmp(argv[1], "left") == 0) joystick_index = 0;
+    else if (strcmp(argv[1], "select") == 0 || strcmp(argv[1], "ok") == 0) joystick_index = 1;
+    else if (strcmp(argv[1], "up") == 0) joystick_index = 2;
+    else if (strcmp(argv[1], "right") == 0) joystick_index = 3;
+    else if (strcmp(argv[1], "down") == 0) joystick_index = 4;
+    
+    if (joystick_index < 0) {
+        glog("Unknown input: %s\n", argv[1]);
+        return;
+    }
+    
+    if (input_queue) {
+        InputEvent evt = {
+            .type = INPUT_TYPE_JOYSTICK,
+            .data.joystick_index = joystick_index
+        };
+        xQueueSend(input_queue, &evt, 0);
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -4456,6 +4510,9 @@ void register_commands() {
 #ifdef CONFIG_HAS_INFRARED
     register_command("ir", handle_ir_cmd);
 #endif
+    register_command("mirror", handle_mirror_cmd);
+    register_command("input", handle_input_cmd);
+    register_command("identify", handle_identify_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
     

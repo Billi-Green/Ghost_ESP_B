@@ -202,6 +202,10 @@ esp_err_t I2C_FN(_read)(i2c_port_t port, uint16_t addr, uint32_t reg, uint8_t *b
 
     if (I2C_FN(_lock)((int)port) == ESP_OK) {
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        if (!cmd) {
+            I2C_FN(_unlock)((int)port);
+            return ESP_ERR_NO_MEM;
+        }
         if (!(reg & I2C_NO_REG)) {
             /* When reading specific register set the addr pointer first. */
             i2c_master_start(cmd);
@@ -255,6 +259,10 @@ esp_err_t I2C_FN(_write)(i2c_port_t port, uint16_t addr, uint32_t reg, const uin
 
     if (I2C_FN(_lock)((int)port) == ESP_OK) {
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        if (!cmd) {
+            I2C_FN(_unlock)((int)port);
+            return ESP_ERR_NO_MEM;
+        }
         i2c_master_start(cmd);
         i2c_send_address(cmd, addr, I2C_MASTER_WRITE);
         if (!(reg & I2C_NO_REG)) {

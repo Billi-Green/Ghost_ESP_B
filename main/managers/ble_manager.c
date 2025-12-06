@@ -45,8 +45,8 @@ static FlipperDevice discovered_flippers[MAX_FLIPPERS];
 static int discovered_flipper_count = 0;
 static int selected_flipper_index = -1; // Index of the Flipper selected for tracking
 
-#define MAX_GATT_DEVICES 50
-#define MAX_GATT_SERVICES 20
+#define MAX_GATT_DEVICES 20
+#define MAX_GATT_SERVICES 8
 
 typedef enum {
     TRACKER_NONE = 0,
@@ -69,10 +69,10 @@ typedef struct {
     int8_t rssi;
     bool connectable;
     TrackerType tracker_type;
-    GattService services[MAX_GATT_SERVICES];
-    int service_count;
-    bool services_enumerated;
 } GattDevice;
+static GattService g_selected_device_services[MAX_GATT_SERVICES];
+static int g_selected_device_service_count = 0;
+static bool g_selected_device_services_enumerated = false;
 static GattDevice discovered_gatt_devices[MAX_GATT_DEVICES];
 static int discovered_gatt_device_count = 0;
 static int selected_gatt_device_index = -1;
@@ -2667,8 +2667,9 @@ static int gatt_disc_chr_cb(uint16_t conn_handle, const struct ble_gatt_error *e
 }
 
 static void gatt_read_known_services(uint16_t conn_handle, GattDevice *dev) {
-    for (int i = 0; i < dev->service_count; i++) {
-        GattService *svc = &dev->services[i];
+    (void)dev;
+    for (int i = 0; i < g_selected_device_service_count; i++) {
+        GattService *svc = &g_selected_device_services[i];
         if (svc->uuid.u.type != BLE_UUID_TYPE_16) continue;
         
         uint16_t svc_uuid = svc->uuid.u16.value;
@@ -2729,12 +2730,12 @@ static int gatt_disc_svc_cb(uint16_t conn_handle, const struct ble_gatt_error *e
     if (error->status == 0 && service != NULL) {
         if (selected_gatt_device_index >= 0 && selected_gatt_device_index < discovered_gatt_device_count) {
             GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
-            if (dev->service_count < MAX_GATT_SERVICES) {
-                GattService *svc = &dev->services[dev->service_count];
+            if (g_selected_device_service_count < MAX_GATT_SERVICES) {
+                GattService *svc = &g_selected_device_services[g_selected_device_service_count];
                 memcpy(&svc->uuid, &service->uuid, sizeof(ble_uuid_any_t));
                 svc->start_handle = service->start_handle;
                 svc->end_handle = service->end_handle;
-                dev->service_count++;
+                g_selected_device_service_count++;
                 
                 char uuid_str[48];
                 gatt_uuid_to_str(&service->uuid, uuid_str, sizeof(uuid_str));
@@ -2750,12 +2751,12 @@ static int gatt_disc_svc_cb(uint16_t conn_handle, const struct ble_gatt_error *e
     } else if (error->status == BLE_HS_EDONE) {
         if (selected_gatt_device_index >= 0 && selected_gatt_device_index < discovered_gatt_device_count) {
             GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
-            dev->services_enumerated = true;
+            g_selected_device_services_enumerated = true;
             
-            for (int i = 0; i < dev->service_count; i++) {
-                if (dev->services[i].uuid.u.type == BLE_UUID_TYPE_128) {
+            for (int i = 0; i < g_selected_device_service_count; i++) {
+                if (g_selected_device_services[i].uuid.u.type == BLE_UUID_TYPE_128) {
                     static const uint8_t tile_base[] = {0x6c, 0xd6, 0xf8, 0x28, 0x97, 0x8d, 0xaa, 0x86, 0x51, 0x49, 0x1c, 0x7d};
-                    if (memcmp(dev->services[i].uuid.u128.value, tile_base, 12) == 0) {
+                    if (memcmp(g_selected_device_services[i].uuid.u128.value, tile_base, 12) == 0) {
                         if (dev->tracker_type != TRACKER_TILE) {
                             glog("Corrected device type: Tile (detected via GATT services)\n");
                             dev->tracker_type = TRACKER_TILE;
@@ -2765,7 +2766,7 @@ static int gatt_disc_svc_cb(uint16_t conn_handle, const struct ble_gatt_error *e
                 }
             }
             
-            glog("Service discovery complete. Found %d services.\n", dev->service_count);
+            glog("Service discovery complete. Found %d services.\n", g_selected_device_service_count);
         }
         gatt_svc_discovery_done = true;
     } else {
@@ -2785,9 +2786,9 @@ static int gatt_disc_svc_cb(uint16_t conn_handle, const struct ble_gatt_error *e
         glog("Service discovery failed: %s (code %d)\n", err_msg, error->status);
         if (selected_gatt_device_index >= 0 && selected_gatt_device_index < discovered_gatt_device_count) {
             GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
-            if (dev->service_count > 0) {
-                dev->services_enumerated = true;
-                glog("Partial discovery: found %d services before error.\n", dev->service_count);
+            if (g_selected_device_service_count > 0) {
+                g_selected_device_services_enumerated = true;
+                glog("Partial discovery: found %d services before error.\n", g_selected_device_service_count);
             }
         }
         gatt_enum_in_progress = false;
@@ -2978,8 +2979,6 @@ void ble_gatt_scan_callback(struct ble_gap_event *event, size_t len) {
         memcpy(&dev->addr, &event->disc.addr, sizeof(ble_addr_t));
         dev->rssi = event->disc.rssi;
         dev->connectable = true;
-        dev->service_count = 0;
-        dev->services_enumerated = false;
         
         parse_device_name(event->disc.data, event->disc.length_data, dev->name, sizeof(dev->name));
         dev->tracker_type = detect_tracker_type(event->disc.data, event->disc.length_data, dev->name);
@@ -3040,7 +3039,7 @@ void ble_list_gatt_devices(void) {
         const char *tracker_str = tracker_type_to_string(dev->tracker_type);
         char info[64] = "";
         if (i == selected_gatt_device_index) strcat(info, " *");
-        if (dev->services_enumerated) strcat(info, " [E]");
+        if (i == selected_gatt_device_index && g_selected_device_services_enumerated) strcat(info, " [E]");
         if (tracker_str) {
             char tmp[32];
             snprintf(tmp, sizeof(tmp), " [%s]", tracker_str);
@@ -3064,6 +3063,8 @@ void ble_select_gatt_device(int index) {
     }
     
     selected_gatt_device_index = index;
+    g_selected_device_service_count = 0;
+    g_selected_device_services_enumerated = false;
     GattDevice *dev = &discovered_gatt_devices[index];
     
     char mac[18];
@@ -3088,19 +3089,19 @@ void ble_enumerate_gatt_services(void) {
     
     GattDevice *dev = &discovered_gatt_devices[selected_gatt_device_index];
     
-    if (dev->services_enumerated) {
+    if (g_selected_device_services_enumerated) {
         glog("Services already enumerated for this device:\n");
-        for (int i = 0; i < dev->service_count; i++) {
+        for (int i = 0; i < g_selected_device_service_count; i++) {
             char uuid_str[48];
-            gatt_uuid_to_str(&dev->services[i].uuid, uuid_str, sizeof(uuid_str));
+            gatt_uuid_to_str(&g_selected_device_services[i].uuid, uuid_str, sizeof(uuid_str));
             
-            const char *svc_name = gatt_svc_uuid_to_name(&dev->services[i].uuid);
+            const char *svc_name = gatt_svc_uuid_to_name(&g_selected_device_services[i].uuid);
             if (svc_name) {
                 glog("  [%d] %s (%s) handles %d-%d\n", i, svc_name, uuid_str, 
-                     dev->services[i].start_handle, dev->services[i].end_handle);
+                     g_selected_device_services[i].start_handle, g_selected_device_services[i].end_handle);
             } else {
                 glog("  [%d] %s handles %d-%d\n", i, uuid_str, 
-                     dev->services[i].start_handle, dev->services[i].end_handle);
+                     g_selected_device_services[i].start_handle, g_selected_device_services[i].end_handle);
             }
         }
         return;
@@ -3118,7 +3119,8 @@ void ble_enumerate_gatt_services(void) {
         return;
     }
     
-    dev->service_count = 0;
+    g_selected_device_service_count = 0;
+    g_selected_device_services_enumerated = false;
     gatt_enum_in_progress = true;
     gatt_svc_discovery_done = false;
     gatt_encryption_done = false;

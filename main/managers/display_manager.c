@@ -29,6 +29,7 @@
 #include "driver/i2c.h"
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
+#include "core/screen_mirror.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -228,6 +229,9 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
             color_p[i].full = ~color_p[i].full;
         }
     }
+    
+    screen_mirror_send_area(area, color_p);
+    
 #ifdef CONFIG_USE_CARDPUTER
     m5stack_lvgl_render_callback(drv, area, color_p);
 #elif defined(CONFIG_USE_TDISPLAY_S3)
@@ -1867,6 +1871,12 @@ void processEvent() {
   InputEvent event;
 
   while (processed < max_events && xQueueReceive(input_queue, &event, 0) == pdTRUE) {
+    last_touch_time = xTaskGetTickCount();
+    if (is_backlight_dimmed || is_backlight_off) {
+      set_backlight_brightness(100);
+      is_backlight_dimmed = false;
+      is_backlight_off = false;
+    }
     if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
       View *current = dm.current_view;
       void (*input_callback)(InputEvent *) = NULL;
@@ -1889,6 +1899,12 @@ void processEvent() {
 
   if (processed == 0) {
     if (xQueueReceive(input_queue, &event, pdMS_TO_TICKS(1)) == pdTRUE) {
+      last_touch_time = xTaskGetTickCount();
+      if (is_backlight_dimmed || is_backlight_off) {
+        set_backlight_brightness(100);
+        is_backlight_dimmed = false;
+        is_backlight_off = false;
+      }
       if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
         View *current = dm.current_view;
         void (*input_callback)(InputEvent *) = NULL;

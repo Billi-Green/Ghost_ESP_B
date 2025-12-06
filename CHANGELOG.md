@@ -37,8 +37,9 @@
 - Added JTAG support for ESP32C5
 - Added basic Mifare Desfire detection
 - Added command to set amount of rgb leds
-
 - Added GATT scanning, service scanning and rssi tracking
+- Added support for wired screen mirroring
+
 ### Changed
 
 - Refactors to NFC logic to make more maintainable
