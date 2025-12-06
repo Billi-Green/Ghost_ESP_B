@@ -642,6 +642,23 @@ static void handle_app_item_selection(int item_index) {
  * @brief Handles hardware button presses for app navigation
  */
 static void handle_apps_button_press(int button) {
+    if (apps_layout == APPS_LAYOUT_LIST) {
+        if (button == 2) { // Up
+            ESP_LOGD(TAG, "Up button pressed\n");
+            select_app_item(selected_app_index - 1, false);
+        } else if (button == 4) { // Down
+            ESP_LOGD(TAG, "Down button pressed\n");
+            select_app_item(selected_app_index + 1, false);
+        } else if (button == 1) { // Select
+            ESP_LOGD(TAG, "Select button pressed\n");
+            handle_app_item_selection(selected_app_index);
+        } else if (button == 0) { // Back/Left
+            ESP_LOGD(TAG, "Back button pressed\n");
+            display_manager_switch_view(&main_menu_view);
+        }
+        return;
+    }
+
     if (button == 0) { // Left
         ESP_LOGD(TAG, "Left button pressed\n");
         select_app_item(selected_app_index - 1, true);

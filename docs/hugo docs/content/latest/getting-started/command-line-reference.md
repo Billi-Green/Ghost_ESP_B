@@ -78,6 +78,14 @@ toc: true
 - **`listairtags`** — Discover nearby AirTags.
 - **`selectairtag <idx>`** — Choose an AirTag for follow-up actions.
 
+### GATT
+
+- **`blescan -g`** — Scan for connectable BLE devices for GATT enumeration.
+- **`listgatt`** — List discovered GATT devices with tracker type detection.
+- **`selectgatt <idx>`** — Select a device by index for enumeration or tracking.
+- **`enumgatt`** — Connect to the selected device and enumerate its GATT services.
+- **`trackgatt`** — Track the selected device using real-time RSSI signal strength.
+
 ## Portal
 
 - **`startportal <path|default> <AP_SSID> [PSK]`** — Serve an Evil Portal bundle from SD or flash (`default` uses the built-in portal).
@@ -107,6 +115,7 @@ toc: true
 - **`rgbmode <rainbow|police|strobe|off|color>`** — Run an LED effect immediately.
 - **`setrgbmode <normal|rainbow|stealth>`** — Persist the LED mode across reboots.
 - **`setrgbpins <r> <g> <b>`** — Override discrete RGB GPIOs; pass the same pin for all three values to switch into single-wire NeoPixel mode on that data pin.
+- **`setrgbcount <1-512>`** — Persist the number of RGB LEDs connected so effects span the correct length. Reinitializes immediately if pins are already configured.
 - **`setneopixelbrightness <0-100>`** / **`getneopixelbrightness`** — Control NeoPixel intensity.
 
 ## Status display (if present)

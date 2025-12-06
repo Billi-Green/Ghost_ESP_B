@@ -31,6 +31,7 @@ static const char **evil_portal_options = NULL;
 #include "esp_log.h"
 #include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
+#include "managers/usb_keyboard_manager.h"
 
 #define KARMA_MAX_SSIDS 64
 
@@ -53,7 +54,7 @@ static int current_settings_category = -1;
 // Category 0: "Display & UI" groups visual and navigation-related options.
 // Category 1: "System & Hardware" groups network, power, LED and control options.
 // Example: settings_category_indices[0] lists settings for category index 0.
-static int settings_category_indices[][16] = {
+static int settings_category_indices[][20] = {
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
         {1, 9, 2, 13, 4, 5, 11, 12,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -65,6 +66,15 @@ static int settings_category_indices[][16] = {
         16,
 #elif defined(CONFIG_USE_ENCODER)
         14,
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        17,
+#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
+        15,
+#else
+        14,
+#endif
 #endif
         -1},
 #else
@@ -78,6 +88,15 @@ static int settings_category_indices[][16] = {
         15,
 #elif defined(CONFIG_USE_ENCODER)
         14,
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        16,
+#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
+        14,
+#else
+        13,
+#endif
 #endif
         -1},
 #endif
@@ -163,7 +182,8 @@ typedef enum {
     DUALCOMM_MENU_TOOLS,
     DUALCOMM_MENU_BLE,
     DUALCOMM_MENU_GPS,
-    DUALCOMM_MENU_ETHERNET
+    DUALCOMM_MENU_ETHERNET,
+    DUALCOMM_MENU_KEYBOARD
 } DualCommMenuState;
 
 static DualCommMenuState current_dualcomm_menu_state = DUALCOMM_MENU_MAIN;
@@ -179,6 +199,14 @@ static const char *dual_comm_main_options[] = {
     "BLE",
     "GPS",
     "Ethernet",
+    "Keyboard",
+    NULL
+};
+
+static const char *dual_comm_keyboard_options[] = {
+    "USB Host On",
+    "USB Host Off",
+    "USB Host Status",
     NULL
 };
 
@@ -337,6 +365,9 @@ enum {
 #ifdef CONFIG_USE_ENCODER
     SETTING_ENCODER_INVERT,
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3
+    SETTING_USB_HOST_MODE,
+#endif
 };
 
 static const char *brightness_options[] = {
@@ -366,6 +397,9 @@ static SettingsItem settings_items[] = {
     #endif
     #ifdef CONFIG_USE_ENCODER
     {"Invert Encoder", SETTING_ENCODER_INVERT, bool_options, 2, 0},
+    #endif
+    #if CONFIG_IDF_TARGET_ESP32S3
+    {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
     #endif
 };
 
@@ -401,7 +435,7 @@ static lv_obj_t *back_btn = NULL;
 
 // --- Add Bluetooth submenu arrays and state ---
 static const char *bluetooth_main_options[] = {
-    "AirTag", "Flipper", "Spam", "Raw", "Skimmer", NULL
+    "AirTag", "Flipper", "GATT Scan", "Spam", "Raw", "Skimmer", NULL
 };
 static const char *bluetooth_airtag_options[] = {
     "Start AirTag Scanner", "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing", NULL
@@ -419,6 +453,9 @@ static const char *bluetooth_raw_options[] = {
 static const char *bluetooth_skimmer_options[] = {
     "BLE Skimmer Detect", NULL
 };
+static const char *bluetooth_gatt_options[] = {
+    "Start GATT Scan", "List GATT Devices", "Select GATT Device", "Enumerate Services", "Track Device", NULL
+};
 
 typedef enum {
     BLUETOOTH_MENU_MAIN,
@@ -426,7 +463,8 @@ typedef enum {
     BLUETOOTH_MENU_FLIPPER,
     BLUETOOTH_MENU_SPAM,
     BLUETOOTH_MENU_RAW,
-    BLUETOOTH_MENU_SKIMMER
+    BLUETOOTH_MENU_SKIMMER,
+    BLUETOOTH_MENU_GATT
 } BluetoothMenuState;
 
 static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
@@ -681,6 +719,7 @@ void options_menu_create() {
             case BLUETOOTH_MENU_SPAM: options = bluetooth_spam_options; break;
             case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
             case BLUETOOTH_MENU_SKIMMER: options = bluetooth_skimmer_options; break;
+            case BLUETOOTH_MENU_GATT: options = bluetooth_gatt_options; break;
         }
         break;
     case OT_GPS: options = gps_options; break;
@@ -696,6 +735,7 @@ void options_menu_create() {
             case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
             case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
             case DUALCOMM_MENU_ETHERNET: options = dual_comm_ethernet_options; break;
+            case DUALCOMM_MENU_KEYBOARD: options = dual_comm_keyboard_options; break;
         }
         break;
     case OT_Settings: 
@@ -853,6 +893,11 @@ static void load_current_settings_values(void) {
                 break;
             }
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3
+            case SETTING_USB_HOST_MODE:
+                settings_items[i].current_value = usb_keyboard_manager_is_host_mode() ? 1 : 0;
+                break;
+#endif
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -947,6 +992,11 @@ static void apply_setting_change(int setting_index, int new_value) {
             settings_set_status_idle_timeout_ms(&G_Settings, ms);
             break;
         }
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+        case SETTING_USB_HOST_MODE:
+            usb_keyboard_manager_set_host_mode(new_value == 1);
+            return;
 #endif
     }
     settings_save(&G_Settings);
@@ -1460,6 +1510,8 @@ void option_event_cb(lv_event_t *e) {
                 return;
             } else if (strcmp(Selected_Option, "Ethernet") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_ETHERNET;
+            } else if (strcmp(Selected_Option, "Keyboard") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_KEYBOARD;
                 display_manager_switch_view(&options_menu_view);
                 option_invoked = false;
                 return;
@@ -1952,6 +2004,20 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend ethconfig show");
+        } else if (strcmp(Selected_Option, "USB Host On") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend usbkbd on");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "USB Host Off") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend usbkbd off");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "USB Host Status") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend usbkbd status");
             view_switched = true;
         }
 
@@ -1979,6 +2045,7 @@ void option_event_cb(lv_event_t *e) {
         if (current_bluetooth_menu_state == BLUETOOTH_MENU_MAIN) {
             if (strcmp(Selected_Option, "AirTag") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_AIRTAG;
             else if (strcmp(Selected_Option, "Flipper") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_FLIPPER;
+            else if (strcmp(Selected_Option, "GATT Scan") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_GATT;
             else if (strcmp(Selected_Option, "Spam") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SPAM;
             else if (strcmp(Selected_Option, "Raw") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_RAW;
             else if (strcmp(Selected_Option, "Skimmer") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SKIMMER;
@@ -2359,6 +2426,60 @@ display_manager_switch_view(&terminal_view);
 #else
         error_popup_create("Device Does not Support Bluetooth...");
         
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Start GATT Scan") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("blescan -g");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "List GATT Devices") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("listgatt");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Select GATT Device") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        set_number_pad_mode(NP_MODE_GATT);
+        display_manager_switch_view(&number_pad_view);
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Enumerate Services") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("enumgatt");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
+#endif
+    }
+
+    else if (strcmp(Selected_Option, "Track Device") == 0) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("trackgatt");
+        view_switched = true;
+#else
+        error_popup_create("Device Does not Support Bluetooth...");
 #endif
     }
 

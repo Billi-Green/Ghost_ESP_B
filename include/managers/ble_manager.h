@@ -54,6 +54,15 @@ void ble_select_airtag(int index);
 void ble_start_spoofing_selected_airtag(void);
 void ble_stop_spoofing(void);
 
+// GATT service enumeration functions
+void ble_start_gatt_scan(void);
+void ble_list_gatt_devices(void);
+void ble_select_gatt_device(int index);
+void ble_enumerate_gatt_services(void);
+void ble_track_gatt_device(void);
+void ble_stop_tracking(void);
+void ble_stop_gatt_scan(void);
+
 // spam advertisement types
 typedef enum {
     BLE_SPAM_MICROSOFT,

@@ -10,6 +10,7 @@
 #include <stdio.h>
 
 #include "driver/i2c.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -41,7 +42,8 @@ static SemaphoreHandle_t s_mutex;
 static bool s_ready;
 static bool s_i2c_configured;
 static bool s_i2c_installed;
-static uint8_t s_buffer[128 * 8];
+static uint8_t *s_buffer;
+#define STATUS_BUFFER_SIZE (128 * 8)
 static char s_line1[24];
 static char s_line2[24];
 static const int SCALE_Y = 2; // simple vertical scaling factor
@@ -56,6 +58,8 @@ static const TickType_t ANIM_INTERVAL_TICKS = pdMS_TO_TICKS(150);
 static int s_anim_frame;
 static TaskHandle_t s_anim_task;
 static TickType_t s_next_anim_allowed_tick;
+static TickType_t s_oom_backoff_until;
+static bool s_oom_logged;
 // static int s_i2c_error_streak; // unused
 
 static const uint8_t font_5x7[][5] = {
@@ -95,7 +99,21 @@ static const uint8_t font_5x7[][5] = {
 
 static esp_err_t status_display_send(uint8_t control, const uint8_t *data, size_t len) {
     if (!data || !len) return ESP_OK;
+    TickType_t now = xTaskGetTickCount();
+    if (s_oom_backoff_until && now < s_oom_backoff_until) {
+        return ESP_ERR_NO_MEM;
+    }
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    if (!cmd) {
+        if (!s_oom_logged) {
+            ESP_LOGW(TAG, "i2c_cmd_link_create failed (OOM), backing off");
+            s_oom_logged = true;
+        }
+        s_oom_backoff_until = now + pdMS_TO_TICKS(2000);
+        return ESP_ERR_NO_MEM;
+    }
+    s_oom_backoff_until = 0;
+    s_oom_logged = false;
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (STATUS_DISPLAY_ADDR << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, control, true);
@@ -123,6 +141,7 @@ static esp_err_t status_display_write_command(uint8_t command) {
 }
 
 static void status_display_flush(void) {
+    if (!s_buffer) return;
 #if defined(CONFIG_USE_IO_EXPANDER)
     TickType_t now = xTaskGetTickCount();
     if (now < s_next_flush_allowed_tick) {
@@ -143,11 +162,11 @@ static void status_display_flush(void) {
 }
 
 static void status_display_clear_buffer(void) {
-    memset(s_buffer, 0, sizeof(s_buffer));
+    if (s_buffer) memset(s_buffer, 0, STATUS_BUFFER_SIZE);
 }
 
 static void status_display_plot_pixel(int x, int y, bool on) {
-    if (x < 0 || x >= 128 || y < 0 || y >= 64) return;
+    if (!s_buffer || x < 0 || x >= 128 || y < 0 || y >= 64) return;
     int index = x + (y / 8) * 128;
     uint8_t bit = 1u << (y & 7);
     if (on) s_buffer[index] |= bit; else s_buffer[index] &= (uint8_t)~bit;
@@ -333,6 +352,22 @@ void status_display_init(void) {
         s_mutex = xSemaphoreCreateMutex();
         if (!s_mutex) {
             ESP_LOGE(TAG, "failed to create mutex");
+            return;
+        }
+    }
+
+    if (!s_buffer) {
+#if CONFIG_SPIRAM
+        s_buffer = heap_caps_malloc(STATUS_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (s_buffer) {
+            ESP_LOGI(TAG, "buffer allocated in PSRAM");
+        } else
+#endif
+        {
+            s_buffer = heap_caps_malloc(STATUS_BUFFER_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+        if (!s_buffer) {
+            ESP_LOGE(TAG, "failed to allocate display buffer");
             return;
         }
     }
