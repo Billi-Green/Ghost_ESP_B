@@ -122,6 +122,7 @@ typedef struct {
   
   // Neopixel settings
   uint8_t neopixel_max_brightness; // Max neopixel brightness (0-100)
+  uint16_t rgb_led_count; // Number of LEDs configured for RGB manager
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   IdleAnimation status_idle_animation; // idle animation for status display
   uint32_t status_idle_timeout_ms; // delay before starting idle animation
@@ -220,6 +221,9 @@ void settings_set_rgb_data_pin(FSettings *settings, int32_t pin);
 int32_t settings_get_rgb_data_pin(const FSettings *settings);
 void settings_set_rgb_separate_pins(FSettings *settings, int32_t red, int32_t green, int32_t blue);
 void settings_get_rgb_separate_pins(const FSettings *settings, int32_t *red, int32_t *green, int32_t *blue);
+void settings_set_rgb_led_count(FSettings *settings, uint16_t count);
+uint16_t settings_get_rgb_led_count(const FSettings *settings);
+
 void settings_set_thirds_control_enabled(FSettings *settings, bool enabled);
 bool settings_get_thirds_control_enabled(const FSettings *settings);
 

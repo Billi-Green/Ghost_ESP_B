@@ -4,6 +4,16 @@
 #include "driver/gpio.h"
 #include "vendor/led/led_strip.h"
 
+#if CONFIG_FREERTOS_UNICORE
+#define RGB_EFFECT_TASK_PRIORITY 6
+#define RGB_EFFECT_TASK_CORE tskNO_AFFINITY
+#define RGB_EFFECT_USE_PINNED_API 0
+#else
+#define RGB_EFFECT_TASK_PRIORITY 6
+#define RGB_EFFECT_TASK_CORE 1
+#define RGB_EFFECT_USE_PINNED_API 1
+#endif
+
 // Struct for the RGB manager (addressable LED strip)
 typedef struct {
   gpio_num_t pin;           // Single pin for LED strip
@@ -54,6 +64,8 @@ void rgb_manager_rainbow_effect(RGBManager_t *rgb_manager, int delay_ms);
 
 void rgb_manager_policesiren_effect(RGBManager_t *rgb_manager, int delay_ms);
 
+void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms);
+
 /**
  * @brief Deinitialize the RGB LED manager
  * @param rgb_manager Pointer to the RGBManager_t structure
@@ -79,6 +91,10 @@ void update_led_visualizer(uint8_t *amplitudes, size_t num_bars,
  * @brief Signal the rainbow task to terminate gracefully
  */
 void rgb_manager_signal_rainbow_exit(void);
+
+void rgb_manager_power_transition_begin(void);
+
+void rgb_manager_power_transition_end(void);
 
 extern RGBManager_t rgb_manager;
 

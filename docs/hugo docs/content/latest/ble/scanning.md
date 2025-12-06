@@ -53,19 +53,31 @@ Discover nearby BLE devices and gather information about them.
 - Scans for payment terminal skimmers that use BLE to exfiltrate card data.
 - Logs detected skimmers to a PCAP file for analysis.
 
+### GATT Service Enumeration
+- **UI**: Menu → Bluetooth → GATT Scan → Start GATT Scan
+- **CLI**: `blescan -g`
+- Connect to BLE devices and discover what services they offer (e.g., heart rate, battery level, custom services).
+- Track devices by signal strength to physically locate them.
+
+See the dedicated [GATT Discovery]({{< relref "gatt" >}}) page for a full walkthrough, command reference, and service UUID tables.
+
 ## Listing and selecting devices
 
 After scanning, you can interact with discovered devices:
 
 ### List discovered devices
-- **Flippers**: Menu → Bluetooth → List Flippers or CLI: `listflippers`
-- **AirTags**: Menu → Bluetooth → List AirTags or CLI: `list -airtags`
+- **Flippers**: Menu → Bluetooth → Flipper → List Flippers or CLI: `listflippers`
+- **AirTags**: Menu → Bluetooth → AirTag → List AirTags or CLI: `listairtags`
+- **GATT Devices**: Menu → Bluetooth → GATT Scan → List GATT Devices or CLI: `listgatt`
 
 ### Select a device for further action
-- **Flipper**: Menu → Bluetooth → Select Flipper
+- **Flipper**: Menu → Bluetooth → Flipper → Select Flipper
   - Once selected, the device will continuously track and display the Flipper's RSSI (signal strength).
   - Use this to locate the Flipper by moving around and watching the signal strength change.
-- **AirTag**: Menu → Bluetooth → Select AirTag (prepares for spoofing)
+- **AirTag**: Menu → Bluetooth → AirTag → Select AirTag (prepares for spoofing)
+- **GATT Device**: Menu → Bluetooth → GATT Scan → Select GATT Device
+  - Once selected, use **Enumerate Services** to connect and discover the device's GATT services.
+  - Use **Track Device** to locate it using real-time signal strength updates.
 
 ## Notes
 

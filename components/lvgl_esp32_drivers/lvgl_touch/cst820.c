@@ -13,6 +13,7 @@
 
 esp_err_t cst820_i2c_read(uint8_t reg_addr, uint8_t *data, size_t len) {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    if (!cmd) return ESP_ERR_NO_MEM;
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (I2C_ADDR_CST820 << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, reg_addr, true);
@@ -30,6 +31,7 @@ esp_err_t cst820_i2c_read(uint8_t reg_addr, uint8_t *data, size_t len) {
 
 esp_err_t cst820_i2c_write(uint8_t reg_addr, uint8_t data) {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    if (!cmd) return ESP_ERR_NO_MEM;
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (I2C_ADDR_CST820 << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, reg_addr, true);

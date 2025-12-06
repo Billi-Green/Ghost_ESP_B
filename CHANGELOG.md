@@ -36,6 +36,10 @@
 - Added CLI commands for changing the status display animations
 - Added JTAG support for ESP32C5
 - Added basic Mifare Desfire detection
+- Added command to set amount of rgb leds
+- Added GATT scanning, service scanning and rssi tracking
+- Added support for wired screen mirroring
+- Added USB HID keyboard host support on ESP32-S3 devices for controlling the UI and inputting text
 
 ### Changed
 
@@ -52,6 +56,8 @@
 
 ### Fixed
 
+- Fixed an issue where setting rgb pins would fail on configs with no leds set
+- Wrapped power-management transitions with RGB pause/resume to prevent a crash
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
 - Apps menu now follows main menu theme, controls and layout
 - Main menu app colors are now consistent across devices
@@ -62,6 +68,11 @@
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
 - Fixed IR send failing with long raw signals
 - Fixed a crash when entering SYM menu on keyboard view - @dagnazty
+- Fixed issues causing glitches with rainbow modes on certain devices and flicker when the RGB rainbow effect runs with power saving disabled
+- Raise sys event task size to prevent intermittent crashes
+- Fixed status bar not resetting from rainbow styling when switching RGB mode back to normal
+- Fixed apps menu not using the correct directions for joystick control
+- Fixed crash after BLE deinit and during WiFi init
 
 ## Revival v1.8.1
 
