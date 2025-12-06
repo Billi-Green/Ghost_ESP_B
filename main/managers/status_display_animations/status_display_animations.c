@@ -31,6 +31,9 @@ void status_anim_spiral_step(TickType_t now, int frame, const StatusAnimGfx *gfx
 void status_anim_falling_leaves_reset(void);
 void status_anim_falling_leaves_step(TickType_t now, int frame, const StatusAnimGfx *gfx);
 
+void status_anim_bouncing_text_reset(void);
+void status_anim_bouncing_text_step(TickType_t now, int frame, const StatusAnimGfx *gfx);
+
 typedef struct {
     void (*reset)(void);
     void (*step)(TickType_t now, int frame, const StatusAnimGfx *gfx);
@@ -45,6 +48,7 @@ static const AnimOps s_anim_ops[] = {
     { status_anim_flying_ghosts_reset, status_anim_flying_ghosts_step },
     { status_anim_spiral_reset,       status_anim_spiral_step       },
     { status_anim_falling_leaves_reset, status_anim_falling_leaves_step },
+    { status_anim_bouncing_text_reset, status_anim_bouncing_text_step },
 };
 
 static IdleAnimation s_current_anim = (IdleAnimation)(-1);
