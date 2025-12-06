@@ -32,6 +32,11 @@ typedef struct {
 
 typedef void (*comm_command_callback_t)(const char* command, const char* data, void* user_data);
 
+#define COMM_MAX_STREAM_CHANNELS 8
+#define COMM_STREAM_CHANNEL_KEYBOARD 1
+
+typedef void (*comm_stream_callback_t)(uint8_t channel, const uint8_t* data, size_t length, void* user_data);
+
 void esp_comm_manager_init_with_defaults(void);
 void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_rate);
 bool esp_comm_manager_set_pins(gpio_num_t tx_pin, gpio_num_t rx_pin);
@@ -47,4 +52,7 @@ bool esp_comm_manager_send_response(const uint8_t* data, size_t length);
 void esp_comm_manager_set_remote_command_flag(bool is_remote);
 bool esp_comm_manager_is_remote_command(void);
 
-#endif // ESP_COMM_MANAGER_H 
+bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t length);
+bool esp_comm_manager_register_stream_handler(uint8_t channel, comm_stream_callback_t callback, void* user_data);
+
+#endif // ESP_COMM_MANAGER_H

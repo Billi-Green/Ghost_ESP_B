@@ -46,6 +46,10 @@
 #include <dirent.h>
 #include "managers/infrared_manager.h"
 #include "core/universal_ir.h"
+#include "core/screen_mirror.h"
+#include "managers/display_manager.h"
+#include "freertos/queue.h"
+#include "managers/usb_keyboard_manager.h"
 
 static const char *TAG = "Commandline";
 
@@ -953,9 +957,16 @@ void handle_ble_scan_cmd(int argc, char **argv) {
         return;
     }
 
+    if (argc > 1 && strcmp(argv[1], "-g") == 0) {
+        glog("Starting GATT Device Scan.\n");
+        ble_start_gatt_scan();
+        return;
+    }
+
     if (argc > 1 && strcmp(argv[1], "-s") == 0) {
         glog("Stopping BLE Scan.\n");
         ble_stop();
+        ble_stop_gatt_scan();
         return;
     }
 
@@ -1238,6 +1249,7 @@ void handle_status_idle_cmd(int argc, char **argv) {
 
     glog("Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|0|1|2|3|4>]\n");
 }
+
 #endif
 
 void handle_capture_scan(int argc, char **argv) {
@@ -1815,9 +1827,10 @@ void handle_help(int argc, char **argv) {
         glog("\nLED & RGB Commands:\n\n");
         printf("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
         printf("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
+        printf("setrgbcount\n    Configure how many RGB LEDs are attached\n    Usage: setrgbcount <1-512>\n\n");
         printf("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
         printf("getneopixelbrightness\n    Show current neopixel max brightness (percent)\n    Usage: getneopixelbrightness\n\n");
-        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins, setneopixelbrightness, getneopixelbrightness\n");
+        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins, setrgbcount, setneopixelbrightness, getneopixelbrightness\n");
         return;
     }
 
@@ -2391,21 +2404,35 @@ void handle_setrgb(int argc, char **argv) {
     gpio_num_t green_pin = (gpio_num_t)atoi(argv[2]);
     gpio_num_t blue_pin = (gpio_num_t)atoi(argv[3]);
 
+    int num_leds = settings_get_rgb_led_count(&G_Settings);
+    if (num_leds <= 0) {
+        if (rgb_manager.num_leds > 0) {
+            num_leds = rgb_manager.num_leds;
+        } else if (CONFIG_NUM_LEDS > 0) {
+            num_leds = CONFIG_NUM_LEDS;
+        } else {
+            num_leds = 1;
+        }
+    }
+
     esp_err_t ret;
     if (red_pin == green_pin && green_pin == blue_pin) {
         rgb_manager_deinit(&rgb_manager);
-        ret = rgb_manager_init(&rgb_manager, red_pin, 1, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
-                                GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+        ret = rgb_manager_init(&rgb_manager, red_pin, num_leds, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
+                               GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
         if (ret == ESP_OK) {
             settings_set_rgb_data_pin(&G_Settings, red_pin);
             settings_set_rgb_separate_pins(&G_Settings, -1, -1, -1);
             settings_save(&G_Settings);
             glog("Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
             status_display_show_status("RGB Single");
+        } else {
+            glog("Failed to init RGB on pin %d: %s\n", red_pin, esp_err_to_name(ret));
+            status_display_show_status("RGB Init Fail");
         }
     } else {
         rgb_manager_deinit(&rgb_manager);
-        ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
+        ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, num_leds, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
                                red_pin, green_pin, blue_pin);
         if (ret == ESP_OK) {
             settings_set_rgb_data_pin(&G_Settings, -1);
@@ -2413,7 +2440,59 @@ void handle_setrgb(int argc, char **argv) {
             settings_save(&G_Settings);
             glog("RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
             status_display_show_status("RGB Pins Set");
+        } else {
+            glog("Failed to init RGB pins R:%d G:%d B:%d: %s\n", red_pin, green_pin, blue_pin, esp_err_to_name(ret));
+            status_display_show_status("RGB Init Fail");
         }
+    }
+}
+
+void handle_setrgbcount(int argc, char **argv) {
+    if (argc != 2) {
+        glog("Usage: setrgbcount <1-512>\n");
+        status_display_show_status("Count Usage");
+        return;
+    }
+
+    int count = atoi(argv[1]);
+    if (count < 1 || count > 512) {
+        glog("RGB LED count must be between 1 and 512\n");
+        status_display_show_status("Count Invalid");
+        return;
+    }
+
+    settings_set_rgb_led_count(&G_Settings, (uint16_t)count);
+
+    int32_t data_pin = settings_get_rgb_data_pin(&G_Settings);
+    int32_t red_pin, green_pin, blue_pin;
+    settings_get_rgb_separate_pins(&G_Settings, &red_pin, &green_pin, &blue_pin);
+
+    esp_err_t ret = ESP_OK;
+    bool attempted_reinit = false;
+
+    if (data_pin != GPIO_NUM_NC) {
+        rgb_manager_deinit(&rgb_manager);
+        ret = rgb_manager_init(&rgb_manager, (gpio_num_t)data_pin, count, LED_PIXEL_FORMAT_GRB,
+                               LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+        attempted_reinit = true;
+    } else if (red_pin != GPIO_NUM_NC && green_pin != GPIO_NUM_NC && blue_pin != GPIO_NUM_NC) {
+        rgb_manager_deinit(&rgb_manager);
+        ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, count, LED_PIXEL_FORMAT_GRB,
+                               LED_MODEL_WS2812, (gpio_num_t)red_pin, (gpio_num_t)green_pin, (gpio_num_t)blue_pin);
+        attempted_reinit = true;
+    }
+
+    settings_save(&G_Settings);
+
+    if (attempted_reinit && ret == ESP_OK) {
+        glog("RGB LED count set to %d and applied.\n", count);
+        status_display_show_status("RGB Count Set");
+    } else if (attempted_reinit) {
+        glog("RGB count saved but reinit failed: %s\n", esp_err_to_name(ret));
+        status_display_show_status("RGB Reinit NG");
+    } else {
+        glog("RGB count set to %d. Configure pins with setrgbpins to apply.\n", count);
+        status_display_show_status("RGB Count Saved");
     }
 }
 
@@ -2676,6 +2755,38 @@ void handle_select_flipper_cmd(int argc, char **argv) {
         status_display_show_status("Flipper Bad");
     }
 }
+
+void handle_list_gatt_cmd(int argc, char **argv) {
+    ble_list_gatt_devices();
+    status_display_show_status("List GATT");
+}
+
+void handle_select_gatt_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        glog("Usage: selectgatt <index>\n");
+        status_display_show_status("GATT Usage");
+        return;
+    }
+    char *endptr;
+    int num = (int)strtol(argv[1], &endptr, 10);
+    if (*endptr == '\0') {
+        ble_select_gatt_device(num);
+        status_display_show_status("GATT Pick");
+    } else {
+        glog("Error: '%s' is not a valid number.\n", argv[1]);
+        status_display_show_status("GATT Bad");
+    }
+}
+
+void handle_enum_gatt_cmd(int argc, char **argv) {
+    ble_enumerate_gatt_services();
+    status_display_show_status("GATT Enum");
+}
+
+void handle_track_gatt_cmd(int argc, char **argv) {
+    ble_track_gatt_device();
+}
+
 #endif
 
 // New beacon list command handlers
@@ -4249,6 +4360,75 @@ void handle_ir_cmd(int argc, char **argv) {
     glog("Unknown ir subcommand: %s\n", sub);
 }
 
+void handle_mirror_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: mirror <on|off|refresh|status>\n");
+        return;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        screen_mirror_set_enabled(true);
+        glog("Screen mirror enabled\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        screen_mirror_set_enabled(false);
+        glog("Screen mirror disabled\n");
+    } else if (strcmp(argv[1], "refresh") == 0) {
+        screen_mirror_refresh();
+    } else if (strcmp(argv[1], "status") == 0) {
+        glog("Screen mirror: %s\n", screen_mirror_is_enabled() ? "on" : "off");
+    } else {
+        glog("Usage: mirror <on|off|refresh|status>\n");
+    }
+}
+
+void handle_identify_cmd(int argc, char **argv) {
+    (void)argc; (void)argv;
+    glog("GHOSTESP_OK\n");
+}
+
+void handle_input_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: input <left|right|up|down|select>\n");
+        return;
+    }
+    int joystick_index = -1;
+    if (strcmp(argv[1], "left") == 0) joystick_index = 0;
+    else if (strcmp(argv[1], "select") == 0 || strcmp(argv[1], "ok") == 0) joystick_index = 1;
+    else if (strcmp(argv[1], "up") == 0) joystick_index = 2;
+    else if (strcmp(argv[1], "right") == 0) joystick_index = 3;
+    else if (strcmp(argv[1], "down") == 0) joystick_index = 4;
+    
+    if (joystick_index < 0) {
+        glog("Unknown input: %s\n", argv[1]);
+        return;
+    }
+    
+    if (input_queue) {
+        InputEvent evt = {
+            .type = INPUT_TYPE_JOYSTICK,
+            .data.joystick_index = joystick_index
+        };
+        xQueueSend(input_queue, &evt, 0);
+    }
+}
+
+void handle_usb_kbd_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: usbkbd <on|off|status>\n");
+        return;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        usb_keyboard_manager_set_host_mode(true);
+        glog("USB keyboard host mode enabled\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        usb_keyboard_manager_set_host_mode(false);
+        glog("USB keyboard host mode disabled\n");
+    } else if (strcmp(argv[1], "status") == 0) {
+        glog("USB keyboard host mode: %s\n", usb_keyboard_manager_is_host_mode() ? "on" : "off");
+    } else {
+        glog("Usage: usbkbd <on|off|status>\n");
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -4313,6 +4493,7 @@ void register_commands() {
     register_command("chipinfo", handle_chip_info_cmd);
     register_command("rgbmode", handle_rgb_mode);
     register_command("setrgbpins", handle_setrgb);
+    register_command("setrgbcount", handle_setrgbcount);
     register_command("sd_config", handle_sd_config);
     register_command("sd_pins_mmc", handle_sd_pins_mmc);
     register_command("sd_pins_spi", handle_sd_pins_spi);
@@ -4322,6 +4503,10 @@ void register_commands() {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("listflippers", handle_list_flippers_cmd);
     register_command("selectflipper", handle_select_flipper_cmd);
+    register_command("listgatt", handle_list_gatt_cmd);
+    register_command("selectgatt", handle_select_gatt_cmd);
+    register_command("enumgatt", handle_enum_gatt_cmd);
+    register_command("trackgatt", handle_track_gatt_cmd);
 #endif
     #ifdef CONFIG_WITH_STATUS_DISPLAY
     register_command("statusidle", handle_status_idle_cmd);
@@ -4343,6 +4528,12 @@ void register_commands() {
     register_command("getneopixelbrightness", handle_get_neopixel_brightness_cmd);
 #ifdef CONFIG_HAS_INFRARED
     register_command("ir", handle_ir_cmd);
+#endif
+    register_command("mirror", handle_mirror_cmd);
+    register_command("input", handle_input_cmd);
+    register_command("identify", handle_identify_cmd);
+#if CONFIG_IDF_TARGET_ESP32S3
+    register_command("usbkbd", handle_usb_kbd_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);

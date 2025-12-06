@@ -25,9 +25,11 @@
 #include "managers/ap_manager.h"
 #include "core/serial_manager.h"
 #include "managers/wifi_manager.h"
+#include "managers/rgb_manager.h"
 #include "driver/i2c.h"
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
+#include "core/screen_mirror.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -227,6 +229,9 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
             color_p[i].full = ~color_p[i].full;
         }
     }
+    
+    screen_mirror_send_area(area, color_p);
+    
 #ifdef CONFIG_USE_CARDPUTER
     m5stack_lvgl_render_callback(drv, area, color_p);
 #elif defined(CONFIG_USE_TDISPLAY_S3)
@@ -827,6 +832,21 @@ static const uint32_t theme_palettes[15][6] = {
         {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}  // Forest
     };
 
+void display_manager_update_status_bar_color(void) {
+  if (!status_bar || !lv_obj_is_valid(status_bar)) {
+    return;
+  }
+
+  uint8_t theme = settings_get_menu_theme(&G_Settings);
+  lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palettes[theme][0]), LV_PART_MAIN);
+
+  if (mainlabel && lv_obj_is_valid(mainlabel)) {
+    lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
+  }
+
+  status_update_cb(NULL);
+}
+
 void display_manager_add_status_bar(const char *CurrentMenuName) {
     const char *label_text = CurrentMenuName ? CurrentMenuName : "";
     if (status_bar && lv_obj_is_valid(status_bar)) {
@@ -932,15 +952,17 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
 }
 
 void apply_power_management_config(bool power_save_enabled) {
-  esp_pm_config_esp32_t pm_cfg = {
+  esp_pm_config_t pm_cfg = {
       .max_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .min_freq_mhz = 20,
-      .light_sleep_enable = true,
+      .min_freq_mhz = power_save_enabled ? 20 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+      .light_sleep_enable = power_save_enabled,
   };
+  rgb_manager_power_transition_begin();
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
   if (pm_err != ESP_OK) {
     ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
   }
+  rgb_manager_power_transition_end();
 
 #if defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
   // Reconfigure LEDC timer after power management changes to maintain stable PWM
@@ -971,7 +993,7 @@ void display_manager_init(void) {
     lvgl_lock_registered = true;
   }
 
-  esp_pm_config_esp32_t pm_cfg = {
+  esp_pm_config_t pm_cfg = {
     .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
     .min_freq_mhz = 80,
     .light_sleep_enable = true,
@@ -1163,7 +1185,7 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
   if (fuel_gauge_manager_init()) {
     ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
     if (battery_poll_task_handle == NULL) {
-      xTaskCreate(battery_poll_task, "battery_poll", 4096, NULL, 5, &battery_poll_task_handle);
+      xTaskCreate(battery_poll_task, "battery_poll", 2048, NULL, 5, &battery_poll_task_handle);
     }
   } else {
     ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
@@ -1849,6 +1871,12 @@ void processEvent() {
   InputEvent event;
 
   while (processed < max_events && xQueueReceive(input_queue, &event, 0) == pdTRUE) {
+    last_touch_time = xTaskGetTickCount();
+    if (is_backlight_dimmed || is_backlight_off) {
+      set_backlight_brightness(100);
+      is_backlight_dimmed = false;
+      is_backlight_off = false;
+    }
     if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
       View *current = dm.current_view;
       void (*input_callback)(InputEvent *) = NULL;
@@ -1871,6 +1899,12 @@ void processEvent() {
 
   if (processed == 0) {
     if (xQueueReceive(input_queue, &event, pdMS_TO_TICKS(1)) == pdTRUE) {
+      last_touch_time = xTaskGetTickCount();
+      if (is_backlight_dimmed || is_backlight_off) {
+        set_backlight_brightness(100);
+        is_backlight_dimmed = false;
+        is_backlight_off = false;
+      }
       if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
         View *current = dm.current_view;
         void (*input_callback)(InputEvent *) = NULL;
@@ -1922,30 +1956,3 @@ void set_keyboard_brightness(uint8_t brightness) {
     lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, kb_brightness, 2);
 }
 #endif
-
-void display_manager_update_status_bar_color(void) {
-    if (!status_bar || !lv_obj_is_valid(status_bar)) return;
-    uint8_t theme = settings_get_menu_theme(&G_Settings);
-    lv_color_t color = lv_color_hex(theme_palettes[theme][0]);
-    lv_obj_set_style_border_color(status_bar, color, 0);
-
-    // Reset label colors as well
-    lv_color_t default_color = lv_color_hex(0xCCCCCC);
-    if (wifi_label && lv_obj_is_valid(wifi_label)) {
-        lv_obj_set_style_text_color(wifi_label, default_color, 0);
-    }
-    if (bt_label && lv_obj_is_valid(bt_label)) {
-        lv_obj_set_style_text_color(bt_label, default_color, 0);
-    }
-    if (sd_label && lv_obj_is_valid(sd_label)) {
-        lv_obj_set_style_text_color(sd_label, default_color, 0);
-    }
-    if (battery_label && lv_obj_is_valid(battery_label)) {
-        lv_obj_set_style_text_color(battery_label, default_color, 0);
-    }
-    if (mainlabel && lv_obj_is_valid(mainlabel)) {
-        lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
-    }
-    lv_obj_invalidate(status_bar);
-}
-

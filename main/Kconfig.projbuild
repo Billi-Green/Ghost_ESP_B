@@ -259,6 +259,27 @@ menu "Ghost ESP Options"
             help
                 Enable hardware keyboard input ui elements.
 
+        config USE_USB_KEYBOARD
+            bool "Enable USB HID Keyboard (host)"
+            default n
+            depends on IDF_TARGET_ESP32S3
+            help
+                Enable USB host HID keyboard support and stream key events over Dual Comm.
+
+        config USB_KBD_DMINUS_PIN
+            int "USB Keyboard D- Pin"
+            default 19
+            depends on USE_USB_KEYBOARD
+            help
+                GPIO pin for USB D- (keyboard). On ESP32-S3 this is normally GPIO19.
+
+        config USB_KBD_DPLUS_PIN
+            int "USB Keyboard D+ Pin"
+            default 20
+            depends on USE_USB_KEYBOARD
+            help
+                GPIO pin for USB D+ (keyboard). On ESP32-S3 this is normally GPIO20.
+
         config HAS_BATTERY
             bool "Enable power saving"
             default n
