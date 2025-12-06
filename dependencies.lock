@@ -78,10 +78,27 @@ dependencies:
     - linux
     version: 1.1.0
   espressif/usb_host_hid:
-    dependencies: []
+    component_hash: 824d49e67771af546c29d916bd8d7d3526cd2ff5e082d9021cab66d5f9c2b9bc
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    - name: espressif/usb
+      registry_url: https://components.espressif.com
+      require: public
+      rules:
+      - if: idf_version >=6.0
+      - if: target not in ["linux"]
+      version: ^1.0.0
     source:
-      path: S:\GhostESP2\Ghost_ESP\components\espressif__usb_host_hid
-      type: local
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - linux
     version: 1.0.4
   idf:
     source:
@@ -93,6 +110,6 @@ direct_dependencies:
 - espressif/usb
 - espressif/usb_host_hid
 - idf
-manifest_hash: 67db34eae17760a0554674eddcc0c71b7014c343173493d0b174b29976c5d571
+manifest_hash: 0f7c779f8262ef45a867294ab06f02d0d4a0e7a4749ea95c7c760bca6c147aa9
 target: esp32s3
 version: 2.0.0
