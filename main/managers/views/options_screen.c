@@ -31,6 +31,7 @@ static const char **evil_portal_options = NULL;
 #include "esp_log.h"
 #include "managers/sd_card_manager.h"
 #include "managers/views/keyboard_screen.h"
+#include "managers/usb_keyboard_manager.h"
 
 #define KARMA_MAX_SSIDS 64
 
@@ -53,7 +54,7 @@ static int current_settings_category = -1;
 // Category 0: "Display & UI" groups visual and navigation-related options.
 // Category 1: "System & Hardware" groups network, power, LED and control options.
 // Example: settings_category_indices[0] lists settings for category index 0.
-static int settings_category_indices[][16] = {
+static int settings_category_indices[][20] = {
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
         {1, 9, 2, 13, 4, 5, 11, 12,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -65,6 +66,15 @@ static int settings_category_indices[][16] = {
         16,
 #elif defined(CONFIG_USE_ENCODER)
         14,
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        17,
+#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
+        15,
+#else
+        14,
+#endif
 #endif
         -1},
 #else
@@ -78,6 +88,15 @@ static int settings_category_indices[][16] = {
         15,
 #elif defined(CONFIG_USE_ENCODER)
         14,
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        16,
+#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
+        14,
+#else
+        13,
+#endif
 #endif
         -1},
 #endif
@@ -162,7 +181,8 @@ typedef enum {
     DUALCOMM_MENU_CAPTURE,
     DUALCOMM_MENU_TOOLS,
     DUALCOMM_MENU_BLE,
-    DUALCOMM_MENU_GPS
+    DUALCOMM_MENU_GPS,
+    DUALCOMM_MENU_KEYBOARD
 } DualCommMenuState;
 
 static DualCommMenuState current_dualcomm_menu_state = DUALCOMM_MENU_MAIN;
@@ -177,6 +197,14 @@ static const char *dual_comm_main_options[] = {
     "Tools",
     "BLE",
     "GPS",
+    "Keyboard",
+    NULL
+};
+
+static const char *dual_comm_keyboard_options[] = {
+    "USB Host On",
+    "USB Host Off",
+    "USB Host Status",
     NULL
 };
 
@@ -320,6 +348,9 @@ enum {
 #ifdef CONFIG_USE_ENCODER
     SETTING_ENCODER_INVERT,
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3
+    SETTING_USB_HOST_MODE,
+#endif
 };
 
 static const char *brightness_options[] = {
@@ -349,6 +380,9 @@ static SettingsItem settings_items[] = {
     #endif
     #ifdef CONFIG_USE_ENCODER
     {"Invert Encoder", SETTING_ENCODER_INVERT, bool_options, 2, 0},
+    #endif
+    #if CONFIG_IDF_TARGET_ESP32S3
+    {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
     #endif
 };
 
@@ -681,6 +715,7 @@ void options_menu_create() {
             case DUALCOMM_MENU_TOOLS:    options = dual_comm_tools_options; break;
             case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
             case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
+            case DUALCOMM_MENU_KEYBOARD: options = dual_comm_keyboard_options; break;
         }
         break;
     case OT_Settings: 
@@ -838,6 +873,11 @@ static void load_current_settings_values(void) {
                 break;
             }
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3
+            case SETTING_USB_HOST_MODE:
+                settings_items[i].current_value = usb_keyboard_manager_is_host_mode() ? 1 : 0;
+                break;
+#endif
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -932,6 +972,11 @@ static void apply_setting_change(int setting_index, int new_value) {
             settings_set_status_idle_timeout_ms(&G_Settings, ms);
             break;
         }
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+        case SETTING_USB_HOST_MODE:
+            usb_keyboard_manager_set_host_mode(new_value == 1);
+            return;
 #endif
     }
     settings_save(&G_Settings);
@@ -1443,6 +1488,11 @@ void option_event_cb(lv_event_t *e) {
                 display_manager_switch_view(&options_menu_view);
                 option_invoked = false;
                 return;
+            } else if (strcmp(Selected_Option, "Keyboard") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_KEYBOARD;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
             }
         }
 
@@ -1869,6 +1919,21 @@ void option_event_cb(lv_event_t *e) {
 #else
             error_popup_create("Device Does not Support Bluetooth...");
 #endif
+        } else if (strcmp(Selected_Option, "USB Host On") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend usbkbd on");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "USB Host Off") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend usbkbd off");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "USB Host Status") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend usbkbd status");
+            view_switched = true;
         }
 
         if (!view_switched) {

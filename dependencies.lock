@@ -10,7 +10,7 @@ dependencies:
       type: service
     version: 0.5.3
   espressif/esp_io_expander:
-    component_hash: fbc0de4082fc7c207dc98a93a0ed83d1a929a4ecee83cc567afb406f3ee6d4a6
+    component_hash: abf3ea0d71407d79d15500550aa3ba433848459b0fa94717cf9478822593ee5d
     dependencies:
     - name: idf
       require: private
@@ -18,7 +18,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.0.1
+    version: 1.1.0
   espressif/esp_io_expander_tca95xx_16bit:
     component_hash: f0c87a480d3e341fcfa3f7d00890270da1325a294a7d26ddeb5af5fb3ce8ba54
     dependencies:
@@ -52,7 +52,7 @@ dependencies:
       type: service
     version: 1.0.0
   espressif/esp_lcd_touch:
-    component_hash: 779b4ba2464a3ae85681e4b860caa5fdc35801458c23f3039ee761bae7f442a4
+    component_hash: cf4741f4903bdfe83c0a6606cb33314957e78605398954154f247e03acfd306b
     dependencies:
     - name: idf
       require: private
@@ -60,14 +60,39 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.1.2
+    version: 1.2.0
+  espressif/usb:
+    component_hash: f583375dac409f4287f3be9c188e54200b01a5ae774194b3bfee7d67e4e269d0
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - linux
+    version: 1.1.0
+  espressif/usb_host_hid:
+    dependencies: []
+    source:
+      path: S:\GhostESP2\Ghost_ESP\components\espressif__usb_host_hid
+      type: local
+    version: 1.0.4
   idf:
     source:
       type: idf
-    version: 5.5.0
+    version: 5.5.1
 direct_dependencies:
 - espressif/esp_io_expander_tca95xx_16bit
 - espressif/esp_lcd_axs15231b
+- espressif/usb
+- espressif/usb_host_hid
 - idf
-target: esp32c5
+manifest_hash: 67db34eae17760a0554674eddcc0c71b7014c343173493d0b174b29976c5d571
+target: esp32s3
 version: 2.0.0

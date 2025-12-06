@@ -17,6 +17,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
+#include "managers/usb_keyboard_manager.h"
 
 #ifdef CONFIG_WITH_ETHERNET
 // TODO
@@ -159,9 +160,15 @@ void app_main(void) {
         int32_t comm_rx = G_Settings.esp_comm_rx_pin;
         MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, DEFAULT_BAUD_RATE));
     }
+    usb_keyboard_manager_register_stream_handler();
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     MEASURE_INIT_RAM("AP Manager", ap_manager_init());
+
+#if CONFIG_USE_USB_KEYBOARD
+    ESP_LOGI(TAG, "Initializing USB Keyboard Manager");
+    MEASURE_INIT_RAM("USB Keyboard", usb_keyboard_manager_init());
+#endif
 
 #ifdef CONFIG_WITH_SCREEN
 

@@ -49,6 +49,7 @@
 #include "core/screen_mirror.h"
 #include "managers/display_manager.h"
 #include "freertos/queue.h"
+#include "managers/usb_keyboard_manager.h"
 
 static const char *TAG = "Commandline";
 
@@ -4410,6 +4411,24 @@ void handle_input_cmd(int argc, char **argv) {
     }
 }
 
+void handle_usb_kbd_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: usbkbd <on|off|status>\n");
+        return;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        usb_keyboard_manager_set_host_mode(true);
+        glog("USB keyboard host mode enabled\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        usb_keyboard_manager_set_host_mode(false);
+        glog("USB keyboard host mode disabled\n");
+    } else if (strcmp(argv[1], "status") == 0) {
+        glog("USB keyboard host mode: %s\n", usb_keyboard_manager_is_host_mode() ? "on" : "off");
+    } else {
+        glog("Usage: usbkbd <on|off|status>\n");
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -4513,6 +4532,9 @@ void register_commands() {
     register_command("mirror", handle_mirror_cmd);
     register_command("input", handle_input_cmd);
     register_command("identify", handle_identify_cmd);
+#if CONFIG_IDF_TARGET_ESP32S3
+    register_command("usbkbd", handle_usb_kbd_cmd);
+#endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
     
