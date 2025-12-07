@@ -1172,6 +1172,10 @@ static const char *idle_anim_to_name(IdleAnimation anim) {
         case IDLE_ANIM_STARFIELD: return "starfield";
         case IDLE_ANIM_HUD: return "hud";
         case IDLE_ANIM_MATRIX: return "matrix";
+        case IDLE_ANIM_FLYING_GHOSTS: return "ghosts";
+        case IDLE_ANIM_SPIRAL: return "spiral";
+        case IDLE_ANIM_FALLING_LEAVES: return "leaves";
+        case IDLE_ANIM_BOUNCING_TEXT: return "bouncing";
         default: return "unknown";
     }
 }
@@ -1198,6 +1202,22 @@ static bool parse_idle_anim_arg(const char *arg, IdleAnimation *out) {
         *out = IDLE_ANIM_MATRIX;
         return true;
     }
+    if (strcmp(arg, "5") == 0 || strcmp(arg, "ghosts") == 0 || strcmp(arg, "flyingghosts") == 0 || strcmp(arg, "flying_ghosts") == 0 || strcmp(arg, "ghoster") == 0 || strcmp(arg, "flyingghoster") == 0 || strcmp(arg, "flying_ghoster") == 0 || strcmp(arg, "toaster") == 0 || strcmp(arg, "flyingtoaster") == 0 || strcmp(arg, "flying_toaster") == 0) {
+        *out = IDLE_ANIM_FLYING_GHOSTS;
+        return true;
+    }
+    if (strcmp(arg, "6") == 0 || strcmp(arg, "spiral") == 0 || strcmp(arg, "hypnotic") == 0 || strcmp(arg, "hypnoticspiral") == 0 || strcmp(arg, "hypnotic_spiral") == 0) {
+        *out = IDLE_ANIM_SPIRAL;
+        return true;
+    }
+    if (strcmp(arg, "7") == 0 || strcmp(arg, "leaves") == 0 || strcmp(arg, "fallingleaves") == 0 || strcmp(arg, "falling_leaves") == 0) {
+        *out = IDLE_ANIM_FALLING_LEAVES;
+        return true;
+    }
+    if (strcmp(arg, "8") == 0 || strcmp(arg, "bouncing") == 0 || strcmp(arg, "bouncingtext") == 0 || strcmp(arg, "bouncing_text") == 0 || strcmp(arg, "dvd") == 0 || strcmp(arg, "dvdplayer") == 0) {
+        *out = IDLE_ANIM_BOUNCING_TEXT;
+        return true;
+    }
     return false;
 }
 
@@ -1221,17 +1241,21 @@ void handle_status_idle_cmd(int argc, char **argv) {
     if (strcmp(argv[1], "list") == 0) {
         glog("Available idle animations:\n");
         glog("  0 - life      (Game of Life)\n");
-        glog("  1 - ghost     (Ghost sprite)\n");
-        glog("  2 - starfield (Starfield effect)\n");
-        glog("  3 - hud       (System HUD)\n");
-        glog("  4 - matrix    (Matrix code rain)\n");
+        glog("  1 - ghost      (Ghost sprite)\n");
+        glog("  2 - starfield  (Starfield effect)\n");
+        glog("  3 - hud        (System HUD)\n");
+        glog("  4 - matrix     (Matrix code rain)\n");
+        glog("  5 - ghosts     (Flying Ghosts)\n");
+        glog("  6 - spiral    (Hypnotic Spiral)\n");
+        glog("  7 - leaves    (Falling Leaves)\n");
+        glog("  8 - bouncing  (Bouncing Text)\n");
         status_display_show_status("Idle Anim List");
         return;
     }
 
     if (strcmp(argv[1], "set") == 0) {
         if (argc < 3) {
-            glog("Usage: statusidle set <life|ghost|starfield|hud|matrix|0|1|2|3|4>\n");
+            glog("Usage: statusidle set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>\n");
             return;
         }
         IdleAnimation anim;
@@ -1247,7 +1271,7 @@ void handle_status_idle_cmd(int argc, char **argv) {
         return;
     }
 
-    glog("Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|0|1|2|3|4>]\n");
+    glog("Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n");
 }
 
 #endif
@@ -1885,7 +1909,7 @@ void handle_help(int argc, char **argv) {
         printf("        settings reset\n\n");
         printf("statusidle\n");
         printf("    Description: View or change the status display idle animation (status OLED only).\n");
-        printf("    Usage: statusidle [list|set <life|ghost|0|1>]\n\n");
+        printf("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
         TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp, settings, statusidle\n");
         return;
     }
