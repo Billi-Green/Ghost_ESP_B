@@ -2,6 +2,7 @@
 
 #include "core/esp_comm_manager.h"
 #include "managers/display_manager.h"
+#include "managers/views/terminal_screen.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -114,10 +115,12 @@ typedef struct {
 
 static TaskHandle_t s_usb_host_task = NULL;
 static bool s_host_mode_active = false;
+static volatile bool s_usb_host_ready = false;
 
 static int usb_kbd_get_joystick_index(uint8_t key_code) {
     switch (key_code) {
         case HID_KEY_LEFT:  return 0;
+        case HID_KEY_ENTER: return 1;
         case HID_KEY_UP:    return 2;
         case HID_KEY_RIGHT: return 3;
         case HID_KEY_DOWN:  return 4;
@@ -127,35 +130,31 @@ static int usb_kbd_get_joystick_index(uint8_t key_code) {
 }
 
 static void usb_kbd_handle_event(const usb_kbd_key_event_t *ev) {
-    if (!ev) return;
+    if (!ev || !ev->pressed) return;
 
     uint8_t payload[3];
-    payload[0] = ev->pressed ? 0x00 : USB_KBD_EVENT_FLAG_RELEASE;
+    payload[0] = 0x00;
     payload[1] = ev->modifier;
     payload[2] = ev->key_code;
     (void)esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_KEYBOARD, payload, sizeof(payload));
 
-    if (ev->pressed) {
-        if (display_manager_notify_user_input()) {
-            return;
-        }
+    if (!input_queue) return;
 
-        int joy_idx = usb_kbd_get_joystick_index(ev->key_code);
-        if (joy_idx >= 0) {
-            InputEvent ie;
-            ie.type = INPUT_TYPE_JOYSTICK;
-            ie.data.joystick_index = joy_idx;
-            xQueueSend((QueueHandle_t)input_queue, &ie, 0);
-            return;
-        }
+    int joy_idx = usb_kbd_get_joystick_index(ev->key_code);
+    if (joy_idx >= 0) {
+        InputEvent ie = {0};
+        ie.type = INPUT_TYPE_JOYSTICK;
+        ie.data.joystick_index = joy_idx;
+        xQueueSend((QueueHandle_t)input_queue, &ie, 0);
+        return;
+    }
 
-        unsigned char ch = 0;
-        if (hid_keyboard_get_char(ev->modifier, ev->key_code, &ch) && ch != 0) {
-            InputEvent ie;
-            ie.type = INPUT_TYPE_KEYBOARD;
-            ie.data.key_value = (uint8_t)ch;
-            xQueueSend((QueueHandle_t)input_queue, &ie, 0);
-        }
+    unsigned char ch = 0;
+    if (hid_keyboard_get_char(ev->modifier, ev->key_code, &ch) && ch != 0) {
+        InputEvent ie = {0};
+        ie.type = INPUT_TYPE_KEYBOARD;
+        ie.data.key_value = (uint8_t)ch;
+        xQueueSend((QueueHandle_t)input_queue, &ie, 0);
     }
 }
 
@@ -229,6 +228,8 @@ static void usb_kbd_interface_cb(hid_host_device_handle_t hid_dev, const hid_hos
         hid_host_device_close(hid_dev);
         break;
     case HID_HOST_INTERFACE_EVENT_TRANSFER_ERROR:
+        ESP_LOGE(TAG, "HID transfer error!");
+        break;
     default:
         break;
     }
@@ -256,6 +257,8 @@ static void usb_kbd_device_cb(hid_host_device_handle_t hid_dev, const hid_host_d
                 }
                 hid_host_device_start(hid_dev);
                 ESP_LOGI(TAG, "HID keyboard connected");
+            } else {
+                ESP_LOGE(TAG, "Failed to open HID device");
             }
         }
     }
@@ -269,9 +272,13 @@ static void usb_kbd_host_task(void *arg) {
     };
 
     if (usb_host_install(&cfg) != ESP_OK) {
+        TERMINAL_VIEW_ADD_TEXT("usb_host_install failed\n");
+        s_usb_host_task = NULL;
         vTaskDelete(NULL);
         return;
     }
+    s_usb_host_ready = true;
+    TERMINAL_VIEW_ADD_TEXT("USB host ready\n");
 
     for (;;) {
         uint32_t flags = 0;
@@ -281,32 +288,45 @@ static void usb_kbd_host_task(void *arg) {
 }
 
 void usb_keyboard_manager_init(void) {
-    if (!CONFIG_USE_USB_KEYBOARD) {
+    if (s_host_mode_active) {
+        TERMINAL_VIEW_ADD_TEXT("USB Host already active\n");
         return;
     }
 
     if (!s_usb_host_task) {
-        if (xTaskCreatePinnedToCore(usb_kbd_host_task, "usb_events", 4096, NULL, 2, &s_usb_host_task, 0) != pdPASS) {
-            ESP_LOGE(TAG, "Failed to start USB host task");
+        s_usb_host_ready = false;
+        if (xTaskCreatePinnedToCore(usb_kbd_host_task, "usb_events", 6144, NULL, 2, &s_usb_host_task, 0) != pdPASS) {
+            TERMINAL_VIEW_ADD_TEXT("USB host task failed\n");
             s_usb_host_task = NULL;
             return;
         }
     }
 
+    int wait_count = 0;
+    while (!s_usb_host_ready && s_usb_host_task && wait_count < 50) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        wait_count++;
+    }
+    if (!s_usb_host_ready) {
+        TERMINAL_VIEW_ADD_TEXT("USB host init timeout\n");
+        return;
+    }
+
     const hid_host_driver_config_t hid_cfg = {
         .create_background_task = true,
         .task_priority = 5,
-        .stack_size = 4096,
+        .stack_size = 6144,
         .core_id = 0,
         .callback = usb_kbd_device_cb,
         .callback_arg = NULL,
     };
 
-    if (hid_host_install(&hid_cfg) != ESP_OK) {
-        ESP_LOGE(TAG, "hid_host_install failed");
+    esp_err_t err = hid_host_install(&hid_cfg);
+    if (err != ESP_OK) {
+        TERMINAL_VIEW_ADD_TEXT("HID install fail: %s\n", esp_err_to_name(err));
     } else {
         s_host_mode_active = true;
-        ESP_LOGI(TAG, "USB keyboard manager initialized (D-=%d, D+=%d)", CONFIG_USB_KBD_DMINUS_PIN, CONFIG_USB_KBD_DPLUS_PIN);
+        TERMINAL_VIEW_ADD_TEXT("USB Host enabled\n");
     }
 }
 
@@ -321,24 +341,35 @@ static void usb_kbd_stop(void) {
         s_usb_host_task = NULL;
     }
     
+    s_usb_host_ready = false;
     s_host_mode_active = false;
-    ESP_LOGI(TAG, "USB Host mode disabled");
+    TERMINAL_VIEW_ADD_TEXT("USB Host disabled\n");
 }
 
 static void usb_kbd_stream_rx_cb(uint8_t channel, const uint8_t* data, size_t length, void* user_data) {
     (void)channel;
     (void)user_data;
-    if (!data || length < 3) return;
+    if (!data || length < 3 || !input_queue) return;
+    if (data[0] & USB_KBD_EVENT_FLAG_RELEASE) return;
     
-    bool pressed = !(data[0] & USB_KBD_EVENT_FLAG_RELEASE);
-    if (!pressed) return;
-    
-    usb_kbd_key_event_t ev = {
-        .modifier = data[1],
-        .key_code = data[2],
-        .pressed = true
-    };
-    usb_kbd_handle_event(&ev);
+    uint8_t key_code = data[2];
+
+    int joy_idx = usb_kbd_get_joystick_index(key_code);
+    if (joy_idx >= 0) {
+        InputEvent ie = {0};
+        ie.type = INPUT_TYPE_JOYSTICK;
+        ie.data.joystick_index = joy_idx;
+        xQueueSend((QueueHandle_t)input_queue, &ie, 0);
+        return;
+    }
+
+    unsigned char ch = 0;
+    if (hid_keyboard_get_char(data[1], key_code, &ch) && ch != 0) {
+        InputEvent ie = {0};
+        ie.type = INPUT_TYPE_KEYBOARD;
+        ie.data.key_value = (uint8_t)ch;
+        xQueueSend((QueueHandle_t)input_queue, &ie, 0);
+    }
 }
 
 bool usb_keyboard_manager_is_host_mode(void) {
@@ -354,8 +385,8 @@ void usb_keyboard_manager_set_host_mode(bool enable) {
 }
 
 void usb_keyboard_manager_register_stream_handler(void) {
-    esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_KEYBOARD, usb_kbd_stream_rx_cb, NULL);
-    ESP_LOGI(TAG, "Registered keyboard stream handler");
+    bool ok = esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_KEYBOARD, usb_kbd_stream_rx_cb, NULL);
+    TERMINAL_VIEW_ADD_TEXT("KBD stream handler(S3): %s\n", ok ? "OK" : "FAIL");
 }
 
 #else
@@ -377,6 +408,7 @@ void usb_keyboard_manager_set_host_mode(bool enable) {
 #define HID_KEY_UP    0x52
 #define HID_KEY_RIGHT 0x4F
 #define HID_KEY_DOWN  0x51
+#define HID_KEY_ENTER 0x28
 #define HID_KEY_ESC   0x29
 #define HID_LEFT_SHIFT  (1 << 1)
 #define HID_RIGHT_SHIFT (1 << 5)
@@ -397,7 +429,7 @@ static const uint8_t keycode2ascii_simple[57][2] = {
 static void usb_kbd_stream_rx_cb_simple(uint8_t channel, const uint8_t* data, size_t length, void* user_data) {
     (void)channel;
     (void)user_data;
-    if (!data || length < 3) return;
+    if (!data || length < 3 || !input_queue) return;
     if (data[0] & 0x01) return;
     
     uint8_t modifier = data[1];
@@ -406,25 +438,26 @@ static void usb_kbd_stream_rx_cb_simple(uint8_t channel, const uint8_t* data, si
     int joy_idx = -1;
     switch (key_code) {
         case HID_KEY_LEFT:  joy_idx = 0; break;
+        case HID_KEY_ENTER: joy_idx = 1; break;
         case HID_KEY_UP:    joy_idx = 2; break;
         case HID_KEY_RIGHT: joy_idx = 3; break;
         case HID_KEY_DOWN:  joy_idx = 4; break;
         case HID_KEY_ESC:   joy_idx = 5; break;
     }
     
-    if (joy_idx >= 0 && input_queue) {
-        InputEvent ie;
+    if (joy_idx >= 0) {
+        InputEvent ie = {0};
         ie.type = INPUT_TYPE_JOYSTICK;
         ie.data.joystick_index = joy_idx;
         xQueueSend((QueueHandle_t)input_queue, &ie, 0);
         return;
     }
     
-    if (key_code >= HID_KEY_A && key_code <= HID_KEY_SLASH && input_queue) {
+    if (key_code >= HID_KEY_A && key_code <= HID_KEY_SLASH) {
         uint8_t shift = ((modifier & HID_LEFT_SHIFT) || (modifier & HID_RIGHT_SHIFT)) ? 1 : 0;
         uint8_t ch = keycode2ascii_simple[key_code][shift];
         if (ch != 0) {
-            InputEvent ie;
+            InputEvent ie = {0};
             ie.type = INPUT_TYPE_KEYBOARD;
             ie.data.key_value = ch;
             xQueueSend((QueueHandle_t)input_queue, &ie, 0);
@@ -433,7 +466,8 @@ static void usb_kbd_stream_rx_cb_simple(uint8_t channel, const uint8_t* data, si
 }
 
 void usb_keyboard_manager_register_stream_handler(void) {
-    esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_KEYBOARD, usb_kbd_stream_rx_cb_simple, NULL);
+    bool ok = esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_KEYBOARD, usb_kbd_stream_rx_cb_simple, NULL);
+    TERMINAL_VIEW_ADD_TEXT("KBD stream handler: %s\n", ok ? "OK" : "FAIL");
 }
 
 #endif

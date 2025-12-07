@@ -165,10 +165,6 @@ void app_main(void) {
     ESP_LOGI(TAG, "Initializing AP Manager");
     MEASURE_INIT_RAM("AP Manager", ap_manager_init());
 
-#if CONFIG_USE_USB_KEYBOARD
-    ESP_LOGI(TAG, "Initializing USB Keyboard Manager");
-    MEASURE_INIT_RAM("USB Keyboard", usb_keyboard_manager_init());
-#endif
 
 #ifdef CONFIG_WITH_SCREEN
 

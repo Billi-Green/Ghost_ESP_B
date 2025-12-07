@@ -311,12 +311,9 @@ static uint8_t compute_packet_checksum(const comm_packet_t* packet, bool use_crc
                    : calculate_legacy_checksum(bytes, frame_len);
 }
 
-static bool send_packet(const comm_packet_t* packet) {
+static bool send_packet_internal(const comm_packet_t* packet, TickType_t wait) {
     if (!s_comm_manager || !packet) return false;
     if (s_comm_manager->tx_queue) {
-        TickType_t wait = (packet->type == PACKET_TYPE_RESPONSE)
-            ? pdMS_TO_TICKS(30)
-            : pdMS_TO_TICKS(5);
         if (xQueueSend(s_comm_manager->tx_queue, packet, wait) != pdPASS) {
             s_comm_manager->tx_dropped_packets++;
             if ((s_comm_manager->tx_dropped_packets & 0x0F) == 1) {
@@ -344,6 +341,13 @@ static bool send_packet(const comm_packet_t* packet) {
         }
         return true;
     }
+}
+
+static bool send_packet(const comm_packet_t* packet) {
+    TickType_t wait = (packet && packet->type == PACKET_TYPE_RESPONSE)
+        ? pdMS_TO_TICKS(30)
+        : pdMS_TO_TICKS(5);
+    return send_packet_internal(packet, wait);
 }
 
 static void tx_task(void* arg) {
@@ -772,16 +776,28 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
             break;
 
         case PACKET_TYPE_STREAM:
-            if (comm->state == COMM_STATE_CONNECTED && packet->length >= 1) {
+            if (comm->state != COMM_STATE_CONNECTED) {
+                printf("STREAM packet ignored: not connected\n");
+                break;
+            }
+            if (packet->length < 1) {
+                printf("STREAM packet ignored: empty payload\n");
+                break;
+            }
+            {
                 uint8_t channel = packet->data[0];
-                if (channel < COMM_MAX_STREAM_CHANNELS) {
-                    comm_stream_callback_t cb = comm->stream_handlers[channel];
-                    if (cb) {
-                        const uint8_t* payload = packet->data + 1;
-                        size_t payload_len = packet->length - 1;
-                        cb(channel, payload, payload_len, comm->stream_user_data[channel]);
-                    }
+                if (channel >= COMM_MAX_STREAM_CHANNELS) {
+                    printf("STREAM packet ignored: invalid channel %d\n", channel);
+                    break;
                 }
+                comm_stream_callback_t cb = comm->stream_handlers[channel];
+                if (!cb) {
+                    printf("STREAM packet ignored: no handler for channel %d\n", channel);
+                    break;
+                }
+                const uint8_t* payload = packet->data + 1;
+                size_t payload_len = packet->length - 1;
+                cb(channel, payload, payload_len, comm->stream_user_data[channel]);
             }
             break;
 
@@ -1156,7 +1172,7 @@ bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t l
         memcpy(packet.data + 1, p, chunk);
         packet.length = (uint8_t)(chunk + 1);
 
-        if (!send_packet(&packet)) {
+        if (!send_packet_internal(&packet, 0)) {
             ok = false;
             break;
         }
