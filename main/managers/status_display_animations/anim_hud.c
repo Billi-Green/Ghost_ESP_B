@@ -10,7 +10,6 @@
 
 #include "esp_heap_caps.h"
 #include "esp_wifi.h"
-#include "esp_vfs_fat.h"
 #include "managers/sd_card_manager.h"
 #include "managers/ap_manager.h"
 
@@ -22,21 +21,6 @@ typedef struct {
     int sd_used_pct;
     bool sd_ok;
 } HudStats;
-
-static bool hud_get_ap_ssid(char *out, size_t len)
-{
-    if (!out || len == 0) return false;
-    wifi_config_t wifi_config;
-    memset(&wifi_config, 0, sizeof(wifi_config));
-    esp_err_t err = esp_wifi_get_config(ESP_IF_WIFI_AP, &wifi_config);
-    if (err != ESP_OK) return false;
-    size_t slen = strnlen((const char *)wifi_config.ap.ssid, sizeof(wifi_config.ap.ssid));
-    if (slen == 0) return false;
-    if (slen >= len) slen = len - 1;
-    memcpy(out, wifi_config.ap.ssid, slen);
-    out[slen] = '\0';
-    return true;
-}
 
 static void hud_collect_stats(HudStats *out)
 {
@@ -63,20 +47,11 @@ static void hud_collect_stats(HudStats *out)
     if (cpu_pct > 100) cpu_pct = 100;
     out->cpu_used_pct = cpu_pct;
 
-    // SD card used space stats
-    out->sd_ok = sd_card_manager.is_initialized;
-    int sd_used_pct = 0;
-    if (out->sd_ok) {
-        uint64_t total_bytes = 0, free_bytes = 0;
-        esp_err_t ret = esp_vfs_fat_info("/mnt", &total_bytes, &free_bytes);
-        if (ret == ESP_OK && total_bytes > 0) {
-            uint64_t used_bytes = total_bytes - free_bytes;
-            sd_used_pct = (int)((used_bytes * 100) / total_bytes);
-            if (sd_used_pct < 0) sd_used_pct = 0;
-            if (sd_used_pct > 100) sd_used_pct = 100;
-        }
-    }
-    out->sd_used_pct = sd_used_pct;
+    // SD card used space stats (use cached value from last mount)
+    sd_card_cached_stats_t sd_stats;
+    sd_card_get_cached_stats(&sd_stats);
+    out->sd_ok = sd_stats.valid;
+    out->sd_used_pct = sd_stats.valid ? sd_stats.used_pct : 0;
 }
 
 static int hud_get_webui_sta_count(bool *ap_enabled, bool *server_running)
@@ -118,33 +93,22 @@ void status_anim_hud_step(TickType_t now, int frame, const StatusAnimGfx *gfx)
 
     char buf[32], buf1[32], buf2[32];
     
-    // AP status (left side) - show device's own AP SSID
-    char ssid[20];
-    wifi_mode_t mode;
-    bool ap_running = false;
-    if (esp_wifi_get_mode(&mode) == ESP_OK) {
-        // Check if AP mode is enabled
-        if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
-            if (hud_get_ap_ssid(ssid, sizeof(ssid))) {
-                snprintf(buf1, sizeof(buf1), "AP %.10s", ssid);
-                ap_running = true;
-            }
-        }
-    }
-    if (!ap_running) {
-        snprintf(buf1, sizeof(buf1), "AP OFF");
-    }
-    
-    // WebUI status (right side)
+    // AP and WebUI status
     bool ap_enabled = false;
     bool server_running = false;
     int sta_count = hud_get_webui_sta_count(&ap_enabled, &server_running);
-    if (!ap_enabled) {
-        snprintf(buf2, sizeof(buf2), "WUI:OFF");
-    } else if (!server_running) {
-        snprintf(buf2, sizeof(buf2), "WUI:STOP");
+    
+    if (ap_enabled) {
+        snprintf(buf1, sizeof(buf1), "AP:ON");
     } else {
-        snprintf(buf2, sizeof(buf2), "WUI:%d", sta_count);
+        snprintf(buf1, sizeof(buf1), "AP:OFF");
+    }
+    if (!ap_enabled) {
+        snprintf(buf2, sizeof(buf2), "WebUI:OFF");
+    } else if (!server_running) {
+        snprintf(buf2, sizeof(buf2), "WebUI:--");
+    } else {
+        snprintf(buf2, sizeof(buf2), "WebUI:%d", sta_count);
     }
     
     // Draw both on the same line, splitting the width
