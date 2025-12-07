@@ -33,7 +33,7 @@ typedef struct {
 
 #define INPUT_QUEUE_LENGTH 10
 #define INPUT_ITEM_SIZE sizeof(int)
-QueueHandle_tt input_queue;
+extern QueueHandle_tt input_queue;
 
 #define MUTEX_TIMEOUT_MS 100
 

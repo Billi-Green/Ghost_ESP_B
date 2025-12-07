@@ -1512,7 +1512,7 @@ void infrared_view_input_cb(InputEvent *event) {
                 }
             }
         } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER) {
-            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 0) ||
+            if ((event->type == INPUT_TYPE_JOYSTICK && (event->data.joystick_index == 0 || event->data.joystick_index == 1)) ||
                 (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_PRESS)) {
                 learning_cancel_cb(NULL);
                 return;

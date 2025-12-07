@@ -43,10 +43,17 @@ static const char *NVS_NAMESPACE = "sd_config";
 #include "managers/display_manager.h"
 static bool s_display_spi_suspended_flag = false;
 static bool is_shared_display_sd_spi(void) {
-#if defined(CONFIG_LV_DISP_SPI_MOSI) && defined(CONFIG_LV_DISP_SPI_MISO) && defined(CONFIG_LV_DISP_SPI_CLK)
-  return (sd_card_manager.spi_mosi_pin == CONFIG_LV_DISP_SPI_MOSI) &&
-         (sd_card_manager.spi_miso_pin == CONFIG_LV_DISP_SPI_MISO) &&
-         (sd_card_manager.spi_clk_pin  == CONFIG_LV_DISP_SPI_CLK);
+#if defined(CONFIG_IDF_TARGET_ESP32C5) && defined(CONFIG_LV_TFT_DISPLAY_SPI2_HOST)
+  return true;
+#elif defined(CONFIG_LV_DISP_SPI_MOSI) && defined(CONFIG_LV_DISP_SPI_CLK)
+  bool mosi_match = (sd_card_manager.spi_mosi_pin == CONFIG_LV_DISP_SPI_MOSI);
+  bool clk_match = (sd_card_manager.spi_clk_pin == CONFIG_LV_DISP_SPI_CLK);
+#if defined(CONFIG_LV_DISP_SPI_MISO)
+  bool miso_match = (sd_card_manager.spi_miso_pin == CONFIG_LV_DISP_SPI_MISO);
+  return mosi_match && clk_match && miso_match;
+#else
+  return mosi_match && clk_match;
+#endif
 #else
   return false;
 #endif
@@ -124,6 +131,29 @@ typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_
 static sd_mount_type_t s_mount_type = MOUNT_NONE;
 static TickType_t s_next_unmount_tick = 0;
 
+static sd_card_cached_stats_t s_cached_stats = { .valid = false, .used_pct = 0 };
+
+static void sd_card_update_cached_stats(void) {
+    if (!sd_card_manager.is_initialized) {
+        s_cached_stats.valid = false;
+        return;
+    }
+    uint64_t total_bytes = 0, free_bytes = 0;
+    esp_err_t ret = esp_vfs_fat_info("/mnt", &total_bytes, &free_bytes);
+    if (ret == ESP_OK && total_bytes > 0) {
+        uint64_t used_bytes = total_bytes - free_bytes;
+        s_cached_stats.used_pct = (int)((used_bytes * 100) / total_bytes);
+        if (s_cached_stats.used_pct < 0) s_cached_stats.used_pct = 0;
+        if (s_cached_stats.used_pct > 100) s_cached_stats.used_pct = 100;
+        s_cached_stats.valid = true;
+    }
+}
+
+void sd_card_get_cached_stats(sd_card_cached_stats_t *out) {
+    if (out) {
+        *out = s_cached_stats;
+    }
+}
 
 #ifdef CONFIG_IS_S3TWATCH
 static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
@@ -485,20 +515,7 @@ esp_err_t sd_card_init(void) {
 
   bool bus_init_success = false;
 
-  
-#ifndef CONFIG_USE_TDECK // tdeck doesnt need this since the spi bus is already inited by display driver
-#ifndef CONFIG_ENCODER_INA 
-#if defined(CONFIG_IDF_TARGET_ESP32)
-  {
-    esp_err_t bus_ret = spi_bus_initialize(SPI3_HOST, &bus_config, dmabus);
-    if (bus_ret == ESP_OK) {
-      bus_init_success = true;
-    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
-      printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
-      return bus_ret;
-    }
-  }
-#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
   {
     esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
     if (bus_ret == ESP_OK) {
@@ -510,7 +527,19 @@ esp_err_t sd_card_init(void) {
       return bus_ret;
     }
   }
-#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+#elif !defined(CONFIG_USE_TDECK)
+#if !defined(CONFIG_ENCODER_INA)
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  {
+    esp_err_t bus_ret = spi_bus_initialize(SPI3_HOST, &bus_config, dmabus);
+    if (bus_ret == ESP_OK) {
+      bus_init_success = true;
+    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
+      printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
+      return bus_ret;
+    }
+  }
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
   {
     esp_err_t bus_ret = spi_bus_initialize(SPI2_HOST, &bus_config, dmabus);
     if (bus_ret == ESP_OK) {
@@ -584,6 +613,7 @@ esp_err_t sd_card_init(void) {
   sd_card_setup_directory_structure();
 
   if (gating_template) {
+    sd_card_update_cached_stats();
     sd_card_unmount();
     if (display_was_suspended) {
       display_spi_resume_after_sd();
@@ -682,6 +712,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   }
   sd_card_manager.is_initialized = true;
   s_mount_type = MOUNT_SPI;
+  sd_card_update_cached_stats();
   s_next_unmount_tick = xTaskGetTickCount() + pdMS_TO_TICKS(300);
   return ESP_OK;
 #else
