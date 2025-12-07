@@ -73,6 +73,7 @@
 - Fixed status bar not resetting from rainbow styling when switching RGB mode back to normal
 - Fixed apps menu not using the correct directions for joystick control
 - Fixed crash after BLE deinit and during WiFi init
+- Fixed IR learn remote popup Cancel button not responding
 
 ## Revival v1.8.1
 
