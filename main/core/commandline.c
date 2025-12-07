@@ -1569,6 +1569,59 @@ void handle_eth_down_cmd(int argc, char **argv) {
     }
 }
 
+// Helper function to ensure Ethernet interface is initialized
+// Returns true if interface is ready, false otherwise
+static bool ensure_eth_interface_up(void) {
+    esp_netif_t *eth_netif = ethernet_manager_get_netif();
+    if (eth_netif == NULL) {
+        // Interface not initialized, bring it up automatically
+        glog("Ethernet interface not initialized. Bringing it up...\n");
+        esp_err_t ret = ethernet_manager_init();
+        if (ret != ESP_OK) {
+            glog("Failed to initialize Ethernet: %s\n", esp_err_to_name(ret));
+            return false;
+        }
+        glog("Ethernet interface initialized. Waiting for link and DHCP...\n");
+        
+        // Wait for link to establish
+        int link_wait_count = 0;
+        while (!ethernet_manager_is_connected() && link_wait_count < 50) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            link_wait_count++;
+        }
+        
+        if (!ethernet_manager_is_connected()) {
+            glog("Ethernet link not established after 10 seconds\n");
+            return false;
+        }
+        
+        // Wait for DHCP to assign IP address
+        esp_netif_ip_info_t ip_info;
+        int dhcp_wait_count = 0;
+        const int MAX_DHCP_WAIT = 75; // 15 seconds total (75 * 200ms)
+        
+        while (dhcp_wait_count < MAX_DHCP_WAIT) {
+            if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+                char ip_str[16];
+                ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+                glog("Ethernet ready with IP address: %s\n", ip_str);
+                return true;
+            }
+            // Show progress every 2.5 seconds
+            if (dhcp_wait_count > 0 && dhcp_wait_count % 12 == 0) {
+                glog("Waiting for DHCP... (%d seconds)\n", dhcp_wait_count / 5);
+            }
+            vTaskDelay(pdMS_TO_TICKS(200));
+            dhcp_wait_count++;
+        }
+        
+        // If we get here, DHCP hasn't assigned an IP yet
+        glog("Warning: DHCP has not assigned an IP address yet (waited 15 seconds)\n");
+        glog("The interface is up but may not be fully ready. Continuing anyway...\n");
+    }
+    return true;
+}
+
 void handle_eth_info_cmd(int argc, char **argv) {
     glog("Ethernet Information\n");
     glog("===================\n");
@@ -1653,6 +1706,11 @@ void handle_eth_info_cmd(int argc, char **argv) {
 }
 
 void handle_eth_arp_cmd(int argc, char **argv) {
+    // Ensure Ethernet interface is initialized
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
     // Check if Ethernet is connected
     if (!ethernet_manager_is_connected()) {
         glog("Ethernet is not connected. Please connect Ethernet first.\n");
@@ -1768,6 +1826,11 @@ void handle_eth_arp_cmd(int argc, char **argv) {
 }
 
 void handle_eth_ports_cmd(int argc, char **argv) {
+    // Ensure Ethernet interface is initialized
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
     // Check if Ethernet is connected
     if (!ethernet_manager_is_connected()) {
         glog("Ethernet is not connected. Please connect Ethernet first.\n");
@@ -2035,6 +2098,11 @@ static bool ping_host(const char *ip_addr, uint32_t timeout_ms) {
 }
 
 void handle_eth_ping_cmd(int argc, char **argv) {
+    // Ensure Ethernet interface is initialized
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
     // Check if Ethernet is connected
     if (!ethernet_manager_is_connected()) {
         glog("Ethernet is not connected. Please connect Ethernet first.\n");
@@ -2186,6 +2254,11 @@ void handle_eth_dns_cmd(int argc, char **argv) {
 
 // ethtrace - Traceroute
 void handle_eth_trace_cmd(int argc, char **argv) {
+    // Ensure Ethernet interface is initialized
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
     if (!ethernet_manager_is_connected()) {
         glog("Ethernet is not connected. Please connect Ethernet first.\n");
         return;
