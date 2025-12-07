@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_eth.h"
+#include "esp_eth_driver.h"
 #include "esp_eth_mac.h"
 #include "esp_eth_phy.h"
 #include "esp_eth_mac_spi.h"
@@ -178,7 +179,11 @@ esp_err_t ethernet_manager_init(void)
 
     // Install GPIO ISR handler for SPI Ethernet module interrupts (ignore if already installed)
     esp_err_t isr_ret = gpio_install_isr_service(0);
-    if (isr_ret != ESP_OK && isr_ret != ESP_ERR_INVALID_STATE) {
+    if (isr_ret == ESP_ERR_INVALID_STATE) {
+        // GPIO ISR service already installed (e.g., from previous initialization)
+        // This is expected and harmless, continue with initialization
+        ESP_LOGD(TAG, "GPIO ISR service already installed, continuing...");
+    } else if (isr_ret != ESP_OK) {
         ESP_LOGE(TAG, "GPIO ISR service installation failed: %s", esp_err_to_name(isr_ret));
         return isr_ret;
     }
@@ -390,7 +395,37 @@ esp_err_t ethernet_manager_init(void)
 
 bool ethernet_manager_is_connected(void)
 {
-    return s_eth_connected;
+    // If not initialized, return false
+    if (!s_eth_initialized || s_eth_handle == NULL) {
+        return false;
+    }
+    
+    // Try to read the PHY register to get current link status
+    // For W5500, PHYCFGR register address is 0x002E0000 (W5500_MAKE_MAP(0x002E, 0x00))
+    // Bit 0 of the register indicates link status
+    esp_eth_phy_reg_rw_data_t reg;
+    uint32_t reg_val = 0;
+    reg.reg_addr = 0x002E0000; // W5500_REG_PHYCFGR
+    reg.reg_value_p = &reg_val;
+    
+    esp_err_t ret = esp_eth_ioctl(s_eth_handle, ETH_CMD_READ_PHY_REG, &reg);
+    if (ret == ESP_OK) {
+        // Check bit 0 for link status (1 = link up, 0 = link down)
+        bool link_up = (reg_val & 0x01) != 0;
+        
+        // Update cached status if it changed
+        if (link_up != s_eth_connected) {
+            s_eth_connected = link_up;
+            ESP_LOGD(TAG, "Link status changed: %s", link_up ? "UP" : "DOWN");
+        }
+        
+        return link_up;
+    } else {
+        // If reading register fails, fall back to cached status
+        ESP_LOGD(TAG, "Failed to read PHY register, using cached status: %s", 
+                 s_eth_connected ? "UP" : "DOWN");
+        return s_eth_connected;
+    }
 }
 
 esp_err_t ethernet_manager_get_ip_info(esp_netif_ip_info_t *ip_info)
