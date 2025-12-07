@@ -34,9 +34,11 @@
 #include "lwip/icmp.h"
 #include "lwip/inet.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
+#include <time.h>
 // Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
 void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #endif
@@ -2684,6 +2686,67 @@ void handle_eth_serv_cmd(int argc, char **argv) {
 
     glog("\nFound %d open service(s)\n", found_count);
 }
+
+// ethntp - Query NTP server and set system time
+void handle_eth_ntp_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        status_display_show_status("Eth Not Connected");
+        return;
+    }
+
+    const char *ntp_server = "pool.ntp.org";
+    if (argc >= 2) {
+        ntp_server = argv[1];
+    }
+
+    glog("Querying NTP server: %s\n", ntp_server);
+    glog("Please wait...\n");
+
+    // Initialize SNTP with the specified server
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntp_server);
+    esp_err_t ret = esp_netif_sntp_init(&config);
+    if (ret != ESP_OK) {
+        glog("Failed to initialize SNTP: %s\n", esp_err_to_name(ret));
+        status_display_show_status("NTP Init Fail");
+        return;
+    }
+
+    // Wait for time synchronization (with timeout)
+    const int timeout_ms = 10000; // 10 seconds
+    ret = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(timeout_ms));
+    
+    if (ret != ESP_OK) {
+        glog("Failed to synchronize time within %d seconds\n", timeout_ms / 1000);
+        glog("Error: %s\n", esp_err_to_name(ret));
+        esp_netif_sntp_deinit();
+        status_display_show_status("NTP Sync Fail");
+        return;
+    }
+
+    // Get the synchronized time
+    time_t now;
+    struct tm timeinfo;
+    char strftime_buf[64];
+    
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    
+    glog("Time synchronized successfully!\n");
+    glog("Current system time: %s\n", strftime_buf);
+    
+    // Also show UTC time
+    struct tm timeinfo_utc;
+    gmtime_r(&now, &timeinfo_utc);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S UTC", &timeinfo_utc);
+    glog("UTC time: %s\n", strftime_buf);
+    
+    // Clean up SNTP
+    esp_netif_sntp_deinit();
+    
+    status_display_show_status("NTP Sync OK");
+}
 #endif
 
 void handle_startwd(int argc, char **argv) {
@@ -3373,7 +3436,17 @@ void handle_help(int argc, char **argv) {
         printf("        [ip_address] : Target IP address (default: gateway)\n");
         printf("    Scans: Common services (FTP, SSH, Telnet, SMTP, HTTP, HTTPS, etc.)\n");
         printf("    Example: ethserv 192.168.1.1\n\n");
-        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv\n");
+        printf("ethntp\n");
+        printf("    Description: Query NTP server and synchronize system time.\n");
+        printf("    Usage: ethntp [ntp_server]\n");
+        printf("    Arguments:\n");
+        printf("        [ntp_server] : NTP server hostname or IP (default: pool.ntp.org)\n");
+        printf("    Examples:\n");
+        printf("        ethntp\n");
+        printf("        ethntp pool.ntp.org\n");
+        printf("        ethntp time.google.com\n");
+        printf("    Note: Requires Ethernet connection to be active\n\n");
+        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv, ethntp\n");
         return;
     }
 #endif
@@ -5919,6 +5992,7 @@ void register_commands() {
     register_command("ethconfig", handle_eth_config_cmd);
     register_command("ethmac", handle_eth_mac_cmd);
     register_command("ethserv", handle_eth_serv_cmd);
+    register_command("ethntp", handle_eth_ntp_cmd);
 #endif
     register_command("mirror", handle_mirror_cmd);
     register_command("input", handle_input_cmd);
