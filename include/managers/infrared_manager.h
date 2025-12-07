@@ -86,4 +86,8 @@ typedef struct {
 rmt_channel_handle_t infrared_manager_get_rx_channel(void);
 QueueHandle_t infrared_manager_get_rx_queue(void);
 
+bool infrared_manager_dazzler_start(void);
+void infrared_manager_dazzler_stop(void);
+bool infrared_manager_dazzler_is_active(void);
+
 #endif // INFRARED_MANAGER_H

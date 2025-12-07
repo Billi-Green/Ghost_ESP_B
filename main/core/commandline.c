@@ -702,6 +702,9 @@ void handle_stop_flipper(int argc, char **argv) {
     // also stop any in-progress IR RX (ir rx / ir learn)
     infrared_manager_rx_cancel();
 
+    // stop IR dazzler if running
+    infrared_manager_dazzler_stop();
+
     // also stop the gps info display task if it is running
     if (gps_info_task_handle != NULL) {
         vTaskDelete(gps_info_task_handle);
@@ -2049,7 +2052,10 @@ void handle_help(int argc, char **argv) {
         printf("           ir universals send <index>\n");
         printf("           ir universals sendall <file|TURNHISTVOFF> [delay_ms]\n");
         printf("           ir universals show <file|TURNHISTVOFF>\n\n");
-        TERMINAL_VIEW_ADD_TEXT("ir send, ir learn, ir list, ir rx, ir show, ir universals\n");
+        printf("ir dazzler\n");
+        printf("    Description: IR dazzler mode - emit continuous IR to interfere with cameras.\n");
+        printf("    Usage: ir dazzler [stop]\n\n");
+        TERMINAL_VIEW_ADD_TEXT("ir send, ir learn, ir list, ir rx, ir show, ir universals, ir dazzler\n");
         return;
     }
 #endif
@@ -3999,13 +4005,14 @@ static void ir_rx_learn_task(void *arg) {
 
 void handle_ir_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("Usage: ir <send|inline|list|show|universals|rx>\n");
+        glog("Usage: ir <send|inline|list|show|universals|rx|dazzler>\n");
         glog("  ir send <path|remote_index> [button_index]\n");
         glog("  ir inline\n");
         glog("  ir list [path]\n");
         glog("  ir show <path|remote_index>\n");
         glog("  ir universals <list|send|sendall> ...\n");
         glog("  ir rx\n");
+        glog("  ir dazzler [stop]\n");
         return;
     }
 
@@ -4378,6 +4385,28 @@ void handle_ir_cmd(int argc, char **argv) {
             return;
         }
         glog("IR learn task started; use 'stop' to cancel.\n");
+        return;
+    }
+
+    if (strcmp(sub, "dazzler") == 0) {
+        if (argc >= 3 && strcmp(argv[2], "stop") == 0) {
+            if (infrared_manager_dazzler_is_active()) {
+                infrared_manager_dazzler_stop();
+                glog("IR_DAZZLER:STOPPING\n");
+            } else {
+                glog("IR_DAZZLER:NOT_RUNNING\n");
+            }
+            return;
+        }
+        if (infrared_manager_dazzler_is_active()) {
+            glog("IR_DAZZLER:ALREADY_RUNNING\n");
+            return;
+        }
+        if (infrared_manager_dazzler_start()) {
+            glog("IR_DAZZLER:STARTED\n");
+        } else {
+            glog("IR_DAZZLER:FAILED\n");
+        }
         return;
     }
 

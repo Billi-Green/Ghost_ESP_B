@@ -122,6 +122,8 @@ static size_t uni_command_count = 0;
 static char current_universal_file[256] = "";
 static lv_obj_t *transmitting_popup = NULL;
 static TaskHandle_t universal_task_handle = NULL;
+static lv_obj_t *dazzler_popup = NULL;
+static lv_obj_t *dazzler_stop_btn = NULL;
 // background sd io worker for infrared
 typedef enum { IR_IO_SAVE = 1, IR_IO_APPEND = 2, IR_IO_RENAME = 3, IR_IO_DELETE = 4 } IrIoOp_t;
 typedef struct {
@@ -569,6 +571,9 @@ static void add_encoder_back_btn(void);
 static void cleanup_transmit_popup(void *obj);
 static void cleanup_learning_popup(void *obj);
 static void universal_transmit_task(void *arg);
+static void dazzler_event_cb(lv_event_t *e);
+static void dazzler_stop_cb(lv_event_t *e);
+static void cleanup_dazzler_popup(void *obj);
 
 static void clear_ir_file_paths(void) {
     if (!ir_file_paths) {
@@ -783,6 +788,59 @@ static void cleanup_transmit_popup(void *obj) {
         lv_obj_del(transmitting_popup);
         transmitting_popup = NULL;
     }
+}
+
+static void cleanup_dazzler_popup(void *obj) {
+    if (dazzler_popup) {
+        lv_obj_del(dazzler_popup);
+        dazzler_popup = NULL;
+        dazzler_stop_btn = NULL;
+    }
+}
+
+static void dazzler_stop_cb(lv_event_t *e) {
+    ESP_LOGI(TAG, "Dazzler stop button pressed");
+    infrared_manager_dazzler_stop();
+    cleanup_dazzler_popup(NULL);
+}
+
+static void dazzler_event_cb(lv_event_t *e) {
+    ESP_LOGI(TAG, "IR Dazzler button pressed");
+    
+    if (infrared_manager_dazzler_is_active()) {
+        infrared_manager_dazzler_stop();
+        return;
+    }
+    
+    if (!infrared_manager_dazzler_start()) {
+        ESP_LOGE(TAG, "Failed to start dazzler");
+        return;
+    }
+    
+    lv_coord_t scr_w = LV_HOR_RES;
+    lv_coord_t scr_h = LV_VER_RES;
+    lv_coord_t popup_w = scr_w - 40;
+    if (popup_w > 280) popup_w = 280;
+    if (popup_w < 160) popup_w = scr_w - 20;
+    lv_coord_t popup_h = 120;
+    if (scr_h < 200) popup_h = scr_h - 40;
+    if (popup_h < 80) popup_h = 80;
+    
+    dazzler_popup = popup_create_container(lv_scr_act(), popup_w, popup_h);
+    lv_obj_center(dazzler_popup);
+    
+    lv_obj_t *title = popup_create_title_label(dazzler_popup, "IR Dazzler Active", &lv_font_montserrat_16, 15);
+    (void)title;
+    
+    lv_obj_t *info = popup_create_body_label(dazzler_popup, "Emitting IR...", popup_w - 20, true, &lv_font_montserrat_14, 45);
+    lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(info, LV_ALIGN_TOP_MID, 0, 45);
+    
+    lv_coord_t btn_w = 100;
+    if (btn_w > popup_w - 40) btn_w = popup_w - 40;
+    dazzler_stop_btn = popup_add_styled_button(dazzler_popup, "Stop", btn_w, 30, 
+                                                LV_ALIGN_BOTTOM_MID, 0, -10, NULL, 
+                                                dazzler_stop_cb, NULL);
 }
 
 static void ir_sd_worker_task(void *arg)
@@ -1155,11 +1213,25 @@ static void back_event_cb(lv_event_t *e) {
         lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
 #endif
 
+        lv_obj_t *dazzler_btn = lv_list_add_btn(list, NULL, "IR Dazzler");
+        lv_obj_set_width(dazzler_btn, LV_HOR_RES);
+        lv_obj_set_style_bg_color(dazzler_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_width(dazzler_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(dazzler_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(dazzler_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *dazzler_label = lv_obj_get_child(dazzler_btn, 0);
+        if (dazzler_label) {
+            lv_obj_set_style_text_font(dazzler_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(dazzler_label, lv_color_hex(0xFFFFFF), 0);
+        }
+        lv_obj_add_event_cb(dazzler_btn, dazzler_event_cb, LV_EVENT_CLICKED, NULL);
+
         num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
 #ifdef CONFIG_HAS_INFRARED_RX
         num_ir_items++; // account for learn remote button
         num_ir_items++; // account for easy learn button
 #endif
+        num_ir_items++; // account for dazzler button
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         add_encoder_back_btn();
 #endif
@@ -1291,11 +1363,25 @@ void infrared_view_create(void) {
     lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
 #endif
 
+    lv_obj_t *dazzler_btn = lv_list_add_btn(list, NULL, "IR Dazzler");
+    lv_obj_set_width(dazzler_btn, LV_HOR_RES);
+    lv_obj_set_style_bg_color(dazzler_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(dazzler_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(dazzler_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dazzler_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t *dazzler_label = lv_obj_get_child(dazzler_btn, 0);
+    if (dazzler_label) {
+        lv_obj_set_style_text_font(dazzler_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(dazzler_label, lv_color_hex(0xFFFFFF), 0);
+    }
+    lv_obj_add_event_cb(dazzler_btn, dazzler_event_cb, LV_EVENT_CLICKED, NULL);
+
     num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
 #ifdef CONFIG_HAS_INFRARED_RX
     num_ir_items++; // account for learn remote button
     num_ir_items++; // account for easy learn button
 #endif
+    num_ir_items++; // account for dazzler button
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
@@ -1363,6 +1449,12 @@ void infrared_view_destroy(void) {
         universal_task_handle = NULL;
     }
     cleanup_transmit_popup(NULL);
+    
+    if (infrared_manager_dazzler_is_active()) {
+        infrared_manager_dazzler_stop();
+    }
+    cleanup_dazzler_popup(NULL);
+    
 #ifdef CONFIG_HAS_INFRARED_RX
     // Cleanup IR learning resources
     if (ir_learning_task_handle) {
@@ -1494,6 +1586,30 @@ void infrared_view_input_cb(InputEvent *event) {
             }
         }
     }
+    
+    // Handle dazzler popup input - any button press stops the dazzler
+    if (dazzler_popup && lv_obj_is_valid(dazzler_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *data = &event->data.touch_data;
+            if (data->state == LV_INDEV_STATE_PR) {
+                if (dazzler_stop_btn && lv_obj_is_valid(dazzler_stop_btn)) {
+                    lv_area_t area;
+                    lv_obj_get_coords(dazzler_stop_btn, &area);
+                    if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
+                        data->point.y >= area.y1 && data->point.y <= area.y2) {
+                        dazzler_stop_cb(NULL);
+                        return;
+                    }
+                }
+            }
+        } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER ||
+                   event->type == INPUT_TYPE_KEYBOARD) {
+            dazzler_stop_cb(NULL);
+            return;
+        }
+        return;
+    }
+    
 #ifdef CONFIG_HAS_INFRARED_RX
     // Handle learn remote popup input
     if (learning_popup && lv_obj_is_valid(learning_popup)) {
@@ -1720,12 +1836,20 @@ void infrared_view_input_cb(InputEvent *event) {
 #ifdef CONFIG_HAS_INFRARED_RX
                                 } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
                                     learn_remote_event_cb(NULL);
+                                } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
+                                    easy_learn_toggle_cb(NULL);
+                                } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                                    dazzler_event_cb(NULL);
+#else
+                                } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                                    dazzler_event_cb(NULL);
 #endif
                                 } else {
                                     int top_count = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
 #ifdef CONFIG_HAS_INFRARED_RX
                                     top_count += 2;
 #endif
+                                    top_count += 1;  // Dazzler
                                     int file_idx = i - top_count;
                                     file_event_open(file_idx);
                                 }
@@ -1778,12 +1902,20 @@ void infrared_view_input_cb(InputEvent *event) {
                 } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
                     ESP_LOGI(TAG, "joystick enter pressed on Easy Learn toggle");
                     easy_learn_toggle_cb(NULL);
+                } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                    ESP_LOGI(TAG, "joystick enter pressed on IR Dazzler");
+                    dazzler_event_cb(NULL);
+#else
+                } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                    ESP_LOGI(TAG, "joystick enter pressed on IR Dazzler");
+                    dazzler_event_cb(NULL);
 #endif
                 } else {
                     int top_count = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0)
 #ifdef CONFIG_HAS_INFRARED_RX
                         + 2  // Account for both Learn Remote and Easy Learn buttons
 #endif
+                        + 1  // Account for Dazzler button
                     ;
                     int file_idx = top_level ? (selected_ir_index - top_count) : selected_ir_index;
                     ESP_LOGI(TAG, "joystick enter pressed, opening selected file at index %d", file_idx);
@@ -1858,12 +1990,20 @@ void infrared_view_input_cb(InputEvent *event) {
                     } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
                         ESP_LOGI(TAG, "Keyboard Enter pressed on Easy Learn");
                         easy_learn_toggle_cb(NULL);
+                    } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                        ESP_LOGI(TAG, "Keyboard Enter pressed on IR Dazzler");
+                        dazzler_event_cb(NULL);
+#else
+                    } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                        ESP_LOGI(TAG, "Keyboard Enter pressed on IR Dazzler");
+                        dazzler_event_cb(NULL);
 #endif
                     } else {
                         int top_count = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0)
 #ifdef CONFIG_HAS_INFRARED_RX
                             + 2  // Account for both Learn Remote and Easy Learn buttons
 #endif
+                            + 1  // Account for Dazzler button
                         ;
                         int file_idx = top_level ? (selected_ir_index - top_count) : selected_ir_index;
                         ESP_LOGI(TAG, "Keyboard Enter pressed, opening selected file at index %d", file_idx);
@@ -1932,12 +2072,18 @@ void infrared_view_input_cb(InputEvent *event) {
                         learn_remote_event_cb(NULL);
                     } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
                         easy_learn_toggle_cb(NULL);
+                    } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                        dazzler_event_cb(NULL);
+#else
+                    } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                        dazzler_event_cb(NULL);
 #endif
                     } else {
                         int file_idx = selected_ir_index - ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0)
 #ifdef CONFIG_HAS_INFRARED_RX
                             + 2  // Account for both Learn Remote and Easy Learn buttons
 #endif
+                            + 1  // Account for Dazzler button
                         );
                         file_event_open(file_idx);
                     }

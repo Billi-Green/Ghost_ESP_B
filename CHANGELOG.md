@@ -40,6 +40,7 @@
 - Added GATT scanning, service scanning and rssi tracking
 - Added support for wired screen mirroring
 - Added USB HID keyboard host support on ESP32-S3 devices for controlling the UI and inputting text
+- Added IR Dazzler functionality to pulse IR at 38kHz 95% duty load
 
 ### Changed
 
