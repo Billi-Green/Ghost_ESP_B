@@ -192,6 +192,12 @@ toc: true
 - **`ethdns reverse <ip_address>`** — Perform reverse DNS lookup.
 - **`ethtrace <hostname_or_ip> [max_hops]`** — Perform traceroute to a target host (default: 30 hops, max: 64).
 - **`ethserv [ip_address]`** — Service discovery and banner grabbing on a target IP (default: gateway). Scans common services (FTP, SSH, Telnet, SMTP, HTTP, HTTPS, etc.).
+- **`ethhttp <url> [lines|all]`** — Send HTTP/HTTPS GET request to a server and display response.
+  - Default: shows first 25 lines
+  - `[lines]`: show first N lines (e.g., `ethhttp http://example.com 50`)
+  - `all`: show full response (e.g., `ethhttp http://example.com all`)
+  - Supports both HTTP and HTTPS (TLS 1.2)
+  - Examples: `ethhttp http://example.com`, `ethhttp https://www.google.com 100`, `ethhttp http://192.168.1.1/index.html all`
 - **`ethntp [ntp_server]`** — Query NTP server and synchronize system time. Default server: `pool.ntp.org`. Examples: `ethntp`, `ethntp pool.ntp.org`, `ethntp time.google.com`.
 
 ### Configuration

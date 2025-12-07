@@ -39,6 +39,11 @@
 #include <arpa/inet.h>
 #include <sys/time.h>
 #include <time.h>
+#include "mbedtls/net_sockets.h"
+#include "mbedtls/ssl.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/error.h"
 // Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
 void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #endif
@@ -2747,6 +2752,509 @@ void handle_eth_ntp_cmd(int argc, char **argv) {
     
     status_display_show_status("NTP Sync OK");
 }
+
+// ethhttp - Send HTTP GET request and display response
+void handle_eth_http_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        status_display_show_status("Eth Not Connected");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethhttp <url> [lines|all]\n");
+        glog("Example: ethhttp http://example.com\n");
+        glog("         ethhttp http://example.com 50  (show first 50 lines)\n");
+        glog("         ethhttp http://example.com all  (show full response)\n");
+        status_display_show_status("HTTP Usage");
+        return;
+    }
+
+    // Parse optional line limit - default is 25 lines
+    int max_lines = 25;  // Default to 25 lines
+    if (argc >= 3) {
+        if (strcasecmp(argv[2], "all") == 0) {
+            max_lines = 0;  // 0 means show all
+        } else {
+            max_lines = atoi(argv[2]);
+            if (max_lines <= 0) {
+                glog("Invalid line count. Use a positive number or 'all' for full response.\n");
+                status_display_show_status("HTTP Usage");
+                return;
+            }
+        }
+    }
+
+    const char *url = argv[1];
+    glog("Sending HTTP GET request to: %s\n", url);
+
+    // Parse URL - use smaller buffers to reduce stack usage
+    char hostname[128] = {0};
+    char path[256] = "/";
+    uint16_t port = 80;
+    bool is_https = false;
+
+    // Check for http:// or https://
+    const char *url_start = url;
+    if (strncmp(url, "http://", 7) == 0) {
+        url_start = url + 7;
+    } else if (strncmp(url, "https://", 8) == 0) {
+        url_start = url + 8;
+        port = 443;
+        is_https = true;
+    } else {
+        // No protocol specified, assume http://
+        url_start = url;
+    }
+
+    // Find hostname and path
+    const char *path_start = strchr(url_start, '/');
+    if (path_start != NULL) {
+        size_t hostname_len = path_start - url_start;
+        if (hostname_len >= sizeof(hostname)) {
+            hostname_len = sizeof(hostname) - 1;
+        }
+        strncpy(hostname, url_start, hostname_len);
+        hostname[hostname_len] = '\0';
+        strncpy(path, path_start, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+    } else {
+        strncpy(hostname, url_start, sizeof(hostname) - 1);
+        hostname[sizeof(hostname) - 1] = '\0';
+    }
+
+    // Check for port in hostname (e.g., example.com:8080)
+    char *port_str = strchr(hostname, ':');
+    if (port_str != NULL) {
+        *port_str = '\0';
+        port = (uint16_t)atoi(port_str + 1);
+        if (port == 0) {
+            port = is_https ? 443 : 80;
+        }
+    }
+
+    glog("Hostname: %s\n", hostname);
+    glog("Path: %s\n", path);
+    glog("Port: %d\n", port);
+
+    // Resolve hostname to IP address
+    struct hostent *host_entry = gethostbyname(hostname);
+    if (host_entry == NULL) {
+        glog("Failed to resolve hostname: %s\n", hostname);
+        status_display_show_status("DNS Resolve Fail");
+        return;
+    }
+
+    struct in_addr **addr_list = (struct in_addr **)host_entry->h_addr_list;
+    if (addr_list[0] == NULL) {
+        glog("No IP address found for hostname: %s\n", hostname);
+        status_display_show_status("DNS No IP");
+        return;
+    }
+
+    char ip_str[16];
+    // Convert struct in_addr to ip4_addr_t for LWIP compatibility
+    ip4_addr_t ip4_addr;
+    ip4_addr.addr = addr_list[0]->s_addr;
+    ip4addr_ntoa_r(&ip4_addr, ip_str, sizeof(ip_str));
+    glog("Resolved to IP: %s\n", ip_str);
+
+    // Prepare HTTP request
+    char request[512];
+    int request_len = snprintf(request, sizeof(request),
+                                "GET %s HTTP/1.1\r\n"
+                                "Host: %s\r\n"
+                                "User-Agent: GhostESP/1.0\r\n"
+                                "Connection: close\r\n"
+                                "\r\n",
+                                path, hostname);
+
+    if (request_len >= (int)sizeof(request)) {
+        glog("Request too long\n");
+        status_display_show_status("Request Too Long");
+        return;
+    }
+
+    // Variables for response handling
+    char buffer[128];
+    ssize_t total_received = 0;
+    // No size limit - we process in small chunks to avoid stack issues
+
+    if (is_https) {
+        // HTTPS using mbedTLS
+        // Use static contexts to reduce stack usage (mbedTLS contexts are very large ~5KB+)
+        // Since this is a synchronous command handler, static is safe
+        static mbedtls_entropy_context entropy;
+        static mbedtls_ctr_drbg_context ctr_drbg;
+        static mbedtls_net_context server_fd;
+        static mbedtls_ssl_context ssl;
+        static mbedtls_ssl_config conf;
+        static bool tls_initialized = false;
+        const char *pers = "ghost_esp_https";
+
+        // Initialize contexts (only once, reuse for subsequent calls)
+        if (!tls_initialized) {
+            mbedtls_entropy_init(&entropy);
+            mbedtls_ctr_drbg_init(&ctr_drbg);
+            mbedtls_net_init(&server_fd);
+            mbedtls_ssl_init(&ssl);
+            mbedtls_ssl_config_init(&conf);
+            if (mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+                                      (const unsigned char *)pers, strlen(pers)) != 0) {
+                glog("mbedTLS RNG seed failed\n");
+                mbedtls_ssl_config_free(&conf);
+                mbedtls_ssl_free(&ssl);
+                mbedtls_net_free(&server_fd);
+                mbedtls_ctr_drbg_free(&ctr_drbg);
+                mbedtls_entropy_free(&entropy);
+                status_display_show_status("TLS Init Fail");
+                return;
+            }
+            tls_initialized = true;
+        } else {
+            // Clean up previous connection state and reinit
+            mbedtls_ssl_free(&ssl);
+            mbedtls_net_free(&server_fd);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_ssl_init(&ssl);
+            mbedtls_net_init(&server_fd);
+            mbedtls_ssl_config_init(&conf);
+        }
+
+        // Configure SSL
+        int ret = mbedtls_ssl_config_defaults(&conf,
+                                              MBEDTLS_SSL_IS_CLIENT,
+                                              MBEDTLS_SSL_TRANSPORT_STREAM,
+                                              MBEDTLS_SSL_PRESET_DEFAULT);
+        if (ret != 0) {
+            glog("mbedTLS config defaults failed: -0x%04x\n", -ret);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Config Fail");
+            return;
+        }
+
+        // Set authmode to optional (skip certificate verification for simplicity)
+        mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+        mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+        mbedtls_ssl_conf_read_timeout(&conf, 10000); // 10 second timeout
+
+        // Setup SSL
+        ret = mbedtls_ssl_setup(&ssl, &conf);
+        if (ret != 0) {
+            glog("mbedTLS SSL setup failed: -0x%04x\n", -ret);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Setup Fail");
+            return;
+        }
+
+        // Set hostname for SNI
+        ret = mbedtls_ssl_set_hostname(&ssl, hostname);
+        if (ret != 0) {
+            glog("mbedTLS set hostname failed: -0x%04x\n", -ret);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Hostname Fail");
+            return;
+        }
+
+        // Connect TCP
+        char port_str[6];
+        snprintf(port_str, sizeof(port_str), "%d", port);
+        glog("Connecting to %s:%s...\n", ip_str, port_str);
+        
+        ret = mbedtls_net_connect(&server_fd, ip_str, port_str, MBEDTLS_NET_PROTO_TCP);
+        if (ret != 0) {
+            glog("mbedTLS connect failed: -0x%04x\n", -ret);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Connect Fail");
+            return;
+        }
+
+        // Set BIO callbacks
+        mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+
+        // Perform TLS handshake
+        glog("Performing TLS handshake...\n");
+        while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
+            if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                // Use smaller error buffer to reduce stack usage
+                char error_buf[128];
+                mbedtls_strerror(ret, error_buf, sizeof(error_buf));
+                glog("TLS handshake failed: -0x%04x - %s\n", -ret, error_buf);
+                mbedtls_ssl_free(&ssl);
+                mbedtls_ssl_config_free(&conf);
+                mbedtls_ctr_drbg_free(&ctr_drbg);
+                mbedtls_entropy_free(&entropy);
+                mbedtls_net_free(&server_fd);
+                status_display_show_status("TLS Handshake Fail");
+                return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+
+        glog("TLS handshake successful\n");
+        glog("Connected successfully (HTTPS)\n");
+        glog("==========================================\n");
+
+        // Send HTTP request over TLS
+        size_t written = 0;
+        while (written < (size_t)request_len) {
+            ret = mbedtls_ssl_write(&ssl, (const unsigned char *)request + written,
+                                    request_len - written);
+            if (ret < 0) {
+                if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                    glog("TLS write failed: -0x%04x\n", -ret);
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            written += ret;
+        }
+
+        if (written != (size_t)request_len) {
+            glog("Warning: Only sent %zu of %d bytes\n", written, request_len);
+        } else {
+            glog("Request sent (%d bytes)\n", request_len);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
+        glog("==========================================\n");
+        glog("Response:\n");
+        glog("==========================================\n");
+
+        // Receive response over TLS - process in small chunks with optional line limiting
+        int line_count = 0;
+        while (1) {
+            ret = mbedtls_ssl_read(&ssl, (unsigned char *)buffer, sizeof(buffer) - 1);
+            if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+                glog("\n[Connection closed by server]\n");
+                break;
+            }
+            if (ret <= 0) {
+                if (ret != 0) {
+                    glog("\n[TLS read error: -0x%04x]\n", -ret);
+                }
+                break;
+            }
+
+            // Process chunk with line counting and truncation
+            buffer[ret] = '\0';
+            int print_len = ret;
+            
+            if (max_lines > 0) {
+                // Count lines and find truncation point
+                for (int i = 0; i < ret; i++) {
+                    if (line_count >= max_lines) {
+                        print_len = i;
+                        break;
+                    }
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                        if (line_count >= max_lines) {
+                            print_len = i + 1;  // Include the newline
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Count lines for statistics (no truncation)
+                for (int i = 0; i < ret; i++) {
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                    }
+                }
+            }
+            
+            // Print the chunk (or truncated portion)
+            if (print_len > 0) {
+                glog("%.*s", print_len, buffer);
+            }
+            
+            if (max_lines > 0 && line_count >= max_lines) {
+                glog("\n[Response truncated at %d lines]\n", max_lines);
+                goto https_done;
+            }
+            
+            total_received += ret;
+        }
+https_done:
+
+        // Cleanup TLS connection (keep static contexts for reuse)
+        mbedtls_ssl_close_notify(&ssl);
+        mbedtls_ssl_free(&ssl);
+        mbedtls_net_free(&server_fd);
+
+    } else {
+        // HTTP using regular sockets
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            glog("Failed to create socket: %d\n", errno);
+            status_display_show_status("Socket Create Fail");
+            return;
+        }
+
+        int opt = 1;
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        
+        struct timeval recv_timeout = {.tv_sec = 10, .tv_usec = 0};
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
+        
+        struct timeval send_timeout = {.tv_sec = 5, .tv_usec = 0};
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
+
+        int flags = fcntl(sock, F_GETFL, 0);
+        if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+            glog("Failed to set socket non-blocking: %d\n", errno);
+            close(sock);
+            status_display_show_status("Socket Config Fail");
+            return;
+        }
+
+        struct sockaddr_in server_addr;
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(port);
+        memcpy(&server_addr.sin_addr, addr_list[0], sizeof(struct in_addr));
+
+        int connect_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        
+        if (connect_result == 0) {
+            fcntl(sock, F_SETFL, flags);
+        } else if (errno == EINPROGRESS) {
+            struct timeval timeout = {.tv_sec = 10, .tv_usec = 0};
+            fd_set fdset;
+            FD_ZERO(&fdset);
+            FD_SET(sock, &fdset);
+
+            if (select(sock + 1, NULL, &fdset, NULL, &timeout) <= 0) {
+                glog("Connection timeout\n");
+                close(sock);
+                status_display_show_status("Connect Timeout");
+                return;
+            }
+
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+                glog("Connection failed: %d\n", error);
+                close(sock);
+                status_display_show_status("Connect Fail");
+                return;
+            }
+            fcntl(sock, F_SETFL, flags);
+        } else {
+            glog("Failed to connect: %d\n", errno);
+            close(sock);
+            status_display_show_status("Connect Fail");
+            return;
+        }
+
+        glog("Connected successfully\n");
+        glog("==========================================\n");
+
+        ssize_t sent = send(sock, request, request_len, 0);
+        if (sent < 0) {
+            glog("Failed to send request: %d\n", errno);
+            close(sock);
+            status_display_show_status("Send Fail");
+            return;
+        }
+
+        if (sent != request_len) {
+            glog("Warning: Only sent %d of %d bytes\n", (int)sent, request_len);
+        }
+
+        glog("Request sent (%d bytes)\n", (int)sent);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        glog("==========================================\n");
+        glog("Response:\n");
+        glog("==========================================\n");
+
+        recv_timeout.tv_sec = 10;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
+
+        // Receive response - process in small chunks with optional line limiting
+        int line_count = 0;
+        while (1) {
+            ssize_t received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+            if (received <= 0) {
+                if (received == 0) {
+                    glog("\n[Connection closed by server]\n");
+                } else if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) {
+                    glog("\n[Receive timeout]\n");
+                } else {
+                    glog("\n[Receive error: %d]\n", errno);
+                }
+                break;
+            }
+
+            // Process chunk with line counting and truncation
+            buffer[received] = '\0';
+            int print_len = received;
+            
+            if (max_lines > 0) {
+                // Count lines and find truncation point
+                for (int i = 0; i < received; i++) {
+                    if (line_count >= max_lines) {
+                        print_len = i;
+                        break;
+                    }
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                        if (line_count >= max_lines) {
+                            print_len = i + 1;  // Include the newline
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Count lines for statistics (no truncation)
+                for (int i = 0; i < received; i++) {
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                    }
+                }
+            }
+            
+            // Print the chunk (or truncated portion)
+            if (print_len > 0) {
+                glog("%.*s", print_len, buffer);
+            }
+            
+            if (max_lines > 0 && line_count >= max_lines) {
+                glog("\n[Response truncated at %d lines]\n", max_lines);
+                goto http_done;
+            }
+            
+            total_received += received;
+        }
+http_done:
+
+        // Cleanup socket connection
+        if (sock >= 0) {
+            shutdown(sock, SHUT_RDWR);
+            close(sock);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    glog("\n==========================================\n");
+    glog("Total received: %zu bytes\n", total_received);
+    
+    status_display_show_status(is_https ? "HTTPS OK" : "HTTP OK");
+}
 #endif
 
 void handle_startwd(int argc, char **argv) {
@@ -3446,7 +3954,19 @@ void handle_help(int argc, char **argv) {
         printf("        ethntp pool.ntp.org\n");
         printf("        ethntp time.google.com\n");
         printf("    Note: Requires Ethernet connection to be active\n\n");
-        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv, ethntp\n");
+        printf("ethhttp\n");
+        printf("    Description: Send HTTP/HTTPS GET request to a server and display response.\n");
+        printf("    Usage: ethhttp <url> [lines|all]\n");
+        printf("    Arguments:\n");
+        printf("        <url>  : Full URL including protocol (http:// or https://)\n");
+        printf("        [lines]: Optional - show first N lines (default: 25, use 'all' for full)\n");
+        printf("    Examples:\n");
+        printf("        ethhttp http://example.com  (shows first 25 lines)\n");
+        printf("        ethhttp https://www.google.com 50  (shows first 50 lines)\n");
+        printf("        ethhttp http://192.168.1.1/index.html all  (shows full response)\n");
+        printf("        ethhttp https://example.com:8443/api/data 100\n");
+        printf("    Note: Default is 25 lines. Use 'all' for complete responses. HTTPS uses TLS 1.2.\n\n");
+        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv, ethntp, ethhttp\n");
         return;
     }
 #endif
@@ -5993,6 +6513,7 @@ void register_commands() {
     register_command("ethmac", handle_eth_mac_cmd);
     register_command("ethserv", handle_eth_serv_cmd);
     register_command("ethntp", handle_eth_ntp_cmd);
+    register_command("ethhttp", handle_eth_http_cmd);
 #endif
     register_command("mirror", handle_mirror_cmd);
     register_command("input", handle_input_cmd);
