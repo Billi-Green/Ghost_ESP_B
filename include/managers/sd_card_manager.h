@@ -49,6 +49,13 @@ bool sd_card_is_virtual_storage();
 esp_err_t sd_card_mount_for_flush(bool *display_was_suspended);
 void sd_card_unmount_after_flush(bool display_was_suspended);
 
+// cached SD stats for HUD (updated during mount operations)
+typedef struct {
+    bool valid;
+    int used_pct;
+} sd_card_cached_stats_t;
+void sd_card_get_cached_stats(sd_card_cached_stats_t *out);
+
 // List evil portal directories from SD card
 int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]);
 

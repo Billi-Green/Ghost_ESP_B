@@ -7,6 +7,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <stdbool.h>
+#include "core/esp_comm_manager.h"
+#include "managers/ap_manager.h"
 
 #define GLOG_BUF_SIZE 512
 #define GLOG_DEFER_MAX 8

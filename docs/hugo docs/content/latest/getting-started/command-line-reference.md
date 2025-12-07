@@ -135,6 +135,7 @@ toc: true
 - **`ir universals sendall <file|TURNHISTVOFF> <button_name> [delay_ms]`** — Transmit all signals for a named button from a universal file or the built‑in TURNHISTVOFF set; can be stopped with `stop`.
 - **`ir rx [timeout]`** — Wait up to `timeout` seconds (default 60) for a single IR signal, print it (decoded or RAW), then stop.
 - **`ir learn [path]`** — Wait for a signal (10s). Without `path`, auto-create a new `.ir` file under `/mnt/ghostesp/infrared/remotes`; with `path`, append the learned signal to that file.
+- **`ir dazzler [stop]`** — Start/stop continuous IR dazzler flood. Responses are machine-parsable: `IR_DAZZLER:STARTED`, `IR_DAZZLER:FAILED`, `IR_DAZZLER:ALREADY_RUNNING`, `IR_DAZZLER:STOPPING`, `IR_DAZZLER:NOT_RUNNING`.
 - **`[IR/BEGIN]` / `[IR/CLOSE]` (UART IR envelope)**
   - **Usage:** Send `[IR/BEGIN]`, then a single IR message body, then `[IR/CLOSE]` on the same UART stream to trigger a one‑off transmit.
   - **Body format (`.ir` text block):** Same fields as a standard `.ir` file entry (for example: name, type, protocol, address, command).

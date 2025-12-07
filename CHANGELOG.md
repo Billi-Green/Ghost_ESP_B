@@ -32,7 +32,7 @@
 - Added dualcomm display menu when connected to a peer with split view terminal showing normal/peer response logs
 - Added AirTag RSSI update logging so existing tags report RSSI changes every few seconds
 - Added 'Invert Encoder' setting to display UI for configs with encoders
-- Added 'Starfield', 'Matrix' and 'HUD' idle animations for the status display
+- Added 9 new animations for the status display - @jaylikesbunda, @tototo31
 - Added CLI commands for changing the status display animations
 - Added JTAG support for ESP32C5
 - Added basic Mifare Desfire detection
@@ -40,6 +40,7 @@
 - Added GATT scanning, service scanning and rssi tracking
 - Added support for wired screen mirroring
 - Added USB HID keyboard host support on ESP32-S3 devices for controlling the UI and inputting text
+- Added IR Dazzler functionality to pulse IR at 38kHz 95% duty load
 
 ### Changed
 
@@ -73,6 +74,7 @@
 - Fixed status bar not resetting from rainbow styling when switching RGB mode back to normal
 - Fixed apps menu not using the correct directions for joystick control
 - Fixed crash after BLE deinit and during WiFi init
+- Fixed IR learn remote popup Cancel button not responding
 
 ## Revival v1.8.1
 

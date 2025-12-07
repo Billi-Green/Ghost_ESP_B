@@ -58,8 +58,8 @@
 #include "managers/fuel_gauge_manager.h"
 #endif
 
-// Global low-I2C activity mode. When true, subsystems should avoid I2C-heavy polling/logging
-// to reduce contention (e.g., while PN532 scanning/bruteforcing).
+QueueHandle_tt input_queue = NULL;
+
 static volatile bool g_low_i2c_mode = false;
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
