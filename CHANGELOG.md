@@ -32,7 +32,7 @@
 - Added dualcomm display menu when connected to a peer with split view terminal showing normal/peer response logs
 - Added AirTag RSSI update logging so existing tags report RSSI changes every few seconds
 - Added 'Invert Encoder' setting to display UI for configs with encoders
-- Added 'Starfield', 'Matrix' and 'HUD' idle animations for the status display - @jaylikesbunda, @tototo31
+- Added 9 new animations for the status display - @jaylikesbunda, @tototo31
 - Added CLI commands for changing the status display animations
 - Added JTAG support for ESP32C5
 - Added basic Mifare Desfire detection
