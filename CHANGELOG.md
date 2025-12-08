@@ -54,6 +54,7 @@
 - Removed unused buffer to save 8KB ram
 - Renamed Dual Comm UI and documentation branding to GhostLink
 - Minor keyboard view logic and styling refactor
+- Terminal enter/select now submits text if typed, otherwise opens keyboard view
 
 ### Fixed
 

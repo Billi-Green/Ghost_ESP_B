@@ -988,9 +988,10 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
   } else if (event->type == INPUT_TYPE_JOYSTICK) {
     int button = event->data.joystick_index;
     
-    if (button == 1) {
-      // Open keyboard for text input
-      if (input_label) {
+    if (button == 1 || button == 3) {
+      if (input_len > 0) {
+        submit_text();
+      } else if (input_label) {
         keyboard_view_set_return_view(&terminal_view);
         keyboard_view_set_submit_callback(keyboard_input_callback);
         keyboard_view_set_placeholder("Enter command...");
@@ -1000,10 +1001,8 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_up();
     } else if (button == 4) {
       scroll_terminal_down();
-    } else if (button == 0) { // left - exit terminal
+    } else if (button == 0) {
       stop_all_operations();
-    } else if (button == 3) { // right - submit text
-      submit_text();
     }
   } else if (event->type == INPUT_TYPE_KEYBOARD) {
     uint8_t key = event->data.key_value;
@@ -1013,8 +1012,15 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_up();
     } else if (key == 46 || key == '.') {      //down arrow
       scroll_terminal_down();
-    } else if (key == 13){
-      submit_text();
+    } else if (key == 13) {
+      if (input_len > 0) {
+        submit_text();
+      } else if (input_label) {
+        keyboard_view_set_return_view(&terminal_view);
+        keyboard_view_set_submit_callback(keyboard_input_callback);
+        keyboard_view_set_placeholder("Enter command...");
+        display_manager_switch_view(&keyboard_view);
+      }
     } else if (key == 8 || key == 127) { // backspace
       remove_char_from_buffer();
     } else if (key == 32) { // space
@@ -1037,8 +1043,15 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
         ESP_LOGD(TAG, "Encoder button press debounced");
         return;
       }
-      stop_all_operations();
-      createdTimeInMs = now_ms; // Update last press time
+      createdTimeInMs = now_ms;
+      if (input_len > 0) {
+        submit_text();
+      } else if (input_label) {
+        keyboard_view_set_return_view(&terminal_view);
+        keyboard_view_set_submit_callback(keyboard_input_callback);
+        keyboard_view_set_placeholder("Enter command...");
+        display_manager_switch_view(&keyboard_view);
+      }
     } else {
       if (event->data.encoder.direction > 0) {
         scroll_terminal_down();
