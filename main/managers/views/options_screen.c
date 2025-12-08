@@ -314,6 +314,8 @@ static const char *dual_comm_ethernet_options[] = {
     "Ping Scan",
     "DNS Lookup",
     "Traceroute",
+    "HTTP Request",
+    "Sync NTP Time",
     "Network Stats",
     "Show Config",
     NULL
@@ -548,6 +550,7 @@ static void dual_comm_wifi_connect_kb_cb(const char *text);
 static void dual_comm_karma_custom_ssids_cb(const char *text);
 static void dual_comm_dns_lookup_kb_cb(const char *text);
 static void dual_comm_traceroute_kb_cb(const char *text);
+static void dual_comm_http_request_kb_cb(const char *text);
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 static void zigbee_capture_kb_cb(const char *text);
 #endif
@@ -1510,6 +1513,9 @@ void option_event_cb(lv_event_t *e) {
                 return;
             } else if (strcmp(Selected_Option, "Ethernet") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_ETHERNET;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
             } else if (strcmp(Selected_Option, "Keyboard") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_KEYBOARD;
                 display_manager_switch_view(&options_menu_view);
@@ -1992,6 +1998,17 @@ void option_event_cb(lv_event_t *e) {
             keyboard_view_set_submit_callback(dual_comm_traceroute_kb_cb);
             display_manager_switch_view(&keyboard_view);
             keyboard_view_set_placeholder("Hostname or IP (e.g. 8.8.8.8)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "HTTP Request") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_http_request_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("URL (e.g. http://example.com or https://www.google.com)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Sync NTP Time") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethntp");
             view_switched = true;
         } else if (strcmp(Selected_Option, "Network Stats") == 0) {
             terminal_set_return_view(&options_menu_view);
@@ -2970,6 +2987,22 @@ static void dual_comm_traceroute_kb_cb(const char *text) {
 
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "commsend ethtrace %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_http_request_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a URL");
+        return;
+    }
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "commsend ethhttp %s", text);
 
     terminal_set_return_view(&options_menu_view);
     terminal_set_dualcomm_filter(true);
