@@ -41,6 +41,7 @@
 - Added support for wired screen mirroring
 - Added USB HID keyboard host support on ESP32-S3 devices for controlling the UI and inputting text
 - Added IR Dazzler functionality to pulse IR at 38kHz 95% duty load
+- Added SD Card CLI for control via WebSerial File Browser
 
 ### Changed
 

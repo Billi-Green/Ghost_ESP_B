@@ -30,7 +30,7 @@
 #define UART_NUM UART_NUM_1
 #endif
 #define BUF_SIZE (512)
-#define SERIAL_BUFFER_SIZE 256
+#define SERIAL_BUFFER_SIZE 512
 
 char serial_buffer[SERIAL_BUFFER_SIZE];
 static TaskHandle_t s_serial_task_handle = NULL;

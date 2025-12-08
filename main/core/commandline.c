@@ -50,6 +50,7 @@
 #include "managers/display_manager.h"
 #include "freertos/queue.h"
 #include "managers/usb_keyboard_manager.h"
+#include "mbedtls/base64.h"
 
 static const char *TAG = "Commandline";
 
@@ -1834,19 +1835,23 @@ void handle_help(int argc, char **argv) {
 
     if (strcmp(category, "sd") == 0) {
         glog("\nSD Card Commands:\n\n");
-        printf("-- SD Card Pin Configuration --\n");
-        printf("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
-        printf("These commands configure pins for the *active* mode.\n");
-        printf("Changing the mode requires recompiling firmware.\n");
-        TERMINAL_VIEW_ADD_TEXT("-- SD Card Pin Configuration --\n");
-        TERMINAL_VIEW_ADD_TEXT("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
-        TERMINAL_VIEW_ADD_TEXT("These commands configure pins for the *active* mode.\n");
-        TERMINAL_VIEW_ADD_TEXT("Changing the mode requires recompiling firmware.\n");
+        printf("-- File Operations (machine-parsable) --\n");
+        printf("sd status\n    Show SD mount status, type, capacity, usage.\n    Usage: sd status\n\n");
+        printf("sd list\n    List files/dirs with indices.\n    Usage: sd list [path]\n\n");
+        printf("sd info\n    Show file/dir details.\n    Usage: sd info <index|path>\n\n");
+        printf("sd size\n    Get file size.\n    Usage: sd size <index|path>\n\n");
+        printf("sd read\n    Read file (chunked downloads).\n    Usage: sd read <index|path> [offset] [length]\n\n");
+        printf("sd write\n    Create/overwrite file with base64 data.\n    Usage: sd write <path> <base64>\n\n");
+        printf("sd append\n    Append base64 data to file.\n    Usage: sd append <path> <base64>\n\n");
+        printf("sd mkdir\n    Create directory.\n    Usage: sd mkdir <path>\n\n");
+        printf("sd rm\n    Delete file or empty directory.\n    Usage: sd rm <index|path>\n\n");
+        printf("sd tree\n    Recursive listing.\n    Usage: sd tree [path] [depth]\n\n");
+        printf("-- Pin Configuration --\n");
         printf("sd_config\n    Show current SD GPIO pin configuration.\n    Usage: sd_config\n\n");
-        printf("sd_pins_mmc\n    Description: Set GPIO pins for SDMMC mode (1 or 4 bit). Requires restart/reinit.\n                 Only effective if firmware compiled for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n    Example: sd_pins_mmc 19 18 20 21 22 23\n\n");
-        printf("sd_pins_spi\n    Description: Set GPIO pins for SPI mode. Requires restart/reinit.\n                 Only effective if firmware compiled for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n    Example: sd_pins_spi 5 18 19 23\n\n");
-        printf("sd_save_config\n    Description: Save the current SD pin configuration (both modes) to the SD card.\n                 Requires SD card to be mounted.\n    Usage: sd_save_config\n\n");
-        TERMINAL_VIEW_ADD_TEXT("sd_config, sd_pins_mmc, sd_pins_spi, sd_save_config\n");
+        printf("sd_pins_mmc\n    Set GPIO pins for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n\n");
+        printf("sd_pins_spi\n    Set GPIO pins for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n\n");
+        printf("sd_save_config\n    Save pin config to NVS.\n    Usage: sd_save_config\n\n");
+        TERMINAL_VIEW_ADD_TEXT("sd, sd_config, sd_pins_mmc, sd_pins_spi, sd_save_config, sd size, sd read, sd write, sd append\n");
         return;
     }
 
@@ -2586,6 +2591,573 @@ void handle_sd_pins_spi(int argc, char **argv) {
 void handle_sd_save_config(int argc, char **argv) {
   sd_card_save_config();
   status_display_show_status("SD Saved");
+}
+
+#define SD_CLI_MAX_ENTRIES 128
+static char *g_sd_cli_paths[SD_CLI_MAX_ENTRIES];
+static uint8_t g_sd_cli_types[SD_CLI_MAX_ENTRIES];
+static size_t g_sd_cli_count = 0;
+
+static void sd_cli_clear_index(void) {
+    for (size_t i = 0; i < g_sd_cli_count; ++i) {
+        free(g_sd_cli_paths[i]);
+        g_sd_cli_paths[i] = NULL;
+    }
+    g_sd_cli_count = 0;
+}
+
+static bool sd_cli_is_number(const char *s) {
+    if (!s || !*s) return false;
+    while (*s) {
+        if (!isdigit((unsigned char)*s)) return false;
+        s++;
+    }
+    return true;
+}
+
+static const char *sd_cli_resolve_path(const char *arg, char *buf, size_t bufsize) {
+    if (sd_cli_is_number(arg) && g_sd_cli_count > 0) {
+        int idx = atoi(arg);
+        if (idx >= 0 && (size_t)idx < g_sd_cli_count) {
+            strncpy(buf, g_sd_cli_paths[idx], bufsize - 1);
+            buf[bufsize - 1] = '\0';
+            return buf;
+        }
+        return NULL;
+    }
+    if (arg[0] == '/') {
+        strncpy(buf, arg, bufsize - 1);
+    } else {
+        snprintf(buf, bufsize, "/mnt/ghostesp/%s", arg);
+    }
+    buf[bufsize - 1] = '\0';
+    return buf;
+}
+
+static bool sd_cli_jit_mounted = false;
+static bool sd_cli_display_suspended = false;
+
+static bool sd_cli_ensure_mounted(void) {
+    if (sd_card_manager.is_initialized) return true;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (sd_card_mount_for_flush(&sd_cli_display_suspended) == ESP_OK) {
+            sd_cli_jit_mounted = true;
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+static void sd_cli_cleanup(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (sd_cli_jit_mounted) {
+        sd_card_unmount_after_flush(sd_cli_display_suspended);
+        sd_cli_jit_mounted = false;
+        sd_cli_display_suspended = false;
+    }
+#endif
+}
+
+void handle_sd_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("SD:USAGE\n");
+        glog("  sd status                        - Show SD card status\n");
+        glog("  sd list [path]                   - List files/dirs with indices\n");
+        glog("  sd info <idx|path>               - Show file/dir info\n");
+        glog("  sd size <idx|path>               - Get file size\n");
+        glog("  sd read <idx|path> [off] [len]   - Read file (offset, length)\n");
+        glog("  sd write <path> <base64>         - Write base64 data to file\n");
+        glog("  sd append <path> <base64>        - Append base64 data to file\n");
+        glog("  sd mkdir <path>                  - Create directory\n");
+        glog("  sd rm <idx|path>                 - Delete file or empty directory\n");
+        glog("  sd tree [path] [depth]           - Recursive listing\n");
+        return;
+    }
+
+    const char *sub = argv[1];
+    char path[256];
+
+    if (strcmp(sub, "status") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:STATUS:mounted=false\n");
+            sd_cli_cleanup();
+            return;
+        }
+        glog("SD:STATUS:mounted=true\n");
+        if (sd_card_is_virtual_storage()) {
+            glog("SD:STATUS:type=virtual\n");
+        } else if (sd_card_manager.card) {
+            glog("SD:STATUS:type=physical\n");
+            glog("SD:STATUS:name=%s\n", sd_card_manager.card->cid.name);
+            uint64_t cap_mb = ((uint64_t)sd_card_manager.card->csd.capacity * 
+                               sd_card_manager.card->csd.sector_size) / (1024 * 1024);
+            glog("SD:STATUS:capacity_mb=%llu\n", (unsigned long long)cap_mb);
+        }
+        uint64_t total = 0, free_bytes = 0;
+        if (esp_vfs_fat_info("/mnt", &total, &free_bytes) == ESP_OK && total > 0) {
+            glog("SD:STATUS:total=%llu\n", (unsigned long long)total);
+            glog("SD:STATUS:free=%llu\n", (unsigned long long)free_bytes);
+            glog("SD:STATUS:total_mb=%llu\n", (unsigned long long)(total / (1024 * 1024)));
+            glog("SD:STATUS:free_mb=%llu\n", (unsigned long long)(free_bytes / (1024 * 1024)));
+            glog("SD:STATUS:used_pct=%d\n", (int)(((total - free_bytes) * 100) / total));
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "list") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *list_path = (argc >= 3) ? argv[2] : "/mnt/ghostesp";
+        if (list_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", list_path);
+        } else {
+            strncpy(path, list_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        DIR *d = opendir(path);
+        if (!d) {
+            glog("SD:ERR:cannot_open:%s\n", path);
+            sd_cli_clear_index();
+            return;
+        }
+
+        sd_cli_clear_index();
+        glog("SD:LIST:%s\n", path);
+
+        struct dirent *entry;
+        while ((entry = readdir(d)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+            char fullpath[512];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+
+            struct stat st;
+            bool is_dir = false;
+            long fsize = 0;
+
+            if (stat(fullpath, &st) == 0) {
+                is_dir = S_ISDIR(st.st_mode);
+                fsize = is_dir ? 0 : (long)st.st_size;
+            } else if (entry->d_type == DT_DIR) {
+                is_dir = true;
+            }
+
+            int idx = (int)g_sd_cli_count;
+            if (g_sd_cli_count < SD_CLI_MAX_ENTRIES) {
+                g_sd_cli_paths[g_sd_cli_count] = strdup(fullpath);
+                g_sd_cli_types[g_sd_cli_count] = is_dir ? 1 : 0;
+                if (g_sd_cli_paths[g_sd_cli_count]) g_sd_cli_count++;
+            }
+
+            if (is_dir) {
+                glog("SD:DIR:[%d] %s\n", idx, entry->d_name);
+            } else {
+                glog("SD:FILE:[%d] %s %ld\n", idx, entry->d_name, fsize);
+            }
+        }
+        closedir(d);
+
+        if (g_sd_cli_count == 0) {
+            glog("SD:EMPTY\n");
+        }
+        glog("SD:OK:listed %zu entries\n", g_sd_cli_count);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "info") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+
+        glog("SD:INFO:path=%s\n", resolved);
+        glog("SD:INFO:type=%s\n", S_ISDIR(st.st_mode) ? "dir" : "file");
+        glog("SD:INFO:size=%ld\n", (long)st.st_size);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "cat") == 0 || strcmp(sub, "read") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        long offset = 0;
+        size_t max_bytes = 0;
+        if (argc >= 4) {
+            offset = strtol(argv[3], NULL, 10);
+            if (offset < 0) offset = 0;
+        }
+        if (argc >= 5) {
+            int mb = atoi(argv[4]);
+            if (mb > 0) max_bytes = (size_t)mb;
+        }
+
+        FILE *f = fopen(resolved, "rb");
+        if (!f) {
+            glog("SD:ERR:cannot_open:%s\n", resolved);
+            return;
+        }
+
+        fseek(f, 0, SEEK_END);
+        long file_size = ftell(f);
+        if (offset > file_size) offset = file_size;
+        fseek(f, offset, SEEK_SET);
+
+        if (max_bytes == 0 || max_bytes > (size_t)(file_size - offset)) {
+            max_bytes = (size_t)(file_size - offset);
+        }
+
+        glog("SD:READ:BEGIN:%s\n", resolved);
+        glog("SD:READ:SIZE:%ld\n", file_size);
+        glog("SD:READ:OFFSET:%ld\n", offset);
+        glog("SD:READ:LENGTH:%zu\n", max_bytes);
+
+        char *buf = malloc(1024);
+        if (!buf) {
+            fclose(f);
+            glog("SD:ERR:oom\n");
+            return;
+        }
+
+        size_t total_read = 0;
+        size_t n;
+        while (total_read < max_bytes && (n = fread(buf, 1, 1024, f)) > 0) {
+            size_t to_write = n;
+            if (total_read + to_write > max_bytes) {
+                to_write = max_bytes - total_read;
+            }
+            fwrite(buf, 1, to_write, stdout);
+            total_read += to_write;
+        }
+        free(buf);
+        fclose(f);
+
+        glog("\nSD:READ:END:bytes=%zu\n", total_read);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "write") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 4) {
+            glog("SD:ERR:usage: sd write <path> <base64data>\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *write_path = argv[2];
+        if (write_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", write_path);
+        } else {
+            strncpy(path, write_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        const char *b64data = argv[3];
+        size_t b64len = strlen(b64data);
+        size_t decoded_len = (b64len * 3) / 4 + 4;
+        unsigned char *decoded = malloc(decoded_len);
+        if (!decoded) {
+            glog("SD:ERR:oom\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(decoded, decoded_len, &olen, (const unsigned char *)b64data, b64len);
+        if (ret != 0) {
+            free(decoded);
+            glog("SD:ERR:base64_decode_failed\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        FILE *f = fopen(path, "wb");
+        if (!f) {
+            free(decoded);
+            glog("SD:ERR:cannot_create:%s\n", path);
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t written = fwrite(decoded, 1, olen, f);
+        fclose(f);
+        free(decoded);
+
+        glog("SD:WRITE:bytes=%zu\n", written);
+        glog("SD:OK:created:%s\n", path);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "append") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 4) {
+            glog("SD:ERR:usage: sd append <path> <base64data>\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *append_path = argv[2];
+        if (append_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", append_path);
+        } else {
+            strncpy(path, append_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        const char *b64data = argv[3];
+        size_t b64len = strlen(b64data);
+        size_t decoded_len = (b64len * 3) / 4 + 4;
+        unsigned char *decoded = malloc(decoded_len);
+        if (!decoded) {
+            glog("SD:ERR:oom\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(decoded, decoded_len, &olen, (const unsigned char *)b64data, b64len);
+        if (ret != 0) {
+            free(decoded);
+            glog("SD:ERR:base64_decode_failed\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        FILE *f = fopen(path, "ab");
+        if (!f) {
+            free(decoded);
+            glog("SD:ERR:cannot_open:%s\n", path);
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t written = fwrite(decoded, 1, olen, f);
+        fclose(f);
+        free(decoded);
+
+        glog("SD:APPEND:bytes=%zu\n", written);
+        glog("SD:OK:appended:%s\n", path);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "size") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+        glog("SD:SIZE:%ld\n", (long)st.st_size);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "mkdir") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *mk_path = argv[2];
+        if (mk_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", mk_path);
+        } else {
+            strncpy(path, mk_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        if (mkdir(path, 0777) == 0) {
+            glog("SD:OK:created:%s\n", path);
+        } else {
+            glog("SD:ERR:mkdir_failed:%s\n", path);
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "rm") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+
+        int ret;
+        if (S_ISDIR(st.st_mode)) {
+            ret = rmdir(resolved);
+        } else {
+            ret = unlink(resolved);
+        }
+
+        if (ret == 0) {
+            glog("SD:OK:removed:%s\n", resolved);
+        } else {
+            glog("SD:ERR:rm_failed:%s\n", resolved);
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "tree") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *tree_path = (argc >= 3) ? argv[2] : "/mnt/ghostesp";
+        int max_depth = 2;
+        if (argc >= 4) {
+            int d = atoi(argv[3]);
+            if (d > 0 && d <= 10) max_depth = d;
+        }
+
+        if (tree_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", tree_path);
+        } else {
+            strncpy(path, tree_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        glog("SD:TREE:%s\n", path);
+        
+        typedef struct { char p[256]; int lvl; } stack_item_t;
+        stack_item_t *stack = malloc(sizeof(stack_item_t) * 64);
+        if (!stack) {
+            glog("SD:ERR:oom\n");
+            return;
+        }
+        int sp = 0;
+        strncpy(stack[sp].p, path, 255);
+        stack[sp].lvl = 0;
+        sp++;
+
+        size_t count = 0;
+        while (sp > 0 && count < 500) {
+            sp--;
+            char *cur = stack[sp].p;
+            int lvl = stack[sp].lvl;
+
+            DIR *d = opendir(cur);
+            if (!d) continue;
+
+            struct dirent *entry;
+            while ((entry = readdir(d)) != NULL && count < 500) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+                char full[512];
+                snprintf(full, sizeof(full), "%s/%s", cur, entry->d_name);
+
+                struct stat st;
+                bool is_dir = false;
+                if (stat(full, &st) == 0) {
+                    is_dir = S_ISDIR(st.st_mode);
+                } else if (entry->d_type == DT_DIR) {
+                    is_dir = true;
+                }
+
+                for (int i = 0; i < lvl; i++) printf("  ");
+                if (is_dir) {
+                    printf("[D] %s/\n", entry->d_name);
+                    if (lvl + 1 < max_depth && sp < 63) {
+                        strncpy(stack[sp].p, full, 255);
+                        stack[sp].lvl = lvl + 1;
+                        sp++;
+                    }
+                } else {
+                    printf("[F] %s (%ld)\n", entry->d_name, (long)st.st_size);
+                }
+                count++;
+            }
+            closedir(d);
+        }
+        free(stack);
+        glog("SD:OK:tree %zu items\n", count);
+        sd_cli_cleanup();
+        return;
+    }
+
+    glog("SD:ERR:unknown_subcommand:%s\n", sub);
+    sd_cli_cleanup();
 }
 
 void handle_congestion_cmd(int argc, char **argv) {
@@ -4551,6 +5123,7 @@ void register_commands() {
     register_command("sd_pins_mmc", handle_sd_pins_mmc);
     register_command("sd_pins_spi", handle_sd_pins_spi);
     register_command("sd_save_config", handle_sd_save_config);
+    register_command("sd", handle_sd_cmd);
     register_command("scanall", handle_scanall);
     register_command("timezone", handle_timezone_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
