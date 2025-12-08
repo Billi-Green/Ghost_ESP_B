@@ -11,6 +11,7 @@ Create a fake Wi-Fi network that shows a login page when users connect.
 ## Prerequisites
 - SD card inserted and mounted.
 - Portal files saved to the SD card (optional; there's a default portal built in).
+- Custom portal files go in `/mnt/ghostesp/evil_portal/portals/` on the SD card. Place your HTML (and any referenced assets) there so `listportals` can find them.
 
 ## Starting a portal
 
@@ -22,11 +23,21 @@ Create a fake Wi-Fi network that shows a login page when users connect.
 3. The portal is now running. Clients connecting to the network will see a login page.
 4. To stop, go back to the menu or run `stopportal` in the terminal.
 
+### From the Flipper app
+1. On the Flipper app, open **WiFi → Evil Portal & Network → Set Evil Portal HTML**.
+2. Pick your HTML file (up to 2048 bytes) from the file browser; it is sent and stored for the next start.
+3. Back in **Evil Portal**, choose **Evil Portal** to run the command. The UI appends `startportal` and prompts for arguments.
+   - Command format: `startportal file/default SSID PSK`.
+   - SSID/PSK should be entered without spaces (use dashes/underscores instead) or the command parser will split them incorrectly.
+   - If you already pushed HTML from the Flipper app, enter `default` for `<file>` to use the stored page automatically.
+4. Clients connecting to the network will see your uploaded portal.
+
 ### Command line
 1. Run `listportals` to see available portal pages.
 2. Run `startportal default MyNetworkName` to start with the built-in portal.
    Or use `startportal mypage.html MyNetworkName` for a custom page.
 3. (Optional) Add a password: `startportal mypage.html MyNetworkName MyPassword`.
+   - Avoid spaces in SSID/PSK here as well; use dashes/underscores so the CLI doesn't misparse arguments.
 4. Run `stopportal` or `stop` to shut it down.
 
 ## What gets recorded
