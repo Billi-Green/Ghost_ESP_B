@@ -114,6 +114,8 @@ void handle_ble_spam_cmd(int argc, char **argv);
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 void handle_status_idle_cmd(int argc, char **argv);
 #endif
+void handle_settime_cmd(int argc, char **argv);
+void handle_time_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -2750,6 +2752,24 @@ void handle_eth_ntp_cmd(int argc, char **argv) {
     // Clean up SNTP
     esp_netif_sntp_deinit();
     
+    // If dual comm is connected, sync the peer's time using our newly synced time
+    if (esp_comm_manager_is_connected()) {
+        glog("Dual comm connected. Setting peer time from local clock...\n");
+        // Get current time as timestamp
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        
+        // Send timestamp to peer as a string
+        char time_str[32];
+        snprintf(time_str, sizeof(time_str), "%ld", (long)tv.tv_sec);
+        
+        if (esp_comm_manager_send_command("settime", time_str)) {
+            glog("Time sync command sent to peer (timestamp: %s)\n", time_str);
+        } else {
+            glog("Failed to send time sync command to peer\n");
+        }
+    }
+    
     status_display_show_status("NTP Sync OK");
 }
 
@@ -3256,6 +3276,67 @@ http_done:
     status_display_show_status(is_https ? "HTTPS OK" : "HTTP OK");
 }
 #endif
+
+// settime - Set system time from a Unix timestamp
+void handle_settime_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: settime <unix_timestamp>\n");
+        glog("Example: settime 1704067200\n");
+        status_display_show_status("SetTime Use");
+        return;
+    }
+    
+    long timestamp = strtol(argv[1], NULL, 10);
+    if (timestamp <= 0) {
+        glog("Invalid timestamp: %s\n", argv[1]);
+        status_display_show_status("SetTime Invalid");
+        return;
+    }
+    
+    struct timeval tv;
+    tv.tv_sec = timestamp;
+    tv.tv_usec = 0;
+    
+    if (settimeofday(&tv, NULL) != 0) {
+        glog("Failed to set system time: %s\n", strerror(errno));
+        status_display_show_status("SetTime Fail");
+        return;
+    }
+    
+    // Display the set time
+    time_t now = (time_t)timestamp;
+    struct tm timeinfo;
+    char strftime_buf[64];
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    
+    glog("System time set successfully!\n");
+    glog("Time: %s\n", strftime_buf);
+    status_display_show_status("Time Set OK");
+}
+
+// time - Display current system time
+void handle_time_cmd(int argc, char **argv) {
+    time_t now;
+    struct tm timeinfo;
+    char strftime_buf[64];
+    
+    time(&now);
+    
+    // Display local time
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    glog("Local time: %s\n", strftime_buf);
+    
+    // Display UTC time
+    struct tm timeinfo_utc;
+    gmtime_r(&now, &timeinfo_utc);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S UTC", &timeinfo_utc);
+    glog("UTC time: %s\n", strftime_buf);
+    
+    // Display Unix timestamp
+    glog("Unix timestamp: %ld\n", (long)now);
+}
 
 void handle_startwd(int argc, char **argv) {
     bool stop_flag = false;
@@ -6470,6 +6551,8 @@ void register_commands() {
     register_command("sd_save_config", handle_sd_save_config);
     register_command("scanall", handle_scanall);
     register_command("timezone", handle_timezone_cmd);
+    register_command("settime", handle_settime_cmd);
+    register_command("time", handle_time_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("listflippers", handle_list_flippers_cmd);
     register_command("selectflipper", handle_select_flipper_cmd);
