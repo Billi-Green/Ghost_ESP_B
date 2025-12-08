@@ -714,6 +714,10 @@ static volatile bool g_ir_universal_send_cancel = false;
 
 static TaskHandle_t g_ir_rx_learn_task = NULL;
 
+#ifdef CONFIG_WITH_ETHERNET
+static volatile bool g_eth_scan_cancel = false;
+#endif
+
 void handle_stop_flipper(int argc, char **argv) {
     if (g_ir_universal_send_task != NULL) {
         g_ir_universal_send_cancel = true;
@@ -751,6 +755,9 @@ void handle_stop_flipper(int argc, char **argv) {
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
     zigbee_manager_stop_capture();
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+    g_eth_scan_cancel = true;
 #endif
     // ensure pcap is properly flushed and closed
     pcap_file_close();
@@ -1489,6 +1496,7 @@ void handle_reboot(int argc, char **argv) {
 }
 
 #ifdef CONFIG_WITH_ETHERNET
+
 void handle_eth_up_cmd(int argc, char **argv) {
     glog("Bringing up Ethernet Manager...\n");
     esp_err_t ret = ethernet_manager_init();
@@ -1675,8 +1683,6 @@ void handle_eth_info_cmd(int argc, char **argv) {
                     } else {
                         glog("DNS Main: Not assigned\n");
                     }
-                } else {
-                    glog("DNS Main: Not assigned\n");
                 }
                 
                 if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
@@ -1686,8 +1692,6 @@ void handle_eth_info_cmd(int argc, char **argv) {
                     } else {
                         glog("DNS Backup: Not assigned\n");
                     }
-                } else {
-                    glog("DNS Backup: Not assigned\n");
                 }
                 
                 if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
@@ -1763,6 +1767,7 @@ void handle_eth_arp_cmd(int argc, char **argv) {
              (int)((network >> 8) & 0xFF),
              (int)((network >> 16) & 0xFF));
 
+    g_eth_scan_cancel = false;
     glog("Starting ARP scan on Ethernet network %s0/24\n", subnet_prefix);
     glog("Scanning network using ARP requests...\n");
 
@@ -1772,11 +1777,11 @@ void handle_eth_arp_cmd(int argc, char **argv) {
     int num_found = 0;
 
     // Scan the subnet in batches
-    for (int batch_start = START_HOST; batch_start <= END_HOST; batch_start += batch_size) {
+    for (int batch_start = START_HOST; batch_start <= END_HOST && !g_eth_scan_cancel; batch_start += batch_size) {
         int batch_end = (batch_start + batch_size - 1 > END_HOST) ? END_HOST : batch_start + batch_size - 1;
         
         // Send batch of ARP requests
-        for (int host = batch_start; host <= batch_end; host++) {
+        for (int host = batch_start; host <= batch_end && !g_eth_scan_cancel; host++) {
             char current_ip[26];
             snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
             
@@ -1788,12 +1793,15 @@ void handle_eth_arp_cmd(int argc, char **argv) {
             }
             vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between requests
         }
+        if (g_eth_scan_cancel) break;
         
         // Wait for responses to arrive
-        vTaskDelay(pdMS_TO_TICKS(250));
+        for (int i = 0; i < 5 && !g_eth_scan_cancel; i++) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
         
         // Check ARP table for this batch
-        for (int host = batch_start; host <= batch_end; host++) {
+        for (int host = batch_start; host <= batch_end && !g_eth_scan_cancel; host++) {
             char current_ip[26];
             snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
             
@@ -1910,6 +1918,7 @@ void handle_eth_ports_cmd(int argc, char **argv) {
         }
     }
 
+    g_eth_scan_cancel = false;
     glog("Scanning TCP ports on %s\n", target_ip);
     if (scan_all) {
         glog("Scanning all ports (1-65535)...\n");
@@ -1939,7 +1948,7 @@ void handle_eth_ports_cmd(int argc, char **argv) {
     if (scan_all || (argc >= 3 && !scan_all)) {
         // Scan port range
         // Use uint32_t for port to handle full range including 65535
-        for (uint32_t port = start_port; port <= end_port && port <= 65535; port++) {
+        for (uint32_t port = start_port; port <= end_port && port <= 65535 && !g_eth_scan_cancel; port++) {
             ports_scanned++;
             if (ports_scanned % 100 == 0) {
                 glog("Progress: %d/%d ports scanned (%.1f%%)\n", ports_scanned, total_ports,
@@ -1958,29 +1967,35 @@ void handle_eth_ports_cmd(int argc, char **argv) {
             int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
             if (scan_result < 0 && errno == EINPROGRESS) {
-                struct timeval timeout = {
-                    .tv_sec = SCAN_TIMEOUT_MS / 1000,
-                    .tv_usec = (SCAN_TIMEOUT_MS % 1000) * 1000
-                };
-                fd_set fdset;
-                FD_ZERO(&fdset);
-                FD_SET(sock, &fdset);
-
-                if (select(sock + 1, NULL, &fdset, NULL, &timeout) > 0) {
-                    int error = 0;
-                    socklen_t len = sizeof(error);
-                    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
-                        open_ports++;
-                        glog("  %s:%d - OPEN\n", target_ip, port);
+                uint32_t elapsed = 0;
+                const uint32_t interval = 50;
+                bool connected = false;
+                while (elapsed < SCAN_TIMEOUT_MS && !g_eth_scan_cancel) {
+                    struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
+                    fd_set fdset;
+                    FD_ZERO(&fdset);
+                    FD_SET(sock, &fdset);
+                    if (select(sock + 1, NULL, &fdset, NULL, &tv) > 0) {
+                        int error = 0;
+                        socklen_t len = sizeof(error);
+                        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                            connected = true;
+                        }
+                        break;
                     }
+                    elapsed += interval;
+                }
+                if (connected) {
+                    open_ports++;
+                    glog("  %s:%lu - OPEN\n", target_ip, (unsigned long)port);
                 }
             }
             close(sock);
-            vTaskDelay(pdMS_TO_TICKS(10));
+            if (g_eth_scan_cancel) break;
         }
     } else {
         // Scan common ports
-        for (size_t i = 0; i < NUM_COMMON_PORTS; i++) {
+        for (size_t i = 0; i < NUM_COMMON_PORTS && !g_eth_scan_cancel; i++) {
             uint16_t port = COMMON_PORTS[i];
             int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (sock < 0) {
@@ -1994,25 +2009,31 @@ void handle_eth_ports_cmd(int argc, char **argv) {
             int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
             if (scan_result < 0 && errno == EINPROGRESS) {
-                struct timeval timeout = {
-                    .tv_sec = SCAN_TIMEOUT_MS / 1000,
-                    .tv_usec = (SCAN_TIMEOUT_MS % 1000) * 1000
-                };
-                fd_set fdset;
-                FD_ZERO(&fdset);
-                FD_SET(sock, &fdset);
-
-                if (select(sock + 1, NULL, &fdset, NULL, &timeout) > 0) {
-                    int error = 0;
-                    socklen_t len = sizeof(error);
-                    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
-                        open_ports++;
-                        glog("  %s:%d - OPEN\n", target_ip, port);
+                uint32_t elapsed = 0;
+                const uint32_t interval = 50;
+                bool connected = false;
+                while (elapsed < SCAN_TIMEOUT_MS && !g_eth_scan_cancel) {
+                    struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
+                    fd_set fdset;
+                    FD_ZERO(&fdset);
+                    FD_SET(sock, &fdset);
+                    if (select(sock + 1, NULL, &fdset, NULL, &tv) > 0) {
+                        int error = 0;
+                        socklen_t len = sizeof(error);
+                        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                            connected = true;
+                        }
+                        break;
                     }
+                    elapsed += interval;
+                }
+                if (connected) {
+                    open_ports++;
+                    glog("  %s:%d - OPEN\n", target_ip, port);
                 }
             }
             close(sock);
-            vTaskDelay(pdMS_TO_TICKS(10));
+            if (g_eth_scan_cancel) break;
         }
     }
 
@@ -2062,19 +2083,15 @@ static uint16_t calculate_icmp_checksum(uint16_t *buf, int len) {
 static bool ping_host(const char *ip_addr, uint32_t timeout_ms) {
     struct sockaddr_in addr;
     int sock;
-    struct timeval timeout;
-    fd_set readset;
     uint8_t buf[sizeof(eth_icmp_packet_t)];
-    bool is_active = false;
 
     sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sock < 0) {
         return false;
     }
 
-    // Prepare ICMP packet
     eth_icmp_packet_t *icmp = (eth_icmp_packet_t *)buf;
-    icmp->type = 8; // ICMP Echo Request
+    icmp->type = 8;
     icmp->code = 0;
     icmp->checksum = 0;
     icmp->id = 0xAFAF;
@@ -2092,18 +2109,22 @@ static bool ping_host(const char *ip_addr, uint32_t timeout_ms) {
 
     sendto(sock, buf, sizeof(eth_icmp_packet_t), 0, (struct sockaddr *)&addr, sizeof(addr));
 
-    timeout.tv_sec = timeout_ms / 1000;
-    timeout.tv_usec = (timeout_ms % 1000) * 1000;
-
-    FD_ZERO(&readset);
-    FD_SET(sock, &readset);
-
-    if (select(sock + 1, &readset, NULL, NULL, &timeout) > 0) {
-        is_active = true;
+    uint32_t elapsed = 0;
+    const uint32_t check_interval = 50;
+    while (elapsed < timeout_ms && !g_eth_scan_cancel) {
+        struct timeval tv = { .tv_sec = 0, .tv_usec = check_interval * 1000 };
+        fd_set readset;
+        FD_ZERO(&readset);
+        FD_SET(sock, &readset);
+        if (select(sock + 1, &readset, NULL, NULL, &tv) > 0) {
+            close(sock);
+            return true;
+        }
+        elapsed += check_interval;
     }
 
     close(sock);
-    return is_active;
+    return false;
 }
 
 void handle_eth_ping_cmd(int argc, char **argv) {
@@ -2141,6 +2162,7 @@ void handle_eth_ping_cmd(int argc, char **argv) {
              (int)((network >> 8) & 0xFF),
              (int)((network >> 16) & 0xFF));
 
+    g_eth_scan_cancel = false;
     glog("Starting ping scan on Ethernet network %s0/24\n", subnet_prefix);
     glog("Scanning network using ICMP ping...\n");
 
@@ -2153,7 +2175,7 @@ void handle_eth_ping_cmd(int argc, char **argv) {
 
     // Ping all hosts directly - the network stack will handle ARP resolution automatically
     // and cache the results, so subsequent pings to the same subnet will be faster
-    for (int host = START_HOST; host <= END_HOST; host++) {
+    for (int host = START_HOST; host <= END_HOST && !g_eth_scan_cancel; host++) {
         char current_ip[26];
         snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
         
@@ -5126,7 +5148,12 @@ void handle_comm_setpins(int argc, char **argv) {
 static void comm_command_callback(const char* command, const char* data, void* user_data) {
     static char full_command[128];
     
-    // Minimal processing in command executor task - just queue the command
+#ifdef CONFIG_WITH_ETHERNET
+    if (strcmp(command, "stop") == 0) {
+        g_eth_scan_cancel = true;
+    }
+#endif
+    
     if (data && strlen(data) > 0) {
         snprintf(full_command, sizeof(full_command), "peer:%s %s", command, data);
     } else {

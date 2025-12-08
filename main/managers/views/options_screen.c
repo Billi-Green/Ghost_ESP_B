@@ -305,8 +305,8 @@ static const char *dual_comm_gps_options[] = {
 };
 
 static const char *dual_comm_ethernet_options[] = {
-    "Ethernet Up",
-    "Ethernet Down",
+    "Initialise",
+    "Deinitialise",
     "Ethernet Info",
     "ARP Scan",
     "Port Scan Local",
@@ -1947,13 +1947,13 @@ void option_event_cb(lv_event_t *e) {
 #else
             error_popup_create("Device Does not Support Bluetooth...");
 #endif
-        } else if (strcmp(Selected_Option, "Ethernet Up") == 0) {
+        } else if (strcmp(Selected_Option, "Initialise") == 0) {
             terminal_set_return_view(&options_menu_view);
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend ethup");
             view_switched = true;
-        } else if (strcmp(Selected_Option, "Ethernet Down") == 0) {
+        } else if (strcmp(Selected_Option, "Deinitialise") == 0) {
             terminal_set_return_view(&options_menu_view);
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
