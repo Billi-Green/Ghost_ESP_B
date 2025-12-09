@@ -63,6 +63,12 @@ void ble_track_gatt_device(void);
 void ble_stop_tracking(void);
 void ble_stop_gatt_scan(void);
 
+// Data access for sweep command
+int ble_get_flipper_count(void);
+int ble_get_flipper_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len);
+int ble_get_gatt_device_count(void);
+int ble_get_gatt_device_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len);
+
 // spam advertisement types
 typedef enum {
     BLE_SPAM_MICROSOFT,

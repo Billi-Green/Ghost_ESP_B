@@ -55,7 +55,6 @@ int get_query_param_value(const char *query, const char *key, char *value,
 }
 
 int get_next_pcap_file_index(const char *base_name) {
-  char path[128];
   int max_index = -1;
 
   DIR *dir = opendir("/mnt/ghostesp/pcaps");
@@ -84,7 +83,6 @@ int get_next_pcap_file_index(const char *base_name) {
 }
 
 int get_next_csv_file_index(const char *base_name) {
-  char path[128];
   int max_index = -1;
 
   DIR *dir = opendir("/mnt/ghostesp/gps");

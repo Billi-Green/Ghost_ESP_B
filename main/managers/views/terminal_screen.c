@@ -1046,11 +1046,16 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       createdTimeInMs = now_ms;
       if (input_len > 0) {
         submit_text();
+#if defined(CONFIG_USE_JOYSTICK) || defined(CONFIG_USE_TOUCHSCREEN)
       } else if (input_label) {
         keyboard_view_set_return_view(&terminal_view);
         keyboard_view_set_submit_callback(keyboard_input_callback);
         keyboard_view_set_placeholder("Enter command...");
         display_manager_switch_view(&keyboard_view);
+#else
+      } else {
+        stop_all_operations();
+#endif
       }
     } else {
       if (event->data.encoder.direction > 0) {

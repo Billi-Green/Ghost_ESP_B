@@ -42,6 +42,7 @@
 - Added USB HID keyboard host support on ESP32-S3 devices for controlling the UI and inputting text
 - Added IR Dazzler functionality to pulse IR at 38kHz 95% duty load
 - Added SD Card CLI for control via WebSerial File Browser
+- Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
 
 ### Changed
 
@@ -77,6 +78,7 @@
 - Fixed apps menu not using the correct directions for joystick control
 - Fixed crash after BLE deinit and during WiFi init
 - Fixed IR learn remote popup Cancel button not responding
+- Fixed RAW BLE Capture not working
 
 ## Revival v1.8.1
 

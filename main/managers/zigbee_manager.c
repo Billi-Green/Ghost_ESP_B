@@ -24,16 +24,60 @@ static uint8_t s_cur_ch = 15;
 static TimerHandle_t s_hop_timer = NULL;
 static bool s_filter_zigbee_only = true;
 
+#define ZB_MAX_DEVICES 64
+static zigbee_device_t s_devices[ZB_MAX_DEVICES];
+static int s_device_count = 0;
+
 typedef struct {
     uint8_t data[ZB_MAX_FRAME_LEN];
     uint8_t len;
+    int8_t rssi;
+    uint8_t channel;
 } zb_frame_t;
+
+static void add_device(const uint8_t *addr, uint8_t addr_len, int8_t rssi, uint8_t channel) {
+    for (int i = 0; i < s_device_count; i++) {
+        if (s_devices[i].addr_len == addr_len && memcmp(s_devices[i].addr, addr, addr_len) == 0) {
+            if (rssi > s_devices[i].rssi) s_devices[i].rssi = rssi;
+            return;
+        }
+    }
+    if (s_device_count < ZB_MAX_DEVICES) {
+        memcpy(s_devices[s_device_count].addr, addr, addr_len);
+        s_devices[s_device_count].addr_len = addr_len;
+        s_devices[s_device_count].rssi = rssi;
+        s_devices[s_device_count].channel = channel;
+        s_device_count++;
+    }
+}
+
+static void parse_src_addr(const uint8_t *frame, uint8_t len, int8_t rssi, uint8_t channel) {
+    if (len < 3) return;
+    uint16_t fcf = (uint16_t)frame[0] | ((uint16_t)frame[1] << 8);
+    uint8_t dest_mode = (fcf >> 10) & 0x3;
+    uint8_t src_mode = (fcf >> 14) & 0x3;
+    bool pan_comp = (fcf >> 6) & 0x1;
+    
+    int idx = 3;
+    if (dest_mode) {
+        idx += 2;
+        idx += (dest_mode == 2) ? 2 : (dest_mode == 3 ? 8 : 0);
+    }
+    if (src_mode) {
+        if (!pan_comp) idx += 2;
+        int slen = (src_mode == 2) ? 2 : (src_mode == 3 ? 8 : 0);
+        if (slen > 0 && idx + slen <= len) {
+            add_device(&frame[idx], slen, rssi, channel);
+        }
+    }
+}
 
 static void zigbee_capture_task(void *arg) {
     zb_frame_t item;
     while (s_capturing) {
         if (xQueueReceive(s_frame_q, &item, pdMS_TO_TICKS(100)) == pdTRUE) {
             pcap_write_packet_to_buffer(item.data, item.len, PCAP_CAPTURE_IEEE802154);
+            parse_src_addr(item.data, item.len, item.rssi, item.channel);
         }
     }
     s_task = NULL;
@@ -180,6 +224,8 @@ void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *frame, esp_ieee802154_frame_
 
     zb_frame_t item;
     item.len = len;
+    item.rssi = frame_info ? frame_info->rssi : -100;
+    item.channel = s_cur_ch;
     memcpy(item.data, frame + 1, len);
 
 /*     // Optional Zigbee-only filtering: drop likely Thread/6LoWPAN frames
@@ -211,5 +257,19 @@ void IRAM_ATTR esp_ieee802154_energy_detect_done(int8_t power) {}
 void IRAM_ATTR esp_ieee802154_receive_at_done(void) {}
 
 void zigbee_manager_set_filter_zigbee_only(bool enable) { s_filter_zigbee_only = enable; }
+
+void zigbee_manager_clear_devices(void) {
+    s_device_count = 0;
+}
+
+int zigbee_manager_get_device_count(void) {
+    return s_device_count;
+}
+
+int zigbee_manager_get_device_data(int index, zigbee_device_t *out) {
+    if (index < 0 || index >= s_device_count || !out) return -1;
+    *out = s_devices[index];
+    return 0;
+}
 
 #endif

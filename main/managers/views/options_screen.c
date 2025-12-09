@@ -139,7 +139,7 @@ static const char *wifi_capture_options[] = {
 };
 
 static const char *wifi_scanning_options[] = {
-    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
+    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Sweep", "Scan LAN Devices",
     "ARP Scan Network", "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
@@ -222,6 +222,7 @@ static const char *dual_comm_scan_options[] = {
     "Scan APs Live",
     "Scan Stations",
     "Scan All (AP & Station)",
+    "Sweep",
     "Scan LAN Devices",
     "ARP Scan Network",
     "Scan Open Ports",
@@ -1548,6 +1549,12 @@ void option_event_cb(lv_event_t *e) {
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend scanall");
             view_switched = true;
+        } else if (strcmp(Selected_Option, "Sweep") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend sweep");
+            view_switched = true;
         } else if (strcmp(Selected_Option, "Scan LAN Devices") == 0) {
             terminal_set_return_view(&options_menu_view);
             terminal_set_dualcomm_filter(true);
@@ -1994,6 +2001,13 @@ void option_event_cb(lv_event_t *e) {
         terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("scanall");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Sweep") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sweep");
         view_switched = true;
     }
 
