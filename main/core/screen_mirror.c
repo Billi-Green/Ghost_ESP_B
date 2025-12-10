@@ -5,8 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) || \
-    defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED
 #include "driver/usb_serial_jtag.h"
 #define MIRROR_USE_JTAG 1
 #else
