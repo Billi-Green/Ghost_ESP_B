@@ -910,11 +910,9 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-#ifdef CONFIG_HAS_RTC_CLOCK
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
     sntp_setservername(0, "pool.ntp.org");
     sntp_init();
-#endif
 }
 
 void handle_wifi_disconnect(int argc, char **argv)

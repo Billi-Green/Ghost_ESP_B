@@ -82,9 +82,7 @@ menu_item_t menu_items[] = {
     {"NFC", &nfc_icon, 2, {{0}}},
 #endif
     {"Apps", &GESPAppGallery, 3, {{0}}}, // applies to all boards
-#ifdef CONFIG_HAS_RTC_CLOCK
     {"Clock", &clock_icon, 4, {{0}}},
-#endif
     {"GhostLink", &dualcomm, 1, {{0}}},
     {"Settings", &settings_icon, 5, {{0}}}, // applies to all boards
 };
@@ -822,9 +820,7 @@ static void handle_menu_item_selection(int item_index) {
         {"NFC", 0, &nfc_view},
 #endif
         {"Apps", 0, &apps_menu_view},
-#ifdef CONFIG_HAS_RTC_CLOCK
         {"Clock", 0, &clock_view},
-#endif
         {"Settings", OT_Settings, &options_menu_view},
         {"GhostLink", OT_DualComm, &options_menu_view}
     };

@@ -57,6 +57,7 @@
 - Renamed Dual Comm UI and documentation branding to GhostLink
 - Minor keyboard view logic and styling refactor
 - Terminal enter/select now submits text if typed, otherwise opens keyboard view
+- Enable clock menu for all boards by using built-in ESP32 RTC and changed icon
 
 ### Fixed
 

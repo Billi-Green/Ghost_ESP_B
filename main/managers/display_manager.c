@@ -1176,9 +1176,7 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
 
 #ifdef CONFIG_HAS_BATTERY
   axp2101_init();
-#ifdef CONFIG_HAS_RTC_CLOCK
   pcf8563_init(I2C_NUM_1, 0x51);
-#endif
 #endif
 
 #ifdef CONFIG_HAS_FUEL_GAUGE

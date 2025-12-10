@@ -300,14 +300,12 @@ void settings_load(FSettings *settings) {
     printf("Failed to load Flappy Ghost Name\n");
   }
 
-#ifdef CONFIG_HAS_RTC_CLOCK
   str_size = sizeof(settings->selected_timezone);
   err = nvs_get_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone,
                     &str_size);
   if (err != ESP_OK) {
     printf("Failed to load Timezone String\n");
   }
-#endif
 
   str_size = sizeof(settings->selected_hex_accent_color);
   err = nvs_get_str(nvsHandle, NVS_ACCENT_COLOR,
@@ -791,12 +789,10 @@ void settings_save(const FSettings *settings) {
     printf("Settings saved to NVS.\n");
   }
 
-#ifdef CONFIG_HAS_RTC_CLOCK
   // Apply timezone change immediately
   ESP_LOGI(TAG, "Applying timezone change: %s", settings->selected_timezone);
   setenv("TZ", settings->selected_timezone, 1);
   tzset();
-#endif
 
   // Update global settings immediately
   ESP_LOGI(TAG, "Updating global settings");
