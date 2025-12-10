@@ -84,11 +84,10 @@ static void apply_selected_style(options_view_t *ov, lv_obj_t *item, bool on) {
             if (ud == (void *)1 || ud == (void *)2) {
                 lv_obj_set_style_text_color(child, txt, 0);
             }
-#ifndef CONFIG_USE_TOUCHSCREEN
+            // Show arrows on selected item (for both touch and non-touch)
             if (ud == (void *)2) {
                 lv_obj_clear_flag(child, LV_OBJ_FLAG_HIDDEN);
             }
-#endif
         }
     } else {
         lv_obj_remove_style(item, &ov->style_selected, 0);
@@ -99,11 +98,16 @@ static void apply_selected_style(options_view_t *ov, lv_obj_t *item, bool on) {
             if (ud == (void *)1 || ud == (void *)2) {
                 lv_obj_set_style_text_color(child, lv_color_hex(0xFFFFFF), 0);
             }
-#ifndef CONFIG_USE_TOUCHSCREEN
+            // Handle arrow visibility for non-selected items
             if (ud == (void *)2) {
+#ifdef CONFIG_USE_TOUCHSCREEN
+                // On touch devices, always show all arrows
+                lv_obj_clear_flag(child, LV_OBJ_FLAG_HIDDEN);
+#else
+                // On non-touch devices, hide arrows on non-selected items
                 lv_obj_add_flag(child, LV_OBJ_FLAG_HIDDEN);
-            }
 #endif
+            }
         }
     }
 }
@@ -277,4 +281,9 @@ void options_view_relayout_item(options_view_t *ov, lv_obj_t *item) {
     lv_coord_t left_pad = 8;
     lv_obj_set_width(lbl, lv_obj_get_width(item) - (2 * left_pad));
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, left_pad, 0);
+}
+
+void options_view_refresh_selected_item(options_view_t *ov) {
+    if (!ov || ov->selected < 0 || ov->selected >= ov->count) return;
+    apply_selected_style(ov, ov->items[ov->selected], true);
 }

@@ -43,6 +43,7 @@
 - Added IR Dazzler functionality to pulse IR at 38kHz 95% duty load
 - Added SD Card CLI for control via WebSerial File Browser
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
+- Added a first time boot setup wizard for display enabled configs
 
 ### Changed
 

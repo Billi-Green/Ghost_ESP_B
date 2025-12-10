@@ -61,6 +61,8 @@ static const char *NVS_MENU_LAYOUT_KEY = "menu_layout";
 static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
 static const char *NVS_RGB_LED_COUNT_KEY = "rgb_led_cnt";
 static const char *NVS_ENCODER_INVERT_KEY = "enc_inv";
+static const char *NVS_SETUP_COMPLETE_KEY = "setup_done";
+static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
 static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
@@ -163,6 +165,8 @@ void settings_set_defaults(FSettings *settings) {
   settings->neopixel_max_brightness = 100; // Default to 100% brightness
   settings->encoder_invert_direction = false;
   settings->rgb_led_count = CONFIG_NUM_LEDS;
+  settings->setup_complete = false;
+  settings->wifi_country = 0;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -492,6 +496,20 @@ void settings_load(FSettings *settings) {
     settings->encoder_invert_direction = (bool)value_u8;
   } else {
     settings->encoder_invert_direction = false;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->setup_complete = (bool)value_u8;
+  } else {
+    settings->setup_complete = false;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->wifi_country = value_u8;
+  } else {
+    settings->wifi_country = 0;
   }
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -844,6 +862,12 @@ void settings_save(const FSettings *settings) {
 
   err = nvs_set_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, settings->encoder_invert_direction);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save encoder_invert_direction: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, settings->setup_complete);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save setup_complete: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save wifi_country: %s", esp_err_to_name(err));
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   err = nvs_set_u8(nvsHandle, NVS_STATUS_IDLE_ANIM_KEY, (uint8_t)settings->status_idle_animation);
@@ -1313,6 +1337,22 @@ void settings_set_encoder_invert_direction(FSettings *settings, bool enabled) {
 
 bool settings_get_encoder_invert_direction(const FSettings *settings) {
   return settings->encoder_invert_direction;
+}
+
+void settings_set_setup_complete(FSettings *settings, bool complete) {
+  settings->setup_complete = complete;
+}
+
+bool settings_get_setup_complete(const FSettings *settings) {
+  return settings->setup_complete;
+}
+
+void settings_set_wifi_country(FSettings *settings, uint8_t country) {
+  settings->wifi_country = country;
+}
+
+uint8_t settings_get_wifi_country(const FSettings *settings) {
+  return settings->wifi_country;
 }
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY

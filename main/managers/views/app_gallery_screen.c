@@ -675,24 +675,28 @@ static void handle_apps_button_press(int button) {
 }
 
 /**
- *  @brief handles keyboard button presses
+ * @brief handles keyboard button presses
  */
-
 static void handle_keyboard_interactions(int keyValue){
 
-    // Vim keybinds
-    // Existing keybinds
+    // Vim keybinds and Cardputer controls
     if (keyValue == LV_KEY_LEFT || keyValue == 44 || keyValue == ',' || keyValue == 'h') { // Left
         ESP_LOGI(TAG, "Left button or 'h' pressed");
         select_app_item(selected_app_index - 1, true);
     } else if (keyValue == LV_KEY_RIGHT || keyValue == 47 || keyValue == '/' || keyValue == 'l') { // Right
         ESP_LOGI(TAG, "Right button or 'l' pressed");
         select_app_item(selected_app_index + 1, false);
-    } else if (keyValue == LV_KEY_ENTER || keyValue == 13 || keyValue == 'j') { // Select
-        ESP_LOGI(TAG, "Enter or 'j' pressed (select)");
+    } else if (keyValue == LV_KEY_UP || keyValue == 'k' || keyValue == ';') { // Up
+        ESP_LOGI(TAG, "Up arrow or 'k' pressed");
+        select_app_item(selected_app_index - 1, true);
+    } else if (keyValue == LV_KEY_DOWN || keyValue == 'j' || keyValue == '.') { // Down
+        ESP_LOGI(TAG, "Down arrow or 'j' pressed");
+        select_app_item(selected_app_index + 1, false);
+    } else if (keyValue == LV_KEY_ENTER || keyValue == 13) { // Select
+        ESP_LOGI(TAG, "Enter pressed (select)");
         handle_app_item_selection(selected_app_index);
-    } else if (keyValue == LV_KEY_ESC || keyValue == 29 || keyValue == '`' || keyValue == 'k') { // Back
-        ESP_LOGI(TAG, "Esc, '`' or 'k' pressed (back)");
+    } else if (keyValue == LV_KEY_ESC || keyValue == 29 || keyValue == '`') { // Back
+        ESP_LOGI(TAG, "Esc or '`' pressed (back)");
         display_manager_switch_view(&main_menu_view);
     }
 }
@@ -700,7 +704,7 @@ static void handle_keyboard_interactions(int keyValue){
 /**
  * @brief Combined handler for app menu events
  */
- void apps_menu_event_handler(InputEvent *event) {
+void apps_menu_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         ESP_LOGW(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;

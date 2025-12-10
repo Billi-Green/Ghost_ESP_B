@@ -602,6 +602,17 @@ static void menu_item_event_handler(InputEvent *event) {
                 // fallthrough: small movement or non-horizontal movement - continue
                 // to layout-specific hit-tests below
             } else if (current_layout == MENU_LAYOUT_GRID) {
+                // Handle horizontal swipe for grid scrolling
+                if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) {
+                    // Find the grid container and scroll it
+                    if (grid_buttons && grid_buttons[0]) {
+                        lv_obj_t *grid_parent = lv_obj_get_parent(grid_buttons[0]);
+                        if (grid_parent) {
+                            lv_obj_scroll_by_bounded(grid_parent, -dx, 0, LV_ANIM_OFF);
+                        }
+                    }
+                    return;
+                }
                 // For grid layout, check if tap was on a grid button
                 if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
                     // Find which grid button was tapped
@@ -620,6 +631,13 @@ static void menu_item_event_handler(InputEvent *event) {
                     }
                 }
             } else if (current_layout == MENU_LAYOUT_GRID_CARDS) {
+                // Handle horizontal swipe for grid cards scrolling
+                if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) {
+                    if (grid_cards_container) {
+                        lv_obj_scroll_by_bounded(grid_cards_container, -dx, 0, LV_ANIM_OFF);
+                    }
+                    return;
+                }
                 // For Grid card layout, check if tap was on a card
                 if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
                     // Find which card was tapped
@@ -638,6 +656,13 @@ static void menu_item_event_handler(InputEvent *event) {
                     }
                 }
             } else if (current_layout == MENU_LAYOUT_LIST) {
+                // Handle vertical swipe for list scrolling
+                if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
+                    if (menu_container) {
+                        lv_obj_scroll_by_bounded(menu_container, 0, -dy, LV_ANIM_OFF);
+                    }
+                    return;
+                }
                 if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
                     if (list_buttons) {
                         for (int i = 0; i < num_items; i++) {
