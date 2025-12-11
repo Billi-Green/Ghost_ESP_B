@@ -1796,6 +1796,11 @@ void ble_start_scanning(void) {
         return;
     }
 
+    if (ble_gap_disc_active()) {
+        ble_gap_disc_cancel();
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
     struct ble_gap_disc_params disc_params = {0};
     disc_params.itvl = BLE_HCI_SCAN_ITVL_DEF;
     disc_params.window = BLE_HCI_SCAN_WINDOW_DEF;
@@ -2006,6 +2011,7 @@ void ble_stop(void) {
     ble_unregister_handler(ble_findtheflippers_callback);
     ble_unregister_handler(airtag_scanner_callback);
     ble_unregister_handler(ble_print_raw_packet_callback);
+    ble_unregister_handler(ble_pcap_callback);
     ble_unregister_handler(detect_ble_spam_callback);
     pcap_flush_buffer_to_file(); // Final flush
     pcap_file_close();           // Close the file after final flush
@@ -2063,12 +2069,7 @@ void ble_start_blespam_detector(void) {
 }
 
 void ble_start_raw_ble_packetscan(void) {
-    if (!ble_initialized) {
-        ble_init();
-    }
-
-    ble_start_scanning();
-    ble_register_handler(ble_print_raw_packet_callback);
+    ble_start_capture();
 }
 
 void ble_start_airtag_scanner(void) {
@@ -2250,6 +2251,41 @@ void ble_list_flippers(void) {
              (i == selected_flipper_index) ? " (Selected)" : "");
     }
 }
+
+int ble_get_flipper_count(void) {
+    return discovered_flipper_count;
+}
+
+int ble_get_flipper_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len) {
+    if (index < 0 || index >= discovered_flipper_count) return -1;
+    if (mac) {
+        for (int i = 0; i < 6; i++) mac[i] = discovered_flippers[index].addr.val[i];
+    }
+    if (rssi) *rssi = discovered_flippers[index].rssi;
+    if (name && name_len > 0) {
+        strncpy(name, discovered_flippers[index].name, name_len - 1);
+        name[name_len - 1] = '\0';
+    }
+    return 0;
+}
+
+int ble_get_gatt_device_count(void) {
+    return discovered_gatt_device_count;
+}
+
+int ble_get_gatt_device_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len) {
+    if (index < 0 || index >= discovered_gatt_device_count) return -1;
+    if (mac) {
+        for (int i = 0; i < 6; i++) mac[i] = discovered_gatt_devices[index].addr.val[i];
+    }
+    if (rssi) *rssi = discovered_gatt_devices[index].rssi;
+    if (name && name_len > 0) {
+        strncpy(name, discovered_gatt_devices[index].name, name_len - 1);
+        name[name_len - 1] = '\0';
+    }
+    return 0;
+}
+
 void ble_start_tracking_selected_flipper(void) {
     // Stop any ongoing scan
     ble_gap_disc_cancel();

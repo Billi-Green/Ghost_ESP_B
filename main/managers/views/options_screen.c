@@ -21,6 +21,7 @@ static const char **evil_portal_options = NULL;
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/views/number_pad_screen.h"
+#include "managers/views/setup_wizard_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/settings_manager.h"
 #include "esp_log.h"
@@ -69,9 +70,19 @@ static int settings_category_indices[][20] = {
 #endif
 #if CONFIG_IDF_TARGET_ESP32S3
 #if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        17,
+        17, 18,
 #elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
+        15, 16,
+#else
+        14, 15,
+#endif
+#else
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        17,
+#elif defined(CONFIG_USE_ENCODER)
         15,
+#elif defined(CONFIG_WITH_STATUS_DISPLAY)
+        16,
 #else
         14,
 #endif
@@ -91,9 +102,19 @@ static int settings_category_indices[][20] = {
 #endif
 #if CONFIG_IDF_TARGET_ESP32S3
 #if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        16,
+        16, 17,
 #elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
+        14, 15,
+#else
+        13, 14,
+#endif
+#else
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        16,
+#elif defined(CONFIG_USE_ENCODER)
         14,
+#elif defined(CONFIG_WITH_STATUS_DISPLAY)
+        15,
 #else
         13,
 #endif
@@ -139,7 +160,7 @@ static const char *wifi_capture_options[] = {
 };
 
 static const char *wifi_scanning_options[] = {
-    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Scan LAN Devices",
+    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Sweep", "Scan LAN Devices",
     "ARP Scan Network", "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
     "List Stations", "Select AP", "Select Station", "Select LAN", NULL
 };
@@ -224,6 +245,7 @@ static const char *dual_comm_scan_options[] = {
     "Scan APs Live",
     "Scan Stations",
     "Scan All (AP & Station)",
+    "Sweep",
     "Scan LAN Devices",
     "ARP Scan Network",
     "Scan Open Ports",
@@ -344,6 +366,7 @@ static const char *idle_animation_options[] = {"Game of Life", "Ghost", "Starfie
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
+static const char *action_options[] = {"Press OK"};
 
 enum {
     SETTING_RGB_MODE = 0,
@@ -370,6 +393,7 @@ enum {
 #if CONFIG_IDF_TARGET_ESP32S3
     SETTING_USB_HOST_MODE,
 #endif
+    SETTING_RUN_SETUP_WIZARD,
 };
 
 static const char *brightness_options[] = {
@@ -403,6 +427,7 @@ static SettingsItem settings_items[] = {
     #if CONFIG_IDF_TARGET_ESP32S3
     {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
     #endif
+    {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0},
 };
 
 static bool is_settings_mode = false;
@@ -481,6 +506,41 @@ static int build_item_index = 0;
 static int button_height_global = 0;
 static bool is_small_screen_global = false;
 
+static void update_settings_arrows_visibility(void) {
+    if (!menu_container || !lv_obj_is_valid(menu_container)) return;
+    
+    uint32_t child_count = lv_obj_get_child_cnt(menu_container);
+    for (uint32_t i = 0; i < child_count; i++) {
+        lv_obj_t *btn = lv_obj_get_child(menu_container, i);
+        if (!btn || !lv_obj_is_valid(btn)) continue;
+        
+        // Check if this is the selected item
+        bool is_selected = (i == (uint32_t)selected_item_index);
+        
+        // Iterate through all children to find arrows (user_data == 2)
+        uint32_t btn_child_count = lv_obj_get_child_cnt(btn);
+        for (uint32_t j = 0; j < btn_child_count; j++) {
+            lv_obj_t *child = lv_obj_get_child(btn, j);
+            if (!child || !lv_obj_is_valid(child)) continue;
+            
+            // Only affect arrows (marked with user_data == 2)
+            if (lv_obj_get_user_data(child) == (void *)2) {
+#ifdef CONFIG_USE_TOUCHSCREEN
+                // On touch devices, always show arrows
+                lv_obj_clear_flag(child, LV_OBJ_FLAG_HIDDEN);
+#else
+                // On non-touch devices, only show arrows on selected item
+                if (is_selected) {
+                    lv_obj_clear_flag(child, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(child, LV_OBJ_FLAG_HIDDEN);
+                }
+#endif
+            }
+        }
+    }
+}
+
 static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
     if (!btn || !lv_obj_is_valid(btn)) return;
 
@@ -501,20 +561,33 @@ static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
     const lv_font_t *font = (button_height_global <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
     lv_obj_set_style_text_font(left, font, 0);
     lv_obj_set_style_text_font(right, font, 0);
+    
+    // Set arrow text color to white (will be adjusted by apply_selected_style for selected item)
+    lv_obj_set_style_text_color(left, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(right, lv_color_hex(0xFFFFFF), 0);
 
     lv_obj_set_user_data(left, (void *)2);
     lv_obj_set_user_data(right, (void *)2);
 
-#ifndef CONFIG_USE_TOUCHSCREEN
-    lv_obj_add_flag(left, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(right, LV_OBJ_FLAG_HIDDEN);
-#endif
-
+    // Set flex properties: arrows don't grow, label takes remaining space
+    lv_obj_set_flex_grow(left, 0);
+    lv_obj_set_flex_grow(right, 0);
+    lv_obj_set_flex_grow(label, 1);
+    
+    // Label should center its text
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(label, LV_SIZE_CONTENT);
 
+    // Always create arrows as visible - update_settings_arrows_visibility() 
+    // will hide them appropriately for non-touch devices
+    lv_obj_clear_flag(left, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(right, LV_OBJ_FLAG_HIDDEN);
+
     lv_obj_move_to_index(left, 0);
     lv_obj_move_to_index(label, 1);
+    
+    // Force layout update to ensure children are positioned correctly
+    lv_obj_update_layout(btn);
 }
 
 // helper to show/hide touch scroll buttons based on list overflow
@@ -644,6 +717,7 @@ select_option_item(selected_item_index + direction);
 void options_menu_create() {
     option_invoked = false;
     current_settings_category = -1;
+    selected_item_index = 0;  // Reset selection to first item for new menu
     int screen_width = LV_HOR_RES;
     int screen_height = LV_VER_RES;
 
@@ -925,7 +999,10 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_MENU_THEME:
             settings_set_menu_theme(&G_Settings, new_value);
             display_manager_update_status_bar_color();
-            if (g_options_view) options_view_refresh_styles(g_options_view);
+            if (g_options_view) {
+                options_view_refresh_styles(g_options_view);
+                update_settings_arrows_visibility();
+            }
             break;
         case SETTING_THIRD_CONTROL:
             settings_set_thirds_control_enabled(&G_Settings, new_value == 1);
@@ -953,7 +1030,10 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_ZEBRA_MENUS:
             settings_set_zebra_menus_enabled(&G_Settings, new_value == 1);
-            if (g_options_view) options_view_refresh_styles(g_options_view);
+            if (g_options_view) {
+                options_view_refresh_styles(g_options_view);
+                update_settings_arrows_visibility();
+            }
             break;
         case SETTING_NAV_BUTTONS:
             settings_set_nav_buttons_enabled(&G_Settings, new_value == 1);
@@ -1001,6 +1081,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             usb_keyboard_manager_set_host_mode(new_value == 1);
             return;
 #endif
+        case SETTING_RUN_SETUP_WIZARD:
+            setup_wizard_reset_and_open();
+            return;
     }
     settings_save(&G_Settings);
 }
@@ -1065,6 +1148,9 @@ static void select_option_item(int index) {
     if (g_options_view) {
         options_view_set_selected(g_options_view, selected_item_index);
     }
+    
+    // Update arrow visibility based on new selection
+    update_settings_arrows_visibility();
 }
 
 void handle_hardware_button_press_options(InputEvent *event) {
@@ -1575,6 +1661,12 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend scanall");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Sweep") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend sweep");
             view_switched = true;
         } else if (strcmp(Selected_Option, "Scan LAN Devices") == 0) {
             terminal_set_return_view(&options_menu_view);
@@ -2096,6 +2188,13 @@ void option_event_cb(lv_event_t *e) {
         terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("scanall");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Sweep") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sweep");
         view_switched = true;
     }
 
@@ -3045,9 +3144,10 @@ static void menu_builder_cb(lv_timer_t *t)
                     num_items++;
                     built_this_tick++;
                     build_item_index++;
-#ifndef CONFIG_USE_TOUCHSCREEN
-                    if (num_items == 1) select_option_item(0);
-#endif
+                    // Select first item for all devices
+                    if (num_items == 1) {
+                        select_option_item(0);
+                    }
                 }
                 if (settings_categories[build_item_index] == NULL) { // End of categories list
 
@@ -3070,9 +3170,12 @@ static void menu_builder_cb(lv_timer_t *t)
                     num_items++;
                     built_this_tick++;
                     build_item_index++;
-#ifndef CONFIG_USE_TOUCHSCREEN
-                    if (num_items == 1) select_option_item(0);
-#endif
+                    // Select first item and refresh its style after arrows are created
+                    if (num_items == 1) {
+                        select_option_item(0);
+                        // Re-apply selected style now that arrows exist
+                        options_view_refresh_selected_item(g_options_view);
+                    }
                 }
                 if (indices[build_item_index] < 0) { // End of settings submenu list
                     all_current_options_processed = true;
@@ -3088,14 +3191,21 @@ static void menu_builder_cb(lv_timer_t *t)
                 num_items++;
                 built_this_tick++;
                 build_item_index++;
-#ifndef CONFIG_USE_TOUCHSCREEN
-                if (num_items == 1) select_option_item(0);
-#endif
+                // Select first item for all devices
+                if (num_items == 1) {
+                    select_option_item(0);
+                }
             }
             if (current_options_list == NULL || current_options_list[build_item_index] == NULL) { // End of regular options list
                 all_current_options_processed = true;
             }
         }
+    }
+
+    // Update arrow visibility after each batch of items is built
+    // This ensures arrows appear immediately on touch devices
+    if (is_settings_mode && current_settings_category >= 0 && built_this_tick > 0) {
+        update_settings_arrows_visibility();
     }
 
     // Now, handle adding the "Back" button and stopping the timer
@@ -3127,6 +3237,8 @@ static void menu_builder_cb(lv_timer_t *t)
             /* menu build complete -- show or hide touch scroll buttons depending on scrollable content */
             if (menu_container && lv_obj_is_valid(menu_container)) {
                 update_scroll_buttons_visibility();
+                // Update arrow visibility after menu is built
+                update_settings_arrows_visibility();
             }
             menu_build_timer = NULL;
         }

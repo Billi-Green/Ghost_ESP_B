@@ -82,9 +82,7 @@ menu_item_t menu_items[] = {
     {"NFC", &nfc_icon, 2, {{0}}},
 #endif
     {"Apps", &GESPAppGallery, 3, {{0}}}, // applies to all boards
-#ifdef CONFIG_HAS_RTC_CLOCK
     {"Clock", &clock_icon, 4, {{0}}},
-#endif
     {"GhostLink", &dualcomm, 1, {{0}}},
     {"Settings", &settings_icon, 5, {{0}}}, // applies to all boards
 };
@@ -604,6 +602,17 @@ static void menu_item_event_handler(InputEvent *event) {
                 // fallthrough: small movement or non-horizontal movement - continue
                 // to layout-specific hit-tests below
             } else if (current_layout == MENU_LAYOUT_GRID) {
+                // Handle horizontal swipe for grid scrolling
+                if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) {
+                    // Find the grid container and scroll it
+                    if (grid_buttons && grid_buttons[0]) {
+                        lv_obj_t *grid_parent = lv_obj_get_parent(grid_buttons[0]);
+                        if (grid_parent) {
+                            lv_obj_scroll_by_bounded(grid_parent, -dx, 0, LV_ANIM_OFF);
+                        }
+                    }
+                    return;
+                }
                 // For grid layout, check if tap was on a grid button
                 if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
                     // Find which grid button was tapped
@@ -622,6 +631,13 @@ static void menu_item_event_handler(InputEvent *event) {
                     }
                 }
             } else if (current_layout == MENU_LAYOUT_GRID_CARDS) {
+                // Handle horizontal swipe for grid cards scrolling
+                if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) {
+                    if (grid_cards_container) {
+                        lv_obj_scroll_by_bounded(grid_cards_container, -dx, 0, LV_ANIM_OFF);
+                    }
+                    return;
+                }
                 // For Grid card layout, check if tap was on a card
                 if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
                     // Find which card was tapped
@@ -640,6 +656,13 @@ static void menu_item_event_handler(InputEvent *event) {
                     }
                 }
             } else if (current_layout == MENU_LAYOUT_LIST) {
+                // Handle vertical swipe for list scrolling
+                if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
+                    if (menu_container) {
+                        lv_obj_scroll_by_bounded(menu_container, 0, -dy, LV_ANIM_OFF);
+                    }
+                    return;
+                }
                 if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
                     if (list_buttons) {
                         for (int i = 0; i < num_items; i++) {
@@ -822,9 +845,7 @@ static void handle_menu_item_selection(int item_index) {
         {"NFC", 0, &nfc_view},
 #endif
         {"Apps", 0, &apps_menu_view},
-#ifdef CONFIG_HAS_RTC_CLOCK
         {"Clock", 0, &clock_view},
-#endif
         {"Settings", OT_Settings, &options_menu_view},
         {"GhostLink", OT_DualComm, &options_menu_view}
     };

@@ -265,15 +265,16 @@ static lv_obj_t* create_key_button(lv_obj_t *parent, int x, int y, int w, int h,
 }
 
 static void submit_text() {
-    if (input_len > 0) {
-        if (submit_callback) {
-            submit_callback(input_buffer);
-        } else {
-            terminal_set_return_view(&options_menu_view);
-            display_manager_switch_view(&terminal_view);
-            vTaskDelay(pdMS_TO_TICKS(10));
-            simulateCommand(input_buffer);
-        }
+    if (submit_callback) {
+        submit_callback(input_buffer);
+        memset(input_buffer, 0, sizeof(input_buffer));
+        input_len = 0;
+        update_input_label();
+    } else if (input_len > 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        simulateCommand(input_buffer);
         memset(input_buffer, 0, sizeof(input_buffer));
         input_len = 0;
         update_input_label();

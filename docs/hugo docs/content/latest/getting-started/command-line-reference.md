@@ -27,6 +27,7 @@ toc: true
 - **`scanap [seconds|-live|-stop]`** — Run an AP scan, optionally for a set duration, live channel hop, or stop (`-stop`).
 - **`scansta`** — Hop channels and log associated stations.
 - **`scanall [seconds]`** — Combined AP and STA scan with summary.
+- **`sweep [-w wifi_sec] [-b ble_sec]`** — Full environment sweep: scans WiFi APs, stations, and BLE devices, then saves a CSV report to SD (`/mnt/ghostesp/sweeps/sweep_N.csv`).
 - **`list [-a|-s|-airtags]`** — Show AP scan results, associated stations, or AirTags.
 - **`listenprobes [channel|stop]`** — Monitor probe requests and log to PCAP if SD is present.
 
@@ -104,6 +105,23 @@ toc: true
 - **`commdisconnect`** — Close the peer link.
 
 ## Storage
+
+### File Operations
+
+- **`sd status`** — Show SD card mount status, type (physical/virtual), capacity, and usage percentage.
+- **`sd list [path]`** — List files and directories with indices for quick reference. Default path: `/mnt/ghostesp`.
+- **`sd info <index|path>`** — Display file or directory details (type, size, path).
+- **`sd size <index|path>`** — Get file size in bytes (for pre-download checks).
+- **`sd read <index|path> [offset] [length]`** — Read file with optional offset and length for chunked downloads. No size limit.
+- **`sd write <path> <base64data>`** — Create/overwrite file with base64-decoded data.
+- **`sd append <path> <base64data>`** — Append base64-decoded data to file.
+- **`sd mkdir <path>`** — Create a new directory.
+- **`sd rm <index|path>`** — Delete a file or empty directory.
+- **`sd tree [path] [depth]`** — Recursive directory listing (default depth: 2, max: 10).
+
+All `sd` commands return machine-parsable output with prefixes like `SD:OK:`, `SD:ERR:`, `SD:FILE:[n]`, `SD:DIR:[n]}`, `SD:READ:`, `SD:WRITE:`.
+
+### Pin Configuration
 
 - **`sd_config`** — Display SD mode, pins, and status.
 - **`sd_pins_spi <cs> <clk> <miso> <mosi>`** — Configure SPI wiring.

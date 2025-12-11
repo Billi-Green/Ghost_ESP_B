@@ -1,6 +1,8 @@
 #include "managers/views/splash_screen.h"
 #include "managers/views/main_menu_screen.h"
+#include "managers/views/setup_wizard_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/settings_manager.h"
 #include <stdio.h>
 
 lv_obj_t *splash_screen;
@@ -63,7 +65,11 @@ static void fade_anim_cb(void *var, int32_t opacity) {
 }
 
 static void fade_out_cb(void *var) {
-  display_manager_switch_view(&main_menu_view);
+  if (!settings_get_setup_complete(&G_Settings)) {
+    display_manager_switch_view(&setup_wizard_view);
+  } else {
+    display_manager_switch_view(&main_menu_view);
+  }
 }
 
 void splash_destroy(void) {
