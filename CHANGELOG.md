@@ -59,6 +59,26 @@
 - Minor keyboard view logic and styling refactor
 - Terminal enter/select now submits text if typed, otherwise opens keyboard view
 - Enable clock menu for all boards by using built-in ESP32 RTC and changed icon
+- Use Kconfig baud rate for UART instead of hardcoded 115200
+- Increase CPU clock speed on certain configs
+- Reorganised and renamed wifi display sections
+- Free pcap queue and task when not capturing
+- Changed default CPU clock speed to 240MHz instead of 160MHz for:
+  - sdkconfig.awokimini
+  - sdkconfig.CYD2432S028R
+  - sdkconfig.CYD2USB
+  - sdkconfig.CYD2USB2.4Inch
+  - sdkconfig.CYD2USB2.4Inch_C_Varient
+  - sdkconfig.CYDDualUSB
+  - sdkconfig.CYDMicroUSB
+  - sdkconfig.default.esp32
+  - sdkconfig.default.esp2c5
+  - sdkconfig.default.esp2s2
+  - sdkconfig.flipper.jcmk_gps
+  - sdkconfig.JCMK_DevBoardPro
+  - sdkconfig.marauderv6
+  - sdkconfig.minion
+  - sdkconfig.poltergeist
 
 ### Fixed
 

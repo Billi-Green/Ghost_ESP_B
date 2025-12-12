@@ -9,6 +9,11 @@
 #define MIRROR_END_MARKER 0x444E4547  // "GEND"
 #define MIRROR_CMD_INFO 0x01
 #define MIRROR_CMD_FRAME 0x02
+#define MIRROR_CMD_FRAME_RLE 0x03
+#define MIRROR_CMD_FRAME_8BIT 0x04
+#define MIRROR_CMD_FRAME_8BIT_RLE 0x05
+// Packed RGB444 (12-bit) raw frame: 2 pixels -> 3 bytes, last odd pixel -> 2 bytes
+#define MIRROR_CMD_FRAME_12BIT 0x06
 
 typedef struct __attribute__((packed)) {
     uint32_t marker;

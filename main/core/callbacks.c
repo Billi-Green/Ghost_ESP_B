@@ -264,6 +264,24 @@ static inline void enqueue_pcap_write_typed(const uint8_t *payload, uint16_t len
 static inline void enqueue_pcap_write(const uint8_t *payload, uint16_t len) {
     enqueue_pcap_write_typed(payload, len, PCAP_CAPTURE_WIFI);
 }
+
+// cleanup function to free pcap queue and task when not capturing
+void cleanup_pcap_queue(void) {
+    if (s_pcap_writer_task != NULL) {
+        vTaskDelete(s_pcap_writer_task);
+        s_pcap_writer_task = NULL;
+    }
+    if (s_pcap_q != NULL) {
+        // drain any remaining items and free their buffers
+        pcap_q_item_t item;
+        while (xQueueReceive(s_pcap_q, &item, 0) == pdTRUE) {
+            if (item.buffer) free(item.buffer);
+        }
+        vQueueDelete(s_pcap_q);
+        s_pcap_q = NULL;
+    }
+}
+
 static const char *suspicious_names[] STORE_DATA_ATTR = {
     "HC-03", "HC-05", "HC-06",  "HC-08",    "BT-HC05", "JDY-31",
     "AT-09", "HM-10", "CC41-A", "MLT-BT05", "SPP-CA",  "FFD0"};

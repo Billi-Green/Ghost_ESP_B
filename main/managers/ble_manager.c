@@ -35,7 +35,14 @@
 #define NIMBLE_HOST_TASK_STACK_SIZE 6144
 
 // Flipper tracking definitions
+#ifdef CONFIG_SPIRAM
 #define MAX_FLIPPERS 50
+#define MAX_AIRTAGS 50
+#else
+#define MAX_FLIPPERS 16
+#define MAX_AIRTAGS 16
+#endif
+
 typedef struct {
     ble_addr_t addr;
     char name[32];
@@ -121,7 +128,6 @@ typedef struct {
     bool selected_for_spoofing;
 } AirTagDevice;
 
-#define MAX_AIRTAGS 50 // Maximum number of AirTags to store
 #define AIRTAG_RSSI_LOG_INTERVAL_MS 3000
 static AirTagDevice discovered_airtags[MAX_AIRTAGS];
 static int discovered_airtag_count = 0;
