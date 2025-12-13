@@ -138,6 +138,8 @@ All `sd` commands return machine-parsable output with prefixes like `SD:OK:`, `S
 
 ## Status display (if present)
 
+Available on boards with an onboard OLED status display or when an external status display is configured.
+
 - **`statusidle [list|set <life|ghost|0|1>]`** — View or change the status OLED idle animation when `CONFIG_WITH_STATUS_DISPLAY` and a status display are enabled.
   - `statusidle` — Show the current idle animation and timeout.
   - `statusidle list` — List available idle animations.
