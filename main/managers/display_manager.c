@@ -180,12 +180,18 @@ static joystick_t exit_button; // IO6 exit button
 
 #define FADE_DURATION_MS 10
 #define DEFAULT_DISPLAY_TIMEOUT_MS 30000
+#define JOYSTICK_REPEAT_INITIAL_DELAY_MS 350
+#define JOYSTICK_REPEAT_INTERVAL_MS 120
 
 uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT_MS;
 
 static uint16_t original_beacon_interval = 100;
 
 #define BACKLIGHT_SLEEP_POLL_MS 50   // Poll slower when dimmed
+
+static inline uint32_t dm_now_ms(void) {
+  return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
 
 #ifdef CONFIG_IS_S3TWATCH
 #define WAKE_UP_PIN GPIO_NUM_16
@@ -1760,22 +1766,49 @@ void hardware_input_task(void *pvParameters) {
       }
 #endif
 
-#ifdef CONFIG_USE_JOYSTICK
+ #ifdef CONFIG_USE_JOYSTICK
+    static uint32_t joystick_repeat_next_ms[5] = {0};
     for (int i = 0; i < 5; i++) {
-      if (joysticks[i].pin >= 0) {
-        if (joystick_just_pressed(&joysticks[i])) {
-          last_touch_time = xTaskGetTickCount();
-          InputEvent event;
-          event.type = INPUT_TYPE_JOYSTICK;
-          event.data.joystick_index = i;
+      if (joysticks[i].pin < 0) continue;
 
-          if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
-          }
+      if (joystick_just_pressed(&joysticks[i])) {
+        last_touch_time = xTaskGetTickCount();
+        InputEvent event;
+        event.type = INPUT_TYPE_JOYSTICK;
+        event.data.joystick_index = i;
+
+        if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+          ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
+        }
+
+        if (i == 2 || i == 4) {
+          joystick_repeat_next_ms[i] = dm_now_ms() + JOYSTICK_REPEAT_INITIAL_DELAY_MS;
+        }
+        continue;
+      }
+
+      if (i != 2 && i != 4) continue;
+
+      if (!joystick_get_button_state(&joysticks[i])) {
+        joystick_repeat_next_ms[i] = 0;
+        continue;
+      }
+
+      if (joystick_repeat_next_ms[i] == 0) continue;
+
+      uint32_t now_ms = dm_now_ms();
+      if ((int32_t)(now_ms - joystick_repeat_next_ms[i]) >= 0) {
+        last_touch_time = xTaskGetTickCount();
+        InputEvent event;
+        event.type = INPUT_TYPE_JOYSTICK;
+        event.data.joystick_index = i;
+
+        if (xQueueSend(input_queue, &event, 0) == pdTRUE) {
+          joystick_repeat_next_ms[i] = now_ms + JOYSTICK_REPEAT_INTERVAL_MS;
         }
       }
     }
-#endif
+ #endif
 
 #ifdef CONFIG_USE_TOUCHSCREEN
 

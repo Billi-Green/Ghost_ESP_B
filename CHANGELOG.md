@@ -69,6 +69,7 @@
 - Added LVGL-safe helpers for NULL-safe object/timer deletion and scheduling
 - Small improvements to encoder handling
 - Miscellaneuous small code refactors and improvements
+- Joystick Up/Down hold in options menus now auto-repeat
 - Changed default CPU clock speed to 240MHz instead of 160MHz for:
   - sdkconfig.awokimini
   - sdkconfig.CYD2432S028R
