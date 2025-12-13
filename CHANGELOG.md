@@ -51,6 +51,7 @@
 - After scanning, NFC popup title now specifies the tag type
 - IR and NFC display views and popups now properly use active set UI theme
 - Standardized LVGL screen root creation across display views and added status-bar content offset GUI helpers
+- Grid menu now scrolls up and down instead of left and right
 - Avoid redundant PN532 Mifare Classic reads for a minor speed up
 - Reorganised the settings menu and adjusted styling
 - Add vendor board support and images to documentation - @tototo31
@@ -104,6 +105,7 @@
 - Fixed apps menu not using the correct directions for joystick control
 - Fixed crash after BLE deinit and during WiFi init
 - Fixed IR learn remote popup Cancel button not responding
+- Fixed an issue with layout of more than 6 apps on the grid menu layout
 - Fixed RAW BLE Capture not working
 
 ## Revival v1.8.1

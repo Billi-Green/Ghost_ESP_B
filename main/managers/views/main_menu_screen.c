@@ -37,7 +37,10 @@ lv_obj_t *menu_container;
 static int selected_item_index = 0;
 static int touch_start_x;
 static int touch_start_y;
+static int touch_last_x;
+static int touch_last_y;
 static bool touch_started = false;
+static bool touch_dragged = false;
 static bool is_animating = false;
 // touch gesture thresholds
 #define SWIPE_THRESHOLD 50
@@ -446,25 +449,24 @@ static void navigate_vertical(int direction) {
     }
     if (current_layout == MENU_LAYOUT_GRID || current_layout == MENU_LAYOUT_GRID_CARDS) {
         if (grid_cols <= 0 || grid_rows <= 0) return;
-        int items_per_page = grid_cols * grid_rows;
-        int page_index = selected_item_index / items_per_page;
-        int within = selected_item_index % items_per_page;
-        int row = within / grid_cols;
-        int col = within % grid_cols;
 
-        // try moving one row in the given direction with wrap
+        int row = selected_item_index / grid_cols;
+        int col = selected_item_index % grid_cols;
+
         for (int tries = 0; tries < grid_rows; ++tries) {
             row = (row + (direction > 0 ? 1 : -1) + grid_rows) % grid_rows;
-            int candidate_within = row * grid_cols + col;
-            int candidate = page_index * items_per_page + candidate_within;
-            if (candidate < num_items) {
-                select_menu_item(candidate, false);
-                return;
+            int base = row * grid_cols;
+            int candidate = base + col;
+            if (candidate >= num_items) {
+                candidate = num_items - 1;
+                if (candidate < base) continue;
             }
+            select_menu_item(candidate, false);
+            return;
         }
-        // if nothing valid (shouldn't happen), keep current
     }
 }
+
 /**
  *  @brief handles keyboard button presses
  */
@@ -491,6 +493,7 @@ void handle_keyboard_interactions(int keyValue){
         // no-op on main menu
     }
 }
+
 /**
  * @brief Handles button click events for menu items.
  */
@@ -511,13 +514,52 @@ static void menu_item_event_handler(InputEvent *event) {
         ESP_LOGI(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
-            touch_started = true;
-            touch_start_x = data->point.x;
-            touch_start_y = data->point.y;
+            if (!touch_started) {
+                touch_started = true;
+                touch_dragged = false;
+                touch_start_x = data->point.x;
+                touch_start_y = data->point.y;
+                touch_last_x = data->point.x;
+                touch_last_y = data->point.y;
+            } else {
+                int dx = data->point.x - touch_last_x;
+                int dy = data->point.y - touch_last_y;
+                touch_last_x = data->point.x;
+                touch_last_y = data->point.y;
+
+                if (!touch_dragged && (abs(data->point.x - touch_start_x) > TAP_THRESHOLD || abs(data->point.y - touch_start_y) > TAP_THRESHOLD)) {
+                    touch_dragged = true;
+                }
+
+                if (touch_dragged) {
+                    if (current_layout == MENU_LAYOUT_GRID_CARDS) {
+                        if (grid_cards_container) {
+                            lv_obj_scroll_by_bounded(grid_cards_container, 0, -dy, LV_ANIM_OFF);
+                        }
+                    } else if (current_layout == MENU_LAYOUT_LIST) {
+                        if (menu_container) {
+                            lv_obj_scroll_by_bounded(menu_container, 0, -dy, LV_ANIM_OFF);
+                        }
+                    } else if (current_layout == MENU_LAYOUT_GRID) {
+                        if (grid_buttons && grid_buttons[0]) {
+                            lv_obj_t *grid_parent = lv_obj_get_parent(grid_buttons[0]);
+                            if (grid_parent) {
+                                lv_obj_scroll_by_bounded(grid_parent, -dx, 0, LV_ANIM_OFF);
+                            }
+                        }
+                    }
+                }
+            }
         } else if (data->state == LV_INDEV_STATE_REL && touch_started) {
             int dx = data->point.x - touch_start_x;
             int dy = data->point.y - touch_start_y;
             touch_started = false;
+
+            if (touch_dragged && current_layout != MENU_LAYOUT_CAROUSEL) {
+                touch_dragged = false;
+                return;
+            }
+            touch_dragged = false;
 
             // NOTE: nav button hit-tests were here previously, but that caused
             // accidental taps when a swipe ended over the nav button. We now
@@ -607,10 +649,10 @@ static void menu_item_event_handler(InputEvent *event) {
                     }
                 }
             } else if (current_layout == MENU_LAYOUT_GRID_CARDS) {
-                // Handle horizontal swipe for grid cards scrolling
-                if (abs(dx) > SWIPE_THRESHOLD && abs(dx) > abs(dy)) {
+                // Handle vertical swipe for grid cards scrolling
+                if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                     if (grid_cards_container) {
-                        lv_obj_scroll_by_bounded(grid_cards_container, -dx, 0, LV_ANIM_OFF);
+                        lv_obj_scroll_by_bounded(grid_cards_container, 0, -dy, LV_ANIM_OFF);
                     }
                     return;
                 }
@@ -878,39 +920,37 @@ static void create_grid_menu(void) {
     int screen_width = LV_HOR_RES;
     int screen_height = LV_VER_RES;
 
-    // Target ~6 cards visible: 3 columns x 2 rows, horizontal tiles
     int cols = 3;
-    int rows = 2;
-    // expose grid dimensions for keyboard/joystick vertical navigation
-    grid_cols = cols;
-    grid_rows = rows;
-    int margin = 6; // inner spacing between cards
-    int status_bar_height = 20; // reserve space for status bar
+    if (cols > num_items) cols = num_items;
+    if (cols <= 0) cols = 1;
+    int visible_rows = 2;
+
+    int margin = 6;
+    int status_bar_height = 20;
     int avail_height = screen_height - status_bar_height;
-    if (avail_height < 60) avail_height = screen_height; // safety fallback
-    // Fill viewport with 3x2 cards with inner margins between them
-    grid_card_width = (screen_width - (cols - 1) * margin) / cols;
-    grid_card_height = (avail_height - (rows - 1) * margin) / rows;
-    // Reduce margin on very small displays to ensure cards still fit
+    if (avail_height < 60) avail_height = screen_height;
     if (screen_width <= 240 || avail_height <= 120) {
         margin = 0;
-        grid_card_width = (screen_width - (cols - 1) * margin) / cols;
-        grid_card_height = (avail_height - (rows - 1) * margin) / rows;
     }
+
+    grid_cols = cols;
+    grid_rows = (num_items + cols - 1) / cols;
+    if (grid_rows <= 0) grid_rows = 1;
+
+    grid_card_width = (screen_width - (cols - 1) * margin) / cols;
+    grid_card_height = (avail_height - (visible_rows - 1) * margin) / visible_rows;
 
     // Create container for cards (grid-like)
     grid_cards_container = lv_obj_create(menu_container);
-    int items_per_page = cols * rows; // 6 per page
-    int pages = (num_items + items_per_page - 1) / items_per_page;
     lv_obj_set_size(grid_cards_container, screen_width, avail_height);
     lv_obj_set_style_bg_opa(grid_cards_container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(grid_cards_container, 0, 0);
     lv_obj_set_style_pad_all(grid_cards_container, 0, 0);
     // Top align within menu container so it sits below the status bar
     lv_obj_align(grid_cards_container, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_scrollbar_mode(grid_cards_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_dir(grid_cards_container, LV_DIR_HOR);
-    // Disable scroll momentum/elastic to keep paging snappy
+    lv_obj_set_scrollbar_mode(grid_cards_container, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(grid_cards_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(grid_cards_container, LV_DIR_VER);
     lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_MOMENTUM);
     lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
@@ -921,13 +961,9 @@ static void create_grid_menu(void) {
         return;
     }
 
-    // card spacing
     int card_margin = margin;
-    // Compute remainders to distribute so we fill the area exactly
     int total_inner_w = cols * grid_card_width + (cols - 1) * card_margin;
-    int total_inner_h = rows * grid_card_height + (rows - 1) * card_margin;
-    int w_remainder = screen_width - total_inner_w;   // add to last col width
-    int h_remainder = (avail_height) - total_inner_h; // add to last row height
+    int w_remainder = screen_width - total_inner_w;
 
     bool connected = esp_comm_manager_is_connected();
     for (int i = 0; i < num_items; i++) {
@@ -935,16 +971,12 @@ static void create_grid_menu(void) {
         // Create card
         grid_cards[i] = lv_btn_create(grid_cards_container);
 
-        // Position card in 3x2 per page; horizontal pages
-        int page = i / items_per_page;
-        int idx = i % items_per_page;
-        int col = idx % cols;
-        int row = idx / cols;
-        int x = page * screen_width + col * (grid_card_width + card_margin);
-        int y = row * (grid_card_height + card_margin); // start at top, no outer gap
-        // Per-cell width/height (add remainder to the last column/row)
+        int col = i % cols;
+        int row = i / cols;
+        int x = col * (grid_card_width + card_margin);
+        int y = row * (grid_card_height + card_margin);
         int cw = grid_card_width + ((col == cols - 1) ? w_remainder : 0);
-        int ch = grid_card_height + ((row == rows - 1) ? h_remainder : 0);
+        int ch = grid_card_height;
         lv_obj_set_pos(grid_cards[i], x, y);
         lv_obj_set_size(grid_cards[i], cw, ch);
 
@@ -1010,12 +1042,14 @@ static void create_grid_menu(void) {
         lv_obj_add_event_cb(grid_cards[i], menu_button_click_handler, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     }
 
+    int selected_menu_index = visible_index_to_menu_index(selected_item_index, connected);
+
     // Highlight selected card
     if (grid_cards[selected_item_index]) {
         // For non-touch devices, make highlight more prominent
 #ifdef CONFIG_USE_TOUCHSCREEN
         // Touch devices: keep original border color
-        lv_obj_set_style_border_color(grid_cards[selected_item_index], menu_items[selected_item_index].border_color, LV_PART_MAIN);
+        lv_obj_set_style_border_color(grid_cards[selected_item_index], menu_items[selected_menu_index].border_color, LV_PART_MAIN);
         lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 8, LV_PART_MAIN);
 #else
         // Non-touch devices: use prominent white border and larger shadow
@@ -1028,7 +1062,7 @@ static void create_grid_menu(void) {
         lv_obj_scroll_to_view(grid_cards[selected_item_index], LV_ANIM_OFF);
     }
 
-    // horizontal scrolling pages
+    // vertical scrolling rows
 }
 
 static void create_list_menu(void) {
