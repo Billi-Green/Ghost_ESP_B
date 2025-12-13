@@ -4,6 +4,8 @@
 #include "lvgl.h"
 #include "managers/views/app_gallery_screen.h"
 #include "gui/theme_palette_api.h"
+#include "gui/lvgl_safe.h"
+#include "gui/screen_layout.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1037,6 +1039,7 @@ static void create_list_menu(void) {
     lv_obj_set_flex_align(menu_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(menu_container, LV_HOR_RES > 200 ? 16 : 10, 0);
     lv_obj_set_style_pad_row(menu_container, 6, 0);
+    lv_obj_add_flag(menu_container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(menu_container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(menu_container, LV_SCROLLBAR_MODE_AUTO);
 
@@ -1080,8 +1083,8 @@ static void create_list_menu(void) {
         }
         lv_coord_t img_w = menu_items[menu_index].icon->header.w;
         lv_coord_t img_h = menu_items[menu_index].icon->header.h;
-        int zoom_w = img_w > 0 ? (icon_target * 256) / img_w : 256;
-        int zoom_h = img_h > 0 ? (icon_target * 256) / img_h : 256;
+        int zoom_w = (img_w > 0) ? (icon_target * 256) / img_w : 256;
+        int zoom_h = (img_h > 0) ? (icon_target * 256) / img_h : 256;
         int zoom = LV_MIN(zoom_w, zoom_h);
         if (zoom > 256) zoom = 256;
         if (zoom < 64) zoom = 64;
@@ -1176,14 +1179,8 @@ void main_menu_create(void) {
             break;
     }
 
-    menu_container = lv_obj_create(lv_scr_act());
+    menu_container = gui_screen_create_root(NULL, NULL, lv_color_hex(0x121212), LV_OPA_TRANSP);
     main_menu_view.root = menu_container;
-    lv_obj_set_size(menu_container, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_opa(menu_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(menu_container, 0, 0);
-    lv_obj_set_style_pad_all(menu_container, 0, 0);
-    lv_obj_set_scrollbar_mode(menu_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_align(menu_container, LV_ALIGN_CENTER, 0, 0);
 
     // Create menu based on layout
     if (current_layout == MENU_LAYOUT_GRID) {
@@ -1319,15 +1316,11 @@ void main_menu_create(void) {
  * @brief Destroys the main menu screen view.
  */
 void main_menu_destroy(void) {
-    if (menu_refresh_timer) {
-        lv_timer_del(menu_refresh_timer);
-        menu_refresh_timer = NULL;
-    }
+    lvgl_timer_del_safe(&menu_refresh_timer);
 
     if (menu_container) {
         lv_obj_clean(menu_container);
-        lv_obj_del(menu_container);
-        menu_container = NULL;
+        lvgl_obj_del_safe(&menu_container);
         main_menu_view.root = NULL;
         // arrays cleaned up below via helper
     }
@@ -1335,14 +1328,8 @@ void main_menu_destroy(void) {
     cleanup_layout_arrays();
 
     // Clean up navigation buttons
-    if (left_nav_btn) {
-        lv_obj_del(left_nav_btn);
-        left_nav_btn = NULL;
-    }
-    if (right_nav_btn) {
-        lv_obj_del(right_nav_btn);
-        right_nav_btn = NULL;
-    }
+    lvgl_obj_del_safe(&left_nav_btn);
+    lvgl_obj_del_safe(&right_nav_btn);
 }
 
 void get_main_menu_callback(void **callback) {

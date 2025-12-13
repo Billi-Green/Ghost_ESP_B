@@ -3,8 +3,10 @@
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
 #include "managers/display_manager.h"
+#include "gui/screen_layout.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "gui/lvgl_safe.h"
 #include <string.h>
 
 static const char *TAG = "SetupWizard";
@@ -568,17 +570,8 @@ static void setup_wizard_create(void) {
     
     display_manager_fill_screen(lv_color_hex(0x121212));
     
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, "Setup", lv_color_hex(0x121212), LV_OPA_TRANSP);
     setup_wizard_view.root = root;
-    lv_obj_set_size(root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(root, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(root, LV_ALIGN_TOP_LEFT, 0, 0);
-
-    display_manager_add_status_bar("Setup");
 
     switch (current_step) {
         case SETUP_STEP_WELCOME:
@@ -675,10 +668,8 @@ static void setup_wizard_create(void) {
 }
 
 static void setup_wizard_destroy(void) {
-    if (root) {
-        lv_obj_del(root);
-        root = NULL;
-    }
+    lvgl_obj_del_safe(&root);
+    setup_wizard_view.root = NULL;
     country_list = NULL;
     option_list = NULL;
     welcome_start_btn = NULL;

@@ -31,6 +31,7 @@
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
 #include "core/screen_mirror.h"
+#include "gui/lvgl_safe.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -845,7 +846,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
         bt_label = NULL;
         sd_label = NULL;
         battery_label = NULL;
-        lv_obj_del(old_bar);
+        lvgl_obj_del_safe(&old_bar);
     }
     status_bar = lv_obj_create(lv_scr_act());
   lv_obj_set_size(status_bar, LV_HOR_RES, 20);
@@ -1280,13 +1281,34 @@ static void dm_switch_async_cb(void *param) {
   display_manager_switch_view_internal((View *)param);
 }
 
-void display_manager_switch_view(View *view) {
-  if (view == NULL) return;
+typedef struct {
+  void (*fn)(void *);
+  void *arg;
+} dm_lvgl_call_t;
+
+static void dm_run_on_lvgl_async_cb(void *param) {
+  dm_lvgl_call_t *call = (dm_lvgl_call_t *)param;
+  if (!call) return;
+  if (call->fn) call->fn(call->arg);
+  free(call);
+}
+
+void display_manager_run_on_lvgl(void (*fn)(void *), void *arg) {
+  if (!fn) return;
   if (lvgl_task_handle && xTaskGetCurrentTaskHandle() != lvgl_task_handle) {
-    lv_async_call(dm_switch_async_cb, view);
+    dm_lvgl_call_t *call = malloc(sizeof(*call));
+    if (!call) return;
+    call->fn = fn;
+    call->arg = arg;
+    lv_async_call(dm_run_on_lvgl_async_cb, call);
     return;
   }
-  display_manager_switch_view_internal(view);
+  fn(arg);
+}
+
+void display_manager_switch_view(View *view) {
+  if (view == NULL) return;
+  display_manager_run_on_lvgl(dm_switch_async_cb, view);
 }
 
 void display_manager_destroy_current_view(void) {

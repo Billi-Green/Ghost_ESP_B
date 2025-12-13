@@ -50,6 +50,7 @@
 - Refactors to NFC logic to make more maintainable
 - After scanning, NFC popup title now specifies the tag type
 - IR and NFC display views and popups now properly use active set UI theme
+- Standardized LVGL screen root creation across display views and added status-bar content offset GUI helpers
 - Avoid redundant PN532 Mifare Classic reads for a minor speed up
 - Reorganised the settings menu and adjusted styling
 - Add vendor board support and images to documentation - @tototo31
@@ -64,6 +65,7 @@
 - Reorganised and renamed wifi display sections
 - Free pcap queue and task when not capturing
 - Added shared MAC formatting helper for refactors
+- Added LVGL-safe helpers for NULL-safe object/timer deletion and scheduling
 - Changed default CPU clock speed to 240MHz instead of 160MHz for:
   - sdkconfig.awokimini
   - sdkconfig.CYD2432S028R

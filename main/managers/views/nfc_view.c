@@ -1,3 +1,4 @@
+ #include "gui/screen_layout.h"
 #include "managers/display_manager.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/keyboard_screen.h"
@@ -6,6 +7,7 @@
 #include "lvgl.h"
 #include "esp_log.h"
 #include "gui/popup.h"
+#include "gui/lvgl_safe.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1680,8 +1682,7 @@ void cleanup_nfc_scan_popup(void *obj) {
     ESP_LOGI(TAG, "cleanup_nfc_scan_popup: begin");
 #endif
     if (nfc_scan_popup) {
-        lv_obj_del(nfc_scan_popup);
-        nfc_scan_popup = NULL;
+        lvgl_obj_del_safe(&nfc_scan_popup);
         nfc_btn_bar = NULL;
         nfc_scan_cancel_btn = NULL;
         nfc_scan_more_btn = NULL;
@@ -1708,10 +1709,7 @@ void cleanup_nfc_scan_popup(void *obj) {
     fuel_gauge_manager_set_paused(true);
 #endif
     // If a deferred retry timer exists, delete it now (legacy cleanup)
-    if (nfc_scan_retry_timer) {
-        lv_timer_del(nfc_scan_retry_timer);
-        nfc_scan_retry_timer = NULL;
-    }
+    lvgl_timer_del_safe(&nfc_scan_retry_timer);
     // Wait briefly for the scan task to exit and release PN532 itself
     uint32_t waited_ms = 0;
     while (nfc_scan_task_handle != NULL && waited_ms < 800) {
@@ -2915,7 +2913,7 @@ static void keys_scroll_down_cb(lv_event_t *e);
 
 static void cleanup_keys_popup(void *obj) {
     (void)obj;
-    if (keys_popup) { lv_obj_del(keys_popup); keys_popup = NULL; }
+    lvgl_obj_del_safe(&keys_popup);
     keys_close_btn = NULL;
     keys_title_label = NULL;
     keys_details_label = NULL;
@@ -3087,7 +3085,7 @@ keys_cleanup:
 // ---- chameleon ultra basic popup ----
 void cleanup_cu_popup(void *obj) {
     (void)obj;
-    if (cu_popup) { lv_obj_del(cu_popup); cu_popup = NULL; }
+    lvgl_obj_del_safe(&cu_popup);
     cu_title_label = NULL;
     cu_details_label = NULL;
     cu_close_btn = NULL;
@@ -3101,7 +3099,7 @@ void cleanup_cu_popup(void *obj) {
     cu_save_visible = false;
     cu_busy = false;
     cu_more_expanded = false;
-    if (cu_state_timer) { lv_timer_del(cu_state_timer); cu_state_timer = NULL; }
+    lvgl_timer_del_safe(&cu_state_timer);
 }
 
 static void cu_close_cb(lv_event_t *e) { (void)e; cleanup_cu_popup(NULL); }
@@ -3316,7 +3314,7 @@ static void create_cu_popup(void) {
     update_cu_popup_selection();
 
     // start lightweight state refresh timer to keep popup live without reopening
-    if (cu_state_timer) { lv_timer_del(cu_state_timer); cu_state_timer = NULL; }
+    lvgl_timer_del_safe(&cu_state_timer);
     cu_state_timer = lv_timer_create(cu_state_timer_cb, 300, NULL);
 }
 
@@ -3344,7 +3342,7 @@ static void cu_state_timer_cb(lv_timer_t *t) {
 
 void cleanup_nfc_write_popup(void *obj) {
     (void)obj;
-    if (nfc_write_popup) { lv_obj_del(nfc_write_popup); nfc_write_popup = NULL; }
+    lvgl_obj_del_safe(&nfc_write_popup);
     nfc_write_cancel_btn = NULL; nfc_write_go_btn = NULL;
     nfc_write_title_label = NULL; nfc_write_details_label = NULL;
     nfc_write_popup_selected = 0;
@@ -3979,7 +3977,7 @@ static void saved_rename_ui_done_cb(void *param) {
 
 void cleanup_saved_details_popup(void *obj) {
     (void)obj;
-    if (saved_popup) { lv_obj_del(saved_popup); saved_popup = NULL; }
+    lvgl_obj_del_safe(&saved_popup);
     saved_close_btn = NULL;
     saved_rename_btn = NULL;
     saved_delete_btn = NULL;
@@ -4431,10 +4429,7 @@ void nfc_view_destroy(void) {
     saved_clear_list();
     in_saved_list = false;
 
-    if (root) {
-        lv_obj_del(root);
-        root = NULL;
-    }
+    lvgl_obj_del_safe(&root);
     nfc_view.root = NULL;
     menu_container = NULL;
     scan_btn = NULL;

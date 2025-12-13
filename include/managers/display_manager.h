@@ -125,6 +125,8 @@ void display_manager_set_low_i2c_mode(bool on);
 void display_manager_suspend_lvgl_task(void);
 void display_manager_resume_lvgl_task(void);
 
+void display_manager_run_on_lvgl(void (*fn)(void *), void *arg);
+
 LV_IMG_DECLARE(Ghost_ESP);
 LV_IMG_DECLARE(Map);
 LV_IMG_DECLARE(bluetooth);

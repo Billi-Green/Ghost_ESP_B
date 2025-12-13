@@ -5,6 +5,8 @@
 
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
+#include "gui/lvgl_safe.h"
+#include "gui/screen_layout.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -386,14 +388,11 @@ static void create_apps_list_menu(void) {
  void apps_menu_create(void) {
     display_manager_fill_screen(lv_color_hex(0x121212));
 
-    apps_container = lv_obj_create(lv_scr_act());
+    const char *title = (LV_VER_RES > 320 ? "Apps Menu" : "Apps");
+
+    apps_container = gui_screen_create_root(NULL, title, lv_color_hex(0x121212), LV_OPA_TRANSP);
     apps_menu_view.root = apps_container;
-    lv_obj_set_size(apps_container, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_opa(apps_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(apps_container, 0, 0);
-    lv_obj_set_style_pad_all(apps_container, 0, 0);
-    lv_obj_set_scrollbar_mode(apps_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_align(apps_container, LV_ALIGN_CENTER, 0, 0);
+
     init_app_colors();
 
     uint8_t layout_setting = settings_get_menu_layout(&G_Settings);
@@ -409,10 +408,9 @@ static void create_apps_list_menu(void) {
             break;
     }
 
-    display_manager_add_status_bar(LV_VER_RES > 320 ? "Apps Menu" : "Apps");
-
     int status_bar_height = 20;
     if (apps_container) {
+
         if (apps_layout == APPS_LAYOUT_GRID_CARDS) {
             lv_obj_align(apps_container, LV_ALIGN_TOP_MID, 0, status_bar_height);
             lv_obj_set_size(apps_container, LV_HOR_RES, LV_VER_RES - status_bar_height);
@@ -525,21 +523,14 @@ static void create_apps_list_menu(void) {
  */
 void apps_menu_destroy(void) {
     if (apps_container) {
-        lv_obj_del(apps_container); // This deletes all children recursively
-        apps_container = NULL;
+        lvgl_obj_del_safe(&apps_container);
         apps_menu_view.root = NULL;
         current_app_obj = NULL;
         back_button = NULL;
     }
     apps_cleanup_layout();
-    if (left_nav_btn) {
-        lv_obj_del(left_nav_btn);
-        left_nav_btn = NULL;
-    }
-    if (right_nav_btn) {
-        lv_obj_del(right_nav_btn);
-        right_nav_btn = NULL;
-    }
+    lvgl_obj_del_safe(&left_nav_btn);
+    lvgl_obj_del_safe(&right_nav_btn);
     // Reset state variables for a clean re-create
     selected_app_index = 0;
     touch_started = false;

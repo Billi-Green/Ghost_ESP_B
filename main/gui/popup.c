@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
+#include "gui/lvgl_safe.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -227,7 +228,7 @@ void popup_hide(popup_t *p) {
 
 void popup_destroy(popup_t *p) {
 	if (!p) return;
-	if (p->container && lv_obj_is_valid(p->container)) lv_obj_del(p->container);
+	lvgl_obj_del_safe(&p->container);
 	free(p);
 }
 

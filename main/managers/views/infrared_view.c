@@ -1,3 +1,4 @@
+ #include "gui/screen_layout.h"
 #include "managers/views/infrared_view.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -44,8 +45,6 @@ void add_signal_cb(lv_event_t *e);
 void delete_remote_cb(lv_event_t *e);
 
 
-
-
 #ifndef JOYSTICK_LEFT
 #define JOYSTICK_LEFT    (-1)
 #endif
@@ -74,6 +73,7 @@ static bool popup_style_initialized = false;
 #include "managers/views/main_menu_screen.h"
 #include "gui/popup.h"
 #include "managers/views/keyboard_screen.h"
+#include "gui/lvgl_safe.h"
 #include <lvgl/lvgl.h>
 #include <dirent.h>
 #include <string.h>
@@ -299,8 +299,6 @@ static void ir_learning_task(void *arg);
 static void add_signal_to_remote_callback(const char *name);
 static void append_signal_to_remote(const char *signal_name);
 #endif
-
-
 
 
 #ifdef CONFIG_HAS_INFRARED_RX
@@ -779,18 +777,14 @@ static void ir_sd_end(bool display_was_suspended)
 }
 
 static void cleanup_transmit_popup(void *obj) {
-    if (transmitting_popup) {
-        lv_obj_del(transmitting_popup);
-        transmitting_popup = NULL;
-    }
+    (void)obj;
+    lvgl_obj_del_safe(&transmitting_popup);
 }
 
 static void cleanup_dazzler_popup(void *obj) {
-    if (dazzler_popup) {
-        lv_obj_del(dazzler_popup);
-        dazzler_popup = NULL;
-        dazzler_stop_btn = NULL;
-    }
+    (void)obj;
+    lvgl_obj_del_safe(&dazzler_popup);
+    dazzler_stop_btn = NULL;
 }
 
 static void dazzler_stop_cb(lv_event_t *e) {
@@ -1245,15 +1239,9 @@ void infrared_view_create(void) {
     is_easy_mode = settings_get_infrared_easy_mode(&G_Settings);
 #endif
     
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, "Infrared", lv_color_hex(0x121212), LV_OPA_COVER);
     lv_obj_set_style_pad_all(root, 0, 0);
     infrared_view.root = root;
-    lv_obj_set_size(root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x121212), 0);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
-
-    display_manager_add_status_bar("Infrared");
     if (!ir_sd_queue) {
         ir_sd_queue = xQueueCreate(4, sizeof(IrIoJob_t));
     }
@@ -1261,7 +1249,7 @@ void infrared_view_create(void) {
         xTaskCreate(ir_sd_worker_task, "ir_io", 4096, NULL, tskIDLE_PRIORITY + 1, &ir_sd_worker_handle);
     }
 
-    const int STATUS_BAR_HEIGHT = 20;
+    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_HEIGHT;
 #ifdef CONFIG_USE_TOUCHSCREEN
     const int BUTTON_AREA_HEIGHT = IR_SCROLL_BTN_SIZE + IR_SCROLL_BTN_PADDING * 2;
 #else
@@ -1496,8 +1484,7 @@ void infrared_view_destroy(void) {
             ir_file_count = 0;
         }
         showing_commands = false;
-        lv_obj_del(root);
-        root = NULL;
+        lvgl_obj_del_safe(&root);
         list = NULL;
         infrared_view.root = NULL;
         selected_ir_index = 0;
@@ -2660,13 +2647,11 @@ static void cleanup_unified_learning_popup(learning_popup_type_t type)
 {
     if (type == LEARNING_POPUP_STANDARD) {
         if (learning_popup) {
-            lv_obj_del(learning_popup);
-            learning_popup = NULL;
+            lvgl_obj_del_safe(&learning_popup);
         }
     } else {
         if (easy_learn_popup) {
-            lv_obj_del(easy_learn_popup);
-            easy_learn_popup = NULL;
+            lvgl_obj_del_safe(&easy_learn_popup);
             easy_learn_instruction_label = NULL;
         }
     }
@@ -2685,15 +2670,13 @@ void cleanup_easy_learn_popup(void *obj)
 // Signal preview UI functions
 void cleanup_signal_preview_popup(void *obj)
 {
-    if (signal_preview_popup) {
-        lv_obj_del(signal_preview_popup);
-        signal_preview_popup = NULL;
-        protocol_label = NULL;
-        address_label = NULL;
-        command_label = NULL;
-        save_btn = NULL;
-        cancel_btn = NULL;
-    }
+    (void)obj;
+    lvgl_obj_del_safe(&signal_preview_popup);
+    protocol_label = NULL;
+    address_label = NULL;
+    command_label = NULL;
+    save_btn = NULL;
+    cancel_btn = NULL;
 }
 
 

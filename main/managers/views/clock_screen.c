@@ -1,9 +1,11 @@
 #include "managers/views/clock_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/display_manager.h"
+#include "gui/screen_layout.h"
 #include "lvgl.h"
 #include <time.h>
 #include "managers/settings_manager.h"
+#include "gui/lvgl_safe.h"
 #include "esp_log.h"
 
 static const char *TAG = "ClockScreens";
@@ -54,26 +56,21 @@ void clock_create(void) {
         tzset();
     }
     display_manager_fill_screen(lv_color_hex(0x121212));
-    clock_container = lv_obj_create(lv_scr_act());
+    clock_container = gui_screen_create_root(NULL, "Clock", lv_color_hex(0x121212), LV_OPA_COVER);
     clock_view.root = clock_container;
-    lv_obj_set_size(clock_container, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_opa(clock_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(clock_container, 0, 0);
-    lv_obj_set_style_border_color(clock_container, lv_color_hex(0x000000), 0);
-    lv_obj_set_scrollbar_mode(clock_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_align(clock_container, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_t *content = gui_screen_create_content(clock_container, GUI_STATUS_BAR_HEIGHT);
 
-    time_label = lv_label_create(clock_container);
+    time_label = lv_label_create(content);
     lv_label_set_text(time_label, "00:00:00");
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_40, 0);
     lv_obj_set_style_text_color(time_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_align(time_label, LV_ALIGN_CENTER, 0, -15);
-    date_label = lv_label_create(clock_container);
+    date_label = lv_label_create(content);
     lv_label_set_text(date_label, "Wednesday, January 01");
     lv_obj_set_style_text_font(date_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(date_label, lv_color_hex(0xAAAAAA), 0);
     lv_obj_align(date_label, LV_ALIGN_CENTER, 0, 30);
-    year_label = lv_label_create(clock_container);
+    year_label = lv_label_create(content);
     lv_label_set_text(year_label, "2025");
     lv_obj_set_style_text_font(year_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(year_label, lv_color_hex(0xAAAAAA), 0);
@@ -81,18 +78,15 @@ void clock_create(void) {
 
     clock_timer = lv_timer_create(digital_clock_cb, 1000, NULL);
     digital_clock_cb(NULL);
-    display_manager_add_status_bar("Clock");
 }
 
 void clock_destroy(void) {
     if (clock_timer) {
-        lv_timer_del(clock_timer);
-        clock_timer = NULL;
+        lvgl_timer_del_safe(&clock_timer);
     }
     if (clock_container) {
         lv_obj_clean(clock_container);
-        lv_obj_del(clock_container);
-        clock_container = NULL;
+        lvgl_obj_del_safe(&clock_container);
         clock_view.root = NULL;
     }
 }

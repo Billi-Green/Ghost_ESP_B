@@ -4,6 +4,8 @@
 #include "managers/display_manager.h"
 #include "gui/options_view.h"
 #include "core/screen_mirror.h"
+#include "gui/lvgl_safe.h"
+#include "gui/screen_layout.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
@@ -37,9 +39,9 @@ static const char **evil_portal_options = NULL;
 
 #define KARMA_MAX_SSIDS 64
 
- static const char *TAG = "optionsScreen";
+static const char *TAG = "optionsScreen";
 
- static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
+static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
 
 typedef enum {
     SETTINGS_CATEGORY_DISPLAY,
@@ -724,15 +726,8 @@ void options_menu_create() {
     display_manager_fill_screen(lv_color_hex(0x121212));
     lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
 
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, NULL, lv_color_hex(0x121212), LV_OPA_COVER);
     options_menu_view.root = root;
-    lv_obj_set_size(root, screen_width, screen_height);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x121212), 0);
-    lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_align(root, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_scrollbar_mode(root, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
     const int STATUS_BAR_HEIGHT = 20;
     g_options_view = options_view_create(root, options_menu_type_to_string(SelectedMenuType));
     menu_container = options_view_get_list(g_options_view);
@@ -1540,10 +1535,7 @@ void option_event_cb(lv_event_t *e) {
     }
     
     // stop incremental menu builder before any potential view switch
-    if (menu_build_timer) {
-        lv_timer_del(menu_build_timer);
-        menu_build_timer = NULL;
-    }
+    lvgl_timer_del_safe(&menu_build_timer);
     
     if (is_settings_mode) {
         const char *udata = (const char *)lv_event_get_user_data(e);
@@ -2749,10 +2741,7 @@ void handle_option_directly(const char *Selected_Option) {
 
 void options_menu_destroy() {
     // Delete the root object (deletes all children recursively)
-    if (options_menu_view.root) {
-        lv_obj_del(options_menu_view.root);
-        options_menu_view.root = NULL;
-    }
+    lvgl_obj_del_safe(&options_menu_view.root);
     if (g_options_view) {
         options_view_destroy(g_options_view);
         g_options_view = NULL;
@@ -2772,10 +2761,7 @@ void options_menu_destroy() {
     // so when returning from terminal view, we resume at the correct submenu
 
     // Delete and clear any timers
-    if (menu_build_timer) {
-        lv_timer_del(menu_build_timer);
-        menu_build_timer = NULL;
-    }
+    lvgl_timer_del_safe(&menu_build_timer);
     // Styles handled by options_view
 
     is_settings_mode = false;
@@ -2842,10 +2828,7 @@ static void back_event_cb(lv_event_t *e) {
 
 static void rebuild_current_menu(void) {
     // stop any existing build timer
-    if (menu_build_timer) {
-        lv_timer_del(menu_build_timer);
-        menu_build_timer = NULL;
-    }
+    lvgl_timer_del_safe(&menu_build_timer);
     
     // clear existing items efficiently
     if (g_options_view) {
