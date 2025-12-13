@@ -207,11 +207,10 @@ static void update_app_item(bool slide_left) {
 }
 
 static void create_apps_grid_menu(void) {
-    int screen_width = LV_HOR_RES;
-    int screen_height = LV_VER_RES;
-    int status_bar_height = 20;
-    int avail_height = screen_height - status_bar_height;
-    if (avail_height < 60) avail_height = screen_height;
+    int screen_width = lv_obj_get_width(apps_container);
+    int avail_height = lv_obj_get_height(apps_container);
+    if (screen_width <= 0) screen_width = LV_HOR_RES;
+    if (avail_height <= 0) avail_height = LV_VER_RES;
 
     int cols = num_apps < 3 ? num_apps : 3;
     if (cols <= 0) cols = 1;
@@ -229,7 +228,11 @@ static void create_apps_grid_menu(void) {
     lv_obj_set_style_border_width(grid_cards_container, 0, 0);
     lv_obj_set_style_pad_all(grid_cards_container, 0, 0);
     lv_obj_align(grid_cards_container, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_scrollbar_mode(grid_cards_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scrollbar_mode(grid_cards_container, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(grid_cards_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(grid_cards_container, LV_DIR_VER);
+    lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
     apps_grid_cards = calloc(num_apps, sizeof(lv_obj_t *));
     if (!apps_grid_cards) {
@@ -237,12 +240,11 @@ static void create_apps_grid_menu(void) {
         return;
     }
 
+    int visible_rows = 2;
     int card_width = (screen_width - (cols - 1) * margin) / cols;
-    int card_height = (avail_height - (rows - 1) * margin) / rows;
+    int card_height = (avail_height - (visible_rows - 1) * margin) / visible_rows;
     int total_inner_w = cols * card_width + (cols - 1) * margin;
-    int total_inner_h = rows * card_height + (rows - 1) * margin;
     int w_remainder = screen_width - total_inner_w;
-    int h_remainder = avail_height - total_inner_h;
 
     for (int i = 0; i < num_apps; ++i) {
         int row = i / cols;
@@ -250,7 +252,7 @@ static void create_apps_grid_menu(void) {
         int x = col * (card_width + margin);
         int y = row * (card_height + margin);
         int cw = card_width + ((col == cols - 1) ? w_remainder : 0);
-        int ch = card_height + ((row == rows - 1) ? h_remainder : 0);
+        int ch = card_height;
 
         lv_obj_t *card = lv_btn_create(grid_cards_container);
         apps_grid_cards[i] = card;
