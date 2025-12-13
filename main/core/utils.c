@@ -150,3 +150,21 @@ void log_heap_status(const char *tag, const char *event) {
            (unsigned)largest8,
            (unsigned)free32);
 }
+
+void format_mac_address(const uint8_t *mac, char *buffer, size_t buffer_len, bool uppercase) {
+  if (mac == NULL || buffer == NULL || buffer_len < 18) {
+    return;
+  }
+
+  const char *format = uppercase ? "%02X:%02X:%02X:%02X:%02X:%02X"
+                                 : "%02x:%02x:%02x:%02x:%02x:%02x";
+  snprintf(buffer,
+           buffer_len,
+           format,
+           mac[0],
+           mac[1],
+           mac[2],
+           mac[3],
+           mac[4],
+           mac[5]);
+}

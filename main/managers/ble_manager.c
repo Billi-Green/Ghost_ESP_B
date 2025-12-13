@@ -17,6 +17,7 @@
 #include "managers/views/terminal_screen.h"
 #include "host/ble_gatt.h"
 #include "core/glog.h"
+#include "core/utils.h"
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -1221,9 +1222,7 @@ void ble_findtheflippers_callback(struct ble_gap_event *event, size_t len) {
     int advertisementRssi = event->disc.rssi;
 
     char advertisementMac[18];
-    snprintf(advertisementMac, sizeof(advertisementMac), "%02x:%02x:%02x:%02x:%02x:%02x",
-             event->disc.addr.val[0], event->disc.addr.val[1], event->disc.addr.val[2],
-             event->disc.addr.val[3], event->disc.addr.val[4], event->disc.addr.val[5]);
+    format_mac_address(event->disc.addr.val, advertisementMac, sizeof(advertisementMac), false);
 
     char advertisementName[32];
     parse_device_name(event->disc.data, event->disc.length_data, advertisementName,
@@ -1287,9 +1286,7 @@ void ble_findtheflippers_callback(struct ble_gap_event *event, size_t len) {
 
 void ble_print_raw_packet_callback(struct ble_gap_event *event, size_t len) {
     char advertisementMac[18];
-    snprintf(advertisementMac, sizeof(advertisementMac), "%02x:%02x:%02x:%02x:%02x:%02x",
-             event->disc.addr.val[0], event->disc.addr.val[1], event->disc.addr.val[2],
-             event->disc.addr.val[3], event->disc.addr.val[4], event->disc.addr.val[5]);
+    format_mac_address(event->disc.addr.val, advertisementMac, sizeof(advertisementMac), false);
 
     // stop logging raw advertisement data
     //
@@ -1377,10 +1374,8 @@ void airtag_scanner_callback(struct ble_gap_event *event, size_t len) {
                     TickType_t elapsed = now - airtag_last_rssi_log[i];
                     if (airtag_last_rssi_log[i] == 0 || elapsed >= pdMS_TO_TICKS(AIRTAG_RSSI_LOG_INTERVAL_MS)) {
                         char macAddress[18];
-                        snprintf(macAddress, sizeof(macAddress), "%02x:%02x:%02x:%02x:%02x:%02x",
-                                 discovered_airtags[i].addr.val[0], discovered_airtags[i].addr.val[1],
-                                 discovered_airtags[i].addr.val[2], discovered_airtags[i].addr.val[3],
-                                 discovered_airtags[i].addr.val[4], discovered_airtags[i].addr.val[5]);
+                        format_mac_address(discovered_airtags[i].addr.val, macAddress, sizeof(macAddress), false);
+
                         glog("AirTag RSSI update: idx %d MAC %s RSSI %d dBm\n", i, macAddress, event->disc.rssi);
                         airtag_last_rssi_log[i] = now;
                     }
@@ -1409,9 +1404,8 @@ void airtag_scanner_callback(struct ble_gap_event *event, size_t len) {
             pulse_once(&rgb_manager, 0, 0, 255);
 
             char macAddress[18];
-            snprintf(macAddress, sizeof(macAddress), "%02x:%02x:%02x:%02x:%02x:%02x",
-                     event->disc.addr.val[0], event->disc.addr.val[1], event->disc.addr.val[2],
-                     event->disc.addr.val[3], event->disc.addr.val[4], event->disc.addr.val[5]);
+            format_mac_address(event->disc.addr.val, macAddress, sizeof(macAddress), false);
+
             int rssi = event->disc.rssi;
 
                 glog("New AirTag found! (Total: %d)\n", airTagCount);
@@ -1444,9 +1438,7 @@ void ble_list_airtags(void) {
 
     for (int i = 0; i < discovered_airtag_count; i++) {
         char macAddress[18];
-        snprintf(macAddress, sizeof(macAddress), "%02x:%02x:%02x:%02x:%02x:%02x",
-                 discovered_airtags[i].addr.val[0], discovered_airtags[i].addr.val[1], discovered_airtags[i].addr.val[2],
-                 discovered_airtags[i].addr.val[3], discovered_airtags[i].addr.val[4], discovered_airtags[i].addr.val[5]);
+        format_mac_address(discovered_airtags[i].addr.val, macAddress, sizeof(macAddress), false);
 
         glog("Index: %d | MAC: %s | RSSI: %d dBm %s\n",
              i, macAddress, discovered_airtags[i].rssi,
@@ -1471,9 +1463,8 @@ void ble_select_airtag(int index) {
 
     selected_airtag_index = index;
     char macAddress[18];
-    snprintf(macAddress, sizeof(macAddress), "%02x:%02x:%02x:%02x:%02x:%02x",
-             discovered_airtags[index].addr.val[0], discovered_airtags[index].addr.val[1], discovered_airtags[index].addr.val[2],
-             discovered_airtags[index].addr.val[3], discovered_airtags[index].addr.val[4], discovered_airtags[index].addr.val[5]);
+    format_mac_address(discovered_airtags[index].addr.val, macAddress, sizeof(macAddress), false);
+
     glog("Selected AirTag at index %d: MAC %s\n", index, macAddress);
 }
 
@@ -1731,9 +1722,8 @@ void ble_start_spoofing_selected_airtag(void) {
     }
 
     char macAddress[18];
-    snprintf(macAddress, sizeof(macAddress), "%02x:%02x:%02x:%02x:%02x:%02x",
-             tag_to_spoof->addr.val[0], tag_to_spoof->addr.val[1], tag_to_spoof->addr.val[2],
-             tag_to_spoof->addr.val[3], tag_to_spoof->addr.val[4], tag_to_spoof->addr.val[5]);
+    format_mac_address(tag_to_spoof->addr.val, macAddress, sizeof(macAddress), false);
+
     printf("Started spoofing AirTag %d (MAC: %s)\n", selected_airtag_index, macAddress);
     TERMINAL_VIEW_ADD_TEXT("Started spoofing AirTag %d\nMAC: %s\n", selected_airtag_index, macAddress);
     status_display_show_status("AirTag Spoof On");
@@ -2115,6 +2105,7 @@ void ble_start_airtag_scanner(void) {
         own_addr_type = BLE_OWN_ADDR_PUBLIC; // Fallback
     }
 
+    // Start a new BLE scan
     int rc = ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &disc_params, ble_gap_event_general, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG_BLE, "Error starting AirTag BLE scan; rc=%d", rc);
@@ -2248,10 +2239,8 @@ void ble_list_flippers(void) {
 
     for (int i = 0; i < discovered_flipper_count; i++) {
         char mac[18];
-        snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-                 discovered_flippers[i].addr.val[0], discovered_flippers[i].addr.val[1],
-                 discovered_flippers[i].addr.val[2], discovered_flippers[i].addr.val[3],
-                 discovered_flippers[i].addr.val[4], discovered_flippers[i].addr.val[5]);
+        format_mac_address(discovered_flippers[i].addr.val, mac, sizeof(mac), false);
+
         glog("Index: %d | MAC: %s | RSSI: %d dBm%s\n",
              i, mac, discovered_flippers[i].rssi,
              (i == selected_flipper_index) ? " (Selected)" : "");
@@ -2322,10 +2311,8 @@ void ble_select_flipper(int index) {
 
     selected_flipper_index = index;
     char mac[18];
-    snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-             discovered_flippers[index].addr.val[0], discovered_flippers[index].addr.val[1],
-             discovered_flippers[index].addr.val[2], discovered_flippers[index].addr.val[3],
-             discovered_flippers[index].addr.val[4], discovered_flippers[index].addr.val[5]);
+    format_mac_address(discovered_flippers[index].addr.val, mac, sizeof(mac), false);
+
     glog("Selected Flipper at index %d: MAC %s\n", index, mac);
     // Start continuous tracking scan without duplicate filtering
     ble_start_tracking_selected_flipper();
@@ -3026,9 +3013,8 @@ void ble_gatt_scan_callback(struct ble_gap_event *event, size_t len) {
         dev->tracker_type = detect_tracker_type(event->disc.data, event->disc.length_data, dev->name);
         
         char mac[18];
-        snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-                 dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
-                 dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+        format_mac_address(dev->addr.val, mac, sizeof(mac), false);
+
         
         const char *tracker_str = tracker_type_to_string(dev->tracker_type);
         if (tracker_str) {
@@ -3074,9 +3060,8 @@ void ble_list_gatt_devices(void) {
     for (int i = 0; i < discovered_gatt_device_count; i++) {
         GattDevice *dev = &discovered_gatt_devices[i];
         char mac[18];
-        snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-                 dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
-                 dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+        format_mac_address(dev->addr.val, mac, sizeof(mac), false);
+
         
         const char *tracker_str = tracker_type_to_string(dev->tracker_type);
         char info[64] = "";
@@ -3110,9 +3095,8 @@ void ble_select_gatt_device(int index) {
     GattDevice *dev = &discovered_gatt_devices[index];
     
     char mac[18];
-    snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x",
-             dev->addr.val[0], dev->addr.val[1], dev->addr.val[2],
-             dev->addr.val[3], dev->addr.val[4], dev->addr.val[5]);
+    format_mac_address(dev->addr.val, mac, sizeof(mac), false);
+
     
     glog("Selected GATT device [%d]: %s (%s)\n", index, 
          dev->name[0] ? dev->name : "<unknown>", mac);

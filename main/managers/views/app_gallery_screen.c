@@ -4,6 +4,7 @@
 #include "managers/views/terminal_screen.h"
 
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -60,36 +61,9 @@ static lv_obj_t *grid_cards_container = NULL;
 // Use the same theme palettes as the main menu to color app borders
 static void init_app_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    const uint32_t palettes[15][6] = {
-        {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
-        {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
-        {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
-        {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
-        {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
-        {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
-        {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
-        {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
-        {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
-        {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
-        {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
-        {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
-        {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
-        {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
-        {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
-    };
-    const int palette_count = (int)(sizeof(palettes) / sizeof(palettes[0]));
-    const int palette_len = (int)(sizeof(palettes[0]) / sizeof(palettes[0][0]));
-    int theme_index = (int)theme;
-    if (theme_index < 0 || theme_index >= palette_count) {
-        theme_index = 0;
-    }
-
     for (int i = 0; i < num_apps; ++i) {
         int slot = app_items[i].palette_index;
-        if (slot < 0 || slot >= palette_len) {
-            slot = 0;
-        }
-        app_items[i].border_color = lv_color_hex(palettes[theme_index][slot]);
+        app_items[i].border_color = lv_color_hex(theme_palette_get(theme, slot));
     }
 }
 

@@ -4,6 +4,7 @@
 #include "managers/rgb_manager.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/wifi_manager.h"
+#include "core/utils.h"
 #include "vendor/GPS/gps_logger.h"
 #include "vendor/pcap.h"
 #include "core/glog.h"
@@ -478,9 +479,7 @@ void log_pineap_detection(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     char mac_str[18];
-    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x", log_data->bssid[0],
-             log_data->bssid[1], log_data->bssid[2], log_data->bssid[3], log_data->bssid[4],
-             log_data->bssid[5]);
+    format_mac_address(log_data->bssid, mac_str, sizeof(mac_str), false);
 
     // Build SSIDs string, filtering out empty SSIDs
     char ssids_str[256] = {0};
@@ -514,10 +513,7 @@ void log_pineap_detection(void *arg) {
                 strcasecmp(network->recent_ssids[0], pineap_networks[i].recent_ssids[0]) == 0) {
                 // format the other network's BSSID into a string before logging
                 char other_mac_str[18];
-                snprintf(other_mac_str, sizeof(other_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-                         pineap_networks[i].bssid[0], pineap_networks[i].bssid[1],
-                         pineap_networks[i].bssid[2], pineap_networks[i].bssid[3],
-                         pineap_networks[i].bssid[4], pineap_networks[i].bssid[5]);
+                format_mac_address(pineap_networks[i].bssid, other_mac_str, sizeof(other_mac_str), false);
 
                 glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %s and\n%s\n",
                      network->recent_ssids[0], mac_str, other_mac_str);
@@ -1483,11 +1479,9 @@ void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     // Extract source and dest MAC and SSID as before...
     char src_mac_str[18];
-    snprintf(src_mac_str, sizeof(src_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5]);
+    format_mac_address(hdr->addr2, src_mac_str, sizeof(src_mac_str), false);
     char dest_mac_str[18];
-    snprintf(dest_mac_str, sizeof(dest_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             hdr->addr1[0], hdr->addr1[1], hdr->addr1[2], hdr->addr1[3], hdr->addr1[4], hdr->addr1[5]);
+    format_mac_address(hdr->addr1, dest_mac_str, sizeof(dest_mac_str), false);
     int index = 24;
     char ssid[33] = {0};
     bool ssid_found = false;

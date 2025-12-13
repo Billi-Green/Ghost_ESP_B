@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
 
 void update_learning_popup_selection(void);
 void update_easy_learn_popup_selection(void);
@@ -22,12 +23,6 @@ static bool ir_sd_begin(bool *display_was_suspended);
 static void ir_sd_end(bool display_was_suspended);
 
 static const char *TAG = "infrared_view";
-
-static const uint32_t ir_theme_accent_colors[15] = {
-    0x1976D2,0xFFCDD2,0x263238,0xFFFFFF,0x002B36,
-    0x888888,0xE91E63,0x9C27B0,0x2196F3,0xFFA500,
-    0x39FF14,0xFF00FF,0x0077BE,0xFF4500,0x556B2F
-};
 
 #ifdef CONFIG_HAS_INFRARED_RX
 void cleanup_signal_preview_popup(void *obj);
@@ -1557,13 +1552,10 @@ static void ir_select_item(int index) {
             }
         } else {
             uint8_t theme = settings_get_menu_theme(&G_Settings);
-            if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) {
-                theme = 0;
-            }
-            lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+            lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
             lv_obj_set_style_bg_color(cur, accent, LV_PART_MAIN);
             if (cur_label) {
-                if (theme == 3) {
+                if (theme_palette_is_bright(theme)) {
                     lv_obj_set_style_text_color(cur_label, lv_color_hex(0x000000), 0);
                 } else {
                     lv_obj_set_style_text_color(cur_label, lv_color_hex(0xFFFFFF), 0);
@@ -2927,8 +2919,7 @@ void update_signal_preview_selection(void)
     
     // Update button styles based on selection
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-    lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+    lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
 
     if (preview_selected_option == 0) {
         // Save selected - theme accent background
@@ -2936,7 +2927,7 @@ void update_signal_preview_selection(void)
         lv_obj_set_style_border_color(save_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *save_label = lv_obj_get_child(save_btn, 0);
         if (save_label) {
-            if (theme == 3) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(save_label, lv_color_hex(0xFFFFFF), 0);
         }
         
@@ -2951,7 +2942,7 @@ void update_signal_preview_selection(void)
         lv_obj_set_style_border_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
         
@@ -2970,13 +2961,12 @@ void update_learning_popup_selection(void)
     if (preview_selected_option == 1) {
         // Cancel selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(learning_cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {
@@ -2997,13 +2987,12 @@ void update_easy_learn_popup_selection(void)
     if (easy_learn_selected_option == 0) {
         // Cancel selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(easy_learn_cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {
@@ -3018,13 +3007,12 @@ void update_easy_learn_popup_selection(void)
     if (easy_learn_selected_option == 1) {
         // Skip selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *skip_label = lv_obj_get_child(easy_learn_skip_btn, 0);
         if (skip_label) {
-            if (theme == 3) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(skip_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {

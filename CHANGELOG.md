@@ -63,6 +63,7 @@
 - Increase CPU clock speed on certain configs
 - Reorganised and renamed wifi display sections
 - Free pcap queue and task when not capturing
+- Added shared MAC formatting helper for refactors
 - Changed default CPU clock speed to 240MHz instead of 160MHz for:
   - sdkconfig.awokimini
   - sdkconfig.CYD2432S028R
@@ -87,6 +88,7 @@
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
 - Apps menu now follows main menu theme, controls and layout
 - Main menu app colors are now consistent across devices
+- Centralized UI theme palette definitions into a shared helper to reduce duplicate display code.
 - Route evil portal HTML requests through the UART HTML buffer when active instead of the SD-backed file handler.
 - Fixed TEmbed C1101-specific hardware initialization running on all encoder configs
 - Fixed an issue that would cause MFC dictionary attack to not try all possible keys
