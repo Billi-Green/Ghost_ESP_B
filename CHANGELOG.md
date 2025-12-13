@@ -45,6 +45,7 @@
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
 - Added a first time boot setup wizard for display enabled configs
 - Added basic support for the Heltec v3 (NO LORA/MESH)- @tototo31
+- Add Docker support for HTML header generation with build script - @tototo31
 
 ### Changed
 
