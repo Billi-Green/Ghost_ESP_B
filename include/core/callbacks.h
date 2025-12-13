@@ -88,4 +88,7 @@ static uint8_t router_ip[4];
 // Controls whether probe listening writes PCAP data to SD (no UART fallback)
 extern bool g_listen_probes_save_to_sd;
 
+// cleanup function to free pcap queue when not capturing
+void cleanup_pcap_queue(void);
+
 #endif

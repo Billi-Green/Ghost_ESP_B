@@ -53,6 +53,7 @@ static uint8_t g_stable_state_port1 = 0xFF;
 static uint8_t g_cached_state_port1 = 0xFF;
 static int64_t g_last_change_time = 0;
 static TaskHandle_t g_io_task_handle = NULL;
+static TickType_t g_oom_backoff_until = 0;
 
 // Forward declarations
 static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data);
@@ -478,6 +479,11 @@ static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1)
     }
 
     esp_err_t ret = ESP_FAIL;
+    TickType_t now = xTaskGetTickCount();
+    if (g_oom_backoff_until && now < g_oom_backoff_until) {
+        xSemaphoreGive(g_i2c_mutex);
+        return ESP_ERR_NO_MEM;
+    }
     bool global_locked = i2c_bus_lock(g_config.i2c_port, 60);
     if (!global_locked) {
         xSemaphoreGive(g_i2c_mutex);
@@ -486,6 +492,7 @@ static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1)
     }
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     if (cmd) {
+        g_oom_backoff_until = 0;
         i2c_master_start(cmd);
         i2c_master_write_byte(cmd, (g_config.i2c_addr << 1) | I2C_MASTER_WRITE, true);
         i2c_master_write_byte(cmd, TCA9535_INPUT_PORT0, true);
@@ -497,6 +504,7 @@ static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1)
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
     } else {
+        g_oom_backoff_until = now + pdMS_TO_TICKS(1000);
         ret = ESP_ERR_NO_MEM;
     }
     i2c_bus_unlock(g_config.i2c_port);

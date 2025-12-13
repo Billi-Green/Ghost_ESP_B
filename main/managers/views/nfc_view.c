@@ -1,10 +1,13 @@
+ #include "gui/screen_layout.h"
 #include "managers/display_manager.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
 #include "lvgl.h"
 #include "esp_log.h"
 #include "gui/popup.h"
+#include "gui/lvgl_safe.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -172,25 +175,6 @@ static lv_obj_t *keys_down_btn = NULL;
 static lv_obj_t *keys_scroll = NULL;
 static int keys_popup_selected = 0;
 static lv_obj_t *keys_btn_bar = NULL;
-
-// Match options_screen theme palettes for selected row color
-static const uint32_t theme_palettes[15][6] __attribute__((unused)) = {
-    {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
-    {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
-    {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
-    {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
-    {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
-    {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
-    {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
-    {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
-    {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
-    {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
-    {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
-    {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
-    {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
-    {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
-    {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
-};
 
 // UI hook from MIFARE Classic layer to indicate sector/block/key phase
 // (implementation moved below after static phase variables are declared)
@@ -1141,7 +1125,7 @@ static void vertically_center_label(lv_obj_t *label, lv_obj_t *btn) {
 
 static void update_selected_style_from_theme(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    lv_color_t theme_bg = lv_color_hex(theme_palettes[theme][0]);
+    lv_color_t theme_bg = lv_color_hex(theme_palette_get_accent(theme));
     lv_style_set_bg_color(&style_selected_item, theme_bg);
     lv_style_set_bg_grad_dir(&style_selected_item, LV_GRAD_DIR_NONE);
     lv_style_set_bg_grad_color(&style_selected_item, theme_bg);
@@ -1155,11 +1139,10 @@ static void highlight_selected(void) {
         lv_obj_t *label = lv_obj_get_child(child, 0);
         if (i == selected_index) {
             uint8_t theme = settings_get_menu_theme(&G_Settings);
-            if (theme >= 15) theme = 0;
-            lv_color_t accent = lv_color_hex(theme_palettes[theme][0]);
+            lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
             lv_obj_set_style_bg_color(child, accent, LV_PART_MAIN);
             if (label) {
-                if (theme == 3) lv_obj_set_style_text_color(label, lv_color_hex(0x000000), 0);
+                if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(label, lv_color_hex(0x000000), 0);
                 else lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
             }
             lv_obj_scroll_to_view(child, LV_ANIM_OFF);
@@ -1699,8 +1682,7 @@ void cleanup_nfc_scan_popup(void *obj) {
     ESP_LOGI(TAG, "cleanup_nfc_scan_popup: begin");
 #endif
     if (nfc_scan_popup) {
-        lv_obj_del(nfc_scan_popup);
-        nfc_scan_popup = NULL;
+        lvgl_obj_del_safe(&nfc_scan_popup);
         nfc_btn_bar = NULL;
         nfc_scan_cancel_btn = NULL;
         nfc_scan_more_btn = NULL;
@@ -1727,10 +1709,7 @@ void cleanup_nfc_scan_popup(void *obj) {
     fuel_gauge_manager_set_paused(true);
 #endif
     // If a deferred retry timer exists, delete it now (legacy cleanup)
-    if (nfc_scan_retry_timer) {
-        lv_timer_del(nfc_scan_retry_timer);
-        nfc_scan_retry_timer = NULL;
-    }
+    lvgl_timer_del_safe(&nfc_scan_retry_timer);
     // Wait briefly for the scan task to exit and release PN532 itself
     uint32_t waited_ms = 0;
     while (nfc_scan_task_handle != NULL && waited_ms < 800) {
@@ -2934,7 +2913,7 @@ static void keys_scroll_down_cb(lv_event_t *e);
 
 static void cleanup_keys_popup(void *obj) {
     (void)obj;
-    if (keys_popup) { lv_obj_del(keys_popup); keys_popup = NULL; }
+    lvgl_obj_del_safe(&keys_popup);
     keys_close_btn = NULL;
     keys_title_label = NULL;
     keys_details_label = NULL;
@@ -3106,7 +3085,7 @@ keys_cleanup:
 // ---- chameleon ultra basic popup ----
 void cleanup_cu_popup(void *obj) {
     (void)obj;
-    if (cu_popup) { lv_obj_del(cu_popup); cu_popup = NULL; }
+    lvgl_obj_del_safe(&cu_popup);
     cu_title_label = NULL;
     cu_details_label = NULL;
     cu_close_btn = NULL;
@@ -3120,7 +3099,7 @@ void cleanup_cu_popup(void *obj) {
     cu_save_visible = false;
     cu_busy = false;
     cu_more_expanded = false;
-    if (cu_state_timer) { lv_timer_del(cu_state_timer); cu_state_timer = NULL; }
+    lvgl_timer_del_safe(&cu_state_timer);
 }
 
 static void cu_close_cb(lv_event_t *e) { (void)e; cleanup_cu_popup(NULL); }
@@ -3335,7 +3314,7 @@ static void create_cu_popup(void) {
     update_cu_popup_selection();
 
     // start lightweight state refresh timer to keep popup live without reopening
-    if (cu_state_timer) { lv_timer_del(cu_state_timer); cu_state_timer = NULL; }
+    lvgl_timer_del_safe(&cu_state_timer);
     cu_state_timer = lv_timer_create(cu_state_timer_cb, 300, NULL);
 }
 
@@ -3363,7 +3342,7 @@ static void cu_state_timer_cb(lv_timer_t *t) {
 
 void cleanup_nfc_write_popup(void *obj) {
     (void)obj;
-    if (nfc_write_popup) { lv_obj_del(nfc_write_popup); nfc_write_popup = NULL; }
+    lvgl_obj_del_safe(&nfc_write_popup);
     nfc_write_cancel_btn = NULL; nfc_write_go_btn = NULL;
     nfc_write_title_label = NULL; nfc_write_details_label = NULL;
     nfc_write_popup_selected = 0;
@@ -3998,7 +3977,7 @@ static void saved_rename_ui_done_cb(void *param) {
 
 void cleanup_saved_details_popup(void *obj) {
     (void)obj;
-    if (saved_popup) { lv_obj_del(saved_popup); saved_popup = NULL; }
+    lvgl_obj_del_safe(&saved_popup);
     saved_close_btn = NULL;
     saved_rename_btn = NULL;
     saved_delete_btn = NULL;
@@ -4450,10 +4429,7 @@ void nfc_view_destroy(void) {
     saved_clear_list();
     in_saved_list = false;
 
-    if (root) {
-        lv_obj_del(root);
-        root = NULL;
-    }
+    lvgl_obj_del_safe(&root);
     nfc_view.root = NULL;
     menu_container = NULL;
     scan_btn = NULL;

@@ -22,7 +22,11 @@ typedef enum {
   IDLE_ANIM_GHOST = 1,
   IDLE_ANIM_STARFIELD = 2,
   IDLE_ANIM_HUD = 3,
-  IDLE_ANIM_MATRIX = 4
+  IDLE_ANIM_MATRIX = 4,
+  IDLE_ANIM_FLYING_GHOSTS = 5,
+  IDLE_ANIM_SPIRAL = 6,
+  IDLE_ANIM_FALLING_LEAVES = 7,
+  IDLE_ANIM_BOUNCING_TEXT = 8
 } IdleAnimation;
 #endif
 
@@ -119,11 +123,14 @@ typedef struct {
   
   // Neopixel settings
   uint8_t neopixel_max_brightness; // Max neopixel brightness (0-100)
+  uint16_t rgb_led_count; // Number of LEDs configured for RGB manager
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   IdleAnimation status_idle_animation; // idle animation for status display
   uint32_t status_idle_timeout_ms; // delay before starting idle animation
 #endif
   bool encoder_invert_direction;
+  bool setup_complete;
+  uint8_t wifi_country;
 } FSettings;
 
 // Function declarations
@@ -217,6 +224,9 @@ void settings_set_rgb_data_pin(FSettings *settings, int32_t pin);
 int32_t settings_get_rgb_data_pin(const FSettings *settings);
 void settings_set_rgb_separate_pins(FSettings *settings, int32_t red, int32_t green, int32_t blue);
 void settings_get_rgb_separate_pins(const FSettings *settings, int32_t *red, int32_t *green, int32_t *blue);
+void settings_set_rgb_led_count(FSettings *settings, uint16_t count);
+uint16_t settings_get_rgb_led_count(const FSettings *settings);
+
 void settings_set_thirds_control_enabled(FSettings *settings, bool enabled);
 bool settings_get_thirds_control_enabled(const FSettings *settings);
 
@@ -276,6 +286,12 @@ uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
 // Encoder direction inversion settings
 void settings_set_encoder_invert_direction(FSettings *settings, bool enabled);
 bool settings_get_encoder_invert_direction(const FSettings *settings);
+
+// Setup wizard settings
+void settings_set_setup_complete(FSettings *settings, bool complete);
+bool settings_get_setup_complete(const FSettings *settings);
+void settings_set_wifi_country(FSettings *settings, uint8_t country);
+uint8_t settings_get_wifi_country(const FSettings *settings);
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 // Status display idle animation accessors

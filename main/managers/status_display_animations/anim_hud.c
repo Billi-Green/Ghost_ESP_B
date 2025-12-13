@@ -18,23 +18,9 @@ typedef struct {
     int ram_free_kb;
     int ram_total_kb;
     int cpu_used_pct;
+    int sd_used_pct;
     bool sd_ok;
 } HudStats;
-
-static bool hud_get_wifi_ssid(char *out, size_t len)
-{
-    if (!out || len == 0) return false;
-    wifi_ap_record_t ap;
-    memset(&ap, 0, sizeof(ap));
-    esp_err_t err = esp_wifi_sta_get_ap_info(&ap);
-    if (err != ESP_OK) return false;
-    size_t slen = strnlen((const char *)ap.ssid, sizeof(ap.ssid));
-    if (slen == 0) return false;
-    if (slen >= len) slen = len - 1;
-    memcpy(out, ap.ssid, slen);
-    out[slen] = '\0';
-    return true;
-}
 
 static void hud_collect_stats(HudStats *out)
 {
@@ -61,7 +47,11 @@ static void hud_collect_stats(HudStats *out)
     if (cpu_pct > 100) cpu_pct = 100;
     out->cpu_used_pct = cpu_pct;
 
-    out->sd_ok = sd_card_manager.is_initialized;
+    // SD card used space stats (use cached value from last mount)
+    sd_card_cached_stats_t sd_stats;
+    sd_card_get_cached_stats(&sd_stats);
+    out->sd_ok = sd_stats.valid;
+    out->sd_used_pct = sd_stats.valid ? sd_stats.used_pct : 0;
 }
 
 static int hud_get_webui_sta_count(bool *ap_enabled, bool *server_running)
@@ -101,44 +91,84 @@ void status_anim_hud_step(TickType_t now, int frame, const StatusAnimGfx *gfx)
     HudStats stats;
     hud_collect_stats(&stats);
 
-    char buf[32];
-    uint32_t hud_phase = (uint32_t)frame;
-    uint32_t top_mode = (hud_phase / 8U) % 3U;
-
-    if (top_mode == 0) {
-        char ssid[20];
-        if (hud_get_wifi_ssid(ssid, sizeof(ssid))) {
-            snprintf(buf, sizeof(buf), "AP  %.16s", ssid);
-        } else {
-            snprintf(buf, sizeof(buf), "AP Not connected");
-        }
-    } else if (top_mode == 1) {
-        if (!stats.sd_ok) {
-            snprintf(buf, sizeof(buf), "SD FAIL");
-        } else {
-            snprintf(buf, sizeof(buf), "SD OK");
-        }
+    char buf[32], buf1[32], buf2[32];
+    
+    // AP and WebUI status
+    bool ap_enabled = false;
+    bool server_running = false;
+    int sta_count = hud_get_webui_sta_count(&ap_enabled, &server_running);
+    
+    if (ap_enabled) {
+        snprintf(buf1, sizeof(buf1), "AP:ON");
     } else {
-        bool ap_enabled = false;
-        bool server_running = false;
-        int sta_count = hud_get_webui_sta_count(&ap_enabled, &server_running);
-        if (!ap_enabled) {
-            snprintf(buf, sizeof(buf), "WebUI: OFF");
-        } else if (!server_running) {
-            snprintf(buf, sizeof(buf), "WebUI: STOP");
-        } else {
-            snprintf(buf, sizeof(buf), "WebUI: %d STA", sta_count);
-        }
+        snprintf(buf1, sizeof(buf1), "AP:OFF");
     }
-    gfx->draw_text(gfx->user, 2, 2, buf);
+    if (!ap_enabled) {
+        snprintf(buf2, sizeof(buf2), "WebUI:OFF");
+    } else if (!server_running) {
+        snprintf(buf2, sizeof(buf2), "WebUI:--");
+    } else {
+        snprintf(buf2, sizeof(buf2), "WebUI:%d", sta_count);
+    }
+    
+    // Draw both on the same line, splitting the width
+    // Left side starts at x=2, right side positioned to avoid vertical scrolling text
+    gfx->draw_text(gfx->user, 2, 2, buf1);
+    
+    // Calculate right side position - vertical text starts at width-8 (x=120)
+    // Position right side text to end before the vertical text area
+    // Each character is ~6 pixels wide
+    int right_text_len = (int)strlen(buf2);
+    int right_text_width = right_text_len * 6;
+    int vertical_text_start = gfx->width - 8; // Vertical text starts here
+    int right_text_x = vertical_text_start - right_text_width - 4; // Leave 4px gap
+    if (right_text_x < 2) right_text_x = 2; // Safety check
+    gfx->draw_text(gfx->user, right_text_x, 2, buf2);
 
+    // RAM text and bar
     snprintf(buf, sizeof(buf), "RAM %3d%%", stats.ram_used_pct);
-    gfx->draw_text(gfx->user, 2, 18, buf);
+    int ram_text_y = 18;
+    gfx->draw_text(gfx->user, 2, ram_text_y, buf);
+    // Bar graph next to RAM percentage (text is ~48 pixels wide, bar starts at x=50)
+    // Center bar vertically with text, adjusted down by half character height
+    int ram_bar_x = 50;
+    int ram_bar_w = 60;
+    int ram_bar_h = 10;
+    int ram_text_center_y = ram_text_y + gfx->font_char_height / 2;
+    int ram_bar_y = ram_text_center_y - ram_bar_h / 2 + 3; // Move down by ~half character height
+    draw_bar(gfx, ram_bar_x, ram_bar_y, ram_bar_w, ram_bar_h, stats.ram_used_pct);
 
+    // CPU text and bar
     snprintf(buf, sizeof(buf), "CPU %3d%%", stats.cpu_used_pct);
-    gfx->draw_text(gfx->user, 2, 34, buf);
+    int cpu_text_y = 34;
+    gfx->draw_text(gfx->user, 2, cpu_text_y, buf);
+    // Bar graph next to CPU percentage
+    // Center bar vertically with text, adjusted down by half character height
+    int cpu_bar_x = 50;
+    int cpu_bar_w = 60;
+    int cpu_bar_h = 10;
+    int cpu_text_center_y = cpu_text_y + gfx->font_char_height / 2;
+    int cpu_bar_y = cpu_text_center_y - cpu_bar_h / 2 + 3; // Move down by ~half character height
+    draw_bar(gfx, cpu_bar_x, cpu_bar_y, cpu_bar_w, cpu_bar_h, stats.cpu_used_pct);
 
-    draw_bar(gfx, 8, gfx->height - 8, gfx->width - 16, 5, stats.cpu_used_pct);
+    // SD card used space text and bar
+    if (stats.sd_ok) {
+        snprintf(buf, sizeof(buf), "SD %3d%%", stats.sd_used_pct);
+    } else {
+        snprintf(buf, sizeof(buf), "SD   N/A");
+    }
+    int sd_text_y = 50;
+    gfx->draw_text(gfx->user, 2, sd_text_y, buf);
+    // Bar graph next to SD card used space (showing percentage of used space)
+    // Center bar vertically with text, adjusted down by half character height
+    int sd_bar_x = 50; // Aligned with RAM and CPU bars
+    int sd_bar_w = 60; // Same width as RAM and CPU bars
+    int sd_bar_h = 10;
+    int sd_text_center_y = sd_text_y + gfx->font_char_height / 2;
+    int sd_bar_y = sd_text_center_y - sd_bar_h / 2 + 3; // Move down by ~half character height
+    if (stats.sd_ok) {
+        draw_bar(gfx, sd_bar_x, sd_bar_y, sd_bar_w, sd_bar_h, stats.sd_used_pct);
+    }
 
     const char *vert = "GhostESP: Revival";
     int len = (int)strlen(vert);

@@ -5,12 +5,13 @@
 #include <lvgl.h>
 #include <math.h>
 #include "esp_log.h"
+#include "gui/screen_layout.h"
+#include "gui/lvgl_safe.h"
 
 #define NUM_PARTICLES 5
 #define ANIMATION_INTERVAL_MS 5 // Approximately 30 FPS
 
 static const char *TAG = "MusicVisualizer";
-
 
 lv_timer_t *animation_timer = NULL;
 
@@ -75,17 +76,10 @@ View music_visualizer_view = {
 void music_visualizer_view_create() {
   display_manager_fill_screen(lv_color_black());
 
-  root = lv_obj_create(lv_scr_act());
+  root = gui_screen_create_root(NULL, (LV_VER_RES > 320 ? "Rave Mode" : "Rave"), lv_color_black(), LV_OPA_COVER);
   music_visualizer_view.root = root;
-  lv_obj_set_style_bg_color(music_visualizer_view.root, lv_color_black(),
-                            LV_PART_MAIN);
-  lv_obj_set_size(music_visualizer_view.root, LV_HOR_RES, LV_VER_RES);
-  lv_obj_set_scrollbar_mode(music_visualizer_view.root, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_set_style_pad_column(music_visualizer_view.root, LV_HOR_RES / 24, 0);
-  lv_obj_set_style_bg_opa(music_visualizer_view.root, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(music_visualizer_view.root, 0, 0);
-  lv_obj_set_style_pad_all(music_visualizer_view.root, 0, 0);
-  lv_obj_set_style_radius(music_visualizer_view.root, 0, 0);
+  lv_obj_t *content = gui_screen_create_content(root, GUI_STATUS_BAR_HEIGHT);
+  lv_obj_set_style_pad_column(content, LV_HOR_RES / 24, 0);
 
   const lv_font_t *track_label_font;
   const lv_font_t *artist_label_font;
@@ -107,14 +101,14 @@ void music_visualizer_view_create() {
   int bar_spacing = LV_HOR_RES / (NUM_BARS + 2);
   int bar_y_offset = LV_VER_RES / 4;
 
-  view.track_label = lv_label_create(music_visualizer_view.root);
+  view.track_label = lv_label_create(content);
   lv_label_set_text(view.track_label, "Ghost ESP");
   lv_obj_set_style_text_font(view.track_label, track_label_font, LV_PART_MAIN);
   lv_obj_set_style_text_color(view.track_label, lv_color_white(), LV_PART_MAIN);
   lv_obj_align(view.track_label, LV_ALIGN_BOTTOM_LEFT, label_x_offset,
                -label_y_offset);
 
-  view.artist_label = lv_label_create(music_visualizer_view.root);
+  view.artist_label = lv_label_create(content);
   lv_label_set_text(view.artist_label, "Spooky");
   lv_obj_set_style_text_font(view.artist_label, artist_label_font,
                              LV_PART_MAIN);
@@ -124,7 +118,7 @@ void music_visualizer_view_create() {
                   0, lv_font_get_line_height(track_label_font) / 4);
 
   for (int i = 0; i < NUM_BARS; i++) {
-    view.bars[i] = lv_obj_create(music_visualizer_view.root);
+    view.bars[i] = lv_obj_create(content);
     lv_obj_set_size(view.bars[i], bar_width, 1);
     lv_obj_align(view.bars[i], LV_ALIGN_BOTTOM_LEFT,
                  label_x_offset + (bar_spacing * i), -bar_y_offset);
@@ -139,18 +133,17 @@ void music_visualizer_view_create() {
   }
 
   for (int i = 0; i < NUM_PARTICLES; i++) {
-    particles[i].obj = lv_obj_create(music_visualizer_view.root);
+    particles[i].obj = lv_obj_create(content);
     lv_obj_set_size(particles[i].obj, 1, 1);
     lv_obj_set_style_radius(particles[i].obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(particles[i].obj, lv_color_white(), LV_PART_MAIN);
+
     particles[i].x = 0;
     particles[i].y = rand() % LV_VER_RES;
     particles[i].velocity = 1 + rand() % 3;
     lv_obj_align(particles[i].obj, LV_ALIGN_TOP_LEFT, particles[i].x,
                  particles[i].y);
   }
-
-  display_manager_add_status_bar(LV_VER_RES > 320 ? "Rave Mode" : "Rave");
 
   amplitudeQueue = xQueueCreate(10, sizeof(AmplitudeData));
   animation_timer =
@@ -201,16 +194,10 @@ void music_visualizer_view_update(const uint8_t *amplitudes,
 
 void music_visualizer_destroy(void) {
 
-  if (animation_timer) {
-    lv_timer_del(animation_timer);
-    animation_timer = NULL;
-  }
+  lvgl_timer_del_safe(&animation_timer);
 
-  if (root) {
-    lv_obj_del(root);
-    root = NULL;
-    music_visualizer_view.root = NULL;
-  }
+  lvgl_obj_del_safe(&root);
+  music_visualizer_view.root = NULL;
   if (amplitudeQueue) {
     vQueueDelete(amplitudeQueue);
     amplitudeQueue = NULL;

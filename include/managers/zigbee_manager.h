@@ -24,6 +24,18 @@ bool zigbee_manager_is_capturing(void);
 // Enable or disable Zigbee-only filtering (best-effort heuristic to drop Thread/6LoWPAN frames)
 void zigbee_manager_set_filter_zigbee_only(bool enable);
 
+// Device tracking for sweep
+typedef struct {
+    uint8_t addr[8];
+    uint8_t addr_len;
+    int8_t rssi;
+    uint8_t channel;
+} zigbee_device_t;
+
+void zigbee_manager_clear_devices(void);
+int zigbee_manager_get_device_count(void);
+int zigbee_manager_get_device_data(int index, zigbee_device_t *out);
+
 #ifdef __cplusplus
 }
 #endif

@@ -27,6 +27,7 @@ toc: true
 - **`scanap [seconds|-live|-stop]`** — Run an AP scan, optionally for a set duration, live channel hop, or stop (`-stop`).
 - **`scansta`** — Hop channels and log associated stations.
 - **`scanall [seconds]`** — Combined AP and STA scan with summary.
+- **`sweep [-w wifi_sec] [-b ble_sec]`** — Full environment sweep: scans WiFi APs, stations, and BLE devices, then saves a CSV report to SD (`/mnt/ghostesp/sweeps/sweep_N.csv`).
 - **`list [-a|-s|-airtags]`** — Show AP scan results, associated stations, or AirTags.
 - **`listenprobes [channel|stop]`** — Monitor probe requests and log to PCAP if SD is present.
 
@@ -78,6 +79,14 @@ toc: true
 - **`listairtags`** — Discover nearby AirTags.
 - **`selectairtag <idx>`** — Choose an AirTag for follow-up actions.
 
+### GATT
+
+- **`blescan -g`** — Scan for connectable BLE devices for GATT enumeration.
+- **`listgatt`** — List discovered GATT devices with tracker type detection.
+- **`selectgatt <idx>`** — Select a device by index for enumeration or tracking.
+- **`enumgatt`** — Connect to the selected device and enumerate its GATT services.
+- **`trackgatt`** — Track the selected device using real-time RSSI signal strength.
+
 ## Portal
 
 - **`startportal <path|default> <AP_SSID> [PSK]`** — Serve an Evil Portal bundle from SD or flash (`default` uses the built-in portal).
@@ -97,6 +106,23 @@ toc: true
 
 ## Storage
 
+### File Operations
+
+- **`sd status`** — Show SD card mount status, type (physical/virtual), capacity, and usage percentage.
+- **`sd list [path]`** — List files and directories with indices for quick reference. Default path: `/mnt/ghostesp`.
+- **`sd info <index|path>`** — Display file or directory details (type, size, path).
+- **`sd size <index|path>`** — Get file size in bytes (for pre-download checks).
+- **`sd read <index|path> [offset] [length]`** — Read file with optional offset and length for chunked downloads. No size limit.
+- **`sd write <path> <base64data>`** — Create/overwrite file with base64-decoded data.
+- **`sd append <path> <base64data>`** — Append base64-decoded data to file.
+- **`sd mkdir <path>`** — Create a new directory.
+- **`sd rm <index|path>`** — Delete a file or empty directory.
+- **`sd tree [path] [depth]`** — Recursive directory listing (default depth: 2, max: 10).
+
+All `sd` commands return machine-parsable output with prefixes like `SD:OK:`, `SD:ERR:`, `SD:FILE:[n]`, `SD:DIR:[n]}`, `SD:READ:`, `SD:WRITE:`.
+
+### Pin Configuration
+
 - **`sd_config`** — Display SD mode, pins, and status.
 - **`sd_pins_spi <cs> <clk> <miso> <mosi>`** — Configure SPI wiring.
 - **`sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>`** — Configure SDIO wiring.
@@ -107,9 +133,12 @@ toc: true
 - **`rgbmode <rainbow|police|strobe|off|color>`** — Run an LED effect immediately.
 - **`setrgbmode <normal|rainbow|stealth>`** — Persist the LED mode across reboots.
 - **`setrgbpins <r> <g> <b>`** — Override discrete RGB GPIOs; pass the same pin for all three values to switch into single-wire NeoPixel mode on that data pin.
+- **`setrgbcount <1-512>`** — Persist the number of RGB LEDs connected so effects span the correct length. Reinitializes immediately if pins are already configured.
 - **`setneopixelbrightness <0-100>`** / **`getneopixelbrightness`** — Control NeoPixel intensity.
 
 ## Status display (if present)
+
+Available on boards with an onboard OLED status display or when an external status display is configured.
 
 - **`statusidle [list|set <life|ghost|0|1>]`** — View or change the status OLED idle animation when `CONFIG_WITH_STATUS_DISPLAY` and a status display are enabled.
   - `statusidle` — Show the current idle animation and timeout.
@@ -126,6 +155,7 @@ toc: true
 - **`ir universals sendall <file|TURNHISTVOFF> <button_name> [delay_ms]`** — Transmit all signals for a named button from a universal file or the built‑in TURNHISTVOFF set; can be stopped with `stop`.
 - **`ir rx [timeout]`** — Wait up to `timeout` seconds (default 60) for a single IR signal, print it (decoded or RAW), then stop.
 - **`ir learn [path]`** — Wait for a signal (10s). Without `path`, auto-create a new `.ir` file under `/mnt/ghostesp/infrared/remotes`; with `path`, append the learned signal to that file.
+- **`ir dazzler [stop]`** — Start/stop continuous IR dazzler flood. Responses are machine-parsable: `IR_DAZZLER:STARTED`, `IR_DAZZLER:FAILED`, `IR_DAZZLER:ALREADY_RUNNING`, `IR_DAZZLER:STOPPING`, `IR_DAZZLER:NOT_RUNNING`.
 - **`[IR/BEGIN]` / `[IR/CLOSE]` (UART IR envelope)**
   - **Usage:** Send `[IR/BEGIN]`, then a single IR message body, then `[IR/CLOSE]` on the same UART stream to trigger a one‑off transmit.
   - **Body format (`.ir` text block):** Same fields as a standard `.ir` file entry (for example: name, type, protocol, address, command).

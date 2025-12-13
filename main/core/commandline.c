@@ -46,6 +46,11 @@
 #include <dirent.h>
 #include "managers/infrared_manager.h"
 #include "core/universal_ir.h"
+#include "core/screen_mirror.h"
+#include "managers/display_manager.h"
+#include "freertos/queue.h"
+#include "managers/usb_keyboard_manager.h"
+#include "mbedtls/base64.h"
 
 static const char *TAG = "Commandline";
 
@@ -698,6 +703,9 @@ void handle_stop_flipper(int argc, char **argv) {
     // also stop any in-progress IR RX (ir rx / ir learn)
     infrared_manager_rx_cancel();
 
+    // stop IR dazzler if running
+    infrared_manager_dazzler_stop();
+
     // also stop the gps info display task if it is running
     if (gps_info_task_handle != NULL) {
         vTaskDelete(gps_info_task_handle);
@@ -902,11 +910,9 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-#ifdef CONFIG_HAS_RTC_CLOCK
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
     sntp_setservername(0, "pool.ntp.org");
     sntp_init();
-#endif
 }
 
 void handle_wifi_disconnect(int argc, char **argv)
@@ -953,9 +959,16 @@ void handle_ble_scan_cmd(int argc, char **argv) {
         return;
     }
 
+    if (argc > 1 && strcmp(argv[1], "-g") == 0) {
+        glog("Starting GATT Device Scan.\n");
+        ble_start_gatt_scan();
+        return;
+    }
+
     if (argc > 1 && strcmp(argv[1], "-s") == 0) {
         glog("Stopping BLE Scan.\n");
         ble_stop();
+        ble_stop_gatt_scan();
         return;
     }
 
@@ -1161,6 +1174,10 @@ static const char *idle_anim_to_name(IdleAnimation anim) {
         case IDLE_ANIM_STARFIELD: return "starfield";
         case IDLE_ANIM_HUD: return "hud";
         case IDLE_ANIM_MATRIX: return "matrix";
+        case IDLE_ANIM_FLYING_GHOSTS: return "ghosts";
+        case IDLE_ANIM_SPIRAL: return "spiral";
+        case IDLE_ANIM_FALLING_LEAVES: return "leaves";
+        case IDLE_ANIM_BOUNCING_TEXT: return "bouncing";
         default: return "unknown";
     }
 }
@@ -1187,6 +1204,22 @@ static bool parse_idle_anim_arg(const char *arg, IdleAnimation *out) {
         *out = IDLE_ANIM_MATRIX;
         return true;
     }
+    if (strcmp(arg, "5") == 0 || strcmp(arg, "ghosts") == 0 || strcmp(arg, "flyingghosts") == 0 || strcmp(arg, "flying_ghosts") == 0 || strcmp(arg, "ghoster") == 0 || strcmp(arg, "flyingghoster") == 0 || strcmp(arg, "flying_ghoster") == 0 || strcmp(arg, "toaster") == 0 || strcmp(arg, "flyingtoaster") == 0 || strcmp(arg, "flying_toaster") == 0) {
+        *out = IDLE_ANIM_FLYING_GHOSTS;
+        return true;
+    }
+    if (strcmp(arg, "6") == 0 || strcmp(arg, "spiral") == 0 || strcmp(arg, "hypnotic") == 0 || strcmp(arg, "hypnoticspiral") == 0 || strcmp(arg, "hypnotic_spiral") == 0) {
+        *out = IDLE_ANIM_SPIRAL;
+        return true;
+    }
+    if (strcmp(arg, "7") == 0 || strcmp(arg, "leaves") == 0 || strcmp(arg, "fallingleaves") == 0 || strcmp(arg, "falling_leaves") == 0) {
+        *out = IDLE_ANIM_FALLING_LEAVES;
+        return true;
+    }
+    if (strcmp(arg, "8") == 0 || strcmp(arg, "bouncing") == 0 || strcmp(arg, "bouncingtext") == 0 || strcmp(arg, "bouncing_text") == 0 || strcmp(arg, "dvd") == 0 || strcmp(arg, "dvdplayer") == 0) {
+        *out = IDLE_ANIM_BOUNCING_TEXT;
+        return true;
+    }
     return false;
 }
 
@@ -1210,17 +1243,21 @@ void handle_status_idle_cmd(int argc, char **argv) {
     if (strcmp(argv[1], "list") == 0) {
         glog("Available idle animations:\n");
         glog("  0 - life      (Game of Life)\n");
-        glog("  1 - ghost     (Ghost sprite)\n");
-        glog("  2 - starfield (Starfield effect)\n");
-        glog("  3 - hud       (System HUD)\n");
-        glog("  4 - matrix    (Matrix code rain)\n");
+        glog("  1 - ghost      (Ghost sprite)\n");
+        glog("  2 - starfield  (Starfield effect)\n");
+        glog("  3 - hud        (System HUD)\n");
+        glog("  4 - matrix     (Matrix code rain)\n");
+        glog("  5 - ghosts     (Flying Ghosts)\n");
+        glog("  6 - spiral    (Hypnotic Spiral)\n");
+        glog("  7 - leaves    (Falling Leaves)\n");
+        glog("  8 - bouncing  (Bouncing Text)\n");
         status_display_show_status("Idle Anim List");
         return;
     }
 
     if (strcmp(argv[1], "set") == 0) {
         if (argc < 3) {
-            glog("Usage: statusidle set <life|ghost|starfield|hud|matrix|0|1|2|3|4>\n");
+            glog("Usage: statusidle set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>\n");
             return;
         }
         IdleAnimation anim;
@@ -1236,8 +1273,9 @@ void handle_status_idle_cmd(int argc, char **argv) {
         return;
     }
 
-    glog("Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|0|1|2|3|4>]\n");
+    glog("Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n");
 }
+
 #endif
 
 void handle_capture_scan(int argc, char **argv) {
@@ -1654,6 +1692,14 @@ void handle_help(int argc, char **argv) {
         printf("scanall\n");
         printf("    Description: Perform combined AP and Station scan, display results.\n");
         printf("    Usage: scanall [seconds]\n\n");
+        printf("sweep\n");
+        printf("    Description: Full environment sweep - scans WiFi APs, stations, BLE devices\n");
+        printf("                 and saves comprehensive report to SD card.\n");
+        printf("    Usage: sweep [-w wifi_sec] [-b ble_sec]\n");
+        printf("    Arguments:\n");
+        printf("        -w  : WiFi scan duration per phase in seconds (default: 5)\n");
+        printf("        -b  : BLE scan duration per phase in seconds (default: 5)\n");
+        printf("    Output: /mnt/ghostesp/sweeps/sweep_N.csv\n\n");
         printf("congestion\n");
         printf("    Description: Display Wi-Fi channel congestion chart.\n");
         printf("    Usage: congestion\n\n");
@@ -1700,7 +1746,7 @@ void handle_help(int argc, char **argv) {
         printf("    Supported: 01, AT, AU, BE, BG, BR, CA, CH, CN, CY, CZ, DE, DK, EE, ES, FI, FR, GB, GR, HK, HR, HU,\n");
         printf("               IE, IN, IS, IT, JP, KR, LI, LT, LU, LV, MT, MX, NL, NO, NZ, PL, PT, RO, SE, SI, SK, TW, US\n\n");
 #endif
-        TERMINAL_VIEW_ADD_TEXT("scanap, scansta, stopscan, attack, list, beaconspam, stopspam, stopdeauth, select, scanall, congestion, connect, apcred, apenable, listenprobes");
+        TERMINAL_VIEW_ADD_TEXT("scanap, scansta, stopscan, attack, list, beaconspam, stopspam, stopdeauth, select, scanall, sweep, congestion, connect, apcred, apenable, listenprobes");
 #if CONFIG_IDF_TARGET_ESP32C5
         TERMINAL_VIEW_ADD_TEXT(", setcountry");
 #endif
@@ -1795,19 +1841,23 @@ void handle_help(int argc, char **argv) {
 
     if (strcmp(category, "sd") == 0) {
         glog("\nSD Card Commands:\n\n");
-        printf("-- SD Card Pin Configuration --\n");
-        printf("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
-        printf("These commands configure pins for the *active* mode.\n");
-        printf("Changing the mode requires recompiling firmware.\n");
-        TERMINAL_VIEW_ADD_TEXT("-- SD Card Pin Configuration --\n");
-        TERMINAL_VIEW_ADD_TEXT("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
-        TERMINAL_VIEW_ADD_TEXT("These commands configure pins for the *active* mode.\n");
-        TERMINAL_VIEW_ADD_TEXT("Changing the mode requires recompiling firmware.\n");
+        printf("-- File Operations (machine-parsable) --\n");
+        printf("sd status\n    Show SD mount status, type, capacity, usage.\n    Usage: sd status\n\n");
+        printf("sd list\n    List files/dirs with indices.\n    Usage: sd list [path]\n\n");
+        printf("sd info\n    Show file/dir details.\n    Usage: sd info <index|path>\n\n");
+        printf("sd size\n    Get file size.\n    Usage: sd size <index|path>\n\n");
+        printf("sd read\n    Read file (chunked downloads).\n    Usage: sd read <index|path> [offset] [length]\n\n");
+        printf("sd write\n    Create/overwrite file with base64 data.\n    Usage: sd write <path> <base64>\n\n");
+        printf("sd append\n    Append base64 data to file.\n    Usage: sd append <path> <base64>\n\n");
+        printf("sd mkdir\n    Create directory.\n    Usage: sd mkdir <path>\n\n");
+        printf("sd rm\n    Delete file or empty directory.\n    Usage: sd rm <index|path>\n\n");
+        printf("sd tree\n    Recursive listing.\n    Usage: sd tree [path] [depth]\n\n");
+        printf("-- Pin Configuration --\n");
         printf("sd_config\n    Show current SD GPIO pin configuration.\n    Usage: sd_config\n\n");
-        printf("sd_pins_mmc\n    Description: Set GPIO pins for SDMMC mode (1 or 4 bit). Requires restart/reinit.\n                 Only effective if firmware compiled for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n    Example: sd_pins_mmc 19 18 20 21 22 23\n\n");
-        printf("sd_pins_spi\n    Description: Set GPIO pins for SPI mode. Requires restart/reinit.\n                 Only effective if firmware compiled for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n    Example: sd_pins_spi 5 18 19 23\n\n");
-        printf("sd_save_config\n    Description: Save the current SD pin configuration (both modes) to the SD card.\n                 Requires SD card to be mounted.\n    Usage: sd_save_config\n\n");
-        TERMINAL_VIEW_ADD_TEXT("sd_config, sd_pins_mmc, sd_pins_spi, sd_save_config\n");
+        printf("sd_pins_mmc\n    Set GPIO pins for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n\n");
+        printf("sd_pins_spi\n    Set GPIO pins for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n\n");
+        printf("sd_save_config\n    Save pin config to NVS.\n    Usage: sd_save_config\n\n");
+        TERMINAL_VIEW_ADD_TEXT("sd, sd_config, sd_pins_mmc, sd_pins_spi, sd_save_config, sd size, sd read, sd write, sd append\n");
         return;
     }
 
@@ -1815,9 +1865,10 @@ void handle_help(int argc, char **argv) {
         glog("\nLED & RGB Commands:\n\n");
         printf("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
         printf("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
+        printf("setrgbcount\n    Configure how many RGB LEDs are attached\n    Usage: setrgbcount <1-512>\n\n");
         printf("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
         printf("getneopixelbrightness\n    Show current neopixel max brightness (percent)\n    Usage: getneopixelbrightness\n\n");
-        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins, setneopixelbrightness, getneopixelbrightness\n");
+        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins, setrgbcount, setneopixelbrightness, getneopixelbrightness\n");
         return;
     }
 
@@ -1872,7 +1923,7 @@ void handle_help(int argc, char **argv) {
         printf("        settings reset\n\n");
         printf("statusidle\n");
         printf("    Description: View or change the status display idle animation (status OLED only).\n");
-        printf("    Usage: statusidle [list|set <life|ghost|0|1>]\n\n");
+        printf("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
         TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp, settings, statusidle\n");
         return;
     }
@@ -2012,7 +2063,10 @@ void handle_help(int argc, char **argv) {
         printf("           ir universals send <index>\n");
         printf("           ir universals sendall <file|TURNHISTVOFF> [delay_ms]\n");
         printf("           ir universals show <file|TURNHISTVOFF>\n\n");
-        TERMINAL_VIEW_ADD_TEXT("ir send, ir learn, ir list, ir rx, ir show, ir universals\n");
+        printf("ir dazzler\n");
+        printf("    Description: IR dazzler mode - emit continuous IR to interfere with cameras.\n");
+        printf("    Usage: ir dazzler [stop]\n\n");
+        TERMINAL_VIEW_ADD_TEXT("ir send, ir learn, ir list, ir rx, ir show, ir universals, ir dazzler\n");
         return;
     }
 #endif
@@ -2391,21 +2445,35 @@ void handle_setrgb(int argc, char **argv) {
     gpio_num_t green_pin = (gpio_num_t)atoi(argv[2]);
     gpio_num_t blue_pin = (gpio_num_t)atoi(argv[3]);
 
+    int num_leds = settings_get_rgb_led_count(&G_Settings);
+    if (num_leds <= 0) {
+        if (rgb_manager.num_leds > 0) {
+            num_leds = rgb_manager.num_leds;
+        } else if (CONFIG_NUM_LEDS > 0) {
+            num_leds = CONFIG_NUM_LEDS;
+        } else {
+            num_leds = 1;
+        }
+    }
+
     esp_err_t ret;
     if (red_pin == green_pin && green_pin == blue_pin) {
         rgb_manager_deinit(&rgb_manager);
-        ret = rgb_manager_init(&rgb_manager, red_pin, 1, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
-                                GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+        ret = rgb_manager_init(&rgb_manager, red_pin, num_leds, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
+                               GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
         if (ret == ESP_OK) {
             settings_set_rgb_data_pin(&G_Settings, red_pin);
             settings_set_rgb_separate_pins(&G_Settings, -1, -1, -1);
             settings_save(&G_Settings);
             glog("Single-pin RGB configured on GPIO %d and saved.\n", red_pin);
             status_display_show_status("RGB Single");
+        } else {
+            glog("Failed to init RGB on pin %d: %s\n", red_pin, esp_err_to_name(ret));
+            status_display_show_status("RGB Init Fail");
         }
     } else {
         rgb_manager_deinit(&rgb_manager);
-        ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
+        ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, num_leds, LED_PIXEL_FORMAT_GRB, LED_MODEL_WS2812,
                                red_pin, green_pin, blue_pin);
         if (ret == ESP_OK) {
             settings_set_rgb_data_pin(&G_Settings, -1);
@@ -2413,7 +2481,59 @@ void handle_setrgb(int argc, char **argv) {
             settings_save(&G_Settings);
             glog("RGB pins updated to R:%d G:%d B:%d and saved.\n", red_pin, green_pin, blue_pin);
             status_display_show_status("RGB Pins Set");
+        } else {
+            glog("Failed to init RGB pins R:%d G:%d B:%d: %s\n", red_pin, green_pin, blue_pin, esp_err_to_name(ret));
+            status_display_show_status("RGB Init Fail");
         }
+    }
+}
+
+void handle_setrgbcount(int argc, char **argv) {
+    if (argc != 2) {
+        glog("Usage: setrgbcount <1-512>\n");
+        status_display_show_status("Count Usage");
+        return;
+    }
+
+    int count = atoi(argv[1]);
+    if (count < 1 || count > 512) {
+        glog("RGB LED count must be between 1 and 512\n");
+        status_display_show_status("Count Invalid");
+        return;
+    }
+
+    settings_set_rgb_led_count(&G_Settings, (uint16_t)count);
+
+    int32_t data_pin = settings_get_rgb_data_pin(&G_Settings);
+    int32_t red_pin, green_pin, blue_pin;
+    settings_get_rgb_separate_pins(&G_Settings, &red_pin, &green_pin, &blue_pin);
+
+    esp_err_t ret = ESP_OK;
+    bool attempted_reinit = false;
+
+    if (data_pin != GPIO_NUM_NC) {
+        rgb_manager_deinit(&rgb_manager);
+        ret = rgb_manager_init(&rgb_manager, (gpio_num_t)data_pin, count, LED_PIXEL_FORMAT_GRB,
+                               LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC);
+        attempted_reinit = true;
+    } else if (red_pin != GPIO_NUM_NC && green_pin != GPIO_NUM_NC && blue_pin != GPIO_NUM_NC) {
+        rgb_manager_deinit(&rgb_manager);
+        ret = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, count, LED_PIXEL_FORMAT_GRB,
+                               LED_MODEL_WS2812, (gpio_num_t)red_pin, (gpio_num_t)green_pin, (gpio_num_t)blue_pin);
+        attempted_reinit = true;
+    }
+
+    settings_save(&G_Settings);
+
+    if (attempted_reinit && ret == ESP_OK) {
+        glog("RGB LED count set to %d and applied.\n", count);
+        status_display_show_status("RGB Count Set");
+    } else if (attempted_reinit) {
+        glog("RGB count saved but reinit failed: %s\n", esp_err_to_name(ret));
+        status_display_show_status("RGB Reinit NG");
+    } else {
+        glog("RGB count set to %d. Configure pins with setrgbpins to apply.\n", count);
+        status_display_show_status("RGB Count Saved");
     }
 }
 
@@ -2477,6 +2597,573 @@ void handle_sd_pins_spi(int argc, char **argv) {
 void handle_sd_save_config(int argc, char **argv) {
   sd_card_save_config();
   status_display_show_status("SD Saved");
+}
+
+#define SD_CLI_MAX_ENTRIES 128
+static char *g_sd_cli_paths[SD_CLI_MAX_ENTRIES];
+static uint8_t g_sd_cli_types[SD_CLI_MAX_ENTRIES];
+static size_t g_sd_cli_count = 0;
+
+static void sd_cli_clear_index(void) {
+    for (size_t i = 0; i < g_sd_cli_count; ++i) {
+        free(g_sd_cli_paths[i]);
+        g_sd_cli_paths[i] = NULL;
+    }
+    g_sd_cli_count = 0;
+}
+
+static bool sd_cli_is_number(const char *s) {
+    if (!s || !*s) return false;
+    while (*s) {
+        if (!isdigit((unsigned char)*s)) return false;
+        s++;
+    }
+    return true;
+}
+
+static const char *sd_cli_resolve_path(const char *arg, char *buf, size_t bufsize) {
+    if (sd_cli_is_number(arg) && g_sd_cli_count > 0) {
+        int idx = atoi(arg);
+        if (idx >= 0 && (size_t)idx < g_sd_cli_count) {
+            strncpy(buf, g_sd_cli_paths[idx], bufsize - 1);
+            buf[bufsize - 1] = '\0';
+            return buf;
+        }
+        return NULL;
+    }
+    if (arg[0] == '/') {
+        strncpy(buf, arg, bufsize - 1);
+    } else {
+        snprintf(buf, bufsize, "/mnt/ghostesp/%s", arg);
+    }
+    buf[bufsize - 1] = '\0';
+    return buf;
+}
+
+static bool sd_cli_jit_mounted = false;
+static bool sd_cli_display_suspended = false;
+
+static bool sd_cli_ensure_mounted(void) {
+    if (sd_card_manager.is_initialized) return true;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (sd_card_mount_for_flush(&sd_cli_display_suspended) == ESP_OK) {
+            sd_cli_jit_mounted = true;
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+static void sd_cli_cleanup(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (sd_cli_jit_mounted) {
+        sd_card_unmount_after_flush(sd_cli_display_suspended);
+        sd_cli_jit_mounted = false;
+        sd_cli_display_suspended = false;
+    }
+#endif
+}
+
+void handle_sd_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("SD:USAGE\n");
+        glog("  sd status                        - Show SD card status\n");
+        glog("  sd list [path]                   - List files/dirs with indices\n");
+        glog("  sd info <idx|path>               - Show file/dir info\n");
+        glog("  sd size <idx|path>               - Get file size\n");
+        glog("  sd read <idx|path> [off] [len]   - Read file (offset, length)\n");
+        glog("  sd write <path> <base64>         - Write base64 data to file\n");
+        glog("  sd append <path> <base64>        - Append base64 data to file\n");
+        glog("  sd mkdir <path>                  - Create directory\n");
+        glog("  sd rm <idx|path>                 - Delete file or empty directory\n");
+        glog("  sd tree [path] [depth]           - Recursive listing\n");
+        return;
+    }
+
+    const char *sub = argv[1];
+    char path[256];
+
+    if (strcmp(sub, "status") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:STATUS:mounted=false\n");
+            sd_cli_cleanup();
+            return;
+        }
+        glog("SD:STATUS:mounted=true\n");
+        if (sd_card_is_virtual_storage()) {
+            glog("SD:STATUS:type=virtual\n");
+        } else if (sd_card_manager.card) {
+            glog("SD:STATUS:type=physical\n");
+            glog("SD:STATUS:name=%s\n", sd_card_manager.card->cid.name);
+            uint64_t cap_mb = ((uint64_t)sd_card_manager.card->csd.capacity * 
+                               sd_card_manager.card->csd.sector_size) / (1024 * 1024);
+            glog("SD:STATUS:capacity_mb=%llu\n", (unsigned long long)cap_mb);
+        }
+        uint64_t total = 0, free_bytes = 0;
+        if (esp_vfs_fat_info("/mnt", &total, &free_bytes) == ESP_OK && total > 0) {
+            glog("SD:STATUS:total=%llu\n", (unsigned long long)total);
+            glog("SD:STATUS:free=%llu\n", (unsigned long long)free_bytes);
+            glog("SD:STATUS:total_mb=%llu\n", (unsigned long long)(total / (1024 * 1024)));
+            glog("SD:STATUS:free_mb=%llu\n", (unsigned long long)(free_bytes / (1024 * 1024)));
+            glog("SD:STATUS:used_pct=%d\n", (int)(((total - free_bytes) * 100) / total));
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "list") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *list_path = (argc >= 3) ? argv[2] : "/mnt/ghostesp";
+        if (list_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", list_path);
+        } else {
+            strncpy(path, list_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        DIR *d = opendir(path);
+        if (!d) {
+            glog("SD:ERR:cannot_open:%s\n", path);
+            sd_cli_clear_index();
+            return;
+        }
+
+        sd_cli_clear_index();
+        glog("SD:LIST:%s\n", path);
+
+        struct dirent *entry;
+        while ((entry = readdir(d)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+            char fullpath[512];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+
+            struct stat st;
+            bool is_dir = false;
+            long fsize = 0;
+
+            if (stat(fullpath, &st) == 0) {
+                is_dir = S_ISDIR(st.st_mode);
+                fsize = is_dir ? 0 : (long)st.st_size;
+            } else if (entry->d_type == DT_DIR) {
+                is_dir = true;
+            }
+
+            int idx = (int)g_sd_cli_count;
+            if (g_sd_cli_count < SD_CLI_MAX_ENTRIES) {
+                g_sd_cli_paths[g_sd_cli_count] = strdup(fullpath);
+                g_sd_cli_types[g_sd_cli_count] = is_dir ? 1 : 0;
+                if (g_sd_cli_paths[g_sd_cli_count]) g_sd_cli_count++;
+            }
+
+            if (is_dir) {
+                glog("SD:DIR:[%d] %s\n", idx, entry->d_name);
+            } else {
+                glog("SD:FILE:[%d] %s %ld\n", idx, entry->d_name, fsize);
+            }
+        }
+        closedir(d);
+
+        if (g_sd_cli_count == 0) {
+            glog("SD:EMPTY\n");
+        }
+        glog("SD:OK:listed %zu entries\n", g_sd_cli_count);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "info") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+
+        glog("SD:INFO:path=%s\n", resolved);
+        glog("SD:INFO:type=%s\n", S_ISDIR(st.st_mode) ? "dir" : "file");
+        glog("SD:INFO:size=%ld\n", (long)st.st_size);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "cat") == 0 || strcmp(sub, "read") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        long offset = 0;
+        size_t max_bytes = 0;
+        if (argc >= 4) {
+            offset = strtol(argv[3], NULL, 10);
+            if (offset < 0) offset = 0;
+        }
+        if (argc >= 5) {
+            int mb = atoi(argv[4]);
+            if (mb > 0) max_bytes = (size_t)mb;
+        }
+
+        FILE *f = fopen(resolved, "rb");
+        if (!f) {
+            glog("SD:ERR:cannot_open:%s\n", resolved);
+            return;
+        }
+
+        fseek(f, 0, SEEK_END);
+        long file_size = ftell(f);
+        if (offset > file_size) offset = file_size;
+        fseek(f, offset, SEEK_SET);
+
+        if (max_bytes == 0 || max_bytes > (size_t)(file_size - offset)) {
+            max_bytes = (size_t)(file_size - offset);
+        }
+
+        glog("SD:READ:BEGIN:%s\n", resolved);
+        glog("SD:READ:SIZE:%ld\n", file_size);
+        glog("SD:READ:OFFSET:%ld\n", offset);
+        glog("SD:READ:LENGTH:%zu\n", max_bytes);
+
+        char *buf = malloc(1024);
+        if (!buf) {
+            fclose(f);
+            glog("SD:ERR:oom\n");
+            return;
+        }
+
+        size_t total_read = 0;
+        size_t n;
+        while (total_read < max_bytes && (n = fread(buf, 1, 1024, f)) > 0) {
+            size_t to_write = n;
+            if (total_read + to_write > max_bytes) {
+                to_write = max_bytes - total_read;
+            }
+            fwrite(buf, 1, to_write, stdout);
+            total_read += to_write;
+        }
+        free(buf);
+        fclose(f);
+
+        glog("\nSD:READ:END:bytes=%zu\n", total_read);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "write") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 4) {
+            glog("SD:ERR:usage: sd write <path> <base64data>\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *write_path = argv[2];
+        if (write_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", write_path);
+        } else {
+            strncpy(path, write_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        const char *b64data = argv[3];
+        size_t b64len = strlen(b64data);
+        size_t decoded_len = (b64len * 3) / 4 + 4;
+        unsigned char *decoded = malloc(decoded_len);
+        if (!decoded) {
+            glog("SD:ERR:oom\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(decoded, decoded_len, &olen, (const unsigned char *)b64data, b64len);
+        if (ret != 0) {
+            free(decoded);
+            glog("SD:ERR:base64_decode_failed\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        FILE *f = fopen(path, "wb");
+        if (!f) {
+            free(decoded);
+            glog("SD:ERR:cannot_create:%s\n", path);
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t written = fwrite(decoded, 1, olen, f);
+        fclose(f);
+        free(decoded);
+
+        glog("SD:WRITE:bytes=%zu\n", written);
+        glog("SD:OK:created:%s\n", path);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "append") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 4) {
+            glog("SD:ERR:usage: sd append <path> <base64data>\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *append_path = argv[2];
+        if (append_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", append_path);
+        } else {
+            strncpy(path, append_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        const char *b64data = argv[3];
+        size_t b64len = strlen(b64data);
+        size_t decoded_len = (b64len * 3) / 4 + 4;
+        unsigned char *decoded = malloc(decoded_len);
+        if (!decoded) {
+            glog("SD:ERR:oom\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(decoded, decoded_len, &olen, (const unsigned char *)b64data, b64len);
+        if (ret != 0) {
+            free(decoded);
+            glog("SD:ERR:base64_decode_failed\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        FILE *f = fopen(path, "ab");
+        if (!f) {
+            free(decoded);
+            glog("SD:ERR:cannot_open:%s\n", path);
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t written = fwrite(decoded, 1, olen, f);
+        fclose(f);
+        free(decoded);
+
+        glog("SD:APPEND:bytes=%zu\n", written);
+        glog("SD:OK:appended:%s\n", path);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "size") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+        glog("SD:SIZE:%ld\n", (long)st.st_size);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "mkdir") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *mk_path = argv[2];
+        if (mk_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", mk_path);
+        } else {
+            strncpy(path, mk_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        if (mkdir(path, 0777) == 0) {
+            glog("SD:OK:created:%s\n", path);
+        } else {
+            glog("SD:ERR:mkdir_failed:%s\n", path);
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "rm") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+
+        int ret;
+        if (S_ISDIR(st.st_mode)) {
+            ret = rmdir(resolved);
+        } else {
+            ret = unlink(resolved);
+        }
+
+        if (ret == 0) {
+            glog("SD:OK:removed:%s\n", resolved);
+        } else {
+            glog("SD:ERR:rm_failed:%s\n", resolved);
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "tree") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *tree_path = (argc >= 3) ? argv[2] : "/mnt/ghostesp";
+        int max_depth = 2;
+        if (argc >= 4) {
+            int d = atoi(argv[3]);
+            if (d > 0 && d <= 10) max_depth = d;
+        }
+
+        if (tree_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", tree_path);
+        } else {
+            strncpy(path, tree_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        glog("SD:TREE:%s\n", path);
+        
+        typedef struct { char p[256]; int lvl; } stack_item_t;
+        stack_item_t *stack = malloc(sizeof(stack_item_t) * 64);
+        if (!stack) {
+            glog("SD:ERR:oom\n");
+            return;
+        }
+        int sp = 0;
+        strncpy(stack[sp].p, path, 255);
+        stack[sp].lvl = 0;
+        sp++;
+
+        size_t count = 0;
+        while (sp > 0 && count < 500) {
+            sp--;
+            char *cur = stack[sp].p;
+            int lvl = stack[sp].lvl;
+
+            DIR *d = opendir(cur);
+            if (!d) continue;
+
+            struct dirent *entry;
+            while ((entry = readdir(d)) != NULL && count < 500) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+                char full[512];
+                snprintf(full, sizeof(full), "%s/%s", cur, entry->d_name);
+
+                struct stat st;
+                bool is_dir = false;
+                if (stat(full, &st) == 0) {
+                    is_dir = S_ISDIR(st.st_mode);
+                } else if (entry->d_type == DT_DIR) {
+                    is_dir = true;
+                }
+
+                for (int i = 0; i < lvl; i++) printf("  ");
+                if (is_dir) {
+                    printf("[D] %s/\n", entry->d_name);
+                    if (lvl + 1 < max_depth && sp < 63) {
+                        strncpy(stack[sp].p, full, 255);
+                        stack[sp].lvl = lvl + 1;
+                        sp++;
+                    }
+                } else {
+                    printf("[F] %s (%ld)\n", entry->d_name, (long)st.st_size);
+                }
+                count++;
+            }
+            closedir(d);
+        }
+        free(stack);
+        glog("SD:OK:tree %zu items\n", count);
+        sd_cli_cleanup();
+        return;
+    }
+
+    glog("SD:ERR:unknown_subcommand:%s\n", sub);
+    sd_cli_cleanup();
 }
 
 void handle_congestion_cmd(int argc, char **argv) {
@@ -2603,12 +3290,309 @@ void handle_scanall(int argc, char **argv) {
     // 3. Print Combined Results
     wifi_manager_scanall_chart();
 
-    // Ensure AP mode is restored if it was stopped
-    ap_manager_start_services(); // Restore AP for WebUI
+    ap_manager_start_services();
     status_display_show_status("ScanAll Done");
 }
 
-// Helper function to simplify calling list airtags
+static int get_next_sweep_file_index(void) {
+    int next = 0;
+    char path[64];
+    while (next < 9999) {
+        snprintf(path, sizeof(path), "/mnt/ghostesp/sweeps/sweep_%d.csv", next);
+        FILE *f = fopen(path, "r");
+        if (!f) break;
+        fclose(f);
+        next++;
+    }
+    return next;
+}
+
+static const char* sweep_get_auth_str(wifi_auth_mode_t auth) {
+    switch (auth) {
+        case WIFI_AUTH_OPEN: return "Open";
+        case WIFI_AUTH_WEP: return "WEP";
+        case WIFI_AUTH_WPA_PSK: return "WPA";
+        case WIFI_AUTH_WPA2_PSK: return "WPA2";
+        case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
+        case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2-Enterprise";
+        case WIFI_AUTH_WPA3_PSK: return "WPA3";
+        case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3";
+        default: return "Unknown";
+    }
+}
+
+static const char* sweep_get_cipher_str(wifi_cipher_type_t cipher) {
+    switch (cipher) {
+        case WIFI_CIPHER_TYPE_NONE: return "None";
+        case WIFI_CIPHER_TYPE_WEP40: return "WEP40";
+        case WIFI_CIPHER_TYPE_WEP104: return "WEP104";
+        case WIFI_CIPHER_TYPE_TKIP: return "TKIP";
+        case WIFI_CIPHER_TYPE_CCMP: return "CCMP";
+        case WIFI_CIPHER_TYPE_TKIP_CCMP: return "TKIP/CCMP";
+        case WIFI_CIPHER_TYPE_GCMP: return "GCMP";
+        case WIFI_CIPHER_TYPE_GCMP256: return "GCMP256";
+        default: return "Unknown";
+    }
+}
+
+static void sweep_get_phy_modes(wifi_ap_record_t *ap, char *buf, size_t len) {
+    buf[0] = '\0';
+    if (ap->phy_11ax) strcat(buf, "ax/");
+    if (ap->phy_11ac) strcat(buf, "ac/");
+    if (ap->phy_11n) strcat(buf, "n/");
+    if (ap->phy_11a) strcat(buf, "a/");
+    if (ap->phy_11g) strcat(buf, "g/");
+    if (ap->phy_11b) strcat(buf, "b/");
+    size_t l = strlen(buf);
+    if (l > 0) buf[l - 1] = '\0';
+}
+
+static void sweep_write_csv_escaped(FILE *f, const char *str) {
+    bool needs_quote = false;
+    for (const char *p = str; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n') { needs_quote = true; break; }
+    }
+    if (needs_quote) {
+        fputc('"', f);
+        for (const char *p = str; *p; p++) {
+            if (*p == '"') fputc('"', f);
+            fputc(*p, f);
+        }
+        fputc('"', f);
+    } else {
+        fputs(str, f);
+    }
+}
+
+void handle_sweep_cmd(int argc, char **argv) {
+    int wifi_seconds = 10;
+    int ble_seconds = 10;
+    
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
+            wifi_seconds = atoi(argv[++i]);
+            if (wifi_seconds < 1) wifi_seconds = 10;
+        } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
+            ble_seconds = atoi(argv[++i]);
+            if (ble_seconds < 1) ble_seconds = 10;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "help") == 0) {
+            glog("Usage: sweep [-w wifi_sec] [-b ble_sec]\n");
+            glog("  -w: WiFi scan duration per phase (default 10s)\n");
+            glog("  -b: BLE scan duration per phase (default 10s)\n");
+            glog("Performs AP scan, STA scan, BLE scans and saves to SD.\n");
+            return;
+        }
+    }
+    
+    glog("=== Starting Full Environment Sweep ===\n");
+    status_display_show_status("Sweep Start");
+    
+    FILE *report = NULL;
+    char report_path[64] = {0};
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char timestamp[32] = "";
+    if (tm_info && tm_info->tm_year >= 120) {
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+    }
+    
+    int open_networks = 0, weak_networks = 0, secure_networks = 0;
+    
+    if (sd_card_exists("/mnt/ghostesp")) {
+        mkdir("/mnt/ghostesp/sweeps", 0755);
+        int idx = get_next_sweep_file_index();
+        snprintf(report_path, sizeof(report_path), "/mnt/ghostesp/sweeps/sweep_%d.csv", idx);
+        report = fopen(report_path, "w");
+        if (report) {
+            fprintf(report, "Type,Name,MAC,Associated MAC,Channel,Frequency,RSSI,Auth,Cipher,802.11,WPS,Latitude,Longitude,Altitude,First Seen\n");
+            glog("Saving report to: %s\n", report_path);
+        }
+    }
+    
+    // --- WiFi AP Scan ---
+    glog("\n--- Phase 1: WiFi AP Scan (%ds) ---\n", wifi_seconds);
+    
+    wifi_manager_start_scan_with_time(wifi_seconds);
+    
+    uint16_t ap_cnt = 0;
+    wifi_ap_record_t *aps = NULL;
+    wifi_manager_get_scan_results_data(&ap_cnt, &aps);
+    
+    glog("Found %d access points\n", ap_cnt);
+    
+    uint16_t limit = ap_cnt > 100 ? 100 : ap_cnt;
+    for (uint16_t i = 0; i < limit && aps; i++) {
+        char ssid_safe[33];
+        strncpy(ssid_safe, (char*)aps[i].ssid, 32);
+        ssid_safe[32] = '\0';
+        for (int j = 0; ssid_safe[j]; j++) {
+            if (ssid_safe[j] < 32 || ssid_safe[j] > 126) ssid_safe[j] = '?';
+        }
+        if (ssid_safe[0] == '\0') strcpy(ssid_safe, "");
+        
+        const char *auth = sweep_get_auth_str(aps[i].authmode);
+        const char *cipher = sweep_get_cipher_str(aps[i].pairwise_cipher);
+        char phy_modes[24];
+        sweep_get_phy_modes(&aps[i], phy_modes, sizeof(phy_modes));
+        int freq = aps[i].primary > 14 ? 5000 + (aps[i].primary * 5) : 2407 + (aps[i].primary * 5);
+        
+        if (aps[i].authmode == WIFI_AUTH_OPEN) open_networks++;
+        else if (aps[i].authmode == WIFI_AUTH_WEP || aps[i].authmode == WIFI_AUTH_WPA_PSK) weak_networks++;
+        else secure_networks++;
+        
+        if (report) {
+            fprintf(report, "WiFi AP,");
+            sweep_write_csv_escaped(report, ssid_safe);
+            fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,%d,%d,%d,%s,%s,%s,%s,",
+                    aps[i].bssid[0], aps[i].bssid[1], aps[i].bssid[2],
+                    aps[i].bssid[3], aps[i].bssid[4], aps[i].bssid[5],
+                    aps[i].primary, freq, aps[i].rssi, auth, cipher, phy_modes,
+                    aps[i].wps ? "Yes" : "No");
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+    // --- WiFi Station Scan ---
+    glog("\n--- Phase 2: WiFi Station Scan (%ds) ---\n", wifi_seconds);
+    
+    station_count = 0;
+    wifi_manager_start_station_scan();
+    vTaskDelay(pdMS_TO_TICKS(wifi_seconds * 1000));
+    wifi_manager_stop_monitor_mode();
+    
+    glog("Found %d stations\n", station_count);
+    
+    for (int i = 0; i < station_count; i++) {
+        if (report) {
+            fprintf(report, "WiFi Client,,%02X:%02X:%02X:%02X:%02X:%02X,%02X:%02X:%02X:%02X:%02X:%02X,,,,,,,",
+                    station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1],
+                    station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3],
+                    station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5],
+                    station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1],
+                    station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3],
+                    station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    // --- BLE Scans ---
+    glog("\n--- Phase 3: BLE Flipper Scan (%ds) ---\n", ble_seconds);
+    
+    ble_start_find_flippers();
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    ble_stop();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ble_list_flippers();
+    
+    int flipper_cnt = ble_get_flipper_count();
+    for (int i = 0; i < flipper_cnt && report; i++) {
+        uint8_t mac[6];
+        int8_t rssi;
+        char name[32];
+        if (ble_get_flipper_data(i, mac, &rssi, name, sizeof(name)) == 0) {
+            fprintf(report, "Flipper,");
+            sweep_write_csv_escaped(report, name[0] ? name : "");
+            fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,,,%d,,,,",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], rssi);
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+    glog("\n--- Phase 4: BLE GATT Device Scan (%ds) ---\n", ble_seconds);
+    
+    ble_start_gatt_scan();
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    ble_stop_gatt_scan();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ble_list_gatt_devices();
+    
+    int gatt_cnt = ble_get_gatt_device_count();
+    for (int i = 0; i < gatt_cnt && report; i++) {
+        uint8_t mac[6];
+        int8_t rssi;
+        char name[32];
+        if (ble_get_gatt_device_data(i, mac, &rssi, name, sizeof(name)) == 0) {
+            fprintf(report, "BLE Device,");
+            sweep_write_csv_escaped(report, name[0] ? name : "");
+            fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,,,%d,,,,",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], rssi);
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+    glog("\n--- Phase 5: BLE Raw Packet Scan (%ds) ---\n", ble_seconds);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ble_start_raw_ble_packetscan();
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    ble_stop();
+#endif
+    
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    glog("\n--- Phase 6: 802.15.4 Scan (%ds) ---\n", ble_seconds);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    zigbee_manager_clear_devices();
+    zigbee_manager_start_capture(0);
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    zigbee_manager_stop_capture();
+    
+    int zb_cnt = zigbee_manager_get_device_count();
+    glog("Found %d 802.15.4 devices\n", zb_cnt);
+    
+    for (int i = 0; i < zb_cnt && report; i++) {
+        zigbee_device_t dev;
+        if (zigbee_manager_get_device_data(i, &dev) == 0) {
+            fprintf(report, "802.15.4,");
+            if (dev.addr_len == 8) {
+                fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X,,%d,,%d,,,,",
+                        dev.addr[0], dev.addr[1], dev.addr[2], dev.addr[3],
+                        dev.addr[4], dev.addr[5], dev.addr[6], dev.addr[7],
+                        dev.channel, dev.rssi);
+            } else {
+                fprintf(report, ",%02X:%02X,,%d,,%d,,,,",
+                        dev.addr[0], dev.addr[1], dev.channel, dev.rssi);
+            }
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+#endif
+    
+    if (report) {
+        fclose(report);
+        glog("\nReport saved to: %s\n", report_path);
+    }
+    
+    ap_manager_start_services();
+    glog("\n=== Sweep Complete ===\n");
+    glog("WiFi: %d APs, %d stations | Security: %d open, %d weak, %d secure\n", 
+         ap_cnt, station_count, open_networks, weak_networks, secure_networks);
+    status_display_show_status("Sweep Done");
+}
+
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_airtags_cmd(int argc, char **argv) {
     ble_list_airtags();
@@ -2676,6 +3660,38 @@ void handle_select_flipper_cmd(int argc, char **argv) {
         status_display_show_status("Flipper Bad");
     }
 }
+
+void handle_list_gatt_cmd(int argc, char **argv) {
+    ble_list_gatt_devices();
+    status_display_show_status("List GATT");
+}
+
+void handle_select_gatt_cmd(int argc, char **argv) {
+    if (argc != 2) {
+        glog("Usage: selectgatt <index>\n");
+        status_display_show_status("GATT Usage");
+        return;
+    }
+    char *endptr;
+    int num = (int)strtol(argv[1], &endptr, 10);
+    if (*endptr == '\0') {
+        ble_select_gatt_device(num);
+        status_display_show_status("GATT Pick");
+    } else {
+        glog("Error: '%s' is not a valid number.\n", argv[1]);
+        status_display_show_status("GATT Bad");
+    }
+}
+
+void handle_enum_gatt_cmd(int argc, char **argv) {
+    ble_enumerate_gatt_services();
+    status_display_show_status("GATT Enum");
+}
+
+void handle_track_gatt_cmd(int argc, char **argv) {
+    ble_track_gatt_device();
+}
+
 #endif
 
 // New beacon list command handlers
@@ -3864,13 +4880,14 @@ static void ir_rx_learn_task(void *arg) {
 
 void handle_ir_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("Usage: ir <send|inline|list|show|universals|rx>\n");
+        glog("Usage: ir <send|inline|list|show|universals|rx|dazzler>\n");
         glog("  ir send <path|remote_index> [button_index]\n");
         glog("  ir inline\n");
         glog("  ir list [path]\n");
         glog("  ir show <path|remote_index>\n");
         glog("  ir universals <list|send|sendall> ...\n");
         glog("  ir rx\n");
+        glog("  ir dazzler [stop]\n");
         return;
     }
 
@@ -4246,7 +5263,98 @@ void handle_ir_cmd(int argc, char **argv) {
         return;
     }
 
+    if (strcmp(sub, "dazzler") == 0) {
+        if (argc >= 3 && strcmp(argv[2], "stop") == 0) {
+            if (infrared_manager_dazzler_is_active()) {
+                infrared_manager_dazzler_stop();
+                glog("IR_DAZZLER:STOPPING\n");
+            } else {
+                glog("IR_DAZZLER:NOT_RUNNING\n");
+            }
+            return;
+        }
+        if (infrared_manager_dazzler_is_active()) {
+            glog("IR_DAZZLER:ALREADY_RUNNING\n");
+            return;
+        }
+        if (infrared_manager_dazzler_start()) {
+            glog("IR_DAZZLER:STARTED\n");
+        } else {
+            glog("IR_DAZZLER:FAILED\n");
+        }
+        return;
+    }
+
     glog("Unknown ir subcommand: %s\n", sub);
+}
+
+void handle_mirror_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: mirror <on|off|refresh|status>\n");
+        return;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        screen_mirror_set_enabled(true);
+        glog("Screen mirror enabled\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        screen_mirror_set_enabled(false);
+        glog("Screen mirror disabled\n");
+    } else if (strcmp(argv[1], "refresh") == 0) {
+        screen_mirror_refresh();
+    } else if (strcmp(argv[1], "status") == 0) {
+        glog("Screen mirror: %s\n", screen_mirror_is_enabled() ? "on" : "off");
+    } else {
+        glog("Usage: mirror <on|off|refresh|status>\n");
+    }
+}
+
+void handle_identify_cmd(int argc, char **argv) {
+    (void)argc; (void)argv;
+    glog("GHOSTESP_OK\n");
+}
+
+void handle_input_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: input <left|right|up|down|select>\n");
+        return;
+    }
+    int joystick_index = -1;
+    if (strcmp(argv[1], "left") == 0) joystick_index = 0;
+    else if (strcmp(argv[1], "select") == 0 || strcmp(argv[1], "ok") == 0) joystick_index = 1;
+    else if (strcmp(argv[1], "up") == 0) joystick_index = 2;
+    else if (strcmp(argv[1], "right") == 0) joystick_index = 3;
+    else if (strcmp(argv[1], "down") == 0) joystick_index = 4;
+    
+    if (joystick_index < 0) {
+        glog("Unknown input: %s\n", argv[1]);
+        return;
+    }
+    
+    if (input_queue) {
+        InputEvent evt = {
+            .type = INPUT_TYPE_JOYSTICK,
+            .data.joystick_index = joystick_index
+        };
+        xQueueSend(input_queue, &evt, 0);
+    }
+}
+
+void handle_usb_kbd_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: usbkbd <on|off|status>\n");
+        return;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        usb_keyboard_manager_set_host_mode(true);
+        glog("USB keyboard host mode enabled\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        usb_keyboard_manager_set_host_mode(false);
+        glog("USB keyboard host mode disabled\n");
+    } else if (strcmp(argv[1], "status") == 0) {
+        glog("USB keyboard host mode: %s\n", usb_keyboard_manager_is_host_mode() ? "on" : "off");
+    } else {
+        glog("Usage: usbkbd <on|off|status>\n");
+    }
 }
 
 void register_commands() {
@@ -4313,15 +5421,22 @@ void register_commands() {
     register_command("chipinfo", handle_chip_info_cmd);
     register_command("rgbmode", handle_rgb_mode);
     register_command("setrgbpins", handle_setrgb);
+    register_command("setrgbcount", handle_setrgbcount);
     register_command("sd_config", handle_sd_config);
     register_command("sd_pins_mmc", handle_sd_pins_mmc);
     register_command("sd_pins_spi", handle_sd_pins_spi);
     register_command("sd_save_config", handle_sd_save_config);
+    register_command("sd", handle_sd_cmd);
     register_command("scanall", handle_scanall);
+    register_command("sweep", handle_sweep_cmd);
     register_command("timezone", handle_timezone_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("listflippers", handle_list_flippers_cmd);
     register_command("selectflipper", handle_select_flipper_cmd);
+    register_command("listgatt", handle_list_gatt_cmd);
+    register_command("selectgatt", handle_select_gatt_cmd);
+    register_command("enumgatt", handle_enum_gatt_cmd);
+    register_command("trackgatt", handle_track_gatt_cmd);
 #endif
     #ifdef CONFIG_WITH_STATUS_DISPLAY
     register_command("statusidle", handle_status_idle_cmd);
@@ -4343,6 +5458,12 @@ void register_commands() {
     register_command("getneopixelbrightness", handle_get_neopixel_brightness_cmd);
 #ifdef CONFIG_HAS_INFRARED
     register_command("ir", handle_ir_cmd);
+#endif
+    register_command("mirror", handle_mirror_cmd);
+    register_command("input", handle_input_cmd);
+    register_command("identify", handle_identify_cmd);
+#if CONFIG_IDF_TARGET_ESP32S3
+    register_command("usbkbd", handle_usb_kbd_cmd);
 #endif
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);

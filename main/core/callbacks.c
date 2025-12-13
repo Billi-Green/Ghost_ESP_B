@@ -4,6 +4,7 @@
 #include "managers/rgb_manager.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/wifi_manager.h"
+#include "core/utils.h"
 #include "vendor/GPS/gps_logger.h"
 #include "vendor/pcap.h"
 #include "core/glog.h"
@@ -264,6 +265,24 @@ static inline void enqueue_pcap_write_typed(const uint8_t *payload, uint16_t len
 static inline void enqueue_pcap_write(const uint8_t *payload, uint16_t len) {
     enqueue_pcap_write_typed(payload, len, PCAP_CAPTURE_WIFI);
 }
+
+// cleanup function to free pcap queue and task when not capturing
+void cleanup_pcap_queue(void) {
+    if (s_pcap_writer_task != NULL) {
+        vTaskDelete(s_pcap_writer_task);
+        s_pcap_writer_task = NULL;
+    }
+    if (s_pcap_q != NULL) {
+        // drain any remaining items and free their buffers
+        pcap_q_item_t item;
+        while (xQueueReceive(s_pcap_q, &item, 0) == pdTRUE) {
+            if (item.buffer) free(item.buffer);
+        }
+        vQueueDelete(s_pcap_q);
+        s_pcap_q = NULL;
+    }
+}
+
 static const char *suspicious_names[] STORE_DATA_ATTR = {
     "HC-03", "HC-05", "HC-06",  "HC-08",    "BT-HC05", "JDY-31",
     "AT-09", "HM-10", "CC41-A", "MLT-BT05", "SPP-CA",  "FFD0"};
@@ -460,9 +479,7 @@ void log_pineap_detection(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     char mac_str[18];
-    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x", log_data->bssid[0],
-             log_data->bssid[1], log_data->bssid[2], log_data->bssid[3], log_data->bssid[4],
-             log_data->bssid[5]);
+    format_mac_address(log_data->bssid, mac_str, sizeof(mac_str), false);
 
     // Build SSIDs string, filtering out empty SSIDs
     char ssids_str[256] = {0};
@@ -496,10 +513,7 @@ void log_pineap_detection(void *arg) {
                 strcasecmp(network->recent_ssids[0], pineap_networks[i].recent_ssids[0]) == 0) {
                 // format the other network's BSSID into a string before logging
                 char other_mac_str[18];
-                snprintf(other_mac_str, sizeof(other_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-                         pineap_networks[i].bssid[0], pineap_networks[i].bssid[1],
-                         pineap_networks[i].bssid[2], pineap_networks[i].bssid[3],
-                         pineap_networks[i].bssid[4], pineap_networks[i].bssid[5]);
+                format_mac_address(pineap_networks[i].bssid, other_mac_str, sizeof(other_mac_str), false);
 
                 glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %s and\n%s\n",
                      network->recent_ssids[0], mac_str, other_mac_str);
@@ -1465,11 +1479,9 @@ void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     // Extract source and dest MAC and SSID as before...
     char src_mac_str[18];
-    snprintf(src_mac_str, sizeof(src_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5]);
+    format_mac_address(hdr->addr2, src_mac_str, sizeof(src_mac_str), false);
     char dest_mac_str[18];
-    snprintf(dest_mac_str, sizeof(dest_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             hdr->addr1[0], hdr->addr1[1], hdr->addr1[2], hdr->addr1[3], hdr->addr1[4], hdr->addr1[5]);
+    format_mac_address(hdr->addr1, dest_mac_str, sizeof(dest_mac_str), false);
     int index = 24;
     char ssid[33] = {0};
     bool ssid_found = false;

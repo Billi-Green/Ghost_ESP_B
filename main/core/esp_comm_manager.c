@@ -67,7 +67,8 @@ typedef enum {
     PACKET_TYPE_COMMAND = 0x04,
     PACKET_TYPE_RESPONSE = 0x05,
     PACKET_TYPE_PING = 0x06,
-    PACKET_TYPE_PONG = 0x07
+    PACKET_TYPE_PONG = 0x07,
+    PACKET_TYPE_STREAM = 0x08
 } packet_type_t;
 
 typedef enum {
@@ -152,6 +153,9 @@ typedef struct {
     psram_task_resources_t protocol_task_res;
     psram_task_resources_t command_task_res;
     TickType_t last_rx_tick;
+
+    comm_stream_callback_t stream_handlers[COMM_MAX_STREAM_CHANNELS];
+    void* stream_user_data[COMM_MAX_STREAM_CHANNELS];
 } esp_comm_manager_t;
 
 static esp_comm_manager_t* s_comm_manager = NULL;
@@ -307,12 +311,9 @@ static uint8_t compute_packet_checksum(const comm_packet_t* packet, bool use_crc
                    : calculate_legacy_checksum(bytes, frame_len);
 }
 
-static bool send_packet(const comm_packet_t* packet) {
+static bool send_packet_internal(const comm_packet_t* packet, TickType_t wait) {
     if (!s_comm_manager || !packet) return false;
     if (s_comm_manager->tx_queue) {
-        TickType_t wait = (packet->type == PACKET_TYPE_RESPONSE)
-            ? pdMS_TO_TICKS(30)
-            : pdMS_TO_TICKS(5);
         if (xQueueSend(s_comm_manager->tx_queue, packet, wait) != pdPASS) {
             s_comm_manager->tx_dropped_packets++;
             if ((s_comm_manager->tx_dropped_packets & 0x0F) == 1) {
@@ -340,6 +341,13 @@ static bool send_packet(const comm_packet_t* packet) {
         }
         return true;
     }
+}
+
+static bool send_packet(const comm_packet_t* packet) {
+    TickType_t wait = (packet && packet->type == PACKET_TYPE_RESPONSE)
+        ? pdMS_TO_TICKS(30)
+        : pdMS_TO_TICKS(5);
+    return send_packet_internal(packet, wait);
 }
 
 static void tx_task(void* arg) {
@@ -767,6 +775,32 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
             }
             break;
 
+        case PACKET_TYPE_STREAM:
+            if (comm->state != COMM_STATE_CONNECTED) {
+                printf("STREAM packet ignored: not connected\n");
+                break;
+            }
+            if (packet->length < 1) {
+                printf("STREAM packet ignored: empty payload\n");
+                break;
+            }
+            {
+                uint8_t channel = packet->data[0];
+                if (channel >= COMM_MAX_STREAM_CHANNELS) {
+                    printf("STREAM packet ignored: invalid channel %d\n", channel);
+                    break;
+                }
+                comm_stream_callback_t cb = comm->stream_handlers[channel];
+                if (!cb) {
+                    printf("STREAM packet ignored: no handler for channel %d\n", channel);
+                    break;
+                }
+                const uint8_t* payload = packet->data + 1;
+                size_t payload_len = packet->length - 1;
+                cb(channel, payload, payload_len, comm->stream_user_data[channel]);
+            }
+            break;
+
         case PACKET_TYPE_PING:
             if (comm->state == COMM_STATE_CONNECTED) {
                 comm_packet_t pong = {0};
@@ -1106,6 +1140,58 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
 
     printf("ESP Comm Manager initialized as '%s' on TX:%d RX:%d at %lu baud - Auto-listening for peers\n", 
              s_comm_manager->chip_name, tx_pin, rx_pin, (unsigned long)baud_rate);
+}
+
+bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t length) {
+    if (!s_comm_manager || !s_comm_manager->initialized || !data || length == 0) {
+        return false;
+    }
+    if (s_comm_manager->state != COMM_STATE_CONNECTED) {
+        return false;
+    }
+    if (channel >= COMM_MAX_STREAM_CHANNELS) {
+        return false;
+    }
+
+    const uint8_t* p = data;
+    size_t remaining = length;
+    bool ok = true;
+
+    size_t payload_cap = (PACKET_MAX_PAYLOAD > 1) ? (PACKET_MAX_PAYLOAD - 1) : 0;
+    if (payload_cap == 0) {
+        return false;
+    }
+
+    while (remaining > 0) {
+        size_t chunk = remaining < payload_cap ? remaining : payload_cap;
+
+        comm_packet_t packet = {0};
+        packet.start_byte = PACKET_START_BYTE;
+        packet.type = PACKET_TYPE_STREAM;
+        packet.data[0] = channel;
+        memcpy(packet.data + 1, p, chunk);
+        packet.length = (uint8_t)(chunk + 1);
+
+        if (!send_packet_internal(&packet, 0)) {
+            ok = false;
+            break;
+        }
+
+        p += chunk;
+        remaining -= chunk;
+    }
+
+    return ok;
+}
+
+bool esp_comm_manager_register_stream_handler(uint8_t channel, comm_stream_callback_t callback, void* user_data) {
+    if (!s_comm_manager || channel >= COMM_MAX_STREAM_CHANNELS) {
+        return false;
+    }
+
+    s_comm_manager->stream_handlers[channel] = callback;
+    s_comm_manager->stream_user_data[channel] = user_data;
+    return true;
 }
 
 bool esp_comm_manager_set_pins(gpio_num_t tx_pin, gpio_num_t rx_pin) {

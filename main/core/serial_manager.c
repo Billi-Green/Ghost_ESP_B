@@ -30,7 +30,7 @@
 #define UART_NUM UART_NUM_1
 #endif
 #define BUF_SIZE (512)
-#define SERIAL_BUFFER_SIZE 256
+#define SERIAL_BUFFER_SIZE 512
 
 char serial_buffer[SERIAL_BUFFER_SIZE];
 static TaskHandle_t s_serial_task_handle = NULL;
@@ -596,7 +596,7 @@ void serial_manager_init() {
 #ifndef CONFIG_USE_IO_EXPANDER
   // UART configuration for main UART
   const uart_config_t uart_config = {
-      .baud_rate = 115200,
+      .baud_rate = CONFIG_ESP_CONSOLE_UART_BAUDRATE,
       .data_bits = UART_DATA_8_BITS,
       .parity = UART_PARITY_DISABLE,
       .stop_bits = UART_STOP_BITS_1,

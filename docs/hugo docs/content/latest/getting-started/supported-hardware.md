@@ -216,6 +216,7 @@ GhostESP runs on a variety of ESP32 boards with varying feature support. This co
       <tr><th scope="row">ESP32-S3 (generic)</th><td>✓</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✓</td></tr>
       <tr><th scope="row">ESP32-C5 (generic)</th><td>✓</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✓</td></tr>
       <tr><th scope="row">ESP32-C6 (generic)</th><td>✓</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✓</td></tr>
+      <tr><th scope="row">Heltec V3</th><td>✓</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>Status Display</td><td>✓</td></tr>
     </tbody>
   </table>
 </div>
@@ -261,6 +262,7 @@ The following table lists the vendor-specific boards supported by GhostESP with 
       <tr><td>JC3248W535EN</td><td><code>JC3248W535EN_LCD.zip</code></td><td></td></tr>
       <tr><td>Wired Hatters ESPRocket</td><td><code>esp32-generic.zip</code></td><td><img src="../images/wired_hatters_rocket.jpg" alt="Wired Hatters ESPRocket"></td></tr>
       <tr><td>Wired Hatters Ultimate Marauder</td><td>Red Port: <code>esp32-generic.zip</code> and Blue Port: <code>MarauderV4_FlipperHub.zip</code></td><td><img src="../images/wired_hatters_ultimate_marauder.jpg" alt="Wired Hatters Ultimate Marauder"></td></tr>
+      <tr><td>Heltec V3</td><td><code>heltecv3.zip</code></td><td></td></tr>
     </tbody>
   </table>
 </div>
