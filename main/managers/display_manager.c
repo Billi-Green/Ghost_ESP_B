@@ -9,6 +9,7 @@
 #include "lvgl_helpers.h"
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
 #include "managers/views/error_popup.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/options_screen.h"
@@ -30,6 +31,7 @@
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
 #include "core/screen_mirror.h"
+#include "gui/lvgl_safe.h"
 
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
@@ -178,12 +180,18 @@ static joystick_t exit_button; // IO6 exit button
 
 #define FADE_DURATION_MS 10
 #define DEFAULT_DISPLAY_TIMEOUT_MS 30000
+#define JOYSTICK_REPEAT_INITIAL_DELAY_MS 350
+#define JOYSTICK_REPEAT_INTERVAL_MS 120
 
 uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT_MS;
 
 static uint16_t original_beacon_interval = 100;
 
 #define BACKLIGHT_SLEEP_POLL_MS 50   // Poll slower when dimmed
+
+static inline uint32_t dm_now_ms(void) {
+  return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
 
 #ifdef CONFIG_IS_S3TWATCH
 #define WAKE_UP_PIN GPIO_NUM_16
@@ -813,32 +821,13 @@ static void status_update_cb(lv_timer_t *timer) {
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
 }
 
-static const uint32_t theme_palettes[15][6] = {
-// bluetooth colors,wifi colors,GPS colors,Apps colors,Clock Colors,Settings colors
-        {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800}, // default
-        {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC}, // Pastel
-        {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F}, // Dark
-        {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF}, // Bright
-        {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36}, // Solarized
-        {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888}, // Monochrome
-        {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63}, // Rose Red
-        {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0}, // Purple
-        {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3}, // Blue
-        {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500}, // Orange
-        {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00}, // Neon
-        {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080}, // Cyberpunk
-        {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B}, // Ocean
-        {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854}, // Sunset
-        {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}  // Forest
-    };
-
 void display_manager_update_status_bar_color(void) {
   if (!status_bar || !lv_obj_is_valid(status_bar)) {
     return;
   }
 
   uint8_t theme = settings_get_menu_theme(&G_Settings);
-  lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palettes[theme][0]), LV_PART_MAIN);
+  lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
 
   if (mainlabel && lv_obj_is_valid(mainlabel)) {
     lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
@@ -863,7 +852,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
         bt_label = NULL;
         sd_label = NULL;
         battery_label = NULL;
-        lv_obj_del(old_bar);
+        lvgl_obj_del_safe(&old_bar);
     }
     status_bar = lv_obj_create(lv_scr_act());
   lv_obj_set_size(status_bar, LV_HOR_RES, 20);
@@ -874,7 +863,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_set_style_border_width(status_bar, 1, LV_PART_MAIN);
   {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palettes[theme][0]), LV_PART_MAIN);
+    lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
   }
   lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(status_bar, 0, LV_PART_MAIN);
@@ -1163,7 +1152,7 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
     return;
   }
 
-  input_queue = xQueueCreate(10, sizeof(InputEvent));
+  input_queue = xQueueCreate(32, sizeof(InputEvent));
   if (input_queue == NULL) {
     ESP_LOGE(TAG, "Failed to create input queue\n");
     return;
@@ -1298,13 +1287,34 @@ static void dm_switch_async_cb(void *param) {
   display_manager_switch_view_internal((View *)param);
 }
 
-void display_manager_switch_view(View *view) {
-  if (view == NULL) return;
+typedef struct {
+  void (*fn)(void *);
+  void *arg;
+} dm_lvgl_call_t;
+
+static void dm_run_on_lvgl_async_cb(void *param) {
+  dm_lvgl_call_t *call = (dm_lvgl_call_t *)param;
+  if (!call) return;
+  if (call->fn) call->fn(call->arg);
+  free(call);
+}
+
+void display_manager_run_on_lvgl(void (*fn)(void *), void *arg) {
+  if (!fn) return;
   if (lvgl_task_handle && xTaskGetCurrentTaskHandle() != lvgl_task_handle) {
-    lv_async_call(dm_switch_async_cb, view);
+    dm_lvgl_call_t *call = malloc(sizeof(*call));
+    if (!call) return;
+    call->fn = fn;
+    call->arg = arg;
+    lv_async_call(dm_run_on_lvgl_async_cb, call);
     return;
   }
-  display_manager_switch_view_internal(view);
+  fn(arg);
+}
+
+void display_manager_switch_view(View *view) {
+  if (view == NULL) return;
+  display_manager_run_on_lvgl(dm_switch_async_cb, view);
 }
 
 void display_manager_destroy_current_view(void) {
@@ -1531,11 +1541,7 @@ void hardware_input_task(void *pvParameters) {
     encoder_tick(&g_encoder);
 
     /* direction events */
-    int8_t dir = encoder_get_direction(&g_encoder);
-    if (settings_get_encoder_invert_direction(&G_Settings)) {
-        dir = (int8_t)-dir;
-    }
-    if (dir) {
+    if (encoder_peek_direction(&g_encoder) != ENCODER_DIR_NONE) {
         // treat an encoder turn as "touch"
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
@@ -1543,12 +1549,26 @@ void hardware_input_task(void *pvParameters) {
           is_backlight_dimmed = false;
           // Don't send input event when waking from dimmed state
         } else {
-          // Only send input event if display was already active
-          InputEvent ev = {
-              .type = INPUT_TYPE_ENCODER,
-              .data.encoder = { .direction = dir, .button = false }
-          };
-          xQueueSend(input_queue, &ev, 0);
+          const int max_encoder_events_per_tick = 4;
+          for (int i = 0; i < max_encoder_events_per_tick; i++) {
+              encoder_direction_t raw_dir = encoder_peek_direction(&g_encoder);
+              if (raw_dir == ENCODER_DIR_NONE) break;
+
+              int8_t dir = (int8_t)raw_dir;
+              if (settings_get_encoder_invert_direction(&G_Settings)) {
+                  dir = (int8_t)-dir;
+              }
+
+              InputEvent ev = {
+                  .type = INPUT_TYPE_ENCODER,
+                  .data.encoder = { .direction = dir, .button = false }
+              };
+              if (xQueueSend(input_queue, &ev, 0) == pdTRUE) {
+                  encoder_consume_direction(&g_encoder, raw_dir);
+              } else {
+                  break;
+              }
+          }
         }
     }
 
@@ -1746,22 +1766,49 @@ void hardware_input_task(void *pvParameters) {
       }
 #endif
 
-#ifdef CONFIG_USE_JOYSTICK
+ #ifdef CONFIG_USE_JOYSTICK
+    static uint32_t joystick_repeat_next_ms[5] = {0};
     for (int i = 0; i < 5; i++) {
-      if (joysticks[i].pin >= 0) {
-        if (joystick_just_pressed(&joysticks[i])) {
-          last_touch_time = xTaskGetTickCount();
-          InputEvent event;
-          event.type = INPUT_TYPE_JOYSTICK;
-          event.data.joystick_index = i;
+      if (joysticks[i].pin < 0) continue;
 
-          if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
-          }
+      if (joystick_just_pressed(&joysticks[i])) {
+        last_touch_time = xTaskGetTickCount();
+        InputEvent event;
+        event.type = INPUT_TYPE_JOYSTICK;
+        event.data.joystick_index = i;
+
+        if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+          ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
+        }
+
+        if (i == 2 || i == 4) {
+          joystick_repeat_next_ms[i] = dm_now_ms() + JOYSTICK_REPEAT_INITIAL_DELAY_MS;
+        }
+        continue;
+      }
+
+      if (i != 2 && i != 4) continue;
+
+      if (!joystick_get_button_state(&joysticks[i])) {
+        joystick_repeat_next_ms[i] = 0;
+        continue;
+      }
+
+      if (joystick_repeat_next_ms[i] == 0) continue;
+
+      uint32_t now_ms = dm_now_ms();
+      if ((int32_t)(now_ms - joystick_repeat_next_ms[i]) >= 0) {
+        last_touch_time = xTaskGetTickCount();
+        InputEvent event;
+        event.type = INPUT_TYPE_JOYSTICK;
+        event.data.joystick_index = i;
+
+        if (xQueueSend(input_queue, &event, 0) == pdTRUE) {
+          joystick_repeat_next_ms[i] = now_ms + JOYSTICK_REPEAT_INTERVAL_MS;
         }
       }
     }
-#endif
+ #endif
 
 #ifdef CONFIG_USE_TOUCHSCREEN
 
@@ -1864,7 +1911,7 @@ void processEvent() {
     return;
   }
 
-  const int max_events = 8;
+  const int max_events = 16;
   int processed = 0;
   InputEvent event;
 

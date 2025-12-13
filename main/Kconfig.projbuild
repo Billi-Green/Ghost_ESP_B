@@ -160,6 +160,22 @@ menu "Ghost ESP Options"
             Rotate only the secondary status OLED by 180 degrees. Does not
             affect the primary TFT/touch display.
 
+    config STATUS_DISPLAY_POWER_PIN
+        int "Status Display Power Control Pin (Vext)"
+        default -1
+        depends on WITH_STATUS_DISPLAY
+        help
+            GPIO pin for power control (e.g., Vext on Heltec V3). Set to -1 to disable.
+            For Heltec V3, this should be GPIO36. LOW = display ON, HIGH = display OFF.
+
+    config STATUS_DISPLAY_RESET_PIN
+        int "Status Display Reset Pin"
+        default -1
+        depends on WITH_STATUS_DISPLAY
+        help
+            GPIO pin for display reset. Set to -1 to disable.
+            For Heltec V3, this should be GPIO21.
+
     endmenu
 
     menu "Misc Options"

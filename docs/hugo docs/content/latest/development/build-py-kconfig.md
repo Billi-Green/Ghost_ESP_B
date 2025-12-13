@@ -63,6 +63,19 @@ Navigate to **Ghost ESP Options → Display Options** for screen hardware:
 - Adjust resolution via **TFT Width** and **TFT Height**, or enable board-specific panels such as **Enable Waveshare LCD**, **Enable Crowtech LCD**, **Enable Sunton LCD**, or **Enable JC3248W535EN LCD** depending on your hardware.
 - Optional helpers like **Enable Touchscreen**, **Use 7-inch Display**, and **Enable Status Display** expose extra pins and I2C settings when needed.
 
+#### Status Display Configuration
+
+When **Enable Status Display** is enabled, you can configure:
+
+- **Status Display SDA Pin** and **Status Display SCL Pin**: I2C pins for the OLED display (default: GPIO 6/7 for shared IO expander bus, or GPIO 17/18 for Heltec V3).
+- **Status Display I2C Port**: I2C controller port (0 or 1).
+- **Status Display I2C Address**: I2C address (default: 0x3C for most OLED displays).
+- **Status Display Power Control Pin (Vext)**: GPIO pin for power control. For Heltec V3, set this to GPIO 36. Set to -1 to disable.
+- **Status Display Reset Pin**: GPIO pin for display reset. For Heltec V3, set this to GPIO 21. Set to -1 to disable.
+- **Rotate status display 180 degrees**: Optional rotation setting.
+
+The status display shows system information, attack status, and idle animations when configured. It's particularly useful for boards like the Heltec V3 which includes an onboard OLED display.
+
 ### Configuring LVGL display driver
 
 After enabling **Enable Screen Support**, navigate to **Component config → LVGL** to configure the display driver:

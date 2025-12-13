@@ -1,6 +1,7 @@
 #include "vendor/pcap.h"
 #include "core/utils.h"
 #include "core/glog.h"
+#include "core/callbacks.h"
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
@@ -621,5 +622,6 @@ void pcap_file_close() {
       ESP_LOGI(PCAP_TAG, "PCAP file closed.");
       xSemaphoreGive(pcap_mutex);
     }
+    cleanup_pcap_queue();
   }
 }

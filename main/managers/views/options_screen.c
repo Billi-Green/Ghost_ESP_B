@@ -3,6 +3,9 @@
 #include "core/commandline.h" // for get_evil_portal_list
 #include "managers/display_manager.h"
 #include "gui/options_view.h"
+#include "core/screen_mirror.h"
+#include "gui/lvgl_safe.h"
+#include "gui/screen_layout.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
@@ -36,9 +39,9 @@ static const char **evil_portal_options = NULL;
 
 #define KARMA_MAX_SSIDS 64
 
- static const char *TAG = "optionsScreen";
+static const char *TAG = "optionsScreen";
 
- static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
+static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
 
 typedef enum {
     SETTINGS_CATEGORY_DISPLAY,
@@ -126,12 +129,14 @@ static int settings_category_indices[][20] = {
 typedef enum {
     WIFI_MENU_MAIN,
     WIFI_MENU_ATTACKS,
+    WIFI_MENU_SCAN_SELECT,
+    WIFI_MENU_ENVIRONMENT,
+    WIFI_MENU_NETWORK,
     WIFI_MENU_CAPTURE,
-    WIFI_MENU_SCANNING,
     WIFI_MENU_EVIL_PORTAL,
     WIFI_MENU_CONNECTION,
     WIFI_MENU_MISC,
-    WIFI_MENU_EVIL_PORTAL_SELECT // <-- Add this line
+    WIFI_MENU_EVIL_PORTAL_SELECT
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -159,10 +164,17 @@ static const char *wifi_capture_options[] = {
     "Listen for Probes", NULL
 };
 
-static const char *wifi_scanning_options[] = {
-    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", "Sweep", "Scan LAN Devices",
-    "ARP Scan Network", "Scan Open Ports", "PineAP Detection", "Channel Congestion", "List Access Points",
-    "List Stations", "Select AP", "Select Station", "Select LAN", NULL
+static const char *wifi_scan_select_options[] = {
+    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", 
+    "List Access Points", "List Stations", "Select AP", "Select Station", NULL
+};
+
+static const char *wifi_environment_options[] = {
+    "Sweep", "PineAP Detection", "Channel Congestion", NULL
+};
+
+static const char *wifi_network_options[] = {
+    "Scan LAN Devices", "ARP Scan Network", "Scan Open Ports", "Select LAN", NULL
 };
 
 static void switch_to_settings_category(int cat_idx);
@@ -177,7 +189,7 @@ static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to s
 static const char *wifi_misc_options[] = {"TV Cast (Dial Connect)", "Power Printer", "TP Link Test", NULL};
 
 static const char *wifi_main_options[] = {
-    "Attacks", "Capture", "Scanning", "Evil Portal", "Connection", "Misc", NULL
+    "Attacks", "Scan & Select", "Environment", "Network", "Capture", "Evil Portal", "Connection", "Misc", NULL
 };
 
 static const char *bluetooth_options[] = {"Find Flippers", "List Flippers", "Select Flipper", "Start AirTag Scanner",
@@ -506,6 +518,8 @@ static int build_item_index = 0;
 static int button_height_global = 0;
 static bool is_small_screen_global = false;
 
+static void rebuild_current_menu(void); // Forward declaration
+
 static void update_settings_arrows_visibility(void) {
     if (!menu_container || !lv_obj_is_valid(menu_container)) return;
     
@@ -715,8 +729,14 @@ select_option_item(selected_item_index + direction);
 /* Theme palette now centralized in display_manager; selection colors applied by options_view */
 
 void options_menu_create() {
+    /* 
+     * Performance Note: Submenu states are preserved across destroy/create cycles
+     * (e.g., current_wifi_menu_state, current_bluetooth_menu_state, etc.)
+     * This allows seamless return from terminal view to the correct submenu.
+     * When navigating BETWEEN submenus, use rebuild_current_menu() instead of
+     * destroy/create to avoid expensive LVGL operations and watchdog starvation.
+     */
     option_invoked = false;
-    current_settings_category = -1;
     selected_item_index = 0;  // Reset selection to first item for new menu
     int screen_width = LV_HOR_RES;
     int screen_height = LV_VER_RES;
@@ -728,15 +748,8 @@ void options_menu_create() {
     display_manager_fill_screen(lv_color_hex(0x121212));
     lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
 
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, NULL, lv_color_hex(0x121212), LV_OPA_COVER);
     options_menu_view.root = root;
-    lv_obj_set_size(root, screen_width, screen_height);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x121212), 0);
-    lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_align(root, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_scrollbar_mode(root, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
     const int STATUS_BAR_HEIGHT = 20;
     g_options_view = options_view_create(root, options_menu_type_to_string(SelectedMenuType));
     menu_container = options_view_get_list(g_options_view);
@@ -757,12 +770,14 @@ void options_menu_create() {
         switch (current_wifi_menu_state) {
             case WIFI_MENU_MAIN: options = wifi_main_options; break;
             case WIFI_MENU_ATTACKS: options = wifi_attacks_options; break;
+            case WIFI_MENU_SCAN_SELECT: options = wifi_scan_select_options; break;
+            case WIFI_MENU_ENVIRONMENT: options = wifi_environment_options; break;
+            case WIFI_MENU_NETWORK: options = wifi_network_options; break;
             case WIFI_MENU_CAPTURE: options = wifi_capture_options; break;
-            case WIFI_MENU_SCANNING: options = wifi_scanning_options; break;
             case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
             case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
-            case WIFI_MENU_EVIL_PORTAL_SELECT: // <-- Add this case
+            case WIFI_MENU_EVIL_PORTAL_SELECT:
             {
                 ESP_LOGI(TAG, "Populating evil portal selector...");
                 evil_portal_names = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
@@ -836,16 +851,18 @@ void options_menu_create() {
         if (current_settings_category < 0) {
             current_options_list = settings_categories;
             build_item_index = 0;
-            menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+            menu_build_timer = lv_timer_create(menu_builder_cb, 20, NULL);
         } else {
             current_options_list = NULL;
             build_item_index = 0;
-            menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+            menu_build_timer = lv_timer_create(menu_builder_cb, 15, NULL);
         }
     } else {
         current_options_list = options;
         build_item_index = 0;
-        menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+        // note: when returning from terminal, submenu states are preserved,
+        // so we rebuild the correct submenu (e.g., wifi scanning) automatically
+        menu_build_timer = lv_timer_create(menu_builder_cb, 15, NULL);
     }
 
     /* Status bar already handled by options_view_create */
@@ -1316,12 +1333,41 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     }
                 }
             }
-        } else if (button == 0 && is_settings_mode && current_settings_category >= 0) { // Left (decrement) button for settings
-            change_current_row(false);
+        } else if (button == 0) { // left button
+            if (is_settings_mode && current_settings_category >= 0) {
+                // in settings submenu, check if we're on the back option
+                lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                if (sel) {
+                    void *udata = lv_obj_get_user_data(sel);
+                    if (udata == (void *)"__BACK_OPTION__") {
+                        // if on back option, go back
+                        ESP_LOGI(TAG, "joystick left pressed on back option, going back");
+                        back_event_cb(NULL);
+                    } else {
+                        // otherwise left decrements value
+                        change_current_row(false);
+                    }
+                }
+            } else {
+                // otherwise left goes back
+                ESP_LOGI(TAG, "joystick left pressed, going back");
+                back_event_cb(NULL);
+            }
         } else if (button == 3) { // Cardputer select button OR Right (increment) button for settings
             if (is_settings_mode && current_settings_category >= 0) {
-                // Change setting value (Cardputer specific or normal increment)
-                change_current_row(true);
+                // in settings submenu, check if we're on the back option
+                lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                if (sel) {
+                    void *udata = lv_obj_get_user_data(sel);
+                    if (udata == (void *)"__BACK_OPTION__") {
+                        // if on back option, go back
+                        ESP_LOGI(TAG, "joystick right pressed on back option, going back");
+                        back_event_cb(NULL);
+                    } else {
+                        // otherwise right increments value
+                        change_current_row(true);
+                    }
+                }
             }
             // For non-settings, button 3 doesn't have a defined action as per the problem description.
             // If it were a general 'select' for non-settings, it would need similar logic to button 1's 'else' block.
@@ -1511,6 +1557,9 @@ void option_event_cb(lv_event_t *e) {
         return;
     }
     
+    // stop incremental menu builder before any potential view switch
+    lvgl_timer_del_safe(&menu_build_timer);
+    
     if (is_settings_mode) {
         const char *udata = (const char *)lv_event_get_user_data(e);
 
@@ -1539,10 +1588,6 @@ void option_event_cb(lv_event_t *e) {
 
     // Handle the "Back" option specifically (for encoder/joystick modes)
     if (strcmp(Selected_Option, "__BACK_OPTION__") == 0) {
-        if (menu_build_timer) {
-            lv_timer_del(menu_build_timer);
-            menu_build_timer = NULL;
-        }
         back_event_cb(NULL);
         option_invoked = false;
         return;
@@ -1559,42 +1604,42 @@ void option_event_cb(lv_event_t *e) {
                 view_switched = true;
             } else if (strcmp(Selected_Option, "Discovery / Session") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_SESSION;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Scanning") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_SCAN;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "WiFi") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_WIFI;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Attacks") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_ATTACKS;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Capture") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_CAPTURE;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Tools") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_TOOLS;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "BLE") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_BLE;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "GPS") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_GPS;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Ethernet") == 0) {
@@ -1604,7 +1649,7 @@ void option_event_cb(lv_event_t *e) {
                 return;
             } else if (strcmp(Selected_Option, "Keyboard") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_KEYBOARD;
-                display_manager_switch_view(&options_menu_view);
+                rebuild_current_menu();
                 option_invoked = false;
                 return;
             }
@@ -2139,13 +2184,16 @@ void option_event_cb(lv_event_t *e) {
     if (SelectedMenuType == OT_Wifi) {
         if (current_wifi_menu_state == WIFI_MENU_MAIN) {
             if (strcmp(Selected_Option, "Attacks") == 0) current_wifi_menu_state = WIFI_MENU_ATTACKS;
+            else if (strcmp(Selected_Option, "Scan & Select") == 0) current_wifi_menu_state = WIFI_MENU_SCAN_SELECT;
+            else if (strcmp(Selected_Option, "Environment") == 0) current_wifi_menu_state = WIFI_MENU_ENVIRONMENT;
+            else if (strcmp(Selected_Option, "Network") == 0) current_wifi_menu_state = WIFI_MENU_NETWORK;
             else if (strcmp(Selected_Option, "Capture") == 0) current_wifi_menu_state = WIFI_MENU_CAPTURE;
-            else if (strcmp(Selected_Option, "Scanning") == 0) current_wifi_menu_state = WIFI_MENU_SCANNING;
             else if (strcmp(Selected_Option, "Evil Portal") == 0) current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
             else if (strcmp(Selected_Option, "Connection") == 0) current_wifi_menu_state = WIFI_MENU_CONNECTION;
             else if (strcmp(Selected_Option, "Misc") == 0) current_wifi_menu_state = WIFI_MENU_MISC;
-            display_manager_switch_view(&options_menu_view);
-            return; // Explicitly return to avoid falling through
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
         }
     }
 
@@ -2158,7 +2206,8 @@ void option_event_cb(lv_event_t *e) {
             else if (strcmp(Selected_Option, "Spam") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SPAM;
             else if (strcmp(Selected_Option, "Raw") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_RAW;
             else if (strcmp(Selected_Option, "Skimmer") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SKIMMER;
-            display_manager_switch_view(&options_menu_view);
+            rebuild_current_menu();
+            option_invoked = false;
             return;
         }
     }
@@ -2392,7 +2441,8 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "Start Custom Evil Portal") == 0) {
         current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL_SELECT;
-        display_manager_switch_view(&options_menu_view);
+        rebuild_current_menu();
+        option_invoked = false;
         return;
     }
     else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
@@ -2793,10 +2843,7 @@ void handle_option_directly(const char *Selected_Option) {
 
 void options_menu_destroy() {
     // Delete the root object (deletes all children recursively)
-    if (options_menu_view.root) {
-        lv_obj_del(options_menu_view.root);
-        options_menu_view.root = NULL;
-    }
+    lvgl_obj_del_safe(&options_menu_view.root);
     if (g_options_view) {
         options_view_destroy(g_options_view);
         g_options_view = NULL;
@@ -2812,12 +2859,11 @@ void options_menu_destroy() {
     selected_item_index = 0;
     num_items = 0;
     current_settings_category = -1;
+    // note: wifi/bluetooth/dualcomm submenu states are intentionally NOT reset here
+    // so when returning from terminal view, we resume at the correct submenu
 
     // Delete and clear any timers
-    if (menu_build_timer) {
-        lv_timer_del(menu_build_timer);
-        menu_build_timer = NULL;
-    }
+    lvgl_timer_del_safe(&menu_build_timer);
     // Styles handled by options_view
 
     is_settings_mode = false;
@@ -2851,35 +2897,127 @@ static void back_event_cb(lv_event_t *e) {
     // If in Evil Portal select submenu, go back to Evil Portal menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
         current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
-        display_manager_switch_view(&options_menu_view);
+        rebuild_current_menu();
         return;
     }
     // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
-        display_manager_switch_view(&options_menu_view);
+        rebuild_current_menu();
         return;
     }
     // If in a Bluetooth submenu (but not main), go back to main Bluetooth menu
     if (SelectedMenuType == OT_Bluetooth && current_bluetooth_menu_state != BLUETOOTH_MENU_MAIN) {
         current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
-        display_manager_switch_view(&options_menu_view);
+        rebuild_current_menu();
         return;
     }
     // If in a Dual Comm submenu (but not main), go back to main Dual Comm menu
     if (SelectedMenuType == OT_DualComm && current_dualcomm_menu_state != DUALCOMM_MENU_MAIN) {
         current_dualcomm_menu_state = DUALCOMM_MENU_MAIN;
-        display_manager_switch_view(&options_menu_view);
+        rebuild_current_menu();
         return;
     }
     // If in a settings submenu, go back to category selection
     if (is_settings_mode && current_settings_category >= 0) {
         current_settings_category = -1;
-        display_manager_switch_view(&options_menu_view);
+        rebuild_current_menu();
         return;
     }
     // Otherwise, go back to main menu
     display_manager_switch_view(&main_menu_view);
+}
+
+static void rebuild_current_menu(void) {
+    // stop any existing build timer
+    lvgl_timer_del_safe(&menu_build_timer);
+    
+    // clear existing items efficiently
+    if (g_options_view) {
+        options_view_clear(g_options_view);
+    } else if (menu_container && lv_obj_is_valid(menu_container)) {
+        lv_obj_clean(menu_container);
+    }
+    
+    // reset build state
+    num_items = 0;
+    build_item_index = 0;
+    selected_item_index = 0;
+    
+    // determine options and timer period based on current menu state
+    const char **options = NULL;
+    int timer_period = 15; // increased from 10ms to give more time between batches
+    
+    if (is_settings_mode) {
+        if (current_settings_category < 0) {
+            current_options_list = settings_categories;
+            timer_period = 20;
+        } else {
+            current_options_list = NULL;
+            timer_period = 15;
+        }
+    } else {
+        switch (SelectedMenuType) {
+        case OT_Wifi:
+            switch (current_wifi_menu_state) {
+                case WIFI_MENU_MAIN: options = wifi_main_options; break;
+                case WIFI_MENU_ATTACKS: options = wifi_attacks_options; break;
+                case WIFI_MENU_SCAN_SELECT: options = wifi_scan_select_options; break;
+                case WIFI_MENU_ENVIRONMENT: options = wifi_environment_options; break;
+                case WIFI_MENU_NETWORK: options = wifi_network_options; break;
+                case WIFI_MENU_CAPTURE: options = wifi_capture_options; break;
+                case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
+                case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
+                case WIFI_MENU_MISC: options = wifi_misc_options; break;
+                case WIFI_MENU_EVIL_PORTAL_SELECT:
+                {
+                    if (evil_portal_names && evil_portal_options) {
+                        options = evil_portal_options;
+                    }
+                    break;
+                }
+            }
+            break;
+        case OT_Bluetooth:
+            switch (current_bluetooth_menu_state) {
+                case BLUETOOTH_MENU_MAIN: options = bluetooth_main_options; break;
+                case BLUETOOTH_MENU_AIRTAG: options = bluetooth_airtag_options; break;
+                case BLUETOOTH_MENU_FLIPPER: options = bluetooth_flipper_options; break;
+                case BLUETOOTH_MENU_SPAM: options = bluetooth_spam_options; break;
+                case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
+                case BLUETOOTH_MENU_SKIMMER: options = bluetooth_skimmer_options; break;
+                case BLUETOOTH_MENU_GATT: options = bluetooth_gatt_options; break;
+            }
+            break;
+        case OT_GPS: options = gps_options; break;
+        case OT_DualComm:
+            switch (current_dualcomm_menu_state) {
+                case DUALCOMM_MENU_MAIN:     options = dual_comm_main_options; break;
+                case DUALCOMM_MENU_SESSION:  options = dual_comm_session_options; break;
+                case DUALCOMM_MENU_SCAN:     options = dual_comm_scan_options; break;
+                case DUALCOMM_MENU_WIFI:     options = dual_comm_wifi_options; break;
+                case DUALCOMM_MENU_ATTACKS:  options = dual_comm_attacks_options; break;
+                case DUALCOMM_MENU_CAPTURE:  options = dual_comm_capture_options; break;
+                case DUALCOMM_MENU_TOOLS:    options = dual_comm_tools_options; break;
+                case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
+                case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
+                case DUALCOMM_MENU_KEYBOARD: options = dual_comm_keyboard_options; break;
+            }
+            break;
+        default: break;
+        }
+        current_options_list = options;
+    }
+    
+    // update title
+    if (is_settings_mode) {
+        options_view_set_title(g_options_view, "Settings");
+    } else {
+        options_view_set_title(g_options_view, options_menu_type_to_string(SelectedMenuType));
+    }
+    
+    // start incremental build with longer period for smoother operation
+    menu_build_timer = lv_timer_create(menu_builder_cb, timer_period, NULL);
 }
 
 static void switch_to_settings_category(int cat_idx) {
@@ -2908,19 +3046,8 @@ static void switch_to_settings_category(int cat_idx) {
         return;
     }
 
-    if (menu_build_timer) {
-        lv_timer_del(menu_build_timer);
-        menu_build_timer = NULL;
-    }
-    if (g_options_view) {
-        options_view_clear(g_options_view);
-    } else if (menu_container) {
-        lv_obj_clean(menu_container);
-    }
-    num_items = 0;
-    build_item_index = 0;
     current_settings_category = cat_idx;
-    menu_build_timer = lv_timer_create(menu_builder_cb, 10, NULL);
+    rebuild_current_menu();
 }
 
 static void ssh_scan_kb_cb(const char *text) {
@@ -3123,9 +3250,12 @@ static void menu_builder_cb(lv_timer_t *t)
         menu_build_timer = NULL;
         return;
     }
-    const int BATCH = 8;
+    const int BATCH = 3; // increased from 2 to reduce timer iterations
     int built_this_tick = 0;
     bool all_current_options_processed = false;
+    
+    // yield to other tasks to prevent watchdog starvation
+    taskYIELD();
 
     // Check if the "Back" option has already been added in a prior tick for this menu
     bool back_option_was_added_in_previous_tick = (bool)(intptr_t)t->user_data;
@@ -3211,7 +3341,12 @@ static void menu_builder_cb(lv_timer_t *t)
     // Now, handle adding the "Back" button and stopping the timer
     if (all_current_options_processed) {
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-        if (!back_option_was_added_in_previous_tick) { // Add back button only once
+        bool need_back_button = true;
+#else
+        // Add back button when mirroring is active (for virtual joystick support)
+        bool need_back_button = screen_mirror_is_enabled();
+#endif
+        if (need_back_button && !back_option_was_added_in_previous_tick) { // Add back button only once
             lv_obj_t *btn = options_view_add_item(g_options_view, LV_SYMBOL_LEFT " Back", option_event_cb, (void *)"__BACK_OPTION__");
             if (btn) {
                 lv_obj_set_user_data(btn, (void *)"__BACK_OPTION__");
@@ -3224,13 +3359,12 @@ static void menu_builder_cb(lv_timer_t *t)
                 t->user_data = (void*)1; // Mark back option as added
             }
         }
-#endif
-        // Timer should stop if all options are processed AND (if encoder/joystick, the back option is now added, OR if neither)
+        // Timer should stop if all options are processed AND (if encoder/joystick/mirroring, the back option is now added, OR if neither)
         if (
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             (bool)(intptr_t)t->user_data
 #else
-            true // If neither encoder nor joystick, stop as soon as regular options are done
+            need_back_button ? (bool)(intptr_t)t->user_data : true
 #endif
         ) {
             lv_timer_del(t);

@@ -1,8 +1,10 @@
+ #include "gui/screen_layout.h"
 #include "managers/views/infrared_view.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
 
 void update_learning_popup_selection(void);
 void update_easy_learn_popup_selection(void);
@@ -23,12 +25,6 @@ static void ir_sd_end(bool display_was_suspended);
 
 static const char *TAG = "infrared_view";
 
-static const uint32_t ir_theme_accent_colors[15] = {
-    0x1976D2,0xFFCDD2,0x263238,0xFFFFFF,0x002B36,
-    0x888888,0xE91E63,0x9C27B0,0x2196F3,0xFFA500,
-    0x39FF14,0xFF00FF,0x0077BE,0xFF4500,0x556B2F
-};
-
 #ifdef CONFIG_HAS_INFRARED_RX
 void cleanup_signal_preview_popup(void *obj);
 void signal_preview_save_cb(lv_event_t *e);
@@ -47,8 +43,6 @@ static void add_signal_keyboard_callback(const char *name);
 void rename_remote_cb(lv_event_t *e);
 void add_signal_cb(lv_event_t *e);
 void delete_remote_cb(lv_event_t *e);
-
-
 
 
 #ifndef JOYSTICK_LEFT
@@ -79,6 +73,7 @@ static bool popup_style_initialized = false;
 #include "managers/views/main_menu_screen.h"
 #include "gui/popup.h"
 #include "managers/views/keyboard_screen.h"
+#include "gui/lvgl_safe.h"
 #include <lvgl/lvgl.h>
 #include <dirent.h>
 #include <string.h>
@@ -304,8 +299,6 @@ static void ir_learning_task(void *arg);
 static void add_signal_to_remote_callback(const char *name);
 static void append_signal_to_remote(const char *signal_name);
 #endif
-
-
 
 
 #ifdef CONFIG_HAS_INFRARED_RX
@@ -784,18 +777,14 @@ static void ir_sd_end(bool display_was_suspended)
 }
 
 static void cleanup_transmit_popup(void *obj) {
-    if (transmitting_popup) {
-        lv_obj_del(transmitting_popup);
-        transmitting_popup = NULL;
-    }
+    (void)obj;
+    lvgl_obj_del_safe(&transmitting_popup);
 }
 
 static void cleanup_dazzler_popup(void *obj) {
-    if (dazzler_popup) {
-        lv_obj_del(dazzler_popup);
-        dazzler_popup = NULL;
-        dazzler_stop_btn = NULL;
-    }
+    (void)obj;
+    lvgl_obj_del_safe(&dazzler_popup);
+    dazzler_stop_btn = NULL;
 }
 
 static void dazzler_stop_cb(lv_event_t *e) {
@@ -1250,15 +1239,9 @@ void infrared_view_create(void) {
     is_easy_mode = settings_get_infrared_easy_mode(&G_Settings);
 #endif
     
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, "Infrared", lv_color_hex(0x121212), LV_OPA_COVER);
     lv_obj_set_style_pad_all(root, 0, 0);
     infrared_view.root = root;
-    lv_obj_set_size(root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x121212), 0);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
-
-    display_manager_add_status_bar("Infrared");
     if (!ir_sd_queue) {
         ir_sd_queue = xQueueCreate(4, sizeof(IrIoJob_t));
     }
@@ -1266,7 +1249,7 @@ void infrared_view_create(void) {
         xTaskCreate(ir_sd_worker_task, "ir_io", 4096, NULL, tskIDLE_PRIORITY + 1, &ir_sd_worker_handle);
     }
 
-    const int STATUS_BAR_HEIGHT = 20;
+    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_HEIGHT;
 #ifdef CONFIG_USE_TOUCHSCREEN
     const int BUTTON_AREA_HEIGHT = IR_SCROLL_BTN_SIZE + IR_SCROLL_BTN_PADDING * 2;
 #else
@@ -1501,8 +1484,7 @@ void infrared_view_destroy(void) {
             ir_file_count = 0;
         }
         showing_commands = false;
-        lv_obj_del(root);
-        root = NULL;
+        lvgl_obj_del_safe(&root);
         list = NULL;
         infrared_view.root = NULL;
         selected_ir_index = 0;
@@ -1557,13 +1539,10 @@ static void ir_select_item(int index) {
             }
         } else {
             uint8_t theme = settings_get_menu_theme(&G_Settings);
-            if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) {
-                theme = 0;
-            }
-            lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+            lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
             lv_obj_set_style_bg_color(cur, accent, LV_PART_MAIN);
             if (cur_label) {
-                if (theme == 3) {
+                if (theme_palette_is_bright(theme)) {
                     lv_obj_set_style_text_color(cur_label, lv_color_hex(0x000000), 0);
                 } else {
                     lv_obj_set_style_text_color(cur_label, lv_color_hex(0xFFFFFF), 0);
@@ -2668,13 +2647,11 @@ static void cleanup_unified_learning_popup(learning_popup_type_t type)
 {
     if (type == LEARNING_POPUP_STANDARD) {
         if (learning_popup) {
-            lv_obj_del(learning_popup);
-            learning_popup = NULL;
+            lvgl_obj_del_safe(&learning_popup);
         }
     } else {
         if (easy_learn_popup) {
-            lv_obj_del(easy_learn_popup);
-            easy_learn_popup = NULL;
+            lvgl_obj_del_safe(&easy_learn_popup);
             easy_learn_instruction_label = NULL;
         }
     }
@@ -2693,15 +2670,13 @@ void cleanup_easy_learn_popup(void *obj)
 // Signal preview UI functions
 void cleanup_signal_preview_popup(void *obj)
 {
-    if (signal_preview_popup) {
-        lv_obj_del(signal_preview_popup);
-        signal_preview_popup = NULL;
-        protocol_label = NULL;
-        address_label = NULL;
-        command_label = NULL;
-        save_btn = NULL;
-        cancel_btn = NULL;
-    }
+    (void)obj;
+    lvgl_obj_del_safe(&signal_preview_popup);
+    protocol_label = NULL;
+    address_label = NULL;
+    command_label = NULL;
+    save_btn = NULL;
+    cancel_btn = NULL;
 }
 
 
@@ -2927,8 +2902,7 @@ void update_signal_preview_selection(void)
     
     // Update button styles based on selection
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-    lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+    lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
 
     if (preview_selected_option == 0) {
         // Save selected - theme accent background
@@ -2936,7 +2910,7 @@ void update_signal_preview_selection(void)
         lv_obj_set_style_border_color(save_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *save_label = lv_obj_get_child(save_btn, 0);
         if (save_label) {
-            if (theme == 3) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(save_label, lv_color_hex(0xFFFFFF), 0);
         }
         
@@ -2951,7 +2925,7 @@ void update_signal_preview_selection(void)
         lv_obj_set_style_border_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
         
@@ -2970,13 +2944,12 @@ void update_learning_popup_selection(void)
     if (preview_selected_option == 1) {
         // Cancel selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(learning_cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {
@@ -2997,13 +2970,12 @@ void update_easy_learn_popup_selection(void)
     if (easy_learn_selected_option == 0) {
         // Cancel selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(easy_learn_cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {
@@ -3018,13 +2990,12 @@ void update_easy_learn_popup_selection(void)
     if (easy_learn_selected_option == 1) {
         // Skip selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *skip_label = lv_obj_get_child(easy_learn_skip_btn, 0);
         if (skip_label) {
-            if (theme == 3) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(skip_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {

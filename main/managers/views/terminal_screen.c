@@ -8,6 +8,8 @@
 #include "managers/views/keyboard_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/display_manager.h"
+#include "gui/screen_layout.h"
+#include "gui/lvgl_safe.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "sdkconfig.h"
@@ -672,16 +674,9 @@ void terminal_view_create(void) {
 
     terminal_active = true;
 
-    terminal_view.root = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(terminal_view.root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(terminal_view.root, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(terminal_view.root, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(terminal_view.root, 0, 0); // Remove border
-    lv_obj_set_style_radius(terminal_view.root, 0, 0);
-    lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
+    terminal_view.root = gui_screen_create_root(NULL, "Terminal", lv_color_black(), LV_OPA_COVER);
 
-    const int STATUS_BAR_HEIGHT = 20;
+    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_HEIGHT;
     const int padding = 5;
     const int textbox_height = 40;
 
@@ -826,8 +821,7 @@ void terminal_view_create(void) {
 }
 static void terminal_retry_cleanup_cb(lv_timer_t *timer) {
     if (!retry_cleanup_flag) {
-        lv_timer_del(timer);
-        terminal_cleanup_retry_timer = NULL;
+        lvgl_timer_del_safe(&terminal_cleanup_retry_timer);
         return;
     }
     ESP_LOGI(TAG, "Retrying terminal cleanup...");
@@ -850,19 +844,13 @@ void terminal_view_destroy(void) {
     input_buffer[0] = '\0';
 
     // Delete timer first to prevent callbacks after objects are freed
-    if (terminal_update_timer) {
-        lv_timer_del(terminal_update_timer);
-        terminal_update_timer = NULL;
-    }
+    lvgl_timer_del_safe(&terminal_update_timer);
 
     // Safely delete LVGL objects
     if (terminal_mutex) {
         if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             // Delete LVGL objects if they exist
-            if (terminal_view.root) {
-                lv_obj_del(terminal_view.root);
-                terminal_view.root = NULL;
-            }
+            lvgl_obj_del_safe(&terminal_view.root);
             // Set all pointers to NULL to avoid dangling references
             terminal_scroller = NULL;
             terminal_canvas = NULL;
@@ -888,10 +876,7 @@ void terminal_view_destroy(void) {
 
     // Final state reset
     is_stopping = false;
-    if (terminal_cleanup_retry_timer) {
-        lv_timer_del(terminal_cleanup_retry_timer);
-        terminal_cleanup_retry_timer = NULL;
-    }
+    lvgl_timer_del_safe(&terminal_cleanup_retry_timer);
 }
 
 static bool terminal_is_dualcomm_line(const char *text) {

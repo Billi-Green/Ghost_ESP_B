@@ -45,12 +45,16 @@
 - Added SD Card CLI for control via WebSerial File Browser
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
 - Added a first time boot setup wizard for display enabled configs
+- Added basic support for the Heltec v3 (NO LORA/MESH)- @tototo31
+- Add Docker support for HTML header generation with build script - @tototo31
 
 ### Changed
 
 - Refactors to NFC logic to make more maintainable
 - After scanning, NFC popup title now specifies the tag type
 - IR and NFC display views and popups now properly use active set UI theme
+- Standardized LVGL screen root creation across display views and added status-bar content offset GUI helpers
+- Grid menu now scrolls up and down instead of left and right
 - Avoid redundant PN532 Mifare Classic reads for a minor speed up
 - Reorganised the settings menu and adjusted styling
 - Add vendor board support and images to documentation - @tototo31
@@ -60,14 +64,40 @@
 - Minor keyboard view logic and styling refactor
 - Terminal enter/select now submits text if typed, otherwise opens keyboard view
 - Enable clock menu for all boards by using built-in ESP32 RTC and changed icon
+- Use Kconfig baud rate for UART instead of hardcoded 115200
+- Increase CPU clock speed on certain configs
+- Reorganised and renamed wifi display sections
+- Free pcap queue and task when not capturing
+- Added shared MAC formatting helper for refactors
+- Added LVGL-safe helpers for NULL-safe object/timer deletion and scheduling
+- Small improvements to encoder handling
+- Miscellaneuous small code refactors and improvements
+- Joystick Up/Down hold in options menus now auto-repeat
+- Changed default CPU clock speed to 240MHz instead of 160MHz for:
+  - sdkconfig.awokimini
+  - sdkconfig.CYD2432S028R
+  - sdkconfig.CYD2USB
+  - sdkconfig.CYD2USB2.4Inch
+  - sdkconfig.CYD2USB2.4Inch_C_Varient
+  - sdkconfig.CYDDualUSB
+  - sdkconfig.CYDMicroUSB
+  - sdkconfig.default.esp32
+  - sdkconfig.default.esp2c5
+  - sdkconfig.default.esp2s2
+  - sdkconfig.flipper.jcmk_gps
+  - sdkconfig.JCMK_DevBoardPro
+  - sdkconfig.marauderv6
+  - sdkconfig.minion
+  - sdkconfig.poltergeist
 
-### Fixed
+### Fixes
 
 - Fixed an issue where setting rgb pins would fail on configs with no leds set
 - Wrapped power-management transitions with RGB pause/resume to prevent a crash
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
 - Apps menu now follows main menu theme, controls and layout
 - Main menu app colors are now consistent across devices
+- Centralized UI theme palette definitions into a shared helper to reduce duplicate display code.
 - Route evil portal HTML requests through the UART HTML buffer when active instead of the SD-backed file handler.
 - Fixed TEmbed C1101-specific hardware initialization running on all encoder configs
 - Fixed an issue that would cause MFC dictionary attack to not try all possible keys
@@ -81,6 +111,7 @@
 - Fixed apps menu not using the correct directions for joystick control
 - Fixed crash after BLE deinit and during WiFi init
 - Fixed IR learn remote popup Cancel button not responding
+- Fixed an issue with layout of more than 6 apps on the grid menu layout
 - Fixed RAW BLE Capture not working
 
 ## Revival v1.8.1
