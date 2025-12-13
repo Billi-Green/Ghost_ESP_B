@@ -112,7 +112,6 @@
 - Fixed an issue with layout of more than 6 apps on the grid menu layout
 - Fixed RAW BLE Capture not working
 
-
 ## Revival v1.8.1
 
 ### Added
