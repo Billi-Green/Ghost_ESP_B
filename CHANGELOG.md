@@ -67,6 +67,8 @@
 - Free pcap queue and task when not capturing
 - Added shared MAC formatting helper for refactors
 - Added LVGL-safe helpers for NULL-safe object/timer deletion and scheduling
+- Small improvements to encoder handling
+- Miscellaneuous small code refactors and improvements
 - Changed default CPU clock speed to 240MHz instead of 160MHz for:
   - sdkconfig.awokimini
   - sdkconfig.CYD2432S028R
@@ -84,7 +86,7 @@
   - sdkconfig.minion
   - sdkconfig.poltergeist
 
-### Fixed
+### Fixes
 
 - Fixed an issue where setting rgb pins would fail on configs with no leds set
 - Wrapped power-management transitions with RGB pause/resume to prevent a crash
@@ -107,6 +109,7 @@
 - Fixed IR learn remote popup Cancel button not responding
 - Fixed an issue with layout of more than 6 apps on the grid menu layout
 - Fixed RAW BLE Capture not working
+
 
 ## Revival v1.8.1
 

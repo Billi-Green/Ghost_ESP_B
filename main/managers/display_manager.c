@@ -1146,7 +1146,7 @@ set_keyboard_brightness(0xFF); // Set to 100% brightness
     return;
   }
 
-  input_queue = xQueueCreate(10, sizeof(InputEvent));
+  input_queue = xQueueCreate(32, sizeof(InputEvent));
   if (input_queue == NULL) {
     ESP_LOGE(TAG, "Failed to create input queue\n");
     return;
@@ -1535,11 +1535,7 @@ void hardware_input_task(void *pvParameters) {
     encoder_tick(&g_encoder);
 
     /* direction events */
-    int8_t dir = encoder_get_direction(&g_encoder);
-    if (settings_get_encoder_invert_direction(&G_Settings)) {
-        dir = (int8_t)-dir;
-    }
-    if (dir) {
+    if (encoder_peek_direction(&g_encoder) != ENCODER_DIR_NONE) {
         // treat an encoder turn as "touch"
         last_touch_time = xTaskGetTickCount();
         if (is_backlight_dimmed) {
@@ -1547,12 +1543,26 @@ void hardware_input_task(void *pvParameters) {
           is_backlight_dimmed = false;
           // Don't send input event when waking from dimmed state
         } else {
-          // Only send input event if display was already active
-          InputEvent ev = {
-              .type = INPUT_TYPE_ENCODER,
-              .data.encoder = { .direction = dir, .button = false }
-          };
-          xQueueSend(input_queue, &ev, 0);
+          const int max_encoder_events_per_tick = 4;
+          for (int i = 0; i < max_encoder_events_per_tick; i++) {
+              encoder_direction_t raw_dir = encoder_peek_direction(&g_encoder);
+              if (raw_dir == ENCODER_DIR_NONE) break;
+
+              int8_t dir = (int8_t)raw_dir;
+              if (settings_get_encoder_invert_direction(&G_Settings)) {
+                  dir = (int8_t)-dir;
+              }
+
+              InputEvent ev = {
+                  .type = INPUT_TYPE_ENCODER,
+                  .data.encoder = { .direction = dir, .button = false }
+              };
+              if (xQueueSend(input_queue, &ev, 0) == pdTRUE) {
+                  encoder_consume_direction(&g_encoder, raw_dir);
+              } else {
+                  break;
+              }
+          }
         }
     }
 
@@ -1868,7 +1878,7 @@ void processEvent() {
     return;
   }
 
-  const int max_events = 8;
+  const int max_events = 16;
   int processed = 0;
   InputEvent event;
 

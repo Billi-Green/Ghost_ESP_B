@@ -31,12 +31,15 @@ typedef struct {
     /* internal state */
     int8_t  old_state;
     int32_t position;            ///< raw internal counter
+    int32_t position_base_ext;   ///< latched position without acceleration
     int32_t position_ext;        ///< latched "user" position
     int32_t position_ext_prev;   ///< last position returned
+    int32_t pending_steps;
     uint32_t pos_time_ms;        ///< time of last latch (ms)
     uint32_t pos_time_prev_ms;   ///< previous latch time (ms)
     uint64_t pos_time_us;
     uint64_t pos_time_prev_us;
+
     uint32_t rpm_time_diffs_us[ENCODER_RPM_SMOOTHING_SIZE];
     uint8_t rpm_time_index;
     uint8_t rpm_time_count;
@@ -53,6 +56,8 @@ void  encoder_init(encoder_t *enc,
 void  encoder_tick(encoder_t *enc);                    ///< Call as fast as you like (e.g. from a 1 kHz timer ISR/task)
 int32_t encoder_get_position(const encoder_t *enc);    ///< latched count
 encoder_direction_t encoder_get_direction(encoder_t *enc); ///< consumes delta
+encoder_direction_t encoder_peek_direction(const encoder_t *enc);
+void encoder_consume_direction(encoder_t *enc, encoder_direction_t dir);
 uint32_t encoder_get_millis_between_rotations(const encoder_t *enc);
 uint32_t encoder_get_rpm(const encoder_t *enc);
 
