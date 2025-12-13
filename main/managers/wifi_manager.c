@@ -1660,26 +1660,28 @@ void wifi_manager_init(void) {
 
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    // configure country based on chip: full dual-band on C5, 2.4GHz only on others
+    // configure country based on saved setting
+    static const struct { const char *code; uint8_t schan; uint8_t nchan; } country_table[] = {
+        {"US", 1, 11}, {"GB", 1, 13}, {"JP", 1, 14}, {"AU", 1, 13}, {"CN", 1, 13}, {"01", 1, 11}
+    };
+    uint8_t country_idx = settings_get_wifi_country(&G_Settings);
+    if (country_idx >= sizeof(country_table)/sizeof(country_table[0])) country_idx = 5; // default to World Safe
+    
 #if CONFIG_IDF_TARGET_ESP32C5
-    wifi_country_t current_country;
-    esp_err_t get_country_err = esp_wifi_get_country(&current_country);
-    if (get_country_err == ESP_OK) {
-        ESP_LOGI(TAG, "ESP32-C5 Current Country: CC='%s', schan=%d, nchan=%d, policy=%s",
-                 current_country.cc, current_country.schan, current_country.nchan,
-                 current_country.policy == WIFI_COUNTRY_POLICY_AUTO ? "AUTO" : "MANUAL");
+    esp_err_t country_err = esp_wifi_set_country_code(country_table[country_idx].code, true);
+    if (country_err == ESP_OK) {
+        ESP_LOGI(TAG, "ESP32-C5 Country set to: %s", country_table[country_idx].code);
     } else {
-        ESP_LOGW(TAG, "ESP32-C5: Failed to get current country config: %s", esp_err_to_name(get_country_err));
+        ESP_LOGW(TAG, "ESP32-C5: Failed to set country: %s", esp_err_to_name(country_err));
     }
 #else
-    // enable all 2.4 GHz channels (1-14) manually for other targets
     wifi_country_t country_to_set = {
-        .cc     = "JP",
-        .schan  = 1,
-        .nchan  = 14,
+        .cc     = {country_table[country_idx].code[0], country_table[country_idx].code[1], 0},
+        .schan  = country_table[country_idx].schan,
+        .nchan  = country_table[country_idx].nchan,
         .policy = WIFI_COUNTRY_POLICY_MANUAL
     };
-    ESP_LOGI(TAG, "Setting country for non-C5 target: CC='%s', schan=%d, nchan=%d, policy=MANUAL",
+    ESP_LOGI(TAG, "Setting country: CC='%s', schan=%d, nchan=%d",
              country_to_set.cc, country_to_set.schan, country_to_set.nchan);
     ESP_ERROR_CHECK(esp_wifi_set_country(&country_to_set));
 #endif

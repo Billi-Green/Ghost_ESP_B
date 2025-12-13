@@ -129,6 +129,8 @@ typedef struct {
   uint32_t status_idle_timeout_ms; // delay before starting idle animation
 #endif
   bool encoder_invert_direction;
+  bool setup_complete;
+  uint8_t wifi_country;
 } FSettings;
 
 // Function declarations
@@ -284,6 +286,12 @@ uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
 // Encoder direction inversion settings
 void settings_set_encoder_invert_direction(FSettings *settings, bool enabled);
 bool settings_get_encoder_invert_direction(const FSettings *settings);
+
+// Setup wizard settings
+void settings_set_setup_complete(FSettings *settings, bool complete);
+bool settings_get_setup_complete(const FSettings *settings);
+void settings_set_wifi_country(FSettings *settings, uint8_t country);
+uint8_t settings_get_wifi_country(const FSettings *settings);
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 // Status display idle animation accessors

@@ -1,17 +1,19 @@
 #include "managers/views/clock_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/display_manager.h"
+#include "gui/screen_layout.h"
 #include "lvgl.h"
 #include <time.h>
 #include "managers/settings_manager.h"
+#include "gui/lvgl_safe.h"
 #include "esp_log.h"
 
 static const char *TAG = "ClockScreens";
 
-
 static lv_obj_t *clock_container;
 static lv_obj_t *time_label;
 static lv_obj_t *date_label;
+static lv_obj_t *year_label;
 lv_timer_t *clock_timer = NULL;
 
 static void digital_clock_cb(lv_timer_t *timer) {
@@ -22,27 +24,27 @@ static void digital_clock_cb(lv_timer_t *timer) {
     char buf[16];
     strftime(buf, sizeof(buf), "%H:%M:%S", &timeinfo);
     lv_label_set_text(time_label, buf);
-    char buf_date[16];
-    strftime(buf_date, sizeof(buf_date), "%A, %b %d", &timeinfo);
+    char buf_date[32];
+    strftime(buf_date, sizeof(buf_date), "%A, %B %d", &timeinfo);
     lv_label_set_text(date_label, buf_date);
+    char buf_year[8];
+    strftime(buf_year, sizeof(buf_year), "%Y", &timeinfo);
+    lv_label_set_text(year_label, buf_year);
 }
 
 static void clock_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH && event->data.touch_data.state == LV_INDEV_STATE_REL) {
-        ESP_LOGI(TAG, "Touch input type");
         display_manager_switch_view(&main_menu_view);
-    } else if (event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 2) {
-        ESP_LOGI(TAG, "Joystick input type");
+    } else if (event->type == INPUT_TYPE_JOYSTICK) {
         display_manager_switch_view(&main_menu_view);
-    } else if (event->type == INPUT_TYPE_KEYBOARD){
-        ESP_LOGI(TAG, "keyboard input type");
+    } else if (event->type == INPUT_TYPE_KEYBOARD) {
         display_manager_switch_view(&main_menu_view);
 #ifdef CONFIG_USE_ENCODER
+    } else if (event->type == INPUT_TYPE_ENCODER && event->data.encoder.button) {
+        display_manager_switch_view(&main_menu_view);
     } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
-        ESP_LOGI(TAG, "IO6 exit button pressed, returning to main menu");
         display_manager_switch_view(&main_menu_view);
 #endif
-
     }
 }
 
@@ -54,40 +56,37 @@ void clock_create(void) {
         tzset();
     }
     display_manager_fill_screen(lv_color_hex(0x121212));
-    clock_container = lv_obj_create(lv_scr_act());
+    clock_container = gui_screen_create_root(NULL, "Clock", lv_color_hex(0x121212), LV_OPA_COVER);
     clock_view.root = clock_container;
-    lv_obj_set_size(clock_container, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_opa(clock_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(clock_container, 0, 0);
-    lv_obj_set_style_border_color(clock_container, lv_color_hex(0x000000), 0);
-    lv_obj_set_scrollbar_mode(clock_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_align(clock_container, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_t *content = gui_screen_create_content(clock_container, GUI_STATUS_BAR_HEIGHT);
 
-    time_label = lv_label_create(clock_container);
+    time_label = lv_label_create(content);
     lv_label_set_text(time_label, "00:00:00");
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_40, 0);
     lv_obj_set_style_text_color(time_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_align(time_label, LV_ALIGN_CENTER, 0, -15);
-    date_label = lv_label_create(clock_container);
-    lv_label_set_text(date_label, "Wednesday, Jan 01");
+    date_label = lv_label_create(content);
+    lv_label_set_text(date_label, "Wednesday, January 01");
     lv_obj_set_style_text_font(date_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(date_label, lv_color_hex(0xAAAAAA), 0);
     lv_obj_align(date_label, LV_ALIGN_CENTER, 0, 30);
+    year_label = lv_label_create(content);
+    lv_label_set_text(year_label, "2025");
+    lv_obj_set_style_text_font(year_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(year_label, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_align(year_label, LV_ALIGN_CENTER, 0, 50);
 
     clock_timer = lv_timer_create(digital_clock_cb, 1000, NULL);
     digital_clock_cb(NULL);
-    display_manager_add_status_bar("Clock");
 }
 
 void clock_destroy(void) {
     if (clock_timer) {
-        lv_timer_del(clock_timer);
-        clock_timer = NULL;
+        lvgl_timer_del_safe(&clock_timer);
     }
     if (clock_container) {
         lv_obj_clean(clock_container);
-        lv_obj_del(clock_container);
-        clock_container = NULL;
+        lvgl_obj_del_safe(&clock_container);
         clock_view.root = NULL;
     }
 }

@@ -4,19 +4,24 @@ description: "Mirror your GhostESP display to your desktop for easier viewing an
 weight: 35
 ---
 
-Screen Mirroring lets you view your GhostESP device's display on your computer in real-time. You can also control the device using your keyboard or on-screen buttons, making it easier to navigate menus and operate GhostESP from your desk.
+Screen Mirroring lets you view your GhostESP device's display on your computer in realtime
 
 ## Prerequisites
 
 - A GhostESP device with a display (CYD, T-Deck, Cardputer, etc.)
-- Python 3.8 or newer installed on your computer
 - USB cable to connect the device
+- Python 3.8 or newer (for desktop script only)
+- **Note**: CYD devices require 460800 baud instead of the default 115200, and use 8-bit color mode which may result in reduced color quality and slowdowns
 
-## Installation
+## Installation (Desktop Script)
 
-The screen mirror script is located in `scripts/screen_mirror/`. Required packages (pygame, pyserial, numpy) are automatically installed on first run.
+The desktop screen mirror script is located in `scripts/screen_mirror/`. Required packages (pygame, pyserial, numpy) are automatically installed on first run.
+
+**For Web-Based Mirror**: If you prefer not to install Python, use the web mirror at [ghostesp.net/serial](https://ghostesp.net/serial) by opening the **Web Serial** tab.
 
 ## Starting the Mirror
+
+### Desktop Script
 
 1. Connect your GhostESP device via USB
 2. Open a terminal in the `scripts/screen_mirror` folder
@@ -32,11 +37,39 @@ Or specify a port directly:
 python ghost_mirror.py COM3
 ```
 
+**For CYD devices**, you must specify the higher baud rate:
+
+```
+python ghost_mirror.py COM3 --baud 460800
+```
+
 To list available serial ports:
 
 ```
 python ghost_mirror.py --list
 ```
+
+### Web-Based Mirror
+
+Alternatively, visit [ghostesp.net/serial](https://ghostesp.net/serial) and open the **Screen Mirror** tab to use the browser-based mirror without installing Python. The web serial mirror also includes a console and file browser on the same page.
+
+## Device-Specific Considerations
+
+### CYD Devices
+
+CYD (Cheap Yellow Display) panels require a different configuration because they ship with an 8-bit mirror mode that is slower and more prone to color inaccuracies. For those boards:
+
+- **Baud Rate**: Use `--baud 460800`; the default 115200 is too slow for CYD refresh rates.
+- **Color Mode**: The mirror stream is truncated to 8 bits, so colors may shift compared to the physical display.
+- **Performance**: Expect reduced frame rates and occasional slowdowns because the 8-bit stream is bandwidth-constrained.
+
+To connect to a CYD device:
+
+```
+python ghost_mirror.py COM3 --baud 460800
+```
+
+If colors look wrong, click the **Swap** button to toggle the byte order; however, poor color fidelity and slower updates are normal while mirroring CYD panels because of their 8-bit mode and serial bottlenecks.
 
 ## Using the Mirror
 
@@ -81,6 +114,8 @@ The virtual D-pad on the right side mirrors the physical controls on your device
 
 If colors appear wrong (inverted or incorrect), click the **Swap** button to toggle byte order. This forces a full screen refresh.
 
+**Note on CYD Color Issues**: CYD devices use 8-bit color mode during mirroring, which inherently produces less accurate colors than 16-bit modes. If toggling the **Swap** button doesn't fully resolve color issues on a CYD device, this is expected behavior due to the 8-bit limitation.
+
 ## Command Line Options
 
 | Option | Description |
@@ -94,6 +129,9 @@ If colors appear wrong (inverted or incorrect), click the **Swap** button to tog
 ```
 # Run with 3x scaling
 python ghost_mirror.py COM3 --scale 3
+
+# CYD device (requires 460800 baud)
+python ghost_mirror.py COM3 --baud 460800
 
 # Use a different baud rate
 python ghost_mirror.py COM3 --baud 921600
@@ -118,6 +156,7 @@ python ghost_mirror.py COM3 --baud 921600
 
 - Click the **Swap** button to toggle byte order
 - The display will refresh with corrected colors
+- **For CYD devices**: Poor color fidelity is normal due to 8-bit color mode.
 
 ### Connection lost
 
@@ -135,11 +174,14 @@ python ghost_mirror.py COM3 --baud 921600
 - Screen mirroring uses USB serial which has bandwidth limitations
 - Reduce scale factor if needed
 - Close other applications using the serial port
+- **For CYD devices**: Slowdowns are expected due to 8-bit color mode and bandwidth constraints. Ensure you're using `--baud 460800` for optimal performance. If the display is still slow, try reducing the scale factor further.
 
 ## Notes
 
-- Screen mirroring sends display data over USB serial at 115200 baud by default
-- The mirror only shows content when the device's display is updating
-- Input commands are sent as text commands over the same serial connection
-- Works with any GhostESP device that has a display
-
+- **Baud Rates**: Desktop script uses 115200 baud by default. CYD devices **require 460800 baud** for proper operation.
+- **Color Modes**: Most devices support 16-bit color. CYD devices use 8-bit color mode, resulting in reduced color accuracy and potential slowdowns.
+- **Performance**: CYD devices may experience frame rate reductions and occasional slowdowns due to 8-bit mode and serial bandwidth limitations. This is normal and expected behavior.
+- **Web vs Desktop**: The desktop script offers better performance and more features. The web-based mirror is a convenience option that works without additional software installation.
+- **Device Display**: The mirror only shows content when the device's display is actively updating.
+- **Input Control**: Virtual D-pad buttons and keyboard shortcuts send commands as text over the same serial connection.
+- **Compatibility**: Works with any GhostESP device that has a display (CYD, T-Deck, Cardputer, etc.).

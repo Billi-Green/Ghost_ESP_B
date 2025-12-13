@@ -1,6 +1,10 @@
 #include "managers/views/splash_screen.h"
 #include "managers/views/main_menu_screen.h"
+#include "managers/views/setup_wizard_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/settings_manager.h"
+#include "gui/screen_layout.h"
+#include "gui/lvgl_safe.h"
 #include <stdio.h>
 
 lv_obj_t *splash_screen;
@@ -13,14 +17,8 @@ void splash_create(void) {
 
   display_manager_fill_screen(lv_color_black());
 
-  splash_screen = lv_obj_create(lv_scr_act());
+  splash_screen = gui_screen_create_root(NULL, NULL, lv_color_black(), LV_OPA_COVER);
   splash_view.root = splash_screen;
-  lv_obj_set_size(splash_screen, LV_HOR_RES, LV_VER_RES);
-  lv_obj_clear_flag(splash_screen, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_opa(splash_screen, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_border_width(splash_screen, 0, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(splash_screen, 0, LV_PART_MAIN);
-  lv_obj_set_style_radius(splash_screen, 0, LV_PART_MAIN);
 
   img = lv_img_create(splash_screen);
 
@@ -63,14 +61,15 @@ static void fade_anim_cb(void *var, int32_t opacity) {
 }
 
 static void fade_out_cb(void *var) {
-  display_manager_switch_view(&main_menu_view);
+  if (!settings_get_setup_complete(&G_Settings)) {
+    display_manager_switch_view(&setup_wizard_view);
+  } else {
+    display_manager_switch_view(&main_menu_view);
+  }
 }
 
 void splash_destroy(void) {
-  if (splash_screen) {
-    lv_obj_del(splash_screen);
-    splash_screen = NULL;
-  }
+  lvgl_obj_del_safe(&splash_screen);
 }
 
 View splash_view = {.root = NULL,

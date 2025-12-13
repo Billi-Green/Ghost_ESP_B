@@ -2,6 +2,8 @@
 #include "lvgl.h"
 #include "esp_log.h"
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
+#include "gui/lvgl_safe.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -24,21 +26,14 @@ struct popup_t {
 static const lv_coord_t DEFAULT_MARGIN = 6;
 static const char *TAG = "PopupLayout";
 
-static const uint32_t popup_theme_accents[15] = {
-    0x1976D2,0xFFCDD2,0x263238,0xFFFFFF,0x002B36,
-    0x888888,0xE91E63,0x9C27B0,0x2196F3,0xFFA500,
-    0x39FF14,0xFF00FF,0x0077BE,0xFF4500,0x556B2F
-};
-
 static lv_color_t popup_get_accent_color(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    if (theme >= (sizeof(popup_theme_accents) / sizeof(popup_theme_accents[0]))) theme = 0;
-    return lv_color_hex(popup_theme_accents[theme]);
+    return lv_color_hex(theme_palette_get_accent(theme));
 }
 
 static bool popup_theme_is_bright(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    return theme == 3;
+    return theme_palette_is_bright(theme);
 }
 
 static lv_coord_t clamp_button_width(lv_coord_t desired, lv_coord_t min_w, lv_coord_t max_w);
@@ -233,7 +228,7 @@ void popup_hide(popup_t *p) {
 
 void popup_destroy(popup_t *p) {
 	if (!p) return;
-	if (p->container && lv_obj_is_valid(p->container)) lv_obj_del(p->container);
+	lvgl_obj_del_safe(&p->container);
 	free(p);
 }
 

@@ -596,7 +596,7 @@ void serial_manager_init() {
 #ifndef CONFIG_USE_IO_EXPANDER
   // UART configuration for main UART
   const uart_config_t uart_config = {
-      .baud_rate = 115200,
+      .baud_rate = CONFIG_ESP_CONSOLE_UART_BAUDRATE,
       .data_bits = UART_DATA_8_BITS,
       .parity = UART_PARITY_DISABLE,
       .stop_bits = UART_STOP_BITS_1,

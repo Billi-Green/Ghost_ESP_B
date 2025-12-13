@@ -302,7 +302,7 @@ class GhostMirror:
                         buffer = buffer[HEADER_SIZE:]
                         continue
                         
-                    if cmd == MIRROR_CMD_FRAME:
+                    if cmd == MIRROR_CMD_FRAME or cmd == MIRROR_CMD_FRAME_RLE or cmd == MIRROR_CMD_FRAME_8BIT or cmd == MIRROR_CMD_FRAME_8BIT_RLE:
                         total_needed = HEADER_SIZE + data_len + 4  # +4 for end marker
                         if len(buffer) < total_needed:
                             break
@@ -312,7 +312,9 @@ class GhostMirror:
                         buffer = buffer[total_needed:]
                         
                         if end_marker == MIRROR_END_MARKER and data_len > 0:
-                            self.frame_queue.append((x1, y1, x2, y2, pixel_data))
+                            is_8bit = (cmd == MIRROR_CMD_FRAME_8BIT or cmd == MIRROR_CMD_FRAME_8BIT_RLE)
+                            is_rle = (cmd == MIRROR_CMD_FRAME_RLE or cmd == MIRROR_CMD_FRAME_8BIT_RLE)
+                            self.frame_queue.append((x1, y1, x2, y2, pixel_data, is_8bit, is_rle))
                     else:
                         buffer = buffer[1:]
                         
@@ -321,24 +323,73 @@ class GhostMirror:
                     self.connected = False
                     time.sleep(0.5)
     
-    def process_frame(self, x1, y1, x2, y2, pixel_data):
+    def process_frame(self, x1, y1, x2, y2, pixel_data, is_8bit=False, is_rle=False):
         w = x2 - x1 + 1
         h = y2 - y1 + 1
-        expected_size = w * h * 2
         
-        if len(pixel_data) < expected_size:
-            return
-        
-        if self.swap_bytes:
-            pixels_raw = np.frombuffer(pixel_data[:expected_size], dtype='>u2')
+        if is_rle:
+            # Simple RLE decode
+            # data is [count, val, count, val, ...]
+            # We need to decode it to raw pixels
+            if is_8bit:
+                # 8-bit RLE: count(1) val(1)
+                data_arr = np.frombuffer(pixel_data, dtype=np.uint8)
+                counts = data_arr[0::2]
+                vals = data_arr[1::2]
+                pixels_raw = np.repeat(vals, counts)
+            else:
+                # 16-bit RLE: count(1) val(2) - Not standard in this firmware but for completeness
+                # Firmware implementation of RLE is specific to 8-bit currently in my analysis,
+                # but if 16-bit RLE exists: count(1), val_lo(1), val_hi(1)? Or count(1) val(2)?
+                # Assuming 8-bit RLE is the only one used by current firmware logic.
+                pass
         else:
-            pixels_raw = np.frombuffer(pixel_data[:expected_size], dtype=np.uint16)
-        
-        r = ((pixels_raw >> 11) & 0x1F) << 3
-        g = ((pixels_raw >> 5) & 0x3F) << 2
-        b = (pixels_raw & 0x1F) << 3
-        
-        rgb = np.stack([r, g, b], axis=-1).astype(np.uint8).reshape(h, w, 3)
+            # Raw data
+            if is_8bit:
+                pixels_raw = np.frombuffer(pixel_data, dtype=np.uint8)
+            else:
+                expected_size = w * h * 2
+                if len(pixel_data) < expected_size:
+                    return
+                if self.swap_bytes:
+                    pixels_raw = np.frombuffer(pixel_data[:expected_size], dtype='>u2')
+                else:
+                    pixels_raw = np.frombuffer(pixel_data[:expected_size], dtype=np.uint16)
+
+        # Convert to RGB888
+        if is_8bit:
+            # RGB332 to RGB888 using linear scaling
+            # R: bits 7-5 (0-7) -> 0-255
+            # G: bits 4-2 (0-7) -> 0-255
+            # B: bits 1-0 (0-3) -> 0-255
+
+            r_bits = (pixels_raw >> 5) & 0x07
+            g_bits = (pixels_raw >> 2) & 0x07
+            b_bits = pixels_raw & 0x03
+
+            r = (r_bits * 255) // 7
+            g = (g_bits * 255) // 7
+            b = (b_bits * 255) // 3
+
+            rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
+            # Ensure shape matches
+            if len(rgb) == w * h:
+                rgb = rgb.reshape(h, w, 3)
+            else:
+                 # fallback/error
+                 return
+        else:
+            # RGB565 to RGB888
+            r = ((pixels_raw >> 11) & 0x1F) << 3
+            g = ((pixels_raw >> 5) & 0x3F) << 2
+            b = (pixels_raw & 0x1F) << 3
+            
+            # Fill lower bits
+            r = r | (r >> 5)
+            g = g | (g >> 6)
+            b = b | (b >> 5)
+            
+            rgb = np.stack([r, g, b], axis=-1).astype(np.uint8).reshape(h, w, 3)
         
         x_end = min(x1 + w, self.width)
         y_end = min(y1 + h, self.height)

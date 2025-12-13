@@ -3,10 +3,12 @@
 #include "managers/views/options_screen.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/views/main_menu_screen.h"
+#include "gui/screen_layout.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "gui/lvgl_safe.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -265,15 +267,16 @@ static lv_obj_t* create_key_button(lv_obj_t *parent, int x, int y, int w, int h,
 }
 
 static void submit_text() {
-    if (input_len > 0) {
-        if (submit_callback) {
-            submit_callback(input_buffer);
-        } else {
-            terminal_set_return_view(&options_menu_view);
-            display_manager_switch_view(&terminal_view);
-            vTaskDelay(pdMS_TO_TICKS(10));
-            simulateCommand(input_buffer);
-        }
+    if (submit_callback) {
+        submit_callback(input_buffer);
+        memset(input_buffer, 0, sizeof(input_buffer));
+        input_len = 0;
+        update_input_label();
+    } else if (input_len > 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        simulateCommand(input_buffer);
         memset(input_buffer, 0, sizeof(input_buffer));
         input_len = 0;
         update_input_label();
@@ -394,10 +397,7 @@ static void recreate_keyboard_buttons() {
 #if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
     if (!root) return;
 
-    if (keyboard_build_timer) {
-        lv_timer_del(keyboard_build_timer);
-        keyboard_build_timer = NULL;
-    }
+    lvgl_timer_del_safe(&keyboard_build_timer);
     // hide the root during incremental rebuild to avoid heavy draw churn
     lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
     destroy_key_buttons();
@@ -407,13 +407,10 @@ static void recreate_keyboard_buttons() {
     keyboard_build_col = 0;
     keyboard_build_timer = lv_timer_create(keyboard_build_step, 10, NULL);
 #else
-    if (keyboard_build_timer) {
-        lv_timer_del(keyboard_build_timer);
-        keyboard_build_timer = NULL;
-    }
+    lvgl_timer_del_safe(&keyboard_build_timer);
     lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
     int screen_height = LV_VER_RES;
-    int status_bar_height = 20;
+    int status_bar_height = GUI_STATUS_BAR_HEIGHT;
     int display_height = 40;
     int padding = 5;
     int keys_start_y = status_bar_height + display_height + padding * 2;
@@ -503,8 +500,9 @@ static void recreate_keyboard_buttons() {
 static void keyboard_build_step(lv_timer_t *t) {
 #if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
     if (!root || !lv_obj_is_valid(root)) { lv_timer_del(t); keyboard_build_timer = NULL; return; }
+
     int screen_height = LV_VER_RES;
-    int status_bar_height = 20;
+    int status_bar_height = GUI_STATUS_BAR_HEIGHT;
     int display_height = 40;
     int padding = 5;
     int keys_start_y = status_bar_height + display_height + padding * 2;
@@ -599,6 +597,7 @@ static void keyboard_build_step(lv_timer_t *t) {
             cursor_row = 0;
             cursor_col = 0;
             apply_selection_highlight();
+
             // unhide root after build completes
             if (root) lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
             // restore radii after initial paint to re-enable rounded corners
@@ -625,12 +624,8 @@ static void destroy_key_buttons(void) {
     for (int r = 0; r < num_rows; r++) {
         for (int c = 0; c < KEYBOARD_COLUMNS; c++) {
             lv_obj_t *btn = key_btns[r][c];
-            if (btn) {
-                if (lv_obj_is_valid(btn)) {
-                    lv_obj_del(btn);
-                }
-                key_btns[r][c] = NULL;
-            }
+            lvgl_obj_del_safe(&btn);
+            key_btns[r][c] = NULL;
         }
     }
     pressed_key_btn = NULL;
@@ -645,9 +640,9 @@ static void keyboard_create() {
     memset(input_buffer, 0, sizeof(input_buffer));
 
     int screen_height = LV_VER_RES;
-    int status_bar_height = 20;
+    int status_bar_height = GUI_STATUS_BAR_HEIGHT;
 
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, "Keyboard", lv_color_hex(0x121212), LV_OPA_COVER);
     keyboard_view.root = root;
     lv_obj_remove_style_all(root);
     lv_obj_set_size(root, LV_HOR_RES, screen_height);
@@ -761,13 +756,9 @@ static void keyboard_create() {
 
 static void keyboard_destroy() {
     if (keyboard_view.root) {
-        if (keyboard_build_timer) {
-            lv_timer_del(keyboard_build_timer);
-            keyboard_build_timer = NULL;
-        }
+        lvgl_timer_del_safe(&keyboard_build_timer);
         destroy_key_buttons();
-        lv_obj_del(keyboard_view.root);
-        keyboard_view.root = NULL;
+        lvgl_obj_del_safe(&keyboard_view.root);
         root = NULL;
         key_matrix = NULL;
         shift_btn_id = -1;
