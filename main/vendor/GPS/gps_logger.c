@@ -18,11 +18,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "core/ghostesp_version.h"
 
 static const char *GPS_TAG = "GPS";
 static const char *CSV_TAG = "CSV";
-static const char *CSV_PRE_HEADER = "WigleWifi-1.6,appRelease=1.0,model=ESP32,release=1.0,device=GhostESP,display=NONE,board=ESP32,brand=Espressif,star=Sol,body=3,subBody=0\n";
-static const char *CSV_HEADER = "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type\n";
+static const char *CSV_HEADER = "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,RCOIs,MfgrId,Type\n";
 
 static bool is_valid_date(const gps_date_t *date);
 
@@ -38,8 +38,224 @@ static SemaphoreHandle_t csv_mutex = NULL;
 static TaskHandle_t csv_flush_task = NULL;
 static bool csv_header_pending_uart = false;
 
+static char csv_pre_header[256];
+static size_t csv_pre_header_len = 0;
+
+static esp_err_t csv_flush_buffer_to_file_unlocked(void);
+
+#define WD_DEDUPE_MAX_WIFI 512
+#define WD_DEDUPE_MAX_BLE 512
+
+typedef struct {
+    char bssid[18];
+    bool used;
+    bool ssid_empty;
+    int best_rssi;
+} wd_wifi_dedupe_t;
+
+typedef struct {
+    char mac[18];
+    bool used;
+    bool name_empty;
+    int best_rssi;
+} wd_ble_dedupe_t;
+
+static wd_wifi_dedupe_t wd_wifi_dedupe[WD_DEDUPE_MAX_WIFI];
+static wd_ble_dedupe_t wd_ble_dedupe[WD_DEDUPE_MAX_BLE];
+static size_t wd_wifi_dedupe_count = 0;
+static size_t wd_ble_dedupe_count = 0;
+static uint32_t wd_wifi_unique_logged = 0;
+
+static void csv_escape_field(char *out, size_t out_len, const char *in) {
+    if (out_len == 0) {
+        return;
+    }
+    if (in == NULL) {
+        out[0] = '\0';
+        return;
+    }
+
+    bool need_quotes = false;
+    for (const char *p = in; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r') {
+            need_quotes = true;
+            break;
+        }
+    }
+
+    if (!need_quotes) {
+        snprintf(out, out_len, "%s", in);
+        return;
+    }
+
+    size_t o = 0;
+    if (o + 1 < out_len) {
+        out[o++] = '"';
+    }
+    for (const char *p = in; *p && o + 1 < out_len; p++) {
+        if (*p == '"') {
+            if (o + 2 < out_len) {
+                out[o++] = '"';
+                out[o++] = '"';
+            } else {
+                break;
+            }
+        } else {
+            out[o++] = *p;
+        }
+    }
+    if (o + 1 < out_len) {
+        out[o++] = '"';
+    }
+    out[o] = '\0';
+}
+
+static void csv_build_pre_header(void) {
+    char f0[64], f1[64], f2[64], f3[64], f4[64], f5[64], f6[64], f7[64], f8[64], f9[64], f10[64];
+
+    char app_release[64];
+    char release[64];
+    char device[64];
+
+    const char *model_str = "ESP32";
+    const char *board_str = "ESP32";
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    model_str = "ESP32-C5";
+    board_str = "ESP32-C5";
+#elif defined(CONFIG_IDF_TARGET_ESP32C6)
+    model_str = "ESP32-C6";
+    board_str = "ESP32-C6";
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+    model_str = "ESP32-S3";
+    board_str = "ESP32-S3";
+#elif defined(CONFIG_IDF_TARGET_ESP32S2)
+    model_str = "ESP32-S2";
+    board_str = "ESP32-S2";
+#elif defined(CONFIG_IDF_TARGET_ESP32)
+    model_str = "ESP32";
+    board_str = "ESP32";
+#endif
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (CONFIG_BUILD_CONFIG_TEMPLATE[0] != '\0' && strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "unknown_board") != 0) {
+        model_str = CONFIG_BUILD_CONFIG_TEMPLATE;
+        board_str = CONFIG_BUILD_CONFIG_TEMPLATE;
+    }
+#endif
+
+    snprintf(app_release, sizeof(app_release), "appRelease=%s %s", GHOSTESP_NAME, GHOSTESP_VERSION);
+    snprintf(release, sizeof(release), "release=%s", GHOSTESP_VERSION);
+    snprintf(device, sizeof(device), "device=%s", GHOSTESP_NAME);
+
+    csv_escape_field(f0, sizeof(f0), "WigleWifi-1.6");
+    csv_escape_field(f1, sizeof(f1), app_release);
+    {
+        char model[64];
+        snprintf(model, sizeof(model), "model=%s", model_str);
+        csv_escape_field(f2, sizeof(f2), model);
+    }
+    csv_escape_field(f3, sizeof(f3), release);
+    csv_escape_field(f4, sizeof(f4), device);
+    csv_escape_field(f5, sizeof(f5), "display=NONE");
+    {
+        char board[64];
+        snprintf(board, sizeof(board), "board=%s", board_str);
+        csv_escape_field(f6, sizeof(f6), board);
+    }
+    csv_escape_field(f7, sizeof(f7), "brand=GhostESP");
+    csv_escape_field(f8, sizeof(f8), "star=Sol");
+    csv_escape_field(f9, sizeof(f9), "body=3");
+    csv_escape_field(f10, sizeof(f10), "subBody=0");
+
+    int n = snprintf(csv_pre_header,
+                     sizeof(csv_pre_header),
+                     "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+                     f0,
+                     f1,
+                     f2,
+                     f3,
+                     f4,
+                     f5,
+                     f6,
+                     f7,
+                     f8,
+                     f9,
+                     f10);
+    if (n < 0) {
+        csv_pre_header[0] = '\0';
+        csv_pre_header_len = 0;
+        return;
+    }
+    if ((size_t)n >= sizeof(csv_pre_header)) {
+        csv_pre_header[sizeof(csv_pre_header) - 2] = '\n';
+        csv_pre_header[sizeof(csv_pre_header) - 1] = '\0';
+        csv_pre_header_len = strlen(csv_pre_header);
+        return;
+    }
+    csv_pre_header_len = (size_t)n;
+}
+
+static wd_wifi_dedupe_t *wd_wifi_dedupe_find_mut(const char *bssid) {
+    for (size_t i = 0; i < wd_wifi_dedupe_count; i++) {
+        if (wd_wifi_dedupe[i].used && strcasecmp(wd_wifi_dedupe[i].bssid, bssid) == 0) {
+            return &wd_wifi_dedupe[i];
+        }
+    }
+    return NULL;
+}
+
+static wd_ble_dedupe_t *wd_ble_dedupe_find_mut(const char *mac) {
+    for (size_t i = 0; i < wd_ble_dedupe_count; i++) {
+        if (wd_ble_dedupe[i].used && strcasecmp(wd_ble_dedupe[i].mac, mac) == 0) {
+            return &wd_ble_dedupe[i];
+        }
+    }
+    return NULL;
+}
+
+static const char *wigle_wifi_capabilities(const char *enc) {
+    if (enc == NULL || enc[0] == '\0') {
+        return "[ESS]";
+    }
+    if (strcmp(enc, "OPEN") == 0) {
+        return "[ESS]";
+    }
+    if (strcmp(enc, "WEP") == 0) {
+        return "[WEP][ESS]";
+    }
+    if (strcmp(enc, "WPA") == 0) {
+        return "[WPA-PSK][ESS]";
+    }
+    if (strcmp(enc, "WPA2") == 0) {
+        return "[WPA2-PSK][ESS]";
+    }
+    if (strcmp(enc, "WPA3") == 0) {
+        return "[WPA3-SAE][ESS]";
+    }
+    if (strcmp(enc, "OWE") == 0) {
+        return "[OWE][ESS]";
+    }
+    return "[ESS]";
+}
+
 bool csv_buffer_has_pending_data(void) {
     return buffer_offset > 0;
+}
+
+uint32_t csv_get_unique_wifi_ap_count(void) {
+    uint32_t count = 0;
+    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
+    count = wd_wifi_unique_logged;
+    if (csv_mutex) xSemaphoreGive(csv_mutex);
+    return count;
+}
+
+size_t csv_get_pending_bytes(void) {
+    size_t pending = 0;
+    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
+    pending = buffer_offset;
+    if (csv_mutex) xSemaphoreGive(csv_mutex);
+    return pending;
 }
 
 static void csv_flush_task_fn(void *arg) {
@@ -59,9 +275,12 @@ esp_err_t csv_write_header(FILE *f) {
         csv_header_pending_uart = true;
         return ESP_OK;
     } else {
-        size_t pre_len = strlen(CSV_PRE_HEADER);
+        if (csv_pre_header_len == 0) {
+            csv_build_pre_header();
+        }
+        size_t pre_len = csv_pre_header_len;
         size_t hdr_len = strlen(CSV_HEADER);
-        size_t written = fwrite(CSV_PRE_HEADER, 1, pre_len, f);
+        size_t written = fwrite(csv_pre_header, 1, pre_len, f);
         if (written != pre_len) {
             return ESP_FAIL;
         }
@@ -81,6 +300,8 @@ void get_next_csv_file_name(char *file_name_buffer, const char *base_name) {
 
 esp_err_t csv_file_open(const char *base_file_name) {
     char file_name[GPS_MAX_FILE_NAME_LENGTH];
+
+    csv_build_pre_header();
 
     // remember base name for later just-in-time open on somethingsomething
     if (base_file_name && *base_file_name) {
@@ -112,6 +333,12 @@ esp_err_t csv_file_open(const char *base_file_name) {
         csv_mutex = xSemaphoreCreateMutex();
     }
 
+    wd_wifi_dedupe_count = 0;
+    wd_ble_dedupe_count = 0;
+    wd_wifi_unique_logged = 0;
+    memset(wd_wifi_dedupe, 0, sizeof(wd_wifi_dedupe));
+    memset(wd_ble_dedupe, 0, sizeof(wd_ble_dedupe));
+
     esp_err_t ret = csv_write_header(csv_file);
     if (ret != ESP_OK) {
         glog("Failed to write CSV header.");
@@ -127,7 +354,11 @@ esp_err_t csv_file_open(const char *base_file_name) {
     if (csv_file) {
         glog("Streaming CSV buffer to SD card\n");
     } else {
-        glog("Streaming CSV buffer over UART\n");
+        if (gating_template) {
+            glog("CSV buffer will flush to SD via JIT mount (fallback UART)\n");
+        } else {
+            glog("Streaming CSV buffer over UART\n");
+        }
         // Header will be emitted with the first non-empty flush via csv_flush_buffer_to_file()
     }
     return ESP_OK;
@@ -141,48 +372,145 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     if (!gps)
         return ESP_ERR_INVALID_STATE;
 
-    char timestamp[35];
+    char timestamp[24];
     if (!is_valid_date(&gps->date) || gps->tim.hour > 23 || gps->tim.minute > 59 ||
         gps->tim.second > 59) {
         ESP_LOGW(GPS_TAG, "Invalid date/time for CSV entry");
         return ESP_ERR_INVALID_STATE;
     }
 
-    snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+    snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d",
              gps_get_absolute_year(gps->date.year), gps->date.month, gps->date.day, gps->tim.hour,
-             gps->tim.minute, gps->tim.second, gps->tim.thousand);
+             gps->tim.minute, gps->tim.second);
 
     static char data_line[CSV_GPS_BUFFER_SIZE];
     int len;
+    bool count_unique_wifi = false;
+
+    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
 
     if (data->ble_data.is_ble_device) {
-        // BLE device format - matches WiGLE Bluetooth format
-        len = snprintf(data_line, CSV_GPS_BUFFER_SIZE, "%s,%s,%d,%s,%.6f,%.6f,%.1f,%.1f,%s\n",
-                       data->ble_data.ble_mac,
-                       data->ble_data.ble_name[0] ? data->ble_data.ble_name : "[Unknown]",
-                       data->ble_data.ble_rssi, timestamp, data->latitude, data->longitude,
-                       data->altitude, data->accuracy,
-                       "BLE"); // Fixed type for BLE devices
-    } else {
-        // WiFi device format
-        int frequency =
-            data->channel > 14 ? 5000 + (data->channel * 5) : 2407 + (data->channel * 5);
+        wd_ble_dedupe_t *entry = wd_ble_dedupe_find_mut(data->ble_data.ble_mac);
+        bool name_empty = (data->ble_data.ble_name[0] == '\0');
+        bool should_log = false;
+        if (entry == NULL) {
+            if (wd_ble_dedupe_count < WD_DEDUPE_MAX_BLE) {
+                entry = &wd_ble_dedupe[wd_ble_dedupe_count++];
+                memset(entry, 0, sizeof(*entry));
+                snprintf(entry->mac, sizeof(entry->mac), "%s", data->ble_data.ble_mac);
+                entry->used = true;
+                entry->name_empty = name_empty;
+                entry->best_rssi = data->ble_data.ble_rssi;
+            }
+            should_log = true;
+        } else {
+            if (entry->name_empty && !name_empty) {
+                should_log = true;
+                entry->name_empty = false;
+            }
+            if (data->ble_data.ble_rssi > entry->best_rssi + 5) {
+                should_log = true;
+                entry->best_rssi = data->ble_data.ble_rssi;
+            }
+        }
 
-        len = snprintf(data_line, CSV_GPS_BUFFER_SIZE,
-                       "%s,%s,%s,%s,%d,%d,%d,%.6f,%.6f,%.1f,%.1f,WIFI\n", data->bssid, data->ssid,
-                       data->encryption_type, timestamp, data->channel, frequency, data->rssi,
-                       data->latitude, data->longitude, data->altitude, data->accuracy);
+        if (!should_log) {
+            if (csv_mutex) xSemaphoreGive(csv_mutex);
+            return ESP_OK;
+        }
+
+        char name_esc[96];
+        char caps_esc[64];
+        csv_escape_field(name_esc, sizeof(name_esc), data->ble_data.ble_name);
+        csv_escape_field(caps_esc, sizeof(caps_esc), "Misc [LE]");
+
+        char mfgr_str[12] = {0};
+        if (data->ble_data.ble_has_mfgr_id) {
+            snprintf(mfgr_str, sizeof(mfgr_str), "%u", (unsigned)data->ble_data.ble_mfgr_id);
+        }
+
+        len = snprintf(data_line,
+                       CSV_GPS_BUFFER_SIZE,
+                       "%s,%s,%s,%s,0,,%d,%.6f,%.6f,%d,%.1f,,%s,BLE\n",
+                       data->ble_data.ble_mac,
+                       name_esc,
+                       caps_esc,
+                       timestamp,
+                       data->ble_data.ble_rssi,
+                       data->latitude,
+                       data->longitude,
+                       (int)lround(data->altitude),
+                       data->accuracy,
+                       mfgr_str);
+    } else {
+        wd_wifi_dedupe_t *entry = wd_wifi_dedupe_find_mut(data->bssid);
+        bool ssid_empty = (data->ssid[0] == '\0');
+        bool should_log = false;
+        if (entry == NULL) {
+            if (wd_wifi_dedupe_count < WD_DEDUPE_MAX_WIFI) {
+                entry = &wd_wifi_dedupe[wd_wifi_dedupe_count++];
+                memset(entry, 0, sizeof(*entry));
+                snprintf(entry->bssid, sizeof(entry->bssid), "%s", data->bssid);
+                entry->used = true;
+                entry->ssid_empty = ssid_empty;
+                entry->best_rssi = data->rssi;
+                count_unique_wifi = true;
+            }
+            should_log = true;
+        } else {
+            if (entry->ssid_empty && !ssid_empty) {
+                should_log = true;
+                entry->ssid_empty = false;
+            }
+            if (data->rssi > entry->best_rssi + 5) {
+                should_log = true;
+                entry->best_rssi = data->rssi;
+            }
+        }
+
+        if (!should_log) {
+            if (csv_mutex) xSemaphoreGive(csv_mutex);
+            return ESP_OK;
+        }
+
+        int frequency;
+        if (data->channel == 14) {
+            frequency = 2484;
+        } else if (data->channel > 14) {
+            frequency = 5000 + (data->channel * 5);
+        } else {
+            frequency = 2407 + (data->channel * 5);
+        }
+
+        char ssid_esc[96];
+        char caps_esc[96];
+        csv_escape_field(ssid_esc, sizeof(ssid_esc), data->ssid);
+        csv_escape_field(caps_esc, sizeof(caps_esc), wigle_wifi_capabilities(data->encryption_type));
+
+        len = snprintf(data_line,
+                       CSV_GPS_BUFFER_SIZE,
+                       "%s,%s,%s,%s,%d,%d,%d,%.6f,%.6f,%d,%.1f,,,WIFI\n",
+                       data->bssid,
+                       ssid_esc,
+                       caps_esc,
+                       timestamp,
+                       data->channel,
+                       frequency,
+                       data->rssi,
+                       data->latitude,
+                       data->longitude,
+                       (int)lround(data->altitude),
+                       data->accuracy);
     }
 
     if (len < 0 || len >= CSV_GPS_BUFFER_SIZE) {
         ESP_LOGE(CSV_TAG, "Buffer overflow prevented");
+        if (csv_mutex) xSemaphoreGive(csv_mutex);
         return ESP_ERR_NO_MEM;
     }
 
-    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
-
     if (buffer_offset + len >= GPS_BUFFER_SIZE) {
-        esp_err_t err = csv_flush_buffer_to_file();
+        esp_err_t err = csv_flush_buffer_to_file_unlocked();
         if (err != ESP_OK) {
             if (csv_mutex) xSemaphoreGive(csv_mutex);
             return err;
@@ -191,28 +519,22 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     }
 
     if (csv_file == NULL && csv_header_pending_uart && buffer_offset == 0) {
-        size_t pre_len = strlen(CSV_PRE_HEADER);
+        size_t pre_len = csv_pre_header_len;
         size_t hdr_len = strlen(CSV_HEADER);
         if (pre_len + hdr_len < GPS_BUFFER_SIZE) {
-            memcpy(csv_buffer, CSV_PRE_HEADER, pre_len);
+            memcpy(csv_buffer, csv_pre_header, pre_len);
             memcpy(csv_buffer + pre_len, CSV_HEADER, hdr_len);
             buffer_offset = pre_len + hdr_len;
             csv_header_pending_uart = false;
         }
     }
 
-    // For BLE entries, ensure we're past the WiFi header: inject Bluetooth header once
-    if (data->ble_data.is_ble_device && buffer_offset == 0) {
-        const char *ble_header = "# Bluetooth\n"
-                                 "MAC,Name,RSSI,FirstSeen,CurrentLatitude,CurrentLongitude,"
-                                 "AltitudeMeters,AccuracyMeters,Type\n";
-        size_t section_len = strlen(ble_header);
-        memcpy(csv_buffer, ble_header, section_len);
-        buffer_offset = section_len;
-    }
-
     memcpy(csv_buffer + buffer_offset, data_line, len);
     buffer_offset += len;
+
+    if (count_unique_wifi) {
+        wd_wifi_unique_logged++;
+    }
 
     if (csv_mutex) xSemaphoreGive(csv_mutex);
 
@@ -221,9 +543,13 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
 
 esp_err_t csv_flush_buffer_to_file() {
     if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
+    esp_err_t ret = csv_flush_buffer_to_file_unlocked();
+    if (csv_mutex) xSemaphoreGive(csv_mutex);
+    return ret;
+}
 
+static esp_err_t csv_flush_buffer_to_file_unlocked(void) {
     if (buffer_offset == 0) {
-        if (csv_mutex) xSemaphoreGive(csv_mutex);
         return ESP_OK;
     }
 
@@ -247,7 +573,14 @@ esp_err_t csv_flush_buffer_to_file() {
                     // if new file (size 0), write header
                     fseek(f, 0, SEEK_END);
                     long sz = ftell(f);
-                    if (sz == 0) {
+                    size_t pre_len = csv_pre_header_len;
+                    size_t hdr_len = strlen(CSV_HEADER);
+                    bool buffer_has_header =
+                        (buffer_offset >= (pre_len + hdr_len)) &&
+                        (pre_len > 0) &&
+                        (memcmp(csv_buffer, csv_pre_header, pre_len) == 0) &&
+                        (memcmp(csv_buffer + pre_len, CSV_HEADER, hdr_len) == 0);
+                    if (sz == 0 && !buffer_has_header) {
                         csv_write_header(f);
                     }
                     size_t written = fwrite(csv_buffer, 1, buffer_offset, f);
@@ -260,7 +593,6 @@ esp_err_t csv_flush_buffer_to_file() {
                     }
                 }
                 sd_card_unmount_after_flush(display_was_suspended);
-                if (csv_mutex) xSemaphoreGive(csv_mutex);
                 return ESP_OK;
             }
         }
@@ -271,16 +603,16 @@ esp_err_t csv_flush_buffer_to_file() {
         const char *mark_close = "[BUF/CLOSE]";
         size_t mark_begin_len = strlen(mark_begin);
         size_t mark_close_len = strlen(mark_close);
-        size_t header_len = csv_header_pending_uart ? (strlen(CSV_PRE_HEADER) + strlen(CSV_HEADER)) : 0;
+        size_t header_len = csv_header_pending_uart ? (csv_pre_header_len + strlen(CSV_HEADER)) : 0;
         size_t out_len = mark_begin_len + header_len + buffer_offset + mark_close_len + 1;
         uint8_t *out = (uint8_t *)malloc(out_len);
         if (out) {
             size_t off = 0;
             memcpy(out + off, mark_begin, mark_begin_len); off += mark_begin_len;
             if (csv_header_pending_uart) {
-                size_t pre_len = strlen(CSV_PRE_HEADER);
+                size_t pre_len = csv_pre_header_len;
                 size_t hdr_len = strlen(CSV_HEADER);
-                memcpy(out + off, CSV_PRE_HEADER, pre_len); off += pre_len;
+                memcpy(out + off, csv_pre_header, pre_len); off += pre_len;
                 memcpy(out + off, CSV_HEADER, hdr_len); off += hdr_len;
                 csv_header_pending_uart = false;
             }
@@ -292,7 +624,7 @@ esp_err_t csv_flush_buffer_to_file() {
         } else {
             uart_write_bytes(UART_NUM_0, mark_begin, mark_begin_len);
             if (csv_header_pending_uart) {
-                uart_write_bytes(UART_NUM_0, CSV_PRE_HEADER, strlen(CSV_PRE_HEADER));
+                uart_write_bytes(UART_NUM_0, csv_pre_header, csv_pre_header_len);
                 uart_write_bytes(UART_NUM_0, CSV_HEADER, strlen(CSV_HEADER));
                 csv_header_pending_uart = false;
             }
@@ -304,7 +636,6 @@ esp_err_t csv_flush_buffer_to_file() {
         glog_flush_deferred();
 
         buffer_offset = 0;
-        if (csv_mutex) xSemaphoreGive(csv_mutex);
         return ESP_OK;
     }
 
@@ -316,8 +647,6 @@ esp_err_t csv_flush_buffer_to_file() {
 
     glog("Flushed %zu bytes to CSV file.\n", buffer_offset);
     buffer_offset = 0;
-
-    if (csv_mutex) xSemaphoreGive(csv_mutex);
 
     return ESP_OK;
 }

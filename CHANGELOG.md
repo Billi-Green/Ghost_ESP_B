@@ -47,9 +47,13 @@
 - Added a first time boot setup wizard for display enabled configs
 - Added basic support for the Heltec v3 (NO LORA/MESH)- @tototo31
 - Add Docker support for HTML header generation with build script - @tototo31
+- Added a shared string for the firmware name and version number
+- Added Unique AP counter to wardriving summary
 
 ### Changed
 
+- Changed WiGLE CSV header brand/model to report GhostESP and build template name
+- Added wardriving deduplication, WiGLE CSV v1.6 pre-header escaping, and improved C5 channel hopping
 - Refactors to NFC logic to make more maintainable
 - After scanning, NFC popup title now specifies the tag type
 - IR and NFC display views and popups now properly use active set UI theme
@@ -73,6 +77,7 @@
 - Small improvements to encoder handling
 - Miscellaneuous small code refactors and improvements
 - Joystick Up/Down hold in options menus now auto-repeat
+- Sync RTC time when a valid GPS fix is received
 - Changed default CPU clock speed to 240MHz instead of 160MHz for:
   - sdkconfig.awokimini
   - sdkconfig.CYD2432S028R
@@ -92,6 +97,9 @@
 
 ### Fixes
 
+- Fixed wardriving WiGLE v1.6 CSV output formatting
+- Fixed issues with GPS and Dualcomm UART being shared
+- Fixed gpsinfo display not logging anything when the GPS info task fails to start
 - Fixed an issue where setting rgb pins would fail on configs with no leds set
 - Wrapped power-management transitions with RGB pause/resume to prevent a crash
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection

@@ -103,6 +103,10 @@ static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 
+// Static storage for GPS info task stack and TCB to enable proper cleanup
+static StackType_t* gps_task_stack = NULL;
+static StaticTask_t* gps_task_tcb = NULL;
+
 // Forward declarations for command handlers
 void cmd_wifi_scan_stop(int argc, char **argv);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -724,6 +728,7 @@ void handle_stop_flipper(int argc, char **argv) {
         g_ir_universal_send_cancel = true;
     }
 
+    stop_wardriving();
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
@@ -745,6 +750,16 @@ void handle_stop_flipper(int argc, char **argv) {
     if (gps_info_task_handle != NULL) {
         vTaskDelete(gps_info_task_handle);
         gps_info_task_handle = NULL;
+        
+        // Free the manually allocated stack and TCB
+        if (gps_task_stack) {
+            heap_caps_free(gps_task_stack);
+            gps_task_stack = NULL;
+        }
+        if (gps_task_tcb) {
+            heap_caps_free(gps_task_tcb);
+            gps_task_tcb = NULL;
+        }
     }
 
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
@@ -3547,432 +3562,415 @@ void handle_help(int argc, char **argv) {
 
     if (strcmp(category, "wifi") == 0) {
         glog("\nWi-Fi Commands:\n\n");
-        printf("scanap\n");
-        printf("    Description: Start a Wi-Fi access point (AP) scan.\n");
-        printf("    Usage: scanap [seconds]\n\n");
-        printf("scansta\n");
-        printf("    Description: Start scanning for Wi-Fi stations (hops channels).\n");
-        printf("    Usage: scansta\n\n");
-        printf("stopscan\n");
-        printf("    Description: Stop any ongoing Wi-Fi scan.\n");
-        printf("    Usage: stopscan\n\n");
-        printf("attack\n");
-        printf("    Description: Launch an attack (e.g., deauthentication attack).\n");
-        printf("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
-        printf("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
-        printf("    Arguments:\n");
-        printf("        -d  : Start deauth attack (supports multiple APs)\n");
-        printf("        -e  : Start EAPOL logoff attack\n");
-        printf("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n\n");
-        printf("list\n");
-        printf("    Description: List Wi-Fi scan results or connected stations.\n");
-        printf("    Usage: list -a | list -s | list -airtags\n");
-        printf("    Arguments:\n");
-        printf("        -a  : Show access points from Wi-Fi scan\n");
-        printf("        -s  : List connected stations\n");
-        printf("        -airtags: List discovered AirTags\n\n");
-        printf("beaconspam\n");
-        printf("    Description: Start beacon spam with different modes.\n");
-        printf("    Usage: beaconspam [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -r   : Start random beacon spam\n");
-        printf("        -rr  : Start Rickroll beacon spam\n");
-        printf("        -l   : Start AP List beacon spam\n");
-        printf("        [SSID]: Use specified SSID for beacon spam\n\n");
-        printf("stopspam\n");
-        printf("    Description: Stop ongoing beacon spam.\n");
-        printf("    Usage: stopspam\n\n");
-        printf("stopdeauth\n");
-        printf("    Description: Stop ongoing deauthentication attack.\n");
-        printf("    Usage: stopdeauth\n\n");
-        printf("select\n");
-        printf("    Description: Select access point(s), station, or AirTag by index from the scan results.\n");
-        printf("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
-        printf("    Arguments:\n");
-        printf("        -a      : AP selection index (supports multiple: 1,3,5)\n");
-        printf("        -s      : Station selection index\n");
-        printf("        -airtag : AirTag selection index\n");
-        printf("    Examples:\n");
-        printf("        select -a 4      : Select single AP at index 4\n");
-        printf("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
-        printf("scanall\n");
-        printf("    Description: Perform combined AP and Station scan, display results.\n");
-        printf("    Usage: scanall [seconds]\n\n");
-        printf("sweep\n");
-        printf("    Description: Full environment sweep - scans WiFi APs, stations, BLE devices\n");
-        printf("                 and saves comprehensive report to SD card.\n");
-        printf("    Usage: sweep [-w wifi_sec] [-b ble_sec]\n");
-        printf("    Arguments:\n");
-        printf("        -w  : WiFi scan duration per phase in seconds (default: 5)\n");
-        printf("        -b  : BLE scan duration per phase in seconds (default: 5)\n");
-        printf("    Output: /mnt/ghostesp/sweeps/sweep_N.csv\n\n");
-        printf("congestion\n");
-        printf("    Description: Display Wi-Fi channel congestion chart.\n");
-        printf("    Usage: congestion\n\n");
-        printf("connect\n");
-        printf("    Description: Connects to Specific WiFi Network and saves credentials.\n");
-        printf("    Usage: connect <SSID> [Password]\n\n");
-        printf("apcred\n");
-        printf("    Description: Change or reset the GhostNet AP credentials\n");
-        printf("    Usage: apcred <ssid> <password>\n");
-        printf("           apcred -r (reset to defaults)\n");
-        printf("    Arguments:\n");
-        printf("        <ssid>     : New SSID for the AP\n");
-        printf("        <password> : New password (min 8 characters)\n");
-        printf("        -r        : Reset to default (GhostNet/GhostNet)\n\n");
-        printf("apenable\n");
-        printf("    Description: Enable or disable the Access Point across reboots\n");
-        printf("    Usage: apenable <on|off>\n");
-        printf("    Arguments:\n");
-        printf("        on  : Enable the Access Point (requires restart)\n");
-        printf("        off : Disable the Access Point (requires restart)\n\n");
-        printf("listenprobes\n");
-        printf("    Description: Listen for and log probe requests.\n");
-        printf("    Usage: listenprobes [channel] [stop]\n");
-        printf("    Arguments:\n");
-        printf("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
-        printf("        stop      : Stop probe request listening\n\n");
-        printf("karma\n");
-        printf("    Description: Start or stop the Karma attack (responds to probe requests with specified or all SSIDs).\n");
-        printf("    Usage: karma start [ssid1 ssid2 ...]\n");
-        printf("           karma stop\n");
-        printf("    Arguments:\n");
-        printf("        start : Begin Karma attack. Optionally specify SSIDs to respond with (default: all known SSIDs).\n");
-        printf("        stop  : Stop Karma attack.\n");
-        printf("    Examples:\n");
-        printf("        karma start\n");
-        printf("        karma start FreeWiFi Starbucks\n");
-        printf("        karma stop\n\n");
+        glog("scanap\n");
+        glog("    Description: Start a Wi-Fi access point (AP) scan.\n");
+        glog("    Usage: scanap [seconds]\n\n");
+        glog("scansta\n");
+        glog("    Description: Start scanning for Wi-Fi stations (hops channels).\n");
+        glog("    Usage: scansta\n\n");
+        glog("stopscan\n");
+        glog("    Description: Stop any ongoing Wi-Fi scan.\n");
+        glog("    Usage: stopscan\n\n");
+        glog("attack\n");
+        glog("    Description: Launch an attack (e.g., deauthentication attack).\n");
+        glog("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
+        glog("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+        glog("    Arguments:\n");
+        glog("        -d  : Start deauth attack (supports multiple APs)\n");
+        glog("        -e  : Start EAPOL logoff attack\n");
+        glog("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n\n");
+        glog("list\n");
+        glog("    Description: List Wi-Fi scan results or connected stations.\n");
+        glog("    Usage: list -a | list -s | list -airtags\n");
+        glog("    Arguments:\n");
+        glog("        -a  : Show access points from Wi-Fi scan\n");
+        glog("        -s  : List connected stations\n");
+        glog("        -airtags: List discovered AirTags\n\n");
+        glog("beaconspam\n");
+        glog("    Description: Start beacon spam with different modes.\n");
+        glog("    Usage: beaconspam [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -r   : Start random beacon spam\n");
+        glog("        -rr  : Start Rickroll beacon spam\n");
+        glog("        -l   : Start AP List beacon spam\n");
+        glog("        [SSID]: Use specified SSID for beacon spam\n\n");
+        glog("stopspam\n");
+        glog("    Description: Stop ongoing beacon spam.\n");
+        glog("    Usage: stopspam\n\n");
+        glog("stopdeauth\n");
+        glog("    Description: Stop ongoing deauthentication attack.\n");
+        glog("    Usage: stopdeauth\n\n");
+        glog("select\n");
+        glog("    Description: Select access point(s), station, or AirTag by index from the scan results.\n");
+        glog("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
+        glog("    Arguments:\n");
+        glog("        -a      : AP selection index (supports multiple: 1,3,5)\n");
+        glog("        -s      : Station selection index\n");
+        glog("        -airtag : AirTag selection index\n");
+        glog("    Examples:\n");
+        glog("        select -a 4      : Select single AP at index 4\n");
+        glog("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
+        glog("scanall\n");
+        glog("    Description: Perform combined AP and Station scan, display results.\n");
+        glog("    Usage: scanall [seconds]\n\n");
+        glog("sweep\n");
+        glog("    Description: Full environment sweep - scans WiFi APs, stations, BLE devices\n");
+        glog("                 and saves comprehensive report to SD card.\n");
+        glog("    Usage: sweep [-w wifi_sec] [-b ble_sec]\n");
+        glog("    Arguments:\n");
+        glog("        -w  : WiFi scan duration per phase in seconds (default: 5)\n");
+        glog("        -b  : BLE scan duration per phase in seconds (default: 5)\n");
+        glog("    Output: /mnt/ghostesp/sweeps/sweep_N.csv\n\n");
+        glog("congestion\n");
+        glog("    Description: Display Wi-Fi channel congestion chart.\n");
+        glog("    Usage: congestion\n\n");
+        glog("connect\n");
+        glog("    Description: Connects to Specific WiFi Network and saves credentials.\n");
+        glog("    Usage: connect <SSID> [Password]\n\n");
+        glog("apcred\n");
+        glog("    Description: Change or reset the GhostNet AP credentials\n");
+        glog("    Usage: apcred <ssid> <password>\n");
+        glog("           apcred -r (reset to defaults)\n");
+        glog("    Arguments:\n");
+        glog("        <ssid>     : New SSID for the AP\n");
+        glog("        <password> : New password (min 8 characters)\n");
+        glog("        -r        : Reset to default (GhostNet/GhostNet)\n\n");
+        glog("apenable\n");
+        glog("    Description: Enable or disable the Access Point across reboots\n");
+        glog("    Usage: apenable <on|off>\n");
+        glog("    Arguments:\n");
+        glog("        on  : Enable the Access Point (requires restart)\n");
+        glog("        off : Disable the Access Point (requires restart)\n\n");
+        glog("listenprobes\n");
+        glog("    Description: Listen for and log probe requests.\n");
+        glog("    Usage: listenprobes [channel] [stop]\n");
+        glog("    Arguments:\n");
+        glog("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+        glog("        stop      : Stop probe request listening\n\n");
+        glog("karma\n");
+        glog("    Description: Start or stop the Karma attack (responds to probe requests with specified or all SSIDs).\n");
+        glog("    Usage: karma start [ssid1 ssid2 ...]\n");
+        glog("           karma stop\n");
+        glog("    Arguments:\n");
+        glog("        start : Begin Karma attack. Optionally specify SSIDs to respond with (default: all known SSIDs).\n");
+        glog("        stop  : Stop Karma attack.\n");
+        glog("    Examples:\n");
+        glog("        karma start\n");
+        glog("        karma start FreeWiFi Starbucks\n");
+        glog("        karma stop\n\n");
 #if CONFIG_IDF_TARGET_ESP32C5
-        printf("setcountry\n");
-        printf("    Description: Set the Wi-Fi country code.\n");
-        printf("    Usage: setcountry <CC>\n");
-        printf("    Arguments:\n");
-        printf("        <CC> : Country code (\"01\" world-safe) or two-letter ISO (e.g., US)\n");
-        printf("    Supported: 01, AT, AU, BE, BG, BR, CA, CH, CN, CY, CZ, DE, DK, EE, ES, FI, FR, GB, GR, HK, HR, HU,\n");
-        printf("               IE, IN, IS, IT, JP, KR, LI, LT, LU, LV, MT, MX, NL, NO, NZ, PL, PT, RO, SE, SI, SK, TW, US\n\n");
+        glog("setcountry\n");
+        glog("    Description: Set the Wi-Fi country code.\n");
+        glog("    Usage: setcountry <CC>\n");
+        glog("    Arguments:\n");
+        glog("        <CC> : Country code (\"01\" world-safe) or two-letter ISO (e.g., US)\n");
+        glog("    Supported: 01, AT, AU, BE, BG, BR, CA, CH, CN, CY, CZ, DE, DK, EE, ES, FI, FR, GB, GR, HK, HR, HU,\n");
+        glog("               IE, IN, IS, IT, JP, KR, LI, LT, LU, LV, MT, MX, NL, NO, NZ, PL, PT, RO, SE, SI, SK, TW, US\n\n");
 #endif
-        TERMINAL_VIEW_ADD_TEXT("scanap, scansta, stopscan, attack, list, beaconspam, stopspam, stopdeauth, select, scanall, sweep, congestion, connect, apcred, apenable, listenprobes");
-#if CONFIG_IDF_TARGET_ESP32C5
-        TERMINAL_VIEW_ADD_TEXT(", setcountry");
-#endif
-        TERMINAL_VIEW_ADD_TEXT(", karma\n");
         return;
     }
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     if (strcmp(category, "ble") == 0) {
         glog("\nBLE Commands:\n\n");
-        printf("blescan\n");
-        printf("    Description: Handle BLE scanning with various modes.\n");
-        printf("    Usage: blescan [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -f   : Start 'Find the Flippers' mode\n");
-        printf("        -ds  : Start BLE spam detector\n");
-        printf("        -a   : Start AirTag scanner\n");
-        printf("        -r   : Scan for raw BLE packets\n");
-        printf("        -s   : Stop BLE scanning\n\n");
-        printf("blespam\n");
-        printf("    Description: Start BLE advertisement spam attacks.\n");
-        printf("    Usage: blespam [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -apple     : Apple device spam (AirPods, Apple TV, etc.)\n");
-        printf("        -ms        : Microsoft Swift Pair spam\n");
-        printf("        -samsung   : Samsung Galaxy Watch spam\n");
-        printf("        -google    : Google Fast Pair spam\n");
-        printf("        -random    : Random spam (cycles through all types)\n");
-        printf("        -s         : Stop BLE spam\n\n");
-        printf("blewardriving\n");
-        printf("    Description: Start/Stop BLE wardriving with GPS logging\n");
-        printf("    Usage: blewardriving [-s]\n");
-        printf("    Arguments:\n");
-        printf("        -s  : Stop BLE wardriving\n\n");
-        printf("list -airtags\n");
-        printf("    Description: List discovered AirTags\n");
-        printf("    Usage: list -airtags\n\n");
-        printf("select -airtag <index>\n\n");
-        printf("blescan\n");
-        printf("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
-        printf("    Usage: blescan [seconds]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("blescan, blespam, blewardriving, list -airtags, select -airtag\n");
+        glog("blescan\n");
+        glog("    Description: Handle BLE scanning with various modes.\n");
+        glog("    Usage: blescan [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -f   : Start 'Find the Flippers' mode\n");
+        glog("        -ds  : Start BLE spam detector\n");
+        glog("        -a   : Start AirTag scanner\n");
+        glog("        -r   : Scan for raw BLE packets\n");
+        glog("        -s   : Stop BLE scanning\n\n");
+        glog("blespam\n");
+        glog("    Description: Start BLE advertisement spam attacks.\n");
+        glog("    Usage: blespam [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -apple     : Apple device spam (AirPods, Apple TV, etc.)\n");
+        glog("        -ms        : Microsoft Swift Pair spam\n");
+        glog("        -samsung   : Samsung Galaxy Watch spam\n");
+        glog("        -google    : Google Fast Pair spam\n");
+        glog("        -random    : Random spam (cycles through all types)\n");
+        glog("        -s         : Stop BLE spam\n\n");
+        glog("blewardriving\n");
+        glog("    Description: Start/Stop BLE wardriving with GPS logging\n");
+        glog("    Usage: blewardriving [-s]\n");
+        glog("    Arguments:\n");
+        glog("        -s  : Stop BLE wardriving\n\n");
+        glog("list -airtags\n");
+        glog("    Description: List discovered AirTags\n");
+        glog("    Usage: list -airtags\n\n");
+        glog("select -airtag <index>\n\n");
+        glog("blescan\n");
+        glog("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
+        glog("    Usage: blescan [seconds]\n\n");
         return;
     }
 
     if (strcmp(category, "chameleon") == 0) {
-        printf("\nChameleon Ultra Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nChameleon Ultra Commands:\n\n");
-        printf("chameleon connect [timeout] [pin]\n");
-        printf("    Description: Connect to a Chameleon Ultra device via BLE\n");
-        printf("    Usage: chameleon connect [timeout_seconds] [pin]\n");
-        printf("    Arguments:\n");
-        printf("        timeout_seconds : Connection timeout (default: 10)\n");
-        printf("        pin            : PIN for authentication (4-6 digits, optional)\n\n");
-        printf("chameleon disconnect\n");
-        printf("    Description: Disconnect from the Chameleon Ultra device\n");
-        printf("    Usage: chameleon disconnect\n\n");
-        printf("chameleon status\n");
-        printf("    Description: Check connection status with Chameleon Ultra\n");
-        printf("    Usage: chameleon status\n\n");
-        printf("chameleon scanhf\n");
-        printf("    Description: Scan for High Frequency (HF) RFID tags\n");
-        printf("    Usage: chameleon scanhf\n\n");
-        printf("chameleon scanlf\n");
-        printf("    Description: Scan for Low Frequency (LF) RFID tags\n");
-        printf("    Usage: chameleon scanlf\n\n");
-        printf("chameleon battery\n");
-        printf("    Description: Get battery information from Chameleon Ultra\n");
-        printf("    Usage: chameleon battery\n\n");
-        printf("chameleon reader\n");
-        printf("    Description: Set Chameleon Ultra to reader mode\n");
-        printf("    Usage: chameleon reader\n\n");
-        printf("chameleon emulator\n");
-        printf("    Description: Set Chameleon Ultra to emulator mode\n");
-        printf("    Usage: chameleon emulator\n\n");
-        TERMINAL_VIEW_ADD_TEXT("chameleon connect, chameleon disconnect, chameleon status, chameleon scanhf, chameleon scanlf, chameleon battery, chameleon reader, chameleon emulator\n");
+        glog("\nChameleon Ultra Commands:\n\n");
+        glog("chameleon connect [timeout] [pin]\n");
+        glog("    Description: Connect to a Chameleon Ultra device via BLE\n");
+        glog("    Usage: chameleon connect [timeout_seconds] [pin]\n");
+        glog("    Arguments:\n");
+        glog("        timeout_seconds : Connection timeout (default: 10)\n");
+        glog("        pin            : PIN for authentication (4-6 digits, optional)\n\n");
+        glog("chameleon disconnect\n");
+        glog("    Description: Disconnect from the Chameleon Ultra device\n");
+        glog("    Usage: chameleon disconnect\n\n");
+        glog("chameleon status\n");
+        glog("    Description: Check connection status with Chameleon Ultra\n");
+        glog("    Usage: chameleon status\n\n");
+        glog("chameleon scanhf\n");
+        glog("    Description: Scan for High Frequency (HF) RFID tags\n");
+        glog("    Usage: chameleon scanhf\n\n");
+        glog("chameleon scanlf\n");
+        glog("    Description: Scan for Low Frequency (LF) RFID tags\n");
+        glog("    Usage: chameleon scanlf\n\n");
+        glog("chameleon battery\n");
+        glog("    Description: Get battery information from Chameleon Ultra\n");
+        glog("    Usage: chameleon battery\n\n");
+        glog("chameleon reader\n");
+        glog("    Description: Set Chameleon Ultra to reader mode\n");
+        glog("    Usage: chameleon reader\n\n");
+        glog("chameleon emulator\n");
+        glog("    Description: Set Chameleon Ultra to emulator mode\n");
+        glog("    Usage: chameleon emulator\n\n");
         return;
     }
 #endif
 
     if (strcmp(category, "comm") == 0) {
         glog("\nCommunication Commands:\n\n");
-        printf("commdiscovery\n    Check discovery status.\n    Usage: commdiscovery\n\n");
-        printf("commconnect\n    Connect to a discovered peer ESP32.\n    Usage: commconnect <peer_name>\n    Example: commconnect ESP_A1B2C3\n\n");
-        printf("commsend\n    Send a command to connected peer ESP32.\n    Usage: commsend <command> [data]\n    Example: commsend scanap\n    Example: commsend hello world\n\n");
-        printf("commstatus\n    Show communication status.\n    Usage: commstatus\n\n");
-        printf("commdisconnect\n    Disconnect from current peer.\n    Usage: commdisconnect\n\n");
-        printf("commsetpins\n    Change communication GPIO pins at runtime.\n    Usage: commsetpins <tx_pin> <rx_pin>\n    Example: commsetpins 4 5\n\n");
-        TERMINAL_VIEW_ADD_TEXT("commdiscovery, commconnect, commsend, commstatus, commdisconnect, commsetpins\n");
+        glog("commdiscovery\n    Check discovery status.\n    Usage: commdiscovery\n\n");
+        glog("commconnect\n    Connect to a discovered peer ESP32.\n    Usage: commconnect <peer_name>\n    Example: commconnect ESP_A1B2C3\n\n");
+        glog("commsend\n    Send a command to connected peer ESP32.\n    Usage: commsend <command> [data]\n    Example: commsend scanap\n    Example: commsend hello world\n\n");
+        glog("commstatus\n    Show communication status.\n    Usage: commstatus\n\n");
+        glog("commdisconnect\n    Disconnect from current peer.\n    Usage: commdisconnect\n\n");
+        glog("commsetpins\n    Change communication GPIO pins at runtime.\n    Usage: commsetpins <tx_pin> <rx_pin>\n    Example: commsetpins 4 5\n\n");
         return;
     }
 
     if (strcmp(category, "sd") == 0) {
         glog("\nSD Card Commands:\n\n");
-        printf("-- File Operations (machine-parsable) --\n");
-        printf("sd status\n    Show SD mount status, type, capacity, usage.\n    Usage: sd status\n\n");
-        printf("sd list\n    List files/dirs with indices.\n    Usage: sd list [path]\n\n");
-        printf("sd info\n    Show file/dir details.\n    Usage: sd info <index|path>\n\n");
-        printf("sd size\n    Get file size.\n    Usage: sd size <index|path>\n\n");
-        printf("sd read\n    Read file (chunked downloads).\n    Usage: sd read <index|path> [offset] [length]\n\n");
-        printf("sd write\n    Create/overwrite file with base64 data.\n    Usage: sd write <path> <base64>\n\n");
-        printf("sd append\n    Append base64 data to file.\n    Usage: sd append <path> <base64>\n\n");
-        printf("sd mkdir\n    Create directory.\n    Usage: sd mkdir <path>\n\n");
-        printf("sd rm\n    Delete file or empty directory.\n    Usage: sd rm <index|path>\n\n");
-        printf("sd tree\n    Recursive listing.\n    Usage: sd tree [path] [depth]\n\n");
-        printf("-- Pin Configuration --\n");
-        printf("sd_config\n    Show current SD GPIO pin configuration.\n    Usage: sd_config\n\n");
-        printf("sd_pins_mmc\n    Set GPIO pins for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n\n");
-        printf("sd_pins_spi\n    Set GPIO pins for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n\n");
-        printf("sd_save_config\n    Save pin config to NVS.\n    Usage: sd_save_config\n\n");
-        TERMINAL_VIEW_ADD_TEXT("sd, sd_config, sd_pins_mmc, sd_pins_spi, sd_save_config, sd size, sd read, sd write, sd append\n");
+        glog("-- File Operations (machine-parsable) --\n");
+        glog("sd status\n    Show SD mount status, type, capacity, usage.\n    Usage: sd status\n\n");
+        glog("sd list\n    List files/dirs with indices.\n    Usage: sd list [path]\n\n");
+        glog("sd info\n    Show file/dir details.\n    Usage: sd info <index|path>\n\n");
+        glog("sd size\n    Get file size.\n    Usage: sd size <index|path>\n\n");
+        glog("sd read\n    Read file (chunked downloads).\n    Usage: sd read <index|path> [offset] [length]\n\n");
+        glog("sd write\n    Create/overwrite file with base64 data.\n    Usage: sd write <path> <base64>\n\n");
+        glog("sd append\n    Append base64 data to file.\n    Usage: sd append <path> <base64>\n\n");
+        glog("sd mkdir\n    Create directory.\n    Usage: sd mkdir <path>\n\n");
+        glog("sd rm\n    Delete file or empty directory.\n    Usage: sd rm <index|path>\n\n");
+        glog("sd tree\n    Recursive listing.\n    Usage: sd tree [path] [depth]\n\n");
+        glog("-- Pin Configuration --\n");
+        glog("sd_config\n    Show current SD GPIO pin configuration.\n    Usage: sd_config\n\n");
+        glog("sd_pins_mmc\n    Set GPIO pins for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n\n");
+        glog("sd_pins_spi\n    Set GPIO pins for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n\n");
+        glog("sd_save_config\n    Save pin config to NVS.\n    Usage: sd_save_config\n\n");
         return;
     }
 
     if (strcmp(category, "led") == 0) {
         glog("\nLED & RGB Commands:\n\n");
-        printf("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
-        printf("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
-        printf("setrgbcount\n    Configure how many RGB LEDs are attached\n    Usage: setrgbcount <1-512>\n\n");
-        printf("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
-        printf("getneopixelbrightness\n    Show current neopixel max brightness (percent)\n    Usage: getneopixelbrightness\n\n");
-        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins, setrgbcount, setneopixelbrightness, getneopixelbrightness\n");
+        glog("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
+        glog("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
+        glog("setrgbcount\n    Configure how many RGB LEDs are attached\n    Usage: setrgbcount <1-512>\n\n");
+        glog("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
+        glog("getneopixelbrightness\n    Show current neopixel max brightness (percent)\n    Usage: getneopixelbrightness\n\n");
         return;
     }
 
     if (strcmp(category, "misc") == 0) {
         glog("\nMiscellaneous Commands:\n\n");
-        printf("help\n");
-        printf("    Description: Display this help message.\n");
-        printf("    Usage: help [category]\n\n");
-        printf("chipinfo\n");
-        printf("    Description: Display chip information including model, revision, and features\n");
-        printf("    Usage: chipinfo\n");
-        printf("    Shows:\n");
-        printf("        - Chip model and revision\n");
-        printf("        - CPU cores and features\n");
-        printf("        - Flash size and memory info\n");
-        printf("        - ESP-IDF version\n\n");
-        printf("timezone\n");
-        printf("    Description: Set the display timezone for the clock view.\n");
-        printf("    Usage: timezone <TZ_STRING>\n\n");
-        printf("webauth\n");
-        printf("    Description: Enable/disable web authentication.\n");
-        printf("    Usage: webauth <enable|disable>\n\n");
-        printf("pineap\n");
-        printf("    Description: Start/Stop detecting WiFi Pineapples.\n");
-        printf("    Usage: pineap [-s]\n");
-        printf("    Arguments:\n");
-        printf("        -s  : Stop PineAP detection\n\n");
-        printf("Port Scanner\n");
-        printf("    Description: Scan ports on local subnet or specific IP\n");
-        printf("    Usage: scanports local\n");
-        printf("           scanports <IP> [all | start-end]\n");
-        printf("    Arguments:\n");
-        printf("        all  : Scan all ports (1-65535)\n");
-        printf("        start-end : Custom port range (e.g. 80-443)\n");
-        printf("        (no range) : Scan common ports (default)\n\n");
-        printf("scanarp\n");
-        printf("    Description: Perform ARP scan on local network to discover active hosts\n");
-        printf("    Usage: scanarp\n\n");
-        printf("settings\n");
-        printf("    Description: Manage NVS stored settings via command line\n");
-        printf("    Usage: settings <command> [arguments]\n");
-        printf("    Commands:\n");
-        printf("        list                    - List all available settings\n");
-        printf("        get <setting>           - Get current value of a setting\n");
-        printf("        set <setting> <value>   - Set a setting to a value\n");
-        printf("        reset [setting]         - Reset setting(s) to defaults\n");
-        printf("        help                    - Show settings help\n");
-        printf("    Examples:\n");
-        printf("        settings list\n");
-        printf("        settings get ap_ssid\n");
-        printf("        settings set rgb_mode 1\n");
-        printf("        settings reset\n\n");
-        printf("statusidle\n");
-        printf("    Description: View or change the status display idle animation (status OLED only).\n");
-        printf("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp, settings, statusidle\n");
+        glog("help\n");
+        glog("    Description: Display this help message.\n");
+        glog("    Usage: help [category]\n\n");
+        glog("chipinfo\n");
+        glog("    Description: Display chip information including model, revision, and features\n");
+        glog("    Usage: chipinfo\n");
+        glog("    Shows:\n");
+        glog("        - Chip model and revision\n");
+        glog("        - CPU cores and features\n");
+        glog("        - Flash size and memory info\n");
+        glog("        - ESP-IDF version\n\n");
+        glog("timezone\n");
+        glog("    Description: Set the display timezone for the clock view.\n");
+        glog("    Usage: timezone <TZ_STRING>\n\n");
+        glog("webauth\n");
+        glog("    Description: Enable/disable web authentication.\n");
+        glog("    Usage: webauth <enable|disable>\n\n");
+        glog("pineap\n");
+        glog("    Description: Start/Stop detecting WiFi Pineapples.\n");
+        glog("    Usage: pineap [-s]\n");
+        glog("    Arguments:\n");
+        glog("        -s  : Stop PineAP detection\n\n");
+        glog("Port Scanner\n");
+        glog("    Description: Scan ports on local subnet or specific IP\n");
+        glog("    Usage: scanports local\n");
+        glog("           scanports <IP> [all | start-end]\n");
+        glog("    Arguments:\n");
+        glog("        all  : Scan all ports (1-65535)\n");
+        glog("        start-end : Custom port range (e.g. 80-443)\n");
+        glog("        (no range) : Scan common ports (default)\n\n");
+        glog("scanarp\n");
+        glog("    Description: Perform ARP scan on local network to discover active hosts\n");
+        glog("    Usage: scanarp\n\n");
+        glog("settings\n");
+        glog("    Description: Manage NVS stored settings via command line\n");
+        glog("    Usage: settings <command> [arguments]\n");
+        glog("    Commands:\n");
+        glog("        list                    - List all available settings\n");
+        glog("        get <setting>           - Get current value of a setting\n");
+        glog("        set <setting> <value>   - Set a setting to a value\n");
+        glog("        reset [setting]         - Reset setting(s) to defaults\n");
+        glog("        help                    - Show settings help\n");
+        glog("    Examples:\n");
+        glog("        settings list\n");
+        glog("        settings get ap_ssid\n");
+        glog("        settings set rgb_mode 1\n");
+        glog("        settings reset\n\n");
+        glog("statusidle\n");
+        glog("    Description: View or change the status display idle animation (status OLED only).\n");
+        glog("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
         return;
     }
     if (strcmp(category, "gps") == 0) {
         glog("\nGPS Commands:\n\n");
-        printf("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo\n\n");
-        printf("startwd\n    Start GPS wardriving.\n    Usage: startwd [seconds]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("gpsinfo, startwd\n");
+        glog("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo\n\n");
+        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [seconds]\n\n");
         return;
     }
     if (strcmp(category, "portal") == 0) {
         glog("\nEvil Portal Commands:\n\n");
-        printf("startportal\n");
-        printf("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
-        printf("                 /mnt/ prefix is added automatically to file paths if missing.\n");
-        printf("    Usage: startportal [FilePath] [AP_SSID] [PSK]\n");
-        printf("           PSK is optional for an open network.\n");
-        printf("    Use 'default' as the file path for the default Evil Portal.\n");
-        printf("\n");
-        printf("evilportal\n");
-        printf("    Description: Configure Evil Portal HTML content via UART buffer.\n");
-        printf("    Usage: evilportal -c sethtmlstr\n");
-        printf("    Steps:\n");
-        printf("      1. Run: evilportal -c sethtmlstr\n");
-        printf("      2. Send [HTML/BEGIN] marker over UART\n");
-        printf("      3. Send HTML content over UART\n");
-        printf("      4. Send [HTML/CLOSE] marker over UART\n");
-        printf("      5. Run startportal (will use buffered HTML)\n");
-        printf("\n");
-        printf("stopportal\n");
-        printf("    Description: Stop Evil Portal\n");
-        printf("    Usage: stopportal\n\n");
-        printf("listportals\n    List available Evil Portal files.\n    Usage: listportals\n\n");
-        TERMINAL_VIEW_ADD_TEXT("startportal, stopportal, listportals\n");
+        glog("startportal\n");
+        glog("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
+        glog("                 /mnt/ prefix is added automatically to file paths if missing.\n");
+        glog("    Usage: startportal [FilePath] [AP_SSID] [PSK]\n");
+        glog("           PSK is optional for an open network.\n");
+        glog("    Use 'default' as the file path for the default Evil Portal.\n");
+        glog("\n");
+        glog("evilportal\n");
+        glog("    Description: Configure Evil Portal HTML content via UART buffer.\n");
+        glog("    Usage: evilportal -c sethtmlstr\n");
+        glog("    Steps:\n");
+        glog("      1. Run: evilportal -c sethtmlstr\n");
+        glog("      2. Send [HTML/BEGIN] marker over UART\n");
+        glog("      3. Send HTML content over UART\n");
+        glog("      4. Send [HTML/CLOSE] marker over UART\n");
+        glog("      5. Run startportal (will use buffered HTML)\n");
+        glog("\n");
+        glog("stopportal\n");
+        glog("    Description: Stop Evil Portal\n");
+        glog("    Usage: stopportal\n\n");
+        glog("listportals\n    List available Evil Portal files.\n    Usage: listportals\n\n");
         return;
     }
 
     if (strcmp(category, "printer") == 0) {
         glog("\nPrinter Commands:\n\n");
-        printf("powerprinter\n");
-        printf("    Description: Print Custom Text to a Printer on your LAN (Requires You to Run Connect First)\n");
-        printf("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n");
-        printf("    aligment options: CM = Center Middle, TL = Top Left, TR = Top Right, BR = Bottom Right, BL = Bottom Left\n\n");
-        TERMINAL_VIEW_ADD_TEXT("powerprinter\n");
-        TERMINAL_VIEW_ADD_TEXT("    Print custom text to a network printer.\n");
-        TERMINAL_VIEW_ADD_TEXT("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n\n");
+        glog("powerprinter\n");
+        glog("    Description: Print Custom Text to a Printer on your LAN (Requires You to Run Connect First)\n");
+        glog("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n");
+        glog("    aligment options: CM = Center Middle, TL = Top Left, TR = Top Right, BR = Bottom Right, BL = Bottom Left\n\n");
+        glog("powerprinter\n");
+        glog("    Print custom text to a network printer.\n");
+        glog("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n\n");
         return;
     }
 
     if (strcmp(category, "cast") == 0) {
         glog("\nYouTube Cast Commands:\n\n");
-        printf("dialconnect\n");
-        printf("    Description: Cast a Random Youtube Video on all Smart TV's on your LAN (Requires You to Run Connect First)\n");
-        printf("    Usage: dialconnect\n\n");
-        TERMINAL_VIEW_ADD_TEXT("dialconnect\n");
-        TERMINAL_VIEW_ADD_TEXT("    Cast a random YouTube video to all smart TVs on your LAN.\n");
-        TERMINAL_VIEW_ADD_TEXT("    Usage: dialconnect\n\n");
+        glog("dialconnect\n");
+        glog("    Description: Cast a Random Youtube Video on all Smart TV's on your LAN (Requires You to Run Connect First)\n");
+        glog("    Usage: dialconnect\n\n");
+        glog("dialconnect\n");
+        glog("    Cast a random YouTube video to all smart TVs on your LAN.\n");
+        glog("    Usage: dialconnect\n\n");
         return;
     }
 
     if (strcmp(category, "capture") == 0) {
         glog("\nCapture Commands:\n\n");
-        printf("capture\n");
-        printf("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
-        printf("    Usage: capture [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -probe   : Start Capturing Probe Packets\n");
-        printf("        -beacon  : Start Capturing Beacon Packets\n");
-        printf("        -deauth   : Start Capturing Deauth Packets\n");
-        printf("        -raw   :   Start Capturing Raw Packets\n");
-        printf("        -wps   :   Start Capturing WPS Packets and there Auth Type\n");
-        printf("        -pwn   :   Start Capturing Pwnagotchi Packets\n");
+        glog("capture\n");
+        glog("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
+        glog("    Usage: capture [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -probe   : Start Capturing Probe Packets\n");
+        glog("        -beacon  : Start Capturing Beacon Packets\n");
+        glog("        -deauth   : Start Capturing Deauth Packets\n");
+        glog("        -raw   :   Start Capturing Raw Packets\n");
+        glog("        -wps   :   Start Capturing WPS Packets and there Auth Type\n");
+        glog("        -pwn   :   Start Capturing Pwnagotchi Packets\n");
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        printf("        -802154:   Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
+        glog("        -802154:   Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
         #endif
-        printf("        -stop   : Stops the active capture\n\n");
-        TERMINAL_VIEW_ADD_TEXT("capture\n");
-        TERMINAL_VIEW_ADD_TEXT("    Start a WiFi packet capture.\n");
-        TERMINAL_VIEW_ADD_TEXT("    Usage: capture [OPTION]\n");
+        glog("        -stop   : Stops the active capture\n\n");
+        glog("capture\n");
+        glog("    Start a WiFi packet capture.\n");
+        glog("    Usage: capture [OPTION]\n");
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -802154, -stop\n\n");
+        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -802154, -stop\n\n");
         #else
-        TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -stop\n\n");
+        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -stop\n\n");
         #endif
         return;
     }
 
     if (strcmp(category, "beacon") == 0) {
         glog("\nBeacon Spam Commands:\n\n");
-        printf("beaconadd\n    Add an SSID to the beacon spam list.\n    Usage: beaconadd <SSID>\n\n");
-        printf("beaconremove\n    Remove an SSID from the beacon spam list.\n    Usage: beaconremove <SSID>\n\n");
-        printf("beaconclear\n    Clear the beacon spam list.\n    Usage: beaconclear\n\n");
-        printf("beaconshow\n    Show the current beacon spam list.\n    Usage: beaconshow\n\n");
-        printf("beaconspamlist\n    Start beacon spamming using the beacon spam list.\n    Usage: beaconspamlist\n\n");
-        TERMINAL_VIEW_ADD_TEXT("beaconadd, beaconremove, beaconclear, beaconshow, beaconspamlist\n");
+        glog("beaconadd\n    Add an SSID to the beacon spam list.\n    Usage: beaconadd <SSID>\n\n");
+        glog("beaconremove\n    Remove an SSID from the beacon spam list.\n    Usage: beaconremove <SSID>\n\n");
+        glog("beaconclear\n    Clear the beacon spam list.\n    Usage: beaconclear\n\n");
+        glog("beaconshow\n    Show the current beacon spam list.\n    Usage: beaconshow\n\n");
+        glog("beaconspamlist\n    Start beacon spamming using the beacon spam list.\n    Usage: beaconspamlist\n\n");
         return;
     }
 
     if (strcmp(category, "attack") == 0) {
         glog("\nAttack Commands:\n\n");
-        printf("dhcpstarve\n");
-        printf("    Description: DHCP starvation flood attack\n");
-        printf("    Usage: dhcpstarve start [threads]\n");
-        printf("           dhcpstarve stop\n");
-        printf("           dhcpstarve display\n\n");
-        printf("saeflood\n");
-        printf("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
-        printf("    Usage: saeflood <password> (requires selected WPA3 AP)\n\n");
-        printf("stopsaeflood\n    Stop SAE flood attack.\n    Usage: stopsaeflood\n\n");
-        printf("saefloodhelp\n    Show detailed SAE flood attack help.\n    Usage: saefloodhelp\n\n");
-        TERMINAL_VIEW_ADD_TEXT("dhcpstarve, saeflood, stopsaeflood, saefloodhelp\n");
+        glog("dhcpstarve\n");
+        glog("    Description: DHCP starvation flood attack\n");
+        glog("    Usage: dhcpstarve start [threads]\n");
+        glog("           dhcpstarve stop\n");
+        glog("           dhcpstarve display\n\n");
+        glog("saeflood\n");
+        glog("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+        glog("    Usage: saeflood <password> (requires selected WPA3 AP)\n\n");
+        glog("stopsaeflood\n    Stop SAE flood attack.\n    Usage: stopsaeflood\n\n");
+        glog("saefloodhelp\n    Show detailed SAE flood attack help.\n    Usage: saefloodhelp\n\n");
         return;
     }
     
 #ifdef CONFIG_HAS_INFRARED
     if (strcmp(category, "ir") == 0) {
         glog("\nInfrared Commands:\n\n");
-        printf("ir send\n");
-        printf("    Description: Send an IR signal from a file.\n");
-        printf("    Usage: ir send <path> [index]\n\n");
+        glog("ir send\n");
+        glog("    Description: Send an IR signal from a file.\n");
+        glog("    Usage: ir send <path> [index]\n\n");
 
-        printf("ir learn\n");
-        printf("    Description: Learn an IR signal and save to file.\n");
-        printf("    Usage: ir learn <path>\n\n");
-        printf("ir list\n");
-        printf("    Description: List IR files in default directory.\n");
-        printf("    Usage: ir list [path]\n\n");
-        printf("ir rx\n");
-        printf("    Description: Receive and display IR signals (Matrix mode).\n");
-        printf("    Usage: ir rx [timeout]\n\n");
-        printf("ir show\n");
-        printf("    Description: Show content of an IR file.\n");
-        printf("    Usage: ir show <path>\n\n");
-        printf("ir universals\n");
-        printf("    Description: Manage universal IR signals (files and built-ins).\n");
-        printf("    Usage: ir universals list [-all]\n");
-        printf("           ir universals send <index>\n");
-        printf("           ir universals sendall <file|TURNHISTVOFF> [delay_ms]\n");
-        printf("           ir universals show <file|TURNHISTVOFF>\n\n");
-        printf("ir dazzler\n");
-        printf("    Description: IR dazzler mode - emit continuous IR to interfere with cameras.\n");
-        printf("    Usage: ir dazzler [stop]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("ir send, ir learn, ir list, ir rx, ir show, ir universals, ir dazzler\n");
+        glog("ir learn\n");
+        glog("    Description: Learn an IR signal and save to file.\n");
+        glog("    Usage: ir learn <path>\n\n");
+        glog("ir list\n");
+        glog("    Description: List IR files in default directory.\n");
+        glog("    Usage: ir list [path]\n\n");
+        glog("ir rx\n");
+        glog("    Description: Receive and display IR signals (Matrix mode).\n");
+        glog("    Usage: ir rx [timeout]\n\n");
+        glog("ir show\n");
+        glog("    Description: Show content of an IR file.\n");
+        glog("    Usage: ir show <path>\n\n");
+        glog("ir universals\n");
+        glog("    Description: Manage universal IR signals (files and built-ins).\n");
+        glog("    Usage: ir universals list [-all]\n");
+        glog("           ir universals send <index>\n");
+        glog("           ir universals sendall <file|TURNHISTVOFF> [delay_ms]\n");
+        glog("           ir universals show <file|TURNHISTVOFF>\n\n");
+        glog("ir dazzler\n");
+        glog("    Description: IR dazzler mode - emit continuous IR to interfere with cameras.\n");
+        glog("    Usage: ir dazzler [stop]\n\n");
         return;
     }
 #endif
@@ -4087,28 +4085,28 @@ void handle_help(int argc, char **argv) {
 
     glog("\nGhost ESP Command Categories:\n\n");
 
-    printf("  help wifi      - Wi-Fi commands\n");
-    printf("  help ble       - Bluetooth/BLE commands\n");
-    printf("  help comm      - ESP32 communication commands\n");
-    printf("  help sd        - SD card commands\n");
-    printf("  help led       - LED/RGB commands\n");
-    printf("  help gps       - GPS commands\n");
-    printf("  help misc      - Miscellaneous commands\n");
-    printf("  help portal    - Evil Portal commands\n");
-    printf("  help printer   - Printer commands\n");
-    printf("  help cast      - YouTube cast commands\n");
-    printf("  help capture   - Wi-Fi packet capture commands\n");
-    printf("  help beacon    - Beacon spam commands\n");
-    printf("  help attack    - Attack/flood commands\n");
+    glog("  help wifi      - Wi-Fi commands\n");
+    glog("  help ble       - Bluetooth/BLE commands\n");
+    glog("  help comm      - ESP32 communication commands\n");
+    glog("  help sd        - SD card commands\n");
+    glog("  help led       - LED/RGB commands\n");
+    glog("  help gps       - GPS commands\n");
+    glog("  help misc      - Miscellaneous commands\n");
+    glog("  help portal    - Evil Portal commands\n");
+    glog("  help printer   - Printer commands\n");
+    glog("  help cast      - YouTube cast commands\n");
+    glog("  help capture   - Wi-Fi packet capture commands\n");
+    glog("  help beacon    - Beacon spam commands\n");
+    glog("  help attack    - Attack/flood commands\n");
 #ifdef CONFIG_HAS_INFRARED
-    printf("  help ir        - Infrared commands\n");
+    glog("  help ir        - Infrared commands\n");
 #endif
 #ifdef CONFIG_WITH_ETHERNET
     printf("  help ethernet  - Ethernet commands\n");
 #endif
-    printf("  help all      - All commands\n\n");
+    glog("  help all      - All commands\n\n");
 
-    TERMINAL_VIEW_ADD_TEXT(
+    glog(
         "  help wifi      - Wi-Fi commands\n"
         "  help ble       - Bluetooth/BLE commands\n"
         "  help comm      - ESP32 communication commands\n"
@@ -4116,22 +4114,21 @@ void handle_help(int argc, char **argv) {
         "  help led       - LED/RGB commands\n"
         "  help gps       - GPS commands\n"
         "  help misc      - Miscellaneous commands\n");
-    TERMINAL_VIEW_ADD_TEXT("  help portal    - Evil Portal commands\n"
-                      "  help printer   - Printer commands\n"
-                      "  help cast      - YouTube cast commands\n"
-                      "  help capture   - Wi-Fi packet capture commands\n"
-                      "  help beacon    - Beacon spam commands\n"
-                      "  help attack    - Attack/flood commands\n"
+    glog("  help portal    - Evil Portal commands\n"
+         "  help printer   - Printer commands\n"
+         "  help cast      - YouTube cast commands\n"
+         "  help capture   - Wi-Fi packet capture commands\n"
+         "  help beacon    - Beacon spam commands\n"
+         "  help attack    - Attack/flood commands\n"
 #ifdef CONFIG_HAS_INFRARED
-                      "  help ir        - Infrared commands\n"
+         "  help ir        - Infrared commands\n"
 #endif
 #ifdef CONFIG_WITH_ETHERNET
-                      "  help ethernet  - Ethernet commands\n"
+         "  help ethernet  - Ethernet commands\n"
 #endif
-                      "  help all      - All commands\n\n");
+         "  help all      - All commands\n\n");
 
-    printf("Type 'help <category>' for details on that category.\n\n");
-    TERMINAL_VIEW_ADD_TEXT("Type 'help <category>' for details on that category.\n\n");
+    glog("Type 'help <category>' for details on that category.\n\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -4167,6 +4164,17 @@ void handle_gps_info(int argc, char **argv) {
         if (gps_info_task_handle != NULL) {
             vTaskDelete(gps_info_task_handle);
             gps_info_task_handle = NULL;
+            
+            // Free the manually allocated stack and TCB
+            if (gps_task_stack) {
+                heap_caps_free(gps_task_stack);
+                gps_task_stack = NULL;
+            }
+            if (gps_task_tcb) {
+                heap_caps_free(gps_task_tcb);
+                gps_task_tcb = NULL;
+            }
+            
             gps_manager_deinit(&g_gpsManager);
             printf("GPS info display stopped.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info display stopped.\n");
@@ -4176,18 +4184,63 @@ void handle_gps_info(int argc, char **argv) {
         if (gps_info_task_handle == NULL) {
             gps_manager_init(&g_gpsManager);
 
-            // Wait a brief moment for GPS initialization
+            // Wait a moment for GPS initialization
             vTaskDelay(pdMS_TO_TICKS(100));
 
-            // Start the info display task
-            xTaskCreate(gps_info_display_task, "gps_info", 4096, NULL, 1, &gps_info_task_handle);
+            // Start info display task with PSRAM preference
+            gps_info_task_handle = NULL;
+            
+            // Allocate stack in PSRAM if available, fallback to internal RAM
+            const size_t stack_bytes_target = 8192;
+            const size_t stack_words = (stack_bytes_target + sizeof(StackType_t) - 1) / sizeof(StackType_t);
+            const size_t stack_size = stack_words * sizeof(StackType_t);
+            gps_task_stack = NULL;
+            
+#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+            gps_task_stack = (StackType_t*)heap_caps_malloc(stack_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+            if (!gps_task_stack) {
+                gps_task_stack = (StackType_t*)heap_caps_malloc(stack_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            }
+            
+            if (!gps_task_stack) {
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to allocate stack.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to allocate stack.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            
+            gps_task_tcb = (StaticTask_t*)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (!gps_task_tcb) {
+                heap_caps_free(gps_task_stack);
+                gps_task_stack = NULL;
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to allocate TCB.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to allocate TCB.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            
+            TaskHandle_t created_task = xTaskCreateStatic(gps_info_display_task, "gps_info", stack_words, NULL, 1, gps_task_stack, gps_task_tcb);
+            if (created_task == NULL) {
+                heap_caps_free(gps_task_stack);
+                heap_caps_free(gps_task_tcb);
+                gps_task_stack = NULL;
+                gps_task_tcb = NULL;
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to start.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to start.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            gps_info_task_handle = created_task;
             printf("GPS info started.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info started.\n");
             status_display_show_status("GPS Info On");
         }
     }
 }
-
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_ble_wardriving(int argc, char **argv) {

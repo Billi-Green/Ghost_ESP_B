@@ -12,6 +12,7 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "core/serial_manager.h"
+#include "core/uart_share.h"
 #include "soc/uart_pins.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -122,7 +123,7 @@ typedef struct {
     char chip_name[32];
     uint8_t chip_id[6];
     
-    bool initialized;
+    volatile bool initialized;
     bool is_executing_remote_cmd;
     bool uart_driver_installed;
     bool use_crc;
@@ -354,8 +355,8 @@ static void tx_task(void* arg) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
     comm_packet_t packet;
 
-    while (1) {
-        if (xQueueReceive(comm->tx_queue, &packet, portMAX_DELAY) == pdPASS) {
+    while (comm->initialized) {
+        if (xQueueReceive(comm->tx_queue, &packet, pdMS_TO_TICKS(100)) == pdPASS) {
             uart_write_bytes(s_uart_num, (uint8_t*)&packet, PACKET_HEADER_SIZE + packet.length);
             uint8_t checksum = compute_packet_checksum(&packet, comm->use_crc);
             uart_write_bytes(s_uart_num, &checksum, 1);
@@ -372,6 +373,10 @@ static void tx_task(void* arg) {
             }
         }
     }
+
+    for (;;) {
+        vTaskSuspend(NULL);
+    }
 }
 
 static void rx_task(void* arg) {
@@ -379,7 +384,7 @@ static void rx_task(void* arg) {
     uint8_t rx_buffer[COMM_BUFFER_SIZE];
     TickType_t last_stats_log = 0;
 
-    while (1) {
+    while (comm->initialized) {
         int len = uart_read_bytes(s_uart_num, rx_buffer, COMM_BUFFER_SIZE, pdMS_TO_TICKS(10));
         if (len <= 0) {
             continue;
@@ -527,6 +532,10 @@ static void rx_task(void* arg) {
                 len = 0;
             }
         }
+    }
+
+    for (;;) {
+        vTaskSuspend(NULL);
     }
 }
 
@@ -861,7 +870,7 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                         size_t drop = 0;
                         bool eol_found = false;
                         for (; drop < rem; ++drop) {
-                            if (p[drop] == '\n') {
+                            if (p[drop] == '\n') { // include the delimiter in this chunk
                                 eol_found = true;
                                 drop++;
                                 break;
@@ -955,8 +964,8 @@ static void command_executor_task(void* arg) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
     comm_command_t received_cmd;
 
-    while (1) {
-        if (xQueueReceive(comm->command_queue, &received_cmd, portMAX_DELAY) == pdPASS) {
+    while (comm->initialized) {
+        if (xQueueReceive(comm->command_queue, &received_cmd, pdMS_TO_TICKS(100)) == pdPASS) {
             if (comm->command_callback) {
                 // Temporarily set the remote command flag to indicate this is a remote command
                 bool was_remote = esp_comm_manager_is_remote_command();
@@ -967,16 +976,24 @@ static void command_executor_task(void* arg) {
             }
         }
     }
+
+    for (;;) {
+        vTaskSuspend(NULL);
+    }
 }
 
 static void protocol_task(void* arg) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
     comm_packet_t packet;
 
-    while(1) {
+    while(comm->initialized) {
         if (xQueueReceive(comm->rx_packet_queue, &packet, pdMS_TO_TICKS(10)) == pdPASS) {
             handle_received_packet(comm, &packet);
         }
+    }
+
+    for (;;) {
+        vTaskSuspend(NULL);
     }
 }
 
@@ -1014,6 +1031,32 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
         return;
     }
 
+    uart_port_t desired_uart = UART_NUM_1;
+    gpio_num_t resolved_tx = tx_pin;
+    gpio_num_t resolved_rx = rx_pin;
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        desired_uart = UART_NUM_0;
+        /* if caller passed default placeholders, switch to U0 default pins */
+        if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
+            resolved_tx = U0TXD_GPIO_NUM;
+            resolved_rx = U0RXD_GPIO_NUM;
+        }
+    } else if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0) {
+        desired_uart = UART_NUM_1;
+        if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
+            resolved_tx = GPIO_NUM_1;
+            resolved_rx = GPIO_NUM_2;
+        }
+    } else {
+        desired_uart = UART_NUM_1;
+    }
+#else
+    desired_uart = UART_NUM_1;
+#endif
+
+    /* If another subsystem (e.g. GPS NMEA parser) already owns this UART, do not init DualComm. */
     // prefer PSRAM if available, fall back to internal RAM (e.g. ESP32-C6 lacks SPIRAM)
     s_comm_manager = heap_caps_calloc(1, sizeof(esp_comm_manager_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_comm_manager) {
@@ -1024,9 +1067,10 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
         return;
     }
 
-    s_comm_manager->tx_pin = tx_pin;
-    s_comm_manager->rx_pin = rx_pin;
+    s_comm_manager->tx_pin = resolved_tx;
+    s_comm_manager->rx_pin = resolved_rx;
     s_comm_manager->baud_rate = baud_rate;
+
     s_comm_manager->state = COMM_STATE_IDLE;
     s_comm_manager->role = COMM_ROLE_MASTER;
     s_comm_manager->is_executing_remote_cmd = false;
@@ -1060,26 +1104,16 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    /* select UART based on build template: use UART0 for "somethingsomething", else UART1 */
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        s_uart_num = UART_NUM_0;
-        /* if caller passed default placeholders, switch to U0 default pins */
-        if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
-            tx_pin = U0TXD_GPIO_NUM;
-            rx_pin = U0RXD_GPIO_NUM;
-        }
-    } else if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0) {
-        s_uart_num = UART_NUM_1;
-        if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
-            tx_pin = GPIO_NUM_1;
-            rx_pin = GPIO_NUM_2;
-        }
-    } else {
-        s_uart_num = UART_NUM_1;
+    s_uart_num = desired_uart;
+
+#ifdef CONFIG_USE_TDECK
+    printf("ESP Comm Manager disabled on TDECK to avoid UART conflicts\n");
+    if (s_comm_manager->state_mutex) {
+        vSemaphoreDelete(s_comm_manager->state_mutex);
     }
-#else
-    s_uart_num = UART_NUM_1;
+    free(s_comm_manager);
+    s_comm_manager = NULL;
+    return;
 #endif
 
     // Don't deinitialize serial manager on TDECK to avoid UART conflicts
@@ -1087,22 +1121,32 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     if (serial_manager_get_uart_num() == (int)UART_NUM_1) {
         serial_manager_deinit();
     } else if (serial_manager_get_uart_num() == (int)UART_NUM_0) {
-        if ((int)tx_pin == U0TXD_GPIO_NUM || (int)rx_pin == U0RXD_GPIO_NUM) {
+        if ((int)resolved_tx == U0TXD_GPIO_NUM || (int)resolved_rx == U0RXD_GPIO_NUM) {
             serial_manager_deinit();
         }
     }
 #endif
 
-    // Only install UART driver if not on TDECK to avoid conflicts
-#ifndef CONFIG_USE_TDECK
-    if (uart_driver_install(s_uart_num, COMM_BUFFER_SIZE * 2, 0, 0, NULL, 0) == ESP_OK) {
-        s_comm_manager->uart_driver_installed = true;
+    if (uart_share_ensure_installed(s_uart_num, COMM_BUFFER_SIZE * 2, 0, 0) == ESP_OK) {
+        if (uart_share_acquire(s_uart_num, UART_SHARE_OWNER_DUALCOMM, pdMS_TO_TICKS(2000)) == ESP_OK) {
+            s_comm_manager->uart_driver_installed = true;
+        }
     }
+
+    if (!s_comm_manager->uart_driver_installed) {
+        if (s_comm_manager->state_mutex) {
+            vSemaphoreDelete(s_comm_manager->state_mutex);
+        }
+        free(s_comm_manager);
+        s_comm_manager = NULL;
+        printf("E: DualComm UART busy\n");
+        return;
+    }
+
+    uart_flush_input(s_uart_num);
+
     uart_param_config(s_uart_num, &uart_config);
-    uart_set_pin(s_uart_num, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-#else
-    printf("ESP Comm Manager disabled on TDECK to avoid UART conflicts\n");
-#endif
+    uart_set_pin(s_uart_num, resolved_tx, resolved_rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
     s_comm_manager->tx_queue = NULL;
     s_comm_manager->rx_packet_queue = NULL;
@@ -1110,6 +1154,8 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     s_comm_manager->command_executor_task_handle = NULL;
     s_comm_manager->tx_task_handle = NULL;
     s_comm_manager->protocol_task_handle = NULL;
+
+    s_comm_manager->initialized = true;
 
     s_comm_manager->rx_task_res.stack = alloc_task_stack(4096);
     s_comm_manager->rx_task_res.tcb = alloc_task_tcb();
@@ -1131,15 +1177,13 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
                                                    pdMS_TO_TICKS(HANDSHAKE_TIMEOUT_MS),
                                                    pdFALSE, s_comm_manager, handshake_timer_callback);
 
-    s_comm_manager->initialized = true;
-
     s_comm_manager->state = COMM_STATE_SCANNING;
     if (s_comm_manager->discovery_timer) {
         xTimerStart(s_comm_manager->discovery_timer, 0);
     }
 
     printf("ESP Comm Manager initialized as '%s' on TX:%d RX:%d at %lu baud - Auto-listening for peers\n", 
-             s_comm_manager->chip_name, tx_pin, rx_pin, (unsigned long)baud_rate);
+           s_comm_manager->chip_name, resolved_tx, resolved_rx, (unsigned long)baud_rate);
 }
 
 bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t length) {
@@ -1291,7 +1335,7 @@ bool esp_comm_manager_start_discovery(void) {
 
     s_comm_manager->state = COMM_STATE_SCANNING;
     if (!s_comm_manager->discovery_timer) {
-        s_comm_manager->discovery_timer = xTimerCreate("discovery_timer",
+        s_comm_manager->discovery_timer = xTimerCreate("discovery_timer", 
                                                        pdMS_TO_TICKS(DISCOVERY_INTERVAL_MS),
                                                        pdTRUE, NULL, discovery_timer_callback);
     }
@@ -1489,11 +1533,51 @@ void esp_comm_manager_disconnect(void) {
 void esp_comm_manager_deinit(void) {
     if (!s_comm_manager) return;
 
-    if (s_comm_manager->uart_driver_installed) {
-        uart_driver_delete(s_uart_num);
-        s_comm_manager->uart_driver_installed = false;
+    // Signal shutdown first - tasks check this flag
+    s_comm_manager->initialized = false;
+
+    // Stop timers with blocking wait to ensure callbacks complete
+    if (s_comm_manager->discovery_timer) {
+        xTimerStop(s_comm_manager->discovery_timer, portMAX_DELAY);
     }
-    
+    if (s_comm_manager->handshake_timer) {
+        xTimerStop(s_comm_manager->handshake_timer, portMAX_DELAY);
+    }
+    if (s_comm_manager->ping_timer) {
+        xTimerStop(s_comm_manager->ping_timer, portMAX_DELAY);
+    }
+
+    // Brief delay to let any in-flight timer callbacks or tasks notice initialized=false
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // Now safe to update state - use short timeout to avoid deadlock
+    if (s_comm_manager->state_mutex && 
+        xSemaphoreTake(s_comm_manager->state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_comm_manager->state = COMM_STATE_IDLE;
+        xSemaphoreGive(s_comm_manager->state_mutex);
+    } else {
+        s_comm_manager->state = COMM_STATE_IDLE;
+    }
+
+    if (s_comm_manager->rx_task_handle) {
+        vTaskDelete(s_comm_manager->rx_task_handle);
+        s_comm_manager->rx_task_handle = NULL;
+    }
+    if (s_comm_manager->tx_task_handle) {
+        vTaskDelete(s_comm_manager->tx_task_handle);
+        s_comm_manager->tx_task_handle = NULL;
+    }
+    if (s_comm_manager->protocol_task_handle) {
+        vTaskDelete(s_comm_manager->protocol_task_handle);
+        s_comm_manager->protocol_task_handle = NULL;
+    }
+    if (s_comm_manager->command_executor_task_handle) {
+        vTaskDelete(s_comm_manager->command_executor_task_handle);
+        s_comm_manager->command_executor_task_handle = NULL;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+
     if (s_comm_manager->discovery_timer) {
         xTimerDelete(s_comm_manager->discovery_timer, 0);
     }
@@ -1504,27 +1588,12 @@ void esp_comm_manager_deinit(void) {
         xTimerDelete(s_comm_manager->ping_timer, 0);
         s_comm_manager->ping_timer = NULL;
     }
-    
-    if (s_comm_manager->rx_task_handle) {
-        vTaskDelete(s_comm_manager->rx_task_handle);
-        s_comm_manager->rx_task_handle = NULL;
-        free_task_resources(&s_comm_manager->rx_task_res);
-    }
-    if (s_comm_manager->tx_task_handle) {
-        vTaskDelete(s_comm_manager->tx_task_handle);
-        s_comm_manager->tx_task_handle = NULL;
-        free_task_resources(&s_comm_manager->tx_task_res);
-    }
-    if (s_comm_manager->protocol_task_handle) {
-        vTaskDelete(s_comm_manager->protocol_task_handle);
-        s_comm_manager->protocol_task_handle = NULL;
-        free_task_resources(&s_comm_manager->protocol_task_res);
-    }
-    if (s_comm_manager->command_executor_task_handle) {
-        vTaskDelete(s_comm_manager->command_executor_task_handle);
-        s_comm_manager->command_executor_task_handle = NULL;
-        free_task_resources(&s_comm_manager->command_task_res);
-    }
+
+    free_task_resources(&s_comm_manager->rx_task_res);
+    free_task_resources(&s_comm_manager->tx_task_res);
+    free_task_resources(&s_comm_manager->protocol_task_res);
+    free_task_resources(&s_comm_manager->command_task_res);
+
     if (s_comm_manager->rx_packet_queue) {
         vQueueDelete(s_comm_manager->rx_packet_queue);
     }
@@ -1537,15 +1606,23 @@ void esp_comm_manager_deinit(void) {
     if (s_comm_manager->state_mutex) {
         vSemaphoreDelete(s_comm_manager->state_mutex);
     }
-    
+
+    // delete UART driver last to avoid tasks accessing a torn-down driver
+    if (s_comm_manager->uart_driver_installed) {
+        (void)uart_wait_tx_done(s_uart_num, pdMS_TO_TICKS(50));
+        (void)uart_flush_input(s_uart_num);
+        (void)uart_share_release(s_uart_num, UART_SHARE_OWNER_DUALCOMM);
+        s_comm_manager->uart_driver_installed = false;
+    }
+
     free(s_comm_manager);
     s_comm_manager = NULL;
     printf("ESP Comm Manager de-initialized\n");
-} 
+}
 
 static void handshake_timer_callback(TimerHandle_t xTimer) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*) pvTimerGetTimerID(xTimer);
-    if (!comm) return;
+    if (!comm || !comm->initialized) return;
     lock_state(comm);
     if (comm->state == COMM_STATE_HANDSHAKE) {
         printf("Handshake timeout\n");
@@ -1560,7 +1637,7 @@ static void handshake_timer_callback(TimerHandle_t xTimer) {
 }
 
 static void handle_connection_loss(esp_comm_manager_t* comm, const char* reason) {
-    if (!comm) return;
+    if (!comm || !comm->initialized) return;
     lock_state(comm);
     if (comm->state != COMM_STATE_CONNECTED) {
         unlock_state(comm);

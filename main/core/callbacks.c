@@ -12,6 +12,7 @@
 #include <esp_log.h>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
 #include "esp_rom_sys.h"  // Contains esp_rom_printf
 #include <esp_timer.h>  // For esp_timer_get_time
 #include "freertos/task.h"
@@ -56,6 +57,64 @@ static esp_timer_handle_t channel_hop_timer = NULL;
 static bool wardriving_hopping_active = false;
 static uint8_t wardrive_channel = 1;
 static esp_timer_handle_t wardrive_hop_timer = NULL;
+static esp_timer_handle_t wardrive_heartbeat_timer = NULL;
+static int64_t wardrive_start_us = 0;
+static uint32_t wardrive_wifi_frames_seen = 0;
+static uint32_t wardrive_ble_advs_seen = 0;
+static uint32_t wardrive_log_attempts = 0;
+static uint32_t wardrive_log_ok = 0;
+static uint32_t wardrive_gps_rejected = 0;
+
+static void wardrive_heartbeat_cb(void *arg);
+static void start_wardrive_heartbeat(void);
+static void stop_wardrive_heartbeat(void);
+
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define WARDRIVE_C5_MAX_CHANNEL_PROBE 196
+static uint8_t wardrive_c5_channels[WARDRIVE_C5_MAX_CHANNEL_PROBE];
+static size_t wardrive_c5_channel_count = 0;
+static size_t wardrive_c5_channel_idx = 0;
+static bool wardrive_c5_channels_ready = false;
+
+static void wardrive_build_channel_list_c5(void) {
+    if (wardrive_c5_channels_ready) {
+        return;
+    }
+
+    wardrive_c5_channel_count = 0;
+    wardrive_c5_channel_idx = 0;
+
+    uint8_t cur_primary = 1;
+    wifi_second_chan_t cur_second = WIFI_SECOND_CHAN_NONE;
+    (void)esp_wifi_get_channel(&cur_primary, &cur_second);
+
+    for (uint16_t ch = 1; ch <= WARDRIVE_C5_MAX_CHANNEL_PROBE; ch++) {
+        if (wardrive_c5_channel_count >= (sizeof(wardrive_c5_channels) / sizeof(wardrive_c5_channels[0]))) {
+            break;
+        }
+        if (esp_wifi_set_channel((uint8_t)ch, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
+            wardrive_c5_channels[wardrive_c5_channel_count++] = (uint8_t)ch;
+        }
+    }
+
+    if (wardrive_c5_channel_count == 0) {
+        wardrive_c5_channels[0] = 1;
+        wardrive_c5_channel_count = 1;
+    }
+
+    (void)esp_wifi_set_channel(cur_primary, cur_second);
+    wardrive_c5_channels_ready = true;
+}
+
+static uint8_t wardrive_next_channel_c5(void) {
+    wardrive_build_channel_list_c5();
+    if (wardrive_c5_channel_count == 0) {
+        return 1;
+    }
+    wardrive_c5_channel_idx = (wardrive_c5_channel_idx + 1) % wardrive_c5_channel_count;
+    return wardrive_c5_channels[wardrive_c5_channel_idx];
+}
+#endif
 static uint32_t hash_ssid(const char *ssid);
 static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash);
 static void trim_trailing(char *str);
@@ -292,6 +351,69 @@ int detected_network_count = 0;
 esp_timer_handle_t stop_timer;
 int should_store_wps = 1;
 gps_t *gps = NULL;
+static bool gps_time_synced = false;
+
+static int64_t days_from_civil(int y, unsigned m, unsigned d) {
+    y -= (m <= 2);
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = (unsigned)(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? (unsigned)-3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return (int64_t)era * 146097 + (int64_t)doe - 719468;
+}
+
+static bool gps_build_utc_timeval(const gps_t *g, struct timeval *out) {
+    if (!g || !out) {
+        return false;
+    }
+    if (!gps_is_valid_year(g->date.year)) {
+        return false;
+    }
+    if (g->date.month < 1 || g->date.month > 12 || g->date.day < 1 || g->date.day > 31) {
+        return false;
+    }
+    if (g->tim.hour > 23 || g->tim.minute > 59 || g->tim.second > 59) {
+        return false;
+    }
+
+    const int year = (int)gps_get_absolute_year(g->date.year);
+    const int64_t days = days_from_civil(year, (unsigned)g->date.month, (unsigned)g->date.day);
+    const int64_t sec = days * 86400LL + (int64_t)g->tim.hour * 3600LL + (int64_t)g->tim.minute * 60LL + (int64_t)g->tim.second;
+    if (sec < 946684800LL) {
+        return false;
+    }
+
+    out->tv_sec = (time_t)sec;
+    out->tv_usec = 0;
+    return true;
+}
+
+static void gps_try_sync_time_from_fix(const gps_t *g) {
+    if (gps_time_synced || !g) {
+        return;
+    }
+
+    struct timeval tv;
+    if (!gps_build_utc_timeval(g, &tv)) {
+        return;
+    }
+
+    struct timeval now;
+    if (gettimeofday(&now, NULL) != 0) {
+        return;
+    }
+
+    if (now.tv_sec >= 1600000000) {
+        gps_time_synced = true;
+        return;
+    }
+
+    if (tv.tv_sec >= 1600000000) {
+        settimeofday(&tv, NULL);
+        gps_time_synced = true;
+    }
+}
+
 typedef struct {
     uint8_t bssid[6];
     time_t detection_time;
@@ -349,12 +471,21 @@ static void channel_hop_timer_callback(void *arg) {
     if (!pineap_detection_active)
         return;
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    for (size_t tries = 0; tries < wardrive_c5_channel_count; tries++) {
+        current_channel = wardrive_next_channel_c5();
+        if (esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
+            break;
+        }
+    }
+#else
     uint8_t start = current_channel;
     do {
         current_channel = (current_channel % MAX_WIFI_CHANNEL) + 1;
         if (esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
             break;
     } while (current_channel != start);
+#endif
 }
 
 static esp_err_t start_channel_hopping(void) {
@@ -416,12 +547,21 @@ static void wardrive_hop_timer_callback(void *arg) {
     if (!wardriving_hopping_active)
         return;
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    for (size_t tries = 0; tries < wardrive_c5_channel_count; tries++) {
+        wardrive_channel = wardrive_next_channel_c5();
+        if (esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
+            break;
+        }
+    }
+#else
     uint8_t start = wardrive_channel;
     do {
         wardrive_channel = (wardrive_channel % MAX_WIFI_CHANNEL) + 1;
         if (esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
             break;
     } while (wardrive_channel != start);
+#endif
 }
 
 static esp_err_t start_wardrive_channel_hopping(void) {
@@ -433,7 +573,14 @@ static esp_err_t start_wardrive_channel_hopping(void) {
     }
 
     wardriving_hopping_active = true;
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    wardrive_c5_channels_ready = false;
+    wardrive_build_channel_list_c5();
+    wardrive_c5_channel_idx = 0;
+    wardrive_channel = wardrive_c5_channels[0];
+#else
     wardrive_channel = 1;
+#endif
     return esp_timer_start_periodic(wardrive_hop_timer, CHANNEL_HOP_INTERVAL_MS * 1000);
 }
 
@@ -446,11 +593,88 @@ static void stop_wardrive_channel_hopping(void) {
     }
 }
 
+#define WARDRIVE_HEARTBEAT_INTERVAL_MS 10000
+
+static void wardrive_heartbeat_cb(void *arg) {
+    (void)arg;
+
+    if (!wardriving_hopping_active) {
+        return;
+    }
+
+    gps_t *gps_local = NULL;
+    const char *fix_status = "No GPS";
+    uint8_t sats = 0;
+
+    if (nmea_hdl != NULL) {
+        gps_local = &((esp_gps_t *)nmea_hdl)->parent;
+    }
+
+    if (gps_local != NULL) {
+        sats = gps_local->sats_in_use;
+        if (!gps_local->valid || gps_local->fix < GPS_FIX_GPS || gps_local->fix_mode < GPS_MODE_2D) {
+            fix_status = "No Fix";
+        } else if (gps_local->fix_mode == GPS_MODE_2D) {
+            fix_status = "2D";
+        } else if (gps_local->fix_mode == GPS_MODE_3D) {
+            fix_status = "3D";
+        } else {
+            fix_status = "Fix";
+        }
+    }
+
+    uint32_t up_s = 0;
+    if (wardrive_start_us != 0) {
+        up_s = (uint32_t)((esp_timer_get_time() - wardrive_start_us) / 1000000LL);
+    }
+
+    uint32_t up_m = up_s / 60;
+    uint32_t up_rem_s = up_s % 60;
+
+    size_t pending = csv_get_pending_bytes();
+
+    glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
+         (unsigned long)wardrive_wifi_frames_seen,
+         (unsigned long)wardrive_log_ok,
+         (unsigned long)wardrive_log_attempts,
+         (unsigned long)wardrive_gps_rejected,
+         (unsigned)wardrive_channel,
+         (unsigned long)up_m,
+         (unsigned long)up_rem_s,
+         fix_status,
+         (unsigned)sats,
+         (unsigned)pending);
+}
+
+static void start_wardrive_heartbeat(void) {
+    wardrive_start_us = esp_timer_get_time();
+    wardrive_wifi_frames_seen = 0;
+    wardrive_ble_advs_seen = 0;
+    wardrive_log_attempts = 0;
+    wardrive_log_ok = 0;
+    wardrive_gps_rejected = 0;
+}
+
+static void stop_wardrive_heartbeat(void) {
+    if (wardrive_heartbeat_timer) {
+        esp_timer_stop(wardrive_heartbeat_timer);
+        esp_timer_delete(wardrive_heartbeat_timer);
+        wardrive_heartbeat_timer = NULL;
+    }
+}
+
 void start_pineap_detection(void) {
     pineap_detection_active = true;
     pineap_network_count = 0;
     memset(pineap_networks, 0, sizeof(pineap_networks));
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    wardrive_c5_channels_ready = false;
+    wardrive_build_channel_list_c5();
+    wardrive_c5_channel_idx = 0;
+    current_channel = wardrive_c5_channels[0];
+#else
     current_channel = 1;
+#endif
     start_channel_hopping();
 }
 
@@ -461,10 +685,16 @@ void stop_pineap_detection(void) {
 
 void start_wardriving(void) {
     start_wardrive_channel_hopping();
+    start_wardrive_heartbeat();
 }
 
 void stop_wardriving(void) {
+    stop_wardrive_heartbeat();
     stop_wardrive_channel_hopping();
+}
+
+uint32_t wardriving_get_ap_count(void) {
+    return wardrive_wifi_frames_seen;
 }
 
 #define IRAM_PRINTF(fmt, ...) do { \
@@ -701,6 +931,7 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
     switch (event_id) {
     case GPS_UPDATE:
         gps = (gps_t *)event_data;
+        gps_try_sync_time_from_fix(gps);
         break;
     default:
         break;
@@ -816,6 +1047,8 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         return;
     }
 
+    wardrive_wifi_frames_seen++;
+
     int index = 36;
     char ssid[33] = {0};
     uint8_t bssid[6];
@@ -904,10 +1137,6 @@ rsn_done:
         index += (2 + ie_len);
     }
 
-    if (ssid[0] == '\0') {
-        return;
-    }
-
     if (!found_rsn && !found_wpa) {
         size_t copy_len = sizeof(encryption_type) - 1;
         if (privacy_required) {
@@ -940,9 +1169,13 @@ rsn_done:
             sizeof(wardriving_data.encryption_type) - 1);
     wardriving_data.encryption_type[sizeof(wardriving_data.encryption_type) - 1] = '\0';
 
+    wardrive_log_attempts++;
     esp_err_t err = gps_manager_log_wardriving_data(&wardriving_data);
-    // Suppress unused variable warning
-    (void)err;
+    if (err == ESP_ERR_INVALID_STATE) {
+        wardrive_gps_rejected++;
+    } else if (err == ESP_OK) {
+        wardrive_log_ok++;
+    }
 }
 
 void wifi_probe_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
@@ -1257,10 +1490,16 @@ static int ble_hs_adv_parse_fields_cb(const struct ble_hs_adv_field *field, void
 
 static const char SKIMMER_TAG[] STORE_STR_ATTR = "SKIMMER_DETECT";
 
+struct ble_adv_parse_arg {
+    wardriving_data_t *wd;
+};
+
 void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
     if (!event || event->type != BLE_GAP_EVENT_DISC) {
         return;
     }
+
+    wardrive_ble_advs_seen++;
 
     wardriving_data_t wardriving_data = {0};
     wardriving_data.ble_data.is_ble_device = true;
@@ -1273,10 +1512,11 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
 
     wardriving_data.ble_data.ble_rssi = event->disc.rssi;
 
-    // Parse BLE name if available
+    // Parse BLE name / manufacturer data if available
     if (event->disc.length_data > 0) {
+        struct ble_adv_parse_arg parse_arg = {.wd = &wardriving_data};
         ble_hs_adv_parse(event->disc.data, event->disc.length_data, ble_hs_adv_parse_fields_cb,
-                         &wardriving_data);
+                         &parse_arg);
     }
 
     // Get GPS data from the global handle, if available
@@ -1294,20 +1534,33 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
     
 
     // Use GPS manager to log data
+    wardrive_log_attempts++;
     esp_err_t err = gps_manager_log_wardriving_data(&wardriving_data);
-    if (err != ESP_OK) {
-        ESP_LOGD("BLE_WD", "Skipped logging entry\nGPS data not ready");
+    if (err == ESP_ERR_INVALID_STATE) {
+        wardrive_gps_rejected++;
+    } else if (err == ESP_OK) {
+        wardrive_log_ok++;
     }
 }
 
 // Move the callback implementation inside the ESP32S2 guard
 static int ble_hs_adv_parse_fields_cb(const struct ble_hs_adv_field *field, void *arg) {
-    wardriving_data_t *data = (wardriving_data_t *)arg;
+    struct ble_adv_parse_arg *p = (struct ble_adv_parse_arg *)arg;
+    wardriving_data_t *data = p ? p->wd : NULL;
+    if (data == NULL || field == NULL) {
+        return 0;
+    }
 
     if (field->type == BLE_HS_ADV_TYPE_COMP_NAME) {
         size_t name_len = MIN(field->length, sizeof(data->ble_data.ble_name) - 1);
         memcpy(data->ble_data.ble_name, field->value, name_len);
         data->ble_data.ble_name[name_len] = '\0';
+    }
+
+    if (field->type == BLE_HS_ADV_TYPE_MFG_DATA && field->length >= 2) {
+        const uint8_t *v = (const uint8_t *)field->value;
+        data->ble_data.ble_mfgr_id = (uint16_t)v[0] | ((uint16_t)v[1] << 8);
+        data->ble_data.ble_has_mfgr_id = true;
     }
 
     return 0;

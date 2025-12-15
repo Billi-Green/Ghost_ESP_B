@@ -30,7 +30,7 @@ static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
 
 /* time multiplex spi when display and sd share the spi bus */
-#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI)
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
 #include "lvgl_helpers.h"
 #include "lvgl_tft/disp_spi.h"
 #include "lvgl_spi_conf.h"

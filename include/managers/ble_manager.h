@@ -16,6 +16,8 @@
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 
+struct ble_gap_event;
+
 typedef void (*ble_data_handler_t)(struct ble_gap_event *event, size_t len);
 
 typedef struct {

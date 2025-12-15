@@ -142,6 +142,8 @@ typedef struct {
   esp_event_loop_handle_t event_loop_hdl;        /*!< Event loop handle */
   TaskHandle_t tsk_hdl;                          /*!< NMEA Parser task handle */
   QueueHandle_t event_queue;                     /*!< UART event queue handle */
+  StackType_t *task_stack;                       /*!< Static task stack (PSRAM) */
+  StaticTask_t *task_tcb;                        /*!< Static task TCB */
 } esp_gps_t;
 
 /**
