@@ -12,6 +12,7 @@
 #include <esp_log.h>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
 #include "esp_rom_sys.h"  // Contains esp_rom_printf
 #include <esp_timer.h>  // For esp_timer_get_time
 #include "freertos/task.h"
@@ -350,6 +351,69 @@ int detected_network_count = 0;
 esp_timer_handle_t stop_timer;
 int should_store_wps = 1;
 gps_t *gps = NULL;
+static bool gps_time_synced = false;
+
+static int64_t days_from_civil(int y, unsigned m, unsigned d) {
+    y -= (m <= 2);
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = (unsigned)(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? (unsigned)-3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return (int64_t)era * 146097 + (int64_t)doe - 719468;
+}
+
+static bool gps_build_utc_timeval(const gps_t *g, struct timeval *out) {
+    if (!g || !out) {
+        return false;
+    }
+    if (!gps_is_valid_year(g->date.year)) {
+        return false;
+    }
+    if (g->date.month < 1 || g->date.month > 12 || g->date.day < 1 || g->date.day > 31) {
+        return false;
+    }
+    if (g->tim.hour > 23 || g->tim.minute > 59 || g->tim.second > 59) {
+        return false;
+    }
+
+    const int year = (int)gps_get_absolute_year(g->date.year);
+    const int64_t days = days_from_civil(year, (unsigned)g->date.month, (unsigned)g->date.day);
+    const int64_t sec = days * 86400LL + (int64_t)g->tim.hour * 3600LL + (int64_t)g->tim.minute * 60LL + (int64_t)g->tim.second;
+    if (sec < 946684800LL) {
+        return false;
+    }
+
+    out->tv_sec = (time_t)sec;
+    out->tv_usec = 0;
+    return true;
+}
+
+static void gps_try_sync_time_from_fix(const gps_t *g) {
+    if (gps_time_synced || !g) {
+        return;
+    }
+
+    struct timeval tv;
+    if (!gps_build_utc_timeval(g, &tv)) {
+        return;
+    }
+
+    struct timeval now;
+    if (gettimeofday(&now, NULL) != 0) {
+        return;
+    }
+
+    if (now.tv_sec >= 1600000000) {
+        gps_time_synced = true;
+        return;
+    }
+
+    if (tv.tv_sec >= 1600000000) {
+        settimeofday(&tv, NULL);
+        gps_time_synced = true;
+    }
+}
+
 typedef struct {
     uint8_t bssid[6];
     time_t detection_time;
@@ -867,6 +931,7 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
     switch (event_id) {
     case GPS_UPDATE:
         gps = (gps_t *)event_data;
+        gps_try_sync_time_from_fix(gps);
         break;
     default:
         break;

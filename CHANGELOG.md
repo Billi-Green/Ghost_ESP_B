@@ -76,6 +76,7 @@
 - Small improvements to encoder handling
 - Miscellaneuous small code refactors and improvements
 - Joystick Up/Down hold in options menus now auto-repeat
+- Sync RTC time when a valid GPS fix is received
 - Changed default CPU clock speed to 240MHz instead of 160MHz for:
   - sdkconfig.awokimini
   - sdkconfig.CYD2432S028R
