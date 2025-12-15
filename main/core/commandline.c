@@ -74,6 +74,10 @@ static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 
+// Static storage for GPS info task stack and TCB to enable proper cleanup
+static StackType_t* gps_task_stack = NULL;
+static StaticTask_t* gps_task_tcb = NULL;
+
 // Forward declarations for command handlers
 void cmd_wifi_scan_stop(int argc, char **argv);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -689,6 +693,7 @@ void handle_stop_flipper(int argc, char **argv) {
         g_ir_universal_send_cancel = true;
     }
 
+    stop_wardriving();
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
@@ -710,6 +715,16 @@ void handle_stop_flipper(int argc, char **argv) {
     if (gps_info_task_handle != NULL) {
         vTaskDelete(gps_info_task_handle);
         gps_info_task_handle = NULL;
+        
+        // Free the manually allocated stack and TCB
+        if (gps_task_stack) {
+            heap_caps_free(gps_task_stack);
+            gps_task_stack = NULL;
+        }
+        if (gps_task_tcb) {
+            heap_caps_free(gps_task_tcb);
+            gps_task_tcb = NULL;
+        }
     }
 
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
@@ -2129,6 +2144,17 @@ void handle_gps_info(int argc, char **argv) {
         if (gps_info_task_handle != NULL) {
             vTaskDelete(gps_info_task_handle);
             gps_info_task_handle = NULL;
+            
+            // Free the manually allocated stack and TCB
+            if (gps_task_stack) {
+                heap_caps_free(gps_task_stack);
+                gps_task_stack = NULL;
+            }
+            if (gps_task_tcb) {
+                heap_caps_free(gps_task_tcb);
+                gps_task_tcb = NULL;
+            }
+            
             gps_manager_deinit(&g_gpsManager);
             printf("GPS info display stopped.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info display stopped.\n");
@@ -2138,18 +2164,63 @@ void handle_gps_info(int argc, char **argv) {
         if (gps_info_task_handle == NULL) {
             gps_manager_init(&g_gpsManager);
 
-            // Wait a brief moment for GPS initialization
+            // Wait a moment for GPS initialization
             vTaskDelay(pdMS_TO_TICKS(100));
 
-            // Start the info display task
-            xTaskCreate(gps_info_display_task, "gps_info", 4096, NULL, 1, &gps_info_task_handle);
+            // Start info display task with PSRAM preference
+            gps_info_task_handle = NULL;
+            
+            // Allocate stack in PSRAM if available, fallback to internal RAM
+            const size_t stack_bytes_target = 8192;
+            const size_t stack_words = (stack_bytes_target + sizeof(StackType_t) - 1) / sizeof(StackType_t);
+            const size_t stack_size = stack_words * sizeof(StackType_t);
+            gps_task_stack = NULL;
+            
+#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+            gps_task_stack = (StackType_t*)heap_caps_malloc(stack_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+            if (!gps_task_stack) {
+                gps_task_stack = (StackType_t*)heap_caps_malloc(stack_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            }
+            
+            if (!gps_task_stack) {
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to allocate stack.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to allocate stack.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            
+            gps_task_tcb = (StaticTask_t*)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (!gps_task_tcb) {
+                heap_caps_free(gps_task_stack);
+                gps_task_stack = NULL;
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to allocate TCB.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to allocate TCB.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            
+            TaskHandle_t created_task = xTaskCreateStatic(gps_info_display_task, "gps_info", stack_words, NULL, 1, gps_task_stack, gps_task_tcb);
+            if (created_task == NULL) {
+                heap_caps_free(gps_task_stack);
+                heap_caps_free(gps_task_tcb);
+                gps_task_stack = NULL;
+                gps_task_tcb = NULL;
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to start.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to start.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            gps_info_task_handle = created_task;
             printf("GPS info started.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info started.\n");
             status_display_show_status("GPS Info On");
         }
     }
 }
-
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_ble_wardriving(int argc, char **argv) {

@@ -1,6 +1,5 @@
 #include "managers/gps_manager.h"
 #include "core/callbacks.h"
-#include "driver/periph_ctrl.h"
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "core/glog.h"
@@ -17,6 +16,17 @@
 #include <string.h>
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
+#include <esp_heap_caps.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+typedef struct {
+    StackType_t *stack;
+    StaticTask_t *tcb;
+    uint32_t stack_words;
+} gps_task_static_res_t;
+
+static gps_task_static_res_t g_gps_check_task_res = {0};
 
 static const char *GPS_TAG = "GPS";
 static bool has_valid_cached_date = false;
@@ -71,8 +81,6 @@ void gps_manager_init(GPSManager *manager) {
     gps_connection_logged = false;
     gps_timeout_detected = false;
 
-
-
     nmea_parser_config_t config = NMEA_PARSER_CONFIG_DEFAULT();
     uint8_t current_rx_pin=0; 
     uint8_t custom_gps_pin=settings_get_gps_rx_pin(&G_Settings); //load custom pin from NVS settings
@@ -88,24 +96,12 @@ void gps_manager_init(GPSManager *manager) {
     glog("GPS RX: IO%d\n", current_rx_pin);
 
     esp_comm_manager_deinit();
-    #ifdef CONFIG_USE_TDISPLAY_S3
-    periph_module_disable(PERIPH_UART2_MODULE);
-    #else
-    periph_module_disable(PERIPH_UART1_MODULE);
-    #endif
 
     gpio_reset_pin(current_rx_pin);
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    #ifdef CONFIG_USE_TDISPLAY_S3
-    periph_module_enable(PERIPH_UART2_MODULE);
-    #else
-    periph_module_enable(PERIPH_UART1_MODULE);
-    #endif
-
     gpio_set_direction(current_rx_pin, GPIO_MODE_INPUT);
     gpio_set_pull_mode(current_rx_pin, GPIO_FLOATING);
-
 
     config.uart.rx_pin = current_rx_pin; //set uart pin for uart init
     #ifdef CONFIG_USE_TDISPLAY_S3
@@ -131,10 +127,49 @@ void gps_manager_init(GPSManager *manager) {
     nmea_parser_add_handler(nmea_hdl, gps_event_handler, NULL);
     manager->isinitilized = true;
     status_display_show_status("GPS Initialized");
-    BaseType_t task_created = xTaskCreate(check_gps_connection_task, "gps_check", 3072, NULL, 1, &gps_check_task_handle);
-    if (task_created != pdPASS) {
-        ESP_LOGW(GPS_TAG, "Failed to create gps_check task");
+
+    const uint32_t gps_check_stack_words = 4096;
+    if (g_gps_check_task_res.stack_words != gps_check_stack_words || g_gps_check_task_res.stack == NULL ||
+        g_gps_check_task_res.tcb == NULL) {
+        if (g_gps_check_task_res.stack) {
+            heap_caps_free(g_gps_check_task_res.stack);
+            g_gps_check_task_res.stack = NULL;
+        }
+        if (g_gps_check_task_res.tcb) {
+            heap_caps_free(g_gps_check_task_res.tcb);
+            g_gps_check_task_res.tcb = NULL;
+        }
+        g_gps_check_task_res.stack_words = gps_check_stack_words;
+
+        g_gps_check_task_res.stack = (StackType_t *)heap_caps_malloc(
+            gps_check_stack_words * sizeof(StackType_t),
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!g_gps_check_task_res.stack) {
+            g_gps_check_task_res.stack = (StackType_t *)heap_caps_malloc(
+                gps_check_stack_words * sizeof(StackType_t),
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+        g_gps_check_task_res.tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+
+    if (g_gps_check_task_res.stack && g_gps_check_task_res.tcb) {
+        gps_check_task_handle = xTaskCreateStatic(check_gps_connection_task,
+                                                  "gps_check",
+                                                  gps_check_stack_words,
+                                                  NULL,
+                                                  1,
+                                                  g_gps_check_task_res.stack,
+                                                  g_gps_check_task_res.tcb);
+    } else {
         gps_check_task_handle = NULL;
+    }
+
+    if (gps_check_task_handle == NULL) {
+        ESP_LOGW(GPS_TAG,
+                 "Failed to create gps_check task (stack_words=%u free_internal=%u free_heap=%u)",
+                 (unsigned)gps_check_stack_words,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
         status_display_show_status("GPS Task Fail");
         // proceed without the connection-check task; parser remains initialized
     }
@@ -161,7 +196,7 @@ static void check_gps_connection_task(void *pvParameters) {
         if (!gps_connection_logged &&
             (gps->tim.hour != 0 || gps->tim.minute != 0 || gps->tim.second != 0 ||
              gps->latitude != 0 || gps->longitude != 0)) {
-            glog("GPS Module Connected\nReceiving Data\n");
+            glog("GPS Connected\nReceiving data, please wait...\n");
             gps_connection_logged = true;
             gps_check_task_handle = NULL;
             vTaskDelete(NULL);
@@ -186,6 +221,16 @@ void gps_manager_deinit(GPSManager *manager) {
             gps_check_task_handle = NULL;
         }
 
+        if (g_gps_check_task_res.stack) {
+            heap_caps_free(g_gps_check_task_res.stack);
+            g_gps_check_task_res.stack = NULL;
+        }
+        if (g_gps_check_task_res.tcb) {
+            heap_caps_free(g_gps_check_task_res.tcb);
+            g_gps_check_task_res.tcb = NULL;
+        }
+        g_gps_check_task_res.stack_words = 0;
+
         if (nmea_hdl) {
             nmea_parser_remove_handler(nmea_hdl, gps_event_handler);
             nmea_parser_deinit(nmea_hdl);
@@ -202,8 +247,8 @@ void gps_manager_deinit(GPSManager *manager) {
     }
 }
 
-#define GPS_STATUS_MESSAGE "GPS: %s\nSats: %u/%u\nSpeed: %.1f km/h\nAccuracy: %s\n"
-#define GPS_UPDATE_INTERVAL 4 // Show status every 4th update (25% chance)
+#define GPS_STATUS_MESSAGE "GPS: %s\nAPs: %lu\nSats: %u/%u\nSpeed: %.1f km/h\nAccuracy: %s\n"
+#define GPS_STATUS_PERIOD_MS 5000
 
 #define MIN_SPEED_THRESHOLD 0.1   // Minimum 0.1 m/s (~0.36 km/h)
 #define MAX_SPEED_THRESHOLD 340.0 // Maximum 340 m/s (~1224 km/h)
@@ -214,8 +259,9 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     }
     gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
     if (!data->ble_data.is_ble_device) {
-        if (!gps->valid || data->ssid[0] == '\0' || strlen(data->ssid) <= 2) {
-            return ESP_ERR_INVALID_ARG;
+        if (!gps->valid || gps->fix < GPS_FIX_GPS || gps->fix_mode < GPS_MODE_2D ||
+            gps->sats_in_use < 3 || gps->sats_in_use > GPS_MAX_SATELLITES_IN_USE) {
+            return ESP_ERR_INVALID_STATE;
         }
     } else {
         // For BLE entries, only check GPS validity
@@ -229,7 +275,6 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (!is_valid_date(&gps->date)) {
         if (!has_valid_cached_date) {
             ESP_LOGW(GPS_TAG, "No valid GPS date available");
-            return ESP_ERR_INVALID_STATE;
         }
 
         // Only log warning for good GPS fixes
@@ -324,7 +369,10 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     }
 
     // Update display periodically
-    if (rand() % GPS_UPDATE_INTERVAL == 0) {
+    static TickType_t last_status_tick = 0;
+    TickType_t now = xTaskGetTickCount();
+    if (last_status_tick == 0 || (now - last_status_tick) >= pdMS_TO_TICKS(GPS_STATUS_PERIOD_MS)) {
+        last_status_tick = now;
         // Determine GPS fix status
         const char *fix_status = (!gps->valid || gps->fix == GPS_FIX_INVALID) ? "No Fix"
                                  : (gps->fix_mode == GPS_MODE_2D)             ? "Basic"
@@ -355,8 +403,12 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
 
         // Add newline before status update for better readability
         glog("\n");
-        glog(GPS_STATUS_MESSAGE, fix_status, data->gps_quality.satellites_used,
-             GPS_MAX_SATELLITES_IN_USE, data->gps_quality.speed * 3.6, // Convert m/s to km/h
+        glog(GPS_STATUS_MESSAGE,
+             fix_status,
+             (unsigned long)csv_get_unique_wifi_ap_count(),
+             data->gps_quality.satellites_used,
+             GPS_MAX_SATELLITES_IN_USE,
+             speed_kmh,
              get_gps_quality_string(data));
     }
 

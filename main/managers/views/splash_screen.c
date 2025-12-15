@@ -3,6 +3,7 @@
 #include "managers/views/setup_wizard_screen.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/settings_manager.h"
+#include "core/ghostesp_version.h"
 #include "gui/screen_layout.h"
 #include "gui/lvgl_safe.h"
 #include <stdio.h>
@@ -39,7 +40,7 @@ void splash_create(void) {
   lv_obj_set_style_text_color(label1, lv_color_hex(0xFFFFFF), 0);
   lv_obj_align_to(label1, img, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
   lv_obj_t *label2 = lv_label_create(splash_screen);
-  lv_label_set_text(label2, "v1.9dev");
+  lv_label_set_text(label2, GHOSTESP_VERSION);
   lv_obj_set_style_text_color(label2, lv_color_hex(0xFFFFFF), 0);
   lv_obj_align_to(label2, label1, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
 
