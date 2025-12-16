@@ -125,7 +125,7 @@ static bool webui_request_allowed(httpd_req_t *req) {
 deny:
     httpd_resp_set_status(req, "403 Forbidden");
     httpd_resp_set_type(req, "text/plain");
-    httpd_resp_sendstr(req, "WebUI access restricted to the onboard AP");
+    httpd_resp_sendstr(req, "Unauthorized");
     return false;
 }
 
