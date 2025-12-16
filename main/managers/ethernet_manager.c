@@ -53,6 +53,11 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "Ethernet Link Up");
         ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
                  mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+
+        ethernet_link_info_t link_info;
+        if (ethernet_manager_get_link_info(&link_info) == ESP_OK && link_info.link_up) {
+            ESP_LOGI(TAG, "Ethernet Link: %dMbps %s", link_info.speed_mbps, link_info.full_duplex ? "Full Duplex" : "Half Duplex");
+        }
         break;
     case ETHERNET_EVENT_DISCONNECTED:
         s_eth_connected = false;
@@ -67,6 +72,50 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
     default:
         break;
     }
+}
+
+static esp_err_t read_w5500_phycfgr(esp_eth_handle_t handle, uint32_t *phycfgr)
+{
+    if (handle == NULL || phycfgr == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_eth_phy_reg_rw_data_t reg;
+    reg.reg_addr = 0x002E0000;
+    reg.reg_value_p = phycfgr;
+    return esp_eth_ioctl(handle, ETH_CMD_READ_PHY_REG, &reg);
+}
+
+esp_err_t ethernet_manager_get_link_info(ethernet_link_info_t *info)
+{
+    if (info == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    info->link_up = false;
+    info->speed_mbps = 0;
+    info->full_duplex = false;
+
+    if (!s_eth_initialized || s_eth_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    uint32_t phycfgr = 0;
+    esp_err_t ret = read_w5500_phycfgr(s_eth_handle, &phycfgr);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    info->link_up = (phycfgr & 0x01) != 0;
+    if (!info->link_up) {
+        info->speed_mbps = 0;
+        info->full_duplex = false;
+        return ESP_OK;
+    }
+
+    info->speed_mbps = (phycfgr & 0x02) ? 100 : 10;
+    info->full_duplex = (phycfgr & 0x04) != 0;
+    return ESP_OK;
 }
 
 // Event handler for IP events
@@ -336,7 +385,7 @@ esp_err_t ethernet_manager_init(void)
         s_eth_mac = NULL;
         // Don't free SPI bus if it was already initialized
         if (s_spi_bus_initialized_by_us) {
-            spi_bus_free(s_spi_host);
+            spi_bus_free(spi_host);
         }
         return ESP_FAIL;
     }
@@ -355,7 +404,7 @@ esp_err_t ethernet_manager_init(void)
         s_eth_mac->del(s_eth_mac);
         s_eth_mac = NULL;
         if (s_spi_bus_initialized_by_us) {
-            spi_bus_free(s_spi_host);
+            spi_bus_free(spi_host);
         }
         return ESP_FAIL;
     }
@@ -363,14 +412,11 @@ esp_err_t ethernet_manager_init(void)
     ESP_LOGI(TAG, "Ethernet driver attached to netif");
 
     // Register event handlers
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
-    ESP_LOGI(TAG, "Ethernet event handlers registered");
-
-    // Start Ethernet driver
-    ret = esp_eth_start(s_eth_handle);
+    ret = esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Ethernet driver start failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to register Ethernet event handler: %s", esp_err_to_name(ret));
+        esp_eth_del_netif_glue(s_eth_netif_glue);
+        s_eth_netif_glue = NULL;
         esp_netif_destroy(s_eth_netif);
         s_eth_netif = NULL;
         esp_eth_driver_uninstall(s_eth_handle);
@@ -379,7 +425,59 @@ esp_err_t ethernet_manager_init(void)
         s_eth_phy = NULL;
         s_eth_mac->del(s_eth_mac);
         s_eth_mac = NULL;
-        // Don't free SPI bus if it was already initialized
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(spi_host);
+        }
+        return ret;
+    }
+
+    ret = esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register IP event handler: %s", esp_err_to_name(ret));
+        esp_event_handler_unregister(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler);
+        esp_eth_del_netif_glue(s_eth_netif_glue);
+        s_eth_netif_glue = NULL;
+        esp_netif_destroy(s_eth_netif);
+        s_eth_netif = NULL;
+        esp_eth_driver_uninstall(s_eth_handle);
+        s_eth_handle = NULL;
+        s_eth_phy->del(s_eth_phy);
+        s_eth_phy = NULL;
+        s_eth_mac->del(s_eth_mac);
+        s_eth_mac = NULL;
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(spi_host);
+        }
+        return ret;
+    }
+    ESP_LOGI(TAG, "Ethernet event handlers registered");
+
+    // Start Ethernet driver
+    ret = esp_eth_start(s_eth_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Ethernet driver start failed: %s", esp_err_to_name(ret));
+        esp_event_handler_unregister(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler);
+        esp_event_handler_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler);
+        if (s_eth_netif_glue != NULL) {
+            esp_eth_del_netif_glue(s_eth_netif_glue);
+            s_eth_netif_glue = NULL;
+        }
+        if (s_eth_netif != NULL) {
+            esp_netif_destroy(s_eth_netif);
+            s_eth_netif = NULL;
+        }
+        if (s_eth_handle != NULL) {
+            esp_eth_driver_uninstall(s_eth_handle);
+            s_eth_handle = NULL;
+        }
+        if (s_eth_phy != NULL) {
+            s_eth_phy->del(s_eth_phy);
+            s_eth_phy = NULL;
+        }
+        if (s_eth_mac != NULL) {
+            s_eth_mac->del(s_eth_mac);
+            s_eth_mac = NULL;
+        }
         if (s_spi_bus_initialized_by_us) {
             spi_bus_free(spi_host);
         }
@@ -395,37 +493,18 @@ esp_err_t ethernet_manager_init(void)
 
 bool ethernet_manager_is_connected(void)
 {
-    // If not initialized, return false
-    if (!s_eth_initialized || s_eth_handle == NULL) {
-        return false;
-    }
-    
-    // Try to read the PHY register to get current link status
-    // For W5500, PHYCFGR register address is 0x002E0000 (W5500_MAKE_MAP(0x002E, 0x00))
-    // Bit 0 of the register indicates link status
-    esp_eth_phy_reg_rw_data_t reg;
-    uint32_t reg_val = 0;
-    reg.reg_addr = 0x002E0000; // W5500_REG_PHYCFGR
-    reg.reg_value_p = &reg_val;
-    
-    esp_err_t ret = esp_eth_ioctl(s_eth_handle, ETH_CMD_READ_PHY_REG, &reg);
+    ethernet_link_info_t info;
+    esp_err_t ret = ethernet_manager_get_link_info(&info);
     if (ret == ESP_OK) {
-        // Check bit 0 for link status (1 = link up, 0 = link down)
-        bool link_up = (reg_val & 0x01) != 0;
-        
-        // Update cached status if it changed
-        if (link_up != s_eth_connected) {
-            s_eth_connected = link_up;
-            ESP_LOGD(TAG, "Link status changed: %s", link_up ? "UP" : "DOWN");
+        if (info.link_up != s_eth_connected) {
+            s_eth_connected = info.link_up;
+            ESP_LOGD(TAG, "Link status changed: %s", info.link_up ? "UP" : "DOWN");
         }
-        
-        return link_up;
-    } else {
-        // If reading register fails, fall back to cached status
-        ESP_LOGD(TAG, "Failed to read PHY register, using cached status: %s", 
-                 s_eth_connected ? "UP" : "DOWN");
-        return s_eth_connected;
+        return info.link_up;
     }
+
+    ESP_LOGD(TAG, "Failed to read PHY register, using cached status: %s", s_eth_connected ? "UP" : "DOWN");
+    return s_eth_connected;
 }
 
 esp_err_t ethernet_manager_get_ip_info(esp_netif_ip_info_t *ip_info)
@@ -576,6 +655,12 @@ esp_err_t ethernet_manager_get_ip_info(esp_netif_ip_info_t *ip_info)
 esp_netif_t *ethernet_manager_get_netif(void)
 {
     return NULL;
+}
+
+esp_err_t ethernet_manager_get_link_info(ethernet_link_info_t *info)
+{
+    (void)info;
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t ethernet_manager_get_dhcp_server_ip(ip4_addr_t *server_ip)

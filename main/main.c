@@ -20,7 +20,7 @@
 #include "managers/usb_keyboard_manager.h"
 
 #ifdef CONFIG_WITH_ETHERNET
-// TODO
+#include "managers/ethernet_manager.h"
 #endif
 
 #ifdef CONFIG_WITH_SCREEN
@@ -74,6 +74,15 @@ void app_main(void) {
 
     MEASURE_INIT_RAM("Serial Manager", serial_manager_init());
     MEASURE_INIT_RAM("Wifi Manager", wifi_manager_init());
+#ifdef CONFIG_WITH_ETHERNET
+    {
+        esp_err_t eth_ret;
+        MEASURE_INIT_RAM("Ethernet Manager", eth_ret = ethernet_manager_init());
+        if (eth_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Ethernet init failed: %s", esp_err_to_name(eth_ret));
+        }
+    }
+#endif
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     // MEASURE_INIT_RAM("BLE Manager", ble_init());
 #endif

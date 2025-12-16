@@ -51,6 +51,33 @@ typedef enum {
 
 static int current_settings_category = -1;
 
+#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+ #define SETTINGS_ITEMS_COUNT_BACKLIGHT 1
+#else
+ #define SETTINGS_ITEMS_COUNT_BACKLIGHT 0
+#endif
+
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+ #define SETTINGS_ITEMS_COUNT_STATUS 2
+#else
+ #define SETTINGS_ITEMS_COUNT_STATUS 0
+#endif
+
+#ifdef CONFIG_USE_ENCODER
+ #define SETTINGS_ITEMS_COUNT_ENCODER 1
+#else
+ #define SETTINGS_ITEMS_COUNT_ENCODER 0
+#endif
+
+#if CONFIG_IDF_TARGET_ESP32S3
+ #define SETTINGS_ITEMS_COUNT_USB_HOST 1
+#else
+ #define SETTINGS_ITEMS_COUNT_USB_HOST 0
+#endif
+
+#define SETTINGS_ITEMS_BASE_COUNT 14
+#define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
+
 // Indices of settings for each category in the settings menu.
 // Each sub-array lists the indices of settings_items[] that belong to a category.
 // The last element in each sub-array must be -1 to mark the end.
@@ -90,6 +117,7 @@ static int settings_category_indices[][20] = {
         14,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #else
         {1, 2, 12, 4, 5, 10, 11,
@@ -122,6 +150,7 @@ static int settings_category_indices[][20] = {
         13,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #endif
 };
@@ -309,6 +338,7 @@ static const char *dual_comm_tools_options[] = {
     "TV Cast (Dial Connect)",
     "Power Printer",
     "Scan SSH",
+    "Toggle WebUI AP Only",
     NULL
 };
 
@@ -388,6 +418,7 @@ enum {
     SETTING_TERMINAL_COLOR,
     SETTING_INVERT_COLORS,
     SETTING_WEB_AUTH,
+    SETTING_WEBUI_AP_ONLY,
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
     SETTING_MAX_BRIGHTNESS,
@@ -440,6 +471,7 @@ static SettingsItem settings_items[] = {
     {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
     #endif
     {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0},
+    {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1},
 };
 
 static bool is_settings_mode = false;
@@ -944,6 +976,9 @@ static void load_current_settings_values(void) {
             case SETTING_WEB_AUTH:
                 settings_items[i].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_WEBUI_AP_ONLY:
+                settings_items[i].current_value = settings_get_webui_restrict_to_ap(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_AP_ENABLED:
                 settings_items[i].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
                 break;
@@ -1032,6 +1067,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_WEB_AUTH:
             settings_set_web_auth_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_WEBUI_AP_ONLY:
+            settings_set_webui_restrict_to_ap(&G_Settings, new_value == 1);
             break;
         case SETTING_AP_ENABLED:
             settings_set_ap_enabled(&G_Settings, new_value == 1);
@@ -1914,6 +1952,12 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend scanssh");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Toggle WebUI AP Only") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend webuiap");
             view_switched = true;
         } else if (strcmp(Selected_Option, "Start AirTag Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -3001,6 +3045,7 @@ static void rebuild_current_menu(void) {
                 case DUALCOMM_MENU_TOOLS:    options = dual_comm_tools_options; break;
                 case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
                 case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
+                case DUALCOMM_MENU_ETHERNET: options = dual_comm_ethernet_options; break;
                 case DUALCOMM_MENU_KEYBOARD: options = dual_comm_keyboard_options; break;
             }
             break;

@@ -109,6 +109,14 @@ static StaticTask_t* gps_task_tcb = NULL;
 
 // Forward declarations for command handlers
 void cmd_wifi_scan_stop(int argc, char **argv);
+void handle_listportals(int argc, char **argv);
+void handle_evilportal(int argc, char **argv);
+void handle_wifi_disconnect(int argc, char **argv);
+void handle_set_rgb_mode_cmd(int argc, char **argv);
+void handle_karma_cmd(int argc, char **argv);
+void handle_set_neopixel_brightness_cmd(int argc, char **argv);
+void handle_get_neopixel_brightness_cmd(int argc, char **argv);
+void handle_webuiap_cmd(int argc, char **argv);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_airtags_cmd(int argc, char **argv);
 void handle_select_airtag(int argc, char **argv);
@@ -1665,6 +1673,19 @@ void handle_eth_info_cmd(int argc, char **argv) {
     }
     
     glog("Status: UP\n");
+
+    ethernet_link_info_t link_info;
+    if (ethernet_manager_get_link_info(&link_info) == ESP_OK && link_info.link_up) {
+        glog("Link: %dMbps %s\n", link_info.speed_mbps, link_info.full_duplex ? "Full Duplex" : "Half Duplex");
+    }
+
+    esp_netif_t *eth_netif = ethernet_manager_get_netif();
+    if (eth_netif != NULL) {
+        uint8_t mac[6];
+        if (esp_netif_get_mac(eth_netif, mac) == ESP_OK) {
+            glog("MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        }
+    }
     
     // Get and display IP info
     esp_netif_ip_info_t ip_info;
@@ -1685,12 +1706,11 @@ void handle_eth_info_cmd(int argc, char **argv) {
             glog("Gateway: %s\n", gw_str);
             
             // Get and display DNS server information and DHCP server
-            esp_netif_t *netif = ethernet_manager_get_netif();
-            if (netif != NULL) {
+            if (eth_netif != NULL) {
                 esp_netif_dns_info_t dns_main, dns_backup, dns_fallback;
                 char dns_str[16];
                 
-                if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK) {
+                if (esp_netif_get_dns_info(eth_netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK) {
                     if (dns_main.ip.type == ESP_IPADDR_TYPE_V4 && dns_main.ip.u_addr.ip4.addr != 0) {
                         ip4addr_ntoa_r(&dns_main.ip.u_addr.ip4, dns_str, sizeof(dns_str));
                         glog("DNS Main: %s\n", dns_str);
@@ -1699,7 +1719,7 @@ void handle_eth_info_cmd(int argc, char **argv) {
                     }
                 }
                 
-                if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
+                if (esp_netif_get_dns_info(eth_netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
                     if (dns_backup.ip.type == ESP_IPADDR_TYPE_V4 && dns_backup.ip.u_addr.ip4.addr != 0) {
                         ip4addr_ntoa_r(&dns_backup.ip.u_addr.ip4, dns_str, sizeof(dns_str));
                         glog("DNS Backup: %s\n", dns_str);
@@ -1708,7 +1728,7 @@ void handle_eth_info_cmd(int argc, char **argv) {
                     }
                 }
                 
-                if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
+                if (esp_netif_get_dns_info(eth_netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
                     if (dns_fallback.ip.type == ESP_IPADDR_TYPE_V4 && dns_fallback.ip.u_addr.ip4.addr != 0) {
                         ip4addr_ntoa_r(&dns_fallback.ip.u_addr.ip4, dns_str, sizeof(dns_str));
                         glog("DNS Fallback: %s\n", dns_str);
@@ -1980,10 +2000,12 @@ void handle_eth_ports_cmd(int argc, char **argv) {
             server_addr.sin_port = htons(port);
             int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
-            if (scan_result < 0 && errno == EINPROGRESS) {
+            bool connected = false;
+            if (scan_result == 0) {
+                connected = true;
+            } else if (scan_result < 0 && errno == EINPROGRESS) {
                 uint32_t elapsed = 0;
                 const uint32_t interval = 50;
-                bool connected = false;
                 while (elapsed < SCAN_TIMEOUT_MS && !g_eth_scan_cancel) {
                     struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
                     fd_set fdset;
@@ -1999,10 +2021,10 @@ void handle_eth_ports_cmd(int argc, char **argv) {
                     }
                     elapsed += interval;
                 }
-                if (connected) {
-                    open_ports++;
-                    glog("  %s:%lu - OPEN\n", target_ip, (unsigned long)port);
-                }
+            }
+            if (connected) {
+                open_ports++;
+                glog("  %s:%lu - OPEN\n", target_ip, (unsigned long)port);
             }
             close(sock);
             if (g_eth_scan_cancel) break;
@@ -2022,10 +2044,12 @@ void handle_eth_ports_cmd(int argc, char **argv) {
             server_addr.sin_port = htons(port);
             int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
-            if (scan_result < 0 && errno == EINPROGRESS) {
+            bool connected = false;
+            if (scan_result == 0) {
+                connected = true;
+            } else if (scan_result < 0 && errno == EINPROGRESS) {
                 uint32_t elapsed = 0;
                 const uint32_t interval = 50;
-                bool connected = false;
                 while (elapsed < SCAN_TIMEOUT_MS && !g_eth_scan_cancel) {
                     struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
                     fd_set fdset;
@@ -2041,10 +2065,10 @@ void handle_eth_ports_cmd(int argc, char **argv) {
                     }
                     elapsed += interval;
                 }
-                if (connected) {
-                    open_ports++;
-                    glog("  %s:%d - OPEN\n", target_ip, port);
-                }
+            }
+            if (connected) {
+                open_ports++;
+                glog("  %s:%d - OPEN\n", target_ip, port);
             }
             close(sock);
             if (g_eth_scan_cancel) break;
@@ -2519,9 +2543,6 @@ void handle_eth_config_cmd(int argc, char **argv) {
             return;
         }
 
-        // Stop DHCP first
-        esp_netif_dhcpc_stop(netif);
-
         esp_netif_ip_info_t ip_info;
         if (inet_aton(argv[2], &ip_info.ip) == 0 ||
             inet_aton(argv[3], &ip_info.netmask) == 0 ||
@@ -2548,6 +2569,12 @@ void handle_eth_config_cmd(int argc, char **argv) {
             glog("  Gateway: %s\n", gw_str);
         } else {
             glog("Failed to set static IP: %s\n", esp_err_to_name(ret));
+            esp_err_t restart_ret = esp_netif_dhcpc_start(netif);
+            if (restart_ret == ESP_OK) {
+                glog("DHCP client restarted to restore connectivity.\n");
+            } else {
+                glog("Failed to restart DHCP client: %s\n", esp_err_to_name(restart_ret));
+            }
         }
     } else if (strcmp(argv[1], "show") == 0) {
         esp_netif_ip_info_t ip_info;
@@ -3049,6 +3076,7 @@ void handle_eth_http_cmd(int argc, char **argv) {
                 mbedtls_ctr_drbg_free(&ctr_drbg);
                 mbedtls_entropy_free(&entropy);
                 mbedtls_net_free(&server_fd);
+                tls_initialized = false;
                 status_display_show_status("TLS Handshake Fail");
                 return;
             }
@@ -5914,15 +5942,40 @@ void handle_web_auth_cmd(int argc, char **argv) {
     }
 }
 
+void handle_webuiap_cmd(int argc, char **argv) {
+    bool enabled = settings_get_webui_restrict_to_ap(&G_Settings);
 
-void handle_listportals(int argc, char **argv);
-void handle_evilportal(int argc, char **argv);
-void handle_wifi_disconnect(int argc, char **argv);
-void handle_set_rgb_mode_cmd(int argc, char **argv);
-void handle_karma_cmd(int argc, char **argv);
-void handle_set_neopixel_brightness_cmd(int argc, char **argv);
-void handle_get_neopixel_brightness_cmd(int argc, char **argv);
+    if (argc == 1) {
+        enabled = !enabled;
+        settings_set_webui_restrict_to_ap(&G_Settings, enabled);
+        settings_save(&G_Settings);
+        glog("WebUI AP-only restriction %s.\n", enabled ? "enabled" : "disabled");
+        return;
+    }
 
+    if (argc == 2) {
+        if (strcmp(argv[1], "on") == 0) {
+            enabled = true;
+        } else if (strcmp(argv[1], "off") == 0) {
+            enabled = false;
+        } else if (strcmp(argv[1], "toggle") == 0) {
+            enabled = !enabled;
+        } else if (strcmp(argv[1], "status") == 0) {
+            glog("WebUI AP-only restriction is %s.\n", enabled ? "enabled" : "disabled");
+            return;
+        } else {
+            glog("Usage: webuiap [on|off|toggle|status]\n");
+            return;
+        }
+
+        settings_set_webui_restrict_to_ap(&G_Settings, enabled);
+        settings_save(&G_Settings);
+        glog("WebUI AP-only restriction %s.\n", enabled ? "enabled" : "disabled");
+        return;
+    }
+
+    glog("Usage: webuiap [on|off|toggle|status]\n");
+}
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -6090,6 +6143,7 @@ static void comm_command_callback(const char* command, const char* data, void* u
     
     simulateCommand(full_command);
 }
+
 void handle_ap_enable_cmd(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: apenable <on|off>\n");
@@ -6787,8 +6841,8 @@ static void ir_universal_send_task(void *arg) {
         if (!infrared_manager_read_list(path, &signals, &count)) {
             glog("IR: failed to read universal file %s\n", path);
         } else if (count == 0) {
-            glog("IR: no signals in universal file %s\n", path);
             infrared_manager_free_list(signals, count);
+            glog("IR: no signals in %s\n", path);
         } else {
             size_t sent = 0;
             glog("IR: universal sendall '%s' from %s (%zu signals)\n", button, path, count);
@@ -7529,6 +7583,7 @@ void register_commands() {
     register_command("setcountry", handle_setcountry);
 #endif
     register_command("webauth", handle_web_auth_cmd);
+    register_command("webuiap", handle_webuiap_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blespam", handle_ble_spam_cmd);
 #endif
