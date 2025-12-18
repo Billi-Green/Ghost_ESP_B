@@ -41,6 +41,7 @@
 - Added support for wired screen mirroring
 - Added USB HID keyboard host support on ESP32-S3 devices for controlling the UI and inputting text
 - Added IR Dazzler functionality to pulse IR at 38kHz 95% duty load
+- Added Ethernet support and docs - @tototo31
 - Added SD Card CLI for control via WebSerial File Browser
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
 - Added a first time boot setup wizard for display enabled configs
@@ -48,6 +49,7 @@
 - Add Docker support for HTML header generation with build script - @tototo31
 - Added a shared string for the firmware name and version number
 - Added Unique AP counter to wardriving summary
+- Added Ethernet Fingerprint scanning
 
 ### Changed
 

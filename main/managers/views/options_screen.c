@@ -51,6 +51,33 @@ typedef enum {
 
 static int current_settings_category = -1;
 
+#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+ #define SETTINGS_ITEMS_COUNT_BACKLIGHT 1
+#else
+ #define SETTINGS_ITEMS_COUNT_BACKLIGHT 0
+#endif
+
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+ #define SETTINGS_ITEMS_COUNT_STATUS 2
+#else
+ #define SETTINGS_ITEMS_COUNT_STATUS 0
+#endif
+
+#ifdef CONFIG_USE_ENCODER
+ #define SETTINGS_ITEMS_COUNT_ENCODER 1
+#else
+ #define SETTINGS_ITEMS_COUNT_ENCODER 0
+#endif
+
+#if CONFIG_IDF_TARGET_ESP32S3
+ #define SETTINGS_ITEMS_COUNT_USB_HOST 1
+#else
+ #define SETTINGS_ITEMS_COUNT_USB_HOST 0
+#endif
+
+#define SETTINGS_ITEMS_BASE_COUNT 14
+#define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
+
 // Indices of settings for each category in the settings menu.
 // Each sub-array lists the indices of settings_items[] that belong to a category.
 // The last element in each sub-array must be -1 to mark the end.
@@ -90,6 +117,7 @@ static int settings_category_indices[][20] = {
         14,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #else
         {1, 2, 12, 4, 5, 10, 11,
@@ -122,6 +150,7 @@ static int settings_category_indices[][20] = {
         13,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #endif
 };
@@ -215,6 +244,7 @@ typedef enum {
     DUALCOMM_MENU_TOOLS,
     DUALCOMM_MENU_BLE,
     DUALCOMM_MENU_GPS,
+    DUALCOMM_MENU_ETHERNET,
     DUALCOMM_MENU_KEYBOARD
 } DualCommMenuState;
 
@@ -230,6 +260,7 @@ static const char *dual_comm_main_options[] = {
     "Tools",
     "BLE",
     "GPS",
+    "Ethernet",
     "Keyboard",
     NULL
 };
@@ -307,6 +338,7 @@ static const char *dual_comm_tools_options[] = {
     "TV Cast (Dial Connect)",
     "Power Printer",
     "Scan SSH",
+    "Toggle WebUI AP Only",
     NULL
 };
 
@@ -333,6 +365,24 @@ static const char *dual_comm_ble_options[] = {
 static const char *dual_comm_gps_options[] = {
     "GPS Info",
     "BLE Wardriving",
+    NULL
+};
+
+static const char *dual_comm_ethernet_options[] = {
+    "Initialise",
+    "Deinitialise",
+    "Ethernet Info",
+    "Fingerprint Scan",
+    "ARP Scan",
+    "Port Scan Local",
+    "Port Scan All",
+    "Ping Scan",
+    "DNS Lookup",
+    "Traceroute",
+    "HTTP Request",
+    "Sync NTP Time",
+    "Network Stats",
+    "Show Config",
     NULL
 };
 
@@ -369,6 +419,7 @@ enum {
     SETTING_TERMINAL_COLOR,
     SETTING_INVERT_COLORS,
     SETTING_WEB_AUTH,
+    SETTING_WEBUI_AP_ONLY,
     SETTING_AP_ENABLED,
     SETTING_POWER_SAVE,
     SETTING_MAX_BRIGHTNESS,
@@ -421,6 +472,7 @@ static SettingsItem settings_items[] = {
     {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
     #endif
     {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0},
+    {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1},
 };
 
 static bool is_settings_mode = false;
@@ -616,6 +668,9 @@ static void dual_comm_connect_kb_cb(const char *text);
 static void dual_comm_send_kb_cb(const char *text);
 static void dual_comm_wifi_connect_kb_cb(const char *text);
 static void dual_comm_karma_custom_ssids_cb(const char *text);
+static void dual_comm_dns_lookup_kb_cb(const char *text);
+static void dual_comm_traceroute_kb_cb(const char *text);
+static void dual_comm_http_request_kb_cb(const char *text);
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 static void zigbee_capture_kb_cb(const char *text);
 #endif
@@ -804,6 +859,7 @@ void options_menu_create() {
             case DUALCOMM_MENU_TOOLS:    options = dual_comm_tools_options; break;
             case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
             case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
+            case DUALCOMM_MENU_ETHERNET: options = dual_comm_ethernet_options; break;
             case DUALCOMM_MENU_KEYBOARD: options = dual_comm_keyboard_options; break;
         }
         break;
@@ -921,6 +977,9 @@ static void load_current_settings_values(void) {
             case SETTING_WEB_AUTH:
                 settings_items[i].current_value = settings_get_web_auth_enabled(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_WEBUI_AP_ONLY:
+                settings_items[i].current_value = settings_get_webui_restrict_to_ap(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_AP_ENABLED:
                 settings_items[i].current_value = settings_get_ap_enabled(&G_Settings) ? 1 : 0;
                 break;
@@ -1009,6 +1068,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_WEB_AUTH:
             settings_set_web_auth_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_WEBUI_AP_ONLY:
+            settings_set_webui_restrict_to_ap(&G_Settings, new_value == 1);
             break;
         case SETTING_AP_ENABLED:
             settings_set_ap_enabled(&G_Settings, new_value == 1);
@@ -1619,6 +1681,11 @@ void option_event_cb(lv_event_t *e) {
                 rebuild_current_menu();
                 option_invoked = false;
                 return;
+            } else if (strcmp(Selected_Option, "Ethernet") == 0) {
+                current_dualcomm_menu_state = DUALCOMM_MENU_ETHERNET;
+                display_manager_switch_view(&options_menu_view);
+                option_invoked = false;
+                return;
             } else if (strcmp(Selected_Option, "Keyboard") == 0) {
                 current_dualcomm_menu_state = DUALCOMM_MENU_KEYBOARD;
                 rebuild_current_menu();
@@ -1887,6 +1954,12 @@ void option_event_cb(lv_event_t *e) {
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend scanssh");
             view_switched = true;
+        } else if (strcmp(Selected_Option, "Toggle WebUI AP Only") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend webuiap");
+            view_switched = true;
         } else if (strcmp(Selected_Option, "Start AirTag Scanner") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
             terminal_set_return_view(&options_menu_view);
@@ -2056,6 +2129,86 @@ void option_event_cb(lv_event_t *e) {
 #else
             error_popup_create("Device Does not Support Bluetooth...");
 #endif
+        } else if (strcmp(Selected_Option, "Initialise") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethup");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Deinitialise") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethdown");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Ethernet Info") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethinfo");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Fingerprint Scan") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethfp");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "ARP Scan") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend etharp");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Port Scan Local") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethports local");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Port Scan All") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethports local all");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Ping Scan") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethping");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "DNS Lookup") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_dns_lookup_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("Hostname (e.g. google.com)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Traceroute") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_traceroute_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("Hostname or IP (e.g. 8.8.8.8)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "HTTP Request") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_http_request_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("URL (e.g. http://example.com or https://www.google.com)");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Sync NTP Time") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethntp");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Network Stats") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethstats");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Show Config") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethconfig show");
         } else if (strcmp(Selected_Option, "USB Host On") == 0) {
             terminal_set_return_view(&options_menu_view);
             display_manager_switch_view(&terminal_view);
@@ -2899,6 +3052,7 @@ static void rebuild_current_menu(void) {
                 case DUALCOMM_MENU_TOOLS:    options = dual_comm_tools_options; break;
                 case DUALCOMM_MENU_BLE:      options = dual_comm_ble_options; break;
                 case DUALCOMM_MENU_GPS:      options = dual_comm_gps_options; break;
+                case DUALCOMM_MENU_ETHERNET: options = dual_comm_ethernet_options; break;
                 case DUALCOMM_MENU_KEYBOARD: options = dual_comm_keyboard_options; break;
             }
             break;
@@ -3082,6 +3236,54 @@ static void dual_comm_karma_custom_ssids_cb(const char *input) {
     snprintf(cmd, sizeof(cmd), "commsend karma start %s", input);
 
     terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_dns_lookup_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a hostname");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend ethdns %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_traceroute_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a hostname or IP address");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend ethtrace %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void dual_comm_http_request_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter a URL");
+        return;
+    }
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "commsend ethhttp %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
     display_manager_switch_view(&terminal_view);
     simulateCommand(cmd);
     keyboard_view_set_submit_callback(NULL);

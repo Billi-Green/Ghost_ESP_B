@@ -43,7 +43,7 @@ file(GLOB_RECURSE axs15231b_sources "${CMAKE_SOURCE_DIR}/components/axs15231b/*.
 list(APPEND app_sources ${axs15231b_sources} ${image_sources})
 
 
-set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp_timer io_manager usb)
+set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp_timer io_manager usb esp_eth)
 
 # Optionally add extra include directories
 set(extra_includes "")
@@ -86,6 +86,12 @@ if("${IDF_TARGET}" STREQUAL "esp32c5" OR "${IDF_TARGET}" STREQUAL "esp32c6")
     list(APPEND required_components ieee802154)
     # Add Zigbee manager source
     list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/zigbee_manager.c")
+endif()
+
+# Add Ethernet component when Ethernet is enabled
+if(CONFIG_WITH_ETHERNET)
+    list(APPEND required_components esp_eth)
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/ethernet_manager.c")
 endif()
 
 if(CONFIG_HAS_NFC)

@@ -618,9 +618,12 @@ static void scroll_terminal_down(void) {
 static void stop_all_operations(void) {
     terminal_active = false;
     is_stopping = true;
+    
+    if (terminal_dualcomm_only) {
+        simulateCommand("commsend stop");
+    }
     terminal_dualcomm_only = false;
 
-    // Send all stop commands
     simulateCommand("stop");
 
     vTaskDelay(pdMS_TO_TICKS(20));
