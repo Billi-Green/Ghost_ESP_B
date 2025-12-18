@@ -23,6 +23,9 @@
 #endif
 #ifdef CONFIG_WITH_ETHERNET
 #include "managers/ethernet_manager.h"
+#include "managers/ethernet/eth_fingerprint.h"
+#include "managers/ethernet/eth_utils.h"
+#include "managers/ethernet/eth_http.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
@@ -44,6 +47,7 @@
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/error.h"
+
 // Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
 void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #endif
@@ -1611,54 +1615,20 @@ void handle_eth_down_cmd(int argc, char **argv) {
 // Helper function to ensure Ethernet interface is initialized
 // Returns true if interface is ready, false otherwise
 static bool ensure_eth_interface_up(void) {
-    esp_netif_t *eth_netif = ethernet_manager_get_netif();
-    if (eth_netif == NULL) {
-        // Interface not initialized, bring it up automatically
-        glog("Ethernet interface not initialized. Bringing it up...\n");
-        esp_err_t ret = ethernet_manager_init();
-        if (ret != ESP_OK) {
-            glog("Failed to initialize Ethernet: %s\n", esp_err_to_name(ret));
-            return false;
-        }
-        glog("Ethernet interface initialized. Waiting for link and DHCP...\n");
-        
-        // Wait for link to establish
-        int link_wait_count = 0;
-        while (!ethernet_manager_is_connected() && link_wait_count < 50) {
-            vTaskDelay(pdMS_TO_TICKS(200));
-            link_wait_count++;
-        }
-        
-        if (!ethernet_manager_is_connected()) {
-            glog("Ethernet link not established after 10 seconds\n");
-            return false;
-        }
-        
-        // Wait for DHCP to assign IP address
-        esp_netif_ip_info_t ip_info;
-        int dhcp_wait_count = 0;
-        const int MAX_DHCP_WAIT = 75; // 15 seconds total (75 * 200ms)
-        
-        while (dhcp_wait_count < MAX_DHCP_WAIT) {
-            if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK && ip_info.ip.addr != 0) {
-                char ip_str[16];
-                ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
-                glog("Ethernet ready with IP address: %s\n", ip_str);
-                return true;
-            }
-            // Show progress every 2.5 seconds
-            if (dhcp_wait_count > 0 && dhcp_wait_count % 12 == 0) {
-                glog("Waiting for DHCP... (%d seconds)\n", dhcp_wait_count / 5);
-            }
-            vTaskDelay(pdMS_TO_TICKS(200));
-            dhcp_wait_count++;
-        }
-        
-        // If we get here, DHCP hasn't assigned an IP yet
-        glog("Warning: DHCP has not assigned an IP address yet (waited 15 seconds)\n");
-        glog("The interface is up but may not be fully ready. Continuing anyway...\n");
+    return eth_ensure_interface_up();
+}
+
+void handle_eth_fingerprint_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected\n");
+        return;
     }
-    return true;
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        glog("No IP address assigned\n");
+        return;
+    }
+    eth_fingerprint_run_scan();
 }
 
 void handle_eth_info_cmd(int argc, char **argv) {
@@ -1962,7 +1932,7 @@ void handle_eth_ports_cmd(int argc, char **argv) {
 
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
-    if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr.s_addr) != 1) {
+    if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr) != 1) {
         glog("Invalid IP address: %s\n", target_ip);
         return;
     }
@@ -1972,7 +1942,6 @@ void handle_eth_ports_cmd(int argc, char **argv) {
         21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080
     };
     const size_t NUM_COMMON_PORTS = sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]);
-    const uint32_t SCAN_TIMEOUT_MS = 500;
 
     int ports_scanned = 0;
     int open_ports = 0;
@@ -2006,7 +1975,7 @@ void handle_eth_ports_cmd(int argc, char **argv) {
             } else if (scan_result < 0 && errno == EINPROGRESS) {
                 uint32_t elapsed = 0;
                 const uint32_t interval = 50;
-                while (elapsed < SCAN_TIMEOUT_MS && !g_eth_scan_cancel) {
+                while (elapsed < 500 && !g_eth_scan_cancel) {
                     struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
                     fd_set fdset;
                     FD_ZERO(&fdset);
@@ -2050,11 +2019,12 @@ void handle_eth_ports_cmd(int argc, char **argv) {
             } else if (scan_result < 0 && errno == EINPROGRESS) {
                 uint32_t elapsed = 0;
                 const uint32_t interval = 50;
-                while (elapsed < SCAN_TIMEOUT_MS && !g_eth_scan_cancel) {
+                while (elapsed < 500 && !g_eth_scan_cancel) {
                     struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
                     fd_set fdset;
                     FD_ZERO(&fdset);
                     FD_SET(sock, &fdset);
+
                     if (select(sock + 1, NULL, &fdset, NULL, &tv) > 0) {
                         int error = 0;
                         socklen_t len = sizeof(error);
@@ -2092,156 +2062,92 @@ void handle_eth_ports_cmd(int argc, char **argv) {
     glog("========================\n");
 }
 
-// ICMP packet structure for ping (local definition for Ethernet ping)
-typedef struct {
-    uint8_t type;
-    uint8_t code;
-    uint16_t checksum;
-    uint16_t id;
-    uint16_t seqno;
-} eth_icmp_packet_t;
-
-// Calculate ICMP checksum
-static uint16_t calculate_icmp_checksum(uint16_t *buf, int len) {
-    uint32_t sum = 0;
-    while (len > 1) {
-        sum += *buf++;
-        len -= 2;
-    }
-    if (len > 0) {
-        sum += *(uint8_t *)buf;
-    }
-    while (sum >> 16) {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-    return (uint16_t)(~sum);
-}
-
-// Check if a host responds to ping
-static bool ping_host(const char *ip_addr, uint32_t timeout_ms) {
-    struct sockaddr_in addr;
-    int sock;
-    uint8_t buf[sizeof(eth_icmp_packet_t)];
-
-    sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (sock < 0) {
-        return false;
-    }
-
-    eth_icmp_packet_t *icmp = (eth_icmp_packet_t *)buf;
-    icmp->type = 8;
-    icmp->code = 0;
-    icmp->checksum = 0;
-    icmp->id = 0xAFAF;
-    icmp->seqno = htons(1);
-    
-    uint16_t aligned_buf[(sizeof(eth_icmp_packet_t) + 1) / 2];
-    memcpy(aligned_buf, icmp, sizeof(eth_icmp_packet_t));
-    icmp->checksum = calculate_icmp_checksum(aligned_buf, sizeof(eth_icmp_packet_t));
-
-    addr.sin_family = AF_INET;
-    if (inet_pton(AF_INET, ip_addr, &addr.sin_addr.s_addr) != 1) {
-        close(sock);
-        return false;
-    }
-
-    sendto(sock, buf, sizeof(eth_icmp_packet_t), 0, (struct sockaddr *)&addr, sizeof(addr));
-
-    uint32_t elapsed = 0;
-    const uint32_t check_interval = 50;
-    while (elapsed < timeout_ms && !g_eth_scan_cancel) {
-        struct timeval tv = { .tv_sec = 0, .tv_usec = check_interval * 1000 };
-        fd_set readset;
-        FD_ZERO(&readset);
-        FD_SET(sock, &readset);
-        if (select(sock + 1, &readset, NULL, NULL, &tv) > 0) {
-            close(sock);
-            return true;
-        }
-        elapsed += check_interval;
-    }
-
-    close(sock);
-    return false;
-}
-
 void handle_eth_ping_cmd(int argc, char **argv) {
-    // Ensure Ethernet interface is initialized
     if (!ensure_eth_interface_up()) {
         return;
     }
 
-    // Check if Ethernet is connected
     if (!ethernet_manager_is_connected()) {
         glog("Ethernet is not connected. Please connect Ethernet first.\n");
         return;
     }
 
-    // Get Ethernet IP info to determine subnet
     esp_netif_ip_info_t ip_info;
-    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK) {
-        glog("Failed to get Ethernet IP information\n");
-        return;
-    }
-
-    if (ip_info.ip.addr == 0) {
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK || ip_info.ip.addr == 0) {
         glog("Ethernet IP address not assigned yet. Please wait for DHCP.\n");
         return;
     }
 
-    // Calculate subnet prefix (e.g., "192.168.1.")
-    char subnet_prefix[16];
-    uint32_t ip = ip_info.ip.addr;
-    uint32_t netmask = ip_info.netmask.addr;
-    uint32_t network = ip & netmask;
-    
-    snprintf(subnet_prefix, sizeof(subnet_prefix), "%d.%d.%d.",
-             (int)((network >> 0) & 0xFF),
-             (int)((network >> 8) & 0xFF),
-             (int)((network >> 16) & 0xFF));
+    const uint32_t ip_host = ntohl(ip_info.ip.addr);
+    const uint32_t netmask_host = ntohl(ip_info.netmask.addr);
+    const uint32_t network_host = ip_host & netmask_host;
+    const uint32_t base_host = network_host & 0xFFFFFF00;
+
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sock < 0) {
+        glog("Failed to create raw socket: %d\n", errno);
+        return;
+    }
+
+    struct timeval timeout = { .tv_sec = 0, .tv_usec = 200000 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    typedef struct {
+        uint8_t type;
+        uint8_t code;
+        uint16_t checksum;
+        uint16_t id;
+        uint16_t seq;
+    } icmp_hdr_t;
 
     g_eth_scan_cancel = false;
-    glog("Starting ping scan on Ethernet network %s0/24\n", subnet_prefix);
-    glog("Scanning network using ICMP ping...\n");
+    glog("Starting ICMP ping scan on local /24...\n");
 
-    const int START_HOST = 1;
-    const int END_HOST = 254;
-    const uint32_t PING_TIMEOUT_MS = 300; // Reduced timeout since we're pinging directly
-    int num_found = 0;
+    int alive = 0;
+    for (int host = 1; host <= 254 && !g_eth_scan_cancel; host++) {
+        const uint32_t target_host = base_host | (uint32_t)host;
+        if (target_host == ip_host) continue;
 
-    glog("Pinging hosts directly (network stack will handle ARP automatically)...\n");
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(target_host);
 
-    // Ping all hosts directly - the network stack will handle ARP resolution automatically
-    // and cache the results, so subsequent pings to the same subnet will be faster
-    for (int host = START_HOST; host <= END_HOST && !g_eth_scan_cancel; host++) {
-        char current_ip[26];
-        snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
-        
-        // Send ping directly - ARP will be handled automatically by the network stack
-        if (ping_host(current_ip, PING_TIMEOUT_MS)) {
-            num_found++;
-            glog("  %s - ALIVE\n", current_ip);
+        icmp_hdr_t icmp = {0};
+        icmp.type = 8;
+        icmp.code = 0;
+        icmp.id = 0xBEEF;
+        icmp.seq = htons((uint16_t)host);
+
+        uint16_t *buf = (uint16_t *)&icmp;
+        uint32_t sum = 0;
+        for (int i = 0; i < (int)(sizeof(icmp) / 2); i++) {
+            sum += buf[i];
         }
-        
-        // Small delay to avoid overwhelming the network stack
-        vTaskDelay(pdMS_TO_TICKS(5));
-        
-        // Progress update every 50 hosts
-        if (host % 50 == 0 || host == END_HOST) {
-            glog("Progress: Scanned %d/%d hosts, found %d alive hosts\n", 
-                 host - START_HOST + 1, END_HOST - START_HOST + 1, num_found);
+        sum = (sum >> 16) + (sum & 0xFFFF);
+        sum += (sum >> 16);
+        icmp.checksum = ~sum;
+
+        sendto(sock, &icmp, sizeof(icmp), 0, (struct sockaddr *)&addr, sizeof(addr));
+
+        uint8_t recv_buf[256];
+        struct sockaddr_in from;
+        socklen_t fromlen = sizeof(from);
+        int r = recvfrom(sock, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &fromlen);
+        if (r > 0 && from.sin_addr.s_addr == addr.sin_addr.s_addr) {
+            char ip_str[16];
+            ip4_addr_t ip4;
+            ip4.addr = from.sin_addr.s_addr;
+            ip4addr_ntoa_r(&ip4, ip_str, sizeof(ip_str));
+            glog("  %s - ALIVE\n", ip_str);
+            alive++;
         }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    glog("\n=== Ping Scan Summary ===\n");
-    glog("Network: %s0/24\n", subnet_prefix);
-    glog("Hosts scanned: %d (1-254)\n", END_HOST - START_HOST + 1);
-    glog("Alive hosts found: %d\n", num_found);
-    if (num_found > 0) {
-        glog("Success rate: %.1f%%\n", (float)num_found / (END_HOST - START_HOST + 1) * 100.0f);
-    }
-    glog("Timeout per ping: %lums\n", (unsigned long)PING_TIMEOUT_MS);
-    glog("========================\n");
+    glog("Ping scan complete. Alive hosts: %d\n", alive);
+    close(sock);
 }
 
 // ethdns - DNS lookup/resolution
@@ -2268,6 +2174,7 @@ void handle_eth_dns_cmd(int argc, char **argv) {
         }
 
         struct sockaddr_in sa;
+        sa.sin_family = AF_INET;
         if (inet_pton(AF_INET, argv[2], &sa.sin_addr) != 1) {
             glog("Invalid IP address: %s\n", argv[2]);
             return;
@@ -2348,7 +2255,7 @@ void handle_eth_trace_cmd(int argc, char **argv) {
     }
 
     // Resolve hostname if needed
-    struct sockaddr_in target_addr = {0};
+    struct sockaddr_in target_addr;
     target_addr.sin_family = AF_INET;
 
     if (inet_pton(AF_INET, target, &target_addr.sin_addr) != 1) {
@@ -2381,10 +2288,9 @@ void handle_eth_trace_cmd(int argc, char **argv) {
         }
 
         // Set timeout
-        struct timeval timeout = {.tv_sec = 3, .tv_usec = 0};
+        struct timeval timeout = { .tv_sec = 2, .tv_usec = 0 };
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
-        // Send ICMP echo request
         typedef struct {
             uint8_t type;
             uint8_t code;
@@ -2402,7 +2308,7 @@ void handle_eth_trace_cmd(int argc, char **argv) {
         // Calculate checksum
         uint16_t *buf = (uint16_t *)&icmp;
         uint32_t sum = 0;
-        for (int i = 0; i < sizeof(icmp) / 2; i++) {
+        for (int i = 0; i < (int)(sizeof(icmp) / 2); i++) {
             sum += buf[i];
         }
         sum = (sum >> 16) + (sum & 0xFFFF);
@@ -2418,7 +2324,7 @@ void handle_eth_trace_cmd(int argc, char **argv) {
         char recv_buf[1024];
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        ssize_t recv_len = recvfrom(sock, recv_buf, sizeof(recv_buf), 0, 
+        ssize_t recv_len = recvfrom(sock, recv_buf, sizeof(recv_buf) - 1, 0, 
                                      (struct sockaddr *)&from_addr, &from_len);
 
         gettimeofday(&end, NULL);
@@ -2445,7 +2351,6 @@ void handle_eth_trace_cmd(int argc, char **argv) {
     }
 }
 
-// ethstats - Network statistics
 void handle_eth_stats_cmd(int argc, char **argv) {
     if (!ethernet_manager_is_connected()) {
         glog("Ethernet is not connected. Please connect Ethernet first.\n");
@@ -2697,6 +2602,7 @@ void handle_eth_serv_cmd(int argc, char **argv) {
 
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
+
     if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr) != 1) {
         glog("Invalid IP address: %s\n", target_ip);
         return;
@@ -2713,9 +2619,9 @@ void handle_eth_serv_cmd(int argc, char **argv) {
         fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 
         server_addr.sin_port = htons(services[i].port);
-        int result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
-        if (result < 0 && errno == EINPROGRESS) {
+        if (scan_result < 0 && errno == EINPROGRESS) {
             struct timeval timeout = {.tv_sec = 2, .tv_usec = 0};
             fd_set fdset;
             FD_ZERO(&fdset);
@@ -2870,6 +2776,74 @@ void handle_eth_http_cmd(int argc, char **argv) {
 
     const char *url = argv[1];
     glog("Sending HTTP GET request to: %s\n", url);
+
+    if (strncmp(url, "https://", 8) != 0) {
+        char http_url[256];
+        const char *http_url_ptr = url;
+        if (strncmp(url, "http://", 7) != 0) {
+            int n = snprintf(http_url, sizeof(http_url), "http://%s", url);
+            if (n <= 0 || n >= (int)sizeof(http_url)) {
+                glog("URL too long\n");
+                status_display_show_status("HTTP Usage");
+                return;
+            }
+            http_url_ptr = http_url;
+        }
+
+        char *resp = NULL;
+#if defined(CONFIG_SPIRAM)
+        resp = (char *)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+        if (!resp) resp = (char *)malloc(4096);
+        if (!resp) {
+            glog("Failed to allocate response buffer\n");
+            status_display_show_status("HTTP Fail");
+            return;
+        }
+
+        int got = eth_http_get_simple(http_url_ptr, resp, 4096, 2000);
+        if (got < 0) {
+            glog("HTTP request failed\n");
+            status_display_show_status("HTTP Fail");
+            if (esp_ptr_external_ram(resp)) {
+                heap_caps_free(resp);
+            } else {
+                free(resp);
+            }
+            return;
+        }
+
+        int lines = 0;
+        const char *p = resp;
+        while (*p) {
+            if (max_lines > 0 && lines >= max_lines) break;
+            const char *nl = strchr(p, '\n');
+            if (!nl) {
+                glog("%s\n", p);
+                break;
+            }
+            size_t len = (size_t)(nl - p + 1);
+            char line[160];
+            if (len >= sizeof(line)) len = sizeof(line) - 1;
+            memcpy(line, p, len);
+            line[len] = '\0';
+            glog("%s", line);
+            lines++;
+            p = nl + 1;
+        }
+
+        if (got >= 4096 - 1) {
+            glog("(response truncated)\n");
+        }
+
+        if (esp_ptr_external_ram(resp)) {
+            heap_caps_free(resp);
+        } else {
+            free(resp);
+        }
+        status_display_show_status("HTTP Done");
+        return;
+    }
 
     // Parse URL - use smaller buffers to reduce stack usage
     char hostname[128] = {0};
@@ -4017,6 +3991,10 @@ void handle_help(int argc, char **argv) {
         printf("    Description: Display Ethernet connection information.\n");
         printf("    Usage: ethinfo\n");
         printf("    Shows: Status, IP address, netmask, gateway, DNS servers, DHCP server\n\n");
+        printf("ethfp\n");
+        printf("    Description: Fingerprint network hosts using mDNS, NetBIOS, and SSDP.\n");
+        printf("    Usage: ethfp\n");
+        printf("    Discovers: Apple devices, Chromecasts, printers, Windows PCs, routers, smart TVs\n\n");
         printf("etharp\n");
         printf("    Description: Perform ARP scan on local Ethernet network.\n");
         printf("    Usage: etharp\n");
@@ -4106,7 +4084,7 @@ void handle_help(int argc, char **argv) {
         printf("        ethhttp http://192.168.1.1/index.html all  (shows full response)\n");
         printf("        ethhttp https://example.com:8443/api/data 100\n");
         printf("    Note: Default is 25 lines. Use 'all' for complete responses. HTTPS uses TLS 1.2.\n\n");
-        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv, ethntp, ethhttp\n");
+        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, ethfp, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv, ethntp, ethhttp\n");
         return;
     }
 #endif
@@ -7598,6 +7576,7 @@ void register_commands() {
     register_command("ethup", handle_eth_up_cmd);
     register_command("ethdown", handle_eth_down_cmd);
     register_command("ethinfo", handle_eth_info_cmd);
+    register_command("ethfp", handle_eth_fingerprint_cmd);
     register_command("etharp", handle_eth_arp_cmd);
     register_command("ethports", handle_eth_ports_cmd);
     register_command("ethping", handle_eth_ping_cmd);

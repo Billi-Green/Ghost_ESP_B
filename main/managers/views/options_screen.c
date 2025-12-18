@@ -372,6 +372,7 @@ static const char *dual_comm_ethernet_options[] = {
     "Initialise",
     "Deinitialise",
     "Ethernet Info",
+    "Fingerprint Scan",
     "ARP Scan",
     "Port Scan Local",
     "Port Scan All",
@@ -2145,6 +2146,12 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend ethinfo");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Fingerprint Scan") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethfp");
             view_switched = true;
         } else if (strcmp(Selected_Option, "ARP Scan") == 0) {
             terminal_set_return_view(&options_menu_view);

@@ -195,9 +195,11 @@ Available on boards with an onboard OLED status display or when an external stat
 - **`ethup`** — Initialize and bring up Ethernet interface; waits for link establishment and DHCP assignment.
 - **`ethdown`** — Deinitialize and bring down Ethernet interface.
 - **`ethinfo`** — Display Ethernet connection information (status, IP address, netmask, gateway, DNS servers, DHCP server).
+- **`webuiap [on|off|toggle|status]`** — Restrict the web UI to clients connected to the onboard AP subnet (AP-only mode).
 
 ### Network Scanning
 
+- **`ethfp`** — Fingerprint network hosts using mDNS, NetBIOS, and SSDP (discovers Apple devices, Chromecasts, printers, Windows PCs, routers, smart TVs).
 - **`etharp`** — Perform ARP scan on local Ethernet network subnet (1-254) to discover active hosts.
 - **`ethping`** — Perform ICMP ping scan on local Ethernet network subnet (1-254) to find alive hosts.
 - **`ethports [ip] [all|start-end]`** — Scan TCP ports on a target IP address.
