@@ -5,4 +5,4 @@
 /hardware/* /latest/hardware/:splat 302
 /docs/latest/* /latest/:splat 301
 /docs/v1.8/* /v1.8/:splat 301
-/docs/* /latest/:splat 302
+/docs/* /latest/:splat 200
