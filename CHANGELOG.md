@@ -102,6 +102,7 @@
 - Fixed issues with GPS and Dualcomm UART being shared
 - Fixed gpsinfo display not logging anything when the GPS info task fails to start
 - Fixed an issue where setting rgb pins would fail on configs with no leds set
+- Debounce T-Deck trackball/keyboard I2C input
 - Wrapped power-management transitions with RGB pause/resume to prevent a crash
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
 - Apps menu now follows main menu theme, controls and layout

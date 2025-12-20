@@ -130,6 +130,8 @@ static void battery_poll_task(void *arg) {
 #define LILYGO_KB_SLAVE_ADDRESS              0x55
 #define LILYGO_KB_BRIGHTNESS_CMD             0x01
 #define LILYGO_KB_ALT_B_BRIGHTNESS_CMD       0x02
+#define TDECK_KEY_DEBOUNCE_MS                30
+#define TDECK_EVENT_RATE_LIMIT_MS            10
 
 void set_keyboard_brightness(uint8_t brightness);
 
@@ -1485,6 +1487,13 @@ void hardware_input_task(void *pvParameters) {
   int screen_width = LV_HOR_RES;
   int screen_height = LV_VER_RES;
   bool was_woken_by_interrupt = false; // New flag for S3T-Watch
+#ifdef CONFIG_USE_TDECK
+  static uint8_t last_tdeck_key = 0;
+  static uint32_t last_tdeck_key_ms = 0;
+  static uint32_t last_tdeck_event_ms = 0;
+
+  gpio_set_direction(46, GPIO_MODE_INPUT);
+#endif
 #ifdef CONFIG_USE_CARDPUTER
   uint8_t shift_count_before_caps =255; // effectively disable hold-to-caps for normal cardputer
   uint8_t shift_count = 0;
@@ -1496,26 +1505,39 @@ void hardware_input_task(void *pvParameters) {
   while (1) {
 #ifdef CONFIG_USE_TDECK
     uint8_t data[1];
-    gpio_set_direction(46, GPIO_MODE_INPUT); // probably should be a part of the init process
     if (gpio_get_level(46)){
-    lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, &data, 1);
+    if (lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, &data, 1) != ESP_OK) {
+      data[0] = 0;
+    }
     } else {
       data[0] = 0; // if the pin is low we assume no data is available
     }
-    if (memcmp(data, "", 1) != 0){
+    if (data[0] != 0){
 
-      ESP_LOGI(TAG, "tdeck keyboard data is %s\n", data);
+      ESP_LOGD(TAG, "tdeck keyboard data: 0x%02x", data[0]);
 
-      bool skip_event = false;
       touch_active = true;
-      last_touch_time = xTaskGetTickCount();
       if (is_backlight_dimmed) {
         set_backlight_brightness(100);
         is_backlight_dimmed = false;
-        skip_event = true;
         vTaskDelay(pdMS_TO_TICKS(100));
       }
-      if (!skip_event) {
+
+      uint32_t now_ms = dm_now_ms();
+      bool should_emit = true;
+      if ((uint32_t)(now_ms - last_tdeck_event_ms) < (uint32_t)TDECK_EVENT_RATE_LIMIT_MS) {
+        should_emit = false;
+      } else if (data[0] == last_tdeck_key && (uint32_t)(now_ms - last_tdeck_key_ms) < (uint32_t)TDECK_KEY_DEBOUNCE_MS) {
+        should_emit = false;
+      }
+
+      if (should_emit) {
+        last_tdeck_event_ms = now_ms;
+        last_tdeck_key = data[0];
+        last_tdeck_key_ms = now_ms;
+
+        last_touch_time = xTaskGetTickCount();
+
         InputEvent event;
         event.type = INPUT_TYPE_KEYBOARD;
         event.data.key_value = *data;
