@@ -68,8 +68,10 @@ void encoder_init(encoder_t *enc,
     }
 
     enc->position = 0;
+    enc->position_base_ext = 0;
     enc->position_ext = 0;
     enc->position_ext_prev = 0;
+    enc->pending_steps = 0;
     enc->pos_time_ms = enc->pos_time_prev_ms = now_ms();
     uint64_t now_us = esp_timer_get_time();
     enc->pos_time_us = now_us;
@@ -146,8 +148,11 @@ void encoder_tick(encoder_t *enc)
             }
 
             int32_t base_ext = (enc->mode == ENCODER_LATCH_TWO03) ? (enc->position >> 1) : (enc->position >> 2);
-            int32_t delta = base_ext - enc->position_ext;
-            enc->position_ext += delta * accel_mult;
+            int32_t detent_delta = base_ext - enc->position_base_ext;
+            if (detent_delta != 0) {
+                enc->position_base_ext = base_ext;
+                enc->pending_steps += detent_delta * accel_mult;
+            }
 
             enc->pos_time_prev_us = enc->pos_time_us;
             enc->pos_time_us = now_us;
@@ -162,16 +167,34 @@ int32_t encoder_get_position(const encoder_t *enc)
     return enc->position_ext;
 }
 
+encoder_direction_t encoder_peek_direction(const encoder_t *enc)
+{
+    if (enc->pending_steps > 0) return ENCODER_DIR_CW;
+    if (enc->pending_steps < 0) return ENCODER_DIR_CCW;
+    return ENCODER_DIR_NONE;
+}
+
+void encoder_consume_direction(encoder_t *enc, encoder_direction_t dir)
+{
+    if (dir == ENCODER_DIR_CW) {
+        if (enc->pending_steps <= 0) return;
+        enc->pending_steps--;
+        enc->position_ext++;
+    } else if (dir == ENCODER_DIR_CCW) {
+        if (enc->pending_steps >= 0) return;
+        enc->pending_steps++;
+        enc->position_ext--;
+    } else {
+        return;
+    }
+    enc->position_ext_prev = enc->position_ext;
+}
+
 encoder_direction_t encoder_get_direction(encoder_t *enc)
 {
-    if (enc->position_ext_prev < enc->position_ext) {
-        enc->position_ext_prev = enc->position_ext;
-        return ENCODER_DIR_CW;
-    } else if (enc->position_ext_prev > enc->position_ext) {
-        enc->position_ext_prev = enc->position_ext;
-        return ENCODER_DIR_CCW;
-    }
-    return ENCODER_DIR_NONE;
+    encoder_direction_t dir = encoder_peek_direction(enc);
+    encoder_consume_direction(enc, dir);
+    return dir;
 }
 
 uint32_t encoder_get_millis_between_rotations(const encoder_t *enc)

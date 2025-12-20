@@ -43,6 +43,8 @@ typedef struct {
     int ble_rssi;
     char ble_name[32];
     uint8_t ble_type;   // 0=Classic, 1=BLE, 2=Dual
+    uint16_t ble_mfgr_id;
+    bool ble_has_mfgr_id;
     bool is_ble_device; // Flag to identify BLE entries
   } ble_data;
 
@@ -56,6 +58,8 @@ esp_err_t csv_file_open(const char *base_file_name);
 esp_err_t csv_write_data_to_buffer(wardriving_data_t *data);
 esp_err_t csv_flush_buffer_to_file();
 bool csv_buffer_has_pending_data(void);
+uint32_t csv_get_unique_wifi_ap_count(void);
+size_t csv_get_pending_bytes(void);
 void csv_file_close();
 
 // New helper functions

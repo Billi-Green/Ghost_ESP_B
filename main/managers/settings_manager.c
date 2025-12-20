@@ -50,6 +50,7 @@ static const char *NVS_TERMINAL_TEXT_COLOR_KEY = "term_color";
 static const char *NVS_INVERT_COLORS_KEY = "invert_colors";
 static const char *NVS_INFRARED_EASY_MODE_KEY = "ir_easy_mode";
 static const char *NVS_WEB_AUTH_KEY = "web_auth";
+static const char *NVS_WEBUI_AP_ONLY_KEY = "webui_ap";
 static const char *NVS_ESP_COMM_TX_PIN_KEY = "esp_comm_tx";
 static const char *NVS_ESP_COMM_RX_PIN_KEY = "esp_comm_rx";
 static const char *NVS_AP_ENABLED_KEY = "ap_enabled";
@@ -59,7 +60,10 @@ static const char *NVS_MAX_SCREEN_BRIGHTNESS_KEY = "max_bright";
 static const char *NVS_NAV_BUTTONS_KEY = "nav_buttons";
 static const char *NVS_MENU_LAYOUT_KEY = "menu_layout";
 static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
+static const char *NVS_RGB_LED_COUNT_KEY = "rgb_led_cnt";
 static const char *NVS_ENCODER_INVERT_KEY = "enc_inv";
+static const char *NVS_SETUP_COMPLETE_KEY = "setup_done";
+static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
 static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
@@ -145,6 +149,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->terminal_text_color = 0x00FF00;
   settings->invert_colors = false;
   settings->web_auth_enabled = false;
+  settings->webui_restrict_to_ap = true;
 #ifdef CONFIG_IDF_TARGET_ESP32
   settings->esp_comm_tx_pin = 17;
   settings->esp_comm_rx_pin = 16;
@@ -161,6 +166,9 @@ void settings_set_defaults(FSettings *settings) {
   settings->menu_layout = 0; // Default to carousel layout
   settings->neopixel_max_brightness = 100; // Default to 100% brightness
   settings->encoder_invert_direction = false;
+  settings->rgb_led_count = CONFIG_NUM_LEDS;
+  settings->setup_complete = false;
+  settings->wifi_country = 0;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -217,6 +225,12 @@ void settings_load(FSettings *settings) {
   err = nvs_get_u8(nvsHandle, NVS_RGB_SPEED_KEY, &value_u8);
   if (err == ESP_OK) {
     settings->rgb_speed = value_u8;
+  }
+
+  // Load RGB LED Count
+  err = nvs_get_u16(nvsHandle, NVS_RGB_LED_COUNT_KEY, &value_u16);
+  if (err == ESP_OK && value_u16 != 0) {
+    settings->rgb_led_count = value_u16;
   }
 
   // Load Evil Portal settings
@@ -292,14 +306,12 @@ void settings_load(FSettings *settings) {
     printf("Failed to load Flappy Ghost Name\n");
   }
 
-#ifdef CONFIG_HAS_RTC_CLOCK
   str_size = sizeof(settings->selected_timezone);
   err = nvs_get_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone,
                     &str_size);
   if (err != ESP_OK) {
     printf("Failed to load Timezone String\n");
   }
-#endif
 
   str_size = sizeof(settings->selected_hex_accent_color);
   err = nvs_get_str(nvsHandle, NVS_ACCENT_COLOR,
@@ -395,7 +407,12 @@ void settings_load(FSettings *settings) {
 
   err = nvs_get_u8(nvsHandle, NVS_WEB_AUTH_KEY, &value_u8);
   if (err == ESP_OK) {
-    settings->web_auth_enabled = (value_u8 != 0);
+    settings->web_auth_enabled = value_u8;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_WEBUI_AP_ONLY_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->webui_restrict_to_ap = value_u8;
   }
 
   err = nvs_get_u8(nvsHandle, NVS_AP_ENABLED_KEY, &value_u8);
@@ -486,6 +503,20 @@ void settings_load(FSettings *settings) {
     settings->encoder_invert_direction = (bool)value_u8;
   } else {
     settings->encoder_invert_direction = false;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->setup_complete = (bool)value_u8;
+  } else {
+    settings->setup_complete = false;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->wifi_country = value_u8;
+  } else {
+    settings->wifi_country = 0;
   }
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -579,6 +610,12 @@ void settings_save(const FSettings *settings) {
   err = nvs_set_u8(nvsHandle, NVS_RGB_SPEED_KEY, settings->rgb_speed);
   if (err != ESP_OK) {
     printf("Failed to save RGB Speed\n");
+  }
+
+  // Save RGB LED Count
+  err = nvs_set_u16(nvsHandle, NVS_RGB_LED_COUNT_KEY, settings->rgb_led_count);
+  if (err != ESP_OK) {
+    printf("Failed to save RGB LED count\n");
   }
 
   // Save RTS Enabled
@@ -750,7 +787,14 @@ void settings_save(const FSettings *settings) {
   
   if (settings_get_rgb_mode(settings) == RGB_MODE_RAINBOW) {
       // Rainbow: animated
-      xTaskCreate(rainbow_task, "Rainbow Task", 3072, &rgb_manager, 1, &rgb_effect_task_handle);
+#if RGB_EFFECT_USE_PINNED_API
+      xTaskCreatePinnedToCore(rainbow_task, "Rainbow Task", 3072, &rgb_manager,
+                              RGB_EFFECT_TASK_PRIORITY, &rgb_effect_task_handle,
+                              RGB_EFFECT_TASK_CORE);
+#else
+      xTaskCreate(rainbow_task, "Rainbow Task", 3072, &rgb_manager,
+                  RGB_EFFECT_TASK_PRIORITY, &rgb_effect_task_handle);
+#endif
   } else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
       // Stealth: LEDs always off
       rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false); // Turn off all LEDs
@@ -770,12 +814,10 @@ void settings_save(const FSettings *settings) {
     printf("Settings saved to NVS.\n");
   }
 
-#ifdef CONFIG_HAS_RTC_CLOCK
   // Apply timezone change immediately
   ESP_LOGI(TAG, "Applying timezone change: %s", settings->selected_timezone);
   setenv("TZ", settings->selected_timezone, 1);
   tzset();
-#endif
 
   // Update global settings immediately
   ESP_LOGI(TAG, "Updating global settings");
@@ -798,6 +840,8 @@ void settings_save(const FSettings *settings) {
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save terminal_text_color: %s", esp_err_to_name(err));
   err = nvs_set_u8(nvsHandle, NVS_WEB_AUTH_KEY, settings->web_auth_enabled);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save web_auth_enabled: %s", esp_err_to_name(err));
+  err = nvs_set_u8(nvsHandle, NVS_WEBUI_AP_ONLY_KEY, settings->webui_restrict_to_ap);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save webui_restrict_to_ap: %s", esp_err_to_name(err));
   err = nvs_set_u8(nvsHandle, NVS_AP_ENABLED_KEY, settings->ap_enabled);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save ap_enabled: %s", esp_err_to_name(err));
   err = nvs_set_u8(nvsHandle, NVS_POWER_SAVE_KEY, settings->power_save_enabled);
@@ -827,6 +871,12 @@ void settings_save(const FSettings *settings) {
 
   err = nvs_set_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, settings->encoder_invert_direction);
   if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save encoder_invert_direction: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, settings->setup_complete);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save setup_complete: %s", esp_err_to_name(err));
+
+  err = nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
+  if (err != ESP_OK) ESP_LOGE(S_TAG, "Failed to save wifi_country: %s", esp_err_to_name(err));
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   err = nvs_set_u8(nvsHandle, NVS_STATUS_IDLE_ANIM_KEY, (uint8_t)settings->status_idle_animation);
@@ -1084,6 +1134,14 @@ void settings_get_rgb_separate_pins(const FSettings *settings, int32_t *red, int
   if (blue) *blue = settings->rgb_blue_pin;
 }
 
+void settings_set_rgb_led_count(FSettings *settings, uint16_t count) {
+  settings->rgb_led_count = count;
+}
+
+uint16_t settings_get_rgb_led_count(const FSettings *settings) {
+  return settings->rgb_led_count;
+}
+
 void settings_set_thirds_control_enabled(FSettings *settings, bool enabled) {
   settings->third_control_enabled = enabled;
 }
@@ -1122,6 +1180,14 @@ void settings_set_web_auth_enabled(FSettings *settings, bool enabled) {
 
 bool settings_get_web_auth_enabled(const FSettings *settings) {
   return settings->web_auth_enabled;
+}
+
+void settings_set_webui_restrict_to_ap(FSettings *settings, bool enabled) {
+  settings->webui_restrict_to_ap = enabled;
+}
+
+bool settings_get_webui_restrict_to_ap(const FSettings *settings) {
+  return settings->webui_restrict_to_ap;
 }
 
 void settings_set_ap_enabled(FSettings *settings, bool enabled) {
@@ -1288,6 +1354,22 @@ void settings_set_encoder_invert_direction(FSettings *settings, bool enabled) {
 
 bool settings_get_encoder_invert_direction(const FSettings *settings) {
   return settings->encoder_invert_direction;
+}
+
+void settings_set_setup_complete(FSettings *settings, bool complete) {
+  settings->setup_complete = complete;
+}
+
+bool settings_get_setup_complete(const FSettings *settings) {
+  return settings->setup_complete;
+}
+
+void settings_set_wifi_country(FSettings *settings, uint8_t country) {
+  settings->wifi_country = country;
+}
+
+uint8_t settings_get_wifi_country(const FSettings *settings) {
+  return settings->wifi_country;
 }
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY

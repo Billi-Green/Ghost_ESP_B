@@ -406,7 +406,7 @@ void configure_hidden_ap() {
     // Get the current AP configuration
     esp_err_t err = esp_wifi_get_config(WIFI_IF_AP, &wifi_config);
     if (err != ESP_OK) {
-        printf("Failed to get Wi-Fi config: %s\n", esp_err_to_name(err));
+        glog("Failed to get Wi-Fi config: %s\n", esp_err_to_name(err));
         return;
     }
 
@@ -418,9 +418,9 @@ void configure_hidden_ap() {
     // Apply the updated configuration
     err = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
     if (err != ESP_OK) {
-        printf("Failed to set Wi-Fi config: %s\n", esp_err_to_name(err));
+        glog("Failed to set Wi-Fi config: %s\n", esp_err_to_name(err));
     } else {
-        printf("Wi-Fi AP SSID hidden.\n");
+        glog("Wi-Fi AP SSID hidden.\n");
     }
 }
 
@@ -429,19 +429,19 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_AP_START:
-            printf("WiFi_manager: AP started\n");
+            glog("WiFi_manager: AP started\n");
             break;
         case WIFI_EVENT_AP_STOP:
-            printf("WiFi_manager: AP stopped\n");
+            glog("WiFi_manager: AP stopped\n");
             break;
         case WIFI_EVENT_AP_STACONNECTED:
             ap_connection_count++;
-            printf("WiFi_manager: Station connected to AP\n");
+            glog("WiFi_manager: Station connected to AP\n");
             esp_wifi_set_ps(WIFI_PS_NONE);
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
             if (ap_connection_count > 0) ap_connection_count--;
-            printf("WiFi_manager: Station disconnected from AP\n");
+            glog("WiFi_manager: Station disconnected from AP\n");
             login_done = false;
             if (ap_connection_count == 0) {
                 esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
@@ -449,15 +449,15 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             }
             break;
         case WIFI_EVENT_STA_START:
-            printf("STA started\n");
+            glog("STA started\n");
             // No auto-connect here - handled by wifi_event_handler
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
             if (manual_disconnect) {
-                printf("Disconnected from Wi-Fi (manual)\n");
+                glog("Disconnected from Wi-Fi (manual)\n");
                 manual_disconnect = false; // Reset flag
             } else {
-                printf("Disconnected from Wi-Fi\n");
+                glog("Disconnected from Wi-Fi\n");
                 // No auto-reconnection
             }
             break;
@@ -469,7 +469,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
         case IP_EVENT_STA_GOT_IP:
             break;
         case IP_EVENT_AP_STAIPASSIGNED:
-            printf("Assigned IP to STA\n");
+            glog("Assigned IP to STA\n");
             ap_sta_has_ip = true;
             break;
         default:
@@ -493,8 +493,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             
             const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
             if (saved_ssid && strlen(saved_ssid) > 0) {
-                printf("Attempting boot-time connection to saved network: %s\n", saved_ssid);
-                TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
+                glog("Attempting boot-time connection to saved network: %s\n", saved_ssid);
                 esp_wifi_connect();
             }
         }
@@ -521,19 +520,16 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         
         // Clean, single-line disconnect logging
         if (manual_disconnect) {
-            printf("WiFi disconnected manually\n");
-            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected manually\n");
+            glog("WiFi disconnected manually\n");
             manual_disconnect = false; // Reset the flag
         } else {
-            printf("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
-            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
+            glog("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        printf("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
-        TERMINAL_VIEW_ADD_TEXT("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
+        glog("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
         
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -575,8 +571,7 @@ static void add_station_ap_pair(const uint8_t *station_mac, const uint8_t *ap_bs
         // Print formatted MAC addresses
 
     } else {
-        printf("Station list full\nCan't add more stations.\n");
-        TERMINAL_VIEW_ADD_TEXT("Station list full\nCan't add more stations.\n");
+        glog("Station list full\nCan't add more stations.\n");
     }
 }
 
@@ -1660,26 +1655,28 @@ void wifi_manager_init(void) {
 
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    // configure country based on chip: full dual-band on C5, 2.4GHz only on others
+    // configure country based on saved setting
+    static const struct { const char *code; uint8_t schan; uint8_t nchan; } country_table[] = {
+        {"US", 1, 11}, {"GB", 1, 13}, {"JP", 1, 14}, {"AU", 1, 13}, {"CN", 1, 13}, {"01", 1, 11}
+    };
+    uint8_t country_idx = settings_get_wifi_country(&G_Settings);
+    if (country_idx >= sizeof(country_table)/sizeof(country_table[0])) country_idx = 5; // default to World Safe
+    
 #if CONFIG_IDF_TARGET_ESP32C5
-    wifi_country_t current_country;
-    esp_err_t get_country_err = esp_wifi_get_country(&current_country);
-    if (get_country_err == ESP_OK) {
-        ESP_LOGI(TAG, "ESP32-C5 Current Country: CC='%s', schan=%d, nchan=%d, policy=%s",
-                 current_country.cc, current_country.schan, current_country.nchan,
-                 current_country.policy == WIFI_COUNTRY_POLICY_AUTO ? "AUTO" : "MANUAL");
+    esp_err_t country_err = esp_wifi_set_country_code(country_table[country_idx].code, true);
+    if (country_err == ESP_OK) {
+        ESP_LOGI(TAG, "ESP32-C5 Country set to: %s", country_table[country_idx].code);
     } else {
-        ESP_LOGW(TAG, "ESP32-C5: Failed to get current country config: %s", esp_err_to_name(get_country_err));
+        ESP_LOGW(TAG, "ESP32-C5: Failed to set country: %s", esp_err_to_name(country_err));
     }
 #else
-    // enable all 2.4 GHz channels (1-14) manually for other targets
     wifi_country_t country_to_set = {
-        .cc     = "JP",
-        .schan  = 1,
-        .nchan  = 14,
+        .cc     = {country_table[country_idx].code[0], country_table[country_idx].code[1], 0},
+        .schan  = country_table[country_idx].schan,
+        .nchan  = country_table[country_idx].nchan,
         .policy = WIFI_COUNTRY_POLICY_MANUAL
     };
-    ESP_LOGI(TAG, "Setting country for non-C5 target: CC='%s', schan=%d, nchan=%d, policy=MANUAL",
+    ESP_LOGI(TAG, "Setting country: CC='%s', schan=%d, nchan=%d",
              country_to_set.cc, country_to_set.schan, country_to_set.nchan);
     ESP_ERROR_CHECK(esp_wifi_set_country(&country_to_set));
 #endif
@@ -1781,8 +1778,32 @@ void wifi_manager_start_scan() {
         ap_count = 0;
     }
     ap_manager_stop_services();
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+
+    wifi_mode_t current_mode;
+    esp_err_t err = esp_wifi_get_mode(&current_mode);
+    if (err == ESP_ERR_WIFI_NOT_INIT) {
+        ESP_LOGW(TAG, "Wi-Fi not initialized, reinitializing driver...");
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        err = esp_wifi_init(&cfg);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to reinit Wi-Fi: %s", esp_err_to_name(err));
+            TERMINAL_VIEW_ADD_TEXT("WiFi init failed: %s\n", esp_err_to_name(err));
+            return;
+        }
+    }
+
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set STA mode: %s", esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("WiFi mode set failed: %s\n", esp_err_to_name(err));
+        return;
+    }
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start Wi-Fi: %s", esp_err_to_name(err));
+        TERMINAL_VIEW_ADD_TEXT("WiFi start failed: %s\n", esp_err_to_name(err));
+        return;
+    }
 
     wifi_scan_config_t scan_config = {
         .ssid = NULL,
@@ -1801,7 +1822,7 @@ void wifi_manager_start_scan() {
         printf("Please wait 5 Seconds...\n");
         TERMINAL_VIEW_ADD_TEXT("Please wait 5 Seconds...\n");
     #endif
-    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+    err = esp_wifi_scan_start(&scan_config, true);
 
     if (err != ESP_OK) {
         printf("WiFi scan failed to start: %s", esp_err_to_name(err));
@@ -1812,8 +1833,8 @@ void wifi_manager_start_scan() {
 
     wifi_manager_stop_scan();
     log_heap_status(TAG, "scan_start_post");
-    ESP_ERROR_CHECK(esp_wifi_stop());
-    ESP_ERROR_CHECK(ap_manager_start_services());
+    esp_wifi_stop();
+    ap_manager_start_services();
 }
 
 // Stop scanning for networks

@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
+#include "gui/lvgl_safe.h"
 
 static const char *TAG = "error_popup";
-
 
 static lv_obj_t *error_popup_root = NULL;
 static lv_obj_t *error_popup_label = NULL;
@@ -29,8 +29,7 @@ void error_popup_destroy(void) {
     
     if (xSemaphoreTake(popup_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         if (error_popup_root) {
-            lv_obj_del(error_popup_root);
-            error_popup_root = NULL;
+            lvgl_obj_del_safe(&error_popup_root);
             error_popup_label = NULL;
         }
         xSemaphoreGive(popup_mutex);

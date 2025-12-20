@@ -160,6 +160,22 @@ menu "Ghost ESP Options"
             Rotate only the secondary status OLED by 180 degrees. Does not
             affect the primary TFT/touch display.
 
+    config STATUS_DISPLAY_POWER_PIN
+        int "Status Display Power Control Pin (Vext)"
+        default -1
+        depends on WITH_STATUS_DISPLAY
+        help
+            GPIO pin for power control (e.g., Vext on Heltec V3). Set to -1 to disable.
+            For Heltec V3, this should be GPIO36. LOW = display ON, HIGH = display OFF.
+
+    config STATUS_DISPLAY_RESET_PIN
+        int "Status Display Reset Pin"
+        default -1
+        depends on WITH_STATUS_DISPLAY
+        help
+            GPIO pin for display reset. Set to -1 to disable.
+            For Heltec V3, this should be GPIO21.
+
     endmenu
 
     menu "Misc Options"
@@ -259,6 +275,27 @@ menu "Ghost ESP Options"
             help
                 Enable hardware keyboard input ui elements.
 
+        config USE_USB_KEYBOARD
+            bool "Enable USB HID Keyboard (host)"
+            default n
+            depends on IDF_TARGET_ESP32S3
+            help
+                Enable USB host HID keyboard support and stream key events over Dual Comm.
+
+        config USB_KBD_DMINUS_PIN
+            int "USB Keyboard D- Pin"
+            default 19
+            depends on USE_USB_KEYBOARD
+            help
+                GPIO pin for USB D- (keyboard). On ESP32-S3 this is normally GPIO19.
+
+        config USB_KBD_DPLUS_PIN
+            int "USB Keyboard D+ Pin"
+            default 20
+            depends on USE_USB_KEYBOARD
+            help
+                GPIO pin for USB D+ (keyboard). On ESP32-S3 this is normally GPIO20.
+
         config HAS_BATTERY
             bool "Enable power saving"
             default n
@@ -330,7 +367,42 @@ menu "Ghost ESP Options"
             bool "Enable Ethernet Support"
             default n
             help
-                Enable Ethernet Support.   
+                Enable Ethernet Support.
+                
+        config ETH_W5500_MOSI_PIN
+            int "W5500 MOSI Pin"
+            default 6
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 MOSI (Master Out Slave In).
+                
+        config ETH_W5500_MISO_PIN
+            int "W5500 MISO Pin"
+            default 5
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 MISO (Master In Slave Out).
+                
+        config ETH_W5500_SCK_PIN
+            int "W5500 SCK Pin"
+            default 4
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 SCK (Serial Clock).
+                
+        config ETH_W5500_CS_PIN
+            int "W5500 CS Pin"
+            default 15
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 CS (Chip Select).
+                
+        config ETH_W5500_INT_PIN
+            int "W5500 INT Pin (optional, use -1 to disable)"
+            default 7
+            depends on WITH_ETHERNET
+            help
+                Set the GPIO pin for W5500 INT (Interrupt). Use -1 if not connected.
             
         config IS_GHOST_BOARD
             bool "Enable Ghost Board Configuration"

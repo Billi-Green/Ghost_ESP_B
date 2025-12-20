@@ -28,7 +28,12 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
+
+static const char *TAG = "ap_manager";
 #include <unistd.h>
+#include <lwip/sockets.h>
+#include <lwip/ip4_addr.h>
+#include <lwip/inet.h>
 #include "esp_vfs_fat.h"
 #include "esp_heap_caps.h"
 #include "managers/status_display_manager.h"
@@ -66,6 +71,8 @@ static bool is_config_loaded(void);
 static esp_err_t setup_mdns(void);
 static esp_err_t teardown_mdns(void);
 
+#define WEBUI_AP_SUBNET_BASE_ADDR ESP_IP4TOADDR(192, 168, 4, 0)
+#define WEBUI_AP_SUBNET_MASK_ADDR ESP_IP4TOADDR(255, 255, 255, 0)
 #define MAX_LOG_BUFFER_SIZE (8 * 1024)  // 8KB log buffer size
 #define LOG_CHUNK_SIZE (MAX_LOG_BUFFER_SIZE / 4)  // Size to remove when buffer is full
 #define MAX_FILE_SIZE (5 * 1024 * 1024) // 5 MB
@@ -74,6 +81,58 @@ static esp_err_t teardown_mdns(void);
 #define SERIAL_BUFFER_SIZE 528          // Size of serial buffer
 #define AUTH_MAX_HDR_LEN 512            // max size for Authorization header (increased for Digest)
 #define AUTH_MAX_DECODE_LEN 256         // max decoded credential length
+
+static bool is_ip_in_ap_subnet(uint32_t addr) {
+    return (addr & WEBUI_AP_SUBNET_MASK_ADDR) == WEBUI_AP_SUBNET_BASE_ADDR;
+}
+
+static bool webui_request_allowed(httpd_req_t *req) {
+    if (!settings_get_webui_restrict_to_ap(&G_Settings)) {
+        return true;
+    }
+
+    int sock = httpd_req_to_sockfd(req);
+    if (sock < 0) {
+        ESP_LOGW(TAG, "Unable to obtain socket descriptor for HTTP request");
+        goto deny;
+    }
+
+    struct sockaddr_storage peer_addr;
+    socklen_t peer_len = sizeof(peer_addr);
+    if (getpeername(sock, (struct sockaddr *)&peer_addr, &peer_len) != 0) {
+        ESP_LOGW(TAG, "getpeername failed for HTTP request: errno %d", errno);
+        goto deny;
+    }
+
+    char ip_buf[INET6_ADDRSTRLEN] = "unknown";
+
+    if (peer_addr.ss_family == AF_INET) {
+        struct sockaddr_in *addr4 = (struct sockaddr_in *)&peer_addr;
+        inet_ntop(AF_INET, &addr4->sin_addr, ip_buf, sizeof(ip_buf));
+        if (is_ip_in_ap_subnet(addr4->sin_addr.s_addr)) {
+            return true;
+        }
+    }
+#if LWIP_IPV6
+    else if (peer_addr.ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&peer_addr;
+        inet_ntop(AF_INET6, &addr6->sin6_addr, ip_buf, sizeof(ip_buf));
+    }
+#endif
+
+    ESP_LOGW(TAG, "Blocking WebUI request from %s (AP-only restriction enabled)", ip_buf);
+
+deny:
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "Unauthorized");
+    return false;
+}
+
+#define WEBUI_GUARD_OR_RETURN(req) \
+    do {                           \
+        if (!webui_request_allowed(req)) return ESP_OK; \
+    } while (0)
 
 // simple global backoff state (very small memory footprint)
 static uint8_t auth_fail_count = 0;
@@ -139,7 +198,6 @@ static char *log_buffer = NULL; // dynamically allocated at runtime
 static size_t log_buffer_index = 0;
 static SemaphoreHandle_t log_mutex = NULL;
 
-static const char *TAG = "AP_MANAGER";
 static httpd_handle_t server = NULL;
 static esp_netif_t *netif = NULL;
 static bool mdns_freed = false;
@@ -220,6 +278,7 @@ static esp_err_t scan_directory(const char *base_path, cJSON *json_array) {
 }
 
 static esp_err_t api_sd_card_get_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     ESP_LOGI(TAG, "Received request for SD card structure.");
 
     const char *base_path = "/mnt";
@@ -279,6 +338,7 @@ static esp_err_t api_sd_card_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t api_sd_card_post_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     char buf[512];
     int received = httpd_req_recv(req, buf, sizeof(buf));
     if (received <= 0) {
@@ -399,6 +459,7 @@ esp_err_t get_query_param(httpd_req_t *req, const char *key, char *value, size_t
 }
 
 esp_err_t api_sd_card_delete_file_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     char filepath[256 + 1];
 
     size_t query_len = httpd_req_get_url_query_len(req) + 1;
@@ -436,6 +497,7 @@ esp_err_t api_sd_card_delete_file_handler(httpd_req_t *req) {
 
 // Handler for uploading files to SD card
 static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     ESP_LOGI(TAG, "Received file upload request.");
 
     // Retrieve 'path' query parameter
@@ -994,6 +1056,7 @@ void ap_manager_stop_services() {
 
 // Handler for GET requests (serves the HTML page)
 static esp_err_t http_get_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     printf("Received HTTP GET request: %s\n", req->uri);
 
     if (!settings_get_web_auth_enabled(&G_Settings)) {
@@ -1160,6 +1223,7 @@ digest_fail:
 }
 
 static esp_err_t api_command_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     char content[500];
     int ret, command_len;
 
@@ -1208,6 +1272,7 @@ static esp_err_t api_command_handler(httpd_req_t *req) {
 
 // handler for getting serial logs
 static esp_err_t api_logs_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     if (!log_mutex) {
         return httpd_resp_send(req, "", 0);
     }
@@ -1242,6 +1307,7 @@ static esp_err_t api_logs_handler(httpd_req_t *req) {
 
 // Handler for /api/clear_logs (clears the log buffer)
 static esp_err_t api_clear_logs_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     if (!log_mutex) {
         return httpd_resp_send(req, "{\"status\":\"error\",\"message\":\"Log system not initialized\"}", -1);
     }
@@ -1261,6 +1327,7 @@ static esp_err_t api_clear_logs_handler(httpd_req_t *req) {
 
 // Handler for /api/settings (updates settings based on JSON payload)
 static esp_err_t api_settings_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     int total_len = req->content_len;
     int cur_len = 0;
     int received = 0;
@@ -1440,6 +1507,7 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
 }
 
 static esp_err_t api_settings_get_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     FSettings *settings = &G_Settings;
 
     cJSON *root = cJSON_CreateObject();
@@ -1508,6 +1576,7 @@ static esp_err_t api_settings_get_handler(httpd_req_t *req) {
 
 // Handler for ESP communication status
 static esp_err_t api_esp_comm_status_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         httpd_resp_set_status(req, "500 Internal Server Error");
@@ -1548,6 +1617,7 @@ static esp_err_t api_esp_comm_status_handler(httpd_req_t *req) {
 
 // Handler for ESP communication control (start discovery, connect, disconnect)
 static esp_err_t api_esp_comm_control_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     char content[512];
     int ret = httpd_req_recv(req, content, MIN_(req->content_len, sizeof(content) - 1));
     if (ret <= 0) {
@@ -1613,6 +1683,7 @@ static esp_err_t api_esp_comm_control_handler(httpd_req_t *req) {
 
 // Handler for sending ESP communication commands
 static esp_err_t api_esp_comm_send_handler(httpd_req_t *req) {
+    WEBUI_GUARD_OR_RETURN(req);
     char content[512];
     int ret = httpd_req_recv(req, content, MIN_(req->content_len, sizeof(content) - 1));
     if (ret <= 0) {

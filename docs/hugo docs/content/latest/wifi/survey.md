@@ -67,6 +67,40 @@ Once you connect to a network, you can discover devices and services on it.
    You should see open ports listed. Add `all` to check all ports, or `start-end` (like `20-1024`) for a range.
 3. Run `scanssh <ip>` to specifically check if a device has SSH enabled.
 
+## Full environment sweep
+
+Run a comprehensive scan of all wireless activity and save results to your SD card.
+
+### What it captures
+- **WiFi Access Points**: Name, MAC, channel, frequency, signal strength, security type, cipher, 802.11 mode, WPS status
+- **WiFi Clients**: MAC address and associated AP
+- **BLE Devices**: Flippers, GATT devices, and raw BLE packets
+- **802.15.4 Packets**: Zigbee/Thread traffic (ESP32-C5 and C6 only)
+- **GPS Coordinates**: Location data for each entry (if GPS module connected)
+
+### Run a sweep from the UI
+1. Open **Menu → WiFi → Scanning → Sweep**.
+   The device will run through each scan phase automatically.
+2. Wait for all phases to complete. Progress is shown on screen.
+3. Find results in `/ghostesp/sweeps/sweep_N.csv` on your SD card.
+
+### Run a sweep from command line
+1. Run `sweep` to start with default timing (10 seconds per phase).
+2. Customize timing with flags:
+   - `sweep -w 15` for 15-second WiFi scans
+   - `sweep -b 20` for 20-second BLE scans
+   - `sweep -w 15 -b 20` to set both
+3. Run `sweep -h` to see all options.
+
+### CSV output format
+Results are saved in a format similar to Kismet/Wigle exports:
+
+```
+Type,Name,MAC,Associated MAC,Channel,Frequency,RSSI,Auth,Cipher,802.11,WPS,Latitude,Longitude,Altitude,First Seen
+WiFi AP,MyNetwork,AA:BB:CC:DD:EE:FF,,6,2437,-45,WPA2,CCMP,ax/n/g/b,No,37.774929,-122.419416,10.5,2025-12-09 17:30:00
+WiFi Client,,11:22:33:44:55:66,AA:BB:CC:DD:EE:FF,,,,,,,37.774929,-122.419416,10.5,2025-12-09 17:30:00
+```
+
 ## Troubleshooting
 - **No networks found**: Move closer to wireless routers and try scanning again.
 - **"You Need to Scan APs First" message**: Run a scan before trying to select a network.

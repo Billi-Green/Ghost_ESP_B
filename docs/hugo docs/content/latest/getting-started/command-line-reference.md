@@ -13,7 +13,7 @@ toc: true
 
 ## Core
 
-- **`help [category|all]`** — List commands by category (`wifi`, `ble`, `portal`, `comm`, `sd`, `led`, `gps`, `misc`, `printer`, `cast`, `capture`, `beacon`, `attack`).
+- **`help [category|all]`** — List commands by category (`wifi`, `ble`, `portal`, `comm`, `sd`, `led`, `gps`, `misc`, `printer`, `cast`, `capture`, `beacon`, `attack`, `ethernet`).
 - **`chipinfo`** — Print SoC model, cores, features, and IDF version.
 - (for developers) **`mem [dump|trace <start|stop|dump>]`** — Print heap stats, dump allocation state, or control heap tracing.
 - **`reboot`** — Soft restart the device.
@@ -27,6 +27,7 @@ toc: true
 - **`scanap [seconds|-live|-stop]`** — Run an AP scan, optionally for a set duration, live channel hop, or stop (`-stop`).
 - **`scansta`** — Hop channels and log associated stations.
 - **`scanall [seconds]`** — Combined AP and STA scan with summary.
+- **`sweep [-w wifi_sec] [-b ble_sec]`** — Full environment sweep: scans WiFi APs, stations, and BLE devices, then saves a CSV report to SD (`/mnt/ghostesp/sweeps/sweep_N.csv`).
 - **`list [-a|-s|-airtags]`** — Show AP scan results, associated stations, or AirTags.
 - **`listenprobes [channel|stop]`** — Monitor probe requests and log to PCAP if SD is present.
 
@@ -78,6 +79,14 @@ toc: true
 - **`listairtags`** — Discover nearby AirTags.
 - **`selectairtag <idx>`** — Choose an AirTag for follow-up actions.
 
+### GATT
+
+- **`blescan -g`** — Scan for connectable BLE devices for GATT enumeration.
+- **`listgatt`** — List discovered GATT devices with tracker type detection.
+- **`selectgatt <idx>`** — Select a device by index for enumeration or tracking.
+- **`enumgatt`** — Connect to the selected device and enumerate its GATT services.
+- **`trackgatt`** — Track the selected device using real-time RSSI signal strength.
+
 ## Portal
 
 - **`startportal <path|default> <AP_SSID> [PSK]`** — Serve an Evil Portal bundle from SD or flash (`default` uses the built-in portal).
@@ -97,6 +106,23 @@ toc: true
 
 ## Storage
 
+### File Operations
+
+- **`sd status`** — Show SD card mount status, type (physical/virtual), capacity, and usage percentage.
+- **`sd list [path]`** — List files and directories with indices for quick reference. Default path: `/mnt/ghostesp`.
+- **`sd info <index|path>`** — Display file or directory details (type, size, path).
+- **`sd size <index|path>`** — Get file size in bytes (for pre-download checks).
+- **`sd read <index|path> [offset] [length]`** — Read file with optional offset and length for chunked downloads. No size limit.
+- **`sd write <path> <base64data>`** — Create/overwrite file with base64-decoded data.
+- **`sd append <path> <base64data>`** — Append base64-decoded data to file.
+- **`sd mkdir <path>`** — Create a new directory.
+- **`sd rm <index|path>`** — Delete a file or empty directory.
+- **`sd tree [path] [depth]`** — Recursive directory listing (default depth: 2, max: 10).
+
+All `sd` commands return machine-parsable output with prefixes like `SD:OK:`, `SD:ERR:`, `SD:FILE:[n]`, `SD:DIR:[n]}`, `SD:READ:`, `SD:WRITE:`.
+
+### Pin Configuration
+
 - **`sd_config`** — Display SD mode, pins, and status.
 - **`sd_pins_spi <cs> <clk> <miso> <mosi>`** — Configure SPI wiring.
 - **`sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>`** — Configure SDIO wiring.
@@ -107,9 +133,12 @@ toc: true
 - **`rgbmode <rainbow|police|strobe|off|color>`** — Run an LED effect immediately.
 - **`setrgbmode <normal|rainbow|stealth>`** — Persist the LED mode across reboots.
 - **`setrgbpins <r> <g> <b>`** — Override discrete RGB GPIOs; pass the same pin for all three values to switch into single-wire NeoPixel mode on that data pin.
+- **`setrgbcount <1-512>`** — Persist the number of RGB LEDs connected so effects span the correct length. Reinitializes immediately if pins are already configured.
 - **`setneopixelbrightness <0-100>`** / **`getneopixelbrightness`** — Control NeoPixel intensity.
 
 ## Status display (if present)
+
+Available on boards with an onboard OLED status display or when an external status display is configured.
 
 - **`statusidle [list|set <life|ghost|0|1>]`** — View or change the status OLED idle animation when `CONFIG_WITH_STATUS_DISPLAY` and a status display are enabled.
   - `statusidle` — Show the current idle animation and timeout.
@@ -126,6 +155,7 @@ toc: true
 - **`ir universals sendall <file|TURNHISTVOFF> <button_name> [delay_ms]`** — Transmit all signals for a named button from a universal file or the built‑in TURNHISTVOFF set; can be stopped with `stop`.
 - **`ir rx [timeout]`** — Wait up to `timeout` seconds (default 60) for a single IR signal, print it (decoded or RAW), then stop.
 - **`ir learn [path]`** — Wait for a signal (10s). Without `path`, auto-create a new `.ir` file under `/mnt/ghostesp/infrared/remotes`; with `path`, append the learned signal to that file.
+- **`ir dazzler [stop]`** — Start/stop continuous IR dazzler flood. Responses are machine-parsable: `IR_DAZZLER:STARTED`, `IR_DAZZLER:FAILED`, `IR_DAZZLER:ALREADY_RUNNING`, `IR_DAZZLER:STOPPING`, `IR_DAZZLER:NOT_RUNNING`.
 - **`[IR/BEGIN]` / `[IR/CLOSE]` (UART IR envelope)**
   - **Usage:** Send `[IR/BEGIN]`, then a single IR message body, then `[IR/CLOSE]` on the same UART stream to trigger a one‑off transmit.
   - **Body format (`.ir` text block):** Same fields as a standard `.ir` file entry (for example: name, type, protocol, address, command).
@@ -156,6 +186,55 @@ toc: true
 
 - **`gpsinfo [-s]`** — Stream current fix, satellites, and speed; pass `-s` to stop the display task.
 - **`startwd [-s]`** — Begin Wi-Fi wardriving with GPS logging, CSV output, and monitor mode; pass `-s` to stop and flush logs.
+
+## Ethernet
+*(Requires `CONFIG_WITH_ETHERNET`)*
+
+### Connection Management
+
+- **`ethup`** — Initialize and bring up Ethernet interface; waits for link establishment and DHCP assignment.
+- **`ethdown`** — Deinitialize and bring down Ethernet interface.
+- **`ethinfo`** — Display Ethernet connection information (status, IP address, netmask, gateway, DNS servers, DHCP server).
+- **`webuiap [on|off|toggle|status]`** — Restrict the web UI to clients connected to the onboard AP subnet (AP-only mode).
+
+### Network Scanning
+
+- **`ethfp`** — Fingerprint network hosts using mDNS, NetBIOS, and SSDP (discovers Apple devices, Chromecasts, printers, Windows PCs, routers, smart TVs).
+- **`etharp`** — Perform ARP scan on local Ethernet network subnet (1-254) to discover active hosts.
+- **`ethping`** — Perform ICMP ping scan on local Ethernet network subnet (1-254) to find alive hosts.
+- **`ethports [ip] [all|start-end]`** — Scan TCP ports on a target IP address.
+  - Without arguments: scans common ports on gateway.
+  - `all`: scan all ports (1-65535).
+  - `start-end`: custom port range (e.g., `80-443`).
+  - Examples: `ethports`, `ethports 192.168.1.1`, `ethports 192.168.1.1 all`, `ethports 192.168.1.1 80-443`.
+
+### Network Tools
+
+- **`ethdns <hostname>`** — Perform forward DNS lookup.
+- **`ethdns reverse <ip_address>`** — Perform reverse DNS lookup.
+- **`ethtrace <hostname_or_ip> [max_hops]`** — Perform traceroute to a target host (default: 30 hops, max: 64).
+- **`ethserv [ip_address]`** — Service discovery and banner grabbing on a target IP (default: gateway). Scans common services (FTP, SSH, Telnet, SMTP, HTTP, HTTPS, etc.).
+- **`ethhttp <url> [lines|all]`** — Send HTTP/HTTPS GET request to a server and display response.
+  - Default: shows first 25 lines
+  - `[lines]`: show first N lines (e.g., `ethhttp http://example.com 50`)
+  - `all`: show full response (e.g., `ethhttp http://example.com all`)
+  - Supports both HTTP and HTTPS (TLS 1.2)
+  - Examples: `ethhttp http://example.com`, `ethhttp https://www.google.com 100`, `ethhttp http://192.168.1.1/index.html all`
+- **`ethntp [ntp_server]`** — Query NTP server and synchronize system time. Default server: `pool.ntp.org`. Examples: `ethntp`, `ethntp pool.ntp.org`, `ethntp time.google.com`.
+
+### Configuration
+
+- **`ethconfig dhcp`** — Use DHCP for automatic IP assignment.
+- **`ethconfig static <ip> <netmask> <gateway>`** — Set static IP configuration.
+  - Example: `ethconfig static 192.168.1.100 255.255.255.0 192.168.1.1`
+- **`ethconfig show`** — Show current IP configuration.
+- **`ethmac`** — Display current MAC address.
+- **`ethmac set <xx:xx:xx:xx:xx:xx>`** — Set Ethernet MAC address (may require reinitialization).
+  - Example: `ethmac set 02:00:00:00:00:01`
+
+### Statistics
+
+- **`ethstats`** — Display Ethernet network statistics (link status, IP info, MAC address, packet statistics, ARP statistics).
 
 ## Settings
 

@@ -75,6 +75,9 @@ static void submit_number() {
             case NP_MODE_FLIPPER:
                 snprintf(command, sizeof(command), "selectflipper %s", input_buffer);
                 break;
+            case NP_MODE_GATT:
+                snprintf(command, sizeof(command), "selectgatt %s", input_buffer);
+                break;
             case NP_MODE_AP_REMOTE:
                 snprintf(command, sizeof(command), "commsend select -a %s", input_buffer);
                 break;
@@ -176,6 +179,8 @@ static void number_pad_create() {
         title = "Select AirTag";
     } else if (current_mode == NP_MODE_FLIPPER || current_mode == NP_MODE_FLIPPER_REMOTE) {
         title = "Select Flipper";
+    } else if (current_mode == NP_MODE_GATT) {
+        title = "Select GATT Device";
     } else {
         title = "Select LAN";
     }

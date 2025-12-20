@@ -29,7 +29,7 @@ typedef struct {
   uint32_t orig_len; // Actual length of packet (on the wire)
 } pcap_packet_header_t;
 
-#define MAX_FILE_NAME_LENGTH 528
+#define MAX_FILE_NAME_LENGTH 64
 #define PCAP_BUFFER_SIZE 5120
 
 #define DLT_IEEE802_11_RADIO 127

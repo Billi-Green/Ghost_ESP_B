@@ -1,8 +1,10 @@
+ #include "gui/screen_layout.h"
 #include "managers/views/infrared_view.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
 
 void update_learning_popup_selection(void);
 void update_easy_learn_popup_selection(void);
@@ -23,12 +25,6 @@ static void ir_sd_end(bool display_was_suspended);
 
 static const char *TAG = "infrared_view";
 
-static const uint32_t ir_theme_accent_colors[15] = {
-    0x1976D2,0xFFCDD2,0x263238,0xFFFFFF,0x002B36,
-    0x888888,0xE91E63,0x9C27B0,0x2196F3,0xFFA500,
-    0x39FF14,0xFF00FF,0x0077BE,0xFF4500,0x556B2F
-};
-
 #ifdef CONFIG_HAS_INFRARED_RX
 void cleanup_signal_preview_popup(void *obj);
 void signal_preview_save_cb(lv_event_t *e);
@@ -47,8 +43,6 @@ static void add_signal_keyboard_callback(const char *name);
 void rename_remote_cb(lv_event_t *e);
 void add_signal_cb(lv_event_t *e);
 void delete_remote_cb(lv_event_t *e);
-
-
 
 
 #ifndef JOYSTICK_LEFT
@@ -79,6 +73,7 @@ static bool popup_style_initialized = false;
 #include "managers/views/main_menu_screen.h"
 #include "gui/popup.h"
 #include "managers/views/keyboard_screen.h"
+#include "gui/lvgl_safe.h"
 #include <lvgl/lvgl.h>
 #include <dirent.h>
 #include <string.h>
@@ -122,6 +117,8 @@ static size_t uni_command_count = 0;
 static char current_universal_file[256] = "";
 static lv_obj_t *transmitting_popup = NULL;
 static TaskHandle_t universal_task_handle = NULL;
+static lv_obj_t *dazzler_popup = NULL;
+static lv_obj_t *dazzler_stop_btn = NULL;
 // background sd io worker for infrared
 typedef enum { IR_IO_SAVE = 1, IR_IO_APPEND = 2, IR_IO_RENAME = 3, IR_IO_DELETE = 4 } IrIoOp_t;
 typedef struct {
@@ -302,8 +299,6 @@ static void ir_learning_task(void *arg);
 static void add_signal_to_remote_callback(const char *name);
 static void append_signal_to_remote(const char *signal_name);
 #endif
-
-
 
 
 #ifdef CONFIG_HAS_INFRARED_RX
@@ -569,6 +564,9 @@ static void add_encoder_back_btn(void);
 static void cleanup_transmit_popup(void *obj);
 static void cleanup_learning_popup(void *obj);
 static void universal_transmit_task(void *arg);
+static void dazzler_event_cb(lv_event_t *e);
+static void dazzler_stop_cb(lv_event_t *e);
+static void cleanup_dazzler_popup(void *obj);
 
 static void clear_ir_file_paths(void) {
     if (!ir_file_paths) {
@@ -779,10 +777,59 @@ static void ir_sd_end(bool display_was_suspended)
 }
 
 static void cleanup_transmit_popup(void *obj) {
-    if (transmitting_popup) {
-        lv_obj_del(transmitting_popup);
-        transmitting_popup = NULL;
+    (void)obj;
+    lvgl_obj_del_safe(&transmitting_popup);
+}
+
+static void cleanup_dazzler_popup(void *obj) {
+    (void)obj;
+    lvgl_obj_del_safe(&dazzler_popup);
+    dazzler_stop_btn = NULL;
+}
+
+static void dazzler_stop_cb(lv_event_t *e) {
+    ESP_LOGI(TAG, "Dazzler stop button pressed");
+    infrared_manager_dazzler_stop();
+    cleanup_dazzler_popup(NULL);
+}
+
+static void dazzler_event_cb(lv_event_t *e) {
+    ESP_LOGI(TAG, "IR Dazzler button pressed");
+    
+    if (infrared_manager_dazzler_is_active()) {
+        infrared_manager_dazzler_stop();
+        return;
     }
+    
+    if (!infrared_manager_dazzler_start()) {
+        ESP_LOGE(TAG, "Failed to start dazzler");
+        return;
+    }
+    
+    lv_coord_t scr_w = LV_HOR_RES;
+    lv_coord_t scr_h = LV_VER_RES;
+    lv_coord_t popup_w = scr_w - 40;
+    if (popup_w > 280) popup_w = 280;
+    if (popup_w < 160) popup_w = scr_w - 20;
+    lv_coord_t popup_h = 120;
+    if (scr_h < 200) popup_h = scr_h - 40;
+    if (popup_h < 80) popup_h = 80;
+    
+    dazzler_popup = popup_create_container(lv_scr_act(), popup_w, popup_h);
+    lv_obj_center(dazzler_popup);
+    
+    lv_obj_t *title = popup_create_title_label(dazzler_popup, "IR Dazzler Active", &lv_font_montserrat_16, 15);
+    (void)title;
+    
+    lv_obj_t *info = popup_create_body_label(dazzler_popup, "Emitting IR...", popup_w - 20, true, &lv_font_montserrat_14, 45);
+    lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(info, LV_ALIGN_TOP_MID, 0, 45);
+    
+    lv_coord_t btn_w = 100;
+    if (btn_w > popup_w - 40) btn_w = popup_w - 40;
+    dazzler_stop_btn = popup_add_styled_button(dazzler_popup, "Stop", btn_w, 30, 
+                                                LV_ALIGN_BOTTOM_MID, 0, -10, NULL, 
+                                                dazzler_stop_cb, NULL);
 }
 
 static void ir_sd_worker_task(void *arg)
@@ -1155,11 +1202,25 @@ static void back_event_cb(lv_event_t *e) {
         lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
 #endif
 
+        lv_obj_t *dazzler_btn = lv_list_add_btn(list, NULL, "IR Dazzler");
+        lv_obj_set_width(dazzler_btn, LV_HOR_RES);
+        lv_obj_set_style_bg_color(dazzler_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_width(dazzler_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(dazzler_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(dazzler_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_t *dazzler_label = lv_obj_get_child(dazzler_btn, 0);
+        if (dazzler_label) {
+            lv_obj_set_style_text_font(dazzler_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(dazzler_label, lv_color_hex(0xFFFFFF), 0);
+        }
+        lv_obj_add_event_cb(dazzler_btn, dazzler_event_cb, LV_EVENT_CLICKED, NULL);
+
         num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
 #ifdef CONFIG_HAS_INFRARED_RX
         num_ir_items++; // account for learn remote button
         num_ir_items++; // account for easy learn button
 #endif
+        num_ir_items++; // account for dazzler button
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         add_encoder_back_btn();
 #endif
@@ -1178,15 +1239,9 @@ void infrared_view_create(void) {
     is_easy_mode = settings_get_infrared_easy_mode(&G_Settings);
 #endif
     
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, "Infrared", lv_color_hex(0x121212), LV_OPA_COVER);
     lv_obj_set_style_pad_all(root, 0, 0);
     infrared_view.root = root;
-    lv_obj_set_size(root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x121212), 0);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(root, 0, LV_PART_MAIN);
-
-    display_manager_add_status_bar("Infrared");
     if (!ir_sd_queue) {
         ir_sd_queue = xQueueCreate(4, sizeof(IrIoJob_t));
     }
@@ -1194,7 +1249,7 @@ void infrared_view_create(void) {
         xTaskCreate(ir_sd_worker_task, "ir_io", 4096, NULL, tskIDLE_PRIORITY + 1, &ir_sd_worker_handle);
     }
 
-    const int STATUS_BAR_HEIGHT = 20;
+    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_HEIGHT;
 #ifdef CONFIG_USE_TOUCHSCREEN
     const int BUTTON_AREA_HEIGHT = IR_SCROLL_BTN_SIZE + IR_SCROLL_BTN_PADDING * 2;
 #else
@@ -1291,11 +1346,25 @@ void infrared_view_create(void) {
     lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
 #endif
 
+    lv_obj_t *dazzler_btn = lv_list_add_btn(list, NULL, "IR Dazzler");
+    lv_obj_set_width(dazzler_btn, LV_HOR_RES);
+    lv_obj_set_style_bg_color(dazzler_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(dazzler_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(dazzler_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dazzler_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t *dazzler_label = lv_obj_get_child(dazzler_btn, 0);
+    if (dazzler_label) {
+        lv_obj_set_style_text_font(dazzler_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(dazzler_label, lv_color_hex(0xFFFFFF), 0);
+    }
+    lv_obj_add_event_cb(dazzler_btn, dazzler_event_cb, LV_EVENT_CLICKED, NULL);
+
     num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
 #ifdef CONFIG_HAS_INFRARED_RX
     num_ir_items++; // account for learn remote button
     num_ir_items++; // account for easy learn button
 #endif
+    num_ir_items++; // account for dazzler button
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
     add_encoder_back_btn();
@@ -1363,6 +1432,12 @@ void infrared_view_destroy(void) {
         universal_task_handle = NULL;
     }
     cleanup_transmit_popup(NULL);
+    
+    if (infrared_manager_dazzler_is_active()) {
+        infrared_manager_dazzler_stop();
+    }
+    cleanup_dazzler_popup(NULL);
+    
 #ifdef CONFIG_HAS_INFRARED_RX
     // Cleanup IR learning resources
     if (ir_learning_task_handle) {
@@ -1409,8 +1484,7 @@ void infrared_view_destroy(void) {
             ir_file_count = 0;
         }
         showing_commands = false;
-        lv_obj_del(root);
-        root = NULL;
+        lvgl_obj_del_safe(&root);
         list = NULL;
         infrared_view.root = NULL;
         selected_ir_index = 0;
@@ -1465,13 +1539,10 @@ static void ir_select_item(int index) {
             }
         } else {
             uint8_t theme = settings_get_menu_theme(&G_Settings);
-            if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) {
-                theme = 0;
-            }
-            lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+            lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
             lv_obj_set_style_bg_color(cur, accent, LV_PART_MAIN);
             if (cur_label) {
-                if (theme == 3) {
+                if (theme_palette_is_bright(theme)) {
                     lv_obj_set_style_text_color(cur_label, lv_color_hex(0x000000), 0);
                 } else {
                     lv_obj_set_style_text_color(cur_label, lv_color_hex(0xFFFFFF), 0);
@@ -1494,6 +1565,30 @@ void infrared_view_input_cb(InputEvent *event) {
             }
         }
     }
+    
+    // Handle dazzler popup input - any button press stops the dazzler
+    if (dazzler_popup && lv_obj_is_valid(dazzler_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *data = &event->data.touch_data;
+            if (data->state == LV_INDEV_STATE_PR) {
+                if (dazzler_stop_btn && lv_obj_is_valid(dazzler_stop_btn)) {
+                    lv_area_t area;
+                    lv_obj_get_coords(dazzler_stop_btn, &area);
+                    if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
+                        data->point.y >= area.y1 && data->point.y <= area.y2) {
+                        dazzler_stop_cb(NULL);
+                        return;
+                    }
+                }
+            }
+        } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER ||
+                   event->type == INPUT_TYPE_KEYBOARD) {
+            dazzler_stop_cb(NULL);
+            return;
+        }
+        return;
+    }
+    
 #ifdef CONFIG_HAS_INFRARED_RX
     // Handle learn remote popup input
     if (learning_popup && lv_obj_is_valid(learning_popup)) {
@@ -1512,7 +1607,7 @@ void infrared_view_input_cb(InputEvent *event) {
                 }
             }
         } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER) {
-            if ((event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 0) ||
+            if ((event->type == INPUT_TYPE_JOYSTICK && (event->data.joystick_index == 0 || event->data.joystick_index == 1)) ||
                 (event->type == INPUT_TYPE_ENCODER && event->data.encoder.direction == ENCODER_PRESS)) {
                 learning_cancel_cb(NULL);
                 return;
@@ -1720,12 +1815,20 @@ void infrared_view_input_cb(InputEvent *event) {
 #ifdef CONFIG_HAS_INFRARED_RX
                                 } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
                                     learn_remote_event_cb(NULL);
+                                } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
+                                    easy_learn_toggle_cb(NULL);
+                                } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                                    dazzler_event_cb(NULL);
+#else
+                                } else if (i == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                                    dazzler_event_cb(NULL);
 #endif
                                 } else {
                                     int top_count = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
 #ifdef CONFIG_HAS_INFRARED_RX
                                     top_count += 2;
 #endif
+                                    top_count += 1;  // Dazzler
                                     int file_idx = i - top_count;
                                     file_event_open(file_idx);
                                 }
@@ -1778,12 +1881,20 @@ void infrared_view_input_cb(InputEvent *event) {
                 } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
                     ESP_LOGI(TAG, "joystick enter pressed on Easy Learn toggle");
                     easy_learn_toggle_cb(NULL);
+                } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                    ESP_LOGI(TAG, "joystick enter pressed on IR Dazzler");
+                    dazzler_event_cb(NULL);
+#else
+                } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                    ESP_LOGI(TAG, "joystick enter pressed on IR Dazzler");
+                    dazzler_event_cb(NULL);
 #endif
                 } else {
                     int top_count = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0)
 #ifdef CONFIG_HAS_INFRARED_RX
                         + 2  // Account for both Learn Remote and Easy Learn buttons
 #endif
+                        + 1  // Account for Dazzler button
                     ;
                     int file_idx = top_level ? (selected_ir_index - top_count) : selected_ir_index;
                     ESP_LOGI(TAG, "joystick enter pressed, opening selected file at index %d", file_idx);
@@ -1858,12 +1969,20 @@ void infrared_view_input_cb(InputEvent *event) {
                     } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
                         ESP_LOGI(TAG, "Keyboard Enter pressed on Easy Learn");
                         easy_learn_toggle_cb(NULL);
+                    } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                        ESP_LOGI(TAG, "Keyboard Enter pressed on IR Dazzler");
+                        dazzler_event_cb(NULL);
+#else
+                    } else if (top_level && selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                        ESP_LOGI(TAG, "Keyboard Enter pressed on IR Dazzler");
+                        dazzler_event_cb(NULL);
 #endif
                     } else {
                         int top_count = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0)
 #ifdef CONFIG_HAS_INFRARED_RX
                             + 2  // Account for both Learn Remote and Easy Learn buttons
 #endif
+                            + 1  // Account for Dazzler button
                         ;
                         int file_idx = top_level ? (selected_ir_index - top_count) : selected_ir_index;
                         ESP_LOGI(TAG, "Keyboard Enter pressed, opening selected file at index %d", file_idx);
@@ -1932,12 +2051,18 @@ void infrared_view_input_cb(InputEvent *event) {
                         learn_remote_event_cb(NULL);
                     } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 1)) {
                         easy_learn_toggle_cb(NULL);
+                    } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0) + 2)) {
+                        dazzler_event_cb(NULL);
+#else
+                    } else if (selected_ir_index == ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0))) {
+                        dazzler_event_cb(NULL);
 #endif
                     } else {
                         int file_idx = selected_ir_index - ((has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0)
 #ifdef CONFIG_HAS_INFRARED_RX
                             + 2  // Account for both Learn Remote and Easy Learn buttons
 #endif
+                            + 1  // Account for Dazzler button
                         );
                         file_event_open(file_idx);
                     }
@@ -2522,13 +2647,11 @@ static void cleanup_unified_learning_popup(learning_popup_type_t type)
 {
     if (type == LEARNING_POPUP_STANDARD) {
         if (learning_popup) {
-            lv_obj_del(learning_popup);
-            learning_popup = NULL;
+            lvgl_obj_del_safe(&learning_popup);
         }
     } else {
         if (easy_learn_popup) {
-            lv_obj_del(easy_learn_popup);
-            easy_learn_popup = NULL;
+            lvgl_obj_del_safe(&easy_learn_popup);
             easy_learn_instruction_label = NULL;
         }
     }
@@ -2547,15 +2670,13 @@ void cleanup_easy_learn_popup(void *obj)
 // Signal preview UI functions
 void cleanup_signal_preview_popup(void *obj)
 {
-    if (signal_preview_popup) {
-        lv_obj_del(signal_preview_popup);
-        signal_preview_popup = NULL;
-        protocol_label = NULL;
-        address_label = NULL;
-        command_label = NULL;
-        save_btn = NULL;
-        cancel_btn = NULL;
-    }
+    (void)obj;
+    lvgl_obj_del_safe(&signal_preview_popup);
+    protocol_label = NULL;
+    address_label = NULL;
+    command_label = NULL;
+    save_btn = NULL;
+    cancel_btn = NULL;
 }
 
 
@@ -2781,8 +2902,7 @@ void update_signal_preview_selection(void)
     
     // Update button styles based on selection
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-    lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+    lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
 
     if (preview_selected_option == 0) {
         // Save selected - theme accent background
@@ -2790,7 +2910,7 @@ void update_signal_preview_selection(void)
         lv_obj_set_style_border_color(save_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *save_label = lv_obj_get_child(save_btn, 0);
         if (save_label) {
-            if (theme == 3) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(save_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(save_label, lv_color_hex(0xFFFFFF), 0);
         }
         
@@ -2805,7 +2925,7 @@ void update_signal_preview_selection(void)
         lv_obj_set_style_border_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
         
@@ -2824,13 +2944,12 @@ void update_learning_popup_selection(void)
     if (preview_selected_option == 1) {
         // Cancel selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(learning_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(learning_cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {
@@ -2851,13 +2970,12 @@ void update_easy_learn_popup_selection(void)
     if (easy_learn_selected_option == 0) {
         // Cancel selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(easy_learn_cancel_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *cancel_label = lv_obj_get_child(easy_learn_cancel_btn, 0);
         if (cancel_label) {
-            if (theme == 3) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(cancel_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {
@@ -2872,13 +2990,12 @@ void update_easy_learn_popup_selection(void)
     if (easy_learn_selected_option == 1) {
         // Skip selected - theme accent background
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        if (theme >= (sizeof(ir_theme_accent_colors) / sizeof(ir_theme_accent_colors[0]))) theme = 0;
-        lv_color_t accent = lv_color_hex(ir_theme_accent_colors[theme]);
+        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
         lv_obj_set_style_bg_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_border_color(easy_learn_skip_btn, accent, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_t *skip_label = lv_obj_get_child(easy_learn_skip_btn, 0);
         if (skip_label) {
-            if (theme == 3) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
+            if (theme_palette_is_bright(theme)) lv_obj_set_style_text_color(skip_label, lv_color_hex(0x000000), 0);
             else lv_obj_set_style_text_color(skip_label, lv_color_hex(0xFFFFFF), 0);
         }
     } else {

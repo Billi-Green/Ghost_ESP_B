@@ -21,6 +21,7 @@
 #include <strings.h>
 #include "managers/infrared_timings.h"
 #include "managers/infrared_protocols.h"
+#include "soc/soc_caps.h"
 #include "freertos/queue.h"
 #ifdef CONFIG_HAS_INFRARED_RX
 #include "driver/rmt_rx.h"
@@ -531,15 +532,15 @@ static const InfraredCommonProtocolSpec* infrared_manager_get_protocol_spec(cons
 
 static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float duty) {
     size_t item_count = (count + 1) / 2;
-    size_t block_symbols = item_count < 48 ? 48 : item_count;
+    size_t hw_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
 
-    if (block_symbols % 2) block_symbols++;
+    if (hw_symbols % 2) hw_symbols++;
 
     static rmt_channel_handle_t tx_chan = NULL;
     static rmt_encoder_handle_t copy_encoder = NULL;
     static size_t chan_symbols = 0;
 
-    if (tx_chan && block_symbols > chan_symbols) {
+    if (tx_chan && hw_symbols != chan_symbols) {
         rmt_disable(tx_chan);
         rmt_del_channel(tx_chan);
         tx_chan = NULL;
@@ -554,7 +555,7 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
 #else
             .gpio_num = GPIO_NUM_NC,
 #endif
-            .mem_block_symbols = block_symbols,
+            .mem_block_symbols = hw_symbols,
             .resolution_hz = 1000000,
             .trans_queue_depth = 1,
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
@@ -566,7 +567,7 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
         if (rmt_new_tx_channel(&cfg, &tx_chan) != ESP_OK) return false;
 
         if (rmt_enable(tx_chan) != ESP_OK) return false;
-        chan_symbols = block_symbols;
+        chan_symbols = hw_symbols;
     }
 
     if (!copy_encoder) {
@@ -576,7 +577,7 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
     rmt_carrier_config_t carrier = {.frequency_hz = freq, .duty_cycle = duty, .flags.polarity_active_low = false};
     if (rmt_apply_carrier(tx_chan, &carrier) != ESP_OK) return false;
 
-    rmt_symbol_word_t *symbols = heap_caps_malloc(block_symbols * sizeof(rmt_symbol_word_t), MALLOC_CAP_DMA);
+    rmt_symbol_word_t *symbols = heap_caps_malloc(item_count * sizeof(rmt_symbol_word_t), MALLOC_CAP_DMA);
     if (!symbols) return false;
     for (size_t i = 0; i < item_count; i++) {
         symbols[i].level0 = 1;
@@ -1187,4 +1188,118 @@ bool infrared_manager_rx_init(void) { return false; }
 void infrared_manager_rx_deinit(void) {}
 bool infrared_manager_rx_receive(infrared_signal_t *signal, int timeout_ms) { return false; }
 void infrared_manager_rx_cancel(void) {}
+#endif
+
+#ifdef CONFIG_HAS_INFRARED
+static rmt_channel_handle_t s_dazzler_tx_chan = NULL;
+static rmt_encoder_handle_t s_dazzler_encoder = NULL;
+
+bool infrared_manager_dazzler_start(void) {
+    if (s_dazzler_tx_chan != NULL) {
+        ESP_LOGW(TAG_IR_MANAGER, "Dazzler already running");
+        return false;
+    }
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
+        infrared_manager_poltergeist_hold_io24_begin();
+    }
+#endif
+
+    rmt_tx_channel_config_t cfg = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .gpio_num = CONFIG_INFRARED_LED_PIN,
+        .mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL,
+        .resolution_hz = 1000000,
+        .trans_queue_depth = 1,
+        .flags = {.with_dma = false, .invert_out = false}
+    };
+    if (rmt_new_tx_channel(&cfg, &s_dazzler_tx_chan) != ESP_OK) {
+        ESP_LOGE(TAG_IR_MANAGER, "Dazzler: failed to create TX channel");
+        goto fail;
+    }
+    if (rmt_enable(s_dazzler_tx_chan) != ESP_OK) {
+        ESP_LOGE(TAG_IR_MANAGER, "Dazzler: failed to enable TX channel");
+        rmt_del_channel(s_dazzler_tx_chan);
+        s_dazzler_tx_chan = NULL;
+        goto fail;
+    }
+
+    rmt_carrier_config_t carrier = {
+        .frequency_hz = 38000,
+        .duty_cycle = 0.50f,
+        .flags.polarity_active_low = false
+    };
+    rmt_apply_carrier(s_dazzler_tx_chan, &carrier);
+
+    if (rmt_new_copy_encoder(&(rmt_copy_encoder_config_t){}, &s_dazzler_encoder) != ESP_OK) {
+        ESP_LOGE(TAG_IR_MANAGER, "Dazzler: failed to create encoder");
+        rmt_disable(s_dazzler_tx_chan);
+        rmt_del_channel(s_dazzler_tx_chan);
+        s_dazzler_tx_chan = NULL;
+        goto fail;
+    }
+
+    static rmt_symbol_word_t burst = {
+        .level0 = 1,
+        .duration0 = 9000,
+        .level1 = 0,
+        .duration1 = 500,
+    };
+
+    rgb_manager_set_color(&rgb_manager, -1, 255, 0, 0, false);
+
+    esp_err_t err = rmt_transmit(s_dazzler_tx_chan, s_dazzler_encoder, &burst, sizeof(burst),
+                                 &(rmt_transmit_config_t){.loop_count = -1});
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG_IR_MANAGER, "Dazzler: failed to start transmission");
+        rmt_del_encoder(s_dazzler_encoder);
+        s_dazzler_encoder = NULL;
+        rmt_disable(s_dazzler_tx_chan);
+        rmt_del_channel(s_dazzler_tx_chan);
+        s_dazzler_tx_chan = NULL;
+        goto fail;
+    }
+
+    ESP_LOGI(TAG_IR_MANAGER, "IR Dazzler started (hardware loop)");
+    return true;
+
+fail:
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
+        infrared_manager_poltergeist_hold_io24_end();
+    }
+#endif
+    return false;
+}
+
+void infrared_manager_dazzler_stop(void) {
+    if (s_dazzler_tx_chan == NULL) return;
+
+    rmt_disable(s_dazzler_tx_chan);
+    if (s_dazzler_encoder) {
+        rmt_del_encoder(s_dazzler_encoder);
+        s_dazzler_encoder = NULL;
+    }
+    rmt_del_channel(s_dazzler_tx_chan);
+    s_dazzler_tx_chan = NULL;
+
+    rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
+        infrared_manager_poltergeist_hold_io24_end();
+    }
+#endif
+    ESP_LOGI(TAG_IR_MANAGER, "IR Dazzler stopped");
+}
+
+bool infrared_manager_dazzler_is_active(void) {
+    return s_dazzler_tx_chan != NULL;
+}
+
+#else
+bool infrared_manager_dazzler_start(void) { return false; }
+void infrared_manager_dazzler_stop(void) {}
+bool infrared_manager_dazzler_is_active(void) { return false; }
 #endif

@@ -41,7 +41,7 @@ static DESFIRE_MODEL desfire_model_from_size_byte(uint8_t size_byte,
 
      // DESFire GET_VERSION on some tags can take noticeably longer than
      // simple MIFARE Classic/NTAG operations, so allow a more generous
-     // INDATAEXCHANGE wait window here. Classic code later re-tightens this.
+     // INDATAEXCHANGE wait window here. Classic code later re-tightens it anyway.
      pn532_set_indata_wait_timeout(500);
 
      uint8_t resp[32] = {0};

@@ -44,6 +44,8 @@ void stop_pineap_detection(void);
 void start_wardriving(void);
 void stop_wardriving(void);
 
+uint32_t wardriving_get_ap_count(void);
+
 // Forward declarations of callback functions
 void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type);
@@ -87,5 +89,8 @@ static uint8_t router_ip[4];
 
 // Controls whether probe listening writes PCAP data to SD (no UART fallback)
 extern bool g_listen_probes_save_to_sd;
+
+// cleanup function to free pcap queue when not capturing
+void cleanup_pcap_queue(void);
 
 #endif

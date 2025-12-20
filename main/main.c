@@ -17,9 +17,10 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
+#include "managers/usb_keyboard_manager.h"
 
 #ifdef CONFIG_WITH_ETHERNET
-// TODO
+#include "managers/ethernet_manager.h"
 #endif
 
 #ifdef CONFIG_WITH_SCREEN
@@ -73,6 +74,15 @@ void app_main(void) {
 
     MEASURE_INIT_RAM("Serial Manager", serial_manager_init());
     MEASURE_INIT_RAM("Wifi Manager", wifi_manager_init());
+#ifdef CONFIG_WITH_ETHERNET
+    {
+        esp_err_t eth_ret;
+        MEASURE_INIT_RAM("Ethernet Manager", eth_ret = ethernet_manager_init());
+        if (eth_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Ethernet init failed: %s", esp_err_to_name(eth_ret));
+        }
+    }
+#endif
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     // MEASURE_INIT_RAM("BLE Manager", ble_init());
 #endif
@@ -138,9 +148,6 @@ void app_main(void) {
     }
 #endif
 
-#ifdef CONFIG_WITH_ETHERNET
-
-#endif
     ESP_LOGI(TAG, "Initializing Commands");
     MEASURE_INIT_RAM("Commands init", command_init());
 
@@ -159,9 +166,11 @@ void app_main(void) {
         int32_t comm_rx = G_Settings.esp_comm_rx_pin;
         MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, DEFAULT_BAUD_RATE));
     }
+    usb_keyboard_manager_register_stream_handler();
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     MEASURE_INIT_RAM("AP Manager", ap_manager_init());
+
 
 #ifdef CONFIG_WITH_SCREEN
 
@@ -221,35 +230,41 @@ void app_main(void) {
     {
         bool initialized = false;
         int32_t data_pin = settings_get_rgb_data_pin(&G_Settings);
+        int rgb_led_count = settings_get_rgb_led_count(&G_Settings);
+        if (rgb_led_count <= 0) {
+            rgb_led_count = CONFIG_NUM_LEDS > 0 ? CONFIG_NUM_LEDS : 1;
+        }
         int32_t red_pin, green_pin, blue_pin;
         settings_get_rgb_separate_pins(&G_Settings, &red_pin, &green_pin, &blue_pin);
         if (data_pin != GPIO_NUM_NC) {
             esp_err_t rgb_err;
-            MEASURE_INIT_RAM("RGB Manager (data pin) init", rgb_err = rgb_manager_init(&rgb_manager, data_pin, CONFIG_NUM_LEDS, LED_PIXEL_FORMAT_GRB,
+            MEASURE_INIT_RAM("RGB Manager (data pin) init", rgb_err = rgb_manager_init(&rgb_manager, data_pin, rgb_led_count, LED_PIXEL_FORMAT_GRB,
                                                  LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC));
             initialized = (rgb_err == ESP_OK);
         } else if (red_pin != GPIO_NUM_NC && green_pin != GPIO_NUM_NC && blue_pin != GPIO_NUM_NC) {
             esp_err_t rgb_err;
-            MEASURE_INIT_RAM("RGB Manager (separate pins) init", rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
+            MEASURE_INIT_RAM("RGB Manager (separate pins) init", rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, rgb_led_count, LED_PIXEL_FORMAT_GRB,
                                                  LED_MODEL_WS2812, red_pin, green_pin, blue_pin));
             initialized = (rgb_err == ESP_OK);
         }
             if (!initialized) {
-    #ifdef CONFIG_LED_DATA_PIN
+#ifdef CONFIG_LED_DATA_PIN
             esp_err_t rgb_err;
-            MEASURE_INIT_RAM("RGB Manager (fallback) init", rgb_err = rgb_manager_init(&rgb_manager, CONFIG_LED_DATA_PIN, CONFIG_NUM_LEDS, LED_ORDER,
+            MEASURE_INIT_RAM("RGB Manager (fallback) init", rgb_err = rgb_manager_init(&rgb_manager, CONFIG_LED_DATA_PIN, rgb_led_count, LED_ORDER,
                                                  LED_MODEL_WS2812, GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC));
             initialized = (rgb_err == ESP_OK);
-    #elif defined(CONFIG_RED_RGB_PIN) && defined(CONFIG_GREEN_RGB_PIN) && defined(CONFIG_BLUE_RGB_PIN)
+#elif defined(CONFIG_RED_RGB_PIN) && defined(CONFIG_GREEN_RGB_PIN) && defined(CONFIG_BLUE_RGB_PIN)
             esp_err_t rgb_err;
-            MEASURE_INIT_RAM("RGB Manager (fallback separate pins) init", rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, 1, LED_PIXEL_FORMAT_GRB,
+            MEASURE_INIT_RAM("RGB Manager (fallback separate pins) init", rgb_err = rgb_manager_init(&rgb_manager, GPIO_NUM_NC, rgb_led_count, LED_PIXEL_FORMAT_GRB,
                                                  LED_MODEL_WS2812, CONFIG_RED_RGB_PIN, CONFIG_GREEN_RGB_PIN, CONFIG_BLUE_RGB_PIN));
             initialized = (rgb_err == ESP_OK);
-    #endif
+#endif
         }
         if (initialized && settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
-            xTaskCreate(rainbow_task, "Rainbow Task", 3072, &rgb_manager, 1,
-                        &rgb_effect_task_handle);
+            xTaskCreatePinnedToCore(rainbow_task, "Rainbow Task", 3072,
+                                    &rgb_manager, RGB_EFFECT_TASK_PRIORITY,
+                                    &rgb_effect_task_handle,
+                                    RGB_EFFECT_TASK_CORE);
         }
     }
 
