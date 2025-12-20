@@ -67,6 +67,13 @@ jobs:
         with:
           python-version: '3.9'
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/esp-idf
+          key: esp-idf-v5.5-${{ runner.os }}
+          restore-keys: |
+            esp-idf-v5.5-
+
       - name: Install ESP-IDF
         run: |
           sudo apt-get update
