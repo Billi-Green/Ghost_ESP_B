@@ -49,6 +49,13 @@
   {{ $meta.Set "twitterCard" (cond (ne $imageURL "") "summary_large_image" "summary") }}
   {{ $locale := default "en_US" .Site.Language.Lang }}
 
+  {{ if not .IsHome }}
+    {{ $latestPath := strings.Replace .RelPermalink .Section "latest" 1 }}
+    <link rel="canonical" href="{{ $latestPath | absURL }}">
+  {{ else }}
+    <link rel="canonical" href="{{ .Permalink | absURL }}">
+  {{ end }}
+
   <meta name="description" content="{{ $meta.Get "description" | htmlEscape }}">
   <meta property="og:site_name" content="{{ .Site.Title | htmlEscape }}">
   <meta property="og:type" content="{{ $meta.Get "type" }}">
@@ -61,6 +68,28 @@
   <meta name="twitter:title" content="{{ $meta.Get "title" | htmlEscape }}">
   <meta name="twitter:description" content="{{ $meta.Get "description" | htmlEscape }}">
   {{ if ne $imageURL "" }}<meta name="twitter:image" content="{{ $imageURL }}">{{ end }}
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-Q9CNW8QW7K"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-Q9CNW8QW7K');
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "{{ if .IsHome }}WebSite{{ else }}Article{{ end }}",
+    "name": "{{ .Site.Title | htmlEscape }}",
+    "description": "{{ $meta.Get "description" | htmlEscape }}",
+    "url": "{{ .Permalink | absURL }}",
+    {{ if not .IsHome }}"author": {"@type": "Organization", "name": "GhostESP Team"},{{ end }}
+    "publisher": {"@type": "Organization", "name": "GhostESP"}
+    {{ if not .IsHome }},
+    "datePublished": "{{ .PublishDate.Format "2006-01-02T15:04:05Z07:00" }}",
+    "dateModified": "{{ .Lastmod.Format "2006-01-02T15:04:05Z07:00" }}"
+    {{ end }}
+  }
+  </script>
   <script>
     (function() {
       const theme = localStorage.getItem('ghostesp-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');

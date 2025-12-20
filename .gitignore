@@ -33,3 +33,4 @@ __pycache__
 local_builds
 dependencies.lock
 venv
+/docs/banshee-docs

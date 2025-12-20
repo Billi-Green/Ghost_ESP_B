@@ -1,6 +1,7 @@
 ---
 title: "Wi-Fi"
 description: "Overview of GhostESP's Wi-Fi capabilities"
+keywords: ["WiFi", "scanning", "monitoring", "portal", "wireless networks"]
 weight: 20
 aliases:
   - "/wifi/"

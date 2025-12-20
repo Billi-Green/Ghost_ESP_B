@@ -1,6 +1,7 @@
 ---
 title: "NFC"
 description: "Information about GhostESP's NFC capabilities"
+keywords: ["NFC", "RFID", "PN532", "ISO14443A", "tag reading", "tag writing"]
 weight: 40
 aliases:
   - "/nfc/"
