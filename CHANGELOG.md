@@ -90,6 +90,7 @@
 - Changed WiGLE CSV header brand/model to report GhostESP and build template name
 - Added wardriving deduplication, WiGLE CSV v1.6 pre-header escaping, and improved C5 channel hopping
 - Free pcap queue and task when not capturing
+- Optimized multi-AP deauth by grouping targets by channel and reducing inter-frame delays
 
 #### Core & CLI
 - Serial console UX improvements - @tototo31

@@ -31,6 +31,8 @@ A Wi-Fi attack is any action that disrupts, intercepts, or tricks Wi-Fi networks
 
 **Legal note**: Deauthing devices you don't own is illegal. Only test on your own network.
 
+**Learn more**: [Deauthentication attacks]({{< relref "deauth.md" >}})
+
 ### Karma Attack
 **What it does**: Pretends to be a Wi-Fi network that a device is looking for, tricking the device into connecting.
 
