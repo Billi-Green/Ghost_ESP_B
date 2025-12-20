@@ -70,10 +70,12 @@ jobs:
       - uses: actions/cache@v4
         id: cache-idf
         with:
-          path: ~/esp-idf
-          key: esp-idf-v5.5-${{ runner.os }}
+          path: |
+            ~/esp-idf
+            ~/.espressif
+          key: esp-idf-v5.5-${{ runner.os }}-v2
           restore-keys: |
-            esp-idf-v5.5-
+            esp-idf-v5.5-${{ runner.os }}-
 
       - name: Install ESP-IDF
         if: steps.cache-idf.outputs.cache-hit != 'true'

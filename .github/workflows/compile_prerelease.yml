@@ -66,10 +66,12 @@ jobs:
       - uses: actions/cache@v4
         id: cache-idf
         with:
-          path: ~/esp-idf
-          key: esp-idf-v5.5-${{ runner.os }}
+          path: |
+            ~/esp-idf
+            ~/.espressif
+          key: esp-idf-v5.5-${{ runner.os }}-v2
           restore-keys: |
-            esp-idf-v5.5-
+            esp-idf-v5.5-${{ runner.os }}-
 
       - name: Install ESP-IDF Dependencies
         if: steps.cache-idf.outputs.cache-hit != 'true'
@@ -77,11 +79,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wget git flex bison gperf python3-pip python3-setuptools cmake ninja-build ccache libffi-dev libssl-dev dfu-util
 
-      - name: Install ESP-IDF v5.4.1
+      - name: Install ESP-IDF
         if: steps.cache-idf.outputs.cache-hit != 'true'
         run: |
           git clone -b v5.5 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
-          ~/esp-idf/install.sh esp32,esp32s2,esp32s3,esp32c3,esp32c5,esp32c6 # Specify all targets needed
+          ~/esp-idf/install.sh
 
       - name: Apply Custom SDK Config
         run: cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
