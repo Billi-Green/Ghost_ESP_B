@@ -127,7 +127,7 @@ jobs:
             echo "Failed to copy bootloader"
             exit 1
           }
-          cp build/*.bin "$ARTIFACT_DIR/firmware.bin" 2>/dev/null || {
+          cp build/Ghost_ESP_IDF.bin "$ARTIFACT_DIR/firmware.bin" || {
             echo "Failed to copy app binary"
             exit 1
           }
@@ -135,8 +135,9 @@ jobs:
           FLASH_SIZE=${FLASH_SIZE:-4MB}
           python3 -m esptool --chip ${{ matrix.target.idf_target }} merge_bin \
             --output "$ARTIFACT_DIR/merged.bin" \
-            --flash-mode dio \
-            --flash-size "$FLASH_SIZE" \
+            --flash_mode dio \
+            --flash_size "$FLASH_SIZE" \
+            --target-offset 0x0 \
             0x1000 "$ARTIFACT_DIR/bootloader.bin" \
             0x8000 "$ARTIFACT_DIR/partitions.bin" \
             0x10000 "$ARTIFACT_DIR/firmware.bin" || {
