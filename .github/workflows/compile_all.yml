@@ -95,8 +95,9 @@ jobs:
           SDKCONFIG_DEFAULTS: "sdkconfig.defaults"
         run: |
           . ~/esp-idf/export.sh
+          export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
           idf.py clean
-          idf.py -j$(nproc) build || {
+          idf.py build || {
             echo "Build failed for ${{ matrix.target.name }}"
             exit 1
           }
