@@ -133,7 +133,7 @@ jobs:
           }
           FLASH_SIZE=$(grep "CONFIG_ESPTOOLPY_FLASHSIZE=" sdkconfig.defaults | cut -d'"' -f2)
           FLASH_SIZE=${FLASH_SIZE:-4MB}
-          python3 -m esptool --chip ${{ matrix.target.idf_target }} merge-bin \
+          python3 -m esptool --chip ${{ matrix.target.idf_target }} merge_bin \
             -o "$ARTIFACT_DIR/merged-flash.bin" \
             --flash-mode dio \
             --flash-size "$FLASH_SIZE" \
