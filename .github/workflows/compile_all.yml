@@ -68,6 +68,7 @@ jobs:
           python-version: '3.9'
 
       - uses: actions/cache@v4
+        id: cache-idf
         with:
           path: ~/esp-idf
           key: esp-idf-v5.5-${{ runner.os }}
@@ -75,6 +76,7 @@ jobs:
             esp-idf-v5.5-
 
       - name: Install ESP-IDF
+        if: steps.cache-idf.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y wget git flex bison gperf python3-pip python3-setuptools cmake ninja-build ccache libffi-dev libssl-dev dfu-util
@@ -113,6 +115,7 @@ jobs:
 
       - name: Package Artifacts into ZIP
         run: |
+          . ~/esp-idf/export.sh
           ARTIFACT_DIR="packaged_artifacts"
           ZIP_FILE="${{ matrix.target.zip_name }}"
           mkdir -p "$ARTIFACT_DIR"
