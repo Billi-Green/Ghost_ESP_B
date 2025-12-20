@@ -43,6 +43,16 @@ static int cursor_position = 0;
 // Command history instance
 static CommandHistory command_history;
 
+// Prompt display tracking
+static bool prompt_displayed = false;
+static bool prompt_pending = false;
+static uint32_t prompt_delay_ticks = 0;
+
+// Output deferral tracking for typing interruption prevention
+static bool output_deferred = false;
+static uint32_t last_typing_activity_tick = 0;
+static const uint32_t TYPING_IDLE_TIMEOUT_MS = 200;
+
 // Arrow key state machine
 typedef enum {
     ARROW_STATE_NONE,
@@ -336,6 +346,30 @@ static void clear_line_from_cursor(void) {
     serial_buffer[cursor_position] = '\0';
 }
 
+static void clear_entire_line(void) {
+    // Move cursor to beginning of line
+    const char cr[] = "\r";
+    uart_write_bytes(UART_NUM, cr, 1);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)cr, 1, 0);
+#endif
+    // Clear entire line using ANSI escape sequence
+    const char clear_line[] = "\033[2K";
+    uart_write_bytes(UART_NUM, clear_line, 4);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)clear_line, 4, 0);
+#endif
+}
+
+static void display_prompt(void) {
+    const char prompt[] = "ghost-cli> ";
+    uart_write_bytes(UART_NUM, prompt, sizeof(prompt) - 1);
+#if JTAG_SUPPORTED
+    usb_serial_jtag_write_bytes((const uint8_t*)prompt, sizeof(prompt) - 1, 0);
+#endif
+    prompt_displayed = true;
+}
+
 // HTML marker processing and IR inline handling
 static void process_html_line(const char* line) {
     if (strstr(line, "[IR/BEGIN]") != NULL) {
@@ -429,7 +463,21 @@ void serial_task(void *pvParameter) {
   int index = 0;
   static uint32_t hwm_log_counter = 0;
 
+  // Display initial prompt after startup messages have time to print
+  if (!s_uart_disabled) {
+    vTaskDelay(500 / portTICK_PERIOD_MS); // Wait for UART to be ready and startup messages to print
+    fflush(stdout); // Ensure any buffered output is flushed
+    display_prompt();
+  }
+
+  bool first_iteration = true;
   while (1) {
+    // Ensure prompt is displayed on first iteration if it wasn't shown during init
+    if (first_iteration && !s_uart_disabled && !prompt_displayed) {
+      fflush(stdout);
+      display_prompt();
+    }
+    first_iteration = false;
     if (++hwm_log_counter >= 6000) {
       UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
       ESP_LOGI("SerialTask", "Stack HWM: %u words (%u bytes free)", hwm, hwm * 4);
@@ -460,6 +508,14 @@ void serial_task(void *pvParameter) {
         if (incoming_char == '\b' || (unsigned char)incoming_char == 0x7F) {
           // Reset arrow key state when backspace is pressed
           arrow_state = ARROW_STATE_NONE;
+          
+          // Enable output deferral when user is editing
+          if (!output_deferred) {
+            glog_set_defer(1);
+            output_deferred = true;
+          }
+          last_typing_activity_tick = xTaskGetTickCount();
+          
           if (cursor_position > 0) {
             // Delete character to the left of cursor
             backspace_at_cursor();
@@ -482,8 +538,17 @@ void serial_task(void *pvParameter) {
           if (incoming_char == 'A') { // Up arrow
             const char* history_cmd = command_history_get_previous();
             if (history_cmd != NULL && strlen(history_cmd) > 0) {
-              // Clear current line
-              clear_line_from_cursor();
+              // Enable output deferral when navigating history
+              if (!output_deferred) {
+                glog_set_defer(1);
+                output_deferred = true;
+              }
+              last_typing_activity_tick = xTaskGetTickCount();
+              
+              // Clear entire line to remove any existing text
+              clear_entire_line();
+              // Display prompt
+              display_prompt();
               // Copy history command to buffer
               strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
               serial_buffer[SERIAL_BUFFER_SIZE - 1] = '\0';
@@ -499,8 +564,18 @@ void serial_task(void *pvParameter) {
             }
           } else if (incoming_char == 'B') { // Down arrow
             const char* history_cmd = command_history_get_next();
-            // Clear current line
-            clear_line_from_cursor();
+            
+            // Enable output deferral when navigating history
+            if (!output_deferred) {
+              glog_set_defer(1);
+              output_deferred = true;
+            }
+            last_typing_activity_tick = xTaskGetTickCount();
+            
+            // Clear entire line to remove any existing text
+            clear_entire_line();
+            // Display prompt
+            display_prompt();
             if (history_cmd != NULL && strlen(history_cmd) > 0) {
               // Copy history command to buffer
               strncpy(serial_buffer, history_cmd, SERIAL_BUFFER_SIZE - 1);
@@ -521,10 +596,24 @@ void serial_task(void *pvParameter) {
               cursor_position = 0;
             }
           } else if (incoming_char == 'C') { // Right arrow
+            // Enable output deferral when navigating cursor
+            if (!output_deferred) {
+              glog_set_defer(1);
+              output_deferred = true;
+            }
+            last_typing_activity_tick = xTaskGetTickCount();
+            
             if (cursor_position < strlen(serial_buffer)) {
               move_cursor_to_position(cursor_position + 1);
             }
           } else if (incoming_char == 'D') { // Left arrow
+            // Enable output deferral when navigating cursor
+            if (!output_deferred) {
+              glog_set_defer(1);
+              output_deferred = true;
+            }
+            last_typing_activity_tick = xTaskGetTickCount();
+            
             if (cursor_position > 0) {
               move_cursor_to_position(cursor_position - 1);
             }
@@ -540,6 +629,13 @@ void serial_task(void *pvParameter) {
         }
 
         if (incoming_char == '\n' || incoming_char == '\r') {
+          // Flush any deferred output before processing command
+          if (output_deferred) {
+            glog_set_defer(0);
+            glog_flush_deferred();
+            output_deferred = false;
+          }
+          
           // Echo newline directly to UART
           const char newline[] = "\n";
           if (!s_uart_disabled) uart_write_bytes(UART_NUM, newline, 1);
@@ -559,12 +655,29 @@ void serial_task(void *pvParameter) {
             memset(serial_buffer, 0, sizeof(serial_buffer));
             index = 0;
           }
+          // Schedule prompt to be displayed after command output completes
+          // This allows time for command output to flush before showing the prompt
+          prompt_displayed = false;
+          prompt_pending = true;
+          prompt_delay_ticks = xTaskGetTickCount() + pdMS_TO_TICKS(50); // 50ms delay
           continue;
         }
 
         if ((unsigned char)incoming_char >= 32 && (unsigned char)incoming_char != 127) {
           // Reset arrow key state when typing normal characters
           arrow_state = ARROW_STATE_NONE;
+          // Display prompt if not already displayed
+          if (!prompt_displayed) {
+            display_prompt();
+          }
+          
+          // Enable output deferral when user starts typing
+          if (!output_deferred) {
+            glog_set_defer(1);
+            output_deferred = true;
+          }
+          last_typing_activity_tick = xTaskGetTickCount();
+          
           if (strlen(serial_buffer) < SERIAL_BUFFER_SIZE - 1) {
             // Insert character at cursor position
             insert_character_at_cursor(incoming_char);
@@ -578,6 +691,30 @@ void serial_task(void *pvParameter) {
     SerialCommand command;
     if (xQueueReceive(commandQueue, &command, 0) == pdTRUE) {
       handle_serial_command(command.command);
+      // Schedule prompt after simulated command too
+      prompt_displayed = false;
+      prompt_pending = true;
+      prompt_delay_ticks = xTaskGetTickCount() + pdMS_TO_TICKS(50);
+    }
+
+    // Check if we need to display a pending prompt
+    if (prompt_pending && xTaskGetTickCount() >= prompt_delay_ticks) {
+      // Flush any pending output before displaying prompt
+      fflush(stdout);
+      display_prompt();
+      prompt_pending = false;
+    }
+
+    // Check if user has stopped typing and flush deferred output
+    if (output_deferred && last_typing_activity_tick > 0) {
+      uint32_t time_since_typing = xTaskGetTickCount() - last_typing_activity_tick;
+      if (time_since_typing >= pdMS_TO_TICKS(TYPING_IDLE_TIMEOUT_MS)) {
+        // User has been idle for 200ms, flush deferred output
+        glog_set_defer(0);
+        glog_flush_deferred();
+        output_deferred = false;
+        last_typing_activity_tick = 0;
+      }
     }
 
     vTaskDelay(10 / portTICK_PERIOD_MS);
