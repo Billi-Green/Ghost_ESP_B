@@ -4,7 +4,7 @@ description: "Using SD card storage with GhostESP for file management, captures,
 weight: 40
 ---
 
-GhostESP uses an SD card for storing PCAP captures, GPS logs, Evil Portal files, infrared remotes, and NFC data. This guide covers WebUI file management, CLI operations, and pin configuration.
+GhostESP uses SD cards to store captures, logs, and files. Learn how to manage files and configure pins.
 
 ## Storage Structure
 
@@ -58,7 +58,7 @@ Access the SD card through the WebUI's **SD Card** tab:
 
 ## CLI Commands
 
-The `sd` command provides machine-parsable file operations with indexed listings.
+The `sd` command allows scripting and direct file access.
 
 ### Status
 
@@ -278,7 +278,7 @@ Persists pin settings to NVS. Changes apply on next boot.
 
 ## Virtual Storage
 
-The S3TWatch and devices without SD card slots use internal flash as virtual storage. Virtual storage works identically to physical SD cards but with limited capacity (typically 4MB).
+Devices without SD slots (like S3TWatch) use internal flash as virtual storage (limited to ~4MB).
 
 Check storage type:
 ```

@@ -4,15 +4,15 @@ description: "Scan and identify devices on your Ethernet network."
 weight: 10
 ---
 
-Network fingerprinting discovers and identifies devices connected to your Ethernet network. GhostESP scans for common protocols and services to build a profile of each device.
+Network fingerprinting discovers and identifies devices on your Ethernet network. GhostESP scans for common protocols to build a device profile.
 
 ## Overview
 
 When you run a fingerprint scan, GhostESP listens for network traffic and service announcements to identify devices. It looks for:
 
-- **mDNS** (Multicast DNS) — Service announcements from devices like printers, smart speakers, and media players
+- **mDNS** — Service announcements (printers, speakers, etc.)
 - **NBNS** (NetBIOS Name Service) — Windows device name broadcasts
-- **SSDP** (Simple Service Discovery Protocol) — UPnP device announcements
+- **SSDP** — UPnP device announcements
 
 The scan collects device names, IP addresses, detected device types (Chromecast, Roku, Apple, Samsung, etc.), and service information.
 
@@ -61,6 +61,6 @@ Each discovered device shows:
 
 ## Troubleshooting
 
-- **No devices found**: Ensure devices are powered on and connected to the same network. Some devices may not broadcast service announcements.
+- **No devices found**: Ensure devices are powered on and on the same network. Some devices don't broadcast.
 - **Incomplete information**: Not all devices provide full details. GhostESP shows what it can detect from available network traffic.
 - **Timeout**: The scan runs for 3 seconds. If you need more time, run the scan again.

@@ -4,7 +4,7 @@ description: "Perform HTTP GET requests from the command line."
 weight: 20
 ---
 
-Make HTTP requests to web servers and APIs directly from GhostESP.
+Make HTTP requests to web servers and APIs.
 
 ## Basic HTTP GET
 
@@ -35,12 +35,11 @@ Fetch from a specific path:
 ethhttp https://api.example.com/status 5
 ```
 
-## Use Cases
-
-- **API Testing** — Query REST APIs and view responses
-- **Web Scraping** — Retrieve specific content from websites
-- **Service Verification** — Check if a web service is running and responding
-- **Configuration Retrieval** — Fetch configuration files or data from remote servers
+**Use Cases**:
+- **API Testing** — Query REST APIs
+- **Web Scraping** — Retrieve website content
+- **Service Verification** — Check if a service is responding
+- **Configuration** — Fetch remote config files
 
 ## Troubleshooting
 

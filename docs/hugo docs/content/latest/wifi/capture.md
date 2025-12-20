@@ -48,7 +48,7 @@ Record Wi-Fi network traffic and save it to the SD card. You can then review the
 ## Notes
 - Captures save to `/mnt/ghostesp/pcaps/` only when an SD card is mounted. If the folder is missing the device streams packets over UART to the Flipper Zero when writing a file.
 - The firmware logs `PCAP: saving to SD as ...` when file storage is active, or `PCAP: streaming over UART` when it falls back to the terminal.
-- Flipper Zero GhostESP app expects captures under `/ext/apps_data/ghost_esp/pcaps/` on its microSD. Copy the `.pcap` using QFlipper or Straight from the Flipper's SD Card to review it in Wireshark or et cetera.
+- Flipper Zero GhostESP app expects captures under `/ext/apps_data/ghost_esp/pcaps/` on its microSD. Copy the `.pcap` using QFlipper or directly from the Flipper's SD card to review in Wireshark.
 - Large captures can take time to copy. Use a card reader instead of QFlipper or the WebUI for faster transfers.
 
 ## Troubleshooting

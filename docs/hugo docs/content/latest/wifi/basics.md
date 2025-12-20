@@ -36,7 +36,7 @@ A Wi-Fi attack is any action that disrupts, intercepts, or tricks Wi-Fi networks
 ### Karma Attack
 **What it does**: Pretends to be a Wi-Fi network that a device is looking for, tricking the device into connecting.
 
-**Why**: Intercept traffic from devices, test how devices behave when connecting to fake networks, or study device behavior.
+**Why**: Intercept traffic from devices or test how they behave when connecting to fake networks.
 
 **Legal note**: Tricking devices into connecting without consent is illegal in most jurisdictions.
 

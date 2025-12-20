@@ -6,12 +6,12 @@ weight: 5
 
 ## Overview
 
-GhostESP can control a Chameleon Ultra over Bluetooth Low Energy. Once paired you can reuse the same NFC scan, save, and dump flows as if you had a PN532 module attached.
+GhostESP can control a Chameleon Ultra over BLE. Once paired, use the same NFC scan/save flows as with a PN532.
 
 ## Prerequisites
 
-- **Firmware:** GhostESP build with BLE enabled and the Chameleon Ultra features compiled in.
-- **Hardware:** A powered Chameleon Ultra advertising over BLE and charged enough for the session.
+- **Firmware:** GhostESP build with BLE and Chameleon Ultra features enabled.
+- **Hardware:** A powered Chameleon Ultra advertising over BLE.
 
 ## Supported Devices
 

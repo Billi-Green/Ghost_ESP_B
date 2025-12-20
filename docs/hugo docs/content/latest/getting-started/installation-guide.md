@@ -1,136 +1,159 @@
 ---
 title: "Installation Guide"
-description: "Instructions for installing GhostESP firmware on ESP32 devices"
+description: "Flash GhostESP firmware to your ESP32 device"
 weight: 10
 toc: true
 ---
 
+Flash GhostESP firmware to your ESP32 board using the web flasher, manual USB tool, or Flipper Zero app. Choose the method that works best for your setup.
+
 ## Prerequisites
 
-Before starting, make sure you have:
-
-- A compatible ESP32 board (see [Supported Hardware](#supported-hardware))
-- A modern web browser (Google Chrome, Brave, or Microsoft Edge is recommended, as Firefox doesn't support WebSerial)
-- An appropriate USB cable (Micro USB or USB-C, ensure it's a data cable, not a charge-only cable)
-- **File Extraction Tool**: Install [7-Zip](https://www.7-zip.org/download.html) or a similar program for extracting .zip bundles.
-
-> <p class="note-heading"><strong>Note</strong></p>
-> <p>For best results, disable any VPN or firewall that might block the flashing process, as some network configurations may interfere with the web flasher.</p>
+- A compatible ESP32 board (see [Supported Hardware]({{< relref "supported-hardware.md" >}}))
+- A USB cable (Micro USB or USB-C; must be a data cable, not charge-only)
+- A modern web browser (Chrome, Brave, or Edge; Firefox doesn't support WebSerial)
+- [7-Zip](https://www.7-zip.org/download.html) or similar tool to extract firmware files
+- VPN/firewall disabled (some configurations interfere with the web flasher)
 
 ## Flashing Methods
 
-Choose your preferred method:
+Choose one:
 
-- [Web Flasher Method](#web-flasher-method) (Recommended)
-- [USB Connection Method](#usb-connection-method)
-- [Flipper Zero Method](#flipper-zero-method) (Doesn't require a PC)
+### Web Flasher Method (Recommended)
 
-### Web Flasher Method
+1. **Open the flasher**
+   - Go to **[flasher.ghostesp.net](https://flasher.ghostesp.net/)** in Chrome, Brave, or Edge.
+   - Close any apps using the serial port.
 
-1. **Prepare**
-   - Open **[flasher.ghostesp.net](https://flasher.ghostesp.net/)** in Chrome.
-   - Close apps using the serial port. If the site glitches, clear cache.
+2. **Enter bootloader mode**
+   - Hold **BOOT**, plug in USB, then release **BOOT**.
+   - If that doesn't work: hold **BOOT**, tap **RESET**, keep **BOOT** held for 1–2 seconds, then release.
 
-2. **Enter Bootloader**
-   - Hold **BOOT** → plug USB → release.  
-   - If needed: hold **BOOT**, tap **RESET**, keep holding **BOOT** 1–2 s, release.
+3. **Flash the firmware**
+   - Select your ESP32 variant from the dropdown.
+   - Click **Connect** and follow the on-screen prompts.
 
-3. **Flash**
-   - Pick your the ESP32 variant your board uses, click **Connect**, and follow the prompts.
+4. **Restart the device**
+   - Unplug and replug the USB cable.
+   - If the flasher times out, try again.
 
-4. **Verify**
-   - Unplug and replug. Continue with [Post-Installation](#post-installation).
-
-> <a id="web-flasher-timeout"></a>**Tips**: After flashing, you will need to restart the device to initialize the new firmware. Disconnect and reconnect your ESP32. If the flasher times out, retry after a fresh USB reconnection.
+> **Note**: If the flasher site glitches, clear your browser cache and reload.
 
 ### USB Connection Method
 
-Use when selecting files and offsets manually.
+Use this method if you prefer manual control or the web flasher doesn't work.
 
-1. **Download**
-   - Get firmware from **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
-   - Extract the `.zip` with your preferred tool.
+1. **Download the firmware**
+   - Go to **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
+   - Download the `.zip` file for your board.
+   - Extract it with 7-Zip or your preferred tool.
 
-2. **Connect**
-   - Enter bootloader
-   - Hold **BOOT** → plug USB → release.  
-   - If needed: hold **BOOT**, tap **RESET**, keep holding **BOOT** 1–2 s, release.
+2. **Enter bootloader mode**
+   - Hold **BOOT**, plug in USB, then release **BOOT**.
+   - If that doesn't work: hold **BOOT**, tap **RESET**, keep **BOOT** held for 1–2 seconds, then release.
 
+3. **Flash using ESP Huhn Tool**
+   - Open **[ESP Huhn Tool](https://esp.huhn.me/)** in your browser.
+   - Click **Connect** and select your device's COM port.
+   - Load the three binary files with the correct offsets:
 
-3. **Flash** via **[ESP Huhn Tool](https://esp.huhn.me/)**
-   - Click **Connect**, select the COM port labeled with your chipset.
-   - Load binaries with offsets:
+   | Chip | `bootloader.bin` | `partitions.bin` | `firmware.bin` |
+   |------|------------------|------------------|----------------|
+   | ESP32-S2 | `0x1000` | `0x8000` | `0x10000` |
+   | ESP32-S3 / C3 / C6 | `0x0` | `0x8000` | `0x10000` |
 
-   | Chip family          | `bootloader.bin` | `partitions.bin (Partition table)` | `firmware.bin (GhostESP_IDF)` |
-   |----------------------|------------------|------------------|----------------|
-   | ESP32-S2 and similar | `0x1000`         | `0x8000`         | `0x10000`      |
-   | ESP32-S3 / C3 / C6   | `0x0`            | `0x8000`         | `0x10000`      |
+   - Click **Flash** and wait for completion.
 
-   - Click **Flash** and wait.
-
-4. **Verify**
-   - Replug the board and connect to a **[serial console](https://ghostesp.net/serial)** to see logs from your device.
+4. **Verify the flash**
+   - Unplug and replug the USB cable.
+   - Open a **[serial console](https://ghostesp.net/serial)** to see device logs.
 
 
 ### Flipper Zero Method
 
-1. **Download**
-   - Install GhostESP app (`.fap`) from the [Flipper app store](https://lab.flipper.net/apps)  
-     or **[releases](https://github.com/jaylikesbunda/ghost_esp_app/releases/latest)**.
-   - Download firmware from **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
+Flash GhostESP using your Flipper Zero as the programmer. No PC required.
 
-2. **Prepare**
-   - Extract archives. Choose the firmware that matches your chip  
-     (e.g., Flipper Dev Board = ESP32-S2 generic).
+1. **Install the GhostESP app**
+   - Download from the [Flipper app store](https://lab.flipper.net/apps) or **[releases](https://github.com/jaylikesbunda/ghost_esp_app/releases/latest)**.
+   - Copy the `.fap` file to your Flipper's SD card.
 
-3. **Copy to Flipper**
-   - Use **qFlipper** (either the mobile app or the desktop app) or pull out the sd card and use the sd card directly. Put the `.bin` files in `SDCard/apps_data/esp_flasher/`.  
-   - Do not use `assets/`.
+2. **Download the firmware**
+   - Go to **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
+   - Download the `.zip` file that matches your ESP32 chip (e.g., `esp32-generic.zip` for a generic ESP32).
+   - Extract the `.zip` file.
 
-4. **Connect Hardware**
-   - Wire ESP32 to Flipper GPIO. Enter bootloader (see Web Flasher Method).
+3. **Copy firmware files to Flipper**
+   - Use **qFlipper** or pull out the Flipper's SD card and insert it into your computer.
+   - Copy the three `.bin` files to `SDCard/apps_data/esp_flasher/`.
+   - Do not put them in `assets/`.
 
-5. **Flash on Flipper**
-   - Open **ESP flasher** → **Manual Flash**.
-   - Select `bootloader.bin`, `partitions.bin`, `GhostESP.bin` and make sure to check the option if your device is one of the specified variants.
-   - Start flash. Reset the ESP32 when done.
+4. **Wire the ESP32 to Flipper**
+   - Connect the ESP32 to the Flipper's GPIO pins (refer to the GhostESP app for pinout).
+   - Enter bootloader mode on the ESP32 (hold **BOOT**, plug USB, release **BOOT**).
 
-## Post-Installation
+5. **Flash the firmware**
+   - Open the **ESP flasher** app on your Flipper.
+   - Select **Manual Flash**.
+   - Choose `bootloader.bin`, `partitions.bin`, and `GhostESP.bin`.
+   - Verify the device variant is correct.
+   - Start the flash and wait for completion.
+   - Reset the ESP32 when done.
 
-As soon as the flash finishes, GhostESP boots its default access point so you can pick the control surface that fits your hardware and workflow.
+## After Flashing
 
-### Control Options
+GhostESP boots automatically and creates a Wi-Fi access point called `GhostNet` (password: `GhostNet`). Choose how you want to control it.
 
-1. **Web Interface**
-   - Connect to the `GhostNet` AP with the password `GhostNet`
-   - Open a browser and connect to either `ghostesp.local` (requires mDNS support) or `192.168.4.1` to access device settings.
-   - WebUI authentication starts **disabled**. Run `webauth on` in the serial/Web CLI if you want to enable HTTP Digest login (defaults: `GhostNet` / `GhostNet`).
-   - Use the auto-updating configuration panel to manage settings, Evil Portal controls, and device info.
+### Control Methods
 
-2. **Qt6 Control App**
-   - [Download and install](../../scripts/control%20app/) the Qt6-based desktop application for more advanced control options.
-   - Offers access to advanced features, customizable settings, and an improved interface for interacting with GhostESP.
+**Web Interface** (Easiest)
+- Connect to the `GhostNet` Wi-Fi network.
+- Open a browser and go to `ghostesp.local` or `192.168.4.1`.
+- No authentication required by default. Run `webauth on` in the terminal to enable login.
+- **Limitation**: Wi-Fi and BLE commands don't work here (the radio is hosting the AP). Use [GhostLink]({{< relref "dual-communication.md" >}}) to run attacks remotely.
 
-3. **Serial Command Line**
-   - Connect via a serial interface for direct command-line control.
-   - Provides full access to GhostESP's command suite and is ideal for advanced users or troubleshooting.
-   - Refer to the [Command Line Reference]({{< relref "command-line-reference.md" >}}) for available commands and examples.
-   - Android devices can interface with the serial command line directly using the [Serial USB Terminal app](https://play.google.com/store/apps/details?id=de.kai_morich.serial_usb_terminal&hl=en-US)
+**Serial Terminal** (Full Control)
+- Connect via USB and open a serial console at 115200 baud.
+- Access all CLI commands. See [Command Line Reference]({{< relref "command-line-reference.md" >}}).
+- On Android, use [Serial USB Terminal](https://play.google.com/store/apps/details?id=de.kai_morich.serial_usb_terminal).
 
-4. **Flipper Zero App**
-   - Control GhostESP directly from the Flipper Zero.
-   - Now available directly from the official flipper app store!
-   - Ensure you have the latest `.fap` version on your Flipper Zero for full functionality and access to features like Evil Portal, Wi-Fi control, and more.
+**Flipper Zero App**
+- Download from the [Flipper app store](https://lab.flipper.net/apps).
+- Control GhostESP directly from your Flipper.
 
-5. **Touch Screen Interface** (for supported boards)
-   - Navigate through menus using touch gestures
-   - Access all major features through the graphical interface
-   - Terminal App available for keyboard-based command input on boards with keyboards
+**Qt6 Desktop App**
+- [Download and install](../../scripts/control%20app/) for advanced features and customization.
 
-### Common Installation Issues
+**Touch Screen** (Supported Boards Only)
+- Navigate menus with touch gestures.
+- Use the on-screen terminal for keyboard input.
 
-- **Boot loops**: Usually power or board-target mismatches—verify you flashed the right image and try a known-good USB-C cable.
-- **Flash errors**: Ensure the chip is in bootloader mode (Refer back to the [Web Flasher section](#web-flasher-timeout)) ; swap USB ports or hubs if it times out. 
-- **Connection issues**: Try installing the [USB-to-UART driver](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers?tab=downloads).
-- **Browser issues**: If the web flasher misbehaves, reload the page, clear cached site data or switch to a different broswer like Chrome, Brave or Microsoft Edge.
-> **Troubleshooting Tip**: When flashing from the Flipper Zero app, double-check GPIO wiring and confirm every firmware blob lives under `SDCard/apps_data/esp_flasher/` before you start the transfer.
+## Troubleshooting
+
+**Device won't boot or loops**
+- Verify you flashed the correct firmware for your chip.
+- Try a different USB cable (some are charge-only).
+- Reboot the device and wait 10 seconds.
+
+**Flash fails or times out**
+- Ensure the chip is in bootloader mode (hold **BOOT** while plugging in USB).
+- Try a different USB port or hub.
+- Close other apps using the serial port.
+
+**Can't connect to GhostNet**
+- Reboot the device.
+- Check that you're using the correct password: `GhostNet`.
+- Move closer to the device.
+
+**Web flasher doesn't work**
+- Clear your browser cache.
+- Try Chrome, Brave, or Edge (Firefox doesn't support WebSerial).
+- Disable VPN or firewall temporarily.
+
+**Serial connection issues**
+- Install the [USB-to-UART driver](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers).
+- Verify the correct COM port is selected.
+
+**Flipper Zero flashing fails**
+- Double-check GPIO wiring between ESP32 and Flipper.
+- Confirm all `.bin` files are in `SDCard/apps_data/esp_flasher/` (not `assets/`).
+- Verify the device variant matches your ESP32 chip.

@@ -6,13 +6,13 @@ weight: 10
 
 ## Before you start
 
-- **Hardware**: Use a board with IR RX support (see [hardware requirements]({{< relref "hardware.md" >}})).
+- **Hardware**: Board with IR RX support (see [hardware requirements]({{< relref "hardware.md" >}})).
 - **SD card**: Inserted and mounted so GhostESP can save `.ir` files under `/mnt/ghostesp/infrared/`.
-- **Easy Learn**: Optional assistant that suggests button names; toggle it via `infrared_easy` in the command line config or the settings menu.
+- **Easy Learn**: Optional assistant that suggests button names. Toggle via settings.
 
 ## Learn a remote or button
 
-1. Open the Infrared view from the main menu and choose *Learn Remote* for a new file or *Learn Button* inside a saved remote to append a new signal to an existing remote.
+1. Open **Infrared** and choose **Learn Remote** or **Learn Button** to append to an existing remote.
 
 2. Align the source remote with the IR receiver window, hold it steady within a few centimeters, then press the button once.
 

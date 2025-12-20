@@ -1,9 +1,9 @@
 ---
 title: "GhostESP: Revival"
-description: "GhostESP firmware and hardware documentation"
+description: "GhostESP is a multi-protocol security testing toolkit for ESP32 devices. Scan Wi-Fi networks, capture handshakes, launch attacks, read NFC tags, learn and transmit IR signals, and more."
 ---
 
-Welcome to the Official GhostESP: Revival documentation!
 
-Use the sidebar to navigate sections.
+
+Start with [Installation Guide]({{< relref "getting-started/installation-guide.md" >}}) to flash your device, then explore the sections below.
 

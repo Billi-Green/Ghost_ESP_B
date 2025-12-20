@@ -69,7 +69,7 @@ Once you connect to a network, you can discover devices and services on it.
 
 ## Full environment sweep
 
-Run a comprehensive scan of all wireless activity and save results to your SD card.
+Scan all wireless activity at once and save results to your SD card.
 
 ### What it captures
 - **WiFi Access Points**: Name, MAC, channel, frequency, signal strength, security type, cipher, 802.11 mode, WPS status
@@ -108,4 +108,4 @@ WiFi Client,,11:22:33:44:55:66,AA:BB:CC:DD:EE:FF,,,,,,,37.774929,-122.419416,10.
 
 ## FAQ
 - **Can I scan while connected to a network?** Yes. The device will pause the connection briefly to scan, then resume.
-- **Where do the device vendor names come from?** GhostESP looks up the device's hardware address in a small built-in database to potentially identify the manufacturer.
+- **Where do the device vendor names come from?** GhostESP looks up the device's hardware address in a built-in database to identify the manufacturer.

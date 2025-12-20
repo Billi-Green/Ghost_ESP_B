@@ -6,9 +6,9 @@ weight: 25
 
 ## Overview
 
-IR Dazzler emits a continuous 38 kHz IR carrier with a high duty cycle to overwhelm night-vision cameras. The mode runs entirely in hardware for minimal CPU/RAM use and is available only on builds with infrared transmit support enabled.
+IR Dazzler emits continuous IR at 38 kHz to overwhelm night-vision cameras. Runs in hardware with minimal CPU use.
 
-> **Note:** Continuous IR drive can warm the LED and draw more current than normal remote transmissions. Stop the mode when not in use.
+> **Note:** Continuous IR can warm the LED and draw more current. Stop when not in use.
 
 ## Use from the UI
 

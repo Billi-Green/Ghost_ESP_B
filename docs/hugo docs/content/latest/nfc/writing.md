@@ -6,7 +6,7 @@ weight: 30
 
 ## Prerequisites
 
-- An NTAG `.nfc` file on the SD card under `/mnt/ghostesp/nfc/` created from a previous scan or copied manually.
+- An NTAG `.nfc` file on the SD card under `/mnt/ghostesp/nfc/`.
 - NTAG21x or Ultralight tag compatible with the captured image size (NTAG213/215/216 page counts).
 - A PN532 or Chameleon Ultra enabled build with a connected PN532 module or Chameleon Ultra.
 
@@ -40,7 +40,7 @@ weight: 30
 
 - **“Present tag to write...” never changes.** The PN532 cannot see the card. Re-seat the antenna or try a different blank tag.
 
-- **Write stops mid-way.** Remove the tag, power-cycle GhostESP, and retry. Persistent failures often mean the card’s capacity does not match the image (e.g., writing a 216-page dump to a 213 card).
+- **Write stops mid-way:** Remove the tag, power-cycle GhostESP, and retry. Failures often mean the card's capacity doesn't match the image.
 
 ## FAQ
 

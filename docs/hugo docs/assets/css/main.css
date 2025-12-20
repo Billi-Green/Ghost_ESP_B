@@ -388,8 +388,8 @@ html[data-theme="dark"] .sidebar__sublink--active {
 
 .content__body h2 {
   font-size: 1.9rem;
-  margin-top: 2.5rem;
-  margin-bottom: 1.25rem;
+  margin-top: 3.5rem;
+  margin-bottom: 1.5rem;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -445,7 +445,8 @@ html[data-theme="dark"] .content__body h2 .heading-anchor {
 .content__body ul,
 .content__body ol {
   padding-left: 1.5rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.75rem;
+  margin-top: 0.75rem;
 }
 
 .content__body li + li {

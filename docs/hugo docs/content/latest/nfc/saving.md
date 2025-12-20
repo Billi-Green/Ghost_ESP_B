@@ -11,13 +11,13 @@ weight: 20
 
 ## Steps
 
-1. **Scan a tag.** Complete the process in the **Scan NFC Tags** guide so the popup shows detailed results.
+1. **Scan a tag.** Complete the scan process so the popup shows results.
    You should see the **Save** button enabled once data is cached.
 
 2. **Tap Save.** Select **Save** in the scan popup.
    You should see the title change to “Saving...” and the button disable while GhostESP writes the file.
 
-3. **Wait for confirmation.** Leave the device alone until the tit reads "Saved!”.
+3. **Wait for confirmation.** Leave the device alone until it reads "Saved!".
    You should see the title change if the save fails (for example, “Save Failed!”).
    
 4. **Repeat as needed.** Saved files remain accessible even after you leave the scan popup.
@@ -39,7 +39,7 @@ weight: 20
 
 - **Save button disabled.** Re-scan the tag and wait for the title to show “NFC Tag”.
 - **“No SD card” error.** Check card seating and filesystem. The path `/mnt/ghostesp/` must be writeable.
-- **File overwriting unexpectedly.** GhostESP auto-generates names and will overwrite if the same model/UID combination is scanned repeatedly.
+- **File overwriting**: GhostESP auto-generates names and will overwrite if the same model/UID is scanned repeatedly.
 
 ## FAQ
 

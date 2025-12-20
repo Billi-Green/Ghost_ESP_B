@@ -42,7 +42,7 @@ Discover nearby BLE devices and gather information about them.
 ### AirTag Scanner
 - **UI**: Menu → Bluetooth → Start AirTag Scanner
 - **CLI**: `blescan -a`
-- Scans for Apple AirTags and other Find My devices using active scanning with aggressive parameters to maximize detection.
+- Scans for Apple AirTags and other Find My devices using active scanning to find more devices.
 - Allows duplicate advertisements to be reported for better tracking.
 - While scanning, RSSI for already discovered AirTags is logged every few seconds to help you see proximity changes over time.
 - Use **List AirTags** to see discovered devices, or **Select AirTag** to prepare for spoofing.

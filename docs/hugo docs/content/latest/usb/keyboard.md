@@ -4,7 +4,7 @@ description: "Using a USB keyboard to control GhostESP"
 weight: 10
 ---
 
-ESP32-S3 devices can use their USB port in Host mode to accept input from a USB keyboard. This allows full navigation and text input without needing the built-in keyboard on devices like the Cardputer.
+ESP32-S3 devices can use USB Host mode to accept input from a USB keyboard.
 
 ## Requirements
 
@@ -60,6 +60,6 @@ When two GhostESP devices are connected via Dual Comm, keyboard events are trans
 
 ## Important Notes
 
-- **CDC Console**: USB console output is unavailable while in Host mode since the USB port switches from Device to Host
+- **CDC Console:** USB console is unavailable while in Host mode (port switches from Device to Host).
 - **Flashing**: You must disable USB Host mode (or reboot) to flash new firmware via USB
 - **Not Persistent**: The USB Host mode setting is runtime-only and resets on reboot

@@ -1,7 +1,7 @@
 ---
 title: "Development"
 description: "Tools and workflows for customizing GhostESP builds"
-weight: 50
+weight: 80
 aliases:
   - "/development/"
 ---

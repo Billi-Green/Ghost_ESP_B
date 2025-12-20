@@ -15,7 +15,7 @@ Wi-Fi networks use management frames to coordinate connections. Two of these fra
 - **Deauthentication frame**: Ends the authentication relationship
 - **Disassociation frame**: Ends the association relationship
 
-GhostESP sends both frame types to maximize effectiveness. Since these frames are part of the original Wi-Fi standard (802.11), most devices have no way to verify if the message is legitimate.
+GhostESP sends both frame types. Since these frames are part of the original Wi-Fi standard (802.11), most devices have no way to verify if the message is legitimate.
 
 ### Broadcast and targeted attacks
 
@@ -31,7 +31,7 @@ For targeted stations, GhostESP sends frames in both directions:
 - **AP → Station**: Appears to come from the access point, telling the device to disconnect
 - **Station → AP**: Appears to come from the device, telling the AP the device is leaving
 
-This two-way approach is more effective than one-way attacks since both sides believe the connection was terminated.
+This makes the attack more reliable since both sides think the connection ended.
 
 ## Frequency band limitations
 
@@ -48,7 +48,7 @@ Most ESP32 boards (ESP32, ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C6) only support *
 The **ESP32-C5** supports both 2.4 GHz and 5 GHz bands, allowing you to:
 
 - Scan and attack networks on all Wi-Fi channels
-- Target devices that have moved to 5 GHz to avoid 2.4 GHz congestion
+- Target devices on 5 GHz networks
 
 If your target network uses 5 GHz, you need an ESP32-C5 based device.
 
@@ -179,11 +179,11 @@ Replace `<CC>` with one of the supported country codes:
 
 ### Devices reconnect immediately
 
-Devices will try to reconnect as soon as they're disconnected. The attack works by sending deauth frames faster than devices can complete reconnection. If devices keep reconnecting:
+Devices reconnect immediately after being kicked. If they keep getting back on:
 
 - Make sure you're only targeting one or two networks
 - Move closer to the access point
-- Check that no other interference is occurring
+- Check for other interference
 
 ### Cannot see 5 GHz networks
 

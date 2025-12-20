@@ -4,11 +4,11 @@ description: "Connect to BLE devices and enumerate their services and characteri
 weight: 15
 ---
 
-GATT (Generic Attribute Profile) defines how Bluetooth Low Energy devices expose their data and capabilities. This guide walks you through discovering what services a BLE device offers.
+GATT defines how BLE devices expose data. This guide shows how to discover services on a device.
 
 ## What is GATT?
 
-When a BLE device advertises itself, it broadcasts basic information. To learn what the device actually *does*, you need to connect and read its GATT profile. A GATT profile contains:
+When a BLE device advertises, it broadcasts basic info. To learn what it actually *does*, you must connect and read its GATT profile. A GATT profile contains:
 
 - **Services** — Logical groupings of related functionality (e.g., "Heart Rate Service")
 - **Characteristics** — Individual data points within a service (e.g., "Heart Rate Measurement")

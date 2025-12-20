@@ -4,7 +4,7 @@ description: "Mirror your GhostESP display to your desktop for easier viewing an
 weight: 35
 ---
 
-Screen Mirroring lets you view your GhostESP device's display on your computer in realtime
+View and control your device's screen from your computer.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Screen Mirroring lets you view your GhostESP device's display on your computer i
 
 ## Installation (Desktop Script)
 
-The desktop screen mirror script is located in `scripts/screen_mirror/`. Required packages (pygame, pyserial, numpy) are automatically installed on first run.
+The script is in `scripts/screen_mirror/`. It installs dependencies (pygame, pyserial, numpy) on first run.
 
 **For Web-Based Mirror**: If you prefer not to install Python, use the web mirror at [ghostesp.net/serial](https://ghostesp.net/serial) by opening the **Web Serial** tab.
 
@@ -57,7 +57,7 @@ Alternatively, visit [ghostesp.net/serial](https://ghostesp.net/serial) and open
 
 ### CYD Devices
 
-CYD (Cheap Yellow Display) panels require a different configuration because they ship with an 8-bit mirror mode that is slower and more prone to color inaccuracies. For those boards:
+CYD devices need specific settings due to their 8-bit color mode:
 
 - **Baud Rate**: Use `--baud 460800`; the default 115200 is too slow for CYD refresh rates.
 - **Color Mode**: The mirror stream is truncated to 8 bits, so colors may shift compared to the physical display.
@@ -69,7 +69,7 @@ To connect to a CYD device:
 python ghost_mirror.py COM3 --baud 460800
 ```
 
-If colors look wrong, click the **Swap** button to toggle the byte order; however, poor color fidelity and slower updates are normal while mirroring CYD panels because of their 8-bit mode and serial bottlenecks.
+Click **Swap** to fix inverted colors. Note that CYD mirroring is slower and has lower color quality.
 
 ## Using the Mirror
 

@@ -15,12 +15,8 @@ Create fake Wi-Fi networks based on SSIDs that nearby devices are searching for.
 
 ## Legal and ethical
 
-- Only test on your own devices or with explicit written permission.
-- Use in controlled environments only.
-- Obtain proper authorization before testing.
-- Stop attacks immediately when testing is complete.
-- Use Karma for educational purposes and authorized security testing only.
-- Never use Karma to attack networks you don't own.
+- Only test on your own devices or with written permission.
+- Never use Karma on networks you don't own.
 
 
 ## Starting Karma
@@ -44,7 +40,7 @@ Create fake Wi-Fi networks based on SSIDs that nearby devices are searching for.
 
 ## How it works
 
-**Automatic mode**: Karma listens for WiFi probe requests from nearby devices and broadcasts fake networks with the SSIDs they're searching for.
+**Automatic mode**: Karma listens for Wi-Fi probe requests from nearby devices and broadcasts fake networks with the SSIDs they're searching for.
 
 **Custom mode**: You specify which SSIDs to broadcast instead of learning them automatically.
 

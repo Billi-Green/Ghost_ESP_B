@@ -6,14 +6,15 @@ weight: 30
 
 ## Directory layout
 
-- `/ghostesp/infrared/remotes` holds individual remotes captured on-device.
-- `/ghostesp/infrared/universals` stores library files with many commands.
+- `/ghostesp/infrared/remotes` — Individual remotes captured on-device
+- `/ghostesp/infrared/universals` — Library files with many commands
 - The Infrared UI reads from `/mnt/ghostesp/infrared/...` when the SD card is mounted.
 
 ### Flipper IR libraries
 
-- GhostESP reads the standard Flipper `.ir` format, so you can copy files from community packs.
-- A large collection is available at [Lucaslhm/Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB); place downloaded files under `infrared/remote` or `infrared/universals` for universal files which you can find in [Momentum custom Flipper Zero firmware](https://github.com/Next-Flip/Momentum-Firmware/tree/dev/applications/main/infrared/resources/infrared/assets).
+GhostESP reads standard Flipper `.ir` format. Download packs from [Lucaslhm/Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB).
+
+Universal IR files are available at [Momentum Flipper Firmware](https://github.com/Next-Flip/Momentum-Firmware/tree/dev/applications/main/infrared/resources/infrared/assets). Download and place them under `infrared/universals`.
 
 ### Built-in Universal IR file
 

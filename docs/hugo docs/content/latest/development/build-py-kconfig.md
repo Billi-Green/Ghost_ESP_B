@@ -4,7 +4,7 @@ description: "Use the build helper to edit GhostESP configuration options."
 weight: 10
 ---
 
-The `build.py` helper wraps Espressif's build tools so you can change GhostESP feature flags without setting up the environment manually. Follow the steps below to run `menuconfig`, persist your changes, and rebuild with the updated settings.
+`build.py` wraps Espressif's build tools so you can change GhostESP feature flags without manual setup. Follow these steps to run `menuconfig`, persist changes, and rebuild.
 
 ## Prerequisites
 
@@ -14,13 +14,13 @@ The `build.py` helper wraps Espressif's build tools so you can change GhostESP f
 
 ## 1. Launch the helper
 
-From the project root, run:
+From the project root:
 
 ```
 python build.py
 ```
 
-If you already know which boards you want to modify, you can skip the interactive picker:
+Skip the interactive picker if you know your targets:
 
 ```
 python build.py --targets 2 3
@@ -28,7 +28,7 @@ python build.py --targets 2 3
 
 Use `--targets all` to queue every board profile.
 
-When prompted for ESP-IDF, confirm a detected path or allow the script to download v5.5 automatically. Supplying `--idf-path <path>` bypasses the prompt entirely.
+When prompted for ESP-IDF, confirm a detected path or allow the script to download v5.5. Use `--idf-path <path>` to skip the prompt.
 
 ## 2. Select a build target
 
@@ -44,7 +44,7 @@ After applying the base config, `build.py` launches:
 idf.py menuconfig
 ```
 
-Use the curses UI to browse `GhostESP Options → GhostESP Features` and any other menus you need. When finished, save and exit menuconfig.
+Use the menu to browse `GhostESP Options → GhostESP Features`. Save and exit when finished.
 
 ### Enabling NFC features
 

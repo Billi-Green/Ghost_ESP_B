@@ -6,13 +6,12 @@ weight: 40
 
 ## Overview
 
-GhostESP’s PN532 stack focuses on ISO14443A tags. This page summarizes what the firmware supports today and what the UI exposes for each family.
+GhostESP's PN532 stack focuses on ISO14443A tags. This page summarizes current support.
 
 ## NTAG / Ultralight
 
 - **Models:** NTAG213 (45 pages), NTAG215 (135 pages), NTAG216 (231 pages), and Ultralight variants with similar memory layouts.
 
-- **Read:** Full user memory, signature, version, and counter/tearing registers. NDEF TLVs are parsed into human-readable summaries.
 
 - **Save:** Exports to Flipper `.nfc` files including UID, header metadata, and all user pages.
 
@@ -29,7 +28,7 @@ GhostESP’s PN532 stack focuses on ISO14443A tags. This page summarizes what th
   - Built-in common keys.
   - Flipper Zero dictionary pre-compiled in.
 
-- **User Dictionary:** Successful keys are appended to the user dictionary on the mounted sd card so future scans start with known values.
+- **User Dictionary:** Successful keys are appended to `/mnt/ghostesp/nfc/mfc_user_keys.nfc` for future scans.
 
 - **Save:** Unlocked sectors and recovered keys are stored in Flipper formatted `.nfc` files.
 

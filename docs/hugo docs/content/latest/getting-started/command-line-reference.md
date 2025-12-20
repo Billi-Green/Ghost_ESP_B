@@ -18,7 +18,7 @@ toc: true
 - (for developers) **`mem [dump|trace <start|stop|dump>]`** — Print heap stats, dump allocation state, or control heap tracing.
 - **`reboot`** — Soft restart the device.
 - **`timezone <TZ>`** — Set timezone, e.g., `timezone EST5EDT,M3.2.0,M11.1.0`.
-- **`stop`** — Global kill switch: halt Wi-Fi attacks, BLE/BLE spam, GPS logging, wardriving, PCAP/CSV captures, RGB effects, and other background timers. It also tears down the BLE stack so suspended Wi-Fi/AP services come back online.
+- **`stop`** — Stops all active attacks, scans, and background tasks. Also restarts Wi-Fi if it was suspended by BLE.
 
 ## WiFi
 
@@ -46,7 +46,7 @@ toc: true
 - **`beaconspam [mode]`** — Broadcast spoof SSIDs (`-r`, `-rr`, `-l`, or custom text).
 - **`karma start [ssid...]`** / **`karma stop`** — Respond to client probes with saved or provided SSIDs.
 - **`pineap [-s]`** — Monitor Pineapple-style beacons; `-s` stops detection.
-- **`saeflood <password>`** / **`stopsaeflood`** / **`saefloodhelp`** — Launch, stop, or review SAE flood attack guidance.
+- **`saeflood <password>`** / **`stopsaeflood`** / **`saefloodhelp`** — Start, stop, or show help for SAE flood attacks.
 
 ### Network
 
@@ -97,7 +97,7 @@ toc: true
 
 ## GhostLink (Dual Communication)
 
-- **`commdiscovery`** — Enter UART discovery mode, broadcasting handshake frames until peers reply (run before `commconnect`).
+- **`commdiscovery`** — Start discovery mode to find other GhostESP devices.
 - **`commconnect <peer_name>`** — Connect to a discovered peer (after `commdiscovery`).
 - **`commsetpins <tx> <rx>`** — Save preferred pins.
 - **`commsend <command> [data...]`** — Issue commands to the connected peer.
@@ -185,7 +185,7 @@ Available on boards with an onboard OLED status display or when an external stat
 ## GPS
 
 - **`gpsinfo [-s]`** — Stream current fix, satellites, and speed; pass `-s` to stop the display task.
-- **`startwd [-s]`** — Begin Wi-Fi wardriving with GPS logging, CSV output, and monitor mode; pass `-s` to stop and flush logs.
+- **`startwd [-s]`** — Start wardriving (logs Wi-Fi/GPS to CSV). Use `-s` to stop.
 
 ## Ethernet
 *(Requires `CONFIG_WITH_ETHERNET`)*

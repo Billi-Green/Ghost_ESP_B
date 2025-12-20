@@ -4,9 +4,9 @@ description: "Access and control GhostESP through the web interface."
 weight: 35
 ---
 
-The GhostNet WebUI is a browser-based control panel for managing GhostESP settings and controlling certain features. It runs on the device's built-in access point and is accessible from any device on the same network.
+The WebUI allows you to configure GhostESP and manage files from your browser.
 
-> **Note**: Wi-Fi and BLE commands cannot be run directly through the WebUI because the device's radio is in use hosting the access point. When you launch those commands from the device or serial CLI, the GhostNet AP is paused until the radio work finishes. Use [GhostLink]({{< relref "dual-communication.md" >}}) to run them remotely without losing the AP.
+> **Note**: Wi-Fi/BLE commands require **GhostLink** because the radio cannot scan and host the AP simultaneously.
 
 ## Connecting to the WebUI
 
@@ -122,7 +122,7 @@ The WebUI cannot directly run Wi-Fi or BLE commands (e.g., `scanap`, `karma star
 
 ### Faster File Transfers
 
-- Use a card reader connected to your computer instead of the WebUI for faster PCAP and file transfers.
+- Use a card reader for faster file transfers.
 - The WebUI file manager is convenient but slower over Wi-Fi.
 
 ### Toggle Authentication When Needed

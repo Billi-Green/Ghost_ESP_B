@@ -25,13 +25,13 @@ weight: 10
 
 ## MIFARE Classic Flow
 
-- **Dictionary attack order.** GhostESP authenticates each sector using keys from `/mnt/ghostesp/nfc/mfc_user_keys.nfc`, then bundled common keys, then the compiled Flipper dictionary. The title bar remains on “Bruteforcing keys…” while this progresses.
+- **Dictionary attack order:** GhostESP tries user keys, then common keys, then the Flipper dictionary.
 
 - **Caching behavior.** Once a sector unlocks, its blocks and both Key A/Key B values are cached. The title shifts to “Reading sectors...” during the copy. Successful keys are appended back to the user dictionary on the SD card.
 
 - **Magic backdoor tags.** If the card supports the classic backdoor sequence, GhostESP logs the detection and can skip sector authentication, pulling data directly.
 
-- **Skip option.** Tap **Skip** to bypass the user and dictionary lists when you only need publicly readable sectors (sector 0).
+- **Skip option:** Tap **Skip** to bypass dictionaries when you only need public sectors.
 
 - **After the scan.** The more summary lists recovered sectors and keys as well as any detected NDEF data.
 

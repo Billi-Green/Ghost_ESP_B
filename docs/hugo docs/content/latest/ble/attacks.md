@@ -18,26 +18,13 @@ Broadcast fake BLE advertisements to simulate nearby devices or spoof Apple AirT
 
 ### Patches and Mitigations
 
-BLE spam attacks have been largely patched in recent device updates:
-- **iOS**: Apple addressed the issue in iOS 17.2 and later with stability improvements and crash fixes.
-- **Android**: Google patched BLE spam vulnerabilities in Android 14 and later.
-- **Windows**: Microsoft has implemented protections in recent Windows versions.
-
-However, older devices and firmware versions remain vulnerable. These attacks are primarily useful for security research and testing on controlled devices.
+Most modern devices (iOS 17+, Android 14+, Windows) block these attacks. They mostly affect older devices.
 
 ### Safety Warnings
 
-**Do not use BLE attacks in public or near other people.** BLE spam can:
-- Cause nearby devices to crash or become unresponsive.
-- Interfere with medical devices (pacemakers, insulin pumps, hearing aids, etc.) that rely on Bluetooth connectivity.
-- Disrupt emergency communication systems.
-- Cause unexpected behavior in connected vehicles and smart home systems.
-- Violate local regulations regarding electromagnetic interference.
+**Do not use BLE attacks in public.** They can crash devices and disrupt essential services.
 
-Only use these features:
-- In isolated test environments with devices you own or have explicit permission to test.
-- For authorized security research and penetration testing.
-- With full understanding of the legal implications in your jurisdiction.
+Only use these features on devices you own or have permission to test.
 
 ## BLE Advertisement Spam
 
