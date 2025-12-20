@@ -134,7 +134,7 @@ jobs:
           FLASH_SIZE=$(grep "CONFIG_ESPTOOLPY_FLASHSIZE=" sdkconfig.defaults | cut -d'"' -f2)
           FLASH_SIZE=${FLASH_SIZE:-4MB}
           python3 -m esptool --chip ${{ matrix.target.idf_target }} merge_bin \
-            -o "$ARTIFACT_DIR/merged-flash.bin" \
+            --output "$ARTIFACT_DIR/merged.bin" \
             --flash-mode dio \
             --flash-size "$FLASH_SIZE" \
             0x1000 "$ARTIFACT_DIR/bootloader.bin" \
