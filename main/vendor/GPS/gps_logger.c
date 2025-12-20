@@ -43,28 +43,33 @@ static size_t csv_pre_header_len = 0;
 
 static esp_err_t csv_flush_buffer_to_file_unlocked(void);
 
-#define WD_DEDUPE_MAX_WIFI 512
-#define WD_DEDUPE_MAX_BLE 512
+#define WD_DEDUPE_SIZE 64
 
 typedef struct {
-    char bssid[18];
-    bool used;
-    bool ssid_empty;
-    int best_rssi;
-} wd_wifi_dedupe_t;
+    uint32_t hash;
+    int8_t best_rssi;
+    uint8_t flags;
+} wd_dedupe_entry_t;
 
-typedef struct {
-    char mac[18];
-    bool used;
-    bool name_empty;
-    int best_rssi;
-} wd_ble_dedupe_t;
+#define WD_FLAG_USED       0x01
+#define WD_FLAG_NAME_EMPTY 0x02
 
-static wd_wifi_dedupe_t wd_wifi_dedupe[WD_DEDUPE_MAX_WIFI];
-static wd_ble_dedupe_t wd_ble_dedupe[WD_DEDUPE_MAX_BLE];
-static size_t wd_wifi_dedupe_count = 0;
-static size_t wd_ble_dedupe_count = 0;
+static wd_dedupe_entry_t wd_wifi_dedupe[WD_DEDUPE_SIZE];
+static wd_dedupe_entry_t wd_ble_dedupe[WD_DEDUPE_SIZE];
+static uint8_t wd_wifi_idx = 0;
+static uint8_t wd_ble_idx = 0;
 static uint32_t wd_wifi_unique_logged = 0;
+
+static uint32_t wd_hash_mac(const char *mac) {
+    uint32_t hash = 2166136261u;
+    while (*mac) {
+        char c = *mac++;
+        if (c >= 'a' && c <= 'f') c -= 32;
+        hash ^= (uint8_t)c;
+        hash *= 16777619u;
+    }
+    return hash;
+}
 
 static void csv_escape_field(char *out, size_t out_len, const char *in) {
     if (out_len == 0) {
@@ -195,18 +200,18 @@ static void csv_build_pre_header(void) {
     csv_pre_header_len = (size_t)n;
 }
 
-static wd_wifi_dedupe_t *wd_wifi_dedupe_find_mut(const char *bssid) {
-    for (size_t i = 0; i < wd_wifi_dedupe_count; i++) {
-        if (wd_wifi_dedupe[i].used && strcasecmp(wd_wifi_dedupe[i].bssid, bssid) == 0) {
+static wd_dedupe_entry_t *wd_wifi_dedupe_find_mut(uint32_t hash) {
+    for (size_t i = 0; i < WD_DEDUPE_SIZE; i++) {
+        if ((wd_wifi_dedupe[i].flags & WD_FLAG_USED) && wd_wifi_dedupe[i].hash == hash) {
             return &wd_wifi_dedupe[i];
         }
     }
     return NULL;
 }
 
-static wd_ble_dedupe_t *wd_ble_dedupe_find_mut(const char *mac) {
-    for (size_t i = 0; i < wd_ble_dedupe_count; i++) {
-        if (wd_ble_dedupe[i].used && strcasecmp(wd_ble_dedupe[i].mac, mac) == 0) {
+static wd_dedupe_entry_t *wd_ble_dedupe_find_mut(uint32_t hash) {
+    for (size_t i = 0; i < WD_DEDUPE_SIZE; i++) {
+        if ((wd_ble_dedupe[i].flags & WD_FLAG_USED) && wd_ble_dedupe[i].hash == hash) {
             return &wd_ble_dedupe[i];
         }
     }
@@ -333,8 +338,8 @@ esp_err_t csv_file_open(const char *base_file_name) {
         csv_mutex = xSemaphoreCreateMutex();
     }
 
-    wd_wifi_dedupe_count = 0;
-    wd_ble_dedupe_count = 0;
+    wd_wifi_idx = 0;
+    wd_ble_idx = 0;
     wd_wifi_unique_logged = 0;
     memset(wd_wifi_dedupe, 0, sizeof(wd_wifi_dedupe));
     memset(wd_ble_dedupe, 0, sizeof(wd_ble_dedupe));
@@ -390,27 +395,25 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
 
     if (data->ble_data.is_ble_device) {
-        wd_ble_dedupe_t *entry = wd_ble_dedupe_find_mut(data->ble_data.ble_mac);
+        uint32_t hash = wd_hash_mac(data->ble_data.ble_mac);
+        wd_dedupe_entry_t *entry = wd_ble_dedupe_find_mut(hash);
         bool name_empty = (data->ble_data.ble_name[0] == '\0');
         bool should_log = false;
         if (entry == NULL) {
-            if (wd_ble_dedupe_count < WD_DEDUPE_MAX_BLE) {
-                entry = &wd_ble_dedupe[wd_ble_dedupe_count++];
-                memset(entry, 0, sizeof(*entry));
-                snprintf(entry->mac, sizeof(entry->mac), "%s", data->ble_data.ble_mac);
-                entry->used = true;
-                entry->name_empty = name_empty;
-                entry->best_rssi = data->ble_data.ble_rssi;
-            }
+            entry = &wd_ble_dedupe[wd_ble_idx];
+            wd_ble_idx = (wd_ble_idx + 1) % WD_DEDUPE_SIZE;
+            entry->hash = hash;
+            entry->flags = WD_FLAG_USED | (name_empty ? WD_FLAG_NAME_EMPTY : 0);
+            entry->best_rssi = (int8_t)data->ble_data.ble_rssi;
             should_log = true;
         } else {
-            if (entry->name_empty && !name_empty) {
+            if ((entry->flags & WD_FLAG_NAME_EMPTY) && !name_empty) {
                 should_log = true;
-                entry->name_empty = false;
+                entry->flags &= ~WD_FLAG_NAME_EMPTY;
             }
             if (data->ble_data.ble_rssi > entry->best_rssi + 5) {
                 should_log = true;
-                entry->best_rssi = data->ble_data.ble_rssi;
+                entry->best_rssi = (int8_t)data->ble_data.ble_rssi;
             }
         }
 
@@ -443,28 +446,26 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
                        data->accuracy,
                        mfgr_str);
     } else {
-        wd_wifi_dedupe_t *entry = wd_wifi_dedupe_find_mut(data->bssid);
+        uint32_t hash = wd_hash_mac(data->bssid);
+        wd_dedupe_entry_t *entry = wd_wifi_dedupe_find_mut(hash);
         bool ssid_empty = (data->ssid[0] == '\0');
         bool should_log = false;
         if (entry == NULL) {
-            if (wd_wifi_dedupe_count < WD_DEDUPE_MAX_WIFI) {
-                entry = &wd_wifi_dedupe[wd_wifi_dedupe_count++];
-                memset(entry, 0, sizeof(*entry));
-                snprintf(entry->bssid, sizeof(entry->bssid), "%s", data->bssid);
-                entry->used = true;
-                entry->ssid_empty = ssid_empty;
-                entry->best_rssi = data->rssi;
-                count_unique_wifi = true;
-            }
+            entry = &wd_wifi_dedupe[wd_wifi_idx];
+            wd_wifi_idx = (wd_wifi_idx + 1) % WD_DEDUPE_SIZE;
+            entry->hash = hash;
+            entry->flags = WD_FLAG_USED | (ssid_empty ? WD_FLAG_NAME_EMPTY : 0);
+            entry->best_rssi = (int8_t)data->rssi;
+            count_unique_wifi = true;
             should_log = true;
         } else {
-            if (entry->ssid_empty && !ssid_empty) {
+            if ((entry->flags & WD_FLAG_NAME_EMPTY) && !ssid_empty) {
                 should_log = true;
-                entry->ssid_empty = false;
+                entry->flags &= ~WD_FLAG_NAME_EMPTY;
             }
             if (data->rssi > entry->best_rssi + 5) {
                 should_log = true;
-                entry->best_rssi = data->rssi;
+                entry->best_rssi = (int8_t)data->rssi;
             }
         }
 
