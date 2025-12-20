@@ -184,6 +184,7 @@ Available on boards with an onboard OLED status display or when an external stat
 
 ## GPS
 
+- **`gpspin [pin]`** — View or set the GPS RX pin for external GPS modules. Without arguments, shows current pin. Setting persists to NVS; restart GPS commands to apply.
 - **`gpsinfo [-s]`** — Stream current fix, satellites, and speed; pass `-s` to stop the display task.
 - **`startwd [-s]`** — Start wardriving (logs Wi-Fi/GPS to CSV). Use `-s` to stop.
 

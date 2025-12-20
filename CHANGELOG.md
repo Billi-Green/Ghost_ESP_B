@@ -59,6 +59,7 @@
 - Added a shared string for the firmware name and version number
 - Added JTAG support for ESP32C5
 - Added USB HID keyboard host support on ESP32-S3 devices for controlling the UI and inputting text
+- Added 'gpspin' command to set the GPS pin for recieving data
 
 #### Hardware
 - Added support for the RabbitLabs Poltergeist board

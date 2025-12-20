@@ -3833,14 +3833,14 @@ void handle_help(int argc, char **argv) {
         glog("        settings get ap_ssid\n");
         glog("        settings set rgb_mode 1\n");
         glog("        settings reset\n\n");
-        glog("statusidle\n");
         glog("    Description: View or change the status display idle animation (status OLED only).\n");
         glog("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
         return;
     }
     if (strcmp(category, "gps") == 0) {
         glog("\nGPS Commands:\n\n");
-        glog("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo\n\n");
+        glog("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo [-s]\n\n");
+        glog("gpspin\n    Set GPS RX pin for external GPS module.\n    Usage: gpspin <pin>\n\n");
         glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [seconds]\n\n");
         return;
     }
@@ -4154,6 +4154,30 @@ void handle_capture(int argc, char **argv) {
         status_display_show_status("Capture BLE");
     }
 #endif
+}
+
+void handle_gps_pin(int argc, char **argv) {
+    if (argc < 2) {
+        uint8_t current_pin = settings_get_gps_rx_pin(&G_Settings);
+        if (current_pin > 0) {
+            glog("GPS RX pin: IO%d\n", current_pin);
+        } else {
+            glog("GPS RX pin: not set (using default)\n");
+        }
+        glog("Usage: gpspin <pin>\n");
+        return;
+    }
+
+    int pin = atoi(argv[1]);
+    if (pin < 0 || pin > 48) {
+        glog("Invalid pin. Must be 0-48.\n");
+        return;
+    }
+
+    settings_set_gps_rx_pin(&G_Settings, (uint8_t)pin);
+    settings_save(&G_Settings);
+    glog("GPS RX pin set to IO%d. Restart GPS to apply.\n", pin);
+    TERMINAL_VIEW_ADD_TEXT("GPS pin set to IO%d\n", pin);
 }
 
 void handle_gps_info(int argc, char **argv) {
@@ -7498,6 +7522,7 @@ void register_commands() {
     register_command("reboot", handle_reboot);
     register_command("startwd", handle_startwd);
     register_command("gpsinfo", handle_gps_info);
+    register_command("gpspin", handle_gps_pin);
     register_command("scanports", handle_scan_ports);
     register_command("scanarp", handle_scan_arp);
     register_command("scanssh", handle_scan_ssh);
