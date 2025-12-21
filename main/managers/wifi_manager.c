@@ -1612,8 +1612,6 @@ void wifi_manager_stop_monitor_mode() {
     }
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
-    printf("WiFi monitor stopped.\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi monitor stopped.\n");
     status_display_show_status("Monitor Stopped");
 
     // Stop the station scan channel hopping timer if it's active
@@ -5059,8 +5057,6 @@ void wifi_manager_start_dhcpstarve(int threads) {
 
 void wifi_manager_stop_dhcpstarve(void) {
     if (!dhcp_starve_running) {
-        printf("DHCP-Starve not running\n");
-        TERMINAL_VIEW_ADD_TEXT("DHCP-Starve not running\n");
         return;
     }
     dhcp_starve_running = false;
@@ -5218,11 +5214,9 @@ void wifi_manager_start_eapollogoff_attack(void) {
 
 void wifi_manager_stop_eapollogoff_attack(void) {
     if (!eapol_logoff_running && eapol_logoff_task_handle == NULL) {
-        printf("EAPOL Logoff not running\n");
-        TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff not running\n");
         return;
     }
-    
+
     // Signal tasks to stop gracefully
     eapol_logoff_running = false;
     
@@ -5979,11 +5973,9 @@ void wifi_manager_start_sae_flood(const char *password) {
 
 void wifi_manager_stop_sae_flood(void) {
     if (!sae_flood_running) {
-        printf("SAE flood attack not running\n");
-        TERMINAL_VIEW_ADD_TEXT("SAE flood attack not running\n");
         return;
     }
-    
+
     sae_flood_running = false;
     
     // Wait for tasks to finish

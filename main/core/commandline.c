@@ -789,7 +789,7 @@ void handle_stop_flipper(int argc, char **argv) {
 #endif
     // ensure pcap is properly flushed and closed
     pcap_file_close();
-    glog("Stopped activities.\nClosed files.\n");
+    glog("All activities stopped.\n");
     status_display_show_status("All Stopped");
 
     // kill any feature tasks we spawned that may still be around
