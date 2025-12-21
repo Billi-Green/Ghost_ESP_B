@@ -1877,9 +1877,6 @@ static esp_err_t start_http_server(void) {
         }
     }
 
-    // register oui lookup endpoint
-    ouis_register_handlers(server);
-
     ESP_LOGI(TAG, "HTTP server started successfully on port %d", server_config.server_port);
     return ESP_OK;
 }

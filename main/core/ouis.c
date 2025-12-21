@@ -1,6 +1,5 @@
 #include "core/ouis.h"
-#include <esp_http_server.h>
-#include <esp_log.h>
+#include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 
@@ -78,62 +77,4 @@ bool ouis_lookup_vendor(const char *mac, char *out_vendor, size_t out_sz) {
         return false;
     }
     return lookup_vendor(p6, out_vendor, out_sz);
-}
-
-static esp_err_t handle_oui_lookup(httpd_req_t *req) {
-    char mac[64] = {0};
-    // prefer post json body, fall back to query string for compatibility
-    if (req->content_len > 0 && req->content_len < 256) {
-        char *body = (char*)malloc(req->content_len + 1);
-        if (body) {
-            int r = httpd_req_recv(req, body, req->content_len);
-            if (r > 0) body[r] = '\0'; else body[0] = '\0';
-            char *p = strstr(body, "\"mac\"");
-            if (p) {
-                p = strchr(p, ':');
-                if (p) {
-                    p++;
-                    while (*p==' '||*p=='\t'||*p=='\"') p++;
-                    char *q = p;
-                    while (*q && *q!='\"' && (q - body) < req->content_len) q++;
-                    size_t l = (size_t)(q - p);
-                    if (l > sizeof(mac)-1) l = sizeof(mac)-1;
-                    memcpy(mac, p, l); mac[l] = '\0';
-                }
-            }
-            free(body);
-        }
-    }
-    if (mac[0] == '\0' && httpd_req_get_url_query_len(req) > 0) {
-        char q[128];
-        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
-            char val[64];
-            if (httpd_query_key_value(q, "mac", val, sizeof(val)) == ESP_OK) {
-                strncpy(mac, val, sizeof(mac)-1);
-            }
-        }
-    }
-    if (mac[0] == '\0') {
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_send(req, "{\"success\":false,\"message\":\"Mac Required\"}", -1);
-    }
-
-    char vendor[64] = {0};
-    bool ok = ouis_lookup_vendor(mac, vendor, sizeof(vendor));
-    httpd_resp_set_type(req, "application/json");
-    if (ok) {
-        char resp[128];
-        snprintf(resp, sizeof(resp), "{\"success\":true,\"vendor\":\"%s\"}", vendor);
-        return httpd_resp_send(req, resp, -1);
-    } else {
-        return httpd_resp_send(req, "{\"success\":false,\"vendor\":null}", -1);
-    }
-}
-
-void ouis_register_handlers(httpd_handle_t handle) {
-    static httpd_uri_t uri_oui_post = {.uri = "/oui", .method = HTTP_POST, .handler = handle_oui_lookup, .user_ctx = NULL};
-    static httpd_uri_t uri_oui_get  = {.uri = "/oui", .method = HTTP_GET,  .handler = handle_oui_lookup, .user_ctx = NULL};
-    httpd_register_uri_handler(handle, &uri_oui_post);
-    httpd_register_uri_handler(handle, &uri_oui_get);
-    ESP_LOGI("OUIS", "Registered /oui Endpoint (GET, POST)");
 }
