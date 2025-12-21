@@ -48,6 +48,7 @@
 - Added Unique AP counter to wardriving summary
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
 - Added RSSI tracking for selected APs and stations
+- Added OUI vendor lookup for access points and stations
 
 #### IR
 - Added IR CLI support
@@ -104,6 +105,7 @@
 - Miscellaneous small code refactors and improvements
 - Sync RTC time when a valid GPS fix is received
 - Renamed Dual Comm UI and documentation branding to GhostLink
+- Station scan now lists entries like AP scan results
 
 #### Hardware
 - Increase CPU clock speed on certain configs

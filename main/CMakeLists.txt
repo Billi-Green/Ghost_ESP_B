@@ -98,13 +98,15 @@ if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
                            REQUIRES ${required_components}
-                           EMBED_TXTFILES "mf_classic_dict.nfc")
+                           EMBED_TXTFILES "mf_classic_dict.nfc"
+                           EMBED_FILES "core/ouis.json")
     # Signal to C code that the dictionary is embedded so it can reference linker symbols safely
     target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_MFC_DICT_EMBEDDED=1)
 else()
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
-                           REQUIRES ${required_components})
+                           REQUIRES ${required_components}
+                           EMBED_FILES "core/ouis.json")
 endif()
 
 # add compile definition for esp32s2 target to maintain legacy guards (needs COMPONENT_LIB)

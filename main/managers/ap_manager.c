@@ -5,6 +5,7 @@
 #define GHOST_SITE_IS_GZ 1
 #include "managers/settings_manager.h"
 #include "core/esp_comm_manager.h"
+#include "core/ouis.h"
 #include "sdkconfig.h"
 #include <cJSON.h>
 #include <core/serial_manager.h>
@@ -1875,6 +1876,9 @@ static esp_err_t start_http_server(void) {
             return ret;
         }
     }
+
+    // register oui lookup endpoint
+    ouis_register_handlers(server);
 
     ESP_LOGI(TAG, "HTTP server started successfully on port %d", server_config.server_port);
     return ESP_OK;
