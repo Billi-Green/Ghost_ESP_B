@@ -398,7 +398,8 @@ int getBattery() {
     ESP_LOGD(TAG, "Battery ADC raw: %d, mV: %d", raw, mv);
 
     // Check for unrealistic voltage values
-    if (mv < 2500 || mv > 5000) {
+    // Lower threshold allows for very dead batteries (down to ~2.0V)
+    if (mv < 2000 || mv > 5000) {
         ESP_LOGW(TAG, "Battery voltage out of range: %d mV", mv);
         return -1;
     }
