@@ -47,6 +47,7 @@
 - Added Ethernet Fingerprint scanning
 - Added Unique AP counter to wardriving summary
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
+- Added RSSI tracking for selected APs and stations
 
 #### IR
 - Added IR CLI support

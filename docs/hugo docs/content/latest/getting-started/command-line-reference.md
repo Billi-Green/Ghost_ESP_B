@@ -38,6 +38,8 @@ toc: true
 - **`disconnect`** — Leave the current STA connection.
 - **`apcred <ssid> <pass>`** or **`apcred -r`** — Change or reset GhostNet AP credentials.
 - **`apenable on|off`** — Toggle AP persistence across reboots.
+- **`trackap`** — Track selected AP signal strength (RSSI) in real-time.
+- **`tracksta`** — Track selected station signal strength (RSSI) in real-time.
 
 ### Offense
 

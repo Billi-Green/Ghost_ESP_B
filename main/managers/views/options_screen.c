@@ -194,8 +194,8 @@ static const char *wifi_capture_options[] = {
 };
 
 static const char *wifi_scan_select_options[] = {
-    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)", 
-    "List Access Points", "List Stations", "Select AP", "Select Station", NULL
+    "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan All (AP & Station)",
+    "List Access Points", "List Stations", "Select AP", "Select Station", "Track AP", "Track Station", NULL
 };
 
 static const char *wifi_environment_options[] = {
@@ -297,6 +297,8 @@ static const char *dual_comm_scan_options[] = {
     "Select AP",
     "Select Station",
     "Select LAN",
+    "Track AP",
+    "Track Station",
     NULL
 };
 
@@ -2756,6 +2758,20 @@ display_manager_switch_view(&terminal_view);
             error_popup_create("You Need to Scan APs First...");
             
         }
+    }
+
+    else if (strcmp(Selected_Option, "Track AP") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("trackap");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Track Station") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("tracksta");
+        view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Select LAN") == 0) {

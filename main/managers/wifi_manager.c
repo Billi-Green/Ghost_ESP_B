@@ -6417,3 +6417,136 @@ void wifi_manager_stop_karma(void) {
     karma_ssid_manual_mode = false;
     // Task will clean up itself
 }
+
+// rssi tracking for selected ap and sta
+static volatile bool ap_tracking_active = false;
+static volatile bool sta_tracking_active = false;
+static int8_t tracking_last_rssi = 0;
+static int8_t tracking_min_rssi = 0;
+static int8_t tracking_max_rssi = -127;
+
+static void wifi_track_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+    
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    
+    int8_t rssi = pkt->rx_ctrl.rssi;
+    bool match = false;
+    
+    if (ap_tracking_active && strlen((const char *)selected_ap.ssid) > 0) {
+        // track ap by bssid (addr2 for beacons)
+        if (memcmp(hdr->addr2, selected_ap.bssid, 6) == 0) {
+            match = true;
+        }
+    }
+    
+    if (sta_tracking_active && station_selected) {
+        // track station by mac address (addr2 for frames from sta)
+        if (memcmp(hdr->addr2, selected_station.station_mac, 6) == 0) {
+            match = true;
+        }
+    }
+    
+    if (!match) return;
+    
+    int8_t delta = rssi - tracking_last_rssi;
+    
+    if (rssi > tracking_max_rssi) tracking_max_rssi = rssi;
+    if (rssi < tracking_min_rssi) tracking_min_rssi = rssi;
+    
+    const char *direction = "";
+    if (delta > 5) direction = " ↑ CLOSER";
+    else if (delta < -5) direction = " ↓ FARTHER";
+    
+    int bars = 0;
+    if (rssi > -50) bars = 5;
+    else if (rssi > -60) bars = 4;
+    else if (rssi > -70) bars = 3;
+    else if (rssi > -80) bars = 2;
+    else if (rssi > -90) bars = 1;
+    
+    char bar_str[8] = "";
+    for (int i = 0; i < bars; i++) {
+        strcat(bar_str, "#");
+    }
+    
+    glog("%s %d dBm (min:%d max:%d)%s\n", bar_str, rssi, tracking_min_rssi, tracking_max_rssi, direction);
+    tracking_last_rssi = rssi;
+}
+
+void wifi_manager_track_ap(void) {
+    if (strlen((const char *)selected_ap.ssid) == 0) {
+        glog("no ap selected. use 'select -a <index>' first.\n");
+        return;
+    }
+    
+    char sanitized_ssid[33];
+    sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
+    
+    glog("=== tracking ap: %s ===\n", sanitized_ssid);
+    glog("bssid: %02x:%02x:%02x:%02x:%02x:%02x\n",
+         selected_ap.bssid[0], selected_ap.bssid[1], selected_ap.bssid[2],
+         selected_ap.bssid[3], selected_ap.bssid[4], selected_ap.bssid[5]);
+    glog("channel: %d\n", selected_ap.primary);
+    glog("move closer to increase signal. type 'stop' to end.\n\n");
+    
+    tracking_last_rssi = selected_ap.rssi;
+    tracking_min_rssi = selected_ap.rssi;
+    tracking_max_rssi = selected_ap.rssi;
+    ap_tracking_active = true;
+    sta_tracking_active = false;
+    
+    // set channel to ap's channel
+    esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+    
+    status_display_show_status("Track AP");
+    wifi_manager_start_monitor_mode(wifi_track_callback);
+}
+
+void wifi_manager_track_sta(void) {
+    if (!station_selected) {
+        glog("no station selected. use 'select -s <index>' first.\n");
+        return;
+    }
+    
+    glog("=== tracking sta ===\n");
+    glog("station: %02x:%02x:%02x:%02x:%02x:%02x\n",
+         selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2],
+         selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5]);
+    glog("ap: %02x:%02x:%02x:%02x:%02x:%02x\n",
+         selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2],
+         selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
+    glog("move closer to increase signal. type 'stop' to end.\n\n");
+    
+    // find the channel for this station's ap
+    int channel = 1;
+    for (int i = 0; i < ap_count; i++) {
+        if (memcmp(scanned_aps[i].bssid, selected_station.ap_bssid, 6) == 0) {
+            channel = scanned_aps[i].primary;
+            break;
+        }
+    }
+    
+    tracking_last_rssi = -100;
+    tracking_min_rssi = -100;
+    tracking_max_rssi = -127;
+    ap_tracking_active = false;
+    sta_tracking_active = true;
+    
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    
+    status_display_show_status("Track STA");
+    wifi_manager_start_monitor_mode(wifi_track_callback);
+}
+
+void wifi_manager_stop_tracking(void) {
+    if (ap_tracking_active || sta_tracking_active) {
+        ap_tracking_active = false;
+        sta_tracking_active = false;
+        wifi_manager_stop_monitor_mode();
+        glog("tracking stopped.\n");
+        status_display_show_status("Track Stopped");
+    }
+}

@@ -780,6 +780,7 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_dhcpstarve();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
+    wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
     zigbee_manager_stop_capture();
@@ -3660,6 +3661,14 @@ void handle_help(int argc, char **argv) {
         glog("        karma start\n");
         glog("        karma start FreeWiFi Starbucks\n");
         glog("        karma stop\n\n");
+        glog("trackap\n");
+        glog("    Description: track selected ap signal strength (rssi)\n");
+        glog("    Usage: trackap\n");
+        glog("    Note: select an ap first with 'select -a <index>'\n\n");
+        glog("tracksta\n");
+        glog("    Description: track selected station signal strength (rssi)\n");
+        glog("    Usage: tracksta\n");
+        glog("    Note: select a station first with 'select -s <index>'\n\n");
 #if CONFIG_IDF_TARGET_ESP32C5
         glog("setcountry\n");
         glog("    Description: Set the Wi-Fi country code.\n");
@@ -5797,6 +5806,14 @@ void handle_track_gatt_cmd(int argc, char **argv) {
 
 #endif
 
+void handle_track_ap_cmd(int argc, char **argv) {
+    wifi_manager_track_ap();
+}
+
+void handle_track_sta_cmd(int argc, char **argv) {
+    wifi_manager_track_sta();
+}
+
 // New beacon list command handlers
 void handle_beaconadd(int argc, char **argv) {
     if (argc != 2) {
@@ -7575,6 +7592,8 @@ void register_commands() {
     register_command("enumgatt", handle_enum_gatt_cmd);
     register_command("trackgatt", handle_track_gatt_cmd);
 #endif
+    register_command("trackap", handle_track_ap_cmd);
+    register_command("tracksta", handle_track_sta_cmd);
     #ifdef CONFIG_WITH_STATUS_DISPLAY
     register_command("statusidle", handle_status_idle_cmd);
     #endif
