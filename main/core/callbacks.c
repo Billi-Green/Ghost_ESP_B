@@ -49,6 +49,10 @@ static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8
 #define MIN_RSSI_THRESHOLD -90  // Drop packets weaker than -90 dBm
 #define MIN_PACKET_LENGTH 24    // Minimum 802.11 header size
 #define MAX_IE_LEN 255
+static const uint8_t pineapple_ouis[][3] = {
+    {0x00, 0x13, 0x37},
+};
+static const size_t pineapple_oui_count = sizeof(pineapple_ouis) / sizeof(pineapple_ouis[0]);
 static pineap_network_t pineap_networks[MAX_PINEAP_NETWORKS];
 static int pineap_network_count = 0;
 static bool pineap_detection_active = false;
@@ -117,6 +121,12 @@ static uint8_t wardrive_next_channel_c5(void) {
 #endif
 static uint32_t hash_ssid(const char *ssid);
 static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash);
+static int build_recent_ssids_string(const pineap_network_t *network, char *out, size_t out_size);
+static void log_pineap_details(pineap_network_t *network,
+                               const char *title,
+                               const char *ssids_str,
+                               int ssid_count);
+static bool is_pineapple_oui(const uint8_t *bssid);
 static void trim_trailing(char *str);
 static bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2);
 static bool is_beacon_packet(const wifi_promiscuous_pkt_t *pkt);
@@ -519,6 +529,8 @@ static pineap_network_t *find_or_create_network(const uint8_t *bssid) {
         memcpy(network->bssid, bssid, 6);
         network->ssid_count = 0;
         network->is_pineap = false;
+        network->has_pineapple_oui = is_pineapple_oui(bssid);
+        network->oui_logged = false;
         network->first_seen = time(NULL);
         return network;
     }
@@ -711,31 +723,14 @@ void log_pineap_detection(void *arg) {
     char mac_str[18];
     format_mac_address(log_data->bssid, mac_str, sizeof(mac_str), false);
 
-    // Build SSIDs string, filtering out empty SSIDs
     char ssids_str[256] = {0};
-    int valid_ssid_count = 0;
-
-    // Use the most up-to-date SSIDs from the network structure
-    for (int i = 0; i < network->ssid_count && i < RECENT_SSID_COUNT; i++) {
-        if (strlen(network->recent_ssids[i]) > 0) {
-            if (valid_ssid_count > 0)
-                strcat(ssids_str, ", ");
-            strcat(ssids_str, network->recent_ssids[i]);
-            valid_ssid_count++;
-        }
-    }
+    int valid_ssid_count =
+        build_recent_ssids_string(network, ssids_str, sizeof(ssids_str));
 
     // Only log if we have valid SSIDs
     if (valid_ssid_count >= MIN_SSIDS_FOR_DETECTION) {
         // Pulse RGB purple (red + blue) to indicate Pineapple detection
         pulse_once(&rgb_manager, 255, 0, 255);
-
-        IRAM_PRINTF("\nPineapple detected!\nBSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-                   log_data->bssid[0], log_data->bssid[1], log_data->bssid[2],
-                   log_data->bssid[3], log_data->bssid[4], log_data->bssid[5]);
-        IRAM_PRINTF("Channel: %d\n", network->last_channel);
-        IRAM_PRINTF("RSSI: %d\n", network->last_rssi);
-        IRAM_PRINTF("SSIDs (%d): %s\n", valid_ssid_count, ssids_str);
 
         // Evil Twin Detection: Check for same SSID from different BSSIDs
         for (int i = 0; i < pineap_network_count; i++) {
@@ -750,11 +745,7 @@ void log_pineap_detection(void *arg) {
             }
         }
 
-        glog("\nPineapple detected!\n");
-        glog("BSSID: %s\n", mac_str);
-        glog("Channel: %d\n", network->last_channel);
-        glog("RSSI: %d\n", network->last_rssi);
-        glog("SSIDs (%d): %s\n", valid_ssid_count, ssids_str);
+        log_pineap_details(network, "Pineapple detected!", ssids_str, valid_ssid_count);
     }
 
     free(log_data);
@@ -816,6 +807,78 @@ static bool is_valid_unique_ssid(const char *new_ssid, pineap_network_t *network
     return true;
 }
 
+static int build_recent_ssids_string(const pineap_network_t *network, char *out, size_t out_size) {
+    if (!network || !out || out_size == 0) {
+        return 0;
+    }
+
+    out[0] = '\0';
+    size_t len = 0;
+    int count = 0;
+
+    for (int i = 0; i < network->ssid_count && i < RECENT_SSID_COUNT; i++) {
+        const char *ssid = network->recent_ssids[i];
+        if (!ssid || ssid[0] == '\0')
+            continue;
+
+        if (len < out_size - 1 && count > 0) {
+            if (len <= out_size - 3) {
+                out[len++] = ',';
+                out[len++] = ' ';
+            } else {
+                break;
+            }
+        }
+
+        size_t ssid_len = strnlen(ssid, 32);
+        size_t avail = out_size - len - 1;
+        if (avail == 0)
+            break;
+        size_t to_copy = ssid_len < avail ? ssid_len : avail;
+        memcpy(out + len, ssid, to_copy);
+        len += to_copy;
+        out[len] = '\0';
+
+        count++;
+    }
+
+    return count;
+}
+
+static void log_pineap_details(pineap_network_t *network,
+                               const char *title,
+                               const char *ssids_str,
+                               int ssid_count) {
+    if (!network)
+        return;
+
+    char mac_str[18];
+    format_mac_address(network->bssid, mac_str, sizeof(mac_str), false);
+    const char *heading = title && title[0] ? title : "Pineapple detected!";
+
+    IRAM_PRINTF("\n%s\nBSSID: %s\n", heading, mac_str);
+    IRAM_PRINTF("Channel: %d\n", network->last_channel);
+    IRAM_PRINTF("RSSI: %d\n", network->last_rssi);
+    IRAM_PRINTF("SSIDs (%d): %s\n", ssid_count, ssids_str ? ssids_str : "");
+
+    glog("\n%s\n", heading);
+    glog("BSSID: %s\n", mac_str);
+    glog("Channel: %d\n", network->last_channel);
+    glog("RSSI: %d\n", network->last_rssi);
+    glog("SSIDs (%d): %s\n", ssid_count, ssids_str ? ssids_str : "");
+
+}
+
+static void log_oui_match_notice(pineap_network_t *network) {
+    if (!network || !network->has_pineapple_oui || network->oui_logged)
+        return;
+
+    char ssids_str[256] = {0};
+    int valid_ssids = build_recent_ssids_string(network, ssids_str, sizeof(ssids_str));
+    log_pineap_details(network, "Pineapple OUI match!", ssids_str, valid_ssids);
+    network->oui_logged = true;
+}
+
 void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (!pineap_detection_active || type != WIFI_PKT_MGMT)
         return;
@@ -848,6 +911,8 @@ void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) 
     // Update channel and RSSI
     network->last_channel = ppkt->rx_ctrl.channel;
     network->last_rssi = ppkt->rx_ctrl.rssi;
+
+    log_oui_match_notice(network);
 
     // Extract SSID from beacon
     const uint8_t *payload = ppkt->payload;
@@ -945,6 +1010,15 @@ bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2) {
         }
     }
     return true;
+}
+
+static bool is_pineapple_oui(const uint8_t *bssid) {
+    for (size_t i = 0; i < pineapple_oui_count; i++) {
+        if (memcmp(bssid, pineapple_ouis[i], 3) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool is_network_duplicate(const char *ssid, const uint8_t *bssid) {

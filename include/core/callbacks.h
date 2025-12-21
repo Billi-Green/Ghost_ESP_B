@@ -16,6 +16,8 @@ typedef struct {
   uint8_t bssid[6];
   uint8_t ssid_count;
   bool is_pineap;
+  bool has_pineapple_oui;
+  bool oui_logged;
   time_t first_seen;
   uint32_t ssid_hashes[MAX_SSIDS_PER_BSSID];
   // Circular buffer for recent SSIDs

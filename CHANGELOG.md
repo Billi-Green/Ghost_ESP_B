@@ -92,6 +92,7 @@
 - Added wardriving deduplication, WiGLE CSV v1.6 pre-header escaping, and improved C5 channel hopping
 - Free pcap queue and task when not capturing
 - Optimized multi-AP deauth by grouping targets by channel and reducing inter-frame delays
+- Added Pineapple OUI detection to existing Pineapple detection logic
 
 #### Core & CLI
 - Serial console UX improvements - @tototo31
