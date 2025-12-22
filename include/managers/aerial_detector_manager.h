@@ -1,5 +1,13 @@
 // aerial_detector_manager.h
-
+//
+// opendroneid message decoding portions derived from:
+// opendroneid-core-c (https://github.com/opendroneid/opendroneid-core-c)
+// Licensed under Apache License 2.0
+//
+// detection approach informed by:
+// nyanBOX by jbohack (https://github.com/jbohack/nyanBOX)
+// Copyright (c) 2025 jbohack, Licensed under MIT
+//
 #ifndef AERIAL_DETECTOR_MANAGER_H
 #define AERIAL_DETECTOR_MANAGER_H
 
