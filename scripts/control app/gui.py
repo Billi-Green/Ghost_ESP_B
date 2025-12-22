@@ -1251,44 +1251,21 @@ class ESP32ControlGUI(QMainWindow):
         self.setup_command_panels(layout)
 
     def create_wifi_tab(self):
-        """Create and return the WiFi operations tab widget."""
-        wifi_widget = QWidget()
-        wifi_layout = QGridLayout(wifi_widget)
-
-        # Scanning Operations
+        """Create and return the WiFi operations tab widget with subtabs."""
+        wifi_tabs = QTabWidget()
+        wifi_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        
+        # Scanning subtab
+        scanning_widget = QWidget()
+        scanning_layout = QGridLayout(scanning_widget)
         self.create_command_group("WiFi Scanning", [
             ("Scan Access Points", "scanap"),
             ("Scan Stations", "scansta"),
             ("Stop Scan", "stopscan"),
             ("List APs", "list -a"),
             ("List Stations", "list -s")
-        ], wifi_layout, 0, 0)
-
-        # Attack Operations
-        self.create_command_group("Attack Operations", [
-            ("Start Deauth", "attack -d"),
-            ("Stop Deauth", "stopdeauth"),
-            ("Select AP", lambda: show_select_ap_dialog(self))
-        ], wifi_layout, 0, 1)
-
-        # Beacon Operations
-        self.create_command_group("Beacon Operations", [
-            ("Random Beacon Spam", "beaconspam -r"),
-            ("Rickroll Beacon", "beaconspam -rr"),
-            ("AP List Beacon", "beaconspam -l"),
-            ("Custom SSID Beacon", lambda: show_custom_beacon_dialog(self)),
-            ("Stop Spam", "stopspam")
-        ], wifi_layout, 1, 0)
-
-        # Beacon List Management
-        self.create_command_group("Beacon List Management", [
-            ("Add SSID to List", self.show_beacon_add_dialog),
-            ("Remove SSID from List", self.show_beacon_remove_dialog),
-            ("Clear Beacon List", "beaconclear"),
-            ("Show Beacon List", "beaconshow"),
-            ("Spam Beacon List", "beaconspamlist"),
-        ], wifi_layout, 1, 1)
-
+        ], scanning_layout, 0, 0)
+        
         # Probe Request Listener
         probe_group = QGroupBox("Probe Request Listener")
         probe_layout = QHBoxLayout(probe_group)
@@ -1301,11 +1278,48 @@ class ESP32ControlGUI(QMainWindow):
         stop_probe_btn = QPushButton("Stop Listening")
         stop_probe_btn.clicked.connect(lambda: self.send_command("listenprobes stop"))
         probe_layout.addWidget(stop_probe_btn)
-        wifi_layout.addWidget(probe_group, 2, 0)
-
-        # --- Capture Controls ---
+        scanning_layout.addWidget(probe_group, 0, 1)
+        scanning_layout.setColumnStretch(0, 1)
+        scanning_layout.setColumnStretch(1, 1)
+        wifi_tabs.addTab(scanning_widget, "Scanning")
+        
+        # Attacks subtab
+        attacks_widget = QWidget()
+        attacks_layout = QGridLayout(attacks_widget)
+        self.create_command_group("Attack Operations", [
+            ("Start Deauth", "attack -d"),
+            ("Stop Deauth", "stopdeauth"),
+            ("Select AP", lambda: show_select_ap_dialog(self))
+        ], attacks_layout, 0, 0)
+        attacks_layout.setColumnStretch(0, 1)
+        wifi_tabs.addTab(attacks_widget, "Attacks")
+        
+        # Beacons subtab
+        beacons_widget = QWidget()
+        beacons_layout = QGridLayout(beacons_widget)
+        self.create_command_group("Beacon Operations", [
+            ("Random Beacon Spam", "beaconspam -r"),
+            ("Rickroll Beacon", "beaconspam -rr"),
+            ("AP List Beacon", "beaconspam -l"),
+            ("Custom SSID Beacon", lambda: show_custom_beacon_dialog(self)),
+            ("Stop Spam", "stopspam")
+        ], beacons_layout, 0, 0)
+        self.create_command_group("Beacon List Management", [
+            ("Add SSID to List", self.show_beacon_add_dialog),
+            ("Remove SSID from List", self.show_beacon_remove_dialog),
+            ("Clear Beacon List", "beaconclear"),
+            ("Show Beacon List", "beaconshow"),
+            ("Spam Beacon List", "beaconspamlist"),
+        ], beacons_layout, 0, 1)
+        beacons_layout.setColumnStretch(0, 1)
+        beacons_layout.setColumnStretch(1, 1)
+        wifi_tabs.addTab(beacons_widget, "Beacons")
+        
+        # Capture subtab
+        capture_widget = QWidget()
+        capture_layout = QVBoxLayout(capture_widget)
         capture_group = QGroupBox("Capture Operations")
-        capture_layout = QVBoxLayout(capture_group)
+        capture_group_layout = QVBoxLayout(capture_group)
         self.capture_type_combo = QComboBox()
         self.capture_type_combo.addItems([
             "Probes",
@@ -1316,8 +1330,8 @@ class ESP32ControlGUI(QMainWindow):
             "Pwnagotchi"
         ])
         self.capture_type_combo.setMinimumHeight(32)
-        capture_layout.addWidget(QLabel("Capture Type:"))
-        capture_layout.addWidget(self.capture_type_combo)
+        capture_group_layout.addWidget(QLabel("Capture Type:"))
+        capture_group_layout.addWidget(self.capture_type_combo)
         button_layout = QHBoxLayout()
         start_btn = QPushButton("Start Capture")
         stop_btn = QPushButton("Stop Capture")
@@ -1325,78 +1339,85 @@ class ESP32ControlGUI(QMainWindow):
         stop_btn.setMinimumHeight(32)
         button_layout.addWidget(start_btn)
         button_layout.addWidget(stop_btn)
-        capture_layout.addLayout(button_layout)
-        capture_layout.addStretch()
+        capture_group_layout.addLayout(button_layout)
+        capture_group_layout.addStretch()
         start_btn.clicked.connect(self.start_capture)
         stop_btn.clicked.connect(lambda: self.send_command("capture -stop"))
-        # Place Capture Operations at the bottom of the WiFi tab, spanning both columns
-        wifi_layout.addWidget(capture_group, 2, 1)
-
-        wifi_layout.setColumnStretch(0, 1)
-        wifi_layout.setColumnStretch(1, 1)
-
-        return wifi_widget
+        capture_layout.addWidget(capture_group)
+        capture_layout.addStretch()
+        wifi_tabs.addTab(capture_widget, "Capture")
+        
+        return wifi_tabs
 
     def create_network_tab(self):
-        """Create and return the Network operations tab widget."""
-        network_widget = QWidget()
-        network_layout = QGridLayout(network_widget)
-
-        # WiFi Connection
+        """Create and return the Network operations tab widget with subtabs."""
+        network_tabs = QTabWidget()
+        network_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        
+        # WiFi Connection subtab
+        wifi_connect_widget = QWidget()
+        wifi_connect_layout = QVBoxLayout(wifi_connect_widget)
         wifi_connect_group = QGroupBox("WiFi Connection")
-        wifi_connect_layout = QFormLayout(wifi_connect_group)
+        wifi_connect_form = QFormLayout(wifi_connect_group)
         self.wifi_ssid = QLineEdit()
         self.wifi_password = QLineEdit()
         self.wifi_password.setEchoMode(QLineEdit.EchoMode.Password)
-        wifi_connect_layout.addRow("SSID:", self.wifi_ssid)
-        wifi_connect_layout.addRow("Password:", self.wifi_password)
+        wifi_connect_form.addRow("SSID:", self.wifi_ssid)
+        wifi_connect_form.addRow("Password:", self.wifi_password)
         connect_btn = QPushButton("Connect to Network")
         connect_btn.clicked.connect(self.connect_to_wifi)
-        wifi_connect_layout.addRow(connect_btn)
-        network_layout.addWidget(wifi_connect_group, 0, 0)
-
-        # Network Tools
+        wifi_connect_form.addRow(connect_btn)
+        wifi_connect_layout.addWidget(wifi_connect_group)
+        wifi_connect_layout.addStretch()
+        network_tabs.addTab(wifi_connect_widget, "WiFi Connection")
+        
+        # Network Tools subtab
+        network_tools_widget = QWidget()
+        network_tools_layout = QGridLayout(network_tools_widget)
         self.create_command_group("Network Tools", [
             ("Cast Random YouTube Video", "dialconnect"),
             ("Print to Network Printer", lambda: show_printer_dialog(self))
-        ], network_layout, 0, 1)
-
-        # Port Scanner
+        ], network_tools_layout, 0, 0)
+        network_tools_layout.setColumnStretch(0, 1)
+        network_tabs.addTab(network_tools_widget, "Network Tools")
+        
+        # Port Scanner subtab
+        portscan_widget = QWidget()
+        portscan_layout = QVBoxLayout(portscan_widget)
         portscan_group = QGroupBox("Port Scanner")
-        portscan_layout = QFormLayout(portscan_group)
+        portscan_form = QFormLayout(portscan_group)
         self.portscan_ip = QLineEdit()
         self.portscan_args = QLineEdit()
-        portscan_layout.addRow("Target IP (or 'local'):", self.portscan_ip)
-        portscan_layout.addRow("Args (-C, -A, or range):", self.portscan_args)
+        portscan_form.addRow("Target IP (or 'local'):", self.portscan_ip)
+        portscan_form.addRow("Args (-C, -A, or range):", self.portscan_args)
         scan_btn = QPushButton("Scan Ports")
         scan_btn.clicked.connect(self.run_port_scan)
-        portscan_layout.addRow(scan_btn)
-        network_layout.addWidget(portscan_group, 1, 0)
-
+        portscan_form.addRow(scan_btn)
+        portscan_layout.addWidget(portscan_group)
+        portscan_layout.addStretch()
+        network_tabs.addTab(portscan_widget, "Port Scanner")
         
-        # Make both columns stretch equally
-        network_layout.setColumnStretch(0, 1)
-        network_layout.setColumnStretch(1, 1)
-
-        return network_widget
+        return network_tabs
 
     def create_ble_tab(self):
-        """Create and return the BLE operations tab widget."""
-        ble_widget = QWidget()
-        ble_layout = QGridLayout(ble_widget)
-
+        """Create and return the BLE operations tab widget with subtabs."""
+        ble_tabs = QTabWidget()
+        ble_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        
+        # BLE Scanning subtab
+        ble_scanning_widget = QWidget()
+        ble_scanning_layout = QGridLayout(ble_scanning_widget)
         self.create_command_group("BLE Scanning", [
             ("Find Flippers", "blescan -f"),
             ("BLE Spam Detector", "blescan -ds"),
             ("AirTag Scanner", "blescan -a"),
             ("Raw BLE Scan", "blescan -r"),
             ("Stop BLE Scan", "blescan -s")
-        ], ble_layout, 0, 0)
-
-        ble_layout.setColumnStretch(0, 1)
-        ble_layout.setColumnStretch(1, 1)
-
-        return ble_widget
+        ], ble_scanning_layout, 0, 0)
+        ble_scanning_layout.setColumnStretch(0, 1)
+        ble_tabs.addTab(ble_scanning_widget, "Scanning")
+        
+        return ble_tabs
 
     def create_capture_tab(self):
         """Create and return the Capture operations tab widget as a dropdown with Start/Stop buttons."""
@@ -1488,27 +1509,29 @@ class ESP32ControlGUI(QMainWindow):
         return portal_widget
 
     def create_settings_tab(self):
-        """Create and return the Settings tab widget with grouped categories."""
-        settings_widget = QWidget()
-        main_layout = QVBoxLayout(settings_widget)
-
-        # --- Display Settings ---
+        """Create and return the Settings tab widget with subtabs."""
+        settings_tabs = QTabWidget()
+        settings_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        
+        # Display Settings subtab
+        display_widget = QWidget()
+        display_layout = QVBoxLayout(display_widget)
         display_group = QGroupBox("Display Settings")
-        display_layout = QFormLayout(display_group)
+        display_form = QFormLayout(display_group)
 
         rgb_mode = QComboBox()
         rgb_mode.addItems(["Normal", "Rainbow", "Stealth"])
         rgb_mode.currentIndexChanged.connect(
             lambda i: self.send_command(f"setrgbmode {rgb_mode.currentText().lower()}")
         )
-        display_layout.addRow("RGB Mode:", rgb_mode)
+        display_form.addRow("RGB Mode:", rgb_mode)
 
         timeout = QComboBox()
         timeout.addItems(["5s", "10s", "30s", "60s", "Never"])
         timeout.currentIndexChanged.connect(
             lambda i: self.send_command(f"settimeout {i}")
         )
-        display_layout.addRow("Display Timeout:", timeout)
+        display_form.addRow("Display Timeout:", timeout)
 
         theme = QComboBox()
         theme.addItems([
@@ -1519,68 +1542,399 @@ class ESP32ControlGUI(QMainWindow):
         theme.currentIndexChanged.connect(
             lambda i: self.send_command(f"settheme {i}")
         )
-        display_layout.addRow("Menu Theme:", theme)
+        display_form.addRow("Menu Theme:", theme)
 
         term_color = QComboBox()
         term_color.addItems(["Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"])
         term_color.currentIndexChanged.connect(
             lambda i: self.send_command(f"settermcolor {i}")
         )
-        display_layout.addRow("Terminal Color:", term_color)
+        display_form.addRow("Terminal Color:", term_color)
 
         invert_colors = QComboBox()
         invert_colors.addItems(["Off", "On"])
         invert_colors.currentIndexChanged.connect(
             lambda i: self.send_command(f"setinvert {'on' if i else 'off'}")
         )
-        display_layout.addRow("Invert Colors:", invert_colors)
+        display_form.addRow("Invert Colors:", invert_colors)
 
         max_brightness = QComboBox()
         max_brightness.addItems(["10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"])
         max_brightness.currentIndexChanged.connect(
             lambda i: self.send_command(f"setbrightness {(i+1)*10}")
         )
-        display_layout.addRow("Max Brightness:", max_brightness)
+        display_form.addRow("Max Brightness:", max_brightness)
 
-        main_layout.addWidget(display_group)
+        display_layout.addWidget(display_group)
+        display_layout.addStretch()
+        settings_tabs.addTab(display_widget, "Display")
 
-        # --- Network Settings ---
+        # RGB Settings subtab
+        rgb_widget = QWidget()
+        rgb_layout = QVBoxLayout(rgb_widget)
+        rgb_group = QGroupBox("RGB/LED Settings")
+        rgb_form = QFormLayout(rgb_group)
+
+        rgb_speed = QSpinBox()
+        rgb_speed.setRange(0, 255)
+        rgb_speed.setValue(128)
+        rgb_speed.valueChanged.connect(
+            lambda v: self.send_command(f"settings set rgb_speed {v}")
+        )
+        rgb_form.addRow("RGB Speed (0-255):", rgb_speed)
+
+        rgb_data_pin = QSpinBox()
+        rgb_data_pin.setRange(-1, 48)
+        rgb_data_pin.setValue(-1)
+        rgb_data_pin.setSpecialValueText("Not used")
+        rgb_data_pin.valueChanged.connect(
+            lambda v: self.send_command(f"settings set rgb_data_pin {v}")
+        )
+        rgb_form.addRow("RGB Data Pin:", rgb_data_pin)
+
+        rgb_red_pin = QSpinBox()
+        rgb_red_pin.setRange(-1, 48)
+        rgb_red_pin.setValue(-1)
+        rgb_red_pin.setSpecialValueText("Not used")
+        rgb_red_pin.valueChanged.connect(
+            lambda v: self.send_command(f"settings set rgb_red_pin {v}")
+        )
+        rgb_form.addRow("RGB Red Pin:", rgb_red_pin)
+
+        rgb_green_pin = QSpinBox()
+        rgb_green_pin.setRange(-1, 48)
+        rgb_green_pin.setValue(-1)
+        rgb_green_pin.setSpecialValueText("Not used")
+        rgb_green_pin.valueChanged.connect(
+            lambda v: self.send_command(f"settings set rgb_green_pin {v}")
+        )
+        rgb_form.addRow("RGB Green Pin:", rgb_green_pin)
+
+        rgb_blue_pin = QSpinBox()
+        rgb_blue_pin.setRange(-1, 48)
+        rgb_blue_pin.setValue(-1)
+        rgb_blue_pin.setSpecialValueText("Not used")
+        rgb_blue_pin.valueChanged.connect(
+            lambda v: self.send_command(f"settings set rgb_blue_pin {v}")
+        )
+        rgb_form.addRow("RGB Blue Pin:", rgb_blue_pin)
+
+        neopixel_bright = QSpinBox()
+        neopixel_bright.setRange(0, 100)
+        neopixel_bright.setValue(50)
+        neopixel_bright.setSuffix("%")
+        neopixel_bright.valueChanged.connect(
+            lambda v: self.send_command(f"settings set neopixel_bright {v}")
+        )
+        rgb_form.addRow("Neopixel Brightness:", neopixel_bright)
+
+        rgb_layout.addWidget(rgb_group)
+        rgb_layout.addStretch()
+        settings_tabs.addTab(rgb_widget, "RGB/LED")
+
+        # Network Settings subtab
+        network_widget = QWidget()
+        network_layout = QVBoxLayout(network_widget)
         network_group = QGroupBox("Network Settings")
-        network_layout = QFormLayout(network_group)
+        network_form = QFormLayout(network_group)
 
         web_auth = QComboBox()
         web_auth.addItems(["Off", "On"])
         web_auth.currentIndexChanged.connect(
             lambda i: self.send_command(f"webauth {'on' if i else 'off'}")
         )
-        network_layout.addRow("Web Auth:", web_auth)
+        network_form.addRow("Web Auth:", web_auth)
 
         ap_enabled = QComboBox()
         ap_enabled.addItems(["Off", "On"])
         ap_enabled.currentIndexChanged.connect(
             lambda i: self.send_command(f"apenable {'on' if i else 'off'}")
         )
-        network_layout.addRow("AP Enabled:", ap_enabled)
+        network_form.addRow("AP Enabled:", ap_enabled)
 
-        main_layout.addWidget(network_group)
+        ap_ssid = QLineEdit()
+        ap_ssid.setPlaceholderText("Enter AP SSID")
+        ap_ssid.returnPressed.connect(
+            lambda: self.send_command(f"settings set ap_ssid {ap_ssid.text()}")
+        )
+        ap_ssid_btn = QPushButton("Set AP SSID")
+        ap_ssid_btn.clicked.connect(
+            lambda: self.send_command(f"settings set ap_ssid {ap_ssid.text()}")
+        )
+        ap_ssid_layout = QHBoxLayout()
+        ap_ssid_layout.addWidget(ap_ssid)
+        ap_ssid_layout.addWidget(ap_ssid_btn)
+        network_form.addRow("AP SSID:", ap_ssid_layout)
 
-        # --- System Settings ---
+        ap_password = QLineEdit()
+        ap_password.setEchoMode(QLineEdit.EchoMode.Password)
+        ap_password.setPlaceholderText("Enter AP password")
+        ap_password.returnPressed.connect(
+            lambda: self.send_command(f"settings set ap_password {ap_password.text()}")
+        )
+        ap_password_btn = QPushButton("Set AP Password")
+        ap_password_btn.clicked.connect(
+            lambda: self.send_command(f"settings set ap_password {ap_password.text()}")
+        )
+        ap_password_layout = QHBoxLayout()
+        ap_password_layout.addWidget(ap_password)
+        ap_password_layout.addWidget(ap_password_btn)
+        network_form.addRow("AP Password:", ap_password_layout)
+
+        sta_ssid = QLineEdit()
+        sta_ssid.setPlaceholderText("Enter Station SSID")
+        sta_ssid.returnPressed.connect(
+            lambda: self.send_command(f"settings set sta_ssid {sta_ssid.text()}")
+        )
+        sta_ssid_btn = QPushButton("Set Station SSID")
+        sta_ssid_btn.clicked.connect(
+            lambda: self.send_command(f"settings set sta_ssid {sta_ssid.text()}")
+        )
+        sta_ssid_layout = QHBoxLayout()
+        sta_ssid_layout.addWidget(sta_ssid)
+        sta_ssid_layout.addWidget(sta_ssid_btn)
+        network_form.addRow("Station SSID:", sta_ssid_layout)
+
+        sta_password = QLineEdit()
+        sta_password.setEchoMode(QLineEdit.EchoMode.Password)
+        sta_password.setPlaceholderText("Enter Station password")
+        sta_password.returnPressed.connect(
+            lambda: self.send_command(f"settings set sta_password {sta_password.text()}")
+        )
+        sta_password_btn = QPushButton("Set Station Password")
+        sta_password_btn.clicked.connect(
+            lambda: self.send_command(f"settings set sta_password {sta_password.text()}")
+        )
+        sta_password_layout = QHBoxLayout()
+        sta_password_layout.addWidget(sta_password)
+        sta_password_layout.addWidget(sta_password_btn)
+        network_form.addRow("Station Password:", sta_password_layout)
+
+        network_layout.addWidget(network_group)
+        network_layout.addStretch()
+        settings_tabs.addTab(network_widget, "Network")
+
+        # Evil Portal Settings subtab
+        portal_settings_widget = QWidget()
+        portal_settings_layout = QVBoxLayout(portal_settings_widget)
+        portal_settings_group = QGroupBox("Evil Portal Settings")
+        portal_settings_form = QFormLayout(portal_settings_group)
+
+        portal_url = QLineEdit()
+        portal_url.setPlaceholderText("Enter portal URL or file path")
+        portal_url.returnPressed.connect(
+            lambda: self.send_command(f"settings set portal_url {portal_url.text()}")
+        )
+        portal_url_btn = QPushButton("Set")
+        portal_url_btn.clicked.connect(
+            lambda: self.send_command(f"settings set portal_url {portal_url.text()}")
+        )
+        portal_url_layout = QHBoxLayout()
+        portal_url_layout.addWidget(portal_url)
+        portal_url_layout.addWidget(portal_url_btn)
+        portal_settings_form.addRow("Portal URL:", portal_url_layout)
+
+        portal_ssid_setting = QLineEdit()
+        portal_ssid_setting.setPlaceholderText("Enter portal SSID")
+        portal_ssid_setting.returnPressed.connect(
+            lambda: self.send_command(f"settings set portal_ssid {portal_ssid_setting.text()}")
+        )
+        portal_ssid_setting_btn = QPushButton("Set")
+        portal_ssid_setting_btn.clicked.connect(
+            lambda: self.send_command(f"settings set portal_ssid {portal_ssid_setting.text()}")
+        )
+        portal_ssid_setting_layout = QHBoxLayout()
+        portal_ssid_setting_layout.addWidget(portal_ssid_setting)
+        portal_ssid_setting_layout.addWidget(portal_ssid_setting_btn)
+        portal_settings_form.addRow("Portal SSID:", portal_ssid_setting_layout)
+
+        portal_password_setting = QLineEdit()
+        portal_password_setting.setEchoMode(QLineEdit.EchoMode.Password)
+        portal_password_setting.setPlaceholderText("Enter portal password")
+        portal_password_setting.returnPressed.connect(
+            lambda: self.send_command(f"settings set portal_password {portal_password_setting.text()}")
+        )
+        portal_password_setting_btn = QPushButton("Set")
+        portal_password_setting_btn.clicked.connect(
+            lambda: self.send_command(f"settings set portal_password {portal_password_setting.text()}")
+        )
+        portal_password_setting_layout = QHBoxLayout()
+        portal_password_setting_layout.addWidget(portal_password_setting)
+        portal_password_setting_layout.addWidget(portal_password_setting_btn)
+        portal_settings_form.addRow("Portal Password:", portal_password_setting_layout)
+
+        portal_ap_ssid = QLineEdit()
+        portal_ap_ssid.setPlaceholderText("Enter portal AP SSID")
+        portal_ap_ssid.returnPressed.connect(
+            lambda: self.send_command(f"settings set portal_ap_ssid {portal_ap_ssid.text()}")
+        )
+        portal_ap_ssid_btn = QPushButton("Set")
+        portal_ap_ssid_btn.clicked.connect(
+            lambda: self.send_command(f"settings set portal_ap_ssid {portal_ap_ssid.text()}")
+        )
+        portal_ap_ssid_layout = QHBoxLayout()
+        portal_ap_ssid_layout.addWidget(portal_ap_ssid)
+        portal_ap_ssid_layout.addWidget(portal_ap_ssid_btn)
+        portal_settings_form.addRow("Portal AP SSID:", portal_ap_ssid_layout)
+
+        portal_domain = QLineEdit()
+        portal_domain.setPlaceholderText("Enter portal domain")
+        portal_domain.returnPressed.connect(
+            lambda: self.send_command(f"settings set portal_domain {portal_domain.text()}")
+        )
+        portal_domain_btn = QPushButton("Set")
+        portal_domain_btn.clicked.connect(
+            lambda: self.send_command(f"settings set portal_domain {portal_domain.text()}")
+        )
+        portal_domain_layout = QHBoxLayout()
+        portal_domain_layout.addWidget(portal_domain)
+        portal_domain_layout.addWidget(portal_domain_btn)
+        portal_settings_form.addRow("Portal Domain:", portal_domain_layout)
+
+        portal_offline = QComboBox()
+        portal_offline.addItems(["Off", "On"])
+        portal_offline.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settings set portal_offline {'true' if i else 'false'}")
+        )
+        portal_settings_form.addRow("Portal Offline Mode:", portal_offline)
+
+        portal_settings_layout.addWidget(portal_settings_group)
+        portal_settings_layout.addStretch()
+        settings_tabs.addTab(portal_settings_widget, "Evil Portal")
+
+        # Printer Settings subtab
+        printer_widget = QWidget()
+        printer_layout = QVBoxLayout(printer_widget)
+        printer_group = QGroupBox("Printer Settings")
+        printer_form = QFormLayout(printer_group)
+
+        printer_ip = QLineEdit()
+        printer_ip.setPlaceholderText("Enter printer IP address")
+        printer_ip.returnPressed.connect(
+            lambda: self.send_command(f"settings set printer_ip {printer_ip.text()}")
+        )
+        printer_ip_btn = QPushButton("Set")
+        printer_ip_btn.clicked.connect(
+            lambda: self.send_command(f"settings set printer_ip {printer_ip.text()}")
+        )
+        printer_ip_layout = QHBoxLayout()
+        printer_ip_layout.addWidget(printer_ip)
+        printer_ip_layout.addWidget(printer_ip_btn)
+        printer_form.addRow("Printer IP:", printer_ip_layout)
+
+        printer_text = QLineEdit()
+        printer_text.setPlaceholderText("Enter printer text")
+        printer_text.returnPressed.connect(
+            lambda: self.send_command(f"settings set printer_text {printer_text.text()}")
+        )
+        printer_text_btn = QPushButton("Set")
+        printer_text_btn.clicked.connect(
+            lambda: self.send_command(f"settings set printer_text {printer_text.text()}")
+        )
+        printer_text_layout = QHBoxLayout()
+        printer_text_layout.addWidget(printer_text)
+        printer_text_layout.addWidget(printer_text_btn)
+        printer_form.addRow("Printer Text:", printer_text_layout)
+
+        printer_font_size = QSpinBox()
+        printer_font_size.setRange(1, 100)
+        printer_font_size.setValue(12)
+        printer_font_size.valueChanged.connect(
+            lambda v: self.send_command(f"settings set printer_font_size {v}")
+        )
+        printer_form.addRow("Printer Font Size:", printer_font_size)
+
+        printer_alignment = QComboBox()
+        printer_alignment.addItems(["0", "1", "2", "3", "4"])
+        printer_alignment.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settings set printer_alignment {i}")
+        )
+        printer_form.addRow("Printer Alignment:", printer_alignment)
+
+        printer_layout.addWidget(printer_group)
+        printer_layout.addStretch()
+        settings_tabs.addTab(printer_widget, "Printer")
+
+        # System Settings subtab
+        system_widget = QWidget()
+        system_layout = QVBoxLayout(system_widget)
         system_group = QGroupBox("System Settings")
-        system_layout = QFormLayout(system_group)
+        system_form = QFormLayout(system_group)
 
         thirds_control = QComboBox()
         thirds_control.addItems(["Off", "On"])
         thirds_control.currentIndexChanged.connect(
             lambda i: self.send_command(f"setthirdcontrol {'on' if i else 'off'}")
         )
-        system_layout.addRow("Third Control:", thirds_control)
+        system_form.addRow("Third Control:", thirds_control)
 
         power_save = QComboBox()
         power_save.addItems(["Off", "On"])
         power_save.currentIndexChanged.connect(
             lambda i: self.send_command(f"setpowersave {'on' if i else 'off'}")
         )
-        system_layout.addRow("Power Saving Mode:", power_save)
+        system_form.addRow("Power Saving Mode:", power_save)
+
+        channel_delay = QSpinBox()
+        channel_delay.setRange(0, 10000)
+        channel_delay.setValue(100)
+        channel_delay.setSuffix(" ms")
+        channel_delay.valueChanged.connect(
+            lambda v: self.send_command(f"settings set channel_delay {v}")
+        )
+        system_form.addRow("Channel Delay:", channel_delay)
+
+        broadcast_speed = QSpinBox()
+        broadcast_speed.setRange(1, 1000)
+        broadcast_speed.setValue(1)
+        broadcast_speed.valueChanged.connect(
+            lambda v: self.send_command(f"settings set broadcast_speed {v}")
+        )
+        system_form.addRow("Broadcast Speed:", broadcast_speed)
+
+        gps_rx_pin = QSpinBox()
+        gps_rx_pin.setRange(-1, 48)
+        gps_rx_pin.setValue(-1)
+        gps_rx_pin.setSpecialValueText("Not used")
+        gps_rx_pin.valueChanged.connect(
+            lambda v: self.send_command(f"settings set gps_rx_pin {v}")
+        )
+        system_form.addRow("GPS RX Pin:", gps_rx_pin)
+
+        zebra_menus = QComboBox()
+        zebra_menus.addItems(["Off", "On"])
+        zebra_menus.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settings set zebra_menus {'true' if i else 'false'}")
+        )
+        system_form.addRow("Zebra Menus:", zebra_menus)
+
+        nav_buttons = QComboBox()
+        nav_buttons.addItems(["Off", "On"])
+        nav_buttons.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settings set nav_buttons {'true' if i else 'false'}")
+        )
+        system_form.addRow("Navigation Buttons:", nav_buttons)
+
+        menu_layout = QComboBox()
+        menu_layout.addItems(["Carousel", "Grid", "List"])
+        menu_layout.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settings set menu_layout {i}")
+        )
+        system_form.addRow("Menu Layout:", menu_layout)
+
+        infrared_easy = QComboBox()
+        infrared_easy.addItems(["Off", "On"])
+        infrared_easy.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settings set infrared_easy {'true' if i else 'false'}")
+        )
+        system_form.addRow("Infrared Easy Mode:", infrared_easy)
+
+        rts_enabled = QComboBox()
+        rts_enabled.addItems(["Off", "On"])
+        rts_enabled.currentIndexChanged.connect(
+            lambda i: self.send_command(f"settings set rts_enabled {'true' if i else 'false'}")
+        )
+        system_form.addRow("RTS Enabled:", rts_enabled)
 
         # Reboot and Save buttons side by side
         button_layout = QHBoxLayout()
@@ -1592,11 +1946,65 @@ class ESP32ControlGUI(QMainWindow):
         save_btn.clicked.connect(lambda: self.send_command("savesetting"))
         button_layout.addWidget(save_btn)
 
-        system_layout.addRow(button_layout)
+        system_form.addRow(button_layout)
 
-        main_layout.addWidget(system_group)
+        system_layout.addWidget(system_group)
+        system_layout.addStretch()
+        settings_tabs.addTab(system_widget, "System")
 
-        return settings_widget
+        # Custom Settings subtab
+        custom_widget = QWidget()
+        custom_layout = QVBoxLayout(custom_widget)
+        custom_group = QGroupBox("Custom Settings")
+        custom_form = QFormLayout(custom_group)
+
+        flappy_name = QLineEdit()
+        flappy_name.setPlaceholderText("Enter Flappy Ghost name")
+        flappy_name.returnPressed.connect(
+            lambda: self.send_command(f"settings set flappy_name {flappy_name.text()}")
+        )
+        flappy_name_btn = QPushButton("Set")
+        flappy_name_btn.clicked.connect(
+            lambda: self.send_command(f"settings set flappy_name {flappy_name.text()}")
+        )
+        flappy_name_layout = QHBoxLayout()
+        flappy_name_layout.addWidget(flappy_name)
+        flappy_name_layout.addWidget(flappy_name_btn)
+        custom_form.addRow("Flappy Ghost Name:", flappy_name_layout)
+
+        timezone_setting = QLineEdit()
+        timezone_setting.setPlaceholderText("e.g., America/New_York")
+        timezone_setting.returnPressed.connect(
+            lambda: self.send_command(f"settings set timezone {timezone_setting.text()}")
+        )
+        timezone_setting_btn = QPushButton("Set")
+        timezone_setting_btn.clicked.connect(
+            lambda: self.send_command(f"settings set timezone {timezone_setting.text()}")
+        )
+        timezone_setting_layout = QHBoxLayout()
+        timezone_setting_layout.addWidget(timezone_setting)
+        timezone_setting_layout.addWidget(timezone_setting_btn)
+        custom_form.addRow("Timezone:", timezone_setting_layout)
+
+        accent_color = QLineEdit()
+        accent_color.setPlaceholderText("e.g., #FF0000")
+        accent_color.returnPressed.connect(
+            lambda: self.send_command(f"settings set accent_color {accent_color.text()}")
+        )
+        accent_color_btn = QPushButton("Set")
+        accent_color_btn.clicked.connect(
+            lambda: self.send_command(f"settings set accent_color {accent_color.text()}")
+        )
+        accent_color_layout = QHBoxLayout()
+        accent_color_layout.addWidget(accent_color)
+        accent_color_layout.addWidget(accent_color_btn)
+        custom_form.addRow("Accent Color (hex):", accent_color_layout)
+
+        custom_layout.addWidget(custom_group)
+        custom_layout.addStretch()
+        settings_tabs.addTab(custom_widget, "Custom")
+
+        return settings_tabs
 
     def create_command_group(self, title, commands, layout, row, col):
         """
