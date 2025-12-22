@@ -676,7 +676,7 @@ class ESP32ControlGUI(QMainWindow):
         try:
             import subprocess
             cmd = [
-                sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write-flash",
+                sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write_flash",
                 boot_offset, bootloader,
                 partition_offset, partition,
                 firmware_offset, firmware
@@ -744,7 +744,7 @@ class ESP32ControlGUI(QMainWindow):
         try:
             import subprocess
             cmd = [
-                sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write-flash",
+                sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write_flash",
                 boot_offset, bootloader,
                 partition_offset, partition,
                 firmware_offset, firmware
@@ -842,7 +842,7 @@ class ESP32ControlGUI(QMainWindow):
 
                 import subprocess
                 cmd = [
-                    sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write-flash",
+                    sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write_flash",
                     boot_offset, bootloader,
                     partition_offset, partition,
                     firmware_offset, firmware
