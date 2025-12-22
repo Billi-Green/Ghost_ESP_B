@@ -1,4 +1,5 @@
 import json
+import re
 from serial.tools import list_ports
 import serial
 from serial_threads import SerialMonitorThread, PortalFileSenderThread
@@ -619,6 +620,20 @@ class ESP32ControlGUI(QMainWindow):
         flasher_output_label = QLabel("Flasher Output")
         flasher_output_label.setStyleSheet("font-weight: bold; font-size: 16px;")
         flasher_output_layout.addWidget(flasher_output_label)
+        
+        # Progress bar for flash progress
+        self.flash_progress_bar = QProgressBar()
+        self.flash_progress_bar.setMinimum(0)
+        self.flash_progress_bar.setMaximum(100)
+        self.flash_progress_bar.setValue(0)
+        self.flash_progress_bar.setVisible(False)
+        self.flash_progress_label = QLabel("")
+        self.flash_progress_label.setVisible(False)
+        progress_layout = QVBoxLayout()
+        progress_layout.addWidget(self.flash_progress_label)
+        progress_layout.addWidget(self.flash_progress_bar)
+        flasher_output_layout.addLayout(progress_layout)
+        
         self.flash_console = QTextEdit()
         self.flash_console.setReadOnly(True)
         self.flash_console.setMinimumWidth(400)
@@ -688,6 +703,52 @@ class ESP32ControlGUI(QMainWindow):
             self.separate_files_widget.hide()
             self.merged_file_widget.show()
 
+    def parse_esptool_output(self, line):
+        """
+        Parse esptool output line and update progress bar if progress information is found.
+        Returns tuple: (has_progress, progress_percent, error_message)
+        """
+        line_lower = line.lower()
+        
+        # Check for error patterns (but not false positives like "failed to connect" during normal operation)
+        error_keywords = ['error:', 'failed:', 'exception', 'traceback', 'fatal error']
+        if any(keyword in line_lower for keyword in error_keywords):
+            return (False, None, line)
+        
+        # Match progress patterns like "Writing at 0x00010000... (20 %)" or "(100 %)"
+        # Find all progress percentages in the line and take the highest one
+        progress_pattern = r'\((\d+)\s*%\)'
+        matches = re.findall(progress_pattern, line)
+        if matches:
+            # Get the highest progress value (in case multiple percentages appear)
+            progress = max(int(m) for m in matches)
+            return (True, progress, None)
+        
+        # Check for completion indicators
+        if 'done' in line_lower and ('leaving' in line_lower or 'hard resetting' in line_lower):
+            return (True, 100, None)
+        
+        return (False, None, None)
+
+    def reset_flash_progress(self):
+        """Reset the flash progress bar to initial state."""
+        self.flash_progress_bar.setValue(0)
+        self.flash_progress_bar.setVisible(False)
+        self.flash_progress_label.setText("")
+        self.flash_progress_label.setVisible(False)
+        self.flash_progress_label.setStyleSheet("")  # Reset style
+
+    def update_flash_progress(self, percent, status_text=""):
+        """Update the flash progress bar."""
+        self.flash_progress_bar.setValue(percent)
+        self.flash_progress_bar.setVisible(True)
+        if status_text:
+            self.flash_progress_label.setText(status_text)
+            self.flash_progress_label.setVisible(True)
+        else:
+            self.flash_progress_label.setText(f"Flashing... {percent}%")
+            self.flash_progress_label.setVisible(True)
+
     def flash_board(self):
         """Flash the selected firmware, bootloader, and partition table to the ESP32 board, or a merged .bin file."""
         # get actual device from combo data if available
@@ -723,7 +784,9 @@ class ESP32ControlGUI(QMainWindow):
 
             self.flash_status.setText(f"Flashing merged .bin ({chip})... Please wait.")
             self.flash_console.clear()
+            self.reset_flash_progress()
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            error_message = None
             try:
                 import subprocess
                 cmd = [
@@ -735,15 +798,35 @@ class ESP32ControlGUI(QMainWindow):
                 for line in process.stdout:
                     self.flash_console.append(line.rstrip())
                     self.flash_console.ensureCursorVisible()
+                    
+                    # Parse output for progress and errors
+                    has_progress, progress, error = self.parse_esptool_output(line)
+                    if error:
+                        error_message = error
+                        self.flash_progress_label.setText(f"Error: {error}")
+                        self.flash_progress_label.setStyleSheet("color: #ff4444;")
+                    elif has_progress and progress is not None:
+                        self.update_flash_progress(progress)
+                    
                     QApplication.processEvents()  # Keep UI responsive
                 process.wait()
                 if process.returncode == 0:
                     self.flash_status.setText("Flashing successful!")
+                    self.update_flash_progress(100, "Flashing completed successfully!")
+                    self.flash_progress_label.setStyleSheet("color: #44bb44;")
                 else:
                     self.flash_status.setText("Flashing failed. See console output.")
+                    if error_message:
+                        self.flash_progress_label.setText(f"Error: {error_message}")
+                    else:
+                        self.flash_progress_label.setText("Flashing failed. See console output.")
+                    self.flash_progress_label.setStyleSheet("color: #ff4444;")
             except Exception as e:
                 self.flash_status.setText(f"Error: {str(e)}")
                 self.flash_console.append(f"Error: {str(e)}")
+                self.flash_progress_label.setText(f"Error: {str(e)}")
+                self.flash_progress_label.setStyleSheet("color: #ff4444;")
+                self.flash_progress_label.setVisible(True)
             finally:
                 QApplication.restoreOverrideCursor()
         else:
@@ -769,7 +852,9 @@ class ESP32ControlGUI(QMainWindow):
 
             self.flash_status.setText(f"Flashing ({chip})... Please wait.")
             self.flash_console.clear()
+            self.reset_flash_progress()
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            error_message = None
             try:
                 import subprocess
                 cmd = [
@@ -783,15 +868,35 @@ class ESP32ControlGUI(QMainWindow):
                 for line in process.stdout:
                     self.flash_console.append(line.rstrip())
                     self.flash_console.ensureCursorVisible()
+                    
+                    # Parse output for progress and errors
+                    has_progress, progress, error = self.parse_esptool_output(line)
+                    if error:
+                        error_message = error
+                        self.flash_progress_label.setText(f"Error: {error}")
+                        self.flash_progress_label.setStyleSheet("color: #ff4444;")
+                    elif has_progress and progress is not None:
+                        self.update_flash_progress(progress)
+                    
                     QApplication.processEvents()  # Keep UI responsive
                 process.wait()
                 if process.returncode == 0:
                     self.flash_status.setText("Flashing successful!")
+                    self.update_flash_progress(100, "Flashing completed successfully!")
+                    self.flash_progress_label.setStyleSheet("color: #44bb44;")
                 else:
                     self.flash_status.setText("Flashing failed. See console output.")
+                    if error_message:
+                        self.flash_progress_label.setText(f"Error: {error_message}")
+                    else:
+                        self.flash_progress_label.setText("Flashing failed. See console output.")
+                    self.flash_progress_label.setStyleSheet("color: #ff4444;")
             except Exception as e:
                 self.flash_status.setText(f"Error: {str(e)}")
                 self.flash_console.append(f"Error: {str(e)}")
+                self.flash_progress_label.setText(f"Error: {str(e)}")
+                self.flash_progress_label.setStyleSheet("color: #ff4444;")
+                self.flash_progress_label.setVisible(True)
             finally:
                 QApplication.restoreOverrideCursor()
 
@@ -837,7 +942,9 @@ class ESP32ControlGUI(QMainWindow):
         firmware_offset = "0x10000"
 
         self.custom_flash_status.setText(f"Flashing ({chip})... Please wait.")
+        self.reset_flash_progress()
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        error_message = None
         try:
             import subprocess
             cmd = [
@@ -851,15 +958,35 @@ class ESP32ControlGUI(QMainWindow):
             for line in process.stdout:
                 self.flash_console.append(line.rstrip())
                 self.flash_console.ensureCursorVisible()
+                
+                # Parse output for progress and errors
+                has_progress, progress, error = self.parse_esptool_output(line)
+                if error:
+                    error_message = error
+                    self.flash_progress_label.setText(f"Error: {error}")
+                    self.flash_progress_label.setStyleSheet("color: #ff4444;")
+                elif has_progress and progress is not None:
+                    self.update_flash_progress(progress)
+                
                 QApplication.processEvents()
             process.wait()
             if process.returncode == 0:
                 self.custom_flash_status.setText("Flashing successful!")
+                self.update_flash_progress(100, "Flashing completed successfully!")
+                self.flash_progress_label.setStyleSheet("color: #44bb44;")
             else:
                 self.custom_flash_status.setText("Flashing failed. See console output.")
+                if error_message:
+                    self.flash_progress_label.setText(f"Error: {error_message}")
+                else:
+                    self.flash_progress_label.setText("Flashing failed. See console output.")
+                self.flash_progress_label.setStyleSheet("color: #ff4444;")
         except Exception as e:
             self.custom_flash_status.setText(f"Error: {str(e)}")
             self.flash_console.append(f"Error: {str(e)}")
+            self.flash_progress_label.setText(f"Error: {str(e)}")
+            self.flash_progress_label.setStyleSheet("color: #ff4444;")
+            self.flash_progress_label.setVisible(True)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -887,6 +1014,7 @@ class ESP32ControlGUI(QMainWindow):
 
         self.flash_bundle_status.setText("Extracting and flashing bundle...")
         self.flash_console.clear()
+        self.reset_flash_progress()
         self.flash_console.append(f"Extracting {zip_path} ...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -945,18 +1073,36 @@ class ESP32ControlGUI(QMainWindow):
                     firmware_offset, firmware
                 ]
                 self.flash_console.append(f"$ {' '.join(cmd)}\n")
+                error_message = None
                 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 for line in process.stdout:
                     self.flash_console.append(line.rstrip())
                     self.flash_console.ensureCursorVisible()
+                    
+                    # Parse output for progress and errors
+                    has_progress, progress, error = self.parse_esptool_output(line)
+                    if error:
+                        error_message = error
+                        self.flash_progress_label.setText(f"Error: {error}")
+                        self.flash_progress_label.setStyleSheet("color: #ff4444;")
+                    elif has_progress and progress is not None:
+                        self.update_flash_progress(progress)
+                    
                     QApplication.processEvents()
                 process.wait()
                 if process.returncode == 0:
                     self.flash_bundle_status.setText("Flashing successful!")
                     self.flash_console.append("Flashing successful!")
+                    self.update_flash_progress(100, "Flashing completed successfully!")
+                    self.flash_progress_label.setStyleSheet("color: #44bb44;")
                 else:
                     self.flash_bundle_status.setText("Flashing failed. See console output.")
                     self.flash_console.append("Flashing failed. See console output.")
+                    if error_message:
+                        self.flash_progress_label.setText(f"Error: {error_message}")
+                    else:
+                        self.flash_progress_label.setText("Flashing failed. See console output.")
+                    self.flash_progress_label.setStyleSheet("color: #ff4444;")
         except Exception as e:
             self.flash_bundle_status.setText(f"Error: {str(e)}")
             self.flash_console.append(f"Error: {str(e)}")
