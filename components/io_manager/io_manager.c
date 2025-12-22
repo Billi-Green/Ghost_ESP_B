@@ -459,7 +459,17 @@ static void io_manager_task(void *arg)
         uint8_t port0 = g_last_state_port0;
         uint8_t port1 = g_last_state_port1;
         if (tca9535_read_inputs(&port0, &port1) == ESP_OK) {
-            io_manager_process_sample(port0, port1, NULL);
+            // Only update cached states, don't consume button events
+            if (port0 != g_last_state_port0) {
+                g_last_state_port0 = port0;
+                g_cached_state_port0 = port0;
+                g_last_change_time = esp_timer_get_time() / 1000;
+            }
+            if (port1 != g_last_state_port1) {
+                g_last_state_port1 = port1;
+                g_cached_state_port1 = port1;
+                g_last_change_time = esp_timer_get_time() / 1000;
+            }
         }
         vTaskDelay(delay);
     }
