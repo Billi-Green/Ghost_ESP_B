@@ -2,7 +2,7 @@ import json
 import re
 from serial.tools import list_ports
 import serial
-from serial_threads import SerialMonitorThread, PortalFileSenderThread
+from serial_threads import SerialMonitorThread, PortalFileSenderThread, AssetDownloadThread
 from dialogs import show_select_ap_dialog, show_custom_beacon_dialog, show_printer_dialog
 from utils import log_message, timestamp
 from espidf_utils import find_esp_idf_gui, download_esp_idf_gui, get_esp_idf_env
@@ -38,6 +38,8 @@ class ESP32ControlGUI(QMainWindow):
         
         self.setWindowTitle("Ghost ESP Commander")
         self.setGeometry(100, 100, 1400, 900)
+        # Set minimum size to prevent window from shrinking too much
+        self.setMinimumSize(800, 600)
 
         # Set custom app icon
         self.setWindowIcon(QIcon("assets/gesp_ghost_trans_bg.png"))  # Use .ico, .png, or .svg
@@ -186,7 +188,8 @@ class ESP32ControlGUI(QMainWindow):
         """
         try:
             self.panel_container.setEnabled(enabled)
-            self.panel_combo.setEnabled(enabled)
+            if hasattr(self, 'panel_tabs'):
+                self.panel_tabs.setEnabled(enabled)
             self.log_group.setEnabled(enabled)
             self.display_text.setEnabled(enabled)
             self.cmd_entry.setEnabled(enabled)
@@ -266,20 +269,10 @@ class ESP32ControlGUI(QMainWindow):
         flash_controls_layout = QVBoxLayout(flash_controls_widget)
         flash_controls_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Flash Mode Panel Dropdown (like normal mode) ---
-        self.flash_panel_combo = QComboBox()
-        self.flash_panel_combo.addItems([
-            "Flash Firmware",
-            "Flash Release Bundle",
-            "Custom Build"
-        ])
-        self.flash_panel_combo.setCurrentIndex(0)
-        self.flash_panel_combo.setMinimumHeight(28)
-        flash_controls_layout.addWidget(self.flash_panel_combo)
-
-        # --- Flash Mode Panels as QStackedWidget ---
-        self.flash_panel_stack = QStackedWidget()
-        flash_controls_layout.addWidget(self.flash_panel_stack)
+        # --- Flash Mode Panels as QTabWidget ---
+        self.flash_panel_tabs = QTabWidget()
+        self.flash_panel_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        flash_controls_layout.addWidget(self.flash_panel_tabs)
 
         # Panel 1: Flash Firmware
         flash_firmware_panel = QWidget()
@@ -371,15 +364,17 @@ class ESP32ControlGUI(QMainWindow):
         self.flash_btn.clicked.connect(self.flash_board)
         flash_firmware_layout.addWidget(self.flash_btn)
         self.flash_status = QLabel("")
+        self.flash_status.setWordWrap(True)
+        self.flash_status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.flash_status.setMaximumHeight(50)  # Limit height to prevent expansion
         flash_firmware_layout.addWidget(self.flash_status)
         exit_btn = QPushButton("Exit Flash Mode")
         exit_btn.clicked.connect(self.exit_flash_mode)
         flash_firmware_layout.addWidget(exit_btn)
         flash_firmware_layout.addStretch()
 
-        # Add firmware panel to stacked widget
-        self.flash_panel_stack.addWidget(flash_firmware_panel)
-        self.flash_panel_combo.currentIndexChanged.connect(self.on_flash_panel_changed)
+        # Add firmware panel as tab
+        self.flash_panel_tabs.addTab(flash_firmware_panel, "Flash Firmware")
 
 
         # --- Panel 2: Flash Release Bundle ---
@@ -443,9 +438,12 @@ class ESP32ControlGUI(QMainWindow):
         self.flash_bundle_btn.clicked.connect(self.flash_release_bundle)
         release_bundle_layout.addWidget(self.flash_bundle_btn)
         self.flash_bundle_status = QLabel("")
+        self.flash_bundle_status.setWordWrap(True)
+        self.flash_bundle_status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.flash_bundle_status.setMaximumHeight(50)  # Limit height to prevent expansion
         release_bundle_layout.addWidget(self.flash_bundle_status)
 
-        self.flash_panel_stack.addWidget(release_bundle_panel)
+        self.flash_panel_tabs.addTab(release_bundle_panel, "Flash Release Bundle")
 
         # Panel 3: Custom Build
         custom_build_panel = QWidget()
@@ -605,12 +603,15 @@ class ESP32ControlGUI(QMainWindow):
         self.custom_flash_btn.clicked.connect(self.flash_custom_build)
         custom_build_layout.addWidget(self.custom_flash_btn)
         self.custom_flash_status = QLabel("")
+        self.custom_flash_status.setWordWrap(True)
+        self.custom_flash_status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.custom_flash_status.setMaximumHeight(50)  # Limit height to prevent expansion
         custom_build_layout.addWidget(self.custom_flash_status)
 
-        self.flash_panel_stack.addWidget(custom_build_panel)
+        self.flash_panel_tabs.addTab(custom_build_panel, "Custom Build")
 
-        # Connect combo box to stacked widget
-        self.flash_panel_combo.currentIndexChanged.connect(self.flash_panel_stack.setCurrentIndex)
+        # Connect tab change to show instructions
+        self.flash_panel_tabs.currentChanged.connect(self.on_flash_panel_changed)
 
         # Add controls to splitter
         flash_splitter.addWidget(flash_controls_widget)
@@ -1219,53 +1220,26 @@ class ESP32ControlGUI(QMainWindow):
 
     def setup_command_panels(self, layout):
         """
-        Set up the command panel dropdown and associated panels.
+        Set up the command panel tabs and associated panels.
 
         Args:
-            layout (QVBoxLayout): The layout to add the panels to.
+            layout (QVBoxLayout): The layout to add the tabs to.
         """
-        # Dropdown for panel selection
-        self.panel_combo = QComboBox()
-        self.panel_combo.addItems([
-            "WiFi Operations",
-            "Network Operations",
-            "BLE Operations",
-            "Evil Portal",
-            "Settings"
-        ])
-        layout.addWidget(self.panel_combo)
-
-        # Create each panel widget
-        self.panels = []
-        self.panels.append(self.create_wifi_tab())
-        self.panels.append(self.create_network_tab())
-        self.panels.append(self.create_ble_tab())
-        self.panels.append(self.create_evil_portal_tab())
-        self.panels.append(self.create_settings_tab())
-
-        # Container for panels
-        self.panel_container = QWidget()
-        self.panel_layout = QVBoxLayout(self.panel_container)
-        for panel in self.panels:
-            self.panel_layout.addWidget(panel)
-            panel.hide()
-        layout.addWidget(self.panel_container)
-
-        # Show the first panel by default
-        self.panels[0].show()
-
-        # Connect dropdown change to panel switch
-        self.panel_combo.currentIndexChanged.connect(self.switch_panel)
-
-    def switch_panel(self, index):
-        """
-        Switch the visible command panel based on dropdown selection.
-
-        Args:
-            index (int): The index of the selected panel.
-        """
-        for i, panel in enumerate(self.panels):
-            panel.setVisible(i == index)
+        # Create tab widget for panel selection
+        self.panel_tabs = QTabWidget()
+        self.panel_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        
+        # Create each panel widget and add as tabs
+        self.panel_tabs.addTab(self.create_wifi_tab(), "WiFi Operations")
+        self.panel_tabs.addTab(self.create_network_tab(), "Network Operations")
+        self.panel_tabs.addTab(self.create_ble_tab(), "BLE Operations")
+        self.panel_tabs.addTab(self.create_evil_portal_tab(), "Evil Portal")
+        self.panel_tabs.addTab(self.create_settings_tab(), "Settings")
+        
+        layout.addWidget(self.panel_tabs)
+        
+        # Store reference to tab widget as panel_container for compatibility
+        self.panel_container = self.panel_tabs
 
     def setup_command_tabs(self, layout):
         """
@@ -2177,10 +2151,46 @@ class ESP32ControlGUI(QMainWindow):
     def fetch_github_releases(self):
         """Fetch release tags from GitHub and populate the version dropdown."""
         api_url = "https://api.github.com/repos/jaylikesbunda/Ghost_ESP/releases"
+        
+        # Show loading state
+        self.release_version_combo.blockSignals(True)
+        self.release_version_combo.clear()
+        self.release_version_combo.addItem("Loading releases...")
+        self.release_version_combo.setEnabled(False)
+        QApplication.processEvents()  # Update UI immediately
+        
         try:
-            response = requests.get(api_url, timeout=10)
-            response.raise_for_status()
-            releases = response.json()
+            # Increased timeout to 30 seconds and added retry logic
+            import time
+            max_retries = 3
+            timeout = 30  # Increased from 10 to 30 seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(api_url, timeout=timeout)
+                    response.raise_for_status()
+                    releases = response.json()
+                    break  # Success, exit retry loop
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        # Show retry message
+                        self.release_version_combo.clear()
+                        self.release_version_combo.addItem(f"Retrying... (attempt {attempt + 1}/{max_retries})")
+                        QApplication.processEvents()
+                        time.sleep(1)  # Brief delay before retry
+                        continue
+                    else:
+                        raise  # Re-raise on final attempt
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        self.release_version_combo.clear()
+                        self.release_version_combo.addItem(f"Retrying... (attempt {attempt + 1}/{max_retries})")
+                        QApplication.processEvents()
+                        time.sleep(1)
+                        continue
+                    else:
+                        raise
+            
             show_prereleases = self.show_prereleases_checkbox.isChecked()
             # Filter out versions that start with "prerelease-" if box is unchecked
             if not show_prereleases:
@@ -2190,23 +2200,52 @@ class ESP32ControlGUI(QMainWindow):
                 ]
             self._github_releases = releases  # Save for asset lookup
             versions = [release.get("tag_name", "Unknown") for release in releases if "tag_name" in release]
-            self.release_version_combo.blockSignals(True)
             self.release_version_combo.clear()
-            # Add "Custom local .zip" as the default option
-            self.release_version_combo.addItem("Custom local .zip")
+            # Add versions first, then "Custom local .zip" at the end
             if versions:
                 self.release_version_combo.addItems(versions)
             else:
                 self.release_version_combo.addItem("No releases found")
-            self.release_version_combo.setCurrentIndex(0)  # Always select "Custom local .zip" by default
+            # Add "Custom local .zip" as the last option
+            self.release_version_combo.addItem("Custom local .zip")
+            self.release_version_combo.setCurrentIndex(0)  # Select first version by default
+            self.release_version_combo.setEnabled(True)
             self.release_version_combo.blockSignals(False)
+        except requests.exceptions.Timeout:
+            self.release_version_combo.clear()
+            self.release_version_combo.addItem("Timeout: Failed to load releases (network too slow)")
+            self.release_version_combo.addItem("Custom local .zip")
+            self.release_version_combo.setCurrentIndex(0)
+            self.release_version_combo.setEnabled(True)
+            self._github_releases = []
+            error_msg = "Timeout: Failed to fetch releases from GitHub. The connection timed out after 30 seconds. Please check your internet connection and try again."
+            if hasattr(self, 'flash_console'):
+                self.flash_console.append(f"Error: {error_msg}")
+            print(f"Error fetching releases: Timeout after {timeout} seconds")
+        except requests.exceptions.RequestException as e:
+            self.release_version_combo.clear()
+            self.release_version_combo.addItem("Failed to load releases")
+            self.release_version_combo.addItem("Custom local .zip")
+            self.release_version_combo.setCurrentIndex(0)
+            self.release_version_combo.setEnabled(True)
+            self._github_releases = []
+            error_msg = f"Failed to fetch releases from GitHub: {str(e)}. You can still use 'Custom local .zip' to flash a local file."
+            if hasattr(self, 'flash_console'):
+                self.flash_console.append(f"Error: {error_msg}")
+            print(f"Error fetching releases: {e}")
         except Exception as e:
             self.release_version_combo.clear()
-            self.release_version_combo.addItem("Custom local .zip")
             self.release_version_combo.addItem("Failed to load releases")
+            self.release_version_combo.addItem("Custom local .zip")
             self.release_version_combo.setCurrentIndex(0)
+            self.release_version_combo.setEnabled(True)
             self._github_releases = []
+            error_msg = f"Unexpected error fetching releases: {str(e)}"
+            if hasattr(self, 'flash_console'):
+                self.flash_console.append(f"Error: {error_msg}")
             print(f"Error fetching releases: {e}")
+        finally:
+            self.release_version_combo.blockSignals(False)
 
         # Always update assets dropdown as well
         self.update_release_assets_dropdown()
@@ -2214,6 +2253,12 @@ class ESP32ControlGUI(QMainWindow):
     def update_release_assets_dropdown(self):
         """Populate the asset dropdown based on the selected version."""
         if not hasattr(self, "release_asset_combo"):
+            # Create container for asset selection and progress
+            asset_container = QWidget()
+            asset_container_layout = QVBoxLayout(asset_container)
+            asset_container_layout.setContentsMargins(0, 0, 0, 0)
+            asset_container_layout.setSpacing(5)
+            
             asset_layout = QHBoxLayout()
             asset_label = QLabel("Asset:")
             asset_label.setContentsMargins(0, 0, 0, 0)
@@ -2222,8 +2267,19 @@ class ESP32ControlGUI(QMainWindow):
             self.release_asset_combo.addItem("Select a version first")
             asset_layout.addWidget(asset_label)
             asset_layout.addWidget(self.release_asset_combo)
+            asset_container_layout.addLayout(asset_layout)
+            
+            # Add progress bar below the dropdown
+            self.asset_download_progress = QProgressBar()
+            self.asset_download_progress.setMinimum(0)
+            self.asset_download_progress.setMaximum(100)
+            self.asset_download_progress.setValue(0)
+            self.asset_download_progress.setVisible(False)
+            self.asset_download_progress.setMinimumHeight(20)
+            self.asset_download_progress.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            asset_container_layout.addWidget(self.asset_download_progress)
 
-            # Insert asset_layout directly after the version_layout
+            # Insert asset_container directly after the version_layout
             parent_layout = self.release_version_combo.parentWidget().layout()
             insert_index = None
             for i in range(parent_layout.count()):
@@ -2239,9 +2295,9 @@ class ESP32ControlGUI(QMainWindow):
                 if insert_index is not None:
                     break
             if insert_index is not None:
-                parent_layout.insertLayout(insert_index, asset_layout)
+                parent_layout.insertWidget(insert_index, asset_container)
             else:
-                parent_layout.addLayout(asset_layout)  # fallback
+                parent_layout.addWidget(asset_container)  # fallback
 
             # Connect asset selection to download handler
             self.release_asset_combo.currentIndexChanged.connect(self.download_selected_asset)
@@ -2296,31 +2352,147 @@ class ESP32ControlGUI(QMainWindow):
             self.custom_chip_combo.setCurrentText(chip)
             self.selected_chip = chip
 
-        # --- Download the asset ---
-        import requests
+        # --- Download the asset in background thread ---
         import tempfile
         import os
+        
         temp_dir = tempfile.gettempdir()
         safe_name = os.path.basename(name)
         temp_path = os.path.join(temp_dir, safe_name)
+        
+        # Stop any existing download thread
+        if hasattr(self, 'asset_download_thread') and self.asset_download_thread.isRunning():
+            self.asset_download_thread.stop()
+            self.asset_download_thread.wait(1000)  # Wait up to 1 second for thread to stop
+        
+        # Show download status
         self.flash_console.append(f"Downloading asset: {name} ...")
-        try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            self.release_zip_edit.setText(temp_path)
-            self.flash_bundle_status.setText(f"Downloaded {name} to {temp_path}")
-            self.flash_console.append(f"Downloaded {name} to {temp_path}")
-        except Exception as e:
-            self.flash_bundle_status.setText(f"Failed to download asset: {e}")
-            self.flash_console.append(f"Failed to download asset: {e}")
+        self.flash_bundle_status.setText(f"Downloading {name}...")
+        
+        # Show and reset progress bar
+        if hasattr(self, 'asset_download_progress'):
+            self.asset_download_progress.setValue(0)
+            self.asset_download_progress.setVisible(True)
+            self.asset_download_progress.setFormat("Downloading... 0%")
+        
+        # Create and start download thread
+        self.asset_download_thread = AssetDownloadThread(url, temp_path, name)
+        
+        # Connect signals
+        self.asset_download_thread.progress_update.connect(self.on_download_progress)
+        self.asset_download_thread.status_update.connect(self.on_download_status)
+        self.asset_download_thread.finished.connect(self.on_download_finished)
+        self.asset_download_thread.error.connect(self.on_download_error)
+        self.asset_download_thread.retry_info.connect(self.on_download_retry)
+        
+        # Start the download thread
+        self.asset_download_thread.start()
+    
+    def on_download_progress(self, name, downloaded_mb, total_mb):
+        """Update UI with download progress."""
+        if total_mb > 0:
+            percent = int((downloaded_mb / total_mb) * 100)
+            self.flash_bundle_status.setText(
+                f"Downloading {name}... {percent:.1f}% ({downloaded_mb}MB/{total_mb}MB)"
+            )
+            # Update progress bar
+            if hasattr(self, 'asset_download_progress'):
+                self.asset_download_progress.setValue(percent)
+                self.asset_download_progress.setFormat(f"Downloading... {percent}% ({downloaded_mb}MB/{total_mb}MB)")
+        else:
+            self.flash_bundle_status.setText(f"Downloading {name}... {downloaded_mb}MB")
+            # Update progress bar (indeterminate mode)
+            if hasattr(self, 'asset_download_progress'):
+                self.asset_download_progress.setValue(0)
+                self.asset_download_progress.setFormat(f"Downloading... {downloaded_mb}MB")
+    
+    def on_download_status(self, message):
+        """Update UI with download status message."""
+        # Truncate very long status messages to prevent window expansion
+        max_status_length = 80
+        if len(message) > max_status_length:
+            truncated_message = message[:max_status_length] + "..."
+        else:
+            truncated_message = message
+        self.flash_bundle_status.setText(truncated_message)
+        self.flash_console.append(message)
+        # Update progress bar text (truncate for progress bar too)
+        if hasattr(self, 'asset_download_progress'):
+            progress_format = truncated_message[:50] if len(truncated_message) > 50 else truncated_message
+            self.asset_download_progress.setFormat(progress_format)
+    
+    def on_download_retry(self, message, attempt, max_retries):
+        """Update UI with retry information."""
+        self.flash_console.append(message)
+        self.flash_bundle_status.setText(f"Retrying download (attempt {attempt}/{max_retries})...")
+        # Reset progress bar on retry
+        if hasattr(self, 'asset_download_progress'):
+            self.asset_download_progress.setValue(0)
+            self.asset_download_progress.setFormat(f"Retrying... (attempt {attempt}/{max_retries})")
+    
+    def on_download_finished(self, file_path, message):
+        """Handle successful download completion."""
+        self.release_zip_edit.setText(file_path)
+        self.flash_bundle_status.setText(message)
+        self.flash_console.append(message)
+        # Update progress bar to show completion
+        if hasattr(self, 'asset_download_progress'):
+            self.asset_download_progress.setValue(100)
+            self.asset_download_progress.setFormat("Download complete!")
+            # Hide progress bar after a short delay
+            QTimer.singleShot(2000, lambda: self.asset_download_progress.setVisible(False) if hasattr(self, 'asset_download_progress') else None)
+        # Clean up thread - disconnect signals and wait for it to finish
+        if hasattr(self, 'asset_download_thread') and self.asset_download_thread:
+            self.asset_download_thread.progress_update.disconnect()
+            self.asset_download_thread.status_update.disconnect()
+            self.asset_download_thread.finished.disconnect()
+            self.asset_download_thread.error.disconnect()
+            self.asset_download_thread.retry_info.disconnect()
+            self.asset_download_thread.wait(100)  # Wait briefly for thread to finish
+            self.asset_download_thread = None
+    
+    def on_download_error(self, error_message):
+        """Handle download error."""
+        # Truncate very long error messages to prevent window expansion
+        max_error_length = 60  # Reduced to prevent expansion
+        if len(error_message) > max_error_length:
+            truncated_error = error_message[:max_error_length] + "..."
+        else:
+            truncated_error = error_message
+        
+        # Use a shorter, fixed message format to prevent layout expansion
+        self.flash_bundle_status.setText(f"Download failed: {truncated_error}")
+        
+        # Preserve window size by ensuring layout doesn't expand
+        current_size = self.size()
+        QApplication.processEvents()  # Process any pending layout updates
+        # Restore window size if it changed
+        if self.size() != current_size:
+            self.resize(current_size)
+        self.flash_console.append(f"Failed to download asset: {error_message}")
+        self.flash_console.append("This may be due to network issues or GitHub server problems.")
+        self.flash_console.append("Please try again later, or use 'Custom local .zip' to browse for a local file.")
+        # Update progress bar to show error
+        if hasattr(self, 'asset_download_progress'):
+            self.asset_download_progress.setValue(0)
+            self.asset_download_progress.setFormat("Download failed")
+            self.asset_download_progress.setStyleSheet("QProgressBar::chunk { background-color: #ff4444; }")
+            # Hide progress bar after a delay
+            QTimer.singleShot(3000, lambda: self.asset_download_progress.setVisible(False) if hasattr(self, 'asset_download_progress') else None)
+            # Reset style after hiding
+            QTimer.singleShot(3000, lambda: self.asset_download_progress.setStyleSheet("") if hasattr(self, 'asset_download_progress') else None)
+        # Clean up thread - disconnect signals and wait for it to finish
+        if hasattr(self, 'asset_download_thread') and self.asset_download_thread:
+            self.asset_download_thread.progress_update.disconnect()
+            self.asset_download_thread.status_update.disconnect()
+            self.asset_download_thread.finished.disconnect()
+            self.asset_download_thread.error.disconnect()
+            self.asset_download_thread.retry_info.disconnect()
+            self.asset_download_thread.wait(100)  # Wait briefly for thread to finish
+            self.asset_download_thread = None
 
     def on_flash_panel_changed(self, index):
-        """Switch the visible flash panel based on dropdown selection and show instructions."""
-        self.flash_panel_stack.setCurrentIndex(index)
+        """Show instructions when flash panel tab is changed."""
         # Show instructions in the flasher output window for each panel
         self.flash_console.clear()
         if index == 0:  # Flash Firmware
