@@ -81,8 +81,9 @@ typedef struct {
 static GattService g_selected_device_services[MAX_GATT_SERVICES];
 static int g_selected_device_service_count = 0;
 static bool g_selected_device_services_enumerated = false;
-static GattDevice discovered_gatt_devices[MAX_GATT_DEVICES];
+static GattDevice *discovered_gatt_devices = NULL;
 static int discovered_gatt_device_count = 0;
+static int discovered_gatt_device_capacity = 0;
 static int selected_gatt_device_index = -1;
 static uint16_t gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static volatile bool gatt_enum_in_progress = false;
@@ -3003,7 +3004,7 @@ void ble_gatt_scan_callback(struct ble_gap_event *event, size_t len) {
         }
     }
     
-    if (!already && discovered_gatt_device_count < MAX_GATT_DEVICES) {
+    if (!already && discovered_gatt_device_count < discovered_gatt_device_capacity) {
         GattDevice *dev = &discovered_gatt_devices[discovered_gatt_device_count];
         memcpy(&dev->addr, &event->disc.addr, sizeof(ble_addr_t));
         dev->rssi = event->disc.rssi;
@@ -3038,7 +3039,16 @@ void ble_start_gatt_scan(void) {
         ble_init();
     }
     
-    memset(discovered_gatt_devices, 0, sizeof(discovered_gatt_devices));
+    if (!discovered_gatt_devices) {
+        discovered_gatt_device_capacity = MAX_GATT_DEVICES;
+        discovered_gatt_devices = (GattDevice *)calloc(discovered_gatt_device_capacity, sizeof(GattDevice));
+        if (!discovered_gatt_devices) {
+            glog("Failed to allocate GATT device array\n");
+            return;
+        }
+    }
+    
+    memset(discovered_gatt_devices, 0, discovered_gatt_device_capacity * sizeof(GattDevice));
     discovered_gatt_device_count = 0;
     selected_gatt_device_index = -1;
     gatt_enum_in_progress = false;
@@ -3052,7 +3062,7 @@ void ble_start_gatt_scan(void) {
 
 void ble_list_gatt_devices(void) {
     glog("--- GATT Devices (%d) ---\n", discovered_gatt_device_count);
-    if (discovered_gatt_device_count == 0) {
+    if (!discovered_gatt_devices || discovered_gatt_device_count == 0) {
         glog("No GATT devices discovered. Run 'blescan -g' first.\n");
         return;
     }
@@ -3083,7 +3093,7 @@ void ble_list_gatt_devices(void) {
 }
 
 void ble_select_gatt_device(int index) {
-    if (index < 0 || index >= discovered_gatt_device_count) {
+    if (!discovered_gatt_devices || index < 0 || index >= discovered_gatt_device_count) {
         glog("Invalid index %d. Use 'listgatt' to see valid indices.\n", index);
         selected_gatt_device_index = -1;
         return;
@@ -3103,7 +3113,7 @@ void ble_select_gatt_device(int index) {
 }
 
 void ble_enumerate_gatt_services(void) {
-    if (selected_gatt_device_index < 0 || selected_gatt_device_index >= discovered_gatt_device_count) {
+    if (!discovered_gatt_devices || selected_gatt_device_index < 0 || selected_gatt_device_index >= discovered_gatt_device_count) {
         glog("No GATT device selected. Use 'selectgatt <index>' first.\n");
         return;
     }
@@ -3308,6 +3318,14 @@ void ble_stop_gatt_scan(void) {
         gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     }
     gatt_enum_in_progress = false;
+    
+    if (discovered_gatt_devices) {
+        free(discovered_gatt_devices);
+        discovered_gatt_devices = NULL;
+        discovered_gatt_device_count = 0;
+        discovered_gatt_device_capacity = 0;
+    }
+    
     glog("GATT scan stopped.\n");
     status_display_show_status("GATT Stopped");
 }

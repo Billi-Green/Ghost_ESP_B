@@ -8,7 +8,11 @@
 #include "esp_err.h"
 #include "esp_wifi_types.h"
 
-#define AERIAL_MAX_DEVICES 64
+#ifdef CONFIG_SPIRAM
+#define AERIAL_MAX_DEVICES 16
+#else
+#define AERIAL_MAX_DEVICES 8
+#endif
 #define AERIAL_MAC_STR_LEN 18
 #define AERIAL_ID_MAX_LEN 32
 #define AERIAL_DESC_MAX_LEN 64

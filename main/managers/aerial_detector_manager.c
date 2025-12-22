@@ -115,8 +115,9 @@ static const char *drone_ssid_patterns[] = {
 static const uint8_t nan_dest_mac[6] = {0x51, 0x6F, 0x9A, 0x01, 0x00, 0x00};
 
 // device storage
-static AerialDevice devices[AERIAL_MAX_DEVICES];
+static AerialDevice *devices = NULL;
 static int device_count = 0;
+static int device_capacity = 0;
 static SemaphoreHandle_t device_mutex = NULL;
 
 // scanning state
@@ -185,13 +186,13 @@ void aerial_detector_init(void) {
         device_mutex = xSemaphoreCreateMutex();
     }
     
-    memset(devices, 0, sizeof(devices));
+    devices = NULL;
     device_count = 0;
+    device_capacity = 0;
     is_scanning = false;
     wifi_scan_phase = false;
     ble_scan_phase = false;
     
-    // build list of allowed channels based on country settings
     build_allowed_channels_list();
     
     ESP_LOGI(TAG, "aerial detector initialized with %d channels", allowed_channel_count);
@@ -199,6 +200,13 @@ void aerial_detector_init(void) {
 
 void aerial_detector_deinit(void) {
     aerial_detector_stop_scan();
+    
+    if (devices) {
+        free(devices);
+        devices = NULL;
+        device_count = 0;
+        device_capacity = 0;
+    }
     
     if (device_mutex) {
         vSemaphoreDelete(device_mutex);
@@ -599,6 +607,17 @@ esp_err_t aerial_detector_start_scan(uint32_t duration_ms) {
         return ESP_ERR_INVALID_STATE;
     }
     
+    if (!devices) {
+        device_capacity = AERIAL_MAX_DEVICES;
+        devices = (AerialDevice *)calloc(device_capacity, sizeof(AerialDevice));
+        if (!devices) {
+            ESP_LOGE(TAG, "failed to allocate device array");
+            return ESP_ERR_NO_MEM;
+        }
+        device_count = 0;
+        ESP_LOGI(TAG, "allocated %d device slots", device_capacity);
+    }
+    
     is_scanning = true;
     
     // calculate phase durations (split time between wifi and ble)
@@ -648,6 +667,14 @@ esp_err_t aerial_detector_stop_scan(void) {
     
     stop_wifi_phase();
     stop_ble_phase();
+    
+    if (devices) {
+        free(devices);
+        devices = NULL;
+        device_count = 0;
+        device_capacity = 0;
+        ESP_LOGI(TAG, "freed device array");
+    }
     
     ESP_LOGI(TAG, "scan stopped");
     glog("Scan Complete\n");
@@ -768,17 +795,19 @@ static AerialDevice* find_or_create_device(const uint8_t *mac) {
     snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     
+    if (!devices) {
+        return NULL;
+    }
+    
     if (xSemaphoreTake(device_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         return NULL;
     }
     
-    // check if tracking specific device
     if (tracked_mac[0] != '\0' && strcmp(mac_str, tracked_mac) != 0) {
         xSemaphoreGive(device_mutex);
         return NULL;
     }
     
-    // find existing device
     for (int i = 0; i < device_count; i++) {
         if (strcmp(devices[i].mac, mac_str) == 0) {
             xSemaphoreGive(device_mutex);
@@ -786,8 +815,7 @@ static AerialDevice* find_or_create_device(const uint8_t *mac) {
         }
     }
     
-    // create new device if room available
-    if (device_count >= AERIAL_MAX_DEVICES) {
+    if (device_count >= device_capacity) {
         xSemaphoreGive(device_mutex);
         return NULL;
     }
@@ -1006,13 +1034,16 @@ int aerial_detector_get_device_count(void) {
 }
 
 AerialDevice* aerial_detector_get_device(int index) {
-    if (index < 0 || index >= device_count) {
+    if (!devices || index < 0 || index >= device_count) {
         return NULL;
     }
     return &devices[index];
 }
 
 AerialDevice* aerial_detector_find_device_by_mac(const char *mac) {
+    if (!devices) {
+        return NULL;
+    }
     for (int i = 0; i < device_count; i++) {
         if (strcmp(devices[i].mac, mac) == 0) {
             return &devices[i];
@@ -1022,14 +1053,20 @@ AerialDevice* aerial_detector_find_device_by_mac(const char *mac) {
 }
 
 void aerial_detector_clear_devices(void) {
+    if (!devices) {
+        return;
+    }
     if (xSemaphoreTake(device_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        memset(devices, 0, sizeof(devices));
+        memset(devices, 0, device_capacity * sizeof(AerialDevice));
         device_count = 0;
         xSemaphoreGive(device_mutex);
     }
 }
 
 void aerial_detector_remove_old_devices(uint32_t max_age_ms) {
+    if (!devices) {
+        return;
+    }
     if (xSemaphoreTake(device_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         return;
     }
@@ -1051,6 +1088,9 @@ void aerial_detector_remove_old_devices(uint32_t max_age_ms) {
 }
 
 void aerial_detector_compact_known_devices(void) {
+    if (!devices) {
+        return;
+    }
     if (xSemaphoreTake(device_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         return;
     }
@@ -1118,8 +1158,10 @@ esp_err_t aerial_detector_track_device(const char *mac) {
 }
 
 esp_err_t aerial_detector_untrack_device(void) {
-    for (int i = 0; i < device_count; i++) {
-        devices[i].is_tracked = false;
+    if (devices) {
+        for (int i = 0; i < device_count; i++) {
+            devices[i].is_tracked = false;
+        }
     }
     memset(tracked_mac, 0, sizeof(tracked_mac));
     stop_track_timer();
