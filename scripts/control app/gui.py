@@ -1176,7 +1176,7 @@ class ESP32ControlGUI(QMainWindow):
         # --- Flash Mode Button (right justified) ---
         self.flash_mode_btn = QPushButton("Flash Mode")
         self.flash_mode_btn.setCheckable(True)
-        self.flash_mode_btn.setFixedWidth(110)
+        self.flash_mode_btn.setFixedWidth(130)  # Increased to fit "Command Mode" text
         self.flash_mode_btn.setToolTip("Toggle Flash Mode to flash your board")
         self.flash_mode_btn.clicked.connect(self.toggle_flash_mode)
         connection_layout.addWidget(self.flash_mode_btn)
