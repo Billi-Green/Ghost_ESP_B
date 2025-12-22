@@ -89,6 +89,15 @@ toc: true
 - **`enumgatt`** — Connect to the selected device and enumerate its GATT services.
 - **`trackgatt`** — Track the selected device using real-time RSSI signal strength.
 
+### Aerial Detection
+
+- **`aerialscan [seconds]`** — Scan for aerial devices (drones, UAVs, RC controllers) using WiFi and BLE in sequential phases. Default: 30 seconds. Phase 1: WiFi scan (OpenDroneID WiFi, DJI WiFi, drone networks). Phase 2: BLE scan (OpenDroneID BLE, DJI BLE) — **WiFi automatically suspended during BLE phase and restored after**.
+- **`aeriallist`** — Display all detected aerial devices with full details including device ID, type, MAC address, vendor, signal strength (RSSI), GPS coordinates, altitude, speed, direction, operator location, and flight status.
+- **`aerialtrack <idx|mac>`** — Track a specific aerial device by index or MAC address (e.g., `aerialtrack 0` or `aerialtrack 12:34:56:78:9a:bc`).
+- **`aerialstop`** — Stop aerial device scanning and tracking.
+- **`aerialspoof [device_id lat lon alt]`** — Broadcast fake drone RemoteID for testing via BLE. Without arguments, uses default test drone (GHOST-TEST at San Francisco, 100m altitude). With arguments: device ID, latitude, longitude, altitude in meters. Example: `aerialspoof DRONE-1234 40.7128 -74.0060 100`. Complies with ASTM F3411 OpenDroneID standard. **Note: WiFi automatically suspended during broadcast, restored on stop**.
+- **`aerialspoofstop`** — Stop broadcasting fake drone RemoteID and restore WiFi.
+
 ## Portal
 
 - **`startportal <path|default> <AP_SSID> [PSK]`** — Serve an Evil Portal bundle from SD or flash (`default` uses the built-in portal).

@@ -84,6 +84,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "freertos/queue.h"
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
+#include "managers/aerial_detector_manager.h"
 
 static const char *TAG = "Commandline";
 
@@ -133,6 +134,12 @@ void handle_status_idle_cmd(int argc, char **argv);
 #endif
 void handle_settime_cmd(int argc, char **argv);
 void handle_time_cmd(int argc, char **argv);
+void handle_aerial_scan_cmd(int argc, char **argv);
+void handle_aerial_list_cmd(int argc, char **argv);
+void handle_aerial_track_cmd(int argc, char **argv);
+void handle_aerial_stop_cmd(int argc, char **argv);
+void handle_aerial_spoof_cmd(int argc, char **argv);
+void handle_aerial_spoof_stop_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -752,6 +759,15 @@ void handle_stop_flipper(int argc, char **argv) {
     csv_file_close();                  // Close any open CSV files
     gps_manager_deinit(&g_gpsManager); // Clean up GPS if active
 
+    // stop aerial operations
+    if (aerial_detector_is_scanning()) {
+        aerial_detector_stop_scan();
+    }
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+    }
+    aerial_detector_untrack_device();
+
     // also stop any in-progress IR RX (ir rx / ir learn)
     infrared_manager_rx_cancel();
 
@@ -762,7 +778,7 @@ void handle_stop_flipper(int argc, char **argv) {
     if (gps_info_task_handle != NULL) {
         vTaskDelete(gps_info_task_handle);
         gps_info_task_handle = NULL;
-        
+
         // Free the manually allocated stack and TCB
         if (gps_task_stack) {
             heap_caps_free(gps_task_stack);
@@ -7508,6 +7524,206 @@ void handle_usb_kbd_cmd(int argc, char **argv) {
     }
 }
 
+void handle_aerial_scan_cmd(int argc, char **argv) {
+    uint32_t duration = 30000;  // default 30 seconds
+
+    if (argc > 1) {
+        duration = atoi(argv[1]) * 1000;
+        if (duration < 1000) duration = 1000;
+        if (duration > 300000) duration = 300000;
+    }
+
+    aerial_detector_init();
+    esp_err_t ret = aerial_detector_start_scan(duration);
+
+    if (ret == ESP_OK) {
+        glog("Scan Started (%lu sec)\n", duration / 1000);
+        glog("Phase 1: WiFi | Phase 2: BLE\n");
+    } else if (ret == ESP_ERR_INVALID_STATE) {
+        glog("Scan already running\n");
+    } else {
+        glog("Failed to start scan\n");
+    }
+}
+
+void handle_aerial_list_cmd(int argc, char **argv) {
+    aerial_detector_compact_known_devices();
+    
+    int total = aerial_detector_get_device_count();
+    int shown = 0;
+    
+    for (int i = 0; i < total; i++) {
+        AerialDevice *dev = aerial_detector_get_device(i);
+        if (!dev || dev->type == AERIAL_TYPE_UNKNOWN) continue;
+        
+        if (shown == 0) {
+            glog("Detected aerial device(s):\n\n");
+        }
+        shown++;
+        
+        glog("[%d] %s\n", i, dev->device_id);
+        glog("    MAC: %s\n", dev->mac);
+        glog("    Type: %s\n", aerial_detector_get_type_string(dev->type));
+        glog("    RSSI: %d dBm\n", dev->rssi);
+        
+        if (dev->vendor[0] != '\0') {
+            glog("    Vendor: %s\n", dev->vendor);
+        }
+        
+        if (dev->has_location) {
+            glog("    Location: %.6f, %.6f\n", dev->latitude, dev->longitude);
+            if (dev->altitude > -1000.0f) {
+                glog("    Altitude: %.1f m\n", dev->altitude);
+            }
+            if (dev->speed_horizontal < 255.0f) {
+                glog("    Speed: %.1f m/s @ %.0f°\n", dev->speed_horizontal, dev->direction);
+            }
+            glog("    Status: %s\n", aerial_detector_get_status_string(dev->status));
+        }
+        
+        if (dev->has_operator_location) {
+            glog("    Operator: %.6f, %.6f", dev->operator_latitude, dev->operator_longitude);
+            if (dev->operator_altitude > -1000.0f) {
+                glog(" @ %.1f m", dev->operator_altitude);
+            }
+            glog("\n");
+        }
+        
+        if (strcmp(dev->operator_id, "N/A") != 0) {
+            glog("    Operator ID: %s\n", dev->operator_id);
+        }
+        
+        if (strcmp(dev->description, "N/A") != 0 && dev->description[0] != '\0') {
+            glog("    Description: %s\n", dev->description);
+        }
+        
+        uint32_t age_sec = (esp_timer_get_time() / 1000 - dev->last_seen_ms) / 1000;
+        glog("    Last seen: %lu sec ago\n", age_sec);
+        glog("\n");
+    }
+
+    if (shown == 0) {
+        glog("No aerial devices detected\n");
+    }
+}
+
+void handle_aerial_track_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: aerialtrack <device_index|mac_address>\n");
+        glog("Use 'aeriallist' to see available devices\n");
+        return;
+    }
+    
+    AerialDevice *dev = NULL;
+    
+    // check if argument is a number (device index)
+    if (argv[1][0] >= '0' && argv[1][0] <= '9') {
+        int index = atoi(argv[1]);
+        dev = aerial_detector_get_device(index);
+        if (!dev) {
+            glog("Invalid device index. Use 'aeriallist' to see available devices\n");
+            return;
+        }
+    } else {
+        // assume mac address
+        dev = aerial_detector_find_device_by_mac(argv[1]);
+        if (!dev) {
+            glog("Device not found: %s\n", argv[1]);
+            return;
+        }
+    }
+    
+    // ensure scanning is running to keep updates flowing
+    if (!aerial_detector_is_scanning()) {
+        aerial_detector_start_scan(30000); // default 30s; tracking will refresh each phase
+        glog("Started aerial scan for tracking\n");
+    }
+    
+    esp_err_t ret = aerial_detector_track_device(dev->mac);
+    if (ret == ESP_OK) {
+        glog("Now tracking: %s (%s)\n", dev->device_id, dev->mac);
+        glog("RSSI: %d dBm\n", dev->rssi);
+        
+        if (dev->has_location) {
+            glog("Location: %.6f, %.6f @ %.1f m\n", 
+                 dev->latitude, dev->longitude, dev->altitude);
+        }
+    } else {
+        glog("Failed to track device\n");
+    }
+}
+
+void handle_aerial_stop_cmd(int argc, char **argv) {
+    if (aerial_detector_is_scanning()) {
+        aerial_detector_stop_scan();
+        glog("Scan Stopped\n");
+    } else {
+        glog("No scan running\n");
+    }
+
+    aerial_detector_untrack_device();
+}
+
+void handle_aerial_spoof_cmd(int argc, char **argv) {
+    const char *device_id;
+    double lat;
+    double lon;
+    float alt;
+    
+    if (argc < 2) {
+        // default test mode - no args needed
+        device_id = "GHOST-TEST";
+        lat = 37.7749;   // san francisco
+        lon = -122.4194;
+        alt = 100.0f;
+        glog("Using default test drone:\n");
+        glog("Device ID: %s\n", device_id);
+        glog("Location: %.6f, %.6f @ %.1fm\n\n", lat, lon, alt);
+    } else if (argc < 5) {
+        glog("Usage: aerialspoof [device_id latitude longitude altitude]\n");
+        glog("Examples:\n");
+        glog("  aerialspoof                              # Use defaults\n");
+        glog("  aerialspoof DRONE-1234 40.7128 -74.0060 100\n");
+        glog("\nBroadcasts fake drone RemoteID for testing purposes.\n");
+        glog("Complies with ASTM F3411 OpenDroneID standard.\n");
+        return;
+    } else {
+        device_id = argv[1];
+        lat = atof(argv[2]);
+        lon = atof(argv[3]);
+        alt = atof(argv[4]);
+    }
+    
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        glog("Invalid coordinates. Lat: -90 to 90, Lon: -180 to 180\n");
+        return;
+    }
+    
+    // stop existing spoof if running
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+    }
+    
+    aerial_detector_init();
+    esp_err_t ret = aerial_detector_start_emulation(device_id, lat, lon, alt);
+    
+    if (ret == ESP_OK) {
+        glog("Spoofing Started\n");
+        glog("ID: %s | Pos: %.6f, %.6f @ %.1fm\n", device_id, lat, lon, alt);
+    } else {
+        glog("Failed to start spoofing\n");
+    }
+}
+
+void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+        glog("Spoofing Stopped\n");
+    } else {
+        glog("No spoofing active\n");
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -7639,9 +7855,15 @@ void register_commands() {
 #if CONFIG_IDF_TARGET_ESP32S3
     register_command("usbkbd", handle_usb_kbd_cmd);
 #endif
+    register_command("aerialscan", handle_aerial_scan_cmd);
+    register_command("aeriallist", handle_aerial_list_cmd);
+    register_command("aerialtrack", handle_aerial_track_cmd);
+    register_command("aerialstop", handle_aerial_stop_cmd);
+    register_command("aerialspoof", handle_aerial_spoof_cmd);
+    register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
-    
+
     glog("Registered Commands\n");
 }
 

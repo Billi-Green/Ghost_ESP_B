@@ -509,7 +509,7 @@ static lv_obj_t *back_btn = NULL;
 
 // --- Add Bluetooth submenu arrays and state ---
 static const char *bluetooth_main_options[] = {
-    "AirTag", "Flipper", "GATT Scan", "Spam", "Raw", "Skimmer", NULL
+    "AirTag", "Flipper", "GATT Scan", "Aerial Detector", "Spam", "Raw", "Skimmer", NULL
 };
 static const char *bluetooth_airtag_options[] = {
     "Start AirTag Scanner", "List AirTags", "Select AirTag", "Spoof Selected AirTag", "Stop Spoofing", NULL
@@ -530,6 +530,10 @@ static const char *bluetooth_skimmer_options[] = {
 static const char *bluetooth_gatt_options[] = {
     "Start GATT Scan", "List GATT Devices", "Select GATT Device", "Enumerate Services", "Track Device", NULL
 };
+static const char *bluetooth_aerial_options[] = {
+    "Scan Aerial Devices", "List Aerial Devices", "Track Aerial Device", "Stop Aerial Scan", 
+    "Spoof Test Drone", "Stop Spoofing", NULL
+};
 
 typedef enum {
     BLUETOOTH_MENU_MAIN,
@@ -538,7 +542,8 @@ typedef enum {
     BLUETOOTH_MENU_SPAM,
     BLUETOOTH_MENU_RAW,
     BLUETOOTH_MENU_SKIMMER,
-    BLUETOOTH_MENU_GATT
+    BLUETOOTH_MENU_GATT,
+    BLUETOOTH_MENU_AERIAL
 } BluetoothMenuState;
 
 static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
@@ -847,6 +852,7 @@ void options_menu_create() {
             case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
             case BLUETOOTH_MENU_SKIMMER: options = bluetooth_skimmer_options; break;
             case BLUETOOTH_MENU_GATT: options = bluetooth_gatt_options; break;
+            case BLUETOOTH_MENU_AERIAL: options = bluetooth_aerial_options; break;
         }
         break;
     case OT_GPS: options = gps_options; break;
@@ -2256,6 +2262,7 @@ void option_event_cb(lv_event_t *e) {
             if (strcmp(Selected_Option, "AirTag") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_AIRTAG;
             else if (strcmp(Selected_Option, "Flipper") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_FLIPPER;
             else if (strcmp(Selected_Option, "GATT Scan") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_GATT;
+            else if (strcmp(Selected_Option, "Aerial Detector") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_AERIAL;
             else if (strcmp(Selected_Option, "Spam") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SPAM;
             else if (strcmp(Selected_Option, "Raw") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_RAW;
             else if (strcmp(Selected_Option, "Skimmer") == 0) current_bluetooth_menu_state = BLUETOOTH_MENU_SKIMMER;
@@ -2702,6 +2709,48 @@ display_manager_switch_view(&terminal_view);
 #endif
     }
 
+    else if (strcmp(Selected_Option, "Scan Aerial Devices") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("aerialscan 60");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "List Aerial Devices") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("aeriallist");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Track Aerial Device") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("aerialtrack");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Stop Aerial Scan") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("aerialstop");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Spoof Test Drone") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("aerialspoof");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Stop Spoofing") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("aerialspoofstop");
+        view_switched = true;
+    }
+
     else if (strcmp(Selected_Option, "GPS Info") == 0) {
         terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
@@ -3054,6 +3103,7 @@ static void rebuild_current_menu(void) {
                 case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
                 case BLUETOOTH_MENU_SKIMMER: options = bluetooth_skimmer_options; break;
                 case BLUETOOTH_MENU_GATT: options = bluetooth_gatt_options; break;
+                case BLUETOOTH_MENU_AERIAL: options = bluetooth_aerial_options; break;
             }
             break;
         case OT_GPS: options = gps_options; break;

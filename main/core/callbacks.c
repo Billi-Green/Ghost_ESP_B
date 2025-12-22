@@ -1013,6 +1013,12 @@ bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2) {
 }
 
 static bool is_pineapple_oui(const uint8_t *bssid) {
+    if (!bssid)
+        return false;
+
+    if (bssid[1] == 0x13 && bssid[2] == 0x37)
+        return true;
+
     for (size_t i = 0; i < pineapple_oui_count; i++) {
         if (memcmp(bssid, pineapple_ouis[i], 3) == 0) {
             return true;
