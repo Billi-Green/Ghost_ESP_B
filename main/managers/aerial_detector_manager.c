@@ -384,6 +384,7 @@ static void stop_wifi_phase(void) {
     ESP_LOGI(TAG, "wifi scan phase stopped");
 }
 
+#ifndef CONFIG_IDF_TARGET_ESP32S2
 static void aerial_ble_data_handler(struct ble_gap_event *event, size_t len) {
     if (!event || !ble_scan_phase) return;
     
@@ -482,10 +483,16 @@ static void aerial_ble_data_handler(struct ble_gap_event *event, size_t len) {
     
     if (detected && device) {
         notify_callback(device);
-    }
-
+    
     #undef ENSURE_DEVICE
 }
+#else
+// Stub for ESP32-S2 (no NimBLE)
+static void aerial_ble_data_handler(void *event, size_t len) {
+    (void)event;
+    (void)len;
+}
+#endif
 
 static void start_ble_phase(void) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
