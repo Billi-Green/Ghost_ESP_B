@@ -483,6 +483,7 @@ static void aerial_ble_data_handler(struct ble_gap_event *event, size_t len) {
     
     if (detected && device) {
         notify_callback(device);
+    }
     
     #undef ENSURE_DEVICE
 }
