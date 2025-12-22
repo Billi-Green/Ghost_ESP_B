@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include "esp_pm.h"
+#include "io_manager/i2c_bus_lock.h"
 
 #ifdef CONFIG_USE_BQ27220_FUEL_GAUGE
 
@@ -30,7 +31,8 @@ static const char *TAG = "FuelGaugeManager";
 #define BQ27220_FW_VERSION      0x0002
 #define BQ27220_RESET           0x0041
 #define BQ27220_SEAL            0x0020
-#define BQ27220_UNSEAL          0x0080
+#define BQ27220_UNSEAL          0x8000
+#define BQ27220_IT_ENABLE       0x0021
 #define BQ27220_ENTER_CFG_UPDATE 0x0013
 #define BQ27220_EXIT_CFG_UPDATE 0x0042
 
@@ -63,10 +65,11 @@ static uint16_t bq27220_read_word(uint8_t reg) {
 #if CONFIG_PM_ENABLE
     if (fg_i2c_pm_lock) esp_pm_lock_acquire(fg_i2c_pm_lock);
 #endif
-
+    bool locked = i2c_bus_lock(I2C_MASTER_NUM, I2C_MASTER_TIMEOUT_MS);
     esp_err_t ret = i2c_master_write_read_device(I2C_MASTER_NUM, BQ27220_I2C_ADDRESS,
                                                  &reg, 1, data, 2,
                                                  pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
+    if (locked) i2c_bus_unlock(I2C_MASTER_NUM);
 #if CONFIG_PM_ENABLE
     if (fg_i2c_pm_lock) esp_pm_lock_release(fg_i2c_pm_lock);
 #endif
@@ -86,10 +89,11 @@ static esp_err_t bq27220_write_word(uint8_t reg, uint16_t data) {
 #if CONFIG_PM_ENABLE
     if (fg_i2c_pm_lock) esp_pm_lock_acquire(fg_i2c_pm_lock);
 #endif
-    
+    bool locked = i2c_bus_lock(I2C_MASTER_NUM, I2C_MASTER_TIMEOUT_MS);
     esp_err_t ret = i2c_master_write_to_device(I2C_MASTER_NUM, BQ27220_I2C_ADDRESS,
                                       write_data, 3,
                                       pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
+    if (locked) i2c_bus_unlock(I2C_MASTER_NUM);
 #if CONFIG_PM_ENABLE
     if (fg_i2c_pm_lock) esp_pm_lock_release(fg_i2c_pm_lock);
 #endif
@@ -191,9 +195,11 @@ static uint8_t bq27220_read_byte(uint8_t reg) {
 #if CONFIG_PM_ENABLE
     if (fg_i2c_pm_lock) esp_pm_lock_acquire(fg_i2c_pm_lock);
 #endif
+    bool locked = i2c_bus_lock(I2C_MASTER_NUM, I2C_MASTER_TIMEOUT_MS);
     esp_err_t ret = i2c_master_write_read_device(I2C_MASTER_NUM, BQ27220_I2C_ADDRESS,
                                                   &reg, 1, &data, 1,
                                                   pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
+    if (locked) i2c_bus_unlock(I2C_MASTER_NUM);
 #if CONFIG_PM_ENABLE
     if (fg_i2c_pm_lock) esp_pm_lock_release(fg_i2c_pm_lock);
 #endif
@@ -267,6 +273,13 @@ static esp_err_t fuel_gauge_configure(void) {
         if (seal_ret != ESP_OK) {
             ESP_LOGW(TAG, "Unable to reseal fuel gauge: %s", esp_err_to_name(seal_ret));
         }
+    }
+
+    esp_err_t it_ret = bq27220_control_command(BQ27220_IT_ENABLE);
+    if (it_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to enable gauging (IT_ENABLE): %s", esp_err_to_name(it_ret));
+    } else {
+        ESP_LOGI(TAG, "Impedance Track gauging enabled");
     }
 
     ESP_LOGI(TAG, "Fuel gauge configuration completed");
@@ -349,9 +362,14 @@ bool fuel_gauge_manager_init(void) {
         return false;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(150));
 
-    uint16_t voltage = bq27220_read_word(BQ27220_REG_VOLTAGE);
+    uint16_t voltage = 0xFFFF;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        voltage = bq27220_read_word(BQ27220_REG_VOLTAGE);
+        if (voltage != 0xFFFF) break;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 
     if (voltage == 0xFFFF) {
         ESP_LOGE(TAG, "Failed to communicate with BQ27220 - check wiring and I2C config");
@@ -416,7 +434,12 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
 
     uint16_t voltage = bq27220_read_word(BQ27220_REG_VOLTAGE);
     uint16_t current_raw = bq27220_read_word(BQ27220_REG_CURRENT);
-    uint8_t soc_byte = bq27220_read_byte(BQ27220_REG_SOC);
+    uint8_t soc_byte = 0xFF;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        soc_byte = bq27220_read_byte(BQ27220_REG_SOC);
+        if (soc_byte != 0xFF) break;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
     uint16_t flags = bq27220_read_word(BQ27220_REG_FLAGS);
 
     // Count successful reads
@@ -435,46 +458,66 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
         return false;
     }
 
+    // Quick charging hint for SOC handling (before smoothing below)
+    bool charging_hint = false;
+    if (flags != 0xFFFF) {
+        charging_hint = ((flags & 0x0001) == 0);
+    }
+    if (!charging_hint && current_raw != 0xFFFF) {
+        int16_t cur = (int16_t)current_raw;
+        if (cur > 10) charging_hint = true;
+    }
+
     // Fill data structure
     data->voltage_mv = (voltage != 0xFFFF) ? voltage : last_data.voltage_mv;
-    // BQ27220 current is signed 16-bit in 2's complement, positive = charging
-    data->current_ma = (current_raw != 0xFFFF) ? (int16_t)current_raw : last_data.current_ma;
+    // BQ27220 current is signed 16-bit in 2's complement; treat positive as charging on this board
+    int16_t interpreted_current = (current_raw != 0xFFFF) ? (int16_t)current_raw : last_data.current_ma;
+    // Treat near-zero noise as 0 to avoid false charge/discharge flips
+    if (interpreted_current > -10 && interpreted_current < 10) {
+        interpreted_current = 0;
+    }
+    data->current_ma = interpreted_current;
     
-    // StateOfCharge: single-byte integer percent read directly
-    // Add validation and fallback logic to prevent stuck SOC
+    // StateOfCharge: prefer reported SOC if valid; fallback to voltage estimate only when invalid
+    static TickType_t last_soc_warn = 0;
     int new_percentage = last_data.percentage;
-    if (soc_byte != 0xFF && soc_byte <= 100) {
-        // Validate that the new SOC makes sense compared to voltage
-        // This helps detect when the fuel gauge is reporting incorrect values
-        if (voltage != 0xFFFF) {
-            // Basic voltage-based SOC estimation as fallback
-            int voltage_based_soc = 0;
-            if (voltage >= 4100) {
-                voltage_based_soc = 100;
-            } else if (voltage >= 3700) {
-                voltage_based_soc = 75 + ((voltage - 3700) * 25) / 400;
-            } else if (voltage >= 3500) {
-                voltage_based_soc = 25 + ((voltage - 3500) * 50) / 200;
-            } else if (voltage >= 3300) {
-                voltage_based_soc = 5 + ((voltage - 3300) * 20) / 200;
-            } else {
-                voltage_based_soc = 0;
-            }
-            
-            // If the reported SOC differs significantly from voltage-based estimation,
-            // it might be incorrect. Use voltage-based estimation with some weighting.
-            int diff = abs((int)soc_byte - voltage_based_soc);
-            if (diff > 30) {
-                // Large discrepancy - use voltage-based estimation
-                ESP_LOGW(TAG, "Large SOC discrepancy detected: reported=%d%%, voltage-based=%d%%", soc_byte, voltage_based_soc);
-                new_percentage = voltage_based_soc;
-            } else {
-                // Reasonable agreement - use reported SOC
-                new_percentage = soc_byte;
-            }
+    bool soc_valid = (soc_byte != 0xFF && soc_byte <= 100);
+    int voltage_based_soc = -1;
+    if (voltage != 0xFFFF) {
+        if (voltage >= 4200) {
+            voltage_based_soc = 100;
+        } else if (voltage >= 4000) {
+            voltage_based_soc = 75 + ((voltage - 4000) * 25) / 200;
+        } else if (voltage >= 3800) {
+            voltage_based_soc = 40 + ((voltage - 3800) * 35) / 200;
+        } else if (voltage >= 3600) {
+            voltage_based_soc = 10 + ((voltage - 3600) * 30) / 200;
+        } else if (voltage >= 3300) {
+            voltage_based_soc = (voltage - 3300) * 10 / 300;
         } else {
-            new_percentage = soc_byte;
+            voltage_based_soc = 0;
         }
+    }
+
+    if (soc_valid) {
+        new_percentage = soc_byte;
+        if (soc_byte == 100) {
+            if (voltage_based_soc >= 0 && voltage_based_soc < 98) {
+                // If SOC reads 100% but voltage estimate is clearly lower, trust voltage
+                new_percentage = voltage_based_soc;
+            } else if (charging_hint) {
+                // While charging, creep upward instead of jumping to 100
+                int target = (voltage_based_soc >= 0) ? voltage_based_soc : new_percentage;
+                if (last_data.is_initialized) {
+                    int min_step = last_data.percentage + 1;
+                    if (target < min_step) target = min_step;
+                }
+                if (target > 99) target = 99;
+                new_percentage = target;
+            }
+        }
+    } else if (voltage_based_soc >= 0) {
+        new_percentage = voltage_based_soc;
     }
     
     // Apply hysteresis to prevent SOC jumping around
@@ -500,12 +543,14 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     bool current_valid = (current_raw != 0xFFFF);
     bool charging = false;
     if (flag_valid || current_valid) {
-        bool charging_flag = flag_valid && ((flags & 0x0100) != 0);
-        bool charging_current = current_valid && (data->current_ma > 0);
+        // BatteryStatus: DSG is bit0 (1 = discharging), CHG bit may be unreliable; prefer !DSG
+        bool dsg_bit = flag_valid && ((flags & 0x0001) != 0);
+        bool charging_flag = flag_valid ? !dsg_bit : false;
+        // Current fallback: positive current means charging on this board, use a small threshold to ignore noise
+        bool charging_current = current_valid && (data->current_ma > 10);
         charging = charging_flag || charging_current;
         
-        // Additional check: if we're at 100% and not charging, but current is positive,
-        // we might be in a charging state that the fuel gauge hasn't detected yet
+        // Additional check: if we're at 100% and not charging, but current shows charge, assume charging
         if (data->percentage >= 99 && !charging && charging_current) {
             charging = true;
         }
@@ -522,6 +567,8 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     ESP_LOGD(TAG, "Battery: %d%%, %dmV, %dmA, %s",
              data->percentage, data->voltage_mv, data->current_ma,
              data->is_charging ? "charging" : "discharging");
+    ESP_LOGI(TAG, "FG raw: flags=0x%04X soc=%d%% current_ma=%d voltage=%dmV",
+             flags, soc_byte, data->current_ma, data->voltage_mv);
 
     return true;
 }
