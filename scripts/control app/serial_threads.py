@@ -268,3 +268,83 @@ class AssetDownloadThread(QThread):
                         except:
                             pass
                     return
+
+class ReleaseFetchThread(QThread):
+    """Thread for fetching GitHub releases without blocking the UI."""
+    
+    finished = pyqtSignal(list)  # releases list
+    error = pyqtSignal(str)  # error message
+    retry_info = pyqtSignal(str, int, int)  # message, attempt, max_retries
+    
+    def __init__(self, api_url, show_prereleases=False):
+        """
+        Initialize the release fetch thread.
+        
+        Args:
+            api_url (str): The GitHub API URL to fetch releases from
+            show_prereleases (bool): Whether to include prereleases
+        """
+        super().__init__()
+        self.api_url = api_url
+        self.show_prereleases = show_prereleases
+        self.running = True
+    
+    def stop(self):
+        """Stop the fetch thread."""
+        self.running = False
+    
+    def run(self):
+        """Fetch releases in the background."""
+        import requests
+        import time
+        from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
+        
+        max_retries = 3
+        timeout = 30
+        
+        for attempt in range(max_retries):
+            if not self.running:
+                return
+                
+            try:
+                if attempt > 0:
+                    # Exponential backoff
+                    backoff_time = min(2 ** attempt, 8)
+                    self.retry_info.emit(f"Retrying fetch (attempt {attempt + 1}/{max_retries})...", attempt + 1, max_retries)
+                    time.sleep(backoff_time)
+                
+                response = requests.get(self.api_url, timeout=timeout)
+                response.raise_for_status()
+                releases = response.json()
+                
+                # Filter prereleases if needed
+                if not self.show_prereleases:
+                    releases = [
+                        r for r in releases
+                        if not r.get("prerelease", False) and not r.get("tag_name", "").startswith("prerelease-")
+                    ]
+                
+                self.finished.emit(releases)
+                return  # Success
+                
+            except Timeout as e:
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    self.error.emit(f"Timeout: Failed to fetch releases from GitHub. The connection timed out after {timeout} seconds. Please check your internet connection and try again.")
+                    return
+            except RequestsConnectionError as e:
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    self.error.emit(f"Connection error: Failed to fetch releases from GitHub: {str(e)}. You can still use 'Custom local .zip' to flash a local file.")
+                    return
+            except RequestException as e:
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    self.error.emit(f"Failed to fetch releases from GitHub: {str(e)}. You can still use 'Custom local .zip' to flash a local file.")
+                    return
+            except Exception as e:
+                self.error.emit(f"Unexpected error fetching releases: {str(e)}")
+                return

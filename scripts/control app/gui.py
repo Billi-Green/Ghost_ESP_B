@@ -2,7 +2,7 @@ import json
 import re
 from serial.tools import list_ports
 import serial
-from serial_threads import SerialMonitorThread, PortalFileSenderThread, AssetDownloadThread
+from serial_threads import SerialMonitorThread, PortalFileSenderThread, AssetDownloadThread, ReleaseFetchThread
 from dialogs import show_select_ap_dialog, show_custom_beacon_dialog, show_printer_dialog
 from utils import log_message, timestamp
 from espidf_utils import find_esp_idf_gui, download_esp_idf_gui, get_esp_idf_env
@@ -2152,103 +2152,88 @@ class ESP32ControlGUI(QMainWindow):
         """Fetch release tags from GitHub and populate the version dropdown."""
         api_url = "https://api.github.com/repos/jaylikesbunda/Ghost_ESP/releases"
         
+        # Clean up any existing thread
+        if hasattr(self, 'release_fetch_thread') and self.release_fetch_thread:
+            self.release_fetch_thread.finished.disconnect()
+            self.release_fetch_thread.error.disconnect()
+            self.release_fetch_thread.retry_info.disconnect()
+            self.release_fetch_thread.stop()
+            self.release_fetch_thread.wait(100)
+            self.release_fetch_thread = None
+        
         # Show loading state
         self.release_version_combo.blockSignals(True)
         self.release_version_combo.clear()
         self.release_version_combo.addItem("Loading releases...")
         self.release_version_combo.setEnabled(False)
-        QApplication.processEvents()  # Update UI immediately
         
-        try:
-            # Increased timeout to 30 seconds and added retry logic
-            import time
-            max_retries = 3
-            timeout = 30  # Increased from 10 to 30 seconds
-            
-            for attempt in range(max_retries):
-                try:
-                    response = requests.get(api_url, timeout=timeout)
-                    response.raise_for_status()
-                    releases = response.json()
-                    break  # Success, exit retry loop
-                except requests.exceptions.Timeout:
-                    if attempt < max_retries - 1:
-                        # Show retry message
-                        self.release_version_combo.clear()
-                        self.release_version_combo.addItem(f"Retrying... (attempt {attempt + 1}/{max_retries})")
-                        QApplication.processEvents()
-                        time.sleep(1)  # Brief delay before retry
-                        continue
-                    else:
-                        raise  # Re-raise on final attempt
-                except requests.exceptions.RequestException as e:
-                    if attempt < max_retries - 1:
-                        self.release_version_combo.clear()
-                        self.release_version_combo.addItem(f"Retrying... (attempt {attempt + 1}/{max_retries})")
-                        QApplication.processEvents()
-                        time.sleep(1)
-                        continue
-                    else:
-                        raise
-            
-            show_prereleases = self.show_prereleases_checkbox.isChecked()
-            # Filter out versions that start with "prerelease-" if box is unchecked
-            if not show_prereleases:
-                releases = [
-                    r for r in releases
-                    if not r.get("prerelease", False) and not r.get("tag_name", "").startswith("prerelease-")
-                ]
-            self._github_releases = releases  # Save for asset lookup
-            versions = [release.get("tag_name", "Unknown") for release in releases if "tag_name" in release]
-            self.release_version_combo.clear()
-            # Add versions first, then "Custom local .zip" at the end
-            if versions:
-                self.release_version_combo.addItems(versions)
-            else:
-                self.release_version_combo.addItem("No releases found")
-            # Add "Custom local .zip" as the last option
-            self.release_version_combo.addItem("Custom local .zip")
-            self.release_version_combo.setCurrentIndex(0)  # Select first version by default
-            self.release_version_combo.setEnabled(True)
-            self.release_version_combo.blockSignals(False)
-        except requests.exceptions.Timeout:
-            self.release_version_combo.clear()
-            self.release_version_combo.addItem("Timeout: Failed to load releases (network too slow)")
-            self.release_version_combo.addItem("Custom local .zip")
-            self.release_version_combo.setCurrentIndex(0)
-            self.release_version_combo.setEnabled(True)
-            self._github_releases = []
-            error_msg = "Timeout: Failed to fetch releases from GitHub. The connection timed out after 30 seconds. Please check your internet connection and try again."
-            if hasattr(self, 'flash_console'):
-                self.flash_console.append(f"Error: {error_msg}")
-            print(f"Error fetching releases: Timeout after {timeout} seconds")
-        except requests.exceptions.RequestException as e:
-            self.release_version_combo.clear()
-            self.release_version_combo.addItem("Failed to load releases")
-            self.release_version_combo.addItem("Custom local .zip")
-            self.release_version_combo.setCurrentIndex(0)
-            self.release_version_combo.setEnabled(True)
-            self._github_releases = []
-            error_msg = f"Failed to fetch releases from GitHub: {str(e)}. You can still use 'Custom local .zip' to flash a local file."
-            if hasattr(self, 'flash_console'):
-                self.flash_console.append(f"Error: {error_msg}")
-            print(f"Error fetching releases: {e}")
-        except Exception as e:
-            self.release_version_combo.clear()
-            self.release_version_combo.addItem("Failed to load releases")
-            self.release_version_combo.addItem("Custom local .zip")
-            self.release_version_combo.setCurrentIndex(0)
-            self.release_version_combo.setEnabled(True)
-            self._github_releases = []
-            error_msg = f"Unexpected error fetching releases: {str(e)}"
-            if hasattr(self, 'flash_console'):
-                self.flash_console.append(f"Error: {error_msg}")
-            print(f"Error fetching releases: {e}")
-        finally:
-            self.release_version_combo.blockSignals(False)
-
+        # Create and start the fetch thread
+        show_prereleases = self.show_prereleases_checkbox.isChecked()
+        self.release_fetch_thread = ReleaseFetchThread(api_url, show_prereleases)
+        self.release_fetch_thread.finished.connect(self.on_releases_fetched)
+        self.release_fetch_thread.error.connect(self.on_releases_fetch_error)
+        self.release_fetch_thread.retry_info.connect(self.on_releases_fetch_retry)
+        self.release_fetch_thread.start()
+    
+    def on_releases_fetched(self, releases):
+        """Handle successful release fetch."""
+        self._github_releases = releases  # Save for asset lookup
+        versions = [release.get("tag_name", "Unknown") for release in releases if "tag_name" in release]
+        self.release_version_combo.clear()
+        # Add versions first, then "Custom local .zip" at the end
+        if versions:
+            self.release_version_combo.addItems(versions)
+        else:
+            self.release_version_combo.addItem("No releases found")
+        # Add "Custom local .zip" as the last option
+        self.release_version_combo.addItem("Custom local .zip")
+        self.release_version_combo.setCurrentIndex(0)  # Select first version by default
+        self.release_version_combo.setEnabled(True)
+        self.release_version_combo.blockSignals(False)
+        
         # Always update assets dropdown as well
         self.update_release_assets_dropdown()
+        
+        # Clean up thread
+        if hasattr(self, 'release_fetch_thread') and self.release_fetch_thread:
+            self.release_fetch_thread.finished.disconnect()
+            self.release_fetch_thread.error.disconnect()
+            self.release_fetch_thread.retry_info.disconnect()
+            self.release_fetch_thread.wait(100)
+            self.release_fetch_thread = None
+    
+    def on_releases_fetch_error(self, error_msg):
+        """Handle release fetch error."""
+        self.release_version_combo.clear()
+        if "Timeout" in error_msg:
+            self.release_version_combo.addItem("Timeout: Failed to load releases (network too slow)")
+        else:
+            self.release_version_combo.addItem("Failed to load releases")
+        self.release_version_combo.addItem("Custom local .zip")
+        self.release_version_combo.setCurrentIndex(0)
+        self.release_version_combo.setEnabled(True)
+        self._github_releases = []
+        self.release_version_combo.blockSignals(False)
+        
+        if hasattr(self, 'flash_console'):
+            self.flash_console.append(f"Error: {error_msg}")
+        print(f"Error fetching releases: {error_msg}")
+        
+        # Always update assets dropdown as well
+        self.update_release_assets_dropdown()
+        
+        # Clean up thread
+        if hasattr(self, 'release_fetch_thread') and self.release_fetch_thread:
+            self.release_fetch_thread.finished.disconnect()
+            self.release_fetch_thread.error.disconnect()
+            self.release_fetch_thread.retry_info.disconnect()
+            self.release_fetch_thread.wait(100)
+            self.release_fetch_thread = None
+    
+    def on_releases_fetch_retry(self, message, attempt, max_retries):
+        """Handle release fetch retry."""
+        self.release_version_combo.clear()
+        self.release_version_combo.addItem(f"Retrying... (attempt {attempt}/{max_retries})")
 
     def update_release_assets_dropdown(self):
         """Populate the asset dropdown based on the selected version."""
