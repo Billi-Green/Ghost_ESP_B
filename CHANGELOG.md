@@ -49,6 +49,7 @@
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
 - Added RSSI tracking for selected APs and stations
 - Added OUI vendor lookup for access points and stations
+- Added drone detection and spoofing
 
 #### IR
 - Added IR CLI support

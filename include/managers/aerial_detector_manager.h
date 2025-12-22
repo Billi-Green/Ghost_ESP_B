@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_err.h"
 #include "esp_wifi_types.h"
 
 #define AERIAL_MAX_DEVICES 64
