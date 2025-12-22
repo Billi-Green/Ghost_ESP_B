@@ -506,11 +506,7 @@ static void parse_ndef_record(uint8_t tnf,
         else if (pre && strcmp(pre, "mailto:") == 0) append_str(out, cap, "MAIL ");
         else append_str(out, cap, "URL ");
         if (pre) append_str(out, cap, pre);
-        for (size_t i = 1; i < payload_len && *cap > 1; ++i) {
-            unsigned char c = payload[i];
-            if (c >= 32 && c <= 126) { **out = (char)c; (*out)++; (*cap)--; }
-            else { append_fmt(out, cap, "%%%02X", c); }
-        }
+        append_percent_decoded(rest, rest_len, out, cap);
         append_str(out, cap, "\n");
         return;
     }
@@ -548,7 +544,7 @@ static void parse_ndef_record(uint8_t tnf,
         append_str(out, cap, "SmartPoster ");
         if (url_bytes) {
             append_str(out, cap, "URL "); if (url_pre) append_str(out, cap, url_pre);
-            for (size_t i = 0; i < url_len && *cap > 1; ++i) { unsigned char c = url_bytes[i]; if (c >= 32 && c <= 126) { **out = (char)c; (*out)++; (*cap)--; } else { append_fmt(out, cap, "%%%02X", c); } }
+            append_percent_decoded((const char*)url_bytes, url_len, out, cap);
         }
         if (title_bytes && title_len) {
             append_str(out, cap, url_bytes ? " | Title \"" : "Title \"");

@@ -146,6 +146,8 @@
 #### NFC
 - Fixed an issue that would cause MFC dictionary attack to not try all possible keys
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
+- Adjusted NTAG model detection to infer 213/215/216 from read length even when CC size byte is incorrect
+- Decoded NDEF URI fields so symbols like “@” display correctly
 
 #### BLE
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection
