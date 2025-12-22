@@ -1,0 +1,274 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600" viewBox="0 0 1200 1600" fill="none">
+  <style>
+    .bg { fill: #0b0b0b; }
+    .text { fill: #f7f7f7; font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace; }
+    .title { font-size: 22px; letter-spacing: 0.3px; text-anchor: middle; }
+    .header { font-size: 18px; font-weight: 600; }
+    .subhead { font-size: 17px; font-weight: 600; }
+    .row { font-size: 16px; }
+    .col0 { width: 420px; }
+    .col1, .col2, .col3 { width: 200px; text-anchor: middle; }
+    .check { fill: #f7f7f7; }
+  </style>
+  <rect class="bg" x="0" y="0" width="1200" height="1600" rx="24"/>
+  <text class="text title" x="600" y="60">This comparison is based on Ghost ESP. It is not a complete feature list for Bruce or Marauder.</text>
+  <g transform="translate(80,120)">
+    <text class="text header" x="0" y="0">Feature</text>
+    <text class="text header" x="480" y="0" text-anchor="middle">Ghost ESP</text>
+    <text class="text header" x="700" y="0" text-anchor="middle">Bruce</text>
+    <text class="text header" x="920" y="0" text-anchor="middle">ESP32 Marauder</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="2"/>
+  </g>
+
+  <!-- WiFi -->
+  <g transform="translate(80,170)">
+    <text class="text subhead" x="0" y="0">[WiFi]</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="1.5"/>
+    <g class="row" transform="translate(0,30)">
+      <text class="text" x="0" y="0">Deauth / disassoc attacks</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,55)">
+      <text class="text" x="0" y="0">Evil Portal</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,80)">
+      <text class="text" x="0" y="0">Beacon spam (lists/random)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,105)">
+      <text class="text" x="0" y="0">AP / STA / All scans</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,130)">
+      <text class="text" x="0" y="0">Network scanners (ARP/port/SSH)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,155)">
+      <text class="text" x="0" y="0">WiFi OUI vendor lookup</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,180)">
+      <text class="text" x="0" y="0">WPA3 / SAE-specific</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,205)">
+      <text class="text" x="0" y="0">DHCP starvation</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,230)">
+      <text class="text" x="0" y="0">Sweep scan (WiFi/BLE/GPS/802.15.4 CSV)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,255)">
+      <text class="text" x="0" y="0">RSSI tracking for selected APs/stations</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,280)">
+      <text class="text" x="0" y="0">Drone detection / spoofing</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+  </g>
+
+  <!-- BLE -->
+  <g transform="translate(80,500)">
+    <text class="text subhead" x="0" y="0">[BLE]</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="1.5"/>
+    <g class="row" transform="translate(0,30)">
+      <text class="text" x="0" y="0">BLE scan</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,55)">
+      <text class="text" x="0" y="0">BLE spam modes</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,80)">
+      <text class="text" x="0" y="0">BLE wardrive</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,105)">
+      <text class="text" x="0" y="0">AirTag scan / spoof</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,130)">
+      <text class="text" x="0" y="0">Flipper finder</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle">[x]</text>
+    </g>
+    <g class="row" transform="translate(0,155)">
+      <text class="text" x="0" y="0">GATT/service scan + per-device RSSI</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+  </g>
+
+  <!-- NFC -->
+  <g transform="translate(80,700)">
+    <text class="text subhead" x="0" y="0">[NFC / RFID (HF)]</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="1.5"/>
+    <g class="row" transform="translate(0,30)">
+      <text class="text" x="0" y="0">PN532 NTAG/MIFARE Classic</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,55)">
+      <text class="text" x="0" y="0">Flipper .nfc import/export</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,80)">
+      <text class="text" x="0" y="0">Chameleon Ultra</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,105)">
+      <text class="text" x="0" y="0">PM3 MIFARE Classic dict attack</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,130)">
+      <text class="text" x="0" y="0">Flipper NFC parsers (transit/parking)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,155)">
+      <text class="text" x="0" y="0">MIFARE Desfire detection</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+  </g>
+
+  <!-- IR -->
+  <g transform="translate(80,920)">
+    <text class="text subhead" x="0" y="0">[IR]</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="1.5"/>
+    <g class="row" transform="translate(0,30)">
+      <text class="text" x="0" y="0">IR TX/RX on supported boards</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,55)">
+      <text class="text" x="0" y="0">IR Learn mode</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,80)">
+      <text class="text" x="0" y="0">IR Easy Learn mode</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,105)">
+      <text class="text" x="0" y="0">IR CLI tools</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,130)">
+      <text class="text" x="0" y="0">IR Dazzler (38 kHz high duty)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+  </g>
+
+  <!-- Dual communication -->
+  <g transform="translate(80,1100)">
+    <text class="text subhead" x="0" y="0">[Dual communication]</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="1.5"/>
+    <g class="row" transform="translate(0,30)">
+      <text class="text" x="0" y="0">Dual-ESP command support</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,55)">
+      <text class="text" x="0" y="0">WebUI dual-device control</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,80)">
+      <text class="text" x="0" y="0">Dual-ESP display interface (GhostLink)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+  </g>
+
+  <!-- Setup / UI -->
+  <g transform="translate(80,1240)">
+    <text class="text subhead" x="0" y="0">[Setup / UI]</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="1.5"/>
+    <g class="row" transform="translate(0,30)">
+      <text class="text" x="0" y="0">First-boot setup wizard (display builds)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,55)">
+      <text class="text" x="0" y="0">Wired screen mirroring (display builds)</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+  </g>
+
+  <!-- Ethernet -->
+  <g transform="translate(80,1380)">
+    <text class="text subhead" x="0" y="0">[Ethernet]</text>
+    <line x1="0" y1="10" x2="1040" y2="10" stroke="#f7f7f7" stroke-width="1.5"/>
+    <g class="row" transform="translate(0,30)">
+      <text class="text" x="0" y="0">Scan ARP/port/SSH</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+    <g class="row" transform="translate(0,55)">
+      <text class="text" x="0" y="0">Ethernet fingerprint scan</text>
+      <text class="text" x="480" y="0" text-anchor="middle">[x]</text>
+      <text class="text" x="700" y="0" text-anchor="middle"></text>
+      <text class="text" x="920" y="0" text-anchor="middle"></text>
+    </g>
+  </g>
+</svg>
