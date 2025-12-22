@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QComboBox, QPushButton, QLabel, QTextEdit,
                              QTabWidget, QGroupBox, QGridLayout, QLineEdit, QMessageBox,
                              QSplitter, QInputDialog, QSpinBox, QFormLayout, QStyle, QFileDialog, QCheckBox, QDialog, QProgressBar, QSizePolicy, QStackedWidget,
-                             QMenuBar, QDialogButtonBox, QSlider)
+                             QMenuBar, QDialogButtonBox, QSlider, QRadioButton)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QIcon
@@ -297,6 +297,24 @@ class ESP32ControlGUI(QMainWindow):
         self.selected_chip = ""  # Default to blank
         self.chip_combo.currentTextChanged.connect(self.set_chip_type)
 
+        # --- Flash mode selection (separate files vs merged .bin) ---
+        flash_mode_layout = QHBoxLayout()
+        self.flash_mode_separate_radio = QRadioButton("Separate files")
+        self.flash_mode_merged_radio = QRadioButton("Merged .bin file")
+        self.flash_mode_separate_radio.setChecked(True)  # Default to separate files
+        flash_mode_layout.addWidget(QLabel("Mode:"))
+        flash_mode_layout.addWidget(self.flash_mode_separate_radio)
+        flash_mode_layout.addWidget(self.flash_mode_merged_radio)
+        flash_mode_layout.addStretch()
+        flash_firmware_layout.addLayout(flash_mode_layout)
+        self.flash_mode_separate_radio.toggled.connect(self.on_flash_mode_changed)
+        self.flash_mode_merged_radio.toggled.connect(self.on_flash_mode_changed)
+
+        # --- Container for separate files mode ---
+        self.separate_files_widget = QWidget()
+        separate_files_layout = QVBoxLayout(self.separate_files_widget)
+        separate_files_layout.setContentsMargins(0, 0, 0, 0)
+
         # --- Bootloader file selection ---
         bootloader_layout = QHBoxLayout()
         self.bootloader_file_edit = QLineEdit()
@@ -305,7 +323,7 @@ class ESP32ControlGUI(QMainWindow):
         bootloader_browse_btn = QPushButton("Browse")
         bootloader_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.bootloader_file_edit))
         bootloader_layout.addWidget(bootloader_browse_btn)
-        flash_firmware_layout.addLayout(bootloader_layout)
+        separate_files_layout.addLayout(bootloader_layout)
 
         # --- Partition table file selection ---
         partition_layout = QHBoxLayout()
@@ -315,7 +333,7 @@ class ESP32ControlGUI(QMainWindow):
         partition_browse_btn = QPushButton("Browse")
         partition_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.partition_file_edit))
         partition_layout.addWidget(partition_browse_btn)
-        flash_firmware_layout.addLayout(partition_layout)
+        separate_files_layout.addLayout(partition_layout)
 
         # --- Firmware file selection ---
         firmware_layout = QHBoxLayout()
@@ -325,7 +343,27 @@ class ESP32ControlGUI(QMainWindow):
         firmware_browse_btn = QPushButton("Browse")
         firmware_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.firmware_file_edit))
         firmware_layout.addWidget(firmware_browse_btn)
-        flash_firmware_layout.addLayout(firmware_layout)
+        separate_files_layout.addLayout(firmware_layout)
+
+        flash_firmware_layout.addWidget(self.separate_files_widget)
+
+        # --- Container for merged file mode ---
+        self.merged_file_widget = QWidget()
+        merged_file_layout = QVBoxLayout(self.merged_file_widget)
+        merged_file_layout.setContentsMargins(0, 0, 0, 0)
+        self.merged_file_widget.hide()  # Hidden by default
+
+        # --- Merged .bin file selection ---
+        merged_layout = QHBoxLayout()
+        self.merged_file_edit = QLineEdit()
+        self.merged_file_edit.setPlaceholderText("Select merged .bin file...")
+        merged_layout.addWidget(self.merged_file_edit)
+        merged_browse_btn = QPushButton("Browse")
+        merged_browse_btn.clicked.connect(lambda: self.browse_bin_file(self.merged_file_edit))
+        merged_layout.addWidget(merged_browse_btn)
+        merged_file_layout.addLayout(merged_layout)
+
+        flash_firmware_layout.addWidget(self.merged_file_widget)
 
         # --- Flash/Exit buttons and status ---
         self.flash_btn = QPushButton("Flash Board")
@@ -641,62 +679,121 @@ class ESP32ControlGUI(QMainWindow):
         if file_path:
             self.flash_file_edit.setText(file_path)
 
+    def on_flash_mode_changed(self):
+        """Toggle visibility of separate files vs merged file widgets based on radio button selection."""
+        if self.flash_mode_separate_radio.isChecked():
+            self.separate_files_widget.show()
+            self.merged_file_widget.hide()
+        else:
+            self.separate_files_widget.hide()
+            self.merged_file_widget.show()
+
     def flash_board(self):
-        """Flash the selected firmware, bootloader, and partition table to the ESP32 board."""
+        """Flash the selected firmware, bootloader, and partition table to the ESP32 board, or a merged .bin file."""
         # get actual device from combo data if available
         data = self.port_combo.currentData()
         port = data if data else self.port_combo.currentText().split()[0]
         chip = getattr(self, "selected_chip", "")
-        bootloader = self.bootloader_file_edit.text().strip()
-        partition = self.partition_file_edit.text().strip()
-        firmware = self.firmware_file_edit.text().strip()
 
         # Validate inputs
         if not chip:
             self.flash_status.setText("Please select a chip type before flashing.")
             return
-        if not all([bootloader, partition, firmware, port]):
-            self.flash_status.setText("Please select all .bin files and a serial port.")
+        if not port:
+            self.flash_status.setText("Please select a serial port.")
             return
 
-        # Determine offsets based on chip type
-        if chip in ["esp32s2", "esp32"]:
-            boot_offset = "0x1000"
-        elif chip in ["esp32s3", "esp32c3", "esp32c5", "esp32c6"]:
-            boot_offset = "0x0"
-        else:
-            boot_offset = "0x1000"  # Default/fallback
-
-        partition_offset = "0x8000"
-        firmware_offset = "0x10000"
-
-        self.flash_status.setText(f"Flashing ({chip})... Please wait.")
-        self.flash_console.clear()
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            import subprocess
-            cmd = [
-                sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write_flash",
-                boot_offset, bootloader,
-                partition_offset, partition,
-                firmware_offset, firmware
-            ]
-            self.flash_console.append(f"$ {' '.join(cmd)}\n")
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            for line in process.stdout:
-                self.flash_console.append(line.rstrip())
-                self.flash_console.ensureCursorVisible()
-                QApplication.processEvents()  # Keep UI responsive
-            process.wait()
-            if process.returncode == 0:
-                self.flash_status.setText("Flashing successful!")
+        # Check which mode is selected
+        use_merged = self.flash_mode_merged_radio.isChecked()
+        
+        if use_merged:
+            # Merged .bin file mode
+            merged_file = self.merged_file_edit.text().strip()
+            if not merged_file:
+                self.flash_status.setText("Please select a merged .bin file.")
+                return
+            
+            # Determine boot offset based on chip type (for merged files, we flash at boot offset)
+            if chip in ["esp32s2", "esp32"]:
+                flash_offset = "0x1000"
+            elif chip in ["esp32s3", "esp32c3", "esp32c5", "esp32c6"]:
+                flash_offset = "0x0"
             else:
-                self.flash_status.setText("Flashing failed. See console output.")
-        except Exception as e:
-            self.flash_status.setText(f"Error: {str(e)}")
-            self.flash_console.append(f"Error: {str(e)}")
-        finally:
-            QApplication.restoreOverrideCursor()
+                flash_offset = "0x1000"  # Default/fallback
+
+            self.flash_status.setText(f"Flashing merged .bin ({chip})... Please wait.")
+            self.flash_console.clear()
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                import subprocess
+                cmd = [
+                    sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write_flash",
+                    flash_offset, merged_file
+                ]
+                self.flash_console.append(f"$ {' '.join(cmd)}\n")
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                for line in process.stdout:
+                    self.flash_console.append(line.rstrip())
+                    self.flash_console.ensureCursorVisible()
+                    QApplication.processEvents()  # Keep UI responsive
+                process.wait()
+                if process.returncode == 0:
+                    self.flash_status.setText("Flashing successful!")
+                else:
+                    self.flash_status.setText("Flashing failed. See console output.")
+            except Exception as e:
+                self.flash_status.setText(f"Error: {str(e)}")
+                self.flash_console.append(f"Error: {str(e)}")
+            finally:
+                QApplication.restoreOverrideCursor()
+        else:
+            # Separate files mode
+            bootloader = self.bootloader_file_edit.text().strip()
+            partition = self.partition_file_edit.text().strip()
+            firmware = self.firmware_file_edit.text().strip()
+
+            if not all([bootloader, partition, firmware]):
+                self.flash_status.setText("Please select all .bin files.")
+                return
+
+            # Determine offsets based on chip type
+            if chip in ["esp32s2", "esp32"]:
+                boot_offset = "0x1000"
+            elif chip in ["esp32s3", "esp32c3", "esp32c5", "esp32c6"]:
+                boot_offset = "0x0"
+            else:
+                boot_offset = "0x1000"  # Default/fallback
+
+            partition_offset = "0x8000"
+            firmware_offset = "0x10000"
+
+            self.flash_status.setText(f"Flashing ({chip})... Please wait.")
+            self.flash_console.clear()
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                import subprocess
+                cmd = [
+                    sys.executable, "-m", "esptool", "--chip", chip, "--port", port, "write_flash",
+                    boot_offset, bootloader,
+                    partition_offset, partition,
+                    firmware_offset, firmware
+                ]
+                self.flash_console.append(f"$ {' '.join(cmd)}\n")
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                for line in process.stdout:
+                    self.flash_console.append(line.rstrip())
+                    self.flash_console.ensureCursorVisible()
+                    QApplication.processEvents()  # Keep UI responsive
+                process.wait()
+                if process.returncode == 0:
+                    self.flash_status.setText("Flashing successful!")
+                else:
+                    self.flash_status.setText("Flashing failed. See console output.")
+            except Exception as e:
+                self.flash_status.setText(f"Error: {str(e)}")
+                self.flash_console.append(f"Error: {str(e)}")
+            finally:
+                QApplication.restoreOverrideCursor()
 
     def flash_custom_build(self):
         """Flash the .bin files built in ../../build to the ESP32 board."""
