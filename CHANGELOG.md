@@ -5,6 +5,7 @@
 ## Revival v1.9.1
 
 - Fixed WebUI AP-only restriction to correctly allow AP clients (including IPv6-mapped IPv4 addresses)
+- 'setcountry' command is now case-insensitive
 - Fixed T-Deck trackball spamming inputs
 
 
