@@ -3,6 +3,7 @@
 #include "core/commandline.h"
 #include "core/callbacks.h"
 #include "core/serial_manager.h"
+#include "core/utils.h"
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
 #include "sdkconfig.h"
@@ -5892,9 +5893,17 @@ void handle_setcountry(int argc, char **argv) {
         status_display_show_status("Country Usage");
         return;
     }
-    esp_err_t err = esp_wifi_set_country_code(argv[1], true);
+
+    char cc_upper[4];
+    if (!str_copy_upper(cc_upper, sizeof(cc_upper), argv[1])) {
+        glog("failed to set country: invalid country code\n");
+        status_display_show_status("Country Fail");
+        return;
+    }
+
+    esp_err_t err = esp_wifi_set_country_code(cc_upper, true);
     if (err == ESP_OK) {
-        glog("country set to %s\n", argv[1]);
+        glog("country set to %s\n", cc_upper);
         status_display_show_status("Country Set");
     } else {
         glog("failed to set country: %s\n", esp_err_to_name(err));
