@@ -133,6 +133,28 @@ static void battery_poll_task(void *arg) {
 #define TDECK_KEY_DEBOUNCE_MS                30
 #define TDECK_EVENT_RATE_LIMIT_MS            10
 
+#define TDECK_TRACKBALL_DEBOUNCE_MS          200
+#define TDECK_TRACKBALL_POST_DELAY_MS        50
+
+static volatile bool trackball_up_flag = false;
+static volatile bool trackball_down_flag = false;
+static volatile bool trackball_left_flag = false;
+static volatile bool trackball_right_flag = false;
+static volatile uint32_t trackball_last_event_ms = 0;
+
+static void IRAM_ATTR trackball_isr_up(void *arg) {
+    trackball_up_flag = true;
+}
+static void IRAM_ATTR trackball_isr_down(void *arg) {
+    trackball_down_flag = true;
+}
+static void IRAM_ATTR trackball_isr_left(void *arg) {
+    trackball_left_flag = true;
+}
+static void IRAM_ATTR trackball_isr_right(void *arg) {
+    trackball_right_flag = true;
+}
+
 void set_keyboard_brightness(uint8_t brightness);
 
 #endif
@@ -1033,6 +1055,24 @@ void display_manager_init(void) {
 
 #ifdef CONFIG_USE_TDECK
 set_keyboard_brightness(0xFF); // Set to 100% brightness
+
+gpio_install_isr_service(0);
+
+gpio_config_t trackball_io_conf = {
+    .pin_bit_mask = (1ULL << CONFIG_U_BTN) | (1ULL << CONFIG_D_BTN) | 
+                    (1ULL << CONFIG_L_BTN) | (1ULL << CONFIG_R_BTN),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_NEGEDGE,
+};
+gpio_config(&trackball_io_conf);
+
+gpio_isr_handler_add(CONFIG_U_BTN, trackball_isr_up, NULL);
+gpio_isr_handler_add(CONFIG_D_BTN, trackball_isr_down, NULL);
+gpio_isr_handler_add(CONFIG_L_BTN, trackball_isr_left, NULL);
+gpio_isr_handler_add(CONFIG_R_BTN, trackball_isr_right, NULL);
+ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #endif
 #ifndef CONFIG_JC3248W535EN_LCD
   // Initialize I2C driver for touch functionality
@@ -1491,6 +1531,7 @@ void hardware_input_task(void *pvParameters) {
   static uint8_t last_tdeck_key = 0;
   static uint32_t last_tdeck_key_ms = 0;
   static uint32_t last_tdeck_event_ms = 0;
+  static uint8_t last_tdeck_sent = 0;
 
   gpio_set_direction(46, GPIO_MODE_INPUT);
 #endif
@@ -1524,10 +1565,10 @@ void hardware_input_task(void *pvParameters) {
       }
 
       uint32_t now_ms = dm_now_ms();
-      bool should_emit = true;
-      if ((uint32_t)(now_ms - last_tdeck_event_ms) < (uint32_t)TDECK_EVENT_RATE_LIMIT_MS) {
+      bool should_emit = (data[0] != last_tdeck_sent);
+      if (should_emit && (uint32_t)(now_ms - last_tdeck_event_ms) < (uint32_t)TDECK_EVENT_RATE_LIMIT_MS) {
         should_emit = false;
-      } else if (data[0] == last_tdeck_key && (uint32_t)(now_ms - last_tdeck_key_ms) < (uint32_t)TDECK_KEY_DEBOUNCE_MS) {
+      } else if (should_emit && data[0] == last_tdeck_key && (uint32_t)(now_ms - last_tdeck_key_ms) < (uint32_t)TDECK_KEY_DEBOUNCE_MS) {
         should_emit = false;
       }
 
@@ -1535,6 +1576,7 @@ void hardware_input_task(void *pvParameters) {
         last_tdeck_event_ms = now_ms;
         last_tdeck_key = data[0];
         last_tdeck_key_ms = now_ms;
+        last_tdeck_sent = data[0];
 
         last_touch_time = xTaskGetTickCount();
 
@@ -1545,6 +1587,9 @@ void hardware_input_task(void *pvParameters) {
           ESP_LOGE(TAG, "Failed to send button input to queue\n");
         }
       }
+    } else {
+      last_tdeck_key = 0;
+      last_tdeck_sent = 0;
     }
 #endif
 
@@ -1789,6 +1834,55 @@ void hardware_input_task(void *pvParameters) {
 #endif
 
  #ifdef CONFIG_USE_JOYSTICK
+#ifdef CONFIG_USE_TDECK
+    {
+      uint32_t now_ms = dm_now_ms();
+      if ((now_ms - trackball_last_event_ms) >= TDECK_TRACKBALL_DEBOUNCE_MS) {
+        int direction = -1;
+        
+        if (trackball_up_flag || trackball_left_flag) {
+          direction = trackball_up_flag ? 2 : 0;  // Up=2, Left=0
+        } else if (trackball_down_flag || trackball_right_flag) {
+          direction = trackball_down_flag ? 4 : 3;  // Down=4, Right=3
+        }
+        
+        trackball_up_flag = false;
+        trackball_down_flag = false;
+        trackball_left_flag = false;
+        trackball_right_flag = false;
+        
+        if (direction >= 0) {
+          trackball_last_event_ms = now_ms;
+          last_touch_time = xTaskGetTickCount();
+          
+          if (is_backlight_dimmed) {
+            set_backlight_brightness(100);
+            is_backlight_dimmed = false;
+          } else {
+            InputEvent event;
+            event.type = INPUT_TYPE_JOYSTICK;
+            event.data.joystick_index = direction;
+            xQueueSend(input_queue, &event, pdMS_TO_TICKS(10));
+          }
+          
+          vTaskDelay(pdMS_TO_TICKS(TDECK_TRACKBALL_POST_DELAY_MS));
+        }
+      } else {
+        trackball_up_flag = false;
+        trackball_down_flag = false;
+        trackball_left_flag = false;
+        trackball_right_flag = false;
+      }
+      
+      if (joystick_just_pressed(&joysticks[1])) {
+        last_touch_time = xTaskGetTickCount();
+        InputEvent event;
+        event.type = INPUT_TYPE_JOYSTICK;
+        event.data.joystick_index = 1;
+        xQueueSend(input_queue, &event, pdMS_TO_TICKS(10));
+      }
+    }
+#else
     static uint32_t joystick_repeat_next_ms[5] = {0};
     for (int i = 0; i < 5; i++) {
       if (joysticks[i].pin < 0) continue;
@@ -1830,6 +1924,7 @@ void hardware_input_task(void *pvParameters) {
         }
       }
     }
+#endif
  #endif
 
 #ifdef CONFIG_USE_TOUCHSCREEN

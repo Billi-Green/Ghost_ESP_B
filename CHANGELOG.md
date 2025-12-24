@@ -3,7 +3,10 @@
 
 
 ## Revival v1.9.1
+
 - Fixed WebUI AP-only restriction to correctly allow AP clients (including IPv6-mapped IPv4 addresses)
+- Fixed T-Deck trackball spamming inputs
+
 
 ## Revival v1.9
 
