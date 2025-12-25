@@ -10,6 +10,7 @@
 - Removed limit of 50 for 'scanap' to prevent getting rid of early entries
 - Changed "Unknown command" to "Unsupported command" in CLI error messages for better UX.
 - Improved Cardputer charging detection
+- Fixed dedicated GhostLink webui terminal not showing responses
 
 ## Revival v1.9
 
