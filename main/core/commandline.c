@@ -230,7 +230,7 @@ CommandFunction find_command(const char *name) {
 }
 
 void handle_unknown_command(const char *cmd) {
-    glog("Unknown command: %s\n", cmd);
+    glog("Unsupported command: %s\n", cmd);
 }
 
 void cmd_wifi_scan_start(int argc, char **argv) {
@@ -2512,7 +2512,7 @@ void handle_eth_config_cmd(int argc, char **argv) {
             glog("  Gateway: %s\n", gw_str);
         }
     } else {
-        glog("Unknown command: %s\n", argv[1]);
+        glog("Unsupported command: %s\n", argv[1]);
     }
 }
 
@@ -2567,7 +2567,7 @@ void handle_eth_mac_cmd(int argc, char **argv) {
             glog("Failed to set MAC address: %s\n", esp_err_to_name(ret));
         }
     } else {
-        glog("Unknown command: %s\n", argv[1]);
+        glog("Unsupported command: %s\n", argv[1]);
     }
 }
 
@@ -7950,7 +7950,7 @@ void handle_evilportal(int argc, char **argv) {
         wifi_manager_clear_html_buffer();
         glog("HTML buffer cleared - will use default portal on next startportal\n");
     } else {
-        glog("Error: Unknown command '%s'\n", argv[2]);
+        glog("Error: Unsupported command '%s'\n", argv[2]);
     }
 }
 
