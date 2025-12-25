@@ -3883,9 +3883,6 @@ void wifi_manager_print_scan_results_with_oui() {
     }
 
     uint16_t limit = ap_count;
-    if (limit > 50) {
-        limit = 50;
-    }
 
     for (uint16_t i = 0; i < limit; i++) {
         char sanitized_ssid[33];

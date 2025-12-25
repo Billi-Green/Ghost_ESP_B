@@ -7,7 +7,7 @@
 - Fixed WebUI AP-only restriction to correctly allow AP clients (including IPv6-mapped IPv4 addresses)
 - 'setcountry' command is now case-insensitive
 - Fixed T-Deck trackball spamming inputs
-
+- removed limit of 50 for 'scanap' to prevent getting rid of early entries
 
 ## Revival v1.9
 
