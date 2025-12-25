@@ -343,10 +343,13 @@ static int last_mv = 0;
 #ifdef CONFIG_USE_CARDPUTER
 static int s_filtered_mv = -1;
 static int s_display_percent = -1;
+static int s_charge_samples[5] = {0};
+static int s_charge_sample_idx = 0;
+static bool s_charge_samples_filled = false;
 #endif
 
 // threshold to ignore ADC noise
-#define CHARGE_THRESH_MV 15
+#define CHARGE_THRESH_MV 30
 
 int getBattery() {
     uint8_t percent;
@@ -409,13 +412,30 @@ int getBattery() {
     mv = (mv * 2);
 #endif
 
-    // -- charging detection by comparing to last reading --
+    // -- charging detection using rolling window to filter noise --
+#ifdef CONFIG_USE_CARDPUTER
+    s_charge_samples[s_charge_sample_idx] = mv;
+    s_charge_sample_idx = (s_charge_sample_idx + 1) % 5;
+    if (s_charge_sample_idx == 0) s_charge_samples_filled = true;
+    
+    if (s_charge_samples_filled) {
+        int oldest_mv = s_charge_samples[s_charge_sample_idx];
+        int trend = mv - oldest_mv;
+        
+        if (trend > CHARGE_THRESH_MV) {
+            _isCharging = true;
+        } else if (trend < -CHARGE_THRESH_MV) {
+            _isCharging = false;
+        }
+    }
+#else
     if (last_mv != 0) {
         int diff = mv - last_mv;
         if (diff >  CHARGE_THRESH_MV) _isCharging = true;
         if (diff < -CHARGE_THRESH_MV) _isCharging = false;
     }
     last_mv = mv;
+#endif
 
     ESP_LOGD(TAG, "Battery ADC raw: %d, mV: %d", raw, mv);
 
