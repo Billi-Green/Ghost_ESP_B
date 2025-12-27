@@ -315,6 +315,9 @@ esp_err_t rgb_manager_init(RGBManager_t *rgb_manager, gpio_num_t pin,
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,   // Portable default clock source
         .resolution_hz = 5 * 1000 * 1000, // 5 MHz resolution
+#ifdef CONFIG_IDF_TARGET_ESP32C5
+        .mem_block_symbols = 96,
+#endif
 #if SOC_RMT_SUPPORT_DMA
         .flags.with_dma = 1               // Use DMA to reduce flicker under load
 #else
