@@ -571,8 +571,7 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
     // Handle single pin LED strip using RMT
 
     if (!rgb_manager->strip) {
-      ESP_LOGE(TAG, "LED strip handle is NULL");
-      return ESP_ERR_INVALID_STATE; // Not initialized
+      return ESP_OK; // No LED strip configured - silently ignore
     }
 
     if (pulse && rgb_manager->num_leds <= 1) {
