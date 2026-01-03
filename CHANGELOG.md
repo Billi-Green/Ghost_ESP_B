@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Added Wireshark dongle mode for real-time PCAP streaming over USB/UART
-- Rewrote DIAL to use HTTP-only mode (no HTTPS needed, works on ESP32-C3)
+- Rewrote DIAL functionality to remove the need for HTTPS, decrease ram usage and increase reliability
 - Fixed RGB LED error spam on devices without LEDs configured
 
 
