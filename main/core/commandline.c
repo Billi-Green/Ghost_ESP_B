@@ -1488,8 +1488,32 @@ void handle_capture_scan(int argc, char **argv) {
         status_display_show_status("Capture WPS");
     }
 
+    if (strcmp(capturetype, "-wireshark") == 0) {
+        status_display_show_status("Wireshark WiFi");
+        int err = pcap_wireshark_start(PCAP_CAPTURE_WIFI);
+        if (err != ESP_OK) {
+            status_display_show_status("Wireshark Err");
+            return;
+        }
+        wifi_manager_start_monitor_mode(wifi_raw_scan_callback);
+        wifi_manager_start_wireshark_channel_hop();
+    }
+
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    if (strcmp(capturetype, "-wiresharkble") == 0) {
+        status_display_show_status("Wireshark BLE");
+        int err = pcap_wireshark_start(PCAP_CAPTURE_BLUETOOTH);
+        if (err != ESP_OK) {
+            status_display_show_status("Wireshark Err");
+            return;
+        }
+        ble_start_capture_wireshark();
+    }
+#endif
+
     if (strcmp(capturetype, "-stop") == 0) {
         glog("Stopping packet capture...\n");
+        wifi_manager_stop_wireshark_channel_hop();
         wifi_manager_stop_monitor_mode();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
         ble_stop();
@@ -1498,6 +1522,7 @@ void handle_capture_scan(int argc, char **argv) {
         zigbee_manager_stop_capture();
 #endif
         pcap_file_close();
+        pcap_wireshark_stop();
         status_display_show_status("Capture Stop");
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -3925,16 +3950,17 @@ void handle_help(int argc, char **argv) {
         glog("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
         glog("    Usage: capture [OPTION]\n");
         glog("    Arguments:\n");
-        glog("        -probe   : Start Capturing Probe Packets\n");
-        glog("        -beacon  : Start Capturing Beacon Packets\n");
-        glog("        -deauth   : Start Capturing Deauth Packets\n");
-        glog("        -raw   :   Start Capturing Raw Packets\n");
-        glog("        -wps   :   Start Capturing WPS Packets and there Auth Type\n");
-        glog("        -pwn   :   Start Capturing Pwnagotchi Packets\n");
+        glog("        -probe     : Start Capturing Probe Packets\n");
+        glog("        -beacon    : Start Capturing Beacon Packets\n");
+        glog("        -deauth    : Start Capturing Deauth Packets\n");
+        glog("        -raw       : Start Capturing Raw Packets\n");
+        glog("        -wps       : Start Capturing WPS Packets and there Auth Type\n");
+        glog("        -pwn       : Start Capturing Pwnagotchi Packets\n");
+        glog("        -wireshark : Stream raw PCAP to USB/UART for Wireshark\n");
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        glog("        -802154:   Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
+        glog("        -802154    : Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
         #endif
-        glog("        -stop   : Stops the active capture\n\n");
+        glog("        -stop      : Stops the active capture\n\n");
         glog("capture\n");
         glog("    Start a WiFi packet capture.\n");
         glog("    Usage: capture [OPTION]\n");

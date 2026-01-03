@@ -1,5 +1,10 @@
 # Ghost ESP Changelog
 
+## Unreleased
+
+
+- Added Wireshark dongle mode for real-time PCAP streaming over USB/UART
+
 
 
 ## Revival v1.9.1

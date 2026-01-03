@@ -1068,10 +1068,12 @@ void ble_stop_skimmer_detection(void) {
     pcap_file_close();           // Close the file after final flush
 
     /* final capture summary */
-    glog("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
-         (unsigned long)ble_pcap_packet_count,
-         (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
-         (unsigned long)ble_pcap_event_total_count);
+    if (!pcap_is_wireshark_mode()) {
+        glog("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+             (unsigned long)ble_pcap_packet_count,
+             (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+             (unsigned long)ble_pcap_event_total_count);
+    }
     /* reset counters for next capture */
     ble_pcap_packet_count = 0;
     ble_pcap_event_total_count = 0;
@@ -1079,10 +1081,14 @@ void ble_stop_skimmer_detection(void) {
     int rc = ble_gap_disc_cancel();
 
     if (rc == 0) {
-        glog("BLE skimmer detection stopped successfully.\n");
+        if (!pcap_is_wireshark_mode()) {
+            glog("BLE skimmer detection stopped successfully.\n");
+        }
         status_display_show_status("Skimmer Stopped");
     } else {
-        glog("Error stopping BLE skimmer detection: %d\n", rc);
+        if (!pcap_is_wireshark_mode()) {
+            glog("Error stopping BLE skimmer detection: %d\n", rc);
+        }
         status_display_show_status("Skimmer Stop Fail");
     }
 }
@@ -2014,10 +2020,12 @@ void ble_stop(void) {
     pcap_file_close();           // Close the file after final flush
 
     /* final capture summary */
-    glog("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
-         (unsigned long)ble_pcap_packet_count,
-         (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
-         (unsigned long)ble_pcap_event_total_count);
+    if (!pcap_is_wireshark_mode()) {
+        glog("BLE capture summary: captured=%lu filtered=%lu total=%lu\n",
+             (unsigned long)ble_pcap_packet_count,
+             (unsigned long)((ble_pcap_event_total_count > ble_pcap_packet_count) ? (ble_pcap_event_total_count - ble_pcap_packet_count) : 0),
+             (unsigned long)ble_pcap_event_total_count);
+    }
     /* reset counters for next capture */
     ble_pcap_packet_count = 0;
     ble_pcap_event_total_count = 0;
@@ -2029,27 +2037,39 @@ void ble_stop(void) {
 
     switch (rc) {
     case 0:
-        glog("BLE scan stopped successfully.\n");
+        if (!pcap_is_wireshark_mode()) {
+            glog("BLE scan stopped successfully.\n");
+        }
         status_display_show_status("BLE Stopped");
         break;
     case BLE_HS_EBUSY:
-        glog("BLE scan is busy\n");
+        if (!pcap_is_wireshark_mode()) {
+            glog("BLE scan is busy\n");
+        }
         status_display_show_status("BLE Busy");
         break;
     case BLE_HS_ETIMEOUT:
-        glog("BLE operation timed out.\n");
+        if (!pcap_is_wireshark_mode()) {
+            glog("BLE operation timed out.\n");
+        }
         status_display_show_status("BLE Timeout");
         break;
     case BLE_HS_ENOTCONN:
-        glog("BLE not connected.\n");
+        if (!pcap_is_wireshark_mode()) {
+            glog("BLE not connected.\n");
+        }
         status_display_show_status("BLE No Conn");
         break;
     case BLE_HS_EINVAL:
-        glog("BLE invalid parameter.\n");
+        if (!pcap_is_wireshark_mode()) {
+            glog("BLE invalid parameter.\n");
+        }
         status_display_show_status("BLE Invalid");
         break;
     default:
-        glog("Error stopping BLE scan: %d\n", rc);
+        if (!pcap_is_wireshark_mode()) {
+            glog("Error stopping BLE scan: %d\n", rc);
+        }
         status_display_show_status("BLE Stop Fail");
     }
 
@@ -2057,12 +2077,15 @@ void ble_stop(void) {
 }
 
 void ble_start_blespam_detector(void) {
-    if (!ble_initialized) {
-        ble_init();
+    // Register the skimmer detection callback
+    esp_err_t err = ble_register_handler(detect_ble_spam_callback);
+    if (err != ESP_OK) {
+        ESP_LOGE("BLE", "Failed to register skimmer detection callback");
+        return;
     }
 
+    // Start BLE scanning
     ble_start_scanning();
-    ble_register_handler(detect_ble_spam_callback);
 }
 
 void ble_start_raw_ble_packetscan(void) {
@@ -2127,52 +2150,36 @@ static void ble_pcap_callback(struct ble_gap_event *event, size_t len) {
     size_t hci_len = 0;
 
     if (event->type == BLE_GAP_EVENT_DISC) {
-        // [1] HCI packet type (0x04 for HCI Event)
-        hci_buffer[0] = 0x04;
+        hci_buffer[0] = 0x04; // HCI packet type (HCI Event)
+        hci_buffer[1] = 0x3E; // HCI Event Code (LE Meta Event)
 
-        // [2] HCI Event Code (0x3E for LE Meta Event)
-        hci_buffer[1] = 0x3E;
-
-        // [3] Calculate total parameter length
-        uint8_t param_len = 10 + event->disc.length_data; // 1 (subevent) + 1 (num reports) + 1
-                                                          // (event type) + 1 (addr type) + 6 (addr)
+        uint8_t param_len = 10 + event->disc.length_data;
         hci_buffer[2] = param_len;
 
-        // [4] LE Meta Subevent (0x02 for LE Advertising Report)
-        hci_buffer[3] = 0x02;
-
-        // [5] Number of reports
-        hci_buffer[4] = 0x01;
-
-        // [6] Event type (ADV_IND = 0x00)
-        hci_buffer[5] = 0x00;
-
-        // [7] Address type
+        hci_buffer[3] = 0x02; // LE Meta Subevent (LE Advertising Report)
+        hci_buffer[4] = 0x01; // Number of reports
+        hci_buffer[5] = 0x00; // Event type (ADV_IND)
         hci_buffer[6] = event->disc.addr.type;
-
-        // [8] Address (6 bytes)
         memcpy(&hci_buffer[7], event->disc.addr.val, 6);
-
-        // [9] Data length
         hci_buffer[13] = event->disc.length_data;
 
-        // [10] Data
         if (event->disc.length_data > 0) {
             memcpy(&hci_buffer[14], event->disc.data, event->disc.length_data);
         }
 
-        // [11] RSSI
         hci_buffer[14 + event->disc.length_data] = (uint8_t)event->disc.rssi;
 
-        hci_len = 15 + event->disc.length_data; // Total length
+        hci_len = 15 + event->disc.length_data;
 
         /* keep a lightweight counter and occasionally report a summary */
 
         ble_pcap_packet_count++;
         if ((ble_pcap_packet_count % 50) == 0) {
             uint32_t filtered = ble_pcap_event_total_count - ble_pcap_packet_count;
-            glog("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
-                 (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
+            if (!pcap_is_wireshark_mode()) {
+                glog("BLE: %lu packets captured, %lu filtered (total events %lu)\n",
+                     (unsigned long)ble_pcap_packet_count, (unsigned long)filtered, (unsigned long)ble_pcap_event_total_count);
+            }
         }
 
         pcap_write_packet_to_buffer(hci_buffer, hci_len, PCAP_CAPTURE_BLUETOOTH);
@@ -2216,6 +2223,41 @@ void ble_start_capture(void) {
 
     ble_start_scanning();
     status_display_show_status("BLE Capture On");
+}
+
+void ble_start_capture_wireshark(void) {
+    if (!ble_initialized) {
+        ble_init();
+    }
+
+    if (!wait_for_ble_ready()) {
+        ESP_LOGE(TAG_BLE, "BLE stack not ready");
+        return;
+    }
+
+    /* reset counters for a fresh capture session */
+    ble_pcap_packet_count = 0;
+    ble_pcap_event_total_count = 0;
+
+    if (flush_timer != NULL) {
+        esp_timer_stop(flush_timer);
+        esp_timer_delete(flush_timer);
+        flush_timer = NULL;
+    }
+
+    /* Register BLE handler to emit HCI packets into the PCAP buffer */
+    ble_register_handler(ble_pcap_callback);
+
+    /* Flush more frequently for better live capture latency */
+    esp_timer_create_args_t timer_args = {.callback = (esp_timer_cb_t)pcap_flush_buffer_to_file,
+                                          .name = "pcap_flush"};
+
+    if (esp_timer_create(&timer_args, &flush_timer) == ESP_OK) {
+        esp_timer_start_periodic(flush_timer, 200000);
+    }
+
+    ble_start_scanning();
+    status_display_show_status("BLE Wireshark");
 }
 
 void ble_start_skimmer_detection(void) {
