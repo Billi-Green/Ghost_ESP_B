@@ -711,16 +711,15 @@ void handle_select_cmd(int argc, char **argv) {
     }
 }
 
+static bool g_dial_cast_all = false;
+
 void discover_task(void *pvParameter) {
     DIALClient client;
     DIALManager manager;
 
     if (dial_client_init(&client) == ESP_OK) {
-
         dial_manager_init(&manager, &client);
-
-        explore_network(&manager);
-
+        explore_network(&manager, g_dial_cast_all);
         dial_client_deinit(&client);
     } else {
         glog("Failed to init DIAL client.\n");
@@ -822,14 +821,13 @@ void handle_stop_flipper(int argc, char **argv) {
 }
 
 void handle_dial_command(int argc, char **argv) {
-    // Usage: dial [device_name]
-    if (argc > 2) {
-        glog("Usage: %s [device_name]\n", argv[0]);
-        return;
-    }
-    // If a device name is provided, set it before discovery
-    if (argc == 2) {
-        dial_manager_set_device_name(argv[1]);
+    g_dial_cast_all = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "all") == 0 || strcmp(argv[i], "-a") == 0) {
+            g_dial_cast_all = true;
+        } else {
+            dial_manager_set_device_name(argv[i]);
+        }
     }
     xTaskCreate(&discover_task, "discover_task", DISCOVER_TASK_STACK, NULL, 5, NULL);
 }
