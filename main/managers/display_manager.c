@@ -243,6 +243,12 @@ void set_display_timeout(uint32_t timeout_ms) {
 #ifdef CONFIG_USE_CARDPUTER
 Keyboard_t gkeyboard;
 
+static bool caps_latch = false;
+static int shift_count = 0;
+static int shift_count_before_caps = 10;
+static Point2D_t last_pressed_keys[16];
+static size_t last_pressed_len = 0;
+
 void m5stack_lvgl_render_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                                   lv_color_t *color_p) {
   int32_t x1 = area->x1;
@@ -339,6 +345,12 @@ static uint8_t cardputer_voltage_to_percent(int mv) {
     return s_cardputer_soc_table[CARDPUTER_SOC_TABLE_SIZE - 1].percent;
 }
 
+static int s_filtered_mv = -1;
+static int s_charge_samples[5];
+static int s_charge_sample_idx = 0;
+static bool s_charge_samples_filled = false;
+static int s_display_percent = -1;
+
 #elif CONFIG_USE_TDECK
 #define _batAdcCh ADC1_GPIO4_CHANNEL
 #define _batAdcUnit ADC_UNIT_1
@@ -392,13 +404,6 @@ static uint8_t tdeck_voltage_to_percent(int mv) {
     }
     return s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE - 1].percent;
 }
-
-// Filtering for stable readings
-static int s_filtered_mv = -1;
-static int s_charge_samples[5];
-static int s_charge_sample_idx = 0;
-static bool s_charge_samples_filled = false;
-static int s_display_percent = -1;
 
 #elif CONFIG_USE_TDISPLAY_S3
 #define _batAdcCh ADC1_GPIO4_CHANNEL
