@@ -3,13 +3,19 @@
 ## Revival v1.9.2
 
 - Added Wireshark dongle mode for real-time PCAP streaming over USB/UART
+- Added "No portal files found" placeholder for evil portal when SD folder is empty
+- Optimized evil portal listing memory usage
 - Rewrote DIAL functionality to remove the need for HTTPS, decrease ram usage and increase reliability
 - Fixed RGB LED error spam on devices without LEDs configured
 - Fix EAPOL capture channel lock by stopping ALL hopping timers before capture
 - Improved reliability of PCAP capture to SD card
 - Fixed SD card timeout on ESP32-C5 by limiting SPI frequency to 4MHz
 - Fixed regression when using C5 with RGB + IR 
-
+- Added ADC battery reading for the LilyGo T-Deck with hysteresis-based charging detection and enhanced filtering to prevent drift
+- Fixed inverted touch scrolling in main menu list layout
+- Fixed not being able to scroll up in options menus on some configs
+- Fixed apps menu always opening top app instead of tapped app
+- Fixed touch handler for the apps menu
 
 ## Revival v1.9.1
 

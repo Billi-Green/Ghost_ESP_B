@@ -63,6 +63,14 @@ def extcap_config(interface):
     print(f"arg {{number=2}}{{call=--capture-type}}{{display=Capture Type}}{{type=selector}}{{default=wifi}}{{tooltip=Type of capture}}")
     print(f"value {{arg=2}}{{value=wifi}}{{display=WiFi}}")
     print(f"value {{arg=2}}{{value=ble}}{{display=Bluetooth LE}}")
+    
+    print(f"arg {{number=3}}{{call=--channel-lock}}{{display=Channel Lock}}{{type=selector}}{{default=auto}}{{tooltip=Lock capture to specific WiFi channel (WiFi only)}}")
+    print(f"value {{arg=3}}{{value=auto}}{{display=Auto (channel hopping)}}")
+    
+    # Add channel options based on target device
+    max_channel = 13  # Default for most ESP32 targets
+    for channel in range(1, max_channel + 1):
+        print(f"value {{arg=3}}{{value={channel}}}{{display=Channel {channel}}}")
 
 def extcap_interfaces():
     print(f"extcap {{version={EXTCAP_VERSION}}}{{help=https://github.com/jaylikesbunda/Ghost_ESP}}")
@@ -141,7 +149,7 @@ def find_pcap_global_header(ser, timeout_s=10.0):
 
     return None
 
-def capture(interface, port, baud, capture_type, fifo):
+def capture(interface, port, baud, capture_type, channel_lock, fifo):
     try:
         ser = serial.Serial(port, baud, timeout=0.1)
     except serial.SerialException as e:
@@ -158,9 +166,19 @@ def capture(interface, port, baud, capture_type, fifo):
     if capture_type == "ble":
         command = "capture -wiresharkble\n"
     else:
-        command = "capture -wireshark\n"
+        # Build command with channel lock if specified
+        if channel_lock != "auto":
+            command = f"capture -wireshark -c {channel_lock}\n"
+        else:
+            command = "capture -wireshark\n"
+    
     ser.write(command.encode())
     ser.flush()
+    
+    sys.stderr.write(f"Starting {capture_type} capture")
+    if capture_type == "wifi" and channel_lock != "auto":
+        sys.stderr.write(f" on channel {channel_lock}")
+    sys.stderr.write("...\n")
     
     sys.stderr.write("Waiting for PCAP header...\n")
 
@@ -224,6 +242,7 @@ def main():
     parser.add_argument("--port", help="Serial port")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate")
     parser.add_argument("--capture-type", default="wifi", help="Capture type")
+    parser.add_argument("--channel-lock", default="auto", help="Channel lock setting")
     
     args = parser.parse_args()
     
@@ -257,7 +276,7 @@ def main():
             sys.stderr.write("4. Click Start to begin capturing\n")
             return 1
         
-        return capture(args.extcap_interface, args.port, args.baud, args.capture_type, args.fifo)
+        return capture(args.extcap_interface, args.port, args.baud, args.capture_type, args.channel_lock, args.fifo)
     
     parser.print_help()
     return 0

@@ -327,12 +327,6 @@ static uint8_t cardputer_voltage_to_percent(int mv) {
 
 #elif CONFIG_USE_TDECK
 #define _batAdcCh ADC1_GPIO4_CHANNEL
-#elif CONFIG_USE_TDISPLAY_S3
-#define _batAdcCh ADC1_GPIO4_CHANNEL
-#else
-
-#endif
-
 #define _batAdcUnit ADC_UNIT_1
 #define _batAdcAtten ADC_ATTEN_DB_12
 bool _isCharging = false;
@@ -340,12 +334,67 @@ bool _isCharging = false;
 // track previous battery millivolt for charging detection
 static int last_mv = 0;
 
-#ifdef CONFIG_USE_CARDPUTER
+// T-Deck specific SOC table for more accurate battery percentage
+#define TDECK_SOC_TABLE_SIZE 11
+typedef struct {
+    int mv;
+    uint8_t percent;
+} tdeck_soc_point_t;
+
+static const tdeck_soc_point_t s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE] = {
+    {3300, 0},
+    {3400, 5},
+    {3500, 12},
+    {3600, 25},
+    {3700, 40},
+    {3800, 55},
+    {3900, 70},
+    {4000, 82},
+    {4100, 92},
+    {4200, 98},
+    {4300, 100},
+};
+
+static uint8_t tdeck_voltage_to_percent(int mv) {
+    if (mv <= s_tdeck_soc_table[0].mv) {
+        return s_tdeck_soc_table[0].percent;
+    }
+    if (mv >= s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE - 1].mv) {
+        return s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE - 1].percent;
+    }
+
+    for (int i = 1; i < TDECK_SOC_TABLE_SIZE; i++) {
+        if (mv <= s_tdeck_soc_table[i].mv) {
+            const tdeck_soc_point_t *low = &s_tdeck_soc_table[i - 1];
+            const tdeck_soc_point_t *high = &s_tdeck_soc_table[i];
+            int range_mv = high->mv - low->mv;
+            if (range_mv <= 0) {
+                return high->percent;
+            }
+            int range_percent = high->percent - low->percent;
+            int offset_mv = mv - low->mv;
+            return (uint8_t)(low->percent + (range_percent * offset_mv) / range_mv);
+        }
+    }
+    return s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE - 1].percent;
+}
+
+// Filtering for stable readings
 static int s_filtered_mv = -1;
-static int s_display_percent = -1;
-static int s_charge_samples[5] = {0};
+static int s_charge_samples[5];
 static int s_charge_sample_idx = 0;
 static bool s_charge_samples_filled = false;
+static int s_display_percent = -1;
+
+#elif CONFIG_USE_TDISPLAY_S3
+#define _batAdcCh ADC1_GPIO4_CHANNEL
+#endif
+
+#ifndef CONFIG_USE_TDECK
+#define _batAdcUnit ADC_UNIT_1
+#define _batAdcAtten ADC_ATTEN_DB_12
+bool _isCharging = false;
+static int last_mv = 0;
 #endif
 
 // threshold to ignore ADC noise
@@ -410,6 +459,10 @@ int getBattery() {
     // Cardputer divides the battery voltage roughly in half with a resistor divider.
     // Scale the measured voltage back up to actual battery voltage.
     mv = (mv * 2);
+#elif CONFIG_USE_TDECK
+    // T-Deck divides the battery voltage roughly in half with a resistor divider.
+    // Scale the measured voltage back up to actual battery voltage.
+    mv = (mv * 2);
 #endif
 
     // -- charging detection using rolling window to filter noise --
@@ -425,6 +478,23 @@ int getBattery() {
         if (trend > CHARGE_THRESH_MV) {
             _isCharging = true;
         } else if (trend < -CHARGE_THRESH_MV) {
+            _isCharging = false;
+        }
+    }
+#elif CONFIG_USE_TDECK
+    // T-Deck: use rolling window like Cardputer for stable charging detection
+    s_charge_samples[s_charge_sample_idx] = mv;
+    s_charge_sample_idx = (s_charge_sample_idx + 1) % 5;
+    if (s_charge_sample_idx == 0) s_charge_samples_filled = true;
+    
+    if (s_charge_samples_filled) {
+        int oldest_mv = s_charge_samples[s_charge_sample_idx];
+        int trend = mv - oldest_mv;
+        
+        // Use higher threshold for T-Deck to avoid false charging detection
+        if (trend > (CHARGE_THRESH_MV * 2)) {
+            _isCharging = true;
+        } else if (trend < -(CHARGE_THRESH_MV * 2)) {
             _isCharging = false;
         }
     }
@@ -455,11 +525,22 @@ int getBattery() {
         s_filtered_mv = (s_filtered_mv * 7 + mv) / 8;
     }
     mv_for_percent = s_filtered_mv;
+#elif CONFIG_USE_TDECK
+    // T-Deck: apply filtering for stable readings like Cardputer
+    if (s_filtered_mv < 0) {
+        s_filtered_mv = mv;
+    } else {
+        // Moderate smoothing for T-Deck to balance responsiveness and stability
+        s_filtered_mv = (s_filtered_mv * 6 + mv * 2) / 8;
+    }
+    mv_for_percent = s_filtered_mv;
 #endif
 
     // Map measured voltage to a percentage
 #ifdef CONFIG_USE_CARDPUTER
     percent = cardputer_voltage_to_percent(mv_for_percent);
+#elif CONFIG_USE_TDECK
+    percent = tdeck_voltage_to_percent(mv_for_percent);
 #else
     const int min_mv = 3300;
     const int max_mv = 4200;
@@ -478,6 +559,22 @@ int getBattery() {
     } else {
         int diff = percent - s_display_percent;
         int threshold = _isCharging ? 4 : 3;
+        if (diff >= threshold) {
+            s_display_percent++;
+        } else if (diff <= -threshold) {
+            s_display_percent--;
+        }
+        if (s_display_percent < 0) s_display_percent = 0;
+        if (s_display_percent > 100) s_display_percent = 100;
+    }
+    percent = (uint8_t)s_display_percent;
+#elif CONFIG_USE_TDECK
+    // T-Deck: apply gradual display changes to prevent sudden jumps
+    if (s_display_percent < 0) {
+        s_display_percent = percent;
+    } else {
+        int diff = percent - s_display_percent;
+        int threshold = _isCharging ? 5 : 3;
         if (diff >= threshold) {
             s_display_percent++;
         } else if (diff <= -threshold) {

@@ -1360,7 +1360,7 @@ void handle_status_idle_cmd(int argc, char **argv) {
 #endif
 
 void handle_capture_scan(int argc, char **argv) {
-    if (argc < 2 || argc > 3) {
+    if (argc < 2 || argc > 4) {
         glog("Error: Incorrect number of arguments.\n");
         status_display_show_status("Capture Usage");
         return;
@@ -1372,6 +1372,21 @@ void handle_capture_scan(int argc, char **argv) {
         glog("Error: Capture Type cannot be empty.\n");
         status_display_show_status("Capture Empty");
         return;
+    }
+    
+    // Parse channel parameter if present
+    uint8_t fixed_channel = 0;
+    bool use_fixed_channel = false;
+    
+    if (argc >= 4 && strcmp(argv[2], "-c") == 0) {
+        fixed_channel = atoi(argv[3]);
+        use_fixed_channel = true;
+        
+        if (fixed_channel < 1 || fixed_channel > MAX_WIFI_CHANNEL) {
+            glog("Error: Invalid channel %d. Must be between 1 and %d\n", fixed_channel, MAX_WIFI_CHANNEL);
+            status_display_show_status("Invalid Channel");
+            return;
+        }
     }
 
     if (strcmp(capturetype, "-probe") == 0) {
@@ -1494,7 +1509,18 @@ void handle_capture_scan(int argc, char **argv) {
             return;
         }
         wifi_manager_start_monitor_mode(wifi_raw_scan_callback);
-        wifi_manager_start_wireshark_channel_hop();
+        
+        if (use_fixed_channel) {
+            err = wifi_manager_set_wireshark_fixed_channel(fixed_channel);
+            if (err != ESP_OK) {
+                glog("Error: Failed to set fixed channel %d\n", fixed_channel);
+                status_display_show_status("Channel Err");
+                return;
+            }
+            glog("Wireshark capture locked to channel %d\n", fixed_channel);
+        } else {
+            wifi_manager_start_wireshark_channel_hop();
+        }
     }
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -3955,6 +3981,8 @@ void handle_help(int argc, char **argv) {
         glog("        -wps       : Start Capturing WPS Packets and there Auth Type\n");
         glog("        -pwn       : Start Capturing Pwnagotchi Packets\n");
         glog("        -wireshark : Stream raw PCAP to USB/UART for Wireshark\n");
+        glog("                    Usage: capture -wireshark [-c <channel>]\n");
+        glog("                    -c <channel>: Lock to specific channel (1-%d)\n", MAX_WIFI_CHANNEL);
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         glog("        -802154    : Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
         #endif

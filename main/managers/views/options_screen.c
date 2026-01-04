@@ -12,7 +12,7 @@
 
 static char selected_portal[MAX_PORTAL_NAME] = {0}; // <-- Move here
 
-static char (*evil_portal_names)[MAX_PORTAL_NAME] = NULL;
+static char *evil_portal_names = NULL;  // Dynamic allocation based on actual count
 static const char **evil_portal_options = NULL;
 
 #include "managers/views/keyboard_screen.h"
@@ -819,25 +819,9 @@ void options_menu_create() {
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
             case WIFI_MENU_EVIL_PORTAL_SELECT:
             {
-                ESP_LOGI(TAG, "Populating evil portal selector...");
-                evil_portal_names = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
-                evil_portal_options = malloc(sizeof(char*) * (MAX_PORTALS + 1));
-
-                if (!evil_portal_names || !evil_portal_options) { // Check for allocation failure
-                    ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
-                    // Handle error, maybe go back to the previous menu
-                    break;
-                }
-                int count = get_evil_portal_list(evil_portal_names);
-                ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
-                if (count <= 0) {
-                    evil_portal_options[0] = "default";
-                    evil_portal_options[1] = NULL;
-                    ESP_LOGI(TAG, "No portals found, using 'default'");
-                } else {
-                    for (int i = 0; i < count; ++i) evil_portal_options[i] = evil_portal_names[i];
-                    evil_portal_options[count] = NULL;
-                }
+                // Portal population is now handled in rebuild_current_menu
+                // Just set a placeholder to indicate we're in the right state
+                ESP_LOGI(TAG, "Evil portal select menu state activated");
                 options = evil_portal_options;
                 break;
             }
@@ -1264,12 +1248,30 @@ void handle_hardware_button_press_options(InputEvent *event) {
             int dx = data->point.x - opt_touch_start_x;
             int dy = data->point.y - opt_touch_start_y;
 
-            // Only react to releases inside the menu list bounds
+            // Calculate swipe thresholds
+            int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            // Lower threshold for Evil Portal HTML list
+            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
+            }
+            int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
+
+            // Check if swipe started in menu container (allow release outside for natural swipes)
             lv_area_t cont_area;
             lv_obj_get_coords(menu_container, &cont_area);
-            if (data->point.x < cont_area.x1 || data->point.x > cont_area.x2 ||
-                data->point.y < cont_area.y1 || data->point.y > cont_area.y2) {
+            bool started_in_container = (opt_touch_start_x >= cont_area.x1 && opt_touch_start_x <= cont_area.x2 &&
+                                        opt_touch_start_y >= cont_area.y1 && opt_touch_start_y <= cont_area.y2);
+            
+            if (!started_in_container) {
                 return;
+            }
+
+            // For tap gestures (not swipes), require release inside container
+            if (abs(dy) <= thr_y && abs(dx) <= thr_x) {
+                if (data->point.x < cont_area.x1 || data->point.x > cont_area.x2 ||
+                    data->point.y < cont_area.y1 || data->point.y > cont_area.y2) {
+                    return;
+                }
             }
 
             // thirds-control special behavior within the menu list area
@@ -1290,17 +1292,11 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
 
             // vertical swipe = scroll
-            int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
-            // Lower threshold for Evil Portal HTML list
-            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
-                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
-            }
             if (abs(dy) > thr_y) {
                 lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                 return;
             }
             // horizontal swipe = ignore
-            int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
             if (abs(dx) > thr_x) return;
 
             // now treat as tap inside the menu list (container bounds already verified)
@@ -2506,6 +2502,12 @@ display_manager_switch_view(&terminal_view);
         return;
     }
     else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        // Prevent selection of placeholder
+        if (strcmp(Selected_Option, "No portal files found") == 0) {
+            option_invoked = false;
+            return;
+        }
+        
         // Prompt for SSID after selecting portal
         strncpy(selected_portal, Selected_Option, MAX_PORTAL_NAME-1);
         selected_portal[MAX_PORTAL_NAME-1] = '\0';
@@ -3087,8 +3089,67 @@ static void rebuild_current_menu(void) {
                 case WIFI_MENU_MISC: options = wifi_misc_options; break;
                 case WIFI_MENU_EVIL_PORTAL_SELECT:
                 {
-                    if (evil_portal_names && evil_portal_options) {
+                    // Always try to populate the portal list if not already done
+                    if (!evil_portal_names || !evil_portal_options) {
+                        ESP_LOGI(TAG, "Re-populating evil portal selector...");
+                        
+                        // First, allocate a temporary buffer to count portals safely
+                        char (*temp_buffer)[MAX_PORTAL_NAME] = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
+                        if (!temp_buffer) {
+                            ESP_LOGE(TAG, "Failed to allocate temp buffer for portal counting");
+                            static const char *fallback_options[] = {"default", NULL};
+                            options = fallback_options;
+                            break;
+                        }
+                        
+                        int count = get_evil_portal_list(temp_buffer);
+                        
+                        if (count <= 0) {
+                            // Use static fallback for no portals case (no heap allocation)
+                            free(temp_buffer);
+                            static const char *no_portals_options[] = {"No portal files found", "default", NULL};
+                            options = no_portals_options;
+                            break;
+                        }
+                        
+                        // Allocate only the memory we actually need for final storage
+                        evil_portal_names = malloc(sizeof(char[MAX_PORTAL_NAME]) * count);
+                        evil_portal_options = malloc(sizeof(char*) * (count + 1));
+                        
+                        if (!evil_portal_names || !evil_portal_options) {
+                            ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
+                            // Clean up allocations
+                            free(temp_buffer);
+                            if (evil_portal_names) free(evil_portal_names);
+                            if (evil_portal_options) free(evil_portal_options);
+                            evil_portal_names = NULL;
+                            evil_portal_options = NULL;
+                            // Fallback to default options
+                            static const char *fallback_options[] = {"default", NULL};
+                            options = fallback_options;
+                            break;
+                        }
+                        
+                        // Copy only the portals we need from temp buffer
+                        for (int i = 0; i < count; ++i) {
+                            strcpy(evil_portal_names + i * MAX_PORTAL_NAME, temp_buffer[i]);
+                            evil_portal_options[i] = evil_portal_names + i * MAX_PORTAL_NAME;
+                        }
+                        evil_portal_options[count] = NULL;
+                        
+                        // Free the temporary buffer
+                        free(temp_buffer);
+                        
+                        ESP_LOGI(TAG, "Loaded %d portals (using %zu bytes)", count, 
+                                sizeof(char[MAX_PORTAL_NAME]) * count + sizeof(char*) * (count + 1));
+                    }
+                    
+                    if (evil_portal_options) {
                         options = evil_portal_options;
+                    } else {
+                        // Fallback if somehow still NULL
+                        static const char *fallback_options[] = {"default", NULL};
+                        options = fallback_options;
                     }
                     break;
                 }

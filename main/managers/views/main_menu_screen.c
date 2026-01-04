@@ -538,7 +538,7 @@ static void menu_item_event_handler(InputEvent *event) {
                         }
                     } else if (current_layout == MENU_LAYOUT_LIST) {
                         if (menu_container) {
-                            lv_obj_scroll_by_bounded(menu_container, 0, -dy, LV_ANIM_OFF);
+                            lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                         }
                     } else if (current_layout == MENU_LAYOUT_GRID) {
                         if (grid_buttons && grid_buttons[0]) {
@@ -677,7 +677,7 @@ static void menu_item_event_handler(InputEvent *event) {
                 // Handle vertical swipe for list scrolling
                 if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                     if (menu_container) {
-                        lv_obj_scroll_by_bounded(menu_container, 0, -dy, LV_ANIM_OFF);
+                        lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                     }
                     return;
                 }

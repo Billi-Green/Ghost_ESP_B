@@ -53,12 +53,16 @@ The extcap script lets Wireshark recognize your GhostESP as a capture interface.
    - **Serial Port**: Select your GhostESP COM port
    - **Baud Rate**: Leave at 115200 (default)
    - **Capture Type**: Select **WiFi**
+   - **Channel Lock**: Choose between:
+     - **Auto (channel hopping)**: Continuously hop through all channels (default)
+     - **Channel 1-13**: Lock to a specific WiFi channel for focused capture
 3. Click **Start** to begin capturing.
 
 The GhostESP will automatically:
 - Enter monitor mode
-- Start channel hopping (150ms per channel)
-- Hop through all legal channels for your configured country
+- Start capture based on your Channel Lock setting:
+  - **Auto mode**: Channel hop through all legal channels (150ms per channel)
+  - **Fixed channel**: Monitor only the selected channel continuously
 - Stream packets in real-time to Wireshark
 
 ### What you'll see
@@ -70,15 +74,27 @@ Wireshark will display:
 - **Management frames**: Association, authentication, deauth
 - **Control frames**: ACKs, RTS/CTS
 
-### Channel hopping behavior
+### Channel hopping vs. Channel lock
 
-The device automatically hops through channels based on your country setting:
+**Auto (Channel Hopping)**
+- Continuously hops through all legal channels for your country
 - **2.4 GHz**: Channels 1-13 (or 1-14 for Japan)
 - **5 GHz** (ESP32-C5/C6 only): Country-specific channels
   - **US/CA**: All UNII bands (36-165)
   - **EU**: UNII-1, 2a, 2c (36-140)
   - **JP**: UNII-1, 2a, 2c (36-140, no 165)
   - **CN**: UNII-1, 2a, 3 (36-64, 149-165)
+- Best for general surveillance and discovering networks
+- Set your country with the `setcountry` command before starting capture
+
+**Fixed Channel Lock**
+- Monitors only the selected channel continuously
+- Higher packet capture rate on the target channel
+- Ideal for:
+  - Analyzing traffic on a known network
+  - Capturing handshakes from a specific AP
+  - Debugging connectivity issues
+  - Following a specific conversation
 
 Set your country with the `setcountry` command before starting capture.
 
@@ -115,8 +131,11 @@ You can also start Wireshark mode from the GhostESP terminal without using the W
 
 ### Wi-Fi capture
 ```
-capture -wireshark
+capture -wireshark [-c <channel>]
 ```
+- `-c <channel>`: Optional channel lock (1-13)
+- Without `-c`: Auto channel hopping
+- With `-c`: Lock to specific channel
 
 ### BLE capture
 ```
@@ -165,9 +184,11 @@ When using command line mode, you'll need to manually configure Wireshark to cap
 
 - Wireshark mode streams packets over USB/UART without saving to SD card
 - The device automatically handles PCAP formatting and headers
-- Channel hopping covers the full spectrum but reduces dwell time per channel
-- For focused capture on a single channel, use file-based capture modes instead
+- **Auto mode**: Channel hopping covers the full spectrum but reduces dwell time per channel
+- **Fixed channel**: Higher packet capture rate on the selected channel
+- For focused capture on a single channel, use either Channel Lock setting or file-based capture modes
 - BLE capture does not hop channels (BLE uses 3 advertising channels: 37, 38, 39)
+- Channel lock is only available for WiFi capture, not BLE
 
 ## Next steps
 

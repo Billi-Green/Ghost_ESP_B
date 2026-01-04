@@ -58,6 +58,15 @@
 #define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
 #define SCANSTA_MAX_WIFI_CHANNEL 13         // Scan channels 1-13
 
+// Defines for Wireshark channel validation
+#if !defined(MAX_WIFI_CHANNEL)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define MAX_WIFI_CHANNEL 165
+#else
+#define MAX_WIFI_CHANNEL 13
+#endif
+#endif
+
 #define MAX_DEVICES 255
 #define CHUNK_SIZE 4096
 #define MDNS_NAME_BUF_LEN 65
@@ -4796,6 +4805,29 @@ void wifi_manager_stop_wireshark_channel_hop(void) {
         wireshark_hopping_active = false;
         ESP_LOGI(TAG, "Wireshark Channel Hopping Stopped.");
     }
+}
+
+esp_err_t wifi_manager_set_wireshark_fixed_channel(uint8_t channel) {
+    // Validate channel range based on target
+    uint8_t max_channel = MAX_WIFI_CHANNEL;
+    
+    if (channel < 1 || channel > max_channel) {
+        ESP_LOGE(TAG, "Invalid channel %d. Must be between 1 and %d", channel, max_channel);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Stop any existing channel hopping
+    wifi_manager_stop_wireshark_channel_hop();
+    
+    // Set the fixed channel
+    esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set channel %d: %s", channel, esp_err_to_name(err));
+        return err;
+    }
+    
+    ESP_LOGI(TAG, "Wireshark capture locked to channel %d", channel);
+    return ESP_OK;
 }
 
 // Function to specifically start station scanning with channel hopping
