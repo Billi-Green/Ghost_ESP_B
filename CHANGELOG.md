@@ -17,6 +17,7 @@
 - Fixed apps menu always opening top app instead of tapped app
 - Fixed touch handler for the apps menu
 - Disable light sleep in power saving mode on the T-Deck
+- Added the back button to the terminal view on the T-Display S3 Touch
 - Misc small fixes
 
 ## Revival v1.9.1
