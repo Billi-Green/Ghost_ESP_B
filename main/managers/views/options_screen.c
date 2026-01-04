@@ -776,6 +776,18 @@ void options_menu_create() {
      * When navigating BETWEEN submenus, use rebuild_current_menu() instead of
      * destroy/create to avoid expensive LVGL operations and watchdog starvation.
      */
+    ESP_LOGI(TAG, "options_menu_create: SelectedMenuType=%d (%s)", SelectedMenuType, options_menu_type_to_string(SelectedMenuType));
+    
+    // Reset WiFi menu state when entering from main menu to ensure clean entry
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
+        // Only reset if we're coming from main menu (not from terminal return)
+        // This is detected by checking if the options view root is NULL
+        if (!options_menu_view.root) {
+            ESP_LOGI(TAG, "Resetting WiFi menu state to MAIN on fresh entry");
+            current_wifi_menu_state = WIFI_MENU_MAIN;
+        }
+    }
+    
     option_invoked = false;
     selected_item_index = 0;  // Reset selection to first item for new menu
     int screen_width = LV_HOR_RES;
@@ -1284,8 +1296,29 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     } else if (y_rel > (container_h * 2) / 3) {
                         select_option_item(selected_item_index + 1);
                     } else {
-                        lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
-                        if (sel) handle_option_directly((const char*)lv_obj_get_user_data(sel));
+                        // Middle third - handle selection
+                        if (is_settings_mode) {
+                            if (current_settings_category < 0) {
+                                // At category level, enter the selected category
+                                switch_to_settings_category(selected_item_index);
+                            } else {
+                                // At setting level, change the setting value
+                                lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                                if (sel) {
+                                    void *udata = lv_obj_get_user_data(sel);
+                                    if (udata == (void *)"__BACK_OPTION__") {
+                                        back_event_cb(NULL);
+                                    } else {
+                                        int setting_idx = (int)(intptr_t)udata;
+                                        change_setting_value(setting_idx, true);
+                                    }
+                                }
+                            }
+                        } else {
+                            // Non-settings menus
+                            lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                            if (sel) handle_option_directly((const char*)lv_obj_get_user_data(sel));
+                        }
                     }
                     return;
                 }

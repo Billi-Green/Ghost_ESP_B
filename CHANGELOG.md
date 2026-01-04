@@ -16,6 +16,8 @@
 - Fixed not being able to scroll up in options menus on some configs
 - Fixed apps menu always opening top app instead of tapped app
 - Fixed touch handler for the apps menu
+- Disable light sleep in power saving mode on the T-Deck
+- Misc small fixes
 
 ## Revival v1.9.1
 

@@ -982,10 +982,26 @@ void display_manager_update_status_bar_color(void) {
   }
 
   uint8_t theme = settings_get_menu_theme(&G_Settings);
-  lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
+  lv_color_t accent_color = lv_color_hex(theme_palette_get_accent(theme));
+  lv_color_t text_color = lv_color_hex(0x999999);
+  
+  lv_obj_set_style_border_color(status_bar, accent_color, LV_PART_MAIN);
 
+  // Reset all status bar label colors when leaving rainbow mode
   if (mainlabel && lv_obj_is_valid(mainlabel)) {
-    lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
+    lv_obj_set_style_text_color(mainlabel, text_color, 0);
+  }
+  if (wifi_label && lv_obj_is_valid(wifi_label)) {
+    lv_obj_set_style_text_color(wifi_label, text_color, 0);
+  }
+  if (bt_label && lv_obj_is_valid(bt_label)) {
+    lv_obj_set_style_text_color(bt_label, text_color, 0);
+  }
+  if (sd_label && lv_obj_is_valid(sd_label)) {
+    lv_obj_set_style_text_color(sd_label, text_color, 0);
+  }
+  if (battery_label && lv_obj_is_valid(battery_label)) {
+    lv_obj_set_style_text_color(battery_label, text_color, 0);
   }
 
   status_update_cb(NULL);
@@ -1097,9 +1113,13 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
 
 void apply_power_management_config(bool power_save_enabled) {
   esp_pm_config_t pm_cfg = {
-      .max_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .min_freq_mhz = power_save_enabled ? 20 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .light_sleep_enable = power_save_enabled,
+      .max_freq_mhz = power_save_enabled ? 160 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+      .min_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+#ifdef CONFIG_USE_TDECK
+      .light_sleep_enable = false, // Disable light sleep for T-Deck to prevent trackball issues
+#else
+      .light_sleep_enable = power_save_enabled, // Keep light sleep for other configs
+#endif
   };
   rgb_manager_power_transition_begin();
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
