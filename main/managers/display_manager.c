@@ -1365,7 +1365,7 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   if (fuel_gauge_manager_init()) {
     ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
     if (battery_poll_task_handle == NULL) {
-      xTaskCreate(battery_poll_task, "battery_poll", 2048, NULL, 5, &battery_poll_task_handle);
+      xTaskCreate(battery_poll_task, "battery_poll", 4096, NULL, 5, &battery_poll_task_handle);
     }
   } else {
     ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
