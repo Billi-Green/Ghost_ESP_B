@@ -10,7 +10,6 @@
 - Fixed RGB LED error spam on devices without LEDs configured
 - Fix EAPOL capture channel lock by stopping ALL hopping timers before capture
 - Improved reliability of PCAP capture to SD card
-- Fixed SD card timeout on ESP32-C5 by limiting SPI frequency to 4MHz
 - Fixed regression when using C5 with RGB + IR 
 - Added ADC battery reading for the LilyGo T-Deck
 - Fixed inverted touch scrolling in main menu list layout
