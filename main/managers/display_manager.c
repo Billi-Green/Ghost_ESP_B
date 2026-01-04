@@ -297,6 +297,11 @@ void set_backlight_brightness(uint8_t percentage); // forward declaration
 
 #ifdef CONFIG_HAS_BATTERY_ADC
 
+static int s_filtered_mv = -1;
+static int s_charge_samples[5];
+static int s_charge_sample_idx = 0;
+static bool s_charge_samples_filled = false;
+static int s_display_percent = -1;
 
 #ifdef CONFIG_USE_CARDPUTER
 #define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
@@ -344,12 +349,6 @@ static uint8_t cardputer_voltage_to_percent(int mv) {
     }
     return s_cardputer_soc_table[CARDPUTER_SOC_TABLE_SIZE - 1].percent;
 }
-
-static int s_filtered_mv = -1;
-static int s_charge_samples[5];
-static int s_charge_sample_idx = 0;
-static bool s_charge_samples_filled = false;
-static int s_display_percent = -1;
 
 #elif CONFIG_USE_TDECK
 #define _batAdcCh ADC1_GPIO4_CHANNEL
