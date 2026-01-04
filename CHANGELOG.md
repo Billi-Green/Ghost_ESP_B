@@ -5,6 +5,7 @@
 - Added Wireshark dongle mode for real-time PCAP streaming over USB/UART
 - Added "No portal files found" placeholder for evil portal when SD folder is empty
 - Optimized evil portal listing memory usage
+- Added T-Deck keyboard shift, symbol key support with key repeat functionality
 - Rewrote DIAL functionality to remove the need for HTTPS, decrease ram usage and increase reliability
 - Fixed RGB LED error spam on devices without LEDs configured
 - Fix EAPOL capture channel lock by stopping ALL hopping timers before capture
