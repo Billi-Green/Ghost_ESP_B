@@ -11,7 +11,7 @@
 - Improved reliability of PCAP capture to SD card
 - Fixed SD card timeout on ESP32-C5 by limiting SPI frequency to 4MHz
 - Fixed regression when using C5 with RGB + IR 
-- Added ADC battery reading for the LilyGo T-Deck with hysteresis-based charging detection and enhanced filtering to prevent drift
+- Added ADC battery reading for the LilyGo T-Deck
 - Fixed inverted touch scrolling in main menu list layout
 - Fixed not being able to scroll up in options menus on some configs
 - Fixed apps menu always opening top app instead of tapped app
