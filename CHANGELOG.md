@@ -1,11 +1,14 @@
 # Ghost ESP Changelog
 
-## Unreleased
+## Revival v1.9.2
 
 - Added Wireshark dongle mode for real-time PCAP streaming over USB/UART
 - Rewrote DIAL functionality to remove the need for HTTPS, decrease ram usage and increase reliability
 - Fixed RGB LED error spam on devices without LEDs configured
-
+- Fix EAPOL capture channel lock by stopping ALL hopping timers before capture
+- Improved reliability of PCAP capture to SD card
+- Fixed SD card timeout on ESP32-C5 by limiting SPI frequency to 4MHz
+- Fixed regression when using C5 with RGB + IR 
 
 
 ## Revival v1.9.1

@@ -32,6 +32,7 @@ static uint8_t pcap_buffer[PCAP_BUFFER_SIZE];
 static size_t buffer_offset = 0;
 static FILE *pcap_file = NULL;
 static SemaphoreHandle_t pcap_mutex = NULL;
+static volatile bool s_capture_active = false;
 
 typedef struct {
   uint8_t packet_type; // HCI packet type (1 byte)
@@ -138,6 +139,9 @@ esp_err_t pcap_file_open(const char *base_file_name,
     return ESP_ERR_TIMEOUT;
   }
 
+  buffer_offset = 0;
+  s_capture_active = false;
+
   if (sd_card_exists("/mnt/ghostesp/pcaps")) {
     get_next_pcap_file_name(file_name, base_file_name);
     pcap_file = fopen(file_name, "wb");
@@ -179,6 +183,7 @@ esp_err_t pcap_file_open(const char *base_file_name,
     }
   }
 
+  s_capture_active = true;
   xSemaphoreGive(pcap_mutex);
   return ESP_OK;
 }
@@ -566,7 +571,8 @@ esp_err_t pcap_wireshark_start(pcap_capture_type_t capture_type) {
     xSemaphoreGive(pcap_mutex);
     return ret;
   }
-  
+
+  s_capture_active = true;
   xSemaphoreGive(pcap_mutex);
   return ESP_OK;
 }
@@ -585,6 +591,8 @@ static esp_err_t _pcap_flush_buffer_to_file_nolock() {
       size_t written = fwrite(pcap_buffer, 1, buffer_offset, pcap_file);
       if (written < buffer_offset) {
         ESP_LOGE(PCAP_TAG, "Failed to write buffered data to PCAP file.");
+      } else {
+        fflush(pcap_file);
       }
     } else { // If no file, try JIT mount for somethingsomething, else UART
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
@@ -660,7 +668,7 @@ esp_err_t pcap_flush_buffer_to_file() {
 }
 
 bool pcap_is_capturing(void) {
-  return pcap_file != NULL || s_pcap_mode == PCAP_MODE_WIRESHARK;
+  return s_capture_active || pcap_file != NULL || s_pcap_mode == PCAP_MODE_WIRESHARK;
 }
 
 bool pcap_is_wireshark_mode(void) {
@@ -668,20 +676,26 @@ bool pcap_is_wireshark_mode(void) {
 }
 
 void pcap_file_close() {
-  if (pcap_file != NULL) {
-    if (xSemaphoreTake(pcap_mutex, portMAX_DELAY) == pdTRUE) {
-      if (buffer_offset > 0) {
-        ESP_LOGI(PCAP_TAG, "Flushing remaining buffer before closing file.");
-        _pcap_flush_buffer_to_file_nolock();
-      }
+  if (pcap_mutex == NULL) {
+    return;
+  }
 
+  if (xSemaphoreTake(pcap_mutex, portMAX_DELAY) == pdTRUE) {
+    if (buffer_offset > 0) {
+      ESP_LOGI(PCAP_TAG, "Flushing remaining buffer before closing.");
+      _pcap_flush_buffer_to_file_nolock();
+    }
+
+    if (pcap_file != NULL) {
       fclose(pcap_file);
       pcap_file = NULL;
       ESP_LOGI(PCAP_TAG, "PCAP file closed.");
-      xSemaphoreGive(pcap_mutex);
     }
-    cleanup_pcap_queue();
+
+    s_capture_active = false;
+    xSemaphoreGive(pcap_mutex);
   }
+  cleanup_pcap_queue();
 }
 
 void pcap_wireshark_stop(void) {
@@ -696,6 +710,8 @@ void pcap_wireshark_stop(void) {
       }
       s_pcap_mode = PCAP_MODE_FILE;
     }
+    s_capture_active = false;
     xSemaphoreGive(pcap_mutex);
   }
+  cleanup_pcap_queue();
 }

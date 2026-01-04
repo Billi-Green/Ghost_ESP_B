@@ -1486,17 +1486,33 @@ void wifi_manager_clear_scan_results(void) {
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    // for EAPOL, stop ALL hopping and lock to selected AP channel
     if (callback == wifi_eapol_scan_callback) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-        ESP_ERROR_CHECK(esp_wifi_start());
-        // lock to selected AP channel if available
-        extern wifi_ap_record_t selected_ap; // declared elsewhere in this module
-        if (selected_ap.ssid[0] != '\0' && selected_ap.primary > 0) {
-            esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+        // Stop any existing channel hopping first
+        if (scansta_hopping_active) {
+            stop_scansta_channel_hopping();
         }
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_start());
+        if (live_ap_hopping_active) {
+            stop_live_ap_channel_hopping();
+        }
+        if (wireshark_hopping_active) {
+            wifi_manager_stop_wireshark_channel_hop();
+        }
+        
+        extern wifi_ap_record_t selected_ap;
+        if (selected_ap.ssid[0] != '\0' && selected_ap.primary > 0) {
+            esp_err_t ch_err = esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+            if (ch_err == ESP_OK) {
+                printf("EAPOL: locked to channel %d (hopping stopped)\n", selected_ap.primary);
+            } else {
+                printf("EAPOL: failed to set channel %d: %s\n", selected_ap.primary, esp_err_to_name(ch_err));
+            }
+        } else {
+            printf("EAPOL: no AP selected, channel hopping disabled\n");
+        }
     }
 
     // Set hardware-level promiscuous filter based on callback type
@@ -1510,8 +1526,8 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
         // Management frames only
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
     } else if (callback == wifi_eapol_scan_callback) {
-        // capture both mgmt and data for eapol + context frames
-        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
+        // capture mgmt, data, and ctrl for full handshake context
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA | WIFI_PROMIS_FILTER_MASK_CTRL;
     } else if (callback == sae_monitor_callback) {
         // Management frames for SAE
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
@@ -1524,6 +1540,15 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     ESP_LOGI("WIFI_MANAGER", "Set hardware filter mask: 0x%02" PRIx32, filter.filter_mask);
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+
+    // Verify current channel for EAPOL
+    if (callback == wifi_eapol_scan_callback) {
+        uint8_t ch_primary = 0; wifi_second_chan_t ch_second = WIFI_SECOND_CHAN_NONE;
+        esp_err_t get_err = esp_wifi_get_channel(&ch_primary, &ch_second);
+        if (get_err == ESP_OK) {
+            printf("EAPOL: current channel verified as %u\n", ch_primary);
+        }
+    }
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(callback));
 
@@ -1570,9 +1595,15 @@ void wifi_manager_stop_monitor_mode() {
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
     status_display_show_status("Monitor Stopped");
 
-    // Stop the station scan channel hopping timer if it's active
+    // Stop ALL channel hopping timers
     if (scansta_hopping_active) {
         stop_scansta_channel_hopping();
+    }
+    if (live_ap_hopping_active) {
+        stop_live_ap_channel_hopping();
+    }
+    if (wireshark_hopping_active) {
+        wifi_manager_stop_wireshark_channel_hop();
     }
 
     // NOTE: Stopping the PineAP timer (channel_hop_timer) is handled by stop_pineap_detection() in callbacks.c
