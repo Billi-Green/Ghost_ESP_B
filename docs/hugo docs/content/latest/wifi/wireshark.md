@@ -12,27 +12,48 @@ This is perfect for live analysis, debugging networks, or learning how wireless 
 
 - GhostESP device connected via USB to your computer
 - Wireshark installed on your computer
-- Python 3.7+ installed (for the extcap script)
-- `pyserial` Python package (`pip install pyserial`)
 
 ## Setup
 
-### Install the extcap script
+### Option 1: GUI Installer (Recommended)
 
-The extcap script lets Wireshark recognize your GhostESP as a capture interface.
+The easiest way to install is using the GUI installer, which automatically handles dependencies and installation:
 
-1. Locate the extcap script in your GhostESP repository:
-   - Path: `scripts/wireshark_extcap_installer/ghostesp_extcap.py`
-   - Batch wrapper: `scripts/wireshark_extcap_installer/ghostesp_extcap.bat`
+1. Navigate to `scripts/wireshark_extcap_installer/` in your GhostESP repository
+2. Run the installer:
+   ```
+   python installer_gui.py
+   ```
+3. Click **Install** in the GUI
+4. Restart Wireshark
 
-2. Copy both files to your Wireshark extcap folder:
+The installer will automatically:
+- Detect your Wireshark installation
+- Install the extcap files to the correct location
+- Set up all required dependencies in an isolated environment
+
+### Option 2: Manual Installation
+
+If you prefer manual installation:
+
+**Prerequisites for manual installation:**
+- Python 3.7+ installed
+- `pyserial` Python package (`pip install pyserial`)
+
+**Installation steps:**
+
+1. Copy the extcap files to your Wireshark extcap folder:
    - **Windows**: `%APPDATA%\Wireshark\extcap\`
-   - **macOS**: `~/.config/wireshark/extcap/`
-   - **Linux**: `~/.config/wireshark/extcap/`
+   - **macOS**: `~/.local/lib/wireshark/extcap/`
+   - **Linux**: `~/.local/lib/wireshark/extcap/`
+
+2. Files to copy from `scripts/wireshark_extcap_installer/`:
+   - `ghostesp_extcap.py`
+   - `ghostesp_extcap.bat` (Windows only)
 
 3. Make the script executable (macOS/Linux only):
    ```
-   chmod +x ~/.config/wireshark/extcap/ghostesp_extcap.py
+   chmod +x ~/.local/lib/wireshark/extcap/ghostesp_extcap.py
    ```
 
 4. Restart Wireshark.

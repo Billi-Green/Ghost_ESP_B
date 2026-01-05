@@ -127,6 +127,23 @@ class GhostESPInstallerGUI:
         try:
             self.log("\n=== Starting Installation ===")
             
+            try:
+                import serial
+                self.log("✓ PySerial already installed")
+            except ImportError:
+                self.log("Installing PySerial dependency...")
+                try:
+                    result = subprocess.run(
+                        [sys.executable, '-m', 'pip', 'install', 'pyserial'],
+                        capture_output=True,
+                        text=True,
+                        check=True
+                    )
+                    self.log("✓ PySerial installed successfully")
+                except subprocess.CalledProcessError as e:
+                    self.log(f"✗ Failed to install PySerial: {e.stderr}")
+                    raise Exception("PySerial installation failed. Please install manually with: pip install pyserial")
+            
             os.makedirs(self.extcap_path, exist_ok=True)
             self.log(f"✓ Created extcap directory: {self.extcap_path}")
             
