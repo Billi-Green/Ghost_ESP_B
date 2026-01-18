@@ -880,14 +880,28 @@ void rgb_manager_rmt_release(void) {
   if (rgb_manager.is_separate_pins || !rgb_manager.strip) return;
   s_saved_rgb_pin = rgb_manager.pin;
   s_saved_num_leds = rgb_manager.num_leds;
-  led_strip_clear(rgb_manager.strip);
-  led_strip_refresh(rgb_manager.strip);
-  led_strip_del(rgb_manager.strip);
+
+  // Clear the strip (may fail if RMT channel is in bad state, ignore error)
+  esp_err_t err = led_strip_clear(rgb_manager.strip);
+  if (err == ESP_OK) {
+    led_strip_refresh(rgb_manager.strip);
+  }
+
+  // Delete the strip - if this fails, still set to NULL to force recreation
+  err = led_strip_del(rgb_manager.strip);
+  if (err != ESP_OK) {
+    ESP_LOGW("RGB", "Failed to delete LED strip (err=%d), forcing NULL", err);
+  }
   rgb_manager.strip = NULL;
+  ESP_LOGD("RGB", "RMT strip released for IR RX");
 }
 
 void rgb_manager_rmt_reacquire(void) {
-  if (rgb_manager.is_separate_pins || rgb_manager.strip || s_saved_rgb_pin == GPIO_NUM_NC) return;
+  if (rgb_manager.is_separate_pins || rgb_manager.strip || s_saved_rgb_pin == GPIO_NUM_NC) {
+    ESP_LOGD("RGB", "RMT reacquire skipped: separate_pins=%d, strip=%p, pin=%d", 
+             rgb_manager.is_separate_pins, rgb_manager.strip, s_saved_rgb_pin);
+    return;
+  }
   led_strip_config_t strip_config = {
     .strip_gpio_num = s_saved_rgb_pin,
     .max_leds = s_saved_num_leds,
@@ -901,8 +915,12 @@ void rgb_manager_rmt_reacquire(void) {
     .mem_block_symbols = 48,
     .flags.with_dma = 0
   };
-  if (led_strip_new_rmt_device(&strip_config, &rmt_config, &rgb_manager.strip) == ESP_OK) {
+  esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config, &rgb_manager.strip);
+  if (ret == ESP_OK) {
     led_strip_clear(rgb_manager.strip);
+    ESP_LOGD("RGB", "RMT strip reacquired successfully");
+  } else {
+    ESP_LOGE("RGB", "Failed to reacquire RMT strip: %d", ret);
   }
 }
 #endif

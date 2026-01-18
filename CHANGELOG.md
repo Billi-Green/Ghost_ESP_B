@@ -1,5 +1,10 @@
 # Ghost ESP Changelog
 
+## Revival v1.9.3
+
+- Added GPIO interrupt-based IR RX approach for improved reliability
+- Set IR universal send RGB pulse brightness to 20% (reduced from 100%)
+
 ## Revival v1.9.2
 
 - Added Wireshark dongle mode for real-time PCAP streaming over USB/UART

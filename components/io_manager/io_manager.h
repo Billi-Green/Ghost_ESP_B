@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "esp_err.h"
+#include <esp_err.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +50,8 @@ bool io_manager_is_initialized(void);
 
 bool io_manager_get_encoder_signals(bool *signal_a, bool *signal_b);
 bool io_manager_get_encoder_button(void);
+esp_err_t io_manager_pulse_p13_low(void);
+void io_manager_scan_i2c(void);
 
 #ifdef __cplusplus
 }

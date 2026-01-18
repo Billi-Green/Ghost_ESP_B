@@ -6,6 +6,7 @@
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
+#include "io_manager.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
@@ -76,7 +77,8 @@ static int current_settings_category = -1;
 #endif
 
 #define SETTINGS_ITEMS_BASE_COUNT 14
-#define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
+#define SETTINGS_ITEM_INDEX_I2C_SCAN (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
+#define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEM_INDEX_I2C_SCAN + 1)
 
 // Indices of settings for each category in the settings menu.
 // Each sub-array lists the indices of settings_items[] that belong to a category.
@@ -117,6 +119,7 @@ static int settings_category_indices[][20] = {
         14,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_I2C_SCAN,
         SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #else
@@ -150,6 +153,7 @@ static int settings_category_indices[][20] = {
         13,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_I2C_SCAN,
         SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #endif
@@ -440,6 +444,7 @@ enum {
     SETTING_USB_HOST_MODE,
 #endif
     SETTING_RUN_SETUP_WIZARD,
+    SETTING_I2C_SCAN,
 };
 
 static const char *brightness_options[] = {
@@ -474,6 +479,7 @@ static SettingsItem settings_items[] = {
     {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
     #endif
     {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0},
+    {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0},
     {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1},
 };
 
@@ -1143,6 +1149,11 @@ static void apply_setting_change(int setting_index, int new_value) {
 #endif
         case SETTING_RUN_SETUP_WIZARD:
             setup_wizard_reset_and_open();
+            return;
+        case SETTING_I2C_SCAN:
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            io_manager_scan_i2c();
             return;
     }
     settings_save(&G_Settings);
