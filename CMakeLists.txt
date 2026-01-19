@@ -20,7 +20,7 @@ if("${IDF_TARGET}" STREQUAL "esp32s2")
     add_compile_definitions(CONFIG_IDF_TARGET_ESP32S2)
 endif()
 
-# Get git commit hash at build time
+# Get git commit hash and branch at build time
 find_package(Git QUIET)
 if(GIT_FOUND)
     execute_process(
@@ -33,12 +33,25 @@ if(GIT_FOUND)
     if(NOT GIT_COMMIT_HASH)
         set(GIT_COMMIT_HASH "unknown")
     endif()
+    
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_BRANCH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT GIT_BRANCH)
+        set(GIT_BRANCH "unknown")
+    endif()
 else()
     set(GIT_COMMIT_HASH "unknown")
+    set(GIT_BRANCH "unknown")
 endif()
 
-# Add git commit hash as compile definition
+# Add git commit hash and branch as compile definitions
 add_compile_definitions(GIT_COMMIT_HASH="${GIT_COMMIT_HASH}")
+add_compile_definitions(GIT_BRANCH="${GIT_BRANCH}")
 
 # Include project settings
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
