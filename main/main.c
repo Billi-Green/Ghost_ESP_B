@@ -1,6 +1,7 @@
 #include "core/commandline.h"
 #include "core/serial_manager.h"
 #include "core/system_manager.h"
+#include "core/ghostesp_version.h"
 #include "managers/ap_manager.h"
 #include "managers/display_manager.h"
 #include "managers/rgb_manager.h"
@@ -270,6 +271,9 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Build config used: %s", CONFIG_BUILD_CONFIG_TEMPLATE);
     printf("Build Name: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+    
+    ESP_LOGI(TAG, "Git commit hash: %s", GIT_COMMIT_HASH);
+    printf("Git commit hash: %s\n", GIT_COMMIT_HASH);
 
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_8BIT);

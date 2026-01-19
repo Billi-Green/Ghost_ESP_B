@@ -5,4 +5,6 @@
 #define GHOSTESP_FLAVOR "Revival"
 #define GHOSTESP_VERSION "v1.9.2"
 
+// GIT_COMMIT_HASH is defined as a compile definition in CMakeLists.txt
+
 #endif
