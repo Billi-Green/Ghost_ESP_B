@@ -4,6 +4,7 @@
 
 - Added GPIO interrupt-based IR RX approach for improved reliability
 - Set IR universal send RGB pulse brightness to 20% (reduced from 100%)
+- Add git commit hash retrieval and logging at build time - @tototo31
 
 ## Revival v1.9.2
 
