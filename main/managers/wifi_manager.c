@@ -3849,7 +3849,7 @@ void wifi_manager_stop_deauth() {
             vTaskDelete(deauth_task_handle);
             deauth_task_handle = NULL;
             beacon_task_running = false;
-            rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
+            rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
             wifi_manager_stop_monitor_mode();
             esp_wifi_stop();
             ap_manager_start_services();
