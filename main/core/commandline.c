@@ -3,6 +3,7 @@
 #include "core/commandline.h"
 #include "core/callbacks.h"
 #include "core/serial_manager.h"
+#include "core/utils.h"
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
 #include "sdkconfig.h"
@@ -84,6 +85,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "freertos/queue.h"
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
+#include "managers/aerial_detector_manager.h"
 
 static const char *TAG = "Commandline";
 
@@ -133,6 +135,12 @@ void handle_status_idle_cmd(int argc, char **argv);
 #endif
 void handle_settime_cmd(int argc, char **argv);
 void handle_time_cmd(int argc, char **argv);
+void handle_aerial_scan_cmd(int argc, char **argv);
+void handle_aerial_list_cmd(int argc, char **argv);
+void handle_aerial_track_cmd(int argc, char **argv);
+void handle_aerial_stop_cmd(int argc, char **argv);
+void handle_aerial_spoof_cmd(int argc, char **argv);
+void handle_aerial_spoof_stop_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -222,7 +230,7 @@ CommandFunction find_command(const char *name) {
 }
 
 void handle_unknown_command(const char *cmd) {
-    glog("Unknown command: %s\n", cmd);
+    glog("Unsupported command: %s\n", cmd);
 }
 
 void cmd_wifi_scan_start(int argc, char **argv) {
@@ -703,16 +711,15 @@ void handle_select_cmd(int argc, char **argv) {
     }
 }
 
+static bool g_dial_cast_all = false;
+
 void discover_task(void *pvParameter) {
     DIALClient client;
     DIALManager manager;
 
     if (dial_client_init(&client) == ESP_OK) {
-
         dial_manager_init(&manager, &client);
-
-        explore_network(&manager);
-
+        explore_network(&manager, g_dial_cast_all);
         dial_client_deinit(&client);
     } else {
         glog("Failed to init DIAL client.\n");
@@ -752,6 +759,15 @@ void handle_stop_flipper(int argc, char **argv) {
     csv_file_close();                  // Close any open CSV files
     gps_manager_deinit(&g_gpsManager); // Clean up GPS if active
 
+    // stop aerial operations
+    if (aerial_detector_is_scanning()) {
+        aerial_detector_stop_scan();
+    }
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+    }
+    aerial_detector_untrack_device();
+
     // also stop any in-progress IR RX (ir rx / ir learn)
     infrared_manager_rx_cancel();
 
@@ -762,7 +778,7 @@ void handle_stop_flipper(int argc, char **argv) {
     if (gps_info_task_handle != NULL) {
         vTaskDelete(gps_info_task_handle);
         gps_info_task_handle = NULL;
-        
+
         // Free the manually allocated stack and TCB
         if (gps_task_stack) {
             heap_caps_free(gps_task_stack);
@@ -805,14 +821,13 @@ void handle_stop_flipper(int argc, char **argv) {
 }
 
 void handle_dial_command(int argc, char **argv) {
-    // Usage: dial [device_name]
-    if (argc > 2) {
-        glog("Usage: %s [device_name]\n", argv[0]);
-        return;
-    }
-    // If a device name is provided, set it before discovery
-    if (argc == 2) {
-        dial_manager_set_device_name(argv[1]);
+    g_dial_cast_all = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "all") == 0 || strcmp(argv[i], "-a") == 0) {
+            g_dial_cast_all = true;
+        } else {
+            dial_manager_set_device_name(argv[i]);
+        }
     }
     xTaskCreate(&discover_task, "discover_task", DISCOVER_TASK_STACK, NULL, 5, NULL);
 }
@@ -1345,7 +1360,7 @@ void handle_status_idle_cmd(int argc, char **argv) {
 #endif
 
 void handle_capture_scan(int argc, char **argv) {
-    if (argc < 2 || argc > 3) {
+    if (argc < 2 || argc > 4) {
         glog("Error: Incorrect number of arguments.\n");
         status_display_show_status("Capture Usage");
         return;
@@ -1357,6 +1372,21 @@ void handle_capture_scan(int argc, char **argv) {
         glog("Error: Capture Type cannot be empty.\n");
         status_display_show_status("Capture Empty");
         return;
+    }
+    
+    // Parse channel parameter if present
+    uint8_t fixed_channel = 0;
+    bool use_fixed_channel = false;
+    
+    if (argc >= 4 && strcmp(argv[2], "-c") == 0) {
+        fixed_channel = atoi(argv[3]);
+        use_fixed_channel = true;
+        
+        if (fixed_channel < 1 || fixed_channel > MAX_WIFI_CHANNEL) {
+            glog("Error: Invalid channel %d. Must be between 1 and %d\n", fixed_channel, MAX_WIFI_CHANNEL);
+            status_display_show_status("Invalid Channel");
+            return;
+        }
     }
 
     if (strcmp(capturetype, "-probe") == 0) {
@@ -1471,8 +1501,43 @@ void handle_capture_scan(int argc, char **argv) {
         status_display_show_status("Capture WPS");
     }
 
+    if (strcmp(capturetype, "-wireshark") == 0) {
+        status_display_show_status("Wireshark WiFi");
+        int err = pcap_wireshark_start(PCAP_CAPTURE_WIFI);
+        if (err != ESP_OK) {
+            status_display_show_status("Wireshark Err");
+            return;
+        }
+        wifi_manager_start_monitor_mode(wifi_raw_scan_callback);
+        
+        if (use_fixed_channel) {
+            err = wifi_manager_set_wireshark_fixed_channel(fixed_channel);
+            if (err != ESP_OK) {
+                glog("Error: Failed to set fixed channel %d\n", fixed_channel);
+                status_display_show_status("Channel Err");
+                return;
+            }
+            glog("Wireshark capture locked to channel %d\n", fixed_channel);
+        } else {
+            wifi_manager_start_wireshark_channel_hop();
+        }
+    }
+
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    if (strcmp(capturetype, "-wiresharkble") == 0) {
+        status_display_show_status("Wireshark BLE");
+        int err = pcap_wireshark_start(PCAP_CAPTURE_BLUETOOTH);
+        if (err != ESP_OK) {
+            status_display_show_status("Wireshark Err");
+            return;
+        }
+        ble_start_capture_wireshark();
+    }
+#endif
+
     if (strcmp(capturetype, "-stop") == 0) {
         glog("Stopping packet capture...\n");
+        wifi_manager_stop_wireshark_channel_hop();
         wifi_manager_stop_monitor_mode();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
         ble_stop();
@@ -1481,6 +1546,7 @@ void handle_capture_scan(int argc, char **argv) {
         zigbee_manager_stop_capture();
 #endif
         pcap_file_close();
+        pcap_wireshark_stop();
         status_display_show_status("Capture Stop");
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -2495,7 +2561,7 @@ void handle_eth_config_cmd(int argc, char **argv) {
             glog("  Gateway: %s\n", gw_str);
         }
     } else {
-        glog("Unknown command: %s\n", argv[1]);
+        glog("Unsupported command: %s\n", argv[1]);
     }
 }
 
@@ -2550,7 +2616,7 @@ void handle_eth_mac_cmd(int argc, char **argv) {
             glog("Failed to set MAC address: %s\n", esp_err_to_name(ret));
         }
     } else {
-        glog("Unknown command: %s\n", argv[1]);
+        glog("Unsupported command: %s\n", argv[1]);
     }
 }
 
@@ -3908,16 +3974,19 @@ void handle_help(int argc, char **argv) {
         glog("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
         glog("    Usage: capture [OPTION]\n");
         glog("    Arguments:\n");
-        glog("        -probe   : Start Capturing Probe Packets\n");
-        glog("        -beacon  : Start Capturing Beacon Packets\n");
-        glog("        -deauth   : Start Capturing Deauth Packets\n");
-        glog("        -raw   :   Start Capturing Raw Packets\n");
-        glog("        -wps   :   Start Capturing WPS Packets and there Auth Type\n");
-        glog("        -pwn   :   Start Capturing Pwnagotchi Packets\n");
+        glog("        -probe     : Start Capturing Probe Packets\n");
+        glog("        -beacon    : Start Capturing Beacon Packets\n");
+        glog("        -deauth    : Start Capturing Deauth Packets\n");
+        glog("        -raw       : Start Capturing Raw Packets\n");
+        glog("        -wps       : Start Capturing WPS Packets and there Auth Type\n");
+        glog("        -pwn       : Start Capturing Pwnagotchi Packets\n");
+        glog("        -wireshark : Stream raw PCAP to USB/UART for Wireshark\n");
+        glog("                    Usage: capture -wireshark [-c <channel>]\n");
+        glog("                    -c <channel>: Lock to specific channel (1-%d)\n", MAX_WIFI_CHANNEL);
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        glog("        -802154:   Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
+        glog("        -802154    : Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
         #endif
-        glog("        -stop   : Stops the active capture\n\n");
+        glog("        -stop      : Stops the active capture\n\n");
         glog("capture\n");
         glog("    Start a WiFi packet capture.\n");
         glog("    Usage: capture [OPTION]\n");
@@ -5876,9 +5945,17 @@ void handle_setcountry(int argc, char **argv) {
         status_display_show_status("Country Usage");
         return;
     }
-    esp_err_t err = esp_wifi_set_country_code(argv[1], true);
+
+    char cc_upper[4];
+    if (!str_copy_upper(cc_upper, sizeof(cc_upper), argv[1])) {
+        glog("failed to set country: invalid country code\n");
+        status_display_show_status("Country Fail");
+        return;
+    }
+
+    esp_err_t err = esp_wifi_set_country_code(cc_upper, true);
     if (err == ESP_OK) {
-        glog("country set to %s\n", argv[1]);
+        glog("country set to %s\n", cc_upper);
         status_display_show_status("Country Set");
     } else {
         glog("failed to set country: %s\n", esp_err_to_name(err));
@@ -7508,6 +7585,206 @@ void handle_usb_kbd_cmd(int argc, char **argv) {
     }
 }
 
+void handle_aerial_scan_cmd(int argc, char **argv) {
+    uint32_t duration = 30000;  // default 30 seconds
+
+    if (argc > 1) {
+        duration = atoi(argv[1]) * 1000;
+        if (duration < 1000) duration = 1000;
+        if (duration > 300000) duration = 300000;
+    }
+
+    aerial_detector_init();
+    esp_err_t ret = aerial_detector_start_scan(duration);
+
+    if (ret == ESP_OK) {
+        glog("Scan Started (%lu sec)\n", duration / 1000);
+        glog("Phase 1: WiFi | Phase 2: BLE\n");
+    } else if (ret == ESP_ERR_INVALID_STATE) {
+        glog("Scan already running\n");
+    } else {
+        glog("Failed to start scan\n");
+    }
+}
+
+void handle_aerial_list_cmd(int argc, char **argv) {
+    aerial_detector_compact_known_devices();
+    
+    int total = aerial_detector_get_device_count();
+    int shown = 0;
+    
+    for (int i = 0; i < total; i++) {
+        AerialDevice *dev = aerial_detector_get_device(i);
+        if (!dev || dev->type == AERIAL_TYPE_UNKNOWN) continue;
+        
+        if (shown == 0) {
+            glog("Detected aerial device(s):\n\n");
+        }
+        shown++;
+        
+        glog("[%d] %s\n", i, dev->device_id);
+        glog("    MAC: %s\n", dev->mac);
+        glog("    Type: %s\n", aerial_detector_get_type_string(dev->type));
+        glog("    RSSI: %d dBm\n", dev->rssi);
+        
+        if (dev->vendor[0] != '\0') {
+            glog("    Vendor: %s\n", dev->vendor);
+        }
+        
+        if (dev->has_location) {
+            glog("    Location: %.6f, %.6f\n", dev->latitude, dev->longitude);
+            if (dev->altitude > -1000.0f) {
+                glog("    Altitude: %.1f m\n", dev->altitude);
+            }
+            if (dev->speed_horizontal < 255.0f) {
+                glog("    Speed: %.1f m/s @ %.0f°\n", dev->speed_horizontal, dev->direction);
+            }
+            glog("    Status: %s\n", aerial_detector_get_status_string(dev->status));
+        }
+        
+        if (dev->has_operator_location) {
+            glog("    Operator: %.6f, %.6f", dev->operator_latitude, dev->operator_longitude);
+            if (dev->operator_altitude > -1000.0f) {
+                glog(" @ %.1f m", dev->operator_altitude);
+            }
+            glog("\n");
+        }
+        
+        if (strcmp(dev->operator_id, "N/A") != 0) {
+            glog("    Operator ID: %s\n", dev->operator_id);
+        }
+        
+        if (strcmp(dev->description, "N/A") != 0 && dev->description[0] != '\0') {
+            glog("    Description: %s\n", dev->description);
+        }
+        
+        uint32_t age_sec = (esp_timer_get_time() / 1000 - dev->last_seen_ms) / 1000;
+        glog("    Last seen: %lu sec ago\n", age_sec);
+        glog("\n");
+    }
+
+    if (shown == 0) {
+        glog("No aerial devices detected\n");
+    }
+}
+
+void handle_aerial_track_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: aerialtrack <device_index|mac_address>\n");
+        glog("Use 'aeriallist' to see available devices\n");
+        return;
+    }
+    
+    AerialDevice *dev = NULL;
+    
+    // check if argument is a number (device index)
+    if (argv[1][0] >= '0' && argv[1][0] <= '9') {
+        int index = atoi(argv[1]);
+        dev = aerial_detector_get_device(index);
+        if (!dev) {
+            glog("Invalid device index. Use 'aeriallist' to see available devices\n");
+            return;
+        }
+    } else {
+        // assume mac address
+        dev = aerial_detector_find_device_by_mac(argv[1]);
+        if (!dev) {
+            glog("Device not found: %s\n", argv[1]);
+            return;
+        }
+    }
+    
+    // ensure scanning is running to keep updates flowing
+    if (!aerial_detector_is_scanning()) {
+        aerial_detector_start_scan(30000); // default 30s; tracking will refresh each phase
+        glog("Started aerial scan for tracking\n");
+    }
+    
+    esp_err_t ret = aerial_detector_track_device(dev->mac);
+    if (ret == ESP_OK) {
+        glog("Now tracking: %s (%s)\n", dev->device_id, dev->mac);
+        glog("RSSI: %d dBm\n", dev->rssi);
+        
+        if (dev->has_location) {
+            glog("Location: %.6f, %.6f @ %.1f m\n", 
+                 dev->latitude, dev->longitude, dev->altitude);
+        }
+    } else {
+        glog("Failed to track device\n");
+    }
+}
+
+void handle_aerial_stop_cmd(int argc, char **argv) {
+    if (aerial_detector_is_scanning()) {
+        aerial_detector_stop_scan();
+        glog("Scan Stopped\n");
+    } else {
+        glog("No scan running\n");
+    }
+
+    aerial_detector_untrack_device();
+}
+
+void handle_aerial_spoof_cmd(int argc, char **argv) {
+    const char *device_id;
+    double lat;
+    double lon;
+    float alt;
+    
+    if (argc < 2) {
+        // default test mode - no args needed
+        device_id = "GHOST-TEST";
+        lat = 37.7749;   // san francisco
+        lon = -122.4194;
+        alt = 100.0f;
+        glog("Using default test drone:\n");
+        glog("Device ID: %s\n", device_id);
+        glog("Location: %.6f, %.6f @ %.1fm\n\n", lat, lon, alt);
+    } else if (argc < 5) {
+        glog("Usage: aerialspoof [device_id latitude longitude altitude]\n");
+        glog("Examples:\n");
+        glog("  aerialspoof                              # Use defaults\n");
+        glog("  aerialspoof DRONE-1234 40.7128 -74.0060 100\n");
+        glog("\nBroadcasts fake drone RemoteID for testing purposes.\n");
+        glog("Complies with ASTM F3411 OpenDroneID standard.\n");
+        return;
+    } else {
+        device_id = argv[1];
+        lat = atof(argv[2]);
+        lon = atof(argv[3]);
+        alt = atof(argv[4]);
+    }
+    
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        glog("Invalid coordinates. Lat: -90 to 90, Lon: -180 to 180\n");
+        return;
+    }
+    
+    // stop existing spoof if running
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+    }
+    
+    aerial_detector_init();
+    esp_err_t ret = aerial_detector_start_emulation(device_id, lat, lon, alt);
+    
+    if (ret == ESP_OK) {
+        glog("Spoofing Started\n");
+        glog("ID: %s | Pos: %.6f, %.6f @ %.1fm\n", device_id, lat, lon, alt);
+    } else {
+        glog("Failed to start spoofing\n");
+    }
+}
+
+void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+        glog("Spoofing Stopped\n");
+    } else {
+        glog("No spoofing active\n");
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -7639,9 +7916,15 @@ void register_commands() {
 #if CONFIG_IDF_TARGET_ESP32S3
     register_command("usbkbd", handle_usb_kbd_cmd);
 #endif
+    register_command("aerialscan", handle_aerial_scan_cmd);
+    register_command("aeriallist", handle_aerial_list_cmd);
+    register_command("aerialtrack", handle_aerial_track_cmd);
+    register_command("aerialstop", handle_aerial_stop_cmd);
+    register_command("aerialspoof", handle_aerial_spoof_cmd);
+    register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
-    
+
     glog("Registered Commands\n");
 }
 
@@ -7719,7 +8002,7 @@ void handle_evilportal(int argc, char **argv) {
         wifi_manager_clear_html_buffer();
         glog("HTML buffer cleared - will use default portal on next startportal\n");
     } else {
-        glog("Error: Unknown command '%s'\n", argv[2]);
+        glog("Error: Unsupported command '%s'\n", argv[2]);
     }
 }
 

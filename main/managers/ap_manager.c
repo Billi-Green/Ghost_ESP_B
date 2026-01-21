@@ -25,6 +25,7 @@
 #include <nvs_flash.h>
 #include <stdio.h>
 #include "mbedtls/base64.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -34,12 +35,23 @@ static const char *TAG = "ap_manager";
 #include <unistd.h>
 #include <lwip/sockets.h>
 #include <lwip/ip4_addr.h>
+#include <lwip/def.h>
 #include <lwip/inet.h>
 #include "esp_vfs_fat.h"
 #include "esp_heap_caps.h"
 #include "managers/status_display_manager.h"
 #include "core/utils.h"
 #include "managers/auth_digest.h"
+
+#ifndef IN6_IS_ADDR_V4MAPPED
+#define IN6_IS_ADDR_V4MAPPED(a)                                             \
+    (((const uint8_t *)(a))[0] == 0 && ((const uint8_t *)(a))[1] == 0 &&    \
+     ((const uint8_t *)(a))[2] == 0 && ((const uint8_t *)(a))[3] == 0 &&    \
+     ((const uint8_t *)(a))[4] == 0 && ((const uint8_t *)(a))[5] == 0 &&    \
+     ((const uint8_t *)(a))[6] == 0 && ((const uint8_t *)(a))[7] == 0 &&    \
+     ((const uint8_t *)(a))[8] == 0 && ((const uint8_t *)(a))[9] == 0 &&    \
+     ((const uint8_t *)(a))[10] == 0xFF && ((const uint8_t *)(a))[11] == 0xFF)
+#endif
 
 static esp_err_t respond_with_site(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
@@ -72,8 +84,8 @@ static bool is_config_loaded(void);
 static esp_err_t setup_mdns(void);
 static esp_err_t teardown_mdns(void);
 
-#define WEBUI_AP_SUBNET_BASE_ADDR ESP_IP4TOADDR(192, 168, 4, 0)
-#define WEBUI_AP_SUBNET_MASK_ADDR ESP_IP4TOADDR(255, 255, 255, 0)
+#define WEBUI_AP_SUBNET_BASE_ADDR PP_HTONL(LWIP_MAKEU32(192, 168, 4, 0))
+#define WEBUI_AP_SUBNET_MASK_ADDR PP_HTONL(LWIP_MAKEU32(255, 255, 255, 0))
 #define MAX_LOG_BUFFER_SIZE (8 * 1024)  // 8KB log buffer size
 #define LOG_CHUNK_SIZE (MAX_LOG_BUFFER_SIZE / 4)  // Size to remove when buffer is full
 #define MAX_FILE_SIZE (5 * 1024 * 1024) // 5 MB
@@ -83,8 +95,11 @@ static esp_err_t teardown_mdns(void);
 #define AUTH_MAX_HDR_LEN 512            // max size for Authorization header (increased for Digest)
 #define AUTH_MAX_DECODE_LEN 256         // max decoded credential length
 
-static bool is_ip_in_ap_subnet(uint32_t addr) {
-    return (addr & WEBUI_AP_SUBNET_MASK_ADDR) == WEBUI_AP_SUBNET_BASE_ADDR;
+static bool is_ip_in_ap_subnet(uint32_t addr_net_order) {
+    ip4_addr_t addr = { .addr = addr_net_order };
+    const ip4_addr_t base = { .addr = WEBUI_AP_SUBNET_BASE_ADDR };
+    const ip4_addr_t mask = { .addr = WEBUI_AP_SUBNET_MASK_ADDR };
+    return ip4_addr_netcmp(&addr, &base, &mask);
 }
 
 static bool webui_request_allowed(httpd_req_t *req) {
@@ -118,6 +133,16 @@ static bool webui_request_allowed(httpd_req_t *req) {
     else if (peer_addr.ss_family == AF_INET6) {
         struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&peer_addr;
         inet_ntop(AF_INET6, &addr6->sin6_addr, ip_buf, sizeof(ip_buf));
+
+        if (IN6_IS_ADDR_V4MAPPED(addr6->sin6_addr.s6_addr)) {
+            uint32_t ipv4_addr_net_order = PP_HTONL(LWIP_MAKEU32(addr6->sin6_addr.s6_addr[12],
+                addr6->sin6_addr.s6_addr[13],
+                addr6->sin6_addr.s6_addr[14],
+                addr6->sin6_addr.s6_addr[15]));
+            if (is_ip_in_ap_subnet(ipv4_addr_net_order)) {
+                return true;
+            }
+        }
     }
 #endif
 

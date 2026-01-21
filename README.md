@@ -10,11 +10,11 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 ## Getting Started
 
-1. Flash your device at <https://flasher.ghostesp.net>
+1. **Flash your device:** [flasher.ghostesp.net](https://flasher.ghostesp.net)
 
-1. Join our **NEW** community on [Discord](https://discord.gg/5cyNmUMgwh) for support and feedback.
+1. **Community & support:** [Discord](https://discord.gg/5cyNmUMgwh)
 
-1. Read the [Documentation](https://docs.ghostesp.net) and visit the [Official Website](https://ghostesp.net) to learn more!
+1. **Learn more:** [Documentation](https://docs.ghostesp.net) • [Official Website](https://ghostesp.net)
 
 > **Making content about GhostESP?** Check out the [Press Kit](https://github.com/jaylikesbunda/Ghost_ESP/blob/Development-deki/presskit.zip) for resources.
 
@@ -43,6 +43,10 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **ARP Scanning** – Scan for devices on local network using ARP (`scanarp`).
 - **SSH Scanning** – Scan for SSH services on network (`scanssh`).
 - **IP Lookup** – Retrieve local network IP information (`scanlocal`).
+- **Ethernet Mode** – Wired networking with fingerprint scanning and OUI vendor lookup.
+- **Wardriving Enhancements** – Unique AP counting, deduped WiGLE v1.6 exports, and a sweep scan that logs WiFi/BLE/GPS/802.15.4 to CSV.
+- **RSSI Tracking** – Track signal strength for selected APs and stations.
+- **Drone Detection/Spoofing** – Detect and spoof detected drones.
 
 </details>
 
@@ -54,6 +58,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **BLE Packet Capture** – Capture and analyze BLE traffic.
 - **BLE Scanning** – Detect BLE devices, including specialized modes for AirTags, Flipper Zeros, and more.
 - **Flipper Zero RSSI Tracking** – Detect and monitor the signal strength (RSSI) of Flipper Zero devices (`blescan -f`).
+- **AirTag RSSI Updates** – Existing tags periodically refresh RSSI so proximity changes are visible.
+- **GATT/Service Discovery** – Scan services/characteristics and track RSSI per device.
 - **BLE Wardriving** – Map and track BLE devices in your vicinity.
 
 </details>
@@ -68,6 +74,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **IR Receive and Decode** – Decode IR signals received by the device *(supported on TEmbed C1101)*.
 - **Multiple IR Protocols** – Support for NEC, Kaseikyo, Pioneer, RCA, Samsung, SIRC, RC5, and RC6 protocols.
 - **IR Rename, Delete, Add Remotes** – Rename, delete, and add remotes *(supported on TEmbed C1101)*.
+- **IR CLI Tools** – Full IR command-line control.
+- **IR Dazzler** – 38 kHz high-duty pulsing for IR dazzler use cases.
 
 </details>
 
@@ -87,6 +95,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **File Management**
   - 'Saved' menu to browse `.nfc` files and rename/delete them from the UI.
   - 'User Keys' view to list `/mnt/ghostesp/nfc/mfc_user_dict.nfc`.
+- **Flipper Parser Compatibility** – Built-in Flipper Zero parser layer with dozens of transit/parking/access cards (Aime, CSC, WashCity, Metromoney, Bip, CharlieCard, Disney Infinity, HI!, HID PACS, H World, Kazan, Microel, MiZIP, Plantain, Saflok, Skylanders, SmartRider, Social Moscow, Troika, Two Cities, Umarsh, Zolotaya Korona, Zolotaya Korona Online).
+- **MIFARE Desfire Detection** – Basic detection to flag Desfire cards.
 
 #### Chameleon Ultra Support
 
@@ -102,6 +112,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 <details>
 <summary><strong>Additional Features</strong></summary>
 
+- **GhostLink (Dual Comm)** – Split-view terminal on-device when linked to a peer device.
+- **Setup Wizard** – First-boot guided setup for display builds.
 - **DIAL & Chromecast V2 Support** – Interact with DIAL-capable devices (e.g., Roku, Chromecast).
 - **Rave Mode** – Extra visualizer app for boards with displays.
 - **GPS Integration** – Retrieve location info via the `gpsinfo` command *(on supported hardware)*.
@@ -110,7 +122,8 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 - **Timezone Configuration** – Change system timezone string (`timezone`).
 
 </details>
-<img width="1200" height="950" alt="image" src="https://github.com/user-attachments/assets/2857723c-7276-4e2f-b911-9dd2bd7d6894" />
+<img width="600" height="800" alt="image" src="https://github.com/user-attachments/assets/9f1ee121-23a9-481a-94cd-aeb353e0e4b7" />
+
 
 
 ---
@@ -165,7 +178,11 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - RabbitLabs Phantom
 
-- RabbitLabs Yapper Board (GPS NOT SUPPORTED AT THIS TIME)
+- RabbitLabs Yapper Board 
+
+- RabbitLabs Poltergeist
+
+- CYD2432S028R
 
 - Waveshare 7″ Touch
 
@@ -173,25 +190,25 @@ Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing t
 
 - 'CYD2 USB 2.4″'
 
-- 'CYD2 USB 2.4″ (C Variant)'
-
-- 'CYD Micro USB'
-
-- 'CYD Dual USB'
-
-- LilyGo S3 T-Watch
-
-- Marauder V4
-
-- Marauder V6
-
-- LilyGo TEmbed C1101 
-
 - LilyGo T-Display S3 Touch
 
 - LilyGo T-Deck
 
 - JCMK Devboard Pro
+
+- Flipper JCMK GPS
+
+- CrowTech 7″
+
+- JC3248W535EN
+
+- Heltec V3
+
+- Lolin S3 Pro
+
+- Minion
+
+- Sunton 7″
   
 </details>
 

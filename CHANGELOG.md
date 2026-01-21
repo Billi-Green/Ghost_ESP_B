@@ -1,5 +1,42 @@
 # Ghost ESP Changelog
 
+## Revival v1.9.3
+
+- Added GPIO interrupt-based IR RX approach for improved reliability
+- Set IR universal send RGB pulse brightness to 20% (reduced from 100%)
+- Add git commit hash retrieval and logging at build time - @tototo31
+- Fixed issue where RGBs would stay lit after stopping a deauth attack
+
+## Revival v1.9.2
+
+- Added Wireshark dongle mode for real-time PCAP streaming over USB/UART
+- Added "No portal files found" placeholder for evil portal when SD folder is empty
+- Optimized evil portal listing memory usage
+- Added T-Deck keyboard shift, symbol key support with key repeat functionality
+- Rewrote DIAL functionality to remove the need for HTTPS, decrease ram usage and increase reliability
+- Fixed RGB LED error spam on devices without LEDs configured
+- Fix EAPOL capture channel lock by stopping ALL hopping timers before capture
+- Improved reliability of PCAP capture to SD card
+- Fixed regression when using C5 with RGB + IR 
+- Added ADC battery reading for the LilyGo T-Deck
+- Fixed inverted touch scrolling in main menu list layout
+- Fixed not being able to scroll up in options menus on some configs
+- Fixed apps menu always opening top app instead of tapped app
+- Disable light sleep in power saving mode on the T-Deck
+- Added the back button to the terminal view on the T-Display S3 Touch
+- Updated NimBLE config options to mirror the TEmbedC1101 for improved BLE reliability during certain tasks like AirTag detection
+- Misc small fixes
+
+## Revival v1.9.1
+
+- Fixed WebUI AP-only restriction to correctly allow AP clients (including IPv6-mapped IPv4 addresses)
+- 'setcountry' command is now case-insensitive
+- Fixed T-Deck trackball spamming inputs
+- Removed limit of 50 for 'scanap' to prevent getting rid of early entries
+- Changed "Unknown command" to "Unsupported command" in CLI error messages for better UX.
+- Improved Cardputer charging detection
+- Fixed dedicated GhostLink webui terminal not showing responses
+
 ## Revival v1.9
 
 ### Added
@@ -49,6 +86,7 @@
 - Added a Sweep scan to capture WiFi, BLE, GPS and 802154 data in a csv file on SD
 - Added RSSI tracking for selected APs and stations
 - Added OUI vendor lookup for access points and stations
+- Added drone detection and spoofing
 
 #### IR
 - Added IR CLI support
@@ -145,6 +183,8 @@
 #### NFC
 - Fixed an issue that would cause MFC dictionary attack to not try all possible keys
 - Fixed an issue that would cause Chameleon Ultra to recover less keys than a PN532
+- Adjusted NTAG model detection to infer 213/215/216 from read length even when CC size byte is incorrect
+- Decoded NDEF URI fields so symbols like “@” display correctly
 
 #### BLE
 - Switched AirTag scanner to active BLE scanning for more reliable AirTag detection

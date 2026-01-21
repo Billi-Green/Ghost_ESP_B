@@ -26,8 +26,8 @@ bool ntag_t2_read_user_memory(pn532_io_handle_t io,
     if (out_model) {
         switch (size_mul_8) {
             case 0x12: *out_model = NTAG2XX_NTAG213; break;
-            case 0x3E: *out_model = NTAG2XX_NTAG215; break;
-            case 0x6D: *out_model = NTAG2XX_NTAG216; break;
+            case 0x3E: case 0x3F: *out_model = NTAG2XX_NTAG215; break;
+            case 0x6D: case 0x6F: *out_model = NTAG2XX_NTAG216; break;
             default: *out_model = NTAG2XX_UNKNOWN; break;
         }
     }
@@ -46,7 +46,24 @@ bool ntag_t2_read_user_memory(pn532_io_handle_t io,
         memcpy(buf + copied, tmp, to_copy);
         copied += to_copy;
         for (size_t i = 0; i + 1 < to_copy; ++i) {
-            if (tmp[i] == 0xFE) { *out_buf = buf; *out_len = copied - (to_copy - i - 1); return true; }
+            if (tmp[i] == 0xFE) {
+                size_t len = copied - (to_copy - i - 1);
+                if (out_model) {
+                    if (*out_model == NTAG2XX_NTAG216 && len <= 540) *out_model = NTAG2XX_NTAG215;
+                    else if (*out_model == NTAG2XX_UNKNOWN) {
+                        if (len <= 200) *out_model = NTAG2XX_NTAG213;
+                        else if (len <= 540) *out_model = NTAG2XX_NTAG215;
+                    }
+                }
+                *out_buf = buf; *out_len = len; return true;
+            }
+        }
+    }
+    if (out_model) {
+        if (*out_model == NTAG2XX_NTAG216 && copied <= 540) *out_model = NTAG2XX_NTAG215;
+        else if (*out_model == NTAG2XX_UNKNOWN) {
+            if (copied <= 200) *out_model = NTAG2XX_NTAG213;
+            else if (copied <= 540) *out_model = NTAG2XX_NTAG215;
         }
     }
     *out_buf = buf;

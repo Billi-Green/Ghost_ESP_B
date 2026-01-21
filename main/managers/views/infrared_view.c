@@ -177,9 +177,7 @@ static lv_obj_t *command_label = NULL;
 static lv_obj_t *save_btn = NULL;
 static lv_obj_t *cancel_btn = NULL;
 static int preview_selected_option = 0;
-static bool signal_decoded = false;
-static InfraredDecodedMessage *decoded_message = NULL;
-static InfraredDecoderContext *decoder_context = NULL;
+// Removed: signal_decoded, decoded_message, and decoder_context - GPIO-based implementation handles decoding internally
 // queue carries rx_event_copy_t by value (no heap allocs in ISR)
 // static QueueHandle_t ir_rx_queue = NULL; // Removed, using infrared_manager
 
@@ -439,43 +437,30 @@ static void append_signal_to_remote(const char *signal_name) {
     
     if (!signal_name || strlen(signal_name) == 0) {
         ESP_LOGE(TAG, "Invalid signal name provided");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
+        // Free timing data if it exists to prevent memory leaks (only for raw signals!)
+        if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
             free(learned_signal.payload.raw.timings);
             learned_signal.payload.raw.timings = NULL;
         }
         return;
     }
-    
+
     if (strlen(current_remote_path) == 0) {
         ESP_LOGE(TAG, "No current remote file selected");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
+        // Free timing data if it exists to prevent memory leaks (only for raw signals!)
+        if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
             free(learned_signal.payload.raw.timings);
             learned_signal.payload.raw.timings = NULL;
         }
         return;
     }
-    
-    // Check if we have valid signal data
-    if (!learned_signal.is_raw) {
-        ESP_LOGE(TAG, "No valid signal data to save");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
-            free(learned_signal.payload.raw.timings);
-            learned_signal.payload.raw.timings = NULL;
+
+    // Check if we have valid signal data (raw signals need timing data)
+    if (learned_signal.is_raw) {
+        if (!learned_signal.payload.raw.timings || learned_signal.payload.raw.timings_size == 0) {
+            ESP_LOGE(TAG, "No timing data in raw signal");
+            return;
         }
-        return;
-    }
-    
-    if (!learned_signal.payload.raw.timings || learned_signal.payload.raw.timings_size == 0) {
-        ESP_LOGE(TAG, "No timing data in signal");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
-            free(learned_signal.payload.raw.timings);
-            learned_signal.payload.raw.timings = NULL;
-        }
-        return;
     }
     
     // do not attempt to validate pointer address range; trust allocation
@@ -490,12 +475,14 @@ static void append_signal_to_remote(const char *signal_name) {
     job.op = IR_IO_APPEND;
     strncpy(job.path, current_remote_path, sizeof(job.path)-1);
     strncpy(job.aux, signal_name, sizeof(job.aux)-1);
-    if (signal_decoded && decoded_message) {
+    if (!learned_signal.is_raw) {
+        // Signal was decoded
         job.has_decoded = true;
-        strncpy(job.protocol, infrared_protocol_to_string(decoded_message->protocol), sizeof(job.protocol)-1);
-        job.address = decoded_message->address;
-        job.command = decoded_message->command;
+        strncpy(job.protocol, learned_signal.payload.message.protocol, sizeof(job.protocol)-1);
+        job.address = learned_signal.payload.message.address;
+        job.command = learned_signal.payload.message.command;
     } else {
+        // Signal is raw
         job.is_raw = true;
         job.frequency = learned_signal.payload.raw.frequency;
         job.duty_cycle = learned_signal.payload.raw.duty_cycle;
@@ -506,9 +493,9 @@ static void append_signal_to_remote(const char *signal_name) {
     if (ir_sd_queue) xQueueSend(ir_sd_queue, &job, 0);
     
     ESP_LOGI(TAG, "Queued append of signal '%s' to remote file %s", signal_name, current_remote_path);
-    
-    // Free timing data to prevent memory leaks
-    if (learned_signal.payload.raw.timings) {
+
+    // Free timing data to prevent memory leaks (only for raw signals!)
+    if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
         free(learned_signal.payload.raw.timings);
         learned_signal.payload.raw.timings = NULL;
     }
@@ -1030,7 +1017,7 @@ static void universal_transmit_task(void *arg) {
                 else if (strncmp(s, "data:",5)==0) {
                     char *p=s+5; size_t cnt=0; char *t=p;
                     while(*t){while(*t&&isspace((unsigned char)*t))t++;if(!*t)break;cnt++;while(*t&&!isspace((unsigned char)*t))t++;}
-                    uint32_t *arr=malloc(cnt*sizeof(uint32_t)); size_t ii=0; char *endp;
+                    uint32_t *arr=heap_caps_malloc(cnt*sizeof(uint32_t), MALLOC_CAP_DEFAULT | MALLOC_CAP_SPIRAM); size_t ii=0; char *endp;
                     while(*p){while(*p&&isspace((unsigned char)*p))p++;if(!*p)break;arr[ii++]=strtoul(p,&endp,10);p=endp;}
                     sig.payload.raw.timings=arr; sig.payload.raw.timings_size=cnt;
                 }
@@ -1448,19 +1435,11 @@ void infrared_view_destroy(void) {
     }
     cleanup_learning_popup(NULL);
     cleanup_signal_preview_popup(NULL);
-    
-    // Clean up decoder context
-    if (decoder_context) {
-        infrared_decoder_free(decoder_context);
-        decoder_context = NULL;
-    }
-    signal_decoded = false;
-    decoded_message = NULL;
-    
+
     // Only free learned signal data if it's not being preserved for the callback
     // If preserve_learned_signal is true, it means we're switching to keyboard view
     // and the timing data should be preserved for the callback
-    if (!preserve_learned_signal && learned_signal.payload.raw.timings) {
+    if (!preserve_learned_signal && learned_signal.is_raw && learned_signal.payload.raw.timings) {
         free(learned_signal.payload.raw.timings);
         learned_signal.payload.raw.timings = NULL;
         learned_signal.payload.raw.timings_size = 0;
@@ -2329,7 +2308,10 @@ static void command_event_execute(int idx) {
         lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_center(label);
 
-        UniversalTransmitArgs_t *args = malloc(sizeof(UniversalTransmitArgs_t));
+        UniversalTransmitArgs_t *args = heap_caps_malloc(sizeof(UniversalTransmitArgs_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!args) {
+            args = heap_caps_malloc(sizeof(UniversalTransmitArgs_t), MALLOC_CAP_DEFAULT);
+        }
         if (!args) {
             printf("Failed to allocate args for universal transmit task\n");
             cleanup_transmit_popup(NULL);
@@ -2339,12 +2321,25 @@ static void command_event_execute(int idx) {
         args->path[sizeof(args->path)-1] = '\0';
         strncpy(args->command, uni_command_names[idx], sizeof(args->command)-1);
         args->command[sizeof(args->command)-1] = '\0';
-        if (xTaskCreate(universal_transmit_task, "uni_tx_task", 4096, args, tskIDLE_PRIORITY + 1, &universal_task_handle) != pdPASS) {
-            printf("universals job task create failed\n");
-            cleanup_transmit_popup(NULL);
-            free(args);
-            universal_task_handle = NULL;
-            return;
+#if CONFIG_SPIRAM
+        static StaticTask_t s_uni_tx_tcb;
+        static StackType_t *s_uni_tx_stack = NULL;
+        if (!s_uni_tx_stack) {
+            s_uni_tx_stack = heap_caps_malloc(4096 * sizeof(StackType_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
+        if (s_uni_tx_stack) {
+            universal_task_handle = xTaskCreateStatic(universal_transmit_task, "uni_tx_task", 4096, args, tskIDLE_PRIORITY + 1, s_uni_tx_stack, &s_uni_tx_tcb);
+        }
+        if (!universal_task_handle)
+#endif
+        {
+            if (xTaskCreate(universal_transmit_task, "uni_tx_task", 4096, args, tskIDLE_PRIORITY + 1, &universal_task_handle) != pdPASS) {
+                printf("universals job task create failed\n");
+                cleanup_transmit_popup(NULL);
+                heap_caps_free(args);
+                universal_task_handle = NULL;
+                return;
+            }
         }
         printf("universals job task created\n");
         return;
@@ -2826,14 +2821,12 @@ void easy_learn_signal_name_callback(void)
 
 void signal_preview_cancel_cb(lv_event_t *e)
 {
-    // Clean up learned signal data
-    if (learned_signal.payload.raw.timings) {
+    // Clean up learned signal data (only for raw signals!)
+    if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
         free(learned_signal.payload.raw.timings);
         learned_signal.payload.raw.timings = NULL;
         learned_signal.payload.raw.timings_size = 0;
     }
-    signal_decoded = false;
-    decoded_message = NULL;
     
     // Reset add signal mode flag when cancelling
     add_signal_mode = false;
@@ -3265,10 +3258,11 @@ void create_signal_preview_popup(void)
     command_label = popup_create_body_label(signal_preview_popup, "", popup_w - 20, false, &lv_font_montserrat_14, 64);
 
     // Set concise text
-    if (signal_decoded && decoded_message) {
-        lv_label_set_text_fmt(protocol_label, "%s", infrared_protocol_to_string(decoded_message->protocol));
-        lv_label_set_text_fmt(address_label, "Addr: 0x%lX", decoded_message->address);
-        lv_label_set_text_fmt(command_label, "Cmd: 0x%lX", decoded_message->command);
+    if (!learned_signal.is_raw) {
+        // Signal was successfully decoded
+        lv_label_set_text_fmt(protocol_label, "%s", learned_signal.payload.message.protocol);
+        lv_label_set_text_fmt(address_label, "Addr: 0x%lX", (unsigned long)learned_signal.payload.message.address);
+        lv_label_set_text_fmt(command_label, "Cmd: 0x%lX", (unsigned long)learned_signal.payload.message.command);
     } else {
         lv_label_set_text(protocol_label, "Raw Signal");
         lv_label_set_text(address_label, "Unknown Protocol");
@@ -3286,9 +3280,13 @@ void create_signal_preview_popup(void)
     
     // Raw signal info (use popup helper for consistent layout)
     lv_coord_t popup_w2 = lv_obj_get_width(signal_preview_popup);
-    lv_coord_t raw_y = signal_decoded ? 80 : 64; // if raw, place where cmd normally is (64)
+    lv_coord_t raw_y = !learned_signal.is_raw ? 80 : 64; // if decoded, place below cmd (80), else at cmd position (64)
     lv_obj_t *raw_info = popup_create_body_label(signal_preview_popup, "", popup_w2 - 20, false, &lv_font_montserrat_14, raw_y);
-    lv_label_set_text_fmt(raw_info, "%d timings", learned_signal.payload.raw.timings_size);
+    if (learned_signal.is_raw) {
+        lv_label_set_text_fmt(raw_info, "%d timings", learned_signal.payload.raw.timings_size);
+    } else {
+        lv_label_set_text(raw_info, "");  // Don't show timing info for decoded signals
+    }
     lv_obj_set_style_text_color(raw_info, lv_color_hex(0xCCCCCC), 0);
     
     // Set initial selection
@@ -3305,33 +3303,20 @@ static void save_learned_signal(const char *signal_name) {
     
     if (!signal_name || strlen(signal_name) == 0) {
         ESP_LOGE(TAG, "Invalid signal name provided");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
+        // Free timing data if it exists to prevent memory leaks (only for raw signals!)
+        if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
             free(learned_signal.payload.raw.timings);
             learned_signal.payload.raw.timings = NULL;
         }
         return;
     }
-    
-    // Check if we have valid signal data
-    if (!learned_signal.is_raw) {
-        ESP_LOGE(TAG, "No valid signal data to save");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
-            free(learned_signal.payload.raw.timings);
-            learned_signal.payload.raw.timings = NULL;
+
+    // Check if we have valid signal data (raw signals need timing data)
+    if (learned_signal.is_raw) {
+        if (!learned_signal.payload.raw.timings || learned_signal.payload.raw.timings_size == 0) {
+            ESP_LOGE(TAG, "No timing data in raw signal");
+            return;
         }
-        return;
-    }
-    
-    if (!learned_signal.payload.raw.timings || learned_signal.payload.raw.timings_size == 0) {
-        ESP_LOGE(TAG, "No timing data in signal");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
-            free(learned_signal.payload.raw.timings);
-            learned_signal.payload.raw.timings = NULL;
-        }
-        return;
     }
     
     // do not attempt to validate pointer address range; trust allocation
@@ -3360,8 +3345,8 @@ static void save_learned_signal(const char *signal_name) {
     // Final safety check for filename length
     if (strlen(filename) >= sizeof(filename) - 1) {
         ESP_LOGE(TAG, "Generated filename would be too long");
-        // Free timing data if it exists to prevent memory leaks
-        if (learned_signal.payload.raw.timings) {
+        // Free timing data if it exists to prevent memory leaks (only for raw signals!)
+        if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
             free(learned_signal.payload.raw.timings);
             learned_signal.payload.raw.timings = NULL;
         }
@@ -3377,12 +3362,14 @@ static void save_learned_signal(const char *signal_name) {
     job.op = IR_IO_SAVE;
     // aux carries the base name (signal name)
     strncpy(job.aux, signal_name, sizeof(job.aux)-1);
-    if (signal_decoded && decoded_message) {
+    if (!learned_signal.is_raw) {
+        // Signal was decoded
         job.has_decoded = true;
-        strncpy(job.protocol, infrared_protocol_to_string(decoded_message->protocol), sizeof(job.protocol)-1);
-        job.address = decoded_message->address;
-        job.command = decoded_message->command;
+        strncpy(job.protocol, learned_signal.payload.message.protocol, sizeof(job.protocol)-1);
+        job.address = learned_signal.payload.message.address;
+        job.command = learned_signal.payload.message.command;
     } else {
+        // Signal is raw
         job.is_raw = true;
         job.frequency = learned_signal.payload.raw.frequency;
         job.duty_cycle = learned_signal.payload.raw.duty_cycle;
@@ -3393,9 +3380,9 @@ static void save_learned_signal(const char *signal_name) {
     if (ir_sd_queue) xQueueSend(ir_sd_queue, &job, 0);
     
     ESP_LOGI(TAG, "Queued IR signal save to %s", filename);
-    
-    // Free timing data to prevent memory leaks
-    if (learned_signal.payload.raw.timings) {
+
+    // Free timing data to prevent memory leaks (only for raw signals!)
+    if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
         free(learned_signal.payload.raw.timings);
         learned_signal.payload.raw.timings = NULL;
     }
@@ -3411,7 +3398,7 @@ static void ir_learning_task(void *arg) {
     // Reset learning cancel flag
     ir_learning_cancel = false;
     
-    // Check if RMT channel is available (should be initialized by view_create or init)
+    // Check if IR RX is initialized (GPIO-based implementation)
     // Ensure manager is initialized
     if (!infrared_manager_rx_init()) {
         ESP_LOGE(TAG, "Failed to init infrared manager RX");
@@ -3421,311 +3408,64 @@ static void ir_learning_task(void *arg) {
         return;
     }
 
-    rmt_channel_handle_t rx_channel = infrared_manager_get_rx_channel();
-    if (!rx_channel) {
-        ESP_LOGE(TAG, "RMT RX channel not initialized");
+    if (!infrared_manager_rx_is_initialized()) {
+        ESP_LOGE(TAG, "IR RX not initialized");
         lv_async_call(cleanup_learning_popup, NULL);
         ir_learning_task_handle = NULL;
         vTaskDelete(NULL);
         return;
     }
-    
-    // Check if RX queue is available
-    QueueHandle_t rx_queue = infrared_manager_get_rx_queue();
-    if (!rx_queue) {
-        ESP_LOGE(TAG, "RX queue not initialized");
-        lv_async_call(cleanup_learning_popup, NULL);
-        ir_learning_task_handle = NULL;
-        vTaskDelete(NULL);
-        return;
-    }
-    
-    // Initialize decoder context
-    decoder_context = infrared_decoder_alloc();
-    if (!decoder_context) {
-        ESP_LOGE(TAG, "Failed to allocate decoder context");
-        lv_async_call(cleanup_learning_popup, NULL);
-        ir_learning_task_handle = NULL;
-        vTaskDelete(NULL);
-        return;
-    }
-    
-    // Reset decoder state
-    signal_decoded = false;
-    decoded_message = NULL;
-    
-    // Receive buffer
-    rmt_symbol_word_t raw_symbols[IR_RX_MAX_SYMBOLS];
-    
-    // Configure receive parameters based on ESP-IDF documentation
-    // These values are suitable for typical IR remote protocols
-    rmt_receive_config_t receive_config = {
-        .signal_range_min_ns = 1250,     // Minimum pulse width (smaller than typical IR pulse ~560µs)
-        .signal_range_max_ns = 12000000, // Maximum pulse width (larger than typical IR gap ~9ms)
-    };
-    
-    bool rx_active = false;
+
+    // Use GPIO-based IR RX - much simpler!
+    ESP_LOGI(TAG, "Waiting for IR signal...");
+
     while (!ir_learning_cancel) {
-        ESP_LOGI(TAG, "Starting IR receive operation...");
-        
-        // Check if channel is still valid before trying to receive
-        rx_channel = infrared_manager_get_rx_channel();
-        if (!rx_channel) {
-            ESP_LOGE(TAG, "RMT RX channel is NULL");
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-        
-        // Start a single receive operation (non-blocking)
-        esp_err_t ret = rmt_receive(rx_channel, raw_symbols, sizeof(raw_symbols), &receive_config);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to start RMT receive: %d", ret);
-            // brief delay then try again
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
-        }
-        rx_active = true;
-        
-        // Wait for IR signal with timeout (inspired by Arduino IRremote timeout handling)
-        TickType_t timeout_ticks = pdMS_TO_TICKS(1000);  // 1 second timeout per attempt
-        
-        infrared_rx_event_t rx_copy = {0};
-        if (xQueueReceive(rx_queue, &rx_copy, timeout_ticks) == pdTRUE && rx_copy.num_symbols > 0) {
-            // Data received, process it
-            ESP_LOGI(TAG, "IR signal received: %u symbols", (unsigned)rx_copy.num_symbols);
+        // infrared_manager_rx_receive handles all the decoding internally
+        // It returns a fully decoded signal (or raw if decoding fails)
+        memset(&learned_signal, 0, sizeof(learned_signal));
 
-            // Log first few symbols for debugging
-            for (size_t i = 0; i < rx_copy.num_symbols && i < 5; i++) {
-                ESP_LOGD(TAG, "Symbol %d: duration0=%u, duration1=%u", (int)i, 
-                         rx_copy.symbols[i].duration0, rx_copy.symbols[i].duration1);
-            }
-            
-            // Enhanced signal validation inspired by Arduino IRremote
-            bool is_valid_signal = false;
-            bool has_overflow = false; // TODO: Implement proper overflow detection
-            uint32_t total_duration = 0;
-            uint32_t max_pulse_duration = 0;
-            uint32_t min_pulse_duration = UINT32_MAX;
-            uint32_t pulse_count = 0;
-            uint32_t gap_count = 0;
-            
-            if (has_overflow) {
-                ESP_LOGW(TAG, "Buffer overflow detected - signal may be truncated");
-            }
-            
-            // More robust signal validation
-            if (rx_copy.num_symbols >= 6 && rx_copy.num_symbols <= 200) {  // Allow wider range but still filter noise
+        if (infrared_manager_rx_receive(&learned_signal, 1000)) {  // 1 second timeout per attempt
+            ESP_LOGI(TAG, "IR signal received successfully");
 
-                for (size_t i = 0; i < rx_copy.num_symbols; i++) {
-                    uint32_t duration_us = rx_copy.symbols[i].duration0 + rx_copy.symbols[i].duration1;
-                    total_duration += duration_us;
+            // Set flag to preserve timing data during view transition
+            preserve_learned_signal = true;
 
-                    // Analyze pulse and gap durations separately
-                    uint32_t pulse_duration = (rx_copy.symbols[i].level0 == 1) ? rx_copy.symbols[i].duration0 : rx_copy.symbols[i].duration1;
-                    uint32_t gap_duration = (rx_copy.symbols[i].level0 == 0) ? rx_copy.symbols[i].duration0 : rx_copy.symbols[i].duration1;
-
-                    if (pulse_duration > 0) {
-                        pulse_count++;
-                        if (pulse_duration > max_pulse_duration) max_pulse_duration = pulse_duration;
-                        if (pulse_duration < min_pulse_duration) min_pulse_duration = pulse_duration;
-                    }
-                    if (gap_duration > 0) {
-                        gap_count++;
-                    }
-                }
-                
-                // Enhanced validation criteria based on typical IR remote characteristics
-                bool duration_valid = (total_duration >= 5000 && total_duration <= 200000);  // 5-200ms total
-                bool pulse_valid = (max_pulse_duration >= 200 && max_pulse_duration <= 20000);  // 0.2-20ms max pulse
-                bool min_pulse_valid = (min_pulse_duration >= 100 && min_pulse_duration <= 5000);  // 0.1-5ms min pulse
-                bool structure_valid = (pulse_count >= 3 && gap_count >= 2);  // Must have pulses and gaps
-                
-                if (duration_valid && pulse_valid && min_pulse_valid && structure_valid) {
-                    is_valid_signal = true;
-                    ESP_LOGI(TAG, "Valid IR signal: %lu symbols, %lu us total, pulse range %lu-%lu us", 
-                            (unsigned long)rx_copy.num_symbols, (unsigned long)total_duration, (unsigned long)min_pulse_duration, (unsigned long)max_pulse_duration);
-                } else {
-                    ESP_LOGW(TAG, "Invalid signal: dur=%s, pulse=%s, min_pulse=%s, struct=%s",
-                            duration_valid ? "OK" : "FAIL",
-                            pulse_valid ? "OK" : "FAIL", 
-                            min_pulse_valid ? "OK" : "FAIL",
-                            structure_valid ? "OK" : "FAIL");
-                }
-            }
-            
-            if (is_valid_signal) {
-                // Convert received data to our format
-                memset(&learned_signal, 0, sizeof(learned_signal));
-                learned_signal.is_raw = true;
-                learned_signal.payload.raw.frequency = 38000; // Default 38kHz
-                learned_signal.payload.raw.duty_cycle = 0.33f; // Default 33% duty cycle
-                learned_signal.payload.raw.timings_size = rx_copy.num_symbols * 2;
-
-                // Validate that we have symbols to process
-                if (rx_copy.num_symbols == 0) {
-                    ESP_LOGW(TAG, "Received valid signal flag but zero symbols, ignoring");
-                    continue;
-                }
-
-                learned_signal.payload.raw.timings = malloc(learned_signal.payload.raw.timings_size * sizeof(uint32_t));
-
-                if (learned_signal.payload.raw.timings) {
-                    // Copy timing data from RMT symbols
-                    for (size_t i = 0; i < rx_copy.num_symbols; i++) {
-                        learned_signal.payload.raw.timings[i * 2] = rx_copy.symbols[i].duration0;
-                        learned_signal.payload.raw.timings[i * 2 + 1] = rx_copy.symbols[i].duration1;
-                    }
-                    
-                    // Additional validation: ensure we actually copied data
-                    if (learned_signal.payload.raw.timings_size > 0) {
-                        ESP_LOGI(TAG, "IR signal data prepared: %d timings, %d bytes", 
-                                learned_signal.payload.raw.timings_size, 
-                                learned_signal.payload.raw.timings_size * sizeof(uint32_t));
-                        
-                        // Try to decode the signal using the decoder
-                        infrared_decoder_reset(decoder_context);
-                        signal_decoded = false;
-                        decoded_message = NULL;
-
-                        // Process RMT symbols as a continuous timing stream
-                        ESP_LOGI(TAG, "Processing %u RMT symbols for decoding:", (unsigned)rx_copy.num_symbols);
-
-                        // Convert RMT symbols to a continuous stream of level/timing pairs
-                        // Each RMT symbol contains two timing periods with their respective levels
-                        for (size_t i = 0; i < rx_copy.num_symbols && !signal_decoded; i++) {
-                            rmt_symbol_word_t symbol = rx_copy.symbols[i];
-                            
-                            ESP_LOGD(TAG, "Symbol %d: dur0=%u(lvl%d), dur1=%u(lvl%d)", 
-                                     i, symbol.duration0, symbol.level0, symbol.duration1, symbol.level1);
-                            
-                            // Feed both timing periods from this symbol to the decoder
-                            // This maintains the continuous timing relationship
-                            
-                            // Process first timing period (duration0 with level0)
-                            if (symbol.duration0 > 0) {
-                                // Invert level since IR receivers typically output inverted signals
-                                // (LOW when IR detected, HIGH when no IR)
-                                bool inverted_level0 = !symbol.level0;
-                                ESP_LOGD(TAG, "Feeding decoder: level=%d, timing=%uµs (raw_level=%d)", inverted_level0, symbol.duration0, symbol.level0);
-                                InfraredDecodedMessage* result = infrared_decoder_decode(decoder_context, inverted_level0, symbol.duration0);
-                                if (result) {
-                                    decoded_message = result;
-                                    signal_decoded = true;
-                                    ESP_LOGI(TAG, "Signal decoded: %s, addr=0x%08lX, cmd=0x%08lX", 
-                                            infrared_protocol_to_string(result->protocol),
-                                            result->address, result->command);
-                                    break;
-                                }
-                            }
-                            
-                            // Process second timing period (duration1 with level1) if not already decoded
-                            if (!signal_decoded && symbol.duration1 > 0) {
-                                // Invert level since IR receivers typically output inverted signals
-                                bool inverted_level1 = !symbol.level1;
-                                ESP_LOGD(TAG, "Feeding decoder: level=%d, timing=%uµs (raw_level=%d)", inverted_level1, symbol.duration1, symbol.level1);
-                                InfraredDecodedMessage* result = infrared_decoder_decode(decoder_context, inverted_level1, symbol.duration1);
-                                if (result) {
-                                    decoded_message = result;
-                                    signal_decoded = true;
-                                    ESP_LOGI(TAG, "Signal decoded: %s, addr=0x%08lX, cmd=0x%08lX", 
-                                            infrared_protocol_to_string(result->protocol),
-                                            result->address, result->command);
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Send end-of-signal indication to decoder if not already decoded
-                        // This is crucial for protocols like SIRC that need end-of-signal detection
-                        if (!signal_decoded) {
-                            ESP_LOGD(TAG, "Sending end-of-signal indication to decoder (timing=0)");
-                            InfraredDecodedMessage* result = infrared_decoder_decode(decoder_context, false, 0);
-                            if (result) {
-                                decoded_message = result;
-                                signal_decoded = true;
-                                ESP_LOGI(TAG, "Signal decoded after end-of-signal: %s, addr=0x%08lX, cmd=0x%08lX", 
-                                        infrared_protocol_to_string(result->protocol),
-                                        result->address, result->command);
-                            }
-                        }
-                        
-                        if (!signal_decoded) {
-                            ESP_LOGI(TAG, "Signal could not be decoded - will save as raw");
-                        }
-                        
-                        // Set flag to preserve timing data during view transition
-                        preserve_learned_signal = true;
-                        
-                        // Signal received successfully, show preview popup
-                        if (is_easy_mode) {
-                            lv_async_call(cleanup_easy_learn_popup, NULL);
-                        } else {
-                            lv_async_call(cleanup_learning_popup, NULL);
-                        }
-                        
-                        // Create and show signal preview popup
-                        lv_async_call((lv_async_cb_t)create_signal_preview_popup, NULL);
-                        
-                        // Don't clean up timing data here - let the callback handle it
-                        // RMT channel remains active for future learning sessions
-
-                        // nothing to free; queue passed by value
-
-                        ir_learning_task_handle = NULL;
-                        vTaskDelete(NULL);
-                        return;
-                    } else {
-                        ESP_LOGW(TAG, "Timing data size is zero after allocation");
-                        free(learned_signal.payload.raw.timings);
-                        learned_signal.payload.raw.timings = NULL;
-                        learned_signal.payload.raw.timings_size = 0;
-                        // nothing to free; queue passed by value
-                        continue;
-                    }
-                } else {
-                    ESP_LOGE(TAG, "Failed to allocate memory for timing data");
-                    // Ensure we don't have a dangling pointer
-                    learned_signal.payload.raw.timings = NULL;
-                    learned_signal.payload.raw.timings_size = 0;
-                    // continue listening for another signal
-                    continue;
-                }
+            // Signal received successfully, show preview popup
+            if (is_easy_mode) {
+                lv_async_call(cleanup_easy_learn_popup, NULL);
             } else {
-                ESP_LOGW(TAG, "Invalid IR signal: %u symbols, %uµs total, %uµs max - likely noise", 
-                         (unsigned)rx_copy.num_symbols, total_duration, max_pulse_duration);
-                // Continue listening for another signal
+                lv_async_call(cleanup_learning_popup, NULL);
             }
-        } else {
-            // Timeout - no signal received within 1 second
-            ESP_LOGD(TAG, "No IR signal received, continuing to listen...");
+
+            // Create and show signal preview popup
+            lv_async_call((lv_async_cb_t)create_signal_preview_popup, NULL);
+
+            ir_learning_task_handle = NULL;
+            vTaskDelete(NULL);
+            return;
         }
 
-        // no explicit reset; next rmt_receive will restart capture
-        rx_active = false;
+        // Check for cancel flag after timeout
+        if (ir_learning_cancel) {
+            break;
+        }
+
+        // No signal received in this iteration, continue listening
+        ESP_LOGD(TAG, "No IR signal received, continuing to listen...");
     }
-    
-    // Cleanup - only reached if learning was cancelled or failed
-    // RMT channel is managed by view lifecycle, don't clean it up here
-    
-    // Clean up decoder context
-    if (decoder_context) {
-        infrared_decoder_free(decoder_context);
-        decoder_context = NULL;
-    }
-    signal_decoded = false;
-    decoded_message = NULL;
-    
-    // Only clean up timing data if learning was cancelled
-    if (ir_learning_cancel && learned_signal.payload.raw.timings) {
-        free(learned_signal.payload.raw.timings);
-        learned_signal.payload.raw.timings = NULL;
-        learned_signal.payload.raw.timings_size = 0;
-    }
-    
+
+    // Cleanup - only reached if learning was cancelled
     if (ir_learning_cancel) {
+        // Clean up any allocated memory in learned_signal
+        if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
+            free(learned_signal.payload.raw.timings);
+            learned_signal.payload.raw.timings = NULL;
+            learned_signal.payload.raw.timings_size = 0;
+        }
+
         lv_async_call(cleanup_learning_popup, NULL);
     }
-    
+
     ir_learning_task_handle = NULL;
     vTaskDelete(NULL);
 }
