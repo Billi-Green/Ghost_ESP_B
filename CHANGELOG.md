@@ -6,6 +6,7 @@
 - Set IR universal send RGB pulse brightness to 20% (reduced from 100%)
 - Add git commit hash retrieval and logging at build time - @tototo31
 - Fixed issue where RGBs would stay lit after stopping a deauth attack
+- Fixed a potential crash when stopping wardriving - Thanks to @10Evansr for reporting with a fix
 
 ## Revival v1.9.2
 
