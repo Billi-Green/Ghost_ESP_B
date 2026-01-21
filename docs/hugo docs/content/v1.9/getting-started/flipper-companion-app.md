@@ -61,10 +61,6 @@ Connect your ESP32 device to your Flipper Zero via UART:
 1. Power on your GhostESP device
 2. Launch the GhostESP app on your Flipper Zero
 3. The app will automatically attempt to connect via serial
-4. If connection fails, check:
-   - Serial port configuration in app settings
-   - Baud rate (typically 115200)
-   - Physical wiring connections
 
 ## Features
 
@@ -247,7 +243,6 @@ Use **qFlipper** or remove the SD card to transfer files to your computer.
 **App can't connect to GhostESP**
 - Verify serial wiring (TX, RX, GND)
 - Check that GhostESP device is powered on
-- Ensure correct baud rate (default: 115200)
 - Try restarting both devices
 - Check serial port configuration in app settings
 
@@ -306,15 +301,6 @@ Use **qFlipper** or remove the SD card to transfer files to your computer.
 
 ## Advanced Configuration
 
-### Serial Port Settings
-
-If default serial settings don't work, you may need to configure:
-
-- **Baud Rate**: Typically 115200, but some devices use 460800 or 921600
-- **Data Bits**: Usually 8
-- **Parity**: Usually None
-- **Stop Bits**: Usually 1
-- **Flow Control**: Usually None
 
 ### Custom Portal HTML
 
