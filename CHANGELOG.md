@@ -2,6 +2,7 @@
 
 ## Revival v1.9.3
 
+- Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability
 - Set IR universal send RGB pulse brightness to 20% (reduced from 100%)
 - Add git commit hash retrieval and logging at build time - @tototo31
