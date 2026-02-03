@@ -1366,7 +1366,9 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 
 #ifdef CONFIG_HAS_BATTERY
   axp2101_init();
-  pcf8563_init(I2C_NUM_1, 0x51);
+#ifdef CONFIG_HAS_RTC_CLOCK
+  pcf8563_init(I2C_NUM_0, 0x51);
+#endif
 #endif
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
@@ -1565,12 +1567,11 @@ void set_backlight_brightness(uint8_t percentage) {
     // Clamp to user setting
     uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
 
-    //if (percentage > max_brightness) percentage = max_brightness;
+    // if (percentage > max_brightness) percentage = max_brightness;
 
     //scale percent by max_brightness
     percentage = (percentage * max_brightness) / 100;
     if (percentage > 100) percentage = 100;
-    if (percentage < 0) percentage = 0;
 
 #ifdef CONFIG_USE_TDISPLAY_S3
     // TDisplay S3 backlight now uses LEDC for PWM control
@@ -1755,8 +1756,9 @@ void hardware_input_task(void *pvParameters) {
   uint16_t calData[5] = {339, 3470, 237, 3438, 2};
   bool touch_active = false;
   int screen_width = LV_HOR_RES;
-  int screen_height = LV_VER_RES;
+#ifdef CONFIG_IS_S3TWATCH
   bool was_woken_by_interrupt = false; // New flag for S3T-Watch
+#endif
 #ifdef CONFIG_USE_TDECK
   static uint8_t last_tdeck_key = 0;
   static uint32_t last_tdeck_key_ms = 0;
@@ -2017,7 +2019,7 @@ void hardware_input_task(void *pvParameters) {
 #if SOC_PM_SUPPORT_EXT0_WAKEUP
             esp_err_t ret = esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 0);
 #elif SOC_PM_SUPPORT_EXT1_WAKEUP
-            esp_err_t ret = esp_sleep_enable_ext1_wakeup_io(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ALL_LOW);
+            esp_err_t ret = esp_sleep_enable_ext1_wakeup_io(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ANY_LOW);
 #else
             esp_err_t ret = ESP_ERR_NOT_SUPPORTED;
 #endif

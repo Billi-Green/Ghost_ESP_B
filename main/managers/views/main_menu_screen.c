@@ -757,7 +757,7 @@ void handle_hardware_button_press(int ButtonPressed) {
 /**
  * @brief Selects a menu item and updates the display.
  */
-static void select_menu_item(int index, bool slide_left) {
+void select_menu_item(int index, bool slide_left) {
     if (is_animating) return; // Block input during animation
     if (index < 0) index = num_items - 1;
     if (index >= num_items) index = 0;
