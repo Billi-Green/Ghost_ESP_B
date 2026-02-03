@@ -356,6 +356,34 @@ menu "Ghost ESP Options"
             depends on USE_BQ27220_FUEL_GAUGE
             help
                 Design capacity of the battery in mAh (default 1300 for T-Embed CC1101).
+
+        config USE_MAX17048_FUEL_GAUGE
+            bool "Use MAX17048 Fuel Gauge"
+            default n
+            depends on HAS_FUEL_GAUGE
+            help
+                Enable support for MAX17048 fuel gauge via I2C.
+
+        config MAX17048_I2C_ADDRESS
+            hex "MAX17048 I2C Address"
+            default 0x36
+            depends on USE_MAX17048_FUEL_GAUGE
+            help
+                I2C address for MAX17048 fuel gauge (default 0x36).
+
+        config MAX17048_I2C_SDA_PIN
+            int "MAX17048 I2C SDA Pin"
+            default 6
+            depends on USE_MAX17048_FUEL_GAUGE
+            help
+                GPIO pin for MAX17048 I2C SDA line.
+
+        config MAX17048_I2C_SCL_PIN
+            int "MAX17048 I2C SCL Pin"
+            default 7
+            depends on USE_MAX17048_FUEL_GAUGE
+            help
+                GPIO pin for MAX17048 I2C SCL line.
     
         config HAS_RTC_CLOCK
             bool "Enable RTC Clock"

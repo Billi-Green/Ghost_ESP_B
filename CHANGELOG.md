@@ -13,6 +13,7 @@
 - Added GhostLink display commands to enable/disable the on-device AP and change credentials
 - Added touch support for The Wired Hatter's Banshee
 - Added proper touch support to the Infrared view
+- Added MAX17048 fuel gauge support for The Wired Hatter's Banshee
 
 ## Revival v1.9.2
 

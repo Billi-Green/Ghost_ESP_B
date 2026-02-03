@@ -95,15 +95,15 @@ static void battery_poll_task(void *arg) {
       last_chg = g_cached_batt_charging;
     }
     if (!g_cached_batt_valid) {
-      delay_ms = 2000;
-    } else if (g_cached_batt_charging) {
-      delay_ms = 1000;
-    } else if (stable >= 6) {
-      delay_ms = 15000;
-    } else if (stable >= 3) {
       delay_ms = 5000;
+    } else if (g_cached_batt_charging) {
+      delay_ms = 10000; // Poll every 10s when charging
+    } else if (stable >= 6) {
+      delay_ms = 60000; // Poll every 60s when stable
+    } else if (stable >= 3) {
+      delay_ms = 30000; // Poll every 30s when relatively stable
     } else {
-      delay_ms = 2000;
+      delay_ms = 5000;  // Poll every 5s initially
     }
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
