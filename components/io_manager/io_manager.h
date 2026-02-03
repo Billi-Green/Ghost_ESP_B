@@ -53,6 +53,11 @@ bool io_manager_get_encoder_button(void);
 esp_err_t io_manager_pulse_p13_low(void);
 void io_manager_scan_i2c(void);
 
+// Polling control for single-threaded operation (e.g. during heavy NFC ops)
+void io_manager_suspend_polling(void);
+void io_manager_resume_polling(void);
+esp_err_t io_manager_poll_immediate(void);
+
 #ifdef __cplusplus
 }
 #endif

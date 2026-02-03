@@ -10,6 +10,7 @@
 #include "i2c_bus_lock.h"
 #include "core/glog.h"
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "IO_MANAGER";
 static bool g_i2c_driver_installed = false; // whether this module installed the I2C driver
@@ -42,7 +43,11 @@ static SemaphoreHandle_t g_i2c_mutex = NULL;
 
 // Debouncing constants
 #define DEBOUNCE_MS            16
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+#define IO_MANAGER_POLL_MS     (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ? 25 : 10)
+#else
 #define IO_MANAGER_POLL_MS     10
+#endif
 #define IO_MANAGER_TASK_STACK  3072
 #define IO_MANAGER_TASK_PRIO   5
 
@@ -58,6 +63,56 @@ static uint8_t g_cached_state_port1 = 0xFF;
 static int64_t g_last_change_time = 0;
 static TaskHandle_t g_io_task_handle = NULL;
 static TickType_t g_oom_backoff_until = 0;
+// Polling control
+static volatile bool g_polling_suspended = false;
+
+void io_manager_suspend_polling(void) {
+    g_polling_suspended = true;
+    ESP_LOGI(TAG, "IO polling suspended");
+}
+
+void io_manager_resume_polling(void) {
+    g_polling_suspended = false;
+    ESP_LOGI(TAG, "IO polling resumed");
+}
+
+static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1);
+static void io_manager_process_sample(uint8_t port0, uint8_t port1, btn_event_t *event_out);
+
+// Manual poll function for single-threaded operation
+esp_err_t io_manager_poll_immediate(void) {
+    if (!g_initialized) return ESP_ERR_INVALID_STATE;
+    
+    // We update the global state variables directly, just like the task does
+    uint8_t port0 = g_last_state_port0;
+    uint8_t port1 = g_last_state_port1;
+    
+    esp_err_t ret = tca9535_read_inputs(&port0, &port1);
+    
+    if (ret == ESP_OK) {
+        // Update cached states and process events
+        // Note: we don't generate events here, just update state for consumers
+        // to read via io_manager_get_button_states if needed, 
+        // BUT display manager reads directly from g_cached_state...
+        
+        bool changed = false;
+        if (port0 != g_last_state_port0) {
+            g_last_state_port0 = port0;
+            g_cached_state_port0 = port0;
+            changed = true;
+        }
+        if (port1 != g_last_state_port1) {
+            g_last_state_port1 = port1;
+            g_cached_state_port1 = port1;
+            changed = true;
+        }
+        
+        if (changed) {
+            g_last_change_time = esp_timer_get_time() / 1000;
+        }
+    }
+    return ret;
+}
 
 // Forward declarations
 static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data);
@@ -69,12 +124,33 @@ static bool i2c_bus_recover(int sda, int scl, int port);
 static esp_err_t i2c_write_reg8_direct(uint8_t addr, uint8_t reg, uint8_t val);
 static esp_err_t i2c_read_reg8_direct(uint8_t addr, uint8_t reg, uint8_t *val);
 static void io_manager_pulse_p13_low_direct(void);
+static void io_manager_force_p13_low_hold(void);
 
 static bool i2c_bus_recover(int sda, int scl, int port)
 {
     const int RECOVERY_US = 6;
+    const int PULSE_COUNT = 
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+        (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ? 16 : 9)
+#else
+        9
+#endif
+        ;
+    const TickType_t SETTLE_TICKS = 
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+        (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ? pdMS_TO_TICKS(5) : pdMS_TO_TICKS(1))
+#else
+        pdMS_TO_TICKS(1)
+#endif
+        ;
 
-    bool have_lock = i2c_bus_lock(port, 100);
+    bool have_lock = i2c_bus_lock(port, 
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+                                 (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ? 300 : 50)
+#else
+                                 50
+#endif
+                                 );
 
     gpio_set_direction(sda, GPIO_MODE_INPUT);
     gpio_set_pull_mode(sda, GPIO_PULLUP_ONLY);
@@ -92,7 +168,7 @@ static bool i2c_bus_recover(int sda, int scl, int port)
     }
 
     if (gpio_get_level(sda) == 0) {
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < PULSE_COUNT; i++) {
             gpio_set_direction(scl, GPIO_MODE_OUTPUT);
             gpio_set_level(scl, 0);
             esp_rom_delay_us(RECOVERY_US);
@@ -112,6 +188,8 @@ static bool i2c_bus_recover(int sda, int scl, int port)
     gpio_set_direction(sda, GPIO_MODE_INPUT);
     gpio_set_pull_mode(sda, GPIO_PULLUP_ONLY);
     esp_rom_delay_us(RECOVERY_US);
+
+    vTaskDelay(SETTLE_TICKS); // allow lines to settle after recovery pulses
 
     bool ok = (gpio_get_level(scl) == 1) && (gpio_get_level(sda) == 1);
     ESP_LOGI(TAG, "I2C bus recovery: %s", ok ? "OK" : "FAILED");
@@ -154,8 +232,17 @@ esp_err_t io_manager_init(const io_manager_config_t *config)
         .scl_io_num = g_config.scl_pin,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
+        .clk_flags = 0,
     };
+    
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        i2c_conf.master.clk_speed = 100000;
+    } else
+#endif
+    {
+        i2c_conf.master.clk_speed = 400000;
+    }
 
     // Clean reinit like Arduino Wire.end() + Wire.begin()
     (void)i2c_driver_delete(g_config.i2c_port);  // ignore error if not installed
@@ -444,6 +531,10 @@ static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data)
         
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
+        if (ret != ESP_OK) {
+            i2c_reset_tx_fifo(g_config.i2c_port);
+            i2c_reset_rx_fifo(g_config.i2c_port);
+        }
         i2c_bus_unlock(g_config.i2c_port);
         
         if (ret == ESP_OK) {
@@ -518,19 +609,21 @@ static void io_manager_task(void *arg)
     (void)arg;
     const TickType_t delay = pdMS_TO_TICKS(IO_MANAGER_POLL_MS);
     while (1) {
-        uint8_t port0 = g_last_state_port0;
-        uint8_t port1 = g_last_state_port1;
-        if (tca9535_read_inputs(&port0, &port1) == ESP_OK) {
-            // Only update cached states, don't consume button events
-            if (port0 != g_last_state_port0) {
-                g_last_state_port0 = port0;
-                g_cached_state_port0 = port0;
-                g_last_change_time = esp_timer_get_time() / 1000;
-            }
-            if (port1 != g_last_state_port1) {
-                g_last_state_port1 = port1;
-                g_cached_state_port1 = port1;
-                g_last_change_time = esp_timer_get_time() / 1000;
+        if (!g_polling_suspended) {
+            uint8_t port0 = g_last_state_port0;
+            uint8_t port1 = g_last_state_port1;
+            if (tca9535_read_inputs(&port0, &port1) == ESP_OK) {
+                // Only update cached states, don't consume button events
+                if (port0 != g_last_state_port0) {
+                    g_last_state_port0 = port0;
+                    g_cached_state_port0 = port0;
+                    g_last_change_time = esp_timer_get_time() / 1000;
+                }
+                if (port1 != g_last_state_port1) {
+                    g_last_state_port1 = port1;
+                    g_cached_state_port1 = port1;
+                    g_last_change_time = esp_timer_get_time() / 1000;
+                }
             }
         }
         vTaskDelay(delay);
@@ -556,7 +649,13 @@ static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1)
         xSemaphoreGive(g_i2c_mutex);
         return ESP_ERR_NO_MEM;
     }
-    bool global_locked = i2c_bus_lock(g_config.i2c_port, 60);
+    bool global_locked = i2c_bus_lock(g_config.i2c_port, 
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+                                         (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ? 350 : 60)
+#else
+                                         60
+#endif
+                                         );
     if (!global_locked) {
         xSemaphoreGive(g_i2c_mutex);
         ESP_LOGW(TAG, "failed to lock shared i2c bus for input read");
@@ -575,6 +674,11 @@ static esp_err_t tca9535_read_inputs(uint8_t *port0, uint8_t *port1)
         i2c_master_stop(cmd);
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
+        // Reset FIFOs after failed transaction to clear any corrupted peripheral state
+        if (ret != ESP_OK) {
+            i2c_reset_tx_fifo(g_config.i2c_port);
+            i2c_reset_rx_fifo(g_config.i2c_port);
+        }
     } else {
         g_oom_backoff_until = now + pdMS_TO_TICKS(1000);
         ret = ESP_ERR_NO_MEM;
@@ -625,6 +729,10 @@ static esp_err_t tca9535_write_port(uint8_t reg, uint8_t data)
         
         ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
+        if (ret != ESP_OK) {
+            i2c_reset_tx_fifo(g_config.i2c_port);
+            i2c_reset_rx_fifo(g_config.i2c_port);
+        }
         i2c_bus_unlock(g_config.i2c_port);
         
         if (ret == ESP_OK) {
@@ -737,6 +845,58 @@ static void io_manager_pulse_p13_low_direct(void)
 
     i2c_bus_unlock(g_config.i2c_port);
     ESP_LOGI(TAG, "P13 pulse done");
+}
+
+static void io_manager_force_p13_low_hold(void)
+{
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") != 0) return;
+#endif
+
+    const uint8_t P13_BIT = 3;
+    const uint8_t P13_MASK = (1 << P13_BIT);
+    const uint8_t REG_OUT1 = 0x03;
+    const uint8_t REG_CFG1 = 0x07;
+
+    ESP_LOGI(TAG, "Holding P13 LOW at boot for template '%s'", CONFIG_BUILD_CONFIG_TEMPLATE);
+
+    if (!i2c_bus_lock(g_config.i2c_port, 500)) {
+        ESP_LOGW(TAG, "P13 hold: failed to lock I2C bus");
+        return;
+    }
+
+    uint8_t cfg1 = 0;
+    if (i2c_read_reg8_direct(g_config.i2c_addr, REG_CFG1, &cfg1) != ESP_OK) {
+        ESP_LOGW(TAG, "P13 hold: read CFG1 failed");
+        i2c_bus_unlock(g_config.i2c_port);
+        return;
+    }
+
+    // Make P13 an output
+    uint8_t cfg1_new = cfg1 & ~P13_MASK;
+    if (cfg1_new != cfg1) {
+        if (i2c_write_reg8_direct(g_config.i2c_addr, REG_CFG1, cfg1_new) != ESP_OK) {
+            ESP_LOGW(TAG, "P13 hold: write CFG1 failed");
+            i2c_bus_unlock(g_config.i2c_port);
+            return;
+        }
+    }
+
+    uint8_t out1 = 0;
+    if (i2c_read_reg8_direct(g_config.i2c_addr, REG_OUT1, &out1) != ESP_OK) {
+        ESP_LOGW(TAG, "P13 hold: read OUT1 failed");
+        i2c_bus_unlock(g_config.i2c_port);
+        return;
+    }
+
+    uint8_t out1_low = out1 & ~P13_MASK;
+    if (i2c_write_reg8_direct(g_config.i2c_addr, REG_OUT1, out1_low) != ESP_OK) {
+        ESP_LOGW(TAG, "P13 hold: write OUT1 failed");
+        i2c_bus_unlock(g_config.i2c_port);
+        return;
+    }
+
+    i2c_bus_unlock(g_config.i2c_port);
 }
 
 esp_err_t io_manager_pulse_p13_low(void)

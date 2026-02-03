@@ -692,6 +692,10 @@ void display_manager_set_low_i2c_mode(bool on) {
     g_low_i2c_mode = on;
 }
 
+bool display_manager_is_low_i2c_mode(void) {
+    return g_low_i2c_mode;
+}
+
 void fade_out_cb(void *obj, int32_t v) {
   if (obj) {
     lv_obj_set_style_opa(obj, v, LV_PART_MAIN);
@@ -1145,10 +1149,10 @@ void apply_power_management_config(bool power_save_enabled) {
   ESP_LOGI(TAG, "LEDC timer reconfigured for power save mode: %s", power_save_enabled ? "enabled" : "disabled");
 #endif
 
-  // control ap based on power save mode
+  // control ap based on power save mode and AP enabled setting
   if (power_save_enabled) {
     ap_manager_stop_services();
-  } else {
+  } else if (settings_get_ap_enabled(&G_Settings)) {
     ap_manager_start_services();
   }
 }

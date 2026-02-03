@@ -310,6 +310,9 @@ static const char *dual_comm_wifi_options[] = {
     "Connect to WiFi",
     "Connect to saved WiFi",
     "Reset AP Credentials",
+    "Set AP Credentials",
+    "Enable AP",
+    "Disable AP",
     NULL
 };
 
@@ -402,7 +405,7 @@ typedef struct {
     int current_value;
 } SettingsItem;
 
-static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth"};
+static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
 static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
 static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
 static const char *bool_options[] = {"Off", "On"};
@@ -452,7 +455,7 @@ static const char *brightness_options[] = {
 };
 
 static SettingsItem settings_items[] = {
-    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 13, 0},
     {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1},
     {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
     {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
@@ -680,6 +683,7 @@ static void ssh_scan_kb_cb(const char *text);
 static void dual_comm_connect_kb_cb(const char *text);
 static void dual_comm_send_kb_cb(const char *text);
 static void dual_comm_wifi_connect_kb_cb(const char *text);
+static void dual_comm_apcred_kb_cb(const char *text);
 static void dual_comm_karma_custom_ssids_cb(const char *text);
 static void dual_comm_dns_lookup_kb_cb(const char *text);
 static void dual_comm_traceroute_kb_cb(const char *text);
@@ -1870,6 +1874,23 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend apcred -r");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Set AP Credentials") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_apcred_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("\"SSID\" \"PASSWORD\"");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Enable AP") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend apenable on");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Disable AP") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend apenable off");
             view_switched = true;
         } else if (strcmp(Selected_Option, "Start Deauth Attack") == 0) {
             terminal_set_return_view(&options_menu_view);
@@ -3412,9 +3433,25 @@ static void dual_comm_karma_custom_ssids_cb(const char *input) {
     keyboard_view_set_submit_callback(NULL);
 }
 
+static void dual_comm_apcred_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter AP credentials");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend apcred %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
 static void dual_comm_dns_lookup_kb_cb(const char *text) {
     if (!text || strlen(text) == 0) {
-        error_popup_create("Please enter a hostname");
+        error_popup_create("Enter a hostname (e.g., example.com)");
         return;
     }
 

@@ -11,7 +11,17 @@
 typedef enum {
     RGB_MODE_NORMAL = 0,
     RGB_MODE_RAINBOW = 1,
-    RGB_MODE_STEALTH = 2
+    RGB_MODE_STEALTH = 2,
+    RGB_MODE_KNIGHT_RIDER = 3,
+    RGB_MODE_RED = 4,
+    RGB_MODE_GREEN = 5,
+    RGB_MODE_BLUE = 6,
+    RGB_MODE_YELLOW = 7,
+    RGB_MODE_PURPLE = 8,
+    RGB_MODE_CYAN = 9,
+    RGB_MODE_ORANGE = 10,
+    RGB_MODE_WHITE = 11,
+    RGB_MODE_PINK = 12
     // ...add more modes here if needed
 } RGBMode;
 

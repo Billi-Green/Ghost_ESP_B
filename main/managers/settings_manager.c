@@ -769,14 +769,14 @@ void settings_save(const FSettings *settings) {
       
       // Wait for the task to terminate gracefully (up to 500ms)
       for (int i = 0; i < 50; i++) {
-          if (eTaskGetState(rgb_effect_task_handle) == eDeleted) {
+          if (rgb_effect_task_handle == NULL || eTaskGetState(rgb_effect_task_handle) == eDeleted) {
               break;
           }
           vTaskDelay(pdMS_TO_TICKS(10));
       }
       
       // If task is still running after timeout, force delete as last resort
-      if (eTaskGetState(rgb_effect_task_handle) != eDeleted) {
+      if (rgb_effect_task_handle != NULL && eTaskGetState(rgb_effect_task_handle) != eDeleted) {
           ESP_LOGW(S_TAG, "Rainbow task did not exit gracefully, force deleting");
           vTaskDelete(rgb_effect_task_handle);
       }
@@ -798,6 +798,37 @@ void settings_save(const FSettings *settings) {
   } else if (settings_get_rgb_mode(settings) == RGB_MODE_STEALTH) {
       // Stealth: LEDs always off
       rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false); // Turn off all LEDs
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_KNIGHT_RIDER) {
+      // Knight Rider: red scanning effect
+      xTaskCreate(knightrider_task, "Knight Rider Task", 3072, &rgb_manager,
+                  RGB_EFFECT_TASK_PRIORITY, &rgb_effect_task_handle);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_RED) {
+      // Static Red
+      rgb_manager_set_color(&rgb_manager, -1, 255, 0, 0, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_GREEN) {
+      // Static Green
+      rgb_manager_set_color(&rgb_manager, -1, 0, 255, 0, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_BLUE) {
+      // Static Blue
+      rgb_manager_set_color(&rgb_manager, -1, 0, 0, 255, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_YELLOW) {
+      // Static Yellow
+      rgb_manager_set_color(&rgb_manager, -1, 255, 255, 0, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_PURPLE) {
+      // Static Purple
+      rgb_manager_set_color(&rgb_manager, -1, 128, 0, 128, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_CYAN) {
+      // Static Cyan
+      rgb_manager_set_color(&rgb_manager, -1, 0, 255, 255, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_ORANGE) {
+      // Static Orange
+      rgb_manager_set_color(&rgb_manager, -1, 255, 165, 0, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_WHITE) {
+      // Static White
+      rgb_manager_set_color(&rgb_manager, -1, 255, 255, 255, false);
+  } else if (settings_get_rgb_mode(settings) == RGB_MODE_PINK) {
+      // Static Pink
+      rgb_manager_set_color(&rgb_manager, -1, 255, 192, 203, false);
   } else {
       // Normal mode: LEDs off
       rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false); // Turn off all LEDs

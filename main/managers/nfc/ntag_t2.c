@@ -16,59 +16,76 @@ bool ntag_t2_read_user_memory(pn532_io_handle_t io,
     if (!io || !out_buf || !out_len) return false;
     *out_buf = NULL; *out_len = 0; if (out_model) *out_model = NTAG2XX_UNKNOWN;
 
-    uint8_t page0_3[16] = {0};
-    if (ntag2xx_read_page(io, 0, page0_3, sizeof(page0_3)) != ESP_OK) {
-        return false;
-    }
-    uint8_t size_mul_8 = page0_3[14];
-    size_t data_bytes = (size_t)size_mul_8 * 8;
-    if (data_bytes == 0 || data_bytes > 1024) data_bytes = 1024;
-    if (out_model) {
-        switch (size_mul_8) {
-            case 0x12: *out_model = NTAG2XX_NTAG213; break;
-            case 0x3E: case 0x3F: *out_model = NTAG2XX_NTAG215; break;
-            case 0x6D: case 0x6F: *out_model = NTAG2XX_NTAG216; break;
-            default: *out_model = NTAG2XX_UNKNOWN; break;
+    // Retry loop for I2C stability - especially for somethingsomething board
+    const int MAX_ATTEMPTS = 3;
+    for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        if (attempt > 0) {
+            // Yield between retries to allow other I2C consumers
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
-    }
-    uint8_t *buf = (uint8_t*)malloc(data_bytes);
-    if (!buf) return false;
-    size_t copied = 0;
-    while (copied < data_bytes) {
-        uint8_t page = 4 + (uint8_t)(copied / 4);
-        uint8_t tmp[16] = {0};
-        if (ntag2xx_read_page(io, page, tmp, sizeof(tmp)) != ESP_OK) {
-            free(buf);
-            return false;
+
+        uint8_t page0_3[16] = {0};
+        if (ntag2xx_read_page(io, 0, page0_3, sizeof(page0_3)) != ESP_OK) {
+            continue; // Retry
         }
-        size_t remain = data_bytes - copied;
-        size_t to_copy = (remain < sizeof(tmp)) ? remain : sizeof(tmp);
-        memcpy(buf + copied, tmp, to_copy);
-        copied += to_copy;
-        for (size_t i = 0; i + 1 < to_copy; ++i) {
-            if (tmp[i] == 0xFE) {
-                size_t len = copied - (to_copy - i - 1);
-                if (out_model) {
-                    if (*out_model == NTAG2XX_NTAG216 && len <= 540) *out_model = NTAG2XX_NTAG215;
-                    else if (*out_model == NTAG2XX_UNKNOWN) {
-                        if (len <= 200) *out_model = NTAG2XX_NTAG213;
-                        else if (len <= 540) *out_model = NTAG2XX_NTAG215;
-                    }
-                }
-                *out_buf = buf; *out_len = len; return true;
+        uint8_t size_mul_8 = page0_3[14];
+        size_t data_bytes = (size_t)size_mul_8 * 8;
+        if (data_bytes == 0 || data_bytes > 1024) data_bytes = 1024;
+        if (out_model) {
+            switch (size_mul_8) {
+                case 0x12: *out_model = NTAG2XX_NTAG213; break;
+                case 0x3E: case 0x3F: *out_model = NTAG2XX_NTAG215; break;
+                case 0x6D: case 0x6F: *out_model = NTAG2XX_NTAG216; break;
+                default: *out_model = NTAG2XX_UNKNOWN; break;
             }
         }
-    }
-    if (out_model) {
-        if (*out_model == NTAG2XX_NTAG216 && copied <= 540) *out_model = NTAG2XX_NTAG215;
-        else if (*out_model == NTAG2XX_UNKNOWN) {
-            if (copied <= 200) *out_model = NTAG2XX_NTAG213;
-            else if (copied <= 540) *out_model = NTAG2XX_NTAG215;
+        uint8_t *buf = (uint8_t*)malloc(data_bytes);
+        if (!buf) return false;
+        size_t copied = 0;
+        bool read_success = true;
+        
+        while (copied < data_bytes) {
+            uint8_t page = 4 + (uint8_t)(copied / 4);
+            uint8_t tmp[16] = {0};
+            if (ntag2xx_read_page(io, page, tmp, sizeof(tmp)) != ESP_OK) {
+                free(buf);
+                read_success = false;
+                break; // Retry entire read
+            }
+            size_t remain = data_bytes - copied;
+            size_t to_copy = (remain < sizeof(tmp)) ? remain : sizeof(tmp);
+            memcpy(buf + copied, tmp, to_copy);
+            copied += to_copy;
+            for (size_t i = 0; i + 1 < to_copy; ++i) {
+                if (tmp[i] == 0xFE) {
+                    size_t len = copied - (to_copy - i - 1);
+                    if (out_model) {
+                        if (*out_model == NTAG2XX_NTAG216 && len <= 540) *out_model = NTAG2XX_NTAG215;
+                        else if (*out_model == NTAG2XX_UNKNOWN) {
+                            if (len <= 200) *out_model = NTAG2XX_NTAG213;
+                            else if (len <= 540) *out_model = NTAG2XX_NTAG215;
+                        }
+                    }
+                    *out_buf = buf; *out_len = len; return true;
+                }
+            }
+        }
+        
+        if (read_success) {
+            if (out_model) {
+                if (*out_model == NTAG2XX_NTAG216 && copied <= 540) *out_model = NTAG2XX_NTAG215;
+                else if (*out_model == NTAG2XX_UNKNOWN) {
+                    if (copied <= 200) *out_model = NTAG2XX_NTAG213;
+                    else if (copied <= 540) *out_model = NTAG2XX_NTAG215;
+                }
+            }
+            *out_buf = buf;
+            *out_len = copied;
+            return true;
         }
     }
-    *out_buf = buf;
-    *out_len = copied;
-    return true;
+    
+    return false;
 }
 #endif
 
@@ -126,7 +143,6 @@ char *ntag_t2_build_details_from_mem(const uint8_t *mem,
         return out;
     }
     size_t off = 0, len = 0;
-    char label_buf[16];
     const char *label = ntag_t2_model_str(model);
     if (ntag_t2_find_ndef(mem, mem_len, &off, &len) && off + len <= mem_len) {
         return ndef_build_details_from_message(mem + off, len, uid, uid_len, label);

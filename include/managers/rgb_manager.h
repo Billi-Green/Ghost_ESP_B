@@ -66,6 +66,10 @@ void rgb_manager_policesiren_effect(RGBManager_t *rgb_manager, int delay_ms);
 
 void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms);
 
+void rgb_manager_knightrider_effect(RGBManager_t *rgb_manager, int delay_ms);
+
+void rgb_manager_apply_static_from_settings(void);
+
 /**
  * @brief Deinitialize the RGB LED manager
  * @param rgb_manager Pointer to the RGBManager_t structure
@@ -78,6 +82,8 @@ void rainbow_task(void *pvParameter);
 void police_task(void *pvParameter);
 
 void strobe_task(void *pvParameter);
+
+void knightrider_task(void *pvParameter);
 
 void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
                 uint8_t blue);

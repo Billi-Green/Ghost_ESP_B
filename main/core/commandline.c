@@ -3851,7 +3851,7 @@ void handle_help(int argc, char **argv) {
 
     if (strcmp(category, "led") == 0) {
         glog("\nLED & RGB Commands:\n\n");
-        glog("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
+        glog("rgbmode\n    Control LED effects (rainbow, police, strobe, knight, off)\n    Usage: rgbmode <rainbow|police|strobe|knight|off|color>\n\n");
         glog("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
         glog("setrgbcount\n    Configure how many RGB LEDs are attached\n    Usage: setrgbcount <1-512>\n\n");
         glog("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
@@ -4506,7 +4506,7 @@ void handle_apcred(int argc, char **argv) {
 void handle_rgb_mode(int argc, char **argv) {
     static bool last_effect_is_rainbow = false;
     if (argc < 2) {
-        glog("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
+        glog("Usage: rgbmode <rainbow|police|strobe|knight|off|color>\n");
         status_display_show_status("RGB Usage");
         return;
     }
@@ -4556,6 +4556,16 @@ void handle_rgb_mode(int argc, char **argv) {
         last_effect_is_rainbow = false;
         glog("Strobe mode activated\n");
         status_display_show_status("RGB Strobe");
+    } else if (strcasecmp(argv[1], "knight") == 0) {
+        if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
+            glog("RGB not initialized\n");
+            status_display_show_status("RGB Not Ready");
+            return;
+        }
+        xTaskCreate(knightrider_task, "knightrider_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
+        last_effect_is_rainbow = false;
+        glog("Knight Rider mode activated\n");
+        status_display_show_status("RGB Knight");
     } else if (strcasecmp(argv[1], "off") == 0) {
         rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
         if (!rgb_manager.is_separate_pins && rgb_manager.strip) {
@@ -4575,33 +4585,36 @@ void handle_rgb_mode(int argc, char **argv) {
             uint8_t r;
             uint8_t g;
             uint8_t b;
+            RGBMode mode;
         } color_t;
         static const color_t supported_colors[] = {
-            { "red",    255, 0,   0 },
-            { "green",  0,   255, 0 },
-            { "blue",   0,   0,   255 },
-            { "yellow", 255, 255, 0 },
-            { "purple", 128, 0,   128 },
-            { "cyan",   0,   255, 255 },
-            { "orange", 255, 165, 0 },
-            { "white",  255, 255, 255 },
-            { "pink",   255, 192, 203 }
+            { "red",         255, 0,   0,   RGB_MODE_RED },
+            { "green",       0,   255, 0,   RGB_MODE_GREEN },
+            { "blue",        0,   0,   255, RGB_MODE_BLUE },
+            { "yellow",      255, 255, 0,   RGB_MODE_YELLOW },
+            { "twh-purple",  115, 0,   225, RGB_MODE_PURPLE }, // #7300E1
+            { "cyan",        0,   255, 255, RGB_MODE_CYAN },
+            { "orange",      255, 165, 0,   RGB_MODE_ORANGE },
+            { "white",       255, 255, 255, RGB_MODE_WHITE },
+            { "pink",        255, 192, 203, RGB_MODE_PINK }
         };
         const int num_colors = sizeof(supported_colors) / sizeof(supported_colors[0]);
         int found = 0;
         uint8_t r, g, b;
+        RGBMode chosen_mode = RGB_MODE_NORMAL;
         for (int i = 0; i < num_colors; i++) {
             // Use case-insensitive compare.
             if (strcasecmp(argv[1], supported_colors[i].name) == 0) {
                 r = supported_colors[i].r;
                 g = supported_colors[i].g;
                 b = supported_colors[i].b;
+                chosen_mode = supported_colors[i].mode;
                 found = 1;
                 break;
             }
         }
         if (!found) {
-            glog("Unknown color '%s'. Supported colors: red, green, blue, yellow, purple, cyan, orange, white, pink.\n", argv[1]);
+            glog("Unknown color '%s'. Supported colors: red, green, blue, yellow, twh-purple, cyan, orange, white, pink.\n", argv[1]);
             status_display_show_status("Color Invalid");
             return;
         }
@@ -4610,6 +4623,9 @@ void handle_rgb_mode(int argc, char **argv) {
             rgb_manager_set_color(&rgb_manager, i, r, g, b, false);
         }
         led_strip_refresh(rgb_manager.strip);
+        // Persist selection so it remains active after other effects/off are toggled
+        settings_set_rgb_mode(&G_Settings, chosen_mode);
+        settings_save(&G_Settings);
         glog("Static color mode activated: %s\n", argv[1]);
         status_display_show_status("RGB Static");
     }

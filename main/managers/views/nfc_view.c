@@ -995,6 +995,8 @@ static void nfc_save_cu_task(void *arg) {
 static void nfc_scan_task(void *arg) {
     const char *TAGT = "NFCScan";
     ESP_LOGI(TAGT, "scan_task: start (cancel=%d)", nfc_scan_cancel);
+    // Reduce I2C contention with StatusDisplay and battery polling during PN532 operations
+    display_manager_set_low_i2c_mode(true);
     mfc_set_attack_hooks(&nfc_ui_attack_hooks);
     if (g_pn532 == NULL) {
         g_pn532 = &g_pn532_instance;
@@ -1038,6 +1040,7 @@ static void nfc_scan_task(void *arg) {
         }
         if (!ok) {
             ESP_LOGE(TAGT, "PN532 init failed on all ports, running i2c scan then exiting");
+            display_manager_set_low_i2c_mode(false);  // Restore normal I2C activity
             nfc_scan_task_handle = NULL;
             vTaskDelete(NULL);
         }
@@ -1071,6 +1074,7 @@ static void nfc_scan_task(void *arg) {
     if (g_pn532) {
         if (nfc_scan_cancel) {
             ESP_LOGI(TAGT, "scan_task: releasing PN532 (cancel=%d)", nfc_scan_cancel);
+            display_manager_set_low_i2c_mode(false);  // Restore normal I2C activity
             pn532_release(g_pn532);
             pn532_delete_driver(g_pn532);
             g_pn532 = NULL;

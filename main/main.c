@@ -261,11 +261,15 @@ void app_main(void) {
             initialized = (rgb_err == ESP_OK);
 #endif
         }
-        if (initialized && settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
+        RGBMode boot_mode = settings_get_rgb_mode(&G_Settings);
+        if (initialized && boot_mode == RGB_MODE_RAINBOW) {
             xTaskCreatePinnedToCore(rainbow_task, "Rainbow Task", 3072,
                                     &rgb_manager, RGB_EFFECT_TASK_PRIORITY,
                                     &rgb_effect_task_handle,
                                     RGB_EFFECT_TASK_CORE);
+        } else if (initialized && boot_mode >= RGB_MODE_RED && boot_mode <= RGB_MODE_PINK) {
+            // Restore saved static color at boot
+            rgb_manager_apply_static_from_settings();
         }
     }
 

@@ -8,6 +8,9 @@
 - Add git commit hash retrieval and logging at build time - @tototo31
 - Fixed issue where RGBs would stay lit after stopping a deauth attack
 - Fixed a potential crash when stopping wardriving - Thanks to @10Evansr for reporting with a fix
+- Added Knight Rider and Static RGB modes
+- Fixed issue where AP disable wouldn't work
+- Added GhostLink display commands to enable/disable the on-device AP and change credentials 
 
 ## Revival v1.9.2
 

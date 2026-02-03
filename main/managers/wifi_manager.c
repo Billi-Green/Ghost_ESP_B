@@ -1804,14 +1804,20 @@ void wifi_manager_start_scan() {
         .bssid = NULL,
         .channel = 0,
         .show_hidden = true,
-        .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}};
+#ifdef CONFIG_IDF_TARGET_ESP32C5
+        // Target ~5s total sweep on C5
+        .scan_time = {.active.min = 250, .active.max = 300, .passive = 300}
+#else
+        .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}
+#endif
+    };
 
     rgb_manager_set_color(&rgb_manager, -1, 50, 255, 50, false);
 
     printf("WiFi Scan started\n");
     #ifdef CONFIG_IDF_TARGET_ESP32C5
-        printf("Please wait 10 Seconds...\n");
-        TERMINAL_VIEW_ADD_TEXT("Please wait 10 Seconds...\n");
+        printf("Please wait ~5 Seconds...\n");
+        TERMINAL_VIEW_ADD_TEXT("Please wait ~5 Seconds...\n");
     #else
         printf("Please wait 5 Seconds...\n");
         TERMINAL_VIEW_ADD_TEXT("Please wait 5 Seconds...\n");
@@ -1829,6 +1835,15 @@ void wifi_manager_start_scan() {
     log_heap_status(TAG, "scan_start_post");
     esp_wifi_stop();
     ap_manager_start_services();
+
+    // Restore saved static color if no RGB effect is running.
+    if (rgb_effect_task_handle == NULL) {
+        RGBMode mode = settings_get_rgb_mode(&G_Settings);
+        if (mode != RGB_MODE_RAINBOW && mode != RGB_MODE_STEALTH &&
+            mode != RGB_MODE_KNIGHT_RIDER && mode != RGB_MODE_NORMAL) {
+            rgb_manager_apply_static_from_settings();
+        }
+    }
 }
 
 // Stop scanning for networks

@@ -141,6 +141,40 @@ void rgb_manager_signal_rainbow_exit(void) {
   rainbow_task_should_exit = true;
 }
 
+void rgb_manager_apply_static_from_settings(void) {
+  switch (settings_get_rgb_mode(&G_Settings)) {
+  case RGB_MODE_RED:
+    rgb_manager_set_color(&rgb_manager, -1, 255, 0, 0, false);
+    break;
+  case RGB_MODE_GREEN:
+    rgb_manager_set_color(&rgb_manager, -1, 0, 255, 0, false);
+    break;
+  case RGB_MODE_BLUE:
+    rgb_manager_set_color(&rgb_manager, -1, 0, 0, 255, false);
+    break;
+  case RGB_MODE_YELLOW:
+    rgb_manager_set_color(&rgb_manager, -1, 255, 255, 0, false);
+    break;
+  case RGB_MODE_PURPLE:
+    rgb_manager_set_color(&rgb_manager, -1, 115, 0, 225, false); // TWH Purple #7300E1
+    break;
+  case RGB_MODE_CYAN:
+    rgb_manager_set_color(&rgb_manager, -1, 0, 255, 255, false);
+    break;
+  case RGB_MODE_ORANGE:
+    rgb_manager_set_color(&rgb_manager, -1, 255, 165, 0, false);
+    break;
+  case RGB_MODE_WHITE:
+    rgb_manager_set_color(&rgb_manager, -1, 255, 255, 255, false);
+    break;
+  case RGB_MODE_PINK:
+    rgb_manager_set_color(&rgb_manager, -1, 255, 192, 203, false);
+    break;
+  default:
+    break;
+  }
+}
+
 void police_task(void *pvParameter) {
   RGBManager_t *rgb_manager = (RGBManager_t *)pvParameter;
   rainbow_task_should_exit = false;
@@ -151,13 +185,14 @@ void police_task(void *pvParameter) {
 
     vTaskDelay(pdMS_TO_TICKS(20));
   }
+  rgb_effect_task_handle = NULL;
   if (rgb_manager->strip) {
     led_strip_clear(rgb_manager->strip);
     led_strip_refresh(rgb_manager->strip);
   } else if (rgb_manager->is_separate_pins) {
     rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
   }
-  rgb_effect_task_handle = NULL;
+  rgb_manager_apply_static_from_settings();
   vTaskDelete(NULL);
 }
 
@@ -165,13 +200,29 @@ void strobe_task(void *pvParameter) {
   RGBManager_t *rgb_manager = (RGBManager_t *)pvParameter;
   rainbow_task_should_exit = false;
   rgb_manager_strobe_effect(rgb_manager, settings_get_rgb_speed(&G_Settings));
+  rgb_effect_task_handle = NULL;
   if (rgb_manager->strip) {
     led_strip_clear(rgb_manager->strip);
     led_strip_refresh(rgb_manager->strip);
   } else if (rgb_manager->is_separate_pins) {
     rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
   }
+  rgb_manager_apply_static_from_settings();
+  vTaskDelete(NULL);
+}
+
+void knightrider_task(void *pvParameter) {
+  RGBManager_t *rgb_manager = (RGBManager_t *)pvParameter;
+  rainbow_task_should_exit = false;
+  rgb_manager_knightrider_effect(rgb_manager, settings_get_rgb_speed(&G_Settings));
   rgb_effect_task_handle = NULL;
+  if (rgb_manager->strip) {
+    led_strip_clear(rgb_manager->strip);
+    led_strip_refresh(rgb_manager->strip);
+  } else if (rgb_manager->is_separate_pins) {
+    rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
+  }
+  rgb_manager_apply_static_from_settings();
   vTaskDelete(NULL);
 }
 
@@ -499,6 +550,15 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
       led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
     }
     led_strip_refresh(rgb_manager->strip);
+  }
+
+  // If no effect task is active and the saved mode is a static color, restore it.
+  if (rgb_effect_task_handle == NULL) {
+    RGBMode mode = settings_get_rgb_mode(&G_Settings);
+    if (mode != RGB_MODE_RAINBOW && mode != RGB_MODE_STEALTH &&
+        mode != RGB_MODE_KNIGHT_RIDER && mode != RGB_MODE_NORMAL) {
+      rgb_manager_apply_static_from_settings();
+    }
   }
 }
 
@@ -869,6 +929,92 @@ void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms) {
   }
 
   rgb_manager_set_color(rgb_manager, target, 0, 0, 0, false);
+}
+
+void rgb_manager_knightrider_effect(RGBManager_t *rgb_manager, int delay_ms) {
+  if (!rgb_manager || rgb_manager->num_leds <= 1) {
+    return;
+  }
+
+  const int num_leds = rgb_manager->num_leds;
+  const int tail_length = (num_leds >= 8) ? 4 : (num_leds >= 4) ? 2 : 1;
+  const int base_delay = (delay_ms > 20) ? delay_ms : 50;
+  int pos = 0;
+  int direction = 1;
+
+  while (!rainbow_task_should_exit) {
+    if (rainbow_task_should_exit) {
+      break;
+    }
+
+    if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+      // Clear all LEDs first
+      for (int i = 0; i < num_leds; i++) {
+        led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
+      }
+
+      // Draw the tail fading from bright to dim
+      for (int t = 0; t < tail_length; t++) {
+        int led_idx = pos - (t * direction);
+        if (led_idx >= 0 && led_idx < num_leds) {
+          // Fade intensity based on position in tail (0 = brightest)
+          uint8_t intensity = 255 - ((255 / tail_length) * t);
+          uint8_t r = intensity;
+          uint8_t g = 0;
+          uint8_t b = 0;
+          scale_grb_by_neopixel_brightness(&g, &r, &b, 0.3,
+                                           settings_get_neopixel_max_brightness(&G_Settings));
+          led_strip_set_pixel(rgb_manager->strip, led_idx, r, g, b);
+        }
+      }
+
+      // Draw the head (brightest)
+      uint8_t head_r = 255, head_g = 0, head_b = 0;
+      scale_grb_by_neopixel_brightness(&head_g, &head_r, &head_b, 0.3,
+                                       settings_get_neopixel_max_brightness(&G_Settings));
+      led_strip_set_pixel(rgb_manager->strip, pos, head_r, head_g, head_b);
+
+      // Refresh the strip
+      if (!rgb_manager->is_separate_pins && rgb_manager->strip) {
+        esp_err_t ret;
+        int attempts = 0;
+        do {
+          ret = led_strip_refresh(rgb_manager->strip);
+          if (ret == ESP_ERR_INVALID_STATE) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+          }
+        } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
+
+        if (ret != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to refresh LED strip (knight rider) after %d attempts: %s",
+                   attempts, esp_err_to_name(ret));
+          led_strip_clear(rgb_manager->strip);
+        }
+      }
+
+      xSemaphoreGiveRecursive(rgb_mutex);
+    }
+
+    // Move to next position
+    pos += direction;
+
+    // Bounce at the ends
+    if (pos >= num_leds - 1) {
+      pos = num_leds - 1;
+      direction = -1;
+    } else if (pos <= 0) {
+      pos = 0;
+      direction = 1;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(base_delay));
+  }
+
+  // Clear LEDs before exiting
+  if (rgb_manager->strip) {
+    led_strip_clear(rgb_manager->strip);
+    led_strip_refresh(rgb_manager->strip);
+  }
 }
 
 #ifdef CONFIG_IDF_TARGET_ESP32C5
