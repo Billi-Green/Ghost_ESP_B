@@ -637,8 +637,8 @@ static void stop_all_operations(void) {
     }
     ESP_LOGI(TAG, "Stop all operations triggered");
 }
-#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
-void text_box_click_cb(lv_event_t *e){
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+static void text_box_click_cb(lv_event_t *e){
   ESP_LOGI(TAG, "Text box clicked");
   printf("Text box clicked\n");
 
