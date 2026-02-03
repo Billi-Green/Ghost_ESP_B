@@ -1405,6 +1405,16 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "LilyGo TEmbedC1101") == 0) {
         joystick_init(&exit_button, 6, 500 /*hold ms*/, true);
     }
+    
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        ESP_LOGI(TAG, "Initializing TSC2007 touch driver for The Banshee");
+        // Register touch driver with LVGL
+        static lv_indev_drv_t indev_drv;
+        lv_indev_drv_init(&indev_drv);
+        indev_drv.type = LV_INDEV_TYPE_POINTER;
+        indev_drv.read_cb = touch_driver_read;
+        lv_indev_drv_register(&indev_drv);
+    }
 #endif
 #endif
 #endif
@@ -1735,6 +1745,8 @@ static char tdeck_raw_to_char(int col, int row, bool shift, bool symbol) {
 }
 #endif
 
+
+
 void hardware_input_task(void *pvParameters) {
   const TickType_t tick_interval = pdMS_TO_TICKS(10);
 
@@ -1882,6 +1894,7 @@ void hardware_input_task(void *pvParameters) {
       tdeck_repeat_active = false;
     }
 #endif
+
 
 // Check for wake interrupt when dimmed
 #ifdef CONFIG_IS_S3TWATCH
@@ -2217,7 +2230,17 @@ void hardware_input_task(void *pvParameters) {
 #endif
  #endif
 
+    bool enable_touch_polling = false;
 #ifdef CONFIG_USE_TOUCHSCREEN
+    enable_touch_polling = true;
+#endif
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        enable_touch_polling = true;
+    }
+#endif
+
+    if (enable_touch_polling) {
 
 #ifdef CONFIG_JC3248W535EN_LCD
     touch_driver_read_axs15231b(&touch_driver, &touch_data);
@@ -2266,7 +2289,7 @@ void hardware_input_task(void *pvParameters) {
       touch_active = false;
     }
 
-#endif
+    } // enable_touch_polling
 
     // backlight dim logic
     uint32_t current_timeout = G_Settings.display_timeout_ms;

@@ -519,6 +519,14 @@ static void ir_select_item(int index);
 static lv_obj_t *ir_scroll_up_btn = NULL;
 static lv_obj_t *ir_scroll_down_btn = NULL;
 static lv_obj_t *ir_back_btn = NULL;
+#endif
+
+static bool ir_touch_started = false;
+static int ir_touch_start_x = 0;
+static int ir_touch_start_y = 0;
+#define IR_SWIPE_THRESHOLD_RATIO 10
+
+#ifdef CONFIG_USE_TOUCHSCREEN
 // scroll callbacks
 static void file_scroll_up_cb(lv_event_t *e) { ir_select_item(selected_ir_index - 1); }
 static void file_scroll_down_cb(lv_event_t *e) { ir_select_item(selected_ir_index + 1); }
@@ -1744,13 +1752,14 @@ void infrared_view_input_cb(InputEvent *event) {
         lv_indev_data_t *data = &event->data.touch_data;
         
         if (data->state == LV_INDEV_STATE_PR) {
-            #ifdef CONFIG_USE_TOUCHSCREEN
+#ifdef CONFIG_USE_TOUCHSCREEN
             if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) {
                 lv_area_t area;
                 lv_obj_get_coords(ir_scroll_up_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     ir_select_item(selected_ir_index - 1);
+                    ir_touch_started = false;
                     return;
                 }
             }
@@ -1761,6 +1770,7 @@ void infrared_view_input_cb(InputEvent *event) {
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     ir_select_item(selected_ir_index + 1);
+                    ir_touch_started = false;
                     return;
                 }
             }
@@ -1771,19 +1781,84 @@ void infrared_view_input_cb(InputEvent *event) {
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     back_event_cb(NULL);
+                    ir_touch_started = false;
                     return;
                 }
             }
-            #endif
+#endif
+
+            if (!ir_touch_started) {
+                ir_touch_started = true;
+                ir_touch_start_x = (int)data->point.x;
+                ir_touch_start_y = (int)data->point.y;
+            }
+            return;
+        }
+
+        if (data->state == LV_INDEV_STATE_REL) {
+            if (!ir_touch_started) return;
+            ir_touch_started = false;
+
+            int dx = (int)data->point.x - ir_touch_start_x;
+            int dy = (int)data->point.y - ir_touch_start_y;
+
+            int thr_y = LV_VER_RES / IR_SWIPE_THRESHOLD_RATIO;
+            int thr_x = LV_HOR_RES / IR_SWIPE_THRESHOLD_RATIO;
+
+            lv_area_t list_area;
+            lv_obj_get_coords(list, &list_area);
+            bool started_in_list = (ir_touch_start_x >= list_area.x1 && ir_touch_start_x <= list_area.x2 &&
+                                     ir_touch_start_y >= list_area.y1 && ir_touch_start_y <= list_area.y2);
             
-            for (int i = 0; i < num_ir_items; i++) {
+            if (started_in_list) {
+                // vertical swipe = scroll
+                if (abs(dy) > thr_y) {
+                    lv_obj_scroll_by_bounded(list, 0, dy, LV_ANIM_OFF);
+                    return;
+                }
+
+                if (abs(dx) > thr_x) return;
+
+                // thirds-control special behavior
+                if (settings_get_thirds_control_enabled(&G_Settings)) {
+                    int list_h = (int)(list_area.y2 - list_area.y1);
+                    if (list_h > 0) {
+                        int y_rel = (int)data->point.y - (int)list_area.y1;
+                        if (y_rel < list_h / 3) {
+                            ir_select_item(selected_ir_index - 1);
+                            return;
+                        } else if (y_rel > (list_h * 2) / 3) {
+                            ir_select_item(selected_ir_index + 1);
+                            return;
+                        }
+                    }
+                }
+            } else {
+                // if it didn't start in the list, we still allow tap check for scroll buttons or other edge cases
+                // but we skip swipe/thirds logic
+                if (abs(dy) > thr_y || abs(dx) > thr_x) return;
+            }
+
+            // treat as tap inside the list
+            uint32_t child_cnt = lv_obj_get_child_cnt(list);
+            for (uint32_t i = 0; i < child_cnt; i++) {
                 lv_obj_t *btn = lv_obj_get_child(list, i);
                 if (btn) {
                     lv_area_t btn_area;
                     lv_obj_get_coords(btn, &btn_area);
                     if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
                         data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
-                        ir_select_item(i);
+                        
+                        ir_select_item((int)i);
+
+                        // Magic "Back" button for encoder mode
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+                        if (lv_obj_get_user_data(btn) == IR_BACK_OPTION_MAGIC_STR) {
+                            back_event_cb(NULL);
+                            return;
+                        }
+#endif
+
                         bool top_level = (has_remotes_option || has_universals_option);
                         if (!showing_commands) {
                             if (top_level) {
@@ -1808,20 +1883,36 @@ void infrared_view_input_cb(InputEvent *event) {
                                     top_count += 2;
 #endif
                                     top_count += 1;  // Dazzler
-                                    int file_idx = i - top_count;
+                                    int file_idx = (int)i - top_count;
                                     file_event_open(file_idx);
                                 }
                             } else {
                                 // inside a file list: direct open
-                                file_event_open(i);
+                                file_event_open((int)i);
                             }
                         } else {
-                            command_event_execute(i);
+                            if (!in_universals_mode) {
+                                if ((size_t)i == signal_count) {
+                                    lv_event_t e = {0};
+                                    rename_remote_cb(&e);
+                                } else if ((size_t)i == signal_count + 1) {
+                                    lv_event_t e = {0};
+                                    add_signal_cb(&e);
+                                } else if ((size_t)i == signal_count + 2) {
+                                    lv_event_t e = {0};
+                                    delete_remote_cb(&e);
+                                } else {
+                                    command_event_execute((int)i);
+                                }
+                            } else {
+                                command_event_execute((int)i);
+                            }
                         }
                         return;
                     }
                 }
             }
+            return;
         }
     } else if(event->type == INPUT_TYPE_JOYSTICK) {
         uint8_t idx = event->data.joystick_index;

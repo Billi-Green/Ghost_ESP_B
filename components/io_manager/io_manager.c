@@ -43,11 +43,7 @@ static SemaphoreHandle_t g_i2c_mutex = NULL;
 
 // Debouncing constants
 #define DEBOUNCE_MS            16
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-#define IO_MANAGER_POLL_MS     (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ? 25 : 10)
-#else
 #define IO_MANAGER_POLL_MS     10
-#endif
 #define IO_MANAGER_TASK_STACK  3072
 #define IO_MANAGER_TASK_PRIO   5
 

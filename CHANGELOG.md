@@ -10,7 +10,9 @@
 - Fixed a potential crash when stopping wardriving - Thanks to @10Evansr for reporting with a fix
 - Added Knight Rider and Static RGB modes
 - Fixed issue where AP disable wouldn't work
-- Added GhostLink display commands to enable/disable the on-device AP and change credentials 
+- Added GhostLink display commands to enable/disable the on-device AP and change credentials
+- Added touch support for The Wired Hatter's Banshee
+- Added proper touch support to the Infrared view
 
 ## Revival v1.9.2
 

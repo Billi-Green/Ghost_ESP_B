@@ -6,6 +6,7 @@
 #include "gui/theme_palette_api.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include "managers/views/error_popup.h"
 #include "gui/popup.h"
 #include "gui/lvgl_safe.h"
 #include <string.h>
@@ -721,6 +722,27 @@ static void nfc_set_details_async(void *ptr) {
 static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, uint8_t uid_len) {
     // Prefer MIFARE Classic summary if SAK indicates Classic
     if (mfc_is_classic_sak(g_sak)) {
+        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+            // Early exit for Banshee: show basic info only to avoid NFC instability
+            size_t cap = 256;
+            ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+            if (!res) return;
+            res->text = (char*)malloc(cap);
+            if (!res->text) { free(res); return; }
+            res->text_len = cap; res->session = nfc_scan_session;
+            char *w = res->text;
+            snprintf(w, cap, "MIFARE Classic\nUID:");
+            size_t used = strlen(w); w += used; cap -= used;
+            for (uint8_t i = 0; i < uid_len && cap > 3; ++i) {
+                int n = snprintf(w, cap, " %02X", uid[i]);
+                if (n > 0) { w += n; cap -= n; }
+            }
+            snprintf(w, cap, "\nATQA: %04X SAK: %02X\nNFC unstable on Banshee", g_atqa, g_sak);
+            if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
+            else { if (res->text) free(res->text); free(res); }
+            return;
+        }
+
         mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
         if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) lv_label_set_text(nfc_title_label, "Bruteforcing keys... 0%");
         // Reduce I2C contention during PN532 scanning/bruteforce
@@ -4416,6 +4438,10 @@ void nfc_view_create(void) {
         }
     }
 #endif
+
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        error_popup_create("Banshee PN532 NFC is unstable");
+    }
 }
 
 void nfc_view_destroy(void) {
