@@ -267,6 +267,9 @@ void app_main(void) {
                                     &rgb_manager, RGB_EFFECT_TASK_PRIORITY,
                                     &rgb_effect_task_handle,
                                     RGB_EFFECT_TASK_CORE);
+        } else if (initialized && boot_mode == RGB_MODE_KNIGHT_RIDER) {
+            xTaskCreate(knightrider_task, "Knight Rider Task", 3072, &rgb_manager,
+                        RGB_EFFECT_TASK_PRIORITY, &rgb_effect_task_handle);
         } else if (initialized && boot_mode >= RGB_MODE_RED && boot_mode <= RGB_MODE_PINK) {
             // Restore saved static color at boot
             rgb_manager_apply_static_from_settings();

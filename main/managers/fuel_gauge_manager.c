@@ -890,7 +890,7 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
     data->is_initialized = true;
 
     // Log the raw and processed values for debugging
-    ESP_LOGI(TAG, "VCELL: %d (%d mV), SOC: 0x%04X (%d%%), CRATE: %d (%d %%/hr), charging: %s",
+    ESP_LOGD(TAG, "VCELL: %d (%d mV), SOC: 0x%04X (%d%%), CRATE: %d (%d %%/hr), charging: %s",
              vcell, data->voltage_mv, soc_raw, data->percentage, 
              signed_crate, (int)(signed_crate * 0.208f),
              data->is_charging ? "YES" : "NO");

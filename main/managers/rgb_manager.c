@@ -543,20 +543,29 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 
-  if (rgb_manager->is_separate_pins) {
-    rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
+  // After pulse, restore the current RGB mode
+  RGBMode mode = settings_get_rgb_mode(&G_Settings);
+  
+  // For effect-based modes (rainbow, knight rider), the effect task is still running
+  // and will naturally resume control. We just need to not interfere.
+  if (rgb_effect_task_handle != NULL) {
+    // Effect task is running - it will resume the effect automatically
+    // Just give it a moment to take over
+    vTaskDelay(pdMS_TO_TICKS(20));
   } else {
-    for (int i = 0; i < rgb_manager->num_leds; i++) {
-      led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
-    }
-    led_strip_refresh(rgb_manager->strip);
-  }
-
-  // If no effect task is active and the saved mode is a static color, restore it.
-  if (rgb_effect_task_handle == NULL) {
-    RGBMode mode = settings_get_rgb_mode(&G_Settings);
-    if (mode != RGB_MODE_RAINBOW && mode != RGB_MODE_STEALTH &&
-        mode != RGB_MODE_KNIGHT_RIDER && mode != RGB_MODE_NORMAL) {
+    // No effect task running - restore based on mode
+    if (mode == RGB_MODE_STEALTH || mode == RGB_MODE_NORMAL) {
+      // Turn off LEDs
+      if (rgb_manager->is_separate_pins) {
+        rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
+      } else {
+        for (int i = 0; i < rgb_manager->num_leds; i++) {
+          led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
+        }
+        led_strip_refresh(rgb_manager->strip);
+      }
+    } else if (mode >= RGB_MODE_RED && mode <= RGB_MODE_PINK) {
+      // Restore static color from settings
       rgb_manager_apply_static_from_settings();
     }
   }

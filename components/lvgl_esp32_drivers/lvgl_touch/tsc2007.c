@@ -20,7 +20,7 @@ static const char *TAG = "TSC2007";
 #include "i2c_bus_lock.h"
 
 void tsc2007_init(void) {
-    ESP_LOGI(TAG, "TSC2007 Init (Addr: 0x%02X)", TSC2007_ADDR);
+    ESP_LOGD(TAG, "TSC2007 Init (Addr: 0x%02X)", TSC2007_ADDR);
 }
 
 static bool tsc2007_i2c_read_cmd(uint8_t func, uint16_t *res) {

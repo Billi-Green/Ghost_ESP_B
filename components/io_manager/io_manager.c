@@ -96,7 +96,7 @@ esp_err_t io_manager_init(const io_manager_config_t *config)
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         // Keep shared port at 100 kHz so PN532 modules can coexist with the expander/status display.
-        .master.clk_speed = 100000,
+        .master.clk_speed = 400000,
     };
 
     // Try to install the driver first; if it's already installed, skip param_config

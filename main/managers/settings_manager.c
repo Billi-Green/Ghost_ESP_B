@@ -815,8 +815,8 @@ void settings_save(const FSettings *settings) {
       // Static Yellow
       rgb_manager_set_color(&rgb_manager, -1, 255, 255, 0, false);
   } else if (settings_get_rgb_mode(settings) == RGB_MODE_PURPLE) {
-      // Static Purple
-      rgb_manager_set_color(&rgb_manager, -1, 128, 0, 128, false);
+      // Static Purple (TWH Purple #7300E1)
+      rgb_manager_set_color(&rgb_manager, -1, 115, 0, 225, false);
   } else if (settings_get_rgb_mode(settings) == RGB_MODE_CYAN) {
       // Static Cyan
       rgb_manager_set_color(&rgb_manager, -1, 0, 255, 255, false);
