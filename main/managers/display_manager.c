@@ -692,10 +692,6 @@ void display_manager_set_low_i2c_mode(bool on) {
     g_low_i2c_mode = on;
 }
 
-bool display_manager_is_low_i2c_mode(void) {
-    return g_low_i2c_mode;
-}
-
 void fade_out_cb(void *obj, int32_t v) {
   if (obj) {
     lv_obj_set_style_opa(obj, v, LV_PART_MAIN);

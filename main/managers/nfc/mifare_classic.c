@@ -14,8 +14,6 @@
 #include "managers/nfc/ndef.h"
 #include "managers/nfc/ntag_t2.h"
 #include "managers/nfc/flipper_nfc_compat.h"
-#include "io_manager.h"
-#include "managers/display_manager.h"
 
 char* ndef_build_details_from_tlv(const uint8_t* tlv_area,
                                   size_t tlv_len,
@@ -463,13 +461,6 @@ static void mfc_key_reuse_sweep(pn532_io_handle_t io, MFC_TYPE t, const uint8_t 
         }
         // Sector completed; bump progress
         if (g_prog_cb) g_prog_cb(s + 1, sectors, g_prog_user);
-        
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Yield at sector boundary to allow other I2C consumers (increased for 60ms lock timeout)
-            vTaskDelay(pdMS_TO_TICKS(40));
-        }
-#endif
     }
 }
 
@@ -489,14 +480,6 @@ static void mfc_harvest_trailer_keys(pn532_io_handle_t io, MFC_TYPE t, int secto
         mfc_cache_record_sector_key(sector, false, key_a);
         ESP_LOGI("MFC", "Harvest: sector=%d Key A verified from trailer", sector);
     }
-    
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        // Yield between harvest auth attempts to reduce I2C contention
-        vTaskDelay(pdMS_TO_TICKS(25));
-    }
-#endif
-    
     // Try Key B
     if (mfc_auth_block(io, blk, true, key_b, uid, uid_len) == ESP_OK) {
         mfc_record_working_key(key_b, true);
@@ -504,7 +487,7 @@ static void mfc_harvest_trailer_keys(pn532_io_handle_t io, MFC_TYPE t, int secto
         ESP_LOGI("MFC", "Harvest: sector=%d Key B verified from trailer", sector);
     }
 }
-
+// Interleaved A/B dict attempts: A[idx], then B[idx], until success or end
 static bool mfc_auth_with_dict_interleaved(pn532_io_handle_t io,
                                            uint8_t block,
                                            const uint8_t* uid,
@@ -514,86 +497,27 @@ static bool mfc_auth_with_dict_interleaved(pn532_io_handle_t io,
     mfc_dict_ensure_loaded();
     const int total = g_dict_key_count;
     if (g_prog_cb) g_prog_cb(0, total, g_prog_user);
-    
-    uint8_t cmd_buf[12];
-    cmd_buf[1] = block;
-    // UID last 4 bytes
-    memcpy(&cmd_buf[8], &uid[uid_len - 4], 4);
-    
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        display_manager_set_low_i2c_mode(true);
-        io_manager_suspend_polling();
-    }
-#endif
-
-    bool result = false;
     for (int idx = 0; idx < total; ++idx) {
-        if (mfc_call_should_cancel() || mfc_call_should_skip_dict()) {
-            result = false;
-            goto cleanup;
-        }
-
+        if (mfc_call_should_cancel() || mfc_call_should_skip_dict()) return false;
         const uint8_t *key = &g_dict_keys[idx*6];
-        memcpy(&cmd_buf[2], key, 6);
-
-        // Try Key A
-        cmd_buf[0] = MIFARE_CMD_AUTH_A;
-        esp_err_t err = pn532_in_data_exchange(io, cmd_buf, 12, NULL, NULL);
-        if (err == ESP_OK) {
+        if (mfc_auth_block(io, block, false, key, uid, uid_len) == ESP_OK) {
             if (out_used_key_b) *out_used_key_b = false;
             mfc_record_working_key(key, false);
+            // cache last dict key for A
             memcpy(g_last_key_a, key, 6); g_last_key_a_valid = true;
-            result = true;
-            goto cleanup;
+            return true;
         }
-
-        if (mfc_call_should_cancel() || mfc_call_should_skip_dict()) {
-            result = false;
-            goto cleanup;
-        }
-
-        // Try Key B
-        cmd_buf[0] = MIFARE_CMD_AUTH_B;
-        err = pn532_in_data_exchange(io, cmd_buf, 12, NULL, NULL);
-        if (err == ESP_OK) {
+        if (mfc_call_should_cancel() || mfc_call_should_skip_dict()) return false;
+        if (mfc_auth_block(io, block, true, key, uid, uid_len) == ESP_OK) {
             if (out_used_key_b) *out_used_key_b = true;
             mfc_record_working_key(key, true);
+            // cache last dict key for B
             memcpy(g_last_key_b, key, 6); g_last_key_b_valid = true;
-            result = true;
-            goto cleanup;
+            return true;
         }
-
-        // Single-threaded polling: Manual poll + yield to prevent bus starvation
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Poll manually since background task is suspended
-             io_manager_poll_immediate();
-
-            // Every 2 keys: give ample time but now we control the bus
-            if ((idx & 0x1) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(40));
-            } else {
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-        } else
-#endif
-        {
-            // Original behavior for non-somethingsomething boards
-            if ((idx & 0xF) == 0) vTaskDelay(pdMS_TO_TICKS(10));
-        }
-
         if (g_prog_cb) g_prog_cb(idx+1, total, g_prog_user);
     }
-
-cleanup:
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        io_manager_resume_polling();
-        display_manager_set_low_i2c_mode(false);
-    }
-#endif
-    return result;
+    return false;
 }
 #endif
 
@@ -903,14 +827,6 @@ static void mfc_try_find_complementary_user_key(pn532_io_handle_t io, MFC_TYPE t
             ESP_LOGI(MFC_TAG, "CompKey: sector=%d found B via session-last", sector);
             return;
         }
-        
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Yield between complementary key attempts
-            vTaskDelay(pdMS_TO_TICKS(25));
-        }
-#endif
-        
         const uint8_t *okb = NULL;
         if (g_sess_b_count > 0 && (try_list_keys_u(io, auth_blk, true, uid, uid_len, g_sess_b_keys, g_sess_b_count, &okb)
             || try_list_keys_u(io, trailer_blk, true, uid, uid_len, g_sess_b_keys, g_sess_b_count, &okb))) {
@@ -930,14 +846,6 @@ static void mfc_try_find_complementary_user_key(pn532_io_handle_t io, MFC_TYPE t
             ESP_LOGI(MFC_TAG, "CompKey: sector=%d found A via session-last", sector);
             return;
         }
-        
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Yield between complementary key attempts
-            vTaskDelay(pdMS_TO_TICKS(25));
-        }
-#endif
-        
         const uint8_t *oka = NULL;
         if (g_sess_a_count > 0 && (try_list_keys_u(io, auth_blk, false, uid, uid_len, g_sess_a_keys, g_sess_a_count, &oka)
             || try_list_keys_u(io, trailer_blk, false, uid, uid_len, g_sess_a_keys, g_sess_a_count, &oka))) {
@@ -1475,57 +1383,24 @@ static esp_err_t mfc_auth_block(pn532_io_handle_t io, uint8_t block, bool use_ke
         if (mfc_call_should_cancel()) {
             return err;
         }
-        
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Yield after every failed auth so other I2C consumers get a turn
-            vTaskDelay(pdMS_TO_TICKS(80));
-            
-            // Reselect to restore state (failed auth desynchronizes the tag)
-            // but do NOT do expensive presence detection on every failure —
-            // wrong keys fail auth normally and don't indicate card removal
+        // Check if authentication failed due to card removal
+        if (!mfc_tag_is_present(io, uid, uid_len)) {
+            // Card was removed, wait for it to return
+            if (!mfc_wait_for_tag_return(io, uid, uid_len)) {
+                // User cancelled while waiting
+                return ESP_ERR_INVALID_STATE;
+            }
+            // Card returned, reselect and retry authentication
             (void)pn532_in_list_passive_target(io);
-            
-            // Another yield after reselect before retry
-            vTaskDelay(pdMS_TO_TICKS(80));
-            
-            // Single retry after reselect
             resp_len = sizeof(resp);
             err = pn532_in_data_exchange(io, cmd, sizeof(cmd), resp, &resp_len);
-        } else
-#endif
-        {
-            // Original behavior for non-somethingsomething boards
-            // Check if authentication failed due to card removal
-            if (!mfc_tag_is_present(io, uid, uid_len)) {
-                // Card was removed, wait for it to return
-                if (!mfc_wait_for_tag_return(io, uid, uid_len)) {
-                    // User cancelled while waiting
-                    return ESP_ERR_INVALID_STATE;
-                }
-                // Card returned, reselect and retry authentication
-                (void)pn532_in_list_passive_target(io);
-                resp_len = sizeof(resp);
-                err = pn532_in_data_exchange(io, cmd, sizeof(cmd), resp, &resp_len);
-            } else {
-                // Failed AUTH can desync the tag; reselect to restore state for next attempts
-                (void)pn532_in_list_passive_target(io);
-                // Retry once after reselect
-                resp_len = sizeof(resp);
-                err = pn532_in_data_exchange(io, cmd, sizeof(cmd), resp, &resp_len);
-            }
+        } else {
+            // Failed AUTH can desync the tag; reselect to restore state for next attempts
+            (void)pn532_in_list_passive_target(io);
+            // Retry once after reselect
+            resp_len = sizeof(resp);
+            err = pn532_in_data_exchange(io, cmd, sizeof(cmd), resp, &resp_len);
         }
-        
-        // If retry also fails and we suspect card removal (consecutive failures),
-        // let the CALLER decide whether to do presence detection rather than
-        // doing it on every single auth attempt
-    } else {
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Yield after successful auth to give IO manager window
-            vTaskDelay(pdMS_TO_TICKS(15));
-        }
-#endif
     }
     return err;
 }
@@ -1533,16 +1408,7 @@ static esp_err_t mfc_auth_block(pn532_io_handle_t io, uint8_t block, bool use_ke
 static esp_err_t mfc_read_block(pn532_io_handle_t io, uint8_t block, uint8_t out16[16]) {
     uint8_t cmd[2] = { MIFARE_CMD_READ, block };
     uint8_t resp_len = 16;
-    esp_err_t err = pn532_in_data_exchange(io, cmd, sizeof(cmd), out16, &resp_len);
-    
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        // Yield after block reads to allow other I2C consumers during sector dumps
-        vTaskDelay(pdMS_TO_TICKS(25));
-    }
-#endif
-    
-    return err;
+    return pn532_in_data_exchange(io, cmd, sizeof(cmd), out16, &resp_len);
 }
 
 static const char* mfc_type_str(MFC_TYPE t) {
@@ -1824,12 +1690,6 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
                 ESP_LOGD("MFC", "Summary: sector=%d user dict failed", s);
             }
         }
-        // Yield between sectors to allow other I2C consumers
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            vTaskDelay(pdMS_TO_TICKS(25));
-        }
-#endif
         // Then defaults
         for (int k = 0; k < (int)(sizeof(DEFAULT_KEYS)/6) && !ok; ++k) {
             if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break; // skip defaults on fast-finish
@@ -1844,23 +1704,8 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
                 ESP_LOGD("MFC", "Summary: sector=%d defaults A (idx=%d) failed", s, k);
             }
             if (g_prog_cb) g_prog_cb(k+1, (int)(sizeof(DEFAULT_KEYS)/6), g_prog_user);
-            
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-            if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-                // Yield every few default key attempts
-                if ((k & 0x3) == 0) vTaskDelay(pdMS_TO_TICKS(25));
-            }
-#endif
         }
         if (ok) continue;
-        
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Yield between defaults A and B loops
-            vTaskDelay(pdMS_TO_TICKS(25));
-        }
-#endif
-        
         for (int k = 0; k < (int)(sizeof(DEFAULT_KEYS)/6) && !ok; ++k) {
             if (&nfc_is_dict_skip_requested && nfc_is_dict_skip_requested()) break; // skip defaults on fast-finish
             if (mfc_auth_block(io, auth_blk, true, DEFAULT_KEYS[k], uid, uid_len) == ESP_OK) {
@@ -1874,13 +1719,6 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
                 ESP_LOGD("MFC", "Summary: sector=%d defaults B (idx=%d) failed", s, k);
             }
             if (g_prog_cb) g_prog_cb(k+1, (int)(sizeof(DEFAULT_KEYS)/6), g_prog_user);
-            
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-            if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-                // Yield every few default key attempts
-                if ((k & 0x3) == 0) vTaskDelay(pdMS_TO_TICKS(25));
-            }
-#endif
         }
 #if defined(CONFIG_HAS_NFC) && defined(CONFIG_MFC_DICT_EMBEDDED)
         if (!ok) {
@@ -1921,12 +1759,6 @@ char* mfc_build_details_summary(pn532_io_handle_t io,
                     }
                 }
             }
-            // Yield between block reads and post-read operations
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-            if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-                vTaskDelay(pdMS_TO_TICKS(30));
-            }
-#endif
             // Optionally try to discover the complementary key using user dict (lightweight)
             mfc_try_find_complementary_user_key(io, t, s, auth_blk, uid, uid_len, usedB_cur);
             // Kick off a reuse sweep using the just-found key to accelerate other sectors

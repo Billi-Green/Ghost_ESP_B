@@ -723,25 +723,27 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
     // Prefer MIFARE Classic summary if SAK indicates Classic
     if (mfc_is_classic_sak(g_sak)) {
         if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-            // Early exit for Banshee: show basic info only to avoid NFC instability
-            size_t cap = 256;
-            ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
-            if (!res) return;
-            res->text = (char*)malloc(cap);
-            if (!res->text) { free(res); return; }
-            res->text_len = cap; res->session = nfc_scan_session;
-            char *w = res->text;
-            snprintf(w, cap, "MIFARE Classic\nUID:");
-            size_t used = strlen(w); w += used; cap -= used;
-            for (uint8_t i = 0; i < uid_len && cap > 3; ++i) {
-                int n = snprintf(w, cap, " %02X", uid[i]);
-                if (n > 0) { w += n; cap -= n; }
-            }
-            snprintf(w, cap, "\nATQA: %04X SAK: %02X\nNFC unstable on Banshee", g_atqa, g_sak);
-            if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
-            else { if (res->text) free(res->text); free(res); }
-            return;
-        }
+        // Early exit for Banshee: show basic info only to avoid NFC instability
+        // Commented out to allow MFC dict attack
+        // size_t cap = 256;
+        // ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+        // if (!res) return;
+        // res->text = (char*)malloc(cap);
+        // if (!res->text) { free(res); return; }
+        // res->text_len = cap; res->session = nfc_scan_session;
+        // char *w = res->text;
+        // snprintf(w, cap, "MIFARE Classic\nUID:");
+        // size_t used = strlen(w); w += used; cap -= used;
+        // for (uint8_t i = 0; i < uid_len && cap > 3; ++i) {
+        //     int n = snprintf(w, cap, " %02X", uid[i]);
+        //     if (n > 0) { w += n; cap -= n; }
+        // }
+        // snprintf(w, cap, "\nATQA: %04X SAK: %02X", g_atqa, g_sak);
+        // // snprintf(w, cap, "\nATQA: %04X SAK: %02X\nNFC unstable on Banshee", g_atqa, g_sak);
+        // if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
+        // else { if (res->text) free(res->text); free(res); }
+        // return;
+    }
 
         mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
         if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) lv_label_set_text(nfc_title_label, "Bruteforcing keys... 0%");
@@ -1017,8 +1019,6 @@ static void nfc_save_cu_task(void *arg) {
 static void nfc_scan_task(void *arg) {
     const char *TAGT = "NFCScan";
     ESP_LOGI(TAGT, "scan_task: start (cancel=%d)", nfc_scan_cancel);
-    // Reduce I2C contention with StatusDisplay and battery polling during PN532 operations
-    display_manager_set_low_i2c_mode(true);
     mfc_set_attack_hooks(&nfc_ui_attack_hooks);
     if (g_pn532 == NULL) {
         g_pn532 = &g_pn532_instance;
@@ -1062,7 +1062,6 @@ static void nfc_scan_task(void *arg) {
         }
         if (!ok) {
             ESP_LOGE(TAGT, "PN532 init failed on all ports, running i2c scan then exiting");
-            display_manager_set_low_i2c_mode(false);  // Restore normal I2C activity
             nfc_scan_task_handle = NULL;
             vTaskDelete(NULL);
         }
@@ -1096,7 +1095,6 @@ static void nfc_scan_task(void *arg) {
     if (g_pn532) {
         if (nfc_scan_cancel) {
             ESP_LOGI(TAGT, "scan_task: releasing PN532 (cancel=%d)", nfc_scan_cancel);
-            display_manager_set_low_i2c_mode(false);  // Restore normal I2C activity
             pn532_release(g_pn532);
             pn532_delete_driver(g_pn532);
             g_pn532 = NULL;
@@ -4439,9 +4437,9 @@ void nfc_view_create(void) {
     }
 #endif
 
-    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
-        error_popup_create("Banshee PN532 NFC is unstable");
-    }
+    // if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+    //     error_popup_create("Banshee PN532 NFC is unstable");
+    // }
 }
 
 void nfc_view_destroy(void) {

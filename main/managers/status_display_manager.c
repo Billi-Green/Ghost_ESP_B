@@ -21,7 +21,6 @@
 #include "i2c_bus_lock.h"
 #include "managers/settings_manager.h"
 #include "managers/status_display_animations.h"
-#include "managers/display_manager.h"
 
 static esp_err_t status_display_send(uint8_t control, const uint8_t *data, size_t len);
 
@@ -101,11 +100,6 @@ static const uint8_t font_5x7[][5] = {
 
 static esp_err_t status_display_send(uint8_t control, const uint8_t *data, size_t len) {
     if (!data || !len) return ESP_OK;
-    // Skip all I2C writes when low_i2c_mode is active (e.g., during NFC scanning)
-    // to avoid contention with PN532 which does aggressive clock stretching
-    if (display_manager_is_low_i2c_mode()) {
-        return ESP_OK;  // Silently skip
-    }
     TickType_t now = xTaskGetTickCount();
     if (s_oom_backoff_until && now < s_oom_backoff_until) {
         return ESP_ERR_NO_MEM;
@@ -126,13 +120,7 @@ static esp_err_t status_display_send(uint8_t control, const uint8_t *data, size_
     i2c_master_write_byte(cmd, control, true);
     i2c_master_write(cmd, (uint8_t *)data, len, true);
     i2c_master_stop(cmd);
-    bool locked = i2c_bus_lock(STATUS_DISPLAY_I2C_PORT, 
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-                                         (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ? 350 : 120)
-#else
-                                         120
-#endif
-                                         );
+    bool locked = i2c_bus_lock(STATUS_DISPLAY_I2C_PORT, 120);
     if (!locked) {
         i2c_cmd_link_delete(cmd);
         ESP_LOGW(TAG, "status display i2c busy, skipping ctrl=0x%02X", control);
