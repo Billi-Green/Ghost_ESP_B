@@ -65,49 +65,10 @@ QueueHandle_tt input_queue = NULL;
 static volatile bool g_low_i2c_mode = false;
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
-// Background polling to avoid blocking LVGL timer with I2C operations
-static TaskHandle_t battery_poll_task_handle = NULL;
+// Background polling logic moved to get_battery_info (lazy loading)
 static volatile uint8_t g_cached_batt_percent = 0;
 static volatile bool g_cached_batt_charging = false;
 static volatile bool g_cached_batt_valid = false;
-static void battery_poll_task(void *arg) {
-  fuel_gauge_data_t fg;
-  uint8_t last_pct = 0xFF;
-  bool last_chg = false;
-  int stable = 0;
-  uint32_t delay_ms = 2000;
-  for (;;) {
-    // In low-I2C mode, pause polling to avoid I2C contention
-    if (g_low_i2c_mode) {
-      vTaskDelay(pdMS_TO_TICKS(5000));
-      continue;
-    }
-    if (fuel_gauge_manager_get_data(&fg)) {
-      g_cached_batt_percent = (uint8_t)fg.percentage;
-      g_cached_batt_charging = fg.is_charging;
-      g_cached_batt_valid = true;
-      if (last_pct == g_cached_batt_percent && last_chg == g_cached_batt_charging) {
-        if (stable < 6) stable++;
-      } else {
-        stable = 0;
-      }
-      last_pct = g_cached_batt_percent;
-      last_chg = g_cached_batt_charging;
-    }
-    if (!g_cached_batt_valid) {
-      delay_ms = 5000;
-    } else if (g_cached_batt_charging) {
-      delay_ms = 10000; // Poll every 10s when charging
-    } else if (stable >= 6) {
-      delay_ms = 60000; // Poll every 60s when stable
-    } else if (stable >= 3) {
-      delay_ms = 30000; // Poll every 30s when relatively stable
-    } else {
-      delay_ms = 5000;  // Poll every 5s initially
-    }
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
-  }
-}
 #endif
 
 #ifdef CONFIG_HAS_RTC_CLOCK
@@ -647,7 +608,19 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
     }
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
-    // Use cached fuel gauge values updated by background task (non-blocking)
+    // Lazy poll on UI thread with rate limiting (every 5s)
+    static int64_t last_poll_time = 0;
+    int64_t now = esp_timer_get_time() / 1000;
+    if (!g_cached_batt_valid || (now - last_poll_time > 5000)) {
+        fuel_gauge_data_t fg;
+        if (fuel_gauge_manager_get_data(&fg)) {
+            g_cached_batt_percent = (uint8_t)fg.percentage;
+            g_cached_batt_charging = fg.is_charging;
+            g_cached_batt_valid = true;
+            last_poll_time = now;
+        }
+    }
+
     if (g_cached_batt_valid) {
         *percentage = g_cached_batt_percent;
         *is_charging = g_cached_batt_charging;
@@ -1370,9 +1343,6 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #ifdef CONFIG_HAS_FUEL_GAUGE
   if (fuel_gauge_manager_init()) {
     ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
-    if (battery_poll_task_handle == NULL) {
-      xTaskCreate(battery_poll_task, "battery_poll", 4096, NULL, 5, &battery_poll_task_handle);
-    }
   } else {
     ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
   }

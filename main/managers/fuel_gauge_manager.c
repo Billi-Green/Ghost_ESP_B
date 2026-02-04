@@ -707,30 +707,35 @@ static esp_err_t max17048_write_word(uint8_t reg, uint16_t data) {
 }
 
 static esp_err_t fuel_gauge_i2c_init(void) {
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = CONFIG_MAX17048_I2C_SDA_PIN,
-        .scl_io_num = CONFIG_MAX17048_I2C_SCL_PIN,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100000,
-        .clk_flags = 0,
-    };
-
-    esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = i2c_driver_install(I2C_MASTER_NUM, I2C_MODE_MASTER, 0, 0, 0);
+    // First try to install the driver to check if it's already installed
+    esp_err_t ret = i2c_driver_install(I2C_MASTER_NUM, I2C_MODE_MASTER, 0, 0, 0);
     if (ret == ESP_OK) {
+        // We installed it - now configure parameters
         i2c_initialized_by_us = true;
+        i2c_config_t conf = {
+            .mode = I2C_MODE_MASTER,
+            .sda_io_num = CONFIG_MAX17048_I2C_SDA_PIN,
+            .scl_io_num = CONFIG_MAX17048_I2C_SCL_PIN,
+            .sda_pullup_en = GPIO_PULLUP_ENABLE,
+            .scl_pullup_en = GPIO_PULLUP_ENABLE,
+            .master.clk_speed = 100000,
+            .clk_flags = 0,
+        };
+
+        ret = i2c_param_config(I2C_MASTER_NUM, &conf);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(ret));
+            i2c_driver_delete(I2C_MASTER_NUM);
+            i2c_initialized_by_us = false;
+            return ret;
+        }
     } else if (ret == ESP_ERR_INVALID_STATE || ret == ESP_FAIL) {
-        ESP_LOGI(TAG, "I2C driver already installed or busy on port %d", I2C_MASTER_NUM);
-        ret = ESP_OK; // Treat as success
+        ESP_LOGI(TAG, "I2C driver already installed on port %d", I2C_MASTER_NUM);
+        i2c_initialized_by_us = false;
+        ret = ESP_OK; // Treat as success - use existing driver
     } else {
         ESP_LOGE(TAG, "Failed to install I2C driver: %s", esp_err_to_name(ret));
+        return ret;
     }
 
 #if CONFIG_PM_ENABLE
@@ -767,6 +772,11 @@ bool fuel_gauge_manager_init(void) {
 
     if (version == 0xFFFF) {
         ESP_LOGE(TAG, "Failed to communicate with MAX17048 - check wiring and I2C config");
+        // CLEANUP: If we installed the driver, remove it so others can use the port cleanly
+        if (i2c_initialized_by_us) {
+            i2c_driver_delete(I2C_MASTER_NUM);
+            i2c_initialized_by_us = false;
+        }
         return false;
     }
 
