@@ -4,7 +4,10 @@
 
 ### Changed since last prerelease
 - Re-enabled MFC dictionary attacks on The Wired Hatter's Banshee
-- Fixed minor issues with RGB on The Wired Hatter's Banshee
+- Fixed minor RGB issues on The Wired Hatter's Banshee
+- Fixed touch issues on The Wired Hatter's Banshee
+- Fixed IR RX issues on The Wired Hatter's Banshee
+
 
 - Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability

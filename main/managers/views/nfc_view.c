@@ -1894,6 +1894,7 @@ static bool write_flipper_nfc_file(void) {
 #ifdef CONFIG_NFC_PN532
     if (g_uid_len == 0 || g_pn532 == NULL) {
         ESP_LOGW(TAG, "No NFC UID/driver to save");
+        if (did) nfc_sd_end(susp);
         return false;
     }
 
@@ -1915,9 +1916,11 @@ static bool write_flipper_nfc_file(void) {
         }
         if (!ok) {
             ESP_LOGE(TAG, "Failed to save Mifare Classic file");
+            if (did) nfc_sd_end(susp);
             return false;
         }
         ESP_LOGI(TAG, "Mifare Classic file saved");
+        if (did) nfc_sd_end(susp);
         return true;
     }
 
@@ -1950,6 +1953,7 @@ static bool write_flipper_nfc_file(void) {
 
         if (sd_card_write_file(path, buf, (size_t)pos) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to write DESFire header: %s", path);
+            if (did) nfc_sd_end(susp);
             return false;
         }
         ESP_LOGI(TAG, "Mifare DESFire header saved: %s", path);
@@ -1988,6 +1992,7 @@ static bool write_flipper_nfc_file(void) {
 
     if (sd_card_write_file(path, buf, (size_t)pos) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write header: %s", path);
+        if (did) nfc_sd_end(susp);
         return false;
     }
 
@@ -2063,6 +2068,7 @@ meta_fallback: ;
     char *pages = (char*)malloc(cap);
     if (!pages) {
         ESP_LOGE(TAG, "OOM building page dump");
+        if (did) nfc_sd_end(susp);
         return false;
     }
     int ppos = 0; int pages_read = 0;
