@@ -10,7 +10,7 @@
 #include "freertos/task.h"
 
 // TSC2007 Address
-#define TSC2007_ADDR 0x4B
+static uint8_t s_tsc2007_addr = 0x4B;
 
 // I2C Port (assumed 0 based on user context)
 #define I2C_PORT_NUM 0
@@ -18,10 +18,6 @@
 static const char *TAG = "TSC2007";
 
 #include "i2c_bus_lock.h"
-
-void tsc2007_init(void) {
-    ESP_LOGD(TAG, "TSC2007 Init (Addr: 0x%02X)", TSC2007_ADDR);
-}
 
 static bool tsc2007_i2c_read_cmd(uint8_t func, uint16_t *res) {
     uint8_t cmd = (func << 4) | (1 << 2) | (0 << 1); // Func, ADON_IRQOFF, 12-bit
@@ -34,7 +30,7 @@ static bool tsc2007_i2c_read_cmd(uint8_t func, uint16_t *res) {
     
     i2c_cmd_handle_t link = i2c_cmd_link_create();
     i2c_master_start(link);
-    i2c_master_write_byte(link, (TSC2007_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(link, (s_tsc2007_addr << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(link, cmd, true);
     i2c_master_stop(link);
     
@@ -48,7 +44,7 @@ static bool tsc2007_i2c_read_cmd(uint8_t func, uint16_t *res) {
     
     link = i2c_cmd_link_create();
     i2c_master_start(link);
-    i2c_master_write_byte(link, (TSC2007_ADDR << 1) | I2C_MASTER_READ, true);
+    i2c_master_write_byte(link, (s_tsc2007_addr << 1) | I2C_MASTER_READ, true);
     i2c_master_read(link, data, 2, I2C_MASTER_LAST_NACK);
     i2c_master_stop(link);
 
@@ -62,6 +58,27 @@ static bool tsc2007_i2c_read_cmd(uint8_t func, uint16_t *res) {
         return true;
     }
     return false;
+}
+
+void tsc2007_init(void) {
+    uint8_t addresses[] = {0x4B, 0x48};
+    bool found = false;
+    uint16_t dummy;
+    
+    for (int i = 0; i < 2; i++) {
+        s_tsc2007_addr = addresses[i];
+        // Try to read Z1 (func 14) to check presence
+        if (tsc2007_i2c_read_cmd(14, &dummy)) {
+            ESP_LOGI(TAG, "TSC2007 Init (Found at Addr: 0x%02X)", s_tsc2007_addr);
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found) {
+        ESP_LOGE(TAG, "TSC2007 not found at 0x4B or 0x48");
+        // Fallback or leave as last attempted
+    }
 }
 
 #define TOUCH_X_MIN 300
