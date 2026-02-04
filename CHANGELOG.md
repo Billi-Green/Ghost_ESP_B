@@ -7,6 +7,7 @@
 - Fixed minor RGB issues on The Wired Hatter's Banshee
 - Fixed touch issues on The Wired Hatter's Banshee
 - Fixed IR RX issues on The Wired Hatter's Banshee
+- Fixed the display hanging when going to save NFC tags on The Wired Hatter's Banshee
 
 
 - Added support for the Febris Pro board
@@ -21,6 +22,10 @@
 - Added touch support for The Wired Hatter's Banshee
 - Added proper touch support to the Infrared view
 - Added MAX17048 fuel gauge support for The Wired Hatter's Banshee
+- Fixed minor RGB issues on The Wired Hatter's Banshee
+- Fixed IR RX issues on The Wired Hatter's Banshee
+- Fixed the display hanging when going to save NFC tags on The Wired Hatter's Banshee
+- Fixed a crash on the TEmbedC1101 when processing large IR signals
 
 ## Revival v1.9.2
 

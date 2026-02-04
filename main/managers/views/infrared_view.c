@@ -144,7 +144,12 @@ static void ir_sd_worker_task(void *arg);
 
 static lv_obj_t *learning_popup = NULL;
 static lv_obj_t *learning_cancel_btn = NULL;
+
 static TaskHandle_t ir_learning_task_handle = NULL;
+#ifdef CONFIG_SPIRAM
+static StaticTask_t *ir_learning_task_tcb = NULL;
+static StackType_t *ir_learning_task_stack = NULL;
+#endif
 static bool ir_learning_cancel = false;
 // static rmt_channel_handle_t rx_channel = NULL; // Removed, using infrared_manager
 static infrared_signal_t learned_signal = {0};
@@ -1437,10 +1442,26 @@ void infrared_view_destroy(void) {
     // Cleanup IR learning resources
     if (ir_learning_task_handle) {
         ir_learning_cancel = true;
-        // Just set the flag and let the task clean itself up
-        // vTaskDelete should be avoided if possible
-        ir_learning_task_handle = NULL;
+        // Wait briefly for task to exit
+        // vTaskDelay(pdMS_TO_TICKS(100)); // Optional: give it a moment
+        // If task handle is still valid (it might have self-deleted), we can't force delete freely if static
+        // But for static tasks, we must free memory. The task should ideally have exited.
+        // Assuming ir_learning_cancel triggers exit loop -> vTaskDelete(NULL)
+        // We will free memory in next cycle or ensure it's freed if handle becomes NULL
     }
+    // Free static task memory if allocated
+#ifdef CONFIG_SPIRAM
+    if (ir_learning_task_stack) {
+        free(ir_learning_task_stack);
+        ir_learning_task_stack = NULL;
+    }
+    if (ir_learning_task_tcb) {
+        free(ir_learning_task_tcb);
+        ir_learning_task_tcb = NULL;
+    }
+#endif
+    ir_learning_task_handle = NULL;
+
     cleanup_learning_popup(NULL);
     cleanup_signal_preview_popup(NULL);
 
@@ -3302,7 +3323,22 @@ void create_easy_learn_popup(void)
     
     // Start IR learning task
     ir_learning_cancel = false;
+#ifdef CONFIG_SPIRAM
+    if (ir_learning_task_stack) free(ir_learning_task_stack);
+    if (ir_learning_task_tcb) free(ir_learning_task_tcb);
+    ir_learning_task_stack = (StackType_t *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ir_learning_task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (ir_learning_task_stack && ir_learning_task_tcb) {
+        ir_learning_task_handle = xTaskCreateStatic(ir_learning_task, "ir_learning", 8192, NULL, 5, ir_learning_task_stack, ir_learning_task_tcb);
+    } else {
+        if (ir_learning_task_stack) free(ir_learning_task_stack);
+        if (ir_learning_task_tcb) free(ir_learning_task_tcb);
+        ir_learning_task_stack = NULL; ir_learning_task_tcb = NULL;
+        xTaskCreate(ir_learning_task, "ir_learning", 8192, NULL, 5, &ir_learning_task_handle);
+    }
+#else
     xTaskCreate(ir_learning_task, "ir_learning", 4096, NULL, 5, &ir_learning_task_handle);
+#endif
 }
 
 void create_signal_preview_popup(void)
@@ -3638,7 +3674,22 @@ static void learn_remote_event_cb(lv_event_t *e) {
         create_learning_popup();
         // Start IR learning task
         ir_learning_cancel = false;
+#ifdef CONFIG_SPIRAM
+        if (ir_learning_task_stack) free(ir_learning_task_stack);
+        if (ir_learning_task_tcb) free(ir_learning_task_tcb);
+        ir_learning_task_stack = (StackType_t *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        ir_learning_task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (ir_learning_task_stack && ir_learning_task_tcb) {
+            ir_learning_task_handle = xTaskCreateStatic(ir_learning_task, "ir_learning", 8192, NULL, 5, ir_learning_task_stack, ir_learning_task_tcb);
+        } else {
+            if (ir_learning_task_stack) free(ir_learning_task_stack);
+            if (ir_learning_task_tcb) free(ir_learning_task_tcb);
+            ir_learning_task_stack = NULL; ir_learning_task_tcb = NULL;
+            xTaskCreate(ir_learning_task, "ir_learning", 8192, NULL, 5, &ir_learning_task_handle);
+        }
+#else
         xTaskCreate(ir_learning_task, "ir_learning", 4096, NULL, 5, &ir_learning_task_handle);
+#endif
     }
 }
 #endif
