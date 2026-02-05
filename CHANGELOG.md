@@ -9,6 +9,7 @@
 - Added 12-bit color precision pipeline for RGB
 - Show highlight border on all displays regardless of touch support
 - Added more status display logs
+- Fixed clock icon not recoloring based on theme
 
 - Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability
@@ -32,6 +33,7 @@
 - Added 12-bit color precision pipeline for RGB
 - Show highlight border on all displays regardless of touch support
 - Added more status display logs
+- Fixed clock icon not recoloring based on theme
 
 ## Revival v1.9.2
 

@@ -6,6 +6,7 @@
 #include <time.h>
 #include "managers/settings_manager.h"
 #include "gui/lvgl_safe.h"
+#include "gui/theme_palette_api.h"
 #include "esp_log.h"
 
 static const char *TAG = "ClockScreens";
@@ -55,6 +56,12 @@ void clock_create(void) {
         setenv("TZ", tz, 1);
         tzset();
     }
+    
+    // Get current theme colors for text only
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    uint32_t accent_color = theme_palette_get_accent(theme);
+    
+    // Keep original background color
     display_manager_fill_screen(lv_color_hex(0x121212));
     clock_container = gui_screen_create_root(NULL, "Clock", lv_color_hex(0x121212), LV_OPA_COVER);
     clock_view.root = clock_container;
@@ -63,17 +70,19 @@ void clock_create(void) {
     time_label = lv_label_create(content);
     lv_label_set_text(time_label, "00:00:00");
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_40, 0);
-    lv_obj_set_style_text_color(time_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(time_label, lv_color_hex(accent_color), 0);
     lv_obj_align(time_label, LV_ALIGN_CENTER, 0, -15);
+    
     date_label = lv_label_create(content);
     lv_label_set_text(date_label, "Wednesday, January 01");
     lv_obj_set_style_text_font(date_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(date_label, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_color(date_label, lv_color_hex(accent_color), 0);
     lv_obj_align(date_label, LV_ALIGN_CENTER, 0, 30);
+    
     year_label = lv_label_create(content);
     lv_label_set_text(year_label, "2025");
     lv_obj_set_style_text_font(year_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(year_label, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_color(year_label, lv_color_hex(accent_color), 0);
     lv_obj_align(year_label, LV_ALIGN_CENTER, 0, 50);
 
     clock_timer = lv_timer_create(digital_clock_cb, 1000, NULL);

@@ -209,7 +209,7 @@ static void carousel_fade_out_ready_cb(lv_anim_t *a) {
         }
         carousel_cache.icon_src = new_icon;
 
-        bool wants_recolor = strcmp(menu_items[menu_index].name, "Clock") != 0;
+        bool wants_recolor = true;
         if (wants_recolor) {
             if (!carousel_cache.icon_recolor_enabled || border_changed) {
                 lv_obj_set_style_img_recolor(icon, new_border, 0);
@@ -417,7 +417,7 @@ static void update_menu_item(bool slide_left) {
     lv_obj_set_size(icon, icon_size, icon_size);
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
     lv_img_set_antialias(icon, false);
-    bool recolor_enabled = strcmp(menu_items[menu_index].name, "Clock") != 0;
+    bool recolor_enabled = true;
     if (recolor_enabled) {
         lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
@@ -1023,10 +1023,8 @@ static void create_grid_menu(void) {
         lv_img_set_antialias(icon, false);
 
         // Color icons according to theme like other layouts
-        if (strcmp(menu_items[menu_index].name, "Clock")) {
-            lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
-            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
-        }
+        lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
+        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
         lv_obj_set_style_clip_corner(icon, false, 0);
 
         // Scale icon using zoom to fit into available area
@@ -1127,10 +1125,8 @@ static void create_list_menu(void) {
         lv_obj_t *icon = lv_img_create(btn);
         lv_img_set_src(icon, menu_items[menu_index].icon);
         lv_img_set_antialias(icon, false);
-        if (strcmp(menu_items[menu_index].name, "Clock") != 0) {
-            lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
-            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
-        }
+        lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
+        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
         lv_coord_t img_w = menu_items[menu_index].icon->header.w;
         lv_coord_t img_h = menu_items[menu_index].icon->header.h;
         int zoom_w = (img_w > 0) ? (icon_target * 256) / img_w : 256;
