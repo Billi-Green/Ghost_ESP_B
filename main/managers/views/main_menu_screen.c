@@ -12,6 +12,7 @@
 #include "managers/views/clock_screen.h"
 #include "managers/views/settings_screen.h"
 #include "core/esp_comm_manager.h"
+#include "managers/status_display_manager.h"
 #ifdef CONFIG_HAS_NFC
 #include "managers/views/nfc_view.h"
 #endif
@@ -801,20 +802,13 @@ void select_menu_item(int index, bool slide_left) {
             // Highlight new selection
             selected_item_index = index;
             if (grid_cards[selected_item_index]) {
-                // For non-touch devices, make highlight more prominent
-#ifdef CONFIG_USE_TOUCHSCREEN
-                // Touch devices: keep original border color
-                int menu_index_new = visible_index_to_menu_index(selected_item_index, esp_comm_manager_is_connected());
-                lv_obj_set_style_border_color(grid_cards[selected_item_index], menu_items[menu_index_new].border_color, LV_PART_MAIN);
-                lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 8, LV_PART_MAIN);
-#else
-                // Non-touch devices: use prominent white border and larger shadow
+                // Always use prominent white border and larger shadow
                 lv_obj_set_style_border_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
                 lv_obj_set_style_border_width(grid_cards[selected_item_index], 4, LV_PART_MAIN);
                 lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 16, LV_PART_MAIN);
                 lv_obj_set_style_shadow_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
                 lv_obj_set_style_shadow_opa(grid_cards[selected_item_index], LV_OPA_30, LV_PART_MAIN);
-#endif
+                
                 // Ensure selected card is visible (handle pagination) without animation
                 lv_obj_scroll_to_view(grid_cards[selected_item_index], LV_ANIM_OFF);
             }
@@ -880,6 +874,28 @@ static void handle_menu_item_selection(int item_index) {
     for (int i = 0; i < num_actions; ++i) {
         if (strcmp(name, menu_actions[i].name) == 0) {
             ESP_LOGI(TAG, "%s selected\n", menu_actions[i].name);
+            
+            // Add status display messages for menu navigation
+            if (strcmp(menu_actions[i].name, "WiFi") == 0) {
+                status_display_show_status("WiFi Menu");
+            } else if (strcmp(menu_actions[i].name, "BLE") == 0) {
+                status_display_show_status("BLE Menu");
+            } else if (strcmp(menu_actions[i].name, "GPS") == 0) {
+                status_display_show_status("GPS Menu");
+            } else if (strcmp(menu_actions[i].name, "Infrared") == 0) {
+                status_display_show_status("Infrared Menu");
+            } else if (strcmp(menu_actions[i].name, "NFC") == 0) {
+                status_display_show_status("NFC Menu");
+            } else if (strcmp(menu_actions[i].name, "Apps") == 0) {
+                status_display_show_status("Apps Menu");
+            } else if (strcmp(menu_actions[i].name, "Clock") == 0) {
+                status_display_show_status("Clock");
+            } else if (strcmp(menu_actions[i].name, "Settings") == 0) {
+                status_display_show_status("Settings");
+            } else if (strcmp(menu_actions[i].name, "GhostLink") == 0) {
+                status_display_show_status("GhostLink");
+            }
+            
             target_view = menu_actions[i].view;
             target_type = menu_actions[i].type;
             break;
@@ -1050,20 +1066,15 @@ static void create_grid_menu(void) {
     int selected_menu_index = visible_index_to_menu_index(selected_item_index, connected);
 
     // Highlight selected card
+    // Highlight selected card
     if (grid_cards[selected_item_index]) {
-        // For non-touch devices, make highlight more prominent
-#ifdef CONFIG_USE_TOUCHSCREEN
-        // Touch devices: keep original border color
-        lv_obj_set_style_border_color(grid_cards[selected_item_index], menu_items[selected_menu_index].border_color, LV_PART_MAIN);
-        lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 8, LV_PART_MAIN);
-#else
-        // Non-touch devices: use prominent white border and larger shadow
+        // Always use prominent white border and larger shadow
         lv_obj_set_style_border_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
         lv_obj_set_style_border_width(grid_cards[selected_item_index], 4, LV_PART_MAIN);
         lv_obj_set_style_shadow_width(grid_cards[selected_item_index], 16, LV_PART_MAIN);
         lv_obj_set_style_shadow_color(grid_cards[selected_item_index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
         lv_obj_set_style_shadow_opa(grid_cards[selected_item_index], LV_OPA_30, LV_PART_MAIN);
-#endif
+
         lv_obj_scroll_to_view(grid_cards[selected_item_index], LV_ANIM_OFF);
     }
 

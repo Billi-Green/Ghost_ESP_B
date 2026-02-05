@@ -7,6 +7,8 @@
 - Reduced the wait time when switching RGB modes
 - Refactored and optimised Rainbow and Knight Rider RGB modes
 - Added 12-bit color precision pipeline for RGB
+- Show highlight border on all displays regardless of touch support
+- Added more status display logs
 
 - Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability
@@ -24,6 +26,12 @@
 - Fixed IR RX issues on The Wired Hatter's Banshee
 - Fixed the display hanging when going to save NFC tags on The Wired Hatter's Banshee
 - Fixed a crash on the TEmbedC1101 when processing large IR signals
+- Only save changed setting to NVS when changing in settings menu to prevent hangs/crashes
+- Reduced the wait time when switching RGB modes
+- Refactored and optimised Rainbow and Knight Rider RGB modes
+- Added 12-bit color precision pipeline for RGB
+- Show highlight border on all displays regardless of touch support
+- Added more status display logs
 
 ## Revival v1.9.2
 

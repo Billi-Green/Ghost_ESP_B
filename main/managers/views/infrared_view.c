@@ -5,6 +5,7 @@
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
+#include "managers/status_display_manager.h"
 
 void update_learning_popup_selection(void);
 void update_easy_learn_popup_selection(void);
@@ -329,12 +330,16 @@ void learned_signal_name_callback(const char *name)
         // Store whether we were in add signal mode before saving
         bool was_adding_to_existing = add_signal_mode && strlen(current_remote_path) > 0;
         
+        status_display_show_status("IR Learning...");
+        
         if (add_signal_mode) {
             // Adding signal to existing remote
             append_signal_to_remote(learned_signal_name);
+            status_display_show_status("Signal Added");
         } else {
             // Learning new remote
             save_learned_signal(learned_signal_name);
+            status_display_show_status("Remote Saved");
         }
         
         // Reset the add signal mode flag
@@ -972,6 +977,7 @@ static void universal_transmit_task(void *arg) {
             infrared_signal_t signal;
             if (universal_ir_get_signal(i, &signal)) {
                 printf("Transmitting TURNHISTVOFF signal %zu: %s\n", i, signal.name);
+                status_display_show_status("Universal IR TX");
                 infrared_manager_transmit(&signal);
                 infrared_manager_free_signal(&signal);
                 vTaskDelay(pdMS_TO_TICKS(150));
@@ -2458,7 +2464,9 @@ static void command_event_execute(int idx) {
     }
     if (idx < 0 || idx >= signal_count) return;
     ESP_LOGI(TAG, "transmitting command: %s", signals[idx].name);
+    status_display_show_status("IR Transmitting...");
     infrared_manager_transmit(&signals[idx]);
+    status_display_show_status("IR Sent");
 }
 
 // LVGL event wrappers
@@ -2653,6 +2661,7 @@ static void create_learning_popup(void) {
 // Function to start the IR learning task
 static void start_ir_learning_task(void) {
     // Start IR learning task
+    status_display_show_status("IR Ready");
     ir_learning_cancel = false;
     xTaskCreate(ir_learning_task, "ir_learning", 4096, NULL, 5, &ir_learning_task_handle);
 }
@@ -2791,6 +2800,7 @@ void cleanup_signal_preview_popup(void *obj)
 void signal_preview_save_cb(lv_event_t *e)
 {
     // Transition to keyboard view for naming
+    status_display_show_status("IR Saving...");
     lv_async_call(cleanup_signal_preview_popup, NULL);
     keyboard_view_set_placeholder("Enter signal name");
     
@@ -2934,13 +2944,13 @@ void easy_learn_signal_name_callback(void)
 void signal_preview_cancel_cb(lv_event_t *e)
 {
     // Clean up learned signal data (only for raw signals!)
+    status_display_show_status("IR Discarded");
     if (learned_signal.is_raw && learned_signal.payload.raw.timings) {
         free(learned_signal.payload.raw.timings);
         learned_signal.payload.raw.timings = NULL;
         learned_signal.payload.raw.timings_size = 0;
     }
-    
-    // Reset add signal mode flag when cancelling
+    learned_signal.is_raw = false;
     add_signal_mode = false;
     
     // Clean up popup immediately (not async) to prevent UI corruption
@@ -3352,6 +3362,14 @@ void create_signal_preview_popup(void)
     lv_coord_t base_h = 160;
     if (scr_h < 200) base_h = scr_h - 30; // keep small margin on very short displays
     if (base_h < 120) base_h = 120;
+    
+    // Show status when signal is decoded and ready for preview
+    if (learned_signal.is_raw) {
+        status_display_show_status("IR Raw Signal");
+    } else {
+        status_display_show_status("IR Decoded");
+    }
+    
     signal_preview_popup = popup_create_container(lv_scr_act(), base_w, base_h);
     lv_obj_center(signal_preview_popup);
     

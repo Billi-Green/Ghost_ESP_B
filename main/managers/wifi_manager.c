@@ -21,6 +21,7 @@
 #include "managers/ap_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
+#include "managers/status_display_manager.h"
 #include "nvs_flash.h"
 #include <core/dns_server.h>
 #include <ctype.h>
@@ -529,15 +530,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         // Clean, single-line disconnect logging
         if (manual_disconnect) {
             glog("WiFi disconnected manually\n");
+            status_display_show_status("WiFi Disconnected");
             manual_disconnect = false; // Reset the flag
         } else {
             glog("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
+            status_display_show_status("WiFi Lost");
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         glog("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
+        status_display_show_status("WiFi Connected");
         
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -1760,6 +1764,7 @@ void wifi_manager_configure_sta_from_settings(void) {
 
 void wifi_manager_start_scan() {
     log_heap_status(TAG, "scan_start_pre");
+    status_display_show_status("WiFi Scanning...");
     // Free any previous selections or scan buffers before starting a fresh scan
     if (selected_aps != NULL) {
         free(selected_aps);
@@ -4431,6 +4436,7 @@ void wifi_manager_start_ip_lookup() {
 void wifi_manager_connect_wifi(const char *ssid, const char *password) {
     printf("Connecting to WiFi: %s\n", ssid);
     TERMINAL_VIEW_ADD_TEXT("Connecting to WiFi: %s\n", ssid);
+    status_display_show_status("WiFi Connecting...");
     
     wifi_config_t wifi_config = {0};
     
