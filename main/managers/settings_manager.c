@@ -813,6 +813,8 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, settings->zebra_menus_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_NAV_BUTTONS_KEY, settings->nav_buttons_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, (uint8_t)settings->menu_layout);
+    nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone);
+    nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
     // Assuming NVS_MAX_BRIGHTNESS_KEY and NVS_NEOPIXEL_BRIGHTNESS_KEY are defined elsewhere
     // nvs_set_u8(nvsHandle, NVS_MAX_BRIGHTNESS_KEY, settings->max_screen_brightness);
     // nvs_set_u8(nvsHandle, NVS_NEOPIXEL_BRIGHTNESS_KEY, settings->neopixel_max_brightness);

@@ -11,6 +11,7 @@
 - Added more status display logs
 - Fixed clock icon not recoloring based on theme
 - Added external RTC support for saving time sync on The Wired Hatter's Banshee
+- Fixed country and timezone not properly persisting
 
 - Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability
@@ -36,6 +37,8 @@
 - Added more status display logs
 - Fixed clock icon not recoloring based on theme
 - Added external RTC support for saving time sync on The Wired Hatter's Banshee
+- Fixed country and timezone not properly persisting
+
 
 ## Revival v1.9.2
 

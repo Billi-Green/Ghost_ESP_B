@@ -8,6 +8,7 @@
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "esp_wifi.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
 #include "vendor/drivers/pcf8563.h"
@@ -168,6 +169,24 @@ void app_main(void) {
         setenv("TZ", tz, 1);
         tzset();
         ESP_LOGI(TAG, "Timezone applied: %s", tz);
+    }
+
+    // Apply WiFi country from settings
+    uint8_t country_index = settings_get_wifi_country(&G_Settings);
+    const char *country_codes[] = {"US", "GB", "JP", "AU", "CN", "01"};
+    if (country_index < sizeof(country_codes) / sizeof(country_codes[0])) {
+        wifi_country_t wifi_country = {
+            .cc = {country_codes[country_index][0], country_codes[country_index][1], 0},
+            .schan = 1,
+            .nchan = (country_index == 2) ? 14 : (country_index == 0) ? 11 : 13,
+            .policy = WIFI_COUNTRY_POLICY_MANUAL
+        };
+        esp_err_t err = esp_wifi_set_country(&wifi_country);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to set WiFi country: %s", esp_err_to_name(err));
+        } else {
+            ESP_LOGI(TAG, "WiFi country applied: %s", country_codes[country_index]);
+        }
     }
 
     ESP_LOGI(TAG, "Configuring WiFi STA from settings");
