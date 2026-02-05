@@ -710,6 +710,10 @@ void settings_persist_setting(SettingsType setting) {
         case SETTING_I2C_SCAN:
              // Actions, not saved
              return;
+        case SETTING_SETUP_COMPLETE:
+            err = nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, G_Settings.setup_complete ? 1 : 0);
+            key = NVS_SETUP_COMPLETE_KEY;
+            break;
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -818,6 +822,8 @@ void settings_save(const FSettings *settings) {
     // Assuming NVS_MAX_BRIGHTNESS_KEY and NVS_NEOPIXEL_BRIGHTNESS_KEY are defined elsewhere
     // nvs_set_u8(nvsHandle, NVS_MAX_BRIGHTNESS_KEY, settings->max_screen_brightness);
     // nvs_set_u8(nvsHandle, NVS_NEOPIXEL_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
+    
+    nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, settings->setup_complete ? 1 : 0);
     
     // Add other fields as necessary based on struct... for now covering main ones
     

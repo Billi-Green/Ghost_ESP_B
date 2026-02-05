@@ -68,6 +68,7 @@ typedef enum {
 #endif
     SETTING_RUN_SETUP_WIZARD,
     SETTING_I2C_SCAN,
+    SETTING_SETUP_COMPLETE,
 } SettingsType;
 
 
