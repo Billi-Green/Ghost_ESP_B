@@ -3,16 +3,7 @@
 
 
 ## Changed since last prerelease
-- Only save changed setting to NVS when changing in settings menu to prevent hangs/crashes
-- Reduced the wait time when switching RGB modes
-- Refactored and optimised Rainbow and Knight Rider RGB modes
-- Added 12-bit color precision pipeline for RGB
-- Show highlight border on all displays regardless of touch support
-- Added more status display logs
-- Fixed clock icon not recoloring based on theme
-- Added external RTC support for saving time sync on The Wired Hatter's Banshee
-- Fixed country and timezone not properly persisting
-- Added new compass app for The Wired Hatter's Banshee
+- Added support for a new upcoming board
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board
