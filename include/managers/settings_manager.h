@@ -40,6 +40,36 @@ typedef enum {
 } IdleAnimation;
 #endif
 
+typedef enum {
+    SETTING_RGB_MODE = 0,
+    SETTING_DISPLAY_TIMEOUT,
+    SETTING_MENU_THEME,
+    SETTING_THIRD_CONTROL,
+    SETTING_TERMINAL_COLOR,
+    SETTING_INVERT_COLORS,
+    SETTING_WEB_AUTH,
+    SETTING_WEBUI_AP_ONLY,
+    SETTING_AP_ENABLED,
+    SETTING_POWER_SAVE,
+    SETTING_MAX_BRIGHTNESS,
+    SETTING_NEOPIXEL_BRIGHTNESS,
+    SETTING_ZEBRA_MENUS,
+    SETTING_NAV_BUTTONS,
+    SETTING_MENU_LAYOUT,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    SETTING_IDLE_ANIMATION,
+    SETTING_IDLE_ANIM_DELAY,
+#endif
+#ifdef CONFIG_USE_ENCODER
+    SETTING_ENCODER_INVERT,
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+    SETTING_USB_HOST_MODE,
+#endif
+    SETTING_RUN_SETUP_WIZARD,
+    SETTING_I2C_SCAN,
+} SettingsType;
+
 
 typedef enum {
   ALIGNMENT_CM, // Center Middle
@@ -150,6 +180,10 @@ void settings_deinit(void);
 void settings_load(FSettings *settings);
 void settings_save(const FSettings *settings);
 void settings_set_defaults(FSettings *settings);
+
+// Optimized Persistence and Task Management
+void settings_persist_setting(SettingsType setting);
+void settings_restart_rgb_effect(void);
 
 // Getters and Setters for core settings
 void settings_set_rgb_mode(FSettings *settings, RGBMode mode);

@@ -1,5 +1,6 @@
 #include "soc/soc_caps.h"
 #include "managers/rgb_manager.h"
+#include "managers/rgb_effects/rgb_effect_helpers.h"
 #include "managers/settings_manager.h"
 #include "vendor/led/led_strip.h"
 #include "driver/ledc.h"
@@ -106,8 +107,8 @@ void rainbow_task(void *pvParameter) {
     }
 
     int delay_ms = (int)settings_get_rgb_speed(&G_Settings);
-    if (delay_ms < 30) {
-      delay_ms = 30;
+    if (delay_ms < 10) {
+      delay_ms = 10;
     }
 
     if (rgb_manager->num_leds > 1) {
@@ -156,7 +157,8 @@ void rgb_manager_apply_static_from_settings(void) {
     rgb_manager_set_color(&rgb_manager, -1, 255, 255, 0, false);
     break;
   case RGB_MODE_PURPLE:
-    rgb_manager_set_color(&rgb_manager, -1, 115, 0, 225, false); // TWH Purple #7300E1
+    // TWH Purple #7300E1
+    rgb_manager_set_color_12bit(&rgb_manager, -1, 1847, 0, 3614, false); 
     break;
   case RGB_MODE_CYAN:
     rgb_manager_set_color(&rgb_manager, -1, 0, 255, 255, false);
@@ -411,7 +413,19 @@ void set_led_column(RGBManager_t *rgb_manager, size_t column, uint8_t height) {
 
   uint8_t r = 255, g = 1, b = 1;
 
-  scale_grb_by_neopixel_brightness(&g, &r, &b, 0.1, settings_get_neopixel_max_brightness(&G_Settings));
+  // Upconvert
+  uint16_t r12 = r * 16;
+  uint16_t g12 = g * 16;
+  uint16_t b12 = b * 16;
+  
+  // Scale (0-100 -> 0-255)
+  uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+  rgb_helper_scale_brightness_12bit(&r12, &g12, &b12, 255, max_bright);
+  
+  // Gamma correct
+  r = rgb_helper_gamma_correct_12bit_to_8bit(r12);
+  g = rgb_helper_gamma_correct_12bit_to_8bit(g12);
+  b = rgb_helper_gamma_correct_12bit_to_8bit(b12);
 
   // Light up the required number of LEDs with the selected primary color
 
@@ -603,11 +617,33 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
   if (rgb_manager->is_separate_pins) {
     // Handle separate R, G, B pins using LEDC
 
-    scale_grb_by_brightness(&green, &red, &blue, -0.3); // Assuming this scale is correct for LEDC
+    // Upconvert to 12-bit for consistent processing
+    uint16_t r12 = red * 16;
+    uint16_t g12 = green * 16;
+    uint16_t b12 = blue * 16;
+    
+    // Scale using global setting (base 255 for full range, convert setting 0-100 -> 0-255)
+    uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+    rgb_helper_scale_brightness_12bit(&r12, &g12, &b12, 255, max_bright);
 
-    uint8_t ired = (uint8_t)(255 - red);
-    uint8_t igreen = (uint8_t)(255 - green);
-    uint8_t iblue = (uint8_t)(255 - blue);
+    // Gamma correct back to 8-bit for LEDC
+    uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(r12);
+    uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(g12);
+    uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(b12);
+    
+    // LEDC usually drives common anode or common cathode.
+    // Assuming common cathode (duty 255 = max brightness).
+    // If common anode (inverted), caller should handle or we use is_inverted flag?
+    // Existing code inverted: 255 - r.
+    
+    // Original code:
+    // scale_grb_by_brightness ... -0.3?
+    // uint8_t ired = (uint8_t)(255 - red);
+    
+    // Let's preserve the inversion assumption but use corrected values
+    uint8_t ired = (uint8_t)(255 - r8);
+    uint8_t igreen = (uint8_t)(255 - g8);
+    uint8_t iblue = (uint8_t)(255 - b8);
 
     // Check if LEDC is initialized (a simple check, might need improvement)
     // A more robust check would involve checking the driver state if possible.
@@ -647,8 +683,19 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
       // Pulse only makes sense for a single logical LED (or all treated as one)
       pulse_once(rgb_manager, red, green, blue);
     } else {
-      uint8_t r = red, g = green, b = blue;
-      scale_grb_by_neopixel_brightness(&g, &r, &b, 0.3, settings_get_neopixel_max_brightness(&G_Settings)); // Scale brightness for RMT with neopixel setting
+      // Upconvert 8-bit input to 12-bit
+      uint16_t r12 = red * 16;
+      uint16_t g12 = green * 16;
+      uint16_t b12 = blue * 16;
+
+      // Scale brightness using 12-bit helper (Base 255 = 1.0x, Global = user setting 0-100 -> 0-255)
+      uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+      rgb_helper_scale_brightness_12bit(&r12, &g12, &b12, 255, max_bright);
+
+      // Gamma correct back to 8-bit
+      uint8_t r = rgb_helper_gamma_correct_12bit_to_8bit(r12);
+      uint8_t g = rgb_helper_gamma_correct_12bit_to_8bit(g12);
+      uint8_t b = rgb_helper_gamma_correct_12bit_to_8bit(b12);
 
       esp_err_t ret = ESP_OK;
       if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
@@ -703,47 +750,85 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
   return ESP_OK;
 }
 
-#define RGB_COLOR_WHEEL_STEPS 1536
-#define RGB_COLOR_WHEEL_Q16_RANGE ((uint32_t)RGB_COLOR_WHEEL_STEPS << 16)
+esp_err_t rgb_manager_set_color_12bit(RGBManager_t *rgb_manager, int led_idx,
+                                      uint16_t r12, uint16_t g12, uint16_t b12,
+                                      bool pulse) {
+  if (!rgb_manager)
+    return ESP_ERR_INVALID_ARG;
 
-static inline void rgb_color_wheel(uint16_t pos, uint8_t *r, uint8_t *g,
-                                   uint8_t *b) {
-  uint8_t segment = pos >> 8;
-  uint8_t offset = pos & 0xFF;
-
-  switch (segment) {
-  case 0:
-    *r = 255;
-    *g = offset;
-    *b = 0;
-    break;
-  case 1:
-    *r = 255 - offset;
-    *g = 255;
-    *b = 0;
-    break;
-  case 2:
-    *r = 0;
-    *g = 255;
-    *b = offset;
-    break;
-  case 3:
-    *r = 0;
-    *g = 255 - offset;
-    *b = 255;
-    break;
-  case 4:
-    *r = offset;
-    *g = 0;
-    *b = 255;
-    break;
-  default:
-    *r = 255;
-    *g = 0;
-    *b = 255 - offset;
-    break;
+  if (rgb_manager->num_leds <= 0 && !rgb_manager->is_separate_pins) {
+    return ESP_OK;
   }
-}
+
+  if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
+    return rgb_manager_set_color(rgb_manager, led_idx, 0, 0, 0, false);
+  }
+
+  // Scale using global setting (base 255 for full range, convert setting 0-100 -> 0-255)
+  uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+  rgb_helper_scale_brightness_12bit(&r12, &g12, &b12, 255, max_bright);
+
+  // Gamma correct back to 8-bit for output
+  // (Both LEDC and Stip currently support 8-bit hardware output)
+  uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(r12);
+  uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(g12);
+  uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(b12);
+
+  if (rgb_manager->is_separate_pins) {
+    // Reuse existing 8-bit function which handles LEDC details (inversion/channels)
+    // We already did the high-res gamma correction which is the main benefit.
+    // Ideally we would have a 12-bit LEDC setter if we reconfigured the timer,
+    // but for now we fit into the existing 8-bit plumbing.
+    return rgb_manager_set_color(rgb_manager, led_idx, r8, g8, b8, pulse);
+  } else {
+    // Strip support
+    if (!rgb_manager->strip) {
+      return ESP_OK;
+    }
+    
+    // For single pixel pulse, we can just call the 8-bit version to reuse logic?
+    // Pulse logic in 8-bit function is simple. Let's just forward for now if pulse is requested.
+    if (pulse && rgb_manager->num_leds <= 1) {
+       return rgb_manager_set_color(rgb_manager, led_idx, r8, g8, b8, true);
+    }
+
+    esp_err_t ret = ESP_OK;
+    if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+      if (led_idx == -1) {
+        // Set all LEDs
+        for (int i = 0; i < rgb_manager->num_leds; i++) {
+          ret = led_strip_set_pixel(rgb_manager->strip, i, r8, g8, b8);
+          if (ret != ESP_OK) {
+             // log error?
+          }
+        }
+      } else if (led_idx >= 0 && led_idx < rgb_manager->num_leds) {
+        ret = led_strip_set_pixel(rgb_manager->strip, led_idx, r8, g8, b8);
+      } else {
+        xSemaphoreGiveRecursive(rgb_mutex);
+        return ESP_ERR_INVALID_ARG;
+      }
+      
+      if (ret == ESP_OK) {
+          int attempts = 0;
+          do {
+            ret = led_strip_refresh(rgb_manager->strip);
+            if (ret == ESP_ERR_INVALID_STATE) {
+              vTaskDelay(pdMS_TO_TICKS(2));
+            }
+          } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
+      }
+      xSemaphoreGiveRecursive(rgb_mutex);
+      return ret;
+    }
+  }
+  return ESP_OK;
+                                      }
+
+// RGB_COLOR_WHEEL_STEPS and RANGE are now defined in rgb_effect_helpers.h
+// to support full 16-bit resolution (0-65535) for smoother effects.
+
+// rgb_color_wheel moved to rgb_effect_helpers.c
 
 void rgb_manager_rainbow_effect_matrix(RGBManager_t *rgb_manager,
                                        int delay_ms) {
@@ -770,14 +855,18 @@ void rgb_manager_rainbow_effect_matrix(RGBManager_t *rgb_manager,
           return;
         }
 
-        uint8_t red, green, blue;
-        rgb_color_wheel((uint16_t)(pixel_pos_q16 >> 16), &red, &green, &blue);
+        uint16_t red, green, blue;
+        rgb_helper_compute_rainbow_pixel_12bit(pixel_pos_q16, &red, &green, &blue);
 
-        scale_grb_by_neopixel_brightness(&green, &red, &blue, 0.3,
-                                         settings_get_neopixel_max_brightness(
-                                             &G_Settings));
+        // Convert 0-100 setting to 0-255 scale
+        uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+        rgb_helper_scale_brightness_12bit(&red, &green, &blue, 255, max_bright);
+        
+        uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(red);
+        uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(green);
+        uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(blue);
 
-        led_strip_set_pixel(rgb_manager->strip, i, red, green, blue);
+        led_strip_set_pixel(rgb_manager->strip, i, r8, g8, b8);
 
         pixel_pos_q16 += hue_step_q16;
         if (pixel_pos_q16 >= RGB_COLOR_WHEEL_Q16_RANGE) {
@@ -840,17 +929,22 @@ void rgb_manager_rainbow_effect(RGBManager_t *rgb_manager, int delay_ms) {
           return;
         }
 
-        uint8_t red, green, blue;
-        rgb_color_wheel((uint16_t)(pixel_pos_q16 >> 16), &red, &green, &blue);
+        uint16_t red, green, blue;
+        rgb_helper_compute_rainbow_pixel_12bit(pixel_pos_q16, &red, &green, &blue);
 
         if (rgb_manager->is_separate_pins) {
-          uint8_t ired = (uint8_t)(255 - red);
-          uint8_t igreen = (uint8_t)(255 - green);
-          uint8_t iblue = (uint8_t)(255 - blue);
-          rgb_manager_set_color(rgb_manager, i, ired, igreen, iblue, false);
+          // Original logic passed inverted values to set_color? Preserving behavior.
+          uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(red);
+          uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(green);
+          uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(blue);
+          
+          rgb_manager_set_color(rgb_manager, i, 255-r8, 255-g8, 255-b8, false);
         } else if (rgb_manager->strip) {
-          led_strip_set_pixel(rgb_manager->strip, single_pixel ? 0 : i, red,
-                              green, blue);
+           uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(red);
+           uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(green);
+           uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(blue);
+           led_strip_set_pixel(rgb_manager->strip, single_pixel ? 0 : i, r8,
+                               g8, b8);
         }
 
         pixel_pos_q16 += hue_step_q16;
@@ -941,7 +1035,7 @@ void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms) {
 }
 
 void rgb_manager_knightrider_effect(RGBManager_t *rgb_manager, int delay_ms) {
-  if (!rgb_manager || rgb_manager->num_leds <= 1) {
+  if (!rgb_manager || rgb_manager->num_leds < 1) {
     return;
   }
 
@@ -957,31 +1051,51 @@ void rgb_manager_knightrider_effect(RGBManager_t *rgb_manager, int delay_ms) {
     }
 
     if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
-      // Clear all LEDs first
+      // Manually clear the buffer (set all keys to 0) instead of calling led_strip_clear
+      // led_strip_clear might trigger a refresh which turns everything off
       for (int i = 0; i < num_leds; i++) {
         led_strip_set_pixel(rgb_manager->strip, i, 0, 0, 0);
       }
 
       // Draw the tail fading from bright to dim
-      for (int t = 0; t < tail_length; t++) {
+      // 1. Draw the Tail (boosted brightness to survive Gamma)
+      for (int t = 1; t < tail_length; t++) {
         int led_idx = pos - (t * direction);
         if (led_idx >= 0 && led_idx < num_leds) {
-          // Fade intensity based on position in tail (0 = brightest)
-          uint8_t intensity = 255 - ((255 / tail_length) * t);
-          uint8_t r = intensity;
-          uint8_t g = 0;
-          uint8_t b = 0;
-          scale_grb_by_neopixel_brightness(&g, &r, &b, 0.3,
-                                           settings_get_neopixel_max_brightness(&G_Settings));
-          led_strip_set_pixel(rgb_manager->strip, led_idx, r, g, b);
+           uint16_t r, g, b;
+           // Manually compute brighter tail: Linear falloff is too dim after Gamma.
+           // Use a gentler falloff.
+           // t=1..3. Scale 4095.
+           // Linear: 0.75, 0.50, 0.25.
+           // Boosted: 0.9, 0.7, 0.5.
+           float ratio = 1.0f - ((float)t / (float)tail_length); 
+           ratio = sqrtf(ratio); // Sqrt compensates for Gamma^2 roughly
+           uint16_t intense = (uint16_t)(4095.0f * ratio);
+           
+           r = intense; g = 0; b = 0;
+
+           // Scale for user brightness
+           uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+           rgb_helper_scale_brightness_12bit(&r, &g, &b, 255, max_bright);
+                                           
+           uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(r);
+           uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(g);
+           uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(b);
+           
+           led_strip_set_pixel(rgb_manager->strip, led_idx, r8, g8, b8);
         }
       }
 
-      // Draw the head (brightest)
-      uint8_t head_r = 255, head_g = 0, head_b = 0;
-      scale_grb_by_neopixel_brightness(&head_g, &head_r, &head_b, 0.3,
-                                       settings_get_neopixel_max_brightness(&G_Settings));
-      led_strip_set_pixel(rgb_manager->strip, pos, head_r, head_g, head_b);
+      // 2. Draw the Head (Always Max Brightness)
+      {
+          uint16_t r = 4095, g = 0, b = 0;
+          uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+          rgb_helper_scale_brightness_12bit(&r, &g, &b, 255, max_bright);
+          uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(r);
+          uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(g);
+          uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(b);
+          led_strip_set_pixel(rgb_manager->strip, pos, r8, g8, b8);
+      }
 
       // Refresh the strip
       if (!rgb_manager->is_separate_pins && rgb_manager->strip) {

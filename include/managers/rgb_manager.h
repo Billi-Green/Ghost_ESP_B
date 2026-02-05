@@ -56,6 +56,19 @@ esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,
                                 bool pulse);
 
 /**
+ * @brief Set the color of an LED with 12-bit precision (0-4095).
+ *
+ * @param rgb_manager Pointer to the RGB Manager
+ * @param led_idx Index of the LED (-1 for all)
+ * @param red Red component (0-4095)
+ * @param green Green component (0-4095)
+ * @param blue Blue component (0-4095)
+ * @param pulse Whether to pulse the color (not implemented for 12-bit yet)
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t rgb_manager_set_color_12bit(RGBManager_t *rgb_manager, int led_idx, uint16_t red, uint16_t green, uint16_t blue, bool pulse);
+
+/**
  * @brief Apply the rainbow effect to the LED strip
  * @param rgb_manager Pointer to the RGBManager_t structure
  * @param delay_ms Delay between hue shifts in milliseconds

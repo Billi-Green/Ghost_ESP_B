@@ -420,35 +420,7 @@ static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
 static const char *action_options[] = {"Press OK"};
 
-enum {
-    SETTING_RGB_MODE = 0,
-    SETTING_DISPLAY_TIMEOUT,
-    SETTING_MENU_THEME,
-    SETTING_THIRD_CONTROL,
-    SETTING_TERMINAL_COLOR,
-    SETTING_INVERT_COLORS,
-    SETTING_WEB_AUTH,
-    SETTING_WEBUI_AP_ONLY,
-    SETTING_AP_ENABLED,
-    SETTING_POWER_SAVE,
-    SETTING_MAX_BRIGHTNESS,
-    SETTING_NEOPIXEL_BRIGHTNESS,
-    SETTING_ZEBRA_MENUS,
-    SETTING_NAV_BUTTONS,
-    SETTING_MENU_LAYOUT,
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-    SETTING_IDLE_ANIMATION,
-    SETTING_IDLE_ANIM_DELAY,
-#endif
-#ifdef CONFIG_USE_ENCODER
-    SETTING_ENCODER_INVERT,
-#endif
-#if CONFIG_IDF_TARGET_ESP32S3
-    SETTING_USB_HOST_MODE,
-#endif
-    SETTING_RUN_SETUP_WIZARD,
-    SETTING_I2C_SCAN,
-};
+// SettingsType enum moved to settings_manager.h
 
 static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
@@ -1056,6 +1028,7 @@ static void apply_setting_change(int setting_index, int new_value) {
     switch (item->setting_type) {
         case SETTING_RGB_MODE:
             settings_set_rgb_mode(&G_Settings, new_value);
+            settings_restart_rgb_effect(); // Immediate visual update
             display_manager_update_status_bar_color();
             break;
         case SETTING_DISPLAY_TIMEOUT: {
@@ -1121,6 +1094,11 @@ static void apply_setting_change(int setting_index, int new_value) {
         #endif
         case SETTING_NEOPIXEL_BRIGHTNESS:
             settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_NORMAL || 
+                settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
+            } 
+            // Restarting the effect applies the new brightness
+            settings_restart_rgb_effect(); 
             break;
         #ifdef CONFIG_USE_ENCODER
         case SETTING_ENCODER_INVERT:
@@ -1160,7 +1138,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             io_manager_scan_i2c();
             return;
     }
-    settings_save(&G_Settings);
+    
+    // Save only the changed setting to NVS (Granular Save)
+    settings_persist_setting((SettingsType)item->setting_type);
 }
 
 static void change_current_row(bool increment)

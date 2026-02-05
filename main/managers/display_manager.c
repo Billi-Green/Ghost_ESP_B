@@ -166,6 +166,8 @@ static bool status_timer_initialized = false;
 static TaskHandle_t lvgl_task_handle = NULL;
 static TaskHandle_t input_task_handle = NULL;
 static lv_timer_t *status_update_timer = NULL;
+static lv_timer_t *rainbow_timer = NULL;
+static uint16_t rainbow_hue = 0;
 static TickType_t last_dim_time = 0; // Initialize to 0
 static TickType_t last_touch_time;
 static bool is_backlight_dimmed = false;
@@ -677,7 +679,7 @@ void fade_in_cb(void *obj, int32_t v) {
   }
 }
 
-void rainbow_effect_cb(lv_timer_t *timer) {
+static void rainbow_effect_cb(lv_timer_t *timer) {
   if (!status_bar || !lv_obj_is_valid(status_bar)) {
     return;
   }
@@ -705,6 +707,22 @@ void rainbow_effect_cb(lv_timer_t *timer) {
   }
 
   lv_obj_invalidate(status_bar);
+}
+
+void display_manager_set_rainbow_mode(bool enable) {
+  if (enable) {
+    if (rainbow_timer == NULL) {
+      rainbow_timer = lv_timer_create(rainbow_effect_cb, 50, NULL);
+      rainbow_hue = 0;
+    }
+  } else {
+    if (rainbow_timer != NULL) {
+      lv_timer_del(rainbow_timer);
+      rainbow_timer = NULL;
+      // Reset status bar color when leaving rainbow mode
+      display_manager_update_status_bar_color();
+    }
+  }
 }
 
 

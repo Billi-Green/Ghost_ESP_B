@@ -3,12 +3,10 @@
 ## Revival v1.9.3
 
 ### Changed since last prerelease
-- Re-enabled MFC dictionary attacks on The Wired Hatter's Banshee
-- Fixed minor RGB issues on The Wired Hatter's Banshee
-- Fixed touch issues on The Wired Hatter's Banshee
-- Fixed IR RX issues on The Wired Hatter's Banshee
-- Fixed the display hanging when going to save NFC tags on The Wired Hatter's Banshee
-
+- Only save changed setting to NVS when changing in settings menu to prevent hangs/crashes
+- Reduced the wait time when switching RGB modes
+- Refactored and optimised Rainbow and Knight Rider RGB modes
+- Added 12-bit color precision pipeline for RGB
 
 - Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability

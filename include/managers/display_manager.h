@@ -9,8 +9,10 @@
 typedef void *QueueHandle_tt;
 typedef void *SemaphoreHandle_tt; // Because Circular Includes are fun :)
 
-static lv_timer_t *rainbow_timer = NULL;
-static uint16_t rainbow_hue = 0;
+// static lv_timer_t *rainbow_timer = NULL; // Removed: moved to implementation file
+// static uint16_t rainbow_hue = 0; // Removed: moved to implementation file
+void display_manager_set_rainbow_mode(bool enable);
+
 
 typedef enum {
     INPUT_TYPE_TOUCH,
@@ -31,7 +33,7 @@ typedef struct {
   } data;
 } InputEvent;
 
-#define INPUT_QUEUE_LENGTH 10
+#define INPUT_QUEUE_LENGTH 32
 #define INPUT_ITEM_SIZE sizeof(int)
 extern QueueHandle_tt input_queue;
 
@@ -82,7 +84,7 @@ void apply_power_management_config(bool power_save_enabled);
 
 void display_manager_update_status_bar_color(void);
 
-void rainbow_effect_cb(lv_timer_t *timer);
+// void rainbow_effect_cb(lv_timer_t *timer); // Removed: internal static function
 
 /**
  * @brief Destroy the current view.

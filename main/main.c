@@ -211,10 +211,7 @@ void app_main(void) {
     ESP_LOGI(TAG, "Presenting splash screen");
     MEASURE_INIT_RAM("Switch to splash view", display_manager_switch_view(&splash_view));
     if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
-        if (rainbow_timer == NULL) {
-            rainbow_timer = lv_timer_create(rainbow_effect_cb, 50, NULL);
-            rainbow_hue = 0;
-        }
+        display_manager_set_rainbow_mode(true);
     }
 #endif
 #ifdef CONFIG_WITH_STATUS_DISPLAY
