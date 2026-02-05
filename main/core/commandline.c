@@ -896,19 +896,23 @@ void handle_mem_cmd(int argc, char **argv) {
 static void sntp_time_sync_callback(struct timeval *tv) {
     if (tv && tv->tv_sec > 1600000000) { // Valid time (after Sept 2020)
         struct tm timeinfo;
+        struct tm utc_timeinfo;
+        
+        // Get local time for display
         localtime_r(&tv->tv_sec, &timeinfo);
         
-        // Save time to RTC
+        // Save UTC time to RTC (not local time)
+        gmtime_r(&tv->tv_sec, &utc_timeinfo);
         RTC_Date rtc_time;
-        rtc_time.year = timeinfo.tm_year + 1900;
-        rtc_time.month = timeinfo.tm_mon + 1;
-        rtc_time.day = timeinfo.tm_mday;
-        rtc_time.hour = timeinfo.tm_hour;
-        rtc_time.minute = timeinfo.tm_min;
-        rtc_time.second = timeinfo.tm_sec;
+        rtc_time.year = utc_timeinfo.tm_year + 1900;
+        rtc_time.month = utc_timeinfo.tm_mon + 1;
+        rtc_time.day = utc_timeinfo.tm_mday;
+        rtc_time.hour = utc_timeinfo.tm_hour;
+        rtc_time.minute = utc_timeinfo.tm_min;
+        rtc_time.second = utc_timeinfo.tm_sec;
         
         if (rtc_set_datetime(&rtc_time) == ESP_OK) {
-            ESP_LOGI("SNTP", "Time synchronized from NTP and saved to RTC: %04d-%02d-%02d %02d:%02d:%02d", 
+            ESP_LOGI("SNTP", "Time synchronized from NTP and UTC saved to RTC: %04d-%02d-%02d %02d:%02d:%02d", 
                      rtc_time.year, rtc_time.month, rtc_time.day, 
                      rtc_time.hour, rtc_time.minute, rtc_time.second);
         }
@@ -2802,6 +2806,7 @@ void handle_eth_ntp_cmd(int argc, char **argv) {
     // Get the synchronized time
     time_t now;
     struct tm timeinfo;
+    struct tm utc_timeinfo;
     char strftime_buf[64];
     
     time(&now);
@@ -2812,17 +2817,20 @@ void handle_eth_ntp_cmd(int argc, char **argv) {
     glog("Current system time: %s\n", strftime_buf);
     
 #ifdef CONFIG_HAS_RTC_CLOCK
-    // Save time to RTC
+    // Save UTC time to RTC (not local time)
+    gmtime_r(&now, &utc_timeinfo);
     RTC_Date rtc_time;
-    rtc_time.year = timeinfo.tm_year + 1900;
-    rtc_time.month = timeinfo.tm_mon + 1;
-    rtc_time.day = timeinfo.tm_mday;
-    rtc_time.hour = timeinfo.tm_hour;
-    rtc_time.minute = timeinfo.tm_min;
-    rtc_time.second = timeinfo.tm_sec;
+    rtc_time.year = utc_timeinfo.tm_year + 1900;
+    rtc_time.month = utc_timeinfo.tm_mon + 1;
+    rtc_time.day = utc_timeinfo.tm_mday;
+    rtc_time.hour = utc_timeinfo.tm_hour;
+    rtc_time.minute = utc_timeinfo.tm_min;
+    rtc_time.second = utc_timeinfo.tm_sec;
     
     if (rtc_set_datetime(&rtc_time) == ESP_OK) {
-        glog("Time saved to RTC\n");
+        glog("UTC time saved to RTC: %04d-%02d-%02d %02d:%02d:%02d\n", 
+             rtc_time.year, rtc_time.month, rtc_time.day, 
+             rtc_time.hour, rtc_time.minute, rtc_time.second);
     } else {
         glog("Failed to save time to RTC\n");
     }
@@ -3468,17 +3476,21 @@ void handle_settime_cmd(int argc, char **argv) {
     glog("Time: %s\n", strftime_buf);
     
 #ifdef CONFIG_HAS_RTC_CLOCK
-    // Save time to RTC
+    // Save UTC time to RTC (not local time)
+    struct tm utc_timeinfo;
+    gmtime_r(&timestamp, &utc_timeinfo);
     RTC_Date rtc_time;
-    rtc_time.year = timeinfo.tm_year + 1900;
-    rtc_time.month = timeinfo.tm_mon + 1;
-    rtc_time.day = timeinfo.tm_mday;
-    rtc_time.hour = timeinfo.tm_hour;
-    rtc_time.minute = timeinfo.tm_min;
-    rtc_time.second = timeinfo.tm_sec;
+    rtc_time.year = utc_timeinfo.tm_year + 1900;
+    rtc_time.month = utc_timeinfo.tm_mon + 1;
+    rtc_time.day = utc_timeinfo.tm_mday;
+    rtc_time.hour = utc_timeinfo.tm_hour;
+    rtc_time.minute = utc_timeinfo.tm_min;
+    rtc_time.second = utc_timeinfo.tm_sec;
     
     if (rtc_set_datetime(&rtc_time) == ESP_OK) {
-        glog("Time saved to RTC\n");
+        glog("UTC time saved to RTC: %04d-%02d-%02d %02d:%02d:%02d\n", 
+             rtc_time.year, rtc_time.month, rtc_time.day, 
+             rtc_time.hour, rtc_time.minute, rtc_time.second);
     } else {
         glog("Failed to save time to RTC\n");
     }

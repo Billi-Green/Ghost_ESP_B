@@ -162,6 +162,14 @@ void app_main(void) {
     ESP_LOGI(TAG, "Initializing Settings");
     MEASURE_INIT_RAM("Settings init", settings_init(&G_Settings));
 
+    // Apply timezone from settings
+    const char *tz = settings_get_timezone_str(&G_Settings);
+    if (tz && strlen(tz) > 0) {
+        setenv("TZ", tz, 1);
+        tzset();
+        ESP_LOGI(TAG, "Timezone applied: %s", tz);
+    }
+
     ESP_LOGI(TAG, "Configuring WiFi STA from settings");
     MEASURE_INIT_RAM("WiFi STA Config", wifi_manager_configure_sta_from_settings());
 

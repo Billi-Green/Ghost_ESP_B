@@ -28,6 +28,7 @@ static const char* get_friendly_timezone_name(const char *tz) {
     if (strstr(tz, "CST6CDT")) return "Central";
     if (strstr(tz, "MST7MDT")) return "Mountain";
     if (strstr(tz, "PST8PDT")) return "Pacific";
+    if (strstr(tz, "AWST-8")) return "Western Australia";
     if (strstr(tz, "America/New_York")) return "Eastern";
     if (strstr(tz, "America/Chicago")) return "Central";
     if (strstr(tz, "America/Denver")) return "Mountain";
@@ -66,7 +67,7 @@ static bool should_free_timezone(const char *friendly_tz, const char *original_t
     // Check against static string literals
     const char *static_names[] = {
         "Local", "UTC", "Eastern", "Central", "Mountain", "Pacific",
-        "London", "Paris", "Tokyo", "Sydney", "EST", "CST", "MST", "PST"
+        "Western Australia", "London", "Paris", "Tokyo", "Sydney", "EST", "CST", "MST", "PST"
     };
     
     for (int i = 0; i < sizeof(static_names) / sizeof(static_names[0]); i++) {
