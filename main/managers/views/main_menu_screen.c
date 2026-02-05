@@ -82,6 +82,9 @@ menu_item_t menu_items[] = {
 #ifdef CONFIG_HAS_GPS
     {"GPS", &Map, 2, {{0}}},
 #endif
+#ifdef CONFIG_HAS_COMPASS
+    {"Compass", &compass, 2, {{0}}},
+#endif
 #if CONFIG_HAS_INFRARED
     {"Infrared", &infrared, 0, {{0}}}, // main infrared icon
 #endif
@@ -853,6 +856,9 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_GPS
         {"GPS", OT_GPS, &options_menu_view},
 #endif
+#ifdef CONFIG_HAS_COMPASS
+        {"Compass", 0, &compass_view},
+#endif
 #if CONFIG_HAS_INFRARED
         {"Infrared", 0, &infrared_view},
 #endif
@@ -882,6 +888,8 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("BLE Menu");
             } else if (strcmp(menu_actions[i].name, "GPS") == 0) {
                 status_display_show_status("GPS Menu");
+            } else if (strcmp(menu_actions[i].name, "Compass") == 0) {
+                status_display_show_status("Compass");
             } else if (strcmp(menu_actions[i].name, "Infrared") == 0) {
                 status_display_show_status("Infrared Menu");
             } else if (strcmp(menu_actions[i].name, "NFC") == 0) {

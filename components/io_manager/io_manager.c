@@ -578,10 +578,16 @@ static esp_err_t tca9535_write_port(uint8_t reg, uint8_t data)
     return ret;
 }
 
-static esp_err_t i2c_write_reg8_direct(uint8_t addr, uint8_t reg, uint8_t val)
+esp_err_t i2c_write_reg8_direct(uint8_t addr, uint8_t reg, uint8_t val)
 {
+    bool locked = i2c_bus_lock(g_config.i2c_port, 50);
+    if (!locked) return ESP_ERR_TIMEOUT;
+
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    if (!cmd) return ESP_ERR_NO_MEM;
+    if (!cmd) {
+        i2c_bus_unlock(g_config.i2c_port);
+        return ESP_ERR_NO_MEM;
+    }
     
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
@@ -591,13 +597,20 @@ static esp_err_t i2c_write_reg8_direct(uint8_t addr, uint8_t reg, uint8_t val)
     
     esp_err_t ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
     i2c_cmd_link_delete(cmd);
+    i2c_bus_unlock(g_config.i2c_port);
     return ret;
 }
 
-static esp_err_t i2c_read_reg8_direct(uint8_t addr, uint8_t reg, uint8_t *val)
+esp_err_t i2c_read_reg8_direct(uint8_t addr, uint8_t reg, uint8_t *val)
 {
+    bool locked = i2c_bus_lock(g_config.i2c_port, 50);
+    if (!locked) return ESP_ERR_TIMEOUT;
+
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    if (!cmd) return ESP_ERR_NO_MEM;
+    if (!cmd) {
+        i2c_bus_unlock(g_config.i2c_port);
+        return ESP_ERR_NO_MEM;
+    }
     
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
@@ -609,6 +622,7 @@ static esp_err_t i2c_read_reg8_direct(uint8_t addr, uint8_t reg, uint8_t *val)
     
     esp_err_t ret = i2c_master_cmd_begin(g_config.i2c_port, cmd, pdMS_TO_TICKS(50));
     i2c_cmd_link_delete(cmd);
+    i2c_bus_unlock(g_config.i2c_port);
     return ret;
 }
 

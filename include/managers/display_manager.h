@@ -61,6 +61,7 @@ extern View options_menu_view;
 extern View terminal_view;
 extern View number_pad_view;
 extern View keyboard_view;
+extern View compass_view;
 extern View *display_manager_previous_view;
 
 /* Function prototypes */
@@ -142,6 +143,7 @@ LV_IMG_DECLARE(settings_icon);
 LV_IMG_DECLARE(infrared);
 LV_IMG_DECLARE(terminal_icon);
 LV_IMG_DECLARE(nfc_icon);
+LV_IMG_DECLARE(compass);
 
 joystick_t joysticks[5];
 #ifdef CONFIG_USE_ENCODER

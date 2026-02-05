@@ -705,6 +705,66 @@ menu "Ghost ESP Options"
     
     endmenu
     
+    menu "Compass Configuration"
+
+    config HAS_COMPASS
+        bool "Enable Compass App"
+        default n
+        help
+            Enable Compass application using QMC6309.
+
+    config COMPASS_I2C_ADDR
+        hex "QMC6309 I2C Address"
+        default 0x0D
+        depends on HAS_COMPASS
+        help
+            I2C address of the QMC6309 magnetometer.
+
+    config COMPASS_ON_EXPANDER
+        bool "Compass connected to IO Expander"
+        default y
+        depends on HAS_COMPASS
+        help
+            Set to true if the Compass is connected to the IO Expander pins (requiring bit-banged I2C).
+
+    config COMPASS_EXPANDER_ADDR
+        hex "Compass IO Expander Address"
+        default 0x7C
+        depends on COMPASS_ON_EXPANDER
+        help
+            I2C address of the IO Expander hosting the Compass.
+
+    config COMPASS_SCL_PIN_BIT
+        int "Compass SCL Pin Bit (Port 1)"
+        default 6
+        depends on COMPASS_ON_EXPANDER
+        help
+            Bit index (0-7) on Port 1 for SCL.
+
+    config COMPASS_SDA_PIN_BIT
+        int "Compass SDA Pin Bit (Port 1)"
+        default 7
+        depends on COMPASS_ON_EXPANDER
+        help
+            Bit index (0-7) on Port 1 for SDA.
+
+    config QMC6309_CALIB_X_OFFSET
+        int "X Offset"
+        default 0
+        depends on HAS_COMPASS
+
+    config QMC6309_CALIB_Y_OFFSET
+        int "Y Offset"
+        default 0
+        depends on HAS_COMPASS
+
+    config QMC6309_CALIB_Z_OFFSET
+        int "Z Offset"
+        default 0
+        depends on HAS_COMPASS
+
+    endmenu
+    
     menu "SPI and MMC Configuration"
     
     config USING_SPI
