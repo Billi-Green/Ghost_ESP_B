@@ -10,6 +10,7 @@
 - Show highlight border on all displays regardless of touch support
 - Added more status display logs
 - Fixed clock icon not recoloring based on theme
+- Added external RTC support for saving time sync on The Wired Hatter's Banshee
 
 - Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability
@@ -34,6 +35,7 @@
 - Show highlight border on all displays regardless of touch support
 - Added more status display logs
 - Fixed clock icon not recoloring based on theme
+- Added external RTC support for saving time sync on The Wired Hatter's Banshee
 
 ## Revival v1.9.2
 

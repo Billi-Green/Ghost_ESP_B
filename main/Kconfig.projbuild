@@ -391,6 +391,46 @@ menu "Ghost ESP Options"
             help
                 Enable RTC Clock.
 
+        config RTC_I2C_SDA_PIN
+            int "RTC SDA Pin"
+            default 6
+            depends on HAS_RTC_CLOCK
+            help
+                Set the SDA pin for the RTC I2C communication.
+
+        config RTC_I2C_SCL_PIN
+            int "RTC SCL Pin"
+            default 7
+            depends on HAS_RTC_CLOCK
+            help
+                Set the SCL pin for the RTC I2C communication.
+
+        config RTC_I2C_ADDRESS
+            hex "RTC I2C Address"
+            default 0x68
+            depends on HAS_RTC_CLOCK
+            help
+                Set the I2C address for the RTC chip (e.g., 0x68 for DS1307/DS3231, 0x51 for PCF8563).
+
+        config RTC_I2C_PORT
+            int "RTC I2C Port"
+            range 0 1
+            default 0
+            depends on HAS_RTC_CLOCK
+            help
+                Select the I2C controller port used for the RTC.
+
+        config RTC_CHIP_TYPE
+            int "RTC Chip Type"
+            range 0 2
+            default 1
+            depends on HAS_RTC_CLOCK
+            help
+                Select the RTC chip type:
+                0 = PCF8563 (address 0x51)
+                1 = DS1307 (address 0x68) 
+                2 = DS3231 (address 0x68)
+
         config WITH_ETHERNET
             bool "Enable Ethernet Support"
             default n

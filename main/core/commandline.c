@@ -7,6 +7,7 @@
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
 #include "sdkconfig.h"
+#include "vendor/drivers/pcf8563.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -890,6 +891,31 @@ void handle_mem_cmd(int argc, char **argv) {
     dump_task_stacks();
 }
 
+#ifdef CONFIG_HAS_RTC_CLOCK
+// Time synchronization callback for SNTP
+static void sntp_time_sync_callback(struct timeval *tv) {
+    if (tv && tv->tv_sec > 1600000000) { // Valid time (after Sept 2020)
+        struct tm timeinfo;
+        localtime_r(&tv->tv_sec, &timeinfo);
+        
+        // Save time to RTC
+        RTC_Date rtc_time;
+        rtc_time.year = timeinfo.tm_year + 1900;
+        rtc_time.month = timeinfo.tm_mon + 1;
+        rtc_time.day = timeinfo.tm_mday;
+        rtc_time.hour = timeinfo.tm_hour;
+        rtc_time.minute = timeinfo.tm_min;
+        rtc_time.second = timeinfo.tm_sec;
+        
+        if (rtc_set_datetime(&rtc_time) == ESP_OK) {
+            ESP_LOGI("SNTP", "Time synchronized from NTP and saved to RTC: %04d-%02d-%02d %02d:%02d:%02d", 
+                     rtc_time.year, rtc_time.month, rtc_time.day, 
+                     rtc_time.hour, rtc_time.minute, rtc_time.second);
+        }
+    }
+}
+#endif
+
 void handle_wifi_connection(int argc, char **argv) {
     const char *ssid;
     const char *password;
@@ -993,6 +1019,12 @@ void handle_wifi_connection(int argc, char **argv) {
 
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
     sntp_setservername(0, "pool.ntp.org");
+    
+#ifdef CONFIG_HAS_RTC_CLOCK
+    // Set up time synchronization callback to save time to RTC
+    sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
+#endif
+    
     sntp_init();
 }
 
@@ -2779,6 +2811,23 @@ void handle_eth_ntp_cmd(int argc, char **argv) {
     glog("Time synchronized successfully!\n");
     glog("Current system time: %s\n", strftime_buf);
     
+#ifdef CONFIG_HAS_RTC_CLOCK
+    // Save time to RTC
+    RTC_Date rtc_time;
+    rtc_time.year = timeinfo.tm_year + 1900;
+    rtc_time.month = timeinfo.tm_mon + 1;
+    rtc_time.day = timeinfo.tm_mday;
+    rtc_time.hour = timeinfo.tm_hour;
+    rtc_time.minute = timeinfo.tm_min;
+    rtc_time.second = timeinfo.tm_sec;
+    
+    if (rtc_set_datetime(&rtc_time) == ESP_OK) {
+        glog("Time saved to RTC\n");
+    } else {
+        glog("Failed to save time to RTC\n");
+    }
+#endif
+    
     // Also show UTC time
     struct tm timeinfo_utc;
     gmtime_r(&now, &timeinfo_utc);
@@ -3417,6 +3466,24 @@ void handle_settime_cmd(int argc, char **argv) {
     
     glog("System time set successfully!\n");
     glog("Time: %s\n", strftime_buf);
+    
+#ifdef CONFIG_HAS_RTC_CLOCK
+    // Save time to RTC
+    RTC_Date rtc_time;
+    rtc_time.year = timeinfo.tm_year + 1900;
+    rtc_time.month = timeinfo.tm_mon + 1;
+    rtc_time.day = timeinfo.tm_mday;
+    rtc_time.hour = timeinfo.tm_hour;
+    rtc_time.minute = timeinfo.tm_min;
+    rtc_time.second = timeinfo.tm_sec;
+    
+    if (rtc_set_datetime(&rtc_time) == ESP_OK) {
+        glog("Time saved to RTC\n");
+    } else {
+        glog("Failed to save time to RTC\n");
+    }
+#endif
+    
     status_display_show_status("Time Set OK");
 }
 

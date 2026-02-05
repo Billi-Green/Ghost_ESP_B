@@ -1353,9 +1353,15 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 
 #ifdef CONFIG_HAS_BATTERY
   axp2101_init();
-#ifdef CONFIG_HAS_RTC_CLOCK
-  pcf8563_init(I2C_NUM_0, 0x51);
 #endif
+
+#ifdef CONFIG_HAS_RTC_CLOCK
+  rtc_chip_type_t chip_type = (rtc_chip_type_t)CONFIG_RTC_CHIP_TYPE;
+  const char* chip_names[] = {"PCF8563", "DS1307", "DS3231"};
+  rtc_init(CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS, chip_type);
+  ESP_LOGI(TAG, "RTC initialized: %s on I2C port %d at address 0x%02X (SDA: %d, SCL: %d)", 
+           chip_names[CONFIG_RTC_CHIP_TYPE], CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS, 
+           CONFIG_RTC_I2C_SDA_PIN, CONFIG_RTC_I2C_SCL_PIN);
 #endif
 
 #ifdef CONFIG_HAS_FUEL_GAUGE

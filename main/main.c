@@ -9,6 +9,10 @@
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
 #include "core/esp_comm_manager.h"
+#include "managers/status_display_manager.h"
+#include "vendor/drivers/pcf8563.h"
+#include <sys/time.h>
+#include <time.h>
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -285,6 +289,39 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Free heap after init: %d / %d bytes (%.1f%% free)", (int)free_heap, (int)total_heap, percent_free);
     printf("Free heap after init: %d / %d bytes (%.1f%% free)\n", (int)free_heap, (int)total_heap, percent_free);
+
+#ifdef CONFIG_HAS_RTC_CLOCK
+    // Sync system time from RTC on boot
+    RTC_Date rtc_time;
+    if (rtc_get_datetime(&rtc_time) == ESP_OK) {
+        struct timeval tv = {0};
+        struct tm tm = {0};
+        
+        tm.tm_year = rtc_time.year - 1900;
+        tm.tm_mon = rtc_time.month - 1;
+        tm.tm_mday = rtc_time.day;
+        tm.tm_hour = rtc_time.hour;
+        tm.tm_min = rtc_time.minute;
+        tm.tm_sec = rtc_time.second;
+        
+        tv.tv_sec = mktime(&tm);
+        tv.tv_usec = 0;
+        
+        if (tv.tv_sec > 1600000000) { // Valid time (after Sept 2020)
+            settimeofday(&tv, NULL);
+            ESP_LOGI(TAG, "System time synchronized from RTC: %04d-%02d-%02d %02d:%02d:%02d", 
+                     rtc_time.year, rtc_time.month, rtc_time.day, 
+                     rtc_time.hour, rtc_time.minute, rtc_time.second);
+            printf("System time restored from RTC: %04d-%02d-%02d %02d:%02d:%02d\n", 
+                   rtc_time.year, rtc_time.month, rtc_time.day, 
+                   rtc_time.hour, rtc_time.minute, rtc_time.second);
+        } else {
+            ESP_LOGW(TAG, "RTC time invalid, keeping default time");
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to read time from RTC");
+    }
+#endif
 
     ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)");
     printf("Ghost ESP Ready ;)\n");
