@@ -4,6 +4,7 @@
 
 ## Changed since last prerelease
 - Added support for a new upcoming board
+- Fixed airtag rgb pulsing in silent rgb mode
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board

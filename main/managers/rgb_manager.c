@@ -514,6 +514,10 @@ void update_led_visualizer(uint8_t *amplitudes, size_t num_bars, bool square_mod
 
 void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
                 uint8_t blue) {
+  if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
+    return;
+  }
+
   int brightness = 0;
   int direction = 1;
 
