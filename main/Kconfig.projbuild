@@ -296,6 +296,24 @@ menu "Ghost ESP Options"
             help
                 GPIO pin for USB D+ (keyboard). On ESP32-S3 this is normally GPIO20.
 
+        config HAS_BADUSB
+            bool "Enable BadUSB (HID Script Injection)"
+            default n
+            depends on IDF_TARGET_ESP32S3
+            help
+                Enable BadUSB support. Uses TinyUSB device mode to emulate a USB HID
+                keyboard and execute DuckyScript v1.0 payloads from the SD card.
+                Only available on ESP32-S3 which has USB OTG support.
+
+        config HAS_BADUSB_REMOTE
+            bool "Enable BadUSB Remote (display menu only, routes via GhostLink)"
+            default n
+            depends on IDF_TARGET_ESP32C5
+            help
+                Enable the BadUSB display menu on a C5 display controller that routes
+                commands to a paired S3 via GhostLink/commsend. The C5 does not execute
+                scripts itself - it only provides the UI.
+
         config HAS_BATTERY
             bool "Enable power saving"
             default n

@@ -68,6 +68,14 @@ static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
 static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
 #endif
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+static const char *NVS_BADUSB_VID_KEY = "bu_vid";
+static const char *NVS_BADUSB_PID_KEY = "bu_pid";
+static const char *NVS_BADUSB_MFR_KEY = "bu_mfr";
+static const char *NVS_BADUSB_PROD_KEY = "bu_prod";
+static const char *NVS_BADUSB_RAND_KEY = "bu_rand";
+static const char *NVS_BADUSB_KB_KEY = "bu_kb_layout";
+#endif
 
 
 static const char *TAG = "SettingsManager";
@@ -172,6 +180,14 @@ void settings_set_defaults(FSettings *settings) {
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
+#endif
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+  settings->badusb_vid = 0x1209;
+  settings->badusb_pid = 0x0001;
+  strcpy(settings->badusb_manufacturer, "USB Device");
+  strcpy(settings->badusb_product, "HID Keyboard");
+  settings->badusb_randomize = false;
+  settings->badusb_kb_layout = KB_LAYOUT_US;
 #endif
 }
 
@@ -543,6 +559,26 @@ void settings_load(FSettings *settings) {
     settings->status_idle_timeout_ms = 5000; // default 5s
   }
 #endif
+
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+  err = nvs_get_u16(nvsHandle, NVS_BADUSB_VID_KEY, &value_u16);
+  if (err == ESP_OK) settings->badusb_vid = value_u16;
+
+  err = nvs_get_u16(nvsHandle, NVS_BADUSB_PID_KEY, &value_u16);
+  if (err == ESP_OK) settings->badusb_pid = value_u16;
+
+  str_size = sizeof(settings->badusb_manufacturer);
+  err = nvs_get_str(nvsHandle, NVS_BADUSB_MFR_KEY, settings->badusb_manufacturer, &str_size);
+
+  str_size = sizeof(settings->badusb_product);
+  err = nvs_get_str(nvsHandle, NVS_BADUSB_PROD_KEY, settings->badusb_product, &str_size);
+
+  err = nvs_get_u8(nvsHandle, NVS_BADUSB_RAND_KEY, &value_u8);
+  if (err == ESP_OK) settings->badusb_randomize = (bool)value_u8;
+
+  err = nvs_get_u8(nvsHandle, NVS_BADUSB_KB_KEY, &value_u8);
+  if (err == ESP_OK) settings->badusb_kb_layout = value_u8;
+#endif
 }
 
 static void update_rainbow_effect(const FSettings *settings) {
@@ -714,6 +750,32 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, G_Settings.setup_complete ? 1 : 0);
             key = NVS_SETUP_COMPLETE_KEY;
             break;
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+        case SETTING_BADUSB_VID:
+            err = nvs_set_u16(nvsHandle, NVS_BADUSB_VID_KEY, G_Settings.badusb_vid);
+            key = NVS_BADUSB_VID_KEY;
+            break;
+        case SETTING_BADUSB_PID:
+            err = nvs_set_u16(nvsHandle, NVS_BADUSB_PID_KEY, G_Settings.badusb_pid);
+            key = NVS_BADUSB_PID_KEY;
+            break;
+        case SETTING_BADUSB_MANUFACTURER:
+            err = nvs_set_str(nvsHandle, NVS_BADUSB_MFR_KEY, G_Settings.badusb_manufacturer);
+            key = NVS_BADUSB_MFR_KEY;
+            break;
+        case SETTING_BADUSB_PRODUCT:
+            err = nvs_set_str(nvsHandle, NVS_BADUSB_PROD_KEY, G_Settings.badusb_product);
+            key = NVS_BADUSB_PROD_KEY;
+            break;
+        case SETTING_BADUSB_RANDOMIZE:
+            err = nvs_set_u8(nvsHandle, NVS_BADUSB_RAND_KEY, G_Settings.badusb_randomize ? 1 : 0);
+            key = NVS_BADUSB_RAND_KEY;
+            break;
+        case SETTING_BADUSB_KB_LAYOUT:
+            err = nvs_set_u8(nvsHandle, NVS_BADUSB_KB_KEY, G_Settings.badusb_kb_layout);
+            key = NVS_BADUSB_KB_KEY;
+            break;
+#endif
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -1265,5 +1327,55 @@ void settings_set_status_idle_timeout_ms(FSettings *settings, uint32_t timeout_m
 
 uint32_t settings_get_status_idle_timeout_ms(const FSettings *settings) {
   return settings->status_idle_timeout_ms;
+}
+#endif
+
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+void settings_set_badusb_vid(FSettings *settings, uint16_t vid) {
+  settings->badusb_vid = vid;
+}
+uint16_t settings_get_badusb_vid(const FSettings *settings) {
+  return settings->badusb_vid;
+}
+void settings_set_badusb_pid(FSettings *settings, uint16_t pid) {
+  settings->badusb_pid = pid;
+}
+uint16_t settings_get_badusb_pid(const FSettings *settings) {
+  return settings->badusb_pid;
+}
+void settings_set_badusb_manufacturer(FSettings *settings, const char *name) {
+  strncpy(settings->badusb_manufacturer, name, sizeof(settings->badusb_manufacturer) - 1);
+  settings->badusb_manufacturer[sizeof(settings->badusb_manufacturer) - 1] = '\0';
+}
+const char *settings_get_badusb_manufacturer(const FSettings *settings) {
+  return settings->badusb_manufacturer;
+}
+void settings_set_badusb_product(FSettings *settings, const char *name) {
+  strncpy(settings->badusb_product, name, sizeof(settings->badusb_product) - 1);
+  settings->badusb_product[sizeof(settings->badusb_product) - 1] = '\0';
+}
+const char *settings_get_badusb_product(const FSettings *settings) {
+  return settings->badusb_product;
+}
+void settings_set_badusb_randomize(FSettings *settings, bool enabled) {
+  settings->badusb_randomize = enabled;
+}
+bool settings_get_badusb_randomize(const FSettings *settings) {
+  return settings->badusb_randomize;
+}
+void settings_set_badusb_kb_layout(FSettings *settings, uint8_t layout) {
+  settings->badusb_kb_layout = layout;
+}
+uint8_t settings_get_badusb_kb_layout(const FSettings *settings) {
+  return settings->badusb_kb_layout;
+}
+
+void settings_reset_badusb_defaults(FSettings *settings) {
+  settings->badusb_vid = 0x1209;
+  settings->badusb_pid = 0x0001;
+  strcpy(settings->badusb_manufacturer, "USB Device");
+  strcpy(settings->badusb_product, "HID Keyboard");
+  settings->badusb_randomize = false;
+  settings->badusb_kb_layout = KB_LAYOUT_US;
 }
 #endif

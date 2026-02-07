@@ -40,6 +40,16 @@ typedef enum {
 } IdleAnimation;
 #endif
 
+// Keyboard layout for BadUSB
+typedef enum {
+    KB_LAYOUT_US = 0,
+    KB_LAYOUT_DE,
+    KB_LAYOUT_FR,
+    KB_LAYOUT_UK,
+    KB_LAYOUT_ES,
+    KB_LAYOUT_COUNT
+} KeyboardLayout;
+
 typedef enum {
     SETTING_RGB_MODE = 0,
     SETTING_DISPLAY_TIMEOUT,
@@ -69,6 +79,14 @@ typedef enum {
     SETTING_RUN_SETUP_WIZARD,
     SETTING_I2C_SCAN,
     SETTING_SETUP_COMPLETE,
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+    SETTING_BADUSB_VID,
+    SETTING_BADUSB_PID,
+    SETTING_BADUSB_MANUFACTURER,
+    SETTING_BADUSB_PRODUCT,
+    SETTING_BADUSB_RANDOMIZE,
+    SETTING_BADUSB_KB_LAYOUT,
+#endif
 } SettingsType;
 
 
@@ -173,6 +191,14 @@ typedef struct {
   bool encoder_invert_direction;
   bool setup_complete;
   uint8_t wifi_country;
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+  uint16_t badusb_vid;
+  uint16_t badusb_pid;
+  char badusb_manufacturer[33];
+  char badusb_product[33];
+  bool badusb_randomize;
+  uint8_t badusb_kb_layout;
+#endif
 } FSettings;
 
 // Function declarations
@@ -347,6 +373,23 @@ void settings_set_status_idle_animation(FSettings *settings, IdleAnimation anim)
 IdleAnimation settings_get_status_idle_animation(const FSettings *settings);
 void settings_set_status_idle_timeout_ms(FSettings *settings, uint32_t timeout_ms);
 uint32_t settings_get_status_idle_timeout_ms(const FSettings *settings);
+#endif
+
+// BadUSB emulation settings
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+void settings_set_badusb_vid(FSettings *settings, uint16_t vid);
+uint16_t settings_get_badusb_vid(const FSettings *settings);
+void settings_set_badusb_pid(FSettings *settings, uint16_t pid);
+uint16_t settings_get_badusb_pid(const FSettings *settings);
+void settings_set_badusb_manufacturer(FSettings *settings, const char *name);
+const char *settings_get_badusb_manufacturer(const FSettings *settings);
+void settings_set_badusb_product(FSettings *settings, const char *name);
+const char *settings_get_badusb_product(const FSettings *settings);
+void settings_set_badusb_randomize(FSettings *settings, bool enabled);
+bool settings_get_badusb_randomize(const FSettings *settings);
+void settings_set_badusb_kb_layout(FSettings *settings, uint8_t layout);
+uint8_t settings_get_badusb_kb_layout(const FSettings *settings);
+void settings_reset_badusb_defaults(FSettings *settings);
 #endif
 
 extern FSettings G_Settings;
