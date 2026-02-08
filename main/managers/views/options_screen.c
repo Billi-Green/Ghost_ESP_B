@@ -6,13 +6,14 @@
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
+#include "io_manager.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
 
 static char selected_portal[MAX_PORTAL_NAME] = {0}; // <-- Move here
 
-static char (*evil_portal_names)[MAX_PORTAL_NAME] = NULL;
+static char *evil_portal_names = NULL;  // Dynamic allocation based on actual count
 static const char **evil_portal_options = NULL;
 
 #include "managers/views/keyboard_screen.h"
@@ -76,7 +77,8 @@ static int current_settings_category = -1;
 #endif
 
 #define SETTINGS_ITEMS_BASE_COUNT 14
-#define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
+#define SETTINGS_ITEM_INDEX_I2C_SCAN (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
+#define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEM_INDEX_I2C_SCAN + 1)
 
 // Indices of settings for each category in the settings menu.
 // Each sub-array lists the indices of settings_items[] that belong to a category.
@@ -117,6 +119,7 @@ static int settings_category_indices[][20] = {
         14,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_I2C_SCAN,
         SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #else
@@ -150,6 +153,7 @@ static int settings_category_indices[][20] = {
         13,
 #endif
 #endif
+        SETTINGS_ITEM_INDEX_I2C_SCAN,
         SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
         -1},
 #endif
@@ -306,6 +310,9 @@ static const char *dual_comm_wifi_options[] = {
     "Connect to WiFi",
     "Connect to saved WiFi",
     "Reset AP Credentials",
+    "Set AP Credentials",
+    "Enable AP",
+    "Disable AP",
     NULL
 };
 
@@ -398,7 +405,7 @@ typedef struct {
     int current_value;
 } SettingsItem;
 
-static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth"};
+static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
 static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
 static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
 static const char *bool_options[] = {"Off", "On"};
@@ -413,41 +420,14 @@ static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
 static const char *action_options[] = {"Press OK"};
 
-enum {
-    SETTING_RGB_MODE = 0,
-    SETTING_DISPLAY_TIMEOUT,
-    SETTING_MENU_THEME,
-    SETTING_THIRD_CONTROL,
-    SETTING_TERMINAL_COLOR,
-    SETTING_INVERT_COLORS,
-    SETTING_WEB_AUTH,
-    SETTING_WEBUI_AP_ONLY,
-    SETTING_AP_ENABLED,
-    SETTING_POWER_SAVE,
-    SETTING_MAX_BRIGHTNESS,
-    SETTING_NEOPIXEL_BRIGHTNESS,
-    SETTING_ZEBRA_MENUS,
-    SETTING_NAV_BUTTONS,
-    SETTING_MENU_LAYOUT,
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-    SETTING_IDLE_ANIMATION,
-    SETTING_IDLE_ANIM_DELAY,
-#endif
-#ifdef CONFIG_USE_ENCODER
-    SETTING_ENCODER_INVERT,
-#endif
-#if CONFIG_IDF_TARGET_ESP32S3
-    SETTING_USB_HOST_MODE,
-#endif
-    SETTING_RUN_SETUP_WIZARD,
-};
+// SettingsType enum moved to settings_manager.h
 
 static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
 static SettingsItem settings_items[] = {
-    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 13, 0},
     {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1},
     {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
     {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
@@ -474,6 +454,7 @@ static SettingsItem settings_items[] = {
     {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
     #endif
     {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0},
+    {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0},
     {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1},
 };
 
@@ -674,6 +655,7 @@ static void ssh_scan_kb_cb(const char *text);
 static void dual_comm_connect_kb_cb(const char *text);
 static void dual_comm_send_kb_cb(const char *text);
 static void dual_comm_wifi_connect_kb_cb(const char *text);
+static void dual_comm_apcred_kb_cb(const char *text);
 static void dual_comm_karma_custom_ssids_cb(const char *text);
 static void dual_comm_dns_lookup_kb_cb(const char *text);
 static void dual_comm_traceroute_kb_cb(const char *text);
@@ -776,6 +758,18 @@ void options_menu_create() {
      * When navigating BETWEEN submenus, use rebuild_current_menu() instead of
      * destroy/create to avoid expensive LVGL operations and watchdog starvation.
      */
+    ESP_LOGI(TAG, "options_menu_create: SelectedMenuType=%d (%s)", SelectedMenuType, options_menu_type_to_string(SelectedMenuType));
+    
+    // Reset WiFi menu state when entering from main menu to ensure clean entry
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
+        // Only reset if we're coming from main menu (not from terminal return)
+        // This is detected by checking if the options view root is NULL
+        if (!options_menu_view.root) {
+            ESP_LOGI(TAG, "Resetting WiFi menu state to MAIN on fresh entry");
+            current_wifi_menu_state = WIFI_MENU_MAIN;
+        }
+    }
+    
     option_invoked = false;
     selected_item_index = 0;  // Reset selection to first item for new menu
     int screen_width = LV_HOR_RES;
@@ -819,25 +813,9 @@ void options_menu_create() {
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
             case WIFI_MENU_EVIL_PORTAL_SELECT:
             {
-                ESP_LOGI(TAG, "Populating evil portal selector...");
-                evil_portal_names = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
-                evil_portal_options = malloc(sizeof(char*) * (MAX_PORTALS + 1));
-
-                if (!evil_portal_names || !evil_portal_options) { // Check for allocation failure
-                    ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
-                    // Handle error, maybe go back to the previous menu
-                    break;
-                }
-                int count = get_evil_portal_list(evil_portal_names);
-                ESP_LOGI(TAG, "get_evil_portal_list returned %d", count);
-                if (count <= 0) {
-                    evil_portal_options[0] = "default";
-                    evil_portal_options[1] = NULL;
-                    ESP_LOGI(TAG, "No portals found, using 'default'");
-                } else {
-                    for (int i = 0; i < count; ++i) evil_portal_options[i] = evil_portal_names[i];
-                    evil_portal_options[count] = NULL;
-                }
+                // Portal population is now handled in rebuild_current_menu
+                // Just set a placeholder to indicate we're in the right state
+                ESP_LOGI(TAG, "Evil portal select menu state activated");
                 options = evil_portal_options;
                 break;
             }
@@ -1050,6 +1028,7 @@ static void apply_setting_change(int setting_index, int new_value) {
     switch (item->setting_type) {
         case SETTING_RGB_MODE:
             settings_set_rgb_mode(&G_Settings, new_value);
+            settings_restart_rgb_effect(); // Immediate visual update
             display_manager_update_status_bar_color();
             break;
         case SETTING_DISPLAY_TIMEOUT: {
@@ -1115,6 +1094,11 @@ static void apply_setting_change(int setting_index, int new_value) {
         #endif
         case SETTING_NEOPIXEL_BRIGHTNESS:
             settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_NORMAL || 
+                settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
+            } 
+            // Restarting the effect applies the new brightness
+            settings_restart_rgb_effect(); 
             break;
         #ifdef CONFIG_USE_ENCODER
         case SETTING_ENCODER_INVERT:
@@ -1148,8 +1132,15 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_RUN_SETUP_WIZARD:
             setup_wizard_reset_and_open();
             return;
+        case SETTING_I2C_SCAN:
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            io_manager_scan_i2c();
+            return;
     }
-    settings_save(&G_Settings);
+    
+    // Save only the changed setting to NVS (Granular Save)
+    settings_persist_setting((SettingsType)item->setting_type);
 }
 
 static void change_current_row(bool increment)
@@ -1264,12 +1255,30 @@ void handle_hardware_button_press_options(InputEvent *event) {
             int dx = data->point.x - opt_touch_start_x;
             int dy = data->point.y - opt_touch_start_y;
 
-            // Only react to releases inside the menu list bounds
+            // Calculate swipe thresholds
+            int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
+            // Lower threshold for Evil Portal HTML list
+            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
+            }
+            int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
+
+            // Check if swipe started in menu container (allow release outside for natural swipes)
             lv_area_t cont_area;
             lv_obj_get_coords(menu_container, &cont_area);
-            if (data->point.x < cont_area.x1 || data->point.x > cont_area.x2 ||
-                data->point.y < cont_area.y1 || data->point.y > cont_area.y2) {
+            bool started_in_container = (opt_touch_start_x >= cont_area.x1 && opt_touch_start_x <= cont_area.x2 &&
+                                        opt_touch_start_y >= cont_area.y1 && opt_touch_start_y <= cont_area.y2);
+            
+            if (!started_in_container) {
                 return;
+            }
+
+            // For tap gestures (not swipes), require release inside container
+            if (abs(dy) <= thr_y && abs(dx) <= thr_x) {
+                if (data->point.x < cont_area.x1 || data->point.x > cont_area.x2 ||
+                    data->point.y < cont_area.y1 || data->point.y > cont_area.y2) {
+                    return;
+                }
             }
 
             // thirds-control special behavior within the menu list area
@@ -1282,25 +1291,40 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     } else if (y_rel > (container_h * 2) / 3) {
                         select_option_item(selected_item_index + 1);
                     } else {
-                        lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
-                        if (sel) handle_option_directly((const char*)lv_obj_get_user_data(sel));
+                        // Middle third - handle selection
+                        if (is_settings_mode) {
+                            if (current_settings_category < 0) {
+                                // At category level, enter the selected category
+                                switch_to_settings_category(selected_item_index);
+                            } else {
+                                // At setting level, change the setting value
+                                lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                                if (sel) {
+                                    void *udata = lv_obj_get_user_data(sel);
+                                    if (udata == (void *)"__BACK_OPTION__") {
+                                        back_event_cb(NULL);
+                                    } else {
+                                        int setting_idx = (int)(intptr_t)udata;
+                                        change_setting_value(setting_idx, true);
+                                    }
+                                }
+                            }
+                        } else {
+                            // Non-settings menus
+                            lv_obj_t *sel = lv_obj_get_child(menu_container, selected_item_index);
+                            if (sel) handle_option_directly((const char*)lv_obj_get_user_data(sel));
+                        }
                     }
                     return;
                 }
             }
 
             // vertical swipe = scroll
-            int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
-            // Lower threshold for Evil Portal HTML list
-            if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
-                thr_y = LV_VER_RES / 20; // much more sensitive for short lists
-            }
             if (abs(dy) > thr_y) {
                 lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                 return;
             }
             // horizontal swipe = ignore
-            int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
             if (abs(dx) > thr_x) return;
 
             // now treat as tap inside the menu list (container bounds already verified)
@@ -1830,6 +1854,23 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend apcred -r");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Set AP Credentials") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_apcred_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("\"SSID\" \"PASSWORD\"");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Enable AP") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend apenable on");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Disable AP") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend apenable off");
             view_switched = true;
         } else if (strcmp(Selected_Option, "Start Deauth Attack") == 0) {
             terminal_set_return_view(&options_menu_view);
@@ -2506,6 +2547,12 @@ display_manager_switch_view(&terminal_view);
         return;
     }
     else if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT) {
+        // Prevent selection of placeholder
+        if (strcmp(Selected_Option, "No portal files found") == 0) {
+            option_invoked = false;
+            return;
+        }
+        
         // Prompt for SSID after selecting portal
         strncpy(selected_portal, Selected_Option, MAX_PORTAL_NAME-1);
         selected_portal[MAX_PORTAL_NAME-1] = '\0';
@@ -3087,8 +3134,67 @@ static void rebuild_current_menu(void) {
                 case WIFI_MENU_MISC: options = wifi_misc_options; break;
                 case WIFI_MENU_EVIL_PORTAL_SELECT:
                 {
-                    if (evil_portal_names && evil_portal_options) {
+                    // Always try to populate the portal list if not already done
+                    if (!evil_portal_names || !evil_portal_options) {
+                        ESP_LOGI(TAG, "Re-populating evil portal selector...");
+                        
+                        // First, allocate a temporary buffer to count portals safely
+                        char (*temp_buffer)[MAX_PORTAL_NAME] = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
+                        if (!temp_buffer) {
+                            ESP_LOGE(TAG, "Failed to allocate temp buffer for portal counting");
+                            static const char *fallback_options[] = {"default", NULL};
+                            options = fallback_options;
+                            break;
+                        }
+                        
+                        int count = get_evil_portal_list(temp_buffer);
+                        
+                        if (count <= 0) {
+                            // Use static fallback for no portals case (no heap allocation)
+                            free(temp_buffer);
+                            static const char *no_portals_options[] = {"No portal files found", "default", NULL};
+                            options = no_portals_options;
+                            break;
+                        }
+                        
+                        // Allocate only the memory we actually need for final storage
+                        evil_portal_names = malloc(sizeof(char[MAX_PORTAL_NAME]) * count);
+                        evil_portal_options = malloc(sizeof(char*) * (count + 1));
+                        
+                        if (!evil_portal_names || !evil_portal_options) {
+                            ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
+                            // Clean up allocations
+                            free(temp_buffer);
+                            if (evil_portal_names) free(evil_portal_names);
+                            if (evil_portal_options) free(evil_portal_options);
+                            evil_portal_names = NULL;
+                            evil_portal_options = NULL;
+                            // Fallback to default options
+                            static const char *fallback_options[] = {"default", NULL};
+                            options = fallback_options;
+                            break;
+                        }
+                        
+                        // Copy only the portals we need from temp buffer
+                        for (int i = 0; i < count; ++i) {
+                            strcpy(evil_portal_names + i * MAX_PORTAL_NAME, temp_buffer[i]);
+                            evil_portal_options[i] = evil_portal_names + i * MAX_PORTAL_NAME;
+                        }
+                        evil_portal_options[count] = NULL;
+                        
+                        // Free the temporary buffer
+                        free(temp_buffer);
+                        
+                        ESP_LOGI(TAG, "Loaded %d portals (using %zu bytes)", count, 
+                                sizeof(char[MAX_PORTAL_NAME]) * count + sizeof(char*) * (count + 1));
+                    }
+                    
+                    if (evil_portal_options) {
                         options = evil_portal_options;
+                    } else {
+                        // Fallback if somehow still NULL
+                        static const char *fallback_options[] = {"default", NULL};
+                        options = fallback_options;
                     }
                     break;
                 }
@@ -3307,9 +3413,25 @@ static void dual_comm_karma_custom_ssids_cb(const char *input) {
     keyboard_view_set_submit_callback(NULL);
 }
 
+static void dual_comm_apcred_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter AP credentials");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend apcred %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
 static void dual_comm_dns_lookup_kb_cb(const char *text) {
     if (!text || strlen(text) == 0) {
-        error_popup_create("Please enter a hostname");
+        error_popup_create("Enter a hostname (e.g., example.com)");
         return;
     }
 

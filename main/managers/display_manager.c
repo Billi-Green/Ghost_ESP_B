@@ -65,49 +65,10 @@ QueueHandle_tt input_queue = NULL;
 static volatile bool g_low_i2c_mode = false;
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
-// Background polling to avoid blocking LVGL timer with I2C operations
-static TaskHandle_t battery_poll_task_handle = NULL;
+// Background polling logic moved to get_battery_info (lazy loading)
 static volatile uint8_t g_cached_batt_percent = 0;
 static volatile bool g_cached_batt_charging = false;
 static volatile bool g_cached_batt_valid = false;
-static void battery_poll_task(void *arg) {
-  fuel_gauge_data_t fg;
-  uint8_t last_pct = 0xFF;
-  bool last_chg = false;
-  int stable = 0;
-  uint32_t delay_ms = 2000;
-  for (;;) {
-    // In low-I2C mode, pause polling to avoid I2C contention
-    if (g_low_i2c_mode) {
-      vTaskDelay(pdMS_TO_TICKS(5000));
-      continue;
-    }
-    if (fuel_gauge_manager_get_data(&fg)) {
-      g_cached_batt_percent = (uint8_t)fg.percentage;
-      g_cached_batt_charging = fg.is_charging;
-      g_cached_batt_valid = true;
-      if (last_pct == g_cached_batt_percent && last_chg == g_cached_batt_charging) {
-        if (stable < 6) stable++;
-      } else {
-        stable = 0;
-      }
-      last_pct = g_cached_batt_percent;
-      last_chg = g_cached_batt_charging;
-    }
-    if (!g_cached_batt_valid) {
-      delay_ms = 2000;
-    } else if (g_cached_batt_charging) {
-      delay_ms = 1000;
-    } else if (stable >= 6) {
-      delay_ms = 15000;
-    } else if (stable >= 3) {
-      delay_ms = 5000;
-    } else {
-      delay_ms = 2000;
-    }
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
-  }
-}
 #endif
 
 #ifdef CONFIG_HAS_RTC_CLOCK
@@ -130,8 +91,22 @@ static void battery_poll_task(void *arg) {
 #define LILYGO_KB_SLAVE_ADDRESS              0x55
 #define LILYGO_KB_BRIGHTNESS_CMD             0x01
 #define LILYGO_KB_ALT_B_BRIGHTNESS_CMD       0x02
+#define LILYGO_KB_MODE_RAW_CMD              0x03
+#define LILYGO_KB_MODE_KEY_CMD              0x04
 #define TDECK_KEY_DEBOUNCE_MS                30
 #define TDECK_EVENT_RATE_LIMIT_MS            10
+
+// T-Deck keyboard layout from Arduino code
+#define TDECK_COLS                           5
+#define TDECK_ROWS                           7
+// Shift key positions: Left Shift at (1,6), Right Shift at (2,3)
+#define TDECK_LEFT_SHIFT_COL                 1
+#define TDECK_LEFT_SHIFT_ROW                 6
+#define TDECK_RIGHT_SHIFT_COL                2
+#define TDECK_RIGHT_SHIFT_ROW                3
+// Symbol key position
+#define TDECK_SYMBOL_COL                     0
+#define TDECK_SYMBOL_ROW                     2
 
 #define TDECK_TRACKBALL_DEBOUNCE_MS          200
 #define TDECK_TRACKBALL_POST_DELAY_MS        50
@@ -191,6 +166,8 @@ static bool status_timer_initialized = false;
 static TaskHandle_t lvgl_task_handle = NULL;
 static TaskHandle_t input_task_handle = NULL;
 static lv_timer_t *status_update_timer = NULL;
+static lv_timer_t *rainbow_timer = NULL;
+static uint16_t rainbow_hue = 0;
 static TickType_t last_dim_time = 0; // Initialize to 0
 static TickType_t last_touch_time;
 static bool is_backlight_dimmed = false;
@@ -228,6 +205,12 @@ void set_display_timeout(uint32_t timeout_ms) {
 
 #ifdef CONFIG_USE_CARDPUTER
 Keyboard_t gkeyboard;
+
+static bool caps_latch = false;
+static int shift_count = 0;
+static int shift_count_before_caps = 10;
+static Point2D_t last_pressed_keys[16];
+static size_t last_pressed_len = 0;
 
 void m5stack_lvgl_render_callback(lv_disp_drv_t *drv, const lv_area_t *area,
                                   lv_color_t *color_p) {
@@ -277,6 +260,11 @@ void set_backlight_brightness(uint8_t percentage); // forward declaration
 
 #ifdef CONFIG_HAS_BATTERY_ADC
 
+static int s_filtered_mv = -1;
+static int s_charge_samples[5];
+static int s_charge_sample_idx = 0;
+static bool s_charge_samples_filled = false;
+static int s_display_percent = -1;
 
 #ifdef CONFIG_USE_CARDPUTER
 #define _batAdcCh ADC_CHANNEL_9 //sar adc1 channel 9 - ADC1_GPIO10_CHANNEL;
@@ -327,12 +315,6 @@ static uint8_t cardputer_voltage_to_percent(int mv) {
 
 #elif CONFIG_USE_TDECK
 #define _batAdcCh ADC1_GPIO4_CHANNEL
-#elif CONFIG_USE_TDISPLAY_S3
-#define _batAdcCh ADC1_GPIO4_CHANNEL
-#else
-
-#endif
-
 #define _batAdcUnit ADC_UNIT_1
 #define _batAdcAtten ADC_ATTEN_DB_12
 bool _isCharging = false;
@@ -340,13 +322,64 @@ bool _isCharging = false;
 // track previous battery millivolt for charging detection
 static int last_mv = 0;
 
-#ifdef CONFIG_USE_CARDPUTER
-static int s_filtered_mv = -1;
-static int s_display_percent = -1;
+// T-Deck specific SOC table for more accurate battery percentage
+#define TDECK_SOC_TABLE_SIZE 11
+typedef struct {
+    int mv;
+    uint8_t percent;
+} tdeck_soc_point_t;
+
+static const tdeck_soc_point_t s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE] = {
+    {3300, 0},
+    {3400, 5},
+    {3500, 12},
+    {3600, 25},
+    {3700, 40},
+    {3800, 55},
+    {3900, 70},
+    {4000, 82},
+    {4100, 92},
+    {4200, 98},
+    {4300, 100},
+};
+
+static uint8_t tdeck_voltage_to_percent(int mv) {
+    if (mv <= s_tdeck_soc_table[0].mv) {
+        return s_tdeck_soc_table[0].percent;
+    }
+    if (mv >= s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE - 1].mv) {
+        return s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE - 1].percent;
+    }
+
+    for (int i = 1; i < TDECK_SOC_TABLE_SIZE; i++) {
+        if (mv <= s_tdeck_soc_table[i].mv) {
+            const tdeck_soc_point_t *low = &s_tdeck_soc_table[i - 1];
+            const tdeck_soc_point_t *high = &s_tdeck_soc_table[i];
+            int range_mv = high->mv - low->mv;
+            if (range_mv <= 0) {
+                return high->percent;
+            }
+            int range_percent = high->percent - low->percent;
+            int offset_mv = mv - low->mv;
+            return (uint8_t)(low->percent + (range_percent * offset_mv) / range_mv);
+        }
+    }
+    return s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE - 1].percent;
+}
+
+#elif CONFIG_USE_TDISPLAY_S3
+#define _batAdcCh ADC1_GPIO4_CHANNEL
+#endif
+
+#ifndef CONFIG_USE_TDECK
+#define _batAdcUnit ADC_UNIT_1
+#define _batAdcAtten ADC_ATTEN_DB_12
+bool _isCharging = false;
+static int last_mv = 0;
 #endif
 
 // threshold to ignore ADC noise
-#define CHARGE_THRESH_MV 15
+#define CHARGE_THRESH_MV 30
 
 int getBattery() {
     uint8_t percent;
@@ -407,20 +440,59 @@ int getBattery() {
     // Cardputer divides the battery voltage roughly in half with a resistor divider.
     // Scale the measured voltage back up to actual battery voltage.
     mv = (mv * 2);
+#elif CONFIG_USE_TDECK
+    // T-Deck divides the battery voltage roughly in half with a resistor divider.
+    // Scale the measured voltage back up to actual battery voltage.
+    mv = (mv * 2);
 #endif
 
-    // -- charging detection by comparing to last reading --
+    // -- charging detection using rolling window to filter noise --
+#ifdef CONFIG_USE_CARDPUTER
+    s_charge_samples[s_charge_sample_idx] = mv;
+    s_charge_sample_idx = (s_charge_sample_idx + 1) % 5;
+    if (s_charge_sample_idx == 0) s_charge_samples_filled = true;
+    
+    if (s_charge_samples_filled) {
+        int oldest_mv = s_charge_samples[s_charge_sample_idx];
+        int trend = mv - oldest_mv;
+        
+        if (trend > CHARGE_THRESH_MV) {
+            _isCharging = true;
+        } else if (trend < -CHARGE_THRESH_MV) {
+            _isCharging = false;
+        }
+    }
+#elif CONFIG_USE_TDECK
+    // T-Deck: use rolling window like Cardputer for stable charging detection
+    s_charge_samples[s_charge_sample_idx] = mv;
+    s_charge_sample_idx = (s_charge_sample_idx + 1) % 5;
+    if (s_charge_sample_idx == 0) s_charge_samples_filled = true;
+    
+    if (s_charge_samples_filled) {
+        int oldest_mv = s_charge_samples[s_charge_sample_idx];
+        int trend = mv - oldest_mv;
+        
+        // Use higher threshold for T-Deck to avoid false charging detection
+        if (trend > (CHARGE_THRESH_MV * 2)) {
+            _isCharging = true;
+        } else if (trend < -(CHARGE_THRESH_MV * 2)) {
+            _isCharging = false;
+        }
+    }
+#else
     if (last_mv != 0) {
         int diff = mv - last_mv;
         if (diff >  CHARGE_THRESH_MV) _isCharging = true;
         if (diff < -CHARGE_THRESH_MV) _isCharging = false;
     }
     last_mv = mv;
+#endif
 
     ESP_LOGD(TAG, "Battery ADC raw: %d, mV: %d", raw, mv);
 
     // Check for unrealistic voltage values
-    if (mv < 2500 || mv > 5000) {
+    // Lower threshold allows for very dead batteries (down to ~2.0V)
+    if (mv < 2000 || mv > 5000) {
         ESP_LOGW(TAG, "Battery voltage out of range: %d mV", mv);
         return -1;
     }
@@ -435,11 +507,22 @@ int getBattery() {
         s_filtered_mv = (s_filtered_mv * 7 + mv) / 8;
     }
     mv_for_percent = s_filtered_mv;
+#elif CONFIG_USE_TDECK
+    // T-Deck: apply filtering for stable readings like Cardputer
+    if (s_filtered_mv < 0) {
+        s_filtered_mv = mv;
+    } else {
+        // Moderate smoothing for T-Deck to balance responsiveness and stability
+        s_filtered_mv = (s_filtered_mv * 6 + mv * 2) / 8;
+    }
+    mv_for_percent = s_filtered_mv;
 #endif
 
     // Map measured voltage to a percentage
 #ifdef CONFIG_USE_CARDPUTER
     percent = cardputer_voltage_to_percent(mv_for_percent);
+#elif CONFIG_USE_TDECK
+    percent = tdeck_voltage_to_percent(mv_for_percent);
 #else
     const int min_mv = 3300;
     const int max_mv = 4200;
@@ -458,6 +541,22 @@ int getBattery() {
     } else {
         int diff = percent - s_display_percent;
         int threshold = _isCharging ? 4 : 3;
+        if (diff >= threshold) {
+            s_display_percent++;
+        } else if (diff <= -threshold) {
+            s_display_percent--;
+        }
+        if (s_display_percent < 0) s_display_percent = 0;
+        if (s_display_percent > 100) s_display_percent = 100;
+    }
+    percent = (uint8_t)s_display_percent;
+#elif CONFIG_USE_TDECK
+    // T-Deck: apply gradual display changes to prevent sudden jumps
+    if (s_display_percent < 0) {
+        s_display_percent = percent;
+    } else {
+        int diff = percent - s_display_percent;
+        int threshold = _isCharging ? 5 : 3;
         if (diff >= threshold) {
             s_display_percent++;
         } else if (diff <= -threshold) {
@@ -512,7 +611,19 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
     }
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
-    // Use cached fuel gauge values updated by background task (non-blocking)
+    // Lazy poll on UI thread with rate limiting (every 5s)
+    static int64_t last_poll_time = 0;
+    int64_t now = esp_timer_get_time() / 1000;
+    if (!g_cached_batt_valid || (now - last_poll_time > 5000)) {
+        fuel_gauge_data_t fg;
+        if (fuel_gauge_manager_get_data(&fg)) {
+            g_cached_batt_percent = (uint8_t)fg.percentage;
+            g_cached_batt_charging = fg.is_charging;
+            g_cached_batt_valid = true;
+            last_poll_time = now;
+        }
+    }
+
     if (g_cached_batt_valid) {
         *percentage = g_cached_batt_percent;
         *is_charging = g_cached_batt_charging;
@@ -569,7 +680,7 @@ void fade_in_cb(void *obj, int32_t v) {
   }
 }
 
-void rainbow_effect_cb(lv_timer_t *timer) {
+static void rainbow_effect_cb(lv_timer_t *timer) {
   if (!status_bar || !lv_obj_is_valid(status_bar)) {
     return;
   }
@@ -597,6 +708,22 @@ void rainbow_effect_cb(lv_timer_t *timer) {
   }
 
   lv_obj_invalidate(status_bar);
+}
+
+void display_manager_set_rainbow_mode(bool enable) {
+  if (enable) {
+    if (rainbow_timer == NULL) {
+      rainbow_timer = lv_timer_create(rainbow_effect_cb, 50, NULL);
+      rainbow_hue = 0;
+    }
+  } else {
+    if (rainbow_timer != NULL) {
+      lv_timer_del(rainbow_timer);
+      rainbow_timer = NULL;
+      // Reset status bar color when leaving rainbow mode
+      display_manager_update_status_bar_color();
+    }
+  }
 }
 
 
@@ -851,10 +978,26 @@ void display_manager_update_status_bar_color(void) {
   }
 
   uint8_t theme = settings_get_menu_theme(&G_Settings);
-  lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
+  lv_color_t accent_color = lv_color_hex(theme_palette_get_accent(theme));
+  lv_color_t text_color = lv_color_hex(0x999999);
+  
+  lv_obj_set_style_border_color(status_bar, accent_color, LV_PART_MAIN);
 
+  // Reset all status bar label colors when leaving rainbow mode
   if (mainlabel && lv_obj_is_valid(mainlabel)) {
-    lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
+    lv_obj_set_style_text_color(mainlabel, text_color, 0);
+  }
+  if (wifi_label && lv_obj_is_valid(wifi_label)) {
+    lv_obj_set_style_text_color(wifi_label, text_color, 0);
+  }
+  if (bt_label && lv_obj_is_valid(bt_label)) {
+    lv_obj_set_style_text_color(bt_label, text_color, 0);
+  }
+  if (sd_label && lv_obj_is_valid(sd_label)) {
+    lv_obj_set_style_text_color(sd_label, text_color, 0);
+  }
+  if (battery_label && lv_obj_is_valid(battery_label)) {
+    lv_obj_set_style_text_color(battery_label, text_color, 0);
   }
 
   status_update_cb(NULL);
@@ -966,9 +1109,13 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
 
 void apply_power_management_config(bool power_save_enabled) {
   esp_pm_config_t pm_cfg = {
-      .max_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .min_freq_mhz = power_save_enabled ? 20 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-      .light_sleep_enable = power_save_enabled,
+      .max_freq_mhz = power_save_enabled ? 160 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+      .min_freq_mhz = power_save_enabled ? 80 : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+#ifdef CONFIG_USE_TDECK
+      .light_sleep_enable = false, // Disable light sleep for T-Deck to prevent trackball issues
+#else
+      .light_sleep_enable = power_save_enabled, // Keep light sleep for other configs
+#endif
   };
   rgb_manager_power_transition_begin();
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
@@ -990,10 +1137,10 @@ void apply_power_management_config(bool power_save_enabled) {
   ESP_LOGI(TAG, "LEDC timer reconfigured for power save mode: %s", power_save_enabled ? "enabled" : "disabled");
 #endif
 
-  // control ap based on power save mode
+  // control ap based on power save mode and AP enabled setting
   if (power_save_enabled) {
     ap_manager_stop_services();
-  } else {
+  } else if (settings_get_ap_enabled(&G_Settings)) {
     ap_manager_start_services();
   }
 }
@@ -1207,15 +1354,20 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 
 #ifdef CONFIG_HAS_BATTERY
   axp2101_init();
-  pcf8563_init(I2C_NUM_1, 0x51);
+#endif
+
+#ifdef CONFIG_HAS_RTC_CLOCK
+  rtc_chip_type_t chip_type = (rtc_chip_type_t)CONFIG_RTC_CHIP_TYPE;
+  const char* chip_names[] = {"PCF8563", "DS1307", "DS3231"};
+  rtc_init(CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS, chip_type);
+  ESP_LOGI(TAG, "RTC initialized: %s on I2C port %d at address 0x%02X (SDA: %d, SCL: %d)", 
+           chip_names[CONFIG_RTC_CHIP_TYPE], CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS, 
+           CONFIG_RTC_I2C_SDA_PIN, CONFIG_RTC_I2C_SCL_PIN);
 #endif
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
   if (fuel_gauge_manager_init()) {
     ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
-    if (battery_poll_task_handle == NULL) {
-      xTaskCreate(battery_poll_task, "battery_poll", 2048, NULL, 5, &battery_poll_task_handle);
-    }
   } else {
     ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
   }
@@ -1245,6 +1397,16 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
     // GPIO 6 exit button is TEmbed C1101 only
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "LilyGo TEmbedC1101") == 0) {
         joystick_init(&exit_button, 6, 500 /*hold ms*/, true);
+    }
+    
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        ESP_LOGI(TAG, "Initializing TSC2007 touch driver for The Banshee");
+        // Register touch driver with LVGL
+        static lv_indev_drv_t indev_drv;
+        lv_indev_drv_init(&indev_drv);
+        indev_drv.type = LV_INDEV_TYPE_POINTER;
+        indev_drv.read_cb = touch_driver_read;
+        lv_indev_drv_register(&indev_drv);
     }
 #endif
 #endif
@@ -1396,12 +1558,11 @@ void set_backlight_brightness(uint8_t percentage) {
     // Clamp to user setting
     uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
 
-    //if (percentage > max_brightness) percentage = max_brightness;
+    // if (percentage > max_brightness) percentage = max_brightness;
 
     //scale percent by max_brightness
     percentage = (percentage * max_brightness) / 100;
     if (percentage > 100) percentage = 100;
-    if (percentage < 0) percentage = 0;
 
 #ifdef CONFIG_USE_TDISPLAY_S3
     // TDisplay S3 backlight now uses LEDC for PWM control
@@ -1517,6 +1678,67 @@ bool display_manager_notify_user_input(void) {
     return false;
 }
 
+#ifdef CONFIG_USE_TDECK
+// Convert T-Deck raw key position to character with shift and symbol support
+static char tdeck_raw_to_char(int col, int row, bool shift, bool symbol) {
+  // Handle special keys first
+  if (col == 3 && row == 3) return '\r';  // Enter
+  if (col == 4 && row == 3) return '\b';  // Backspace
+  if (col == 0 && row == 5) return ' ';   // Space
+  
+  // Skip non-character keys (shift, alt, etc.)
+  if ((col == 1 && row == 6) || (col == 2 && row == 3)) return 0; // Shift keys
+  if (col == 0 && row == 2) return 0;  // Symbol key
+  if (col == 0 && row == 4) return 0;  // ALT key
+  if (col == 0 && row == 6) return 0;  // Mic key
+  
+  // T-Deck keyboard layout from Arduino code (5 cols x 7 rows)
+  // Format: keyboard[col][row] where col=0-4, row=0-6
+  static const char keyboard[TDECK_COLS][TDECK_ROWS] = {
+    {'q', 'w', 0, 'a', 0, ' ', 0},      // col 0 (row 2=symbol, row 4=ALT, row 6=Mic)
+    {'e', 's', 'd', 'p', 'x', 'z', 0},       // col 1 (row 6=Left Shift)
+    {'r', 'g', 't', 0, 'v', 'c', 'f'},       // col 2 (row 3=Right Shift)
+    {'u', 'h', 'y', 0, 'b', 'n', 'j'},       // col 3 (row 3=Enter)
+    {'o', 'l', 'i', 0, '$', 'm', 'k'}        // col 4 (row 3=Backspace)
+  };
+  
+  // Symbol characters from Arduino code (5 cols x 7 rows)
+  // Format: keyboard_symbol[col][row] where col=0-4, row=0-6
+  static const char keyboard_symbol[TDECK_COLS][TDECK_ROWS] = {
+    {'#', '1', 0, '*', 0, 0, '0'},      // col 0
+    {'2', '4', '5', '@', '8', '7', 0},       // col 1
+    {'3', '/', '(', 0, '?', '9', '6'},       // col 2
+    {'_', ':', ')', 0, '!', ',', ';'},        // col 3
+    {'+', '"', '-', 0, 0, '.', '\''}       // col 4
+  };
+  
+  // Get base character
+  char c = 0;
+  if (col < TDECK_COLS && row < TDECK_ROWS) {
+    if (symbol) {
+      c = keyboard_symbol[col][row];
+    } else {
+      c = keyboard[col][row];
+    }
+  }
+  
+  if (c == 0) return 0;
+  
+  // Apply shift if needed (for symbol mode, shift might add different characters)
+  if (shift) {
+    // For normal characters, convert to uppercase
+    if (!symbol && c >= 'a' && c <= 'z') {
+      c = c - ('a' - 'A');
+    }
+    // Additional shift combinations could be added here
+  }
+  
+  return c;
+}
+#endif
+
+
+
 void hardware_input_task(void *pvParameters) {
   const TickType_t tick_interval = pdMS_TO_TICKS(10);
 
@@ -1525,73 +1747,147 @@ void hardware_input_task(void *pvParameters) {
   uint16_t calData[5] = {339, 3470, 237, 3438, 2};
   bool touch_active = false;
   int screen_width = LV_HOR_RES;
-  int screen_height = LV_VER_RES;
+#ifdef CONFIG_IS_S3TWATCH
   bool was_woken_by_interrupt = false; // New flag for S3T-Watch
+#endif
 #ifdef CONFIG_USE_TDECK
   static uint8_t last_tdeck_key = 0;
   static uint32_t last_tdeck_key_ms = 0;
   static uint32_t last_tdeck_event_ms = 0;
   static uint8_t last_tdeck_sent = 0;
+  static bool tdeck_shift_pressed = false;
+  static bool tdeck_symbol_pressed = false;
+  static uint8_t tdeck_last_raw_state[TDECK_COLS] = {0};
+  static uint32_t tdeck_repeat_start_ms = 0;
+  static bool tdeck_repeat_active = false;
+  static char tdeck_repeat_char = 0;
+  static const uint32_t TDECK_REPEAT_DELAY_MS = 500;   // Initial delay before repeat
+  static const uint32_t TDECK_REPEAT_RATE_MS = 100;    // Repeat rate
 
   gpio_set_direction(46, GPIO_MODE_INPUT);
-#endif
-#ifdef CONFIG_USE_CARDPUTER
-  uint8_t shift_count_before_caps =255; // effectively disable hold-to-caps for normal cardputer
-  uint8_t shift_count = 0;
-  bool caps_latch = false; // var for tracking if caps was just toggled
-  // track last pressed keys to emit only on new press (avoid spam)
-  static Point2D_t last_pressed_keys[16];
-  static size_t last_pressed_len = 0;
+  
+  // Initialize keyboard in raw mode for shift key support
+  uint8_t raw_cmd = LILYGO_KB_MODE_RAW_CMD;
+  lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, &raw_cmd, 1);
+  ESP_LOGI(TAG, "T-Deck keyboard initialized in raw mode");
 #endif
   while (1) {
 #ifdef CONFIG_USE_TDECK
-    uint8_t data[1];
-    if (gpio_get_level(46)){
-    if (lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, &data, 1) != ESP_OK) {
-      data[0] = 0;
-    }
-    } else {
-      data[0] = 0; // if the pin is low we assume no data is available
-    }
-    if (data[0] != 0){
-
-      ESP_LOGD(TAG, "tdeck keyboard data: 0x%02x", data[0]);
-
-      touch_active = true;
-      if (is_backlight_dimmed) {
-        set_backlight_brightness(100);
-        is_backlight_dimmed = false;
-        vTaskDelay(pdMS_TO_TICKS(100));
-      }
-
-      uint32_t now_ms = dm_now_ms();
-      bool should_emit = (data[0] != last_tdeck_sent);
-      if (should_emit && (uint32_t)(now_ms - last_tdeck_event_ms) < (uint32_t)TDECK_EVENT_RATE_LIMIT_MS) {
-        should_emit = false;
-      } else if (should_emit && data[0] == last_tdeck_key && (uint32_t)(now_ms - last_tdeck_key_ms) < (uint32_t)TDECK_KEY_DEBOUNCE_MS) {
-        should_emit = false;
-      }
-
-      if (should_emit) {
-        last_tdeck_event_ms = now_ms;
-        last_tdeck_key = data[0];
-        last_tdeck_key_ms = now_ms;
-        last_tdeck_sent = data[0];
-
-        last_touch_time = xTaskGetTickCount();
-
-        InputEvent event;
-        event.type = INPUT_TYPE_KEYBOARD;
-        event.data.key_value = *data;
-        if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-          ESP_LOGE(TAG, "Failed to send button input to queue\n");
+    // Read raw keyboard state for shift key support
+    uint8_t raw_data[TDECK_COLS] = {0};
+    bool key_changed = false;
+    
+    if (gpio_get_level(46)) {
+      if (lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT, LILYGO_KB_SLAVE_ADDRESS, 0x00, &raw_data, TDECK_COLS) == ESP_OK) {
+        // Check if any key state changed
+        for (int i = 0; i < TDECK_COLS; i++) {
+          if (raw_data[i] != tdeck_last_raw_state[i]) {
+            key_changed = true;
+            break;
+          }
+        }
+        
+        // Always update shift and symbol states
+        bool left_shift = (raw_data[TDECK_LEFT_SHIFT_COL] & (1 << TDECK_LEFT_SHIFT_ROW)) != 0;
+        bool right_shift = (raw_data[TDECK_RIGHT_SHIFT_COL] & (1 << TDECK_RIGHT_SHIFT_ROW)) != 0;
+        tdeck_shift_pressed = left_shift || right_shift;
+        tdeck_symbol_pressed = (raw_data[TDECK_SYMBOL_COL] & (1 << TDECK_SYMBOL_ROW)) != 0;
+        
+        // Find currently pressed keys
+        char current_char = 0;
+        bool key_pressed = false;
+        
+        for (int col = 0; col < TDECK_COLS; col++) {
+          for (int row = 0; row < TDECK_ROWS; row++) {
+            if (raw_data[col] & (1 << row)) {
+              char c = tdeck_raw_to_char(col, row, tdeck_shift_pressed, tdeck_symbol_pressed);
+              if (c != 0) {
+                current_char = c;
+                key_pressed = true;
+                break; // Take first character found
+              }
+            }
+          }
+          if (key_pressed) break;
+        }
+        
+        uint32_t now_ms = dm_now_ms();
+        
+        if (key_changed) {
+          // Update last state
+          memcpy(tdeck_last_raw_state, raw_data, TDECK_COLS);
+          
+          if (key_pressed) {
+            if (current_char != tdeck_repeat_char) {
+              // New key pressed - send immediately and start repeat timer
+              tdeck_repeat_char = current_char;
+              tdeck_repeat_start_ms = now_ms;
+              tdeck_repeat_active = false;
+              
+              ESP_LOGD(TAG, "T-Deck key pressed: '%c'", current_char);
+              
+              touch_active = true;
+              if (is_backlight_dimmed) {
+                set_backlight_brightness(100);
+                is_backlight_dimmed = false;
+                vTaskDelay(pdMS_TO_TICKS(100));
+              }
+              
+              InputEvent event;
+              event.type = INPUT_TYPE_KEYBOARD;
+              event.data.key_value = current_char;
+              if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+                ESP_LOGE(TAG, "Failed to send T-Deck key input to queue\n");
+              }
+            }
+          } else {
+            // No keys pressed - reset repeat state
+            tdeck_repeat_char = 0;
+            tdeck_repeat_active = false;
+          }
+        }
+        
+        // Handle key repeat - this runs every loop iteration, not just on state change
+        if (key_pressed && tdeck_repeat_char != 0) {
+          if (!tdeck_repeat_active) {
+            // Check if initial delay has passed
+            if (now_ms - tdeck_repeat_start_ms >= TDECK_REPEAT_DELAY_MS) {
+              tdeck_repeat_active = true;
+              tdeck_repeat_start_ms = now_ms; // Reset for repeat rate
+              
+              ESP_LOGD(TAG, "T-Deck repeat started for: '%c'", current_char);
+            }
+          } else {
+            // Check if repeat rate has passed
+            if (now_ms - tdeck_repeat_start_ms >= TDECK_REPEAT_RATE_MS) {
+              tdeck_repeat_start_ms = now_ms; // Reset for next repeat
+              
+              ESP_LOGD(TAG, "T-Deck key repeat: '%c'", current_char);
+              
+              InputEvent event;
+              event.type = INPUT_TYPE_KEYBOARD;
+              event.data.key_value = current_char;
+              if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+                ESP_LOGE(TAG, "Failed to send T-Deck repeat key to queue\n");
+              }
+            }
+          }
+        } else if (!key_pressed) {
+          // No keys pressed - reset repeat state
+          tdeck_repeat_char = 0;
+          tdeck_repeat_active = false;
         }
       }
     } else {
-      last_tdeck_key = 0;
-      last_tdeck_sent = 0;
+      // Reset state when pin is low
+      memset(tdeck_last_raw_state, 0, TDECK_COLS);
+      tdeck_shift_pressed = false;
+      tdeck_symbol_pressed = false;
+      tdeck_repeat_char = 0;
+      tdeck_repeat_active = false;
     }
 #endif
+
 
 // Check for wake interrupt when dimmed
 #ifdef CONFIG_IS_S3TWATCH
@@ -1714,7 +2010,7 @@ void hardware_input_task(void *pvParameters) {
 #if SOC_PM_SUPPORT_EXT0_WAKEUP
             esp_err_t ret = esp_sleep_enable_ext0_wakeup(GPIO_NUM_6, 0);
 #elif SOC_PM_SUPPORT_EXT1_WAKEUP
-            esp_err_t ret = esp_sleep_enable_ext1_wakeup_io(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ALL_LOW);
+            esp_err_t ret = esp_sleep_enable_ext1_wakeup_io(1ULL << GPIO_NUM_6, ESP_EXT1_WAKEUP_ANY_LOW);
 #else
             esp_err_t ret = ESP_ERR_NOT_SUPPORTED;
 #endif
@@ -1927,7 +2223,17 @@ void hardware_input_task(void *pvParameters) {
 #endif
  #endif
 
+    bool enable_touch_polling = false;
 #ifdef CONFIG_USE_TOUCHSCREEN
+    enable_touch_polling = true;
+#endif
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        enable_touch_polling = true;
+    }
+#endif
+
+    if (enable_touch_polling) {
 
 #ifdef CONFIG_JC3248W535EN_LCD
     touch_driver_read_axs15231b(&touch_driver, &touch_data);
@@ -1976,7 +2282,7 @@ void hardware_input_task(void *pvParameters) {
       touch_active = false;
     }
 
-#endif
+    } // enable_touch_polling
 
     // backlight dim logic
     uint32_t current_timeout = G_Settings.display_timeout_ms;

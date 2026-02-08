@@ -1,13 +1,72 @@
 # Ghost ESP Changelog
 
+## Changed since last prerelease
+- Remove dependencies.lock file - @tototo31
+- Adjust battery voltage threshold to allow for very dead batteries - @tototo31
 
+## Revival v1.9.3
+- Added support for the Febris Pro board
+- Added GPIO interrupt-based IR RX approach for improved reliability
+- Set IR universal send RGB pulse brightness to 20% (reduced from 100%)
+- Add git commit hash retrieval and logging at build time - @tototo31
+- Fixed issue where RGBs would stay lit after stopping a deauth attack
+- Fixed a potential crash when stopping wardriving - Thanks to @10Evansr for reporting with a fix
+- Added Knight Rider and Static RGB modes
+- Fixed issue where AP disable wouldn't work
+- Added GhostLink display commands to enable/disable the on-device AP and change credentials
+- Added touch support for The Wired Hatter's Banshee
+- Added proper touch support to the Infrared view
+- Added MAX17048 fuel gauge support for The Wired Hatter's Banshee
+- Fixed minor RGB issues on The Wired Hatter's Banshee
+- Fixed IR RX issues on The Wired Hatter's Banshee
+- Fixed the display hanging when going to save NFC tags on The Wired Hatter's Banshee
+- Fixed a crash on the TEmbedC1101 when processing large IR signals
+- Only save changed setting to NVS when changing in settings menu to prevent hangs/crashes
+- Reduced the wait time when switching RGB modes
+- Refactored and optimised Rainbow and Knight Rider RGB modes
+- Added 12-bit color precision pipeline for RGB
+- Show highlight border on all displays regardless of touch support
+- Added more status display logs
+- Fixed clock icon not recoloring based on theme
+- Added external RTC support for saving time sync on The Wired Hatter's Banshee
+- Fixed country and timezone not properly persisting
+- Added new compass app for The Wired Hatter's Banshee
+- Added support for a new upcoming board
+- Fixed airtag rgb pulsing in silent rgb mode
+- Updated main menu item order
+- Added BadUSB support for The Wired Hatter's Banshee
+- Remove dependencies.lock file - @tototo31
+- Adjust battery voltage threshold to allow for very dead batteries - @tototo31
+
+## Revival v1.9.2
+
+- Added Wireshark dongle mode for real-time PCAP streaming over USB/UART
+- Added "No portal files found" placeholder for evil portal when SD folder is empty
+- Optimized evil portal listing memory usage
+- Added T-Deck keyboard shift, symbol key support with key repeat functionality
+- Rewrote DIAL functionality to remove the need for HTTPS, decrease ram usage and increase reliability
+- Fixed RGB LED error spam on devices without LEDs configured
+- Fix EAPOL capture channel lock by stopping ALL hopping timers before capture
+- Improved reliability of PCAP capture to SD card
+- Fixed regression when using C5 with RGB + IR 
+- Added ADC battery reading for the LilyGo T-Deck
+- Fixed inverted touch scrolling in main menu list layout
+- Fixed not being able to scroll up in options menus on some configs
+- Fixed apps menu always opening top app instead of tapped app
+- Disable light sleep in power saving mode on the T-Deck
+- Added the back button to the terminal view on the T-Display S3 Touch
+- Updated NimBLE config options to mirror the TEmbedC1101 for improved BLE reliability during certain tasks like AirTag detection
+- Misc small fixes
 
 ## Revival v1.9.1
 
 - Fixed WebUI AP-only restriction to correctly allow AP clients (including IPv6-mapped IPv4 addresses)
 - 'setcountry' command is now case-insensitive
 - Fixed T-Deck trackball spamming inputs
-
+- Removed limit of 50 for 'scanap' to prevent getting rid of early entries
+- Changed "Unknown command" to "Unsupported command" in CLI error messages for better UX.
+- Improved Cardputer charging detection
+- Fixed dedicated GhostLink webui terminal not showing responses
 
 ## Revival v1.9
 

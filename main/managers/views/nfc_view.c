@@ -4,8 +4,10 @@
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
+#include "managers/status_display_manager.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include "managers/views/error_popup.h"
 #include "gui/popup.h"
 #include "gui/lvgl_safe.h"
 #include <string.h>
@@ -475,6 +477,16 @@ void mfc_ui_set_phase(int sector, int first_block, bool key_b, int total_keys) {
     mfc_phase_first_block = first_block;
     mfc_phase_key_b = key_b;
     mfc_phase_total = total_keys;
+    
+    // Add detailed status messages for MFC dictionary attack phases
+    if (sector == 0 && first_block == 0) {
+        status_display_show_status("MFC Attack Start");
+    } else if (sector >= 0) {
+        char status_msg[32];
+        snprintf(status_msg, sizeof(status_msg), "MFC Sec %d Key %c", sector, key_b ? 'B' : 'A');
+        status_display_show_status(status_msg);
+    }
+    
     dict_prog_t *dp = nfc_dict_pool_alloc();
     if (dp) { dp->c = 0; dp->t = total_keys; dp->s = nfc_scan_session; lv_async_call(nfc_progress_update_async, dp); }
 }
@@ -488,6 +500,27 @@ static void mfc_dict_progress_cb(int current, int total, void *user) {
     static int last_percent = -1;
     if (percent == last_percent) return;
     last_percent = percent;
+    
+    // Add status display messages for NFC scanning phases
+    if (nfc_cache_fill_phase) {
+        status_display_show_status("NFC Reading...");
+    } else if (!nfc_details_visible && mfc_phase_total > 0) {
+        // Show progress milestones for dictionary attack
+        if (percent == 0) {
+            status_display_show_status("MFC Dict Start");
+        } else if (percent == 25) {
+            status_display_show_status("MFC 25%");
+        } else if (percent == 50) {
+            status_display_show_status("MFC 50%");
+        } else if (percent == 75) {
+            status_display_show_status("MFC 75%");
+        } else if (percent == 100) {
+            status_display_show_status("MFC Dict Done");
+        }
+    } else if (nfc_dict_skip_requested) {
+        status_display_show_status("NFC Basic Read");
+    }
+    
     dict_prog_t *dp = nfc_dict_pool_alloc();
     if (!dp) return;
     dp->c = current; dp->t = total; dp->s = nfc_scan_session;
@@ -662,6 +695,10 @@ static void nfc_set_details_async(void *ptr) {
     if (nfc_detected_title[0] == '\0') {
         snprintf(nfc_detected_title, sizeof(nfc_detected_title), "NFC Tag");
     }
+    
+    // Show success status when NFC scanning completes
+    status_display_show_status("NFC Scan Done");
+    
     // reset phase state and update summary labels to indicate completion
     mfc_phase_sector = -1;
     mfc_phase_first_block = -1;
@@ -721,6 +758,29 @@ static void nfc_set_details_async(void *ptr) {
 static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, uint8_t uid_len) {
     // Prefer MIFARE Classic summary if SAK indicates Classic
     if (mfc_is_classic_sak(g_sak)) {
+        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        // Early exit for Banshee: show basic info only to avoid NFC instability
+        // Commented out to allow MFC dict attack
+        // size_t cap = 256;
+        // ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+        // if (!res) return;
+        // res->text = (char*)malloc(cap);
+        // if (!res->text) { free(res); return; }
+        // res->text_len = cap; res->session = nfc_scan_session;
+        // char *w = res->text;
+        // snprintf(w, cap, "MIFARE Classic\nUID:");
+        // size_t used = strlen(w); w += used; cap -= used;
+        // for (uint8_t i = 0; i < uid_len && cap > 3; ++i) {
+        //     int n = snprintf(w, cap, " %02X", uid[i]);
+        //     if (n > 0) { w += n; cap -= n; }
+        // }
+        // snprintf(w, cap, "\nATQA: %04X SAK: %02X", g_atqa, g_sak);
+        // // snprintf(w, cap, "\nATQA: %04X SAK: %02X\nNFC unstable on Banshee", g_atqa, g_sak);
+        // if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
+        // else { if (res->text) free(res->text); free(res); }
+        // return;
+    }
+
         mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
         if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) lv_label_set_text(nfc_title_label, "Bruteforcing keys... 0%");
         // Reduce I2C contention during PN532 scanning/bruteforce
@@ -1062,6 +1122,7 @@ static void nfc_scan_task(void *arg) {
             if (nfc_scan_cancel) break;
             g_uid_len = uid_len; memcpy(g_uid, uid + 1, uid_len); g_atqa = atqa; g_sak = sak; g_model = NTAG2XX_UNKNOWN;
             ESP_LOGI(TAGT, "scan_task: UID found, building details (len=%u)", uid_len);
+            status_display_show_status("NFC Tag Found");
             nfc_build_and_set_details(g_pn532, uid + 1, uid_len);
             break;
         }
@@ -1751,6 +1812,7 @@ void cleanup_nfc_scan_popup(void *obj) {
 }
 
 static void nfc_scan_cancel_cb(lv_event_t *e) {
+    status_display_show_status("NFC Scan Canceled");
     cleanup_nfc_scan_popup(NULL);
 }
 
@@ -1786,6 +1848,7 @@ static void nfc_scan_more_cb(lv_event_t *e) {
     // If bruteforcing is active, treat More as Skip (basic read)
     if (!nfc_dict_skip_requested && mfc_phase_sector >= 0) {
         nfc_dict_skip_requested = true;
+        status_display_show_status("MFC Dict Skipped");
         if (nfc_title_label && lv_obj_is_valid(nfc_title_label)) {
             lv_label_set_text(nfc_title_label, "Basic read (skipping dict) ...");
         }
@@ -1870,6 +1933,7 @@ static bool write_flipper_nfc_file(void) {
 #ifdef CONFIG_NFC_PN532
     if (g_uid_len == 0 || g_pn532 == NULL) {
         ESP_LOGW(TAG, "No NFC UID/driver to save");
+        if (did) nfc_sd_end(susp);
         return false;
     }
 
@@ -1891,9 +1955,11 @@ static bool write_flipper_nfc_file(void) {
         }
         if (!ok) {
             ESP_LOGE(TAG, "Failed to save Mifare Classic file");
+            if (did) nfc_sd_end(susp);
             return false;
         }
         ESP_LOGI(TAG, "Mifare Classic file saved");
+        if (did) nfc_sd_end(susp);
         return true;
     }
 
@@ -1926,6 +1992,7 @@ static bool write_flipper_nfc_file(void) {
 
         if (sd_card_write_file(path, buf, (size_t)pos) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to write DESFire header: %s", path);
+            if (did) nfc_sd_end(susp);
             return false;
         }
         ESP_LOGI(TAG, "Mifare DESFire header saved: %s", path);
@@ -1964,6 +2031,7 @@ static bool write_flipper_nfc_file(void) {
 
     if (sd_card_write_file(path, buf, (size_t)pos) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write header: %s", path);
+        if (did) nfc_sd_end(susp);
         return false;
     }
 
@@ -2039,6 +2107,7 @@ meta_fallback: ;
     char *pages = (char*)malloc(cap);
     if (!pages) {
         ESP_LOGE(TAG, "OOM building page dump");
+        if (did) nfc_sd_end(susp);
         return false;
     }
     int ppos = 0; int pages_read = 0;
@@ -2169,6 +2238,7 @@ static void create_nfc_scan_popup(void) {
         }
     }
     ESP_LOGI(TAG, "create_nfc_scan_popup: starting scan task");
+    status_display_show_status("NFC Scanning...");
     nfc_scan_cancel = false;
     mfc_set_progress_callback(mfc_dict_progress_cb, NULL);
     xTaskCreate(nfc_scan_task, "nfc_scan", 6144, NULL, 5, &nfc_scan_task_handle);
@@ -2208,6 +2278,13 @@ static void nfc_save_done_async(void *ptr) {
     }
     if (nfc_scan_save_btn && lv_obj_is_valid(nfc_scan_save_btn)) {
         lv_obj_clear_state(nfc_scan_save_btn, LV_STATE_DISABLED);
+    }
+    
+    // Add status display messages for NFC save result
+    if (ok) {
+        status_display_show_status("NFC Saved");
+    } else {
+        status_display_show_status("NFC Save Fail");
     }
 #ifdef CONFIG_NFC_PN532
     mfc_set_progress_callback(NULL, NULL);
@@ -4176,6 +4253,13 @@ static void nfc_write_done_async(void *ptr) {
     if (g_write_image_valid) { ntag_file_free(&g_write_image); g_write_image_valid = false; }
     if (nfc_write_title_label && lv_obj_is_valid(nfc_write_title_label)) lv_label_set_text(nfc_write_title_label, ok ? "Write complete" : "Write failed");
     ESP_LOGI(TAG, "nfc_write_done: %s", ok ? "success" : "fail");
+    
+    // Add status display messages for NFC write result
+    if (ok) {
+        status_display_show_status("NFC Written");
+    } else {
+        status_display_show_status("NFC Write Fail");
+    }
 }
 
 static void nfc_write_task(void *arg) {
@@ -4218,6 +4302,7 @@ static void nfc_write_go_cb(lv_event_t *e) {
     nfc_write_cancel = false;
     nfc_write_in_progress = true;
     ESP_LOGI(TAG, "nfc_write_go: %s", g_write_image_path);
+    status_display_show_status("NFC Writing...");
     if (nfc_write_title_label && lv_obj_is_valid(nfc_write_title_label)) lv_label_set_text(nfc_write_title_label, "Present tag to write...");
 #ifdef CONFIG_NFC_PN532
     xTaskCreate(nfc_write_task, "nfc_write", 6144, NULL, 5, NULL);
@@ -4412,6 +4497,10 @@ void nfc_view_create(void) {
         }
     }
 #endif
+
+    // if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+    //     error_popup_create("Banshee PN532 NFC is unstable");
+    // }
 }
 
 void nfc_view_destroy(void) {
