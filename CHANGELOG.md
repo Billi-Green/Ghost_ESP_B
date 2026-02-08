@@ -9,6 +9,7 @@
   - Cardputer
   - Cardputer ADV
   - TEmbedC1101
+- Added touch control bar to the BadUSB view
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board
@@ -43,6 +44,7 @@
 - Added BadUSB support for The Wired Hatter's Banshee
 - Remove dependencies.lock file - @tototo31
 - Adjust battery voltage threshold to allow for very dead batteries - @tototo31
+- Added touch control bar to the BadUSB view
 
 ## Revival v1.9.2
 

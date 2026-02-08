@@ -216,6 +216,29 @@ static void scroll_down_cb(lv_event_t *e) {
     }
 }
 
+static void update_scroll_buttons_visibility(void) {
+    if (!menu_container || !lv_obj_is_valid(menu_container)) return;
+    lv_obj_update_layout(menu_container);
+    
+    lv_coord_t scroll_bottom = lv_obj_get_scroll_bottom(menu_container);
+    lv_coord_t scroll_top = lv_obj_get_scroll_top(menu_container);
+    bool needs_scroll = (scroll_bottom > 0) || (scroll_top > 0);
+    
+    if (needs_scroll) {
+        if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
+            lv_obj_clear_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(scroll_up_btn);
+        }
+        if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) {
+            lv_obj_clear_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(scroll_down_btn);
+        }
+    } else {
+        if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+        if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void rebuild_menu(void);
 static void go_back(void);
 
@@ -658,6 +681,10 @@ static void rebuild_menu(void) {
     if (num_items > 0) {
         select_item(0);
     }
+
+#ifdef CONFIG_USE_TOUCHSCREEN
+    update_scroll_buttons_visibility();
+#endif
 }
 
 void badusb_view_create(void) {
@@ -673,7 +700,7 @@ void badusb_view_create(void) {
 #ifdef CONFIG_USE_TOUCHSCREEN
     int screen_height = LV_VER_RES;
     const int STATUS_BAR_HEIGHT = 20;
-    const int BUTTON_AREA_HEIGHT = 0;
+    const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
     int container_height = screen_height - STATUS_BAR_HEIGHT - BUTTON_AREA_HEIGHT;
     lv_obj_set_size(menu_container, LV_HOR_RES, container_height);
     lv_obj_align(menu_container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT);
@@ -687,6 +714,49 @@ void badusb_view_create(void) {
     add_items_with_userdata(g_ov, options);
     for (const char **p = options; *p; p++) num_items++;
     if (num_items > 0) select_item(0);
+
+#ifdef CONFIG_USE_TOUCHSCREEN
+    scroll_up_btn = lv_btn_create(root);
+    lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
+    lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(scroll_up_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_radius(scroll_up_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scroll_up_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(scroll_up_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(scroll_up_btn, scroll_up_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *up_label = lv_label_create(scroll_up_btn);
+    lv_label_set_text(up_label, LV_SYMBOL_UP);
+    lv_obj_center(up_label);
+    lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+
+    scroll_down_btn = lv_btn_create(root);
+    lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
+    lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(scroll_down_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_radius(scroll_down_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scroll_down_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(scroll_down_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(scroll_down_btn, scroll_down_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *down_label = lv_label_create(scroll_down_btn);
+    lv_label_set_text(down_label, LV_SYMBOL_DOWN);
+    lv_obj_center(down_label);
+    lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+
+    back_btn = lv_btn_create(root);
+    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x555555), LV_PART_MAIN);
+    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(back_btn, back_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_label);
+
+    update_scroll_buttons_visibility();
+#endif
 }
 
 void badusb_view_destroy(void) {
