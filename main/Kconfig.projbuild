@@ -792,6 +792,31 @@ menu "Ghost ESP Options"
         depends on HAS_COMPASS
 
     endmenu
+
+    menu "Accelerometer Configuration"
+
+    config HAS_ACCELEROMETER
+        bool "Enable Accelerometer App"
+        default n
+        help
+            Enable Accelerometer application using ADXL345.
+
+    config ACCEL_I2C_ADDR
+        hex "ADXL345 I2C Address"
+        default 0x53
+        depends on HAS_ACCELEROMETER
+        help
+            I2C address of the ADXL345 accelerometer (0x53 default, 0x1D if SDO high).
+
+    config ACCEL_I2C_PORT
+        int "Accelerometer I2C Port"
+        range 0 1
+        default 0
+        depends on HAS_ACCELEROMETER
+        help
+            Select the I2C controller port used for the accelerometer.
+
+    endmenu
     
     menu "SPI and MMC Configuration"
     

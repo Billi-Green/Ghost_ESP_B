@@ -1,15 +1,7 @@
 # Ghost ESP Changelog
 
 ## Changed since last prerelease
-- Remove dependencies.lock file - @tototo31
-- Adjust battery voltage threshold to allow for very dead batteries - @tototo31
-- Replace "Ghost ESP Ready ;)" startup message with GHOST ESP ASCII and ghostcli help prompt
-- Added BadUSB VSENSE support for The Wired Hatter's Banshee
-- Added BadUSB support to:
-  - Cardputer
-  - Cardputer ADV
-  - TEmbedC1101
-- Added touch control bar to the BadUSB view
+- Added ADXL345 accelerometer app to The Wired Hatter's Banshee
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board
@@ -41,10 +33,15 @@
 - Added support for a new upcoming board
 - Fixed airtag rgb pulsing in silent rgb mode
 - Updated main menu item order
-- Added BadUSB support for The Wired Hatter's Banshee
 - Remove dependencies.lock file - @tototo31
 - Adjust battery voltage threshold to allow for very dead batteries - @tototo31
 - Added touch control bar to the BadUSB view
+- Added BadUSB support to:
+  - Cardputer
+  - Cardputer ADV
+  - TEmbedC1101
+  - The Wired Hatter's Banshee
+- Replace "Ghost ESP Ready ;)" startup message with GHOST ESP ASCII and ghostcli help prompt
 
 ## Revival v1.9.2
 
