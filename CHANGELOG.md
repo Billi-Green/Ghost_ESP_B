@@ -3,6 +3,11 @@
 ## Changed since last prerelease
 - Remove dependencies.lock file - @tototo31
 - Adjust battery voltage threshold to allow for very dead batteries - @tototo31
+- Added BadUSB VSENSE support for The Wired Hatter's Banshee
+- Added BadUSB support to:
+  - Cardputer
+  - Cardputer ADV
+  - TEmbedC1101
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board

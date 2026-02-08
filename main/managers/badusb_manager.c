@@ -365,7 +365,6 @@ static void badusb_exec_task(void *arg) {
 
     glog("BadUSB: USB ready, mounted=%d\n", tud_mounted() ? 1 : 0);
 
-    s_stop_requested = false;
     int lines = 0;
 
     if (params->from_file) {
@@ -393,6 +392,11 @@ static void badusb_exec_task(void *arg) {
     // Notify peer (C5) that execution is done
     if (esp_comm_manager_is_connected()) {
         esp_comm_manager_send_command("badusb", "status done");
+    }
+
+    if (s_driver_installed) {
+        tinyusb_driver_uninstall();
+        s_driver_installed = false;
     }
 
     s_active = false;

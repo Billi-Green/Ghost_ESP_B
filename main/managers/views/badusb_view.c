@@ -273,7 +273,11 @@ static void badusb_prod_kb_cb(const char *text) {
 static void badusb_cancel_cb(lv_event_t *e) {
     (void)e;
     bool remote = badusb_is_remote();
-    simulateCommand(remote ? "commsend badusb stop" : "badusb stop");
+    if (remote) {
+        simulateCommand("commsend badusb stop");
+    } else {
+        badusb_manager_stop();
+    }
     if (vsense_poll_timer) {
         lv_timer_del(vsense_poll_timer);
         vsense_poll_timer = NULL;
@@ -339,16 +343,7 @@ static void show_running_popup_ex(const char *script_name, bool waiting_for_usb)
                                                    LV_ALIGN_BOTTOM_MID, 0, -10, body_font,
                                                    badusb_cancel_cb, NULL);
     if (cancel_btn) {
-        uint8_t theme = settings_get_menu_theme(&G_Settings);
-        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
-        lv_color_t text_color = theme_palette_is_bright(theme) ? lv_color_hex(0x000000) : lv_color_hex(0xFFFFFF);
-        lv_obj_set_style_bg_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_FOCUSED);
-        lv_obj_set_style_bg_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
-        lv_obj_t *cancel_label = lv_obj_get_child(cancel_btn, 0);
-        if (cancel_label) {
-            lv_obj_set_style_text_color(cancel_label, text_color, LV_PART_MAIN | LV_STATE_FOCUSED);
-            lv_obj_set_style_text_color(cancel_label, text_color, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
-        }
+        popup_set_button_selected(cancel_btn, true);
     }
 }
 
@@ -730,7 +725,7 @@ void badusb_view_input_cb(InputEvent *event) {
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         if (event->type == INPUT_TYPE_KEYBOARD) {
             uint8_t key = event->data.key_value;
-            if (key == 13 || key == 10 || key == 27 || key == 'c' || key == 'C') {
+            if (key == 13 || key == 10 || key == 27 || key == 29 || key == 'c' || key == 'C') {
                 badusb_cancel_cb(NULL);
                 return;
             }
