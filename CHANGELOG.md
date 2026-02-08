@@ -1,10 +1,7 @@
 # Ghost ESP Changelog
 
 ## Changed since last prerelease
-- Added support for a new upcoming board
-- Fixed airtag rgb pulsing in silent rgb mode
-- Updated main menu item order
-- Added BadUSB support for The Wired Hatter's Banshee
+- Remove dependencies.lock file - @tototo31
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board
@@ -37,6 +34,7 @@
 - Fixed airtag rgb pulsing in silent rgb mode
 - Updated main menu item order
 - Added BadUSB support for The Wired Hatter's Banshee
+- Remove dependencies.lock file - @tototo31
 
 ## Revival v1.9.2
 
