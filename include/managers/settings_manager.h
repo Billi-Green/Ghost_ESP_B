@@ -66,6 +66,7 @@ typedef enum {
     SETTING_ZEBRA_MENUS,
     SETTING_NAV_BUTTONS,
     SETTING_MENU_LAYOUT,
+    SETTING_AUTO_SAVE_SCANS,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
     SETTING_IDLE_ANIMATION,
     SETTING_IDLE_ANIM_DELAY,
@@ -190,6 +191,7 @@ typedef struct {
 #endif
   bool encoder_invert_direction;
   bool setup_complete;
+  bool auto_save_scans;
   uint8_t wifi_country;
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
   uint16_t badusb_vid;
@@ -360,6 +362,9 @@ uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
 // Encoder direction inversion settings
 void settings_set_encoder_invert_direction(FSettings *settings, bool enabled);
 bool settings_get_encoder_invert_direction(const FSettings *settings);
+
+void settings_set_auto_save_scans(FSettings *settings, bool enabled);
+bool settings_get_auto_save_scans(const FSettings *settings);
 
 // Setup wizard settings
 void settings_set_setup_complete(FSettings *settings, bool complete);

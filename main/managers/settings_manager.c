@@ -62,6 +62,7 @@ static const char *NVS_MENU_LAYOUT_KEY = "menu_layout";
 static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
 static const char *NVS_RGB_LED_COUNT_KEY = "rgb_led_cnt";
 static const char *NVS_ENCODER_INVERT_KEY = "enc_inv";
+static const char *NVS_AUTO_SAVE_SCANS_KEY = "auto_save_sc";
 static const char *NVS_SETUP_COMPLETE_KEY = "setup_done";
 static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -175,6 +176,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->neopixel_max_brightness = 100; // Default to 100% brightness
   settings->encoder_invert_direction = false;
   settings->rgb_led_count = CONFIG_NUM_LEDS;
+  settings->auto_save_scans = true;
   settings->setup_complete = false;
   settings->wifi_country = 0;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -497,6 +499,14 @@ void settings_load(FSettings *settings) {
     settings->nav_buttons_enabled = true; // Default to enabled if not found
   }
 
+  // Load Auto Save Scans
+  err = nvs_get_u8(nvsHandle, NVS_AUTO_SAVE_SCANS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->auto_save_scans = (bool)value_u8;
+  } else {
+    settings->auto_save_scans = true; // Default to enabled if not found
+  }
+
   // Load Menu Layout
   err = nvs_get_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, &value_u8);
   if (err == ESP_OK) {
@@ -718,6 +728,10 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_u8(nvsHandle, NVS_NAV_BUTTONS_KEY, G_Settings.nav_buttons_enabled);
             key = NVS_NAV_BUTTONS_KEY;
             break;
+        case SETTING_AUTO_SAVE_SCANS:
+            err = nvs_set_u8(nvsHandle, NVS_AUTO_SAVE_SCANS_KEY, G_Settings.auto_save_scans);
+            key = NVS_AUTO_SAVE_SCANS_KEY;
+            break;
         case SETTING_MENU_LAYOUT:
             err = nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, G_Settings.menu_layout);
             key = NVS_MENU_LAYOUT_KEY;
@@ -878,6 +892,7 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_POWER_SAVE_KEY, settings->power_save_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, settings->zebra_menus_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_NAV_BUTTONS_KEY, settings->nav_buttons_enabled ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_AUTO_SAVE_SCANS_KEY, settings->auto_save_scans ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, (uint8_t)settings->menu_layout);
     nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone);
     nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
@@ -1267,6 +1282,14 @@ void settings_set_nav_buttons_enabled(FSettings *settings, bool enabled) {
 
 bool settings_get_nav_buttons_enabled(const FSettings *settings) {
     return settings->nav_buttons_enabled;
+}
+
+void settings_set_auto_save_scans(FSettings *settings, bool enabled) {
+    settings->auto_save_scans = enabled;
+}
+
+bool settings_get_auto_save_scans(const FSettings *settings) {
+    return settings->auto_save_scans;
 }
 
 // Menu layout settings

@@ -344,6 +344,7 @@ static const SettingDescriptor k_settings_desc[] = {
     {"web_auth", ST_BOOL, OFF(web_auth_enabled), "System", 0, 0, 0},
     {"rts_enabled", ST_BOOL, OFF(rts_enabled), "System", 0, 0, 0},
     {"third_ctrl", ST_BOOL, OFF(third_control_enabled), "System", 0, 0, 0},
+    {"auto_save_scans", ST_BOOL, OFF(auto_save_scans), "System", 0, 0, 0},
 
     {"flappy_name", ST_STRING, OFF(flappy_ghost_name), "Custom", 65, 0, 0},
     {"timezone", ST_STRING, OFF(selected_timezone), "Custom", 25, 0, 0},
@@ -755,6 +756,7 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
+    ble_stop_gatt_scan();
     ble_stop_ble_spam();
 #endif
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
@@ -6535,6 +6537,7 @@ void handle_settings_cmd(int argc, char **argv) {
         glog("    web_auth          - Web authentication (true/false)\n");
         glog("    rts_enabled       - RTS enabled (true/false)\n");
         glog("    third_ctrl        - Third control enabled (true/false)\n");
+        glog("    auto_save_scans   - Auto save scan results to SD (true/false)\n");
         glog("  Custom Settings:\n");
         glog("    flappy_name       - Flappy Ghost name\n");
         glog("    timezone          - Selected timezone\n");
