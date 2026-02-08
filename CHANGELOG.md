@@ -1,9 +1,42 @@
 # Ghost ESP Changelog
 
-## Revival v1.9.3
+## Changed since last prerelease
+- Remove dependencies.lock file - @tototo31
+- Adjust battery voltage threshold to allow for very dead batteries - @tototo31
 
+## Revival v1.9.3
+- Added support for the Febris Pro board
 - Added GPIO interrupt-based IR RX approach for improved reliability
 - Set IR universal send RGB pulse brightness to 20% (reduced from 100%)
+- Add git commit hash retrieval and logging at build time - @tototo31
+- Fixed issue where RGBs would stay lit after stopping a deauth attack
+- Fixed a potential crash when stopping wardriving - Thanks to @10Evansr for reporting with a fix
+- Added Knight Rider and Static RGB modes
+- Fixed issue where AP disable wouldn't work
+- Added GhostLink display commands to enable/disable the on-device AP and change credentials
+- Added touch support for The Wired Hatter's Banshee
+- Added proper touch support to the Infrared view
+- Added MAX17048 fuel gauge support for The Wired Hatter's Banshee
+- Fixed minor RGB issues on The Wired Hatter's Banshee
+- Fixed IR RX issues on The Wired Hatter's Banshee
+- Fixed the display hanging when going to save NFC tags on The Wired Hatter's Banshee
+- Fixed a crash on the TEmbedC1101 when processing large IR signals
+- Only save changed setting to NVS when changing in settings menu to prevent hangs/crashes
+- Reduced the wait time when switching RGB modes
+- Refactored and optimised Rainbow and Knight Rider RGB modes
+- Added 12-bit color precision pipeline for RGB
+- Show highlight border on all displays regardless of touch support
+- Added more status display logs
+- Fixed clock icon not recoloring based on theme
+- Added external RTC support for saving time sync on The Wired Hatter's Banshee
+- Fixed country and timezone not properly persisting
+- Added new compass app for The Wired Hatter's Banshee
+- Added support for a new upcoming board
+- Fixed airtag rgb pulsing in silent rgb mode
+- Updated main menu item order
+- Added BadUSB support for The Wired Hatter's Banshee
+- Remove dependencies.lock file - @tototo31
+- Adjust battery voltage threshold to allow for very dead batteries - @tototo31
 
 ## Revival v1.9.2
 

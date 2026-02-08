@@ -310,6 +310,9 @@ static const char *dual_comm_wifi_options[] = {
     "Connect to WiFi",
     "Connect to saved WiFi",
     "Reset AP Credentials",
+    "Set AP Credentials",
+    "Enable AP",
+    "Disable AP",
     NULL
 };
 
@@ -402,7 +405,7 @@ typedef struct {
     int current_value;
 } SettingsItem;
 
-static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth"};
+static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
 static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
 static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
 static const char *bool_options[] = {"Off", "On"};
@@ -417,42 +420,14 @@ static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
 static const char *action_options[] = {"Press OK"};
 
-enum {
-    SETTING_RGB_MODE = 0,
-    SETTING_DISPLAY_TIMEOUT,
-    SETTING_MENU_THEME,
-    SETTING_THIRD_CONTROL,
-    SETTING_TERMINAL_COLOR,
-    SETTING_INVERT_COLORS,
-    SETTING_WEB_AUTH,
-    SETTING_WEBUI_AP_ONLY,
-    SETTING_AP_ENABLED,
-    SETTING_POWER_SAVE,
-    SETTING_MAX_BRIGHTNESS,
-    SETTING_NEOPIXEL_BRIGHTNESS,
-    SETTING_ZEBRA_MENUS,
-    SETTING_NAV_BUTTONS,
-    SETTING_MENU_LAYOUT,
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-    SETTING_IDLE_ANIMATION,
-    SETTING_IDLE_ANIM_DELAY,
-#endif
-#ifdef CONFIG_USE_ENCODER
-    SETTING_ENCODER_INVERT,
-#endif
-#if CONFIG_IDF_TARGET_ESP32S3
-    SETTING_USB_HOST_MODE,
-#endif
-    SETTING_RUN_SETUP_WIZARD,
-    SETTING_I2C_SCAN,
-};
+// SettingsType enum moved to settings_manager.h
 
 static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
 static SettingsItem settings_items[] = {
-    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 3, 0},
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 13, 0},
     {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1},
     {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
     {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
@@ -680,6 +655,7 @@ static void ssh_scan_kb_cb(const char *text);
 static void dual_comm_connect_kb_cb(const char *text);
 static void dual_comm_send_kb_cb(const char *text);
 static void dual_comm_wifi_connect_kb_cb(const char *text);
+static void dual_comm_apcred_kb_cb(const char *text);
 static void dual_comm_karma_custom_ssids_cb(const char *text);
 static void dual_comm_dns_lookup_kb_cb(const char *text);
 static void dual_comm_traceroute_kb_cb(const char *text);
@@ -1052,6 +1028,7 @@ static void apply_setting_change(int setting_index, int new_value) {
     switch (item->setting_type) {
         case SETTING_RGB_MODE:
             settings_set_rgb_mode(&G_Settings, new_value);
+            settings_restart_rgb_effect(); // Immediate visual update
             display_manager_update_status_bar_color();
             break;
         case SETTING_DISPLAY_TIMEOUT: {
@@ -1117,6 +1094,11 @@ static void apply_setting_change(int setting_index, int new_value) {
         #endif
         case SETTING_NEOPIXEL_BRIGHTNESS:
             settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)((new_value + 1) * 10));
+            if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_NORMAL || 
+                settings_get_rgb_mode(&G_Settings) == RGB_MODE_STEALTH) {
+            } 
+            // Restarting the effect applies the new brightness
+            settings_restart_rgb_effect(); 
             break;
         #ifdef CONFIG_USE_ENCODER
         case SETTING_ENCODER_INVERT:
@@ -1156,7 +1138,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             io_manager_scan_i2c();
             return;
     }
-    settings_save(&G_Settings);
+    
+    // Save only the changed setting to NVS (Granular Save)
+    settings_persist_setting((SettingsType)item->setting_type);
 }
 
 static void change_current_row(bool increment)
@@ -1870,6 +1854,23 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend apcred -r");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Set AP Credentials") == 0) {
+            keyboard_view_set_submit_callback(dual_comm_apcred_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("\"SSID\" \"PASSWORD\"");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Enable AP") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend apenable on");
+            view_switched = true;
+        } else if (strcmp(Selected_Option, "Disable AP") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend apenable off");
             view_switched = true;
         } else if (strcmp(Selected_Option, "Start Deauth Attack") == 0) {
             terminal_set_return_view(&options_menu_view);
@@ -3412,9 +3413,25 @@ static void dual_comm_karma_custom_ssids_cb(const char *input) {
     keyboard_view_set_submit_callback(NULL);
 }
 
+static void dual_comm_apcred_kb_cb(const char *text) {
+    if (!text || strlen(text) == 0) {
+        error_popup_create("Please enter AP credentials");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "commsend apcred %s", text);
+
+    terminal_set_return_view(&options_menu_view);
+    terminal_set_dualcomm_filter(true);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
 static void dual_comm_dns_lookup_kb_cb(const char *text) {
     if (!text || strlen(text) == 0) {
-        error_popup_create("Please enter a hostname");
+        error_popup_create("Enter a hostname (e.g., example.com)");
         return;
     }
 
