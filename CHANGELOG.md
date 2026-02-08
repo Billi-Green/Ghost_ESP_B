@@ -3,6 +3,7 @@
 ## Changed since last prerelease
 - Remove dependencies.lock file - @tototo31
 - Adjust battery voltage threshold to allow for very dead batteries - @tototo31
+- Replace "Ghost ESP Ready ;)" startup message with GHOST ESP banner art and ghostcli prompt
 - Added BadUSB VSENSE support for The Wired Hatter's Banshee
 - Added BadUSB support to:
   - Cardputer
