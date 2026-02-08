@@ -2,6 +2,7 @@
 
 ## Changed since last prerelease
 - Remove dependencies.lock file - @tototo31
+- Adjust battery voltage threshold to allow for very dead batteries - @tototo31
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board
@@ -35,6 +36,7 @@
 - Updated main menu item order
 - Added BadUSB support for The Wired Hatter's Banshee
 - Remove dependencies.lock file - @tototo31
+- Adjust battery voltage threshold to allow for very dead batteries - @tototo31
 
 ## Revival v1.9.2
 
