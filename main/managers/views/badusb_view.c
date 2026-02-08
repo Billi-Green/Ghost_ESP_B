@@ -299,7 +299,9 @@ static void badusb_cancel_cb(lv_event_t *e) {
     if (remote) {
         simulateCommand("commsend badusb stop");
     } else {
+#ifdef CONFIG_HAS_BADUSB
         badusb_manager_stop();
+#endif
     }
     if (vsense_poll_timer) {
         lv_timer_del(vsense_poll_timer);
