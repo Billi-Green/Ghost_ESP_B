@@ -1,7 +1,9 @@
 # Ghost ESP Changelog
 
 ## Changed since last prerelease
+- Refactored NFC and IR menus to use shared options_view helpers for consistent styling
 - Added ADXL345 accelerometer app to The Wired Hatter's Banshee
+- Downgrade GPS errors to ESP_LOGW to prevent printing in terminal
 
 ## Revival v1.9.3
 - Added support for the Febris Pro board
