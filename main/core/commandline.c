@@ -7338,6 +7338,31 @@ void handle_badusb_cmd(int argc, char **argv) {
         uint8_t layout = (uint8_t)strtol(argv[2], NULL, 0);
         settings_set_badusb_kb_layout(&G_Settings, layout);
         glog("BadUSB: Layout set to %u\n", layout);
+    } else if (strcmp(sub, "status") == 0) {
+        // Status update from peer - forward to view
+#ifdef CONFIG_WITH_SCREEN
+        if (argc >= 3) {
+            extern void badusb_view_update_status(const char *status);
+            badusb_view_update_status(argv[2]);
+        }
+#endif
+    } else {
+        glog("Unknown badusb subcommand: %s\n", sub);
+    }
+#elif defined(CONFIG_HAS_BADUSB_REMOTE)
+    if (argc < 2) {
+        glog("BadUSB remote: no subcommand\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp(sub, "status") == 0) {
+        // Status update from S3 peer - forward to display view
+#ifdef CONFIG_WITH_SCREEN
+        if (argc >= 3) {
+            extern void badusb_view_update_status(const char *status);
+            badusb_view_update_status(argv[2]);
+        }
+#endif
     } else {
         glog("Unknown badusb subcommand: %s\n", sub);
     }

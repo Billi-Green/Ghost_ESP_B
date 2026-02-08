@@ -305,6 +305,16 @@ menu "Ghost ESP Options"
                 keyboard and execute DuckyScript v1.0 payloads from the SD card.
                 Only available on ESP32-S3 which has USB OTG support.
 
+        config BADUSB_VSENSE_PIN
+            int "BadUSB VBUS Sense Pin (use -1 to disable)"
+            default -1
+            depends on HAS_BADUSB
+            help
+                GPIO pin to sense USB VBUS voltage. When set to a valid pin (>= 0),
+                BadUSB will wait for VBUS to go HIGH before executing a script,
+                allowing you to plug in the device after selecting a payload.
+                Set to -1 to disable and execute immediately.
+
         config HAS_BADUSB_REMOTE
             bool "Enable BadUSB Remote (display menu only, routes via GhostLink)"
             default n

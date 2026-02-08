@@ -126,6 +126,10 @@ static lv_obj_t *back_btn = NULL;
 #define SCROLL_BTN_PADDING 5
 
 static lv_obj_t *badusb_running_popup = NULL;
+static lv_obj_t *badusb_popup_title_lbl = NULL;
+static lv_obj_t *badusb_popup_body_lbl = NULL;
+static lv_timer_t *vsense_poll_timer = NULL;
+static char vsense_pending_script[MAX_SCRIPT_NAME];
 
 static bool badusb_is_remote(void) {
 #ifdef CONFIG_HAS_BADUSB_REMOTE
@@ -270,18 +274,26 @@ static void badusb_cancel_cb(lv_event_t *e) {
     (void)e;
     bool remote = badusb_is_remote();
     simulateCommand(remote ? "commsend badusb stop" : "badusb stop");
+    if (vsense_poll_timer) {
+        lv_timer_del(vsense_poll_timer);
+        vsense_poll_timer = NULL;
+    }
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         lv_obj_del(badusb_running_popup);
         badusb_running_popup = NULL;
     }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
     error_popup_create("BadUSB stopped");
 }
 
-static void show_running_popup(const char *script_name) {
+static void show_running_popup_ex(const char *script_name, bool waiting_for_usb) {
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         lv_obj_del(badusb_running_popup);
         badusb_running_popup = NULL;
     }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
 
     int popup_w = LV_HOR_RES - 30;
     int popup_h;
@@ -303,14 +315,23 @@ static void show_running_popup(const char *script_name) {
     const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
     const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 
-    popup_create_title_label(badusb_running_popup, "BadUSB Running", title_font, 12);
+    const char *title = waiting_for_usb ? "Waiting for USB..." : "BadUSB Running";
+    badusb_popup_title_lbl = popup_create_title_label(badusb_running_popup, title, title_font, 12);
 
     char body[80];
-    snprintf(body, sizeof(body), "Script: %s", script_name);
-    lv_obj_t *body_lbl = popup_create_body_label(badusb_running_popup, body, popup_w - 20, true, body_font, 40);
-    if (body_lbl) {
-        lv_obj_set_style_text_align(body_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    if (waiting_for_usb) {
+        snprintf(body, sizeof(body), "Plug in to execute\n%s", script_name);
+    } else {
+        snprintf(body, sizeof(body), "Script: %s", script_name);
     }
+    badusb_popup_body_lbl = popup_create_body_label(badusb_running_popup, body, popup_w - 20, true, body_font, 40);
+    if (badusb_popup_body_lbl) {
+        lv_obj_set_style_text_align(badusb_popup_body_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    }
+
+    // Store script name for status updates
+    strncpy(vsense_pending_script, script_name, MAX_SCRIPT_NAME - 1);
+    vsense_pending_script[MAX_SCRIPT_NAME - 1] = '\0';
 
     int btn_w = 90, btn_h = 30;
     if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 28; }
@@ -328,6 +349,67 @@ static void show_running_popup(const char *script_name) {
             lv_obj_set_style_text_color(cancel_label, text_color, LV_PART_MAIN | LV_STATE_FOCUSED);
             lv_obj_set_style_text_color(cancel_label, text_color, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
         }
+    }
+}
+
+static void show_running_popup(const char *script_name) {
+    show_running_popup_ex(script_name, false);
+}
+
+// Update the popup in-place when receiving status from S3 (remote) or VSENSE poll (standalone)
+static void badusb_popup_set_running(void) {
+    if (!badusb_running_popup || !lv_obj_is_valid(badusb_running_popup)) return;
+    if (badusb_popup_title_lbl && lv_obj_is_valid(badusb_popup_title_lbl)) {
+        lv_label_set_text(badusb_popup_title_lbl, "BadUSB Running");
+    }
+    if (badusb_popup_body_lbl && lv_obj_is_valid(badusb_popup_body_lbl)) {
+        char body[80];
+        snprintf(body, sizeof(body), "Script: %s", vsense_pending_script);
+        lv_label_set_text(badusb_popup_body_lbl, body);
+    }
+}
+
+static void badusb_popup_set_done(void) {
+    if (vsense_poll_timer) {
+        lv_timer_del(vsense_poll_timer);
+        vsense_poll_timer = NULL;
+    }
+    if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
+        lv_obj_del(badusb_running_popup);
+        badusb_running_popup = NULL;
+    }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
+}
+
+#ifdef CONFIG_HAS_BADUSB
+// LVGL timer callback for standalone VSENSE polling
+static void vsense_poll_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+    if (badusb_vsense_connected()) {
+        // VBUS detected - update popup to "Running"
+        badusb_popup_set_running();
+        // Stop polling
+        if (vsense_poll_timer) {
+            lv_timer_del(vsense_poll_timer);
+            vsense_poll_timer = NULL;
+        }
+    }
+}
+#endif
+
+// Public: called from command handler when S3 sends "badusb status <state>" to C5
+void badusb_view_update_status(const char *status) {
+    if (!status) return;
+    if (strcmp(status, "waiting") == 0) {
+        // S3 is waiting for VBUS - show waiting popup if not already showing
+        if (!badusb_running_popup || !lv_obj_is_valid(badusb_running_popup)) {
+            show_running_popup_ex(vsense_pending_script, true);
+        }
+    } else if (strcmp(status, "running") == 0) {
+        badusb_popup_set_running();
+    } else if (strcmp(status, "done") == 0) {
+        badusb_popup_set_done();
     }
 }
 
@@ -508,14 +590,32 @@ static void handle_option(const char *option) {
 #ifdef CONFIG_HAS_BADUSB_REMOTE
             badusb_send_settings_to_peer();
             if (badusb_send_script_to_peer(option)) {
-                show_running_popup(option);
+                // Show "Waiting for USB..." - the S3 will send status updates
+                // to transition to "Running" and "Done" via GhostLink
+                show_running_popup_ex(option, true);
             }
 #endif
         } else {
+#ifdef CONFIG_HAS_BADUSB
+            bool has_vsense = badusb_has_vsense();
+            bool already_connected = has_vsense && badusb_vsense_connected();
+
+            // Issue the command - exec task will wait for VBUS if needed
             char cmd[128];
             snprintf(cmd, sizeof(cmd), "badusb run %s", option);
             simulateCommand(cmd);
-            show_running_popup(option);
+
+            if (has_vsense && !already_connected) {
+                // Show waiting popup and start polling timer
+                show_running_popup_ex(option, true);
+                if (vsense_poll_timer) {
+                    lv_timer_del(vsense_poll_timer);
+                }
+                vsense_poll_timer = lv_timer_create(vsense_poll_timer_cb, 100, NULL);
+            } else {
+                show_running_popup(option);
+            }
+#endif
         }
     }
 }
@@ -595,10 +695,16 @@ void badusb_view_create(void) {
 }
 
 void badusb_view_destroy(void) {
+    if (vsense_poll_timer) {
+        lv_timer_del(vsense_poll_timer);
+        vsense_poll_timer = NULL;
+    }
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         lv_obj_del(badusb_running_popup);
         badusb_running_popup = NULL;
     }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
 
     if (g_ov) {
         options_view_destroy(g_ov);
