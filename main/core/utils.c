@@ -3,10 +3,43 @@
 #include "freertos/task.h"
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/dirent.h>
 
 #define TAG "Utils"
+
+const char *wrap_message(const char *message, const char *file, int line) {
+  int size =
+      snprintf(NULL, 0, "File: %s, Line: %d, Message: %s", file, line, message);
+
+  char *buffer = (char *)malloc(size + 1);
+
+  if (buffer != NULL) {
+    snprintf(buffer, size + 1, "File: %s, Line: %d, Message: %s", file, line,
+             message);
+  }
+  return buffer;
+}
+
+void scale_grb_by_brightness(uint8_t *g, uint8_t *r, uint8_t *b, float brightness) {
+  *g = (uint8_t)(*g * brightness);
+  *r = (uint8_t)(*r * brightness);
+  *b = (uint8_t)(*b * brightness);
+}
+
+void scale_grb_by_neopixel_brightness(uint8_t *g, uint8_t *r, uint8_t *b, float base_brightness,
+                                      uint8_t max_brightness_percent) {
+  *g = (uint8_t)(*g * base_brightness);
+  *r = (uint8_t)(*r * base_brightness);
+  *b = (uint8_t)(*b * base_brightness);
+
+  float neopixel_scale = max_brightness_percent / 100.0f;
+  *g = (uint8_t)(*g * neopixel_scale);
+  *r = (uint8_t)(*r * neopixel_scale);
+  *b = (uint8_t)(*b * neopixel_scale);
+}
 
 bool is_in_task_context(void) {
   if (xTaskGetCurrentTaskHandle() != NULL) {
@@ -55,7 +88,6 @@ int get_query_param_value(const char *query, const char *key, char *value,
 }
 
 int get_next_pcap_file_index(const char *base_name) {
-  char path[128];
   int max_index = -1;
 
   DIR *dir = opendir("/mnt/ghostesp/pcaps");
@@ -84,7 +116,6 @@ int get_next_pcap_file_index(const char *base_name) {
 }
 
 int get_next_csv_file_index(const char *base_name) {
-  char path[128];
   int max_index = -1;
 
   DIR *dir = opendir("/mnt/ghostesp/gps");
@@ -151,4 +182,40 @@ void log_heap_status(const char *tag, const char *event) {
            (unsigned)free8,
            (unsigned)largest8,
            (unsigned)free32);
+}
+
+void format_mac_address(const uint8_t *mac, char *buffer, size_t buffer_len, bool uppercase) {
+  if (mac == NULL || buffer == NULL || buffer_len < 18) {
+    return;
+  }
+
+  const char *format = uppercase ? "%02X:%02X:%02X:%02X:%02X:%02X"
+                                 : "%02x:%02x:%02x:%02x:%02x:%02x";
+  snprintf(buffer,
+           buffer_len,
+           format,
+           mac[0],
+           mac[1],
+           mac[2],
+           mac[3],
+           mac[4],
+           mac[5]);
+}
+
+bool str_copy_upper(char *dst, size_t dst_size, const char *src) {
+  if (dst == NULL || src == NULL || dst_size == 0) {
+    return false;
+  }
+
+  size_t src_len = strlen(src);
+  if (src_len + 1 > dst_size) {
+    dst[0] = '\0';
+    return false;
+  }
+
+  for (size_t i = 0; i < src_len; i++) {
+    dst[i] = (char)toupper((unsigned char)src[i]);
+  }
+  dst[src_len] = '\0';
+  return true;
 }

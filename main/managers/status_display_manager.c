@@ -10,6 +10,7 @@
 #include <stdio.h>
 
 #include "driver/i2c.h"
+#include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -122,13 +123,13 @@ static esp_err_t status_display_send(uint8_t control, const uint8_t *data, size_
     bool locked = i2c_bus_lock(STATUS_DISPLAY_I2C_PORT, 120);
     if (!locked) {
         i2c_cmd_link_delete(cmd);
-        ESP_LOGW(TAG, "status display i2c busy, skipping ctrl=0x%02X", control);
+        ESP_LOGD(TAG, "status display i2c busy, skipping ctrl=0x%02X", control);
         return ESP_ERR_TIMEOUT;
     }
     esp_err_t err = i2c_master_cmd_begin(STATUS_DISPLAY_I2C_PORT, cmd, pdMS_TO_TICKS(100));
     i2c_bus_unlock(STATUS_DISPLAY_I2C_PORT);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2c write failed ctrl=0x%02X len=%u err=%s", control, (unsigned)len, esp_err_to_name(err));
+        ESP_LOGD(TAG, "i2c write failed ctrl=0x%02X len=%u err=%s", control, (unsigned)len, esp_err_to_name(err));
     } else {
         ESP_LOGD(TAG, "i2c write ok ctrl=0x%02X len=%u", control, (unsigned)len);
     }
@@ -348,6 +349,28 @@ void status_display_init(void) {
 
     ESP_LOGI(TAG, "initializing status display on I2C port %d addr 0x%02X", STATUS_DISPLAY_I2C_PORT, STATUS_DISPLAY_ADDR);
 
+    // Configure power control pin (Vext) if specified
+#if CONFIG_STATUS_DISPLAY_POWER_PIN >= 0
+    gpio_reset_pin(CONFIG_STATUS_DISPLAY_POWER_PIN);
+    gpio_set_direction(CONFIG_STATUS_DISPLAY_POWER_PIN, GPIO_MODE_OUTPUT);
+    // Set LOW to power on display (Heltec V3 Vext pin behavior)
+    gpio_set_level(CONFIG_STATUS_DISPLAY_POWER_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(10)); // Small delay for power to stabilize
+    ESP_LOGI(TAG, "power control pin %d set LOW (display ON)", CONFIG_STATUS_DISPLAY_POWER_PIN);
+#endif
+
+    // Configure reset pin if specified
+#if CONFIG_STATUS_DISPLAY_RESET_PIN >= 0
+    gpio_reset_pin(CONFIG_STATUS_DISPLAY_RESET_PIN);
+    gpio_set_direction(CONFIG_STATUS_DISPLAY_RESET_PIN, GPIO_MODE_OUTPUT);
+    // Reset sequence: LOW -> delay -> HIGH
+    gpio_set_level(CONFIG_STATUS_DISPLAY_RESET_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(CONFIG_STATUS_DISPLAY_RESET_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    ESP_LOGI(TAG, "reset pin %d sequence completed", CONFIG_STATUS_DISPLAY_RESET_PIN);
+#endif
+
     if (!s_mutex) {
         s_mutex = xSemaphoreCreateMutex();
         if (!s_mutex) {
@@ -528,6 +551,11 @@ void status_display_deinit(void) {
     if (s_i2c_configured) {
         s_i2c_configured = false;
     }
+#if CONFIG_STATUS_DISPLAY_POWER_PIN >= 0
+    // Turn off display by setting power pin HIGH
+    gpio_set_level(CONFIG_STATUS_DISPLAY_POWER_PIN, 1);
+    ESP_LOGI(TAG, "power control pin %d set HIGH (display OFF)", CONFIG_STATUS_DISPLAY_POWER_PIN);
+#endif
 }
 
 #else

@@ -11,7 +11,17 @@
 typedef enum {
     RGB_MODE_NORMAL = 0,
     RGB_MODE_RAINBOW = 1,
-    RGB_MODE_STEALTH = 2
+    RGB_MODE_STEALTH = 2,
+    RGB_MODE_KNIGHT_RIDER = 3,
+    RGB_MODE_RED = 4,
+    RGB_MODE_GREEN = 5,
+    RGB_MODE_BLUE = 6,
+    RGB_MODE_YELLOW = 7,
+    RGB_MODE_PURPLE = 8,
+    RGB_MODE_CYAN = 9,
+    RGB_MODE_ORANGE = 10,
+    RGB_MODE_WHITE = 11,
+    RGB_MODE_PINK = 12
     // ...add more modes here if needed
 } RGBMode;
 
@@ -29,6 +39,55 @@ typedef enum {
   IDLE_ANIM_BOUNCING_TEXT = 8
 } IdleAnimation;
 #endif
+
+// Keyboard layout for BadUSB
+typedef enum {
+    KB_LAYOUT_US = 0,
+    KB_LAYOUT_DE,
+    KB_LAYOUT_FR,
+    KB_LAYOUT_UK,
+    KB_LAYOUT_ES,
+    KB_LAYOUT_COUNT
+} KeyboardLayout;
+
+typedef enum {
+    SETTING_RGB_MODE = 0,
+    SETTING_DISPLAY_TIMEOUT,
+    SETTING_MENU_THEME,
+    SETTING_THIRD_CONTROL,
+    SETTING_TERMINAL_COLOR,
+    SETTING_INVERT_COLORS,
+    SETTING_WEB_AUTH,
+    SETTING_WEBUI_AP_ONLY,
+    SETTING_AP_ENABLED,
+    SETTING_POWER_SAVE,
+    SETTING_MAX_BRIGHTNESS,
+    SETTING_NEOPIXEL_BRIGHTNESS,
+    SETTING_ZEBRA_MENUS,
+    SETTING_NAV_BUTTONS,
+    SETTING_MENU_LAYOUT,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    SETTING_IDLE_ANIMATION,
+    SETTING_IDLE_ANIM_DELAY,
+#endif
+#ifdef CONFIG_USE_ENCODER
+    SETTING_ENCODER_INVERT,
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+    SETTING_USB_HOST_MODE,
+#endif
+    SETTING_RUN_SETUP_WIZARD,
+    SETTING_I2C_SCAN,
+    SETTING_SETUP_COMPLETE,
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+    SETTING_BADUSB_VID,
+    SETTING_BADUSB_PID,
+    SETTING_BADUSB_MANUFACTURER,
+    SETTING_BADUSB_PRODUCT,
+    SETTING_BADUSB_RANDOMIZE,
+    SETTING_BADUSB_KB_LAYOUT,
+#endif
+} SettingsType;
 
 
 typedef enum {
@@ -106,6 +165,7 @@ typedef struct {
   uint8_t menu_theme;  // Theme for main menu colors (0=Default)
   bool invert_colors; // Invert screen colors
   bool web_auth_enabled;
+  bool webui_restrict_to_ap;
   
   int32_t esp_comm_tx_pin; // ESP communication TX pin
   int32_t esp_comm_rx_pin; // ESP communication RX pin
@@ -129,6 +189,16 @@ typedef struct {
   uint32_t status_idle_timeout_ms; // delay before starting idle animation
 #endif
   bool encoder_invert_direction;
+  bool setup_complete;
+  uint8_t wifi_country;
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+  uint16_t badusb_vid;
+  uint16_t badusb_pid;
+  char badusb_manufacturer[33];
+  char badusb_product[33];
+  bool badusb_randomize;
+  uint8_t badusb_kb_layout;
+#endif
 } FSettings;
 
 // Function declarations
@@ -137,6 +207,10 @@ void settings_deinit(void);
 void settings_load(FSettings *settings);
 void settings_save(const FSettings *settings);
 void settings_set_defaults(FSettings *settings);
+
+// Optimized Persistence and Task Management
+void settings_persist_setting(SettingsType setting);
+void settings_restart_rgb_effect(void);
 
 // Getters and Setters for core settings
 void settings_set_rgb_mode(FSettings *settings, RGBMode mode);
@@ -239,6 +313,8 @@ bool settings_get_invert_colors(const FSettings *settings);
 // Getter and Setter for web auth
 void settings_set_web_auth_enabled(FSettings *settings, bool enabled);
 bool settings_get_web_auth_enabled(const FSettings *settings);
+void settings_set_webui_restrict_to_ap(FSettings *settings, bool enabled);
+bool settings_get_webui_restrict_to_ap(const FSettings *settings);
 
 void settings_set_esp_comm_pins(FSettings *settings, int32_t tx_pin, int32_t rx_pin);
 void settings_get_esp_comm_pins(const FSettings *settings, int32_t *tx_pin, int32_t *rx_pin);
@@ -285,12 +361,35 @@ uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
 void settings_set_encoder_invert_direction(FSettings *settings, bool enabled);
 bool settings_get_encoder_invert_direction(const FSettings *settings);
 
+// Setup wizard settings
+void settings_set_setup_complete(FSettings *settings, bool complete);
+bool settings_get_setup_complete(const FSettings *settings);
+void settings_set_wifi_country(FSettings *settings, uint8_t country);
+uint8_t settings_get_wifi_country(const FSettings *settings);
+
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 // Status display idle animation accessors
 void settings_set_status_idle_animation(FSettings *settings, IdleAnimation anim);
 IdleAnimation settings_get_status_idle_animation(const FSettings *settings);
 void settings_set_status_idle_timeout_ms(FSettings *settings, uint32_t timeout_ms);
 uint32_t settings_get_status_idle_timeout_ms(const FSettings *settings);
+#endif
+
+// BadUSB emulation settings
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+void settings_set_badusb_vid(FSettings *settings, uint16_t vid);
+uint16_t settings_get_badusb_vid(const FSettings *settings);
+void settings_set_badusb_pid(FSettings *settings, uint16_t pid);
+uint16_t settings_get_badusb_pid(const FSettings *settings);
+void settings_set_badusb_manufacturer(FSettings *settings, const char *name);
+const char *settings_get_badusb_manufacturer(const FSettings *settings);
+void settings_set_badusb_product(FSettings *settings, const char *name);
+const char *settings_get_badusb_product(const FSettings *settings);
+void settings_set_badusb_randomize(FSettings *settings, bool enabled);
+bool settings_get_badusb_randomize(const FSettings *settings);
+void settings_set_badusb_kb_layout(FSettings *settings, uint8_t layout);
+uint8_t settings_get_badusb_kb_layout(const FSettings *settings);
+void settings_reset_badusb_defaults(FSettings *settings);
 #endif
 
 extern FSettings G_Settings;

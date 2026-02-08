@@ -43,7 +43,7 @@ file(GLOB_RECURSE axs15231b_sources "${CMAKE_SOURCE_DIR}/components/axs15231b/*.
 list(APPEND app_sources ${axs15231b_sources} ${image_sources})
 
 
-set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp_timer io_manager usb)
+set(required_components bt nvs_flash driver esp_http_server mdns json esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp_timer io_manager usb esp_eth)
 
 # Optionally add extra include directories
 set(extra_includes "")
@@ -88,17 +88,32 @@ if("${IDF_TARGET}" STREQUAL "esp32c5" OR "${IDF_TARGET}" STREQUAL "esp32c6")
     list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/zigbee_manager.c")
 endif()
 
+# Add Ethernet component when Ethernet is enabled
+if(CONFIG_WITH_ETHERNET)
+    list(APPEND required_components esp_eth)
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/ethernet_manager.c")
+endif()
+
+# Add BadUSB manager and HID script parser when BadUSB is enabled (S3 only)
+if(CONFIG_HAS_BADUSB)
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/badusb_manager.c")
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/hid_script_parser.c")
+    list(APPEND required_components esp_tinyusb)
+endif()
+
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
                            REQUIRES ${required_components}
-                           EMBED_TXTFILES "mf_classic_dict.nfc")
+                           EMBED_TXTFILES "mf_classic_dict.nfc"
+                           EMBED_FILES "core/ouis.json")
     # Signal to C code that the dictionary is embedded so it can reference linker symbols safely
     target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_MFC_DICT_EMBEDDED=1)
 else()
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
-                           REQUIRES ${required_components})
+                           REQUIRES ${required_components}
+                           EMBED_FILES "core/ouis.json")
 endif()
 
 # add compile definition for esp32s2 target to maintain legacy guards (needs COMPONENT_LIB)

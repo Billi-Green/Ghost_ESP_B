@@ -2,6 +2,8 @@
 
 #include "managers/wifi_manager.h"
 #include "core/callbacks.h"  // For callback function declarations
+#include "core/ouis.h"       // For OUI vendor lookup
+#include "vendor/pcap.h"     // For pcap_is_wireshark_mode()
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h" // Add include for heap stats
@@ -19,6 +21,7 @@
 #include "managers/ap_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
+#include "managers/status_display_manager.h"
 #include "nvs_flash.h"
 #include <core/dns_server.h>
 #include <ctype.h>
@@ -55,6 +58,15 @@
 // Defines for Station Scan Channel Hopping
 #define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
 #define SCANSTA_MAX_WIFI_CHANNEL 13         // Scan channels 1-13
+
+// Defines for Wireshark channel validation
+#if !defined(MAX_WIFI_CHANNEL)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define MAX_WIFI_CHANNEL 165
+#else
+#define MAX_WIFI_CHANNEL 13
+#endif
+#endif
 
 #define MAX_DEVICES 255
 #define CHUNK_SIZE 4096
@@ -336,6 +348,14 @@ static esp_timer_handle_t scansta_channel_hop_timer = NULL;
 static uint8_t scansta_current_channel = 1;
 static bool scansta_hopping_active = false;
 
+// Wireshark Capture Channel Hopping Globals
+static esp_timer_handle_t wireshark_channel_hop_timer = NULL;
+static size_t wireshark_channel_index = 0;
+static bool wireshark_hopping_active = false;
+#define WIRESHARK_CHANNEL_HOP_INTERVAL_MS 150
+static uint8_t wireshark_channels[50];
+static size_t wireshark_channels_count = 0;
+
 // Dynamic list of channels discovered during AP scan (used for station scanning)
 static int *scansta_channel_list = NULL;
 static size_t scansta_channel_list_len = 0;
@@ -378,17 +398,6 @@ struct DeviceInfo {
     struct eth_addr mac;
 };
 
-typedef enum {
-    COMPANY_DLINK,
-    COMPANY_NETGEAR,
-    COMPANY_BELKIN,
-    COMPANY_TPLINK,
-    COMPANY_LINKSYS,
-    COMPANY_ASUS,
-    COMPANY_ACTIONTEC,
-    COMPANY_UNKNOWN
-} ECompany;
-
 void wifi_manager_set_manual_disconnect(bool disconnect) {
     manual_disconnect = disconnect;
 }
@@ -406,7 +415,7 @@ void configure_hidden_ap() {
     // Get the current AP configuration
     esp_err_t err = esp_wifi_get_config(WIFI_IF_AP, &wifi_config);
     if (err != ESP_OK) {
-        printf("Failed to get Wi-Fi config: %s\n", esp_err_to_name(err));
+        glog("Failed to get Wi-Fi config: %s\n", esp_err_to_name(err));
         return;
     }
 
@@ -418,9 +427,9 @@ void configure_hidden_ap() {
     // Apply the updated configuration
     err = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
     if (err != ESP_OK) {
-        printf("Failed to set Wi-Fi config: %s\n", esp_err_to_name(err));
+        glog("Failed to set Wi-Fi config: %s\n", esp_err_to_name(err));
     } else {
-        printf("Wi-Fi AP SSID hidden.\n");
+        glog("Wi-Fi AP SSID hidden.\n");
     }
 }
 
@@ -429,19 +438,19 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_AP_START:
-            printf("WiFi_manager: AP started\n");
+            glog("WiFi_manager: AP started\n");
             break;
         case WIFI_EVENT_AP_STOP:
-            printf("WiFi_manager: AP stopped\n");
+            glog("WiFi_manager: AP stopped\n");
             break;
         case WIFI_EVENT_AP_STACONNECTED:
             ap_connection_count++;
-            printf("WiFi_manager: Station connected to AP\n");
+            glog("WiFi_manager: Station connected to AP\n");
             esp_wifi_set_ps(WIFI_PS_NONE);
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
             if (ap_connection_count > 0) ap_connection_count--;
-            printf("WiFi_manager: Station disconnected from AP\n");
+            glog("WiFi_manager: Station disconnected from AP\n");
             login_done = false;
             if (ap_connection_count == 0) {
                 esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
@@ -449,15 +458,15 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             }
             break;
         case WIFI_EVENT_STA_START:
-            printf("STA started\n");
+            glog("STA started\n");
             // No auto-connect here - handled by wifi_event_handler
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
             if (manual_disconnect) {
-                printf("Disconnected from Wi-Fi (manual)\n");
+                glog("Disconnected from Wi-Fi (manual)\n");
                 manual_disconnect = false; // Reset flag
             } else {
-                printf("Disconnected from Wi-Fi\n");
+                glog("Disconnected from Wi-Fi\n");
                 // No auto-reconnection
             }
             break;
@@ -469,7 +478,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
         case IP_EVENT_STA_GOT_IP:
             break;
         case IP_EVENT_AP_STAIPASSIGNED:
-            printf("Assigned IP to STA\n");
+            glog("Assigned IP to STA\n");
             ap_sta_has_ip = true;
             break;
         default:
@@ -493,8 +502,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             
             const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
             if (saved_ssid && strlen(saved_ssid) > 0) {
-                printf("Attempting boot-time connection to saved network: %s\n", saved_ssid);
-                TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
+                glog("Attempting boot-time connection to saved network: %s\n", saved_ssid);
                 esp_wifi_connect();
             }
         }
@@ -521,19 +529,19 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         
         // Clean, single-line disconnect logging
         if (manual_disconnect) {
-            printf("WiFi disconnected manually\n");
-            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected manually\n");
+            glog("WiFi disconnected manually\n");
+            status_display_show_status("WiFi Disconnected");
             manual_disconnect = false; // Reset the flag
         } else {
-            printf("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
-            TERMINAL_VIEW_ADD_TEXT("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
+            glog("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
+            status_display_show_status("WiFi Lost");
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        printf("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
-        TERMINAL_VIEW_ADD_TEXT("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
+        glog("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
+        status_display_show_status("WiFi Connected");
         
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -575,81 +583,11 @@ static void add_station_ap_pair(const uint8_t *station_mac, const uint8_t *ap_bs
         // Print formatted MAC addresses
 
     } else {
-        printf("Station list full\nCan't add more stations.\n");
-        TERMINAL_VIEW_ADD_TEXT("Station list full\nCan't add more stations.\n");
+        glog("Station list full\nCan't add more stations.\n");
     }
 }
 
-typedef struct {
-    const char* oui;
-    ECompany company;
-} oui_company_map_t;
-
-static const oui_company_map_t OUI_MAP[] = {
-    {"00055D", COMPANY_DLINK}, {"000D88", COMPANY_DLINK}, {"000F3D", COMPANY_DLINK}, {"001195", COMPANY_DLINK}, {"001346", COMPANY_DLINK}, {"0015E9", COMPANY_DLINK}, {"00179A", COMPANY_DLINK}, {"00195B", COMPANY_DLINK}, {"001B11", COMPANY_DLINK},
-    {"001CF0", COMPANY_DLINK}, {"001E58", COMPANY_DLINK}, {"002191", COMPANY_DLINK}, {"0022B0", COMPANY_DLINK}, {"002401", COMPANY_DLINK}, {"00265A", COMPANY_DLINK}, {"00AD24", COMPANY_DLINK}, {"04BAD6", COMPANY_DLINK}, {"085A11", COMPANY_DLINK},
-    {"0C0E76", COMPANY_DLINK}, {"0CB6D2", COMPANY_DLINK}, {"1062EB", COMPANY_DLINK}, {"10BEF5", COMPANY_DLINK}, {"14D64D", COMPANY_DLINK}, {"180F76", COMPANY_DLINK}, {"1C5F2B", COMPANY_DLINK}, {"1C7EE5", COMPANY_DLINK}, {"1CAFF7", COMPANY_DLINK},
-    {"1CBDB9", COMPANY_DLINK}, {"283B82", COMPANY_DLINK}, {"302303", COMPANY_DLINK}, {"340804", COMPANY_DLINK}, {"340A33", COMPANY_DLINK}, {"3C1E04", COMPANY_DLINK}, {"3C3332", COMPANY_DLINK}, {"4086CB", COMPANY_DLINK}, {"409BCD", COMPANY_DLINK},
-    {"54B80A", COMPANY_DLINK}, {"5CD998", COMPANY_DLINK}, {"60634C", COMPANY_DLINK}, {"642943", COMPANY_DLINK}, {"6C198F", COMPANY_DLINK}, {"6C7220", COMPANY_DLINK}, {"744401", COMPANY_DLINK}, {"74DADA", COMPANY_DLINK}, {"78321B", COMPANY_DLINK},
-    {"78542E", COMPANY_DLINK}, {"7898E8", COMPANY_DLINK}, {"802689", COMPANY_DLINK}, {"84C9B2", COMPANY_DLINK}, {"8876B9", COMPANY_DLINK}, {"908D78", COMPANY_DLINK}, {"9094E4", COMPANY_DLINK}, {"9CD643", COMPANY_DLINK}, {"A06391", COMPANY_DLINK},
-    {"A0AB1B", COMPANY_DLINK}, {"A42A95", COMPANY_DLINK}, {"A8637D", COMPANY_DLINK}, {"ACF1DF", COMPANY_DLINK}, {"B437D8", COMPANY_DLINK}, {"B8A386", COMPANY_DLINK}, {"BC0F9A", COMPANY_DLINK}, {"BC2228", COMPANY_DLINK}, {"BCF685", COMPANY_DLINK},
-    {"C0A0BB", COMPANY_DLINK}, {"C4A81D", COMPANY_DLINK}, {"C4E90A", COMPANY_DLINK}, {"C8787D", COMPANY_DLINK}, {"C8BE19", COMPANY_DLINK}, {"C8D3A3", COMPANY_DLINK}, {"CCB255", COMPANY_DLINK}, {"D8FEE3", COMPANY_DLINK}, {"DCEAE7", COMPANY_DLINK},
-    {"E01CFC", COMPANY_DLINK}, {"E46F13", COMPANY_DLINK}, {"E8CC18", COMPANY_DLINK}, {"EC2280", COMPANY_DLINK}, {"ECADE0", COMPANY_DLINK}, {"F07D68", COMPANY_DLINK}, {"F0B4D2", COMPANY_DLINK}, {"F48CEB", COMPANY_DLINK}, {"F8E903", COMPANY_DLINK},
-    {"FC7516", COMPANY_DLINK},
-    {"00095B", COMPANY_NETGEAR}, {"000FB5", COMPANY_NETGEAR}, {"00146C", COMPANY_NETGEAR}, {"001B2F", COMPANY_NETGEAR}, {"001E2A", COMPANY_NETGEAR}, {"001F33", COMPANY_NETGEAR}, {"00223F", COMPANY_NETGEAR}, {"00224B", COMPANY_NETGEAR}, {"0026F2", COMPANY_NETGEAR},
-    {"008EF2", COMPANY_NETGEAR}, {"08028E", COMPANY_NETGEAR}, {"0836C9", COMPANY_NETGEAR}, {"08BD43", COMPANY_NETGEAR}, {"100C6B", COMPANY_NETGEAR}, {"100D7F", COMPANY_NETGEAR}, {"10DA43", COMPANY_NETGEAR}, {"1459C0", COMPANY_NETGEAR},  {"204E7F", COMPANY_NETGEAR},
-    {"20E52A", COMPANY_NETGEAR}, {"288088", COMPANY_NETGEAR}, {"289401", COMPANY_NETGEAR}, {"28C68E", COMPANY_NETGEAR}, {"2C3033", COMPANY_NETGEAR}, {"2CB05D", COMPANY_NETGEAR}, {"30469A", COMPANY_NETGEAR}, {"3498B5", COMPANY_NETGEAR},  {"3894ED", COMPANY_NETGEAR},
-    {"3C3786", COMPANY_NETGEAR}, {"405D82", COMPANY_NETGEAR}, {"44A56E", COMPANY_NETGEAR}, {"4C60DE", COMPANY_NETGEAR}, {"504A6E", COMPANY_NETGEAR}, {"506A03", COMPANY_NETGEAR}, {"54077D", COMPANY_NETGEAR}, {"58EF68", COMPANY_NETGEAR},  {"6038E0", COMPANY_NETGEAR},
-    {"6CB0CE", COMPANY_NETGEAR}, {"6CCDD6", COMPANY_NETGEAR}, {"744401", COMPANY_NETGEAR}, {"803773", COMPANY_NETGEAR}, {"841B5E", COMPANY_NETGEAR}, {"8C3BAD", COMPANY_NETGEAR}, {"941865", COMPANY_NETGEAR}, {"9C3DCF", COMPANY_NETGEAR},  {"9CC9EB", COMPANY_NETGEAR},
-    {"9CD36D", COMPANY_NETGEAR}, {"A00460", COMPANY_NETGEAR}, {"A021B7", COMPANY_NETGEAR}, {"A040A0", COMPANY_NETGEAR}, {"A42B8C", COMPANY_NETGEAR}, {"B03956", COMPANY_NETGEAR}, {"B07FB9", COMPANY_NETGEAR}, {"B0B98A", COMPANY_NETGEAR},  {"BCA511", COMPANY_NETGEAR},
-    {"C03F0E", COMPANY_NETGEAR}, {"C0FFD4", COMPANY_NETGEAR}, {"C40415", COMPANY_NETGEAR}, {"C43DC7", COMPANY_NETGEAR}, {"C89E43", COMPANY_NETGEAR}, {"CC40D0", COMPANY_NETGEAR}, {"DCEF09", COMPANY_NETGEAR}, {"E0469A", COMPANY_NETGEAR},  {"E046EE", COMPANY_NETGEAR},
-    {"E091F5", COMPANY_NETGEAR}, {"E4F4C6", COMPANY_NETGEAR}, {"E8FCAF", COMPANY_NETGEAR}, {"F87394", COMPANY_NETGEAR},
-    {"001150", COMPANY_BELKIN}, {"00173F", COMPANY_BELKIN}, {"0030BD", COMPANY_BELKIN}, {"08BD43", COMPANY_BELKIN}, {"149182", COMPANY_BELKIN}, {"24F5A2", COMPANY_BELKIN},
-    {"302303", COMPANY_BELKIN}, {"80691A", COMPANY_BELKIN}, {"94103E", COMPANY_BELKIN}, {"944452", COMPANY_BELKIN}, {"B4750E", COMPANY_BELKIN}, {"C05627", COMPANY_BELKIN},
-    {"C4411E", COMPANY_BELKIN}, {"D8EC5E", COMPANY_BELKIN}, {"E89F80", COMPANY_BELKIN}, {"EC1A59", COMPANY_BELKIN}, {"EC2280", COMPANY_BELKIN},
-    {"003192", COMPANY_TPLINK}, {"005F67", COMPANY_TPLINK}, {"1027F5", COMPANY_TPLINK}, {"14EBB6", COMPANY_TPLINK}, {"1C61B4", COMPANY_TPLINK}, {"203626", COMPANY_TPLINK}, {"2887BA", COMPANY_TPLINK},
-    {"30DE4B", COMPANY_TPLINK}, {"3460F9", COMPANY_TPLINK}, {"3C52A1", COMPANY_TPLINK}, {"40ED00", COMPANY_TPLINK}, {"482254", COMPANY_TPLINK}, {"5091E3", COMPANY_TPLINK}, {"54AF97", COMPANY_TPLINK},
-    {"5C628B", COMPANY_TPLINK}, {"5CA6E6", COMPANY_TPLINK}, {"5CE931", COMPANY_TPLINK}, {"60A4B7", COMPANY_TPLINK}, {"687FF0", COMPANY_TPLINK}, {"6C5AB0", COMPANY_TPLINK}, {"788CB5", COMPANY_TPLINK},
-    {"7CC2C6", COMPANY_TPLINK}, {"9C5322", COMPANY_TPLINK}, {"9CA2F4", COMPANY_TPLINK}, {"A842A1", COMPANY_TPLINK}, {"AC15A2", COMPANY_TPLINK}, {"B0A7B9", COMPANY_TPLINK}, {"B4B024", COMPANY_TPLINK},
-    {"C006C3", COMPANY_TPLINK}, {"CC68B6", COMPANY_TPLINK}, {"E848B8", COMPANY_TPLINK}, {"F0A731", COMPANY_TPLINK},
-    {"00045A", COMPANY_LINKSYS}, {"000625", COMPANY_LINKSYS}, {"000C41", COMPANY_LINKSYS}, {"000E08", COMPANY_LINKSYS}, {"000F66", COMPANY_LINKSYS}, {"001217", COMPANY_LINKSYS}, {"001310", COMPANY_LINKSYS}, {"0014BF", COMPANY_LINKSYS}, {"0016B6", COMPANY_LINKSYS},
-    {"001839", COMPANY_LINKSYS}, {"0018F8", COMPANY_LINKSYS}, {"001A70", COMPANY_LINKSYS}, {"001C10", COMPANY_LINKSYS}, {"001D7E", COMPANY_LINKSYS}, {"001EE5", COMPANY_LINKSYS}, {"002129", COMPANY_LINKSYS}, {"00226B", COMPANY_LINKSYS}, {"002369", COMPANY_LINKSYS},
-    {"00259C", COMPANY_LINKSYS}, {"002354", COMPANY_LINKSYS}, {"0024B2", COMPANY_LINKSYS}, {"003192", COMPANY_LINKSYS}, {"005F67", COMPANY_LINKSYS}, {"1027F5", COMPANY_LINKSYS}, {"14EBB6", COMPANY_LINKSYS}, {"1C61B4", COMPANY_LINKSYS}, {"203626", COMPANY_LINKSYS},
-    {"2887BA", COMPANY_LINKSYS}, {"305A3A", COMPANY_LINKSYS}, {"2CFDA1", COMPANY_LINKSYS}, {"302303", COMPANY_LINKSYS}, {"30469A", COMPANY_LINKSYS}, {"40ED00", COMPANY_LINKSYS}, {"482254", COMPANY_LINKSYS}, {"5091E3", COMPANY_LINKSYS}, {"54AF97", COMPANY_LINKSYS},
-    {"5CA2F4", COMPANY_LINKSYS}, {"5CA6E6", COMPANY_LINKSYS}, {"5CE931", COMPANY_LINKSYS}, {"60A4B7", COMPANY_LINKSYS}, {"687FF0", COMPANY_LINKSYS}, {"6C5AB0", COMPANY_LINKSYS}, {"788CB5", COMPANY_LINKSYS}, {"7CC2C6", COMPANY_LINKSYS}, {"9C5322", COMPANY_LINKSYS},
-    {"9CA2F4", COMPANY_LINKSYS}, {"A842A1", COMPANY_LINKSYS}, {"AC15A2", COMPANY_LINKSYS}, {"B0A7B9", COMPANY_LINKSYS}, {"B4B024", COMPANY_LINKSYS}, {"C006C3", COMPANY_LINKSYS}, {"CC68B6", COMPANY_LINKSYS}, {"E848B8", COMPANY_LINKSYS}, {"F0A731", COMPANY_LINKSYS},
-    {"000C6E", COMPANY_ASUS}, {"000EA6", COMPANY_ASUS}, {"00112F", COMPANY_ASUS}, {"0011D8", COMPANY_ASUS}, {"0013D4", COMPANY_ASUS}, {"0015F2", COMPANY_ASUS}, {"001731", COMPANY_ASUS}, {"0018F3", COMPANY_ASUS}, {"001A92", COMPANY_ASUS},
-    {"001BFC", COMPANY_ASUS}, {"001D60", COMPANY_ASUS}, {"001E8C", COMPANY_ASUS}, {"001FC6", COMPANY_ASUS}, {"002215", COMPANY_ASUS}, {"002354", COMPANY_ASUS}, {"00248C", COMPANY_ASUS}, {"002618", COMPANY_ASUS}, {"00E018", COMPANY_ASUS},
-    {"04421A", COMPANY_ASUS}, {"049226", COMPANY_ASUS}, {"04D4C4", COMPANY_ASUS}, {"04D9F5", COMPANY_ASUS}, {"08606E", COMPANY_ASUS}, {"086266", COMPANY_ASUS}, {"08BFB8", COMPANY_ASUS}, {"0C9D92", COMPANY_ASUS}, {"107B44", COMPANY_ASUS},
-    {"107C61", COMPANY_ASUS}, {"10BF48", COMPANY_ASUS}, {"10C37B", COMPANY_ASUS}, {"14DAE9", COMPANY_ASUS}, {"14DDA9", COMPANY_ASUS}, {"1831BF", COMPANY_ASUS}, {"1C872C", COMPANY_ASUS}, {"1CB72C", COMPANY_ASUS}, {"20CF30", COMPANY_ASUS},
-    {"244BFE", COMPANY_ASUS}, {"2C4D54", COMPANY_ASUS}, {"2C56DC", COMPANY_ASUS}, {"2CFDA1", COMPANY_ASUS}, {"305A3A", COMPANY_ASUS}, {"3085A9", COMPANY_ASUS}, {"3497F6", COMPANY_ASUS}, {"382C4A", COMPANY_ASUS}, {"38D547", COMPANY_ASUS},
-    {"3C7C3F", COMPANY_ASUS}, {"40167E", COMPANY_ASUS}, {"40B076", COMPANY_ASUS}, {"485B39", COMPANY_ASUS}, {"4CEDFB", COMPANY_ASUS}, {"50465D", COMPANY_ASUS}, {"50EBF6", COMPANY_ASUS}, {"5404A6", COMPANY_ASUS}, {"54A050", COMPANY_ASUS},
-    {"581122", COMPANY_ASUS}, {"6045CB", COMPANY_ASUS}, {"60A44C", COMPANY_ASUS}, {"60CF84", COMPANY_ASUS}, {"704D7B", COMPANY_ASUS}, {"708BCD", COMPANY_ASUS}, {"74D02B", COMPANY_ASUS}, {"7824AF", COMPANY_ASUS}, {"7C10C9", COMPANY_ASUS},
-    {"88D7F6", COMPANY_ASUS}, {"90E6BA", COMPANY_ASUS}, {"9C5C8E", COMPANY_ASUS}, {"A036BC", COMPANY_ASUS}, {"A85E45", COMPANY_ASUS}, {"AC220B", COMPANY_ASUS}, {"AC9E17", COMPANY_ASUS}, {"B06EBF", COMPANY_ASUS}, {"BCAEC5", COMPANY_ASUS},
-    {"BCEE7B", COMPANY_ASUS}, {"C86000", COMPANY_ASUS}, {"C87F54", COMPANY_ASUS}, {"CC28AA", COMPANY_ASUS}, {"D017C2", COMPANY_ASUS}, {"D45D64", COMPANY_ASUS}, {"D850E6", COMPANY_ASUS}, {"E03F49", COMPANY_ASUS}, {"E0CB4E", COMPANY_ASUS},
-    {"E89C25", COMPANY_ASUS}, {"F02F74", COMPANY_ASUS}, {"F07959", COMPANY_ASUS}, {"F46D04", COMPANY_ASUS}, {"F832E4", COMPANY_ASUS}, {"FC3497", COMPANY_ASUS}, {"FCC233", COMPANY_ASUS},
-    {"000FB3", COMPANY_ACTIONTEC}, {"001505", COMPANY_ACTIONTEC}, {"001801", COMPANY_ACTIONTEC}, {"001EA7", COMPANY_ACTIONTEC}, {"001F90", COMPANY_ACTIONTEC}, {"0020E0", COMPANY_ACTIONTEC},
-    {"00247B", COMPANY_ACTIONTEC}, {"002662", COMPANY_ACTIONTEC}, {"0026B8", COMPANY_ACTIONTEC}, {"007F28", COMPANY_ACTIONTEC}, {"0C6127", COMPANY_ACTIONTEC}, {"105F06", COMPANY_ACTIONTEC},
-    {"10785B", COMPANY_ACTIONTEC}, {"109FA9", COMPANY_ACTIONTEC}, {"181BEB", COMPANY_ACTIONTEC}, {"207600", COMPANY_ACTIONTEC}, {"408B07", COMPANY_ACTIONTEC}, {"4C8B30", COMPANY_ACTIONTEC},
-    {"5C35FC", COMPANY_ACTIONTEC}, {"7058A4", COMPANY_ACTIONTEC}, {"70F196", COMPANY_ACTIONTEC}, {"70F220", COMPANY_ACTIONTEC}, {"84E892", COMPANY_ACTIONTEC}, {"941C56", COMPANY_ACTIONTEC},
-    {"9C1E95", COMPANY_ACTIONTEC}, {"A0A3E2", COMPANY_ACTIONTEC}, {"A83944", COMPANY_ACTIONTEC}, {"E86FF2", COMPANY_ACTIONTEC}, {"F8E4FB", COMPANY_ACTIONTEC}, {"FC2BB2", COMPANY_ACTIONTEC},
-};
-
-// Function to match the BSSID to a company based on OUI
-ECompany match_bssid_to_company(const uint8_t *bssid) {
-    char oui[7];
-    snprintf(oui, sizeof(oui), "%02X%02X%02X", bssid[0], bssid[1], bssid[2]);
-
-    for (size_t i = 0; i < sizeof(OUI_MAP) / sizeof(OUI_MAP[0]); i++) {
-        if (strcmp(oui, OUI_MAP[i].oui) == 0) {
-            return OUI_MAP[i].company;
-        }
-    }
-
-    return COMPANY_UNKNOWN;
-}
-
-// Helper macro to check for broadcast/multicast addresses
+// helper macro to check for broadcast/multicast addresses
 #define IS_BROADCAST_OR_MULTICAST(addr) (((addr)[0] & 0x01) || (memcmp((addr), "\xff\xff\xff\xff\xff\xff", 6) == 0))
 
 // Function to check if a station MAC already exists in the list
@@ -768,11 +706,35 @@ void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type)
              strcpy(ssid_str, "(Hidden)");
         }
 
-        glog(
-            "New Station: %02X:%02X:%02X:%02X:%02X:%02X -> Associated AP: %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
-            station_mac[0], station_mac[1], station_mac[2], station_mac[3], station_mac[4], station_mac[5],
-            ssid_str, // Use SSID here
-            ap_bssid[0], ap_bssid[1], ap_bssid[2], ap_bssid[3], ap_bssid[4], ap_bssid[5]); // Use original ap_bssid
+        char station_mac_str[18];
+        snprintf(station_mac_str, sizeof(station_mac_str),
+                 "%02X:%02X:%02X:%02X:%02X:%02X",
+                 station_mac[0], station_mac[1], station_mac[2],
+                 station_mac[3], station_mac[4], station_mac[5]);
+
+        char ap_mac_str[18];
+        snprintf(ap_mac_str, sizeof(ap_mac_str),
+                 "%02X:%02X:%02X:%02X:%02X:%02X",
+                 ap_bssid[0], ap_bssid[1], ap_bssid[2],
+                 ap_bssid[3], ap_bssid[4], ap_bssid[5]);
+
+        char station_vendor[64] = "Unknown";
+        (void)ouis_lookup_vendor(station_mac_str, station_vendor, sizeof(station_vendor));
+
+        char ap_vendor[64] = "Unknown";
+        (void)ouis_lookup_vendor(ap_mac_str, ap_vendor, sizeof(ap_vendor));
+
+        glog("New Station:\n"
+             "     STA: %s\n"
+             "     STA Vendor: %s\n"
+             "     Associated AP: %s\n"
+             "     AP BSSID: %s\n"
+             "     AP Vendor: %s\n",
+             station_mac_str,
+             station_vendor,
+             ssid_str,
+             ap_mac_str,
+             ap_vendor);
 
         // Add the station and the *specific AP BSSID* it was seen with to the list
         add_station_ap_pair(station_mac, ap_bssid);
@@ -1537,17 +1499,33 @@ void wifi_manager_clear_scan_results(void) {
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    // for EAPOL, stop ALL hopping and lock to selected AP channel
     if (callback == wifi_eapol_scan_callback) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-        ESP_ERROR_CHECK(esp_wifi_start());
-        // lock to selected AP channel if available
-        extern wifi_ap_record_t selected_ap; // declared elsewhere in this module
-        if (selected_ap.ssid[0] != '\0' && selected_ap.primary > 0) {
-            esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+        // Stop any existing channel hopping first
+        if (scansta_hopping_active) {
+            stop_scansta_channel_hopping();
         }
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_start());
+        if (live_ap_hopping_active) {
+            stop_live_ap_channel_hopping();
+        }
+        if (wireshark_hopping_active) {
+            wifi_manager_stop_wireshark_channel_hop();
+        }
+        
+        extern wifi_ap_record_t selected_ap;
+        if (selected_ap.ssid[0] != '\0' && selected_ap.primary > 0) {
+            esp_err_t ch_err = esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+            if (ch_err == ESP_OK) {
+                printf("EAPOL: locked to channel %d (hopping stopped)\n", selected_ap.primary);
+            } else {
+                printf("EAPOL: failed to set channel %d: %s\n", selected_ap.primary, esp_err_to_name(ch_err));
+            }
+        } else {
+            printf("EAPOL: no AP selected, channel hopping disabled\n");
+        }
     }
 
     // Set hardware-level promiscuous filter based on callback type
@@ -1561,8 +1539,8 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
         // Management frames only
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
     } else if (callback == wifi_eapol_scan_callback) {
-        // capture both mgmt and data for eapol + context frames
-        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
+        // capture mgmt, data, and ctrl for full handshake context
+        filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA | WIFI_PROMIS_FILTER_MASK_CTRL;
     } else if (callback == sae_monitor_callback) {
         // Management frames for SAE
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
@@ -1575,6 +1553,15 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     ESP_LOGI("WIFI_MANAGER", "Set hardware filter mask: 0x%02" PRIx32, filter.filter_mask);
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+
+    // Verify current channel for EAPOL
+    if (callback == wifi_eapol_scan_callback) {
+        uint8_t ch_primary = 0; wifi_second_chan_t ch_second = WIFI_SECOND_CHAN_NONE;
+        esp_err_t get_err = esp_wifi_get_channel(&ch_primary, &ch_second);
+        if (get_err == ESP_OK) {
+            printf("EAPOL: current channel verified as %u\n", ch_primary);
+        }
+    }
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(callback));
 
@@ -1594,14 +1581,16 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     else if (filter.filter_mask == WIFI_PROMIS_FILTER_MASK_DATA) filter_desc = "data";
     else if (filter.filter_mask == (WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA)) filter_desc = "mgmt+data";
 
-    printf("WiFi capture started.\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi capture started.\n");
-    printf("Type: %s\n", cap_desc);
-    TERMINAL_VIEW_ADD_TEXT("Type: %s\n", cap_desc);
-    printf("Channel: %u\n", (unsigned)ch_primary);
-    TERMINAL_VIEW_ADD_TEXT("Channel: %u\n", (unsigned)ch_primary);
-    printf("Filter: %s\n", filter_desc);
-    TERMINAL_VIEW_ADD_TEXT("Filter: %s\n", filter_desc);
+    if (!pcap_is_wireshark_mode()) {
+        printf("WiFi capture started.\n");
+        TERMINAL_VIEW_ADD_TEXT("WiFi capture started.\n");
+        printf("Type: %s\n", cap_desc);
+        TERMINAL_VIEW_ADD_TEXT("Type: %s\n", cap_desc);
+        printf("Channel: %u\n", (unsigned)ch_primary);
+        TERMINAL_VIEW_ADD_TEXT("Channel: %u\n", (unsigned)ch_primary);
+        printf("Filter: %s\n", filter_desc);
+        TERMINAL_VIEW_ADD_TEXT("Filter: %s\n", filter_desc);
+    }
     status_display_show_status("Monitor Started");
 }
 void wifi_manager_stop_monitor_mode() {
@@ -1617,13 +1606,17 @@ void wifi_manager_stop_monitor_mode() {
     }
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
-    printf("WiFi monitor stopped.\n");
-    TERMINAL_VIEW_ADD_TEXT("WiFi monitor stopped.\n");
     status_display_show_status("Monitor Stopped");
 
-    // Stop the station scan channel hopping timer if it's active
+    // Stop ALL channel hopping timers
     if (scansta_hopping_active) {
         stop_scansta_channel_hopping();
+    }
+    if (live_ap_hopping_active) {
+        stop_live_ap_channel_hopping();
+    }
+    if (wireshark_hopping_active) {
+        wifi_manager_stop_wireshark_channel_hop();
     }
 
     // NOTE: Stopping the PineAP timer (channel_hop_timer) is handled by stop_pineap_detection() in callbacks.c
@@ -1660,26 +1653,28 @@ void wifi_manager_init(void) {
 
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    // configure country based on chip: full dual-band on C5, 2.4GHz only on others
+    // configure country based on saved setting
+    static const struct { const char *code; uint8_t schan; uint8_t nchan; } country_table[] = {
+        {"US", 1, 11}, {"GB", 1, 13}, {"JP", 1, 14}, {"AU", 1, 13}, {"CN", 1, 13}, {"01", 1, 11}
+    };
+    uint8_t country_idx = settings_get_wifi_country(&G_Settings);
+    if (country_idx >= sizeof(country_table)/sizeof(country_table[0])) country_idx = 5; // default to World Safe
+    
 #if CONFIG_IDF_TARGET_ESP32C5
-    wifi_country_t current_country;
-    esp_err_t get_country_err = esp_wifi_get_country(&current_country);
-    if (get_country_err == ESP_OK) {
-        ESP_LOGI(TAG, "ESP32-C5 Current Country: CC='%s', schan=%d, nchan=%d, policy=%s",
-                 current_country.cc, current_country.schan, current_country.nchan,
-                 current_country.policy == WIFI_COUNTRY_POLICY_AUTO ? "AUTO" : "MANUAL");
+    esp_err_t country_err = esp_wifi_set_country_code(country_table[country_idx].code, true);
+    if (country_err == ESP_OK) {
+        ESP_LOGI(TAG, "ESP32-C5 Country set to: %s", country_table[country_idx].code);
     } else {
-        ESP_LOGW(TAG, "ESP32-C5: Failed to get current country config: %s", esp_err_to_name(get_country_err));
+        ESP_LOGW(TAG, "ESP32-C5: Failed to set country: %s", esp_err_to_name(country_err));
     }
 #else
-    // enable all 2.4 GHz channels (1-14) manually for other targets
     wifi_country_t country_to_set = {
-        .cc     = "JP",
-        .schan  = 1,
-        .nchan  = 14,
+        .cc     = {country_table[country_idx].code[0], country_table[country_idx].code[1], 0},
+        .schan  = country_table[country_idx].schan,
+        .nchan  = country_table[country_idx].nchan,
         .policy = WIFI_COUNTRY_POLICY_MANUAL
     };
-    ESP_LOGI(TAG, "Setting country for non-C5 target: CC='%s', schan=%d, nchan=%d, policy=MANUAL",
+    ESP_LOGI(TAG, "Setting country: CC='%s', schan=%d, nchan=%d",
              country_to_set.cc, country_to_set.schan, country_to_set.nchan);
     ESP_ERROR_CHECK(esp_wifi_set_country(&country_to_set));
 #endif
@@ -1769,6 +1764,7 @@ void wifi_manager_configure_sta_from_settings(void) {
 
 void wifi_manager_start_scan() {
     log_heap_status(TAG, "scan_start_pre");
+    status_display_show_status("WiFi Scanning...");
     // Free any previous selections or scan buffers before starting a fresh scan
     if (selected_aps != NULL) {
         free(selected_aps);
@@ -1813,14 +1809,20 @@ void wifi_manager_start_scan() {
         .bssid = NULL,
         .channel = 0,
         .show_hidden = true,
-        .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}};
+#ifdef CONFIG_IDF_TARGET_ESP32C5
+        // Target ~5s total sweep on C5
+        .scan_time = {.active.min = 250, .active.max = 300, .passive = 300}
+#else
+        .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}
+#endif
+    };
 
     rgb_manager_set_color(&rgb_manager, -1, 50, 255, 50, false);
 
     printf("WiFi Scan started\n");
     #ifdef CONFIG_IDF_TARGET_ESP32C5
-        printf("Please wait 10 Seconds...\n");
-        TERMINAL_VIEW_ADD_TEXT("Please wait 10 Seconds...\n");
+        printf("Please wait ~5 Seconds...\n");
+        TERMINAL_VIEW_ADD_TEXT("Please wait ~5 Seconds...\n");
     #else
         printf("Please wait 5 Seconds...\n");
         TERMINAL_VIEW_ADD_TEXT("Please wait 5 Seconds...\n");
@@ -1838,6 +1840,15 @@ void wifi_manager_start_scan() {
     log_heap_status(TAG, "scan_start_post");
     esp_wifi_stop();
     ap_manager_start_services();
+
+    // Restore saved static color if no RGB effect is running.
+    if (rgb_effect_task_handle == NULL) {
+        RGBMode mode = settings_get_rgb_mode(&G_Settings);
+        if (mode != RGB_MODE_RAINBOW && mode != RGB_MODE_STEALTH &&
+            mode != RGB_MODE_KNIGHT_RIDER && mode != RGB_MODE_NORMAL) {
+            rgb_manager_apply_static_from_settings();
+        }
+    }
 }
 
 // Stop scanning for networks
@@ -1923,9 +1934,10 @@ void wifi_manager_list_stations() {
         printf("No stations found.\n");
         return;
     }
-    printf("Listing all stations and their associated APs:\n");
+    printf("--- Station List (%d entries) ---\n", station_count);
+    TERMINAL_VIEW_ADD_TEXT("--- Station List (%d entries) ---\n", station_count);
     for (int i = 0; i < station_count; i++) {
-        char sanitized_ssid[33]; // Buffer for sanitized SSID
+        char sanitized_ssid[33];
         bool found = false;
         for (int j = 0; j < ap_count; j++) {
             if (memcmp(scanned_aps[j].bssid, station_ap_list[i].ap_bssid, 6) == 0) {
@@ -1936,17 +1948,39 @@ void wifi_manager_list_stations() {
         }
         if (!found) {
             strcpy(sanitized_ssid, "(Unknown AP)");
-         }
-        printf("[%d] Station MAC: %02X:%02X:%02X:%02X:%02X:%02X, AP SSID: %s, AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-               i,
-               station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1], station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3], station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5],
-               sanitized_ssid,
-               station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1], station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3], station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
-        TERMINAL_VIEW_ADD_TEXT("[%d] Station MAC: %02X:%02X:%02X:%02X:%02X:%02X, AP SSID: %s, AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                               i,
-                               station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1], station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3], station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5],
-                               sanitized_ssid,
-                               station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1], station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3], station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
+        }
+
+        char sta_mac_str[18];
+        snprintf(sta_mac_str, sizeof(sta_mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1],
+                 station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3],
+                 station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5]);
+        char sta_vendor[64] = "Unknown";
+        if (!ouis_lookup_vendor(sta_mac_str, sta_vendor, sizeof(sta_vendor))) {
+            strncpy(sta_vendor, "Unknown", sizeof(sta_vendor) - 1);
+        }
+
+        char ap_mac_str[18];
+        snprintf(ap_mac_str, sizeof(ap_mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1],
+                 station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3],
+                 station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
+        char ap_vendor[64] = "Unknown";
+        if (!ouis_lookup_vendor(ap_mac_str, ap_vendor, sizeof(ap_vendor))) {
+            strncpy(ap_vendor, "Unknown", sizeof(ap_vendor) - 1);
+        }
+
+        printf("[%d] Station MAC: %s\n", i, sta_mac_str);
+        printf("     Station Vendor: %s\n", sta_vendor);
+        printf("     Associated AP: %s\n", sanitized_ssid);
+        printf("     AP BSSID: %s\n", ap_mac_str);
+        printf("     AP Vendor: %s\n", ap_vendor);
+
+        TERMINAL_VIEW_ADD_TEXT("[%d] Station MAC: %s\n", i, sta_mac_str);
+        TERMINAL_VIEW_ADD_TEXT("     Station Vendor: %s\n", sta_vendor);
+        TERMINAL_VIEW_ADD_TEXT("     Associated AP: %s\n", sanitized_ssid);
+        TERMINAL_VIEW_ADD_TEXT("     AP BSSID: %s\n", ap_mac_str);
+        TERMINAL_VIEW_ADD_TEXT("     AP Vendor: %s\n", ap_vendor);
     }
 }
 
@@ -2104,53 +2138,64 @@ void wifi_deauth_task(void *param) {
     }
 
     uint32_t last_log = 0;
+    uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     
     while (1) {
         if (selected_ap_count > 0 && selected_aps != NULL) {
-            for (int sel_idx = 0; sel_idx < selected_ap_count; sel_idx++) {
-                for (int i = 0; i < ap_count; i++) {
-                    if (memcmp(ap_info[i].bssid, selected_aps[sel_idx].bssid, 6) == 0) {
-                        int ch = ap_info[i].primary;
-                        uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-                        wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
-                        for (int j = 0; j < station_count; j++) {
-                            if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
-                                wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+            for (int ch = 1; ch <= 14; ch++) {
+                bool channel_set = false;
+                for (int sel_idx = 0; sel_idx < selected_ap_count; sel_idx++) {
+                    for (int i = 0; i < ap_count; i++) {
+                        if (memcmp(ap_info[i].bssid, selected_aps[sel_idx].bssid, 6) == 0 && ap_info[i].primary == ch) {
+                            if (!channel_set) {
+                                esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+                                channel_set = true;
+                            }
+                            wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
+                            for (int j = 0; j < station_count; j++) {
+                                if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
+                                    wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                                }
                             }
                         }
-                        vTaskDelay(pdMS_TO_TICKS(50));
                     }
                 }
+                if (channel_set) vTaskDelay(pdMS_TO_TICKS(10));
             }
         } else if (strlen((const char *)selected_ap.ssid) > 0) {
             for (int i = 0; i < ap_count; i++) {
                 if (strcmp((char *)ap_info[i].ssid, (char *)selected_ap.ssid) == 0) {
                     int ch = ap_info[i].primary;
-                    uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
                     wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
                     for (int j = 0; j < station_count; j++) {
                         if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
                             wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
                         }
                     }
-                    vTaskDelay(pdMS_TO_TICKS(50));
+                    vTaskDelay(pdMS_TO_TICKS(20));
                 }
             }
         } else {
-            // Global deauth on each AP's channel
-            for (int i = 0; i < ap_count; i++) {
-                int ch = ap_info[i].primary;
-                    uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-                wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
-                    for (int j = 0; j < station_count; j++) {
-                        if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
-                        wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+            for (int ch = 1; ch <= 14; ch++) {
+                bool channel_set = false;
+                for (int i = 0; i < ap_count; i++) {
+                    if (ap_info[i].primary == ch) {
+                        if (!channel_set) {
+                            esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+                            channel_set = true;
+                        }
+                        wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
+                        for (int j = 0; j < station_count; j++) {
+                            if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
+                                wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                            }
                         }
                     }
-                    vTaskDelay(pdMS_TO_TICKS(50));
+                }
+                if (channel_set) vTaskDelay(pdMS_TO_TICKS(10));
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(50));
         uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         if (now - last_log >= 5000) {
             TERMINAL_VIEW_ADD_TEXT("%" PRIu32 " packets/sec\n", deauth_packets_sent/5);
@@ -3824,7 +3869,7 @@ void wifi_manager_stop_deauth() {
             vTaskDelete(deauth_task_handle);
             deauth_task_handle = NULL;
             beacon_task_running = false;
-            rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
+            rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
             wifi_manager_stop_monitor_mode();
             esp_wifi_stop();
             ap_manager_start_services();
@@ -3838,18 +3883,13 @@ static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_re
     char sanitized_ssid[33];
     sanitize_ssid_and_check_hidden((uint8_t *)rec->ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
-    ECompany company = match_bssid_to_company(rec->bssid);
-    const char *company_str = "Unknown";
-    switch (company) {
-        case COMPANY_DLINK: company_str = "DLink"; break;
-        case COMPANY_NETGEAR: company_str = "Netgear"; break;
-        case COMPANY_BELKIN: company_str = "Belkin"; break;
-        case COMPANY_TPLINK: company_str = "TPLink"; break;
-        case COMPANY_LINKSYS: company_str = "Linksys"; break;
-        case COMPANY_ASUS: company_str = "ASUS"; break;
-        case COMPANY_ACTIONTEC: company_str = "Actiontec"; break;
-        default: company_str = "Unknown"; break;
-    }
+    // lookup vendor using oui database
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             rec->bssid[0], rec->bssid[1], rec->bssid[2],
+             rec->bssid[3], rec->bssid[4], rec->bssid[5]);
+    char vendor[64] = {0};
+    bool has_vendor = ouis_lookup_vendor(mac_str, vendor, sizeof(vendor));
 
     printf("[%u] SSID: %s,\n"
            "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
@@ -3902,9 +3942,9 @@ static void wifi_manager_print_ap_entry_formatted(uint16_t idx, const wifi_ap_re
     }
 #endif
 
-    if (strcmp(company_str, "Unknown") != 0) {
-        printf("     Company: %s\n", company_str);
-        TERMINAL_VIEW_ADD_TEXT("     Company: %s\n", company_str);
+    if (has_vendor) {
+        printf("     Vendor: %s\n", vendor);
+        TERMINAL_VIEW_ADD_TEXT("     Vendor: %s\n", vendor);
     }
 }
 void wifi_manager_print_scan_results_with_oui() {
@@ -3914,42 +3954,18 @@ void wifi_manager_print_scan_results_with_oui() {
     }
 
     uint16_t limit = ap_count;
-    if (limit > 50) {
-        limit = 50;
-    }
 
     for (uint16_t i = 0; i < limit; i++) {
         char sanitized_ssid[33];
         sanitize_ssid_and_check_hidden(scanned_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
-        ECompany company = match_bssid_to_company(scanned_aps[i].bssid);
-        const char *company_str = "Unknown";
-        switch (company) {
-        case COMPANY_DLINK:
-            company_str = "DLink";
-            break;
-        case COMPANY_NETGEAR:
-            company_str = "Netgear";
-            break;
-        case COMPANY_BELKIN:
-            company_str = "Belkin";
-            break;
-        case COMPANY_TPLINK:
-            company_str = "TPLink";
-            break;
-        case COMPANY_LINKSYS:
-            company_str = "Linksys";
-            break;
-        case COMPANY_ASUS:
-            company_str = "ASUS";
-            break;
-        case COMPANY_ACTIONTEC:
-            company_str = "Actiontec";
-            break;
-        default:
-            company_str = "Unknown";
-            break;
-        }
+        // lookup vendor using oui database
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 scanned_aps[i].bssid[0], scanned_aps[i].bssid[1], scanned_aps[i].bssid[2],
+                 scanned_aps[i].bssid[3], scanned_aps[i].bssid[4], scanned_aps[i].bssid[5]);
+        char vendor[64] = {0};
+        bool has_vendor = ouis_lookup_vendor(mac_str, vendor, sizeof(vendor));
 
         glog("[%u] SSID: %s,\n"
              "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
@@ -4017,8 +4033,8 @@ void wifi_manager_print_scan_results_with_oui() {
             }
         }
 #endif
-        if (strcmp(company_str, "Unknown") != 0) {
-            glog("     Company: %s\n", company_str);
+        if (has_vendor) {
+            glog("     Vendor: %s\n", vendor);
         }
     }
 }
@@ -4420,6 +4436,7 @@ void wifi_manager_start_ip_lookup() {
 void wifi_manager_connect_wifi(const char *ssid, const char *password) {
     printf("Connecting to WiFi: %s\n", ssid);
     TERMINAL_VIEW_ADD_TEXT("Connecting to WiFi: %s\n", ssid);
+    status_display_show_status("WiFi Connecting...");
     
     wifi_config_t wifi_config = {0};
     
@@ -4658,6 +4675,182 @@ static void stop_scansta_channel_hopping(void) {
     }
 }
 
+// Build country-appropriate channel list for Wireshark
+static void wifi_manager_build_wireshark_channels(void) {
+    wireshark_channels_count = 0;
+    
+    // get current wifi country configuration
+    wifi_country_t country;
+    esp_err_t ret = esp_wifi_get_country(&country);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "wifi country not set, using default channels");
+        // 2.4ghz: channels 1, 6, 11 (common worldwide)
+        wireshark_channels[wireshark_channels_count++] = 1;
+        wireshark_channels[wireshark_channels_count++] = 6;
+        wireshark_channels[wireshark_channels_count++] = 11;
+        
+        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        // 5ghz: common unii-1 channels
+        wireshark_channels[wireshark_channels_count++] = 36;
+        wireshark_channels[wireshark_channels_count++] = 40;
+        wireshark_channels[wireshark_channels_count++] = 44;
+        wireshark_channels[wireshark_channels_count++] = 48;
+        #endif
+        
+        ESP_LOGI(TAG, "using %d default channels", wireshark_channels_count);
+        return;
+    }
+    
+    // build channel list based on country regulations
+    // 2.4ghz band: channels 1-14 (varies by country)
+    uint8_t max_24ghz_channel = country.nchan;
+    if (max_24ghz_channel > 14) max_24ghz_channel = 14;
+    
+    // add 2.4ghz channels (prioritize 1, 6, 11 for non-overlapping)
+    for (uint8_t ch = 1; ch <= max_24ghz_channel; ch++) {
+        if (ch == 1 || ch == 6 || ch == 11) {
+            wireshark_channels[wireshark_channels_count++] = ch;
+        }
+    }
+    
+    // add overlapping 2.4ghz channels if needed
+    for (uint8_t ch = 2; ch <= max_24ghz_channel; ch++) {
+        if (ch != 1 && ch != 6 && ch != 11 && wireshark_channels_count < 50) {
+            wireshark_channels[wireshark_channels_count++] = ch;
+        }
+    }
+    
+    #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    // 5ghz band support for esp32-c5/c6
+    if (strcmp(country.cc, "US") == 0 || strcmp(country.cc, "CA") == 0) {
+        // north america: all bands allowed
+        uint8_t us_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165};
+        for (int i = 0; i < sizeof(us_5ghz) && wireshark_channels_count < 50; i++) {
+            wireshark_channels[wireshark_channels_count++] = us_5ghz[i];
+        }
+    } else if (strcmp(country.cc, "JP") == 0) {
+        // japan: all bands with restrictions
+        uint8_t jp_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140};
+        for (int i = 0; i < sizeof(jp_5ghz) && wireshark_channels_count < 50; i++) {
+            wireshark_channels[wireshark_channels_count++] = jp_5ghz[i];
+        }
+    } else if (strcmp(country.cc, "CN") == 0) {
+        // china: limited 5ghz
+        uint8_t cn_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 149, 153, 157, 161, 165};
+        for (int i = 0; i < sizeof(cn_5ghz) && wireshark_channels_count < 50; i++) {
+            wireshark_channels[wireshark_channels_count++] = cn_5ghz[i];
+        }
+    } else if (strcmp(country.cc, "EU") == 0 || strcmp(country.cc, "GB") == 0 || 
+               strcmp(country.cc, "DE") == 0 || strcmp(country.cc, "FR") == 0) {
+        // europe: unii-1 and unii-2
+        uint8_t eu_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140};
+        for (int i = 0; i < sizeof(eu_5ghz) && wireshark_channels_count < 50; i++) {
+            wireshark_channels[wireshark_channels_count++] = eu_5ghz[i];
+        }
+    } else {
+        // default: unii-1 only (most permissive worldwide)
+        uint8_t default_5ghz[] = {36, 40, 44, 48};
+        for (int i = 0; i < sizeof(default_5ghz) && wireshark_channels_count < 50; i++) {
+            wireshark_channels[wireshark_channels_count++] = default_5ghz[i];
+        }
+    }
+    #endif
+    
+    ESP_LOGI(TAG, "country %s: using %d channels for Wireshark", country.cc, wireshark_channels_count);
+}
+
+// Wireshark Capture Channel Hopping Callback
+static void wireshark_channel_hop_timer_callback(void *arg) {
+    if (!wireshark_hopping_active) return;
+    wireshark_channel_index = (wireshark_channel_index + 1) % wireshark_channels_count;
+    uint8_t channel = wireshark_channels[wireshark_channel_index];
+    
+    // determine if 5ghz or 2.4ghz
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+    
+    #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (channel > 14) {
+        // 5ghz channel - use ht40
+        second = WIFI_SECOND_CHAN_ABOVE;
+    }
+    #endif
+    
+    esp_wifi_set_channel(channel, second);
+}
+
+void wifi_manager_start_wireshark_channel_hop(void) {
+    if (wireshark_channel_hop_timer != NULL) {
+        esp_timer_stop(wireshark_channel_hop_timer);
+        esp_timer_delete(wireshark_channel_hop_timer);
+        wireshark_channel_hop_timer = NULL;
+    }
+
+    // build country-appropriate channel list
+    wifi_manager_build_wireshark_channels();
+    if (wireshark_channels_count == 0) {
+        ESP_LOGE(TAG, "No channels available for Wireshark hopping");
+        return;
+    }
+
+    wireshark_channel_index = 0;
+    esp_wifi_set_channel(wireshark_channels[wireshark_channel_index], WIFI_SECOND_CHAN_NONE);
+
+    esp_timer_create_args_t timer_args = {
+        .callback = wireshark_channel_hop_timer_callback,
+        .name = "wireshark_hop"
+    };
+
+    esp_err_t err = esp_timer_create(&timer_args, &wireshark_channel_hop_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create Wireshark channel hop timer");
+        return;
+    }
+
+    err = esp_timer_start_periodic(wireshark_channel_hop_timer, WIRESHARK_CHANNEL_HOP_INTERVAL_MS * 1000);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start Wireshark channel hop timer");
+        esp_timer_delete(wireshark_channel_hop_timer);
+        wireshark_channel_hop_timer = NULL;
+        return;
+    }
+
+    wireshark_hopping_active = true;
+    ESP_LOGI(TAG, "Wireshark Channel Hopping Started (%d channels, 150ms interval)", wireshark_channels_count);
+}
+
+void wifi_manager_stop_wireshark_channel_hop(void) {
+    if (wireshark_channel_hop_timer) {
+        esp_timer_stop(wireshark_channel_hop_timer);
+        esp_timer_delete(wireshark_channel_hop_timer);
+        wireshark_channel_hop_timer = NULL;
+        wireshark_hopping_active = false;
+        ESP_LOGI(TAG, "Wireshark Channel Hopping Stopped.");
+    }
+}
+
+esp_err_t wifi_manager_set_wireshark_fixed_channel(uint8_t channel) {
+    // Validate channel range based on target
+    uint8_t max_channel = MAX_WIFI_CHANNEL;
+    
+    if (channel < 1 || channel > max_channel) {
+        ESP_LOGE(TAG, "Invalid channel %d. Must be between 1 and %d", channel, max_channel);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Stop any existing channel hopping
+    wifi_manager_stop_wireshark_channel_hop();
+    
+    // Set the fixed channel
+    esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set channel %d: %s", channel, esp_err_to_name(err));
+        return err;
+    }
+    
+    ESP_LOGI(TAG, "Wireshark capture locked to channel %d", channel);
+    return ESP_OK;
+}
+
 // Function to specifically start station scanning with channel hopping
 void wifi_manager_start_station_scan() {
     // Ensure we have a list of APs to compare against first
@@ -4810,17 +5003,14 @@ void wifi_manager_scanall_chart() {
         char sanitized_ssid[33];
         sanitize_ssid_and_check_hidden(scanned_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
-        ECompany company = match_bssid_to_company(scanned_aps[i].bssid);
-        const char *company_str = "Unknown";
-        switch (company) {
-        case COMPANY_DLINK: company_str = "DLink"; break;
-        case COMPANY_NETGEAR: company_str = "Netgear"; break;
-        case COMPANY_BELKIN: company_str = "Belkin"; break;
-        case COMPANY_TPLINK: company_str = "TPLink"; break;
-        case COMPANY_LINKSYS: company_str = "Linksys"; break;
-        case COMPANY_ASUS: company_str = "ASUS"; break;
-        case COMPANY_ACTIONTEC: company_str = "Actiontec"; break;
-        default: company_str = "Unknown"; break;
+        // lookup vendor using oui database
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 scanned_aps[i].bssid[0], scanned_aps[i].bssid[1], scanned_aps[i].bssid[2],
+                 scanned_aps[i].bssid[3], scanned_aps[i].bssid[4], scanned_aps[i].bssid[5]);
+        char vendor[64] = {0};
+        if (!ouis_lookup_vendor(mac_str, vendor, sizeof(vendor))) {
+            strncpy(vendor, "Unknown", sizeof(vendor) - 1);
         }
 
         // Print AP details line
@@ -4828,7 +5018,7 @@ void wifi_manager_scanall_chart() {
         snprintf(ap_details_line, sizeof(ap_details_line), ap_format, sanitized_ssid,
                  scanned_aps[i].bssid[0], scanned_aps[i].bssid[1], scanned_aps[i].bssid[2],
                  scanned_aps[i].bssid[3], scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
-                 scanned_aps[i].primary, company_str);
+                 scanned_aps[i].primary, vendor);
         printf("%s\n", ap_details_line);
         TERMINAL_VIEW_ADD_TEXT("%s\n", ap_details_line);
 
@@ -4836,15 +5026,27 @@ void wifi_manager_scanall_chart() {
         // Find and print associated stations for this AP
         for (int j = 0; j < station_count; j++) {
             if (memcmp(station_ap_list[j].ap_bssid, scanned_aps[i].bssid, 6) == 0) {
-                // Print station MAC using the new format
-                char sta_details_line[100];
-                snprintf(sta_details_line, sizeof(sta_details_line), sta_format,
+                // lookup vendor for station mac
+                char sta_mac_str[18];
+                snprintf(sta_mac_str, sizeof(sta_mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
                          station_ap_list[j].station_mac[0], station_ap_list[j].station_mac[1],
                          station_ap_list[j].station_mac[2], station_ap_list[j].station_mac[3],
                          station_ap_list[j].station_mac[4], station_ap_list[j].station_mac[5]);
-                printf("%s\n", sta_details_line);
-                TERMINAL_VIEW_ADD_TEXT("%s\n", sta_details_line);
-                station_found_for_ap = true; // Mark that we printed at least one station
+                char sta_vendor[64] = {0};
+                bool has_sta_vendor = ouis_lookup_vendor(sta_mac_str, sta_vendor, sizeof(sta_vendor));
+
+                // Print station MAC using the new format
+                char sta_details_line[150];
+                if (has_sta_vendor) {
+                    snprintf(sta_details_line, sizeof(sta_details_line), "%s (%s)",
+                             sta_mac_str, sta_vendor);
+                } else {
+                    snprintf(sta_details_line, sizeof(sta_details_line), "%s",
+                             sta_mac_str);
+                }
+                printf("    STA: %s\n", sta_details_line);
+                TERMINAL_VIEW_ADD_TEXT("    STA: %s\n", sta_details_line);
+                station_found_for_ap = true;
             }
         }
 
@@ -5051,8 +5253,6 @@ void wifi_manager_start_dhcpstarve(int threads) {
 
 void wifi_manager_stop_dhcpstarve(void) {
     if (!dhcp_starve_running) {
-        printf("DHCP-Starve not running\n");
-        TERMINAL_VIEW_ADD_TEXT("DHCP-Starve not running\n");
         return;
     }
     dhcp_starve_running = false;
@@ -5210,11 +5410,9 @@ void wifi_manager_start_eapollogoff_attack(void) {
 
 void wifi_manager_stop_eapollogoff_attack(void) {
     if (!eapol_logoff_running && eapol_logoff_task_handle == NULL) {
-        printf("EAPOL Logoff not running\n");
-        TERMINAL_VIEW_ADD_TEXT("EAPOL Logoff not running\n");
         return;
     }
-    
+
     // Signal tasks to stop gracefully
     eapol_logoff_running = false;
     
@@ -5971,11 +6169,9 @@ void wifi_manager_start_sae_flood(const char *password) {
 
 void wifi_manager_stop_sae_flood(void) {
     if (!sae_flood_running) {
-        printf("SAE flood attack not running\n");
-        TERMINAL_VIEW_ADD_TEXT("SAE flood attack not running\n");
         return;
     }
-    
+
     sae_flood_running = false;
     
     // Wait for tasks to finish
@@ -6416,4 +6612,137 @@ void wifi_manager_stop_karma(void) {
     karma_ssid_index = 0;
     karma_ssid_manual_mode = false;
     // Task will clean up itself
+}
+
+// rssi tracking for selected ap and sta
+static volatile bool ap_tracking_active = false;
+static volatile bool sta_tracking_active = false;
+static int8_t tracking_last_rssi = 0;
+static int8_t tracking_min_rssi = 0;
+static int8_t tracking_max_rssi = -127;
+
+static void wifi_track_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) return;
+    
+    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    
+    int8_t rssi = pkt->rx_ctrl.rssi;
+    bool match = false;
+    
+    if (ap_tracking_active && strlen((const char *)selected_ap.ssid) > 0) {
+        // track ap by bssid (addr2 for beacons)
+        if (memcmp(hdr->addr2, selected_ap.bssid, 6) == 0) {
+            match = true;
+        }
+    }
+    
+    if (sta_tracking_active && station_selected) {
+        // track station by mac address (addr2 for frames from sta)
+        if (memcmp(hdr->addr2, selected_station.station_mac, 6) == 0) {
+            match = true;
+        }
+    }
+    
+    if (!match) return;
+    
+    int8_t delta = rssi - tracking_last_rssi;
+    
+    if (rssi > tracking_max_rssi) tracking_max_rssi = rssi;
+    if (rssi < tracking_min_rssi) tracking_min_rssi = rssi;
+    
+    const char *direction = "";
+    if (delta > 5) direction = " ↑ CLOSER";
+    else if (delta < -5) direction = " ↓ FARTHER";
+    
+    int bars = 0;
+    if (rssi > -50) bars = 5;
+    else if (rssi > -60) bars = 4;
+    else if (rssi > -70) bars = 3;
+    else if (rssi > -80) bars = 2;
+    else if (rssi > -90) bars = 1;
+    
+    char bar_str[8] = "";
+    for (int i = 0; i < bars; i++) {
+        strcat(bar_str, "#");
+    }
+    
+    glog("%s %d dBm (min:%d max:%d)%s\n", bar_str, rssi, tracking_min_rssi, tracking_max_rssi, direction);
+    tracking_last_rssi = rssi;
+}
+
+void wifi_manager_track_ap(void) {
+    if (strlen((const char *)selected_ap.ssid) == 0) {
+        glog("no ap selected. use 'select -a <index>' first.\n");
+        return;
+    }
+    
+    char sanitized_ssid[33];
+    sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
+    
+    glog("=== tracking ap: %s ===\n", sanitized_ssid);
+    glog("bssid: %02x:%02x:%02x:%02x:%02x:%02x\n",
+         selected_ap.bssid[0], selected_ap.bssid[1], selected_ap.bssid[2],
+         selected_ap.bssid[3], selected_ap.bssid[4], selected_ap.bssid[5]);
+    glog("channel: %d\n", selected_ap.primary);
+    glog("move closer to increase signal. type 'stop' to end.\n\n");
+    
+    tracking_last_rssi = selected_ap.rssi;
+    tracking_min_rssi = selected_ap.rssi;
+    tracking_max_rssi = selected_ap.rssi;
+    ap_tracking_active = true;
+    sta_tracking_active = false;
+    
+    // set channel to ap's channel
+    esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
+    
+    status_display_show_status("Track AP");
+    wifi_manager_start_monitor_mode(wifi_track_callback);
+}
+
+void wifi_manager_track_sta(void) {
+    if (!station_selected) {
+        glog("no station selected. use 'select -s <index>' first.\n");
+        return;
+    }
+    
+    glog("=== tracking sta ===\n");
+    glog("station: %02x:%02x:%02x:%02x:%02x:%02x\n",
+         selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2],
+         selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5]);
+    glog("ap: %02x:%02x:%02x:%02x:%02x:%02x\n",
+         selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2],
+         selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
+    glog("move closer to increase signal. type 'stop' to end.\n\n");
+    
+    // find the channel for this station's ap
+    int channel = 1;
+    for (int i = 0; i < ap_count; i++) {
+        if (memcmp(scanned_aps[i].bssid, selected_station.ap_bssid, 6) == 0) {
+            channel = scanned_aps[i].primary;
+            break;
+        }
+    }
+    
+    tracking_last_rssi = -100;
+    tracking_min_rssi = -100;
+    tracking_max_rssi = -127;
+    ap_tracking_active = false;
+    sta_tracking_active = true;
+    
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    
+    status_display_show_status("Track STA");
+    wifi_manager_start_monitor_mode(wifi_track_callback);
+}
+
+void wifi_manager_stop_tracking(void) {
+    if (ap_tracking_active || sta_tracking_active) {
+        ap_tracking_active = false;
+        sta_tracking_active = false;
+        wifi_manager_stop_monitor_mode();
+        glog("tracking stopped.\n");
+        status_display_show_status("Track Stopped");
+    }
 }

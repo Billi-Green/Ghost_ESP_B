@@ -3,9 +3,11 @@
 #include "core/commandline.h"
 #include "core/callbacks.h"
 #include "core/serial_manager.h"
+#include "core/utils.h"
 #include "esp_sntp.h"
 #include "managers/ap_manager.h"
 #include "sdkconfig.h"
+#include "vendor/drivers/pcf8563.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -21,6 +23,39 @@
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 #include "managers/zigbee_manager.h"
 #endif
+#ifdef CONFIG_HAS_BADUSB
+#include "managers/badusb_manager.h"
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+#include "managers/ethernet_manager.h"
+#include "managers/ethernet/eth_fingerprint.h"
+#include "managers/ethernet/eth_utils.h"
+#include "managers/ethernet/eth_http.h"
+#include "lwip/ip4_addr.h"
+#include "lwip/etharp.h"
+#include "lwip/netif.h"
+#include "lwip/stats.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
+#include "lwip/dns.h"
+#include "lwip/ip.h"
+#include "lwip/icmp.h"
+#include "lwip/inet.h"
+#include "esp_netif.h"
+#include "esp_netif_sntp.h"
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <sys/time.h>
+#include <time.h>
+#include "mbedtls/net_sockets.h"
+#include "mbedtls/ssl.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/error.h"
+
+// Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
+void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
+#endif
 #include <esp_timer.h>
 #include <managers/gps_manager.h>
 #include <managers/views/terminal_screen.h>
@@ -28,6 +63,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
 #include <vendor/dial_client.h>
 #include "esp_wifi.h"
 #include "managers/default_portal.h"
@@ -50,6 +88,8 @@
 #include "managers/display_manager.h"
 #include "freertos/queue.h"
 #include "managers/usb_keyboard_manager.h"
+#include "mbedtls/base64.h"
+#include "managers/aerial_detector_manager.h"
 
 static const char *TAG = "Commandline";
 
@@ -73,8 +113,20 @@ static Command *command_list_head = NULL;
 TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 
+// Static storage for GPS info task stack and TCB to enable proper cleanup
+static StackType_t* gps_task_stack = NULL;
+static StaticTask_t* gps_task_tcb = NULL;
+
 // Forward declarations for command handlers
 void cmd_wifi_scan_stop(int argc, char **argv);
+void handle_listportals(int argc, char **argv);
+void handle_evilportal(int argc, char **argv);
+void handle_wifi_disconnect(int argc, char **argv);
+void handle_set_rgb_mode_cmd(int argc, char **argv);
+void handle_karma_cmd(int argc, char **argv);
+void handle_set_neopixel_brightness_cmd(int argc, char **argv);
+void handle_get_neopixel_brightness_cmd(int argc, char **argv);
+void handle_webuiap_cmd(int argc, char **argv);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_airtags_cmd(int argc, char **argv);
 void handle_select_airtag(int argc, char **argv);
@@ -85,6 +137,14 @@ void handle_ble_spam_cmd(int argc, char **argv);
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 void handle_status_idle_cmd(int argc, char **argv);
 #endif
+void handle_settime_cmd(int argc, char **argv);
+void handle_time_cmd(int argc, char **argv);
+void handle_aerial_scan_cmd(int argc, char **argv);
+void handle_aerial_list_cmd(int argc, char **argv);
+void handle_aerial_track_cmd(int argc, char **argv);
+void handle_aerial_stop_cmd(int argc, char **argv);
+void handle_aerial_spoof_cmd(int argc, char **argv);
+void handle_aerial_spoof_stop_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -174,7 +234,7 @@ CommandFunction find_command(const char *name) {
 }
 
 void handle_unknown_command(const char *cmd) {
-    glog("Unknown command: %s\n", cmd);
+    glog("Unsupported command: %s\n", cmd);
 }
 
 void cmd_wifi_scan_start(int argc, char **argv) {
@@ -655,16 +715,15 @@ void handle_select_cmd(int argc, char **argv) {
     }
 }
 
+static bool g_dial_cast_all = false;
+
 void discover_task(void *pvParameter) {
     DIALClient client;
     DIALManager manager;
 
     if (dial_client_init(&client) == ESP_OK) {
-
         dial_manager_init(&manager, &client);
-
-        explore_network(&manager);
-
+        explore_network(&manager, g_dial_cast_all);
         dial_client_deinit(&client);
     } else {
         glog("Failed to init DIAL client.\n");
@@ -683,11 +742,16 @@ static volatile bool g_ir_universal_send_cancel = false;
 
 static TaskHandle_t g_ir_rx_learn_task = NULL;
 
+#ifdef CONFIG_WITH_ETHERNET
+static volatile bool g_eth_scan_cancel = false;
+#endif
+
 void handle_stop_flipper(int argc, char **argv) {
     if (g_ir_universal_send_task != NULL) {
         g_ir_universal_send_cancel = true;
     }
 
+    stop_wardriving();
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
@@ -699,6 +763,15 @@ void handle_stop_flipper(int argc, char **argv) {
     csv_file_close();                  // Close any open CSV files
     gps_manager_deinit(&g_gpsManager); // Clean up GPS if active
 
+    // stop aerial operations
+    if (aerial_detector_is_scanning()) {
+        aerial_detector_stop_scan();
+    }
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+    }
+    aerial_detector_untrack_device();
+
     // also stop any in-progress IR RX (ir rx / ir learn)
     infrared_manager_rx_cancel();
 
@@ -709,6 +782,16 @@ void handle_stop_flipper(int argc, char **argv) {
     if (gps_info_task_handle != NULL) {
         vTaskDelete(gps_info_task_handle);
         gps_info_task_handle = NULL;
+
+        // Free the manually allocated stack and TCB
+        if (gps_task_stack) {
+            heap_caps_free(gps_task_stack);
+            gps_task_stack = NULL;
+        }
+        if (gps_task_tcb) {
+            heap_caps_free(gps_task_tcb);
+            gps_task_tcb = NULL;
+        }
     }
 
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
@@ -717,13 +800,17 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_dhcpstarve();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
+    wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
     zigbee_manager_stop_capture();
 #endif
+#ifdef CONFIG_WITH_ETHERNET
+    g_eth_scan_cancel = true;
+#endif
     // ensure pcap is properly flushed and closed
     pcap_file_close();
-    glog("Stopped activities.\nClosed files.\n");
+    glog("All activities stopped.\n");
     status_display_show_status("All Stopped");
 
     // kill any feature tasks we spawned that may still be around
@@ -738,14 +825,13 @@ void handle_stop_flipper(int argc, char **argv) {
 }
 
 void handle_dial_command(int argc, char **argv) {
-    // Usage: dial [device_name]
-    if (argc > 2) {
-        glog("Usage: %s [device_name]\n", argv[0]);
-        return;
-    }
-    // If a device name is provided, set it before discovery
-    if (argc == 2) {
-        dial_manager_set_device_name(argv[1]);
+    g_dial_cast_all = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "all") == 0 || strcmp(argv[i], "-a") == 0) {
+            g_dial_cast_all = true;
+        } else {
+            dial_manager_set_device_name(argv[i]);
+        }
     }
     xTaskCreate(&discover_task, "discover_task", DISCOVER_TASK_STACK, NULL, 5, NULL);
 }
@@ -807,6 +893,35 @@ void handle_mem_cmd(int argc, char **argv) {
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
     dump_task_stacks();
 }
+
+#ifdef CONFIG_HAS_RTC_CLOCK
+// Time synchronization callback for SNTP
+static void sntp_time_sync_callback(struct timeval *tv) {
+    if (tv && tv->tv_sec > 1600000000) { // Valid time (after Sept 2020)
+        struct tm timeinfo;
+        struct tm utc_timeinfo;
+        
+        // Get local time for display
+        localtime_r(&tv->tv_sec, &timeinfo);
+        
+        // Save UTC time to RTC (not local time)
+        gmtime_r(&tv->tv_sec, &utc_timeinfo);
+        RTC_Date rtc_time;
+        rtc_time.year = utc_timeinfo.tm_year + 1900;
+        rtc_time.month = utc_timeinfo.tm_mon + 1;
+        rtc_time.day = utc_timeinfo.tm_mday;
+        rtc_time.hour = utc_timeinfo.tm_hour;
+        rtc_time.minute = utc_timeinfo.tm_min;
+        rtc_time.second = utc_timeinfo.tm_sec;
+        
+        if (rtc_set_datetime(&rtc_time) == ESP_OK) {
+            ESP_LOGI("SNTP", "Time synchronized from NTP and UTC saved to RTC: %04d-%02d-%02d %02d:%02d:%02d", 
+                     rtc_time.year, rtc_time.month, rtc_time.day, 
+                     rtc_time.hour, rtc_time.minute, rtc_time.second);
+        }
+    }
+}
+#endif
 
 void handle_wifi_connection(int argc, char **argv) {
     const char *ssid;
@@ -909,11 +1024,15 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-#ifdef CONFIG_HAS_RTC_CLOCK
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
     sntp_setservername(0, "pool.ntp.org");
-    sntp_init();
+    
+#ifdef CONFIG_HAS_RTC_CLOCK
+    // Set up time synchronization callback to save time to RTC
+    sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
 #endif
+    
+    sntp_init();
 }
 
 void handle_wifi_disconnect(int argc, char **argv)
@@ -1280,7 +1399,7 @@ void handle_status_idle_cmd(int argc, char **argv) {
 #endif
 
 void handle_capture_scan(int argc, char **argv) {
-    if (argc < 2 || argc > 3) {
+    if (argc < 2 || argc > 4) {
         glog("Error: Incorrect number of arguments.\n");
         status_display_show_status("Capture Usage");
         return;
@@ -1292,6 +1411,21 @@ void handle_capture_scan(int argc, char **argv) {
         glog("Error: Capture Type cannot be empty.\n");
         status_display_show_status("Capture Empty");
         return;
+    }
+    
+    // Parse channel parameter if present
+    uint8_t fixed_channel = 0;
+    bool use_fixed_channel = false;
+    
+    if (argc >= 4 && strcmp(argv[2], "-c") == 0) {
+        fixed_channel = atoi(argv[3]);
+        use_fixed_channel = true;
+        
+        if (fixed_channel < 1 || fixed_channel > MAX_WIFI_CHANNEL) {
+            glog("Error: Invalid channel %d. Must be between 1 and %d\n", fixed_channel, MAX_WIFI_CHANNEL);
+            status_display_show_status("Invalid Channel");
+            return;
+        }
     }
 
     if (strcmp(capturetype, "-probe") == 0) {
@@ -1406,8 +1540,43 @@ void handle_capture_scan(int argc, char **argv) {
         status_display_show_status("Capture WPS");
     }
 
+    if (strcmp(capturetype, "-wireshark") == 0) {
+        status_display_show_status("Wireshark WiFi");
+        int err = pcap_wireshark_start(PCAP_CAPTURE_WIFI);
+        if (err != ESP_OK) {
+            status_display_show_status("Wireshark Err");
+            return;
+        }
+        wifi_manager_start_monitor_mode(wifi_raw_scan_callback);
+        
+        if (use_fixed_channel) {
+            err = wifi_manager_set_wireshark_fixed_channel(fixed_channel);
+            if (err != ESP_OK) {
+                glog("Error: Failed to set fixed channel %d\n", fixed_channel);
+                status_display_show_status("Channel Err");
+                return;
+            }
+            glog("Wireshark capture locked to channel %d\n", fixed_channel);
+        } else {
+            wifi_manager_start_wireshark_channel_hop();
+        }
+    }
+
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    if (strcmp(capturetype, "-wiresharkble") == 0) {
+        status_display_show_status("Wireshark BLE");
+        int err = pcap_wireshark_start(PCAP_CAPTURE_BLUETOOTH);
+        if (err != ESP_OK) {
+            status_display_show_status("Wireshark Err");
+            return;
+        }
+        ble_start_capture_wireshark();
+    }
+#endif
+
     if (strcmp(capturetype, "-stop") == 0) {
         glog("Stopping packet capture...\n");
+        wifi_manager_stop_wireshark_channel_hop();
         wifi_manager_stop_monitor_mode();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
         ble_stop();
@@ -1416,6 +1585,7 @@ void handle_capture_scan(int argc, char **argv) {
         zigbee_manager_stop_capture();
 #endif
         pcap_file_close();
+        pcap_wireshark_stop();
         status_display_show_status("Capture Stop");
     }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -1457,6 +1627,1904 @@ void handle_reboot(int argc, char **argv) {
     esp_restart();
 }
 
+#ifdef CONFIG_WITH_ETHERNET
+
+void handle_eth_up_cmd(int argc, char **argv) {
+    glog("Bringing up Ethernet Manager...\n");
+    esp_err_t ret = ethernet_manager_init();
+    if (ret == ESP_OK) {
+        glog("Ethernet Manager initialized successfully\n");
+        
+        // Wait a moment for link to establish and DHCP to complete
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        
+        // Check connection status
+        if (ethernet_manager_is_connected()) {
+            glog("Ethernet link is UP\n");
+            
+            // Get and display IP info
+            esp_netif_ip_info_t ip_info;
+            if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK) {
+                char ip_str[16], netmask_str[16], gw_str[16];
+                ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+                ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+                ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+                
+                // Check if IP is actually assigned (not 0.0.0.0)
+                if (ip_info.ip.addr == 0) {
+                    glog("IP Address: Not assigned yet (waiting for DHCP...)\n");
+                    glog("Netmask: Not assigned\n");
+                    glog("Gateway: Not assigned\n");
+                    glog("Note: DHCP may take a few more seconds. Check again shortly.\n");
+                } else {
+                    glog("IP Address: %s\n", ip_str);
+                    glog("Netmask: %s\n", netmask_str);
+                    glog("Gateway: %s\n", gw_str);
+                    
+                    // Get and display DNS server information and DHCP server
+                    esp_netif_t *netif = ethernet_manager_get_netif();
+                    if (netif != NULL) {
+                        esp_netif_dns_info_t dns_main, dns_backup, dns_fallback;
+                        char dns_str[16];
+                        
+                        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK) {
+                            if (dns_main.ip.type == ESP_IPADDR_TYPE_V4 && dns_main.ip.u_addr.ip4.addr != 0) {
+                                ip4addr_ntoa_r(&dns_main.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                                glog("DNS Main: %s\n", dns_str);
+                            }
+                        }
+                        
+                        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
+                            if (dns_backup.ip.type == ESP_IPADDR_TYPE_V4 && dns_backup.ip.u_addr.ip4.addr != 0) {
+                                ip4addr_ntoa_r(&dns_backup.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                                glog("DNS Backup: %s\n", dns_str);
+                            }
+                        }
+                        
+                        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
+                            if (dns_fallback.ip.type == ESP_IPADDR_TYPE_V4 && dns_fallback.ip.u_addr.ip4.addr != 0) {
+                                ip4addr_ntoa_r(&dns_fallback.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                                glog("DNS Fallback: %s\n", dns_str);
+                            }
+                        }
+                        
+                        // Get DHCP server IP address
+                        ip4_addr_t dhcp_server_ip;
+                        if (ethernet_manager_get_dhcp_server_ip(&dhcp_server_ip) == ESP_OK) {
+                            ip4addr_ntoa_r(&dhcp_server_ip, dns_str, sizeof(dns_str));
+                            glog("DHCP Server: %s\n", dns_str);
+                        }
+                    }
+                }
+            } else {
+                glog("Failed to get IP information\n");
+            }
+        } else {
+            glog("Ethernet link is DOWN - waiting for cable connection...\n");
+            glog("Please connect an Ethernet cable to the W5500 module\n");
+        }
+    } else {
+        glog("Ethernet Manager initialization failed: %s\n", esp_err_to_name(ret));
+    }
+}
+
+void handle_eth_down_cmd(int argc, char **argv) {
+    glog("Bringing down Ethernet Manager...\n");
+    esp_err_t ret = ethernet_manager_deinit();
+    if (ret == ESP_OK) {
+        glog("Ethernet Manager deinitialized successfully\n");
+    } else {
+        glog("Ethernet Manager deinitialization failed: %s\n", esp_err_to_name(ret));
+    }
+}
+
+// Helper function to ensure Ethernet interface is initialized
+// Returns true if interface is ready, false otherwise
+static bool ensure_eth_interface_up(void) {
+    return eth_ensure_interface_up();
+}
+
+void handle_eth_fingerprint_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected\n");
+        return;
+    }
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        glog("No IP address assigned\n");
+        return;
+    }
+    eth_fingerprint_run_scan();
+}
+
+void handle_eth_info_cmd(int argc, char **argv) {
+    glog("Ethernet Information\n");
+    glog("===================\n");
+    
+    // Check connection status
+    if (!ethernet_manager_is_connected()) {
+        glog("Status: DOWN\n");
+        glog("Ethernet link is not established\n");
+        return;
+    }
+    
+    glog("Status: UP\n");
+
+    ethernet_link_info_t link_info;
+    if (ethernet_manager_get_link_info(&link_info) == ESP_OK && link_info.link_up) {
+        glog("Link: %dMbps %s\n", link_info.speed_mbps, link_info.full_duplex ? "Full Duplex" : "Half Duplex");
+    }
+
+    esp_netif_t *eth_netif = ethernet_manager_get_netif();
+    if (eth_netif != NULL) {
+        uint8_t mac[6];
+        if (esp_netif_get_mac(eth_netif, mac) == ESP_OK) {
+            glog("MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        }
+    }
+    
+    // Get and display IP info
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK) {
+        char ip_str[16], netmask_str[16], gw_str[16];
+        ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+        ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+        ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+        
+        // Check if IP is actually assigned (not 0.0.0.0)
+        if (ip_info.ip.addr == 0) {
+            glog("IP Address: Not assigned yet (waiting for DHCP...)\n");
+            glog("Netmask: Not assigned\n");
+            glog("Gateway: Not assigned\n");
+        } else {
+            glog("IP Address: %s\n", ip_str);
+            glog("Netmask: %s\n", netmask_str);
+            glog("Gateway: %s\n", gw_str);
+            
+            // Get and display DNS server information and DHCP server
+            if (eth_netif != NULL) {
+                esp_netif_dns_info_t dns_main, dns_backup, dns_fallback;
+                char dns_str[16];
+                
+                if (esp_netif_get_dns_info(eth_netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK) {
+                    if (dns_main.ip.type == ESP_IPADDR_TYPE_V4 && dns_main.ip.u_addr.ip4.addr != 0) {
+                        ip4addr_ntoa_r(&dns_main.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                        glog("DNS Main: %s\n", dns_str);
+                    } else {
+                        glog("DNS Main: Not assigned\n");
+                    }
+                }
+                
+                if (esp_netif_get_dns_info(eth_netif, ESP_NETIF_DNS_BACKUP, &dns_backup) == ESP_OK) {
+                    if (dns_backup.ip.type == ESP_IPADDR_TYPE_V4 && dns_backup.ip.u_addr.ip4.addr != 0) {
+                        ip4addr_ntoa_r(&dns_backup.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                        glog("DNS Backup: %s\n", dns_str);
+                    } else {
+                        glog("DNS Backup: Not assigned\n");
+                    }
+                }
+                
+                if (esp_netif_get_dns_info(eth_netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback) == ESP_OK) {
+                    if (dns_fallback.ip.type == ESP_IPADDR_TYPE_V4 && dns_fallback.ip.u_addr.ip4.addr != 0) {
+                        ip4addr_ntoa_r(&dns_fallback.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+                        glog("DNS Fallback: %s\n", dns_str);
+                    }
+                }
+                
+                // Get DHCP server IP address
+                ip4_addr_t dhcp_server_ip;
+                if (ethernet_manager_get_dhcp_server_ip(&dhcp_server_ip) == ESP_OK) {
+                    ip4addr_ntoa_r(&dhcp_server_ip, dns_str, sizeof(dns_str));
+                    glog("DHCP Server: %s\n", dns_str);
+                } else {
+                    glog("DHCP Server: Not available\n");
+                }
+            }
+        }
+    } else {
+        glog("Failed to get IP information\n");
+    }
+    
+    glog("===================\n");
+}
+
+void handle_eth_arp_cmd(int argc, char **argv) {
+    // Ensure Ethernet interface is initialized
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
+    // Check if Ethernet is connected
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    // Get Ethernet IP info to determine subnet
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK) {
+        glog("Failed to get Ethernet IP information\n");
+        return;
+    }
+
+    if (ip_info.ip.addr == 0) {
+        glog("Ethernet IP address not assigned yet. Please wait for DHCP.\n");
+        return;
+    }
+
+    // Get Ethernet netif
+    esp_netif_t *eth_netif = ethernet_manager_get_netif();
+    if (eth_netif == NULL) {
+        glog("Failed to get Ethernet netif\n");
+        return;
+    }
+
+    // Get underlying LWIP netif
+    struct netif *lwip_netif = (struct netif *)esp_netif_get_netif_impl(eth_netif);
+    if (lwip_netif == NULL) {
+        glog("Failed to get LWIP netif\n");
+        return;
+    }
+
+    // Calculate subnet prefix (e.g., "192.168.1.")
+    char subnet_prefix[16];
+    uint32_t ip = ip_info.ip.addr;
+    uint32_t netmask = ip_info.netmask.addr;
+    uint32_t network = ip & netmask;
+    
+    snprintf(subnet_prefix, sizeof(subnet_prefix), "%d.%d.%d.",
+             (int)((network >> 0) & 0xFF),
+             (int)((network >> 8) & 0xFF),
+             (int)((network >> 16) & 0xFF));
+
+    g_eth_scan_cancel = false;
+    glog("Starting ARP scan on Ethernet network %s0/24\n", subnet_prefix);
+    glog("Scanning network using ARP requests...\n");
+
+    const int START_HOST = 1;
+    const int END_HOST = 254;
+    const int batch_size = 10;
+    int num_found = 0;
+
+    // Scan the subnet in batches
+    for (int batch_start = START_HOST; batch_start <= END_HOST && !g_eth_scan_cancel; batch_start += batch_size) {
+        int batch_end = (batch_start + batch_size - 1 > END_HOST) ? END_HOST : batch_start + batch_size - 1;
+        
+        // Send batch of ARP requests
+        for (int host = batch_start; host <= batch_end && !g_eth_scan_cancel; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
+            
+            // Parse IP address
+            ip4_addr_t target_addr;
+            if (ip4addr_aton(current_ip, &target_addr)) {
+                // Send ARP request using lwIP
+                etharp_request(lwip_netif, &target_addr);
+            }
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between requests
+        }
+        if (g_eth_scan_cancel) break;
+        
+        // Wait for responses to arrive
+        for (int i = 0; i < 5 && !g_eth_scan_cancel; i++) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        
+        // Check ARP table for this batch
+        for (int host = batch_start; host <= batch_end && !g_eth_scan_cancel; host++) {
+            char current_ip[26];
+            snprintf(current_ip, sizeof(current_ip), "%s%d", subnet_prefix, host);
+            
+            // Parse IP address
+            ip4_addr_t target_addr;
+            if (!ip4addr_aton(current_ip, &target_addr)) {
+                continue;
+            }
+            
+            // Search ARP table
+            struct eth_addr *eth_ret = NULL;
+            const ip4_addr_t *ip_ret = NULL;
+            s8_t arp_idx = etharp_find_addr(lwip_netif, &target_addr, &eth_ret, &ip_ret);
+            
+            if (arp_idx >= 0 && eth_ret) {
+                num_found++;
+                glog("  %-15s %02x:%02x:%02x:%02x:%02x:%02x\n",
+                     current_ip,
+                     eth_ret->addr[0], eth_ret->addr[1], eth_ret->addr[2],
+                     eth_ret->addr[3], eth_ret->addr[4], eth_ret->addr[5]);
+            }
+        }
+        
+        // Progress update
+        if (batch_end % 50 == 0 || batch_end == END_HOST) {
+            glog("Progress: Scanned %d/%d hosts, found %d active hosts\n", 
+                 batch_end - START_HOST + 1, END_HOST - START_HOST + 1, num_found);
+        }
+    }
+
+    glog("\n=== ARP Scan Summary ===\n");
+    glog("Network: %s0/24\n", subnet_prefix);
+    glog("Hosts scanned: %d (1-254)\n", END_HOST - START_HOST + 1);
+    glog("Active hosts found: %d\n", num_found);
+    if (num_found > 0) {
+        glog("Success rate: %.1f%%\n", (float)num_found / (END_HOST - START_HOST + 1) * 100.0f);
+    }
+    glog("=======================\n");
+}
+
+void handle_eth_ports_cmd(int argc, char **argv) {
+    // Ensure Ethernet interface is initialized
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
+    // Check if Ethernet is connected
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    // Get Ethernet IP info
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK) {
+        glog("Failed to get Ethernet IP information\n");
+        return;
+    }
+
+    if (ip_info.ip.addr == 0) {
+        glog("Ethernet IP address not assigned yet. Please wait for DHCP.\n");
+        return;
+    }
+
+    char target_ip[16];
+    uint16_t start_port = 1;
+    uint16_t end_port = 1024;
+    bool scan_all = false;
+
+    // Parse arguments
+    if (argc < 2) {
+        // Default: scan local network gateway
+        ip4addr_ntoa_r(&ip_info.gw, target_ip, sizeof(target_ip));
+        if (ip_info.gw.addr == 0) {
+            glog("No gateway configured. Usage: ethports <IP> [all | start-end]\n");
+            return;
+        }
+        // Default to common ports when no arguments
+        start_port = 1;
+        end_port = 1024;
+    } else if (strcmp(argv[1], "local") == 0) {
+        // Scan local network (gateway)
+        ip4addr_ntoa_r(&ip_info.gw, target_ip, sizeof(target_ip));
+        if (ip_info.gw.addr == 0) {
+            glog("No gateway configured.\n");
+            return;
+        }
+        // Check if "all" is specified after "local"
+        if (argc >= 3 && strcmp(argv[2], "all") == 0) {
+            scan_all = true;
+            start_port = 1;
+            end_port = 65535;
+        }
+    } else {
+        strncpy(target_ip, argv[1], sizeof(target_ip) - 1);
+        target_ip[sizeof(target_ip) - 1] = '\0';
+
+        if (argc >= 3) {
+            if (strcmp(argv[2], "all") == 0) {
+                scan_all = true;
+                start_port = 1;
+                end_port = 65535;
+            } else {
+                // Parse range like "80-443"
+                if (sscanf(argv[2], "%hu-%hu", &start_port, &end_port) != 2) {
+                    glog("Invalid port range. Use format: start-end (e.g., 80-443)\n");
+                    return;
+                }
+                if (start_port > end_port || start_port == 0 || end_port > 65535) {
+                    glog("Invalid port range. Ports must be 1-65535 and start <= end.\n");
+                    return;
+                }
+            }
+        }
+    }
+
+    g_eth_scan_cancel = false;
+    glog("Scanning TCP ports on %s\n", target_ip);
+    if (scan_all) {
+        glog("Scanning all ports (1-65535)...\n");
+    } else {
+        glog("Scanning ports %d-%d...\n", start_port, end_port);
+    }
+
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr) != 1) {
+        glog("Invalid IP address: %s\n", target_ip);
+        return;
+    }
+
+    // Common ports to scan if no range specified
+    static const uint16_t COMMON_PORTS[] = {
+        21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080
+    };
+    const size_t NUM_COMMON_PORTS = sizeof(COMMON_PORTS) / sizeof(COMMON_PORTS[0]);
+
+    int ports_scanned = 0;
+    int open_ports = 0;
+    uint32_t total_ports = scan_all ? (end_port - start_port + 1) : 
+                          (argc >= 3 ? (end_port - start_port + 1) : NUM_COMMON_PORTS);
+
+    if (scan_all || (argc >= 3 && !scan_all)) {
+        // Scan port range
+        // Use uint32_t for port to handle full range including 65535
+        for (uint32_t port = start_port; port <= end_port && port <= 65535 && !g_eth_scan_cancel; port++) {
+            ports_scanned++;
+            if (ports_scanned % 100 == 0) {
+                glog("Progress: %d/%d ports scanned (%.1f%%)\n", ports_scanned, total_ports,
+                     (float)ports_scanned / total_ports * 100);
+            }
+
+            int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (sock < 0) {
+                continue;
+            }
+
+            int flags = fcntl(sock, F_GETFL, 0);
+            fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+            server_addr.sin_port = htons(port);
+            int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+            bool connected = false;
+            if (scan_result == 0) {
+                connected = true;
+            } else if (scan_result < 0 && errno == EINPROGRESS) {
+                uint32_t elapsed = 0;
+                const uint32_t interval = 50;
+                while (elapsed < 500 && !g_eth_scan_cancel) {
+                    struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
+                    fd_set fdset;
+                    FD_ZERO(&fdset);
+                    FD_SET(sock, &fdset);
+                    if (select(sock + 1, NULL, &fdset, NULL, &tv) > 0) {
+                        int error = 0;
+                        socklen_t len = sizeof(error);
+                        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                            connected = true;
+                        }
+                        break;
+                    }
+                    elapsed += interval;
+                }
+            }
+            if (connected) {
+                open_ports++;
+                glog("  %s:%lu - OPEN\n", target_ip, (unsigned long)port);
+            }
+            close(sock);
+            if (g_eth_scan_cancel) break;
+        }
+    } else {
+        // Scan common ports
+        for (size_t i = 0; i < NUM_COMMON_PORTS && !g_eth_scan_cancel; i++) {
+            uint16_t port = COMMON_PORTS[i];
+            int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (sock < 0) {
+                continue;
+            }
+
+            int flags = fcntl(sock, F_GETFL, 0);
+            fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+            server_addr.sin_port = htons(port);
+            int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+            bool connected = false;
+            if (scan_result == 0) {
+                connected = true;
+            } else if (scan_result < 0 && errno == EINPROGRESS) {
+                uint32_t elapsed = 0;
+                const uint32_t interval = 50;
+                while (elapsed < 500 && !g_eth_scan_cancel) {
+                    struct timeval tv = { .tv_sec = 0, .tv_usec = interval * 1000 };
+                    fd_set fdset;
+                    FD_ZERO(&fdset);
+                    FD_SET(sock, &fdset);
+
+                    if (select(sock + 1, NULL, &fdset, NULL, &tv) > 0) {
+                        int error = 0;
+                        socklen_t len = sizeof(error);
+                        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                            connected = true;
+                        }
+                        break;
+                    }
+                    elapsed += interval;
+                }
+            }
+            if (connected) {
+                open_ports++;
+                glog("  %s:%d - OPEN\n", target_ip, port);
+            }
+            close(sock);
+            if (g_eth_scan_cancel) break;
+        }
+    }
+
+    glog("\n=== Port Scan Summary ===\n");
+    glog("Target: %s\n", target_ip);
+    if (scan_all) {
+        glog("Port range: 1-65535 (all ports)\n");
+    } else if (argc >= 3) {
+        glog("Port range: %d-%d\n", start_port, end_port);
+    } else {
+        glog("Ports scanned: %zu common ports\n", NUM_COMMON_PORTS);
+    }
+    glog("Total ports scanned: %lu\n", (unsigned long)total_ports);
+    glog("Open ports found: %d\n", open_ports);
+    if (total_ports > 0) {
+        glog("Open port rate: %.1f%%\n", (float)open_ports / total_ports * 100.0f);
+    }
+    glog("========================\n");
+}
+
+void handle_eth_ping_cmd(int argc, char **argv) {
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        glog("Ethernet IP address not assigned yet. Please wait for DHCP.\n");
+        return;
+    }
+
+    const uint32_t ip_host = ntohl(ip_info.ip.addr);
+    const uint32_t netmask_host = ntohl(ip_info.netmask.addr);
+    const uint32_t network_host = ip_host & netmask_host;
+    const uint32_t base_host = network_host & 0xFFFFFF00;
+
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sock < 0) {
+        glog("Failed to create raw socket: %d\n", errno);
+        return;
+    }
+
+    struct timeval timeout = { .tv_sec = 0, .tv_usec = 200000 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    typedef struct {
+        uint8_t type;
+        uint8_t code;
+        uint16_t checksum;
+        uint16_t id;
+        uint16_t seq;
+    } icmp_hdr_t;
+
+    g_eth_scan_cancel = false;
+    glog("Starting ICMP ping scan on local /24...\n");
+
+    int alive = 0;
+    for (int host = 1; host <= 254 && !g_eth_scan_cancel; host++) {
+        const uint32_t target_host = base_host | (uint32_t)host;
+        if (target_host == ip_host) continue;
+
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(target_host);
+
+        icmp_hdr_t icmp = {0};
+        icmp.type = 8;
+        icmp.code = 0;
+        icmp.id = 0xBEEF;
+        icmp.seq = htons((uint16_t)host);
+
+        uint16_t *buf = (uint16_t *)&icmp;
+        uint32_t sum = 0;
+        for (int i = 0; i < (int)(sizeof(icmp) / 2); i++) {
+            sum += buf[i];
+        }
+        sum = (sum >> 16) + (sum & 0xFFFF);
+        sum += (sum >> 16);
+        icmp.checksum = ~sum;
+
+        sendto(sock, &icmp, sizeof(icmp), 0, (struct sockaddr *)&addr, sizeof(addr));
+
+        uint8_t recv_buf[256];
+        struct sockaddr_in from;
+        socklen_t fromlen = sizeof(from);
+        int r = recvfrom(sock, recv_buf, sizeof(recv_buf), 0, (struct sockaddr *)&from, &fromlen);
+        if (r > 0 && from.sin_addr.s_addr == addr.sin_addr.s_addr) {
+            char ip_str[16];
+            ip4_addr_t ip4;
+            ip4.addr = from.sin_addr.s_addr;
+            ip4addr_ntoa_r(&ip4, ip_str, sizeof(ip_str));
+            glog("  %s - ALIVE\n", ip_str);
+            alive++;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    glog("Ping scan complete. Alive hosts: %d\n", alive);
+    close(sock);
+}
+
+// ethdns - DNS lookup/resolution
+void handle_eth_dns_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethdns <hostname> [reverse]\n");
+        glog("  hostname: Domain name to resolve\n");
+        glog("  reverse:  IP address for reverse DNS lookup\n");
+        glog("Example: ethdns google.com\n");
+        glog("Example: ethdns reverse 8.8.8.8\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "reverse") == 0) {
+        // Reverse DNS lookup
+        if (argc < 3) {
+            glog("Usage: ethdns reverse <ip_address>\n");
+            return;
+        }
+
+        struct sockaddr_in sa;
+        sa.sin_family = AF_INET;
+        if (inet_pton(AF_INET, argv[2], &sa.sin_addr) != 1) {
+            glog("Invalid IP address: %s\n", argv[2]);
+            return;
+        }
+
+        // Note: Reverse DNS may not be fully supported in lwIP
+        // This is a simplified implementation
+        glog("Reverse DNS lookup for %s:\n", argv[2]);
+        glog("  Note: Reverse DNS (PTR records) may not be fully supported.\n");
+        glog("  Use forward DNS lookup (ethdns <hostname>) instead.\n");
+    } else {
+        // Forward DNS lookup
+        const char *hostname = argv[1];
+        glog("Resolving %s...\n", hostname);
+
+        struct addrinfo hints = {0};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        struct addrinfo *result = NULL;
+        int ret = getaddrinfo(hostname, NULL, &hints, &result);
+        if (ret != 0) {
+            const char *err_msg = "Unknown error";
+            switch (ret) {
+                case EAI_NONAME: err_msg = "Name does not resolve"; break;
+                case EAI_FAIL: err_msg = "Non-recoverable failure"; break;
+                case EAI_MEMORY: err_msg = "Memory allocation failure"; break;
+                default: err_msg = "DNS lookup failed"; break;
+            }
+            glog("DNS lookup failed: %s\n", err_msg);
+            return;
+        }
+
+        glog("DNS resolution for %s:\n", hostname);
+        int count = 0;
+        for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
+            if (rp->ai_family == AF_INET) {
+                struct sockaddr_in *sin = (struct sockaddr_in *)rp->ai_addr;
+                char ip_str[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &sin->sin_addr, ip_str, sizeof(ip_str));
+                glog("  IP: %s\n", ip_str);
+                count++;
+            }
+        }
+
+        if (count == 0) {
+            glog("  No IPv4 addresses found\n");
+        }
+
+        freeaddrinfo(result);
+    }
+}
+
+// ethtrace - Traceroute
+void handle_eth_trace_cmd(int argc, char **argv) {
+    // Ensure Ethernet interface is initialized
+    if (!ensure_eth_interface_up()) {
+        return;
+    }
+
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethtrace <hostname_or_ip> [max_hops]\n");
+        glog("Example: ethtrace 8.8.8.8\n");
+        glog("Example: ethtrace google.com 30\n");
+        return;
+    }
+
+    const char *target = argv[1];
+    int max_hops = (argc >= 3) ? atoi(argv[2]) : 30;
+    if (max_hops < 1 || max_hops > 64) {
+        glog("Max hops must be between 1 and 64\n");
+        return;
+    }
+
+    // Resolve hostname if needed
+    struct sockaddr_in target_addr;
+    target_addr.sin_family = AF_INET;
+
+    if (inet_pton(AF_INET, target, &target_addr.sin_addr) != 1) {
+        // Try DNS lookup
+        struct hostent *he = gethostbyname(target);
+        if (he == NULL || he->h_addr_list[0] == NULL) {
+            glog("Failed to resolve %s\n", target);
+            return;
+        }
+        memcpy(&target_addr.sin_addr, he->h_addr_list[0], sizeof(struct in_addr));
+        char resolved_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &target_addr.sin_addr, resolved_ip, sizeof(resolved_ip));
+        glog("Tracing route to %s (%s) [max %d hops]:\n", target, resolved_ip, max_hops);
+    } else {
+        glog("Tracing route to %s [max %d hops]:\n", target, max_hops);
+    }
+
+    // Traceroute using ICMP with increasing TTL
+    for (int ttl = 1; ttl <= max_hops; ttl++) {
+        int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+        if (sock < 0) {
+            glog("Failed to create raw socket: %d\n", errno);
+            return;
+        }
+
+        // Set TTL
+        if (setsockopt(sock, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) < 0) {
+            close(sock);
+            continue;
+        }
+
+        // Set timeout
+        struct timeval timeout = { .tv_sec = 2, .tv_usec = 0 };
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+        typedef struct {
+            uint8_t type;
+            uint8_t code;
+            uint16_t checksum;
+            uint16_t id;
+            uint16_t seq;
+        } icmp_hdr_t;
+
+        icmp_hdr_t icmp = {0};
+        icmp.type = 8; // Echo request
+        icmp.code = 0;
+        icmp.id = 0xAFAF;
+        icmp.seq = htons(ttl);
+
+        // Calculate checksum
+        uint16_t *buf = (uint16_t *)&icmp;
+        uint32_t sum = 0;
+        for (int i = 0; i < (int)(sizeof(icmp) / 2); i++) {
+            sum += buf[i];
+        }
+        sum = (sum >> 16) + (sum & 0xFFFF);
+        sum += (sum >> 16);
+        icmp.checksum = ~sum;
+
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+
+        sendto(sock, &icmp, sizeof(icmp), 0, (struct sockaddr *)&target_addr, sizeof(target_addr));
+
+        // Wait for response
+        char recv_buf[1024];
+        struct sockaddr_in from_addr;
+        socklen_t from_len = sizeof(from_addr);
+        ssize_t recv_len = recvfrom(sock, recv_buf, sizeof(recv_buf) - 1, 0, 
+                                     (struct sockaddr *)&from_addr, &from_len);
+
+        gettimeofday(&end, NULL);
+        long elapsed = ((end.tv_sec - start.tv_sec) * 1000) + 
+                       ((end.tv_usec - start.tv_usec) / 1000);
+
+        close(sock);
+
+        if (recv_len > 0) {
+            char from_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &from_addr.sin_addr, from_ip, sizeof(from_ip));
+            glog("  %2d  %s  %ldms\n", ttl, from_ip, elapsed);
+
+            // Check if we reached the target
+            if (from_addr.sin_addr.s_addr == target_addr.sin_addr.s_addr) {
+                glog("Trace complete.\n");
+                break;
+            }
+        } else {
+            glog("  %2d  *  (timeout)\n", ttl);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+void handle_eth_stats_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    esp_netif_t *netif = ethernet_manager_get_netif();
+    if (netif == NULL) {
+        glog("Failed to get Ethernet netif\n");
+        return;
+    }
+
+    struct netif *lwip_netif = (struct netif *)esp_netif_get_netif_impl(netif);
+    if (lwip_netif == NULL) {
+        glog("Failed to get LWIP netif\n");
+        return;
+    }
+
+    glog("=== Ethernet Statistics ===\n");
+
+    // Link status
+    glog("Link Status: %s\n", ethernet_manager_is_connected() ? "UP" : "DOWN");
+
+    // IP info
+    esp_netif_ip_info_t ip_info;
+    if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK) {
+        char ip_str[16], netmask_str[16], gw_str[16];
+        ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+        ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+        ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+        glog("IP Address: %s\n", ip_str);
+        glog("Netmask: %s\n", netmask_str);
+        glog("Gateway: %s\n", gw_str);
+    }
+
+    // MAC address
+    uint8_t mac[6];
+    if (esp_netif_get_mac(netif, mac) == ESP_OK) {
+        glog("MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+
+    // LWIP statistics (using global stats)
+    glog("\n--- Packet Statistics ---\n");
+#if LWIP_STATS
+    extern struct stats_ lwip_stats;
+    glog("RX Packets: %lu\n", (unsigned long)STATS_GET(link.recv));
+    glog("TX Packets: %lu\n", (unsigned long)STATS_GET(link.xmit));
+    glog("RX Errors: %lu\n", (unsigned long)STATS_GET(link.err));
+    glog("RX Drops: %lu\n", (unsigned long)STATS_GET(link.drop));
+    glog("TX Errors: %lu\n", (unsigned long)STATS_GET(link.chkerr));
+    glog("TX Drops: %lu\n", (unsigned long)STATS_GET(link.memerr));
+#else
+    glog("Statistics not available (LWIP_STATS disabled)\n");
+#endif
+
+    // ARP statistics
+    glog("\n--- ARP Statistics ---\n");
+#if LWIP_STATS && ETHARP_STATS
+    glog("ARP Requests: %lu\n", (unsigned long)STATS_GET(etharp.xmit));
+    glog("ARP Replies: %lu\n", (unsigned long)STATS_GET(etharp.recv));
+#endif
+
+    glog("===================\n");
+}
+
+// ethconfig - Static IP configuration
+void handle_eth_config_cmd(int argc, char **argv) {
+    esp_netif_t *netif = ethernet_manager_get_netif();
+    if (netif == NULL) {
+        glog("Ethernet interface is not initialized. Please run 'ethup' first.\n");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethconfig <command>\n");
+        glog("Commands:\n");
+        glog("  dhcp          - Use DHCP (automatic IP)\n");
+        glog("  static <ip> <netmask> <gateway> - Set static IP\n");
+        glog("  show          - Show current configuration\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "dhcp") == 0) {
+        esp_err_t ret = esp_netif_dhcpc_start(netif);
+        if (ret == ESP_OK) {
+            glog("DHCP client started. Waiting for IP assignment...\n");
+        } else {
+            glog("Failed to start DHCP client: %s\n", esp_err_to_name(ret));
+        }
+    } else if (strcmp(argv[1], "static") == 0) {
+        if (argc < 5) {
+            glog("Usage: ethconfig static <ip> <netmask> <gateway>\n");
+            glog("Example: ethconfig static 192.168.1.100 255.255.255.0 192.168.1.1\n");
+            return;
+        }
+
+        esp_netif_ip_info_t ip_info;
+        if (inet_aton(argv[2], &ip_info.ip) == 0 ||
+            inet_aton(argv[3], &ip_info.netmask) == 0 ||
+            inet_aton(argv[4], &ip_info.gw) == 0) {
+            glog("Invalid IP address format\n");
+            return;
+        }
+
+        esp_err_t ret = esp_netif_dhcpc_stop(netif);
+        if (ret != ESP_OK && ret != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+            glog("Failed to stop DHCP: %s\n", esp_err_to_name(ret));
+            return;
+        }
+
+        ret = esp_netif_set_ip_info(netif, &ip_info);
+        if (ret == ESP_OK) {
+            glog("Static IP configured:\n");
+            char ip_str[16], netmask_str[16], gw_str[16];
+            ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+            ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+            ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+            glog("  IP: %s\n", ip_str);
+            glog("  Netmask: %s\n", netmask_str);
+            glog("  Gateway: %s\n", gw_str);
+        } else {
+            glog("Failed to set static IP: %s\n", esp_err_to_name(ret));
+            esp_err_t restart_ret = esp_netif_dhcpc_start(netif);
+            if (restart_ret == ESP_OK) {
+                glog("DHCP client restarted to restore connectivity.\n");
+            } else {
+                glog("Failed to restart DHCP client: %s\n", esp_err_to_name(restart_ret));
+            }
+        }
+    } else if (strcmp(argv[1], "show") == 0) {
+        esp_netif_ip_info_t ip_info;
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            char ip_str[16], netmask_str[16], gw_str[16];
+            ip4addr_ntoa_r(&ip_info.ip, ip_str, sizeof(ip_str));
+            ip4addr_ntoa_r(&ip_info.netmask, netmask_str, sizeof(netmask_str));
+            ip4addr_ntoa_r(&ip_info.gw, gw_str, sizeof(gw_str));
+            glog("Current IP Configuration:\n");
+            glog("  IP: %s\n", ip_str);
+            glog("  Netmask: %s\n", netmask_str);
+            glog("  Gateway: %s\n", gw_str);
+        }
+    } else {
+        glog("Unsupported command: %s\n", argv[1]);
+    }
+}
+
+// ethmac - MAC address management
+void handle_eth_mac_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    esp_netif_t *netif = ethernet_manager_get_netif();
+    if (netif == NULL) {
+        glog("Failed to get Ethernet netif\n");
+        return;
+    }
+
+    if (argc < 2) {
+        // Show current MAC
+        uint8_t mac[6];
+        if (esp_netif_get_mac(netif, mac) == ESP_OK) {
+            glog("Current MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        } else {
+            glog("Failed to get MAC address\n");
+        }
+        glog("\nUsage: ethmac set <xx:xx:xx:xx:xx:xx>\n");
+        glog("Note: MAC address changes require reinitialization\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "set") == 0) {
+        if (argc < 3) {
+            glog("Usage: ethmac set <xx:xx:xx:xx:xx:xx>\n");
+            glog("Example: ethmac set 02:00:00:00:00:01\n");
+            return;
+        }
+
+        uint8_t new_mac[6];
+        if (sscanf(argv[2], "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+                   &new_mac[0], &new_mac[1], &new_mac[2],
+                   &new_mac[3], &new_mac[4], &new_mac[5]) != 6) {
+            glog("Invalid MAC address format. Use xx:xx:xx:xx:xx:xx\n");
+            return;
+        }
+
+        esp_err_t ret = esp_netif_set_mac(netif, new_mac);
+        if (ret == ESP_OK) {
+            glog("MAC address set to: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                 new_mac[0], new_mac[1], new_mac[2], new_mac[3], new_mac[4], new_mac[5]);
+            glog("Note: You may need to restart Ethernet for changes to take effect.\n");
+        } else {
+            glog("Failed to set MAC address: %s\n", esp_err_to_name(ret));
+        }
+    } else {
+        glog("Unsupported command: %s\n", argv[1]);
+    }
+}
+
+// ethserv - Service discovery and banner grabbing
+void handle_eth_serv_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        return;
+    }
+
+    char target_ip[16];
+    if (argc < 2) {
+        esp_netif_ip_info_t ip_info;
+        if (ethernet_manager_get_ip_info(&ip_info) == ESP_OK && ip_info.gw.addr != 0) {
+            ip4addr_ntoa_r(&ip_info.gw, target_ip, sizeof(target_ip));
+        } else {
+            glog("Usage: ethserv <ip_address>\n");
+            return;
+        }
+    } else {
+        strncpy(target_ip, argv[1], sizeof(target_ip) - 1);
+        target_ip[sizeof(target_ip) - 1] = '\0';
+    }
+
+    glog("Service discovery for %s\n", target_ip);
+    glog("==========================================\n\n");
+
+    // Common services to check
+    struct {
+        uint16_t port;
+        const char *name;
+        const char *probe;
+    } services[] = {
+        {21, "FTP", "USER anonymous\r\n"},
+        {22, "SSH", ""},
+        {23, "Telnet", ""},
+        {25, "SMTP", "EHLO test\r\n"},
+        {80, "HTTP", "GET / HTTP/1.0\r\n\r\n"},
+        {110, "POP3", "USER test\r\n"},
+        {143, "IMAP", "a001 LOGIN test test\r\n"},
+        {443, "HTTPS", ""},
+        {445, "SMB", ""},
+        {3306, "MySQL", ""},
+        {3389, "RDP", ""},
+        {5432, "PostgreSQL", ""},
+        {8080, "HTTP-Proxy", "GET / HTTP/1.0\r\n\r\n"},
+    };
+
+    const size_t num_services = sizeof(services) / sizeof(services[0]);
+
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+
+    if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr) != 1) {
+        glog("Invalid IP address: %s\n", target_ip);
+        return;
+    }
+
+    int found_count = 0;
+    for (size_t i = 0; i < num_services; i++) {
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            continue;
+        }
+
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+        server_addr.sin_port = htons(services[i].port);
+        int scan_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+        if (scan_result < 0 && errno == EINPROGRESS) {
+            struct timeval timeout = {.tv_sec = 2, .tv_usec = 0};
+            fd_set fdset;
+            FD_ZERO(&fdset);
+            FD_SET(sock, &fdset);
+
+            if (select(sock + 1, NULL, &fdset, NULL, &timeout) > 0) {
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+                    glog("[OPEN] %s:%d (%s)\n", target_ip, services[i].port, services[i].name);
+                    found_count++;
+
+                    // Try banner grabbing for some services
+                    if (strlen(services[i].probe) > 0) {
+                        send(sock, services[i].probe, strlen(services[i].probe), 0);
+                        vTaskDelay(pdMS_TO_TICKS(100));
+
+                        char banner[256];
+                        ssize_t recv_len = recv(sock, banner, sizeof(banner) - 1, MSG_DONTWAIT);
+                        if (recv_len > 0) {
+                            banner[recv_len] = '\0';
+                            // Clean up banner (remove newlines, limit length)
+                            for (int j = 0; j < recv_len && j < 200; j++) {
+                                if (banner[j] == '\n' || banner[j] == '\r') {
+                                    banner[j] = ' ';
+                                }
+                            }
+                            banner[200] = '\0';
+                            glog("      Banner: %.200s\n", banner);
+                        }
+                    }
+                }
+            }
+        }
+        close(sock);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    glog("\nFound %d open service(s)\n", found_count);
+}
+
+// ethntp - Query NTP server and set system time
+void handle_eth_ntp_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        status_display_show_status("Eth Not Connected");
+        return;
+    }
+
+    const char *ntp_server = "pool.ntp.org";
+    if (argc >= 2) {
+        ntp_server = argv[1];
+    }
+
+    glog("Querying NTP server: %s\n", ntp_server);
+    glog("Please wait...\n");
+
+    // Initialize SNTP with the specified server
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG(ntp_server);
+    esp_err_t ret = esp_netif_sntp_init(&config);
+    if (ret != ESP_OK) {
+        glog("Failed to initialize SNTP: %s\n", esp_err_to_name(ret));
+        status_display_show_status("NTP Init Fail");
+        return;
+    }
+
+    // Wait for time synchronization (with timeout)
+    const int timeout_ms = 10000; // 10 seconds
+    ret = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(timeout_ms));
+    
+    if (ret != ESP_OK) {
+        glog("Failed to synchronize time within %d seconds\n", timeout_ms / 1000);
+        glog("Error: %s\n", esp_err_to_name(ret));
+        esp_netif_sntp_deinit();
+        status_display_show_status("NTP Sync Fail");
+        return;
+    }
+
+    // Get the synchronized time
+    time_t now;
+    struct tm timeinfo;
+    struct tm utc_timeinfo;
+    char strftime_buf[64];
+    
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    
+    glog("Time synchronized successfully!\n");
+    glog("Current system time: %s\n", strftime_buf);
+    
+#ifdef CONFIG_HAS_RTC_CLOCK
+    // Save UTC time to RTC (not local time)
+    gmtime_r(&now, &utc_timeinfo);
+    RTC_Date rtc_time;
+    rtc_time.year = utc_timeinfo.tm_year + 1900;
+    rtc_time.month = utc_timeinfo.tm_mon + 1;
+    rtc_time.day = utc_timeinfo.tm_mday;
+    rtc_time.hour = utc_timeinfo.tm_hour;
+    rtc_time.minute = utc_timeinfo.tm_min;
+    rtc_time.second = utc_timeinfo.tm_sec;
+    
+    if (rtc_set_datetime(&rtc_time) == ESP_OK) {
+        glog("UTC time saved to RTC: %04d-%02d-%02d %02d:%02d:%02d\n", 
+             rtc_time.year, rtc_time.month, rtc_time.day, 
+             rtc_time.hour, rtc_time.minute, rtc_time.second);
+    } else {
+        glog("Failed to save time to RTC\n");
+    }
+#endif
+    
+    // Also show UTC time
+    struct tm timeinfo_utc;
+    gmtime_r(&now, &timeinfo_utc);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S UTC", &timeinfo_utc);
+    glog("UTC time: %s\n", strftime_buf);
+    
+    // Clean up SNTP
+    esp_netif_sntp_deinit();
+    
+    // If dual comm is connected, sync the peer's time using our newly synced time
+    if (esp_comm_manager_is_connected()) {
+        glog("Dual comm connected. Setting peer time from local clock...\n");
+        // Get current time as timestamp
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        
+        // Send timestamp to peer as a string
+        char time_str[32];
+        snprintf(time_str, sizeof(time_str), "%ld", (long)tv.tv_sec);
+        
+        if (esp_comm_manager_send_command("settime", time_str)) {
+            glog("Time sync command sent to peer (timestamp: %s)\n", time_str);
+        } else {
+            glog("Failed to send time sync command to peer\n");
+        }
+    }
+    
+    status_display_show_status("NTP Sync OK");
+}
+
+// ethhttp - Send HTTP GET request and display response
+void handle_eth_http_cmd(int argc, char **argv) {
+    if (!ethernet_manager_is_connected()) {
+        glog("Ethernet is not connected. Please connect Ethernet first.\n");
+        status_display_show_status("Eth Not Connected");
+        return;
+    }
+
+    if (argc < 2) {
+        glog("Usage: ethhttp <url> [lines|all]\n");
+        glog("Example: ethhttp http://example.com\n");
+        glog("         ethhttp http://example.com 50  (show first 50 lines)\n");
+        glog("         ethhttp http://example.com all  (show full response)\n");
+        status_display_show_status("HTTP Usage");
+        return;
+    }
+
+    // Parse optional line limit - default is 25 lines
+    int max_lines = 25;  // Default to 25 lines
+    if (argc >= 3) {
+        if (strcasecmp(argv[2], "all") == 0) {
+            max_lines = 0;  // 0 means show all
+        } else {
+            max_lines = atoi(argv[2]);
+            if (max_lines <= 0) {
+                glog("Invalid line count. Use a positive number or 'all' for full response.\n");
+                status_display_show_status("HTTP Usage");
+                return;
+            }
+        }
+    }
+
+    const char *url = argv[1];
+    glog("Sending HTTP GET request to: %s\n", url);
+
+    if (strncmp(url, "https://", 8) != 0) {
+        char http_url[256];
+        const char *http_url_ptr = url;
+        if (strncmp(url, "http://", 7) != 0) {
+            int n = snprintf(http_url, sizeof(http_url), "http://%s", url);
+            if (n <= 0 || n >= (int)sizeof(http_url)) {
+                glog("URL too long\n");
+                status_display_show_status("HTTP Usage");
+                return;
+            }
+            http_url_ptr = http_url;
+        }
+
+        char *resp = NULL;
+#if defined(CONFIG_SPIRAM)
+        resp = (char *)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+        if (!resp) resp = (char *)malloc(4096);
+        if (!resp) {
+            glog("Failed to allocate response buffer\n");
+            status_display_show_status("HTTP Fail");
+            return;
+        }
+
+        int got = eth_http_get_simple(http_url_ptr, resp, 4096, 2000);
+        if (got < 0) {
+            glog("HTTP request failed\n");
+            status_display_show_status("HTTP Fail");
+            if (esp_ptr_external_ram(resp)) {
+                heap_caps_free(resp);
+            } else {
+                free(resp);
+            }
+            return;
+        }
+
+        int lines = 0;
+        const char *p = resp;
+        while (*p) {
+            if (max_lines > 0 && lines >= max_lines) break;
+            const char *nl = strchr(p, '\n');
+            if (!nl) {
+                glog("%s\n", p);
+                break;
+            }
+            size_t len = (size_t)(nl - p + 1);
+            char line[160];
+            if (len >= sizeof(line)) len = sizeof(line) - 1;
+            memcpy(line, p, len);
+            line[len] = '\0';
+            glog("%s", line);
+            lines++;
+            p = nl + 1;
+        }
+
+        if (got >= 4096 - 1) {
+            glog("(response truncated)\n");
+        }
+
+        if (esp_ptr_external_ram(resp)) {
+            heap_caps_free(resp);
+        } else {
+            free(resp);
+        }
+        status_display_show_status("HTTP Done");
+        return;
+    }
+
+    // Parse URL - use smaller buffers to reduce stack usage
+    char hostname[128] = {0};
+    char path[256] = "/";
+    uint16_t port = 80;
+    bool is_https = false;
+
+    // Check for http:// or https://
+    const char *url_start = url;
+    if (strncmp(url, "http://", 7) == 0) {
+        url_start = url + 7;
+    } else if (strncmp(url, "https://", 8) == 0) {
+        url_start = url + 8;
+        port = 443;
+        is_https = true;
+    } else {
+        // No protocol specified, assume http://
+        url_start = url;
+    }
+
+    // Find hostname and path
+    const char *path_start = strchr(url_start, '/');
+    if (path_start != NULL) {
+        size_t hostname_len = path_start - url_start;
+        if (hostname_len >= sizeof(hostname)) {
+            hostname_len = sizeof(hostname) - 1;
+        }
+        strncpy(hostname, url_start, hostname_len);
+        hostname[hostname_len] = '\0';
+        strncpy(path, path_start, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+    } else {
+        strncpy(hostname, url_start, sizeof(hostname) - 1);
+        hostname[sizeof(hostname) - 1] = '\0';
+    }
+
+    // Check for port in hostname (e.g., example.com:8080)
+    char *port_str = strchr(hostname, ':');
+    if (port_str != NULL) {
+        *port_str = '\0';
+        port = (uint16_t)atoi(port_str + 1);
+        if (port == 0) {
+            port = is_https ? 443 : 80;
+        }
+    }
+
+    glog("Hostname: %s\n", hostname);
+    glog("Path: %s\n", path);
+    glog("Port: %d\n", port);
+
+    // Resolve hostname to IP address
+    struct hostent *host_entry = gethostbyname(hostname);
+    if (host_entry == NULL) {
+        glog("Failed to resolve hostname: %s\n", hostname);
+        status_display_show_status("DNS Resolve Fail");
+        return;
+    }
+
+    struct in_addr **addr_list = (struct in_addr **)host_entry->h_addr_list;
+    if (addr_list[0] == NULL) {
+        glog("No IP address found for hostname: %s\n", hostname);
+        status_display_show_status("DNS No IP");
+        return;
+    }
+
+    char ip_str[16];
+    // Convert struct in_addr to ip4_addr_t for LWIP compatibility
+    ip4_addr_t ip4_addr;
+    ip4_addr.addr = addr_list[0]->s_addr;
+    ip4addr_ntoa_r(&ip4_addr, ip_str, sizeof(ip_str));
+    glog("Resolved to IP: %s\n", ip_str);
+
+    // Prepare HTTP request
+    char request[512];
+    int request_len = snprintf(request, sizeof(request),
+                                "GET %s HTTP/1.1\r\n"
+                                "Host: %s\r\n"
+                                "User-Agent: GhostESP/1.0\r\n"
+                                "Connection: close\r\n"
+                                "\r\n",
+                                path, hostname);
+
+    if (request_len >= (int)sizeof(request)) {
+        glog("Request too long\n");
+        status_display_show_status("Request Too Long");
+        return;
+    }
+
+    // Variables for response handling
+    char buffer[128];
+    ssize_t total_received = 0;
+    // No size limit - we process in small chunks to avoid stack issues
+
+    if (is_https) {
+        // HTTPS using mbedTLS
+        // Use static contexts to reduce stack usage (mbedTLS contexts are very large ~5KB+)
+        // Since this is a synchronous command handler, static is safe
+        static mbedtls_entropy_context entropy;
+        static mbedtls_ctr_drbg_context ctr_drbg;
+        static mbedtls_net_context server_fd;
+        static mbedtls_ssl_context ssl;
+        static mbedtls_ssl_config conf;
+        static bool tls_initialized = false;
+        const char *pers = "ghost_esp_https";
+
+        // Initialize contexts (only once, reuse for subsequent calls)
+        if (!tls_initialized) {
+            mbedtls_entropy_init(&entropy);
+            mbedtls_ctr_drbg_init(&ctr_drbg);
+            mbedtls_net_init(&server_fd);
+            mbedtls_ssl_init(&ssl);
+            mbedtls_ssl_config_init(&conf);
+            if (mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+                                      (const unsigned char *)pers, strlen(pers)) != 0) {
+                glog("mbedTLS RNG seed failed\n");
+                mbedtls_ssl_config_free(&conf);
+                mbedtls_ssl_free(&ssl);
+                mbedtls_net_free(&server_fd);
+                mbedtls_ctr_drbg_free(&ctr_drbg);
+                mbedtls_entropy_free(&entropy);
+                status_display_show_status("TLS Init Fail");
+                return;
+            }
+            tls_initialized = true;
+        } else {
+            // Clean up previous connection state and reinit
+            mbedtls_ssl_free(&ssl);
+            mbedtls_net_free(&server_fd);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_ssl_init(&ssl);
+            mbedtls_net_init(&server_fd);
+            mbedtls_ssl_config_init(&conf);
+        }
+
+        // Configure SSL
+        int ret = mbedtls_ssl_config_defaults(&conf,
+                                              MBEDTLS_SSL_IS_CLIENT,
+                                              MBEDTLS_SSL_TRANSPORT_STREAM,
+                                              MBEDTLS_SSL_PRESET_DEFAULT);
+        if (ret != 0) {
+            glog("mbedTLS config defaults failed: -0x%04x\n", -ret);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Config Fail");
+            return;
+        }
+
+        // Set authmode to optional (skip certificate verification for simplicity)
+        mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+        mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+        mbedtls_ssl_conf_read_timeout(&conf, 10000); // 10 second timeout
+
+        // Setup SSL
+        ret = mbedtls_ssl_setup(&ssl, &conf);
+        if (ret != 0) {
+            glog("mbedTLS SSL setup failed: -0x%04x\n", -ret);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Setup Fail");
+            return;
+        }
+
+        // Set hostname for SNI
+        ret = mbedtls_ssl_set_hostname(&ssl, hostname);
+        if (ret != 0) {
+            glog("mbedTLS set hostname failed: -0x%04x\n", -ret);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Hostname Fail");
+            return;
+        }
+
+        // Connect TCP
+        char port_str[6];
+        snprintf(port_str, sizeof(port_str), "%d", port);
+        glog("Connecting to %s:%s...\n", ip_str, port_str);
+        
+        ret = mbedtls_net_connect(&server_fd, ip_str, port_str, MBEDTLS_NET_PROTO_TCP);
+        if (ret != 0) {
+            glog("mbedTLS connect failed: -0x%04x\n", -ret);
+            mbedtls_ssl_free(&ssl);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_net_free(&server_fd);
+            status_display_show_status("TLS Connect Fail");
+            return;
+        }
+
+        // Set BIO callbacks
+        mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+
+        // Perform TLS handshake
+        glog("Performing TLS handshake...\n");
+        while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
+            if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                // Use smaller error buffer to reduce stack usage
+                char error_buf[128];
+                mbedtls_strerror(ret, error_buf, sizeof(error_buf));
+                glog("TLS handshake failed: -0x%04x - %s\n", -ret, error_buf);
+                mbedtls_ssl_free(&ssl);
+                mbedtls_ssl_config_free(&conf);
+                mbedtls_ctr_drbg_free(&ctr_drbg);
+                mbedtls_entropy_free(&entropy);
+                mbedtls_net_free(&server_fd);
+                tls_initialized = false;
+                status_display_show_status("TLS Handshake Fail");
+                return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+
+        glog("TLS handshake successful\n");
+        glog("Connected successfully (HTTPS)\n");
+        glog("==========================================\n");
+
+        // Send HTTP request over TLS
+        size_t written = 0;
+        while (written < (size_t)request_len) {
+            ret = mbedtls_ssl_write(&ssl, (const unsigned char *)request + written,
+                                    request_len - written);
+            if (ret < 0) {
+                if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                    glog("TLS write failed: -0x%04x\n", -ret);
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            written += ret;
+        }
+
+        if (written != (size_t)request_len) {
+            glog("Warning: Only sent %zu of %d bytes\n", written, request_len);
+        } else {
+            glog("Request sent (%d bytes)\n", request_len);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
+        glog("==========================================\n");
+        glog("Response:\n");
+        glog("==========================================\n");
+
+        // Receive response over TLS - process in small chunks with optional line limiting
+        int line_count = 0;
+        while (1) {
+            ret = mbedtls_ssl_read(&ssl, (unsigned char *)buffer, sizeof(buffer) - 1);
+            if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+                glog("\n[Connection closed by server]\n");
+                break;
+            }
+            if (ret <= 0) {
+                if (ret != 0) {
+                    glog("\n[TLS read error: -0x%04x]\n", -ret);
+                }
+                break;
+            }
+
+            // Process chunk with line counting and truncation
+            buffer[ret] = '\0';
+            int print_len = ret;
+            
+            if (max_lines > 0) {
+                // Count lines and find truncation point
+                for (int i = 0; i < ret; i++) {
+                    if (line_count >= max_lines) {
+                        print_len = i;
+                        break;
+                    }
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                        if (line_count >= max_lines) {
+                            print_len = i + 1;  // Include the newline
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Count lines for statistics (no truncation)
+                for (int i = 0; i < ret; i++) {
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                    }
+                }
+            }
+            
+            // Print the chunk (or truncated portion)
+            if (print_len > 0) {
+                glog("%.*s", print_len, buffer);
+            }
+            
+            if (max_lines > 0 && line_count >= max_lines) {
+                glog("\n[Response truncated at %d lines]\n", max_lines);
+                goto https_done;
+            }
+            
+            total_received += ret;
+        }
+https_done:
+
+        // Cleanup TLS connection (keep static contexts for reuse)
+        mbedtls_ssl_close_notify(&ssl);
+        mbedtls_ssl_free(&ssl);
+        mbedtls_net_free(&server_fd);
+
+    } else {
+        // HTTP using regular sockets
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            glog("Failed to create socket: %d\n", errno);
+            status_display_show_status("Socket Create Fail");
+            return;
+        }
+
+        int opt = 1;
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        
+        struct timeval recv_timeout = {.tv_sec = 10, .tv_usec = 0};
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
+        
+        struct timeval send_timeout = {.tv_sec = 5, .tv_usec = 0};
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
+
+        int flags = fcntl(sock, F_GETFL, 0);
+        if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+            glog("Failed to set socket non-blocking: %d\n", errno);
+            close(sock);
+            status_display_show_status("Socket Config Fail");
+            return;
+        }
+
+        struct sockaddr_in server_addr;
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(port);
+        memcpy(&server_addr.sin_addr, addr_list[0], sizeof(struct in_addr));
+
+        int connect_result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        
+        if (connect_result == 0) {
+            fcntl(sock, F_SETFL, flags);
+        } else if (errno == EINPROGRESS) {
+            struct timeval timeout = {.tv_sec = 10, .tv_usec = 0};
+            fd_set fdset;
+            FD_ZERO(&fdset);
+            FD_SET(sock, &fdset);
+
+            if (select(sock + 1, NULL, &fdset, NULL, &timeout) <= 0) {
+                glog("Connection timeout\n");
+                close(sock);
+                status_display_show_status("Connect Timeout");
+                return;
+            }
+
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+                glog("Connection failed: %d\n", error);
+                close(sock);
+                status_display_show_status("Connect Fail");
+                return;
+            }
+            fcntl(sock, F_SETFL, flags);
+        } else {
+            glog("Failed to connect: %d\n", errno);
+            close(sock);
+            status_display_show_status("Connect Fail");
+            return;
+        }
+
+        glog("Connected successfully\n");
+        glog("==========================================\n");
+
+        ssize_t sent = send(sock, request, request_len, 0);
+        if (sent < 0) {
+            glog("Failed to send request: %d\n", errno);
+            close(sock);
+            status_display_show_status("Send Fail");
+            return;
+        }
+
+        if (sent != request_len) {
+            glog("Warning: Only sent %d of %d bytes\n", (int)sent, request_len);
+        }
+
+        glog("Request sent (%d bytes)\n", (int)sent);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        glog("==========================================\n");
+        glog("Response:\n");
+        glog("==========================================\n");
+
+        recv_timeout.tv_sec = 10;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
+
+        // Receive response - process in small chunks with optional line limiting
+        int line_count = 0;
+        while (1) {
+            ssize_t received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+            if (received <= 0) {
+                if (received == 0) {
+                    glog("\n[Connection closed by server]\n");
+                } else if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) {
+                    glog("\n[Receive timeout]\n");
+                } else {
+                    glog("\n[Receive error: %d]\n", errno);
+                }
+                break;
+            }
+
+            // Process chunk with line counting and truncation
+            buffer[received] = '\0';
+            int print_len = received;
+            
+            if (max_lines > 0) {
+                // Count lines and find truncation point
+                for (int i = 0; i < received; i++) {
+                    if (line_count >= max_lines) {
+                        print_len = i;
+                        break;
+                    }
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                        if (line_count >= max_lines) {
+                            print_len = i + 1;  // Include the newline
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Count lines for statistics (no truncation)
+                for (int i = 0; i < received; i++) {
+                    if (buffer[i] == '\n') {
+                        line_count++;
+                    }
+                }
+            }
+            
+            // Print the chunk (or truncated portion)
+            if (print_len > 0) {
+                glog("%.*s", print_len, buffer);
+            }
+            
+            if (max_lines > 0 && line_count >= max_lines) {
+                glog("\n[Response truncated at %d lines]\n", max_lines);
+                goto http_done;
+            }
+            
+            total_received += received;
+        }
+http_done:
+
+        // Cleanup socket connection
+        if (sock >= 0) {
+            shutdown(sock, SHUT_RDWR);
+            close(sock);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    glog("\n==========================================\n");
+    glog("Total received: %zu bytes\n", total_received);
+    
+    status_display_show_status(is_https ? "HTTPS OK" : "HTTP OK");
+}
+#endif
+
+// settime - Set system time from a Unix timestamp
+void handle_settime_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: settime <unix_timestamp>\n");
+        glog("Example: settime 1704067200\n");
+        status_display_show_status("SetTime Use");
+        return;
+    }
+    
+    long timestamp = strtol(argv[1], NULL, 10);
+    if (timestamp <= 0) {
+        glog("Invalid timestamp: %s\n", argv[1]);
+        status_display_show_status("SetTime Invalid");
+        return;
+    }
+    
+    struct timeval tv;
+    tv.tv_sec = timestamp;
+    tv.tv_usec = 0;
+    
+    if (settimeofday(&tv, NULL) != 0) {
+        glog("Failed to set system time: %s\n", strerror(errno));
+        status_display_show_status("SetTime Fail");
+        return;
+    }
+    
+    // Display the set time
+    time_t now = (time_t)timestamp;
+    struct tm timeinfo;
+    char strftime_buf[64];
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    
+    glog("System time set successfully!\n");
+    glog("Time: %s\n", strftime_buf);
+    
+#ifdef CONFIG_HAS_RTC_CLOCK
+    // Save UTC time to RTC (not local time)
+    struct tm utc_timeinfo;
+    gmtime_r(&timestamp, &utc_timeinfo);
+    RTC_Date rtc_time;
+    rtc_time.year = utc_timeinfo.tm_year + 1900;
+    rtc_time.month = utc_timeinfo.tm_mon + 1;
+    rtc_time.day = utc_timeinfo.tm_mday;
+    rtc_time.hour = utc_timeinfo.tm_hour;
+    rtc_time.minute = utc_timeinfo.tm_min;
+    rtc_time.second = utc_timeinfo.tm_sec;
+    
+    if (rtc_set_datetime(&rtc_time) == ESP_OK) {
+        glog("UTC time saved to RTC: %04d-%02d-%02d %02d:%02d:%02d\n", 
+             rtc_time.year, rtc_time.month, rtc_time.day, 
+             rtc_time.hour, rtc_time.minute, rtc_time.second);
+    } else {
+        glog("Failed to save time to RTC\n");
+    }
+#endif
+    
+    status_display_show_status("Time Set OK");
+}
+
+// time - Display current system time
+void handle_time_cmd(int argc, char **argv) {
+    time_t now;
+    struct tm timeinfo;
+    char strftime_buf[64];
+    
+    time(&now);
+    
+    // Display local time
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    glog("Local time: %s\n", strftime_buf);
+    
+    // Display UTC time
+    struct tm timeinfo_utc;
+    gmtime_r(&now, &timeinfo_utc);
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S UTC", &timeinfo_utc);
+    glog("UTC time: %s\n", strftime_buf);
+    
+    // Display Unix timestamp
+    glog("Unix timestamp: %ld\n", (long)now);
+}
+
 void handle_startwd(int argc, char **argv) {
     bool stop_flag = false;
 
@@ -1469,12 +3537,12 @@ void handle_startwd(int argc, char **argv) {
 
     if (stop_flag) {
         stop_wardriving();
-        gps_manager_deinit(&g_gpsManager);
         wifi_manager_stop_monitor_mode();
         if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
             csv_flush_buffer_to_file();
         }
         csv_file_close();
+        gps_manager_deinit(&g_gpsManager);
         glog("Wardriving stopped.\n");
         status_display_show_status("Wardrive Stop");
     } else {
@@ -1627,6 +3695,9 @@ void handle_help(int argc, char **argv) {
 #ifdef CONFIG_HAS_INFRARED
         , "ir"
 #endif
+#ifdef CONFIG_WITH_ETHERNET
+        , "ethernet"
+#endif
     };
     int num_categories = sizeof(all_categories) / sizeof(all_categories[0]);
 
@@ -1642,445 +3713,566 @@ void handle_help(int argc, char **argv) {
 
     if (strcmp(category, "wifi") == 0) {
         glog("\nWi-Fi Commands:\n\n");
-        printf("scanap\n");
-        printf("    Description: Start a Wi-Fi access point (AP) scan.\n");
-        printf("    Usage: scanap [seconds]\n\n");
-        printf("scansta\n");
-        printf("    Description: Start scanning for Wi-Fi stations (hops channels).\n");
-        printf("    Usage: scansta\n\n");
-        printf("stopscan\n");
-        printf("    Description: Stop any ongoing Wi-Fi scan.\n");
-        printf("    Usage: stopscan\n\n");
-        printf("attack\n");
-        printf("    Description: Launch an attack (e.g., deauthentication attack).\n");
-        printf("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
-        printf("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
-        printf("    Arguments:\n");
-        printf("        -d  : Start deauth attack (supports multiple APs)\n");
-        printf("        -e  : Start EAPOL logoff attack\n");
-        printf("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n\n");
-        printf("list\n");
-        printf("    Description: List Wi-Fi scan results or connected stations.\n");
-        printf("    Usage: list -a | list -s | list -airtags\n");
-        printf("    Arguments:\n");
-        printf("        -a  : Show access points from Wi-Fi scan\n");
-        printf("        -s  : List connected stations\n");
-        printf("        -airtags: List discovered AirTags\n\n");
-        printf("beaconspam\n");
-        printf("    Description: Start beacon spam with different modes.\n");
-        printf("    Usage: beaconspam [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -r   : Start random beacon spam\n");
-        printf("        -rr  : Start Rickroll beacon spam\n");
-        printf("        -l   : Start AP List beacon spam\n");
-        printf("        [SSID]: Use specified SSID for beacon spam\n\n");
-        printf("stopspam\n");
-        printf("    Description: Stop ongoing beacon spam.\n");
-        printf("    Usage: stopspam\n\n");
-        printf("stopdeauth\n");
-        printf("    Description: Stop ongoing deauthentication attack.\n");
-        printf("    Usage: stopdeauth\n\n");
-        printf("select\n");
-        printf("    Description: Select access point(s), station, or AirTag by index from the scan results.\n");
-        printf("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
-        printf("    Arguments:\n");
-        printf("        -a      : AP selection index (supports multiple: 1,3,5)\n");
-        printf("        -s      : Station selection index\n");
-        printf("        -airtag : AirTag selection index\n");
-        printf("    Examples:\n");
-        printf("        select -a 4      : Select single AP at index 4\n");
-        printf("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
-        printf("scanall\n");
-        printf("    Description: Perform combined AP and Station scan, display results.\n");
-        printf("    Usage: scanall [seconds]\n\n");
-        printf("congestion\n");
-        printf("    Description: Display Wi-Fi channel congestion chart.\n");
-        printf("    Usage: congestion\n\n");
-        printf("connect\n");
-        printf("    Description: Connects to Specific WiFi Network and saves credentials.\n");
-        printf("    Usage: connect <SSID> [Password]\n\n");
-        printf("apcred\n");
-        printf("    Description: Change or reset the GhostNet AP credentials\n");
-        printf("    Usage: apcred <ssid> <password>\n");
-        printf("           apcred -r (reset to defaults)\n");
-        printf("    Arguments:\n");
-        printf("        <ssid>     : New SSID for the AP\n");
-        printf("        <password> : New password (min 8 characters)\n");
-        printf("        -r        : Reset to default (GhostNet/GhostNet)\n\n");
-        printf("apenable\n");
-        printf("    Description: Enable or disable the Access Point across reboots\n");
-        printf("    Usage: apenable <on|off>\n");
-        printf("    Arguments:\n");
-        printf("        on  : Enable the Access Point (requires restart)\n");
-        printf("        off : Disable the Access Point (requires restart)\n\n");
-        printf("listenprobes\n");
-        printf("    Description: Listen for and log probe requests.\n");
-        printf("    Usage: listenprobes [channel] [stop]\n");
-        printf("    Arguments:\n");
-        printf("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
-        printf("        stop      : Stop probe request listening\n\n");
-        printf("karma\n");
-        printf("    Description: Start or stop the Karma attack (responds to probe requests with specified or all SSIDs).\n");
-        printf("    Usage: karma start [ssid1 ssid2 ...]\n");
-        printf("           karma stop\n");
-        printf("    Arguments:\n");
-        printf("        start : Begin Karma attack. Optionally specify SSIDs to respond with (default: all known SSIDs).\n");
-        printf("        stop  : Stop Karma attack.\n");
-        printf("    Examples:\n");
-        printf("        karma start\n");
-        printf("        karma start FreeWiFi Starbucks\n");
-        printf("        karma stop\n\n");
+        glog("scanap\n");
+        glog("    Description: Start a Wi-Fi access point (AP) scan.\n");
+        glog("    Usage: scanap [seconds]\n\n");
+        glog("scansta\n");
+        glog("    Description: Start scanning for Wi-Fi stations (hops channels).\n");
+        glog("    Usage: scansta\n\n");
+        glog("stopscan\n");
+        glog("    Description: Stop any ongoing Wi-Fi scan.\n");
+        glog("    Usage: stopscan\n\n");
+        glog("attack\n");
+        glog("    Description: Launch an attack (e.g., deauthentication attack).\n");
+        glog("                 Supports multiple selected APs when using 'select -a 1,2,3'.\n");
+        glog("    Usage: attack -d (deauth) | attack -e (EAPOL logoff) | attack -s (SAE flood)\n");
+        glog("    Arguments:\n");
+        glog("        -d  : Start deauth attack (supports multiple APs)\n");
+        glog("        -e  : Start EAPOL logoff attack\n");
+        glog("        -s  : Start SAE flood attack (ESP32-C5/C6 only)\n\n");
+        glog("list\n");
+        glog("    Description: List Wi-Fi scan results or connected stations.\n");
+        glog("    Usage: list -a | list -s | list -airtags\n");
+        glog("    Arguments:\n");
+        glog("        -a  : Show access points from Wi-Fi scan\n");
+        glog("        -s  : List connected stations\n");
+        glog("        -airtags: List discovered AirTags\n\n");
+        glog("beaconspam\n");
+        glog("    Description: Start beacon spam with different modes.\n");
+        glog("    Usage: beaconspam [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -r   : Start random beacon spam\n");
+        glog("        -rr  : Start Rickroll beacon spam\n");
+        glog("        -l   : Start AP List beacon spam\n");
+        glog("        [SSID]: Use specified SSID for beacon spam\n\n");
+        glog("stopspam\n");
+        glog("    Description: Stop ongoing beacon spam.\n");
+        glog("    Usage: stopspam\n\n");
+        glog("stopdeauth\n");
+        glog("    Description: Stop ongoing deauthentication attack.\n");
+        glog("    Usage: stopdeauth\n\n");
+        glog("select\n");
+        glog("    Description: Select access point(s), station, or AirTag by index from the scan results.\n");
+        glog("    Usage: select -a <num[,num,...]> | select -s <num> | select -airtag <num>\n");
+        glog("    Arguments:\n");
+        glog("        -a      : AP selection index (supports multiple: 1,3,5)\n");
+        glog("        -s      : Station selection index\n");
+        glog("        -airtag : AirTag selection index\n");
+        glog("    Examples:\n");
+        glog("        select -a 4      : Select single AP at index 4\n");
+        glog("        select -a 1,3,5  : Select multiple APs at indices 1, 3, and 5\n\n");
+        glog("scanall\n");
+        glog("    Description: Perform combined AP and Station scan, display results.\n");
+        glog("    Usage: scanall [seconds]\n\n");
+        glog("sweep\n");
+        glog("    Description: Full environment sweep - scans WiFi APs, stations, BLE devices\n");
+        glog("                 and saves comprehensive report to SD card.\n");
+        glog("    Usage: sweep [-w wifi_sec] [-b ble_sec]\n");
+        glog("    Arguments:\n");
+        glog("        -w  : WiFi scan duration per phase in seconds (default: 5)\n");
+        glog("        -b  : BLE scan duration per phase in seconds (default: 5)\n");
+        glog("    Output: /mnt/ghostesp/sweeps/sweep_N.csv\n\n");
+        glog("congestion\n");
+        glog("    Description: Display Wi-Fi channel congestion chart.\n");
+        glog("    Usage: congestion\n\n");
+        glog("connect\n");
+        glog("    Description: Connects to Specific WiFi Network and saves credentials.\n");
+        glog("    Usage: connect <SSID> [Password]\n\n");
+        glog("apcred\n");
+        glog("    Description: Change or reset the GhostNet AP credentials\n");
+        glog("    Usage: apcred <ssid> <password>\n");
+        glog("           apcred -r (reset to defaults)\n");
+        glog("    Arguments:\n");
+        glog("        <ssid>     : New SSID for the AP\n");
+        glog("        <password> : New password (min 8 characters)\n");
+        glog("        -r        : Reset to default (GhostNet/GhostNet)\n\n");
+        glog("apenable\n");
+        glog("    Description: Enable or disable the Access Point across reboots\n");
+        glog("    Usage: apenable <on|off>\n");
+        glog("    Arguments:\n");
+        glog("        on  : Enable the Access Point (requires restart)\n");
+        glog("        off : Disable the Access Point (requires restart)\n\n");
+        glog("listenprobes\n");
+        glog("    Description: Listen for and log probe requests.\n");
+        glog("    Usage: listenprobes [channel] [stop]\n");
+        glog("    Arguments:\n");
+        glog("        [channel] : Listen on specific channel (1-165), omit for channel hopping\n");
+        glog("        stop      : Stop probe request listening\n\n");
+        glog("karma\n");
+        glog("    Description: Start or stop the Karma attack (responds to probe requests with specified or all SSIDs).\n");
+        glog("    Usage: karma start [ssid1 ssid2 ...]\n");
+        glog("           karma stop\n");
+        glog("    Arguments:\n");
+        glog("        start : Begin Karma attack. Optionally specify SSIDs to respond with (default: all known SSIDs).\n");
+        glog("        stop  : Stop Karma attack.\n");
+        glog("    Examples:\n");
+        glog("        karma start\n");
+        glog("        karma start FreeWiFi Starbucks\n");
+        glog("        karma stop\n\n");
+        glog("trackap\n");
+        glog("    Description: track selected ap signal strength (rssi)\n");
+        glog("    Usage: trackap\n");
+        glog("    Note: select an ap first with 'select -a <index>'\n\n");
+        glog("tracksta\n");
+        glog("    Description: track selected station signal strength (rssi)\n");
+        glog("    Usage: tracksta\n");
+        glog("    Note: select a station first with 'select -s <index>'\n\n");
 #if CONFIG_IDF_TARGET_ESP32C5
-        printf("setcountry\n");
-        printf("    Description: Set the Wi-Fi country code.\n");
-        printf("    Usage: setcountry <CC>\n");
-        printf("    Arguments:\n");
-        printf("        <CC> : Country code (\"01\" world-safe) or two-letter ISO (e.g., US)\n");
-        printf("    Supported: 01, AT, AU, BE, BG, BR, CA, CH, CN, CY, CZ, DE, DK, EE, ES, FI, FR, GB, GR, HK, HR, HU,\n");
-        printf("               IE, IN, IS, IT, JP, KR, LI, LT, LU, LV, MT, MX, NL, NO, NZ, PL, PT, RO, SE, SI, SK, TW, US\n\n");
+        glog("setcountry\n");
+        glog("    Description: Set the Wi-Fi country code.\n");
+        glog("    Usage: setcountry <CC>\n");
+        glog("    Arguments:\n");
+        glog("        <CC> : Country code (\"01\" world-safe) or two-letter ISO (e.g., US)\n");
+        glog("    Supported: 01, AT, AU, BE, BG, BR, CA, CH, CN, CY, CZ, DE, DK, EE, ES, FI, FR, GB, GR, HK, HR, HU,\n");
+        glog("               IE, IN, IS, IT, JP, KR, LI, LT, LU, LV, MT, MX, NL, NO, NZ, PL, PT, RO, SE, SI, SK, TW, US\n\n");
 #endif
-        TERMINAL_VIEW_ADD_TEXT("scanap, scansta, stopscan, attack, list, beaconspam, stopspam, stopdeauth, select, scanall, congestion, connect, apcred, apenable, listenprobes");
-#if CONFIG_IDF_TARGET_ESP32C5
-        TERMINAL_VIEW_ADD_TEXT(", setcountry");
-#endif
-        TERMINAL_VIEW_ADD_TEXT(", karma\n");
         return;
     }
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     if (strcmp(category, "ble") == 0) {
         glog("\nBLE Commands:\n\n");
-        printf("blescan\n");
-        printf("    Description: Handle BLE scanning with various modes.\n");
-        printf("    Usage: blescan [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -f   : Start 'Find the Flippers' mode\n");
-        printf("        -ds  : Start BLE spam detector\n");
-        printf("        -a   : Start AirTag scanner\n");
-        printf("        -r   : Scan for raw BLE packets\n");
-        printf("        -s   : Stop BLE scanning\n\n");
-        printf("blespam\n");
-        printf("    Description: Start BLE advertisement spam attacks.\n");
-        printf("    Usage: blespam [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -apple     : Apple device spam (AirPods, Apple TV, etc.)\n");
-        printf("        -ms        : Microsoft Swift Pair spam\n");
-        printf("        -samsung   : Samsung Galaxy Watch spam\n");
-        printf("        -google    : Google Fast Pair spam\n");
-        printf("        -random    : Random spam (cycles through all types)\n");
-        printf("        -s         : Stop BLE spam\n\n");
-        printf("blewardriving\n");
-        printf("    Description: Start/Stop BLE wardriving with GPS logging\n");
-        printf("    Usage: blewardriving [-s]\n");
-        printf("    Arguments:\n");
-        printf("        -s  : Stop BLE wardriving\n\n");
-        printf("list -airtags\n");
-        printf("    Description: List discovered AirTags\n");
-        printf("    Usage: list -airtags\n\n");
-        printf("select -airtag <index>\n\n");
-        printf("blescan\n");
-        printf("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
-        printf("    Usage: blescan [seconds]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("blescan, blespam, blewardriving, list -airtags, select -airtag\n");
+        glog("blescan\n");
+        glog("    Description: Handle BLE scanning with various modes.\n");
+        glog("    Usage: blescan [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -f   : Start 'Find the Flippers' mode\n");
+        glog("        -ds  : Start BLE spam detector\n");
+        glog("        -a   : Start AirTag scanner\n");
+        glog("        -r   : Scan for raw BLE packets\n");
+        glog("        -s   : Stop BLE scanning\n\n");
+        glog("blespam\n");
+        glog("    Description: Start BLE advertisement spam attacks.\n");
+        glog("    Usage: blespam [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -apple     : Apple device spam (AirPods, Apple TV, etc.)\n");
+        glog("        -ms        : Microsoft Swift Pair spam\n");
+        glog("        -samsung   : Samsung Galaxy Watch spam\n");
+        glog("        -google    : Google Fast Pair spam\n");
+        glog("        -random    : Random spam (cycles through all types)\n");
+        glog("        -s         : Stop BLE spam\n\n");
+        glog("blewardriving\n");
+        glog("    Description: Start/Stop BLE wardriving with GPS logging\n");
+        glog("    Usage: blewardriving [-s]\n");
+        glog("    Arguments:\n");
+        glog("        -s  : Stop BLE wardriving\n\n");
+        glog("list -airtags\n");
+        glog("    Description: List discovered AirTags\n");
+        glog("    Usage: list -airtags\n\n");
+        glog("select -airtag <index>\n\n");
+        glog("blescan\n");
+        glog("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
+        glog("    Usage: blescan [seconds]\n\n");
         return;
     }
 
     if (strcmp(category, "chameleon") == 0) {
-        printf("\nChameleon Ultra Commands:\n\n");
-        TERMINAL_VIEW_ADD_TEXT("\nChameleon Ultra Commands:\n\n");
-        printf("chameleon connect [timeout] [pin]\n");
-        printf("    Description: Connect to a Chameleon Ultra device via BLE\n");
-        printf("    Usage: chameleon connect [timeout_seconds] [pin]\n");
-        printf("    Arguments:\n");
-        printf("        timeout_seconds : Connection timeout (default: 10)\n");
-        printf("        pin            : PIN for authentication (4-6 digits, optional)\n\n");
-        printf("chameleon disconnect\n");
-        printf("    Description: Disconnect from the Chameleon Ultra device\n");
-        printf("    Usage: chameleon disconnect\n\n");
-        printf("chameleon status\n");
-        printf("    Description: Check connection status with Chameleon Ultra\n");
-        printf("    Usage: chameleon status\n\n");
-        printf("chameleon scanhf\n");
-        printf("    Description: Scan for High Frequency (HF) RFID tags\n");
-        printf("    Usage: chameleon scanhf\n\n");
-        printf("chameleon scanlf\n");
-        printf("    Description: Scan for Low Frequency (LF) RFID tags\n");
-        printf("    Usage: chameleon scanlf\n\n");
-        printf("chameleon battery\n");
-        printf("    Description: Get battery information from Chameleon Ultra\n");
-        printf("    Usage: chameleon battery\n\n");
-        printf("chameleon reader\n");
-        printf("    Description: Set Chameleon Ultra to reader mode\n");
-        printf("    Usage: chameleon reader\n\n");
-        printf("chameleon emulator\n");
-        printf("    Description: Set Chameleon Ultra to emulator mode\n");
-        printf("    Usage: chameleon emulator\n\n");
-        TERMINAL_VIEW_ADD_TEXT("chameleon connect, chameleon disconnect, chameleon status, chameleon scanhf, chameleon scanlf, chameleon battery, chameleon reader, chameleon emulator\n");
+        glog("\nChameleon Ultra Commands:\n\n");
+        glog("chameleon connect [timeout] [pin]\n");
+        glog("    Description: Connect to a Chameleon Ultra device via BLE\n");
+        glog("    Usage: chameleon connect [timeout_seconds] [pin]\n");
+        glog("    Arguments:\n");
+        glog("        timeout_seconds : Connection timeout (default: 10)\n");
+        glog("        pin            : PIN for authentication (4-6 digits, optional)\n\n");
+        glog("chameleon disconnect\n");
+        glog("    Description: Disconnect from the Chameleon Ultra device\n");
+        glog("    Usage: chameleon disconnect\n\n");
+        glog("chameleon status\n");
+        glog("    Description: Check connection status with Chameleon Ultra\n");
+        glog("    Usage: chameleon status\n\n");
+        glog("chameleon scanhf\n");
+        glog("    Description: Scan for High Frequency (HF) RFID tags\n");
+        glog("    Usage: chameleon scanhf\n\n");
+        glog("chameleon scanlf\n");
+        glog("    Description: Scan for Low Frequency (LF) RFID tags\n");
+        glog("    Usage: chameleon scanlf\n\n");
+        glog("chameleon battery\n");
+        glog("    Description: Get battery information from Chameleon Ultra\n");
+        glog("    Usage: chameleon battery\n\n");
+        glog("chameleon reader\n");
+        glog("    Description: Set Chameleon Ultra to reader mode\n");
+        glog("    Usage: chameleon reader\n\n");
+        glog("chameleon emulator\n");
+        glog("    Description: Set Chameleon Ultra to emulator mode\n");
+        glog("    Usage: chameleon emulator\n\n");
         return;
     }
 #endif
 
     if (strcmp(category, "comm") == 0) {
         glog("\nCommunication Commands:\n\n");
-        printf("commdiscovery\n    Check discovery status.\n    Usage: commdiscovery\n\n");
-        printf("commconnect\n    Connect to a discovered peer ESP32.\n    Usage: commconnect <peer_name>\n    Example: commconnect ESP_A1B2C3\n\n");
-        printf("commsend\n    Send a command to connected peer ESP32.\n    Usage: commsend <command> [data]\n    Example: commsend scanap\n    Example: commsend hello world\n\n");
-        printf("commstatus\n    Show communication status.\n    Usage: commstatus\n\n");
-        printf("commdisconnect\n    Disconnect from current peer.\n    Usage: commdisconnect\n\n");
-        printf("commsetpins\n    Change communication GPIO pins at runtime.\n    Usage: commsetpins <tx_pin> <rx_pin>\n    Example: commsetpins 4 5\n\n");
-        TERMINAL_VIEW_ADD_TEXT("commdiscovery, commconnect, commsend, commstatus, commdisconnect, commsetpins\n");
+        glog("commdiscovery\n    Check discovery status.\n    Usage: commdiscovery\n\n");
+        glog("commconnect\n    Connect to a discovered peer ESP32.\n    Usage: commconnect <peer_name>\n    Example: commconnect ESP_A1B2C3\n\n");
+        glog("commsend\n    Send a command to connected peer ESP32.\n    Usage: commsend <command> [data]\n    Example: commsend scanap\n    Example: commsend hello world\n\n");
+        glog("commstatus\n    Show communication status.\n    Usage: commstatus\n\n");
+        glog("commdisconnect\n    Disconnect from current peer.\n    Usage: commdisconnect\n\n");
+        glog("commsetpins\n    Change communication GPIO pins at runtime.\n    Usage: commsetpins <tx_pin> <rx_pin>\n    Example: commsetpins 4 5\n\n");
         return;
     }
 
     if (strcmp(category, "sd") == 0) {
         glog("\nSD Card Commands:\n\n");
-        printf("-- SD Card Pin Configuration --\n");
-        printf("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
-        printf("These commands configure pins for the *active* mode.\n");
-        printf("Changing the mode requires recompiling firmware.\n");
-        TERMINAL_VIEW_ADD_TEXT("-- SD Card Pin Configuration --\n");
-        TERMINAL_VIEW_ADD_TEXT("Note: SD Card mode (MMC vs SPI) is set at compile time (sdkconfig).\n");
-        TERMINAL_VIEW_ADD_TEXT("These commands configure pins for the *active* mode.\n");
-        TERMINAL_VIEW_ADD_TEXT("Changing the mode requires recompiling firmware.\n");
-        printf("sd_config\n    Show current SD GPIO pin configuration.\n    Usage: sd_config\n\n");
-        printf("sd_pins_mmc\n    Description: Set GPIO pins for SDMMC mode (1 or 4 bit). Requires restart/reinit.\n                 Only effective if firmware compiled for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n    Example: sd_pins_mmc 19 18 20 21 22 23\n\n");
-        printf("sd_pins_spi\n    Description: Set GPIO pins for SPI mode. Requires restart/reinit.\n                 Only effective if firmware compiled for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n    Example: sd_pins_spi 5 18 19 23\n\n");
-        printf("sd_save_config\n    Description: Save the current SD pin configuration (both modes) to the SD card.\n                 Requires SD card to be mounted.\n    Usage: sd_save_config\n\n");
-        TERMINAL_VIEW_ADD_TEXT("sd_config, sd_pins_mmc, sd_pins_spi, sd_save_config\n");
+        glog("-- File Operations (machine-parsable) --\n");
+        glog("sd status\n    Show SD mount status, type, capacity, usage.\n    Usage: sd status\n\n");
+        glog("sd list\n    List files/dirs with indices.\n    Usage: sd list [path]\n\n");
+        glog("sd info\n    Show file/dir details.\n    Usage: sd info <index|path>\n\n");
+        glog("sd size\n    Get file size.\n    Usage: sd size <index|path>\n\n");
+        glog("sd read\n    Read file (chunked downloads).\n    Usage: sd read <index|path> [offset] [length]\n\n");
+        glog("sd write\n    Create/overwrite file with base64 data.\n    Usage: sd write <path> <base64>\n\n");
+        glog("sd append\n    Append base64 data to file.\n    Usage: sd append <path> <base64>\n\n");
+        glog("sd mkdir\n    Create directory.\n    Usage: sd mkdir <path>\n\n");
+        glog("sd rm\n    Delete file or empty directory.\n    Usage: sd rm <index|path>\n\n");
+        glog("sd tree\n    Recursive listing.\n    Usage: sd tree [path] [depth]\n\n");
+        glog("-- Pin Configuration --\n");
+        glog("sd_config\n    Show current SD GPIO pin configuration.\n    Usage: sd_config\n\n");
+        glog("sd_pins_mmc\n    Set GPIO pins for SDMMC mode.\n    Usage: sd_pins_mmc <clk> <cmd> <d0> <d1> <d2> <d3>\n\n");
+        glog("sd_pins_spi\n    Set GPIO pins for SPI mode.\n    Usage: sd_pins_spi <cs> <clk> <miso> <mosi>\n\n");
+        glog("sd_save_config\n    Save pin config to NVS.\n    Usage: sd_save_config\n\n");
         return;
     }
 
     if (strcmp(category, "led") == 0) {
         glog("\nLED & RGB Commands:\n\n");
-        printf("rgbmode\n    Control LED effects (rainbow, police, strobe, off)\n    Usage: rgbmode <rainbow|police|strobe|off|color>\n\n");
-        printf("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
-        printf("setrgbcount\n    Configure how many RGB LEDs are attached\n    Usage: setrgbcount <1-512>\n\n");
-        printf("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
-        printf("getneopixelbrightness\n    Show current neopixel max brightness (percent)\n    Usage: getneopixelbrightness\n\n");
-        TERMINAL_VIEW_ADD_TEXT("rgbmode, setrgbpins, setrgbcount, setneopixelbrightness, getneopixelbrightness\n");
+        glog("rgbmode\n    Control LED effects (rainbow, police, strobe, knight, off)\n    Usage: rgbmode <rainbow|police|strobe|knight|off|color>\n\n");
+        glog("setrgbpins\n    Change RGB LED pins\n    Usage: setrgbpins <red> <green> <blue>\n           (use same value for all pins for single-pin LED strips)\n\n");
+        glog("setrgbcount\n    Configure how many RGB LEDs are attached\n    Usage: setrgbcount <1-512>\n\n");
+        glog("setneopixelbrightness\n    Set maximum neopixel brightness (percent)\n    Usage: setneopixelbrightness <0-100>\n\n");
+        glog("getneopixelbrightness\n    Show current neopixel max brightness (percent)\n    Usage: getneopixelbrightness\n\n");
         return;
     }
 
     if (strcmp(category, "misc") == 0) {
         glog("\nMiscellaneous Commands:\n\n");
-        printf("help\n");
-        printf("    Description: Display this help message.\n");
-        printf("    Usage: help [category]\n\n");
-        printf("chipinfo\n");
-        printf("    Description: Display chip information including model, revision, and features\n");
-        printf("    Usage: chipinfo\n");
-        printf("    Shows:\n");
-        printf("        - Chip model and revision\n");
-        printf("        - CPU cores and features\n");
-        printf("        - Flash size and memory info\n");
-        printf("        - ESP-IDF version\n\n");
-        printf("timezone\n");
-        printf("    Description: Set the display timezone for the clock view.\n");
-        printf("    Usage: timezone <TZ_STRING>\n\n");
-        printf("webauth\n");
-        printf("    Description: Enable/disable web authentication.\n");
-        printf("    Usage: webauth <enable|disable>\n\n");
-        printf("pineap\n");
-        printf("    Description: Start/Stop detecting WiFi Pineapples.\n");
-        printf("    Usage: pineap [-s]\n");
-        printf("    Arguments:\n");
-        printf("        -s  : Stop PineAP detection\n\n");
-        printf("Port Scanner\n");
-        printf("    Description: Scan ports on local subnet or specific IP\n");
-        printf("    Usage: scanports local\n");
-        printf("           scanports <IP> [all | start-end]\n");
-        printf("    Arguments:\n");
-        printf("        all  : Scan all ports (1-65535)\n");
-        printf("        start-end : Custom port range (e.g. 80-443)\n");
-        printf("        (no range) : Scan common ports (default)\n\n");
-        printf("scanarp\n");
-        printf("    Description: Perform ARP scan on local network to discover active hosts\n");
-        printf("    Usage: scanarp\n\n");
-        printf("settings\n");
-        printf("    Description: Manage NVS stored settings via command line\n");
-        printf("    Usage: settings <command> [arguments]\n");
-        printf("    Commands:\n");
-        printf("        list                    - List all available settings\n");
-        printf("        get <setting>           - Get current value of a setting\n");
-        printf("        set <setting> <value>   - Set a setting to a value\n");
-        printf("        reset [setting]         - Reset setting(s) to defaults\n");
-        printf("        help                    - Show settings help\n");
-        printf("    Examples:\n");
-        printf("        settings list\n");
-        printf("        settings get ap_ssid\n");
-        printf("        settings set rgb_mode 1\n");
-        printf("        settings reset\n\n");
-        printf("statusidle\n");
-        printf("    Description: View or change the status display idle animation (status OLED only).\n");
-        printf("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("help, chipinfo, timezone, webauth, pineap, scanports, scanarp, settings, statusidle\n");
+        glog("help\n");
+        glog("    Description: Display this help message.\n");
+        glog("    Usage: help [category]\n\n");
+        glog("chipinfo\n");
+        glog("    Description: Display chip information including model, revision, and features\n");
+        glog("    Usage: chipinfo\n");
+        glog("    Shows:\n");
+        glog("        - Chip model and revision\n");
+        glog("        - CPU cores and features\n");
+        glog("        - Flash size and memory info\n");
+        glog("        - ESP-IDF version\n\n");
+        glog("timezone\n");
+        glog("    Description: Set the display timezone for the clock view.\n");
+        glog("    Usage: timezone <TZ_STRING>\n\n");
+        glog("webauth\n");
+        glog("    Description: Enable/disable web authentication.\n");
+        glog("    Usage: webauth <enable|disable>\n\n");
+        glog("pineap\n");
+        glog("    Description: Start/Stop detecting WiFi Pineapples.\n");
+        glog("    Usage: pineap [-s]\n");
+        glog("    Arguments:\n");
+        glog("        -s  : Stop PineAP detection\n\n");
+        glog("Port Scanner\n");
+        glog("    Description: Scan ports on local subnet or specific IP\n");
+        glog("    Usage: scanports local\n");
+        glog("           scanports <IP> [all | start-end]\n");
+        glog("    Arguments:\n");
+        glog("        all  : Scan all ports (1-65535)\n");
+        glog("        start-end : Custom port range (e.g. 80-443)\n");
+        glog("        (no range) : Scan common ports (default)\n\n");
+        glog("scanarp\n");
+        glog("    Description: Perform ARP scan on local network to discover active hosts\n");
+        glog("    Usage: scanarp\n\n");
+        glog("settings\n");
+        glog("    Description: Manage NVS stored settings via command line\n");
+        glog("    Usage: settings <command> [arguments]\n");
+        glog("    Commands:\n");
+        glog("        list                    - List all available settings\n");
+        glog("        get <setting>           - Get current value of a setting\n");
+        glog("        set <setting> <value>   - Set a setting to a value\n");
+        glog("        reset [setting]         - Reset setting(s) to defaults\n");
+        glog("        help                    - Show settings help\n");
+        glog("    Examples:\n");
+        glog("        settings list\n");
+        glog("        settings get ap_ssid\n");
+        glog("        settings set rgb_mode 1\n");
+        glog("        settings reset\n\n");
+        glog("    Description: View or change the status display idle animation (status OLED only).\n");
+        glog("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
         return;
     }
     if (strcmp(category, "gps") == 0) {
         glog("\nGPS Commands:\n\n");
-        printf("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo\n\n");
-        printf("startwd\n    Start GPS wardriving.\n    Usage: startwd [seconds]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("gpsinfo, startwd\n");
+        glog("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo [-s]\n\n");
+        glog("gpspin\n    Set GPS RX pin for external GPS module.\n    Usage: gpspin <pin>\n\n");
+        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [seconds]\n\n");
         return;
     }
     if (strcmp(category, "portal") == 0) {
         glog("\nEvil Portal Commands:\n\n");
-        printf("startportal\n");
-        printf("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
-        printf("                 /mnt/ prefix is added automatically to file paths if missing.\n");
-        printf("    Usage: startportal [FilePath] [AP_SSID] [PSK]\n");
-        printf("           PSK is optional for an open network.\n");
-        printf("    Use 'default' as the file path for the default Evil Portal.\n");
-        printf("\n");
-        printf("evilportal\n");
-        printf("    Description: Configure Evil Portal HTML content via UART buffer.\n");
-        printf("    Usage: evilportal -c sethtmlstr\n");
-        printf("    Steps:\n");
-        printf("      1. Run: evilportal -c sethtmlstr\n");
-        printf("      2. Send [HTML/BEGIN] marker over UART\n");
-        printf("      3. Send HTML content over UART\n");
-        printf("      4. Send [HTML/CLOSE] marker over UART\n");
-        printf("      5. Run startportal (will use buffered HTML)\n");
-        printf("\n");
-        printf("stopportal\n");
-        printf("    Description: Stop Evil Portal\n");
-        printf("    Usage: stopportal\n\n");
-        printf("listportals\n    List available Evil Portal files.\n    Usage: listportals\n\n");
-        TERMINAL_VIEW_ADD_TEXT("startportal, stopportal, listportals\n");
+        glog("startportal\n");
+        glog("    Description: Start an Evil Portal using a local file or the default embedded page.\n");
+        glog("                 /mnt/ prefix is added automatically to file paths if missing.\n");
+        glog("    Usage: startportal [FilePath] [AP_SSID] [PSK]\n");
+        glog("           PSK is optional for an open network.\n");
+        glog("    Use 'default' as the file path for the default Evil Portal.\n");
+        glog("\n");
+        glog("evilportal\n");
+        glog("    Description: Configure Evil Portal HTML content via UART buffer.\n");
+        glog("    Usage: evilportal -c sethtmlstr\n");
+        glog("    Steps:\n");
+        glog("      1. Run: evilportal -c sethtmlstr\n");
+        glog("      2. Send [HTML/BEGIN] marker over UART\n");
+        glog("      3. Send HTML content over UART\n");
+        glog("      4. Send [HTML/CLOSE] marker over UART\n");
+        glog("      5. Run startportal (will use buffered HTML)\n");
+        glog("\n");
+        glog("stopportal\n");
+        glog("    Description: Stop Evil Portal\n");
+        glog("    Usage: stopportal\n\n");
+        glog("listportals\n    List available Evil Portal files.\n    Usage: listportals\n\n");
         return;
     }
 
     if (strcmp(category, "printer") == 0) {
         glog("\nPrinter Commands:\n\n");
-        printf("powerprinter\n");
-        printf("    Description: Print Custom Text to a Printer on your LAN (Requires You to Run Connect First)\n");
-        printf("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n");
-        printf("    aligment options: CM = Center Middle, TL = Top Left, TR = Top Right, BR = Bottom Right, BL = Bottom Left\n\n");
-        TERMINAL_VIEW_ADD_TEXT("powerprinter\n");
-        TERMINAL_VIEW_ADD_TEXT("    Print custom text to a network printer.\n");
-        TERMINAL_VIEW_ADD_TEXT("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n\n");
+        glog("powerprinter\n");
+        glog("    Description: Print Custom Text to a Printer on your LAN (Requires You to Run Connect First)\n");
+        glog("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n");
+        glog("    aligment options: CM = Center Middle, TL = Top Left, TR = Top Right, BR = Bottom Right, BL = Bottom Left\n\n");
+        glog("powerprinter\n");
+        glog("    Print custom text to a network printer.\n");
+        glog("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n\n");
         return;
     }
 
     if (strcmp(category, "cast") == 0) {
         glog("\nYouTube Cast Commands:\n\n");
-        printf("dialconnect\n");
-        printf("    Description: Cast a Random Youtube Video on all Smart TV's on your LAN (Requires You to Run Connect First)\n");
-        printf("    Usage: dialconnect\n\n");
-        TERMINAL_VIEW_ADD_TEXT("dialconnect\n");
-        TERMINAL_VIEW_ADD_TEXT("    Cast a random YouTube video to all smart TVs on your LAN.\n");
-        TERMINAL_VIEW_ADD_TEXT("    Usage: dialconnect\n\n");
+        glog("dialconnect\n");
+        glog("    Description: Cast a Random Youtube Video on all Smart TV's on your LAN (Requires You to Run Connect First)\n");
+        glog("    Usage: dialconnect\n\n");
+        glog("dialconnect\n");
+        glog("    Cast a random YouTube video to all smart TVs on your LAN.\n");
+        glog("    Usage: dialconnect\n\n");
         return;
     }
 
     if (strcmp(category, "capture") == 0) {
         glog("\nCapture Commands:\n\n");
-        printf("capture\n");
-        printf("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
-        printf("    Usage: capture [OPTION]\n");
-        printf("    Arguments:\n");
-        printf("        -probe   : Start Capturing Probe Packets\n");
-        printf("        -beacon  : Start Capturing Beacon Packets\n");
-        printf("        -deauth   : Start Capturing Deauth Packets\n");
-        printf("        -raw   :   Start Capturing Raw Packets\n");
-        printf("        -wps   :   Start Capturing WPS Packets and there Auth Type\n");
-        printf("        -pwn   :   Start Capturing Pwnagotchi Packets\n");
+        glog("capture\n");
+        glog("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
+        glog("    Usage: capture [OPTION]\n");
+        glog("    Arguments:\n");
+        glog("        -probe     : Start Capturing Probe Packets\n");
+        glog("        -beacon    : Start Capturing Beacon Packets\n");
+        glog("        -deauth    : Start Capturing Deauth Packets\n");
+        glog("        -raw       : Start Capturing Raw Packets\n");
+        glog("        -wps       : Start Capturing WPS Packets and there Auth Type\n");
+        glog("        -pwn       : Start Capturing Pwnagotchi Packets\n");
+        glog("        -wireshark : Stream raw PCAP to USB/UART for Wireshark\n");
+        glog("                    Usage: capture -wireshark [-c <channel>]\n");
+        glog("                    -c <channel>: Lock to specific channel (1-%d)\n", MAX_WIFI_CHANNEL);
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        printf("        -802154:   Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
+        glog("        -802154    : Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
         #endif
-        printf("        -stop   : Stops the active capture\n\n");
-        TERMINAL_VIEW_ADD_TEXT("capture\n");
-        TERMINAL_VIEW_ADD_TEXT("    Start a WiFi packet capture.\n");
-        TERMINAL_VIEW_ADD_TEXT("    Usage: capture [OPTION]\n");
+        glog("        -stop      : Stops the active capture\n\n");
+        glog("capture\n");
+        glog("    Start a WiFi packet capture.\n");
+        glog("    Usage: capture [OPTION]\n");
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -802154, -stop\n\n");
+        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -802154, -stop\n\n");
         #else
-        TERMINAL_VIEW_ADD_TEXT("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -stop\n\n");
+        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -stop\n\n");
         #endif
         return;
     }
 
     if (strcmp(category, "beacon") == 0) {
         glog("\nBeacon Spam Commands:\n\n");
-        printf("beaconadd\n    Add an SSID to the beacon spam list.\n    Usage: beaconadd <SSID>\n\n");
-        printf("beaconremove\n    Remove an SSID from the beacon spam list.\n    Usage: beaconremove <SSID>\n\n");
-        printf("beaconclear\n    Clear the beacon spam list.\n    Usage: beaconclear\n\n");
-        printf("beaconshow\n    Show the current beacon spam list.\n    Usage: beaconshow\n\n");
-        printf("beaconspamlist\n    Start beacon spamming using the beacon spam list.\n    Usage: beaconspamlist\n\n");
-        TERMINAL_VIEW_ADD_TEXT("beaconadd, beaconremove, beaconclear, beaconshow, beaconspamlist\n");
+        glog("beaconadd\n    Add an SSID to the beacon spam list.\n    Usage: beaconadd <SSID>\n\n");
+        glog("beaconremove\n    Remove an SSID from the beacon spam list.\n    Usage: beaconremove <SSID>\n\n");
+        glog("beaconclear\n    Clear the beacon spam list.\n    Usage: beaconclear\n\n");
+        glog("beaconshow\n    Show the current beacon spam list.\n    Usage: beaconshow\n\n");
+        glog("beaconspamlist\n    Start beacon spamming using the beacon spam list.\n    Usage: beaconspamlist\n\n");
         return;
     }
 
     if (strcmp(category, "attack") == 0) {
         glog("\nAttack Commands:\n\n");
-        printf("dhcpstarve\n");
-        printf("    Description: DHCP starvation flood attack\n");
-        printf("    Usage: dhcpstarve start [threads]\n");
-        printf("           dhcpstarve stop\n");
-        printf("           dhcpstarve display\n\n");
-        printf("saeflood\n");
-        printf("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
-        printf("    Usage: saeflood <password> (requires selected WPA3 AP)\n\n");
-        printf("stopsaeflood\n    Stop SAE flood attack.\n    Usage: stopsaeflood\n\n");
-        printf("saefloodhelp\n    Show detailed SAE flood attack help.\n    Usage: saefloodhelp\n\n");
-        TERMINAL_VIEW_ADD_TEXT("dhcpstarve, saeflood, stopsaeflood, saefloodhelp\n");
+        glog("dhcpstarve\n");
+        glog("    Description: DHCP starvation flood attack\n");
+        glog("    Usage: dhcpstarve start [threads]\n");
+        glog("           dhcpstarve stop\n");
+        glog("           dhcpstarve display\n\n");
+        glog("saeflood\n");
+        glog("    Description: SAE handshake flooding attack (ESP32-C5/C6 only)\n");
+        glog("    Usage: saeflood <password> (requires selected WPA3 AP)\n\n");
+        glog("stopsaeflood\n    Stop SAE flood attack.\n    Usage: stopsaeflood\n\n");
+        glog("saefloodhelp\n    Show detailed SAE flood attack help.\n    Usage: saefloodhelp\n\n");
         return;
     }
     
 #ifdef CONFIG_HAS_INFRARED
     if (strcmp(category, "ir") == 0) {
         glog("\nInfrared Commands:\n\n");
-        printf("ir send\n");
-        printf("    Description: Send an IR signal from a file.\n");
-        printf("    Usage: ir send <path> [index]\n\n");
+        glog("ir send\n");
+        glog("    Description: Send an IR signal from a file.\n");
+        glog("    Usage: ir send <path> [index]\n\n");
 
-        printf("ir learn\n");
-        printf("    Description: Learn an IR signal and save to file.\n");
-        printf("    Usage: ir learn <path>\n\n");
-        printf("ir list\n");
-        printf("    Description: List IR files in default directory.\n");
-        printf("    Usage: ir list [path]\n\n");
-        printf("ir rx\n");
-        printf("    Description: Receive and display IR signals (Matrix mode).\n");
-        printf("    Usage: ir rx [timeout]\n\n");
-        printf("ir show\n");
-        printf("    Description: Show content of an IR file.\n");
-        printf("    Usage: ir show <path>\n\n");
-        printf("ir universals\n");
-        printf("    Description: Manage universal IR signals (files and built-ins).\n");
-        printf("    Usage: ir universals list [-all]\n");
-        printf("           ir universals send <index>\n");
-        printf("           ir universals sendall <file|TURNHISTVOFF> [delay_ms]\n");
-        printf("           ir universals show <file|TURNHISTVOFF>\n\n");
-        printf("ir dazzler\n");
-        printf("    Description: IR dazzler mode - emit continuous IR to interfere with cameras.\n");
-        printf("    Usage: ir dazzler [stop]\n\n");
-        TERMINAL_VIEW_ADD_TEXT("ir send, ir learn, ir list, ir rx, ir show, ir universals, ir dazzler\n");
+        glog("ir learn\n");
+        glog("    Description: Learn an IR signal and save to file.\n");
+        glog("    Usage: ir learn <path>\n\n");
+        glog("ir list\n");
+        glog("    Description: List IR files in default directory.\n");
+        glog("    Usage: ir list [path]\n\n");
+        glog("ir rx\n");
+        glog("    Description: Receive and display IR signals (Matrix mode).\n");
+        glog("    Usage: ir rx [timeout]\n\n");
+        glog("ir show\n");
+        glog("    Description: Show content of an IR file.\n");
+        glog("    Usage: ir show <path>\n\n");
+        glog("ir universals\n");
+        glog("    Description: Manage universal IR signals (files and built-ins).\n");
+        glog("    Usage: ir universals list [-all]\n");
+        glog("           ir universals send <index>\n");
+        glog("           ir universals sendall <file|TURNHISTVOFF> [delay_ms]\n");
+        glog("           ir universals show <file|TURNHISTVOFF>\n\n");
+        glog("ir dazzler\n");
+        glog("    Description: IR dazzler mode - emit continuous IR to interfere with cameras.\n");
+        glog("    Usage: ir dazzler [stop]\n\n");
+        return;
+    }
+#endif
+
+#ifdef CONFIG_WITH_ETHERNET
+    if (strcmp(category, "ethernet") == 0) {
+        glog("\nEthernet Commands:\n\n");
+        printf("ethup\n");
+        printf("    Description: Initialize and bring up Ethernet interface.\n");
+        printf("    Usage: ethup\n");
+        printf("    Note: Waits for link establishment and DHCP assignment.\n\n");
+        printf("ethdown\n");
+        printf("    Description: Deinitialize and bring down Ethernet interface.\n");
+        printf("    Usage: ethdown\n\n");
+        printf("ethinfo\n");
+        printf("    Description: Display Ethernet connection information.\n");
+        printf("    Usage: ethinfo\n");
+        printf("    Shows: Status, IP address, netmask, gateway, DNS servers, DHCP server\n\n");
+        printf("ethfp\n");
+        printf("    Description: Fingerprint network hosts using mDNS, NetBIOS, and SSDP.\n");
+        printf("    Usage: ethfp\n");
+        printf("    Discovers: Apple devices, Chromecasts, printers, Windows PCs, routers, smart TVs\n\n");
+        printf("etharp\n");
+        printf("    Description: Perform ARP scan on local Ethernet network.\n");
+        printf("    Usage: etharp\n");
+        printf("    Scans: Local subnet (1-254) to discover active hosts\n\n");
+        printf("ethports\n");
+        printf("    Description: Scan TCP ports on a target IP address.\n");
+        printf("    Usage: ethports [IP] [all | start-end]\n");
+        printf("    Arguments:\n");
+        printf("        [IP]      : Target IP address (default: gateway)\n");
+        printf("        all       : Scan all ports (1-65535)\n");
+        printf("        start-end  : Custom port range (e.g., 80-443)\n");
+        printf("        (no range): Scan common ports (default)\n");
+        printf("    Examples:\n");
+        printf("        ethports\n");
+        printf("        ethports 192.168.1.1\n");
+        printf("        ethports 192.168.1.1 all\n");
+        printf("        ethports 192.168.1.1 80-443\n\n");
+        printf("ethping\n");
+        printf("    Description: Perform ICMP ping scan on local Ethernet network.\n");
+        printf("    Usage: ethping\n");
+        printf("    Scans: Local subnet (1-254) to find alive hosts\n\n");
+        printf("ethdns\n");
+        printf("    Description: Perform DNS lookup or reverse DNS lookup.\n");
+        printf("    Usage: ethdns <hostname>\n");
+        printf("           ethdns reverse <ip_address>\n");
+        printf("    Examples:\n");
+        printf("        ethdns google.com\n");
+        printf("        ethdns reverse 8.8.8.8\n\n");
+        printf("ethtrace\n");
+        printf("    Description: Perform traceroute to a target host.\n");
+        printf("    Usage: ethtrace <hostname_or_ip> [max_hops]\n");
+        printf("    Arguments:\n");
+        printf("        hostname_or_ip : Target hostname or IP address\n");
+        printf("        max_hops       : Maximum number of hops (default: 30, max: 64)\n");
+        printf("    Examples:\n");
+        printf("        ethtrace 8.8.8.8\n");
+        printf("        ethtrace google.com 30\n\n");
+        printf("ethstats\n");
+        printf("    Description: Display Ethernet network statistics.\n");
+        printf("    Usage: ethstats\n");
+        printf("    Shows: Link status, IP info, MAC address, packet statistics, ARP statistics\n\n");
+        printf("ethconfig\n");
+        printf("    Description: Configure Ethernet IP settings (DHCP or static).\n");
+        printf("    Usage: ethconfig <command>\n");
+        printf("    Commands:\n");
+        printf("        dhcp                    - Use DHCP (automatic IP)\n");
+        printf("        static <ip> <netmask> <gateway> - Set static IP\n");
+        printf("        show                    - Show current configuration\n");
+        printf("    Examples:\n");
+        printf("        ethconfig dhcp\n");
+        printf("        ethconfig static 192.168.1.100 255.255.255.0 192.168.1.1\n");
+        printf("        ethconfig show\n\n");
+        printf("ethmac\n");
+        printf("    Description: View or set Ethernet MAC address.\n");
+        printf("    Usage: ethmac\n");
+        printf("           ethmac set <xx:xx:xx:xx:xx:xx>\n");
+        printf("    Examples:\n");
+        printf("        ethmac\n");
+        printf("        ethmac set 02:00:00:00:00:01\n");
+        printf("    Note: MAC address changes may require reinitialization\n\n");
+        printf("ethserv\n");
+        printf("    Description: Service discovery and banner grabbing on a target IP.\n");
+        printf("    Usage: ethserv [ip_address]\n");
+        printf("    Arguments:\n");
+        printf("        [ip_address] : Target IP address (default: gateway)\n");
+        printf("    Scans: Common services (FTP, SSH, Telnet, SMTP, HTTP, HTTPS, etc.)\n");
+        printf("    Example: ethserv 192.168.1.1\n\n");
+        printf("ethntp\n");
+        printf("    Description: Query NTP server and synchronize system time.\n");
+        printf("    Usage: ethntp [ntp_server]\n");
+        printf("    Arguments:\n");
+        printf("        [ntp_server] : NTP server hostname or IP (default: pool.ntp.org)\n");
+        printf("    Examples:\n");
+        printf("        ethntp\n");
+        printf("        ethntp pool.ntp.org\n");
+        printf("        ethntp time.google.com\n");
+        printf("    Note: Requires Ethernet connection to be active\n\n");
+        printf("ethhttp\n");
+        printf("    Description: Send HTTP/HTTPS GET request to a server and display response.\n");
+        printf("    Usage: ethhttp <url> [lines|all]\n");
+        printf("    Arguments:\n");
+        printf("        <url>  : Full URL including protocol (http:// or https://)\n");
+        printf("        [lines]: Optional - show first N lines (default: 25, use 'all' for full)\n");
+        printf("    Examples:\n");
+        printf("        ethhttp http://example.com  (shows first 25 lines)\n");
+        printf("        ethhttp https://www.google.com 50  (shows first 50 lines)\n");
+        printf("        ethhttp http://192.168.1.1/index.html all  (shows full response)\n");
+        printf("        ethhttp https://example.com:8443/api/data 100\n");
+        printf("    Note: Default is 25 lines. Use 'all' for complete responses. HTTPS uses TLS 1.2.\n\n");
+        TERMINAL_VIEW_ADD_TEXT("ethup, ethdown, ethinfo, ethfp, etharp, ethports, ethping, ethdns, ethtrace, ethstats, ethconfig, ethmac, ethserv, ethntp, ethhttp\n");
         return;
     }
 #endif
 
     glog("\nGhost ESP Command Categories:\n\n");
 
-    printf("  help wifi      - Wi-Fi commands\n");
-    printf("  help ble       - Bluetooth/BLE commands\n");
-    printf("  help comm      - ESP32 communication commands\n");
-    printf("  help sd        - SD card commands\n");
-    printf("  help led       - LED/RGB commands\n");
-    printf("  help gps       - GPS commands\n");
-    printf("  help misc      - Miscellaneous commands\n");
-    printf("  help portal    - Evil Portal commands\n");
-    printf("  help printer   - Printer commands\n");
-    printf("  help cast      - YouTube cast commands\n");
-    printf("  help capture   - Wi-Fi packet capture commands\n");
-    printf("  help beacon    - Beacon spam commands\n");
-    printf("  help attack    - Attack/flood commands\n");
+    glog("  help wifi      - Wi-Fi commands\n");
+    glog("  help ble       - Bluetooth/BLE commands\n");
+    glog("  help comm      - ESP32 communication commands\n");
+    glog("  help sd        - SD card commands\n");
+    glog("  help led       - LED/RGB commands\n");
+    glog("  help gps       - GPS commands\n");
+    glog("  help misc      - Miscellaneous commands\n");
+    glog("  help portal    - Evil Portal commands\n");
+    glog("  help printer   - Printer commands\n");
+    glog("  help cast      - YouTube cast commands\n");
+    glog("  help capture   - Wi-Fi packet capture commands\n");
+    glog("  help beacon    - Beacon spam commands\n");
+    glog("  help attack    - Attack/flood commands\n");
 #ifdef CONFIG_HAS_INFRARED
-    printf("  help ir        - Infrared commands\n");
+    glog("  help ir        - Infrared commands\n");
 #endif
-    printf("  help all      - All commands\n\n");
+#ifdef CONFIG_WITH_ETHERNET
+    printf("  help ethernet  - Ethernet commands\n");
+#endif
+    glog("  help all      - All commands\n\n");
 
-    TERMINAL_VIEW_ADD_TEXT(
+    glog(
         "  help wifi      - Wi-Fi commands\n"
         "  help ble       - Bluetooth/BLE commands\n"
         "  help comm      - ESP32 communication commands\n"
@@ -2088,19 +4280,21 @@ void handle_help(int argc, char **argv) {
         "  help led       - LED/RGB commands\n"
         "  help gps       - GPS commands\n"
         "  help misc      - Miscellaneous commands\n");
-    TERMINAL_VIEW_ADD_TEXT("  help portal    - Evil Portal commands\n"
-                      "  help printer   - Printer commands\n"
-                      "  help cast      - YouTube cast commands\n"
-                      "  help capture   - Wi-Fi packet capture commands\n"
-                      "  help beacon    - Beacon spam commands\n"
-                      "  help attack    - Attack/flood commands\n"
+    glog("  help portal    - Evil Portal commands\n"
+         "  help printer   - Printer commands\n"
+         "  help cast      - YouTube cast commands\n"
+         "  help capture   - Wi-Fi packet capture commands\n"
+         "  help beacon    - Beacon spam commands\n"
+         "  help attack    - Attack/flood commands\n"
 #ifdef CONFIG_HAS_INFRARED
-                      "  help ir        - Infrared commands\n"
+         "  help ir        - Infrared commands\n"
 #endif
-                      "  help all      - All commands\n\n");
+#ifdef CONFIG_WITH_ETHERNET
+         "  help ethernet  - Ethernet commands\n"
+#endif
+         "  help all      - All commands\n\n");
 
-    printf("Type 'help <category>' for details on that category.\n\n");
-    TERMINAL_VIEW_ADD_TEXT("Type 'help <category>' for details on that category.\n\n");
+    glog("Type 'help <category>' for details on that category.\n\n");
 }
 
 void handle_capture(int argc, char **argv) {
@@ -2122,6 +4316,30 @@ void handle_capture(int argc, char **argv) {
 #endif
 }
 
+void handle_gps_pin(int argc, char **argv) {
+    if (argc < 2) {
+        uint8_t current_pin = settings_get_gps_rx_pin(&G_Settings);
+        if (current_pin > 0) {
+            glog("GPS RX pin: IO%d\n", current_pin);
+        } else {
+            glog("GPS RX pin: not set (using default)\n");
+        }
+        glog("Usage: gpspin <pin>\n");
+        return;
+    }
+
+    int pin = atoi(argv[1]);
+    if (pin < 0 || pin > 48) {
+        glog("Invalid pin. Must be 0-48.\n");
+        return;
+    }
+
+    settings_set_gps_rx_pin(&G_Settings, (uint8_t)pin);
+    settings_save(&G_Settings);
+    glog("GPS RX pin set to IO%d. Restart GPS to apply.\n", pin);
+    TERMINAL_VIEW_ADD_TEXT("GPS pin set to IO%d\n", pin);
+}
+
 void handle_gps_info(int argc, char **argv) {
     bool stop_flag = false;
 
@@ -2136,6 +4354,17 @@ void handle_gps_info(int argc, char **argv) {
         if (gps_info_task_handle != NULL) {
             vTaskDelete(gps_info_task_handle);
             gps_info_task_handle = NULL;
+            
+            // Free the manually allocated stack and TCB
+            if (gps_task_stack) {
+                heap_caps_free(gps_task_stack);
+                gps_task_stack = NULL;
+            }
+            if (gps_task_tcb) {
+                heap_caps_free(gps_task_tcb);
+                gps_task_tcb = NULL;
+            }
+            
             gps_manager_deinit(&g_gpsManager);
             printf("GPS info display stopped.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info display stopped.\n");
@@ -2145,18 +4374,63 @@ void handle_gps_info(int argc, char **argv) {
         if (gps_info_task_handle == NULL) {
             gps_manager_init(&g_gpsManager);
 
-            // Wait a brief moment for GPS initialization
+            // Wait a moment for GPS initialization
             vTaskDelay(pdMS_TO_TICKS(100));
 
-            // Start the info display task
-            xTaskCreate(gps_info_display_task, "gps_info", 4096, NULL, 1, &gps_info_task_handle);
+            // Start info display task with PSRAM preference
+            gps_info_task_handle = NULL;
+            
+            // Allocate stack in PSRAM if available, fallback to internal RAM
+            const size_t stack_bytes_target = 8192;
+            const size_t stack_words = (stack_bytes_target + sizeof(StackType_t) - 1) / sizeof(StackType_t);
+            const size_t stack_size = stack_words * sizeof(StackType_t);
+            gps_task_stack = NULL;
+            
+#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+            gps_task_stack = (StackType_t*)heap_caps_malloc(stack_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+            if (!gps_task_stack) {
+                gps_task_stack = (StackType_t*)heap_caps_malloc(stack_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            }
+            
+            if (!gps_task_stack) {
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to allocate stack.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to allocate stack.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            
+            gps_task_tcb = (StaticTask_t*)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (!gps_task_tcb) {
+                heap_caps_free(gps_task_stack);
+                gps_task_stack = NULL;
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to allocate TCB.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to allocate TCB.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            
+            TaskHandle_t created_task = xTaskCreateStatic(gps_info_display_task, "gps_info", stack_words, NULL, 1, gps_task_stack, gps_task_tcb);
+            if (created_task == NULL) {
+                heap_caps_free(gps_task_stack);
+                heap_caps_free(gps_task_tcb);
+                gps_task_stack = NULL;
+                gps_task_tcb = NULL;
+                gps_manager_deinit(&g_gpsManager);
+                printf("GPS info failed to start.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS info failed to start.\n");
+                status_display_show_status("GPS Info Fail");
+                return;
+            }
+            gps_info_task_handle = created_task;
             printf("GPS info started.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info started.\n");
             status_display_show_status("GPS Info On");
         }
     }
 }
-
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_ble_wardriving(int argc, char **argv) {
@@ -2171,11 +4445,11 @@ void handle_ble_wardriving(int argc, char **argv) {
 
     if (stop_flag) {
         ble_stop();
-        gps_manager_deinit(&g_gpsManager);
         if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
             csv_flush_buffer_to_file();
         }
         csv_file_close();
+        gps_manager_deinit(&g_gpsManager);
         printf("BLE wardriving stopped.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving stopped.\n");
         status_display_show_status("BLE Drive Off");
@@ -2314,7 +4588,7 @@ void handle_apcred(int argc, char **argv) {
 void handle_rgb_mode(int argc, char **argv) {
     static bool last_effect_is_rainbow = false;
     if (argc < 2) {
-        glog("Usage: rgbmode <rainbow|police|strobe|off|color>\n");
+        glog("Usage: rgbmode <rainbow|police|strobe|knight|off|color>\n");
         status_display_show_status("RGB Usage");
         return;
     }
@@ -2364,6 +4638,16 @@ void handle_rgb_mode(int argc, char **argv) {
         last_effect_is_rainbow = false;
         glog("Strobe mode activated\n");
         status_display_show_status("RGB Strobe");
+    } else if (strcasecmp(argv[1], "knight") == 0) {
+        if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
+            glog("RGB not initialized\n");
+            status_display_show_status("RGB Not Ready");
+            return;
+        }
+        xTaskCreate(knightrider_task, "knightrider_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
+        last_effect_is_rainbow = false;
+        glog("Knight Rider mode activated\n");
+        status_display_show_status("RGB Knight");
     } else if (strcasecmp(argv[1], "off") == 0) {
         rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
         if (!rgb_manager.is_separate_pins && rgb_manager.strip) {
@@ -2383,33 +4667,36 @@ void handle_rgb_mode(int argc, char **argv) {
             uint8_t r;
             uint8_t g;
             uint8_t b;
+            RGBMode mode;
         } color_t;
         static const color_t supported_colors[] = {
-            { "red",    255, 0,   0 },
-            { "green",  0,   255, 0 },
-            { "blue",   0,   0,   255 },
-            { "yellow", 255, 255, 0 },
-            { "purple", 128, 0,   128 },
-            { "cyan",   0,   255, 255 },
-            { "orange", 255, 165, 0 },
-            { "white",  255, 255, 255 },
-            { "pink",   255, 192, 203 }
+            { "red",         255, 0,   0,   RGB_MODE_RED },
+            { "green",       0,   255, 0,   RGB_MODE_GREEN },
+            { "blue",        0,   0,   255, RGB_MODE_BLUE },
+            { "yellow",      255, 255, 0,   RGB_MODE_YELLOW },
+            { "twh-purple",  115, 0,   225, RGB_MODE_PURPLE }, // #7300E1
+            { "cyan",        0,   255, 255, RGB_MODE_CYAN },
+            { "orange",      255, 165, 0,   RGB_MODE_ORANGE },
+            { "white",       255, 255, 255, RGB_MODE_WHITE },
+            { "pink",        255, 192, 203, RGB_MODE_PINK }
         };
         const int num_colors = sizeof(supported_colors) / sizeof(supported_colors[0]);
         int found = 0;
         uint8_t r, g, b;
+        RGBMode chosen_mode = RGB_MODE_NORMAL;
         for (int i = 0; i < num_colors; i++) {
             // Use case-insensitive compare.
             if (strcasecmp(argv[1], supported_colors[i].name) == 0) {
                 r = supported_colors[i].r;
                 g = supported_colors[i].g;
                 b = supported_colors[i].b;
+                chosen_mode = supported_colors[i].mode;
                 found = 1;
                 break;
             }
         }
         if (!found) {
-            glog("Unknown color '%s'. Supported colors: red, green, blue, yellow, purple, cyan, orange, white, pink.\n", argv[1]);
+            glog("Unknown color '%s'. Supported colors: red, green, blue, yellow, twh-purple, cyan, orange, white, pink.\n", argv[1]);
             status_display_show_status("Color Invalid");
             return;
         }
@@ -2418,6 +4705,9 @@ void handle_rgb_mode(int argc, char **argv) {
             rgb_manager_set_color(&rgb_manager, i, r, g, b, false);
         }
         led_strip_refresh(rgb_manager.strip);
+        // Persist selection so it remains active after other effects/off are toggled
+        settings_set_rgb_mode(&G_Settings, chosen_mode);
+        settings_save(&G_Settings);
         glog("Static color mode activated: %s\n", argv[1]);
         status_display_show_status("RGB Static");
     }
@@ -2588,6 +4878,573 @@ void handle_sd_save_config(int argc, char **argv) {
   status_display_show_status("SD Saved");
 }
 
+#define SD_CLI_MAX_ENTRIES 128
+static char *g_sd_cli_paths[SD_CLI_MAX_ENTRIES];
+static uint8_t g_sd_cli_types[SD_CLI_MAX_ENTRIES];
+static size_t g_sd_cli_count = 0;
+
+static void sd_cli_clear_index(void) {
+    for (size_t i = 0; i < g_sd_cli_count; ++i) {
+        free(g_sd_cli_paths[i]);
+        g_sd_cli_paths[i] = NULL;
+    }
+    g_sd_cli_count = 0;
+}
+
+static bool sd_cli_is_number(const char *s) {
+    if (!s || !*s) return false;
+    while (*s) {
+        if (!isdigit((unsigned char)*s)) return false;
+        s++;
+    }
+    return true;
+}
+
+static const char *sd_cli_resolve_path(const char *arg, char *buf, size_t bufsize) {
+    if (sd_cli_is_number(arg) && g_sd_cli_count > 0) {
+        int idx = atoi(arg);
+        if (idx >= 0 && (size_t)idx < g_sd_cli_count) {
+            strncpy(buf, g_sd_cli_paths[idx], bufsize - 1);
+            buf[bufsize - 1] = '\0';
+            return buf;
+        }
+        return NULL;
+    }
+    if (arg[0] == '/') {
+        strncpy(buf, arg, bufsize - 1);
+    } else {
+        snprintf(buf, bufsize, "/mnt/ghostesp/%s", arg);
+    }
+    buf[bufsize - 1] = '\0';
+    return buf;
+}
+
+static bool sd_cli_jit_mounted = false;
+static bool sd_cli_display_suspended = false;
+
+static bool sd_cli_ensure_mounted(void) {
+    if (sd_card_manager.is_initialized) return true;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (sd_card_mount_for_flush(&sd_cli_display_suspended) == ESP_OK) {
+            sd_cli_jit_mounted = true;
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+static void sd_cli_cleanup(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (sd_cli_jit_mounted) {
+        sd_card_unmount_after_flush(sd_cli_display_suspended);
+        sd_cli_jit_mounted = false;
+        sd_cli_display_suspended = false;
+    }
+#endif
+}
+
+void handle_sd_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("SD:USAGE\n");
+        glog("  sd status                        - Show SD card status\n");
+        glog("  sd list [path]                   - List files/dirs with indices\n");
+        glog("  sd info <idx|path>               - Show file/dir info\n");
+        glog("  sd size <idx|path>               - Get file size\n");
+        glog("  sd read <idx|path> [off] [len]   - Read file (offset, length)\n");
+        glog("  sd write <path> <base64>         - Write base64 data to file\n");
+        glog("  sd append <path> <base64>        - Append base64 data to file\n");
+        glog("  sd mkdir <path>                  - Create directory\n");
+        glog("  sd rm <idx|path>                 - Delete file or empty directory\n");
+        glog("  sd tree [path] [depth]           - Recursive listing\n");
+        return;
+    }
+
+    const char *sub = argv[1];
+    char path[256];
+
+    if (strcmp(sub, "status") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:STATUS:mounted=false\n");
+            sd_cli_cleanup();
+            return;
+        }
+        glog("SD:STATUS:mounted=true\n");
+        if (sd_card_is_virtual_storage()) {
+            glog("SD:STATUS:type=virtual\n");
+        } else if (sd_card_manager.card) {
+            glog("SD:STATUS:type=physical\n");
+            glog("SD:STATUS:name=%s\n", sd_card_manager.card->cid.name);
+            uint64_t cap_mb = ((uint64_t)sd_card_manager.card->csd.capacity * 
+                               sd_card_manager.card->csd.sector_size) / (1024 * 1024);
+            glog("SD:STATUS:capacity_mb=%llu\n", (unsigned long long)cap_mb);
+        }
+        uint64_t total = 0, free_bytes = 0;
+        if (esp_vfs_fat_info("/mnt", &total, &free_bytes) == ESP_OK && total > 0) {
+            glog("SD:STATUS:total=%llu\n", (unsigned long long)total);
+            glog("SD:STATUS:free=%llu\n", (unsigned long long)free_bytes);
+            glog("SD:STATUS:total_mb=%llu\n", (unsigned long long)(total / (1024 * 1024)));
+            glog("SD:STATUS:free_mb=%llu\n", (unsigned long long)(free_bytes / (1024 * 1024)));
+            glog("SD:STATUS:used_pct=%d\n", (int)(((total - free_bytes) * 100) / total));
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "list") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *list_path = (argc >= 3) ? argv[2] : "/mnt/ghostesp";
+        if (list_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", list_path);
+        } else {
+            strncpy(path, list_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        DIR *d = opendir(path);
+        if (!d) {
+            glog("SD:ERR:cannot_open:%s\n", path);
+            sd_cli_clear_index();
+            return;
+        }
+
+        sd_cli_clear_index();
+        glog("SD:LIST:%s\n", path);
+
+        struct dirent *entry;
+        while ((entry = readdir(d)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+            char fullpath[512];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+
+            struct stat st;
+            bool is_dir = false;
+            long fsize = 0;
+
+            if (stat(fullpath, &st) == 0) {
+                is_dir = S_ISDIR(st.st_mode);
+                fsize = is_dir ? 0 : (long)st.st_size;
+            } else if (entry->d_type == DT_DIR) {
+                is_dir = true;
+            }
+
+            int idx = (int)g_sd_cli_count;
+            if (g_sd_cli_count < SD_CLI_MAX_ENTRIES) {
+                g_sd_cli_paths[g_sd_cli_count] = strdup(fullpath);
+                g_sd_cli_types[g_sd_cli_count] = is_dir ? 1 : 0;
+                if (g_sd_cli_paths[g_sd_cli_count]) g_sd_cli_count++;
+            }
+
+            if (is_dir) {
+                glog("SD:DIR:[%d] %s\n", idx, entry->d_name);
+            } else {
+                glog("SD:FILE:[%d] %s %ld\n", idx, entry->d_name, fsize);
+            }
+        }
+        closedir(d);
+
+        if (g_sd_cli_count == 0) {
+            glog("SD:EMPTY\n");
+        }
+        glog("SD:OK:listed %zu entries\n", g_sd_cli_count);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "info") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+
+        glog("SD:INFO:path=%s\n", resolved);
+        glog("SD:INFO:type=%s\n", S_ISDIR(st.st_mode) ? "dir" : "file");
+        glog("SD:INFO:size=%ld\n", (long)st.st_size);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "cat") == 0 || strcmp(sub, "read") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        long offset = 0;
+        size_t max_bytes = 0;
+        if (argc >= 4) {
+            offset = strtol(argv[3], NULL, 10);
+            if (offset < 0) offset = 0;
+        }
+        if (argc >= 5) {
+            int mb = atoi(argv[4]);
+            if (mb > 0) max_bytes = (size_t)mb;
+        }
+
+        FILE *f = fopen(resolved, "rb");
+        if (!f) {
+            glog("SD:ERR:cannot_open:%s\n", resolved);
+            return;
+        }
+
+        fseek(f, 0, SEEK_END);
+        long file_size = ftell(f);
+        if (offset > file_size) offset = file_size;
+        fseek(f, offset, SEEK_SET);
+
+        if (max_bytes == 0 || max_bytes > (size_t)(file_size - offset)) {
+            max_bytes = (size_t)(file_size - offset);
+        }
+
+        glog("SD:READ:BEGIN:%s\n", resolved);
+        glog("SD:READ:SIZE:%ld\n", file_size);
+        glog("SD:READ:OFFSET:%ld\n", offset);
+        glog("SD:READ:LENGTH:%zu\n", max_bytes);
+
+        char *buf = malloc(1024);
+        if (!buf) {
+            fclose(f);
+            glog("SD:ERR:oom\n");
+            return;
+        }
+
+        size_t total_read = 0;
+        size_t n;
+        while (total_read < max_bytes && (n = fread(buf, 1, 1024, f)) > 0) {
+            size_t to_write = n;
+            if (total_read + to_write > max_bytes) {
+                to_write = max_bytes - total_read;
+            }
+            fwrite(buf, 1, to_write, stdout);
+            total_read += to_write;
+        }
+        free(buf);
+        fclose(f);
+
+        glog("\nSD:READ:END:bytes=%zu\n", total_read);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "write") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 4) {
+            glog("SD:ERR:usage: sd write <path> <base64data>\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *write_path = argv[2];
+        if (write_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", write_path);
+        } else {
+            strncpy(path, write_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        const char *b64data = argv[3];
+        size_t b64len = strlen(b64data);
+        size_t decoded_len = (b64len * 3) / 4 + 4;
+        unsigned char *decoded = malloc(decoded_len);
+        if (!decoded) {
+            glog("SD:ERR:oom\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(decoded, decoded_len, &olen, (const unsigned char *)b64data, b64len);
+        if (ret != 0) {
+            free(decoded);
+            glog("SD:ERR:base64_decode_failed\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        FILE *f = fopen(path, "wb");
+        if (!f) {
+            free(decoded);
+            glog("SD:ERR:cannot_create:%s\n", path);
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t written = fwrite(decoded, 1, olen, f);
+        fclose(f);
+        free(decoded);
+
+        glog("SD:WRITE:bytes=%zu\n", written);
+        glog("SD:OK:created:%s\n", path);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "append") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 4) {
+            glog("SD:ERR:usage: sd append <path> <base64data>\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *append_path = argv[2];
+        if (append_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", append_path);
+        } else {
+            strncpy(path, append_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        const char *b64data = argv[3];
+        size_t b64len = strlen(b64data);
+        size_t decoded_len = (b64len * 3) / 4 + 4;
+        unsigned char *decoded = malloc(decoded_len);
+        if (!decoded) {
+            glog("SD:ERR:oom\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(decoded, decoded_len, &olen, (const unsigned char *)b64data, b64len);
+        if (ret != 0) {
+            free(decoded);
+            glog("SD:ERR:base64_decode_failed\n");
+            sd_cli_cleanup();
+            return;
+        }
+
+        FILE *f = fopen(path, "ab");
+        if (!f) {
+            free(decoded);
+            glog("SD:ERR:cannot_open:%s\n", path);
+            sd_cli_cleanup();
+            return;
+        }
+
+        size_t written = fwrite(decoded, 1, olen, f);
+        fclose(f);
+        free(decoded);
+
+        glog("SD:APPEND:bytes=%zu\n", written);
+        glog("SD:OK:appended:%s\n", path);
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "size") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+        glog("SD:SIZE:%ld\n", (long)st.st_size);
+        glog("SD:OK\n");
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "mkdir") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *mk_path = argv[2];
+        if (mk_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", mk_path);
+        } else {
+            strncpy(path, mk_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        if (mkdir(path, 0777) == 0) {
+            glog("SD:OK:created:%s\n", path);
+        } else {
+            glog("SD:ERR:mkdir_failed:%s\n", path);
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "rm") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        if (argc < 3) {
+            glog("SD:ERR:missing_path\n");
+            return;
+        }
+        const char *resolved = sd_cli_resolve_path(argv[2], path, sizeof(path));
+        if (!resolved) {
+            glog("SD:ERR:invalid_index\n");
+            return;
+        }
+
+        struct stat st;
+        if (stat(resolved, &st) != 0) {
+            glog("SD:ERR:not_found:%s\n", resolved);
+            return;
+        }
+
+        int ret;
+        if (S_ISDIR(st.st_mode)) {
+            ret = rmdir(resolved);
+        } else {
+            ret = unlink(resolved);
+        }
+
+        if (ret == 0) {
+            glog("SD:OK:removed:%s\n", resolved);
+        } else {
+            glog("SD:ERR:rm_failed:%s\n", resolved);
+        }
+        sd_cli_cleanup();
+        return;
+    }
+
+    if (strcmp(sub, "tree") == 0) {
+        if (!sd_cli_ensure_mounted()) {
+            glog("SD:ERR:not_mounted\n");
+            sd_cli_cleanup();
+            return;
+        }
+        const char *tree_path = (argc >= 3) ? argv[2] : "/mnt/ghostesp";
+        int max_depth = 2;
+        if (argc >= 4) {
+            int d = atoi(argv[3]);
+            if (d > 0 && d <= 10) max_depth = d;
+        }
+
+        if (tree_path[0] != '/') {
+            snprintf(path, sizeof(path), "/mnt/ghostesp/%s", tree_path);
+        } else {
+            strncpy(path, tree_path, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
+
+        glog("SD:TREE:%s\n", path);
+        
+        typedef struct { char p[256]; int lvl; } stack_item_t;
+        stack_item_t *stack = malloc(sizeof(stack_item_t) * 64);
+        if (!stack) {
+            glog("SD:ERR:oom\n");
+            return;
+        }
+        int sp = 0;
+        strncpy(stack[sp].p, path, 255);
+        stack[sp].lvl = 0;
+        sp++;
+
+        size_t count = 0;
+        while (sp > 0 && count < 500) {
+            sp--;
+            char *cur = stack[sp].p;
+            int lvl = stack[sp].lvl;
+
+            DIR *d = opendir(cur);
+            if (!d) continue;
+
+            struct dirent *entry;
+            while ((entry = readdir(d)) != NULL && count < 500) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+                char full[512];
+                snprintf(full, sizeof(full), "%s/%s", cur, entry->d_name);
+
+                struct stat st;
+                bool is_dir = false;
+                if (stat(full, &st) == 0) {
+                    is_dir = S_ISDIR(st.st_mode);
+                } else if (entry->d_type == DT_DIR) {
+                    is_dir = true;
+                }
+
+                for (int i = 0; i < lvl; i++) printf("  ");
+                if (is_dir) {
+                    printf("[D] %s/\n", entry->d_name);
+                    if (lvl + 1 < max_depth && sp < 63) {
+                        strncpy(stack[sp].p, full, 255);
+                        stack[sp].lvl = lvl + 1;
+                        sp++;
+                    }
+                } else {
+                    printf("[F] %s (%ld)\n", entry->d_name, (long)st.st_size);
+                }
+                count++;
+            }
+            closedir(d);
+        }
+        free(stack);
+        glog("SD:OK:tree %zu items\n", count);
+        sd_cli_cleanup();
+        return;
+    }
+
+    glog("SD:ERR:unknown_subcommand:%s\n", sub);
+    sd_cli_cleanup();
+}
+
 void handle_congestion_cmd(int argc, char **argv) {
     wifi_manager_start_scan();
     status_display_show_status("Congest Scan");
@@ -2712,12 +5569,309 @@ void handle_scanall(int argc, char **argv) {
     // 3. Print Combined Results
     wifi_manager_scanall_chart();
 
-    // Ensure AP mode is restored if it was stopped
-    ap_manager_start_services(); // Restore AP for WebUI
+    ap_manager_start_services();
     status_display_show_status("ScanAll Done");
 }
 
-// Helper function to simplify calling list airtags
+static int get_next_sweep_file_index(void) {
+    int next = 0;
+    char path[64];
+    while (next < 9999) {
+        snprintf(path, sizeof(path), "/mnt/ghostesp/sweeps/sweep_%d.csv", next);
+        FILE *f = fopen(path, "r");
+        if (!f) break;
+        fclose(f);
+        next++;
+    }
+    return next;
+}
+
+static const char* sweep_get_auth_str(wifi_auth_mode_t auth) {
+    switch (auth) {
+        case WIFI_AUTH_OPEN: return "Open";
+        case WIFI_AUTH_WEP: return "WEP";
+        case WIFI_AUTH_WPA_PSK: return "WPA";
+        case WIFI_AUTH_WPA2_PSK: return "WPA2";
+        case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
+        case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2-Enterprise";
+        case WIFI_AUTH_WPA3_PSK: return "WPA3";
+        case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3";
+        default: return "Unknown";
+    }
+}
+
+static const char* sweep_get_cipher_str(wifi_cipher_type_t cipher) {
+    switch (cipher) {
+        case WIFI_CIPHER_TYPE_NONE: return "None";
+        case WIFI_CIPHER_TYPE_WEP40: return "WEP40";
+        case WIFI_CIPHER_TYPE_WEP104: return "WEP104";
+        case WIFI_CIPHER_TYPE_TKIP: return "TKIP";
+        case WIFI_CIPHER_TYPE_CCMP: return "CCMP";
+        case WIFI_CIPHER_TYPE_TKIP_CCMP: return "TKIP/CCMP";
+        case WIFI_CIPHER_TYPE_GCMP: return "GCMP";
+        case WIFI_CIPHER_TYPE_GCMP256: return "GCMP256";
+        default: return "Unknown";
+    }
+}
+
+static void sweep_get_phy_modes(wifi_ap_record_t *ap, char *buf, size_t len) {
+    buf[0] = '\0';
+    if (ap->phy_11ax) strcat(buf, "ax/");
+    if (ap->phy_11ac) strcat(buf, "ac/");
+    if (ap->phy_11n) strcat(buf, "n/");
+    if (ap->phy_11a) strcat(buf, "a/");
+    if (ap->phy_11g) strcat(buf, "g/");
+    if (ap->phy_11b) strcat(buf, "b/");
+    size_t l = strlen(buf);
+    if (l > 0) buf[l - 1] = '\0';
+}
+
+static void sweep_write_csv_escaped(FILE *f, const char *str) {
+    bool needs_quote = false;
+    for (const char *p = str; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n') { needs_quote = true; break; }
+    }
+    if (needs_quote) {
+        fputc('"', f);
+        for (const char *p = str; *p; p++) {
+            if (*p == '"') fputc('"', f);
+            fputc(*p, f);
+        }
+        fputc('"', f);
+    } else {
+        fputs(str, f);
+    }
+}
+
+void handle_sweep_cmd(int argc, char **argv) {
+    int wifi_seconds = 10;
+    int ble_seconds = 10;
+    
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
+            wifi_seconds = atoi(argv[++i]);
+            if (wifi_seconds < 1) wifi_seconds = 10;
+        } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
+            ble_seconds = atoi(argv[++i]);
+            if (ble_seconds < 1) ble_seconds = 10;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "help") == 0) {
+            glog("Usage: sweep [-w wifi_sec] [-b ble_sec]\n");
+            glog("  -w: WiFi scan duration per phase (default 10s)\n");
+            glog("  -b: BLE scan duration per phase (default 10s)\n");
+            glog("Performs AP scan, STA scan, BLE scans and saves to SD.\n");
+            return;
+        }
+    }
+    
+    glog("=== Starting Full Environment Sweep ===\n");
+    status_display_show_status("Sweep Start");
+    
+    FILE *report = NULL;
+    char report_path[64] = {0};
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char timestamp[32] = "";
+    if (tm_info && tm_info->tm_year >= 120) {
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+    }
+    
+    int open_networks = 0, weak_networks = 0, secure_networks = 0;
+    
+    if (sd_card_exists("/mnt/ghostesp")) {
+        mkdir("/mnt/ghostesp/sweeps", 0755);
+        int idx = get_next_sweep_file_index();
+        snprintf(report_path, sizeof(report_path), "/mnt/ghostesp/sweeps/sweep_%d.csv", idx);
+        report = fopen(report_path, "w");
+        if (report) {
+            fprintf(report, "Type,Name,MAC,Associated MAC,Channel,Frequency,RSSI,Auth,Cipher,802.11,WPS,Latitude,Longitude,Altitude,First Seen\n");
+            glog("Saving report to: %s\n", report_path);
+        }
+    }
+    
+    // --- WiFi AP Scan ---
+    glog("\n--- Phase 1: WiFi AP Scan (%ds) ---\n", wifi_seconds);
+    
+    wifi_manager_start_scan_with_time(wifi_seconds);
+    
+    uint16_t ap_cnt = 0;
+    wifi_ap_record_t *aps = NULL;
+    wifi_manager_get_scan_results_data(&ap_cnt, &aps);
+    
+    glog("Found %d access points\n", ap_cnt);
+    
+    uint16_t limit = ap_cnt > 100 ? 100 : ap_cnt;
+    for (uint16_t i = 0; i < limit && aps; i++) {
+        char ssid_safe[33];
+        strncpy(ssid_safe, (char*)aps[i].ssid, 32);
+        ssid_safe[32] = '\0';
+        for (int j = 0; ssid_safe[j]; j++) {
+            if (ssid_safe[j] < 32 || ssid_safe[j] > 126) ssid_safe[j] = '?';
+        }
+        if (ssid_safe[0] == '\0') strcpy(ssid_safe, "");
+        
+        const char *auth = sweep_get_auth_str(aps[i].authmode);
+        const char *cipher = sweep_get_cipher_str(aps[i].pairwise_cipher);
+        char phy_modes[24];
+        sweep_get_phy_modes(&aps[i], phy_modes, sizeof(phy_modes));
+        int freq = aps[i].primary > 14 ? 5000 + (aps[i].primary * 5) : 2407 + (aps[i].primary * 5);
+        
+        if (aps[i].authmode == WIFI_AUTH_OPEN) open_networks++;
+        else if (aps[i].authmode == WIFI_AUTH_WEP || aps[i].authmode == WIFI_AUTH_WPA_PSK) weak_networks++;
+        else secure_networks++;
+        
+        if (report) {
+            fprintf(report, "WiFi AP,");
+            sweep_write_csv_escaped(report, ssid_safe);
+            fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,%d,%d,%d,%s,%s,%s,%s,",
+                    aps[i].bssid[0], aps[i].bssid[1], aps[i].bssid[2],
+                    aps[i].bssid[3], aps[i].bssid[4], aps[i].bssid[5],
+                    aps[i].primary, freq, aps[i].rssi, auth, cipher, phy_modes,
+                    aps[i].wps ? "Yes" : "No");
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+    // --- WiFi Station Scan ---
+    glog("\n--- Phase 2: WiFi Station Scan (%ds) ---\n", wifi_seconds);
+    
+    station_count = 0;
+    wifi_manager_start_station_scan();
+    vTaskDelay(pdMS_TO_TICKS(wifi_seconds * 1000));
+    wifi_manager_stop_monitor_mode();
+    
+    glog("Found %d stations\n", station_count);
+    
+    for (int i = 0; i < station_count; i++) {
+        if (report) {
+            fprintf(report, "WiFi Client,,%02X:%02X:%02X:%02X:%02X:%02X,%02X:%02X:%02X:%02X:%02X:%02X,,,,,,,",
+                    station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1],
+                    station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3],
+                    station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5],
+                    station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1],
+                    station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3],
+                    station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    // --- BLE Scans ---
+    glog("\n--- Phase 3: BLE Flipper Scan (%ds) ---\n", ble_seconds);
+    
+    ble_start_find_flippers();
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    ble_stop();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ble_list_flippers();
+    
+    int flipper_cnt = ble_get_flipper_count();
+    for (int i = 0; i < flipper_cnt && report; i++) {
+        uint8_t mac[6];
+        int8_t rssi;
+        char name[32];
+        if (ble_get_flipper_data(i, mac, &rssi, name, sizeof(name)) == 0) {
+            fprintf(report, "Flipper,");
+            sweep_write_csv_escaped(report, name[0] ? name : "");
+            fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,,,%d,,,,",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], rssi);
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+    glog("\n--- Phase 4: BLE GATT Device Scan (%ds) ---\n", ble_seconds);
+    
+    ble_start_gatt_scan();
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    ble_stop_gatt_scan();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ble_list_gatt_devices();
+    
+    int gatt_cnt = ble_get_gatt_device_count();
+    for (int i = 0; i < gatt_cnt && report; i++) {
+        uint8_t mac[6];
+        int8_t rssi;
+        char name[32];
+        if (ble_get_gatt_device_data(i, mac, &rssi, name, sizeof(name)) == 0) {
+            fprintf(report, "BLE Device,");
+            sweep_write_csv_escaped(report, name[0] ? name : "");
+            fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,,,%d,,,,",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], rssi);
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+    
+    glog("\n--- Phase 5: BLE Raw Packet Scan (%ds) ---\n", ble_seconds);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    ble_start_raw_ble_packetscan();
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    ble_stop();
+#endif
+    
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    glog("\n--- Phase 6: 802.15.4 Scan (%ds) ---\n", ble_seconds);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    zigbee_manager_clear_devices();
+    zigbee_manager_start_capture(0);
+    vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
+    zigbee_manager_stop_capture();
+    
+    int zb_cnt = zigbee_manager_get_device_count();
+    glog("Found %d 802.15.4 devices\n", zb_cnt);
+    
+    for (int i = 0; i < zb_cnt && report; i++) {
+        zigbee_device_t dev;
+        if (zigbee_manager_get_device_data(i, &dev) == 0) {
+            fprintf(report, "802.15.4,");
+            if (dev.addr_len == 8) {
+                fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X,,%d,,%d,,,,",
+                        dev.addr[0], dev.addr[1], dev.addr[2], dev.addr[3],
+                        dev.addr[4], dev.addr[5], dev.addr[6], dev.addr[7],
+                        dev.channel, dev.rssi);
+            } else {
+                fprintf(report, ",%02X:%02X,,%d,,%d,,,,",
+                        dev.addr[0], dev.addr[1], dev.channel, dev.rssi);
+            }
+            if (gps && gps->valid) {
+                fprintf(report, "%.6f,%.6f,%.1f,%s\n", gps->latitude, gps->longitude, gps->altitude, timestamp);
+            } else {
+                fprintf(report, ",,,%s\n", timestamp);
+            }
+        }
+    }
+#endif
+    
+    if (report) {
+        fclose(report);
+        glog("\nReport saved to: %s\n", report_path);
+    }
+    
+    ap_manager_start_services();
+    glog("\n=== Sweep Complete ===\n");
+    glog("WiFi: %d APs, %d stations | Security: %d open, %d weak, %d secure\n", 
+         ap_cnt, station_count, open_networks, weak_networks, secure_networks);
+    status_display_show_status("Sweep Done");
+}
+
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_airtags_cmd(int argc, char **argv) {
     ble_list_airtags();
@@ -2819,6 +5973,14 @@ void handle_track_gatt_cmd(int argc, char **argv) {
 
 #endif
 
+void handle_track_ap_cmd(int argc, char **argv) {
+    wifi_manager_track_ap();
+}
+
+void handle_track_sta_cmd(int argc, char **argv) {
+    wifi_manager_track_sta();
+}
+
 // New beacon list command handlers
 void handle_beaconadd(int argc, char **argv) {
     if (argc != 2) {
@@ -2881,9 +6043,17 @@ void handle_setcountry(int argc, char **argv) {
         status_display_show_status("Country Usage");
         return;
     }
-    esp_err_t err = esp_wifi_set_country_code(argv[1], true);
+
+    char cc_upper[4];
+    if (!str_copy_upper(cc_upper, sizeof(cc_upper), argv[1])) {
+        glog("failed to set country: invalid country code\n");
+        status_display_show_status("Country Fail");
+        return;
+    }
+
+    esp_err_t err = esp_wifi_set_country_code(cc_upper, true);
     if (err == ESP_OK) {
-        glog("country set to %s\n", argv[1]);
+        glog("country set to %s\n", cc_upper);
         status_display_show_status("Country Set");
     } else {
         glog("failed to set country: %s\n", esp_err_to_name(err));
@@ -2966,15 +6136,40 @@ void handle_web_auth_cmd(int argc, char **argv) {
     }
 }
 
+void handle_webuiap_cmd(int argc, char **argv) {
+    bool enabled = settings_get_webui_restrict_to_ap(&G_Settings);
 
-void handle_listportals(int argc, char **argv);
-void handle_evilportal(int argc, char **argv);
-void handle_wifi_disconnect(int argc, char **argv);
-void handle_set_rgb_mode_cmd(int argc, char **argv);
-void handle_karma_cmd(int argc, char **argv);
-void handle_set_neopixel_brightness_cmd(int argc, char **argv);
-void handle_get_neopixel_brightness_cmd(int argc, char **argv);
+    if (argc == 1) {
+        enabled = !enabled;
+        settings_set_webui_restrict_to_ap(&G_Settings, enabled);
+        settings_save(&G_Settings);
+        glog("WebUI AP-only restriction %s.\n", enabled ? "enabled" : "disabled");
+        return;
+    }
 
+    if (argc == 2) {
+        if (strcmp(argv[1], "on") == 0) {
+            enabled = true;
+        } else if (strcmp(argv[1], "off") == 0) {
+            enabled = false;
+        } else if (strcmp(argv[1], "toggle") == 0) {
+            enabled = !enabled;
+        } else if (strcmp(argv[1], "status") == 0) {
+            glog("WebUI AP-only restriction is %s.\n", enabled ? "enabled" : "disabled");
+            return;
+        } else {
+            glog("Usage: webuiap [on|off|toggle|status]\n");
+            return;
+        }
+
+        settings_set_webui_restrict_to_ap(&G_Settings, enabled);
+        settings_save(&G_Settings);
+        glog("WebUI AP-only restriction %s.\n", enabled ? "enabled" : "disabled");
+        return;
+    }
+
+    glog("Usage: webuiap [on|off|toggle|status]\n");
+}
 
 void handle_comm_discovery(int argc, char **argv) {
     comm_state_t state = esp_comm_manager_get_state();
@@ -3128,7 +6323,12 @@ void handle_comm_setpins(int argc, char **argv) {
 static void comm_command_callback(const char* command, const char* data, void* user_data) {
     static char full_command[128];
     
-    // Minimal processing in command executor task - just queue the command
+#ifdef CONFIG_WITH_ETHERNET
+    if (strcmp(command, "stop") == 0) {
+        g_eth_scan_cancel = true;
+    }
+#endif
+    
     if (data && strlen(data) > 0) {
         snprintf(full_command, sizeof(full_command), "peer:%s %s", command, data);
     } else {
@@ -3137,6 +6337,7 @@ static void comm_command_callback(const char* command, const char* data, void* u
     
     simulateCommand(full_command);
 }
+
 void handle_ap_enable_cmd(int argc, char **argv) {
     if (argc != 2) {
         glog("Usage: apenable <on|off>\n");
@@ -3834,8 +7035,8 @@ static void ir_universal_send_task(void *arg) {
         if (!infrared_manager_read_list(path, &signals, &count)) {
             glog("IR: failed to read universal file %s\n", path);
         } else if (count == 0) {
-            glog("IR: no signals in universal file %s\n", path);
             infrared_manager_free_list(signals, count);
+            glog("IR: no signals in %s\n", path);
         } else {
             size_t sent = 0;
             glog("IR: universal sendall '%s' from %s (%zu signals)\n", button, path, count);
@@ -4001,6 +7202,148 @@ static void ir_rx_learn_task(void *arg) {
 
     g_ir_rx_learn_task = NULL;
     vTaskDelete(NULL);
+}
+
+static size_t badusb_join_args(char *out, size_t out_len, int argc, char **argv, int start_idx) {
+    if (!out || out_len == 0) return 0;
+    out[0] = '\0';
+    size_t used = 0;
+    for (int i = start_idx; i < argc; i++) {
+        const char *arg = argv[i] ? argv[i] : "";
+        size_t arg_len = strlen(arg);
+        if (used + arg_len + 1 >= out_len) break;
+        if (used > 0) {
+            out[used++] = ' ';
+        }
+        memcpy(out + used, arg, arg_len);
+        used += arg_len;
+        out[used] = '\0';
+    }
+    return used;
+}
+
+static void badusb_strip_quotes(char *text) {
+    if (!text) return;
+    size_t len = strlen(text);
+    if (len < 2) return;
+    if ((text[0] == '"' && text[len - 1] == '"') || (text[0] == '\'' && text[len - 1] == '\'')) {
+        memmove(text, text + 1, len - 2);
+        text[len - 2] = '\0';
+    }
+}
+
+void handle_badusb_cmd(int argc, char **argv) {
+#ifdef CONFIG_HAS_BADUSB
+    if (argc < 2) {
+        glog("Usage: badusb <run|list|stop|exec|set_vid|set_pid|set_mfr|set_prod|set_rand|set_layout>\n");
+        glog("  badusb run <filename>  - Execute a DuckyScript from /mnt/ghostesp/badusb/\n");
+        glog("  badusb list            - List available scripts\n");
+        glog("  badusb stop            - Stop current execution\n");
+        glog("  badusb exec <size>     - Prepare to receive a script via stream\n");
+        glog("  badusb set_vid <hex>   - Set USB VID for next run\n");
+        glog("  badusb set_pid <hex>   - Set USB PID for next run\n");
+        glog("  badusb set_mfr <text>  - Set USB manufacturer for next run\n");
+        glog("  badusb set_prod <text> - Set USB product for next run\n");
+        glog("  badusb set_rand <0|1>  - Toggle USB detail randomization\n");
+        glog("  badusb set_layout <n>  - Set keyboard layout for next run\n");
+        return;
+    }
+
+    const char *sub = argv[1];
+
+    if (strcmp(sub, "list") == 0) {
+        char scripts[32][64];
+        int count = badusb_manager_list_scripts(scripts, 32);
+        if (count == 0) {
+            glog("No scripts found in /mnt/ghostesp/badusb/\n");
+        } else {
+            glog("BadUSB scripts (%d):\n", count);
+            for (int i = 0; i < count; i++) {
+                glog("  [%d] %s\n", i, scripts[i]);
+            }
+        }
+    } else if (strcmp(sub, "run") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb run <filename>\n");
+            return;
+        }
+        char path[256];
+        snprintf(path, sizeof(path), "/mnt/ghostesp/badusb/%s", argv[2]);
+        esp_err_t ret = badusb_manager_execute_file(path);
+        if (ret != ESP_OK) {
+            glog("BadUSB: Failed to execute %s\n", argv[2]);
+        }
+    } else if (strcmp(sub, "exec") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb exec <size>\n");
+            return;
+        }
+        size_t size = (size_t)atoi(argv[2]);
+        esp_err_t ret = badusb_manager_prepare_receive(size);
+        if (ret != ESP_OK) {
+            glog("BadUSB: Failed to prepare receive\n");
+        }
+    } else if (strcmp(sub, "stop") == 0) {
+        badusb_manager_stop();
+        glog("BadUSB: Stopped\n");
+    } else if (strcmp(sub, "set_vid") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb set_vid <hex>\n");
+            return;
+        }
+        uint16_t vid = (uint16_t)strtol(argv[2], NULL, 0);
+        settings_set_badusb_vid(&G_Settings, vid);
+        glog("BadUSB: VID set\n");
+    } else if (strcmp(sub, "set_pid") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb set_pid <hex>\n");
+            return;
+        }
+        uint16_t pid = (uint16_t)strtol(argv[2], NULL, 0);
+        settings_set_badusb_pid(&G_Settings, pid);
+        glog("BadUSB: PID set\n");
+    } else if (strcmp(sub, "set_mfr") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb set_mfr <text>\n");
+            return;
+        }
+        char value[64];
+        badusb_join_args(value, sizeof(value), argc, argv, 2);
+        badusb_strip_quotes(value);
+        settings_set_badusb_manufacturer(&G_Settings, value);
+        glog("BadUSB: Manufacturer set\n");
+    } else if (strcmp(sub, "set_prod") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb set_prod <text>\n");
+            return;
+        }
+        char value[64];
+        badusb_join_args(value, sizeof(value), argc, argv, 2);
+        badusb_strip_quotes(value);
+        settings_set_badusb_product(&G_Settings, value);
+        glog("BadUSB: Product set\n");
+    } else if (strcmp(sub, "set_rand") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb set_rand <0|1>\n");
+            return;
+        }
+        bool enabled = atoi(argv[2]) != 0;
+        settings_set_badusb_randomize(&G_Settings, enabled);
+        glog("BadUSB: Randomize set to %u\n", enabled ? 1 : 0);
+    } else if (strcmp(sub, "set_layout") == 0) {
+        if (argc < 3) {
+            glog("Usage: badusb set_layout <n>\n");
+            return;
+        }
+        uint8_t layout = (uint8_t)strtol(argv[2], NULL, 0);
+        settings_set_badusb_kb_layout(&G_Settings, layout);
+        glog("BadUSB: Layout set to %u\n", layout);
+    } else {
+        glog("Unknown badusb subcommand: %s\n", sub);
+    }
+#else
+    glog("BadUSB not enabled on this build\n");
+#endif
 }
 
 void handle_ir_cmd(int argc, char **argv) {
@@ -4482,6 +7825,206 @@ void handle_usb_kbd_cmd(int argc, char **argv) {
     }
 }
 
+void handle_aerial_scan_cmd(int argc, char **argv) {
+    uint32_t duration = 30000;  // default 30 seconds
+
+    if (argc > 1) {
+        duration = atoi(argv[1]) * 1000;
+        if (duration < 1000) duration = 1000;
+        if (duration > 300000) duration = 300000;
+    }
+
+    aerial_detector_init();
+    esp_err_t ret = aerial_detector_start_scan(duration);
+
+    if (ret == ESP_OK) {
+        glog("Scan Started (%lu sec)\n", duration / 1000);
+        glog("Phase 1: WiFi | Phase 2: BLE\n");
+    } else if (ret == ESP_ERR_INVALID_STATE) {
+        glog("Scan already running\n");
+    } else {
+        glog("Failed to start scan\n");
+    }
+}
+
+void handle_aerial_list_cmd(int argc, char **argv) {
+    aerial_detector_compact_known_devices();
+    
+    int total = aerial_detector_get_device_count();
+    int shown = 0;
+    
+    for (int i = 0; i < total; i++) {
+        AerialDevice *dev = aerial_detector_get_device(i);
+        if (!dev || dev->type == AERIAL_TYPE_UNKNOWN) continue;
+        
+        if (shown == 0) {
+            glog("Detected aerial device(s):\n\n");
+        }
+        shown++;
+        
+        glog("[%d] %s\n", i, dev->device_id);
+        glog("    MAC: %s\n", dev->mac);
+        glog("    Type: %s\n", aerial_detector_get_type_string(dev->type));
+        glog("    RSSI: %d dBm\n", dev->rssi);
+        
+        if (dev->vendor[0] != '\0') {
+            glog("    Vendor: %s\n", dev->vendor);
+        }
+        
+        if (dev->has_location) {
+            glog("    Location: %.6f, %.6f\n", dev->latitude, dev->longitude);
+            if (dev->altitude > -1000.0f) {
+                glog("    Altitude: %.1f m\n", dev->altitude);
+            }
+            if (dev->speed_horizontal < 255.0f) {
+                glog("    Speed: %.1f m/s @ %.0f°\n", dev->speed_horizontal, dev->direction);
+            }
+            glog("    Status: %s\n", aerial_detector_get_status_string(dev->status));
+        }
+        
+        if (dev->has_operator_location) {
+            glog("    Operator: %.6f, %.6f", dev->operator_latitude, dev->operator_longitude);
+            if (dev->operator_altitude > -1000.0f) {
+                glog(" @ %.1f m", dev->operator_altitude);
+            }
+            glog("\n");
+        }
+        
+        if (strcmp(dev->operator_id, "N/A") != 0) {
+            glog("    Operator ID: %s\n", dev->operator_id);
+        }
+        
+        if (strcmp(dev->description, "N/A") != 0 && dev->description[0] != '\0') {
+            glog("    Description: %s\n", dev->description);
+        }
+        
+        uint32_t age_sec = (esp_timer_get_time() / 1000 - dev->last_seen_ms) / 1000;
+        glog("    Last seen: %lu sec ago\n", age_sec);
+        glog("\n");
+    }
+
+    if (shown == 0) {
+        glog("No aerial devices detected\n");
+    }
+}
+
+void handle_aerial_track_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: aerialtrack <device_index|mac_address>\n");
+        glog("Use 'aeriallist' to see available devices\n");
+        return;
+    }
+    
+    AerialDevice *dev = NULL;
+    
+    // check if argument is a number (device index)
+    if (argv[1][0] >= '0' && argv[1][0] <= '9') {
+        int index = atoi(argv[1]);
+        dev = aerial_detector_get_device(index);
+        if (!dev) {
+            glog("Invalid device index. Use 'aeriallist' to see available devices\n");
+            return;
+        }
+    } else {
+        // assume mac address
+        dev = aerial_detector_find_device_by_mac(argv[1]);
+        if (!dev) {
+            glog("Device not found: %s\n", argv[1]);
+            return;
+        }
+    }
+    
+    // ensure scanning is running to keep updates flowing
+    if (!aerial_detector_is_scanning()) {
+        aerial_detector_start_scan(30000); // default 30s; tracking will refresh each phase
+        glog("Started aerial scan for tracking\n");
+    }
+    
+    esp_err_t ret = aerial_detector_track_device(dev->mac);
+    if (ret == ESP_OK) {
+        glog("Now tracking: %s (%s)\n", dev->device_id, dev->mac);
+        glog("RSSI: %d dBm\n", dev->rssi);
+        
+        if (dev->has_location) {
+            glog("Location: %.6f, %.6f @ %.1f m\n", 
+                 dev->latitude, dev->longitude, dev->altitude);
+        }
+    } else {
+        glog("Failed to track device\n");
+    }
+}
+
+void handle_aerial_stop_cmd(int argc, char **argv) {
+    if (aerial_detector_is_scanning()) {
+        aerial_detector_stop_scan();
+        glog("Scan Stopped\n");
+    } else {
+        glog("No scan running\n");
+    }
+
+    aerial_detector_untrack_device();
+}
+
+void handle_aerial_spoof_cmd(int argc, char **argv) {
+    const char *device_id;
+    double lat;
+    double lon;
+    float alt;
+    
+    if (argc < 2) {
+        // default test mode - no args needed
+        device_id = "GHOST-TEST";
+        lat = 37.7749;   // san francisco
+        lon = -122.4194;
+        alt = 100.0f;
+        glog("Using default test drone:\n");
+        glog("Device ID: %s\n", device_id);
+        glog("Location: %.6f, %.6f @ %.1fm\n\n", lat, lon, alt);
+    } else if (argc < 5) {
+        glog("Usage: aerialspoof [device_id latitude longitude altitude]\n");
+        glog("Examples:\n");
+        glog("  aerialspoof                              # Use defaults\n");
+        glog("  aerialspoof DRONE-1234 40.7128 -74.0060 100\n");
+        glog("\nBroadcasts fake drone RemoteID for testing purposes.\n");
+        glog("Complies with ASTM F3411 OpenDroneID standard.\n");
+        return;
+    } else {
+        device_id = argv[1];
+        lat = atof(argv[2]);
+        lon = atof(argv[3]);
+        alt = atof(argv[4]);
+    }
+    
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        glog("Invalid coordinates. Lat: -90 to 90, Lon: -180 to 180\n");
+        return;
+    }
+    
+    // stop existing spoof if running
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+    }
+    
+    aerial_detector_init();
+    esp_err_t ret = aerial_detector_start_emulation(device_id, lat, lon, alt);
+    
+    if (ret == ESP_OK) {
+        glog("Spoofing Started\n");
+        glog("ID: %s | Pos: %.6f, %.6f @ %.1fm\n", device_id, lat, lon, alt);
+    } else {
+        glog("Failed to start spoofing\n");
+    }
+}
+
+void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
+    if (aerial_detector_is_emulating()) {
+        aerial_detector_stop_emulation();
+        glog("Spoofing Stopped\n");
+    } else {
+        glog("No spoofing active\n");
+    }
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -4513,6 +8056,7 @@ void register_commands() {
     register_command("reboot", handle_reboot);
     register_command("startwd", handle_startwd);
     register_command("gpsinfo", handle_gps_info);
+    register_command("gpspin", handle_gps_pin);
     register_command("scanports", handle_scan_ports);
     register_command("scanarp", handle_scan_arp);
     register_command("scanssh", handle_scan_ssh);
@@ -4551,8 +8095,12 @@ void register_commands() {
     register_command("sd_pins_mmc", handle_sd_pins_mmc);
     register_command("sd_pins_spi", handle_sd_pins_spi);
     register_command("sd_save_config", handle_sd_save_config);
+    register_command("sd", handle_sd_cmd);
     register_command("scanall", handle_scanall);
+    register_command("sweep", handle_sweep_cmd);
     register_command("timezone", handle_timezone_cmd);
+    register_command("settime", handle_settime_cmd);
+    register_command("time", handle_time_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("listflippers", handle_list_flippers_cmd);
     register_command("selectflipper", handle_select_flipper_cmd);
@@ -4561,6 +8109,8 @@ void register_commands() {
     register_command("enumgatt", handle_enum_gatt_cmd);
     register_command("trackgatt", handle_track_gatt_cmd);
 #endif
+    register_command("trackap", handle_track_ap_cmd);
+    register_command("tracksta", handle_track_sta_cmd);
     #ifdef CONFIG_WITH_STATUS_DISPLAY
     register_command("statusidle", handle_status_idle_cmd);
     #endif
@@ -4572,6 +8122,7 @@ void register_commands() {
     register_command("setcountry", handle_setcountry);
 #endif
     register_command("webauth", handle_web_auth_cmd);
+    register_command("webuiap", handle_webuiap_cmd);
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     register_command("blespam", handle_ble_spam_cmd);
 #endif
@@ -4582,15 +8133,39 @@ void register_commands() {
 #ifdef CONFIG_HAS_INFRARED
     register_command("ir", handle_ir_cmd);
 #endif
+    register_command("badusb", handle_badusb_cmd);
+#ifdef CONFIG_WITH_ETHERNET
+    register_command("ethup", handle_eth_up_cmd);
+    register_command("ethdown", handle_eth_down_cmd);
+    register_command("ethinfo", handle_eth_info_cmd);
+    register_command("ethfp", handle_eth_fingerprint_cmd);
+    register_command("etharp", handle_eth_arp_cmd);
+    register_command("ethports", handle_eth_ports_cmd);
+    register_command("ethping", handle_eth_ping_cmd);
+    register_command("ethdns", handle_eth_dns_cmd);
+    register_command("ethtrace", handle_eth_trace_cmd);
+    register_command("ethstats", handle_eth_stats_cmd);
+    register_command("ethconfig", handle_eth_config_cmd);
+    register_command("ethmac", handle_eth_mac_cmd);
+    register_command("ethserv", handle_eth_serv_cmd);
+    register_command("ethntp", handle_eth_ntp_cmd);
+    register_command("ethhttp", handle_eth_http_cmd);
+#endif
     register_command("mirror", handle_mirror_cmd);
     register_command("input", handle_input_cmd);
     register_command("identify", handle_identify_cmd);
 #if CONFIG_IDF_TARGET_ESP32S3
     register_command("usbkbd", handle_usb_kbd_cmd);
 #endif
+    register_command("aerialscan", handle_aerial_scan_cmd);
+    register_command("aeriallist", handle_aerial_list_cmd);
+    register_command("aerialtrack", handle_aerial_track_cmd);
+    register_command("aerialstop", handle_aerial_stop_cmd);
+    register_command("aerialspoof", handle_aerial_spoof_cmd);
+    register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
-    
+
     glog("Registered Commands\n");
 }
 
@@ -4668,7 +8243,7 @@ void handle_evilportal(int argc, char **argv) {
         wifi_manager_clear_html_buffer();
         glog("HTML buffer cleared - will use default portal on next startportal\n");
     } else {
-        glog("Error: Unknown command '%s'\n", argv[2]);
+        glog("Error: Unsupported command '%s'\n", argv[2]);
     }
 }
 

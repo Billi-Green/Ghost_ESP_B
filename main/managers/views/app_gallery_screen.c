@@ -4,6 +4,9 @@
 #include "managers/views/terminal_screen.h"
 
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
+#include "gui/lvgl_safe.h"
+#include "gui/screen_layout.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -60,36 +63,9 @@ static lv_obj_t *grid_cards_container = NULL;
 // Use the same theme palettes as the main menu to color app borders
 static void init_app_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    const uint32_t palettes[15][6] = {
-        {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
-        {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
-        {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
-        {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
-        {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
-        {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
-        {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
-        {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
-        {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
-        {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
-        {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
-        {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
-        {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
-        {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
-        {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
-    };
-    const int palette_count = (int)(sizeof(palettes) / sizeof(palettes[0]));
-    const int palette_len = (int)(sizeof(palettes[0]) / sizeof(palettes[0][0]));
-    int theme_index = (int)theme;
-    if (theme_index < 0 || theme_index >= palette_count) {
-        theme_index = 0;
-    }
-
     for (int i = 0; i < num_apps; ++i) {
         int slot = app_items[i].palette_index;
-        if (slot < 0 || slot >= palette_len) {
-            slot = 0;
-        }
-        app_items[i].border_color = lv_color_hex(palettes[theme_index][slot]);
+        app_items[i].border_color = lv_color_hex(theme_palette_get(theme, slot));
     }
 }
 
@@ -231,11 +207,10 @@ static void update_app_item(bool slide_left) {
 }
 
 static void create_apps_grid_menu(void) {
-    int screen_width = LV_HOR_RES;
-    int screen_height = LV_VER_RES;
-    int status_bar_height = 20;
-    int avail_height = screen_height - status_bar_height;
-    if (avail_height < 60) avail_height = screen_height;
+    int screen_width = lv_obj_get_width(apps_container);
+    int avail_height = lv_obj_get_height(apps_container);
+    if (screen_width <= 0) screen_width = LV_HOR_RES;
+    if (avail_height <= 0) avail_height = LV_VER_RES;
 
     int cols = num_apps < 3 ? num_apps : 3;
     if (cols <= 0) cols = 1;
@@ -253,7 +228,11 @@ static void create_apps_grid_menu(void) {
     lv_obj_set_style_border_width(grid_cards_container, 0, 0);
     lv_obj_set_style_pad_all(grid_cards_container, 0, 0);
     lv_obj_align(grid_cards_container, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_scrollbar_mode(grid_cards_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scrollbar_mode(grid_cards_container, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(grid_cards_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(grid_cards_container, LV_DIR_VER);
+    lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_clear_flag(grid_cards_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
     apps_grid_cards = calloc(num_apps, sizeof(lv_obj_t *));
     if (!apps_grid_cards) {
@@ -261,12 +240,11 @@ static void create_apps_grid_menu(void) {
         return;
     }
 
+    int visible_rows = 2;
     int card_width = (screen_width - (cols - 1) * margin) / cols;
-    int card_height = (avail_height - (rows - 1) * margin) / rows;
+    int card_height = (avail_height - (visible_rows - 1) * margin) / visible_rows;
     int total_inner_w = cols * card_width + (cols - 1) * margin;
-    int total_inner_h = rows * card_height + (rows - 1) * margin;
     int w_remainder = screen_width - total_inner_w;
-    int h_remainder = avail_height - total_inner_h;
 
     for (int i = 0; i < num_apps; ++i) {
         int row = i / cols;
@@ -274,7 +252,7 @@ static void create_apps_grid_menu(void) {
         int x = col * (card_width + margin);
         int y = row * (card_height + margin);
         int cw = card_width + ((col == cols - 1) ? w_remainder : 0);
-        int ch = card_height + ((row == rows - 1) ? h_remainder : 0);
+        int ch = card_height;
 
         lv_obj_t *card = lv_btn_create(grid_cards_container);
         apps_grid_cards[i] = card;
@@ -412,14 +390,11 @@ static void create_apps_list_menu(void) {
  void apps_menu_create(void) {
     display_manager_fill_screen(lv_color_hex(0x121212));
 
-    apps_container = lv_obj_create(lv_scr_act());
+    const char *title = (LV_VER_RES > 320 ? "Apps Menu" : "Apps");
+
+    apps_container = gui_screen_create_root(NULL, title, lv_color_hex(0x121212), LV_OPA_TRANSP);
     apps_menu_view.root = apps_container;
-    lv_obj_set_size(apps_container, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_opa(apps_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(apps_container, 0, 0);
-    lv_obj_set_style_pad_all(apps_container, 0, 0);
-    lv_obj_set_scrollbar_mode(apps_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_align(apps_container, LV_ALIGN_CENTER, 0, 0);
+
     init_app_colors();
 
     uint8_t layout_setting = settings_get_menu_layout(&G_Settings);
@@ -435,10 +410,9 @@ static void create_apps_list_menu(void) {
             break;
     }
 
-    display_manager_add_status_bar(LV_VER_RES > 320 ? "Apps Menu" : "Apps");
-
     int status_bar_height = 20;
     if (apps_container) {
+
         if (apps_layout == APPS_LAYOUT_GRID_CARDS) {
             lv_obj_align(apps_container, LV_ALIGN_TOP_MID, 0, status_bar_height);
             lv_obj_set_size(apps_container, LV_HOR_RES, LV_VER_RES - status_bar_height);
@@ -551,21 +525,14 @@ static void create_apps_list_menu(void) {
  */
 void apps_menu_destroy(void) {
     if (apps_container) {
-        lv_obj_del(apps_container); // This deletes all children recursively
-        apps_container = NULL;
+        lvgl_obj_del_safe(&apps_container);
         apps_menu_view.root = NULL;
         current_app_obj = NULL;
         back_button = NULL;
     }
     apps_cleanup_layout();
-    if (left_nav_btn) {
-        lv_obj_del(left_nav_btn);
-        left_nav_btn = NULL;
-    }
-    if (right_nav_btn) {
-        lv_obj_del(right_nav_btn);
-        right_nav_btn = NULL;
-    }
+    lvgl_obj_del_safe(&left_nav_btn);
+    lvgl_obj_del_safe(&right_nav_btn);
     // Reset state variables for a clean re-create
     selected_app_index = 0;
     touch_started = false;
@@ -675,24 +642,28 @@ static void handle_apps_button_press(int button) {
 }
 
 /**
- *  @brief handles keyboard button presses
+ * @brief handles keyboard button presses
  */
-
 static void handle_keyboard_interactions(int keyValue){
 
-    // Vim keybinds
-    // Existing keybinds
+    // Vim keybinds and Cardputer controls
     if (keyValue == LV_KEY_LEFT || keyValue == 44 || keyValue == ',' || keyValue == 'h') { // Left
         ESP_LOGI(TAG, "Left button or 'h' pressed");
         select_app_item(selected_app_index - 1, true);
     } else if (keyValue == LV_KEY_RIGHT || keyValue == 47 || keyValue == '/' || keyValue == 'l') { // Right
         ESP_LOGI(TAG, "Right button or 'l' pressed");
         select_app_item(selected_app_index + 1, false);
-    } else if (keyValue == LV_KEY_ENTER || keyValue == 13 || keyValue == 'j') { // Select
-        ESP_LOGI(TAG, "Enter or 'j' pressed (select)");
+    } else if (keyValue == LV_KEY_UP || keyValue == 'k' || keyValue == ';') { // Up
+        ESP_LOGI(TAG, "Up arrow or 'k' pressed");
+        select_app_item(selected_app_index - 1, true);
+    } else if (keyValue == LV_KEY_DOWN || keyValue == 'j' || keyValue == '.') { // Down
+        ESP_LOGI(TAG, "Down arrow or 'j' pressed");
+        select_app_item(selected_app_index + 1, false);
+    } else if (keyValue == LV_KEY_ENTER || keyValue == 13) { // Select
+        ESP_LOGI(TAG, "Enter pressed (select)");
         handle_app_item_selection(selected_app_index);
-    } else if (keyValue == LV_KEY_ESC || keyValue == 29 || keyValue == '`' || keyValue == 'k') { // Back
-        ESP_LOGI(TAG, "Esc, '`' or 'k' pressed (back)");
+    } else if (keyValue == LV_KEY_ESC || keyValue == 29 || keyValue == '`') { // Back
+        ESP_LOGI(TAG, "Esc or '`' pressed (back)");
         display_manager_switch_view(&main_menu_view);
     }
 }
@@ -700,7 +671,7 @@ static void handle_keyboard_interactions(int keyValue){
 /**
  * @brief Combined handler for app menu events
  */
- void apps_menu_event_handler(InputEvent *event) {
+void apps_menu_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         ESP_LOGW(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;
@@ -749,7 +720,37 @@ static void handle_keyboard_interactions(int keyValue){
             }
 
             if (abs(dx) < TAP_THRESHOLD && abs(dy) < TAP_THRESHOLD) {
-                handle_app_item_selection(selected_app_index);
+                // Check which app button was actually tapped
+                if (apps_layout == APPS_LAYOUT_LIST && apps_list_buttons) {
+                    for (int i = 0; i < num_apps; i++) {
+                        if (apps_list_buttons[i]) {
+                            lv_area_t btn_area;
+                            lv_obj_get_coords(apps_list_buttons[i], &btn_area);
+                            if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
+                                data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
+                                select_app_item(i, false);
+                                handle_app_item_selection(i);
+                                return;
+                            }
+                        }
+                    }
+                } else if (apps_layout == APPS_LAYOUT_GRID_CARDS && apps_grid_cards) {
+                    for (int i = 0; i < num_apps; i++) {
+                        if (apps_grid_cards[i]) {
+                            lv_area_t card_area;
+                            lv_obj_get_coords(apps_grid_cards[i], &card_area);
+                            if (data->point.x >= card_area.x1 && data->point.x <= card_area.x2 &&
+                                data->point.y >= card_area.y1 && data->point.y <= card_area.y2) {
+                                select_app_item(i, false);
+                                handle_app_item_selection(i);
+                                return;
+                            }
+                        }
+                    }
+                } else {
+                    // Carousel layout - use current selection
+                    handle_app_item_selection(selected_app_index);
+                }
                 return;
             }
         }

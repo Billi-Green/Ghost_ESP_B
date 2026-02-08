@@ -8,6 +8,8 @@
 #include "managers/views/keyboard_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/display_manager.h"
+#include "gui/screen_layout.h"
+#include "gui/lvgl_safe.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "sdkconfig.h"
@@ -616,9 +618,12 @@ static void scroll_terminal_down(void) {
 static void stop_all_operations(void) {
     terminal_active = false;
     is_stopping = true;
+    
+    if (terminal_dualcomm_only) {
+        simulateCommand("commsend stop");
+    }
     terminal_dualcomm_only = false;
 
-    // Send all stop commands
     simulateCommand("stop");
 
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -632,7 +637,7 @@ static void stop_all_operations(void) {
     }
     ESP_LOGI(TAG, "Stop all operations triggered");
 }
-#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
 void text_box_click_cb(lv_event_t *e){
   ESP_LOGI(TAG, "Text box clicked");
   printf("Text box clicked\n");
@@ -669,16 +674,9 @@ void terminal_view_create(void) {
 
     terminal_active = true;
 
-    terminal_view.root = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(terminal_view.root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(terminal_view.root, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(terminal_view.root, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(terminal_view.root, 0, 0); // Remove border
-    lv_obj_set_style_radius(terminal_view.root, 0, 0);
-    lv_obj_set_scrollbar_mode(terminal_view.root, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_pad_all(terminal_view.root, 0, 0);
+    terminal_view.root = gui_screen_create_root(NULL, "Terminal", lv_color_black(), LV_OPA_COVER);
 
-    const int STATUS_BAR_HEIGHT = 20;
+    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_HEIGHT;
     const int padding = 5;
     const int textbox_height = 40;
 
@@ -686,15 +684,31 @@ void terminal_view_create(void) {
     bool show_back_btn = false;
     bool show_input_bar = false;
 
-#ifdef CONFIG_USE_TOUCHSCREEN
-    if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+#define TEMPLATE_HAS_TOUCH (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0)
+#else
+#define TEMPLATE_HAS_TOUCH (false)
+#endif
+
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+    // Show back button on larger screens and T-Display S3 (320x170)
+    if ((LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) ||
+        (LV_HOR_RES == 320 && LV_VER_RES == 170) 
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+        || (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0)
+#endif
+    ) {
         show_back_btn = true;
         back_button_height = BUTTON_SIZE + BUTTON_PADDING * 2;
     }
 #endif
 
+    show_input_bar = false;
 #if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
     show_input_bar = true;
+#endif
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (TEMPLATE_HAS_TOUCH) show_input_bar = true;
 #endif
 
     // Calculate the height for the input area (input box + padding)
@@ -741,8 +755,14 @@ void terminal_view_create(void) {
     lv_obj_add_event_cb(terminal_scroller, terminal_canvas_size_event, LV_EVENT_SIZE_CHANGED, NULL);
     update_terminal_label("");
 
+#if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+    if (show_back_btn && (
 #ifdef CONFIG_USE_TOUCHSCREEN
-    if (show_back_btn) {
+        true
+#else
+        TEMPLATE_HAS_TOUCH
+#endif
+    )) {
         back_btn = lv_btn_create(terminal_view.root);
         lv_obj_set_size(back_btn, BUTTON_SIZE, BUTTON_SIZE);
         lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, BUTTON_PADDING, -BUTTON_PADDING);
@@ -762,11 +782,17 @@ void terminal_view_create(void) {
     }
 #endif
 
-#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK)
+#if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
     if (show_input_bar) {
         int textbox_width = LV_HOR_RES - 2 * padding;
-    #ifdef CONFIG_USE_TOUCHSCREEN
-        if (show_back_btn) {
+    #if defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+        if (show_back_btn && (
+#ifdef CONFIG_USE_TOUCHSCREEN
+            true
+#else
+            TEMPLATE_HAS_TOUCH
+#endif
+        )) {
             textbox_width -= BUTTON_SIZE + 2 * BUTTON_PADDING;
         }
     #endif
@@ -823,8 +849,7 @@ void terminal_view_create(void) {
 }
 static void terminal_retry_cleanup_cb(lv_timer_t *timer) {
     if (!retry_cleanup_flag) {
-        lv_timer_del(timer);
-        terminal_cleanup_retry_timer = NULL;
+        lvgl_timer_del_safe(&terminal_cleanup_retry_timer);
         return;
     }
     ESP_LOGI(TAG, "Retrying terminal cleanup...");
@@ -847,19 +872,13 @@ void terminal_view_destroy(void) {
     input_buffer[0] = '\0';
 
     // Delete timer first to prevent callbacks after objects are freed
-    if (terminal_update_timer) {
-        lv_timer_del(terminal_update_timer);
-        terminal_update_timer = NULL;
-    }
+    lvgl_timer_del_safe(&terminal_update_timer);
 
     // Safely delete LVGL objects
     if (terminal_mutex) {
         if (xSemaphoreTake(terminal_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             // Delete LVGL objects if they exist
-            if (terminal_view.root) {
-                lv_obj_del(terminal_view.root);
-                terminal_view.root = NULL;
-            }
+            lvgl_obj_del_safe(&terminal_view.root);
             // Set all pointers to NULL to avoid dangling references
             terminal_scroller = NULL;
             terminal_canvas = NULL;
@@ -885,10 +904,7 @@ void terminal_view_destroy(void) {
 
     // Final state reset
     is_stopping = false;
-    if (terminal_cleanup_retry_timer) {
-        lv_timer_del(terminal_cleanup_retry_timer);
-        terminal_cleanup_retry_timer = NULL;
-    }
+    lvgl_timer_del_safe(&terminal_cleanup_retry_timer);
 }
 
 static bool terminal_is_dualcomm_line(const char *text) {
@@ -956,7 +972,9 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       }
     }
 
-    if (LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) {
+    // Handle back button touch on larger screens and T-Display S3
+    if ((LV_HOR_RES > MIN_SCREEN_SIZE && LV_VER_RES > MIN_SCREEN_SIZE) ||
+        (LV_HOR_RES == 320 && LV_VER_RES == 170)) {
       int button_y_min = LV_VER_RES - (BUTTON_SIZE + BUTTON_PADDING * 2);
       int button_y_max = LV_VER_RES - BUTTON_PADDING;
       
@@ -988,9 +1006,10 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
   } else if (event->type == INPUT_TYPE_JOYSTICK) {
     int button = event->data.joystick_index;
     
-    if (button == 1) {
-      // Open keyboard for text input
-      if (input_label) {
+    if (button == 1 || button == 3) {
+      if (input_len > 0) {
+        submit_text();
+      } else if (input_label) {
         keyboard_view_set_return_view(&terminal_view);
         keyboard_view_set_submit_callback(keyboard_input_callback);
         keyboard_view_set_placeholder("Enter command...");
@@ -1000,10 +1019,8 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_up();
     } else if (button == 4) {
       scroll_terminal_down();
-    } else if (button == 0) { // left - exit terminal
+    } else if (button == 0) {
       stop_all_operations();
-    } else if (button == 3) { // right - submit text
-      submit_text();
     }
   } else if (event->type == INPUT_TYPE_KEYBOARD) {
     uint8_t key = event->data.key_value;
@@ -1013,8 +1030,15 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
       scroll_terminal_up();
     } else if (key == 46 || key == '.') {      //down arrow
       scroll_terminal_down();
-    } else if (key == 13){
-      submit_text();
+    } else if (key == 13) {
+      if (input_len > 0) {
+        submit_text();
+      } else if (input_label) {
+        keyboard_view_set_return_view(&terminal_view);
+        keyboard_view_set_submit_callback(keyboard_input_callback);
+        keyboard_view_set_placeholder("Enter command...");
+        display_manager_switch_view(&keyboard_view);
+      }
     } else if (key == 8 || key == 127) { // backspace
       remove_char_from_buffer();
     } else if (key == 32) { // space
@@ -1037,8 +1061,20 @@ void terminal_view_hardwareinput_callback(InputEvent *event) {
         ESP_LOGD(TAG, "Encoder button press debounced");
         return;
       }
-      stop_all_operations();
-      createdTimeInMs = now_ms; // Update last press time
+      createdTimeInMs = now_ms;
+      if (input_len > 0) {
+        submit_text();
+#if defined(CONFIG_USE_JOYSTICK) || defined(CONFIG_USE_TOUCHSCREEN)
+      } else if (input_label) {
+        keyboard_view_set_return_view(&terminal_view);
+        keyboard_view_set_submit_callback(keyboard_input_callback);
+        keyboard_view_set_placeholder("Enter command...");
+        display_manager_switch_view(&keyboard_view);
+#else
+      } else {
+        stop_all_operations();
+#endif
+      }
     } else {
       if (event->data.encoder.direction > 0) {
         scroll_terminal_down();

@@ -16,6 +16,8 @@
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 
+struct ble_gap_event;
+
 typedef void (*ble_data_handler_t)(struct ble_gap_event *event, size_t len);
 
 typedef struct {
@@ -40,6 +42,7 @@ void ble_start_airtag_scanner(void);
 void ble_start_raw_ble_packetscan(void);
 void ble_start_blespam_detector(void);
 void ble_start_capture(void);
+void ble_start_capture_wireshark(void);
 void ble_start_scanning(void);
 void ble_start_skimmer_detection(void);
 void ble_stop_skimmer_detection(void);
@@ -62,6 +65,12 @@ void ble_enumerate_gatt_services(void);
 void ble_track_gatt_device(void);
 void ble_stop_tracking(void);
 void ble_stop_gatt_scan(void);
+
+// Data access for sweep command
+int ble_get_flipper_count(void);
+int ble_get_flipper_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len);
+int ble_get_gatt_device_count(void);
+int ble_get_gatt_device_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len);
 
 // spam advertisement types
 typedef enum {

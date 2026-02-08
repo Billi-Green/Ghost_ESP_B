@@ -10,9 +10,6 @@
 #include "esp_vfs_fat.h"
 #include "vendor/drivers/CH422G.h"
 #include "vendor/pcap.h"
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(CONFIG_ENCODER_INA) /* S3 builds that use the rotary encoder */
-#include "driver/gpio.h"
-#endif
 #include <dirent.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,12 +23,14 @@
 #include "freertos/task.h"
 #include "managers/status_display_manager.h"
 
+#define MAX_PORTALS 32
+#define MAX_PORTAL_NAME 64
+
 static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
 
-
 /* time multiplex spi when display and sd share the spi bus */
-#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI)
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
 #include "lvgl_helpers.h"
 #include "lvgl_tft/disp_spi.h"
 #include "lvgl_spi_conf.h"
@@ -489,6 +488,8 @@ esp_err_t sd_card_init(void) {
   sdmmc_host_t host = SDSPI_HOST_DEFAULT();
 #if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(CONFIG_ENCODER_INA)
   host.max_freq_khz = 4000;       /* 4 MHz for first probe – increase later if needed */
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+  host.max_freq_khz = 4000;       /* 4 MHz for ESP32-C5 to avoid timeout issues */
 #endif
   /* select spi host slot for target */
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
@@ -614,7 +615,7 @@ esp_err_t sd_card_init(void) {
 
   if (gating_template) {
     sd_card_update_cached_stats();
-    sd_card_unmount();
+    sd_card_unmount_with_context(SD_UNMOUNT_CONTEXT_JIT);
     if (display_was_suspended) {
       display_spi_resume_after_sd();
     }
@@ -656,6 +657,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   sdmmc_host_t host = SDSPI_HOST_DEFAULT();
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
   host.slot = SPI2_HOST;
+  host.max_freq_khz = 4000;       /* 4 MHz for ESP32-C5 to avoid timeout issues */
 #endif
 
   spi_bus_config_t bus_config; memset(&bus_config, 0, sizeof(spi_bus_config_t));
@@ -714,6 +716,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   s_mount_type = MOUNT_SPI;
   sd_card_update_cached_stats();
   s_next_unmount_tick = xTaskGetTickCount() + pdMS_TO_TICKS(300);
+  status_display_show_status("SD Active");
   return ESP_OK;
 #else
   // For SDMMC, if not mounted try normal init path quickly
@@ -724,20 +727,38 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
 void sd_card_unmount_after_flush(bool display_was_suspended) {
   /* fuck it, unmount now so the display can safely resume without bus contention */
   if (sd_card_manager.is_initialized) {
-    sd_card_unmount();
+    sd_card_unmount_with_context(SD_UNMOUNT_CONTEXT_JIT);
   }
   /* always attempt resume; it's idempotent and guards internally */
   display_spi_resume_after_sd();
 }
 
-void sd_card_unmount(void) {
+void sd_card_unmount_with_context(sd_unmount_context_t context) {
 #ifdef CONFIG_IS_S3TWATCH
   if (s_virtual_storage_mounted) {
     unmount_virtual_storage();
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
-    status_display_show_status("SD Unmounted");
+    
+    // Show appropriate status based on context
+    switch (context) {
+      case SD_UNMOUNT_CONTEXT_JIT:
+        status_display_show_status("Virtual SD Idle");
+        break;
+      case SD_UNMOUNT_CONTEXT_USER:
+        status_display_show_status("Virtual SD Off");
+        break;
+      case SD_UNMOUNT_CONTEXT_ERROR:
+        status_display_show_status("Virtual SD Err");
+        break;
+      case SD_UNMOUNT_CONTEXT_SHUTDOWN:
+        // Don't show status during shutdown
+        break;
+      default:
+        status_display_show_status("Virtual SD Off");
+        break;
+    }
     return;
   }
 #endif
@@ -749,7 +770,25 @@ void sd_card_unmount(void) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
-    status_display_show_status("SD Unmounted");
+    
+    // Show appropriate status based on context
+    switch (context) {
+      case SD_UNMOUNT_CONTEXT_JIT:
+        status_display_show_status("SD Idle");
+        break;
+      case SD_UNMOUNT_CONTEXT_USER:
+        status_display_show_status("SD Unmounted");
+        break;
+      case SD_UNMOUNT_CONTEXT_ERROR:
+        status_display_show_status("SD Error");
+        break;
+      case SD_UNMOUNT_CONTEXT_SHUTDOWN:
+        // Don't show status during shutdown
+        break;
+      default:
+        status_display_show_status("SD Unmounted");
+        break;
+    }
   } else {
     status_display_show_status("SD Not Mounted");
   }
@@ -765,11 +804,33 @@ void sd_card_unmount(void) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
-    status_display_show_status("SD Unmounted");
+    
+    // Show appropriate status based on context
+    switch (context) {
+      case SD_UNMOUNT_CONTEXT_JIT:
+        status_display_show_status("SD Idle");
+        break;
+      case SD_UNMOUNT_CONTEXT_USER:
+        status_display_show_status("SD Unmounted");
+        break;
+      case SD_UNMOUNT_CONTEXT_ERROR:
+        status_display_show_status("SD Error");
+        break;
+      case SD_UNMOUNT_CONTEXT_SHUTDOWN:
+        // Don't show status during shutdown
+        break;
+      default:
+        status_display_show_status("SD Unmounted");
+        break;
+    }
   } else {
     status_display_show_status("SD Not Mounted");
   }
 #endif
+}
+
+void sd_card_unmount(void) {
+  sd_card_unmount_with_context(SD_UNMOUNT_CONTEXT_USER);
 }
 
 esp_err_t sd_card_append_file(const char *path, const void *data, size_t size) {
@@ -889,6 +950,20 @@ bool sd_card_exists(const char *path) {
   }
 }
 
+static esp_err_t ensure_sd_dir_exists(const char *path) {
+  if (!sd_card_exists(path)) {
+    printf("Creating directory: %s\n", path);
+    esp_err_t ret = sd_card_create_directory(path);
+    if (ret != ESP_OK) {
+      printf("Failed to create directory %s: %s\n", path, esp_err_to_name(ret));
+      return ret;
+    }
+  } else {
+    printf("Directory %s already exists\n", path);
+  }
+  return ESP_OK;
+}
+
 esp_err_t sd_card_setup_directory_structure() {
   const char *root_dir = "/mnt/ghostesp";
   const char *debug_dir = "/mnt/ghostesp/debug";
@@ -903,150 +978,52 @@ esp_err_t sd_card_setup_directory_structure() {
   const char *nfc_dir = "/mnt/ghostesp/nfc";
 #endif
 
-  if (!sd_card_exists(root_dir)) {
-    printf("Creating directory: %s\n", root_dir);
-    esp_err_t ret = sd_card_create_directory(root_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", root_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", root_dir);
-  }
+  esp_err_t ret = ensure_sd_dir_exists(root_dir);
+  if (ret != ESP_OK) return ret;
 
-  if (!sd_card_exists(games_dir)) {
-    printf("Creating directory: %s\n", games_dir);
-    esp_err_t ret = sd_card_create_directory(games_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", games_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", games_dir);
-  }
+  ret = ensure_sd_dir_exists(games_dir);
+  if (ret != ESP_OK) return ret;
 
-  if (!sd_card_exists(gps_dir)) {
-    printf("Creating directory: %s\n", gps_dir);
-    esp_err_t ret = sd_card_create_directory(gps_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", gps_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", gps_dir);
-  }
+  ret = ensure_sd_dir_exists(gps_dir);
+  if (ret != ESP_OK) return ret;
 
-  if (!sd_card_exists(debug_dir)) {
-    printf("Creating directory: %s\n", debug_dir);
-    esp_err_t ret = sd_card_create_directory(debug_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", debug_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", debug_dir);
-  }
+  ret = ensure_sd_dir_exists(debug_dir);
+  if (ret != ESP_OK) return ret;
 
-  if (!sd_card_exists(pcaps_dir)) {
-    printf("Creating directory: %s\n", pcaps_dir);
-    esp_err_t ret = sd_card_create_directory(pcaps_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", pcaps_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", pcaps_dir);
-  }
+  ret = ensure_sd_dir_exists(pcaps_dir);
+  if (ret != ESP_OK) return ret;
 
-  if (!sd_card_exists(scans_dir)) {
-    printf("Creating directory: %s\n", scans_dir);
-    esp_err_t ret = sd_card_create_directory(scans_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", scans_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", scans_dir);
-  }
+  ret = ensure_sd_dir_exists(scans_dir);
+  if (ret != ESP_OK) return ret;
 
   // Create evil_portal directory
-  if (!sd_card_exists(evil_portal_dir)) {
-    printf("Creating directory: %s\n", evil_portal_dir);
-    esp_err_t ret = sd_card_create_directory(evil_portal_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", evil_portal_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", evil_portal_dir);
-  }
+  ret = ensure_sd_dir_exists(evil_portal_dir);
+  if (ret != ESP_OK) return ret;
 
   // Create evil_portal/portals directory
-  if (!sd_card_exists(evil_portal_portals_dir)) {
-    printf("Creating directory: %s\n", evil_portal_portals_dir);
-    esp_err_t ret = sd_card_create_directory(evil_portal_portals_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", evil_portal_portals_dir,
-             esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", evil_portal_portals_dir);
-  }
+  ret = ensure_sd_dir_exists(evil_portal_portals_dir);
+  if (ret != ESP_OK) return ret;
 
   const char *infrared_dir = "/mnt/ghostesp/infrared";
-  if (!sd_card_exists(infrared_dir)) {
-    printf("Creating directory: %s\n", infrared_dir);
-    esp_err_t ret = sd_card_create_directory(infrared_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", infrared_dir, esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", infrared_dir);
-  }
+  ret = ensure_sd_dir_exists(infrared_dir);
+  if (ret != ESP_OK) return ret;
 
   const char *remotes_dir = "/mnt/ghostesp/infrared/remotes";
-  if (!sd_card_exists(remotes_dir)) {
-    printf("Creating directory: %s\n", remotes_dir);
-    esp_err_t ret = sd_card_create_directory(remotes_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", remotes_dir, esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", remotes_dir);
-  }
+  ret = ensure_sd_dir_exists(remotes_dir);
+  if (ret != ESP_OK) return ret;
 
-  if (!sd_card_exists(universals_dir)) {
-    printf("Creating directory: %s\n", universals_dir);
-    esp_err_t ret = sd_card_create_directory(universals_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", universals_dir, esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", universals_dir);
-  }
+  ret = ensure_sd_dir_exists(universals_dir);
+  if (ret != ESP_OK) return ret;
 
 #if defined(CONFIG_NFC_PN532) || defined(CONFIG_NFC_CHAMELEON)
-  if (!sd_card_exists(nfc_dir)) {
-    printf("Creating directory: %s\n", nfc_dir);
-    esp_err_t ret = sd_card_create_directory(nfc_dir);
-    if (ret != ESP_OK) {
-      printf("Failed to create directory %s: %s\n", nfc_dir, esp_err_to_name(ret));
-      return ret;
-    }
-  } else {
-    printf("Directory %s already exists\n", nfc_dir);
-  }
+  ret = ensure_sd_dir_exists(nfc_dir);
+  if (ret != ESP_OK) return ret;
+#endif
+
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+  const char *badusb_dir = "/mnt/ghostesp/badusb";
+  ret = ensure_sd_dir_exists(badusb_dir);
+  if (ret != ESP_OK) return ret;
 #endif
 
   printf("Directory structure successfully set up.\n");
@@ -1252,12 +1229,6 @@ bool sd_card_is_virtual_storage() {
   return false;
 #endif
 }
-
-#include <dirent.h>
-#include <string.h>
-
-#define MAX_PORTALS 32
-#define MAX_PORTAL_NAME 64
 
 int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]) {
     const char *portal_dir = "/mnt/ghostesp/evil_portal/portals";

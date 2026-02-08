@@ -1,6 +1,7 @@
 #include "gui/options_view.h"
 #include "managers/display_manager.h"
 #include "managers/settings_manager.h"
+#include "gui/theme_palette_api.h"
 #include "lvgl.h"
 #include <stdlib.h>
 #include <string.h>
@@ -24,24 +25,6 @@ static inline void ensure_capacity(options_view_t *ov, int need) {
     ov->items = (lv_obj_t **)realloc(ov->items, sizeof(lv_obj_t *) * newcap);
     ov->capacity = newcap;
 }
-
-static const uint32_t theme_palettes[15][6] = {
-    {0x1976D2,0xD32F2F,0x388E3C,0x7B1FA2,0x000000,0xFF9800},
-    {0xFFCDD2,0xC8E6C9,0xB3E5FC,0xFFF9C4,0xD1C4E9,0xCFD8DC},
-    {0x263238,0x37474F,0x455A64,0x546E7A,0x263238,0x37474F},
-    {0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF,0xFFFFFF},
-    {0x002B36,0x073642,0x586E75,0x839496,0xEEE8D5,0x002B36},
-    {0x888888,0x888888,0x888888,0x888888,0x888888,0x888888},
-    {0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63,0xE91E63},
-    {0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0,0x9C27B0},
-    {0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3,0x2196F3},
-    {0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500,0xFFA500},
-    {0x39FF14,0xFF073A,0x0FF1CE,0xF8F32B,0xFF6EC7,0xFF8C00},
-    {0xFF00FF,0x00FFFF,0xFF0000,0x00FF00,0xFFFF00,0x800080},
-    {0x0077BE,0x00CED1,0x20B2AA,0x4682B4,0x5F9EA0,0x00008B},
-    {0xFF4500,0xFF8C00,0xFFD700,0xFF1493,0x8B008B,0x2E0854},
-    {0x556B2F,0x6B8E23,0x228B22,0x2E8B57,0x8FBC8F,0x8B4513}
-};
 
 static inline lv_style_t *get_zebra_style(options_view_t *ov, int idx) {
     bool zebra = settings_get_zebra_menus_enabled(&G_Settings);
@@ -72,8 +55,8 @@ static void apply_selected_style(options_view_t *ov, lv_obj_t *item, bool on) {
 
     if (on) {
         uint8_t theme = settings_get_menu_theme(&G_Settings);
-        lv_color_t c = lv_color_hex(theme_palettes[theme][0]);
-        lv_color_t txt = (theme == 3) ? lv_color_hex(0x000000) : lv_color_hex(0xFFFFFF);
+        lv_color_t c = lv_color_hex(theme_palette_get_accent(theme));
+        lv_color_t txt = theme_palette_is_bright(theme) ? lv_color_hex(0x000000) : lv_color_hex(0xFFFFFF);
         lv_style_set_bg_color(&ov->style_selected, c);
         lv_style_set_bg_grad_color(&ov->style_selected, c);
         lv_obj_add_style(item, &ov->style_selected, 0);
@@ -84,11 +67,10 @@ static void apply_selected_style(options_view_t *ov, lv_obj_t *item, bool on) {
             if (ud == (void *)1 || ud == (void *)2) {
                 lv_obj_set_style_text_color(child, txt, 0);
             }
-#ifndef CONFIG_USE_TOUCHSCREEN
+            // Show arrows on selected item (for both touch and non-touch)
             if (ud == (void *)2) {
                 lv_obj_clear_flag(child, LV_OBJ_FLAG_HIDDEN);
             }
-#endif
         }
     } else {
         lv_obj_remove_style(item, &ov->style_selected, 0);
@@ -99,11 +81,16 @@ static void apply_selected_style(options_view_t *ov, lv_obj_t *item, bool on) {
             if (ud == (void *)1 || ud == (void *)2) {
                 lv_obj_set_style_text_color(child, lv_color_hex(0xFFFFFF), 0);
             }
-#ifndef CONFIG_USE_TOUCHSCREEN
+            // Handle arrow visibility for non-selected items
             if (ud == (void *)2) {
+#ifdef CONFIG_USE_TOUCHSCREEN
+                // On touch devices, always show all arrows
+                lv_obj_clear_flag(child, LV_OBJ_FLAG_HIDDEN);
+#else
+                // On non-touch devices, hide arrows on non-selected items
                 lv_obj_add_flag(child, LV_OBJ_FLAG_HIDDEN);
-            }
 #endif
+            }
         }
     }
 }
@@ -277,4 +264,9 @@ void options_view_relayout_item(options_view_t *ov, lv_obj_t *item) {
     lv_coord_t left_pad = 8;
     lv_obj_set_width(lbl, lv_obj_get_width(item) - (2 * left_pad));
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, left_pad, 0);
+}
+
+void options_view_refresh_selected_item(options_view_t *ov) {
+    if (!ov || ov->selected < 0 || ov->selected >= ov->count) return;
+    apply_selected_style(ov, ov->items[ov->selected], true);
 }

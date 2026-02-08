@@ -16,6 +16,8 @@ typedef struct {
   uint8_t bssid[6];
   uint8_t ssid_count;
   bool is_pineap;
+  bool has_pineapple_oui;
+  bool oui_logged;
   time_t first_seen;
   uint32_t ssid_hashes[MAX_SSIDS_PER_BSSID];
   // Circular buffer for recent SSIDs
@@ -43,6 +45,8 @@ void stop_pineap_detection(void);
 // Wardriving channel hopping control functions
 void start_wardriving(void);
 void stop_wardriving(void);
+
+uint32_t wardriving_get_ap_count(void);
 
 // Forward declarations of callback functions
 void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type);
@@ -87,5 +91,8 @@ static uint8_t router_ip[4];
 
 // Controls whether probe listening writes PCAP data to SD (no UART fallback)
 extern bool g_listen_probes_save_to_sd;
+
+// cleanup function to free pcap queue when not capturing
+void cleanup_pcap_queue(void);
 
 #endif

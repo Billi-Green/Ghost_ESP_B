@@ -4,6 +4,8 @@
 #include "managers/rgb_manager.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/wifi_manager.h"
+#include "managers/status_display_manager.h"
+#include "core/utils.h"
 #include "vendor/GPS/gps_logger.h"
 #include "vendor/pcap.h"
 #include "core/glog.h"
@@ -11,6 +13,7 @@
 #include <esp_log.h>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
 #include "esp_rom_sys.h"  // Contains esp_rom_printf
 #include <esp_timer.h>  // For esp_timer_get_time
 #include "freertos/task.h"
@@ -47,6 +50,10 @@ static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8
 #define MIN_RSSI_THRESHOLD -90  // Drop packets weaker than -90 dBm
 #define MIN_PACKET_LENGTH 24    // Minimum 802.11 header size
 #define MAX_IE_LEN 255
+static const uint8_t pineapple_ouis[][3] = {
+    {0x00, 0x13, 0x37},
+};
+static const size_t pineapple_oui_count = sizeof(pineapple_ouis) / sizeof(pineapple_ouis[0]);
 static pineap_network_t pineap_networks[MAX_PINEAP_NETWORKS];
 static int pineap_network_count = 0;
 static bool pineap_detection_active = false;
@@ -55,8 +62,72 @@ static esp_timer_handle_t channel_hop_timer = NULL;
 static bool wardriving_hopping_active = false;
 static uint8_t wardrive_channel = 1;
 static esp_timer_handle_t wardrive_hop_timer = NULL;
+static esp_timer_handle_t wardrive_heartbeat_timer = NULL;
+static int64_t wardrive_start_us = 0;
+static uint32_t wardrive_wifi_frames_seen = 0;
+static uint32_t wardrive_ble_advs_seen = 0;
+static uint32_t wardrive_log_attempts = 0;
+static uint32_t wardrive_log_ok = 0;
+static uint32_t wardrive_gps_rejected = 0;
+
+static void wardrive_heartbeat_cb(void *arg);
+static void start_wardrive_heartbeat(void);
+static void stop_wardrive_heartbeat(void);
+
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define WARDRIVE_C5_MAX_CHANNEL_PROBE 196
+static uint8_t wardrive_c5_channels[WARDRIVE_C5_MAX_CHANNEL_PROBE];
+static size_t wardrive_c5_channel_count = 0;
+static size_t wardrive_c5_channel_idx = 0;
+static bool wardrive_c5_channels_ready = false;
+
+static void wardrive_build_channel_list_c5(void) {
+    if (wardrive_c5_channels_ready) {
+        return;
+    }
+
+    wardrive_c5_channel_count = 0;
+    wardrive_c5_channel_idx = 0;
+
+    uint8_t cur_primary = 1;
+    wifi_second_chan_t cur_second = WIFI_SECOND_CHAN_NONE;
+    (void)esp_wifi_get_channel(&cur_primary, &cur_second);
+
+    for (uint16_t ch = 1; ch <= WARDRIVE_C5_MAX_CHANNEL_PROBE; ch++) {
+        if (wardrive_c5_channel_count >= (sizeof(wardrive_c5_channels) / sizeof(wardrive_c5_channels[0]))) {
+            break;
+        }
+        if (esp_wifi_set_channel((uint8_t)ch, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
+            wardrive_c5_channels[wardrive_c5_channel_count++] = (uint8_t)ch;
+        }
+    }
+
+    if (wardrive_c5_channel_count == 0) {
+        wardrive_c5_channels[0] = 1;
+        wardrive_c5_channel_count = 1;
+    }
+
+    (void)esp_wifi_set_channel(cur_primary, cur_second);
+    wardrive_c5_channels_ready = true;
+}
+
+static uint8_t wardrive_next_channel_c5(void) {
+    wardrive_build_channel_list_c5();
+    if (wardrive_c5_channel_count == 0) {
+        return 1;
+    }
+    wardrive_c5_channel_idx = (wardrive_c5_channel_idx + 1) % wardrive_c5_channel_count;
+    return wardrive_c5_channels[wardrive_c5_channel_idx];
+}
+#endif
 static uint32_t hash_ssid(const char *ssid);
 static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash);
+static int build_recent_ssids_string(const pineap_network_t *network, char *out, size_t out_size);
+static void log_pineap_details(pineap_network_t *network,
+                               const char *title,
+                               const char *ssids_str,
+                               int ssid_count);
+static bool is_pineapple_oui(const uint8_t *bssid);
 static void trim_trailing(char *str);
 static bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2);
 static bool is_beacon_packet(const wifi_promiscuous_pkt_t *pkt);
@@ -264,6 +335,24 @@ static inline void enqueue_pcap_write_typed(const uint8_t *payload, uint16_t len
 static inline void enqueue_pcap_write(const uint8_t *payload, uint16_t len) {
     enqueue_pcap_write_typed(payload, len, PCAP_CAPTURE_WIFI);
 }
+
+// cleanup function to free pcap queue and task when not capturing
+void cleanup_pcap_queue(void) {
+    if (s_pcap_writer_task != NULL) {
+        vTaskDelete(s_pcap_writer_task);
+        s_pcap_writer_task = NULL;
+    }
+    if (s_pcap_q != NULL) {
+        // drain any remaining items and free their buffers
+        pcap_q_item_t item;
+        while (xQueueReceive(s_pcap_q, &item, 0) == pdTRUE) {
+            if (item.buffer) free(item.buffer);
+        }
+        vQueueDelete(s_pcap_q);
+        s_pcap_q = NULL;
+    }
+}
+
 static const char *suspicious_names[] STORE_DATA_ATTR = {
     "HC-03", "HC-05", "HC-06",  "HC-08",    "BT-HC05", "JDY-31",
     "AT-09", "HM-10", "CC41-A", "MLT-BT05", "SPP-CA",  "FFD0"};
@@ -273,6 +362,69 @@ int detected_network_count = 0;
 esp_timer_handle_t stop_timer;
 int should_store_wps = 1;
 gps_t *gps = NULL;
+static bool gps_time_synced = false;
+
+static int64_t days_from_civil(int y, unsigned m, unsigned d) {
+    y -= (m <= 2);
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = (unsigned)(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? (unsigned)-3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return (int64_t)era * 146097 + (int64_t)doe - 719468;
+}
+
+static bool gps_build_utc_timeval(const gps_t *g, struct timeval *out) {
+    if (!g || !out) {
+        return false;
+    }
+    if (!gps_is_valid_year(g->date.year)) {
+        return false;
+    }
+    if (g->date.month < 1 || g->date.month > 12 || g->date.day < 1 || g->date.day > 31) {
+        return false;
+    }
+    if (g->tim.hour > 23 || g->tim.minute > 59 || g->tim.second > 59) {
+        return false;
+    }
+
+    const int year = (int)gps_get_absolute_year(g->date.year);
+    const int64_t days = days_from_civil(year, (unsigned)g->date.month, (unsigned)g->date.day);
+    const int64_t sec = days * 86400LL + (int64_t)g->tim.hour * 3600LL + (int64_t)g->tim.minute * 60LL + (int64_t)g->tim.second;
+    if (sec < 946684800LL) {
+        return false;
+    }
+
+    out->tv_sec = (time_t)sec;
+    out->tv_usec = 0;
+    return true;
+}
+
+static void gps_try_sync_time_from_fix(const gps_t *g) {
+    if (gps_time_synced || !g) {
+        return;
+    }
+
+    struct timeval tv;
+    if (!gps_build_utc_timeval(g, &tv)) {
+        return;
+    }
+
+    struct timeval now;
+    if (gettimeofday(&now, NULL) != 0) {
+        return;
+    }
+
+    if (now.tv_sec >= 1600000000) {
+        gps_time_synced = true;
+        return;
+    }
+
+    if (tv.tv_sec >= 1600000000) {
+        settimeofday(&tv, NULL);
+        gps_time_synced = true;
+    }
+}
+
 typedef struct {
     uint8_t bssid[6];
     time_t detection_time;
@@ -330,12 +482,21 @@ static void channel_hop_timer_callback(void *arg) {
     if (!pineap_detection_active)
         return;
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    for (size_t tries = 0; tries < wardrive_c5_channel_count; tries++) {
+        current_channel = wardrive_next_channel_c5();
+        if (esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
+            break;
+        }
+    }
+#else
     uint8_t start = current_channel;
     do {
         current_channel = (current_channel % MAX_WIFI_CHANNEL) + 1;
         if (esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
             break;
     } while (current_channel != start);
+#endif
 }
 
 static esp_err_t start_channel_hopping(void) {
@@ -369,6 +530,8 @@ static pineap_network_t *find_or_create_network(const uint8_t *bssid) {
         memcpy(network->bssid, bssid, 6);
         network->ssid_count = 0;
         network->is_pineap = false;
+        network->has_pineapple_oui = is_pineapple_oui(bssid);
+        network->oui_logged = false;
         network->first_seen = time(NULL);
         return network;
     }
@@ -397,12 +560,21 @@ static void wardrive_hop_timer_callback(void *arg) {
     if (!wardriving_hopping_active)
         return;
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    for (size_t tries = 0; tries < wardrive_c5_channel_count; tries++) {
+        wardrive_channel = wardrive_next_channel_c5();
+        if (esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
+            break;
+        }
+    }
+#else
     uint8_t start = wardrive_channel;
     do {
         wardrive_channel = (wardrive_channel % MAX_WIFI_CHANNEL) + 1;
         if (esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
             break;
     } while (wardrive_channel != start);
+#endif
 }
 
 static esp_err_t start_wardrive_channel_hopping(void) {
@@ -414,7 +586,14 @@ static esp_err_t start_wardrive_channel_hopping(void) {
     }
 
     wardriving_hopping_active = true;
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    wardrive_c5_channels_ready = false;
+    wardrive_build_channel_list_c5();
+    wardrive_c5_channel_idx = 0;
+    wardrive_channel = wardrive_c5_channels[0];
+#else
     wardrive_channel = 1;
+#endif
     return esp_timer_start_periodic(wardrive_hop_timer, CHANNEL_HOP_INTERVAL_MS * 1000);
 }
 
@@ -427,11 +606,88 @@ static void stop_wardrive_channel_hopping(void) {
     }
 }
 
+#define WARDRIVE_HEARTBEAT_INTERVAL_MS 10000
+
+static void wardrive_heartbeat_cb(void *arg) {
+    (void)arg;
+
+    if (!wardriving_hopping_active) {
+        return;
+    }
+
+    gps_t *gps_local = NULL;
+    const char *fix_status = "No GPS";
+    uint8_t sats = 0;
+
+    if (nmea_hdl != NULL) {
+        gps_local = &((esp_gps_t *)nmea_hdl)->parent;
+    }
+
+    if (gps_local != NULL) {
+        sats = gps_local->sats_in_use;
+        if (!gps_local->valid || gps_local->fix < GPS_FIX_GPS || gps_local->fix_mode < GPS_MODE_2D) {
+            fix_status = "No Fix";
+        } else if (gps_local->fix_mode == GPS_MODE_2D) {
+            fix_status = "2D";
+        } else if (gps_local->fix_mode == GPS_MODE_3D) {
+            fix_status = "3D";
+        } else {
+            fix_status = "Fix";
+        }
+    }
+
+    uint32_t up_s = 0;
+    if (wardrive_start_us != 0) {
+        up_s = (uint32_t)((esp_timer_get_time() - wardrive_start_us) / 1000000LL);
+    }
+
+    uint32_t up_m = up_s / 60;
+    uint32_t up_rem_s = up_s % 60;
+
+    size_t pending = csv_get_pending_bytes();
+
+    glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
+         (unsigned long)wardrive_wifi_frames_seen,
+         (unsigned long)wardrive_log_ok,
+         (unsigned long)wardrive_log_attempts,
+         (unsigned long)wardrive_gps_rejected,
+         (unsigned)wardrive_channel,
+         (unsigned long)up_m,
+         (unsigned long)up_rem_s,
+         fix_status,
+         (unsigned)sats,
+         (unsigned)pending);
+}
+
+static void start_wardrive_heartbeat(void) {
+    wardrive_start_us = esp_timer_get_time();
+    wardrive_wifi_frames_seen = 0;
+    wardrive_ble_advs_seen = 0;
+    wardrive_log_attempts = 0;
+    wardrive_log_ok = 0;
+    wardrive_gps_rejected = 0;
+}
+
+static void stop_wardrive_heartbeat(void) {
+    if (wardrive_heartbeat_timer) {
+        esp_timer_stop(wardrive_heartbeat_timer);
+        esp_timer_delete(wardrive_heartbeat_timer);
+        wardrive_heartbeat_timer = NULL;
+    }
+}
+
 void start_pineap_detection(void) {
     pineap_detection_active = true;
     pineap_network_count = 0;
     memset(pineap_networks, 0, sizeof(pineap_networks));
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    wardrive_c5_channels_ready = false;
+    wardrive_build_channel_list_c5();
+    wardrive_c5_channel_idx = 0;
+    current_channel = wardrive_c5_channels[0];
+#else
     current_channel = 1;
+#endif
     start_channel_hopping();
 }
 
@@ -442,10 +698,16 @@ void stop_pineap_detection(void) {
 
 void start_wardriving(void) {
     start_wardrive_channel_hopping();
+    start_wardrive_heartbeat();
 }
 
 void stop_wardriving(void) {
+    stop_wardrive_heartbeat();
     stop_wardrive_channel_hopping();
+}
+
+uint32_t wardriving_get_ap_count(void) {
+    return wardrive_wifi_frames_seen;
 }
 
 #define IRAM_PRINTF(fmt, ...) do { \
@@ -460,35 +722,16 @@ void log_pineap_detection(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     char mac_str[18];
-    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x", log_data->bssid[0],
-             log_data->bssid[1], log_data->bssid[2], log_data->bssid[3], log_data->bssid[4],
-             log_data->bssid[5]);
+    format_mac_address(log_data->bssid, mac_str, sizeof(mac_str), false);
 
-    // Build SSIDs string, filtering out empty SSIDs
     char ssids_str[256] = {0};
-    int valid_ssid_count = 0;
-
-    // Use the most up-to-date SSIDs from the network structure
-    for (int i = 0; i < network->ssid_count && i < RECENT_SSID_COUNT; i++) {
-        if (strlen(network->recent_ssids[i]) > 0) {
-            if (valid_ssid_count > 0)
-                strcat(ssids_str, ", ");
-            strcat(ssids_str, network->recent_ssids[i]);
-            valid_ssid_count++;
-        }
-    }
+    int valid_ssid_count =
+        build_recent_ssids_string(network, ssids_str, sizeof(ssids_str));
 
     // Only log if we have valid SSIDs
     if (valid_ssid_count >= MIN_SSIDS_FOR_DETECTION) {
         // Pulse RGB purple (red + blue) to indicate Pineapple detection
         pulse_once(&rgb_manager, 255, 0, 255);
-
-        IRAM_PRINTF("\nPineapple detected!\nBSSID: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-                   log_data->bssid[0], log_data->bssid[1], log_data->bssid[2],
-                   log_data->bssid[3], log_data->bssid[4], log_data->bssid[5]);
-        IRAM_PRINTF("Channel: %d\n", network->last_channel);
-        IRAM_PRINTF("RSSI: %d\n", network->last_rssi);
-        IRAM_PRINTF("SSIDs (%d): %s\n", valid_ssid_count, ssids_str);
 
         // Evil Twin Detection: Check for same SSID from different BSSIDs
         for (int i = 0; i < pineap_network_count; i++) {
@@ -496,21 +739,14 @@ void log_pineap_detection(void *arg) {
                 strcasecmp(network->recent_ssids[0], pineap_networks[i].recent_ssids[0]) == 0) {
                 // format the other network's BSSID into a string before logging
                 char other_mac_str[18];
-                snprintf(other_mac_str, sizeof(other_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-                         pineap_networks[i].bssid[0], pineap_networks[i].bssid[1],
-                         pineap_networks[i].bssid[2], pineap_networks[i].bssid[3],
-                         pineap_networks[i].bssid[4], pineap_networks[i].bssid[5]);
+                format_mac_address(pineap_networks[i].bssid, other_mac_str, sizeof(other_mac_str), false);
 
                 glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %s and\n%s\n",
                      network->recent_ssids[0], mac_str, other_mac_str);
             }
         }
 
-        glog("\nPineapple detected!\n");
-        glog("BSSID: %s\n", mac_str);
-        glog("Channel: %d\n", network->last_channel);
-        glog("RSSI: %d\n", network->last_rssi);
-        glog("SSIDs (%d): %s\n", valid_ssid_count, ssids_str);
+        log_pineap_details(network, "Pineapple detected!", ssids_str, valid_ssid_count);
     }
 
     free(log_data);
@@ -572,6 +808,78 @@ static bool is_valid_unique_ssid(const char *new_ssid, pineap_network_t *network
     return true;
 }
 
+static int build_recent_ssids_string(const pineap_network_t *network, char *out, size_t out_size) {
+    if (!network || !out || out_size == 0) {
+        return 0;
+    }
+
+    out[0] = '\0';
+    size_t len = 0;
+    int count = 0;
+
+    for (int i = 0; i < network->ssid_count && i < RECENT_SSID_COUNT; i++) {
+        const char *ssid = network->recent_ssids[i];
+        if (!ssid || ssid[0] == '\0')
+            continue;
+
+        if (len < out_size - 1 && count > 0) {
+            if (len <= out_size - 3) {
+                out[len++] = ',';
+                out[len++] = ' ';
+            } else {
+                break;
+            }
+        }
+
+        size_t ssid_len = strnlen(ssid, 32);
+        size_t avail = out_size - len - 1;
+        if (avail == 0)
+            break;
+        size_t to_copy = ssid_len < avail ? ssid_len : avail;
+        memcpy(out + len, ssid, to_copy);
+        len += to_copy;
+        out[len] = '\0';
+
+        count++;
+    }
+
+    return count;
+}
+
+static void log_pineap_details(pineap_network_t *network,
+                               const char *title,
+                               const char *ssids_str,
+                               int ssid_count) {
+    if (!network)
+        return;
+
+    char mac_str[18];
+    format_mac_address(network->bssid, mac_str, sizeof(mac_str), false);
+    const char *heading = title && title[0] ? title : "Pineapple detected!";
+
+    IRAM_PRINTF("\n%s\nBSSID: %s\n", heading, mac_str);
+    IRAM_PRINTF("Channel: %d\n", network->last_channel);
+    IRAM_PRINTF("RSSI: %d\n", network->last_rssi);
+    IRAM_PRINTF("SSIDs (%d): %s\n", ssid_count, ssids_str ? ssids_str : "");
+
+    glog("\n%s\n", heading);
+    glog("BSSID: %s\n", mac_str);
+    glog("Channel: %d\n", network->last_channel);
+    glog("RSSI: %d\n", network->last_rssi);
+    glog("SSIDs (%d): %s\n", ssid_count, ssids_str ? ssids_str : "");
+
+}
+
+static void log_oui_match_notice(pineap_network_t *network) {
+    if (!network || !network->has_pineapple_oui || network->oui_logged)
+        return;
+
+    char ssids_str[256] = {0};
+    int valid_ssids = build_recent_ssids_string(network, ssids_str, sizeof(ssids_str));
+    log_pineap_details(network, "Pineapple OUI match!", ssids_str, valid_ssids);
+    network->oui_logged = true;
+}
+
 void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (!pineap_detection_active || type != WIFI_PKT_MGMT)
         return;
@@ -604,6 +912,8 @@ void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) 
     // Update channel and RSSI
     network->last_channel = ppkt->rx_ctrl.channel;
     network->last_rssi = ppkt->rx_ctrl.rssi;
+
+    log_oui_match_notice(network);
 
     // Extract SSID from beacon
     const uint8_t *payload = ppkt->payload;
@@ -687,6 +997,18 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
     switch (event_id) {
     case GPS_UPDATE:
         gps = (gps_t *)event_data;
+        gps_try_sync_time_from_fix(gps);
+        
+        // Add status display messages for GPS fix status
+        if (gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D) {
+            if (gps->fix_mode == GPS_MODE_3D) {
+                status_display_show_status("GPS 3D Lock");
+            } else {
+                status_display_show_status("GPS 2D Lock");
+            }
+        } else if (gps->valid && gps->fix == GPS_FIX_INVALID) {
+            status_display_show_status("GPS No Fix");
+        }
         break;
     default:
         break;
@@ -700,6 +1022,21 @@ bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2) {
         }
     }
     return true;
+}
+
+static bool is_pineapple_oui(const uint8_t *bssid) {
+    if (!bssid)
+        return false;
+
+    if (bssid[1] == 0x13 && bssid[2] == 0x37)
+        return true;
+
+    for (size_t i = 0; i < pineapple_oui_count; i++) {
+        if (memcmp(bssid, pineapple_ouis[i], 3) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool is_network_duplicate(const char *ssid, const uint8_t *bssid) {
@@ -802,6 +1139,8 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         return;
     }
 
+    wardrive_wifi_frames_seen++;
+
     int index = 36;
     char ssid[33] = {0};
     uint8_t bssid[6];
@@ -890,10 +1229,6 @@ rsn_done:
         index += (2 + ie_len);
     }
 
-    if (ssid[0] == '\0') {
-        return;
-    }
-
     if (!found_rsn && !found_wpa) {
         size_t copy_len = sizeof(encryption_type) - 1;
         if (privacy_required) {
@@ -926,9 +1261,13 @@ rsn_done:
             sizeof(wardriving_data.encryption_type) - 1);
     wardriving_data.encryption_type[sizeof(wardriving_data.encryption_type) - 1] = '\0';
 
+    wardrive_log_attempts++;
     esp_err_t err = gps_manager_log_wardriving_data(&wardriving_data);
-    // Suppress unused variable warning
-    (void)err;
+    if (err == ESP_ERR_INVALID_STATE) {
+        wardrive_gps_rejected++;
+    } else if (err == ESP_OK) {
+        wardrive_log_ok++;
+    }
 }
 
 void wifi_probe_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
@@ -993,7 +1332,6 @@ void wifi_pwn_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
 
-    // minimal validation: don't drop on RSSI for handshake capture
     if (type == WIFI_PKT_MISC) return;
     if (pkt->rx_ctrl.sig_len < 24) return;
 
@@ -1002,17 +1340,20 @@ void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         int len = pkt->rx_ctrl.sig_len;
 
         uint16_t fc = frame[0] | (frame[1] << 8);
-        uint8_t dtype = (fc >> 2) & 0x3;      // 2 = data
         uint8_t dsub = (fc >> 4) & 0xF;
-        bool qos = (dtype == 0x2) && ((dsub & 0x8) != 0);
+        bool qos = (dsub & 0x8) != 0;
         bool to_ds = (fc >> 8) & 0x1;
         bool from_ds = (fc >> 9) & 0x1;
 
         size_t hdr_len = 24;
         if (to_ds && from_ds) hdr_len = 30;
         if (qos) hdr_len += 2;
-        if (len < (int)(hdr_len + 8)) return;
 
+        // always write data frames to pcap first, then check for EAPOL
+        enqueue_pcap_write(pkt->payload, pkt->rx_ctrl.sig_len);
+
+        // check if this is an EAPOL frame for handshake tracking
+        if (len < (int)(hdr_len + 8)) return;
         const uint8_t *llc = frame + hdr_len;
         if (llc[0] != 0xAA || llc[1] != 0xAA || llc[2] != 0x03) return;
         uint16_t ethertype = (llc[6] << 8) | llc[7];
@@ -1022,11 +1363,7 @@ void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         if (len < (int)(hdr_len + 8 + 17)) return;
 
         uint8_t key_desc_type = eapol[4];
-        if (key_desc_type != 2) {
-            // still write eapol payloads
-            enqueue_pcap_write(pkt->payload, pkt->rx_ctrl.sig_len);
-            return;
-        }
+        if (key_desc_type != 2) return;
 
         uint16_t key_info = (eapol[5] << 8) | eapol[6];
         bool has_mic = (key_info & 0x0100) != 0;
@@ -1034,34 +1371,27 @@ void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         bool is_install = (key_info & 0x0040) != 0;
         bool is_ack = (key_info & 0x0080) != 0;
 
-        // addresses
-        const uint8_t *addr1 = frame + 4;  // DA
-        const uint8_t *addr2 = frame + 10; // SA
-        const uint8_t *ap_mac = NULL;
-        const uint8_t *sta_mac = NULL;
-
-        if (is_ack) {
-            ap_mac = addr2;
-            sta_mac = addr1;
-        } else {
-            ap_mac = addr1;
-            sta_mac = addr2;
-        }
+        const uint8_t *addr1 = frame + 4;
+        const uint8_t *addr2 = frame + 10;
+        const uint8_t *ap_mac = is_ack ? addr2 : addr1;
+        const uint8_t *sta_mac = is_ack ? addr1 : addr2;
 
         uint64_t replay = 0;
         for (int i = 0; i < 8; i++) replay = (replay << 8) | eapol[9 + i];
 
-        if (is_pairwise && has_mic) {
-            // derive msg type: AP frames with MIC: M3, STA frames with MIC: M2/M4 (install bit is set on M3)
+        if (is_pairwise) {
             uint8_t msg = 0;
-            if (is_ack && is_install) msg = 3;          // AP->STA, MIC, Install => M3
-            else if (!is_ack && !is_install) msg = 2;    // STA->AP, MIC, no Install => M2
-            else if (!is_ack && is_install) msg = 4;     // STA->AP, MIC, Install (rare) => treat as M4
-            else msg = 0;                                // unknown/edge
-            process_eapol_candidate_pair(ap_mac, sta_mac, replay, is_ack, msg);
+            if (!has_mic && is_ack && !is_install) {
+                msg = 1;  // M1: AP->STA, no MIC, no Install
+            } else if (has_mic) {
+                if (is_ack && is_install) msg = 3;        // M3
+                else if (!is_ack && !is_install) msg = 2; // M2
+                else if (!is_ack && is_install) msg = 4;  // M4
+            }
+            if (msg > 0) {
+                process_eapol_candidate_pair(ap_mac, sta_mac, replay, is_ack, msg);
+            }
         }
-
-        enqueue_pcap_write(pkt->payload, pkt->rx_ctrl.sig_len);
         return;
     }
 
@@ -1243,10 +1573,16 @@ static int ble_hs_adv_parse_fields_cb(const struct ble_hs_adv_field *field, void
 
 static const char SKIMMER_TAG[] STORE_STR_ATTR = "SKIMMER_DETECT";
 
+struct ble_adv_parse_arg {
+    wardriving_data_t *wd;
+};
+
 void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
     if (!event || event->type != BLE_GAP_EVENT_DISC) {
         return;
     }
+
+    wardrive_ble_advs_seen++;
 
     wardriving_data_t wardriving_data = {0};
     wardriving_data.ble_data.is_ble_device = true;
@@ -1259,10 +1595,11 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
 
     wardriving_data.ble_data.ble_rssi = event->disc.rssi;
 
-    // Parse BLE name if available
+    // Parse BLE name / manufacturer data if available
     if (event->disc.length_data > 0) {
+        struct ble_adv_parse_arg parse_arg = {.wd = &wardriving_data};
         ble_hs_adv_parse(event->disc.data, event->disc.length_data, ble_hs_adv_parse_fields_cb,
-                         &wardriving_data);
+                         &parse_arg);
     }
 
     // Get GPS data from the global handle, if available
@@ -1280,20 +1617,33 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
     
 
     // Use GPS manager to log data
+    wardrive_log_attempts++;
     esp_err_t err = gps_manager_log_wardriving_data(&wardriving_data);
-    if (err != ESP_OK) {
-        ESP_LOGD("BLE_WD", "Skipped logging entry\nGPS data not ready");
+    if (err == ESP_ERR_INVALID_STATE) {
+        wardrive_gps_rejected++;
+    } else if (err == ESP_OK) {
+        wardrive_log_ok++;
     }
 }
 
 // Move the callback implementation inside the ESP32S2 guard
 static int ble_hs_adv_parse_fields_cb(const struct ble_hs_adv_field *field, void *arg) {
-    wardriving_data_t *data = (wardriving_data_t *)arg;
+    struct ble_adv_parse_arg *p = (struct ble_adv_parse_arg *)arg;
+    wardriving_data_t *data = p ? p->wd : NULL;
+    if (data == NULL || field == NULL) {
+        return 0;
+    }
 
     if (field->type == BLE_HS_ADV_TYPE_COMP_NAME) {
         size_t name_len = MIN(field->length, sizeof(data->ble_data.ble_name) - 1);
         memcpy(data->ble_data.ble_name, field->value, name_len);
         data->ble_data.ble_name[name_len] = '\0';
+    }
+
+    if (field->type == BLE_HS_ADV_TYPE_MFG_DATA && field->length >= 2) {
+        const uint8_t *v = (const uint8_t *)field->value;
+        data->ble_data.ble_mfgr_id = (uint16_t)v[0] | ((uint16_t)v[1] << 8);
+        data->ble_data.ble_has_mfgr_id = true;
     }
 
     return 0;
@@ -1465,11 +1815,9 @@ void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     // Extract source and dest MAC and SSID as before...
     char src_mac_str[18];
-    snprintf(src_mac_str, sizeof(src_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5]);
+    format_mac_address(hdr->addr2, src_mac_str, sizeof(src_mac_str), false);
     char dest_mac_str[18];
-    snprintf(dest_mac_str, sizeof(dest_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             hdr->addr1[0], hdr->addr1[1], hdr->addr1[2], hdr->addr1[3], hdr->addr1[4], hdr->addr1[5]);
+    format_mac_address(hdr->addr1, dest_mac_str, sizeof(dest_mac_str), false);
     int index = 24;
     char ssid[33] = {0};
     bool ssid_found = false;

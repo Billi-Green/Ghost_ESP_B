@@ -50,6 +50,9 @@ void options_view_refresh_styles(options_view_t *ov);
 // Recenter a single item's label after changing its height externally.
 void options_view_relayout_item(options_view_t *ov, lv_obj_t *item);
 
+// Force re-apply selected style to the currently selected item (useful after modifying its children).
+void options_view_refresh_selected_item(options_view_t *ov);
+
 #ifdef __cplusplus
 }
 #endif

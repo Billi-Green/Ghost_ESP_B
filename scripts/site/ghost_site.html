@@ -1631,7 +1631,7 @@
     <div class="container">
         <div class="page-title">
             <h1 class="title-text">GhostESP: Revival</h1>
-            <span class="version-badge">v1.9dev</span>
+            <span class="version-badge">v1.9.2</span>
         </div>
         <!-- Tab Navigation -->
         <div class="tab">
@@ -1880,6 +1880,7 @@
                     <div class="settings-item" onclick="openHelpPage('capture')"><span>Capture</span><span class="chev">›</span></div>
                     <div class="settings-item" onclick="openHelpPage('beacon')"><span>Beacon</span><span class="chev">›</span></div>
                     <div class="settings-item" onclick="openHelpPage('attack')"><span>Attack</span><span class="chev">›</span></div>
+                    <div class="settings-item" onclick="openHelpPage('ethernet')"><span>Ethernet</span><span class="chev">›</span></div>
                 </div>
             </div>
             <div class="settings-page" id="help-page">
@@ -2161,6 +2162,77 @@
                             <strong>Usage:</strong> <code>commsetpins &lt;tx_pin&gt; &lt;rx_pin&gt;</code><br>
                             <strong>Example:</strong> <code>commsetpins 4 5</code>
                         </li>
+                        <li>
+                            <strong>ethup</strong>: Bring up Ethernet interface.<br>
+                            <strong>Usage:</strong> <code>ethup</code>
+                        </li>
+                        <li>
+                            <strong>ethdown</strong>: Bring down Ethernet interface.<br>
+                            <strong>Usage:</strong> <code>ethdown</code>
+                        </li>
+                        <li>
+                            <strong>ethinfo</strong>: Show Ethernet connection information (IP, netmask, gateway, DNS, DHCP server).<br>
+                            <strong>Usage:</strong> <code>ethinfo</code>
+                        </li>
+                        <li>
+                            <strong>etharp</strong>: Scan local network using ARP to discover devices.<br>
+                            <strong>Usage:</strong> <code>etharp</code>
+                        </li>
+                        <li>
+                            <strong>ethports</strong>: Scan TCP ports on target IP address.<br>
+                            <strong>Usage:</strong> <code>ethports [local] [all | start-end] | &lt;IP&gt; [all | start-end]</code><br>
+                            <strong>Arguments:</strong><br>
+                            <code>local</code>: Scan local network gateway<br>
+                            <code>all</code>: Scan all ports (1-65535)<br>
+                            <code>start-end</code>: Custom port range (e.g. 80-443)<br>
+                            <strong>Examples:</strong><br>
+                            <code>ethports local</code>: Scan common ports on gateway<br>
+                            <code>ethports local all</code>: Scan all ports on gateway<br>
+                            <code>ethports 192.168.1.1 80-443</code>: Scan ports 80-443 on specific IP
+                        </li>
+                        <li>
+                            <strong>ethping</strong>: Ping scan local network to discover active hosts.<br>
+                            <strong>Usage:</strong> <code>ethping</code>
+                        </li>
+                        <li>
+                            <strong>ethdns</strong>: Perform DNS lookup (forward or reverse).<br>
+                            <strong>Usage:</strong> <code>ethdns &lt;hostname&gt; | reverse &lt;ip_address&gt;</code><br>
+                            <strong>Examples:</strong><br>
+                            <code>ethdns google.com</code>: Forward DNS lookup<br>
+                            <code>ethdns reverse 8.8.8.8</code>: Reverse DNS lookup
+                        </li>
+                        <li>
+                            <strong>ethtrace</strong>: Traceroute to target hostname or IP address.<br>
+                            <strong>Usage:</strong> <code>ethtrace &lt;hostname_or_ip&gt; [max_hops]</code><br>
+                            <strong>Arguments:</strong><br>
+                            <code>max_hops</code>: Maximum number of hops (default: 30, max: 64)<br>
+                            <strong>Examples:</strong><br>
+                            <code>ethtrace 8.8.8.8</code>: Traceroute to Google DNS<br>
+                            <code>ethtrace google.com 30</code>: Traceroute with max 30 hops
+                        </li>
+                        <li>
+                            <strong>ethstats</strong>: Show network statistics for Ethernet interface.<br>
+                            <strong>Usage:</strong> <code>ethstats</code>
+                        </li>
+                        <li>
+                            <strong>ethconfig</strong>: Configure Ethernet IP settings (DHCP or static).<br>
+                            <strong>Usage:</strong> <code>ethconfig dhcp | static &lt;ip&gt; &lt;netmask&gt; &lt;gateway&gt; | show</code><br>
+                            <strong>Arguments:</strong><br>
+                            <code>dhcp</code>: Use DHCP for automatic IP assignment<br>
+                            <code>static</code>: Set static IP configuration<br>
+                            <code>show</code>: Show current IP configuration<br>
+                            <strong>Example:</strong> <code>ethconfig static 192.168.1.100 255.255.255.0 192.168.1.1</code>
+                        </li>
+                        <li>
+                            <strong>ethmac</strong>: View or set Ethernet MAC address.<br>
+                            <strong>Usage:</strong> <code>ethmac | ethmac set &lt;xx:xx:xx:xx:xx:xx&gt;</code><br>
+                            <strong>Example:</strong> <code>ethmac set 02:00:00:00:00:01</code>
+                        </li>
+                        <li>
+                            <strong>ethserv</strong>: Service discovery and banner grabbing on target IP.<br>
+                            <strong>Usage:</strong> <code>ethserv [ip_address]</code><br>
+                            <strong>Note:</strong> If no IP is provided, uses local network gateway
+                        </li>
                     </ul>
                 </div>
             </div>
@@ -2231,7 +2303,7 @@
                 </p>
                 <div id="terminalOutput" class="terminal-output"></div>
                 <div class="terminal-input-container">
-                    <input type="text" id="terminalInput" placeholder="Enter command...">
+                    <input type="text" id="terminalInput" placeholder="Enter command..." autocapitalize="off" autocorrect="off" spellcheck="false">
                     <button onclick="sendTerminalCommand()">Send</button>
                 </div>
             </div>
@@ -2360,6 +2432,24 @@
                         </div>
 
                         <div class="command-category">
+                            <div class="category-header" onclick="toggleCategory('ethernet-commands')">
+                                <span>Ethernet Commands</span>
+                                <span class="category-arrow">▼</span>
+                            </div>
+                            <div id="ethernet-commands" class="category-content">
+                                <button class="small" onclick="sendQuickCommand('ethup')">Ethernet Up</button>
+                                <button class="small" onclick="sendQuickCommand('ethdown')">Ethernet Down</button>
+                                <button class="small" onclick="sendQuickCommand('ethinfo')">Ethernet Info</button>
+                                <button class="small" onclick="sendQuickCommand('etharp')">ARP Scan</button>
+                                <button class="small" onclick="sendQuickCommand('ethports local')">Port Scan Local</button>
+                                <button class="small" onclick="sendQuickCommand('ethports local all')">Port Scan All</button>
+                                <button class="small" onclick="sendQuickCommand('ethping')">Ping Scan</button>
+                                <button class="small" onclick="sendQuickCommand('ethstats')">Network Stats</button>
+                                <button class="small" onclick="sendQuickCommand('ethconfig show')">Show Config</button>
+                            </div>
+                        </div>
+
+                        <div class="command-category">
                             <div class="category-header" onclick="toggleCategory('system-commands')">
                                 <span>System Commands</span>
                                 <span class="category-arrow">▼</span>
@@ -2384,7 +2474,7 @@
                 </p>
                 <div id="commTerminalOutput" class="terminal-output"></div>
                 <div class="terminal-input-container">
-                    <input type="text" id="commTerminalInput" placeholder="Type command (e.g., scanap, attack -d, beaconspam -r)..." autocomplete="off">
+                    <input type="text" id="commTerminalInput" placeholder="Type command (e.g., scanap, attack -d, beaconspam -r)..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
                     <button onclick="sendCommTerminalCommand()">Send</button>
                 </div>
             </div>
@@ -3187,6 +3277,23 @@
                     { name: 'stopsaeflood', usage: 'stopsaeflood' },
                     { name: 'saefloodhelp', usage: 'saefloodhelp' },
                 ]
+            },
+            ethernet: {
+                title: 'Ethernet Commands',
+                commands: [
+                    { name: 'ethup', usage: 'ethup', desc: 'Bring up Ethernet interface' },
+                    { name: 'ethdown', usage: 'ethdown', desc: 'Bring down Ethernet interface' },
+                    { name: 'ethinfo', usage: 'ethinfo', desc: 'Show Ethernet connection information' },
+                    { name: 'etharp', usage: 'etharp', desc: 'Scan local network using ARP' },
+                    { name: 'ethports', usage: 'ethports [local] [all | start-end] | <IP> [all | start-end]', desc: 'Scan TCP ports on target' },
+                    { name: 'ethping', usage: 'ethping', desc: 'Ping scan local network' },
+                    { name: 'ethdns', usage: 'ethdns <hostname> | reverse <ip_address>', desc: 'DNS lookup' },
+                    { name: 'ethtrace', usage: 'ethtrace <hostname_or_ip> [max_hops]', desc: 'Traceroute to target' },
+                    { name: 'ethstats', usage: 'ethstats', desc: 'Show network statistics' },
+                    { name: 'ethconfig', usage: 'ethconfig dhcp | static <ip> <netmask> <gateway> | show', desc: 'Configure Ethernet IP settings' },
+                    { name: 'ethmac', usage: 'ethmac | ethmac set <xx:xx:xx:xx:xx:xx>', desc: 'View or set MAC address' },
+                    { name: 'ethserv', usage: 'ethserv [ip_address]', desc: 'Service discovery and banner grabbing' },
+                ]
             }
         };
 
@@ -3394,7 +3501,7 @@
             });
         }
 
-        // Function to send quick commands
+        // Function to send quick commands to remote device via GhostLink
         function sendQuickCommand(command) {
             // Add command to terminal display
             addCommTerminalMessage(`> ${command}`);
@@ -3502,19 +3609,21 @@
                     }
 
                     newLines.forEach(line => {
-                        if (line.includes('ESP Comm Response:')) {
-                            const responseText = line.replace(/^.*ESP Comm Response:\s*/, '').trim();
+                        if (line.includes('RX: ')) {
+                            const responseText = line.replace(/^.*RX:\s*/, '').trim();
                             if (responseText) {
                                 addCommTerminalMessage(responseText);
                             }
-                        } else if (line.includes('Discovered peer:')) {
-                            addCommTerminalMessage(line.trim());
-                        } else if (line.includes('Handshake complete')) {
-                            addCommTerminalMessage(line.trim());
-                        } else if (line.includes('Connecting to peer:')) {
-                            addCommTerminalMessage(line.trim());
-                        } else if (line.includes('Sent command:')) {
-                            addCommTerminalMessage(line.trim());
+                        } else if (line.includes('I: ')) {
+                            const infoText = line.replace(/^.*I:\s*/, '').trim();
+                            if (infoText) {
+                                addCommTerminalMessage(infoText);
+                            }
+                        } else if (line.includes('W: ')) {
+                            const warnText = line.replace(/^.*W:\s*/, '').trim();
+                            if (warnText) {
+                                addCommTerminalMessage(warnText);
+                            }
                         }
                     });
 

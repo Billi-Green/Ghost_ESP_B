@@ -8,6 +8,9 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "core/uart_share.h"
+#include "hal/uart_ll.h"
+#include <esp_heap_caps.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
@@ -578,11 +581,20 @@ static esp_err_t gps_decode(esp_gps_t *esp_gps, size_t len) {
 static void esp_handle_uart_pattern(esp_gps_t *esp_gps) {
   int pos = uart_pattern_pop_pos(esp_gps->uart_port);
   if (pos != -1) {
+    if (pos >= (NMEA_PARSER_RUNTIME_BUFFER_SIZE - 1)) {
+      ESP_LOGW(GPS_TAG, "NMEA line too long (pos=%d)", pos);
+      uart_flush_input(esp_gps->uart_port);
+      if (esp_gps->event_queue) {
+        xQueueReset(esp_gps->event_queue);
+      }
+      return;
+    }
     /* read one line(include '\n') */
     int read_len = uart_read_bytes(esp_gps->uart_port, esp_gps->buffer, pos + 1,
                                    100 / portTICK_PERIOD_MS);
     /* make sure the line is a standard string */
     esp_gps->buffer[read_len] = '\0';
+
     /* Send new line to handle */
     if (gps_decode(esp_gps, read_len + 1) != ESP_OK) {
       ESP_LOGW(GPS_TAG, "GPS decode line failed");
@@ -692,12 +704,31 @@ nmea_parser_handle_t nmea_parser_init(const nmea_parser_config_t *config) {
       .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
       .source_clk = UART_SCLK_DEFAULT,
   };
-  if (uart_driver_install(
-          esp_gps->uart_port, CONFIG_NMEA_PARSER_RING_BUFFER_SIZE, 0,
-          config->uart.event_queue_size, &esp_gps->event_queue, 0) != ESP_OK) {
+  if (uart_share_ensure_installed(esp_gps->uart_port, CONFIG_NMEA_PARSER_RING_BUFFER_SIZE, 0,
+                                 (int)config->uart.event_queue_size) != ESP_OK) {
     ESP_LOGE(GPS_TAG, "install uart driver failed");
     goto err_uart_install;
   }
+
+  if (uart_share_acquire(esp_gps->uart_port, UART_SHARE_OWNER_GPS, pdMS_TO_TICKS(2000)) != ESP_OK) {
+    ESP_LOGE(GPS_TAG, "acquire uart failed");
+    goto err_uart_install;
+  }
+
+  uart_flush_input(esp_gps->uart_port);
+
+  esp_gps->event_queue = uart_share_get_event_queue(esp_gps->uart_port);
+  if (!esp_gps->event_queue) {
+    ESP_LOGE(GPS_TAG, "uart event queue unavailable");
+    goto err_uart_install;
+  }
+
+  xQueueReset(esp_gps->event_queue);
+
+#if CONFIG_IDF_TARGET_ESP32C5
+  uart_ll_enable_bus_clock(esp_gps->uart_port, true);
+  uart_ll_sclk_enable(UART_LL_GET_HW(esp_gps->uart_port));
+#endif
   if (uart_param_config(esp_gps->uart_port, &uart_config) != ESP_OK) {
     ESP_LOGE(GPS_TAG, "config uart parameter failed");
     goto err_uart_config;
@@ -719,22 +750,50 @@ nmea_parser_handle_t nmea_parser_init(const nmea_parser_config_t *config) {
     ESP_LOGE(GPS_TAG, "create event loop faild");
     goto err_eloop;
   }
-  /* Create NMEA Parser task */
-  BaseType_t err = xTaskCreate(
-      nmea_parser_task_entry, "nmea_parser", CONFIG_NMEA_PARSER_TASK_STACK_SIZE,
-      esp_gps, CONFIG_NMEA_PARSER_TASK_PRIORITY, &esp_gps->tsk_hdl);
-  if (err != pdTRUE) {
-    ESP_LOGE(GPS_TAG, "create NMEA Parser task failed");
+  /* Allocate task stack from PSRAM if available, else internal */
+#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+  esp_gps->task_stack = (StackType_t *)heap_caps_malloc(
+      CONFIG_NMEA_PARSER_TASK_STACK_SIZE * sizeof(StackType_t),
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!esp_gps->task_stack) {
+    esp_gps->task_stack = (StackType_t *)heap_caps_malloc(
+        CONFIG_NMEA_PARSER_TASK_STACK_SIZE * sizeof(StackType_t),
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+#else
+  esp_gps->task_stack = (StackType_t *)heap_caps_malloc(
+      CONFIG_NMEA_PARSER_TASK_STACK_SIZE * sizeof(StackType_t),
+      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#endif
+  esp_gps->task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t),
+                                                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!esp_gps->task_stack || !esp_gps->task_tcb) {
+    ESP_LOGE(GPS_TAG,
+             "alloc NMEA task resources failed (stack_words=%d free_internal=%u free_heap=%u)",
+             (int)CONFIG_NMEA_PARSER_TASK_STACK_SIZE,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
     goto err_task_create;
   }
+  esp_gps->tsk_hdl = xTaskCreateStatic(
+      nmea_parser_task_entry, "nmea_parser", CONFIG_NMEA_PARSER_TASK_STACK_SIZE,
+      esp_gps, CONFIG_NMEA_PARSER_TASK_PRIORITY,
+      esp_gps->task_stack, esp_gps->task_tcb);
+  if (!esp_gps->tsk_hdl) {
+    ESP_LOGE(GPS_TAG, "xTaskCreateStatic failed");
+    goto err_task_create;
+  }
+
   ESP_LOGI(GPS_TAG, "NMEA Parser init OK");
   return esp_gps;
   /*Error Handling*/
 err_task_create:
+  if (esp_gps->task_stack) heap_caps_free(esp_gps->task_stack);
+  if (esp_gps->task_tcb) heap_caps_free(esp_gps->task_tcb);
   esp_event_loop_delete(esp_gps->event_loop_hdl);
 err_eloop:
 err_uart_install:
-  uart_driver_delete(esp_gps->uart_port);
+  (void)uart_share_release(esp_gps->uart_port, UART_SHARE_OWNER_GPS);
 err_uart_config:
 err_buffer:
   free(esp_gps->buffer);
@@ -753,7 +812,11 @@ esp_err_t nmea_parser_deinit(nmea_parser_handle_t nmea_hdl) {
   esp_gps_t *esp_gps = (esp_gps_t *)nmea_hdl;
   vTaskDelete(esp_gps->tsk_hdl);
   esp_event_loop_delete(esp_gps->event_loop_hdl);
-  esp_err_t err = uart_driver_delete(esp_gps->uart_port);
+  uart_disable_pattern_det_intr(esp_gps->uart_port);
+  (void)uart_flush_input(esp_gps->uart_port);
+  esp_err_t err = uart_share_release(esp_gps->uart_port, UART_SHARE_OWNER_GPS);
+  if (esp_gps->task_stack) heap_caps_free(esp_gps->task_stack);
+  if (esp_gps->task_tcb) heap_caps_free(esp_gps->task_tcb);
   free(esp_gps->buffer);
   free(esp_gps);
   return err;

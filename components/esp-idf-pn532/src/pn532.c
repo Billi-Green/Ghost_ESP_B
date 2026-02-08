@@ -446,7 +446,7 @@ void pn532_set_inlist_wait_timeout(int ms) { if (ms > 0) s_inlist_wait_ms = ms; 
      if (ESP_OK != err)
          return err;
  
-     if (*(uint32_t*)pn532_packetbuffer == 0x00ff0000)
+     if (pn532_packetbuffer[0] == 0 && pn532_packetbuffer[1] == 0 && pn532_packetbuffer[2] == 0xff)
      {
          uint8_t length = pn532_packetbuffer[3];
          if (0 != ((pn532_packetbuffer[4] + length) & 0xFF))
