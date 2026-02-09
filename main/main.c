@@ -29,6 +29,10 @@
 #include "managers/ethernet_manager.h"
 #endif
 
+#ifdef CONFIG_HAS_BADUSB
+#include "managers/badusb_manager.h"
+#endif
+
 #ifdef CONFIG_WITH_SCREEN
 #include "managers/views/splash_screen.h"
 #endif
@@ -91,6 +95,9 @@ void app_main(void) {
 #endif
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     // MEASURE_INIT_RAM("BLE Manager", ble_init());
+#endif
+#ifdef CONFIG_HAS_BADUSB
+    MEASURE_INIT_RAM("BadUSB Manager", badusb_manager_init());
 #endif
 
 #ifdef CONFIG_USE_TDECK
@@ -199,6 +206,9 @@ void app_main(void) {
         MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, DEFAULT_BAUD_RATE));
     }
     usb_keyboard_manager_register_stream_handler();
+#ifdef CONFIG_HAS_BADUSB
+    badusb_manager_register_stream_handler();
+#endif
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     MEASURE_INIT_RAM("AP Manager", ap_manager_init());
@@ -350,6 +360,12 @@ void app_main(void) {
     }
 #endif
 
-    ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)");
-    printf("Ghost ESP Ready ;)\n");
+    ESP_LOGI(TAG, "Ghost ESP INIT complete.");
+    printf("    ####  #   #  ####   ####  #####   ####  ####  #####\n");
+    printf("   #      #   # #    #  #       #     #     #     #   #\n");
+    printf("   #  ### ##### #    #  ####    #     ####  ####  #####\n");
+    printf("   #   #  #   # #    #     #    #     #        #  #\n");
+    printf("    ####  #   #  ####   ####    #     ##### ####  #\n");
+    printf("\n");
+    printf("ghostcli> Type 'help' for available commands\n");
 }

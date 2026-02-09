@@ -19,8 +19,15 @@
 #if CONFIG_HAS_INFRARED
 #include "managers/views/infrared_view.h"
 #endif
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+#include "managers/views/badusb_view.h"
+#endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+#include "managers/views/accelerometer_screen.h"
+#endif
 
 LV_IMG_DECLARE(dualcomm);
+LV_IMG_DECLARE(accelerometer_icon);
 
 static const char *TAG = "MainMenu";
 
@@ -75,15 +82,12 @@ typedef struct {
 
 // Define colors as compile-time constants
 menu_item_t menu_items[] = {
+    {"WiFi", &wifi, 1, {{0}}}, // applies to all boards
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     {"BLE", &bluetooth, 0, {{0}}},
 #endif
-    {"WiFi", &wifi, 1, {{0}}}, // applies to all boards
 #ifdef CONFIG_HAS_GPS
     {"GPS", &Map, 2, {{0}}},
-#endif
-#ifdef CONFIG_HAS_COMPASS
-    {"Compass", &compass, 2, {{0}}},
 #endif
 #if CONFIG_HAS_INFRARED
     {"Infrared", &infrared, 0, {{0}}}, // main infrared icon
@@ -91,9 +95,18 @@ menu_item_t menu_items[] = {
 #ifdef CONFIG_HAS_NFC
     {"NFC", &nfc_icon, 2, {{0}}},
 #endif
-    {"Apps", &GESPAppGallery, 3, {{0}}}, // applies to all boards
-    {"Clock", &clock_icon, 4, {{0}}},
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+    {"BadUSB", &usb, 3, {{0}}},
+#endif
     {"GhostLink", &dualcomm, 1, {{0}}},
+    {"Clock", &clock_icon, 4, {{0}}},
+#ifdef CONFIG_HAS_COMPASS
+    {"Compass", &compass, 2, {{0}}},
+#endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+    {"Accelerometer", &accelerometer_icon, 4, {{0}}},
+#endif
+    {"Apps", &GESPAppGallery, 3, {{0}}}, // applies to all boards
     {"Settings", &settings_icon, 5, {{0}}}, // applies to all boards
 };
 
@@ -859,6 +872,9 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_COMPASS
         {"Compass", 0, &compass_view},
 #endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+        {"Accelerometer", 0, &accelerometer_view},
+#endif
 #if CONFIG_HAS_INFRARED
         {"Infrared", 0, &infrared_view},
 #endif
@@ -868,7 +884,10 @@ static void handle_menu_item_selection(int item_index) {
         {"Apps", 0, &apps_menu_view},
         {"Clock", 0, &clock_view},
         {"Settings", OT_Settings, &options_menu_view},
-        {"GhostLink", OT_DualComm, &options_menu_view}
+        {"GhostLink", OT_DualComm, &options_menu_view},
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+        {"BadUSB", 0, &badusb_view},
+#endif
     };
 
     const int num_actions = sizeof(menu_actions) / sizeof(menu_actions[0]);
@@ -902,7 +921,12 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("Settings");
             } else if (strcmp(menu_actions[i].name, "GhostLink") == 0) {
                 status_display_show_status("GhostLink");
+            } else if (strcmp(menu_actions[i].name, "BadUSB") == 0) {
+                status_display_show_status("BadUSB");
+            } else if (strcmp(menu_actions[i].name, "Accelerometer") == 0) {
+                status_display_show_status("Accelerometer");
             }
+
             
             target_view = menu_actions[i].view;
             target_type = menu_actions[i].type;

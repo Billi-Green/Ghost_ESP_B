@@ -296,6 +296,34 @@ menu "Ghost ESP Options"
             help
                 GPIO pin for USB D+ (keyboard). On ESP32-S3 this is normally GPIO20.
 
+        config HAS_BADUSB
+            bool "Enable BadUSB (HID Script Injection)"
+            default n
+            depends on IDF_TARGET_ESP32S3
+            help
+                Enable BadUSB support. Uses TinyUSB device mode to emulate a USB HID
+                keyboard and execute DuckyScript v1.0 payloads from the SD card.
+                Only available on ESP32-S3 which has USB OTG support.
+
+        config BADUSB_VSENSE_PIN
+            int "BadUSB VBUS Sense Pin (use -1 to disable)"
+            default -1
+            depends on HAS_BADUSB
+            help
+                GPIO pin to sense USB VBUS voltage. When set to a valid pin (>= 0),
+                BadUSB will wait for VBUS to go HIGH before executing a script,
+                allowing you to plug in the device after selecting a payload.
+                Set to -1 to disable and execute immediately.
+
+        config HAS_BADUSB_REMOTE
+            bool "Enable BadUSB Remote (display menu only, routes via GhostLink)"
+            default n
+            depends on IDF_TARGET_ESP32C5
+            help
+                Enable the BadUSB display menu on a C5 display controller that routes
+                commands to a paired S3 via GhostLink/commsend. The C5 does not execute
+                scripts itself - it only provides the UI.
+
         config HAS_BATTERY
             bool "Enable power saving"
             default n
@@ -762,6 +790,31 @@ menu "Ghost ESP Options"
         int "Z Offset"
         default 0
         depends on HAS_COMPASS
+
+    endmenu
+
+    menu "Accelerometer Configuration"
+
+    config HAS_ACCELEROMETER
+        bool "Enable Accelerometer App"
+        default n
+        help
+            Enable Accelerometer application using ADXL345.
+
+    config ACCEL_I2C_ADDR
+        hex "ADXL345 I2C Address"
+        default 0x53
+        depends on HAS_ACCELEROMETER
+        help
+            I2C address of the ADXL345 accelerometer (0x53 default, 0x1D if SDO high).
+
+    config ACCEL_I2C_PORT
+        int "Accelerometer I2C Port"
+        range 0 1
+        default 0
+        depends on HAS_ACCELEROMETER
+        help
+            Select the I2C controller port used for the accelerometer.
 
     endmenu
     

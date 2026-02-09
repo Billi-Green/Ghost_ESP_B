@@ -37,8 +37,9 @@
 #ifdef WITH_SCREEN
 #include "managers/views/music_visualizer.h"
 #endif
-#include "managers/sd_card_manager.h" // Add SD card manager include
+#include "managers/sd_card_manager.h"
 #include "managers/wigle_manager.h"
+#include "core/scan_saver.h"
 #include "managers/views/terminal_screen.h"
 #include "core/glog.h"
 #include "core/utils.h" // Add utils include
@@ -1936,8 +1937,14 @@ void wifi_manager_list_stations() {
         printf("No stations found.\n");
         return;
     }
+
+    scan_file_t sf = SCAN_FILE_INIT;
+    bool saving = (scan_file_open(&sf, "station_scan", "txt") == ESP_OK);
+
     printf("--- Station List (%d entries) ---\n", station_count);
     TERMINAL_VIEW_ADD_TEXT("--- Station List (%d entries) ---\n", station_count);
+    if (saving) scan_file_printf(&sf, "--- Station List (%d entries) ---\n", station_count);
+
     for (int i = 0; i < station_count; i++) {
         char sanitized_ssid[33];
         bool found = false;
@@ -1983,7 +1990,15 @@ void wifi_manager_list_stations() {
         TERMINAL_VIEW_ADD_TEXT("     Associated AP: %s\n", sanitized_ssid);
         TERMINAL_VIEW_ADD_TEXT("     AP BSSID: %s\n", ap_mac_str);
         TERMINAL_VIEW_ADD_TEXT("     AP Vendor: %s\n", ap_vendor);
+
+        if (saving) {
+            scan_file_printf(&sf, "[%d] STA: %s (%s) -> AP: %s BSSID: %s (%s)\n",
+                             i, sta_mac_str, sta_vendor,
+                             sanitized_ssid, ap_mac_str, ap_vendor);
+        }
     }
+
+    if (saving) scan_file_close(&sf);
 }
 
 static bool check_packet_rate(void) {
@@ -3955,13 +3970,19 @@ void wifi_manager_print_scan_results_with_oui() {
         return;
     }
 
+    scan_file_t sf = SCAN_FILE_INIT;
+    bool saving = (scan_file_open(&sf, "ap_scan", "txt") == ESP_OK);
+
     uint16_t limit = ap_count;
+
+    if (saving) {
+        scan_file_printf(&sf, "--- AP Scan Results (%u APs) ---\n", limit);
+    }
 
     for (uint16_t i = 0; i < limit; i++) {
         char sanitized_ssid[33];
         sanitize_ssid_and_check_hidden(scanned_aps[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
 
-        // lookup vendor using oui database
         char mac_str[18];
         snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
                  scanned_aps[i].bssid[0], scanned_aps[i].bssid[1], scanned_aps[i].bssid[2],
@@ -3979,6 +4000,12 @@ void wifi_manager_print_scan_results_with_oui() {
              scanned_aps[i].bssid[4], scanned_aps[i].bssid[5],
              scanned_aps[i].rssi,
              scanned_aps[i].primary);
+
+        if (saving) {
+            scan_file_printf(&sf, "[%u] SSID: %s, BSSID: %s, RSSI: %d, CH: %d",
+                             i, sanitized_ssid, mac_str,
+                             scanned_aps[i].rssi, scanned_aps[i].primary);
+        }
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         {
@@ -4033,12 +4060,20 @@ void wifi_manager_print_scan_results_with_oui() {
             } else {
                 glog("     Security: %s\n", auth_str);
             }
+            if (saving) {
+                scan_file_printf(&sf, ", Band: %s, Security: %s", band_str, auth_str);
+                if (pmf_str) scan_file_printf(&sf, ", PMF: %s", pmf_str);
+            }
         }
 #endif
         if (has_vendor) {
             glog("     Vendor: %s\n", vendor);
+            if (saving) scan_file_printf(&sf, ", Vendor: %s", vendor);
         }
+        if (saving) scan_file_printf(&sf, "\n");
     }
+
+    if (saving) scan_file_close(&sf);
 }
 
 static void live_ap_channel_hop_timer_callback(void *arg) {

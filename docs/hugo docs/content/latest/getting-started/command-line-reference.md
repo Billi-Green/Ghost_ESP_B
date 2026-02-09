@@ -254,3 +254,16 @@ Available on boards with an onboard OLED status display or when an external stat
 - **`settings help`** — Show supported subcommands.
 - **`settings get <key>`** / **`settings set <key> <value>`** — Inspect or change individual options.
 - **`settings reset [key]`** — Restore all settings or a specific key to defaults.
+
+## BadUSB
+
+- **`badusb list`** — List scripts in `/mnt/ghostesp/badusb/`.
+- **`badusb run <filename>`** — Run a script from `/mnt/ghostesp/badusb/`.
+- **`badusb stop`** — Stop the current BadUSB run.
+- **`badusb exec <size>`** — Prepare for a streamed script.
+- **`badusb set_vid <hex>`** — Set USB VID for the next run.
+- **`badusb set_pid <hex>`** — Set USB PID for the next run.
+- **`badusb set_mfr <text>`** — Set USB manufacturer for the next run.
+- **`badusb set_prod <text>`** — Set USB product for the next run.
+- **`badusb set_rand <0|1>`** — Toggle per-run USB detail randomization.
+- **`badusb set_layout <n>`** — Set keyboard layout for the next run (`0` US, `1` DE, `2` FR, `3` UK, `4` ES).

@@ -1020,6 +1020,12 @@ esp_err_t sd_card_setup_directory_structure() {
   if (ret != ESP_OK) return ret;
 #endif
 
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+  const char *badusb_dir = "/mnt/ghostesp/badusb";
+  ret = ensure_sd_dir_exists(badusb_dir);
+  if (ret != ESP_OK) return ret;
+#endif
+
   printf("Directory structure successfully set up.\n");
   return ESP_OK;
 }

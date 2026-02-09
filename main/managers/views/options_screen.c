@@ -76,7 +76,7 @@ static int current_settings_category = -1;
  #define SETTINGS_ITEMS_COUNT_USB_HOST 0
 #endif
 
-#define SETTINGS_ITEMS_BASE_COUNT 14
+#define SETTINGS_ITEMS_BASE_COUNT 15
 #define SETTINGS_ITEM_INDEX_I2C_SCAN (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
 #define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEM_INDEX_I2C_SCAN + 1)
 
@@ -89,16 +89,50 @@ static int current_settings_category = -1;
 // Example: settings_category_indices[0] lists settings for category index 0.
 static int settings_category_indices[][20] = {
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 9, 2, 13, 4, 5, 11, 12,
+        {1, 9, 2, 14, 4, 5, 11, 12,
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        15, 16,
+#endif
+        -1},
+        {6, 7, 8, 0, 10, 3, 13,
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        17,
+#elif defined(CONFIG_USE_ENCODER)
+        15,
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        18, 19,
+#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
+        16, 17,
+#else
+        15, 16,
+#endif
+#else
+#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
+        18,
+#elif defined(CONFIG_USE_ENCODER)
+        16,
+#elif defined(CONFIG_WITH_STATUS_DISPLAY)
+        17,
+#else
+        15,
+#endif
+#endif
+        SETTINGS_ITEM_INDEX_I2C_SCAN,
+        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
+        -1},
+#else
+        {1, 2, 13, 4, 5, 10, 11,
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         14, 15,
 #endif
         -1},
-        {6, 7, 8, 0, 10, 3,
+        {6, 7, 8, 0, 9, 3, 12,
 #if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
         16,
 #elif defined(CONFIG_USE_ENCODER)
-        14,
+        15,
 #endif
 #if CONFIG_IDF_TARGET_ESP32S3
 #if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
@@ -117,40 +151,6 @@ static int settings_category_indices[][20] = {
         16,
 #else
         14,
-#endif
-#endif
-        SETTINGS_ITEM_INDEX_I2C_SCAN,
-        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
-        -1},
-#else
-        {1, 2, 12, 4, 5, 10, 11,
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-        13, 14,
-#endif
-        -1},
-        {6, 7, 8, 0, 9, 3,
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        15,
-#elif defined(CONFIG_USE_ENCODER)
-        14,
-#endif
-#if CONFIG_IDF_TARGET_ESP32S3
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        16, 17,
-#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
-        14, 15,
-#else
-        13, 14,
-#endif
-#else
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        16,
-#elif defined(CONFIG_USE_ENCODER)
-        14,
-#elif defined(CONFIG_WITH_STATUS_DISPLAY)
-        15,
-#else
-        13,
 #endif
 #endif
         SETTINGS_ITEM_INDEX_I2C_SCAN,
@@ -442,6 +442,7 @@ static SettingsItem settings_items[] = {
     {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
+    {"Auto Save Scans", SETTING_AUTO_SAVE_SCANS, bool_options, 2, 1},
     {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0},
     #ifdef CONFIG_WITH_STATUS_DISPLAY
     {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 9, 0},
@@ -978,6 +979,9 @@ static void load_current_settings_values(void) {
             case SETTING_NAV_BUTTONS:
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_AUTO_SAVE_SCANS:
+                settings_items[i].current_value = settings_get_auto_save_scans(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_MENU_LAYOUT:
             settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
                 break;
@@ -1080,6 +1084,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_NAV_BUTTONS:
             settings_set_nav_buttons_enabled(&G_Settings, new_value == 1);
+            break;
+        case SETTING_AUTO_SAVE_SCANS:
+            settings_set_auto_save_scans(&G_Settings, new_value == 1);
             break;
         case SETTING_MENU_LAYOUT:
             settings_set_menu_layout(&G_Settings, new_value);
