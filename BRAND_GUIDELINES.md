@@ -72,6 +72,7 @@ We reserve the right to take action (including copyright takedowns) against:
 - **Code:** Licensed under GPL-3.0.
 - **Artwork & Logo:** Copyright © 2024-2026 GhostESP Maintainers. All Rights Reserved.
 - **Brand Name:** The "GhostESP" name represents the identity of the GhostESP: Revival project.
+- **Trademark:** GhostESP is a trademark of the GhostESP: Revival project maintainers.
 
 ## Questions?
 
