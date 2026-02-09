@@ -11,6 +11,8 @@
 - Refactored NFC and IR menus to use shared options_view helpers for consistent styling
 - Added ADXL345 accelerometer app to The Wired Hatter's Banshee
 - Downgrade GPS errors to ESP_LOGW to prevent printing in terminal
+- Fixed incorrect speed conversion in NMEA GPS parser
+- Bumped NMEA queue size from 16→32 to fix the UART pattern queue overflow
 
 ## Revival v1.9.3
 
@@ -67,7 +69,8 @@
 - Clock icon not recoloring based on theme
 - Country and timezone not properly persisting
 - Airtag rgb pulsing in silent rgb mode
-
+- Fixed incorrect speed conversion in NMEA GPS parser
+- Bumped NMEA queue size from 16→32 to fix the UART pattern queue overflow
 
 ## Revival v1.9.2
 

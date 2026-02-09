@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "i2c_bus_lock.h"
 #include <math.h>
+#include "managers/gps_manager.h"
 
 #ifdef CONFIG_HAS_ACCELEROMETER
 
@@ -44,15 +45,17 @@ static const char *TAG = "AccelScreen";
 #define GAUGE_MAX_G 4.0f
 #define ALPHA 0.3f
 #define DT_SEC 0.033f
-#define GRAV_LP 0.05f
-#define LIN_DEAD_ZONE 0.12f
+#define GRAV_LP 0.15f
+#define LIN_DEAD_ZONE 0.20f
 #define ZUPT_JERK_THRESH 0.05f
 #define ZUPT_WINDOW 4
-#define VEL_FRICTION 0.97f
+#define VEL_FRICTION 0.93f
+#define MAX_VELOCITY_MS 2.0f
 #define MS_TO_KMH 3.6f
 #define MS_TO_MPH 2.23694f
 #define G_TO_MS2 9.80665f
 #define FREEFALL_THRESH 0.3f
+#define GPS_SPEED_MIN 0.5f
 #define CAL_SAMPLES 16
 #define OFS_SCALE_LSB_PER_G 256.0f
 #define OFS_REG_SCALE 4.0f
@@ -84,6 +87,7 @@ static int zupt_still_count = 0;
 static int i2c_error_count = 0;
 static bool first_sample = true;
 static bool freefall_active = false;
+static bool gps_started_by_accel = false;
 
 static int gauge_cx, gauge_cy, gauge_r;
 
@@ -345,18 +349,33 @@ static void accel_timer_cb(lv_timer_t *timer) {
     } else if (lin_mag > 0) {
         velocity_ms += lin_mag * G_TO_MS2 * DT_SEC;
     }
+    if (velocity_ms > MAX_VELOCITY_MS) velocity_ms = MAX_VELOCITY_MS;
     if (velocity_ms < 0.01f) velocity_ms = 0;
 
     if (speed_label) {
-        float kmh = velocity_ms * MS_TO_KMH;
-        float mph = velocity_ms * MS_TO_MPH;
+        bool gps_active = false;
+        float display_speed_ms = velocity_ms;
+        if (g_gpsManager.isinitilized && nmea_hdl) {
+            gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
+            if (gps && gps->valid && gps->fix >= GPS_FIX_GPS) {
+                gps_active = true;
+                display_speed_ms = (gps->speed >= GPS_SPEED_MIN) ? gps->speed : 0.0f;
+            }
+        }
+        float kmh = display_speed_ms * MS_TO_KMH;
+        float mph = display_speed_ms * MS_TO_MPH;
         static int last_kmh10 = -1, last_mph10 = -1;
+        static bool last_gps_state = false;
         int kmh10 = (int)(kmh * 10);
         int mph10 = (int)(mph * 10);
-        if (kmh10 != last_kmh10 || mph10 != last_mph10) {
-            lv_label_set_text_fmt(speed_label, "%d.%d km/h  |  %d.%d mph",
-                kmh10 / 10, kmh10 % 10, mph10 / 10, mph10 % 10);
+        if (kmh10 != last_kmh10 || mph10 != last_mph10 || gps_active != last_gps_state) {
+            const char *prefix = gps_active ? "GPS" : "NO GPS";
+            lv_label_set_text_fmt(speed_label, "%s: %d.%d km/h | %d.%d mph",
+                prefix, kmh10 / 10, kmh10 % 10, mph10 / 10, mph10 % 10);
+            lv_obj_set_style_text_color(speed_label,
+                lv_color_hex(gps_active ? 0x00FF88 : 0x00CCFF), 0);
             last_kmh10 = kmh10; last_mph10 = mph10;
+            last_gps_state = gps_active;
         }
     }
 }
@@ -488,7 +507,7 @@ void accelerometer_create(void) {
     lv_obj_align(peak_label, LV_ALIGN_BOTTOM_MID, 0, -42);
 
     speed_label = lv_label_create(content);
-    lv_label_set_text(speed_label, "0.0 km/h  |  0.0 mph");
+    lv_label_set_text(speed_label, "NO GPS: 0.0 km/h | 0.0 mph");
     lv_obj_set_style_text_color(speed_label, lv_color_hex(0x00CCFF), 0);
     lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_10, 0);
     lv_obj_align(speed_label, LV_ALIGN_BOTTOM_MID, 0, -29);
@@ -515,12 +534,24 @@ void accelerometer_create(void) {
     filtered_x = filtered_y = filtered_z = 0;
     grav_x = 0; grav_y = 0; grav_z = 1.0f;
 
+    gps_started_by_accel = false;
+    if (!g_gpsManager.isinitilized) {
+        gps_manager_init(&g_gpsManager);
+        if (g_gpsManager.isinitilized) {
+            gps_started_by_accel = true;
+        }
+    }
+
     accel_timer = lv_timer_create(accel_timer_cb, 33, NULL);
     accel_init_hw();
 }
 
 void accelerometer_destroy(void) {
     if (accel_timer) { lv_timer_del(accel_timer); accel_timer = NULL; }
+    if (gps_started_by_accel && g_gpsManager.isinitilized) {
+        gps_manager_deinit(&g_gpsManager);
+        gps_started_by_accel = false;
+    }
     if (accel_container) { lv_obj_del(accel_container); accel_container = NULL; accelerometer_view.root = NULL; }
     gauge_arc_bg = NULL;
     gauge_arc = NULL;
