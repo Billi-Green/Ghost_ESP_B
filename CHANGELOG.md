@@ -4,6 +4,7 @@
 - Fixed incorrect speed conversion in NMEA GPS parser
 - Bumped NMEA queue size from 16→32 to fix the UART pattern queue overflow
 - Added GPS speed when available to the Accelerometer view
+- Fixed issues with saving most settings to NVS
 
 ## Revival v1.9.3
 

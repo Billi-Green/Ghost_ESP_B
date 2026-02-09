@@ -863,9 +863,7 @@ const char *settings_get_timezone_str(const FSettings *settings) {
 void settings_set_accent_color_str(FSettings *settings, const char *Name) {
   strncpy(settings->selected_hex_accent_color, Name,
           sizeof(settings->selected_hex_accent_color) - 1);
-  settings
-      ->selected_hex_accent_color[sizeof(settings->selected_hex_accent_color) -
-                                  1] = '\0';
+  settings->selected_hex_accent_color[sizeof(settings->selected_hex_accent_color) - 1] = '\0';
 }
 
 const char *settings_get_accent_color_str(const FSettings *settings) {
@@ -874,36 +872,78 @@ const char *settings_get_accent_color_str(const FSettings *settings) {
 
 void settings_save(const FSettings *settings) {
     if (!settings) return;
-    
-    // Compatibility: Write all settings to NVS
-    // This is less efficient than granular saves but required for modules 
-    // that haven't been updated to use settings_persist_setting yet.
-    
+
     nvs_set_u8(nvsHandle, NVS_RGB_MODE_KEY, (uint8_t)settings->rgb_mode);
+    float ch_delay = settings->channel_delay;
+    nvs_set_blob(nvsHandle, NVS_CHANNEL_DELAY_KEY, &ch_delay, sizeof(ch_delay));
+    nvs_set_u16(nvsHandle, NVS_BROADCAST_SPEED_KEY, settings->broadcast_speed);
+    nvs_set_str(nvsHandle, NVS_AP_SSID_KEY, settings->ap_ssid);
+    nvs_set_str(nvsHandle, NVS_AP_PASSWORD_KEY, settings->ap_password);
+    nvs_set_u8(nvsHandle, NVS_RGB_SPEED_KEY, settings->rgb_speed);
+    nvs_set_u16(nvsHandle, NVS_RGB_LED_COUNT_KEY, settings->rgb_led_count);
+
+    nvs_set_str(nvsHandle, NVS_PORTAL_URL_KEY, settings->portal_url);
+    nvs_set_str(nvsHandle, NVS_PORTAL_SSID_KEY, settings->portal_ssid);
+    nvs_set_str(nvsHandle, NVS_PORTAL_PASSWORD_KEY, settings->portal_password);
+    nvs_set_str(nvsHandle, NVS_PORTAL_AP_SSID_KEY, settings->portal_ap_ssid);
+    nvs_set_str(nvsHandle, NVS_PORTAL_DOMAIN_KEY, settings->portal_domain);
+    nvs_set_u8(nvsHandle, NVS_PORTAL_OFFLINE_KEY, settings->portal_offline_mode ? 1 : 0);
+
+    nvs_set_str(nvsHandle, NVS_PRINTER_IP_KEY, settings->printer_ip);
+    nvs_set_str(nvsHandle, NVS_PRINTER_TEXT_KEY, settings->printer_text);
+    nvs_set_u8(nvsHandle, NVS_PRINTER_FONT_SIZE_KEY, settings->printer_font_size);
+    nvs_set_u8(nvsHandle, NVS_PRINTER_ALIGNMENT_KEY, (uint8_t)settings->printer_alignment);
+
+    nvs_set_str(nvsHandle, NVS_FLAPPY_GHOST_NAME, settings->flappy_ghost_name);
+    nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone);
+    nvs_set_str(nvsHandle, NVS_ACCENT_COLOR, settings->selected_hex_accent_color);
+    nvs_set_u8(nvsHandle, NVS_GPS_RX_PIN, (uint8_t)settings->gps_rx_pin);
     nvs_set_u32(nvsHandle, NVS_DISPLAY_TIMEOUT_KEY, settings->display_timeout_ms);
-    nvs_set_u8(nvsHandle, NVS_MENU_THEME_KEY, (uint8_t)settings->menu_theme);
-    // Assuming NVS_SCAN_LIST_COLOR_KEY is defined elsewhere
-    // nvs_set_u8(nvsHandle, NVS_SCAN_LIST_COLOR_KEY, (uint8_t)settings->scan_list_color);
+    nvs_set_u8(nvsHandle, NVS_ENABLE_RTS_KEY, settings->rts_enabled ? 1 : 0);
+
+    nvs_set_str(nvsHandle, NVS_STA_SSID_KEY, settings->sta_ssid);
+    nvs_set_str(nvsHandle, NVS_STA_PASSWORD_KEY, settings->sta_password);
+
+    nvs_set_i32(nvsHandle, NVS_RGB_DATA_PIN_KEY, settings->rgb_data_pin);
+    nvs_set_i32(nvsHandle, NVS_RGB_RED_PIN_KEY, settings->rgb_red_pin);
+    nvs_set_i32(nvsHandle, NVS_RGB_GREEN_PIN_KEY, settings->rgb_green_pin);
+    nvs_set_i32(nvsHandle, NVS_RGB_BLUE_PIN_KEY, settings->rgb_blue_pin);
+
+    nvs_set_u8(nvsHandle, NVS_THIRD_CTRL_KEY, settings->third_control_enabled ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_MENU_THEME_KEY, settings->menu_theme);
+    nvs_set_u32(nvsHandle, NVS_TERMINAL_TEXT_COLOR_KEY, settings->terminal_text_color);
     nvs_set_u8(nvsHandle, NVS_INVERT_COLORS_KEY, settings->invert_colors ? 1 : 0);
-    // Assuming NVS_WEB_AUTH_ENABLED_KEY is defined elsewhere
-    // nvs_set_u8(nvsHandle, NVS_WEB_AUTH_ENABLED_KEY, settings->web_auth_enabled ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_WEB_AUTH_KEY, settings->web_auth_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_WEBUI_AP_ONLY_KEY, settings->webui_restrict_to_ap ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_AP_ENABLED_KEY, settings->ap_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_POWER_SAVE_KEY, settings->power_save_enabled ? 1 : 0);
+    nvs_set_i32(nvsHandle, NVS_ESP_COMM_TX_PIN_KEY, settings->esp_comm_tx_pin);
+    nvs_set_i32(nvsHandle, NVS_ESP_COMM_RX_PIN_KEY, settings->esp_comm_rx_pin);
     nvs_set_u8(nvsHandle, NVS_ZEBRA_MENUS_KEY, settings->zebra_menus_enabled ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_MAX_SCREEN_BRIGHTNESS_KEY, settings->max_screen_brightness);
+    nvs_set_u8(nvsHandle, NVS_INFRARED_EASY_MODE_KEY, settings->infrared_easy_mode ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_NAV_BUTTONS_KEY, settings->nav_buttons_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_AUTO_SAVE_SCANS_KEY, settings->auto_save_scans ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, (uint8_t)settings->menu_layout);
-    nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone);
-    nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
-    // Assuming NVS_MAX_BRIGHTNESS_KEY and NVS_NEOPIXEL_BRIGHTNESS_KEY are defined elsewhere
-    // nvs_set_u8(nvsHandle, NVS_MAX_BRIGHTNESS_KEY, settings->max_screen_brightness);
-    // nvs_set_u8(nvsHandle, NVS_NEOPIXEL_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
-    
+    nvs_set_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
+    nvs_set_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, settings->encoder_invert_direction ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, settings->setup_complete ? 1 : 0);
-    
-    // Add other fields as necessary based on struct... for now covering main ones
-    
+    nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
+
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    nvs_set_u8(nvsHandle, NVS_STATUS_IDLE_ANIM_KEY, (uint8_t)settings->status_idle_animation);
+    nvs_set_u32(nvsHandle, NVS_STATUS_IDLE_TIMEOUT_KEY, settings->status_idle_timeout_ms);
+#endif
+
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+    nvs_set_u16(nvsHandle, NVS_BADUSB_VID_KEY, settings->badusb_vid);
+    nvs_set_u16(nvsHandle, NVS_BADUSB_PID_KEY, settings->badusb_pid);
+    nvs_set_str(nvsHandle, NVS_BADUSB_MFR_KEY, settings->badusb_manufacturer);
+    nvs_set_str(nvsHandle, NVS_BADUSB_PROD_KEY, settings->badusb_product);
+    nvs_set_u8(nvsHandle, NVS_BADUSB_RAND_KEY, settings->badusb_randomize ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_BADUSB_KB_KEY, settings->badusb_kb_layout);
+#endif
+
     esp_err_t err = nvs_commit(nvsHandle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to commit settings_save: %s", esp_err_to_name(err));
