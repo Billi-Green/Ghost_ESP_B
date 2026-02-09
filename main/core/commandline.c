@@ -25,6 +25,7 @@
 #endif
 #ifdef CONFIG_HAS_BADUSB
 #include "managers/badusb_manager.h"
+#include "managers/badusb_builtin_script.h"
 #endif
 #ifdef CONFIG_WITH_ETHERNET
 #include "managers/ethernet_manager.h"
@@ -7267,14 +7268,26 @@ void handle_badusb_cmd(int argc, char **argv) {
         }
     } else if (strcmp(sub, "run") == 0) {
         if (argc < 3) {
-            glog("Usage: badusb run <filename>\n");
+            glog("Usage: badusb run <filename|builtin>\n");
             return;
         }
-        char path[256];
-        snprintf(path, sizeof(path), "/mnt/ghostesp/badusb/%s", argv[2]);
-        esp_err_t ret = badusb_manager_execute_file(path);
-        if (ret != ESP_OK) {
-            glog("BadUSB: Failed to execute %s\n", argv[2]);
+        if (strcmp(argv[2], "builtin") == 0) {
+            char *buf = strdup(badusb_builtin_script);
+            if (buf) {
+                esp_err_t ret = badusb_manager_execute_buffer(buf, BADUSB_BUILTIN_SCRIPT_LEN);
+                if (ret != ESP_OK) {
+                    glog("BadUSB: Failed to execute built-in script\n");
+                }
+            } else {
+                glog("BadUSB: Out of memory\n");
+            }
+        } else {
+            char path[256];
+            snprintf(path, sizeof(path), "/mnt/ghostesp/badusb/%s", argv[2]);
+            esp_err_t ret = badusb_manager_execute_file(path);
+            if (ret != ESP_OK) {
+                glog("BadUSB: Failed to execute %s\n", argv[2]);
+            }
         }
     } else if (strcmp(sub, "exec") == 0) {
         if (argc < 3) {

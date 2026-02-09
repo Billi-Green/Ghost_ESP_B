@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 
 #include "managers/sd_card_manager.h"
+#include "managers/badusb_builtin_script.h"
 
 #ifdef CONFIG_HAS_BADUSB
 #include "managers/badusb_manager.h"
@@ -151,33 +152,28 @@ static void select_item(int index) {
 static void populate_script_list(void) {
     script_count = 0;
 
+    strncpy(script_names[script_count], BADUSB_BUILTIN_SCRIPT_NAME, MAX_SCRIPT_NAME - 1);
+    script_names[script_count][MAX_SCRIPT_NAME - 1] = '\0';
+    script_count++;
+
     bool display_was_suspended = false;
-    if (!badusb_sd_begin(&display_was_suspended)) {
-        script_options[0] = NULL;
-        return;
-    }
-
-    const char *dir_path = "/mnt/ghostesp/badusb";
-    DIR *dir = opendir(dir_path);
-    if (!dir) {
-        ESP_LOGW(TAG, "Cannot open %s", dir_path);
-        script_options[0] = NULL;
-        badusb_sd_end(display_was_suspended);
-        return;
-    }
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && script_count < MAX_SCRIPTS) {
-        size_t len = strlen(entry->d_name);
-        if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
-            strncpy(script_names[script_count], entry->d_name, MAX_SCRIPT_NAME - 1);
-            script_names[script_count][MAX_SCRIPT_NAME - 1] = '\0';
-            script_count++;
+    if (badusb_sd_begin(&display_was_suspended)) {
+        const char *dir_path = "/mnt/ghostesp/badusb";
+        DIR *dir = opendir(dir_path);
+        if (dir) {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL && script_count < MAX_SCRIPTS) {
+                size_t len = strlen(entry->d_name);
+                if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
+                    strncpy(script_names[script_count], entry->d_name, MAX_SCRIPT_NAME - 1);
+                    script_names[script_count][MAX_SCRIPT_NAME - 1] = '\0';
+                    script_count++;
+                }
+            }
+            closedir(dir);
         }
+        badusb_sd_end(display_was_suspended);
     }
-    closedir(dir);
-
-    badusb_sd_end(display_was_suspended);
 
     for (int i = 0; i < script_count; i++) {
         script_options[i] = script_names[i];
@@ -532,6 +528,42 @@ static bool badusb_send_script_to_peer(const char *name) {
     ESP_LOGI(TAG, "Streamed %zu bytes to peer", total_sent);
     return true;
 }
+static bool badusb_send_builtin_to_peer(void) {
+    size_t script_size = BADUSB_BUILTIN_SCRIPT_LEN;
+
+    char exec_data[32];
+    snprintf(exec_data, sizeof(exec_data), "exec %zu", script_size);
+    if (!esp_comm_manager_send_command("badusb", exec_data)) {
+        error_popup_create("Failed to send command");
+        return false;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    const uint8_t *data = (const uint8_t *)badusb_builtin_script;
+    size_t total_sent = 0;
+    bool ok = true;
+
+    while (total_sent < script_size) {
+        size_t remaining = script_size - total_sent;
+        size_t n = (remaining < STREAM_CHUNK_SIZE) ? remaining : STREAM_CHUNK_SIZE;
+
+        if (!esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_BADUSB, data + total_sent, n)) {
+            ok = false;
+            break;
+        }
+        total_sent += n;
+        vTaskDelay(pdMS_TO_TICKS(15));
+    }
+
+    if (!ok || total_sent != script_size) {
+        error_popup_create("Script transfer failed");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Streamed %zu bytes (built-in) to peer", total_sent);
+    return true;
+}
 #endif // CONFIG_HAS_BADUSB_REMOTE
 
 static void handle_option(const char *option) {
@@ -606,12 +638,13 @@ static void handle_option(const char *option) {
             go_back();
             return;
         }
+        bool is_builtin = (strcmp(option, BADUSB_BUILTIN_SCRIPT_NAME) == 0);
         if (remote) {
 #ifdef CONFIG_HAS_BADUSB_REMOTE
             badusb_send_settings_to_peer();
-            if (badusb_send_script_to_peer(option)) {
-                // Show "Waiting for USB..." - the S3 will send status updates
-                // to transition to "Running" and "Done" via GhostLink
+            bool ok = is_builtin ? badusb_send_builtin_to_peer()
+                                 : badusb_send_script_to_peer(option);
+            if (ok) {
                 show_running_popup_ex(option, true);
             }
 #endif
@@ -620,13 +653,18 @@ static void handle_option(const char *option) {
             bool has_vsense = badusb_has_vsense();
             bool already_connected = has_vsense && badusb_vsense_connected();
 
-            // Issue the command - exec task will wait for VBUS if needed
-            char cmd[128];
-            snprintf(cmd, sizeof(cmd), "badusb run %s", option);
-            simulateCommand(cmd);
+            if (is_builtin) {
+                char *buf = strdup(badusb_builtin_script);
+                if (buf) {
+                    badusb_manager_execute_buffer(buf, BADUSB_BUILTIN_SCRIPT_LEN);
+                }
+            } else {
+                char cmd[128];
+                snprintf(cmd, sizeof(cmd), "badusb run %s", option);
+                simulateCommand(cmd);
+            }
 
             if (has_vsense && !already_connected) {
-                // Show waiting popup and start polling timer
                 show_running_popup_ex(option, true);
                 if (vsense_poll_timer) {
                     lv_timer_del(vsense_poll_timer);

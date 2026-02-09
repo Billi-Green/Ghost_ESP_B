@@ -1,6 +1,7 @@
 # Ghost ESP Changelog
 
 ## Changed since last prerelease
+- Added built-in BadUSB script
 - Fixed incorrect speed conversion in NMEA GPS parser
 - Bumped NMEA queue size from 16→32 to fix the UART pattern queue overflow
 - Added GPS speed when available to the Accelerometer view
@@ -22,7 +23,7 @@
 - Added new compass app for The Wired Hatter's Banshee
 - Added ADXL345 accelerometer app to The Wired Hatter's Banshee
 - Added touch control bar to the BadUSB view
-- Added BadUSB display and CLI support for:
+- Added BadUSB display and CLI support with built-in test script for:
   - Cardputer
   - Cardputer ADV
   - TEmbedC1101

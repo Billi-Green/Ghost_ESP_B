@@ -3,6 +3,7 @@
 #ifdef CONFIG_HAS_BADUSB
 
 #include "managers/badusb_manager.h"
+#include "managers/badusb_builtin_script.h"
 #include "managers/hid_script_parser.h"
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
@@ -430,24 +431,28 @@ bool badusb_manager_is_active(void) {
 }
 
 int badusb_manager_list_scripts(char scripts[][64], int max_scripts) {
-    const char *dir_path = "/mnt/ghostesp/badusb";
-    DIR *dir = opendir(dir_path);
-    if (!dir) {
-        return 0;
+    int count = 0;
+
+    if (count < max_scripts) {
+        strncpy(scripts[count], BADUSB_BUILTIN_SCRIPT_NAME, 63);
+        scripts[count][63] = '\0';
+        count++;
     }
 
-    int count = 0;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && count < max_scripts) {
-        // Only list .txt files
-        size_t len = strlen(entry->d_name);
-        if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
-            strncpy(scripts[count], entry->d_name, 63);
-            scripts[count][63] = '\0';
-            count++;
+    const char *dir_path = "/mnt/ghostesp/badusb";
+    DIR *dir = opendir(dir_path);
+    if (dir) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL && count < max_scripts) {
+            size_t len = strlen(entry->d_name);
+            if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
+                strncpy(scripts[count], entry->d_name, 63);
+                scripts[count][63] = '\0';
+                count++;
+            }
         }
+        closedir(dir);
     }
-    closedir(dir);
     return count;
 }
 
