@@ -173,6 +173,9 @@ typedef struct {
   bool encoder_invert_direction;
   bool setup_complete;
   uint8_t wifi_country;
+
+  // Wigle API key for wardriving upload (format: "APIName:APIToken" from wigle.net/account)
+  char wigle_api_key[129];
 } FSettings;
 
 // Function declarations

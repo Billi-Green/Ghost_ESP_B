@@ -38,6 +38,7 @@
 #include "managers/views/music_visualizer.h"
 #endif
 #include "managers/sd_card_manager.h" // Add SD card manager include
+#include "managers/wigle_manager.h"
 #include "managers/views/terminal_screen.h"
 #include "core/glog.h"
 #include "core/utils.h" // Add utils include
@@ -544,6 +545,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         status_display_show_status("WiFi Connected");
         
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+        wigle_upload_recent_async(1);
     }
 }
 // Removed old wifi_retry_timer_callback - using unified retry system

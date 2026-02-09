@@ -64,6 +64,7 @@ static const char *NVS_RGB_LED_COUNT_KEY = "rgb_led_cnt";
 static const char *NVS_ENCODER_INVERT_KEY = "enc_inv";
 static const char *NVS_SETUP_COMPLETE_KEY = "setup_done";
 static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
+static const char *NVS_WIGLE_API_KEY = "wigle_api_key";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
 static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
@@ -169,6 +170,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->rgb_led_count = CONFIG_NUM_LEDS;
   settings->setup_complete = false;
   settings->wifi_country = 0;
+  strcpy(settings->wigle_api_key, "");
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -365,6 +367,15 @@ void settings_load(FSettings *settings) {
     printf("Failed to load STA Password: %s\n", esp_err_to_name(err));
   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
     strcpy(settings->sta_password, ""); // Ensure it's empty if not found
+  }
+
+  // Load Wigle API key (format: APIName:APIToken)
+  str_size = sizeof(settings->wigle_api_key);
+  err = nvs_get_str(nvsHandle, NVS_WIGLE_API_KEY, settings->wigle_api_key, &str_size);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    printf("Failed to load Wigle API key: %s\n", esp_err_to_name(err));
+  } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+    strcpy(settings->wigle_api_key, "");
   }
 
   printf("Settings loaded from NVS.\n");
@@ -819,6 +830,7 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, (uint8_t)settings->menu_layout);
     nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone);
     nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
+    nvs_set_str(nvsHandle, NVS_WIGLE_API_KEY, settings->wigle_api_key);
     // Assuming NVS_MAX_BRIGHTNESS_KEY and NVS_NEOPIXEL_BRIGHTNESS_KEY are defined elsewhere
     // nvs_set_u8(nvsHandle, NVS_MAX_BRIGHTNESS_KEY, settings->max_screen_brightness);
     // nvs_set_u8(nvsHandle, NVS_NEOPIXEL_BRIGHTNESS_KEY, settings->neopixel_max_brightness);

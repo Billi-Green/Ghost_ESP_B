@@ -87,6 +87,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
 #include "managers/aerial_detector_manager.h"
+#include "managers/wigle_manager.h"
 
 static const char *TAG = "Commandline";
 
@@ -142,6 +143,7 @@ void handle_aerial_track_cmd(int argc, char **argv);
 void handle_aerial_stop_cmd(int argc, char **argv);
 void handle_aerial_spoof_cmd(int argc, char **argv);
 void handle_aerial_spoof_stop_cmd(int argc, char **argv);
+void handle_wigle_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -7880,6 +7882,29 @@ void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
     }
 }
 
+void handle_wigle_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("wigle API <name>:<token>  - Set Wigle API key (from wigle.net/account)\n");
+        glog("wigle list                - List stored uploaded CSV memory\n");
+        return;
+    }
+    if (strcmp(argv[1], "API") == 0 || strcmp(argv[1], "api") == 0) {
+        if (argc < 3) {
+            glog("Usage: wigle API <APIName>:<APIToken>\n");
+            glog("Get credentials from https://wigle.net/account\n");
+            return;
+        }
+        wigle_set_api_key(argv[2]);
+        glog("Wigle API key set\n");
+        return;
+    }
+    if (strcmp(argv[1], "list") == 0) {
+        wigle_uploaded_list();
+        return;
+    }
+    glog("Unknown wigle command: %s\n", argv[1]);
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -8017,6 +8042,7 @@ void register_commands() {
     register_command("aerialstop", handle_aerial_stop_cmd);
     register_command("aerialspoof", handle_aerial_spoof_cmd);
     register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
+    register_command("wigle", handle_wigle_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
 

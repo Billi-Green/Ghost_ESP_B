@@ -288,6 +288,18 @@
 </details>
 
 <details>
+<summary><strong>Wigle Upload</strong></summary>
+
+- <code>wigle API &lt;APIName&gt;:&lt;APIToken&gt;</code>  
+  Set Wigle API credentials (from https://wigle.net/account)
+
+- <code>wigle list</code>  
+  List stored uploaded CSV memory
+
+Auto-upload: When WiFi (STA) connects, the 1 most recent Wigle CSV is uploaded. Previously uploaded files (by basename+size) are skipped.
+</details>
+
+<details>
 <summary><strong>System Commands</strong></summary>
 
 - <code>help</code>  
