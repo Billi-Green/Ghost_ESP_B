@@ -1,18 +1,9 @@
 # Ghost ESP Changelog
 
 ## Changed since last prerelease
-- Added helper for saving scan data to SD card with incremental file numbering
-- Added auto saving of scans for:
-  - AP scan
-  - Station scan
-  - Flipper scan
-  - Airtag scan
-  - GATT scan
-- Refactored NFC and IR menus to use shared options_view helpers for consistent styling
-- Added ADXL345 accelerometer app to The Wired Hatter's Banshee
-- Downgrade GPS errors to ESP_LOGW to prevent printing in terminal
 - Fixed incorrect speed conversion in NMEA GPS parser
 - Bumped NMEA queue size from 16→32 to fix the UART pattern queue overflow
+- Added GPS speed when available to the Accelerometer view
 
 ## Revival v1.9.3
 
