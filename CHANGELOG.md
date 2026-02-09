@@ -1,11 +1,7 @@
 # Ghost ESP Changelog
 
 ## Changed since last prerelease
-- Added built-in BadUSB script
-- Fixed incorrect speed conversion in NMEA GPS parser
-- Bumped NMEA queue size from 16→32 to fix the UART pattern queue overflow
-- Added GPS speed when available to the Accelerometer view
-- Fixed issues with saving most settings to NVS
+- Fixed deauth reverse-direction frames using station MAC as BSSID instead of AP BSSID
 
 ## Revival v1.9.3
 
@@ -65,6 +61,7 @@
 - Fixed incorrect speed conversion in NMEA GPS parser
 - Bumped NMEA queue size from 16→32 to fix the UART pattern queue overflow
 - Fixed issues with saving most settings to NVS
+- Fixed deauth reverse-direction frames using station MAC as BSSID instead of AP BSSID
 
 ## Revival v1.9.2
 
