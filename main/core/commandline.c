@@ -823,10 +823,7 @@ void handle_stop_flipper(int argc, char **argv) {
         vTaskDelete(VisualizerHandle);
         VisualizerHandle = NULL;
     }
-    if (rgb_effect_task_handle != NULL) {
-        vTaskDelete(rgb_effect_task_handle);
-        rgb_effect_task_handle = NULL;
-    }
+    settings_restart_rgb_effect();
 }
 
 void handle_dial_command(int argc, char **argv) {
@@ -4600,11 +4597,11 @@ void handle_rgb_mode(int argc, char **argv) {
 
     // Cancel any currently running LED effect task safely.
     if (rgb_effect_task_handle != NULL) {
-        if (last_effect_is_rainbow) {
-            rgb_manager_signal_rainbow_exit();
-            vTaskDelay(pdMS_TO_TICKS(50));
-            rgb_effect_task_handle = NULL;
-        } else {
+        rgb_manager_signal_rainbow_exit();
+        for (int i = 0; i < 20 && rgb_effect_task_handle != NULL; i++) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+        if (rgb_effect_task_handle != NULL) {
             vTaskDelete(rgb_effect_task_handle);
             rgb_effect_task_handle = NULL;
         }
