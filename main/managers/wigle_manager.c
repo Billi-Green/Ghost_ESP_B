@@ -10,7 +10,6 @@
 #include "core/glog.h"
 #include "esp_err.h"
 #include "esp_http_client.h"
-#include "esp_heap_caps.h"
 #include "esp_crt_bundle.h"
 #include "mbedtls/base64.h"
 #include <stdlib.h>
@@ -25,14 +24,17 @@
 #include "esp_netif.h"
 
 #define WIGLE_UPLOAD_URL "https://api.wigle.net/api/v2/file/upload"
-#define WIGLE_MAX_FILE_SIZE (32 * 1024)
 #define WIGLE_BOUNDARY "------------------------GhostESP"
 #define WIGLE_UPLOADED_FILE "/mnt/ghostesp/.wigle_uploaded"
-#define WIGLE_RECENT_MAX 16
+#define WIGLE_QUEUE_FILE "/mnt/ghostesp/.wigle_queue"
+/* Max queue entries processed per connect; kept small to limit RAM. */
+#define WIGLE_QUEUE_BATCH_MAX 16
+#define WIGLE_STREAM_CHUNK_SIZE 4096
 #define AUTH_BUF_SIZE 256
 #define WIGLE_RESP_BUF_SIZE 384
-#define WIGLE_STREAM_CHUNK 512
-#define WIGLE_TASK_STACK 8192
+#define WIGLE_TASK_STACK 16384
+
+static volatile bool wigle_upload_in_progress = false;
 
 typedef struct {
     char buf[WIGLE_RESP_BUF_SIZE];
@@ -126,6 +128,22 @@ static bool wigle_file_has_data_rows(FILE *f) {
     return newlines >= 2;  /* pre-header, header, and at least one data row */
 }
 
+/**
+ * Upload a single CSV file to WiGLE API.
+ * 
+ * Multipart structure:
+ *   --------------------------GhostESP\r\n
+ *   Content-Disposition: form-data; name="file"; filename="test.csv"\r\n
+ *   Content-Type: text/csv\r\n\r\n
+ *   [file content]
+ *   \r\n--------------------------GhostESP\r\n
+ *   Content-Disposition: form-data; name="donate"\r\n\r\n
+ *   true\r\n
+ *   --------------------------GhostESP--\r\n
+ * 
+ * Content-Type header: multipart/form-data; boundary=------------------------GhostESP
+ * Note: boundary in header has NO dashes, body boundaries have "--" prefix
+ */
 static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
     FILE *f = fopen(filepath, "rb");
     if (!f) {
@@ -144,16 +162,14 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
         glog("Wigle: skip %s (no data rows - need GPS fix + wardriving)\n", filepath);
         return ESP_ERR_NOT_SUPPORTED;
     }
-    fseek(f, 0, SEEK_SET);
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (fsize <= 0 || fsize > (long)WIGLE_MAX_FILE_SIZE) {
+    if (fsize <= 0) {
         fclose(f);
-        glog("Wigle: file %s size %ld out of range (max %d)\n",
-             filepath, fsize, WIGLE_MAX_FILE_SIZE);
+        glog("Wigle: file %s size %ld invalid\n", filepath, fsize);
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -178,39 +194,12 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
     size_t part1_fname = strlen(basename);
     part1_len += part1_fname;
 
+    const char *donate_val = G_Settings.wigle_donate ? "true" : "false";
     size_t part2_len = strlen("\r\n--" WIGLE_BOUNDARY "\r\n"
-        "Content-Disposition: form-data; name=\"donate\"\r\n\r\n"
-        "true\r\n"
-        "--" WIGLE_BOUNDARY "--\r\n");
+        "Content-Disposition: form-data; name=\"donate\"\r\n\r\n") +
+        strlen(donate_val) + strlen("\r\n--" WIGLE_BOUNDARY "--\r\n");
 
     size_t body_len = part1_len + file_len + part2_len;
-
-    /* Allocate from PSRAM first; fallback to heap */
-    char *body = heap_caps_malloc(body_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    bool use_caps = (body != NULL);
-    if (!body) body = (char *)malloc(body_len);
-    if (!body) {
-        fclose(f);
-        glog("Wigle: OOM for upload body\n");
-        return ESP_ERR_NO_MEM;
-    }
-
-    char *p = body;
-    p += snprintf(p, (size_t)(body + body_len - p), "--" WIGLE_BOUNDARY "\r\n"
-        "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
-        "Content-Type: text/csv\r\n\r\n", basename);
-    size_t read_len = fread(p, 1, file_len, f);
-    fclose(f);
-    if (read_len != file_len) {
-        if (use_caps) heap_caps_free(body);
-        else free(body);
-        return ESP_FAIL;
-    }
-    p += read_len;
-    memcpy(p, "\r\n--" WIGLE_BOUNDARY "\r\n"
-        "Content-Disposition: form-data; name=\"donate\"\r\n\r\n"
-        "true\r\n"
-        "--" WIGLE_BOUNDARY "--\r\n", part2_len);
 
     /* Build Authorization: Basic base64(APIName:APIToken) */
     char auth_b64[AUTH_BUF_SIZE];
@@ -218,14 +207,13 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
     int r = mbedtls_base64_encode((unsigned char *)auth_b64, AUTH_BUF_SIZE, &enc_len,
                                   (const unsigned char *)api_key, strlen(api_key));
     if (r != 0) {
-        if (use_caps) heap_caps_free(body);
-        else free(body);
+        fclose(f);
         glog("Wigle: base64 encode failed\n");
         return ESP_FAIL;
     }
     auth_b64[enc_len] = '\0';
 
-    char auth_val[6 + AUTH_BUF_SIZE + 2];
+    char auth_val[6 + AUTH_BUF_SIZE + 1];
     snprintf(auth_val, sizeof(auth_val), "Basic %s", auth_b64);
 
     char content_type_hdr[128];
@@ -248,8 +236,7 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
-        if (use_caps) heap_caps_free(body);
-        else free(body);
+        fclose(f);
         return ESP_FAIL;
     }
 
@@ -257,31 +244,83 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
     esp_http_client_set_header(client, "User-Agent", "GhostESP/1.0");
     esp_http_client_set_header(client, "Authorization", auth_val);
     esp_http_client_set_header(client, "Content-Type", content_type_hdr);
-    esp_http_client_set_post_field(client, body, (int)body_len);
 
-    esp_err_t err = esp_http_client_perform(client);
-    if (use_caps) heap_caps_free(body);
-    else free(body);
-
-    int status = esp_http_client_get_status_code(client);
+    esp_err_t err = esp_http_client_open(client, (int)body_len);
     if (err != ESP_OK) {
-        int tls_code = 0, tls_flags = 0;
-        if (esp_http_client_get_and_clear_last_tls_error(client, &tls_code, &tls_flags) == ESP_OK && (tls_code != 0 || tls_flags != 0)) {
-            glog("Wigle: TLS err 0x%x flags 0x%x\n", (unsigned)tls_code, (unsigned)tls_flags);
-        }
-    }
-    esp_http_client_cleanup(client);
-
-    if (err != ESP_OK) {
-        glog("Wigle: HTTP err 0x%x %s\n", (unsigned)err, esp_err_to_name(err));
+        fclose(f);
+        esp_http_client_cleanup(client);
         return err;
     }
+
+    /* Write part1 (boundary + headers) */
+    char part1[256];
+    int p1_len = snprintf(part1, sizeof(part1), "--" WIGLE_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+        "Content-Type: text/csv\r\n\r\n", basename);
+    int written = esp_http_client_write(client, part1, p1_len);
+    if (written != p1_len) {
+        fclose(f);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    /* Stream file content */
+    char chunk[WIGLE_STREAM_CHUNK_SIZE];
+    size_t remaining = file_len;
+    while (remaining > 0) {
+        size_t to_read = (remaining > WIGLE_STREAM_CHUNK_SIZE) ? WIGLE_STREAM_CHUNK_SIZE : remaining;
+        size_t read_len = fread(chunk, 1, to_read, f);
+        if (read_len == 0) break;
+        written = esp_http_client_write(client, chunk, (int)read_len);
+        if (written != (int)read_len) {
+            fclose(f);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_FAIL;
+        }
+        remaining -= read_len;
+    }
+    fclose(f);
+
+    /* Write part2 (boundary + donate + closing) */
+    char part2[160];
+    int p2_len = snprintf(part2, sizeof(part2), "\r\n--" WIGLE_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"donate\"\r\n\r\n"
+        "%s\r\n"
+        "--" WIGLE_BOUNDARY "--\r\n", donate_val);
+    written = esp_http_client_write(client, part2, p2_len);
+    if (written != p2_len) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    if (err != ESP_OK) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return err;
+    }
+
+    /* After writing body manually, fetch response headers */
+    int content_len = esp_http_client_fetch_headers(client);
+    if (content_len < 0) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return (esp_err_t)content_len;
+    }
+
+    /* Drain response body to complete the request */
+    char resp_drain[128];
+    while (esp_http_client_read(client, resp_drain, sizeof(resp_drain)) > 0) {
+        /* Response captured by event handler */
+    }
+
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
     if (status < 200 || status >= 300) {
         glog("Wigle: upload %s failed HTTP %d\n", filepath, status);
-        if (resp.len > 0) {
-            resp.buf[WIGLE_RESP_BUF_SIZE - 1] = '\0';
-            glog("Wigle response: %s\n", resp.buf);
-        }
         return ESP_FAIL;
     }
     glog("Wigle: uploaded %s\n", filepath);
@@ -289,121 +328,141 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
     return ESP_OK;
 }
 
-typedef struct {
-    char path[320];
-    time_t mtime;
-    long size;
-} wigle_file_entry_t;
-
-/* Collect eligible Wigle CSVs from dir into entries, return count. */
-static int wigle_collect_from_dir(const char *dirpath, wigle_file_entry_t *entries, int max_count) {
-    DIR *d = opendir(dirpath);
-    if (!d) return 0;
-    int n = 0;
-    struct dirent *e;
-    while (n < max_count && (e = readdir(d)) != NULL) {
-        if (e->d_name[0] == '.') continue;
-        size_t len = strlen(e->d_name);
-        int is_csv = (len > 4 && strcasecmp(e->d_name + len - 4, ".csv") == 0) ||
-                     (len > 9 && strcasecmp(e->d_name + len - 9, ".wiglecsv") == 0);
-        if (!is_csv) continue;
-
-        char path[320];
-        (void)snprintf(path, sizeof(path), "%s/%s", dirpath, e->d_name);
-
-        struct stat st;
-        if (stat(path, &st) != 0) continue;
-
-        FILE *f = fopen(path, "rb");
-        if (!f) continue;
-        if (!wigle_file_is_valid_format(f)) { fclose(f); continue; }
-        fseek(f, 0, SEEK_SET);
-        if (!wigle_file_has_data_rows(f)) { fclose(f); continue; }
-        fseek(f, 0, SEEK_END);
-        long fsize = ftell(f);
-        fclose(f);
-
-        if (fsize <= 0 || fsize > (long)WIGLE_MAX_FILE_SIZE) continue;
-
-        snprintf(entries[n].path, sizeof(entries[n].path), "%s", path);
-        entries[n].mtime = st.st_mtime;
-        entries[n].size = fsize;
-        n++;
-    }
-    closedir(d);
-    return n;
+/* Add file path to upload queue (only if not already uploaded) */
+void wigle_queue_add(const char *filepath) {
+    const char *basename = strrchr(filepath, '/');
+    if (!basename) basename = filepath;
+    else basename++;
+    
+    struct stat st;
+    if (stat(filepath, &st) != 0) return;
+    
+    /* Skip if already uploaded */
+    if (wigle_uploaded_check(basename, st.st_size)) return;
+    
+    FILE *q = fopen(WIGLE_QUEUE_FILE, "a");
+    if (!q) return;
+    fprintf(q, "%s\n", filepath);
+    fclose(q);
 }
 
-/* Upload the N most recent Wigle CSVs (by mtime). Skips already-uploaded. */
-static esp_err_t wigle_upload_recent_impl(int count, const char *api_key) {
-    size_t entries_sz = sizeof(wigle_file_entry_t) * WIGLE_RECENT_MAX;
-    wigle_file_entry_t *entries = heap_caps_malloc(entries_sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    bool use_caps = (entries != NULL);
-    if (!entries) entries = malloc(entries_sz);
-    if (!entries) {
-        glog("Wigle: OOM for entries\n");
-        return ESP_ERR_NO_MEM;
-    }
-    int total = wigle_collect_from_dir("/mnt/ghostesp/sweeps", entries, WIGLE_RECENT_MAX);
-    if (total < WIGLE_RECENT_MAX) {
-        total += wigle_collect_from_dir("/mnt/ghostesp/gps", entries + total, WIGLE_RECENT_MAX - total);
-    }
-    if (total == 0) {
-        glog("Wigle: no eligible CSV files found\n");
-        if (use_caps) heap_caps_free(entries);
-        else free(entries);
-        return ESP_OK;
-    }
-    /* Sort by mtime descending (newest first) */
-    for (int i = 0; i < total - 1; i++) {
-        for (int j = i + 1; j < total; j++) {
-            if (entries[j].mtime > entries[i].mtime) {
-                wigle_file_entry_t tmp = entries[i];
-                entries[i] = entries[j];
-                entries[j] = tmp;
+/* Process queue file: upload queued files, remove successful ones from queue */
+static esp_err_t wigle_process_queue(const char *api_key) {
+    FILE *q = fopen(WIGLE_QUEUE_FILE, "r");
+    if (!q) {
+        /* Allocate from heap to avoid stack overflow and save memory when not in use */
+        char *scan_path = malloc(320);
+        if (!scan_path) {
+            return ESP_ERR_NO_MEM;
+        }
+        DIR *d = opendir("/mnt/ghostesp/gps");
+        if (d) {
+            struct dirent *e;
+            while ((e = readdir(d)) != NULL) {
+                if (e->d_name[0] == '.') continue;
+                size_t len = strlen(e->d_name);
+                if (len <= 4 || strcasecmp(e->d_name + len - 4, ".csv") != 0) continue;
+                (void)snprintf(scan_path, 320, "/mnt/ghostesp/gps/%s", e->d_name);
+                FILE *f = fopen(scan_path, "rb");
+                if (f) {
+                    if (wigle_file_is_valid_format(f)) wigle_queue_add(scan_path);
+                    fclose(f);
+                }
             }
+            closedir(d);
+        }
+        free(scan_path);
+        q = fopen(WIGLE_QUEUE_FILE, "r");
+        if (!q) {
+            glog("Wigle: files already uploaded, no new files to upload\n");
+            return ESP_ERR_NOT_FOUND;
         }
     }
-    int uploaded = 0, failed = 0;
-    for (int i = 0; i < total && uploaded < count; i++) {
-        const char *basename = strrchr(entries[i].path, '/');
-        if (!basename) basename = entries[i].path;
+
+    /* Allocate from heap to avoid stack overflow and save memory when not in use */
+    char (*queued_paths)[320] = malloc(WIGLE_QUEUE_BATCH_MAX * 320);
+    char *line = malloc(320);
+    if (!queued_paths || !line) {
+        if (queued_paths) free(queued_paths);
+        if (line) free(line);
+        fclose(q);
+        return ESP_ERR_NO_MEM;
+    }
+
+    int queued_count = 0;
+    while (queued_count < WIGLE_QUEUE_BATCH_MAX && fgets(line, 320, q)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (line[0]) {
+            strncpy(queued_paths[queued_count], line, sizeof(queued_paths[0]) - 1);
+            queued_paths[queued_count][sizeof(queued_paths[0]) - 1] = '\0';
+            queued_count++;
+        }
+    }
+    fclose(q);
+
+    if (queued_count == 0) {
+        free(queued_paths);
+        free(line);
+        glog("Wigle: files already uploaded, no new files to upload\n");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    FILE *q_out = fopen(WIGLE_QUEUE_FILE, "w");
+    int uploaded = 0, failed = 0, skipped = 0;
+
+    for (int i = 0; i < queued_count; i++) {
+        const char *basename = strrchr(queued_paths[i], '/');
+        if (!basename) basename = queued_paths[i];
         else basename++;
-        if (wigle_uploaded_check(basename, entries[i].size)) continue;
-        esp_err_t ret = wigle_upload_file(entries[i].path, api_key);
-        if (ret == ESP_OK) uploaded++;
-        else if (ret != ESP_ERR_NOT_SUPPORTED) failed++;
+
+        struct stat st;
+        if (stat(queued_paths[i], &st) != 0) {
+            /* File doesn't exist, remove from queue */
+            continue;
+        }
+
+        /* Skip if already uploaded (remove from queue) */
+        if (wigle_uploaded_check(basename, st.st_size)) {
+            skipped++;
+            continue;
+        }
+
+        esp_err_t ret = wigle_upload_file(queued_paths[i], api_key);
+        if (ret == ESP_OK) {
+            uploaded++;
+            /* Successfully uploaded, don't add back to queue */
+        } else if (ret != ESP_ERR_NOT_SUPPORTED) {
+            failed++;
+            /* Failed upload, keep in queue for retry */
+            if (q_out) fprintf(q_out, "%s\n", queued_paths[i]);
+        }
+        /* ESP_ERR_NOT_SUPPORTED means skip (invalid format, no data, etc) - remove from queue */
     }
-    if (use_caps) heap_caps_free(entries);
-    else free(entries);
-    glog("Wigle: done. uploaded=%d failed=%d\n", uploaded, failed);
-    return (failed > 0) ? ESP_FAIL : ESP_OK;
-}
 
-/**
- * Iterate directory and upload .csv and .wiglecsv files.
- */
-static esp_err_t wigle_upload_from_dir(const char *dirpath, const char *api_key,
-                                       int *uploaded, int *failed) {
-    DIR *d = opendir(dirpath);
-    if (!d) return ESP_OK;
-
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        if (e->d_name[0] == '.') continue;
-        size_t len = strlen(e->d_name);
-        int is_csv = (len > 4 && strcasecmp(e->d_name + len - 4, ".csv") == 0) ||
-                     (len > 9 && strcasecmp(e->d_name + len - 9, ".wiglecsv") == 0);
-        if (!is_csv) continue;
-
-        char path[320];
-        (void)snprintf(path, sizeof(path), "%s/%s", dirpath, e->d_name);
-
-        esp_err_t ret = wigle_upload_file(path, api_key);
-        if (ret == ESP_OK) (*uploaded)++;
-        else if (ret != ESP_ERR_NOT_SUPPORTED) (*failed)++;
+    bool had_failures = (failed > 0);
+    if (q_out) fclose(q_out);
+    
+    /* Delete queue file if empty (all files uploaded successfully) */
+    if (!had_failures) {
+        remove(WIGLE_QUEUE_FILE);
     }
-    closedir(d);
+    
+    free(queued_paths);
+    free(line);
+    
+    if (uploaded > 0 && failed == 0) {
+        glog("Wigle: all files uploaded successfully (%d)\n", uploaded);
+        return ESP_OK;
+    } else if (uploaded > 0) {
+        glog("Wigle: uploaded=%d failed=%d\n", uploaded, failed);
+        return (failed > 0) ? ESP_FAIL : ESP_OK;
+    } else if (failed > 0) {
+        glog("Wigle: upload failed (%d files)\n", failed);
+        return ESP_FAIL;
+    } else if (skipped > 0) {
+        glog("Wigle: files already uploaded, no new files to upload\n");
+        return ESP_ERR_NOT_FOUND;
+    }
     return ESP_OK;
 }
 
@@ -424,35 +483,7 @@ esp_err_t wigle_upload_all(void) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    glog("Wigle: starting upload...\n");
-
-    int uploaded = 0, failed = 0;
-
-    wigle_upload_from_dir("/mnt/ghostesp/sweeps", api_key, &uploaded, &failed);
-    wigle_upload_from_dir("/mnt/ghostesp/gps", api_key, &uploaded, &failed);
-
-    glog("Wigle: done. uploaded=%d failed=%d\n", uploaded, failed);
-
-    return (failed > 0) ? ESP_FAIL : ESP_OK;
-}
-
-esp_err_t wigle_upload_recent(int count) {
-    const char *api_key = wigle_get_api_key();
-    if (!api_key || api_key[0] == '\0') {
-        glog("Wigle: no API key set. Use 'wigle API <name>:<token>'\n");
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (strchr(api_key, ':') == NULL) {
-        glog("Wigle: API key must be format APIName:APIToken\n");
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!wigle_sta_has_ip()) {
-        glog("Wigle: STA not connected - connect to WiFi first\n");
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (count <= 0) return ESP_OK;
-    glog("Wigle: uploading %d most recent CSV(s)...\n", count);
-    return wigle_upload_recent_impl(count, api_key);
+    return wigle_process_queue(api_key);
 }
 
 void wigle_uploaded_list(void) {
@@ -476,35 +507,29 @@ void wigle_uploaded_list(void) {
 
 static void wigle_upload_all_task(void *arg) {
     (void)arg;
-    wigle_upload_all();
-    vTaskDelete(NULL);
-}
-
-static void wigle_upload_recent_task(void *arg) {
-    int count = (int)(intptr_t)arg;
-    wigle_upload_recent(count);
+    esp_err_t ret = wigle_upload_all();
+    wigle_upload_in_progress = false;
+    /* Only log "upload complete" when at least one file was uploaded */
+    if (ret == ESP_OK) {
+        glog("Wigle: upload complete\n");
+    }
+    /* ESP_ERR_NOT_FOUND = nothing to do / all already uploaded (message already logged in process_queue) */
     vTaskDelete(NULL);
 }
 
 void wigle_upload_all_async(void) {
+    if (wigle_upload_in_progress) {
+        glog("Wigle: upload already in progress\n");
+        return;
+    }
     const char *key = wigle_get_api_key();
     if (!key || key[0] == '\0' || strchr(key, ':') == NULL) return;
+    wigle_upload_in_progress = true;
     if (xTaskCreate(wigle_upload_all_task, "wigle_up", WIGLE_TASK_STACK, NULL, 5, NULL) == pdPASS) {
         glog("Wigle: auto-upload started\n");
     } else {
         glog("Wigle: failed to start upload task\n");
-    }
-}
-
-void wigle_upload_recent_async(int count) {
-    const char *key = wigle_get_api_key();
-    if (!key || key[0] == '\0' || strchr(key, ':') == NULL) return;
-    if (count <= 0) return;
-    void *arg = (void *)(intptr_t)count;
-    if (xTaskCreate(wigle_upload_recent_task, "wigle_up", WIGLE_TASK_STACK, arg, 5, NULL) == pdPASS) {
-        glog("Wigle: uploading %d most recent\n", count);
-    } else {
-        glog("Wigle: failed to start upload task\n");
+        wigle_upload_in_progress = false;
     }
 }
 

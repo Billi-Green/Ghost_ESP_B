@@ -196,6 +196,7 @@ typedef struct {
 
   // Wigle API key for wardriving upload (format: "APIName:APIToken" from wigle.net/account)
   char wigle_api_key[129];
+  bool wigle_donate; // Whether to donate uploads to Wigle
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
   uint16_t badusb_vid;
   uint16_t badusb_pid;

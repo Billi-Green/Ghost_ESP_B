@@ -66,6 +66,7 @@ static const char *NVS_AUTO_SAVE_SCANS_KEY = "auto_save_sc";
 static const char *NVS_SETUP_COMPLETE_KEY = "setup_done";
 static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
 static const char *NVS_WIGLE_API_KEY = "wigle_api_key";
+static const char *NVS_WIGLE_DONATE_KEY = "wigle_donate";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
 static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
@@ -181,6 +182,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->setup_complete = false;
   settings->wifi_country = 0;
   strcpy(settings->wigle_api_key, "");
+  settings->wigle_donate = true; // Default to donating
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -395,6 +397,14 @@ void settings_load(FSettings *settings) {
   } else if (err == ESP_ERR_NVS_NOT_FOUND) {
     strcpy(settings->wigle_api_key, "");
   }
+
+  // Load Wigle donate setting
+  uint8_t donate_val = 1;
+  err = nvs_get_u8(nvsHandle, NVS_WIGLE_DONATE_KEY, &donate_val);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    printf("Failed to load Wigle donate setting: %s\n", esp_err_to_name(err));
+  }
+  settings->wigle_donate = (donate_val != 0);
 
   printf("Settings loaded from NVS.\n");
   int32_t tmp;
@@ -939,6 +949,7 @@ void settings_save(const FSettings *settings) {
     nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone);
     nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
     nvs_set_str(nvsHandle, NVS_WIGLE_API_KEY, settings->wigle_api_key);
+    nvs_set_u8(nvsHandle, NVS_WIGLE_DONATE_KEY, settings->wigle_donate ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
     nvs_set_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, settings->encoder_invert_direction ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, settings->setup_complete ? 1 : 0);

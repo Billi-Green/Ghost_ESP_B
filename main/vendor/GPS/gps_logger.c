@@ -5,6 +5,7 @@
 #include "core/glog.h"
 #include "managers/gps_manager.h"
 #include "managers/sd_card_manager.h"
+#include "managers/wigle_manager.h"
 #include "managers/views/terminal_screen.h"
 #include "sys/time.h"
 #include "vendor/GPS/MicroNMEA.h"
@@ -679,6 +680,9 @@ void csv_file_close() {
                 finfo.fdate = ((year - 1980) << 9) | (gps->date.month << 5) | gps->date.day;
                 finfo.ftime = (gps->tim.hour << 11) | (gps->tim.minute << 5) | (gps->tim.second / 2);
                 f_utime(rel_path, &finfo);
+            }
+            if (csv_file_path[0] != '\0') {
+                wigle_queue_add(csv_file_path);
             }
         }
         glog("CSV file closed.\n");

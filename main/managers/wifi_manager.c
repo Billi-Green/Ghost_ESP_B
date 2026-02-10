@@ -546,7 +546,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         status_display_show_status("WiFi Connected");
         
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
-        wigle_upload_recent_async(1);
+        wigle_upload_all_async();
     }
 }
 // Removed old wifi_retry_timer_callback - using unified retry system

@@ -296,7 +296,7 @@
 - <code>wigle list</code>  
   List stored uploaded CSV memory
 
-Auto-upload: When WiFi (STA) connects, the 1 most recent Wigle CSV is uploaded. Previously uploaded files (by basename+size) are skipped.
+Auto-upload: When WiFi (STA) connects, queued Wigle CSV files are uploaded. GPS logger automatically queues CSV files when they're created. Previously uploaded files (by basename+size) are skipped.
 </details>
 
 <details>
