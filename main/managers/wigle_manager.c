@@ -265,8 +265,14 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
         return ESP_FAIL;
     }
 
-    /* Stream file content */
-    char chunk[WIGLE_STREAM_CHUNK_SIZE];
+    /* Stream file content (heap buffer to keep task stack small) */
+    char *chunk = (char *)malloc(WIGLE_STREAM_CHUNK_SIZE);
+    if (!chunk) {
+        fclose(f);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_ERR_NO_MEM;
+    }
     size_t remaining = file_len;
     while (remaining > 0) {
         size_t to_read = (remaining > WIGLE_STREAM_CHUNK_SIZE) ? WIGLE_STREAM_CHUNK_SIZE : remaining;
@@ -274,6 +280,7 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
         if (read_len == 0) break;
         written = esp_http_client_write(client, chunk, (int)read_len);
         if (written != (int)read_len) {
+            free(chunk);
             fclose(f);
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
@@ -281,6 +288,7 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
         }
         remaining -= read_len;
     }
+    free(chunk);
     fclose(f);
 
     /* Write part2 (boundary + donate + closing) */
@@ -346,11 +354,13 @@ void wigle_queue_add(const char *filepath) {
     fclose(q);
 }
 
-/* Process queue file: upload queued files, remove successful ones from queue */
+/* Process queue file: upload queued files, remove successful ones from queue.
+ * Reads queue line-by-line to avoid large buffers. Only files that fail to
+ * upload are written back to the queue for retry. */
 static esp_err_t wigle_process_queue(const char *api_key) {
     FILE *q = fopen(WIGLE_QUEUE_FILE, "r");
     if (!q) {
-        /* Allocate from heap to avoid stack overflow and save memory when not in use */
+        /* No queue yet: scan GPS directory and enqueue valid Wigle CSVs. */
         char *scan_path = malloc(320);
         if (!scan_path) {
             return ESP_ERR_NO_MEM;
@@ -365,7 +375,9 @@ static esp_err_t wigle_process_queue(const char *api_key) {
                 (void)snprintf(scan_path, 320, "/mnt/ghostesp/gps/%s", e->d_name);
                 FILE *f = fopen(scan_path, "rb");
                 if (f) {
-                    if (wigle_file_is_valid_format(f)) wigle_queue_add(scan_path);
+                    if (wigle_file_is_valid_format(f)) {
+                        wigle_queue_add(scan_path);
+                    }
                     fclose(f);
                 }
             }
@@ -379,45 +391,33 @@ static esp_err_t wigle_process_queue(const char *api_key) {
         }
     }
 
-    /* Allocate from heap to avoid stack overflow and save memory when not in use */
-    char (*queued_paths)[320] = malloc(WIGLE_QUEUE_BATCH_MAX * 320);
-    char *line = malloc(320);
-    if (!queued_paths || !line) {
-        if (queued_paths) free(queued_paths);
-        if (line) free(line);
+    FILE *q_out = fopen(WIGLE_QUEUE_FILE ".tmp", "w");
+    if (!q_out) {
         fclose(q);
+        return ESP_FAIL;
+    }
+
+    char *line = malloc(320);
+    if (!line) {
+        fclose(q);
+        fclose(q_out);
         return ESP_ERR_NO_MEM;
     }
 
-    int queued_count = 0;
-    while (queued_count < WIGLE_QUEUE_BATCH_MAX && fgets(line, 320, q)) {
-        line[strcspn(line, "\r\n")] = '\0';
-        if (line[0]) {
-            strncpy(queued_paths[queued_count], line, sizeof(queued_paths[0]) - 1);
-            queued_paths[queued_count][sizeof(queued_paths[0]) - 1] = '\0';
-            queued_count++;
-        }
-    }
-    fclose(q);
-
-    if (queued_count == 0) {
-        free(queued_paths);
-        free(line);
-        glog("Wigle: files already uploaded, no new files to upload\n");
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    FILE *q_out = fopen(WIGLE_QUEUE_FILE, "w");
     int uploaded = 0, failed = 0, skipped = 0;
 
-    for (int i = 0; i < queued_count; i++) {
-        const char *basename = strrchr(queued_paths[i], '/');
-        if (!basename) basename = queued_paths[i];
+    while (fgets(line, 320, q)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!line[0]) continue;
+
+        const char *path = line;
+        const char *basename = strrchr(path, '/');
+        if (!basename) basename = path;
         else basename++;
 
         struct stat st;
-        if (stat(queued_paths[i], &st) != 0) {
-            /* File doesn't exist, remove from queue */
+        if (stat(path, &st) != 0) {
+            /* File doesn't exist, drop from queue */
             continue;
         }
 
@@ -427,43 +427,49 @@ static esp_err_t wigle_process_queue(const char *api_key) {
             continue;
         }
 
-        esp_err_t ret = wigle_upload_file(queued_paths[i], api_key);
+        esp_err_t ret = wigle_upload_file(path, api_key);
         if (ret == ESP_OK) {
             uploaded++;
             /* Successfully uploaded, don't add back to queue */
-        } else if (ret != ESP_ERR_NOT_SUPPORTED) {
+        } else if (ret == ESP_ERR_NOT_SUPPORTED) {
+            /* Invalid/empty Wigle CSV, drop from queue */
+            continue;
+        } else {
             failed++;
             /* Failed upload, keep in queue for retry */
-            if (q_out) fprintf(q_out, "%s\n", queued_paths[i]);
+            fprintf(q_out, "%s\n", path);
         }
-        /* ESP_ERR_NOT_SUPPORTED means skip (invalid format, no data, etc) - remove from queue */
     }
 
-    bool had_failures = (failed > 0);
-    if (q_out) fclose(q_out);
-    
-    /* Delete queue file if empty (all files uploaded successfully) */
-    if (!had_failures) {
-        remove(WIGLE_QUEUE_FILE);
-    }
-    
-    free(queued_paths);
     free(line);
-    
+    fclose(q);
+    fclose(q_out);
+
+    if (failed > 0) {
+        /* Keep only failures in the queue. */
+        remove(WIGLE_QUEUE_FILE);
+        if (rename(WIGLE_QUEUE_FILE ".tmp", WIGLE_QUEUE_FILE) != 0) {
+            /* If rename fails, leave tmp as-is for inspection. */
+        }
+    } else {
+        /* No failures: no queue needed. */
+        remove(WIGLE_QUEUE_FILE);
+        remove(WIGLE_QUEUE_FILE ".tmp");
+    }
+
     if (uploaded > 0 && failed == 0) {
         glog("Wigle: all files uploaded successfully (%d)\n", uploaded);
         return ESP_OK;
-    } else if (uploaded > 0) {
+    } else if (uploaded > 0 && failed > 0) {
         glog("Wigle: uploaded=%d failed=%d\n", uploaded, failed);
-        return (failed > 0) ? ESP_FAIL : ESP_OK;
+        return ESP_FAIL;
     } else if (failed > 0) {
         glog("Wigle: upload failed (%d files)\n", failed);
         return ESP_FAIL;
-    } else if (skipped > 0) {
+    } else {
         glog("Wigle: files already uploaded, no new files to upload\n");
         return ESP_ERR_NOT_FOUND;
     }
-    return ESP_OK;
 }
 
 esp_err_t wigle_upload_all(void) {
@@ -507,13 +513,8 @@ void wigle_uploaded_list(void) {
 
 static void wigle_upload_all_task(void *arg) {
     (void)arg;
-    esp_err_t ret = wigle_upload_all();
+    (void)wigle_upload_all();
     wigle_upload_in_progress = false;
-    /* Only log "upload complete" when at least one file was uploaded */
-    if (ret == ESP_OK) {
-        glog("Wigle: upload complete\n");
-    }
-    /* ESP_ERR_NOT_FOUND = nothing to do / all already uploaded (message already logged in process_queue) */
     vTaskDelete(NULL);
 }
 
