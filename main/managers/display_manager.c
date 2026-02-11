@@ -24,6 +24,7 @@
 #include "driver/ledc.h"
 #include <limits.h> // for UINT32_MAX
 #include "managers/ap_manager.h"
+#include "managers/wifi_manager.h"
 #include "core/serial_manager.h"
 #include "managers/wifi_manager.h"
 #include "managers/rgb_manager.h"
@@ -1138,10 +1139,12 @@ void apply_power_management_config(bool power_save_enabled) {
 #endif
 
   // control ap based on power save mode and AP enabled setting
-  if (power_save_enabled) {
-    ap_manager_stop_services();
-  } else if (settings_get_ap_enabled(&G_Settings)) {
-    ap_manager_start_services();
+  if (!wifi_manager_is_evil_portal_active()) {
+    if (power_save_enabled) {
+      ap_manager_stop_services();
+    } else if (settings_get_ap_enabled(&G_Settings)) {
+      ap_manager_start_services();
+    }
   }
 }
 
@@ -1627,13 +1630,15 @@ void set_backlight_brightness(uint8_t percentage) {
         if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
         if (clock_timer)           lv_timer_pause(clock_timer);
         {
-            wifi_config_t cfg;
-            if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
-                original_beacon_interval = cfg.ap.beacon_interval;
-                cfg.ap.beacon_interval = 1000;
-                esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+            if (!wifi_manager_is_evil_portal_active()) {
+                wifi_config_t cfg;
+                if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                    original_beacon_interval = cfg.ap.beacon_interval;
+                    cfg.ap.beacon_interval = 1000;
+                    esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+                }
+                esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
             }
-            esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
         }
         esp_light_sleep_start();
 
@@ -1654,11 +1659,13 @@ void set_backlight_brightness(uint8_t percentage) {
         if (terminal_update_timer) lv_timer_resume(terminal_update_timer);
         if (clock_timer)           lv_timer_resume(clock_timer);
         {
-            esp_wifi_set_ps(WIFI_PS_NONE);
-            wifi_config_t cfg;
-            if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
-                cfg.ap.beacon_interval = original_beacon_interval;
-                esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+            if (!wifi_manager_is_evil_portal_active()) {
+                esp_wifi_set_ps(WIFI_PS_NONE);
+                wifi_config_t cfg;
+                if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                    cfg.ap.beacon_interval = original_beacon_interval;
+                    esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+                }
             }
         }
     }
