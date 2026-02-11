@@ -349,7 +349,10 @@ static void show_running_popup_ex(const char *script_name, bool waiting_for_usb)
     } else {
         snprintf(body, sizeof(body), "Script: %s", script_name);
     }
-    badusb_popup_body_lbl = popup_create_body_label(badusb_running_popup, body, popup_w - 20, true, body_font, 40);
+    
+    // smaller screens need tighter spacing to avoid overlap with cancel button
+    int body_y_offset = (LV_VER_RES < 160) ? 32 : ((LV_VER_RES <= 200) ? 35 : 40);
+    badusb_popup_body_lbl = popup_create_body_label(badusb_running_popup, body, popup_w - 20, true, body_font, body_y_offset);
     if (badusb_popup_body_lbl) {
         lv_obj_set_style_text_align(badusb_popup_body_lbl, LV_TEXT_ALIGN_CENTER, 0);
     }
