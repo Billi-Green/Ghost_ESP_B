@@ -86,8 +86,12 @@ static void display_spi_resume_after_sd(void) {
   if (!s_display_spi_suspended_flag) {
     return;
   }
-  (void)lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
+  esp_err_t ret = lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
                              SPI_BUS_MAX_TRANSFER_SZ, 1, DISP_SPI_IO2, DISP_SPI_IO3);
+  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE("sd_card", "display_spi_resume: bus init failed: %s", esp_err_to_name(ret));
+    return;
+  }
   disp_spi_add_device(TFT_SPI_HOST);
   /* resume lvgl refresh */
   lv_disp_t *disp = lv_disp_get_default();
