@@ -405,6 +405,7 @@ static void portal_force_flush_to_sd(void) {
 #endif
     
     if (s_portal_keystroke_len == 0 && s_portal_creds_len == 0) {
+        return;
     }
     
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
