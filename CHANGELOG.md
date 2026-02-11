@@ -1,8 +1,5 @@
 # Ghost ESP Changelog
 
-## Changed since last prerelease
-- Fixed deauth reverse-direction frames using station MAC as BSSID instead of AP BSSID
-
 ## Revival v1.9.3
 
 ### Added
