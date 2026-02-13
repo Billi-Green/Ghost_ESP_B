@@ -17,6 +17,7 @@
 #include "managers/rgb_manager.h"
 #include "managers/status_display_manager.h"
 #include "managers/views/terminal_screen.h"
+#include "core/glog.h"
 #include "esp_wifi.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -222,18 +223,15 @@ esp_err_t deauth_attack_broadcast(uint8_t bssid[6], int channel, uint8_t mac[6])
 
 static void deauth_task(void *param) {
     if (ap_count == 0) {
-        printf("No access points found\n");
-        printf("Please run 'scan -w' first to find targets\n");
-        TERMINAL_VIEW_ADD_TEXT("No access points found\n");
-        TERMINAL_VIEW_ADD_TEXT("Please run 'scan -w' first to find targets\n");
+        glog("No access points found\n");
+        glog("Please run 'scan -w' first to find targets\n");
         vTaskDelete(NULL);
         return;
     }
 
     wifi_ap_record_t *ap_info = scanned_aps;
     if (ap_info == NULL) {
-        printf("Failed to allocate memory for AP info\n");
-        TERMINAL_VIEW_ADD_TEXT("Failed to allocate memory for AP info\n");
+        glog("Failed to allocate memory for AP info\n");
         vTaskDelete(NULL);
         return;
     }
@@ -302,8 +300,7 @@ static void deauth_task(void *param) {
         vTaskDelay(pdMS_TO_TICKS(50));
         uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         if (now - last_log >= 5000) {
-            TERMINAL_VIEW_ADD_TEXT("%" PRIu32 " packets/sec\n", deauth_packets_sent/5);
-            printf("%" PRIu32 " packets/sec\n", deauth_packets_sent/5); 
+            glog("%" PRIu32 " packets/sec\n", deauth_packets_sent/5);
             deauth_packets_sent = 0;
             last_log = now;
         }
@@ -333,17 +330,15 @@ void deauth_attack_start(void) {
         selected_ap_count_local = selected_ap_count;
         
         if (selected_ap_count_local > 0 && selected_aps_local != NULL) {
-            printf("Starting deauth attack on %d selected APs:\n", selected_ap_count_local);
-            TERMINAL_VIEW_ADD_TEXT("Starting deauth attack on %d selected APs:\n", selected_ap_count_local);
+            glog("Starting deauth attack on %d selected APs:\n", selected_ap_count_local);
             
             for (int i = 0; i < selected_ap_count_local; i++) {
                 char sanitized_ssid[33];
                 sanitize_ssid(selected_aps_local[i].ssid, sanitized_ssid, sizeof(sanitized_ssid));
-                printf("  [%d] %s (%02X:%02X:%02X:%02X:%02X:%02X)\n", 
-                       i, sanitized_ssid,
-                       selected_aps_local[i].bssid[0], selected_aps_local[i].bssid[1], selected_aps_local[i].bssid[2],
-                       selected_aps_local[i].bssid[3], selected_aps_local[i].bssid[4], selected_aps_local[i].bssid[5]);
-                TERMINAL_VIEW_ADD_TEXT("  [%d] %s\n", i, sanitized_ssid);
+                glog("  [%d] %s (%02X:%02X:%02X:%02X:%02X:%02X)\n", 
+                     i, sanitized_ssid,
+                     selected_aps_local[i].bssid[0], selected_aps_local[i].bssid[1], selected_aps_local[i].bssid[2],
+                     selected_aps_local[i].bssid[3], selected_aps_local[i].bssid[4], selected_aps_local[i].bssid[5]);
 #ifdef CONFIG_WITH_STATUS_DISPLAY
                 if (i == 0) {
                     status_display_show_attack("Deauth", sanitized_ssid);
@@ -353,14 +348,12 @@ void deauth_attack_start(void) {
         } else if (strlen((const char *)selected_ap_local.ssid) > 0) {
             char sanitized_ssid[33];
             sanitize_ssid(selected_ap_local.ssid, sanitized_ssid, sizeof(sanitized_ssid));
-            printf("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
-            TERMINAL_VIEW_ADD_TEXT("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
+            glog("Starting deauth attack on selected AP: %s\n", sanitized_ssid);
 #ifdef CONFIG_WITH_STATUS_DISPLAY
             status_display_show_attack("Deauth", sanitized_ssid);
 #endif
         } else {
-            printf("Starting global deauth attack on all APs\n");
-            TERMINAL_VIEW_ADD_TEXT("Starting global deauth attack on all APs\n");
+            glog("Starting global deauth attack on all APs\n");
 #ifdef CONFIG_WITH_STATUS_DISPLAY
             status_display_show_attack("Deauth", "all APs");
 #endif
@@ -370,8 +363,7 @@ void deauth_attack_start(void) {
         deauth_task_running = true;
         rgb_manager_set_color(&rgb_manager, -1, 255, 0, 0, false);
     } else {
-        printf("Deauth already running.\n");
-        TERMINAL_VIEW_ADD_TEXT("Deauth already running.\n");
+        glog("Deauth already running.\n");
     }
 }
 
@@ -406,16 +398,11 @@ void deauth_attack_start_station(void) {
     ap_manager_stop_services(); // stop AP and HTTP server
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP)); // switch to AP mode for deauth
     ESP_ERROR_CHECK(esp_wifi_start()); // restart Wi-Fi interface without HTTP server
-    printf("Deauthing station %02X:%02X:%02X:%02X:%02X:%02X from AP %02X:%02X:%02X:%02X:%02X:%02X, starting background task...\n",
-           selected_station_local.station_mac[0], selected_station_local.station_mac[1], selected_station_local.station_mac[2], 
-           selected_station_local.station_mac[3], selected_station_local.station_mac[4], selected_station_local.station_mac[5],
-           selected_station_local.ap_bssid[0], selected_station_local.ap_bssid[1], selected_station_local.ap_bssid[2], 
-           selected_station_local.ap_bssid[3], selected_station_local.ap_bssid[4], selected_station_local.ap_bssid[5]);
-    TERMINAL_VIEW_ADD_TEXT("Deauthing station %02X:%02X:%02X:%02X:%02X:%02X from AP %02X:%02X:%02X:%02X:%02X:%02X, starting background task...\n",
-           selected_station_local.station_mac[0], selected_station_local.station_mac[1], selected_station_local.station_mac[2], 
-           selected_station_local.station_mac[3], selected_station_local.station_mac[4], selected_station_local.station_mac[5],
-           selected_station_local.ap_bssid[0], selected_station_local.ap_bssid[1], selected_station_local.ap_bssid[2], 
-           selected_station_local.ap_bssid[3], selected_station_local.ap_bssid[4], selected_station_local.ap_bssid[5]);
+    glog("Deauthing station %02X:%02X:%02X:%02X:%02X:%02X from AP %02X:%02X:%02X:%02X:%02X:%02X, starting background task...\n",
+         selected_station_local.station_mac[0], selected_station_local.station_mac[1], selected_station_local.station_mac[2], 
+         selected_station_local.station_mac[3], selected_station_local.station_mac[4], selected_station_local.station_mac[5],
+         selected_station_local.ap_bssid[0], selected_station_local.ap_bssid[1], selected_station_local.ap_bssid[2], 
+         selected_station_local.ap_bssid[3], selected_station_local.ap_bssid[4], selected_station_local.ap_bssid[5]);
     xTaskCreate(deauth_station_task, "deauth_station", 4096, NULL, 5, &deauth_station_task_handle);
     station_selected_local = false;
 }
@@ -442,8 +429,7 @@ static void deauth_station_task(void *param) {
         vTaskDelay(pdMS_TO_TICKS(50));
         uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         if (now - last_log >= 5000) {
-            printf("%" PRIu32 " packets/sec\n", deauth_packets_sent / 5);
-            TERMINAL_VIEW_ADD_TEXT("%" PRIu32 " packets/sec\n", deauth_packets_sent / 5);
+            glog("%" PRIu32 " packets/sec\n", deauth_packets_sent / 5);
             deauth_packets_sent = 0;
             last_log = now;
         }
@@ -479,11 +465,9 @@ static void auto_deauth_task(void *Parameter) {
             }
 
             ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, scanned_aps));
-            printf("\nFound %d access points\n", ap_count);
-            TERMINAL_VIEW_ADD_TEXT("\nFound %d access points\n", ap_count);
+            glog("\nFound %d access points\n", ap_count);
         } else {
-            printf("\nNo access points found\n");
-            TERMINAL_VIEW_ADD_TEXT("\nNo access points found\n");
+            glog("\nNo access points found\n");
             vTaskDelay(pdMS_TO_TICKS(1000)); // Wait before retrying if no APs found
             continue;
         }

@@ -20,6 +20,7 @@
 #include "managers/status_display_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/views/terminal_screen.h"
+#include "core/glog.h"
 #include "esp_wifi.h"
 #include "esp_random.h"
 #include "freertos/task.h"
@@ -258,8 +259,7 @@ static void beacon_spam_list_task(void *param) {
 void beacon_spam_start(const char *ssid) {
     if (!beacon_task_running) {
         ap_manager_stop_services();
-        printf("Starting beacon transmission...\n");
-        TERMINAL_VIEW_ADD_TEXT("Starting beacon transmission...\n");
+        glog("Starting beacon transmission...\n");
         status_display_show_status("Beacon Starting");
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP)); // Set AP mode for 802.11 TX
         configure_hidden_ap();
@@ -268,8 +268,7 @@ void beacon_spam_start(const char *ssid) {
         xTaskCreate(beacon_spam_task, "beacon_task", 2048, (void *)ssid, 5, &beacon_task_handle);
         rgb_manager_set_color(&rgb_manager, 0, 255, 0, 0, false);
     } else {
-        printf("Beacon transmission already running.\n");
-        TERMINAL_VIEW_ADD_TEXT("Beacon transmission already running.\n");
+        glog("Beacon transmission already running.\n");
         status_display_show_status("Beacon Active");
     }
 }
@@ -277,8 +276,7 @@ void beacon_spam_start(const char *ssid) {
 // Stop beacon spam
 void beacon_spam_stop(void) {
     if (beacon_task_running) {
-        printf("Stopping beacon transmission...\n");
-        TERMINAL_VIEW_ADD_TEXT("Stopping beacon transmission...\n");
+        glog("Stopping beacon transmission...\n");
 
         // Signal the task to stop
         beacon_task_running = false;
@@ -305,8 +303,7 @@ void beacon_spam_stop(void) {
         ap_manager_init();
         status_display_show_status("Beacon Stopped");
     } else {
-        printf("No beacon transmission running.\n");
-        TERMINAL_VIEW_ADD_TEXT("No beacon transmission running.\n");
+        glog("No beacon transmission running.\n");
         status_display_show_status("No Beacon Active");
     }
 }
@@ -320,8 +317,7 @@ void beacon_spam_start_list(void) {
     // Ensure any existing beacon spam is stopped
     beacon_spam_stop();
     // Notify user that list-based beacon spam is starting
-    printf("Starting beacon spam list (%d SSIDs)...\n", g_beacon_list_count);
-    TERMINAL_VIEW_ADD_TEXT("Starting beacon spam list (%d SSIDs)...\n", g_beacon_list_count);
+    glog("Starting beacon spam list (%d SSIDs)...\n", g_beacon_list_count);
     
     ap_manager_stop_services();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));

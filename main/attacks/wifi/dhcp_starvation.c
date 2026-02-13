@@ -97,7 +97,7 @@ static void dhcp_starve_display_task(void *param) {
         uint32_t interval = total - prev_total;
         prev_total = total;
         uint32_t pps = interval / 5;
-        glog("%lu packets/sec\n", (unsigned long)pps);
+        glog("DHCP-Starve: %lu/sec | Total: %lu\n", (unsigned long)pps, (unsigned long)total);
     }
     dhcp_starve_display_task_handle = NULL;
     vTaskDelete(NULL);
@@ -137,7 +137,7 @@ void dhcp_starvation_stop(void) {
     if (!dhcp_starve_running) {
         return;
     }
-    glog("Stopping DHCP starvation...\n");
+    glog("DHCP-Starve stopped. Total: %lu packets\n", (unsigned long)dhcp_starve_packets_sent);
     dhcp_starve_running = false;
     
     // Wait for tasks to delete themselves (max 2 seconds)
@@ -153,7 +153,7 @@ void dhcp_starvation_stop(void) {
 }
 
 void dhcp_starvation_display(void) {
-    glog("Packets sent: %lu\n", (unsigned long)dhcp_starve_packets_sent);
+    glog("DHCP-Starve: Total: %lu packets\n", (unsigned long)dhcp_starve_packets_sent);
 }
 
 void dhcp_starvation_help(void) {
