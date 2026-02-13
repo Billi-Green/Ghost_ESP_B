@@ -91,7 +91,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
 #include "managers/aerial_detector_manager.h"
-
+#include "attacks/wifi/dhcp_starvation.h"
 static const char *TAG = "Commandline";
 
 #if !defined(MAX_WIFI_CHANNEL)
@@ -800,11 +800,12 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_deauth();
-    wifi_manager_stop_dhcpstarve();
+    dhcp_starvation_stop();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
     wifi_manager_stop_evil_portal();  // stop evil portal and flush credentials
     wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
+    wifi_manager_stop_beacon();  // stop beacon spam
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
     zigbee_manager_stop_capture();
@@ -6020,20 +6021,20 @@ void handle_beaconspamlist(int argc, char **argv) {
 
 void handle_dhcpstarve_cmd(int argc, char **argv) {
     if (argc < 2) {
-        wifi_manager_dhcpstarve_help();
+        dhcp_starvation_help();
         status_display_show_status("DHCP Usage");
     } else if (strcmp(argv[1], "start") == 0) {
         int thr = (argc >= 3) ? atoi(argv[2]) : 1;
-        wifi_manager_start_dhcpstarve(thr);
+        dhcp_starvation_start(thr);
         status_display_show_status("DHCP Start");
     } else if (strcmp(argv[1], "stop") == 0) {
-        wifi_manager_stop_dhcpstarve();
+        dhcp_starvation_stop();
         status_display_show_status("DHCP Stop");
     } else if (strcmp(argv[1], "display") == 0) {
-        wifi_manager_dhcpstarve_display();
+        dhcp_starvation_display();
         status_display_show_status("DHCP Stats");
     } else {
-        wifi_manager_dhcpstarve_help();
+        dhcp_starvation_help();
         status_display_show_status("DHCP Usage");
     }
 }

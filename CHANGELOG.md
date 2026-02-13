@@ -6,6 +6,8 @@
 
 - Use country-appropriate channel list in main deauth task
 - Fixed station deauth channel lookup
+- Moved multiple attacks to separate files for maintainability
+- Miscellaneous fixes, improvements and refactors to attacks
 
 ## Revival v1.9.3
 

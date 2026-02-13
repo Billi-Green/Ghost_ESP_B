@@ -24,9 +24,15 @@ extern wifi_ap_record_t *scanned_aps;
 extern wifi_ap_record_t selected_ap;
 extern wifi_ap_record_t *selected_aps;
 extern int selected_ap_count;
-extern void *beacon_task_handle;
-extern void *deauth_task_handle;
-extern int beacon_task_running;
+extern uint16_t ap_count;
+extern volatile bool ap_sta_has_ip;
+
+// Channel list for deauth and wireshark (country-appropriate)
+extern uint8_t wireshark_channels[50];
+extern size_t wireshark_channels_count;
+
+// Build country-appropriate channel list
+void wifi_manager_build_wireshark_channels(void);
 
 // WiFi event group bits
 #define WIFI_CONNECTED_BIT BIT0
@@ -193,9 +199,6 @@ void wifi_manager_start_deauth();
 
 void wifi_manager_stop_deauth();
 
-esp_err_t wifi_manager_broadcast_deauth(uint8_t bssid[6], int channel,
-                                        uint8_t mac[6]);
-
 void wifi_stations_sniffer_callback(void *buf,
                                     wifi_promiscuous_pkt_type_t type);
 
@@ -256,12 +259,6 @@ void wifi_manager_show_beacon_list(void);
 void wifi_manager_start_beacon_list(void);
 
 void wifi_manager_start_live_ap_scan(void);
-
-// Add DHCP starvation attack functions
-void wifi_manager_start_dhcpstarve(int threads);
-void wifi_manager_stop_dhcpstarve(void);
-void wifi_manager_dhcpstarve_display(void);
-void wifi_manager_dhcpstarve_help(void);
 
 void wifi_manager_start_eapollogoff_attack(void);
 void wifi_manager_stop_eapollogoff_attack(void);
