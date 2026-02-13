@@ -1,5 +1,12 @@
 # Ghost ESP Changelog
 
+
+
+## Revival v1.9.4
+
+- Use country-appropriate channel list in main deauth task
+- Fixed station deauth channel lookup
+
 ## Revival v1.9.3
 
 ### Added

