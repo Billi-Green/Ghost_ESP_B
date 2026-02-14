@@ -15,6 +15,7 @@
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "scans/wifi/port_scan.h"
 #include "managers/sd_card_manager.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
@@ -3592,7 +3593,7 @@ void handle_scan_ports(int argc, char **argv) {
             status_display_show_status("Ports Local");
         }
         glog("Starting local subnet scan...\n");
-        wifi_manager_scan_subnet();
+        port_scan_subnet_async();  // Use async version to keep CLI responsive
         status_display_show_status("Ports Local");
         return;
     }

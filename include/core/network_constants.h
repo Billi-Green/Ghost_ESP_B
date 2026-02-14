@@ -30,6 +30,23 @@ const char* get_tcp_port_service(uint16_t port);
 // Get the service name for a UDP port (returns NULL if unknown)
 const char* get_udp_port_service(uint16_t port);
 
+// Get a user-friendly service description for a port (for port scan analysis)
+// Returns NULL if no description is available
+const char* get_port_service_description(uint16_t port);
+
+// ============================================================================
+// PORT CATEGORY DETECTION (for device type analysis)
+// ============================================================================
+
+// Check if a port is commonly used for web services
+bool is_web_port(uint16_t port);
+
+// Check if a port is commonly used for database services
+bool is_database_port(uint16_t port);
+
+// Check if a port is commonly used for file sharing services
+bool is_file_sharing_port(uint16_t port);
+
 // ============================================================================
 // WIFI CHANNEL DEFINITIONS
 // ============================================================================

@@ -346,3 +346,71 @@ bool is_dji_oui(const uint8_t *mac) {
 
 // NAN (Neighbor Aware Networking) destination MAC for OpenDroneID WiFi
 const uint8_t NAN_DEST_MAC[6] = {0x51, 0x6F, 0x9A, 0x01, 0x00, 0x00};
+
+// ============================================================================
+// SERVICE DESCRIPTION LOOKUP (for port scan analysis)
+// ============================================================================
+
+// Service description table with user-friendly names
+typedef struct {
+    uint16_t port;
+    const char *description;
+} port_description_t;
+
+static const port_description_t service_descriptions[] = {
+    {20, "FTP Server (data)"},
+    {21, "FTP Server"},
+    {22, "SSH Server"},
+    {23, "Telnet Server"},
+    {80, "Web Server"},
+    {139, "Windows File Share/Domain Controller"},
+    {443, "Web Server (HTTPS)"},
+    {445, "Windows File Share/Domain Controller"},
+    {1521, "Oracle Database"},
+    {1883, "IoT Device (MQTT)"},
+    {2222, "SSH Server"},
+    {2082, "Web Hosting Control Panel"},
+    {2083, "Web Hosting Control Panel"},
+    {2086, "Web Hosting Control Panel"},
+    {2087, "Web Hosting Control Panel"},
+    {3306, "MySQL Database"},
+    {3389, "Windows Remote Desktop"},
+    {5432, "PostgreSQL Database"},
+    {5900, "VNC Remote Access"},
+    {5901, "VNC Remote Access"},
+    {5902, "VNC Remote Access"},
+    {6379, "Redis Server"},
+    {8080, "Web Server"},
+    {8443, "Web Server"},
+    {8883, "IoT Device (MQTT)"},
+    {9100, "Network Printer"},
+    {27017, "MongoDB Database"},
+    {32400, "Plex Media Server"}
+};
+
+static const size_t NUM_SERVICE_DESCRIPTIONS = sizeof(service_descriptions) / sizeof(service_descriptions[0]);
+
+const char* get_port_service_description(uint16_t port) {
+    for (size_t i = 0; i < NUM_SERVICE_DESCRIPTIONS; i++) {
+        if (service_descriptions[i].port == port) {
+            return service_descriptions[i].description;
+        }
+    }
+    return NULL;
+}
+
+// ============================================================================
+// PORT CATEGORY DETECTION (for device type analysis)
+// ============================================================================
+
+bool is_web_port(uint16_t port) {
+    return port == 80 || port == 443 || port == 8080 || port == 8443;
+}
+
+bool is_database_port(uint16_t port) {
+    return port == 3306 || port == 5432 || port == 1521 || port == 27017;
+}
+
+bool is_file_sharing_port(uint16_t port) {
+    return port == 445 || port == 139;
+}
