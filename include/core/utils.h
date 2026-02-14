@@ -133,6 +133,30 @@ uint32_t read_u32_le(const uint8_t *data);
  */
 void parse_ble_device_name(const uint8_t *data, size_t len, char *name_buf, size_t name_buf_len);
 
+/**
+ * @brief Format a byte array as a hex string
+ * 
+ * @param data Byte array to format
+ * @param len Length of byte array
+ * @param buf Output buffer for hex string
+ * @param buf_size Size of output buffer
+ * @param sep Separator character between bytes (e.g., ' ' or ':')
+ * @return size_t Number of characters written (excluding null terminator)
+ */
+size_t format_hex_bytes(const uint8_t *data, size_t len, char *buf, size_t buf_size, char sep);
+
+// ============================================================================
+// Signal Strength Utilities
+// ============================================================================
+
+/**
+ * @brief Get proximity description from RSSI value
+ * 
+ * @param rssi RSSI value in dBm
+ * @return const char* Proximity description string
+ */
+const char *rssi_to_proximity(int8_t rssi);
+
 // ============================================================================
 // Macros
 // ============================================================================

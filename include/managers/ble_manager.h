@@ -41,6 +41,7 @@ void stop_ble_stack(void);
 // BLE status accessors
 bool ble_is_initialized(void);
 bool ble_is_stack_ready(void);
+bool ble_wait_for_ready(void);
 
 // BLE gap event handler (for use by scan modules)
 int ble_gap_event_general(struct ble_gap_event *event, void *arg);

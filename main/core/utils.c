@@ -309,3 +309,36 @@ void parse_ble_device_name(const uint8_t *data, size_t len, char *name_buf, size
     index += field_len + 1;
   }
 }
+
+// ============================================================================
+// Hex Formatting Utilities
+// ============================================================================
+
+size_t format_hex_bytes(const uint8_t *data, size_t len, char *buf, size_t buf_size, char sep) {
+  if (buf == NULL || buf_size == 0) {
+    return 0;
+  }
+
+  size_t written = 0;
+  for (size_t i = 0; i < len && written + 4 < buf_size; i++) {
+    if (i > 0 && sep != '\0') {
+      written += snprintf(buf + written, buf_size - written, "%c", sep);
+    }
+    written += snprintf(buf + written, buf_size - written, "%02X", data[i]);
+  }
+  return written;
+}
+
+// ============================================================================
+// Signal Strength Utilities
+// ============================================================================
+
+const char *rssi_to_proximity(int8_t rssi) {
+  if (rssi >= -40) return "Immediate";
+  if (rssi >= -50) return "Very Close";
+  if (rssi >= -60) return "Close";
+  if (rssi >= -70) return "Moderate";
+  if (rssi >= -80) return "Far";
+  if (rssi >= -90) return "Very Far";
+  return "Out of Range";
+}

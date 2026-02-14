@@ -16,7 +16,6 @@
 #include "managers/ble_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/status_display_manager.h"
-#include "managers/views/terminal_screen.h"
 #include "esp_log.h"
 #include "host/ble_gap.h"
 #include "host/ble_hs.h"
@@ -102,22 +101,6 @@ static bool is_flipper_uuid(uint16_t value) {
     return value == FLIPPER_UUID_WHITE ||
            value == FLIPPER_UUID_BLACK ||
            value == FLIPPER_UUID_TRANSPARENT;
-}
-
-/**
- * @brief Get proximity description from RSSI value
- * 
- * @param rssi RSSI value in dBm
- * @return const char* Proximity description string
- */
-static const char *rssi_to_proximity(int8_t rssi) {
-    if (rssi >= -40) return "Immediate";
-    if (rssi >= -50) return "Very Close";
-    if (rssi >= -60) return "Close";
-    if (rssi >= -70) return "Moderate";
-    if (rssi >= -80) return "Far";
-    if (rssi >= -90) return "Very Far";
-    return "Out of Range";
 }
 
 /**
@@ -315,8 +298,11 @@ static void ble_findtheflippers_callback(struct ble_gap_event *event, size_t len
         discovered_flippers[discovered_flipper_count].name[sizeof(discovered_flippers[0].name) - 1] = '\0';
         discovered_flippers[discovered_flipper_count].rssi = advertisementRssi;
         
-        glog("Found %s Flipper (Index: %d): MAC %s, Name %s, RSSI %d\n",
-             type_str, discovered_flipper_count,
+        glog("[%d] %s Flipper Found:\n"
+             "     MAC: %s,\n"
+             "     Name: %s,\n"
+             "     RSSI: %d dBm\n",
+             discovered_flipper_count, type_str,
              advertisementMac, advertisementName, advertisementRssi);
         pulse_once(&rgb_manager, 0, 255, 0);
         discovered_flipper_count++;
@@ -381,14 +367,17 @@ void flipper_scan_print_results(void) {
         char mac[18];
         format_mac_address(discovered_flippers[i].addr.val, mac, sizeof(mac), false);
 
-        glog("Index: %d | MAC: %s | RSSI: %d dBm%s\n",
-             i, mac, discovered_flippers[i].rssi,
+        glog("[%d] MAC: %s,\n"
+             "     Name: %s,\n"
+             "     RSSI: %d dBm%s\n",
+             i, mac, discovered_flippers[i].name, discovered_flippers[i].rssi,
              (i == selected_flipper_index) ? " (Selected)" : "");
         if (saving) {
             scan_file_printf(&sf, "[%d] MAC: %s, Name: %s, RSSI: %d dBm\n",
                              i, mac, discovered_flippers[i].name, discovered_flippers[i].rssi);
         }
     }
+    glog("-------------------------------\n");
     if (saving) scan_file_close(&sf);
 }
 
@@ -420,7 +409,7 @@ void flipper_scan_select(int index) {
     char mac[18];
     format_mac_address(discovered_flippers[index].addr.val, mac, sizeof(mac), false);
 
-    glog("Selected Flipper at index %d: MAC %s\n", index, mac);
+    glog("Selected Flipper [%d]: MAC %s\n", index, mac);
     flipper_scan_start_tracking();
     glog("Started tracking Flipper %d...\n", index);
 }
