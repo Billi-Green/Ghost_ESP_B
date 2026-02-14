@@ -74,18 +74,8 @@ void ble_stop_gatt_scan(void);
 int ble_get_gatt_device_count(void);
 int ble_get_gatt_device_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len);
 
-// spam advertisement types
-typedef enum {
-    BLE_SPAM_MICROSOFT,
-    BLE_SPAM_APPLE,
-    BLE_SPAM_SAMSUNG,
-    BLE_SPAM_GOOGLE,
-    BLE_SPAM_FLIPPERZERO,
-    BLE_SPAM_RANDOM
-} ble_spam_type_t;
-
-void ble_start_ble_spam(ble_spam_type_t type);
-void ble_stop_ble_spam(void);
+// BLE spam functions - defined in attacks/ble/ble_spam.h
+// Include attacks/ble/ble_spam.h for ble_spam_type_t and ble_spam_* functions
 
 #endif
 #endif // BLE_MANAGER_H

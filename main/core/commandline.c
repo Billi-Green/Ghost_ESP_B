@@ -10,6 +10,7 @@
 #include "vendor/drivers/pcf8563.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
+#include "attacks/ble/ble_spam.h"
 #include "scans/ble/flipper_scan.h"
 #endif
 #include "managers/dial_manager.h"
@@ -760,7 +761,7 @@ void handle_stop_flipper(int argc, char **argv) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
     ble_stop_gatt_scan();
-    ble_stop_ble_spam();
+    ble_spam_stop();
 #endif
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
@@ -8215,37 +8216,37 @@ void register_commands() {
 void handle_ble_spam_cmd(int argc, char **argv) {
     if (argc > 1) {
         if (strcmp(argv[1], "-apple") == 0) {
-            glog("starting apple ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_APPLE);
+            glog("Starting Apple BLE spam...\n");
+            ble_spam_start(BLE_SPAM_APPLE);
             return;
         }
         if (strcmp(argv[1], "-ms") == 0 || strcmp(argv[1], "-microsoft") == 0) {
-            glog("starting microsoft ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_MICROSOFT);
+            glog("Starting Microsoft BLE spam...\n");
+            ble_spam_start(BLE_SPAM_MICROSOFT);
             return;
         }
         if (strcmp(argv[1], "-samsung") == 0) {
-            glog("starting samsung ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_SAMSUNG);
+            glog("Starting Samsung BLE spam...\n");
+            ble_spam_start(BLE_SPAM_SAMSUNG);
             return;
         }
         if (strcmp(argv[1], "-google") == 0) {
-            glog("starting google ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_GOOGLE);
+            glog("Starting Google BLE spam...\n");
+            ble_spam_start(BLE_SPAM_GOOGLE);
             return;
         }
         if (strcmp(argv[1], "-random") == 0) {
-            glog("starting random ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_RANDOM);
+            glog("Starting Random BLE spam...\n");
+            ble_spam_start(BLE_SPAM_RANDOM);
             return;
         }
         if (strcmp(argv[1], "-s") == 0) {
-            glog("stopping ble spam...\n");
-            ble_stop_ble_spam();
+            glog("Stopping BLE spam...\n");
+            ble_spam_stop();
             return;
         }
     }
-    glog("usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+    glog("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
 }
 #endif
 
