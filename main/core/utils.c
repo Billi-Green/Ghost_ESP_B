@@ -3,10 +3,13 @@
 #include "freertos/task.h"
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_wifi.h>
+#include <esp_netif.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/dirent.h>
+#include <stdio.h>
 
 #define TAG "Utils"
 
@@ -211,5 +214,45 @@ bool str_copy_upper(char *dst, size_t dst_size, const char *src) {
     dst[i] = (char)toupper((unsigned char)src[i]);
   }
   dst[src_len] = '\0';
+  return true;
+}
+
+// ============================================================================
+// Network/MAC Utilities
+// ============================================================================
+
+void build_ip_string(char *buffer, size_t size, const char *prefix, int host) {
+  if (buffer == NULL || prefix == NULL || size == 0) {
+    return;
+  }
+  snprintf(buffer, size, "%s%d", prefix, host);
+}
+
+// ============================================================================
+// WiFi Network Utilities
+// ============================================================================
+
+esp_netif_t *get_wifi_sta_netif(void) {
+  return esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+}
+
+bool is_wifi_sta_connected(void) {
+  wifi_ap_record_t ap_info;
+  return (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK);
+}
+
+bool get_own_ip_and_mac(esp_netif_t *netif, esp_netif_ip_info_t *ip_info, uint8_t *mac) {
+  if (netif == NULL || ip_info == NULL || mac == NULL) {
+    return false;
+  }
+  
+  if (esp_netif_get_ip_info(netif, ip_info) != ESP_OK) {
+    return false;
+  }
+  
+  if (esp_netif_get_mac(netif, mac) != ESP_OK) {
+    return false;
+  }
+  
   return true;
 }
