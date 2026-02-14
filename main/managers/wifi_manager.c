@@ -61,11 +61,8 @@
 #include "attacks/wifi/eapol_logoff.h"
 #include "attacks/wifi/sae_flood.h"
 #include "scans/wifi/ap_scan.h"
+#include "scans/wifi/station_scan.h"
 #include "scans/wifi/wifi_channels.h"
-
-// Defines for Station Scan Channel Hopping
-#define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
-#define SCANSTA_MAX_WIFI_CHANNEL 13         // Scan channels 1-13
 
 // Defines for Wireshark channel validation
 #if !defined(MAX_WIFI_CHANNEL)
@@ -115,8 +112,7 @@ static size_t live_ap_channel_index = 0;
 
 const char *TAG = "WiFiManager";
 
-station_ap_pair_t station_ap_list[MAX_STATIONS];
-int station_count = 0;
+// Station scan variables moved to station_scan.c module
 bool manual_disconnect = false;
 static bool boot_connection_attempted = false;
 
@@ -132,8 +128,7 @@ EventGroupHandle_t wifi_event_group;
 wifi_ap_record_t selected_ap;
 wifi_ap_record_t *selected_aps = NULL;
 int selected_ap_count = 0;
-station_ap_pair_t selected_station;
-bool station_selected = false;
+// selected_station and station_selected moved to station_scan.c module
 bool redirect_handled = false;
 httpd_handle_t evilportal_server = NULL;
 dns_server_handle_t dns_handle;
@@ -386,10 +381,7 @@ static inline void stream_buf_unlock(void) {
     }
 }
 
-// Station Scan Channel Hopping Globals
-static esp_timer_handle_t scansta_channel_hop_timer = NULL;
-static uint8_t scansta_current_channel = 1;
-static bool scansta_hopping_active = false;
+// Station scan channel hopping moved to station_scan.c module
 
 // Wireshark Capture Channel Hopping Globals
 static esp_timer_handle_t wireshark_channel_hop_timer = NULL;
@@ -398,15 +390,6 @@ static bool wireshark_hopping_active = false;
 #define WIRESHARK_CHANNEL_HOP_INTERVAL_MS 150
 uint8_t wireshark_channels[50];
 size_t wireshark_channels_count = 0;
-
-// Dynamic list of channels discovered during AP scan (used for station scanning)
-static int *scansta_channel_list = NULL;
-static size_t scansta_channel_list_len = 0;
-static size_t scansta_channel_list_idx = 0;
-
-// Forward declarations for static channel hopping functions
-static esp_err_t start_scansta_channel_hopping(void);
-static void stop_scansta_channel_hopping(void);
 
 // Helper function forward declaration
 static void sanitize_ssid_and_check_hidden(const uint8_t* input_ssid, char* output_buffer, size_t buffer_size);
@@ -561,185 +544,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
 }
 // Removed old wifi_retry_timer_callback - using unified retry system
 
-static bool station_exists(const uint8_t *station_mac, const uint8_t *ap_bssid) {
-    for (int i = 0; i < station_count; i++) {
-        if (memcmp(station_ap_list[i].station_mac, station_mac, 6) == 0 &&
-            memcmp(station_ap_list[i].ap_bssid, ap_bssid, 6) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static void add_station_ap_pair(const uint8_t *station_mac, const uint8_t *ap_bssid) {
-    if (station_count < MAX_STATIONS) {
-        // Copy MAC addresses to the list
-        memcpy(station_ap_list[station_count].station_mac, station_mac, 6);
-        memcpy(station_ap_list[station_count].ap_bssid, ap_bssid, 6);
-        station_count++;
-
-        // Print formatted MAC addresses
-
-    } else {
-        glog("Station list full\nCan't add more stations.\n");
-    }
-}
-
-// helper macro to check for broadcast/multicast addresses
-#define IS_BROADCAST_OR_MULTICAST(addr) (((addr)[0] & 0x01) || (memcmp((addr), "\xff\xff\xff\xff\xff\xff", 6) == 0))
-
-// Function to check if a station MAC already exists in the list
-static bool station_mac_exists(const uint8_t *station_mac) {
-    for (int i = 0; i < station_count; i++) {
-        if (memcmp(station_ap_list[i].station_mac, station_mac, 6) == 0) {
-            return true; // Station MAC found
-        }
-    }
-    return false; // Station MAC not found
-}
-
-// Helper function to reverse MAC address byte order for comparison
-static void reverse_mac(const uint8_t *src, uint8_t *dst) {
-    for (int i = 0; i < 6; i++) {
-        dst[i] = src[5 - i];
-    }
-}
-
-void wifi_stations_sniffer_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
-    // Focus on Management frames like the example, can be changed back to WIFI_PKT_DATA if needed
-    if (type != WIFI_PKT_MGMT) {
-        // printf("DEBUG: Dropped non-MGMT packet\n"); 
-        return;
-    }
-
-    // Check if we have scanned APs to compare against
-    if (scanned_aps == NULL || ap_count == 0) {
-        // This case should be handled by wifi_manager_start_station_scan now
-        printf("ERROR: No scanned APs in callback!\n");
-        return;
-    }
-
-    const wifi_promiscuous_pkt_t *packet = (wifi_promiscuous_pkt_t *)buf;
-    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)packet->payload;
-    const wifi_ieee80211_hdr_t *hdr = &ipkt->hdr;
-
-    // --- DEBUG: Print raw addresses from MGMT frame ---
-    // printf("DEBUG MGMT Frame: Addr1=%02X:%02X:%02X:%02X:%02X:%02X, Addr2=%02X:%02X:%02X:%02X:%02X:%02X, Addr3=%02X:%02X:%02X:%02X:%02X:%02X\n",
-    //        hdr->addr1[0], hdr->addr1[1], hdr->addr1[2], hdr->addr1[3], hdr->addr1[4], hdr->addr1[5],
-    //        hdr->addr2[0], hdr->addr2[1], hdr->addr2[2], hdr->addr2[3], hdr->addr2[4], hdr->addr2[5],
-    //        hdr->addr3[0], hdr->addr3[1], hdr->addr3[2], hdr->addr3[3], hdr->addr3[4], hdr->addr3[5]);
-
-    // --- DEBUG: Print first known AP BSSID ---
-    // if (ap_count > 0 && scanned_aps != NULL) {
-    //      printf("DEBUG Known AP[0]: BSSID=%02X:%02X:%02X:%02X:%02X:%02X\n",
-    //             scanned_aps[0].bssid[0], scanned_aps[0].bssid[1],
-    //             scanned_aps[0].bssid[2], scanned_aps[0].bssid[3],
-    //             scanned_aps[0].bssid[4], scanned_aps[0].bssid[5]);
-    // }
-    // ----------------------------------------
-
-    const uint8_t *station_mac = NULL;
-    const uint8_t *ap_bssid = NULL;
-    int matched_ap_index = -1;
-
-    // Iterate through known APs (from last scan)
-    for (int i = 0; i < ap_count; i++) {
-        uint8_t *bssid = scanned_aps[i].bssid;
-        // Case 1: addr1 == AP BSSID, station likely in addr2
-        if (memcmp(hdr->addr1, bssid, 6) == 0 && memcmp(hdr->addr2, bssid, 6) != 0) {
-            ap_bssid = bssid;
-            station_mac = hdr->addr2;
-            matched_ap_index = i;
-            break;
-        }
-        // Case 2: addr2 == AP BSSID, station likely in addr1
-        if (memcmp(hdr->addr2, bssid, 6) == 0 && memcmp(hdr->addr1, bssid, 6) != 0) {
-            ap_bssid = bssid;
-            station_mac = hdr->addr1;
-            matched_ap_index = i;
-            break;
-        }
-        // Case 3: addr3 == AP BSSID, station could be in addr1 or addr2
-        if (memcmp(hdr->addr3, bssid, 6) == 0) {
-            // prefer addr2 (source fields)
-            if (memcmp(hdr->addr2, bssid, 6) != 0 && !IS_BROADCAST_OR_MULTICAST(hdr->addr2)) {
-                ap_bssid = bssid;
-                station_mac = hdr->addr2;
-                matched_ap_index = i;
-                break;
-            }
-            if (memcmp(hdr->addr1, bssid, 6) != 0 && !IS_BROADCAST_OR_MULTICAST(hdr->addr1)) {
-                ap_bssid = bssid;
-                station_mac = hdr->addr1;
-                matched_ap_index = i;
-                break;
-            }
-        }
-    }
-    // If no known AP BSSID found, ignore
-    if (matched_ap_index == -1) {
-       // printf("DEBUG: Dropped packet - No known AP BSSID found in addresses.\n");
-        return;
-    }
-
-    // Ensure we are capturing a station, not an AP or broadcast
-    if (memcmp(station_mac, ap_bssid, 6) == 0 || IS_BROADCAST_OR_MULTICAST(station_mac)) {
-       // printf("DEBUG: Dropped packet - Station MAC is broadcast/multicast or same as AP.\n");
-        return;
-    }
-
-    // Ignore broadcast MAC address for the station
-   // if (IS_BROADCAST_OR_MULTICAST(station_mac)) {
-   //     printf("DEBUG: Dropped packet - Station MAC is broadcast/multicast.\n"); // Uncomment for verbose debug
-   //     return;
-   // }
-
-    // Check if this station MAC has already been seen/logged
-    if (!station_mac_exists(station_mac)) {
-         // Get the SSID of the matched AP
-        char ssid_str[33];
-        memcpy(ssid_str, scanned_aps[matched_ap_index].ssid, 32);
-        ssid_str[32] = '\0';
-        if (strlen(ssid_str) == 0) {
-             strcpy(ssid_str, "(Hidden)");
-        }
-
-        char station_mac_str[18];
-        snprintf(station_mac_str, sizeof(station_mac_str),
-                 "%02X:%02X:%02X:%02X:%02X:%02X",
-                 station_mac[0], station_mac[1], station_mac[2],
-                 station_mac[3], station_mac[4], station_mac[5]);
-
-        char ap_mac_str[18];
-        snprintf(ap_mac_str, sizeof(ap_mac_str),
-                 "%02X:%02X:%02X:%02X:%02X:%02X",
-                 ap_bssid[0], ap_bssid[1], ap_bssid[2],
-                 ap_bssid[3], ap_bssid[4], ap_bssid[5]);
-
-        char station_vendor[64] = "Unknown";
-        (void)ouis_lookup_vendor(station_mac_str, station_vendor, sizeof(station_vendor));
-
-        char ap_vendor[64] = "Unknown";
-        (void)ouis_lookup_vendor(ap_mac_str, ap_vendor, sizeof(ap_vendor));
-
-        glog("New Station:\n"
-             "     STA: %s\n"
-             "     STA Vendor: %s\n"
-             "     Associated AP: %s\n"
-             "     AP BSSID: %s\n"
-             "     AP Vendor: %s\n",
-             station_mac_str,
-             station_vendor,
-             ssid_str,
-             ap_mac_str,
-             ap_vendor);
-
-        // Add the station and the *specific AP BSSID* it was seen with to the list
-        add_station_ap_pair(station_mac, ap_bssid);
-    } else {
-       // printf("DEBUG: Filtered packet - Station MAC already seen.\n");
-    }
-}
+// Station scan helper functions moved to station_scan.c module
 
 esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *content_type) {
     httpd_resp_set_hdr(req, "Connection", "close");
@@ -1655,8 +1460,8 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     // for EAPOL, stop ALL hopping and lock to selected AP channel
     if (callback == wifi_eapol_scan_callback) {
         // Stop any existing channel hopping first
-        if (scansta_hopping_active) {
-            stop_scansta_channel_hopping();
+        if (station_scan_is_active()) {
+            station_scan_stop();
         }
         if (live_ap_hopping_active) {
             stop_live_ap_channel_hopping();
@@ -1756,8 +1561,8 @@ void wifi_manager_stop_monitor_mode() {
     status_display_show_status("Monitor Stopped");
 
     // Stop ALL channel hopping timers
-    if (scansta_hopping_active) {
-        stop_scansta_channel_hopping();
+    if (station_scan_is_active()) {
+        station_scan_stop();
     }
     if (live_ap_hopping_active) {
         stop_live_ap_channel_hopping();
@@ -2006,73 +1811,9 @@ void wifi_manager_stop_scan() {
     }
 }
 
+// List stations - delegated to station_scan module
 void wifi_manager_list_stations() {
-    if (station_count == 0) {
-        printf("No stations found.\n");
-        return;
-    }
-
-    scan_file_t sf = SCAN_FILE_INIT;
-    bool saving = (scan_file_open(&sf, "station_scan", "txt") == ESP_OK);
-
-    printf("--- Station List (%d entries) ---\n", station_count);
-    TERMINAL_VIEW_ADD_TEXT("--- Station List (%d entries) ---\n", station_count);
-    if (saving) scan_file_printf(&sf, "--- Station List (%d entries) ---\n", station_count);
-
-    for (int i = 0; i < station_count; i++) {
-        char sanitized_ssid[33];
-        bool found = false;
-        for (int j = 0; j < ap_count; j++) {
-            if (memcmp(scanned_aps[j].bssid, station_ap_list[i].ap_bssid, 6) == 0) {
-                sanitize_ssid_and_check_hidden(scanned_aps[j].ssid, sanitized_ssid, sizeof(sanitized_ssid));
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            strcpy(sanitized_ssid, "(Unknown AP)");
-        }
-
-        char sta_mac_str[18];
-        snprintf(sta_mac_str, sizeof(sta_mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 station_ap_list[i].station_mac[0], station_ap_list[i].station_mac[1],
-                 station_ap_list[i].station_mac[2], station_ap_list[i].station_mac[3],
-                 station_ap_list[i].station_mac[4], station_ap_list[i].station_mac[5]);
-        char sta_vendor[64] = "Unknown";
-        if (!ouis_lookup_vendor(sta_mac_str, sta_vendor, sizeof(sta_vendor))) {
-            strncpy(sta_vendor, "Unknown", sizeof(sta_vendor) - 1);
-        }
-
-        char ap_mac_str[18];
-        snprintf(ap_mac_str, sizeof(ap_mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 station_ap_list[i].ap_bssid[0], station_ap_list[i].ap_bssid[1],
-                 station_ap_list[i].ap_bssid[2], station_ap_list[i].ap_bssid[3],
-                 station_ap_list[i].ap_bssid[4], station_ap_list[i].ap_bssid[5]);
-        char ap_vendor[64] = "Unknown";
-        if (!ouis_lookup_vendor(ap_mac_str, ap_vendor, sizeof(ap_vendor))) {
-            strncpy(ap_vendor, "Unknown", sizeof(ap_vendor) - 1);
-        }
-
-        printf("[%d] Station MAC: %s\n", i, sta_mac_str);
-        printf("     Station Vendor: %s\n", sta_vendor);
-        printf("     Associated AP: %s\n", sanitized_ssid);
-        printf("     AP BSSID: %s\n", ap_mac_str);
-        printf("     AP Vendor: %s\n", ap_vendor);
-
-        TERMINAL_VIEW_ADD_TEXT("[%d] Station MAC: %s\n", i, sta_mac_str);
-        TERMINAL_VIEW_ADD_TEXT("     Station Vendor: %s\n", sta_vendor);
-        TERMINAL_VIEW_ADD_TEXT("     Associated AP: %s\n", sanitized_ssid);
-        TERMINAL_VIEW_ADD_TEXT("     AP BSSID: %s\n", ap_mac_str);
-        TERMINAL_VIEW_ADD_TEXT("     AP Vendor: %s\n", ap_vendor);
-
-        if (saving) {
-            scan_file_printf(&sf, "[%d] STA: %s (%s) -> AP: %s BSSID: %s (%s)\n",
-                             i, sta_mac_str, sta_vendor,
-                             sanitized_ssid, ap_mac_str, ap_vendor);
-        }
-    }
-
-    if (saving) scan_file_close(&sf);
+    station_scan_print_results();
 }
 
 // Start deauth function - wrapper for deauth_attack module
@@ -2171,48 +1912,9 @@ void wifi_manager_get_selected_aps(wifi_ap_record_t **aps, int *count) {
     }
 }
 
+// Select station - delegated to station_scan module
 void wifi_manager_select_station(int index) {
-    if (station_count == 0) {
-        printf("No stations found.\n");
-        TERMINAL_VIEW_ADD_TEXT("No stations found.\n");
-        return;
-    }
-    if (index < 0 || index >= station_count) {
-        printf("Invalid station index: %d. Index should be between 0 and %d\n", index, station_count - 1);
-        TERMINAL_VIEW_ADD_TEXT("Invalid station index: %d. Index should be between 0 and %d\n", index, station_count - 1);
-        return;
-    }
-    selected_station = station_ap_list[index];
-    char ssid_str[33];
-    char sanitized_ssid[33];
-    for (int i = 0; i < ap_count; i++) {
-        if (memcmp(scanned_aps[i].bssid, selected_station.ap_bssid, 6) == 0) {
-            memcpy(ssid_str, scanned_aps[i].ssid, 32);
-            ssid_str[32] = '\0';
-            int len = strlen(ssid_str);
-            for (int j = 0; j < len; j++) {
-                char c = ssid_str[j];
-                sanitized_ssid[j] = (c >= 32 && c <= 126) ? c : '.';
-            }
-            sanitized_ssid[len] = '\0';
-            break;
-        }
-    }
-    printf("Selected Station %d: Station MAC: %02X:%02X:%02X:%02X:%02X:%02X\n    -> AP SSID: %s\n    -> AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-           index,
-           selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2],
-           selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5],
-           sanitized_ssid,
-           selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2],
-           selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
-    TERMINAL_VIEW_ADD_TEXT("Selected Station %d: Station MAC: %02X:%02X:%02X:%02X:%02X:%02X\n    -> AP SSID: %s\n    -> AP BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-           index,
-           selected_station.station_mac[0], selected_station.station_mac[1], selected_station.station_mac[2],
-           selected_station.station_mac[3], selected_station.station_mac[4], selected_station.station_mac[5],
-           sanitized_ssid,
-           selected_station.ap_bssid[0], selected_station.ap_bssid[1], selected_station.ap_bssid[2],
-           selected_station.ap_bssid[3], selected_station.ap_bssid[4], selected_station.ap_bssid[5]);
-    station_selected = true;
+    station_scan_select(index);
 }
 
 // Deauth station function - wrapper for deauth_attack module
@@ -3730,7 +3432,7 @@ static esp_err_t start_live_ap_channel_hopping(void) {
     };
     esp_err_t err = esp_timer_create(&timer_args, &live_ap_channel_hop_timer);
     if (err != ESP_OK) return err;
-    err = esp_timer_start_periodic(live_ap_channel_hop_timer, SCANSTA_CHANNEL_HOP_INTERVAL_MS * 1000);
+    err = esp_timer_start_periodic(live_ap_channel_hop_timer, WIRESHARK_CHANNEL_HOP_INTERVAL_MS * 1000);
     if (err != ESP_OK) {
         esp_timer_delete(live_ap_channel_hop_timer);
         live_ap_channel_hop_timer = NULL;
@@ -4128,61 +3830,7 @@ void wifi_manager_start_scan_with_time(int seconds) {
     // ESP_ERROR_CHECK(ap_manager_start_services()); // Removed: Rely on caller (handle_combined_scan) to restart AP services
 }
 
-// Station Scan Channel Hopping Callback
-static void scansta_channel_hop_timer_callback(void *arg) {
-    if (!scansta_hopping_active) return; // Check if hopping should be active
-
-    scansta_current_channel = (scansta_current_channel % SCANSTA_MAX_WIFI_CHANNEL) + 1;
-    esp_wifi_set_channel(scansta_current_channel, WIFI_SECOND_CHAN_NONE);
-    // ESP_LOGI(TAG, "Station Scan Hopped to Channel: %d", scansta_current_channel); // Optional: for debugging
-}
-
-// Start the channel hopping timer for station scanning
-static esp_err_t start_scansta_channel_hopping(void) {
-    if (scansta_channel_hop_timer != NULL) {
-        ESP_LOGW(TAG, "Scansta channel hop timer already exists. Stopping and deleting first.");
-        esp_timer_stop(scansta_channel_hop_timer);
-        esp_timer_delete(scansta_channel_hop_timer);
-        scansta_channel_hop_timer = NULL;
-    }
-
-    scansta_current_channel = 1; // Start from channel 1
-    esp_wifi_set_channel(scansta_current_channel, WIFI_SECOND_CHAN_NONE); // Set initial channel
-
-    esp_timer_create_args_t timer_args = {
-        .callback = scansta_channel_hop_timer_callback,
-        .name = "scansta_channel_hop"
-    };
-
-    esp_err_t err = esp_timer_create(&timer_args, &scansta_channel_hop_timer);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create scansta channel hop timer: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    err = esp_timer_start_periodic(scansta_channel_hop_timer, SCANSTA_CHANNEL_HOP_INTERVAL_MS * 1000);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start scansta channel hop timer: %s", esp_err_to_name(err));
-        esp_timer_delete(scansta_channel_hop_timer); // Clean up timer if start fails
-        scansta_channel_hop_timer = NULL;
-        return err;
-    }
-
-    scansta_hopping_active = true;
-    ESP_LOGI(TAG, "Station Scan Channel Hopping Started.");
-    return ESP_OK;
-}
-
-// Stop the channel hopping timer for station scanning
-static void stop_scansta_channel_hopping(void) {
-    if (scansta_channel_hop_timer) {
-        esp_timer_stop(scansta_channel_hop_timer);
-        esp_timer_delete(scansta_channel_hop_timer);
-        scansta_channel_hop_timer = NULL;
-        scansta_hopping_active = false;
-        ESP_LOGI(TAG, "Station Scan Channel Hopping Stopped.");
-    }
-}
+// Station scan channel hopping functions moved to station_scan.c module
 
 // Wireshark Capture Channel Hopping Callback
 static void wireshark_channel_hop_timer_callback(void *arg) {
@@ -4276,125 +3924,11 @@ esp_err_t wifi_manager_set_wireshark_fixed_channel(uint8_t channel) {
     return ESP_OK;
 }
 
-// Function to specifically start station scanning with channel hopping
+// Start station scan - delegated to station_scan module
 void wifi_manager_start_station_scan() {
-    // Ensure we have a list of APs to compare against first
-    if (scanned_aps == NULL || ap_count == 0) {
-        printf("No APs scanned previously. Performing initial scan...\n");
-        TERMINAL_VIEW_ADD_TEXT("No APs scanned previously. Performing initial scan...\n");
-
-        // Perform a synchronous scan
-        ap_manager_stop_services(); // Stop other services that might interfere
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_start());
-
-        wifi_scan_config_t scan_config = {
-            .ssid = NULL,
-            .bssid = NULL,
-            .channel = 0,
-            .show_hidden = true,
-            // Use a reasonable scan time
-            .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}
-        };
-
-        esp_err_t err = esp_wifi_scan_start(&scan_config, true); // Block until scan done
-
-        if (err == ESP_OK) {
-            // Get the results directly, similar to wifi_manager_stop_scan()
-            uint16_t initial_ap_count = 0;
-            err = esp_wifi_scan_get_ap_num(&initial_ap_count);
-            if (err == ESP_OK) {
-                 char log_buf[128];
-                 snprintf(log_buf, sizeof(log_buf), "Initial scan found %u access points\n", initial_ap_count);
-                 printf("%s", log_buf);
-                 TERMINAL_VIEW_ADD_TEXT(log_buf);
-
-                 if (initial_ap_count > 0) {
-                    if (scanned_aps != NULL) {
-                        free(scanned_aps);
-                        scanned_aps = NULL;
-                    }
-                    scanned_aps = calloc(initial_ap_count, sizeof(wifi_ap_record_t));
-                    if (scanned_aps == NULL) {
-                        printf("Failed to allocate memory for AP info\n");
-                        ap_count = 0;
-                    } else {
-                        uint16_t actual_ap_count = initial_ap_count;
-                        err = esp_wifi_scan_get_ap_records(&actual_ap_count, scanned_aps);
-                        if (err != ESP_OK) {
-                            printf("Failed to get AP records: %s\n", esp_err_to_name(err));
-                            free(scanned_aps);
-                            scanned_aps = NULL;
-                            ap_count = 0;
-                        } else {
-                             ap_count = actual_ap_count;
-
-                              // ---- ADD THIS BLOCK START ----
-                              printf("--- Known AP BSSIDs for Station Scan ---\n");
-                              TERMINAL_VIEW_ADD_TEXT("--- Known AP BSSIDs for Station Scan ---\n");
-                              for (int k = 0; k < ap_count; k++) {
-                                  char bssid_log_buf[128];
-                                  snprintf(bssid_log_buf, sizeof(bssid_log_buf), "[%d] BSSID: %02X:%02X:%02X:%02X:%02X:%02X (SSID: %.*s)\n", k,
-                                         scanned_aps[k].bssid[0], scanned_aps[k].bssid[1],
-                                         scanned_aps[k].bssid[2], scanned_aps[k].bssid[3],
-                                         scanned_aps[k].bssid[4], scanned_aps[k].bssid[5],
-                                         32, scanned_aps[k].ssid); // Print SSID for context
-                                  printf("%s", bssid_log_buf);
-                                  TERMINAL_VIEW_ADD_TEXT(bssid_log_buf);
-                              }
-                              printf("----------------------------------------\n");
-                              TERMINAL_VIEW_ADD_TEXT("----------------------------------------\n");
-                              // ---- ADD THIS BLOCK END ----
-                         }
-                     }
-                 } else {
-                      printf("Initial scan found no access points\n");
-                      TERMINAL_VIEW_ADD_TEXT("Initial scan found no access points\n");
-                      ap_count = 0;
-                 }
-            } else {
-                printf("Failed to get AP count after initial scan: %s\n", esp_err_to_name(err));
-                TERMINAL_VIEW_ADD_TEXT("Failed get AP count\n");
-                 ap_count = 0;
-            }
-
-        } else {
-            printf("Initial AP scan failed: %s\n", esp_err_to_name(err));
-            TERMINAL_VIEW_ADD_TEXT("Initial AP scan failed.\n");
-            ap_count = 0; // Ensure ap_count reflects failure
-        }
-
-        // Stop STA mode before setting monitor mode
-        ESP_ERROR_CHECK(esp_wifi_stop());
-        // Note: AP Manager services are not restarted here, as monitor mode is intended next
-    } else {
-         printf("Using previously scanned AP list (%d APs).\n", ap_count);
-         TERMINAL_VIEW_ADD_TEXT("Using cached AP list.\n");
-    }
-    
-    // Build list of unique channels for channel hopping
-    if (scansta_channel_list) { free(scansta_channel_list); scansta_channel_list = NULL; }
-    scansta_channel_list_len = 0;
-    scansta_channel_list = calloc(ap_count, sizeof(int));
-    if (scansta_channel_list) {
-        for (int k = 0; k < ap_count; k++) {
-            int ch = scanned_aps[k].primary;
-            bool found = false;
-            for (size_t m = 0; m < scansta_channel_list_len; m++) {
-                if (scansta_channel_list[m] == ch) { found = true; break; }
-            }
-            if (!found) { scansta_channel_list[scansta_channel_list_len++] = ch; }
-        }
-    }
-    scansta_channel_list_idx = 0;
-
-    // Now start monitor mode with the callback
-    wifi_manager_start_monitor_mode(wifi_stations_sniffer_callback);
-    // Start channel hopping for station scan
-    start_scansta_channel_hopping();
-    printf("Started Station Scan (Channel Hopping Enabled)...\n");
-    TERMINAL_VIEW_ADD_TEXT("Started Station Scan (Hopping)...\n");
+    station_scan_start();
 }
+
 // Print combined AP/Station scan results in ASCII chart
 void wifi_manager_scanall_chart() {
     if (ap_count == 0) {

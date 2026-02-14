@@ -11,6 +11,7 @@
 
 // WiFi Scans
 #include "scans/wifi/ap_scan.h"
+#include "scans/wifi/station_scan.h"
 
 // Common
 #include "scans/common/scan_types.h"
