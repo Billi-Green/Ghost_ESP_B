@@ -31,8 +31,8 @@ extern volatile bool ap_sta_has_ip;
 extern uint8_t wireshark_channels[50];
 extern size_t wireshark_channels_count;
 
-// Build country-appropriate channel list
-void wifi_manager_build_wireshark_channels(void);
+// Note: Use wifi_channels_build_country_list() from scans/wifi/wifi_channels.h
+// to build country-appropriate channel lists
 
 // WiFi event group bits
 #define WIFI_CONNECTED_BIT BIT0

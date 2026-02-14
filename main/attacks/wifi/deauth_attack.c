@@ -18,6 +18,7 @@
 #include "managers/status_display_manager.h"
 #include "managers/views/terminal_screen.h"
 #include "core/glog.h"
+#include "scans/wifi/wifi_channels.h"
 #include "esp_wifi.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -318,7 +319,7 @@ void deauth_attack_start(void) {
 #endif
         
         // Build country-appropriate channel list for deauth
-        wifi_manager_build_wireshark_channels();
+        wireshark_channels_count = wifi_channels_build_country_list(wireshark_channels, sizeof(wireshark_channels));
         
         // Copy selected AP info from wifi_manager globals
         extern wifi_ap_record_t selected_ap;

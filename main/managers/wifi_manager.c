@@ -60,6 +60,8 @@
 #include "attacks/wifi/beacon_spam.h"
 #include "attacks/wifi/eapol_logoff.h"
 #include "attacks/wifi/sae_flood.h"
+#include "scans/wifi/ap_scan.h"
+#include "scans/wifi/wifi_channels.h"
 
 // Defines for Station Scan Channel Hopping
 #define SCANSTA_CHANNEL_HOP_INTERVAL_MS 250 // Hop channel every 250ms
@@ -87,9 +89,6 @@
 
 #define KARMA_MAX_SSIDS 32
 
-// Forward declaration for country-appropriate channel list
-void wifi_manager_build_wireshark_channels(void);
-
 // Forward declarations for live AP scan
 static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 static esp_err_t start_live_ap_channel_hopping(void);
@@ -114,8 +113,6 @@ static const uint8_t live_ap_channels[] = {
 static const size_t live_ap_channels_len = sizeof(live_ap_channels) / sizeof(live_ap_channels[0]);
 static size_t live_ap_channel_index = 0;
 
-uint16_t ap_count;
-wifi_ap_record_t *scanned_aps;
 const char *TAG = "WiFiManager";
 
 station_ap_pair_t station_ap_list[MAX_STATIONS];
@@ -1646,18 +1643,9 @@ bool wifi_manager_is_evil_portal_active(void) {
     return evilportal_server != NULL;
 }
 
-// Release scan result buffers when they are no longer needed
+// Release scan result buffers - delegated to ap_scan module
 void wifi_manager_clear_scan_results(void) {
-    if (scanned_aps != NULL) {
-        free(scanned_aps);
-        scanned_aps = NULL;
-        ap_count = 0;
-    }
-    if (selected_aps != NULL) {
-        free(selected_aps);
-        selected_aps = NULL;
-        selected_ap_count = 0;
-    }
+    ap_scan_clear_results();
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
@@ -1935,93 +1923,9 @@ void wifi_manager_configure_sta_from_settings(void) {
     }
 }
 
+// Start WiFi scan - delegated to ap_scan module
 void wifi_manager_start_scan() {
-    log_heap_status(TAG, "scan_start_pre");
-    status_display_show_status("WiFi Scanning...");
-    // Free any previous selections or scan buffers before starting a fresh scan
-    if (selected_aps != NULL) {
-        free(selected_aps);
-        selected_aps = NULL;
-        selected_ap_count = 0;
-    }
-    if (scanned_aps != NULL) {
-        free(scanned_aps);
-        scanned_aps = NULL;
-        ap_count = 0;
-    }
-    ap_manager_stop_services();
-
-    wifi_mode_t current_mode;
-    esp_err_t err = esp_wifi_get_mode(&current_mode);
-    if (err == ESP_ERR_WIFI_NOT_INIT) {
-        ESP_LOGW(TAG, "Wi-Fi not initialized, reinitializing driver...");
-        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        err = esp_wifi_init(&cfg);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to reinit Wi-Fi: %s", esp_err_to_name(err));
-            TERMINAL_VIEW_ADD_TEXT("WiFi init failed: %s\n", esp_err_to_name(err));
-            return;
-        }
-    }
-
-    err = esp_wifi_set_mode(WIFI_MODE_STA);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set STA mode: %s", esp_err_to_name(err));
-        TERMINAL_VIEW_ADD_TEXT("WiFi mode set failed: %s\n", esp_err_to_name(err));
-        return;
-    }
-    err = esp_wifi_start();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start Wi-Fi: %s", esp_err_to_name(err));
-        TERMINAL_VIEW_ADD_TEXT("WiFi start failed: %s\n", esp_err_to_name(err));
-        return;
-    }
-
-    wifi_scan_config_t scan_config = {
-        .ssid = NULL,
-        .bssid = NULL,
-        .channel = 0,
-        .show_hidden = true,
-#ifdef CONFIG_IDF_TARGET_ESP32C5
-        // Target ~5s total sweep on C5
-        .scan_time = {.active.min = 250, .active.max = 300, .passive = 300}
-#else
-        .scan_time = {.active.min = 450, .active.max = 500, .passive = 500}
-#endif
-    };
-
-    rgb_manager_set_color(&rgb_manager, -1, 50, 255, 50, false);
-
-    printf("WiFi Scan started\n");
-    #ifdef CONFIG_IDF_TARGET_ESP32C5
-        printf("Please wait ~5 Seconds...\n");
-        TERMINAL_VIEW_ADD_TEXT("Please wait ~5 Seconds...\n");
-    #else
-        printf("Please wait 5 Seconds...\n");
-        TERMINAL_VIEW_ADD_TEXT("Please wait 5 Seconds...\n");
-    #endif
-    err = esp_wifi_scan_start(&scan_config, true);
-
-    if (err != ESP_OK) {
-        printf("WiFi scan failed to start: %s", esp_err_to_name(err));
-        TERMINAL_VIEW_ADD_TEXT("WiFi scan failed to start\n");
-        log_heap_status(TAG, "scan_start_failed");
-        return;
-    }
-
-    wifi_manager_stop_scan();
-    log_heap_status(TAG, "scan_start_post");
-    esp_wifi_stop();
-    ap_manager_start_services();
-
-    // Restore saved static color if no RGB effect is running.
-    if (rgb_effect_task_handle == NULL) {
-        RGBMode mode = settings_get_rgb_mode(&G_Settings);
-        if (mode != RGB_MODE_RAINBOW && mode != RGB_MODE_STEALTH &&
-            mode != RGB_MODE_KNIGHT_RIDER && mode != RGB_MODE_NORMAL) {
-            rgb_manager_apply_static_from_settings();
-        }
-    }
+    ap_scan_start();
 }
 
 // Stop scanning for networks
@@ -2176,56 +2080,13 @@ void wifi_manager_start_deauth() {
     deauth_attack_start();
 }
 
+// Select AP - delegated to ap_scan module
 void wifi_manager_select_ap(int index) {
-
-    if (ap_count == 0) {
-        printf("No access points found\n");
-        TERMINAL_VIEW_ADD_TEXT("No access points found\n");
-        return;
+    esp_err_t err = ap_scan_select(index);
+    if (err == ESP_OK) {
+        // Update local selected_ap for compatibility with other functions
+        ap_scan_get_selection(&selected_ap);
     }
-
-    if (scanned_aps == NULL) {
-        printf("No AP info available (scanned_aps is NULL)\n");
-        TERMINAL_VIEW_ADD_TEXT("No AP info available (scanned_aps is NULL)\n");
-        return;
-    }
-
-    if (index < 0 || index >= ap_count) {
-        printf("Invalid index: %d. Index should be between 0 and %d\n", index, ap_count - 1);
-        TERMINAL_VIEW_ADD_TEXT("Invalid index: %d. Index should be between 0 and %d\n", index,
-                               ap_count - 1);
-        return;
-    }
-
-    selected_ap = scanned_aps[index];
-
-    if (selected_aps != NULL) {
-        free(selected_aps);
-        selected_aps = NULL;
-    }
-
-    selected_aps = malloc(sizeof(wifi_ap_record_t));
-    if (selected_aps != NULL) {
-        selected_aps[0] = selected_ap;
-        selected_ap_count = 1;
-    } else {
-        selected_ap_count = 0;
-    }
-
-    char sanitized_ssid[33];
-    sanitize_ssid_and_check_hidden(selected_ap.ssid, sanitized_ssid, sizeof(sanitized_ssid));
-
-    printf("Selected Access Point: SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n",
-           sanitized_ssid, selected_ap.bssid[0], selected_ap.bssid[1], selected_ap.bssid[2],
-           selected_ap.bssid[3], selected_ap.bssid[4], selected_ap.bssid[5]);
-
-    TERMINAL_VIEW_ADD_TEXT(
-        "Selected Access Point: SSID: %s, BSSID: %02X:%02X:%02X:%02X:%02X:%02X\n", sanitized_ssid,
-        selected_ap.bssid[0], selected_ap.bssid[1], selected_ap.bssid[2], selected_ap.bssid[3],
-        selected_ap.bssid[4], selected_ap.bssid[5]);
-
-    printf("Selected Access Point Successfully\n");
-    TERMINAL_VIEW_ADD_TEXT("Selected Access Point Successfully\n");
 }
 
 void wifi_manager_select_multiple_aps(int *indices, int count) {
@@ -4323,90 +4184,6 @@ static void stop_scansta_channel_hopping(void) {
     }
 }
 
-// Build country-appropriate channel list for Wireshark
-void wifi_manager_build_wireshark_channels(void) {
-    wireshark_channels_count = 0;
-    
-    // get current wifi country configuration
-    wifi_country_t country;
-    esp_err_t ret = esp_wifi_get_country(&country);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "wifi country not set, using default channels");
-        // 2.4ghz: channels 1, 6, 11 (common worldwide)
-        wireshark_channels[wireshark_channels_count++] = 1;
-        wireshark_channels[wireshark_channels_count++] = 6;
-        wireshark_channels[wireshark_channels_count++] = 11;
-        
-        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        // 5ghz: common unii-1 channels
-        wireshark_channels[wireshark_channels_count++] = 36;
-        wireshark_channels[wireshark_channels_count++] = 40;
-        wireshark_channels[wireshark_channels_count++] = 44;
-        wireshark_channels[wireshark_channels_count++] = 48;
-        #endif
-        
-        ESP_LOGI(TAG, "using %d default channels", wireshark_channels_count);
-        return;
-    }
-    
-    // build channel list based on country regulations
-    // 2.4ghz band: channels 1-14 (varies by country)
-    uint8_t max_24ghz_channel = country.nchan;
-    if (max_24ghz_channel > 14) max_24ghz_channel = 14;
-    
-    // add 2.4ghz channels (prioritize 1, 6, 11 for non-overlapping)
-    for (uint8_t ch = 1; ch <= max_24ghz_channel; ch++) {
-        if (ch == 1 || ch == 6 || ch == 11) {
-            wireshark_channels[wireshark_channels_count++] = ch;
-        }
-    }
-    
-    // add overlapping 2.4ghz channels if needed
-    for (uint8_t ch = 2; ch <= max_24ghz_channel; ch++) {
-        if (ch != 1 && ch != 6 && ch != 11 && wireshark_channels_count < 50) {
-            wireshark_channels[wireshark_channels_count++] = ch;
-        }
-    }
-    
-    #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-    // 5ghz band support for esp32-c5/c6
-    if (strcmp(country.cc, "US") == 0 || strcmp(country.cc, "CA") == 0) {
-        // north america: all bands allowed
-        uint8_t us_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165};
-        for (int i = 0; i < sizeof(us_5ghz) && wireshark_channels_count < 50; i++) {
-            wireshark_channels[wireshark_channels_count++] = us_5ghz[i];
-        }
-    } else if (strcmp(country.cc, "JP") == 0) {
-        // japan: all bands with restrictions
-        uint8_t jp_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140};
-        for (int i = 0; i < sizeof(jp_5ghz) && wireshark_channels_count < 50; i++) {
-            wireshark_channels[wireshark_channels_count++] = jp_5ghz[i];
-        }
-    } else if (strcmp(country.cc, "CN") == 0) {
-        // china: limited 5ghz
-        uint8_t cn_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 149, 153, 157, 161, 165};
-        for (int i = 0; i < sizeof(cn_5ghz) && wireshark_channels_count < 50; i++) {
-            wireshark_channels[wireshark_channels_count++] = cn_5ghz[i];
-        }
-    } else if (strcmp(country.cc, "EU") == 0 || strcmp(country.cc, "GB") == 0 || 
-               strcmp(country.cc, "DE") == 0 || strcmp(country.cc, "FR") == 0) {
-        // europe: unii-1 and unii-2
-        uint8_t eu_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140};
-        for (int i = 0; i < sizeof(eu_5ghz) && wireshark_channels_count < 50; i++) {
-            wireshark_channels[wireshark_channels_count++] = eu_5ghz[i];
-        }
-    } else {
-        // default: unii-1 only (most permissive worldwide)
-        uint8_t default_5ghz[] = {36, 40, 44, 48};
-        for (int i = 0; i < sizeof(default_5ghz) && wireshark_channels_count < 50; i++) {
-            wireshark_channels[wireshark_channels_count++] = default_5ghz[i];
-        }
-    }
-    #endif
-    
-    ESP_LOGI(TAG, "country %s: using %d channels for Wireshark", country.cc, wireshark_channels_count);
-}
-
 // Wireshark Capture Channel Hopping Callback
 static void wireshark_channel_hop_timer_callback(void *arg) {
     if (!wireshark_hopping_active) return;
@@ -4434,7 +4211,7 @@ void wifi_manager_start_wireshark_channel_hop(void) {
     }
 
     // build country-appropriate channel list
-    wifi_manager_build_wireshark_channels();
+    wireshark_channels_count = wifi_channels_build_country_list(wireshark_channels, sizeof(wireshark_channels));
     if (wireshark_channels_count == 0) {
         ESP_LOGE(TAG, "No channels available for Wireshark hopping");
         return;

@@ -1,0 +1,18 @@
+/**
+ * @file scans.h
+ * @brief Master header for all scan modules
+ * 
+ * This header includes all scan module headers for convenience.
+ * Individual headers can also be included directly as needed.
+ */
+
+#ifndef SCANS_H
+#define SCANS_H
+
+// WiFi Scans
+#include "scans/wifi/ap_scan.h"
+
+// Common
+#include "scans/common/scan_types.h"
+
+#endif // SCANS_H
