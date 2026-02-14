@@ -10,6 +10,7 @@
 #include "vendor/drivers/pcf8563.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
+#include "scans/ble/flipper_scan.h"
 #endif
 #include "managers/dial_manager.h"
 #include "managers/rgb_manager.h"
@@ -1060,7 +1061,7 @@ void handle_wifi_disconnect(int argc, char **argv)
 void handle_ble_scan_cmd(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-f") == 0) {
         glog("Starting Find the Flippers.\n");
-        ble_start_find_flippers();
+        flipper_scan_start();
         return;
     }
 
@@ -5769,19 +5770,19 @@ void handle_sweep_cmd(int argc, char **argv) {
     // --- BLE Scans ---
     glog("\n--- Phase 3: BLE Flipper Scan (%ds) ---\n", ble_seconds);
     
-    ble_start_find_flippers();
+    flipper_scan_start();
     vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
-    ble_stop();
+    flipper_scan_stop();
     vTaskDelay(pdMS_TO_TICKS(500));
     
-    ble_list_flippers();
+    flipper_scan_print_results();
     
-    int flipper_cnt = ble_get_flipper_count();
+    int flipper_cnt = flipper_scan_get_count();
     for (int i = 0; i < flipper_cnt && report; i++) {
         uint8_t mac[6];
         int8_t rssi;
         char name[32];
-        if (ble_get_flipper_data(i, mac, &rssi, name, sizeof(name)) == 0) {
+        if (flipper_scan_get_device_data(i, mac, &rssi, name, sizeof(name)) == 0) {
             fprintf(report, "Flipper,");
             sweep_write_csv_escaped(report, name[0] ? name : "");
             fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,,,%d,,,,",
@@ -5922,7 +5923,7 @@ void handle_stop_spoof(int argc, char **argv) {
 // Handlers for Flipper commands
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_flippers_cmd(int argc, char **argv) {
-    ble_list_flippers();
+    flipper_scan_print_results();
     status_display_show_status("List Flipper");
 }
 
@@ -5935,7 +5936,7 @@ void handle_select_flipper_cmd(int argc, char **argv) {
     char *endptr;
     int num = (int)strtol(argv[1], &endptr, 10);
     if (*endptr == '\0') {
-        ble_select_flipper(num);
+        flipper_scan_select(num);
         status_display_show_status("Flipper Pick");
     } else {
         glog("Error: '%s' is not a valid number.\n", argv[1]);

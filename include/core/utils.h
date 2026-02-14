@@ -104,6 +104,36 @@ bool is_wifi_sta_connected(void);
 bool get_own_ip_and_mac(esp_netif_t *netif, esp_netif_ip_info_t *ip_info, uint8_t *mac);
 
 // ============================================================================
+// Byte/Buffer Utilities
+// ============================================================================
+
+/**
+ * @brief Read a 16-bit little-endian value from a byte array
+ * 
+ * @param data Pointer to at least 2 bytes
+ * @return uint16_t The 16-bit value
+ */
+uint16_t read_u16_le(const uint8_t *data);
+
+/**
+ * @brief Read a 32-bit little-endian value from a byte array
+ * 
+ * @param data Pointer to at least 4 bytes
+ * @return uint32_t The 32-bit value
+ */
+uint32_t read_u32_le(const uint8_t *data);
+
+/**
+ * @brief Parse device name from BLE advertisement data
+ * 
+ * @param data Raw advertisement data
+ * @param len Length of advertisement data
+ * @param name_buf Output buffer for device name
+ * @param name_buf_len Size of output buffer
+ */
+void parse_ble_device_name(const uint8_t *data, size_t len, char *name_buf, size_t name_buf_len);
+
+// ============================================================================
 // Macros
 // ============================================================================
 

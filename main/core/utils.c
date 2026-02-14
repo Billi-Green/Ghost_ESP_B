@@ -256,3 +256,56 @@ bool get_own_ip_and_mac(esp_netif_t *netif, esp_netif_ip_info_t *ip_info, uint8_
   
   return true;
 }
+
+// ============================================================================
+// Byte/Buffer Utilities
+// ============================================================================
+
+uint16_t read_u16_le(const uint8_t *data) {
+  return (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+}
+
+uint32_t read_u32_le(const uint8_t *data) {
+  return (uint32_t)data[0] |
+         ((uint32_t)data[1] << 8) |
+         ((uint32_t)data[2] << 16) |
+         ((uint32_t)data[3] << 24);
+}
+
+void parse_ble_device_name(const uint8_t *data, size_t len, char *name_buf, size_t name_buf_len) {
+  if (name_buf == NULL || name_buf_len == 0) {
+    return;
+  }
+
+  name_buf[0] = '\0';
+
+  if (data == NULL || len < 2) {
+    return;
+  }
+
+  // BLE advertisement field types for device name
+  const uint8_t BLE_AD_TYPE_NAME_COMPLETE = 0x09;
+  const uint8_t BLE_AD_TYPE_NAME_SHORT = 0x08;
+
+  size_t index = 0;
+  while (index < len) {
+    uint8_t field_len = data[index];
+    if (field_len == 0) {
+      break;
+    }
+    if (index + field_len >= len) {
+      break;
+    }
+    uint8_t field_type = data[index + 1];
+    if (field_type == BLE_AD_TYPE_NAME_COMPLETE || field_type == BLE_AD_TYPE_NAME_SHORT) {
+      size_t name_len = field_len - 1;
+      if (name_len >= name_buf_len) {
+        name_len = name_buf_len - 1;
+      }
+      memcpy(name_buf, &data[index + 2], name_len);
+      name_buf[name_len] = '\0';
+      return;
+    }
+    index += field_len + 1;
+  }
+}

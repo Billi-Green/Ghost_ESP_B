@@ -35,9 +35,16 @@ esp_err_t ble_register_handler(ble_data_handler_t handler);
 esp_err_t ble_unregister_handler(ble_data_handler_t handler);
 void ble_init(void);
 void ble_deinit(void);
-void ble_start_find_flippers(void);
 void ble_stop(void);
 void stop_ble_stack(void);
+
+// BLE status accessors
+bool ble_is_initialized(void);
+bool ble_is_stack_ready(void);
+
+// BLE gap event handler (for use by scan modules)
+int ble_gap_event_general(struct ble_gap_event *event, void *arg);
+
 void ble_start_airtag_scanner(void);
 void ble_start_raw_ble_packetscan(void);
 void ble_start_blespam_detector(void);
@@ -46,10 +53,6 @@ void ble_start_capture_wireshark(void);
 void ble_start_scanning(void);
 void ble_start_skimmer_detection(void);
 void ble_stop_skimmer_detection(void);
-
-// Flipper specific functions
-void ble_list_flippers(void);
-void ble_select_flipper(int index);
 
 // AirTag specific functions
 void ble_list_airtags(void);
@@ -67,8 +70,6 @@ void ble_stop_tracking(void);
 void ble_stop_gatt_scan(void);
 
 // Data access for sweep command
-int ble_get_flipper_count(void);
-int ble_get_flipper_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len);
 int ble_get_gatt_device_count(void);
 int ble_get_gatt_device_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len);
 

@@ -30,29 +30,19 @@
 #include "managers/ap_manager.h"
 #include "managers/wifi_manager.h"
 #include "core/scan_saver.h"
+#include "scans/ble/flipper_scan.h"
 
 #define MAX_DEVICES 30
 #define MAX_HANDLERS 10
 #define MAX_PACKET_SIZE 31
 #define NIMBLE_HOST_TASK_STACK_SIZE 6144
 
-// Flipper tracking definitions
+// AirTag tracking definitions
 #ifdef CONFIG_SPIRAM
-#define MAX_FLIPPERS 50
 #define MAX_AIRTAGS 50
 #else
-#define MAX_FLIPPERS 16
 #define MAX_AIRTAGS 16
 #endif
-
-typedef struct {
-    ble_addr_t addr;
-    char name[32];
-    int8_t rssi;
-} FlipperDevice;
-static FlipperDevice discovered_flippers[MAX_FLIPPERS];
-static int discovered_flipper_count = 0;
-static int selected_flipper_index = -1; // Index of the Flipper selected for tracking
 
 #define MAX_GATT_DEVICES 20
 #define MAX_GATT_SERVICES 8
@@ -96,7 +86,6 @@ static int airTagCount = 0;
 static volatile bool ble_initialized = false;
 static volatile bool ble_stack_ready = false;
 static volatile bool airtag_scanner_active = false;
-static volatile bool flipper_scan_active = false;
 
 static esp_timer_handle_t flush_timer = NULL;
 static TaskHandle_t nimble_host_task_handle = NULL;
@@ -118,9 +107,6 @@ static void ble_on_sync(void);
 static void ble_on_reset(int reason);
 static void ble_suspend_networking(void);
 static void ble_resume_networking(void);
-static void parse_device_name(const uint8_t *data, size_t len, char *name_buf, size_t name_buf_len);
-static const char *detect_flipper_type_from_adv(const uint8_t *data, size_t len);
-static int ble_gap_event_general(struct ble_gap_event *event, void *arg);
 static bool wait_for_ble_ready(void);
 
 typedef struct {
@@ -766,7 +752,7 @@ static void notify_handlers(struct ble_gap_event *event, int len) {
     }
 }
 
-static int ble_gap_event_general(struct ble_gap_event *event, void *arg) {
+int ble_gap_event_general(struct ble_gap_event *event, void *arg) {
     (void)arg;
 
     if (!event) {
@@ -1096,204 +1082,6 @@ void ble_stop_skimmer_detection(void) {
             glog("Error stopping BLE skimmer detection: %d\n", rc);
         }
         status_display_show_status("Skimmer Stop Fail");
-    }
-}
-
-static void parse_device_name(const uint8_t *data, size_t len, char *name_buf, size_t name_buf_len) {
-    if (!name_buf || name_buf_len == 0) {
-        return;
-    }
-
-    name_buf[0] = '\0';
-
-    if (!data || len < 2) {
-        return;
-    }
-
-    size_t index = 0;
-    while (index < len) {
-        uint8_t field_len = data[index];
-        if (field_len == 0) {
-            break;
-        }
-        if (index + field_len >= len) {
-            break;
-        }
-        uint8_t field_type = data[index + 1];
-        if (field_type == 0x09 || field_type == 0x08) {
-            size_t name_len = field_len - 1;
-            if (name_len >= name_buf_len) {
-                name_len = name_buf_len - 1;
-            }
-            memcpy(name_buf, &data[index + 2], name_len);
-            name_buf[name_len] = '\0';
-            return;
-        }
-        index += field_len + 1;
-    }
-}
-
-static const char *detect_flipper_type_from_adv(const uint8_t *data, size_t len) {
-    const uint8_t *p = data;
-    size_t remaining = len;
-    bool flipper = false;
-    const char *uuid_type = NULL;
-
-    while (remaining > 1) {
-        uint8_t field_len = p[0];
-
-        if (field_len == 0 || (size_t)(field_len + 1) > remaining) {
-            break;
-        }
-
-        uint8_t field_type = p[1];
-        const uint8_t *payload = p + 2;
-        uint8_t payload_len = (field_len >= 1) ? (uint8_t)(field_len - 1) : 0;
-
-        if ((field_type == 0x02 || field_type == 0x03) && payload_len >= 2) {
-            const uint8_t *u = payload;
-            size_t n = payload_len;
-            while (n >= 2) {
-                uint16_t u16 = (uint16_t)u[0] | ((uint16_t)u[1] << 8);
-                if (u16 == 0x3082) {
-                    flipper = true;
-                    uuid_type = "White";
-                } else if (u16 == 0x3081) {
-                    if (!uuid_type) uuid_type = "Black";
-                    flipper = true;
-                } else if (u16 == 0x3083) {
-                    flipper = true;
-                    uuid_type = "Transparent";
-                }
-                u += 2;
-                n -= 2;
-            }
-        } else if ((field_type == 0x04 || field_type == 0x05) && payload_len >= 4) {
-            const uint8_t *u = payload;
-            size_t n = payload_len;
-            while (n >= 4) {
-                uint32_t u32 = (uint32_t)u[0] |
-                               ((uint32_t)u[1] << 8) |
-                               ((uint32_t)u[2] << 16) |
-                               ((uint32_t)u[3] << 24);
-                uint16_t lo = (uint16_t)(u32 & 0xFFFF);
-                if (lo == 0x3082) {
-                    flipper = true;
-                    uuid_type = "White";
-                } else if (lo == 0x3081) {
-                    if (!uuid_type) uuid_type = "Black";
-                    flipper = true;
-                } else if (lo == 0x3083) {
-                    flipper = true;
-                    uuid_type = "Transparent";
-                }
-                u += 4;
-                n -= 4;
-            }
-        } else if ((field_type == 0x06 || field_type == 0x07) && payload_len >= 16) {
-            const uint8_t *u = payload;
-            size_t n = payload_len;
-            while (n >= 16) {
-                for (int i = 0; i <= 14; i++) {
-                    if (u[i] == 0x82 && u[i + 1] == 0x30) {
-                        flipper = true;
-                        uuid_type = "White";
-                        break;
-                    }
-                    if (u[i] == 0x81 && u[i + 1] == 0x30) {
-                        if (!uuid_type) uuid_type = "Black";
-                        flipper = true;
-                        break;
-                    }
-                    if (u[i] == 0x83 && u[i + 1] == 0x30) {
-                        flipper = true;
-                        uuid_type = "Transparent";
-                        break;
-                    }
-                }
-                u += 16;
-                n -= 16;
-            }
-        }
-
-        remaining -= (size_t)(field_len + 1);
-        p += (size_t)(field_len + 1);
-    }
-
-    if (!flipper) {
-        return NULL;
-    }
-
-    if (uuid_type) {
-        return uuid_type;
-    }
-
-    return "Unknown";
-}
-
-void ble_findtheflippers_callback(struct ble_gap_event *event, size_t len) {
-    int advertisementRssi = event->disc.rssi;
-
-    char advertisementMac[18];
-    format_mac_address(event->disc.addr.val, advertisementMac, sizeof(advertisementMac), false);
-
-    char advertisementName[32];
-    parse_device_name(event->disc.data, event->disc.length_data, advertisementName,
-                      sizeof(advertisementName));
-
-    const char *type_str = detect_flipper_type_from_adv(event->disc.data, event->disc.length_data);
-    ESP_LOGI(TAG_BLE,
-             "FindFlippers: MAC=%s RSSI=%d len=%u name='%s' type=%s",
-             advertisementMac,
-             advertisementRssi,
-             (unsigned int)event->disc.length_data,
-             (advertisementName[0] != '\0') ? advertisementName : "<none>",
-             type_str ? type_str : "<null>");
-    if (!type_str) {
-        return;
-    }
-
-    bool already = false;
-    for (int j = 0; j < discovered_flipper_count; j++) {
-        if (memcmp(discovered_flippers[j].addr.val, event->disc.addr.val, 6) == 0) {
-            already = true;
-            discovered_flippers[j].rssi = advertisementRssi;
-            if (j == selected_flipper_index) {
-                const char *proximity;
-                if (advertisementRssi >= -40) {
-                    proximity = "Immediate";
-                } else if (advertisementRssi >= -50) {
-                    proximity = "Very Close";
-                } else if (advertisementRssi >= -60) {
-                    proximity = "Close";
-                } else if (advertisementRssi >= -70) {
-                    proximity = "Moderate";
-                } else if (advertisementRssi >= -80) {
-                    proximity = "Far";
-                } else if (advertisementRssi >= -90) {
-                    proximity = "Very Far";
-                } else {
-                    proximity = "Out of Range";
-                }
-                printf("Tracking Flipper %d: RSSI %d dBm (%s)\n", selected_flipper_index, advertisementRssi, proximity);
-                TERMINAL_VIEW_ADD_TEXT("Track [%d]: RSSI %d (%s)\n", selected_flipper_index, advertisementRssi, proximity);
-            }
-            break;
-        }
-    }
-    if (!already && discovered_flipper_count < MAX_FLIPPERS) {
-        discovered_flippers[discovered_flipper_count].addr = event->disc.addr;
-        strncpy(discovered_flippers[discovered_flipper_count].name, advertisementName,
-                sizeof(discovered_flippers[discovered_flipper_count].name)-1);
-        discovered_flippers[discovered_flipper_count].rssi = advertisementRssi;
-        printf("Found %s Flipper (Index: %d): MAC %s, Name %s, RSSI %d\n",
-               type_str, discovered_flipper_count,
-               advertisementMac, advertisementName, advertisementRssi);
-        TERMINAL_VIEW_ADD_TEXT("Found %s Flipper (Idx %d): MAC %s, RSSI %d\n",
-                               type_str, discovered_flipper_count,
-                               advertisementMac, advertisementRssi);
-        pulse_once(&rgb_manager, 0, 255, 0);
-        discovered_flipper_count++;
     }
 }
 
@@ -1985,21 +1773,6 @@ void ble_init(void) {
 #endif
 }
 
-void ble_start_find_flippers(void) {
-    if (!ble_initialized) {
-        ble_init();
-    }
-
-    memset(discovered_flippers, 0, sizeof(discovered_flippers));
-    discovered_flipper_count = 0;
-    selected_flipper_index = -1;
-    flipper_scan_active = true;
-
-    ESP_LOGI(TAG_BLE, "Find Flippers: registering handler and starting BLE scan");
-    ble_register_handler(ble_findtheflippers_callback);
-    ble_start_scanning();
-}
-
 void ble_deinit(void) {
     if (ble_initialized) {
         handler_count = 0;
@@ -2037,6 +1810,14 @@ void ble_deinit(void) {
     }
 }
 
+bool ble_is_initialized(void) {
+    return ble_initialized;
+}
+
+bool ble_is_stack_ready(void) {
+    return ble_stack_ready;
+}
+
 void ble_stop(void) {
     ESP_LOGI(TAG_BLE, "ble_stop called, ble_initialized=%d", ble_initialized);
     if (!ble_initialized) {
@@ -2062,19 +1843,6 @@ void ble_stop(void) {
 
     rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);
 
-    if (flipper_scan_active && discovered_flipper_count > 0) {
-        scan_file_t sf = SCAN_FILE_INIT;
-        if (scan_file_open(&sf, "flipper_scan", "txt") == ESP_OK) {
-            scan_file_printf(&sf, "--- Discovered Flippers (%d) ---\n", discovered_flipper_count);
-            for (int i = 0; i < discovered_flipper_count; i++) {
-                char mac[18];
-                format_mac_address(discovered_flippers[i].addr.val, mac, sizeof(mac), false);
-                scan_file_printf(&sf, "[%d] MAC: %s, Name: %s, RSSI: %d dBm\n",
-                                 i, mac, discovered_flippers[i].name, discovered_flippers[i].rssi);
-            }
-            scan_file_close(&sf);
-        }
-    }
     if (airtag_scanner_active && discovered_airtag_count > 0) {
         scan_file_t sf = SCAN_FILE_INIT;
         if (scan_file_open(&sf, "airtag_scan", "txt") == ESP_OK) {
@@ -2089,9 +1857,7 @@ void ble_stop(void) {
         }
     }
 
-    flipper_scan_active = false;
     airtag_scanner_active = false;
-    ble_unregister_handler(ble_findtheflippers_callback);
     ble_unregister_handler(airtag_scanner_callback);
     ble_unregister_handler(ble_print_raw_packet_callback);
     ble_unregister_handler(ble_pcap_callback);
@@ -2354,50 +2120,6 @@ void ble_start_skimmer_detection(void) {
     ble_start_scanning();
 }
 
-// Function to list discovered Flippers
-void ble_list_flippers(void) {
-    glog("--- Discovered Flippers (%d) ---\n", discovered_flipper_count);
-    if (discovered_flipper_count == 0) {
-        glog("No Flippers discovered yet.\n");
-        return;
-    }
-
-    scan_file_t sf = SCAN_FILE_INIT;
-    bool saving = (scan_file_open(&sf, "flipper_scan", "txt") == ESP_OK);
-    if (saving) scan_file_printf(&sf, "--- Discovered Flippers (%d) ---\n", discovered_flipper_count);
-
-    for (int i = 0; i < discovered_flipper_count; i++) {
-        char mac[18];
-        format_mac_address(discovered_flippers[i].addr.val, mac, sizeof(mac), false);
-
-        glog("Index: %d | MAC: %s | RSSI: %d dBm%s\n",
-             i, mac, discovered_flippers[i].rssi,
-             (i == selected_flipper_index) ? " (Selected)" : "");
-        if (saving) {
-            scan_file_printf(&sf, "[%d] MAC: %s, Name: %s, RSSI: %d dBm\n",
-                             i, mac, discovered_flippers[i].name, discovered_flippers[i].rssi);
-        }
-    }
-    if (saving) scan_file_close(&sf);
-}
-
-int ble_get_flipper_count(void) {
-    return discovered_flipper_count;
-}
-
-int ble_get_flipper_data(int index, uint8_t *mac, int8_t *rssi, char *name, size_t name_len) {
-    if (index < 0 || index >= discovered_flipper_count) return -1;
-    if (mac) {
-        for (int i = 0; i < 6; i++) mac[i] = discovered_flippers[index].addr.val[i];
-    }
-    if (rssi) *rssi = discovered_flippers[index].rssi;
-    if (name && name_len > 0) {
-        strncpy(name, discovered_flippers[index].name, name_len - 1);
-        name[name_len - 1] = '\0';
-    }
-    return 0;
-}
-
 int ble_get_gatt_device_count(void) {
     return discovered_gatt_device_count;
 }
@@ -2413,56 +2135,6 @@ int ble_get_gatt_device_data(int index, uint8_t *mac, int8_t *rssi, char *name, 
         name[name_len - 1] = '\0';
     }
     return 0;
-}
-
-void ble_start_tracking_selected_flipper(void) {
-    // Check if BLE is properly initialized before proceeding
-    if (!ble_initialized || !ble_stack_ready) {
-        glog("Error: BLE stack not initialized. Cannot start Flipper tracking.\n");
-        return;
-    }
-
-    // Stop any existing scan
-    ble_gap_disc_cancel();
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    // Register Flipper callback for tracking
-    ble_register_handler(ble_findtheflippers_callback);
-
-    struct ble_gap_disc_params params = {0};
-    params.itvl = BLE_HCI_SCAN_ITVL_DEF;
-    params.window = BLE_HCI_SCAN_WINDOW_DEF;
-    params.filter_duplicates = 0; // receive all advertisement updates
-
-    uint8_t own_addr_type;
-    if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) {
-        own_addr_type = BLE_OWN_ADDR_PUBLIC;
-    }
-
-    int rc = ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &params, ble_gap_event_general, NULL);
-    if (rc != 0) {
-        glog("Error starting tracker; rc=%d\n", rc);
-    }
-}
-
-void ble_select_flipper(int index) {
-    if (index < 0 || index >= discovered_flipper_count) {
-        glog("Error: Invalid Flipper index %d. Use 'listflippers' to see valid indices.\n", index);
-        selected_flipper_index = -1;
-        return;
-    }
-
-    if (!ble_initialized) {
-        ble_init();
-    }
-
-    selected_flipper_index = index;
-    char mac[18];
-    format_mac_address(discovered_flippers[index].addr.val, mac, sizeof(mac), false);
-
-    glog("Selected Flipper at index %d: MAC %s\n", index, mac);
-    ble_start_tracking_selected_flipper();
-    glog("Started tracking Flipper %d...\n", index);
 }
 
 static void build_microsoft_mfg(const char *name, uint8_t *buf, size_t *len) {
@@ -3155,7 +2827,7 @@ void ble_gatt_scan_callback(struct ble_gap_event *event, size_t len) {
         dev->rssi = event->disc.rssi;
         dev->connectable = true;
         
-        parse_device_name(event->disc.data, event->disc.length_data, dev->name, sizeof(dev->name));
+        parse_ble_device_name(event->disc.data, event->disc.length_data, dev->name, sizeof(dev->name));
         dev->tracker_type = detect_tracker_type(event->disc.data, event->disc.length_data, dev->name);
         
         char mac[18];
