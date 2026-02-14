@@ -302,9 +302,6 @@ void beacon_spam_stop(void) {
         // Now restart services
         ap_manager_init();
         status_display_show_status("Beacon Stopped");
-    } else {
-        glog("No beacon transmission running.\n");
-        status_display_show_status("No Beacon Active");
     }
 }
 
