@@ -18,6 +18,7 @@
 // BLE Scans
 #include "scans/ble/flipper_scan.h"
 #include "scans/ble/airtag_scan.h"
+#include "scans/ble/gatt_scan.h"
 
 // Common
 #include "scans/common/scan_types.h"
