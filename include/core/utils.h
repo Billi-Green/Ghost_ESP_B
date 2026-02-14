@@ -158,6 +158,51 @@ size_t format_hex_bytes(const uint8_t *data, size_t len, char *buf, size_t buf_s
 const char *rssi_to_proximity(int8_t rssi);
 
 // ============================================================================
+// Network Scanning Utilities
+// ============================================================================
+
+/**
+ * @brief Get subnet prefix from current WiFi connection
+ * 
+ * Extracts the subnet prefix (e.g., "192.168.1.") from the device's IP address.
+ * 
+ * @param prefix Buffer to store subnet prefix (minimum 16 bytes)
+ * @param prefix_size Size of prefix buffer
+ * @return true on success, false on failure (not connected, etc.)
+ */
+bool get_wifi_subnet_prefix(char *prefix, size_t prefix_size);
+
+/**
+ * @brief Connect to a TCP port with timeout
+ * 
+ * Creates a non-blocking socket, connects with timeout, and returns the socket.
+ * 
+ * @param target_ip IP address to connect to
+ * @param port Port number to connect to
+ * @param timeout_sec Connection timeout in seconds
+ * @return Socket descriptor on success, -1 on failure
+ */
+int tcp_connect_with_timeout(const char *target_ip, uint16_t port, int timeout_sec);
+
+/**
+ * @brief Receive data from a socket with timeout
+ * 
+ * @param sock Socket descriptor
+ * @param buffer Buffer to store received data
+ * @param buffer_size Size of buffer
+ * @param timeout_sec Receive timeout in seconds
+ * @return Number of bytes received, -1 on error, 0 on timeout
+ */
+int tcp_recv_with_timeout(int sock, char *buffer, size_t buffer_size, int timeout_sec);
+
+/**
+ * @brief Close socket safely (handles invalid socket)
+ * 
+ * @param sock Socket descriptor (set to -1 after close)
+ */
+void tcp_close_socket(int *sock);
+
+// ============================================================================
 // Macros
 // ============================================================================
 

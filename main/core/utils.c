@@ -10,6 +10,11 @@
 #include <string.h>
 #include <sys/dirent.h>
 #include <stdio.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include "lwip/inet.h"
+#include "lwip/sockets.h"
 
 #define TAG "Utils"
 
@@ -355,4 +360,128 @@ const char *rssi_to_proximity(int8_t rssi) {
   if (rssi >= -80) return "Far";
   if (rssi >= -90) return "Very Far";
   return "Out of Range";
+}
+
+// ============================================================================
+// Network Scanning Utilities
+// ============================================================================
+
+bool get_wifi_subnet_prefix(char *prefix, size_t prefix_size) {
+  if (prefix == NULL || prefix_size < 16) {
+    return false;
+  }
+  
+  esp_netif_t *netif = get_wifi_sta_netif();
+  if (!netif) {
+    return false;
+  }
+  
+  esp_netif_ip_info_t ip_info;
+  if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK) {
+    return false;
+  }
+  
+  // Convert IP to string and extract subnet prefix
+  char ip_str[16];
+  esp_ip4addr_ntoa(&ip_info.ip, ip_str, sizeof(ip_str));
+  
+  // Find the last octet and replace it with empty string
+  char *last_dot = strrchr(ip_str, '.');
+  if (last_dot) {
+    *last_dot = '\0';
+    snprintf(prefix, prefix_size, "%s.", ip_str);
+    return true;
+  }
+  
+  return false;
+}
+
+int tcp_connect_with_timeout(const char *target_ip, uint16_t port, int timeout_sec) {
+  struct sockaddr_in server_addr;
+  int sock;
+  int result;
+  struct timeval timeout;
+  fd_set fdset;
+  int flags;
+  
+  // Create socket
+  sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (sock < 0) {
+    return -1;
+  }
+  
+  // Set non-blocking mode
+  flags = fcntl(sock, F_GETFL, 0);
+  fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+  
+  // Setup server address
+  memset(&server_addr, 0, sizeof(server_addr));
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(port);
+  if (inet_pton(AF_INET, target_ip, &server_addr.sin_addr) <= 0) {
+    close(sock);
+    return -1;
+  }
+  
+  // Attempt connection
+  result = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+  
+  if (result < 0 && errno == EINPROGRESS) {
+    // Wait for connection with timeout
+    timeout.tv_sec = timeout_sec;
+    timeout.tv_usec = 0;
+    
+    FD_ZERO(&fdset);
+    FD_SET(sock, &fdset);
+    
+    result = select(sock + 1, NULL, &fdset, NULL, &timeout);
+    
+    if (result > 0) {
+      int error = 0;
+      socklen_t len = sizeof(error);
+      if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) >= 0 && error == 0) {
+        // Connection successful - restore blocking mode
+        fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+        return sock;
+      }
+    }
+    
+    // Connection failed or timeout
+    close(sock);
+    return -1;
+  } else if (result == 0) {
+    // Immediate connection (rare but possible)
+    fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+    return sock;
+  }
+  
+  // Connection failed
+  close(sock);
+  return -1;
+}
+
+int tcp_recv_with_timeout(int sock, char *buffer, size_t buffer_size, int timeout_sec) {
+  if (sock < 0 || buffer == NULL || buffer_size == 0) {
+    return -1;
+  }
+  
+  struct timeval timeout;
+  timeout.tv_sec = timeout_sec;
+  timeout.tv_usec = 0;
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  
+  ssize_t bytes = recv(sock, buffer, buffer_size - 1, 0);
+  if (bytes > 0) {
+    buffer[bytes] = '\0';
+    return (int)bytes;
+  }
+  
+  return (bytes == 0) ? 0 : -1;
+}
+
+void tcp_close_socket(int *sock) {
+  if (sock != NULL && *sock >= 0) {
+    close(*sock);
+    *sock = -1;
+  }
 }

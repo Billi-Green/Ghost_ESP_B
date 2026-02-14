@@ -14,6 +14,7 @@
 #include "scans/wifi/station_scan.h"
 #include "scans/wifi/port_scan.h"
 #include "scans/wifi/arp_scan.h"
+#include "scans/wifi/ssh_scan.h"
 
 // BLE Scans
 #include "scans/ble/flipper_scan.h"

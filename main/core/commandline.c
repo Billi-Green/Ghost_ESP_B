@@ -18,6 +18,7 @@
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
 #include "scans/wifi/port_scan.h"
+#include "scans/wifi/ssh_scan.h"
 #include "managers/sd_card_manager.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
@@ -3668,20 +3669,12 @@ void handle_scan_ssh(int argc, char **argv) {
     }
 
     const char *target_ip = argv[1];
-    host_result_t result;
-    char msg_buf[64];
     
     glog("Starting SSH scan on %s...\n", target_ip);
     
-    scan_ssh_on_host(target_ip, &result);
+    ssh_scan_host(target_ip);
     
-    if (result.num_open_ports > 0) {
-        glog("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
-        status_display_show_status("SSH Found");
-    } else {
-        glog("No SSH services found.\n");
-        status_display_show_status("SSH None");
-    }
+    status_display_show_status("SSH Scan Done");
 }
 
 void handle_crash(int argc, char **argv) {

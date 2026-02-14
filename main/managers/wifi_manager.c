@@ -3,6 +3,7 @@
 #include "managers/wifi_manager.h"
 #include "scans/wifi/port_scan.h"
 #include "scans/wifi/arp_scan.h"
+#include "scans/wifi/ssh_scan.h"
 #include "core/callbacks.h"  // For callback function declarations
 #include "core/network_constants.h" // For common port definitions
 #include "core/ouis.h"       // For OUI vendor lookup
