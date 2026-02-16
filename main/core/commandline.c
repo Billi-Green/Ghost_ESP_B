@@ -10,11 +10,15 @@
 #include "vendor/drivers/pcf8563.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
+#include "attacks/ble/ble_spam.h"
+#include "scans/ble/flipper_scan.h"
 #endif
 #include "managers/dial_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "scans/wifi/port_scan.h"
+#include "scans/wifi/ssh_scan.h"
 #include "managers/sd_card_manager.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
@@ -93,6 +97,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "managers/aerial_detector_manager.h"
 #include "managers/wigle_manager.h"
 
+#include "attacks/wifi/dhcp_starvation.h"
 static const char *TAG = "Commandline";
 
 #if !defined(MAX_WIFI_CHANNEL)
@@ -760,7 +765,7 @@ void handle_stop_flipper(int argc, char **argv) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
     ble_stop_gatt_scan();
-    ble_stop_ble_spam();
+    ble_spam_stop();
 #endif
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
@@ -802,11 +807,12 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_deauth();
-    wifi_manager_stop_dhcpstarve();
+    dhcp_starvation_stop();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
     wifi_manager_stop_evil_portal();  // stop evil portal and flush credentials
     wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
+    wifi_manager_stop_beacon();  // stop beacon spam
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
     zigbee_manager_stop_capture();
@@ -1060,7 +1066,7 @@ void handle_wifi_disconnect(int argc, char **argv)
 void handle_ble_scan_cmd(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-f") == 0) {
         glog("Starting Find the Flippers.\n");
-        ble_start_find_flippers();
+        flipper_scan_start();
         return;
     }
 
@@ -3593,7 +3599,7 @@ void handle_scan_ports(int argc, char **argv) {
             status_display_show_status("Ports Local");
         }
         glog("Starting local subnet scan...\n");
-        wifi_manager_scan_subnet();
+        port_scan_subnet_async();  // Use async version to keep CLI responsive
         status_display_show_status("Ports Local");
         return;
     }
@@ -3666,20 +3672,12 @@ void handle_scan_ssh(int argc, char **argv) {
     }
 
     const char *target_ip = argv[1];
-    host_result_t result;
-    char msg_buf[64];
     
     glog("Starting SSH scan on %s...\n", target_ip);
     
-    scan_ssh_on_host(target_ip, &result);
+    ssh_scan_host(target_ip);
     
-    if (result.num_open_ports > 0) {
-        glog("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
-        status_display_show_status("SSH Found");
-    } else {
-        glog("No SSH services found.\n");
-        status_display_show_status("SSH None");
-    }
+    status_display_show_status("SSH Scan Done");
 }
 
 void handle_crash(int argc, char **argv) {
@@ -5769,19 +5767,19 @@ void handle_sweep_cmd(int argc, char **argv) {
     // --- BLE Scans ---
     glog("\n--- Phase 3: BLE Flipper Scan (%ds) ---\n", ble_seconds);
     
-    ble_start_find_flippers();
+    flipper_scan_start();
     vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
-    ble_stop();
+    flipper_scan_stop();
     vTaskDelay(pdMS_TO_TICKS(500));
     
-    ble_list_flippers();
+    flipper_scan_print_results();
     
-    int flipper_cnt = ble_get_flipper_count();
+    int flipper_cnt = flipper_scan_get_count();
     for (int i = 0; i < flipper_cnt && report; i++) {
         uint8_t mac[6];
         int8_t rssi;
         char name[32];
-        if (ble_get_flipper_data(i, mac, &rssi, name, sizeof(name)) == 0) {
+        if (flipper_scan_get_device_data(i, mac, &rssi, name, sizeof(name)) == 0) {
             fprintf(report, "Flipper,");
             sweep_write_csv_escaped(report, name[0] ? name : "");
             fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,,,%d,,,,",
@@ -5922,7 +5920,7 @@ void handle_stop_spoof(int argc, char **argv) {
 // Handlers for Flipper commands
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_flippers_cmd(int argc, char **argv) {
-    ble_list_flippers();
+    flipper_scan_print_results();
     status_display_show_status("List Flipper");
 }
 
@@ -5935,7 +5933,7 @@ void handle_select_flipper_cmd(int argc, char **argv) {
     char *endptr;
     int num = (int)strtol(argv[1], &endptr, 10);
     if (*endptr == '\0') {
-        ble_select_flipper(num);
+        flipper_scan_select(num);
         status_display_show_status("Flipper Pick");
     } else {
         glog("Error: '%s' is not a valid number.\n", argv[1]);
@@ -6022,20 +6020,20 @@ void handle_beaconspamlist(int argc, char **argv) {
 
 void handle_dhcpstarve_cmd(int argc, char **argv) {
     if (argc < 2) {
-        wifi_manager_dhcpstarve_help();
+        dhcp_starvation_help();
         status_display_show_status("DHCP Usage");
     } else if (strcmp(argv[1], "start") == 0) {
         int thr = (argc >= 3) ? atoi(argv[2]) : 1;
-        wifi_manager_start_dhcpstarve(thr);
+        dhcp_starvation_start(thr);
         status_display_show_status("DHCP Start");
     } else if (strcmp(argv[1], "stop") == 0) {
-        wifi_manager_stop_dhcpstarve();
+        dhcp_starvation_stop();
         status_display_show_status("DHCP Stop");
     } else if (strcmp(argv[1], "display") == 0) {
-        wifi_manager_dhcpstarve_display();
+        dhcp_starvation_display();
         status_display_show_status("DHCP Stats");
     } else {
-        wifi_manager_dhcpstarve_help();
+        dhcp_starvation_help();
         status_display_show_status("DHCP Usage");
     }
 }
@@ -8238,37 +8236,37 @@ void register_commands() {
 void handle_ble_spam_cmd(int argc, char **argv) {
     if (argc > 1) {
         if (strcmp(argv[1], "-apple") == 0) {
-            glog("starting apple ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_APPLE);
+            glog("Starting Apple BLE spam...\n");
+            ble_spam_start(BLE_SPAM_APPLE);
             return;
         }
         if (strcmp(argv[1], "-ms") == 0 || strcmp(argv[1], "-microsoft") == 0) {
-            glog("starting microsoft ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_MICROSOFT);
+            glog("Starting Microsoft BLE spam...\n");
+            ble_spam_start(BLE_SPAM_MICROSOFT);
             return;
         }
         if (strcmp(argv[1], "-samsung") == 0) {
-            glog("starting samsung ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_SAMSUNG);
+            glog("Starting Samsung BLE spam...\n");
+            ble_spam_start(BLE_SPAM_SAMSUNG);
             return;
         }
         if (strcmp(argv[1], "-google") == 0) {
-            glog("starting google ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_GOOGLE);
+            glog("Starting Google BLE spam...\n");
+            ble_spam_start(BLE_SPAM_GOOGLE);
             return;
         }
         if (strcmp(argv[1], "-random") == 0) {
-            glog("starting random ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_RANDOM);
+            glog("Starting Random BLE spam...\n");
+            ble_spam_start(BLE_SPAM_RANDOM);
             return;
         }
         if (strcmp(argv[1], "-s") == 0) {
-            glog("stopping ble spam...\n");
-            ble_stop_ble_spam();
+            glog("Stopping BLE spam...\n");
+            ble_spam_stop();
             return;
         }
     }
-    glog("usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+    glog("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
 }
 #endif
 
