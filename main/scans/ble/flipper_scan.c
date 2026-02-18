@@ -415,9 +415,12 @@ void flipper_scan_select(int index) {
 }
 
 void flipper_scan_start_tracking(void) {
-    // Check if BLE is properly initialized before proceeding
-    if (!ble_is_initialized() || !ble_is_stack_ready()) {
-        glog("Error: BLE stack not initialized. Cannot start Flipper tracking.\n");
+    if (!ble_is_initialized()) {
+        ble_init();
+    }
+
+    if (!ble_wait_for_ready()) {
+        glog("Error: BLE stack not ready. Cannot start Flipper tracking.\n");
         return;
     }
 

@@ -8,6 +8,7 @@
 - Fixed station deauth channel lookup
 - Moved multiple attacks and scans to separate files for maintainability
 - Significantly optimised port scan memory usage
+- Fixed BLE not initializing when selecting a flipper
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3
