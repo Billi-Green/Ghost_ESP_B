@@ -4,10 +4,14 @@
 
 ## Revival v1.9.4
 
+- 'chipinfo' command now shows firmware version and enabled build features (Display, NFC, BadUSB, IR, GPS, etc.)
 - Use country-appropriate channel list in main deauth task
 - Fixed station deauth channel lookup
 - Moved multiple attacks and scans to separate files for maintainability
 - Significantly optimised port scan memory usage
+- Fixed BLE not initializing when selecting a flipper
+- Slightly increased IR Learn task size to prevent crash
+- Added `wifistatus` CLI command to show connection status and saved network info
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3

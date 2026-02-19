@@ -5,6 +5,7 @@
 #include "core/serial_manager.h"
 #include "core/utils.h"
 #include "esp_sntp.h"
+#include "esp_mac.h"
 #include "managers/ap_manager.h"
 #include "sdkconfig.h"
 #include "vendor/drivers/pcf8563.h"
@@ -79,6 +80,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include <dirent.h>
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
+#include "core/ghostesp_version.h"
 #include "managers/chameleon_manager.h"
 #include <stddef.h>
 #include <ctype.h>
@@ -129,6 +131,7 @@ void cmd_wifi_scan_stop(int argc, char **argv);
 void handle_listportals(int argc, char **argv);
 void handle_evilportal(int argc, char **argv);
 void handle_wifi_disconnect(int argc, char **argv);
+void handle_wifi_status(int argc, char **argv);
 void handle_set_rgb_mode_cmd(int argc, char **argv);
 void handle_karma_cmd(int argc, char **argv);
 void handle_set_neopixel_brightness_cmd(int argc, char **argv);
@@ -1033,15 +1036,14 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
     
 #ifdef CONFIG_HAS_RTC_CLOCK
-    // Set up time synchronization callback to save time to RTC
-    sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
+    esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
 #endif
     
-    sntp_init();
+    esp_sntp_init();
 }
 
 void handle_wifi_disconnect(int argc, char **argv)
@@ -1059,6 +1061,40 @@ void handle_wifi_disconnect(int argc, char **argv)
         vTaskDelete(VisualizerHandle);
         VisualizerHandle = NULL;
     }
+}
+
+void handle_wifi_status(int argc, char **argv)
+{
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    glog("=== WIFI STATUS ===\n");
+    
+    bool is_connected = is_wifi_sta_connected();
+    const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+    bool has_saved = (saved_ssid != NULL && strlen(saved_ssid) > 0);
+    
+    glog("connected=%s\n", is_connected ? "true" : "false");
+    glog("has_saved_network=%s\n", has_saved ? "true" : "false");
+    
+    if (is_connected) {
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            glog("connected_ssid=%s\n", ap_info.ssid);
+            glog("connected_rssi=%d\n", ap_info.rssi);
+            glog("connected_bssid=" MACSTR "\n", MAC2STR(ap_info.bssid));
+            glog("connected_channel=%d\n", ap_info.primary);
+        }
+    } else {
+        glog("connected_ssid=\n");
+    }
+    
+    if (has_saved) {
+        glog("saved_ssid=%s\n", saved_ssid);
+    } else {
+        glog("saved_ssid=\n");
+    }
+    
+    glog("=== END STATUS ===\n");
 }
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -6367,6 +6403,10 @@ void handle_ap_enable_cmd(int argc, char **argv) {
 }
 
 void handle_chip_info_cmd(int argc, char **argv) {
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    glog("[CHIPINFO_START]\n");
+    
     esp_chip_info_t chip_info;
     uint32_t flash_size;
     
@@ -6413,6 +6453,10 @@ void handle_chip_info_cmd(int argc, char **argv) {
     unsigned minor_rev = chip_info.revision % 100;
     
     glog("Chip Information:\n");
+    glog("  Firmware: %s %s %s\n", GHOSTESP_NAME, GHOSTESP_FLAVOR, GHOSTESP_VERSION);
+#ifdef GIT_COMMIT_HASH
+    glog("  Git Commit: %s\n", GIT_COMMIT_HASH);
+#endif
     glog("  Model: %s\n", model_name);
     glog("  Revision: v%d.%d\n", major_rev, minor_rev);
     glog("  CPU Cores: %d\n", chip_info.cores);
@@ -6459,12 +6503,83 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
 #endif
-    
-    glog("  Model: %s\n  Revision: v%d.%d\n  CPU Cores: %d\n  Free Heap: %lu bytes\n",
-          model_name, major_rev, minor_rev, chip_info.cores, esp_get_free_heap_size());
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+
+    glog("\n  Enabled Features:\n");
+#ifdef CONFIG_WITH_SCREEN
+    glog("    Display\n");
 #endif
+#ifdef CONFIG_USE_TOUCHSCREEN
+    glog("    Touchscreen\n");
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    glog("    Status Display (OLED)\n");
+#endif
+#ifdef CONFIG_HAS_NFC
+    glog("    NFC\n");
+#endif
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+    glog("    BadUSB\n");
+#endif
+#ifdef CONFIG_HAS_INFRARED
+    glog("    Infrared TX\n");
+#endif
+#ifdef CONFIG_HAS_INFRARED_RX
+    glog("    Infrared RX\n");
+#endif
+#ifdef CONFIG_HAS_GPS
+    glog("    GPS\n");
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+    glog("    Ethernet\n");
+#endif
+#ifdef CONFIG_HAS_BATTERY
+    glog("    Battery (Power Save)\n");
+#endif
+#ifdef CONFIG_HAS_BATTERY_ADC
+    glog("    Battery ADC\n");
+#endif
+#ifdef CONFIG_HAS_FUEL_GAUGE
+    glog("    Fuel Gauge\n");
+#endif
+#ifdef CONFIG_HAS_RTC_CLOCK
+    glog("    RTC Clock\n");
+#endif
+#ifdef CONFIG_HAS_COMPASS
+    glog("    Compass\n");
+#endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+    glog("    Accelerometer\n");
+#endif
+#ifdef CONFIG_USE_JOYSTICK
+    glog("    Joystick\n");
+#endif
+#ifdef CONFIG_USE_CARDPUTER
+    glog("    Cardputer\n");
+#endif
+#ifdef CONFIG_USE_TDECK
+    glog("    T-Deck\n");
+#endif
+#ifdef CONFIG_USE_ENCODER
+    glog("    Rotary Encoder\n");
+#endif
+#ifdef CONFIG_USE_USB_KEYBOARD
+    glog("    USB Keyboard (Host)\n");
+#endif
+#ifdef CONFIG_IS_GHOST_BOARD
+    glog("    Ghost Board\n");
+#endif
+#ifdef CONFIG_IS_S3TWATCH
+    glog("    S3TWatch\n");
+#endif
+#ifdef CONFIG_USING_SPI
+    glog("    SD Card (SPI)\n");
+#endif
+#if defined(CONFIG_USING_MMC) || defined(CONFIG_USING_MMC_1_BIT)
+    glog("    SD Card (MMC)\n");
+#endif
+    
+    glog("[CHIPINFO_END]\n");
+    
     status_display_show_status("Chip Info");
 }
 
@@ -7760,7 +7875,7 @@ void handle_ir_cmd(int argc, char **argv) {
         args->timeout_sec = 10;
         strncpy(args->path, path, sizeof(args->path) - 1);
         args->path[sizeof(args->path) - 1] = '\0';
-        if (xTaskCreate(ir_rx_learn_task, "ir_learn", 4096, args, 5, &g_ir_rx_learn_task) != pdPASS) {
+        if (xTaskCreate(ir_rx_learn_task, "ir_learn", 5120, args, 5, &g_ir_rx_learn_task) != pdPASS) {
             glog("IR: failed to start learn task.\n");
             free(args);
             g_ir_rx_learn_task = NULL;
@@ -8109,6 +8224,7 @@ void register_commands() {
     register_command("capture", handle_capture_scan);
     register_command("startportal", handle_start_portal);
     register_command("disconnect", handle_wifi_disconnect);
+    register_command("wifistatus", handle_wifi_status);
     register_command("stopportal", stop_portal);
     register_command("connect", handle_wifi_connection);
     register_command("dialconnect", handle_dial_command);
