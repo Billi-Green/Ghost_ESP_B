@@ -748,10 +748,14 @@ void ble_deinit(void) {
     if (ble_initialized) {
         handler_count = 0;
 
-        nimble_port_stop();
-        if (nimble_host_task_handle != NULL && nimble_host_exit_sem != NULL) {
-            if (xSemaphoreTake(nimble_host_exit_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
-                ESP_LOGW(TAG_BLE, "nimble_host_task did not signal exit in time");
+        vTaskDelay(pdMS_TO_TICKS(100));
+
+        if (nimble_host_task_handle != NULL) {
+            nimble_port_stop();
+            if (nimble_host_exit_sem != NULL) {
+                if (xSemaphoreTake(nimble_host_exit_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
+                    ESP_LOGW(TAG_BLE, "nimble_host_task did not signal exit in time");
+                }
             }
             nimble_host_task_handle = NULL;
         }
@@ -856,6 +860,8 @@ void ble_stop(void) {
     ble_stop_spoofing();
 
     int rc = ble_gap_disc_cancel();
+
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     switch (rc) {
     case 0:
