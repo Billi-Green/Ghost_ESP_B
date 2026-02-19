@@ -12,6 +12,8 @@
 - Fixed BLE not initializing when selecting a flipper
 - Slightly increased IR Learn task size to prevent crash
 - Added `wifistatus` CLI command to show connection status and saved network info
+- Fixed a crash when deinitializing BLE
+- Improved BLE Spam
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3
