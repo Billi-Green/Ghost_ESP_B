@@ -5,6 +5,7 @@
 #include "core/serial_manager.h"
 #include "core/utils.h"
 #include "esp_sntp.h"
+#include "esp_mac.h"
 #include "managers/ap_manager.h"
 #include "sdkconfig.h"
 #include "vendor/drivers/pcf8563.h"
@@ -1032,15 +1033,14 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
     
 #ifdef CONFIG_HAS_RTC_CLOCK
-    // Set up time synchronization callback to save time to RTC
-    sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
+    esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
 #endif
     
-    sntp_init();
+    esp_sntp_init();
 }
 
 void handle_wifi_disconnect(int argc, char **argv)
@@ -6400,6 +6400,10 @@ void handle_ap_enable_cmd(int argc, char **argv) {
 }
 
 void handle_chip_info_cmd(int argc, char **argv) {
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    glog("[CHIPINFO_START]\n");
+    
     esp_chip_info_t chip_info;
     uint32_t flash_size;
     
