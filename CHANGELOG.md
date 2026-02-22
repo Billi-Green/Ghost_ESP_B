@@ -7,6 +7,8 @@
 - 'chipinfo' command now shows firmware version and enabled build features (Display, NFC, BadUSB, IR, GPS, etc.)
 - Use country-appropriate channel list in main deauth task
 - Fixed station deauth channel lookup
+- Fixed GPS latitude parsing for GLL sentences (was using 3-digit degree width instead of 2)
+- Improved GPS Info display with fix mode, satellites in view, and cleaner logging
 - Moved multiple attacks and scans to separate files for maintainability
 - Significantly optimised port scan memory usage
 - Fixed BLE not initializing when selecting a flipper

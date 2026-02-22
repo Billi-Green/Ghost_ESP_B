@@ -1000,7 +1000,7 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
         gps_try_sync_time_from_fix(gps);
         
         // Add status display messages for GPS fix status
-        if (gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D) {
+        if (gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D && gps->sats_in_use > 0) {
             if (gps->fix_mode == GPS_MODE_3D) {
                 status_display_show_status("GPS 3D Lock");
             } else {
