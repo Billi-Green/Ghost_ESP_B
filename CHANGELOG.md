@@ -16,6 +16,7 @@
 - Added `wifistatus` CLI command to show connection status and saved network info
 - Fixed a crash when deinitializing BLE
 - Improved BLE Spam
+- Deauth: fixed 5GHz HT40 tuning, added burst loops, and removed rate limiting
 - Fixed GPS satellites logic
 - Fixed misc Wardriving issues
 - Added New Wardriving and GPS info display view
