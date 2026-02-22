@@ -16,6 +16,9 @@
 - Added `wifistatus` CLI command to show connection status and saved network info
 - Fixed a crash when deinitializing BLE
 - Improved BLE Spam
+- Fixed GPS satellites logic
+- Fixed misc Wardriving issues
+- Added New Wardriving and GPS info display view
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3

@@ -9,6 +9,7 @@
 #include "vendor/GPS/gps_logger.h"
 #include "vendor/pcap.h"
 #include "core/glog.h"
+#include "scans/wifi/wifi_channels.h"
 #include <ctype.h>
 #include <esp_log.h>
 #include <string.h>
@@ -74,52 +75,22 @@ static void wardrive_heartbeat_cb(void *arg);
 static void start_wardrive_heartbeat(void);
 static void stop_wardrive_heartbeat(void);
 
-#if defined(CONFIG_IDF_TARGET_ESP32C5)
-#define WARDRIVE_C5_MAX_CHANNEL_PROBE 196
-static uint8_t wardrive_c5_channels[WARDRIVE_C5_MAX_CHANNEL_PROBE];
-static size_t wardrive_c5_channel_count = 0;
-static size_t wardrive_c5_channel_idx = 0;
-static bool wardrive_c5_channels_ready = false;
+static uint8_t wardrive_channels[WIFI_CHANNELS_MAX];
+static uint8_t wardrive_channel_count = 0;
+static uint8_t wardrive_channel_idx = 0;
 
-static void wardrive_build_channel_list_c5(void) {
-    if (wardrive_c5_channels_ready) {
-        return;
+static void wardrive_build_channel_list(void) {
+    wardrive_channel_count = wifi_channels_build_country_list(wardrive_channels, WIFI_CHANNELS_MAX);
+    if (wardrive_channel_count == 0) {
+        // Fallback to full channel list
+        uint8_t fallback[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,
+            36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165};
+        memcpy(wardrive_channels, fallback, sizeof(fallback));
+        wardrive_channel_count = sizeof(fallback);
     }
-
-    wardrive_c5_channel_count = 0;
-    wardrive_c5_channel_idx = 0;
-
-    uint8_t cur_primary = 1;
-    wifi_second_chan_t cur_second = WIFI_SECOND_CHAN_NONE;
-    (void)esp_wifi_get_channel(&cur_primary, &cur_second);
-
-    for (uint16_t ch = 1; ch <= WARDRIVE_C5_MAX_CHANNEL_PROBE; ch++) {
-        if (wardrive_c5_channel_count >= (sizeof(wardrive_c5_channels) / sizeof(wardrive_c5_channels[0]))) {
-            break;
-        }
-        if (esp_wifi_set_channel((uint8_t)ch, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
-            wardrive_c5_channels[wardrive_c5_channel_count++] = (uint8_t)ch;
-        }
-    }
-
-    if (wardrive_c5_channel_count == 0) {
-        wardrive_c5_channels[0] = 1;
-        wardrive_c5_channel_count = 1;
-    }
-
-    (void)esp_wifi_set_channel(cur_primary, cur_second);
-    wardrive_c5_channels_ready = true;
+    ESP_LOGI(TAG, "Wardrive channel list: %d channels", wardrive_channel_count);
 }
 
-static uint8_t wardrive_next_channel_c5(void) {
-    wardrive_build_channel_list_c5();
-    if (wardrive_c5_channel_count == 0) {
-        return 1;
-    }
-    wardrive_c5_channel_idx = (wardrive_c5_channel_idx + 1) % wardrive_c5_channel_count;
-    return wardrive_c5_channels[wardrive_c5_channel_idx];
-}
-#endif
 static uint32_t hash_ssid(const char *ssid);
 static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash);
 static int build_recent_ssids_string(const pineap_network_t *network, char *out, size_t out_size);
@@ -482,21 +453,10 @@ static void channel_hop_timer_callback(void *arg) {
     if (!pineap_detection_active)
         return;
 
-#if defined(CONFIG_IDF_TARGET_ESP32C5)
-    for (size_t tries = 0; tries < wardrive_c5_channel_count; tries++) {
-        current_channel = wardrive_next_channel_c5();
-        if (esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
-            break;
-        }
-    }
-#else
-    uint8_t start = current_channel;
-    do {
-        current_channel = (current_channel % MAX_WIFI_CHANNEL) + 1;
-        if (esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
-            break;
-    } while (current_channel != start);
-#endif
+    wardrive_build_channel_list();
+    wardrive_channel_idx = (wardrive_channel_idx + 1) % wardrive_channel_count;
+    current_channel = wardrive_channels[wardrive_channel_idx];
+    esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
 }
 
 static esp_err_t start_channel_hopping(void) {
@@ -560,21 +520,15 @@ static void wardrive_hop_timer_callback(void *arg) {
     if (!wardriving_hopping_active)
         return;
 
-#if defined(CONFIG_IDF_TARGET_ESP32C5)
-    for (size_t tries = 0; tries < wardrive_c5_channel_count; tries++) {
-        wardrive_channel = wardrive_next_channel_c5();
-        if (esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK) {
-            break;
-        }
+    wardrive_channel_idx = (wardrive_channel_idx + 1) % wardrive_channel_count;
+    wardrive_channel = wardrive_channels[wardrive_channel_idx];
+    esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE);
+    
+    static int hop_count = 0;
+    hop_count++;
+    if (hop_count % 50 == 0) {
+        ESP_LOGI(TAG, "Wardrive hopped to channel %d (hop #%d)", wardrive_channel, hop_count);
     }
-#else
-    uint8_t start = wardrive_channel;
-    do {
-        wardrive_channel = (wardrive_channel % MAX_WIFI_CHANNEL) + 1;
-        if (esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE) == ESP_OK)
-            break;
-    } while (wardrive_channel != start);
-#endif
 }
 
 static esp_err_t start_wardrive_channel_hopping(void) {
@@ -582,19 +536,28 @@ static esp_err_t start_wardrive_channel_hopping(void) {
                                           .name = "wardrive_hop"};
 
     if (wardrive_hop_timer == NULL) {
-        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &wardrive_hop_timer));
+        esp_err_t err = esp_timer_create(&timer_args, &wardrive_hop_timer);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create wardrive hop timer: %s", esp_err_to_name(err));
+            return err;
+        }
     }
 
+    wardrive_build_channel_list();
+    wardrive_channel_idx = 0;
+    wardrive_channel = wardrive_channels[0];
     wardriving_hopping_active = true;
-#if defined(CONFIG_IDF_TARGET_ESP32C5)
-    wardrive_c5_channels_ready = false;
-    wardrive_build_channel_list_c5();
-    wardrive_c5_channel_idx = 0;
-    wardrive_channel = wardrive_c5_channels[0];
-#else
-    wardrive_channel = 1;
-#endif
-    return esp_timer_start_periodic(wardrive_hop_timer, CHANNEL_HOP_INTERVAL_MS * 1000);
+    
+    esp_err_t err = esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE);
+    ESP_LOGI(TAG, "Wardrive starting on channel %d (set_channel: %s)", wardrive_channel, esp_err_to_name(err));
+    
+    err = esp_timer_start_periodic(wardrive_hop_timer, CHANNEL_HOP_INTERVAL_MS * 1000);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start wardrive hop timer: %s", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "Wardrive channel hopping started (%d channels, %dms interval)", wardrive_channel_count, CHANNEL_HOP_INTERVAL_MS);
+    return ESP_OK;
 }
 
 static void stop_wardrive_channel_hopping(void) {
@@ -680,14 +643,9 @@ void start_pineap_detection(void) {
     pineap_detection_active = true;
     pineap_network_count = 0;
     memset(pineap_networks, 0, sizeof(pineap_networks));
-#if defined(CONFIG_IDF_TARGET_ESP32C5)
-    wardrive_c5_channels_ready = false;
-    wardrive_build_channel_list_c5();
-    wardrive_c5_channel_idx = 0;
-    current_channel = wardrive_c5_channels[0];
-#else
-    current_channel = 1;
-#endif
+    wardrive_build_channel_list();
+    wardrive_channel_idx = 0;
+    current_channel = wardrive_channels[0];
     start_channel_hopping();
 }
 
@@ -1173,6 +1131,18 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             memcpy(ssid, &payload[index + 2], ie_len);
             ssid[ie_len] = '\0';
             trim_trailing(ssid);
+            // Sanitize: replace non-printable / non-ASCII bytes
+            for (char *p = ssid; *p; p++) {
+                if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7E) {
+                    *p = '?';
+                }
+            }
+        }
+
+        // DS Parameter Set IE - authoritative AP channel from the beacon itself
+        // (rx_ctrl.channel can be unreliable on some targets)
+        if (id == 3 && ie_len == 1) {
+            channel = payload[index + 2];
         }
 
         if (id == 48) {
@@ -1260,6 +1230,11 @@ rsn_done:
     strncpy(wardriving_data.encryption_type, encryption_type,
             sizeof(wardriving_data.encryption_type) - 1);
     wardriving_data.encryption_type[sizeof(wardriving_data.encryption_type) - 1] = '\0';
+
+    // Skip entries with empty SSIDs — hidden networks aren't useful for WiGLE
+    if (ssid[0] == '\0') {
+        return;
+    }
 
     wardrive_log_attempts++;
     esp_err_t err = gps_manager_log_wardriving_data(&wardriving_data);

@@ -1,12 +1,13 @@
 #include "managers/views/options_screen.h"
 #include "core/serial_manager.h"
-#include "core/commandline.h" // for get_evil_portal_list
+#include "core/commandline.h"
 #include "managers/display_manager.h"
 #include "gui/options_view.h"
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
 #include "io_manager.h"
+#include "managers/views/wardriving_screen.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
@@ -2570,9 +2571,8 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("startwd");
+        wardriving_view_set_scan_mode(true);
+        display_manager_switch_view(&wardriving_view);
         view_switched = true;
     }
 
@@ -2806,9 +2806,7 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "GPS Info") == 0) {
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("gpsinfo");
+        display_manager_switch_view(&wardriving_view);
         view_switched = true;
     }
 

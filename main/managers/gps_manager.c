@@ -29,7 +29,7 @@ typedef struct {
 static gps_task_static_res_t g_gps_check_task_res = {0};
 
 static const char *GPS_TAG = "GPS";
-static bool has_valid_cached_date = false;
+bool has_valid_cached_date = false;
 static bool gps_connection_logged = false;
 static TaskHandle_t gps_check_task_handle = NULL;
 static bool gps_timeout_detected = false;
@@ -260,13 +260,13 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
     if (!data->ble_data.is_ble_device) {
         if (!gps->valid || gps->fix < GPS_FIX_GPS || gps->fix_mode < GPS_MODE_2D ||
-            gps->sats_in_use < 3 || gps->sats_in_use > GPS_MAX_SATELLITES_IN_USE) {
+            gps->sats_in_use < 3) {
             return ESP_ERR_INVALID_STATE;
         }
     } else {
         // For BLE entries, only check GPS validity
         if (!gps->valid || gps->fix < GPS_FIX_GPS || gps->fix_mode < GPS_MODE_2D ||
-            gps->sats_in_use < 3 || gps->sats_in_use > GPS_MAX_SATELLITES_IN_USE) {
+            gps->sats_in_use < 3) {
             return ESP_ERR_INVALID_STATE;
         }
     }
@@ -279,7 +279,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
 
         // Only log warning for good GPS fixes
         if (gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D &&
-            gps->sats_in_use >= 3 && gps->sats_in_use <= GPS_MAX_SATELLITES_IN_USE &&
+            gps->sats_in_use >= 3 &&
             rand() % 100 == 0) {
             ESP_LOGW(GPS_TAG,
                      "Invalid date despite good fix: %04d-%02d-%02d "
@@ -307,12 +307,10 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     // Initialize GPS quality data to avoid uninitialized fields
     populate_gps_quality_data(data, gps);
 
-    // First, validate the current GPS date
-    if (!is_valid_date(&gps->date)) {
-        // Only show warning if we have a truly valid fix
+    // Check if we have a valid date or cached date - csv_write_data_to_buffer will handle fallback
+    if (!is_valid_date(&gps->date) && !has_valid_cached_date) {
         if (gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D &&
             gps->sats_in_use >= 3 &&
-            gps->sats_in_use <= GPS_MAX_SATELLITES_IN_USE &&
             rand() % 100 == 0) {
             ESP_LOGW(GPS_TAG, "Invalid date despite good fix: %04d-%02d-%02d (Fix:%d Mode:%d Sats:%d)",
                      gps_get_absolute_year(gps->date.year), gps->date.month, gps->date.day, gps->fix,
@@ -321,10 +319,10 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
         return ESP_OK;
     }
 
-    // Then, only if we don't have a cached date and the current date is valid,
-    // cache it
-    if (cacheddate.year <= 0) {
+    // Cache valid date if we don't have one
+    if (is_valid_date(&gps->date) && !has_valid_cached_date) {
         cacheddate = gps->date;
+        has_valid_cached_date = true;
     }
 
     if (gps->tim.hour > 23 || gps->tim.minute > 59 || gps->tim.second > 59) {
@@ -367,9 +365,6 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
                                  : (gps->fix_mode == GPS_MODE_3D)             ? "Locked"
                                                                               : "Unknown";
 
-        // Validate satellite counts (clamp between 0 and max)
-        uint8_t sats_in_use = (gps->sats_in_use > GPS_MAX_SATELLITES_IN_USE) ? 0 : gps->sats_in_use;
-
         // Determine accuracy based on HDOP
         const char *accuracy = (gps->dop_h < 0.0 || gps->dop_h > 50.0) ? "Invalid"
                                : (gps->dop_h <= 1.0)                   ? "Perfect"
@@ -395,7 +390,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
              fix_status,
              (unsigned long)csv_get_unique_wifi_ap_count(),
              data->gps_quality.satellites_used,
-             GPS_MAX_SATELLITES_IN_USE,
+             gps->sats_in_view,
              speed_kmh,
              get_gps_quality_string(data));
     }

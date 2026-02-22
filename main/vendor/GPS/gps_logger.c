@@ -378,14 +378,22 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
         return ESP_ERR_INVALID_STATE;
 
     char timestamp[24];
-    if (!is_valid_date(&gps->date) || gps->tim.hour > 23 || gps->tim.minute > 59 ||
-        gps->tim.second > 59) {
-        ESP_LOGW(GPS_TAG, "Invalid date/time for CSV entry");
+    gps_date_t date_to_use = gps->date;
+    if (!is_valid_date(&gps->date)) {
+        if (has_valid_cached_date) {
+            date_to_use = cacheddate;
+        } else {
+            ESP_LOGW(GPS_TAG, "Invalid date/time for CSV entry and no cached date");
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    if (gps->tim.hour > 23 || gps->tim.minute > 59 || gps->tim.second > 59) {
+        ESP_LOGW(GPS_TAG, "Invalid time for CSV entry");
         return ESP_ERR_INVALID_STATE;
     }
 
     snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d",
-             gps_get_absolute_year(gps->date.year), gps->date.month, gps->date.day, gps->tim.hour,
+             gps_get_absolute_year(date_to_use.year), date_to_use.month, date_to_use.day, gps->tim.hour,
              gps->tim.minute, gps->tim.second);
 
     static char data_line[CSV_GPS_BUFFER_SIZE];
@@ -799,6 +807,8 @@ void gps_info_display_task(void *pvParameters) {
     static char output_buffer[256] = {0};
     char lat_str[20] = {0}, lon_str[20] = {0};
     static wardriving_data_t gps_data = {0};
+    static int8_t last_sats_warn_state = -1;
+    static uint8_t gps_debug_count = 0;
     while (1) {
         // Add null check for nmea_hdl
         if (!nmea_hdl) {
@@ -822,25 +832,46 @@ void gps_info_display_task(void *pvParameters) {
         }
 
         if (!gps->valid || gps->fix < GPS_FIX_GPS || gps->fix_mode < GPS_MODE_2D ||
-            gps->sats_in_use < 3 || gps->sats_in_use > GPS_MAX_SATELLITES_IN_USE) {
+            gps->sats_in_use < 3) {
+            // Debug: log when we have coords but no valid fix (weird state)
+            static bool logged_coords_no_fix = false;
+            if (!logged_coords_no_fix && gps->latitude != 0.0 && gps->longitude != 0.0) {
+                logged_coords_no_fix = true;
+                if (gps_debug_count < 3) {
+                    gps_debug_count++;
+                    glog("GPS Debug: coords but no fix! valid=%d fix=%d sats_in_use=%d dop_h=%.1f lat=%.6f lon=%.6f\n",
+                         gps->valid, gps->fix, gps->sats_in_use, gps->dop_h, gps->latitude, gps->longitude);
+                }
+            } else if (gps->latitude == 0.0 && gps->longitude == 0.0) {
+                logged_coords_no_fix = false;
+            }
             if (!gps_is_timeout_detected()) {
                 const char *fix_str = gps->fix_mode == GPS_MODE_3D ? "3D" 
                                      : gps->fix_mode == GPS_MODE_2D ? "2D" 
                                      : gps->fix == GPS_FIX_GPS ? "GPS" : "No Fix";
                 glog("\nAcquiring GPS...\nFix: %s\nSats: %d/%d in view",
                      fix_str,
-                     gps->sats_in_use > GPS_MAX_SATELLITES_IN_USE ? 0 : gps->sats_in_use,
-                     gps->sats_in_view > 0 ? gps->sats_in_view : GPS_MAX_SATELLITES_IN_USE);
+                     gps->sats_in_use,
+                     gps->sats_in_view > 0 ? gps->sats_in_view : 0);
             }
         } else {
             // Only populate GPS data if we have a valid fix
+            int8_t sats_warn = (gps->sats_in_use < 3) ? 1 : 0;
+            if (sats_warn != last_sats_warn_state) {
+                last_sats_warn_state = sats_warn;
+                if (gps_debug_count < 3) {
+                    gps_debug_count++;
+                    glog("GPS Debug: sats_in_use=%d sats_in_view=%d dop_h=%.1f valid=%d fix=%d\n",
+                         gps->sats_in_use, gps->sats_in_view, gps->dop_h, gps->valid, gps->fix);
+                }
+            }
             populate_gps_quality_data(&gps_data, gps);
             format_coordinates(gps_data.latitude, gps_data.longitude, lat_str, lon_str);
             const char *direction = get_cardinal_direction(gps_data.gps_quality.course);
 
             glog("\nGPS Info\nFix: %s\nSats: %d/%d\nLat: %s\nLong: %s\nAlt: %.1fm\nSpeed: %.1f km/h\nDirection: %d° %s\nHDOP: %.1f",
                  gps->fix_mode == GPS_MODE_3D ? "3D" : "2D", gps_data.gps_quality.satellites_used,
-                 GPS_MAX_SATELLITES_IN_USE, lat_str, lon_str, gps->altitude,
+                 gps->sats_in_view, lat_str, lon_str, gps->altitude,
                  gps->speed * 3.6,
                  (int)gps_data.gps_quality.course, direction ? direction : "Unknown", gps->dop_h);
         }
