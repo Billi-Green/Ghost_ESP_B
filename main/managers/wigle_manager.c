@@ -34,6 +34,8 @@
 #define AUTH_BUF_SIZE 256
 #define WIGLE_RESP_BUF_SIZE 384
 #define WIGLE_TASK_STACK (12 * 1024)
+/* JIT-mount upload limits */
+#define WIGLE_JIT_MAX_ENTRIES   32             /* max paths per scan */
 
 static volatile bool wigle_upload_in_progress = false;
 
@@ -131,7 +133,7 @@ static bool wigle_file_has_data_rows(FILE *f) {
 
 /**
  * Upload a single CSV file to WiGLE API.
- * 
+ *
  * Multipart structure:
  *   --------------------------GhostESP\r\n
  *   Content-Disposition: form-data; name="file"; filename="test.csv"\r\n
@@ -141,11 +143,36 @@ static bool wigle_file_has_data_rows(FILE *f) {
  *   Content-Disposition: form-data; name="donate"\r\n\r\n
  *   true\r\n
  *   --------------------------GhostESP--\r\n
- * 
+ *
  * Content-Type header: multipart/form-data; boundary=------------------------GhostESP
  * Note: boundary in header has NO dashes, body boundaries have "--" prefix
  */
 static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
+    /* Resolve basename and file size via stat() BEFORE opening the file.
+     * wigle_process_queue holds q (FD1) + q_out (FD2) open; opening f here
+     * (FD3) then calling wigle_uploaded_check() (needs another FD) would
+     * exceed the JIT mount's max_files=3 limit.  Using stat() avoids the
+     * extra descriptor entirely. */
+    const char *basename = strrchr(filepath, '/');
+    if (!basename) basename = filepath;
+    else basename++;
+
+    struct stat st;
+    if (stat(filepath, &st) != 0) {
+        glog("Wigle: cannot stat %s\n", filepath);
+        return ESP_FAIL;
+    }
+    long fsize = (long)st.st_size;
+    if (fsize <= 0) {
+        glog("Wigle: file %s size %ld invalid\n", filepath, fsize);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    if (wigle_uploaded_check(basename, fsize)) {
+        glog("Wigle: skip %s (already uploaded)\n", filepath);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
     FILE *f = fopen(filepath, "rb");
     if (!f) {
         glog("Wigle: cannot open %s\n", filepath);
@@ -163,28 +190,9 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
         glog("Wigle: skip %s (no data rows - need GPS fix + wardriving)\n", filepath);
         return ESP_ERR_NOT_SUPPORTED;
     }
-
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (fsize <= 0) {
-        fclose(f);
-        glog("Wigle: file %s size %ld invalid\n", filepath, fsize);
-        return ESP_ERR_INVALID_SIZE;
-    }
-
     size_t file_len = (size_t)fsize;
-
-    const char *basename = strrchr(filepath, '/');
-    if (!basename) basename = filepath;
-    else basename++;
-
-    if (wigle_uploaded_check(basename, fsize)) {
-        fclose(f);
-        glog("Wigle: skip %s (already uploaded)\n", filepath);
-        return ESP_ERR_NOT_SUPPORTED;
-    }
 
     /* Multipart body size:
      * boundary + headers + file + boundary + donate + closing
@@ -335,6 +343,303 @@ static esp_err_t wigle_upload_file(const char *filepath, const char *api_key) {
     glog("Wigle: uploaded %s\n", filepath);
     wigle_uploaded_add(basename, fsize);
     return ESP_OK;
+}
+
+/**
+ * Upload a file to WiGLE using JIT-mount streaming.
+ *
+ * Key property: DNS/TCP/TLS setup happens with SD unmounted.  SD is mounted
+ * only for the actual file-streaming window (fast disk I/O, typically < 1s).
+ * No heap allocation for file content — uses a small on-stack chunk buffer.
+ *
+ * fsize and basename must be pre-validated by the caller.
+ */
+static esp_err_t wigle_upload_file_jit(const char *filepath, long fsize,
+                                        const char *basename, const char *api_key) {
+    const char *donate_val = G_Settings.wigle_donate ? "true" : "false";
+
+    size_t part1_len = strlen("--" WIGLE_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"\"\r\n"
+        "Content-Type: text/csv\r\n\r\n") + strlen(basename);
+    size_t part2_len = strlen("\r\n--" WIGLE_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"donate\"\r\n\r\n") +
+        strlen(donate_val) + strlen("\r\n--" WIGLE_BOUNDARY "--\r\n");
+    size_t body_len = part1_len + (size_t)fsize + part2_len;
+
+    char auth_b64[AUTH_BUF_SIZE];
+    size_t enc_len = AUTH_BUF_SIZE - 1;
+    if (mbedtls_base64_encode((unsigned char *)auth_b64, AUTH_BUF_SIZE, &enc_len,
+                              (const unsigned char *)api_key, strlen(api_key)) != 0) {
+        glog("Wigle JIT: base64 encode failed\n");
+        return ESP_FAIL;
+    }
+    auth_b64[enc_len] = '\0';
+
+    char auth_val[6 + AUTH_BUF_SIZE + 1];
+    snprintf(auth_val, sizeof(auth_val), "Basic %s", auth_b64);
+
+    char content_type_hdr[128];
+    snprintf(content_type_hdr, sizeof(content_type_hdr),
+             "multipart/form-data; boundary=%s", WIGLE_BOUNDARY);
+
+    wigle_resp_t resp = {0};
+    esp_http_client_config_t cfg = {
+        .url               = WIGLE_UPLOAD_URL,
+        .method            = HTTP_METHOD_POST,
+        .timeout_ms        = 90000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .transport_type    = HTTP_TRANSPORT_OVER_SSL,
+        .event_handler     = wigle_http_event,
+        .user_data         = &resp,
+        .buffer_size       = 4096,
+        .buffer_size_tx    = 4096,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) return ESP_FAIL;
+
+    esp_http_client_set_header(client, "Accept",        "application/json");
+    esp_http_client_set_header(client, "User-Agent",    "GhostESP/1.0");
+    esp_http_client_set_header(client, "Authorization", auth_val);
+    esp_http_client_set_header(client, "Content-Type",  content_type_hdr);
+
+    /* Open connection — DNS/TCP/TLS happen here, SD is NOT mounted */
+    esp_err_t err = esp_http_client_open(client, (int)body_len);
+    if (err != ESP_OK) { esp_http_client_cleanup(client); return err; }
+
+    /* Write part1 — no SD needed */
+    char part1[256];
+    int p1_len = snprintf(part1, sizeof(part1),
+        "--" WIGLE_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+        "Content-Type: text/csv\r\n\r\n", basename);
+    if (esp_http_client_write(client, part1, p1_len) != p1_len) {
+        esp_http_client_close(client); esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    /* Brief JIT mount: open file, stream to HTTP in small chunks, close, unmount.
+     * Display SPI is suspended only for this fast disk-I/O window. */
+    bool dws = false;
+    if (sd_card_mount_for_flush(&dws) != ESP_OK) {
+        esp_http_client_close(client); esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+    FILE *f = fopen(filepath, "rb");
+    if (!f) {
+        sd_card_unmount_after_flush(dws);
+        esp_http_client_close(client); esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+    esp_err_t stream_err = ESP_OK;
+    char chunk[512];   /* on-stack; no heap allocation for file content */
+    size_t remaining = (size_t)fsize;
+    while (remaining > 0) {
+        size_t to_read = (remaining > sizeof(chunk)) ? sizeof(chunk) : remaining;
+        size_t got = fread(chunk, 1, to_read, f);
+        if (got == 0) { stream_err = ESP_FAIL; break; }
+        if (esp_http_client_write(client, chunk, (int)got) != (int)got) {
+            stream_err = ESP_FAIL; break;
+        }
+        remaining -= got;
+    }
+    fclose(f);
+    sd_card_unmount_after_flush(dws);   /* SD unmounted right after file read */
+
+    if (stream_err != ESP_OK) {
+        esp_http_client_close(client); esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    /* Write part2 — no SD needed */
+    char part2[160];
+    int p2_len = snprintf(part2, sizeof(part2),
+        "\r\n--" WIGLE_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"donate\"\r\n\r\n"
+        "%s\r\n--" WIGLE_BOUNDARY "--\r\n", donate_val);
+    if (esp_http_client_write(client, part2, p2_len) != p2_len) {
+        esp_http_client_close(client); esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    int content_len = esp_http_client_fetch_headers(client);
+    if (content_len < 0) {
+        esp_http_client_close(client); esp_http_client_cleanup(client);
+        return (esp_err_t)content_len;
+    }
+    char drain[128];
+    while (esp_http_client_read(client, drain, sizeof(drain)) > 0) {}
+
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (status < 200 || status >= 300) {
+        glog("Wigle JIT: upload %s failed HTTP %d\n", basename, status);
+        return ESP_FAIL;
+    }
+    glog("Wigle JIT: uploaded %s\n", basename);
+    return ESP_OK;
+}
+
+/**
+ * JIT-mount variant of wigle_process_queue for builds where SD and display
+ * share an SPI bus ("somethingsomething").  SD is held mounted only during
+ * brief file-I/O windows; HTTP is done with SD unmounted so the display SPI
+ * is never suspended for more than a few milliseconds at a time.
+ *
+ * Zero heap allocations.  The queue file on SD is the backing store;
+ * we seek to line i on each iteration rather than loading all paths to RAM.
+ * Failures are tracked with a uint32_t bitmask (1 bit per entry, 4 bytes).
+ *
+ * Phase 1 – one mount: ensure queue file exists (build from GPS dir if needed)
+ * Phase 2 – per file: mount → read path i + validate → unmount
+ *            → HTTP (DNS/TLS with SD unmounted; file streamed in brief window)
+ *            → mount → record success → unmount
+ * Phase 3 – one mount: rewrite queue keeping only failed entries
+ *
+ * FD budget per window: never exceeds 2 simultaneous descriptors,
+ * well within the JIT max_files=3 limit.
+ */
+static esp_err_t wigle_process_queue_jit(const char *api_key) {
+    char path[320];          /* stack only — no heap for file paths */
+    uint32_t fail_mask = 0;  /* bit i set = entry i failed upload */
+
+    /* ── Phase 1: brief mount – ensure queue file exists ───────── */
+    {
+        bool dws = false;
+        if (sd_card_mount_for_flush(&dws) != ESP_OK) {
+            glog("Wigle JIT: SD mount failed (phase 1)\n");
+            return ESP_FAIL;
+        }
+
+        FILE *q = fopen(WIGLE_QUEUE_FILE, "r");  /* FD1 */
+        if (q) {
+            fclose(q);
+        } else {
+            /* Build queue from GPS directory */
+            DIR *d = opendir("/mnt/ghostesp/gps");  /* FD1 */
+            if (d) {
+                FILE *qw = fopen(WIGLE_QUEUE_FILE, "w");  /* FD2 */
+                struct dirent *e;
+                while ((e = readdir(d)) != NULL) {
+                    if (e->d_name[0] == '.') continue;
+                    size_t len = strlen(e->d_name);
+                    if (len <= 4 || strcasecmp(e->d_name + len - 4, ".csv") != 0) continue;
+                    if (qw) fprintf(qw, "/mnt/ghostesp/gps/%s\n", e->d_name);
+                }
+                if (qw) fclose(qw);
+                closedir(d);
+            }
+        }
+
+        sd_card_unmount_after_flush(dws);
+    }
+
+    /* ── Phase 2: process entries one at a time ─────────────────── */
+    int uploaded = 0, failed = 0, skipped = 0;
+
+    for (int i = 0; i < WIGLE_JIT_MAX_ENTRIES; i++) {
+        /* Brief mount: read line i from queue, then validate the file. */
+        bool dws2 = false;
+        if (sd_card_mount_for_flush(&dws2) != ESP_OK) {
+            fail_mask |= (1u << i); failed++;
+            continue;
+        }
+
+        /* Seek to line i in the queue file */
+        path[0] = '\0';
+        FILE *q = fopen(WIGLE_QUEUE_FILE, "r");  /* FD1 */
+        if (q) {
+            for (int j = 0; j <= i; j++) {
+                if (!fgets(path, sizeof(path), q)) { path[0] = '\0'; break; }
+                path[strcspn(path, "\r\n")] = '\0';
+            }
+            fclose(q);
+        }
+
+        if (!path[0]) {
+            sd_card_unmount_after_flush(dws2);
+            break;  /* queue exhausted */
+        }
+
+        const char *basename = strrchr(path, '/');
+        basename = basename ? basename + 1 : path;
+
+        /* stat + uploaded check + format validation — max 1 FD at any time */
+        long fsize = 0;
+        bool should_upload = false;
+        struct stat st;
+        if (stat(path, &st) == 0 && st.st_size > 0) {
+            fsize = (long)st.st_size;
+            if (!wigle_uploaded_check(basename, fsize)) {   /* FD1, brief */
+                FILE *f = fopen(path, "rb");                /* FD1 */
+                if (f) {
+                    bool valid = wigle_file_is_valid_format(f);
+                    if (valid) { fseek(f, 0, SEEK_SET); valid = wigle_file_has_data_rows(f); }
+                    fclose(f);
+                    should_upload = valid;
+                }
+            }
+        }
+        sd_card_unmount_after_flush(dws2);
+
+        if (!should_upload) { skipped++; continue; }
+
+        /* HTTP upload: DNS/TLS outside mount; file streamed in brief window */
+        esp_err_t ret = wigle_upload_file_jit(path, fsize, basename, api_key);
+
+        if (ret == ESP_OK) {
+            uploaded++;
+            bool dws3 = false;
+            if (sd_card_mount_for_flush(&dws3) == ESP_OK) {
+                wigle_uploaded_add(basename, fsize);   /* FD1 – brief */
+                sd_card_unmount_after_flush(dws3);
+            }
+        } else {
+            fail_mask |= (1u << i); failed++;
+        }
+    }
+
+    /* ── Phase 3: rewrite queue keeping only failed entries ─────── */
+    {
+        bool dws4 = false;
+        if (sd_card_mount_for_flush(&dws4) == ESP_OK) {
+            if (failed > 0) {
+                FILE *qin  = fopen(WIGLE_QUEUE_FILE, "r");         /* FD1 */
+                FILE *qtmp = fopen(WIGLE_QUEUE_FILE ".tmp", "w");  /* FD2 */
+                if (qin && qtmp) {
+                    int idx = 0;
+                    /* reuse path[] as line buffer; fgets preserves '\n' */
+                    while (fgets(path, sizeof(path), qin) &&
+                           idx < WIGLE_JIT_MAX_ENTRIES) {
+                        if (fail_mask & (1u << idx))
+                            fputs(path, qtmp);
+                        idx++;
+                    }
+                }
+                if (qin)  fclose(qin);
+                if (qtmp) fclose(qtmp);
+                remove(WIGLE_QUEUE_FILE);
+                rename(WIGLE_QUEUE_FILE ".tmp", WIGLE_QUEUE_FILE);
+            } else {
+                remove(WIGLE_QUEUE_FILE);
+            }
+            sd_card_unmount_after_flush(dws4);
+        }
+    }
+
+    if (uploaded > 0 && failed == 0) {
+        glog("Wigle JIT: all files uploaded (%d)\n", uploaded);
+        return ESP_OK;
+    } else if (uploaded > 0) {
+        glog("Wigle JIT: uploaded=%d failed=%d\n", uploaded, failed);
+        return ESP_FAIL;
+    } else if (failed > 0) {
+        glog("Wigle JIT: upload failed (%d files)\n", failed);
+        return ESP_FAIL;
+    }
+    glog("Wigle JIT: no new files to upload\n");
+    return ESP_ERR_NOT_FOUND;
 }
 
 /* Add file path to upload queue (only if not already uploaded) */
@@ -494,11 +799,19 @@ esp_err_t wigle_upload_all(void) {
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     require_jit = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
 #endif
+
+    if (require_jit) {
+        /* JIT path: SD and display share SPI — mount only in brief windows,
+         * never during HTTP (DNS/TLS can stall for 7+ seconds). */
+        return wigle_process_queue_jit(api_key);
+    }
+
+    /* Non-JIT path: SD does not share the display SPI bus. */
     bool display_was_suspended = false;
     bool did_mount = false;
-    if (require_jit && !sd_card_manager.is_initialized) {
+    if (!sd_card_manager.is_initialized) {
         if (sd_card_mount_for_flush(&display_was_suspended) != ESP_OK) {
-            glog("Wigle: JIT SD mount failed, cannot read queue\n");
+            glog("Wigle: SD mount failed, cannot read queue\n");
             return ESP_FAIL;
         }
         did_mount = true;
@@ -533,6 +846,9 @@ void wigle_uploaded_list(void) {
 
 static void wigle_upload_all_task(void *arg) {
     (void)arg;
+    /* Give the DNS resolver time to stabilize after DHCP.
+     * Without this, getaddrinfo() returns EAI_AGAIN (~500ms after IP event). */
+    vTaskDelay(pdMS_TO_TICKS(2000));
     (void)wigle_upload_all();
     wigle_upload_in_progress = false;
     vTaskDelete(NULL);

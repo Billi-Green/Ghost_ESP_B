@@ -542,7 +542,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         glog("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
         status_display_show_status("WiFi Connected");
-        
+
+        /* Set reliable fallback DNS servers so external resolution doesn't
+         * depend entirely on the router's DNS. DHCP sets DNS_MAIN (index 0);
+         * we set BACKUP and FALLBACK here after DHCP has run. */
+        esp_netif_dns_info_t dns = {0};
+        dns.ip.type = ESP_IPADDR_TYPE_V4;
+        dns.ip.u_addr.ip4.addr = esp_ip4addr_aton("8.8.8.8");
+        esp_netif_set_dns_info(wifiSTA, ESP_NETIF_DNS_BACKUP, &dns);
+        dns.ip.u_addr.ip4.addr = esp_ip4addr_aton("1.1.1.1");
+        esp_netif_set_dns_info(wifiSTA, ESP_NETIF_DNS_FALLBACK, &dns);
+
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
         wigle_upload_all_async();
     }

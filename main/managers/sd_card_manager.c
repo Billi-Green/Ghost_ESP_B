@@ -63,6 +63,9 @@ static bool display_spi_suspend_for_sd(void) {
   if (!is_shared_display_sd_spi()) {
     return false;
   }
+  if (s_display_spi_suspended_flag) {
+    return true;  /* already suspended — idempotent, matches resume_after_sd guard */
+  }
   /* pause lvgl refresh to stop flush() while we steal the bus */
   lv_disp_t *disp = lv_disp_get_default();
   if (disp) {
