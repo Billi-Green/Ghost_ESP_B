@@ -2759,13 +2759,12 @@ display_manager_switch_view(&terminal_view);
 
     else if (strcmp(Selected_Option, "BLE Wardriving") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("blewardriving");
+        wardriving_view_set_ble_mode(true);
+        display_manager_switch_view(&wardriving_view);
         view_switched = true;
 #else
         error_popup_create("Device Does not Support Bluetooth...");
-        
+
 #endif
     }
 

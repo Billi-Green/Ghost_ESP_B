@@ -4500,8 +4500,8 @@ void handle_ble_wardriving(int argc, char **argv) {
             return;
         }
 
-        ble_register_handler(ble_wardriving_callback);
         ble_start_scanning();
+        ble_register_handler(ble_wardriving_callback);
         printf("BLE wardriving started.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving started.\n");
         status_display_show_status("BLE Drive On");

@@ -191,6 +191,7 @@
 - IR and NFC display views and popups now properly use active set UI theme
 - Standardized LVGL screen root creation across display views and added status-bar content offset GUI helpers
 - Grid menu now scrolls up and down instead of left and right
+- BLE wardriving now uses dedicated wardriving screen with GPS stats and reliable device name parsing
 - Reorganised the settings menu and adjusted styling
 - Minor keyboard view logic and styling refactor
 - Terminal enter/select now submits text if typed, otherwise opens keyboard view

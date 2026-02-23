@@ -71,6 +71,32 @@ static uint32_t wardrive_log_attempts = 0;
 static uint32_t wardrive_log_ok = 0;
 static uint32_t wardrive_gps_rejected = 0;
 
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+#define BLE_WD_SEEN_SIZE 256
+static uint32_t ble_wd_seen_hashes[BLE_WD_SEEN_SIZE];
+static uint16_t ble_wd_seen_idx = 0;
+static uint32_t ble_wd_unique_count = 0;
+
+static uint32_t ble_wd_hash_mac(const uint8_t *addr) {
+    uint32_t hash = 2166136261u;
+    for (int i = 0; i < 6; i++) {
+        hash ^= addr[i];
+        hash *= 16777619u;
+    }
+    return hash ? hash : 1u;
+}
+
+uint32_t ble_wardriving_get_unique_device_count(void) {
+    return ble_wd_unique_count;
+}
+
+void ble_wardriving_reset_unique_device_count(void) {
+    memset(ble_wd_seen_hashes, 0, sizeof(ble_wd_seen_hashes));
+    ble_wd_seen_idx = 0;
+    ble_wd_unique_count = 0;
+}
+#endif
+
 static void wardrive_heartbeat_cb(void *arg);
 static void start_wardrive_heartbeat(void);
 static void stop_wardrive_heartbeat(void);
@@ -629,6 +655,11 @@ static void start_wardrive_heartbeat(void) {
     wardrive_log_attempts = 0;
     wardrive_log_ok = 0;
     wardrive_gps_rejected = 0;
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+    memset(ble_wd_seen_hashes, 0, sizeof(ble_wd_seen_hashes));
+    ble_wd_seen_idx = 0;
+    ble_wd_unique_count = 0;
+#endif
 }
 
 static void stop_wardrive_heartbeat(void) {
@@ -1559,10 +1590,32 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
 
     wardrive_ble_advs_seen++;
 
+    static uint32_t cb_log_counter = 0;
+    cb_log_counter++;
+    if ((cb_log_counter % 50) == 1) {
+        ESP_LOGI("BLE_WD", "callback: seen=%lu unique=%lu attempts=%lu ok=%lu rejected=%lu nmea_hdl=%p",
+                 (unsigned long)wardrive_ble_advs_seen,
+                 (unsigned long)ble_wd_unique_count,
+                 (unsigned long)wardrive_log_attempts,
+                 (unsigned long)wardrive_log_ok,
+                 (unsigned long)wardrive_gps_rejected,
+                 nmea_hdl);
+    }
+
+    uint32_t mac_hash = ble_wd_hash_mac(event->disc.addr.val);
+    bool already_seen = false;
+    for (int i = 0; i < BLE_WD_SEEN_SIZE; i++) {
+        if (ble_wd_seen_hashes[i] == mac_hash) { already_seen = true; break; }
+    }
+    if (!already_seen) {
+        ble_wd_seen_hashes[ble_wd_seen_idx] = mac_hash;
+        ble_wd_seen_idx = (ble_wd_seen_idx + 1) % BLE_WD_SEEN_SIZE;
+        ble_wd_unique_count++;
+    }
+
     wardriving_data_t wardriving_data = {0};
     wardriving_data.ble_data.is_ble_device = true;
 
-    // Get BLE MAC and RSSI
     snprintf(wardriving_data.ble_data.ble_mac, sizeof(wardriving_data.ble_data.ble_mac),
              "%02x:%02x:%02x:%02x:%02x:%02x", event->disc.addr.val[0], event->disc.addr.val[1],
              event->disc.addr.val[2], event->disc.addr.val[3], event->disc.addr.val[4],
@@ -1570,8 +1623,10 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
 
     wardriving_data.ble_data.ble_rssi = event->disc.rssi;
 
-    // Parse BLE name / manufacturer data if available
     if (event->disc.length_data > 0) {
+        parse_ble_device_name(event->disc.data, event->disc.length_data,
+                              wardriving_data.ble_data.ble_name,
+                              sizeof(wardriving_data.ble_data.ble_name));
         struct ble_adv_parse_arg parse_arg = {.wd = &wardriving_data};
         ble_hs_adv_parse(event->disc.data, event->disc.length_data, ble_hs_adv_parse_fields_cb,
                          &parse_arg);
@@ -1610,6 +1665,10 @@ static int ble_hs_adv_parse_fields_cb(const struct ble_hs_adv_field *field, void
     }
 
     if (field->type == BLE_HS_ADV_TYPE_COMP_NAME) {
+        size_t name_len = MIN(field->length, sizeof(data->ble_data.ble_name) - 1);
+        memcpy(data->ble_data.ble_name, field->value, name_len);
+        data->ble_data.ble_name[name_len] = '\0';
+    } else if (field->type == BLE_HS_ADV_TYPE_INCOMP_NAME && data->ble_data.ble_name[0] == '\0') {
         size_t name_len = MIN(field->length, sizeof(data->ble_data.ble_name) - 1);
         memcpy(data->ble_data.ble_name, field->value, name_len);
         data->ble_data.ble_name[name_len] = '\0';

@@ -59,6 +59,7 @@ static wd_dedupe_entry_t wd_ble_dedupe[WD_DEDUPE_SIZE];
 static uint8_t wd_wifi_idx = 0;
 static uint8_t wd_ble_idx = 0;
 static uint32_t wd_wifi_unique_logged = 0;
+static uint32_t wd_ble_unique_logged = 0;
 
 static uint32_t wd_hash_mac(const char *mac) {
     uint32_t hash = 2166136261u;
@@ -255,6 +256,14 @@ uint32_t csv_get_unique_wifi_ap_count(void) {
     return count;
 }
 
+uint32_t csv_get_unique_ble_device_count(void) {
+    uint32_t count = 0;
+    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
+    count = wd_ble_unique_logged;
+    if (csv_mutex) xSemaphoreGive(csv_mutex);
+    return count;
+}
+
 size_t csv_get_pending_bytes(void) {
     size_t pending = 0;
     if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
@@ -341,6 +350,7 @@ esp_err_t csv_file_open(const char *base_file_name) {
     wd_wifi_idx = 0;
     wd_ble_idx = 0;
     wd_wifi_unique_logged = 0;
+    wd_ble_unique_logged = 0;
     memset(wd_wifi_dedupe, 0, sizeof(wd_wifi_dedupe));
     memset(wd_ble_dedupe, 0, sizeof(wd_ble_dedupe));
 
@@ -414,6 +424,7 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
             entry->flags = WD_FLAG_USED | (name_empty ? WD_FLAG_NAME_EMPTY : 0);
             entry->best_rssi = (int8_t)data->ble_data.ble_rssi;
             should_log = true;
+            wd_ble_unique_logged++;
         } else {
             if ((entry->flags & WD_FLAG_NAME_EMPTY) && !name_empty) {
                 should_log = true;
@@ -430,6 +441,15 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
             return ESP_OK;
         }
 
+        static uint32_t ble_csv_log_counter = 0;
+        ble_csv_log_counter++;
+        if ((ble_csv_log_counter % 50) == 1) {
+            ESP_LOGI(CSV_TAG, "BLE CSV write: mac=%s rssi=%d lat=%.6f lon=%.6f unique_logged=%lu",
+                     data->ble_data.ble_mac, data->ble_data.ble_rssi,
+                     data->latitude, data->longitude,
+                     (unsigned long)wd_ble_unique_logged);
+        }
+
         char name_esc[96];
         char caps_esc[64];
         csv_escape_field(name_esc, sizeof(name_esc), data->ble_data.ble_name);
@@ -438,6 +458,11 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
         char mfgr_str[12] = {0};
         if (data->ble_data.ble_has_mfgr_id) {
             snprintf(mfgr_str, sizeof(mfgr_str), "%u", (unsigned)data->ble_data.ble_mfgr_id);
+        }
+
+        int altitude_val = (int)lround(data->altitude);
+        if (altitude_val > 1000000 || altitude_val < -1000000) {
+            altitude_val = 0;
         }
 
         len = snprintf(data_line,
@@ -450,7 +475,7 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
                        data->ble_data.ble_rssi,
                        data->latitude,
                        data->longitude,
-                       (int)lround(data->altitude),
+                       altitude_val,
                        data->accuracy,
                        mfgr_str);
     } else {

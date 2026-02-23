@@ -6,6 +6,9 @@
 #include "vendor/GPS/MicroNMEA.h"
 #include "vendor/GPS/gps_logger.h"
 #include "core/callbacks.h"
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+#include "managers/ble_manager.h"
+#endif
 #include "gui/screen_layout.h"
 #include "gui/lvgl_safe.h"
 #include "gui/theme_palette_api.h"
@@ -36,6 +39,7 @@ static lv_obj_t *compass_needle = NULL;
 
 static bool wardriving_initialized_gps = false;
 static bool wardriving_scan_mode = false;
+static bool wardriving_ble_mode = false;
 
 static uint32_t accent_color = 0x00FFFF;
 static uint32_t bg_color = 0x0A0A0A;
@@ -236,7 +240,13 @@ static void update_display_cb(lv_timer_t *timer) {
     }
     
     if (lbl_aps) {
-        uint32_t ap_count = csv_get_unique_wifi_ap_count();
+        uint32_t ap_count = wardriving_ble_mode
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+            ? ble_wardriving_get_unique_device_count()
+#else
+            ? 0
+#endif
+            : csv_get_unique_wifi_ap_count();
         char aps_buf[16];
         snprintf(aps_buf, sizeof(aps_buf), "%u", (unsigned int)ap_count);
         lv_label_set_text(lbl_aps, aps_buf);
@@ -333,7 +343,17 @@ void wardriving_view_create(void) {
     }
 
     bool csv_ok = true;
-    if (wardriving_scan_mode) {
+    if (wardriving_ble_mode) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        ESP_LOGI(TAG, "BLE wardriving start: gps_init=%d csv_ok=%d",
+                 g_gpsManager.isinitilized, csv_ok);
+        ble_wardriving_reset_unique_device_count();
+        csv_ok = (csv_file_open("ble_wardriving") == ESP_OK);
+        ble_start_scanning();
+        ble_register_handler(ble_wardriving_callback);
+        ESP_LOGI(TAG, "BLE wardriving started: csv_ok=%d", csv_ok);
+#endif
+    } else if (wardriving_scan_mode) {
         csv_ok = (csv_file_open("wardriving") == ESP_OK);
         wifi_manager_start_monitor_mode(wardriving_scan_callback);
         start_wardriving();
@@ -395,7 +415,7 @@ void wardriving_view_create(void) {
     
     lv_obj_t *aps_card = create_card(stats_row, 48);
     lv_obj_t *aps_label = lv_label_create(aps_card);
-    lv_label_set_text(aps_label, "APs Found");
+    lv_label_set_text(aps_label, wardriving_ble_mode ? "BLE Devs" : "APs Found");
     lv_obj_set_style_text_font(aps_label, small_font, 0);
     lv_obj_set_style_text_color(aps_label, lv_color_hex(dim_color), 0);
     lbl_aps = lv_label_create(aps_card);
@@ -477,9 +497,12 @@ void wardriving_view_create(void) {
     lv_obj_set_width(lbl_accuracy, LV_PCT(100));
     set_label_long_mode(lbl_accuracy);
     
-    display_manager_add_status_bar(wardriving_scan_mode ? "Wardriving" : "GPS Info");
+    const char *bar_title = wardriving_ble_mode ? "BLE Wardriving"
+                          : wardriving_scan_mode ? "Wardriving"
+                          : "GPS Info";
+    display_manager_add_status_bar(bar_title);
 
-    if (wardriving_scan_mode && !csv_ok && lbl_sd_status) {
+    if ((wardriving_scan_mode || wardriving_ble_mode) && !csv_ok && lbl_sd_status) {
         lv_obj_clear_flag(lbl_sd_status, LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -492,7 +515,19 @@ void wardriving_view_destroy(void) {
         update_timer = NULL;
     }
 
-    if (wardriving_scan_mode) {
+    if (wardriving_ble_mode) {
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        ESP_LOGI(TAG, "BLE wardriving stop: unique=%lu pending=%uB",
+                 (unsigned long)ble_wardriving_get_unique_device_count(),
+                 (unsigned)csv_get_pending_bytes());
+        ble_stop();
+        if (csv_buffer_has_pending_data()) {
+            csv_flush_buffer_to_file();
+        }
+        csv_file_close();
+#endif
+        wardriving_ble_mode = false;
+    } else if (wardriving_scan_mode) {
         stop_wardriving();
         wifi_manager_stop_monitor_mode();
         if (csv_buffer_has_pending_data()) {
@@ -529,6 +564,10 @@ void wardriving_view_destroy(void) {
 
 void wardriving_view_set_scan_mode(bool enabled) {
     wardriving_scan_mode = enabled;
+}
+
+void wardriving_view_set_ble_mode(bool enabled) {
+    wardriving_ble_mode = enabled;
 }
 
 static void get_wardriving_callback(void **callback) {

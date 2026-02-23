@@ -255,6 +255,7 @@ void gps_manager_deinit(GPSManager *manager) {
 
 esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (!data || !nmea_hdl) {
+        ESP_LOGW(GPS_TAG, "log_wardriving_data: null check failed data=%p nmea_hdl=%p", data, nmea_hdl);
         return ESP_ERR_INVALID_ARG;
     }
     gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
@@ -264,9 +265,14 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
             return ESP_ERR_INVALID_STATE;
         }
     } else {
-        // For BLE entries, only check GPS validity
+        static uint32_t ble_gps_reject_log_counter = 0;
+        ble_gps_reject_log_counter++;
         if (!gps->valid || gps->fix < GPS_FIX_GPS || gps->fix_mode < GPS_MODE_2D ||
             gps->sats_in_use < 3) {
+            if ((ble_gps_reject_log_counter % 100) == 1) {
+                ESP_LOGI(GPS_TAG, "BLE wardrive GPS check: valid=%d fix=%d mode=%d sats=%d",
+                         gps->valid, gps->fix, gps->fix_mode, gps->sats_in_use);
+            }
             return ESP_ERR_INVALID_STATE;
         }
     }
@@ -386,13 +392,23 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
 
         // Add newline before status update for better readability
         glog("\n");
-        glog(GPS_STATUS_MESSAGE,
-             fix_status,
-             (unsigned long)csv_get_unique_wifi_ap_count(),
-             data->gps_quality.satellites_used,
-             gps->sats_in_view,
-             speed_kmh,
-             get_gps_quality_string(data));
+        if (data->ble_data.is_ble_device) {
+            glog("GPS: %s\nBLE: %lu\nSats: %u/%u\nSpeed: %.1f km/h\nAccuracy: %s\n",
+                 fix_status,
+                 (unsigned long)csv_get_unique_ble_device_count(),
+                 data->gps_quality.satellites_used,
+                 gps->sats_in_view,
+                 speed_kmh,
+                 get_gps_quality_string(data));
+        } else {
+            glog(GPS_STATUS_MESSAGE,
+                 fix_status,
+                 (unsigned long)csv_get_unique_wifi_ap_count(),
+                 data->gps_quality.satellites_used,
+                 gps->sats_in_view,
+                 speed_kmh,
+                 get_gps_quality_string(data));
+        }
     }
 
     return ret;
