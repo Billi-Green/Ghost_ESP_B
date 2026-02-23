@@ -67,6 +67,7 @@ static const char *NVS_SETUP_COMPLETE_KEY = "setup_done";
 static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
 static const char *NVS_WIGLE_API_KEY = "wigle_api_key";
 static const char *NVS_WIGLE_DONATE_KEY = "wigle_donate";
+static const char *NVS_WIGLE_AUTO_UPLOAD_KEY = "wigle_auto_ul";
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *NVS_STATUS_IDLE_ANIM_KEY = "idle_anim"; // nvs keys must be <=15 chars
 static const char *NVS_STATUS_IDLE_TIMEOUT_KEY = "idle_to_ms";
@@ -182,6 +183,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->setup_complete = false;
   settings->wifi_country = 0;
   strcpy(settings->wigle_api_key, "");
+  settings->wigle_auto_upload = false; // Default to off
   settings->wigle_donate = true; // Default to donating
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
@@ -405,6 +407,14 @@ void settings_load(FSettings *settings) {
     printf("Failed to load Wigle donate setting: %s\n", esp_err_to_name(err));
   }
   settings->wigle_donate = (donate_val != 0);
+
+  // Load Wigle auto-upload setting
+  uint8_t auto_upload_val = 0;
+  err = nvs_get_u8(nvsHandle, NVS_WIGLE_AUTO_UPLOAD_KEY, &auto_upload_val);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    printf("Failed to load Wigle auto-upload setting: %s\n", esp_err_to_name(err));
+  }
+  settings->wigle_auto_upload = (auto_upload_val != 0);
 
   printf("Settings loaded from NVS.\n");
   int32_t tmp;
@@ -811,6 +821,14 @@ void settings_persist_setting(SettingsType setting) {
             key = NVS_BADUSB_KB_KEY;
             break;
 #endif
+        case SETTING_WIGLE_AUTO_UPLOAD:
+            err = nvs_set_u8(nvsHandle, NVS_WIGLE_AUTO_UPLOAD_KEY, G_Settings.wigle_auto_upload ? 1 : 0);
+            key = NVS_WIGLE_AUTO_UPLOAD_KEY;
+            break;
+        case SETTING_WIGLE_DONATE:
+            err = nvs_set_u8(nvsHandle, NVS_WIGLE_DONATE_KEY, G_Settings.wigle_donate ? 1 : 0);
+            key = NVS_WIGLE_DONATE_KEY;
+            break;
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -950,6 +968,7 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country);
     nvs_set_str(nvsHandle, NVS_WIGLE_API_KEY, settings->wigle_api_key);
     nvs_set_u8(nvsHandle, NVS_WIGLE_DONATE_KEY, settings->wigle_donate ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_WIGLE_AUTO_UPLOAD_KEY, settings->wigle_auto_upload ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY, settings->neopixel_max_brightness);
     nvs_set_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, settings->encoder_invert_direction ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, settings->setup_complete ? 1 : 0);
@@ -1397,6 +1416,22 @@ void settings_set_wifi_country(FSettings *settings, uint8_t country) {
 
 uint8_t settings_get_wifi_country(const FSettings *settings) {
   return settings->wifi_country;
+}
+
+void settings_set_wigle_auto_upload(FSettings *settings, bool enabled) {
+  settings->wigle_auto_upload = enabled;
+}
+
+bool settings_get_wigle_auto_upload(const FSettings *settings) {
+  return settings->wigle_auto_upload;
+}
+
+void settings_set_wigle_donate(FSettings *settings, bool enabled) {
+  settings->wigle_donate = enabled;
+}
+
+bool settings_get_wigle_donate(const FSettings *settings) {
+  return settings->wigle_donate;
 }
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY

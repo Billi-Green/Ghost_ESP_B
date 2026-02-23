@@ -51,6 +51,7 @@ typedef enum {
     SETTINGS_CAT_STATUS_DISPLAY,
     SETTINGS_CAT_NETWORK,
     SETTINGS_CAT_POWER_SYSTEM,
+    SETTINGS_CAT_WIGLE,
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -71,6 +72,7 @@ static SettingsCategory settings_categories[] = {
 #endif
     {"Network",        SETTINGS_CAT_NETWORK,       false, NULL},
     {"Power & System", SETTINGS_CAT_POWER_SYSTEM,  false, NULL},
+{"WiGLE", SETTINGS_CAT_WIGLE, false, NULL},
 };
 
 static int current_settings_category = -1;
@@ -380,6 +382,9 @@ static SettingsItem settings_items[] = {
     {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
     {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
     {"Factory Reset", SETTING_FACTORY_RESET, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+    
+    {"Auto Upload", SETTING_WIGLE_AUTO_UPLOAD, bool_options, 2, 0, SETTINGS_CAT_WIGLE, false, NULL},
+    {"Donate Data", SETTING_WIGLE_DONATE, bool_options, 2, 1, SETTINGS_CAT_WIGLE, false, NULL},
 };
 
 static int get_settings_count_for_category(SettingsCategoryId cat_id) {
@@ -962,6 +967,12 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = usb_keyboard_manager_is_host_mode() ? 1 : 0;
                 break;
 #endif
+            case SETTING_WIGLE_AUTO_UPLOAD:
+                settings_items[i].current_value = settings_get_wigle_auto_upload(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_WIGLE_DONATE:
+                settings_items[i].current_value = settings_get_wigle_donate(&G_Settings) ? 1 : 0;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -1092,6 +1103,12 @@ static void apply_setting_change(int setting_index, int new_value) {
             nvs_flash_erase();
             esp_restart();
             return;
+        case SETTING_WIGLE_AUTO_UPLOAD:
+            settings_set_wigle_auto_upload(&G_Settings, new_value == 1);
+            break;
+        case SETTING_WIGLE_DONATE:
+            settings_set_wigle_donate(&G_Settings, new_value == 1);
+            break;
     }
     
     // Save only the changed setting to NVS (Granular Save)

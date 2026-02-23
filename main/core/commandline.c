@@ -8182,7 +8182,11 @@ void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
 void handle_wigle_cmd(int argc, char **argv) {
     if (argc < 2) {
         glog("wigle API <name>:<token>  - Set Wigle API key (from wigle.net/account)\n");
-        glog("wigle list                - List stored uploaded CSV memory\n");
+        glog("wigle auto on/off          - Auto-upload at boot\n");
+        glog("wigle donate on/off         - Donate data to Wigle\n");
+        glog("wigle show                  - Show current settings\n");
+        glog("wigle list                  - List stored uploaded CSV memory\n");
+        glog("wigle upload                - Manually trigger upload\n");
         return;
     }
     if (strcmp(argv[1], "API") == 0 || strcmp(argv[1], "api") == 0) {
@@ -8195,8 +8199,41 @@ void handle_wigle_cmd(int argc, char **argv) {
         glog("Wigle API key set\n");
         return;
     }
+    if (strcmp(argv[1], "auto") == 0) {
+        if (argc < 3) {
+            glog("Usage: wigle auto on/off\n");
+            return;
+        }
+        bool enabled = (strcmp(argv[2], "on") == 0 || strcmp(argv[2], "1") == 0);
+        settings_set_wigle_auto_upload(&G_Settings, enabled);
+        settings_persist_setting(SETTING_WIGLE_AUTO_UPLOAD);
+        glog("Wigle auto-upload: %s\n", enabled ? "on" : "off");
+        return;
+    }
+    if (strcmp(argv[1], "donate") == 0) {
+        if (argc < 3) {
+            glog("Usage: wigle donate on/off\n");
+            return;
+        }
+        bool enabled = (strcmp(argv[2], "on") == 0 || strcmp(argv[2], "1") == 0);
+        settings_set_wigle_donate(&G_Settings, enabled);
+        settings_persist_setting(SETTING_WIGLE_DONATE);
+        glog("Wigle donate: %s\n", enabled ? "on" : "off");
+        return;
+    }
+    if (strcmp(argv[1], "show") == 0) {
+        glog("API Key: %s\n", G_Settings.wigle_api_key[0] ? "(set)" : "(not set)");
+        glog("Auto Upload: %s\n", settings_get_wigle_auto_upload(&G_Settings) ? "on" : "off");
+        glog("Donate: %s\n", settings_get_wigle_donate(&G_Settings) ? "on" : "off");
+        return;
+    }
     if (strcmp(argv[1], "list") == 0) {
         wigle_uploaded_list();
+        return;
+    }
+    if (strcmp(argv[1], "upload") == 0) {
+        wigle_upload_all_async();
+        glog("Wigle upload started\n");
         return;
     }
     glog("Unknown wigle command: %s\n", argv[1]);

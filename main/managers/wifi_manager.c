@@ -554,7 +554,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         esp_netif_set_dns_info(wifiSTA, ESP_NETIF_DNS_FALLBACK, &dns);
 
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
-        wigle_upload_all_async();
+        if (settings_get_wigle_auto_upload(&G_Settings)) {
+            wigle_upload_all_async();
+        }
     }
 }
 // Removed old wifi_retry_timer_callback - using unified retry system

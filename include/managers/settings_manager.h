@@ -81,6 +81,8 @@ typedef enum {
     SETTING_I2C_SCAN,
     SETTING_FACTORY_RESET,
     SETTING_SETUP_COMPLETE,
+    SETTING_WIGLE_AUTO_UPLOAD,
+    SETTING_WIGLE_DONATE,
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
     SETTING_BADUSB_VID,
     SETTING_BADUSB_PID,
@@ -197,6 +199,7 @@ typedef struct {
 
   // Wigle API key for wardriving upload (format: "APIName:APIToken" from wigle.net/account)
   char wigle_api_key[129];
+  bool wigle_auto_upload; // Auto-upload CSVs at boot when WiFi connected
   bool wigle_donate; // Whether to donate uploads to Wigle
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
   uint16_t badusb_vid;
@@ -376,6 +379,11 @@ void settings_set_setup_complete(FSettings *settings, bool complete);
 bool settings_get_setup_complete(const FSettings *settings);
 void settings_set_wifi_country(FSettings *settings, uint8_t country);
 uint8_t settings_get_wifi_country(const FSettings *settings);
+
+void settings_set_wigle_auto_upload(FSettings *settings, bool enabled);
+bool settings_get_wigle_auto_upload(const FSettings *settings);
+void settings_set_wigle_donate(FSettings *settings, bool enabled);
+bool settings_get_wigle_donate(const FSettings *settings);
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 // Status display idle animation accessors
