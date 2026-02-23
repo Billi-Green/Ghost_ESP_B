@@ -71,3 +71,8 @@ enableRobotsTXT = true
   name = "GPS & Wardriving"
   url = "/latest/gps/"
   weight = 5
+
+[[menu.sidebar]]
+  name = "Flipper Zero App"
+  url = "/latest/flipper-app/"
+  weight = 6
