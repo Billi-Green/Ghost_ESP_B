@@ -360,6 +360,12 @@ void app_main(void) {
     }
 #endif
 
-    ESP_LOGI(TAG, "Ghost ESP INIT complete. Ghost ESP Ready ;)");
-    printf("Ghost ESP Ready ;)\n");
+    ESP_LOGI(TAG, "Ghost ESP INIT complete.");
+    printf("    ####  #   #  ####   ####  #####   ####  ####  #####\n");
+    printf("   #      #   # #    #  #       #     #     #     #   #\n");
+    printf("   #  ### ##### #    #  ####    #     ####  ####  #####\n");
+    printf("   #   #  #   # #    #     #    #     #        #  #\n");
+    printf("    ####  #   #  ####   ####    #     ##### ####  #\n");
+    printf("\n");
+    printf("ghostcli> Type 'help' for available commands\n");
 }

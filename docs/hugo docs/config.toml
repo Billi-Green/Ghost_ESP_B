@@ -66,3 +66,8 @@ enableRobotsTXT = true
   name = "Firmware"
   url = "/latest/firmware/"
   weight = 4
+
+[[menu.sidebar]]
+  name = "GPS & Wardriving"
+  url = "/latest/gps/"
+  weight = 5

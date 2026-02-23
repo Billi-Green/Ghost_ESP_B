@@ -1,12 +1,13 @@
 #include "managers/views/options_screen.h"
 #include "core/serial_manager.h"
-#include "core/commandline.h" // for get_evil_portal_list
+#include "core/commandline.h"
 #include "managers/display_manager.h"
 #include "gui/options_view.h"
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
 #include "io_manager.h"
+#include "managers/views/wardriving_screen.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
@@ -42,122 +43,40 @@ static const char **evil_portal_options = NULL;
 
 static const char *TAG = "optionsScreen";
 
-static const char *settings_categories[] = {"Display & UI", "System & Hardware", NULL};
-
 typedef enum {
-    SETTINGS_CATEGORY_DISPLAY,
-    SETTINGS_CATEGORY_CONFIG,
-    SETTINGS_CATEGORY_COUNT
+    SETTINGS_CAT_DISPLAY = 0,
+    SETTINGS_CAT_APPEARANCE,
+    SETTINGS_CAT_LED_RGB,
+    SETTINGS_CAT_NAVIGATION,
+    SETTINGS_CAT_STATUS_DISPLAY,
+    SETTINGS_CAT_NETWORK,
+    SETTINGS_CAT_POWER_SYSTEM,
+    SETTINGS_CAT_WIGLE,
+    SETTINGS_CAT_COUNT
+} SettingsCategoryId;
+
+typedef struct {
+    const char *name;
+    SettingsCategoryId id;
+    bool conditional;
+    const char *condition_config;
 } SettingsCategory;
 
-static int current_settings_category = -1;
-
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
- #define SETTINGS_ITEMS_COUNT_BACKLIGHT 1
-#else
- #define SETTINGS_ITEMS_COUNT_BACKLIGHT 0
-#endif
-
+static SettingsCategory settings_categories[] = {
+    {"Display",        SETTINGS_CAT_DISPLAY,       false, NULL},
+    {"Appearance",     SETTINGS_CAT_APPEARANCE,    false, NULL},
+    {"LED & RGB",      SETTINGS_CAT_LED_RGB,       false, NULL},
+    {"Navigation",     SETTINGS_CAT_NAVIGATION,    false, NULL},
 #ifdef CONFIG_WITH_STATUS_DISPLAY
- #define SETTINGS_ITEMS_COUNT_STATUS 2
-#else
- #define SETTINGS_ITEMS_COUNT_STATUS 0
+    {"Status Display", SETTINGS_CAT_STATUS_DISPLAY, true, "CONFIG_WITH_STATUS_DISPLAY"},
 #endif
-
-#ifdef CONFIG_USE_ENCODER
- #define SETTINGS_ITEMS_COUNT_ENCODER 1
-#else
- #define SETTINGS_ITEMS_COUNT_ENCODER 0
-#endif
-
-#if CONFIG_IDF_TARGET_ESP32S3
- #define SETTINGS_ITEMS_COUNT_USB_HOST 1
-#else
- #define SETTINGS_ITEMS_COUNT_USB_HOST 0
-#endif
-
-#define SETTINGS_ITEMS_BASE_COUNT 14
-#define SETTINGS_ITEM_INDEX_I2C_SCAN (SETTINGS_ITEMS_BASE_COUNT + SETTINGS_ITEMS_COUNT_BACKLIGHT + SETTINGS_ITEMS_COUNT_STATUS + SETTINGS_ITEMS_COUNT_ENCODER + SETTINGS_ITEMS_COUNT_USB_HOST)
-#define SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY (SETTINGS_ITEM_INDEX_I2C_SCAN + 1)
-
-// Indices of settings for each category in the settings menu.
-// Each sub-array lists the indices of settings_items[] that belong to a category.
-// The last element in each sub-array must be -1 to mark the end.
-//
-// Category 0: "Display & UI" groups visual and navigation-related options.
-// Category 1: "System & Hardware" groups network, power, LED and control options.
-// Example: settings_category_indices[0] lists settings for category index 0.
-static int settings_category_indices[][20] = {
-#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-        {1, 9, 2, 13, 4, 5, 11, 12,
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-        14, 15,
-#endif
-        -1},
-        {6, 7, 8, 0, 10, 3,
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        16,
-#elif defined(CONFIG_USE_ENCODER)
-        14,
-#endif
-#if CONFIG_IDF_TARGET_ESP32S3
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        17, 18,
-#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
-        15, 16,
-#else
-        14, 15,
-#endif
-#else
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        17,
-#elif defined(CONFIG_USE_ENCODER)
-        15,
-#elif defined(CONFIG_WITH_STATUS_DISPLAY)
-        16,
-#else
-        14,
-#endif
-#endif
-        SETTINGS_ITEM_INDEX_I2C_SCAN,
-        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
-        -1},
-#else
-        {1, 2, 12, 4, 5, 10, 11,
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-        13, 14,
-#endif
-        -1},
-        {6, 7, 8, 0, 9, 3,
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        15,
-#elif defined(CONFIG_USE_ENCODER)
-        14,
-#endif
-#if CONFIG_IDF_TARGET_ESP32S3
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        16, 17,
-#elif defined(CONFIG_USE_ENCODER) || defined(CONFIG_WITH_STATUS_DISPLAY)
-        14, 15,
-#else
-        13, 14,
-#endif
-#else
-#if defined(CONFIG_USE_ENCODER) && defined(CONFIG_WITH_STATUS_DISPLAY)
-        16,
-#elif defined(CONFIG_USE_ENCODER)
-        14,
-#elif defined(CONFIG_WITH_STATUS_DISPLAY)
-        15,
-#else
-        13,
-#endif
-#endif
-        SETTINGS_ITEM_INDEX_I2C_SCAN,
-        SETTINGS_ITEM_INDEX_WEBUI_AP_ONLY,
-        -1},
-#endif
+    {"Network",        SETTINGS_CAT_NETWORK,       false, NULL},
+    {"Power & System", SETTINGS_CAT_POWER_SYSTEM,  false, NULL},
+{"WiGLE", SETTINGS_CAT_WIGLE, false, NULL},
 };
+
+static int current_settings_category = -1;
+static int settings_submenu_depth = 0;
 
 typedef enum {
     WIFI_MENU_MAIN,
@@ -403,6 +322,9 @@ typedef struct {
     const char **value_options;
     int value_count;
     int current_value;
+    SettingsCategoryId category_id;
+    bool conditional;
+    const char *condition_config;
 } SettingsItem;
 
 static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
@@ -414,49 +336,81 @@ static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000
 static const char *menu_layout_options[] = {"Normal", "Grid", "List"};
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *idle_animation_options[] = {"Game of Life", "Ghost", "Starfield", "HUD", "Matrix", "Flying Ghosts", "Spiral", "Falling Leaves", "Bouncing Text"};
-#endif
-#ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
 static const char *action_options[] = {"Press OK"};
-
-// SettingsType enum moved to settings_manager.h
 
 static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
 static SettingsItem settings_items[] = {
-    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 13, 0},
-    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1},
-    {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0},
-    {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0},
-    {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0},
-    {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0},
-    {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1},
-    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1},
-    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0},
-    #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
-    #endif
-    {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9}, // default 100%
-    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0},
-    {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1},
-    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0},
-    #ifdef CONFIG_WITH_STATUS_DISPLAY
-    {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 9, 0},
-    {"Idle Anim Delay", SETTING_IDLE_ANIM_DELAY, idle_delay_options, 4, 0},
-    #endif
-    #ifdef CONFIG_USE_ENCODER
-    {"Invert Encoder", SETTING_ENCODER_INVERT, bool_options, 2, 0},
-    #endif
-    #if CONFIG_IDF_TARGET_ESP32S3
-    {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0},
-    #endif
-    {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0},
-    {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0},
-    {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1},
+    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1, SETTINGS_CAT_DISPLAY, false, NULL},
+#ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
+    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_DISPLAY, false, NULL},
+#endif
+    {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0, SETTINGS_CAT_DISPLAY, false, NULL},
+    
+    {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 13, 0, SETTINGS_CAT_LED_RGB, false, NULL},
+    {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_LED_RGB, false, NULL},
+    
+    {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1, SETTINGS_CAT_NAVIGATION, false, NULL},
+    {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0, SETTINGS_CAT_NAVIGATION, false, NULL},
+#ifdef CONFIG_USE_ENCODER
+    {"Invert Encoder", SETTING_ENCODER_INVERT, bool_options, 2, 0, SETTINGS_CAT_NAVIGATION, true, "CONFIG_USE_ENCODER"},
+#endif
+    
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 9, 0, SETTINGS_CAT_STATUS_DISPLAY, true, "CONFIG_WITH_STATUS_DISPLAY"},
+    {"Idle Anim Delay", SETTING_IDLE_ANIM_DELAY, idle_delay_options, 4, 0, SETTINGS_CAT_STATUS_DISPLAY, true, "CONFIG_WITH_STATUS_DISPLAY"},
+#endif
+    
+    {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL},
+    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL},
+    {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL},
+    
+    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+#if CONFIG_IDF_TARGET_ESP32S3
+    {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0, SETTINGS_CAT_POWER_SYSTEM, true, "CONFIG_IDF_TARGET_ESP32S3"},
+#endif
+    {"Auto Save Scans", SETTING_AUTO_SAVE_SCANS, bool_options, 2, 1, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+    {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+    {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+    {"Factory Reset", SETTING_FACTORY_RESET, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+    
+    {"Auto Upload", SETTING_WIGLE_AUTO_UPLOAD, bool_options, 2, 0, SETTINGS_CAT_WIGLE, false, NULL},
+    {"Donate Data", SETTING_WIGLE_DONATE, bool_options, 2, 1, SETTINGS_CAT_WIGLE, false, NULL},
 };
+
+static int get_settings_count_for_category(SettingsCategoryId cat_id) {
+    int count = 0;
+    int settings_count = sizeof(settings_items) / sizeof(settings_items[0]);
+    for (int i = 0; i < settings_count; i++) {
+        if (settings_items[i].category_id == cat_id) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int get_setting_index_in_category(int position_in_category, SettingsCategoryId cat_id) {
+    int current_pos = 0;
+    int settings_count = sizeof(settings_items) / sizeof(settings_items[0]);
+    for (int i = 0; i < settings_count; i++) {
+        if (settings_items[i].category_id == cat_id) {
+            if (current_pos == position_in_category) {
+                return i;
+            }
+            current_pos++;
+        }
+    }
+    return -1;
+}
 
 static bool is_settings_mode = false;
 
@@ -851,6 +805,8 @@ void options_menu_create() {
         break;
     case OT_Settings: 
         is_settings_mode = true;
+        current_settings_category = -1;
+        settings_submenu_depth = 0;
         load_current_settings_values();
         break;
     default: options = NULL; break;
@@ -867,15 +823,9 @@ void options_menu_create() {
     button_height_global = button_height;
     
     if (is_settings_mode) {
-        if (current_settings_category < 0) {
-            current_options_list = settings_categories;
-            build_item_index = 0;
-            menu_build_timer = lv_timer_create(menu_builder_cb, 20, NULL);
-        } else {
-            current_options_list = NULL;
-            build_item_index = 0;
-            menu_build_timer = lv_timer_create(menu_builder_cb, 15, NULL);
-        }
+        current_options_list = NULL;
+        build_item_index = 0;
+        menu_build_timer = lv_timer_create(menu_builder_cb, current_settings_category < 0 ? 20 : 15, NULL);
     } else {
         current_options_list = options;
         build_item_index = 0;
@@ -978,6 +928,9 @@ static void load_current_settings_values(void) {
             case SETTING_NAV_BUTTONS:
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_AUTO_SAVE_SCANS:
+                settings_items[i].current_value = settings_get_auto_save_scans(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_MENU_LAYOUT:
             settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
                 break;
@@ -1014,6 +967,12 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = usb_keyboard_manager_is_host_mode() ? 1 : 0;
                 break;
 #endif
+            case SETTING_WIGLE_AUTO_UPLOAD:
+                settings_items[i].current_value = settings_get_wigle_auto_upload(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_WIGLE_DONATE:
+                settings_items[i].current_value = settings_get_wigle_donate(&G_Settings) ? 1 : 0;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -1081,6 +1040,9 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_NAV_BUTTONS:
             settings_set_nav_buttons_enabled(&G_Settings, new_value == 1);
             break;
+        case SETTING_AUTO_SAVE_SCANS:
+            settings_set_auto_save_scans(&G_Settings, new_value == 1);
+            break;
         case SETTING_MENU_LAYOUT:
             settings_set_menu_layout(&G_Settings, new_value);
             // The layout change will take effect on next menu creation
@@ -1137,6 +1099,16 @@ static void apply_setting_change(int setting_index, int new_value) {
             display_manager_switch_view(&terminal_view);
             io_manager_scan_i2c();
             return;
+        case SETTING_FACTORY_RESET:
+            nvs_flash_erase();
+            esp_restart();
+            return;
+        case SETTING_WIGLE_AUTO_UPLOAD:
+            settings_set_wigle_auto_upload(&G_Settings, new_value == 1);
+            break;
+        case SETTING_WIGLE_DONATE:
+            settings_set_wigle_donate(&G_Settings, new_value == 1);
+            break;
     }
     
     // Save only the changed setting to NVS (Granular Save)
@@ -2563,9 +2535,8 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("startwd");
+        wardriving_view_set_scan_mode(true);
+        display_manager_switch_view(&wardriving_view);
         view_switched = true;
     }
 
@@ -2799,21 +2770,18 @@ display_manager_switch_view(&terminal_view);
     }
 
     else if (strcmp(Selected_Option, "GPS Info") == 0) {
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("gpsinfo");
+        display_manager_switch_view(&wardriving_view);
         view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "BLE Wardriving") == 0) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("blewardriving");
+        wardriving_view_set_ble_mode(true);
+        display_manager_switch_view(&wardriving_view);
         view_switched = true;
 #else
         error_popup_create("Device Does not Support Bluetooth...");
-        
+
 #endif
     }
 
@@ -3084,6 +3052,7 @@ static void back_event_cb(lv_event_t *e) {
     // If in a settings submenu, go back to category selection
     if (is_settings_mode && current_settings_category >= 0) {
         current_settings_category = -1;
+        settings_submenu_depth = 0;
         rebuild_current_menu();
         return;
     }
@@ -3092,33 +3061,24 @@ static void back_event_cb(lv_event_t *e) {
 }
 
 static void rebuild_current_menu(void) {
-    // stop any existing build timer
     lvgl_timer_del_safe(&menu_build_timer);
     
-    // clear existing items efficiently
     if (g_options_view) {
         options_view_clear(g_options_view);
     } else if (menu_container && lv_obj_is_valid(menu_container)) {
         lv_obj_clean(menu_container);
     }
     
-    // reset build state
     num_items = 0;
     build_item_index = 0;
     selected_item_index = 0;
     
-    // determine options and timer period based on current menu state
     const char **options = NULL;
-    int timer_period = 15; // increased from 10ms to give more time between batches
+    int timer_period = 15;
     
     if (is_settings_mode) {
-        if (current_settings_category < 0) {
-            current_options_list = settings_categories;
-            timer_period = 20;
-        } else {
-            current_options_list = NULL;
-            timer_period = 15;
-        }
+        current_options_list = NULL;
+        timer_period = current_settings_category < 0 ? 20 : 15;
     } else {
         switch (SelectedMenuType) {
         case OT_Wifi:
@@ -3235,7 +3195,16 @@ static void rebuild_current_menu(void) {
     
     // update title
     if (is_settings_mode) {
-        options_view_set_title(g_options_view, "Settings");
+        if (current_settings_category >= 0) {
+            int cat_count = sizeof(settings_categories) / sizeof(settings_categories[0]);
+            if (current_settings_category < cat_count) {
+                options_view_set_title(g_options_view, settings_categories[current_settings_category].name);
+            } else {
+                options_view_set_title(g_options_view, "Settings");
+            }
+        } else {
+            options_view_set_title(g_options_view, "Settings");
+        }
     } else {
         options_view_set_title(g_options_view, options_menu_type_to_string(SelectedMenuType));
     }
@@ -3261,16 +3230,18 @@ static void switch_to_settings_category(int cat_idx) {
      * Instead, treat any out-of-range index exactly like a Back press and  *
      * leave current_settings_category unchanged.                           *
      * ------------------------------------------------------------------ */
-    if (cat_idx < 0 || cat_idx >= SETTINGS_CATEGORY_COUNT) {
+    int category_count = sizeof(settings_categories) / sizeof(settings_categories[0]);
+    if (cat_idx < 0 || cat_idx >= category_count) {
         ESP_LOGW(TAG,
                  "switch_to_settings_category: index %d outside [0..%d]; "
                  "interpreting as Back action",
-                 cat_idx, SETTINGS_CATEGORY_COUNT - 1);
+                 cat_idx, category_count - 1);
         back_event_cb(NULL);
         return;
     }
 
     current_settings_category = cat_idx;
+    settings_submenu_depth = 1;
     rebuild_current_menu();
 }
 
@@ -3484,29 +3455,26 @@ static void dual_comm_http_request_kb_cb(const char *text) {
 // build menu items in small batches so we don't starve the watchdog
 static void menu_builder_cb(lv_timer_t *t)
 {
-    /* If the view or options view is gone, stop this timer immediately. */
     if (!menu_container || !lv_obj_is_valid(menu_container) || !g_options_view) {
         if (t) lv_timer_del(t);
         menu_build_timer = NULL;
         return;
     }
-    const int BATCH = 3; // increased from 2 to reduce timer iterations
+    const int BATCH = 3;
     int built_this_tick = 0;
     bool all_current_options_processed = false;
     
-    // yield to other tasks to prevent watchdog starvation
     taskYIELD();
 
-    // Check if the "Back" option has already been added in a prior tick for this menu
     bool back_option_was_added_in_previous_tick = (bool)(intptr_t)t->user_data;
 
-    // Add regular menu items if the "Back" option hasn't been added yet
     if (!back_option_was_added_in_previous_tick) {
         if (is_settings_mode) {
-            if (current_settings_category < 0) { // Top-level categories (e.g., "Display", "Config")
-                while (settings_categories[build_item_index] != NULL && built_this_tick < BATCH) {
-                    const char *cat = settings_categories[build_item_index];
-                    lv_obj_t *btn = options_view_add_item(g_options_view, cat, option_event_cb, (void *)(intptr_t)build_item_index);
+            if (current_settings_category < 0) {
+                int category_count = sizeof(settings_categories) / sizeof(settings_categories[0]);
+                while (build_item_index < category_count && built_this_tick < BATCH) {
+                    SettingsCategory *cat = &settings_categories[build_item_index];
+                    lv_obj_t *btn = options_view_add_item(g_options_view, cat->name, option_event_cb, (void *)(intptr_t)build_item_index);
                     if (!btn) break;
                     lv_obj_set_user_data(btn, (void *)(intptr_t)build_item_index);
                     lv_obj_set_height(btn, button_height_global * 1.2);
@@ -3514,44 +3482,52 @@ static void menu_builder_cb(lv_timer_t *t)
                     num_items++;
                     built_this_tick++;
                     build_item_index++;
-                    // Select first item for all devices
                     if (num_items == 1) {
                         select_option_item(0);
                     }
                 }
-                if (settings_categories[build_item_index] == NULL) { // End of categories list
-
-
-
+                if (build_item_index >= category_count) {
                     all_current_options_processed = true;
                 }
-            } else { // Submenu of a settings category (e.g., "RGB Mode", "Display Timeout")
-                int *indices = settings_category_indices[current_settings_category];
-                while (indices[build_item_index] >= 0 && built_this_tick < BATCH) {
-                    int setting_idx = indices[build_item_index];
-                    SettingsItem *item = &settings_items[setting_idx];
-                    char buf[128];
-                    snprintf(buf, sizeof(buf), "%s: %s", item->label, item->value_options[item->current_value]);
-                    lv_obj_t *btn = options_view_add_item(g_options_view, buf, option_event_cb, (void *)(intptr_t)setting_idx);
-                    if (!btn) break;
-                    lv_obj_set_user_data(btn, (void *)(intptr_t)setting_idx);
-                    lv_obj_set_height(btn, button_height_global);
-                    decorate_settings_row_with_arrows(btn);
-                    num_items++;
-                    built_this_tick++;
-                    build_item_index++;
-                    // Select first item and refresh its style after arrows are created
-                    if (num_items == 1) {
-                        select_option_item(0);
-                        // Re-apply selected style now that arrows exist
-                        options_view_refresh_selected_item(g_options_view);
+            } else {
+                int settings_count = sizeof(settings_items) / sizeof(settings_items[0]);
+                int items_in_category = 0;
+                
+                for (int i = 0; i < settings_count; i++) {
+                    if (settings_items[i].category_id == current_settings_category) {
+                        items_in_category++;
                     }
                 }
-                if (indices[build_item_index] < 0) { // End of settings submenu list
+                
+                int current_item_in_category = 0;
+                for (int i = 0; i < settings_count && built_this_tick < BATCH; i++) {
+                    if (settings_items[i].category_id == current_settings_category) {
+                        if (current_item_in_category >= build_item_index) {
+                            SettingsItem *item = &settings_items[i];
+                            char buf[128];
+                            snprintf(buf, sizeof(buf), "%s: %s", item->label, item->value_options[item->current_value]);
+                            lv_obj_t *btn = options_view_add_item(g_options_view, buf, option_event_cb, (void *)(intptr_t)i);
+                            if (!btn) break;
+                            lv_obj_set_user_data(btn, (void *)(intptr_t)i);
+                            lv_obj_set_height(btn, button_height_global);
+                            decorate_settings_row_with_arrows(btn);
+                            num_items++;
+                            built_this_tick++;
+                            build_item_index++;
+                            if (num_items == 1) {
+                                select_option_item(0);
+                                options_view_refresh_selected_item(g_options_view);
+                            }
+                        }
+                        current_item_in_category++;
+                    }
+                }
+                
+                if (build_item_index >= items_in_category) {
                     all_current_options_processed = true;
                 }
             }
-        } else { // Non-settings menus (e.g., Wi-Fi Attacks, Bluetooth Main)
+        } else {
             while (current_options_list != NULL && current_options_list[build_item_index] != NULL && built_this_tick < BATCH) {
                 const char *opt = current_options_list[build_item_index];
                 lv_obj_t *btn = options_view_add_item(g_options_view, opt, option_event_cb, (void *)opt);
@@ -3561,32 +3537,27 @@ static void menu_builder_cb(lv_timer_t *t)
                 num_items++;
                 built_this_tick++;
                 build_item_index++;
-                // Select first item for all devices
                 if (num_items == 1) {
                     select_option_item(0);
                 }
             }
-            if (current_options_list == NULL || current_options_list[build_item_index] == NULL) { // End of regular options list
+            if (current_options_list == NULL || current_options_list[build_item_index] == NULL) {
                 all_current_options_processed = true;
             }
         }
     }
 
-    // Update arrow visibility after each batch of items is built
-    // This ensures arrows appear immediately on touch devices
     if (is_settings_mode && current_settings_category >= 0 && built_this_tick > 0) {
         update_settings_arrows_visibility();
     }
 
-    // Now, handle adding the "Back" button and stopping the timer
     if (all_current_options_processed) {
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
         bool need_back_button = true;
 #else
-        // Add back button when mirroring is active (for virtual joystick support)
         bool need_back_button = screen_mirror_is_enabled();
 #endif
-        if (need_back_button && !back_option_was_added_in_previous_tick) { // Add back button only once
+        if (need_back_button && !back_option_was_added_in_previous_tick) {
             lv_obj_t *btn = options_view_add_item(g_options_view, LV_SYMBOL_LEFT " Back", option_event_cb, (void *)"__BACK_OPTION__");
             if (btn) {
                 lv_obj_set_user_data(btn, (void *)"__BACK_OPTION__");
@@ -3596,10 +3567,9 @@ static void menu_builder_cb(lv_timer_t *t)
                     if (label) lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
                 }
                 num_items++;
-                t->user_data = (void*)1; // Mark back option as added
+                t->user_data = (void*)1;
             }
         }
-        // Timer should stop if all options are processed AND (if encoder/joystick/mirroring, the back option is now added, OR if neither)
         if (
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
             (bool)(intptr_t)t->user_data
@@ -3608,10 +3578,8 @@ static void menu_builder_cb(lv_timer_t *t)
 #endif
         ) {
             lv_timer_del(t);
-            /* menu build complete -- show or hide touch scroll buttons depending on scrollable content */
             if (menu_container && lv_obj_is_valid(menu_container)) {
                 update_scroll_buttons_visibility();
-                // Update arrow visibility after menu is built
                 update_settings_arrows_visibility();
             }
             menu_build_timer = NULL;
