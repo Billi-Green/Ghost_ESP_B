@@ -3,6 +3,7 @@
 #ifdef CONFIG_HAS_BADUSB
 
 #include "managers/badusb_manager.h"
+#include "managers/badusb_builtin_script.h"
 #include "managers/hid_script_parser.h"
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
@@ -18,6 +19,7 @@
 #include "tusb.h"
 #include "class/hid/hid.h"
 #include "class/hid/hid_device.h"
+#include "driver/gpio.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -178,8 +180,39 @@ static const hid_transport_t usb_transport = {
 esp_err_t badusb_manager_init(void) {
     if (s_initialized) return ESP_OK;
     s_initialized = true;
+
+#if defined(CONFIG_BADUSB_VSENSE_PIN) && CONFIG_BADUSB_VSENSE_PIN >= 0
+    gpio_config_t vsense_cfg = {
+        .pin_bit_mask = (1ULL << CONFIG_BADUSB_VSENSE_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&vsense_cfg);
+    ESP_LOGI(TAG, "VSENSE pin configured on GPIO%d (level=%d)",
+             CONFIG_BADUSB_VSENSE_PIN,
+             gpio_get_level(CONFIG_BADUSB_VSENSE_PIN));
+#endif
+
     ESP_LOGI(TAG, "BadUSB manager initialized");
     return ESP_OK;
+}
+
+bool badusb_has_vsense(void) {
+#if defined(CONFIG_BADUSB_VSENSE_PIN) && CONFIG_BADUSB_VSENSE_PIN >= 0
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool badusb_vsense_connected(void) {
+#if defined(CONFIG_BADUSB_VSENSE_PIN) && CONFIG_BADUSB_VSENSE_PIN >= 0
+    return gpio_get_level(CONFIG_BADUSB_VSENSE_PIN) != 0;
+#else
+    return true;
+#endif
 }
 
 static void badusb_randomize_details(uint16_t *vid, uint16_t *pid, char *mfr, size_t mfr_len, char *prod, size_t prod_len) {
@@ -213,11 +246,9 @@ void badusb_manager_apply_settings(void) {
              settings_get_badusb_kb_layout(&G_Settings));
 }
 
-esp_err_t badusb_manager_start(void) {
-    if (s_active) return ESP_OK;
-
-    badusb_manager_apply_settings();
-
+// Install TinyUSB driver (does not wait for mount).
+// Caller must call badusb_manager_apply_settings() first.
+static esp_err_t badusb_install_driver(void) {
     if (s_driver_installed) {
         tinyusb_driver_uninstall();
         s_driver_installed = false;
@@ -236,22 +267,37 @@ esp_err_t badusb_manager_start(void) {
         return ret;
     }
     s_driver_installed = true;
+    return ESP_OK;
+}
 
-    s_active = true;
-    s_stop_requested = false;
-
-    int timeout = 300;  // 3 seconds
-    while (!tud_mounted() && timeout-- > 0) {
+// Wait for USB host to mount the device
+static esp_err_t badusb_wait_for_mount(void) {
+    int timeout = 500;  // 5 seconds
+    while (!tud_mounted() && timeout-- > 0 && !s_stop_requested) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+
+    if (s_stop_requested) return ESP_ERR_INVALID_STATE;
 
     if (!tud_mounted()) {
         ESP_LOGW(TAG, "USB not mounted after timeout, continuing anyway");
     } else {
         ESP_LOGI(TAG, "USB device mounted");
     }
-
     return ESP_OK;
+}
+
+esp_err_t badusb_manager_start(void) {
+    if (s_active) return ESP_OK;
+
+    badusb_manager_apply_settings();
+    esp_err_t ret = badusb_install_driver();
+    if (ret != ESP_OK) return ret;
+
+    s_active = true;
+    s_stop_requested = false;
+
+    return badusb_wait_for_mount();
 }
 
 esp_err_t badusb_manager_stop(void) {
@@ -273,9 +319,44 @@ typedef struct {
 static void badusb_exec_task(void *arg) {
     exec_task_params_t *params = (exec_task_params_t *)arg;
 
+    s_stop_requested = false;
+
+    // If VSENSE is available, wait for USB cable to be plugged in BEFORE
+    // installing TinyUSB.  The ESP32-S3 internal PHY needs VBUS present for
+    // the device stack to enumerate correctly.
+    if (badusb_has_vsense() && !badusb_vsense_connected()) {
+        ESP_LOGI(TAG, "Waiting for VBUS...");
+        // Notify peer (C5) that we're waiting for USB
+        if (esp_comm_manager_is_connected()) {
+            esp_comm_manager_send_command("badusb", "status waiting");
+        }
+        while (!badusb_vsense_connected() && !s_stop_requested) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        if (s_stop_requested) {
+            glog("BadUSB: Cancelled while waiting for USB\n");
+            if (!params->from_file && params->buf) free(params->buf);
+            free(params);
+            s_exec_task_handle = NULL;
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGI(TAG, "VBUS detected, letting connection settle...");
+        // Let VBUS and data lines stabilise before touching the USB stack
+        vTaskDelay(pdMS_TO_TICKS(200));
+        // Notify peer (C5) that USB is connected
+        if (esp_comm_manager_is_connected()) {
+            esp_comm_manager_send_command("badusb", "status running");
+        }
+    }
+
+    // Now install TinyUSB and wait for host enumeration
     esp_err_t ret = badusb_manager_start();
     if (ret != ESP_OK) {
         glog("BadUSB: Failed to start: %s\n", esp_err_to_name(ret));
+        if (esp_comm_manager_is_connected()) {
+            esp_comm_manager_send_command("badusb", "status done");
+        }
         if (!params->from_file && params->buf) free(params->buf);
         free(params);
         s_exec_task_handle = NULL;
@@ -283,7 +364,8 @@ static void badusb_exec_task(void *arg) {
         return;
     }
 
-    s_stop_requested = false;
+    glog("BadUSB: USB ready, mounted=%d\n", tud_mounted() ? 1 : 0);
+
     int lines = 0;
 
     if (params->from_file) {
@@ -306,6 +388,16 @@ static void badusb_exec_task(void *arg) {
         glog("BadUSB: Execution stopped by user\n");
     } else {
         glog("BadUSB: Done (%d lines)\n", lines);
+    }
+
+    // Notify peer (C5) that execution is done
+    if (esp_comm_manager_is_connected()) {
+        esp_comm_manager_send_command("badusb", "status done");
+    }
+
+    if (s_driver_installed) {
+        tinyusb_driver_uninstall();
+        s_driver_installed = false;
     }
 
     s_active = false;
@@ -339,24 +431,28 @@ bool badusb_manager_is_active(void) {
 }
 
 int badusb_manager_list_scripts(char scripts[][64], int max_scripts) {
-    const char *dir_path = "/mnt/ghostesp/badusb";
-    DIR *dir = opendir(dir_path);
-    if (!dir) {
-        return 0;
+    int count = 0;
+
+    if (count < max_scripts) {
+        strncpy(scripts[count], BADUSB_BUILTIN_SCRIPT_NAME, 63);
+        scripts[count][63] = '\0';
+        count++;
     }
 
-    int count = 0;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && count < max_scripts) {
-        // Only list .txt files
-        size_t len = strlen(entry->d_name);
-        if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
-            strncpy(scripts[count], entry->d_name, 63);
-            scripts[count][63] = '\0';
-            count++;
+    const char *dir_path = "/mnt/ghostesp/badusb";
+    DIR *dir = opendir(dir_path);
+    if (dir) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL && count < max_scripts) {
+            size_t len = strlen(entry->d_name);
+            if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
+                strncpy(scripts[count], entry->d_name, 63);
+                scripts[count][63] = '\0';
+                count++;
+            }
         }
+        closedir(dir);
     }
-    closedir(dir);
     return count;
 }
 

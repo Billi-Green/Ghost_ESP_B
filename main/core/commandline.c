@@ -5,16 +5,21 @@
 #include "core/serial_manager.h"
 #include "core/utils.h"
 #include "esp_sntp.h"
+#include "esp_mac.h"
 #include "managers/ap_manager.h"
 #include "sdkconfig.h"
 #include "vendor/drivers/pcf8563.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
+#include "attacks/ble/ble_spam.h"
+#include "scans/ble/flipper_scan.h"
 #endif
 #include "managers/dial_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "scans/wifi/port_scan.h"
+#include "scans/wifi/ssh_scan.h"
 #include "managers/sd_card_manager.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
@@ -25,6 +30,7 @@
 #endif
 #ifdef CONFIG_HAS_BADUSB
 #include "managers/badusb_manager.h"
+#include "managers/badusb_builtin_script.h"
 #endif
 #ifdef CONFIG_WITH_ETHERNET
 #include "managers/ethernet_manager.h"
@@ -74,6 +80,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include <dirent.h>
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
+#include "core/ghostesp_version.h"
 #include "managers/chameleon_manager.h"
 #include <stddef.h>
 #include <ctype.h>
@@ -90,7 +97,9 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
 #include "managers/aerial_detector_manager.h"
+#include "managers/wigle_manager.h"
 
+#include "attacks/wifi/dhcp_starvation.h"
 static const char *TAG = "Commandline";
 
 #if !defined(MAX_WIFI_CHANNEL)
@@ -122,6 +131,7 @@ void cmd_wifi_scan_stop(int argc, char **argv);
 void handle_listportals(int argc, char **argv);
 void handle_evilportal(int argc, char **argv);
 void handle_wifi_disconnect(int argc, char **argv);
+void handle_wifi_status(int argc, char **argv);
 void handle_set_rgb_mode_cmd(int argc, char **argv);
 void handle_karma_cmd(int argc, char **argv);
 void handle_set_neopixel_brightness_cmd(int argc, char **argv);
@@ -145,6 +155,7 @@ void handle_aerial_track_cmd(int argc, char **argv);
 void handle_aerial_stop_cmd(int argc, char **argv);
 void handle_aerial_spoof_cmd(int argc, char **argv);
 void handle_aerial_spoof_stop_cmd(int argc, char **argv);
+void handle_wigle_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -344,6 +355,7 @@ static const SettingDescriptor k_settings_desc[] = {
     {"web_auth", ST_BOOL, OFF(web_auth_enabled), "System", 0, 0, 0},
     {"rts_enabled", ST_BOOL, OFF(rts_enabled), "System", 0, 0, 0},
     {"third_ctrl", ST_BOOL, OFF(third_control_enabled), "System", 0, 0, 0},
+    {"auto_save_scans", ST_BOOL, OFF(auto_save_scans), "System", 0, 0, 0},
 
     {"flappy_name", ST_STRING, OFF(flappy_ghost_name), "Custom", 65, 0, 0},
     {"timezone", ST_STRING, OFF(selected_timezone), "Custom", 25, 0, 0},
@@ -755,7 +767,8 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
-    ble_stop_ble_spam();
+    ble_stop_gatt_scan();
+    ble_spam_stop();
 #endif
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
@@ -797,10 +810,12 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_deauth();
-    wifi_manager_stop_dhcpstarve();
+    dhcp_starvation_stop();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
+    wifi_manager_stop_evil_portal();  // stop evil portal and flush credentials
     wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
+    wifi_manager_stop_beacon();  // stop beacon spam
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
     zigbee_manager_stop_capture();
@@ -818,10 +833,7 @@ void handle_stop_flipper(int argc, char **argv) {
         vTaskDelete(VisualizerHandle);
         VisualizerHandle = NULL;
     }
-    if (rgb_effect_task_handle != NULL) {
-        vTaskDelete(rgb_effect_task_handle);
-        rgb_effect_task_handle = NULL;
-    }
+    settings_restart_rgb_effect();
 }
 
 void handle_dial_command(int argc, char **argv) {
@@ -1024,15 +1036,14 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
     
 #ifdef CONFIG_HAS_RTC_CLOCK
-    // Set up time synchronization callback to save time to RTC
-    sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
+    esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
 #endif
     
-    sntp_init();
+    esp_sntp_init();
 }
 
 void handle_wifi_disconnect(int argc, char **argv)
@@ -1052,12 +1063,46 @@ void handle_wifi_disconnect(int argc, char **argv)
     }
 }
 
+void handle_wifi_status(int argc, char **argv)
+{
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    glog("=== WIFI STATUS ===\n");
+    
+    bool is_connected = is_wifi_sta_connected();
+    const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+    bool has_saved = (saved_ssid != NULL && strlen(saved_ssid) > 0);
+    
+    glog("connected=%s\n", is_connected ? "true" : "false");
+    glog("has_saved_network=%s\n", has_saved ? "true" : "false");
+    
+    if (is_connected) {
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            glog("connected_ssid=%s\n", ap_info.ssid);
+            glog("connected_rssi=%d\n", ap_info.rssi);
+            glog("connected_bssid=" MACSTR "\n", MAC2STR(ap_info.bssid));
+            glog("connected_channel=%d\n", ap_info.primary);
+        }
+    } else {
+        glog("connected_ssid=\n");
+    }
+    
+    if (has_saved) {
+        glog("saved_ssid=%s\n", saved_ssid);
+    } else {
+        glog("saved_ssid=\n");
+    }
+    
+    glog("=== END STATUS ===\n");
+}
+
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 
 void handle_ble_scan_cmd(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "-f") == 0) {
         glog("Starting Find the Flippers.\n");
-        ble_start_find_flippers();
+        flipper_scan_start();
         return;
     }
 
@@ -3590,7 +3635,7 @@ void handle_scan_ports(int argc, char **argv) {
             status_display_show_status("Ports Local");
         }
         glog("Starting local subnet scan...\n");
-        wifi_manager_scan_subnet();
+        port_scan_subnet_async();  // Use async version to keep CLI responsive
         status_display_show_status("Ports Local");
         return;
     }
@@ -3663,20 +3708,12 @@ void handle_scan_ssh(int argc, char **argv) {
     }
 
     const char *target_ip = argv[1];
-    host_result_t result;
-    char msg_buf[64];
     
     glog("Starting SSH scan on %s...\n", target_ip);
     
-    scan_ssh_on_host(target_ip, &result);
+    ssh_scan_host(target_ip);
     
-    if (result.num_open_ports > 0) {
-        glog("Found %d SSH service(s) on %s\n", result.num_open_ports, target_ip);
-        status_display_show_status("SSH Found");
-    } else {
-        glog("No SSH services found.\n");
-        status_display_show_status("SSH None");
-    }
+    status_display_show_status("SSH Scan Done");
 }
 
 void handle_crash(int argc, char **argv) {
@@ -4466,8 +4503,8 @@ void handle_ble_wardriving(int argc, char **argv) {
             return;
         }
 
-        ble_register_handler(ble_wardriving_callback);
         ble_start_scanning();
+        ble_register_handler(ble_wardriving_callback);
         printf("BLE wardriving started.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving started.\n");
         status_display_show_status("BLE Drive On");
@@ -4595,11 +4632,11 @@ void handle_rgb_mode(int argc, char **argv) {
 
     // Cancel any currently running LED effect task safely.
     if (rgb_effect_task_handle != NULL) {
-        if (last_effect_is_rainbow) {
-            rgb_manager_signal_rainbow_exit();
-            vTaskDelay(pdMS_TO_TICKS(50));
-            rgb_effect_task_handle = NULL;
-        } else {
+        rgb_manager_signal_rainbow_exit();
+        for (int i = 0; i < 20 && rgb_effect_task_handle != NULL; i++) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+        if (rgb_effect_task_handle != NULL) {
             vTaskDelete(rgb_effect_task_handle);
             rgb_effect_task_handle = NULL;
         }
@@ -5766,19 +5803,19 @@ void handle_sweep_cmd(int argc, char **argv) {
     // --- BLE Scans ---
     glog("\n--- Phase 3: BLE Flipper Scan (%ds) ---\n", ble_seconds);
     
-    ble_start_find_flippers();
+    flipper_scan_start();
     vTaskDelay(pdMS_TO_TICKS(ble_seconds * 1000));
-    ble_stop();
+    flipper_scan_stop();
     vTaskDelay(pdMS_TO_TICKS(500));
     
-    ble_list_flippers();
+    flipper_scan_print_results();
     
-    int flipper_cnt = ble_get_flipper_count();
+    int flipper_cnt = flipper_scan_get_count();
     for (int i = 0; i < flipper_cnt && report; i++) {
         uint8_t mac[6];
         int8_t rssi;
         char name[32];
-        if (ble_get_flipper_data(i, mac, &rssi, name, sizeof(name)) == 0) {
+        if (flipper_scan_get_device_data(i, mac, &rssi, name, sizeof(name)) == 0) {
             fprintf(report, "Flipper,");
             sweep_write_csv_escaped(report, name[0] ? name : "");
             fprintf(report, ",%02X:%02X:%02X:%02X:%02X:%02X,,,,%d,,,,",
@@ -5919,7 +5956,7 @@ void handle_stop_spoof(int argc, char **argv) {
 // Handlers for Flipper commands
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 void handle_list_flippers_cmd(int argc, char **argv) {
-    ble_list_flippers();
+    flipper_scan_print_results();
     status_display_show_status("List Flipper");
 }
 
@@ -5932,7 +5969,7 @@ void handle_select_flipper_cmd(int argc, char **argv) {
     char *endptr;
     int num = (int)strtol(argv[1], &endptr, 10);
     if (*endptr == '\0') {
-        ble_select_flipper(num);
+        flipper_scan_select(num);
         status_display_show_status("Flipper Pick");
     } else {
         glog("Error: '%s' is not a valid number.\n", argv[1]);
@@ -6019,20 +6056,20 @@ void handle_beaconspamlist(int argc, char **argv) {
 
 void handle_dhcpstarve_cmd(int argc, char **argv) {
     if (argc < 2) {
-        wifi_manager_dhcpstarve_help();
+        dhcp_starvation_help();
         status_display_show_status("DHCP Usage");
     } else if (strcmp(argv[1], "start") == 0) {
         int thr = (argc >= 3) ? atoi(argv[2]) : 1;
-        wifi_manager_start_dhcpstarve(thr);
+        dhcp_starvation_start(thr);
         status_display_show_status("DHCP Start");
     } else if (strcmp(argv[1], "stop") == 0) {
-        wifi_manager_stop_dhcpstarve();
+        dhcp_starvation_stop();
         status_display_show_status("DHCP Stop");
     } else if (strcmp(argv[1], "display") == 0) {
-        wifi_manager_dhcpstarve_display();
+        dhcp_starvation_display();
         status_display_show_status("DHCP Stats");
     } else {
-        wifi_manager_dhcpstarve_help();
+        dhcp_starvation_help();
         status_display_show_status("DHCP Usage");
     }
 }
@@ -6366,6 +6403,10 @@ void handle_ap_enable_cmd(int argc, char **argv) {
 }
 
 void handle_chip_info_cmd(int argc, char **argv) {
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    glog("[CHIPINFO_START]\n");
+    
     esp_chip_info_t chip_info;
     uint32_t flash_size;
     
@@ -6412,6 +6453,10 @@ void handle_chip_info_cmd(int argc, char **argv) {
     unsigned minor_rev = chip_info.revision % 100;
     
     glog("Chip Information:\n");
+    glog("  Firmware: %s %s %s\n", GHOSTESP_NAME, GHOSTESP_FLAVOR, GHOSTESP_VERSION);
+#ifdef GIT_COMMIT_HASH
+    glog("  Git Commit: %s\n", GIT_COMMIT_HASH);
+#endif
     glog("  Model: %s\n", model_name);
     glog("  Revision: v%d.%d\n", major_rev, minor_rev);
     glog("  CPU Cores: %d\n", chip_info.cores);
@@ -6458,12 +6503,83 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
 #endif
-    
-    glog("  Model: %s\n  Revision: v%d.%d\n  CPU Cores: %d\n  Free Heap: %lu bytes\n",
-          model_name, major_rev, minor_rev, chip_info.cores, esp_get_free_heap_size());
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
+
+    glog("\n  Enabled Features:\n");
+#ifdef CONFIG_WITH_SCREEN
+    glog("    Display\n");
 #endif
+#ifdef CONFIG_USE_TOUCHSCREEN
+    glog("    Touchscreen\n");
+#endif
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+    glog("    Status Display (OLED)\n");
+#endif
+#ifdef CONFIG_HAS_NFC
+    glog("    NFC\n");
+#endif
+#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
+    glog("    BadUSB\n");
+#endif
+#ifdef CONFIG_HAS_INFRARED
+    glog("    Infrared TX\n");
+#endif
+#ifdef CONFIG_HAS_INFRARED_RX
+    glog("    Infrared RX\n");
+#endif
+#ifdef CONFIG_HAS_GPS
+    glog("    GPS\n");
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+    glog("    Ethernet\n");
+#endif
+#ifdef CONFIG_HAS_BATTERY
+    glog("    Battery (Power Save)\n");
+#endif
+#ifdef CONFIG_HAS_BATTERY_ADC
+    glog("    Battery ADC\n");
+#endif
+#ifdef CONFIG_HAS_FUEL_GAUGE
+    glog("    Fuel Gauge\n");
+#endif
+#ifdef CONFIG_HAS_RTC_CLOCK
+    glog("    RTC Clock\n");
+#endif
+#ifdef CONFIG_HAS_COMPASS
+    glog("    Compass\n");
+#endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+    glog("    Accelerometer\n");
+#endif
+#ifdef CONFIG_USE_JOYSTICK
+    glog("    Joystick\n");
+#endif
+#ifdef CONFIG_USE_CARDPUTER
+    glog("    Cardputer\n");
+#endif
+#ifdef CONFIG_USE_TDECK
+    glog("    T-Deck\n");
+#endif
+#ifdef CONFIG_USE_ENCODER
+    glog("    Rotary Encoder\n");
+#endif
+#ifdef CONFIG_USE_USB_KEYBOARD
+    glog("    USB Keyboard (Host)\n");
+#endif
+#ifdef CONFIG_IS_GHOST_BOARD
+    glog("    Ghost Board\n");
+#endif
+#ifdef CONFIG_IS_S3TWATCH
+    glog("    S3TWatch\n");
+#endif
+#ifdef CONFIG_USING_SPI
+    glog("    SD Card (SPI)\n");
+#endif
+#if defined(CONFIG_USING_MMC) || defined(CONFIG_USING_MMC_1_BIT)
+    glog("    SD Card (MMC)\n");
+#endif
+    
+    glog("[CHIPINFO_END]\n");
+    
     status_display_show_status("Chip Info");
 }
 
@@ -6535,6 +6651,7 @@ void handle_settings_cmd(int argc, char **argv) {
         glog("    web_auth          - Web authentication (true/false)\n");
         glog("    rts_enabled       - RTS enabled (true/false)\n");
         glog("    third_ctrl        - Third control enabled (true/false)\n");
+        glog("    auto_save_scans   - Auto save scan results to SD (true/false)\n");
         glog("  Custom Settings:\n");
         glog("    flappy_name       - Flappy Ghost name\n");
         glog("    timezone          - Selected timezone\n");
@@ -7264,14 +7381,26 @@ void handle_badusb_cmd(int argc, char **argv) {
         }
     } else if (strcmp(sub, "run") == 0) {
         if (argc < 3) {
-            glog("Usage: badusb run <filename>\n");
+            glog("Usage: badusb run <filename|builtin>\n");
             return;
         }
-        char path[256];
-        snprintf(path, sizeof(path), "/mnt/ghostesp/badusb/%s", argv[2]);
-        esp_err_t ret = badusb_manager_execute_file(path);
-        if (ret != ESP_OK) {
-            glog("BadUSB: Failed to execute %s\n", argv[2]);
+        if (strcmp(argv[2], "builtin") == 0) {
+            char *buf = strdup(badusb_builtin_script);
+            if (buf) {
+                esp_err_t ret = badusb_manager_execute_buffer(buf, BADUSB_BUILTIN_SCRIPT_LEN);
+                if (ret != ESP_OK) {
+                    glog("BadUSB: Failed to execute built-in script\n");
+                }
+            } else {
+                glog("BadUSB: Out of memory\n");
+            }
+        } else {
+            char path[256];
+            snprintf(path, sizeof(path), "/mnt/ghostesp/badusb/%s", argv[2]);
+            esp_err_t ret = badusb_manager_execute_file(path);
+            if (ret != ESP_OK) {
+                glog("BadUSB: Failed to execute %s\n", argv[2]);
+            }
         }
     } else if (strcmp(sub, "exec") == 0) {
         if (argc < 3) {
@@ -7338,6 +7467,31 @@ void handle_badusb_cmd(int argc, char **argv) {
         uint8_t layout = (uint8_t)strtol(argv[2], NULL, 0);
         settings_set_badusb_kb_layout(&G_Settings, layout);
         glog("BadUSB: Layout set to %u\n", layout);
+    } else if (strcmp(sub, "status") == 0) {
+        // Status update from peer - forward to view
+#ifdef CONFIG_WITH_SCREEN
+        if (argc >= 3) {
+            extern void badusb_view_update_status(const char *status);
+            badusb_view_update_status(argv[2]);
+        }
+#endif
+    } else {
+        glog("Unknown badusb subcommand: %s\n", sub);
+    }
+#elif defined(CONFIG_HAS_BADUSB_REMOTE)
+    if (argc < 2) {
+        glog("BadUSB remote: no subcommand\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp(sub, "status") == 0) {
+        // Status update from S3 peer - forward to display view
+#ifdef CONFIG_WITH_SCREEN
+        if (argc >= 3) {
+            extern void badusb_view_update_status(const char *status);
+            badusb_view_update_status(argv[2]);
+        }
+#endif
     } else {
         glog("Unknown badusb subcommand: %s\n", sub);
     }
@@ -7721,7 +7875,7 @@ void handle_ir_cmd(int argc, char **argv) {
         args->timeout_sec = 10;
         strncpy(args->path, path, sizeof(args->path) - 1);
         args->path[sizeof(args->path) - 1] = '\0';
-        if (xTaskCreate(ir_rx_learn_task, "ir_learn", 4096, args, 5, &g_ir_rx_learn_task) != pdPASS) {
+        if (xTaskCreate(ir_rx_learn_task, "ir_learn", 5120, args, 5, &g_ir_rx_learn_task) != pdPASS) {
             glog("IR: failed to start learn task.\n");
             free(args);
             g_ir_rx_learn_task = NULL;
@@ -8025,6 +8179,66 @@ void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
     }
 }
 
+void handle_wigle_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("wigle API <name>:<token>  - Set Wigle API key (from wigle.net/account)\n");
+        glog("wigle auto on/off          - Auto-upload at boot\n");
+        glog("wigle donate on/off         - Donate data to Wigle\n");
+        glog("wigle show                  - Show current settings\n");
+        glog("wigle list                  - List stored uploaded CSV memory\n");
+        glog("wigle upload                - Manually trigger upload\n");
+        return;
+    }
+    if (strcmp(argv[1], "API") == 0 || strcmp(argv[1], "api") == 0) {
+        if (argc < 3) {
+            glog("Usage: wigle API <APIName>:<APIToken>\n");
+            glog("Get credentials from https://wigle.net/account\n");
+            return;
+        }
+        wigle_set_api_key(argv[2]);
+        glog("Wigle API key set\n");
+        return;
+    }
+    if (strcmp(argv[1], "auto") == 0) {
+        if (argc < 3) {
+            glog("Usage: wigle auto on/off\n");
+            return;
+        }
+        bool enabled = (strcmp(argv[2], "on") == 0 || strcmp(argv[2], "1") == 0);
+        settings_set_wigle_auto_upload(&G_Settings, enabled);
+        settings_persist_setting(SETTING_WIGLE_AUTO_UPLOAD);
+        glog("Wigle auto-upload: %s\n", enabled ? "on" : "off");
+        return;
+    }
+    if (strcmp(argv[1], "donate") == 0) {
+        if (argc < 3) {
+            glog("Usage: wigle donate on/off\n");
+            return;
+        }
+        bool enabled = (strcmp(argv[2], "on") == 0 || strcmp(argv[2], "1") == 0);
+        settings_set_wigle_donate(&G_Settings, enabled);
+        settings_persist_setting(SETTING_WIGLE_DONATE);
+        glog("Wigle donate: %s\n", enabled ? "on" : "off");
+        return;
+    }
+    if (strcmp(argv[1], "show") == 0) {
+        glog("API Key: %s\n", G_Settings.wigle_api_key[0] ? "(set)" : "(not set)");
+        glog("Auto Upload: %s\n", settings_get_wigle_auto_upload(&G_Settings) ? "on" : "off");
+        glog("Donate: %s\n", settings_get_wigle_donate(&G_Settings) ? "on" : "off");
+        return;
+    }
+    if (strcmp(argv[1], "list") == 0) {
+        wigle_uploaded_list();
+        return;
+    }
+    if (strcmp(argv[1], "upload") == 0) {
+        wigle_upload_all_async();
+        glog("Wigle upload started\n");
+        return;
+    }
+    glog("Unknown wigle command: %s\n", argv[1]);
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -8047,6 +8261,7 @@ void register_commands() {
     register_command("capture", handle_capture_scan);
     register_command("startportal", handle_start_portal);
     register_command("disconnect", handle_wifi_disconnect);
+    register_command("wifistatus", handle_wifi_status);
     register_command("stopportal", stop_portal);
     register_command("connect", handle_wifi_connection);
     register_command("dialconnect", handle_dial_command);
@@ -8163,6 +8378,7 @@ void register_commands() {
     register_command("aerialstop", handle_aerial_stop_cmd);
     register_command("aerialspoof", handle_aerial_spoof_cmd);
     register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
+    register_command("wigle", handle_wigle_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
 
@@ -8173,37 +8389,37 @@ void register_commands() {
 void handle_ble_spam_cmd(int argc, char **argv) {
     if (argc > 1) {
         if (strcmp(argv[1], "-apple") == 0) {
-            glog("starting apple ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_APPLE);
+            glog("Starting Apple BLE spam...\n");
+            ble_spam_start(BLE_SPAM_APPLE);
             return;
         }
         if (strcmp(argv[1], "-ms") == 0 || strcmp(argv[1], "-microsoft") == 0) {
-            glog("starting microsoft ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_MICROSOFT);
+            glog("Starting Microsoft BLE spam...\n");
+            ble_spam_start(BLE_SPAM_MICROSOFT);
             return;
         }
         if (strcmp(argv[1], "-samsung") == 0) {
-            glog("starting samsung ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_SAMSUNG);
+            glog("Starting Samsung BLE spam...\n");
+            ble_spam_start(BLE_SPAM_SAMSUNG);
             return;
         }
         if (strcmp(argv[1], "-google") == 0) {
-            glog("starting google ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_GOOGLE);
+            glog("Starting Google BLE spam...\n");
+            ble_spam_start(BLE_SPAM_GOOGLE);
             return;
         }
         if (strcmp(argv[1], "-random") == 0) {
-            glog("starting random ble spam...\n");
-            ble_start_ble_spam(BLE_SPAM_RANDOM);
+            glog("Starting Random BLE spam...\n");
+            ble_spam_start(BLE_SPAM_RANDOM);
             return;
         }
         if (strcmp(argv[1], "-s") == 0) {
-            glog("stopping ble spam...\n");
-            ble_stop_ble_spam();
+            glog("Stopping BLE spam...\n");
+            ble_spam_stop();
             return;
         }
     }
-    glog("usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
+    glog("Usage: blespam [-apple|-ms|-samsung|-google|-random|-s]\n");
 }
 #endif
 

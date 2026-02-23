@@ -5,6 +5,7 @@
 #include "managers/views/keyboard_screen.h"
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
+#include "gui/options_view.h"
 #include "managers/status_display_manager.h"
 
 void update_learning_popup_selection(void);
@@ -100,6 +101,11 @@ static bool popup_style_initialized = false;
 #include "driver/gpio.h"
 #endif
 
+static options_view_t *g_ir_ov = NULL;
+static void back_event_cb(lv_event_t *e);
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+static void ir_add_back_row(void);
+#endif
 static lv_obj_t *root = NULL;
 static lv_obj_t *list = NULL;
 static int selected_ir_index = 0;
@@ -354,75 +360,26 @@ void learned_signal_name_callback(const char *name)
                 signal_count = 0;
             }
             if (infrared_manager_read_list(current_remote_path, &signals, &signal_count)) {
-                // Rebuild the signal list UI with proper styling
-                lv_obj_clean(list);
-                num_ir_items = signal_count;
+                if (g_ir_ov) options_view_clear(g_ir_ov);
                 selected_ir_index = 0;
                 
                 for (size_t i = 0; i < signal_count; i++) {
-                    const char *cmd_name = signals[i].name;
-                    lv_obj_t *btn = lv_list_add_btn(list, NULL, cmd_name);
-                    lv_obj_set_width(btn, LV_HOR_RES);
-                    lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-                    lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-                    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_t *label = lv_obj_get_child(btn, 0);
-                    if (label) {
-                        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-                        lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-                    }
-                    lv_obj_add_event_cb(btn, command_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-                    lv_obj_set_user_data(btn, (void *)(intptr_t)i);
+                    options_view_add_item(g_ir_ov, signals[i].name, command_event_cb, (void *)(intptr_t)i);
                 }
                 
-                // Add remote management options with proper styling
-                lv_obj_t *rename_btn = lv_list_add_btn(list, NULL, "Rename Remote");
-                lv_obj_set_width(rename_btn, LV_HOR_RES);
-                lv_obj_set_style_bg_color(rename_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_set_style_border_width(rename_btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_radius(rename_btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_bg_opa(rename_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_t *rename_label = lv_obj_get_child(rename_btn, 0);
-                if (rename_label) {
-                    lv_obj_set_style_text_font(rename_label, &lv_font_montserrat_14, 0);
-                    lv_obj_set_style_text_color(rename_label, lv_color_hex(0xFFFFFF), 0);
-                }
-                lv_obj_add_event_cb(rename_btn, rename_remote_cb, LV_EVENT_CLICKED, NULL);
-                lv_obj_set_user_data(rename_btn, (void *)(intptr_t)signal_count);
+                options_view_add_item(g_ir_ov, "Rename Remote", rename_remote_cb, NULL);
+                options_view_add_item(g_ir_ov, "Add Signal", add_signal_cb, NULL);
+                lv_obj_t *delete_btn = options_view_add_item(g_ir_ov, "Delete Remote", delete_remote_cb, NULL);
+                if (delete_btn) lv_obj_set_style_bg_color(delete_btn, lv_color_hex(0x8B0000), LV_PART_MAIN | LV_STATE_DEFAULT);
                 
-                lv_obj_t *add_signal_btn = lv_list_add_btn(list, NULL, "Add Signal");
-                lv_obj_set_width(add_signal_btn, LV_HOR_RES);
-                lv_obj_set_style_bg_color(add_signal_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_set_style_border_width(add_signal_btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_radius(add_signal_btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_bg_opa(add_signal_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_t *add_signal_label = lv_obj_get_child(add_signal_btn, 0);
-                if (add_signal_label) {
-                    lv_obj_set_style_text_font(add_signal_label, &lv_font_montserrat_14, 0);
-                    lv_obj_set_style_text_color(add_signal_label, lv_color_hex(0xFFFFFF), 0);
-                }
-                lv_obj_add_event_cb(add_signal_btn, add_signal_cb, LV_EVENT_CLICKED, NULL);
-                lv_obj_set_user_data(add_signal_btn, (void *)(intptr_t)(signal_count + 1));
-                
-                lv_obj_t *delete_btn = lv_list_add_btn(list, NULL, "Delete Remote");
-                lv_obj_set_width(delete_btn, LV_HOR_RES);
-                lv_obj_set_style_bg_color(delete_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_set_style_border_width(delete_btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_radius(delete_btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_bg_opa(delete_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_t *delete_label = lv_obj_get_child(delete_btn, 0);
-                if (delete_label) {
-                    lv_obj_set_style_text_font(delete_label, &lv_font_montserrat_14, 0);
-                    lv_obj_set_style_text_color(delete_label, lv_color_hex(0xFFFFFF), 0);
-                }
-                lv_obj_add_event_cb(delete_btn, delete_remote_cb, LV_EVENT_CLICKED, NULL);
-                lv_obj_set_user_data(delete_btn, (void *)(intptr_t)(signal_count + 2));
-                
-                num_ir_items = signal_count + 3; // signals + 3 management options
+#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
+                ir_add_back_row();
+#endif
+                num_ir_items = options_view_get_item_count(g_ir_ov);
+                options_view_set_selected(g_ir_ov, 0);
                 
                 ESP_LOGI(TAG, "Reloaded %zu signals for remote after adding new signal (regular mode)", signal_count);
-                return; // Stay in current view, don't switch
+                return;
             }
         }
     }
@@ -513,7 +470,11 @@ static void append_signal_to_remote(const char *signal_name) {
 #endif
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-static const char *IR_BACK_OPTION_MAGIC_STR = "__IR_BACK_OPTION__"; // Unique string for the back button
+static const char *IR_BACK_OPTION_MAGIC_STR = "__IR_BACK_OPTION__";
+static void ir_add_back_row(void) {
+    lv_obj_t *btn = options_view_add_back_row(g_ir_ov, back_event_cb, NULL);
+    if (btn) lv_obj_set_user_data(btn, (void *)IR_BACK_OPTION_MAGIC_STR);
+}
 #endif
 
 typedef struct {
@@ -551,7 +512,6 @@ static QueueHandle_t universals_queue = NULL;
 static TaskHandle_t universals_task_handle = NULL;
 
 // forward declarations
-static void back_event_cb(lv_event_t *e);
 static void file_event_open(int idx);
 static void command_event_execute(int idx);
 static void file_event_cb(lv_event_t *e);
@@ -561,9 +521,6 @@ static void remotes_event_cb(lv_event_t *e);
 static void universals_event_cb(lv_event_t *e);
 #ifdef CONFIG_HAS_INFRARED_RX
 static void learn_remote_event_cb(lv_event_t *e);
-#endif
-#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-static void add_encoder_back_btn(void);
 #endif
 
 static void cleanup_transmit_popup(void *obj);
@@ -680,52 +637,25 @@ static bool load_ir_file_list_from_dir(const char *dir) {
 }
 
 static void rebuild_ir_file_list_ui(void) {
-    if (!list) {
-        return;
-    }
+    if (!g_ir_ov) return;
 
     ESP_LOGI(TAG, "mem[ir_ui_pre]: free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-    lv_obj_clean(list);
-    num_ir_items = ir_file_count;
+    options_view_clear(g_ir_ov);
     selected_ir_index = 0;
 
     for (size_t i = 0; i < ir_file_count; i++) {
-        lv_obj_t *btn = lv_list_add_btn(list, NULL, ir_file_paths[i]);
-        lv_obj_set_width(btn, LV_HOR_RES);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *label = lv_obj_get_child(btn, 0);
-        if (label) {
-            lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(btn, file_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        options_view_add_item(g_ir_ov, ir_file_paths[i], file_event_cb, (void *)(intptr_t)i);
     }
 
     if (ir_file_count == 0) {
-        lv_obj_t *placeholder = lv_list_add_btn(list, NULL, "No .ir files");
-        lv_obj_set_width(placeholder, LV_HOR_RES);
-        lv_obj_set_style_bg_color(placeholder, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(placeholder, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(placeholder, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(placeholder, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *placeholder_label = lv_obj_get_child(placeholder, 0);
-        if (placeholder_label) {
-            lv_obj_set_style_text_font(placeholder_label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(placeholder_label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(placeholder, placeholder_event_cb, LV_EVENT_CLICKED, NULL);
-        // Count placeholder as an item so it's selectable but does nothing
-        num_ir_items = 1;
+        options_view_add_item(g_ir_ov, "No .ir files", placeholder_event_cb, NULL);
     }
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-    add_encoder_back_btn();
+    ir_add_back_row();
 #endif
-
-    ir_select_item(0);
+    num_ir_items = options_view_get_item_count(g_ir_ov);
+    options_view_set_selected(g_ir_ov, 0);
     ESP_LOGI(TAG, "mem[ir_ui_post]: free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
@@ -736,11 +666,12 @@ static void refresh_ir_file_list(const char *dir) {
 
     bool loaded = load_ir_file_list_from_dir(dir);
     if (!loaded) {
-        lv_obj_clean(list);
+        if (g_ir_ov) options_view_clear(g_ir_ov);
         num_ir_items = 0;
         selected_ir_index = 0;
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-        add_encoder_back_btn();
+        if (g_ir_ov) ir_add_back_row();
+        num_ir_items = g_ir_ov ? options_view_get_item_count(g_ir_ov) : 0;
 #endif
         return;
     }
@@ -1149,89 +1080,21 @@ static void back_event_cb(lv_event_t *e) {
         has_universals_option = true;
         strcpy(current_dir, "/mnt/ghostesp");
 
-        // rebuild the top-level list
-        lv_obj_clean(list);
-        lv_obj_t *remotes_btn = lv_list_add_btn(list, NULL, "Remotes");
-        lv_obj_set_width(remotes_btn, LV_HOR_RES);
-        lv_obj_set_style_bg_color(remotes_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(remotes_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(remotes_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(remotes_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *rem_label = lv_obj_get_child(remotes_btn, 0);
-        if (rem_label) {
-            lv_obj_set_style_text_font(rem_label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(rem_label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(remotes_btn, remotes_event_cb, LV_EVENT_CLICKED, NULL);
-
-        lv_obj_t *universals_btn = lv_list_add_btn(list, NULL, "Universals");
-        lv_obj_set_width(universals_btn, LV_HOR_RES);
-        lv_obj_set_style_bg_color(universals_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(universals_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(universals_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(universals_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *uni_label = lv_obj_get_child(universals_btn, 0);
-        if (uni_label) {
-            lv_obj_set_style_text_font(uni_label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(uni_label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(universals_btn, universals_event_cb, LV_EVENT_CLICKED, NULL);
-
+        if (g_ir_ov) options_view_clear(g_ir_ov);
+        options_view_add_item(g_ir_ov, "Remotes", remotes_event_cb, NULL);
+        options_view_add_item(g_ir_ov, "Universals", universals_event_cb, NULL);
 #ifdef CONFIG_HAS_INFRARED_RX
-        // add learn remote option
-        lv_obj_t *learn_btn = lv_list_add_btn(list, NULL, "Learn Remote");
-        lv_obj_set_width(learn_btn, LV_HOR_RES);
-        lv_obj_set_style_bg_color(learn_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(learn_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(learn_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(learn_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *learn_label = lv_obj_get_child(learn_btn, 0);
-        if (learn_label) {
-            lv_obj_set_style_text_font(learn_label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(learn_label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(learn_btn, learn_remote_event_cb, LV_EVENT_CLICKED, NULL);
-        
-        // Add Easy Learn toggle option
         is_easy_mode = settings_get_infrared_easy_mode(&G_Settings);
-        lv_obj_t *easy_learn_btn = lv_list_add_btn(list, NULL, is_easy_mode ? "Easy Learn [X]" : "Easy Learn [ ]");
-        lv_obj_set_width(easy_learn_btn, LV_HOR_RES);
-        lv_obj_set_style_bg_color(easy_learn_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(easy_learn_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(easy_learn_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(easy_learn_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *easy_learn_label = lv_obj_get_child(easy_learn_btn, 0);
-        if (easy_learn_label) {
-            lv_obj_set_style_text_font(easy_learn_label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(easy_learn_label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
+        options_view_add_item(g_ir_ov, "Learn Remote", learn_remote_event_cb, NULL);
+        options_view_add_item(g_ir_ov, is_easy_mode ? "Easy Learn [X]" : "Easy Learn [ ]", easy_learn_toggle_cb, NULL);
 #endif
-
-        lv_obj_t *dazzler_btn = lv_list_add_btn(list, NULL, "IR Dazzler");
-        lv_obj_set_width(dazzler_btn, LV_HOR_RES);
-        lv_obj_set_style_bg_color(dazzler_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(dazzler_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(dazzler_btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(dazzler_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *dazzler_label = lv_obj_get_child(dazzler_btn, 0);
-        if (dazzler_label) {
-            lv_obj_set_style_text_font(dazzler_label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(dazzler_label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(dazzler_btn, dazzler_event_cb, LV_EVENT_CLICKED, NULL);
-
-        num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
-#ifdef CONFIG_HAS_INFRARED_RX
-        num_ir_items++; // account for learn remote button
-        num_ir_items++; // account for easy learn button
-#endif
-        num_ir_items++; // account for dazzler button
+        options_view_add_item(g_ir_ov, "IR Dazzler", dazzler_event_cb, NULL);
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-        add_encoder_back_btn();
+        ir_add_back_row();
 #endif
+        num_ir_items = options_view_get_item_count(g_ir_ov);
         selected_ir_index = 0;
-        if (num_ir_items > 0) ir_select_item(0);
+        if (num_ir_items > 0) options_view_set_selected(g_ir_ov, 0);
         return;
     }
 
@@ -1240,7 +1103,6 @@ static void back_event_cb(lv_event_t *e) {
 }
 
 void infrared_view_create(void) {
-    // Initialize infrared settings
 #ifdef CONFIG_HAS_INFRARED_RX
     is_easy_mode = settings_get_infrared_easy_mode(&G_Settings);
 #endif
@@ -1255,58 +1117,24 @@ void infrared_view_create(void) {
         xTaskCreate(ir_sd_worker_task, "ir_io", 4096, NULL, tskIDLE_PRIORITY + 1, &ir_sd_worker_handle);
     }
 
-    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_HEIGHT;
+    g_ir_ov = options_view_create(root, "Infrared");
+    list = options_view_get_list(g_ir_ov);
+
 #ifdef CONFIG_USE_TOUCHSCREEN
+    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_HEIGHT;
     const int BUTTON_AREA_HEIGHT = IR_SCROLL_BTN_SIZE + IR_SCROLL_BTN_PADDING * 2;
-#else
-    const int BUTTON_AREA_HEIGHT = 0;
-#endif
     int list_h = LV_VER_RES - STATUS_BAR_HEIGHT - BUTTON_AREA_HEIGHT;
-    list = lv_list_create(root);
-    lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_left(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(list, 0, LV_PART_MAIN);
     lv_obj_set_size(list, LV_HOR_RES, list_h);
     lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, STATUS_BAR_HEIGHT);
-    lv_obj_set_style_bg_color(list, lv_color_hex(0x121212), 0);
-    lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(list, 0, LV_PART_MAIN);
+#endif
 
-    // add remotes option
     has_remotes_option = true;
-    lv_obj_t *remotes_btn = lv_list_add_btn(list, NULL, "Remotes");
-    lv_obj_set_width(remotes_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(remotes_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(remotes_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(remotes_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(remotes_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *rem_label = lv_obj_get_child(remotes_btn, 0);
-    if (rem_label) {
-        lv_obj_set_style_text_font(rem_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(rem_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(remotes_btn, remotes_event_cb, LV_EVENT_CLICKED, NULL);
-
-    // add universals option
     has_universals_option = true;
-    lv_obj_t *universals_btn = lv_list_add_btn(list, NULL, "Universals");
-    lv_obj_set_width(universals_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(universals_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(universals_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(universals_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(universals_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *uni_label = lv_obj_get_child(universals_btn, 0);
-    if (uni_label) {
-        lv_obj_set_style_text_font(uni_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(uni_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(universals_btn, universals_event_cb, LV_EVENT_CLICKED, NULL);
+    options_view_add_item(g_ir_ov, "Remotes", remotes_event_cb, NULL);
+    options_view_add_item(g_ir_ov, "Universals", universals_event_cb, NULL);
 
 #ifdef CONFIG_HAS_INFRARED_RX
-    // Initialize RMT RX channel for IR learning (do this once per view)
     ESP_LOGI(TAG, "Initializing RMT RX channel for infrared learning");
-    
-    // Initialize GPIO for IR RX
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_INPUT,
@@ -1315,72 +1143,25 @@ void infrared_view_create(void) {
         .pull_up_en = 1,
     };
     gpio_config(&io_conf);
-    
-    // Initialize RMT RX channel via manager
     if (infrared_manager_rx_init()) {
         ESP_LOGI(TAG, "RMT RX channel initialized successfully via manager");
     } else {
         ESP_LOGE(TAG, "Failed to initialize RMT RX channel via manager");
     }
-    
-    // add learn remote option
-    lv_obj_t *learn_btn = lv_list_add_btn(list, NULL, "Learn Remote");
-    lv_obj_set_width(learn_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(learn_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(learn_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(learn_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(learn_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *learn_label = lv_obj_get_child(learn_btn, 0);
-    if (learn_label) {
-        lv_obj_set_style_text_font(learn_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(learn_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(learn_btn, learn_remote_event_cb, LV_EVENT_CLICKED, NULL);
-    
-    // Add Easy Learn toggle option
-    lv_obj_t *easy_learn_btn = lv_list_add_btn(list, NULL, is_easy_mode ? "Easy Learn [X]" : "Easy Learn [ ]");
-    lv_obj_set_width(easy_learn_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(easy_learn_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(easy_learn_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(easy_learn_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(easy_learn_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *easy_learn_label = lv_obj_get_child(easy_learn_btn, 0);
-    if (easy_learn_label) {
-        lv_obj_set_style_text_font(easy_learn_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(easy_learn_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(easy_learn_btn, easy_learn_toggle_cb, LV_EVENT_CLICKED, NULL);
+    options_view_add_item(g_ir_ov, "Learn Remote", learn_remote_event_cb, NULL);
+    options_view_add_item(g_ir_ov, is_easy_mode ? "Easy Learn [X]" : "Easy Learn [ ]", easy_learn_toggle_cb, NULL);
 #endif
 
-    lv_obj_t *dazzler_btn = lv_list_add_btn(list, NULL, "IR Dazzler");
-    lv_obj_set_width(dazzler_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(dazzler_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(dazzler_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(dazzler_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(dazzler_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *dazzler_label = lv_obj_get_child(dazzler_btn, 0);
-    if (dazzler_label) {
-        lv_obj_set_style_text_font(dazzler_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(dazzler_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(dazzler_btn, dazzler_event_cb, LV_EVENT_CLICKED, NULL);
-
-    num_ir_items = (has_remotes_option ? 1 : 0) + (has_universals_option ? 1 : 0);
-#ifdef CONFIG_HAS_INFRARED_RX
-    num_ir_items++; // account for learn remote button
-    num_ir_items++; // account for easy learn button
-#endif
-    num_ir_items++; // account for dazzler button
+    options_view_add_item(g_ir_ov, "IR Dazzler", dazzler_event_cb, NULL);
 
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-    add_encoder_back_btn();
+    ir_add_back_row();
 #endif
+    num_ir_items = options_view_get_item_count(g_ir_ov);
     selected_ir_index = 0;
-    if (num_ir_items > 0) ir_select_item(0);
+    if (num_ir_items > 0) options_view_set_selected(g_ir_ov, 0);
 
-    // Back button
-    // touchscreen-only controls
-    #ifdef CONFIG_USE_TOUCHSCREEN
+#ifdef CONFIG_USE_TOUCHSCREEN
     ir_scroll_up_btn = lv_btn_create(root);
     lv_obj_set_size(ir_scroll_up_btn, IR_SCROLL_BTN_SIZE, IR_SCROLL_BTN_SIZE);
     lv_obj_align(ir_scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, IR_SCROLL_BTN_PADDING, -IR_SCROLL_BTN_PADDING);
@@ -1390,7 +1171,6 @@ void infrared_view_create(void) {
     lv_obj_t *up_label = lv_label_create(ir_scroll_up_btn);
     lv_label_set_text(up_label, LV_SYMBOL_UP);
     lv_obj_center(up_label);
-    /* hide IR scroll buttons until we know whether the list is scrollable */
     lv_obj_add_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
 
     ir_scroll_down_btn = lv_btn_create(root);
@@ -1414,18 +1194,13 @@ void infrared_view_create(void) {
     lv_obj_t *back_label = lv_label_create(ir_back_btn);
     lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
-    #endif
-    /* reveal IR scroll buttons only if the list is actually scrollable */
-#ifdef CONFIG_USE_TOUCHSCREEN
+
     if (list && lv_obj_is_valid(list)) {
         lv_coord_t scroll_bottom = lv_obj_get_scroll_bottom(list);
         lv_coord_t scroll_top = lv_obj_get_scroll_top(list);
         if (scroll_bottom > 0 || scroll_top > 0) {
             if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) lv_obj_clear_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
             if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) lv_obj_clear_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            if (ir_scroll_up_btn && lv_obj_is_valid(ir_scroll_up_btn)) lv_obj_add_flag(ir_scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
-            if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) lv_obj_add_flag(ir_scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
         }
     }
 #endif
@@ -1498,6 +1273,7 @@ void infrared_view_destroy(void) {
             ir_file_count = 0;
         }
         showing_commands = false;
+        if (g_ir_ov) { options_view_destroy(g_ir_ov); g_ir_ov = NULL; }
         lvgl_obj_del_safe(&root);
         list = NULL;
         infrared_view.root = NULL;
@@ -1507,63 +1283,27 @@ void infrared_view_destroy(void) {
 }
 
 static void ir_select_item(int index) {
-    if(num_ir_items == 0) return;
-    if(index < 0) index = num_ir_items - 1;
-    if(index >= num_ir_items) index = 0;
-    
-    // clear previous selection
-    lv_obj_t *prev = lv_obj_get_child(list, selected_ir_index);
-    if(prev) {
-        lv_obj_t *prev_label = lv_obj_get_child(prev, 0);
-        // Check if this is one of the management buttons that have special styling
-        if (showing_commands && !in_universals_mode && selected_ir_index >= signal_count) {
-            // This is a management button, restore its special styling
-            if (selected_ir_index == signal_count) {
-                // Rename button
-                lv_obj_set_style_bg_color(prev, lv_color_hex(0x2E2E2E), LV_PART_MAIN);
-            } else if (selected_ir_index == signal_count + 1) {
-                // Add Signal button
-                lv_obj_set_style_bg_color(prev, lv_color_hex(0x2E2E2E), LV_PART_MAIN);
-            } else if (selected_ir_index == signal_count + 2) {
-                // Delete button - keep the red color
-                lv_obj_set_style_bg_color(prev, lv_color_hex(0x8B0000), LV_PART_MAIN);
-            } else {
-                // Regular command button
-                lv_obj_set_style_bg_color(prev, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-            }
-        } else {
-            // Regular command button
-            lv_obj_set_style_bg_color(prev, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-        }
-        if (prev_label) {
-            lv_obj_set_style_text_color(prev_label, lv_color_hex(0xFFFFFF), 0);
-        }
-    }
-    
+    if (num_ir_items == 0 || !g_ir_ov) return;
+    if (index < 0) index = num_ir_items - 1;
+    if (index >= num_ir_items) index = 0;
+
     selected_ir_index = index;
-    lv_obj_t *cur = lv_obj_get_child(list, selected_ir_index);
-    if(cur) {
-        lv_obj_t *cur_label = lv_obj_get_child(cur, 0);
-        // If the currently selected item is the Delete Remote management option,
-        // highlight it with a lighter red instead of the default gray.
-        if (showing_commands && !in_universals_mode && selected_ir_index >= signal_count && selected_ir_index == signal_count + 2) {
-            lv_obj_set_style_bg_color(cur, lv_color_hex(0xB22222), LV_PART_MAIN);
-            if (cur_label) {
-                lv_obj_set_style_text_color(cur_label, lv_color_hex(0xFFFFFF), 0);
-            }
-        } else {
-            uint8_t theme = settings_get_menu_theme(&G_Settings);
-            lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
-            lv_obj_set_style_bg_color(cur, accent, LV_PART_MAIN);
-            if (cur_label) {
-                if (theme_palette_is_bright(theme)) {
-                    lv_obj_set_style_text_color(cur_label, lv_color_hex(0x000000), 0);
-                } else {
-                    lv_obj_set_style_text_color(cur_label, lv_color_hex(0xFFFFFF), 0);
-                }
+    options_view_set_selected(g_ir_ov, index);
+
+    if (showing_commands && !in_universals_mode) {
+        int del_idx = (int)signal_count + 2;
+        lv_obj_t *del = lv_obj_get_child(list, del_idx);
+        if (del) {
+            if (index == del_idx) {
+                lv_obj_set_style_bg_color(del, lv_color_hex(0xB22222), LV_PART_MAIN);
+                lv_obj_t *lbl = lv_obj_get_child(del, 0);
+                if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+            } else {
+                lv_obj_set_style_bg_color(del, lv_color_hex(0x8B0000), LV_PART_MAIN);
+                lv_obj_t *lbl = lv_obj_get_child(del, 0);
+                if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
             }
         }
-        lv_obj_scroll_to_view(cur, LV_ANIM_OFF);
     }
 }
 
@@ -2273,29 +2013,17 @@ static void file_event_open(int idx) {
             if (did) ir_sd_end(susp);
             printf("found %zu unique commands\n", uni_command_count);
         }
-        // show unique commands
-        lv_obj_clean(list);
+        if (g_ir_ov) options_view_clear(g_ir_ov);
         showing_commands = true;
-        num_ir_items = uni_command_count;
         selected_ir_index = 0;
         for (size_t i = 0; i < uni_command_count; i++) {
-            lv_obj_t *btn = lv_list_add_btn(list, NULL, uni_command_names[i]);
-            lv_obj_set_width(btn, LV_HOR_RES);
-            lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *label = lv_obj_get_child(btn, 0);
-            if (label) {
-                lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-                lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-            }
-            lv_obj_add_event_cb(btn, command_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+            options_view_add_item(g_ir_ov, uni_command_names[i], command_event_cb, (void*)(intptr_t)i);
         }
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-        add_encoder_back_btn();
+        ir_add_back_row();
 #endif
-        ir_select_item(0);
+        num_ir_items = options_view_get_item_count(g_ir_ov);
+        options_view_set_selected(g_ir_ov, 0);
         return;
     }
     if (idx < 0 || idx >= ir_file_count) return;
@@ -2333,77 +2061,28 @@ static void file_event_open(int idx) {
         return;
     }
     if (did2) ir_sd_end(susp2);
-    lv_obj_clean(list);
+    if (g_ir_ov) options_view_clear(g_ir_ov);
     showing_commands = true;
-    num_ir_items = signal_count;
     selected_ir_index = 0;
 
     ESP_LOGI(TAG, "listing %zu commands for %s", signal_count, ir_file_paths[idx]);
 
     for (size_t i = 0; i < signal_count; i++) {
-        const char *cmd_name = signals[i].name;
-        lv_obj_t *btn = lv_list_add_btn(list, NULL, cmd_name);
-        lv_obj_set_width(btn, LV_HOR_RES);
-        // style button
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_t *label = lv_obj_get_child(btn, 0);
-        if (label) {
-            lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-        }
-        lv_obj_add_event_cb(btn, command_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+        options_view_add_item(g_ir_ov, signals[i].name, command_event_cb, (void*)(intptr_t)i);
     }
     
-    // Add remote management options at the bottom
-    lv_obj_t *rename_btn = lv_list_add_btn(list, NULL, "Rename Remote");
-    lv_obj_set_width(rename_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(rename_btn, lv_color_hex(0x2E2E2E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(rename_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(rename_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(rename_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *rename_label = lv_obj_get_child(rename_btn, 0);
-    if (rename_label) {
-        lv_obj_set_style_text_font(rename_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(rename_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(rename_btn, rename_remote_cb, LV_EVENT_CLICKED, NULL);
+    options_view_add_item(g_ir_ov, "Rename Remote", rename_remote_cb, NULL);
+    options_view_add_item(g_ir_ov, "Add New Signal", add_signal_cb, NULL);
+    lv_obj_t *delete_btn = options_view_add_item(g_ir_ov, "Delete Remote", delete_remote_cb, NULL);
+    if (delete_btn) lv_obj_set_style_bg_color(delete_btn, lv_color_hex(0x8B0000), LV_PART_MAIN | LV_STATE_DEFAULT);
     
-    lv_obj_t *add_signal_btn = lv_list_add_btn(list, NULL, "Add New Signal");
-    lv_obj_set_width(add_signal_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(add_signal_btn, lv_color_hex(0x2E2E2E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(add_signal_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(add_signal_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(add_signal_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *add_signal_label = lv_obj_get_child(add_signal_btn, 0);
-    if (add_signal_label) {
-        lv_obj_set_style_text_font(add_signal_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(add_signal_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(add_signal_btn, add_signal_cb, LV_EVENT_CLICKED, NULL);
-    
-    lv_obj_t *delete_btn = lv_list_add_btn(list, NULL, "Delete Remote");
-    lv_obj_set_width(delete_btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(delete_btn, lv_color_hex(0x8B0000), LV_PART_MAIN | LV_STATE_DEFAULT);  // Dark red
-    lv_obj_set_style_border_width(delete_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(delete_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(delete_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_t *delete_label = lv_obj_get_child(delete_btn, 0);
-    if (delete_label) {
-        lv_obj_set_style_text_font(delete_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(delete_label, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(delete_btn, delete_remote_cb, LV_EVENT_CLICKED, NULL);
-    
-    // Update item count to include management options
-    num_ir_items = signal_count + 3;  // 3 management options
+    num_ir_items = options_view_get_item_count(g_ir_ov);
     
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-    add_encoder_back_btn();
+    ir_add_back_row();
+    num_ir_items = options_view_get_item_count(g_ir_ov);
 #endif
-    ir_select_item(0);
+    options_view_set_selected(g_ir_ov, 0);
 }
 
 // execute selected IR command
@@ -2736,26 +2415,6 @@ static void universals_event_cb(lv_event_t *e) {
     refresh_ir_file_list(current_dir);
 }
 
-#if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-static void add_encoder_back_btn(void)
-{
-    lv_obj_t *btn = lv_list_add_btn(list, NULL, LV_SYMBOL_LEFT " Back");
-    lv_obj_set_width(btn, LV_HOR_RES);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_t *lbl = lv_obj_get_child(btn, 0);
-    if (lbl) {
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-    }
-    lv_obj_add_event_cb(btn, back_event_cb, LV_EVENT_CLICKED,
-                        (void *)IR_BACK_OPTION_MAGIC_STR);
-    lv_obj_set_user_data(btn, (void *)IR_BACK_OPTION_MAGIC_STR);
-    num_ir_items++;
-}
-#endif
 
 #ifdef CONFIG_HAS_INFRARED_RX
 // IR learning functionality
@@ -2859,76 +2518,23 @@ void easy_learn_signal_name_callback(void)
             signal_count = 0;
         }
         if (infrared_manager_read_list(current_remote_path, &signals, &signal_count)) {
-            // Rebuild the signal list UI
-            lv_obj_clean(list);
-            num_ir_items = signal_count;
+            if (g_ir_ov) options_view_clear(g_ir_ov);
             selected_ir_index = 0;
             
             for (size_t i = 0; i < signal_count; i++) {
-                const char *cmd_name = signals[i].name;
-                lv_obj_t *btn = lv_list_add_btn(list, NULL, cmd_name);
-                lv_obj_set_width(btn, LV_HOR_RES);
-                lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-                lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-                lv_obj_t *label = lv_obj_get_child(btn, 0);
-                if (label) {
-                    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-                    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
-                }
-                lv_obj_add_event_cb(btn, command_event_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-                lv_obj_set_user_data(btn, (void *)(intptr_t)i);
+                options_view_add_item(g_ir_ov, signals[i].name, command_event_cb, (void *)(intptr_t)i);
             }
             
-            // Add remote management options
-            lv_obj_t *rename_btn = lv_list_add_btn(list, NULL, "Rename Remote");
-            lv_obj_set_width(rename_btn, LV_HOR_RES);
-            lv_obj_set_style_bg_color(rename_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(rename_btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_radius(rename_btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(rename_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *rename_label = lv_obj_get_child(rename_btn, 0);
-            if (rename_label) {
-                lv_obj_set_style_text_font(rename_label, &lv_font_montserrat_14, 0);
-                lv_obj_set_style_text_color(rename_label, lv_color_hex(0xFFFFFF), 0);
-            }
-            lv_obj_add_event_cb(rename_btn, rename_remote_cb, LV_EVENT_CLICKED, NULL);
-            lv_obj_set_user_data(rename_btn, (void *)(intptr_t)signal_count);
-            
-            lv_obj_t *add_signal_btn = lv_list_add_btn(list, NULL, "Add Signal");
-            lv_obj_set_width(add_signal_btn, LV_HOR_RES);
-            lv_obj_set_style_bg_color(add_signal_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(add_signal_btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_radius(add_signal_btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(add_signal_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *add_signal_label = lv_obj_get_child(add_signal_btn, 0);
-            if (add_signal_label) {
-                lv_obj_set_style_text_font(add_signal_label, &lv_font_montserrat_14, 0);
-                lv_obj_set_style_text_color(add_signal_label, lv_color_hex(0xFFFFFF), 0);
-            }
-            lv_obj_add_event_cb(add_signal_btn, add_signal_cb, LV_EVENT_CLICKED, NULL);
-            lv_obj_set_user_data(add_signal_btn, (void *)(intptr_t)(signal_count + 1));
-            
-            lv_obj_t *delete_btn = lv_list_add_btn(list, NULL, "Delete Remote");
-            lv_obj_set_width(delete_btn, LV_HOR_RES);
-            lv_obj_set_style_bg_color(delete_btn, lv_color_hex(0x1E1E1E), LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(delete_btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_radius(delete_btn, 0, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(delete_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_t *delete_label = lv_obj_get_child(delete_btn, 0);
-            if (delete_label) {
-                lv_obj_set_style_text_font(delete_label, &lv_font_montserrat_14, 0);
-                lv_obj_set_style_text_color(delete_label, lv_color_hex(0xFFFFFF), 0);
-            }
-            lv_obj_add_event_cb(delete_btn, delete_remote_cb, LV_EVENT_CLICKED, NULL);
-            lv_obj_set_user_data(delete_btn, (void *)(intptr_t)(signal_count + 2));
-            
-            num_ir_items = signal_count + 3; // signals + 3 management options
+            options_view_add_item(g_ir_ov, "Rename Remote", rename_remote_cb, NULL);
+            options_view_add_item(g_ir_ov, "Add Signal", add_signal_cb, NULL);
+            lv_obj_t *delete_btn = options_view_add_item(g_ir_ov, "Delete Remote", delete_remote_cb, NULL);
+            if (delete_btn) lv_obj_set_style_bg_color(delete_btn, lv_color_hex(0x8B0000), LV_PART_MAIN | LV_STATE_DEFAULT);
             
 #if defined(CONFIG_USE_ENCODER) || defined(CONFIG_USE_JOYSTICK)
-            add_encoder_back_btn();
+            ir_add_back_row();
 #endif
+            num_ir_items = options_view_get_item_count(g_ir_ov);
+            options_view_set_selected(g_ir_ov, 0);
             
             ESP_LOGI(TAG, "Reloaded %zu signals for remote after adding new signal", signal_count);
         }

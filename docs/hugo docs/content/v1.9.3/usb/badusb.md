@@ -6,9 +6,19 @@ weight: 20
 
 BadUSB runs scripts from the SD card as a USB HID keyboard. Scripts live in `/mnt/ghostesp/badusb/`.
 
-## Firmware Support
+## Supported Devices
 
-BadUSB is only available on configs that enable BadUSB.
+**Note:** Configs with VSENSE support will wait for a USB connection before starting the script.
+
+With VSENSE support:
+- The Wired Hatter's Banshee
+
+Without VSENSE support:
+- Cardputer
+- Cardputer ADV
+- LilyGo T-Deck/T-Deck Plus
+
+## Supported DuckyScript Commands
 
 Supported DuckyScript commands:
 
@@ -74,7 +84,3 @@ These values are saved on the local device and used on the next run.
 
 When BadUSB is used over Dual Comm, the controller sends the current settings to the peer right before streaming the script. The peer uses those settings for that run. These remote settings apply only for that run and do not persist to NVS on the peer. For setup details, see [GhostLink](/latest/getting-started/dual-communication/).
 
-## Supported Devices
-
-- BadUSB runs on builds with USB device support enabled.
-- Remote mode uses a controller build with BadUSB Remote enabled and a peer build with BadUSB enabled.

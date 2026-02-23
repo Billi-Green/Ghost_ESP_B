@@ -42,7 +42,9 @@ static const char *NVS_NAMESPACE = "sd_config";
 #include "managers/display_manager.h"
 static bool s_display_spi_suspended_flag = false;
 static bool is_shared_display_sd_spi(void) {
-#if defined(CONFIG_IDF_TARGET_ESP32C5) && defined(CONFIG_LV_TFT_DISPLAY_SPI2_HOST)
+#if !defined(CONFIG_IDF_TARGET_ESP32) && defined(CONFIG_LV_TFT_DISPLAY_SPI2_HOST)
+  /* On all non-ESP32 SPI targets the SD mount always uses SPI2_HOST.
+   * If the display is also configured on SPI2_HOST the buses are shared. */
   return true;
 #elif defined(CONFIG_LV_DISP_SPI_MOSI) && defined(CONFIG_LV_DISP_SPI_CLK)
   bool mosi_match = (sd_card_manager.spi_mosi_pin == CONFIG_LV_DISP_SPI_MOSI);
@@ -60,6 +62,9 @@ static bool is_shared_display_sd_spi(void) {
 static bool display_spi_suspend_for_sd(void) {
   if (!is_shared_display_sd_spi()) {
     return false;
+  }
+  if (s_display_spi_suspended_flag) {
+    return true;  /* already suspended — idempotent, matches resume_after_sd guard */
   }
   /* pause lvgl refresh to stop flush() while we steal the bus */
   lv_disp_t *disp = lv_disp_get_default();
@@ -86,9 +91,14 @@ static void display_spi_resume_after_sd(void) {
   if (!s_display_spi_suspended_flag) {
     return;
   }
-  (void)lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
+  esp_err_t ret = lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
                              SPI_BUS_MAX_TRANSFER_SZ, 1, DISP_SPI_IO2, DISP_SPI_IO3);
-  disp_spi_add_device(TFT_SPI_HOST);
+  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE("sd_card", "display_spi_resume: bus init failed: %s", esp_err_to_name(ret));
+    /* fall through — still resume LVGL task to prevent watchdog */
+  } else {
+    disp_spi_add_device(TFT_SPI_HOST);
+  }
   /* resume lvgl refresh */
   lv_disp_t *disp = lv_disp_get_default();
   if (disp) {
@@ -774,7 +784,6 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     // Show appropriate status based on context
     switch (context) {
       case SD_UNMOUNT_CONTEXT_JIT:
-        status_display_show_status("SD Idle");
         break;
       case SD_UNMOUNT_CONTEXT_USER:
         status_display_show_status("SD Unmounted");
@@ -783,14 +792,11 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
         status_display_show_status("SD Error");
         break;
       case SD_UNMOUNT_CONTEXT_SHUTDOWN:
-        // Don't show status during shutdown
         break;
       default:
         status_display_show_status("SD Unmounted");
         break;
     }
-  } else {
-    status_display_show_status("SD Not Mounted");
   }
 #else
   if (sd_card_manager.is_initialized) {

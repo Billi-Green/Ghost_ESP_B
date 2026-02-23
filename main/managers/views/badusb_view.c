@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 
 #include "managers/sd_card_manager.h"
+#include "managers/badusb_builtin_script.h"
 
 #ifdef CONFIG_HAS_BADUSB
 #include "managers/badusb_manager.h"
@@ -126,6 +127,10 @@ static lv_obj_t *back_btn = NULL;
 #define SCROLL_BTN_PADDING 5
 
 static lv_obj_t *badusb_running_popup = NULL;
+static lv_obj_t *badusb_popup_title_lbl = NULL;
+static lv_obj_t *badusb_popup_body_lbl = NULL;
+static lv_timer_t *vsense_poll_timer = NULL;
+static char vsense_pending_script[MAX_SCRIPT_NAME];
 
 static bool badusb_is_remote(void) {
 #ifdef CONFIG_HAS_BADUSB_REMOTE
@@ -147,33 +152,28 @@ static void select_item(int index) {
 static void populate_script_list(void) {
     script_count = 0;
 
+    strncpy(script_names[script_count], BADUSB_BUILTIN_SCRIPT_NAME, MAX_SCRIPT_NAME - 1);
+    script_names[script_count][MAX_SCRIPT_NAME - 1] = '\0';
+    script_count++;
+
     bool display_was_suspended = false;
-    if (!badusb_sd_begin(&display_was_suspended)) {
-        script_options[0] = NULL;
-        return;
-    }
-
-    const char *dir_path = "/mnt/ghostesp/badusb";
-    DIR *dir = opendir(dir_path);
-    if (!dir) {
-        ESP_LOGW(TAG, "Cannot open %s", dir_path);
-        script_options[0] = NULL;
-        badusb_sd_end(display_was_suspended);
-        return;
-    }
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && script_count < MAX_SCRIPTS) {
-        size_t len = strlen(entry->d_name);
-        if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
-            strncpy(script_names[script_count], entry->d_name, MAX_SCRIPT_NAME - 1);
-            script_names[script_count][MAX_SCRIPT_NAME - 1] = '\0';
-            script_count++;
+    if (badusb_sd_begin(&display_was_suspended)) {
+        const char *dir_path = "/mnt/ghostesp/badusb";
+        DIR *dir = opendir(dir_path);
+        if (dir) {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL && script_count < MAX_SCRIPTS) {
+                size_t len = strlen(entry->d_name);
+                if (len > 4 && strcmp(entry->d_name + len - 4, ".txt") == 0) {
+                    strncpy(script_names[script_count], entry->d_name, MAX_SCRIPT_NAME - 1);
+                    script_names[script_count][MAX_SCRIPT_NAME - 1] = '\0';
+                    script_count++;
+                }
+            }
+            closedir(dir);
         }
+        badusb_sd_end(display_was_suspended);
     }
-    closedir(dir);
-
-    badusb_sd_end(display_was_suspended);
 
     for (int i = 0; i < script_count; i++) {
         script_options[i] = script_names[i];
@@ -209,6 +209,29 @@ static void scroll_down_cb(lv_event_t *e) {
     if (menu_container && lv_obj_is_valid(menu_container)) {
         lv_coord_t scroll_amt = lv_obj_get_height(menu_container) / 2;
         lv_obj_scroll_by_bounded(menu_container, 0, -scroll_amt, LV_ANIM_OFF);
+    }
+}
+
+static void update_scroll_buttons_visibility(void) {
+    if (!menu_container || !lv_obj_is_valid(menu_container)) return;
+    lv_obj_update_layout(menu_container);
+    
+    lv_coord_t scroll_bottom = lv_obj_get_scroll_bottom(menu_container);
+    lv_coord_t scroll_top = lv_obj_get_scroll_top(menu_container);
+    bool needs_scroll = (scroll_bottom > 0) || (scroll_top > 0);
+    
+    if (needs_scroll) {
+        if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
+            lv_obj_clear_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(scroll_up_btn);
+        }
+        if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) {
+            lv_obj_clear_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(scroll_down_btn);
+        }
+    } else {
+        if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+        if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -269,19 +292,33 @@ static void badusb_prod_kb_cb(const char *text) {
 static void badusb_cancel_cb(lv_event_t *e) {
     (void)e;
     bool remote = badusb_is_remote();
-    simulateCommand(remote ? "commsend badusb stop" : "badusb stop");
+    if (remote) {
+        simulateCommand("commsend badusb stop");
+    } else {
+#ifdef CONFIG_HAS_BADUSB
+        badusb_manager_stop();
+#endif
+    }
+    if (vsense_poll_timer) {
+        lv_timer_del(vsense_poll_timer);
+        vsense_poll_timer = NULL;
+    }
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         lv_obj_del(badusb_running_popup);
         badusb_running_popup = NULL;
     }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
     error_popup_create("BadUSB stopped");
 }
 
-static void show_running_popup(const char *script_name) {
+static void show_running_popup_ex(const char *script_name, bool waiting_for_usb) {
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         lv_obj_del(badusb_running_popup);
         badusb_running_popup = NULL;
     }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
 
     int popup_w = LV_HOR_RES - 30;
     int popup_h;
@@ -303,14 +340,26 @@ static void show_running_popup(const char *script_name) {
     const lv_font_t *title_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_14 : &lv_font_montserrat_16;
     const lv_font_t *body_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 
-    popup_create_title_label(badusb_running_popup, "BadUSB Running", title_font, 12);
+    const char *title = waiting_for_usb ? "Waiting for USB..." : "BadUSB Running";
+    badusb_popup_title_lbl = popup_create_title_label(badusb_running_popup, title, title_font, 12);
 
     char body[80];
-    snprintf(body, sizeof(body), "Script: %s", script_name);
-    lv_obj_t *body_lbl = popup_create_body_label(badusb_running_popup, body, popup_w - 20, true, body_font, 40);
-    if (body_lbl) {
-        lv_obj_set_style_text_align(body_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    if (waiting_for_usb) {
+        snprintf(body, sizeof(body), "Plug in to execute\n%s", script_name);
+    } else {
+        snprintf(body, sizeof(body), "Script: %s", script_name);
     }
+    
+    // smaller screens need tighter spacing to avoid overlap with cancel button
+    int body_y_offset = (LV_VER_RES < 160) ? 32 : ((LV_VER_RES <= 200) ? 35 : 40);
+    badusb_popup_body_lbl = popup_create_body_label(badusb_running_popup, body, popup_w - 20, true, body_font, body_y_offset);
+    if (badusb_popup_body_lbl) {
+        lv_obj_set_style_text_align(badusb_popup_body_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    }
+
+    // Store script name for status updates
+    strncpy(vsense_pending_script, script_name, MAX_SCRIPT_NAME - 1);
+    vsense_pending_script[MAX_SCRIPT_NAME - 1] = '\0';
 
     int btn_w = 90, btn_h = 30;
     if (LV_VER_RES <= 240) { btn_w = 80; btn_h = 28; }
@@ -318,16 +367,68 @@ static void show_running_popup(const char *script_name) {
                                                    LV_ALIGN_BOTTOM_MID, 0, -10, body_font,
                                                    badusb_cancel_cb, NULL);
     if (cancel_btn) {
-        uint8_t theme = settings_get_menu_theme(&G_Settings);
-        lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
-        lv_color_t text_color = theme_palette_is_bright(theme) ? lv_color_hex(0x000000) : lv_color_hex(0xFFFFFF);
-        lv_obj_set_style_bg_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_FOCUSED);
-        lv_obj_set_style_bg_color(cancel_btn, accent, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
-        lv_obj_t *cancel_label = lv_obj_get_child(cancel_btn, 0);
-        if (cancel_label) {
-            lv_obj_set_style_text_color(cancel_label, text_color, LV_PART_MAIN | LV_STATE_FOCUSED);
-            lv_obj_set_style_text_color(cancel_label, text_color, LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_PRESSED);
+        popup_set_button_selected(cancel_btn, true);
+    }
+}
+
+static void show_running_popup(const char *script_name) {
+    show_running_popup_ex(script_name, false);
+}
+
+// Update the popup in-place when receiving status from S3 (remote) or VSENSE poll (standalone)
+static void badusb_popup_set_running(void) {
+    if (!badusb_running_popup || !lv_obj_is_valid(badusb_running_popup)) return;
+    if (badusb_popup_title_lbl && lv_obj_is_valid(badusb_popup_title_lbl)) {
+        lv_label_set_text(badusb_popup_title_lbl, "BadUSB Running");
+    }
+    if (badusb_popup_body_lbl && lv_obj_is_valid(badusb_popup_body_lbl)) {
+        char body[80];
+        snprintf(body, sizeof(body), "Script: %s", vsense_pending_script);
+        lv_label_set_text(badusb_popup_body_lbl, body);
+    }
+}
+
+static void badusb_popup_set_done(void) {
+    if (vsense_poll_timer) {
+        lv_timer_del(vsense_poll_timer);
+        vsense_poll_timer = NULL;
+    }
+    if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
+        lv_obj_del(badusb_running_popup);
+        badusb_running_popup = NULL;
+    }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
+}
+
+#ifdef CONFIG_HAS_BADUSB
+// LVGL timer callback for standalone VSENSE polling
+static void vsense_poll_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+    if (badusb_vsense_connected()) {
+        // VBUS detected - update popup to "Running"
+        badusb_popup_set_running();
+        // Stop polling
+        if (vsense_poll_timer) {
+            lv_timer_del(vsense_poll_timer);
+            vsense_poll_timer = NULL;
         }
+    }
+}
+#endif
+
+// Public: called from command handler when S3 sends "badusb status <state>" to C5
+void badusb_view_update_status(const char *status) {
+    if (!status) return;
+    if (strcmp(status, "waiting") == 0) {
+        // S3 is waiting for VBUS - show waiting popup if not already showing
+        if (!badusb_running_popup || !lv_obj_is_valid(badusb_running_popup)) {
+            show_running_popup_ex(vsense_pending_script, true);
+        }
+    } else if (strcmp(status, "running") == 0) {
+        badusb_popup_set_running();
+    } else if (strcmp(status, "done") == 0) {
+        badusb_popup_set_done();
     }
 }
 
@@ -430,6 +531,42 @@ static bool badusb_send_script_to_peer(const char *name) {
     ESP_LOGI(TAG, "Streamed %zu bytes to peer", total_sent);
     return true;
 }
+static bool badusb_send_builtin_to_peer(void) {
+    size_t script_size = BADUSB_BUILTIN_SCRIPT_LEN;
+
+    char exec_data[32];
+    snprintf(exec_data, sizeof(exec_data), "exec %zu", script_size);
+    if (!esp_comm_manager_send_command("badusb", exec_data)) {
+        error_popup_create("Failed to send command");
+        return false;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    const uint8_t *data = (const uint8_t *)badusb_builtin_script;
+    size_t total_sent = 0;
+    bool ok = true;
+
+    while (total_sent < script_size) {
+        size_t remaining = script_size - total_sent;
+        size_t n = (remaining < STREAM_CHUNK_SIZE) ? remaining : STREAM_CHUNK_SIZE;
+
+        if (!esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_BADUSB, data + total_sent, n)) {
+            ok = false;
+            break;
+        }
+        total_sent += n;
+        vTaskDelay(pdMS_TO_TICKS(15));
+    }
+
+    if (!ok || total_sent != script_size) {
+        error_popup_create("Script transfer failed");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Streamed %zu bytes (built-in) to peer", total_sent);
+    return true;
+}
 #endif // CONFIG_HAS_BADUSB_REMOTE
 
 static void handle_option(const char *option) {
@@ -504,18 +641,42 @@ static void handle_option(const char *option) {
             go_back();
             return;
         }
+        bool is_builtin = (strcmp(option, BADUSB_BUILTIN_SCRIPT_NAME) == 0);
         if (remote) {
 #ifdef CONFIG_HAS_BADUSB_REMOTE
             badusb_send_settings_to_peer();
-            if (badusb_send_script_to_peer(option)) {
-                show_running_popup(option);
+            bool ok = is_builtin ? badusb_send_builtin_to_peer()
+                                 : badusb_send_script_to_peer(option);
+            if (ok) {
+                show_running_popup_ex(option, true);
             }
 #endif
         } else {
-            char cmd[128];
-            snprintf(cmd, sizeof(cmd), "badusb run %s", option);
-            simulateCommand(cmd);
-            show_running_popup(option);
+#ifdef CONFIG_HAS_BADUSB
+            bool has_vsense = badusb_has_vsense();
+            bool already_connected = has_vsense && badusb_vsense_connected();
+
+            if (is_builtin) {
+                char *buf = strdup(badusb_builtin_script);
+                if (buf) {
+                    badusb_manager_execute_buffer(buf, BADUSB_BUILTIN_SCRIPT_LEN);
+                }
+            } else {
+                char cmd[128];
+                snprintf(cmd, sizeof(cmd), "badusb run %s", option);
+                simulateCommand(cmd);
+            }
+
+            if (has_vsense && !already_connected) {
+                show_running_popup_ex(option, true);
+                if (vsense_poll_timer) {
+                    lv_timer_del(vsense_poll_timer);
+                }
+                vsense_poll_timer = lv_timer_create(vsense_poll_timer_cb, 100, NULL);
+            } else {
+                show_running_popup(option);
+            }
+#endif
         }
     }
 }
@@ -563,6 +724,10 @@ static void rebuild_menu(void) {
     if (num_items > 0) {
         select_item(0);
     }
+
+#ifdef CONFIG_USE_TOUCHSCREEN
+    update_scroll_buttons_visibility();
+#endif
 }
 
 void badusb_view_create(void) {
@@ -578,7 +743,7 @@ void badusb_view_create(void) {
 #ifdef CONFIG_USE_TOUCHSCREEN
     int screen_height = LV_VER_RES;
     const int STATUS_BAR_HEIGHT = 20;
-    const int BUTTON_AREA_HEIGHT = 0;
+    const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
     int container_height = screen_height - STATUS_BAR_HEIGHT - BUTTON_AREA_HEIGHT;
     lv_obj_set_size(menu_container, LV_HOR_RES, container_height);
     lv_obj_align(menu_container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT);
@@ -592,13 +757,62 @@ void badusb_view_create(void) {
     add_items_with_userdata(g_ov, options);
     for (const char **p = options; *p; p++) num_items++;
     if (num_items > 0) select_item(0);
+
+#ifdef CONFIG_USE_TOUCHSCREEN
+    scroll_up_btn = lv_btn_create(root);
+    lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
+    lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(scroll_up_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_radius(scroll_up_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scroll_up_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(scroll_up_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(scroll_up_btn, scroll_up_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *up_label = lv_label_create(scroll_up_btn);
+    lv_label_set_text(up_label, LV_SYMBOL_UP);
+    lv_obj_center(up_label);
+    lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
+
+    scroll_down_btn = lv_btn_create(root);
+    lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
+    lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(scroll_down_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_radius(scroll_down_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scroll_down_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(scroll_down_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(scroll_down_btn, scroll_down_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *down_label = lv_label_create(scroll_down_btn);
+    lv_label_set_text(down_label, LV_SYMBOL_DOWN);
+    lv_obj_center(down_label);
+    lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
+
+    back_btn = lv_btn_create(root);
+    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x555555), LV_PART_MAIN);
+    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(back_btn, back_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_label);
+
+    update_scroll_buttons_visibility();
+#endif
 }
 
 void badusb_view_destroy(void) {
+    if (vsense_poll_timer) {
+        lv_timer_del(vsense_poll_timer);
+        vsense_poll_timer = NULL;
+    }
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         lv_obj_del(badusb_running_popup);
         badusb_running_popup = NULL;
     }
+    badusb_popup_title_lbl = NULL;
+    badusb_popup_body_lbl = NULL;
 
     if (g_ov) {
         options_view_destroy(g_ov);
@@ -624,7 +838,7 @@ void badusb_view_input_cb(InputEvent *event) {
     if (badusb_running_popup && lv_obj_is_valid(badusb_running_popup)) {
         if (event->type == INPUT_TYPE_KEYBOARD) {
             uint8_t key = event->data.key_value;
-            if (key == 13 || key == 10 || key == 27 || key == 'c' || key == 'C') {
+            if (key == 13 || key == 10 || key == 27 || key == 29 || key == 'c' || key == 'C') {
                 badusb_cancel_cb(NULL);
                 return;
             }

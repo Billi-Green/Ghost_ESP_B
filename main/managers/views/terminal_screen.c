@@ -1,5 +1,6 @@
 #include "managers/views/terminal_screen.h"
 #include "core/serial_manager.h"
+#include "core/commandline.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -616,6 +617,7 @@ static void scroll_terminal_down(void) {
 }
 
 static void stop_all_operations(void) {
+    ESP_LOGI(TAG, "Stop all operations triggered");
     terminal_active = false;
     is_stopping = true;
     
@@ -624,18 +626,16 @@ static void stop_all_operations(void) {
     }
     terminal_dualcomm_only = false;
 
-    simulateCommand("stop");
+    // call stop handler directly instead of queuing it
+    handle_stop_flipper(0, NULL);
 
-    vTaskDelay(pdMS_TO_TICKS(20));
-
-    // Now, switch the view
+    // now switch the view
     if (terminal_return_view) {
         display_manager_switch_view(terminal_return_view);
-        terminal_return_view = NULL; // Clear after use
+        terminal_return_view = NULL;
     } else {
-        display_manager_switch_view(&main_menu_view); // Fallback
+        display_manager_switch_view(&main_menu_view);
     }
-    ESP_LOGI(TAG, "Stop all operations triggered");
 }
 #if defined(CONFIG_USE_HW_KB) || defined(CONFIG_USE_TOUCHSCREEN) || defined(CONFIG_USE_JOYSTICK) || defined(CONFIG_BUILD_CONFIG_TEMPLATE)
 void text_box_click_cb(lv_event_t *e){

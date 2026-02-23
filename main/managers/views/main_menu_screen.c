@@ -22,8 +22,12 @@
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
 #include "managers/views/badusb_view.h"
 #endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+#include "managers/views/accelerometer_screen.h"
+#endif
 
 LV_IMG_DECLARE(dualcomm);
+LV_IMG_DECLARE(accelerometer_icon);
 
 static const char *TAG = "MainMenu";
 
@@ -98,6 +102,9 @@ menu_item_t menu_items[] = {
     {"Clock", &clock_icon, 4, {{0}}},
 #ifdef CONFIG_HAS_COMPASS
     {"Compass", &compass, 2, {{0}}},
+#endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+    {"Accelerometer", &accelerometer_icon, 4, {{0}}},
 #endif
     {"Apps", &GESPAppGallery, 3, {{0}}}, // applies to all boards
     {"Settings", &settings_icon, 5, {{0}}}, // applies to all boards
@@ -865,6 +872,9 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_COMPASS
         {"Compass", 0, &compass_view},
 #endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+        {"Accelerometer", 0, &accelerometer_view},
+#endif
 #if CONFIG_HAS_INFRARED
         {"Infrared", 0, &infrared_view},
 #endif
@@ -873,7 +883,6 @@ static void handle_menu_item_selection(int item_index) {
 #endif
         {"Apps", 0, &apps_menu_view},
         {"Clock", 0, &clock_view},
-        {"Settings", OT_Settings, &options_menu_view},
         {"Settings", OT_Settings, &options_menu_view},
         {"GhostLink", OT_DualComm, &options_menu_view},
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
@@ -914,6 +923,8 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("GhostLink");
             } else if (strcmp(menu_actions[i].name, "BadUSB") == 0) {
                 status_display_show_status("BadUSB");
+            } else if (strcmp(menu_actions[i].name, "Accelerometer") == 0) {
+                status_display_show_status("Accelerometer");
             }
 
             

@@ -5,4 +5,8 @@
 
 extern View badusb_view;
 
+// Called by command handler when S3 sends status updates over GhostLink
+// status: "waiting", "running", or "done"
+void badusb_view_update_status(const char *status);
+
 #endif // BADUSB_VIEW_H
