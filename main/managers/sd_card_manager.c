@@ -781,7 +781,6 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     // Show appropriate status based on context
     switch (context) {
       case SD_UNMOUNT_CONTEXT_JIT:
-        status_display_show_status("SD Idle");
         break;
       case SD_UNMOUNT_CONTEXT_USER:
         status_display_show_status("SD Unmounted");
@@ -790,14 +789,11 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
         status_display_show_status("SD Error");
         break;
       case SD_UNMOUNT_CONTEXT_SHUTDOWN:
-        // Don't show status during shutdown
         break;
       default:
         status_display_show_status("SD Unmounted");
         break;
     }
-  } else {
-    status_display_show_status("SD Not Mounted");
   }
 #else
   if (sd_card_manager.is_initialized) {
