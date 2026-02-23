@@ -20,6 +20,8 @@
 - Fixed GPS satellites logic
 - Fixed misc Wardriving issues
 - Added New Wardriving and GPS info display view
+- Reorganized settings menu into more categories
+- Added Factory Reset option to wipe NVS and reboot
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3
