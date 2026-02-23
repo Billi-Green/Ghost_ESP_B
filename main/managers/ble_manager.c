@@ -639,12 +639,10 @@ void ble_start_scanning(void) {
 
 esp_err_t ble_register_handler(ble_data_handler_t handler) {
     if (handler_count >= MAX_HANDLERS) {
-        ESP_LOGE(TAG_BLE, "ble_register_handler: MAX_HANDLERS reached");
         return ESP_ERR_NO_MEM;
     }
     handlers[handler_count].handler = handler;
     handler_count++;
-    ESP_LOGI(TAG_BLE, "ble_register_handler: registered handler %p, count=%d", handler, handler_count);
     return ESP_OK;
 }
 

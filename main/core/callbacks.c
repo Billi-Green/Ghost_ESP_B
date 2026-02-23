@@ -72,7 +72,7 @@ static uint32_t wardrive_log_ok = 0;
 static uint32_t wardrive_gps_rejected = 0;
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-#define BLE_WD_SEEN_SIZE 256
+#define BLE_WD_SEEN_SIZE 64
 static uint32_t ble_wd_seen_hashes[BLE_WD_SEEN_SIZE];
 static uint16_t ble_wd_seen_idx = 0;
 static uint32_t ble_wd_unique_count = 0;
@@ -1589,18 +1589,6 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
     }
 
     wardrive_ble_advs_seen++;
-
-    static uint32_t cb_log_counter = 0;
-    cb_log_counter++;
-    if ((cb_log_counter % 50) == 1) {
-        ESP_LOGI("BLE_WD", "callback: seen=%lu unique=%lu attempts=%lu ok=%lu rejected=%lu nmea_hdl=%p",
-                 (unsigned long)wardrive_ble_advs_seen,
-                 (unsigned long)ble_wd_unique_count,
-                 (unsigned long)wardrive_log_attempts,
-                 (unsigned long)wardrive_log_ok,
-                 (unsigned long)wardrive_gps_rejected,
-                 nmea_hdl);
-    }
 
     uint32_t mac_hash = ble_wd_hash_mac(event->disc.addr.val);
     bool already_seen = false;

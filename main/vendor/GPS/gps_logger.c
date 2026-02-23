@@ -441,15 +441,6 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
             return ESP_OK;
         }
 
-        static uint32_t ble_csv_log_counter = 0;
-        ble_csv_log_counter++;
-        if ((ble_csv_log_counter % 50) == 1) {
-            ESP_LOGI(CSV_TAG, "BLE CSV write: mac=%s rssi=%d lat=%.6f lon=%.6f unique_logged=%lu",
-                     data->ble_data.ble_mac, data->ble_data.ble_rssi,
-                     data->latitude, data->longitude,
-                     (unsigned long)wd_ble_unique_logged);
-        }
-
         char name_esc[96];
         char caps_esc[64];
         csv_escape_field(name_esc, sizeof(name_esc), data->ble_data.ble_name);

@@ -345,13 +345,10 @@ void wardriving_view_create(void) {
     bool csv_ok = true;
     if (wardriving_ble_mode) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        ESP_LOGI(TAG, "BLE wardriving start: gps_init=%d csv_ok=%d",
-                 g_gpsManager.isinitilized, csv_ok);
         ble_wardriving_reset_unique_device_count();
         csv_ok = (csv_file_open("ble_wardriving") == ESP_OK);
         ble_start_scanning();
         ble_register_handler(ble_wardriving_callback);
-        ESP_LOGI(TAG, "BLE wardriving started: csv_ok=%d", csv_ok);
 #endif
     } else if (wardriving_scan_mode) {
         csv_ok = (csv_file_open("wardriving") == ESP_OK);
@@ -517,9 +514,6 @@ void wardriving_view_destroy(void) {
 
     if (wardriving_ble_mode) {
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-        ESP_LOGI(TAG, "BLE wardriving stop: unique=%lu pending=%uB",
-                 (unsigned long)ble_wardriving_get_unique_device_count(),
-                 (unsigned)csv_get_pending_bytes());
         ble_stop();
         if (csv_buffer_has_pending_data()) {
             csv_flush_buffer_to_file();
