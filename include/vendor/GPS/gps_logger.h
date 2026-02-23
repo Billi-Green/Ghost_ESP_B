@@ -42,10 +42,10 @@ typedef struct {
     char ble_mac[18];
     int ble_rssi;
     char ble_name[32];
-    uint8_t ble_type;   // 0=Classic, 1=BLE, 2=Dual
+    uint16_t ble_appearance;
     uint16_t ble_mfgr_id;
     bool ble_has_mfgr_id;
-    bool is_ble_device; // Flag to identify BLE entries
+    bool is_ble_device;
   } ble_data;
 
 } wardriving_data_t;

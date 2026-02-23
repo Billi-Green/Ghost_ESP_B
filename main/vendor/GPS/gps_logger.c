@@ -459,11 +459,12 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
 
         len = snprintf(data_line,
                        CSV_GPS_BUFFER_SIZE,
-                       "%s,%s,%s,%s,0,,%d,%.6f,%.6f,%d,%.1f,,%s,BLE\n",
+                       "%s,%s,%s,%s,0,%u,%d,%.6f,%.6f,%d,%.1f,,%s,BLE\n",
                        data->ble_data.ble_mac,
                        name_esc,
                        caps_esc,
                        timestamp,
+                       (unsigned)data->ble_data.ble_appearance,
                        data->ble_data.ble_rssi,
                        data->latitude,
                        data->longitude,

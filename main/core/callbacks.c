@@ -1573,7 +1573,10 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 }
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-// Forward declare the struct and callback before use
+#ifndef BLE_HS_ADV_TYPE_APPEARANCE
+#define BLE_HS_ADV_TYPE_APPEARANCE 0x19
+#endif
+
 struct ble_hs_adv_field;
 static int ble_hs_adv_parse_fields_cb(const struct ble_hs_adv_field *field, void *arg);
 
@@ -1666,6 +1669,11 @@ static int ble_hs_adv_parse_fields_cb(const struct ble_hs_adv_field *field, void
         const uint8_t *v = (const uint8_t *)field->value;
         data->ble_data.ble_mfgr_id = (uint16_t)v[0] | ((uint16_t)v[1] << 8);
         data->ble_data.ble_has_mfgr_id = true;
+    }
+
+    if (field->type == BLE_HS_ADV_TYPE_APPEARANCE && field->length >= 2) {
+        const uint8_t *v = (const uint8_t *)field->value;
+        data->ble_data.ble_appearance = (uint16_t)v[0] | ((uint16_t)v[1] << 8);
     }
 
     return 0;
