@@ -7,6 +7,7 @@
 
 #include "managers/wigle_manager.h"
 #include "managers/settings_manager.h"
+#include "managers/sd_card_manager.h"
 #include "core/glog.h"
 #include "esp_err.h"
 #include "esp_http_client.h"
@@ -32,7 +33,7 @@
 #define WIGLE_STREAM_CHUNK_SIZE 4096
 #define AUTH_BUF_SIZE 256
 #define WIGLE_RESP_BUF_SIZE 384
-#define WIGLE_TASK_STACK 16384
+#define WIGLE_TASK_STACK (12 * 1024)
 
 static volatile bool wigle_upload_in_progress = false;
 
@@ -489,7 +490,26 @@ esp_err_t wigle_upload_all(void) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    return wigle_process_queue(api_key);
+    bool require_jit = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    require_jit = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#endif
+    bool display_was_suspended = false;
+    bool did_mount = false;
+    if (require_jit && !sd_card_manager.is_initialized) {
+        if (sd_card_mount_for_flush(&display_was_suspended) != ESP_OK) {
+            glog("Wigle: JIT SD mount failed, cannot read queue\n");
+            return ESP_FAIL;
+        }
+        did_mount = true;
+    }
+
+    esp_err_t ret = wigle_process_queue(api_key);
+
+    if (did_mount) {
+        sd_card_unmount_after_flush(display_was_suspended);
+    }
+    return ret;
 }
 
 void wigle_uploaded_list(void) {
