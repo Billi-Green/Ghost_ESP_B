@@ -22,6 +22,7 @@
 - Added New Wardriving and GPS info display view
 - Reorganized settings menu into more categories
 - Added Factory Reset option to wipe NVS and reboot
+- Added auto upload to WiGLE - @Play2BReal
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3

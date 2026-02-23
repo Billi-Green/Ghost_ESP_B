@@ -63,6 +63,9 @@ static bool display_spi_suspend_for_sd(void) {
   if (!is_shared_display_sd_spi()) {
     return false;
   }
+  if (s_display_spi_suspended_flag) {
+    return true;  /* already suspended — idempotent, matches resume_after_sd guard */
+  }
   /* pause lvgl refresh to stop flush() while we steal the bus */
   lv_disp_t *disp = lv_disp_get_default();
   if (disp) {
@@ -781,7 +784,6 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     // Show appropriate status based on context
     switch (context) {
       case SD_UNMOUNT_CONTEXT_JIT:
-        status_display_show_status("SD Idle");
         break;
       case SD_UNMOUNT_CONTEXT_USER:
         status_display_show_status("SD Unmounted");
@@ -790,14 +792,11 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
         status_display_show_status("SD Error");
         break;
       case SD_UNMOUNT_CONTEXT_SHUTDOWN:
-        // Don't show status during shutdown
         break;
       default:
         status_display_show_status("SD Unmounted");
         break;
     }
-  } else {
-    status_display_show_status("SD Not Mounted");
   }
 #else
   if (sd_card_manager.is_initialized) {
