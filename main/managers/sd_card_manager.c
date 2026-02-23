@@ -42,7 +42,9 @@ static const char *NVS_NAMESPACE = "sd_config";
 #include "managers/display_manager.h"
 static bool s_display_spi_suspended_flag = false;
 static bool is_shared_display_sd_spi(void) {
-#if defined(CONFIG_IDF_TARGET_ESP32C5) && defined(CONFIG_LV_TFT_DISPLAY_SPI2_HOST)
+#if !defined(CONFIG_IDF_TARGET_ESP32) && defined(CONFIG_LV_TFT_DISPLAY_SPI2_HOST)
+  /* On all non-ESP32 SPI targets the SD mount always uses SPI2_HOST.
+   * If the display is also configured on SPI2_HOST the buses are shared. */
   return true;
 #elif defined(CONFIG_LV_DISP_SPI_MOSI) && defined(CONFIG_LV_DISP_SPI_CLK)
   bool mosi_match = (sd_card_manager.spi_mosi_pin == CONFIG_LV_DISP_SPI_MOSI);
@@ -90,9 +92,10 @@ static void display_spi_resume_after_sd(void) {
                              SPI_BUS_MAX_TRANSFER_SZ, 1, DISP_SPI_IO2, DISP_SPI_IO3);
   if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
     ESP_LOGE("sd_card", "display_spi_resume: bus init failed: %s", esp_err_to_name(ret));
-    return;
+    /* fall through — still resume LVGL task to prevent watchdog */
+  } else {
+    disp_spi_add_device(TFT_SPI_HOST);
   }
-  disp_spi_add_device(TFT_SPI_HOST);
   /* resume lvgl refresh */
   lv_disp_t *disp = lv_disp_get_default();
   if (disp) {

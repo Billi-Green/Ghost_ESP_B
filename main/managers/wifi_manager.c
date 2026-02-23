@@ -1462,6 +1462,11 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    // Disconnect STA if connected — an associated STA locks the radio to the
+    // AP's channel, causing esp_wifi_set_channel() to fail (ESP_FAIL) and
+    // preventing channel hopping (e.g. wardriving only sees one channel).
+    esp_wifi_disconnect();
+
     // for EAPOL, stop ALL hopping and lock to selected AP channel
     if (callback == wifi_eapol_scan_callback) {
         // Stop any existing channel hopping first
@@ -1495,7 +1500,7 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     if (callback == wifi_beacon_scan_callback || callback == wifi_probe_scan_callback || 
         callback == wifi_deauth_scan_callback || callback == wifi_pwn_scan_callback ||
         callback == wifi_wps_detection_callback || callback == wifi_listen_probes_callback ||
-        callback == wifi_pineap_detector_callback || callback == wardriving_scan_callback) {
+        callback == wifi_pineap_detector_callback) {
         // Management frames only
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
     } else if (callback == wifi_eapol_scan_callback) {

@@ -7,11 +7,21 @@
 - 'chipinfo' command now shows firmware version and enabled build features (Display, NFC, BadUSB, IR, GPS, etc.)
 - Use country-appropriate channel list in main deauth task
 - Fixed station deauth channel lookup
+- Fixed GPS latitude parsing for GLL sentences (was using 3-digit degree width instead of 2)
+- Improved GPS Info display with fix mode, satellites in view, and cleaner logging
 - Moved multiple attacks and scans to separate files for maintainability
 - Significantly optimised port scan memory usage
 - Fixed BLE not initializing when selecting a flipper
 - Slightly increased IR Learn task size to prevent crash
 - Added `wifistatus` CLI command to show connection status and saved network info
+- Fixed a crash when deinitializing BLE
+- Improved BLE Spam
+- Deauth: fixed 5GHz HT40 tuning, added burst loops, and removed rate limiting
+- Fixed GPS satellites logic
+- Fixed misc Wardriving issues
+- Added New Wardriving and GPS info display view
+- Reorganized settings menu into more categories
+- Added Factory Reset option to wipe NVS and reboot
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3
@@ -181,6 +191,7 @@
 - IR and NFC display views and popups now properly use active set UI theme
 - Standardized LVGL screen root creation across display views and added status-bar content offset GUI helpers
 - Grid menu now scrolls up and down instead of left and right
+- BLE wardriving now uses dedicated wardriving screen with GPS stats and reliable device name parsing
 - Reorganised the settings menu and adjusted styling
 - Minor keyboard view logic and styling refactor
 - Terminal enter/select now submits text if typed, otherwise opens keyboard view

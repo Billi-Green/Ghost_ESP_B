@@ -59,6 +59,7 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data);
 esp_err_t csv_flush_buffer_to_file();
 bool csv_buffer_has_pending_data(void);
 uint32_t csv_get_unique_wifi_ap_count(void);
+uint32_t csv_get_unique_ble_device_count(void);
 size_t csv_get_pending_bytes(void);
 void csv_file_close();
 
