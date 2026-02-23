@@ -151,6 +151,8 @@ static void update_display_cb(lv_timer_t *timer) {
     static uint8_t gps_debug_count = 0;
     static int8_t last_sats_warn_state = -1;
     static bool logged_coords_no_fix = false;
+    static uint8_t no_fix_toggle_counter = 0;
+    static bool no_fix_show_sats = false;
     
     if (!nmea_hdl) {
         if (lbl_fix_status) lv_label_set_text(lbl_fix_status, "No GPS");
@@ -170,6 +172,25 @@ static void update_display_cb(lv_timer_t *timer) {
     
     const char *fix_status = get_fix_status_string(gps);
     bool has_fix = gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D;
+    
+    char fix_display_buf[32];
+    if (!has_fix) {
+        no_fix_toggle_counter++;
+        if (no_fix_toggle_counter >= 3) {
+            no_fix_toggle_counter = 0;
+            no_fix_show_sats = !no_fix_show_sats;
+        }
+        if (!no_fix_show_sats || gps->sats_in_view == 0) {
+            strncpy(fix_display_buf, "No Fix", sizeof(fix_display_buf) - 1);
+            fix_display_buf[sizeof(fix_display_buf) - 1] = '\0';
+        } else {
+            snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats in view", gps->sats_in_view);
+        }
+        fix_status = fix_display_buf;
+    } else {
+        no_fix_toggle_counter = 0;
+        no_fix_show_sats = false;
+    }
     
     // Debug: log coords without fix (weird state)
     if (!logged_coords_no_fix && gps->latitude != 0.0 && gps->longitude != 0.0 && !has_fix) {
