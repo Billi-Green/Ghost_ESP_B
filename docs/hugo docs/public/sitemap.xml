@@ -622,6 +622,10 @@
     <changefreq>weekly</changefreq>
     <priority>0.5</priority>
   </url><url>
+    <loc>//localhost:1313/latest/getting-started/control-app/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url><url>
     <loc>//localhost:1313/latest/wifi/evil-portal/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.5</priority>
