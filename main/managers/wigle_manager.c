@@ -38,6 +38,16 @@
 #define WIGLE_JIT_MAX_ENTRIES   32             /* max paths per scan */
 
 static volatile bool wigle_upload_in_progress = false;
+static wigle_test_callback_t wigle_test_cb = NULL;
+static bool wigle_test_in_progress = false;
+
+void wigle_set_test_callback(wigle_test_callback_t callback) {
+    wigle_test_cb = callback;
+}
+
+bool wigle_is_test_in_progress(void) {
+    return wigle_test_in_progress;
+}
 
 typedef struct {
     char buf[WIGLE_RESP_BUF_SIZE];
@@ -868,5 +878,129 @@ void wigle_upload_all_async(void) {
         glog("Wigle: failed to start upload task\n");
         wigle_upload_in_progress = false;
     }
+}
+
+#define WIGLE_PROFILE_URL "https://api.wigle.net/api/v2/profile/user"
+
+typedef struct {
+    char message[128];
+    bool success;
+} wigle_test_result_t;
+
+static void wigle_test_api_task(void *arg);
+
+esp_err_t wigle_test_api_key(void) {
+    if (wigle_test_in_progress) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    const char *api_key = wigle_get_api_key();
+    if (!api_key || api_key[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (strchr(api_key, ':') == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    wigle_test_result_t *result = calloc(1, sizeof(wigle_test_result_t));
+    if (!result) {
+        return ESP_ERR_NO_MEM;
+    }
+    
+    wigle_test_in_progress = true;
+    
+    if (xTaskCreate(wigle_test_api_task, "wigle_test", WIGLE_TASK_STACK, result, 5, NULL) != pdPASS) {
+        free(result);
+        wigle_test_in_progress = false;
+        return ESP_FAIL;
+    }
+    
+    return ESP_OK;
+}
+
+static void wigle_test_api_task(void *arg) {
+    wigle_test_result_t *result = (wigle_test_result_t *)arg;
+    
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    if (!wigle_sta_has_ip()) {
+        strncpy(result->message, "Not connected to WiFi", sizeof(result->message) - 1);
+        result->success = false;
+        goto done;
+    }
+    
+    const char *api_key = wigle_get_api_key();
+    if (!api_key || api_key[0] == '\0') {
+        strncpy(result->message, "No API key set", sizeof(result->message) - 1);
+        result->success = false;
+        goto done;
+    }
+    
+    char auth_b64[AUTH_BUF_SIZE];
+    size_t enc_len = AUTH_BUF_SIZE - 1;
+    int r = mbedtls_base64_encode((unsigned char *)auth_b64, AUTH_BUF_SIZE, &enc_len,
+                                  (const unsigned char *)api_key, strlen(api_key));
+    if (r != 0) {
+        strncpy(result->message, "API key encoding failed", sizeof(result->message) - 1);
+        result->success = false;
+        goto done;
+    }
+    auth_b64[enc_len] = '\0';
+    
+    char auth_val[6 + AUTH_BUF_SIZE + 1];
+    snprintf(auth_val, sizeof(auth_val), "Basic %s", auth_b64);
+    
+    wigle_resp_t resp = {0};
+    
+    esp_http_client_config_t config = {
+        .url = WIGLE_PROFILE_URL,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = 15000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
+        .event_handler = wigle_http_event,
+        .user_data = &resp,
+        .buffer_size = 1024,
+    };
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        strncpy(result->message, "HTTP client init failed", sizeof(result->message) - 1);
+        result->success = false;
+        goto done;
+    }
+    
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_header(client, "User-Agent", "GhostESP/1.0");
+    esp_http_client_set_header(client, "Authorization", auth_val);
+    
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    
+    if (err != ESP_OK) {
+        snprintf(result->message, sizeof(result->message), "Network error: %s", esp_err_to_name(err));
+        result->success = false;
+    } else if (status == 200) {
+        strncpy(result->message, "API key is valid!", sizeof(result->message) - 1);
+        result->success = true;
+    } else if (status == 401) {
+        strncpy(result->message, "Invalid API key", sizeof(result->message) - 1);
+        result->success = false;
+    } else {
+        snprintf(result->message, sizeof(result->message), "HTTP error: %d", status);
+        result->success = false;
+    }
+    
+done:
+    glog("WiGLE: %s\n", result->message);
+    
+    if (wigle_test_cb) {
+        wigle_test_cb(result->success, result->message);
+    }
+    
+    wigle_test_in_progress = false;
+    free(result);
+    vTaskDelete(NULL);
 }
 

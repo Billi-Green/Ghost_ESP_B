@@ -8,6 +8,9 @@
 #include "gui/screen_layout.h"
 #include "io_manager.h"
 #include "managers/views/wardriving_screen.h"
+#include "managers/wigle_manager.h"
+#include "gui/popup.h"
+#include "core/utils.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
@@ -385,6 +388,8 @@ static SettingsItem settings_items[] = {
     
     {"Auto Upload", SETTING_WIGLE_AUTO_UPLOAD, bool_options, 2, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"Donate Data", SETTING_WIGLE_DONATE, bool_options, 2, 1, SETTINGS_CAT_WIGLE, false, NULL},
+    {"Test API Key", SETTING_WIGLE_TEST_API, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
+    {"Help", SETTING_WIGLE_HELP, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
 };
 
 static int get_settings_count_for_category(SettingsCategoryId cat_id) {
@@ -441,6 +446,9 @@ static bool touch_on_scroll_btn = false; // Flag active between press and releas
 
 // Add button declaration for back button
 static lv_obj_t *back_btn = NULL;
+
+// WiGLE help popup
+static lv_obj_t *wigle_help_popup = NULL;
 
 // --- Add Bluetooth submenu arrays and state ---
 static const char *bluetooth_main_options[] = {
@@ -604,6 +612,8 @@ static void update_scroll_buttons_visibility(void) {
 
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
+static void wigle_help_close_cb(lv_event_t *e); // Forward Declaration for WiGLE help close
+static void wigle_test_result_cb(bool success, const char *message);
 static void wifi_connect_kb_cb(const char *text);
 static void ssh_scan_kb_cb(const char *text);
 static void dual_comm_connect_kb_cb(const char *text);
@@ -1109,6 +1119,79 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_WIGLE_DONATE:
             settings_set_wigle_donate(&G_Settings, new_value == 1);
             break;
+        case SETTING_WIGLE_TEST_API: {
+            if (wigle_is_test_in_progress()) {
+                return;
+            }
+            if (!is_wifi_sta_connected()) {
+                error_popup_create("Connect to WiFi first");
+                return;
+            }
+            const char *api_key = wigle_get_api_key();
+            if (!api_key || api_key[0] == '\0') {
+                error_popup_create("No API key set\nUse CLI: wigle API <name>:<token>");
+                return;
+            }
+            error_popup_create("Testing API key...");
+            wigle_set_test_callback(wigle_test_result_cb);
+            esp_err_t err = wigle_test_api_key();
+            if (err != ESP_OK) {
+                wigle_set_test_callback(NULL);
+                error_popup_create("Failed to start test");
+                return;
+            }
+            return;
+        }
+        case SETTING_WIGLE_HELP: {
+            if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
+                lvgl_obj_del_safe(&wigle_help_popup);
+                return;
+            }
+            
+            int popup_w = LV_HOR_RES - 20;
+            int popup_h = LV_VER_RES - 40;
+            wigle_help_popup = popup_create_container(lv_layer_top(), popup_w, popup_h);
+            lv_obj_set_style_bg_color(wigle_help_popup, lv_color_hex(0x1E1E1E), 0);
+            
+            lv_obj_t *title = lv_label_create(wigle_help_popup);
+            lv_label_set_text(title, "WiGLE Setup Help");
+            lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+            lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+            
+            lv_obj_t *help_scroll = popup_create_scroll_area(wigle_help_popup, popup_w - 16, popup_h - 50, LV_ALIGN_TOP_MID, 0, 25);
+            
+            lv_obj_t *help_label = lv_label_create(help_scroll);
+            lv_label_set_long_mode(help_label, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(help_label, popup_w - 20);
+            lv_obj_set_style_text_color(help_label, lv_color_hex(0xCCCCCC), 0);
+            
+            const char *help_text = 
+                "1. Create free account at wigle.net\n"
+                "2. Account > API section\n"
+                "3. Copy API Name & Token\n\n"
+                "CLI: wigle API <name>:<token>\n"
+                "Ex: wigle API ABC123:DEF456\n\n"
+                "Auto Upload: Upload CSV when WiFi connects\n"
+                "Donate: Share scans publicly (recommended)\n\n"
+                "Needs: GPS, SD card, WiFi, CSV files in /mnt/ghostesp/gps/";
+            
+            lv_label_set_text(help_label, help_text);
+            lv_obj_set_style_text_font(help_label, &lv_font_montserrat_10, 0);
+            
+            lv_obj_t *close_btn = lv_btn_create(wigle_help_popup);
+            lv_obj_set_size(close_btn, 80, 30);
+            lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -5);
+            lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x444444), 0);
+            lv_obj_add_event_cb(close_btn, wigle_help_close_cb, LV_EVENT_CLICKED, NULL);
+            
+            lv_obj_t *btn_label = lv_label_create(close_btn);
+            lv_label_set_text(btn_label, "Close");
+            lv_obj_center(btn_label);
+            lv_obj_set_style_text_color(btn_label, lv_color_white(), 0);
+            
+            return;
+        }
     }
     
     // Save only the changed setting to NVS (Granular Save)
@@ -1181,6 +1264,15 @@ static void select_option_item(int index) {
 }
 
 void handle_hardware_button_press_options(InputEvent *event) {
+    // Close wigle help popup on exit button or joystick back
+    if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
+        if (event->type == INPUT_TYPE_EXIT_BUTTON || 
+            (event->type == INPUT_TYPE_JOYSTICK && event->data.joystick_index == 0)) {
+            wigle_help_close_cb(NULL);
+            return;
+        }
+    }
+
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
@@ -3017,6 +3109,36 @@ View options_menu_view = {.root = NULL,
                           .input_callback = handle_hardware_button_press_options,
                           .name = "Options Screen",
                           .get_hardwareinput_callback = get_options_menu_callback};
+
+static void wigle_help_close_cb(lv_event_t *e) {
+    (void)e;
+    if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
+        lvgl_obj_del_safe(&wigle_help_popup);
+    }
+}
+
+static void wigle_test_result_async(void *data) {
+    uint8_t *args = (uint8_t *)data;
+    bool success = args[0];
+    char *message = (char *)(&args[1]);
+    wigle_set_test_callback(NULL);
+    if (success) {
+        error_popup_create(message);
+    } else {
+        error_popup_create(message);
+    }
+    free(data);
+}
+
+static void wigle_test_result_cb(bool success, const char *message) {
+    // Must use lv_async_call since this runs in FreeRTOS task, not LVGL thread
+    size_t len = strlen(message) + 1;
+    uint8_t *args = malloc(sizeof(bool) + len);
+    if (!args) return;
+    args[0] = success;
+    memcpy(&args[1], message, len);
+    lv_async_call(wigle_test_result_async, args);
+}
 
 static void back_event_cb(lv_event_t *e) {
 

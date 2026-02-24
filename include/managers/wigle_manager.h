@@ -2,6 +2,7 @@
 #define WIGLE_MANAGER_H
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 /**
  * Set Wigle API credentials (format: "APIName:APIToken" from wigle.net/account)
@@ -31,5 +32,27 @@ void wigle_queue_add(const char *filepath);
 
 /** Spawn task to run wigle_upload_all in background. CLI returns immediately. */
 void wigle_upload_all_async(void);
+
+/**
+ * Callback type for wigle_test_api_key result.
+ */
+typedef void (*wigle_test_callback_t)(bool success, const char *message);
+
+/**
+ * Set callback for wigle_test_api_key result.
+ */
+void wigle_set_test_callback(wigle_test_callback_t callback);
+
+/**
+ * Check if a WiGLE API test is already in progress.
+ */
+bool wigle_is_test_in_progress(void);
+
+/**
+ * Test WiGLE API key validity by making a request to the profile endpoint.
+ * Result is returned via callback.
+ * @return ESP_OK if test initiated, ESP_ERR_INVALID_ARG if no key provided
+ */
+esp_err_t wigle_test_api_key(void);
 
 #endif /* WIGLE_MANAGER_H */

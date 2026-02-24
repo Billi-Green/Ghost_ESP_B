@@ -126,13 +126,9 @@ static void deauth_station_task(void *param);
 static void auto_deauth_task(void *Parameter);
 
 esp_err_t deauth_attack_broadcast(uint8_t bssid[6], int channel, uint8_t mac[6]) {
-    // Use HT40 for 5GHz channels on dual-band chips
+    // Use HT40 for 5GHz channels on dual-band chips - but use NONE as secondary
+    // WIFI_SECOND_CHAN_ABOVE is only valid for 2.4GHz HT40
     wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
-#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-    if (channel > 14) {
-        second = WIFI_SECOND_CHAN_ABOVE;
-    }
-#endif
     esp_err_t err = esp_wifi_set_channel(channel, second);
     if (err != ESP_OK) {
         printf("Failed to set channel %d: %s\n", channel, esp_err_to_name(err));
@@ -240,14 +236,11 @@ static void deauth_task(void *param) {
                 for (int sel_idx = 0; sel_idx < selected_ap_count_local; sel_idx++) {
                     for (int i = 0; i < ap_count; i++) {
                         if (memcmp(ap_info[i].bssid, selected_aps_local[sel_idx].bssid, 6) == 0 && ap_info[i].primary == ch) {
-                            if (!channel_set) {
-                                wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
-#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-                                if (ch > 14) sec = WIFI_SECOND_CHAN_ABOVE;
-#endif
-                                esp_wifi_set_channel(ch, sec);
-                                channel_set = true;
-                            }
+                        if (!channel_set) {
+                            wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+                            esp_wifi_set_channel(ch, sec);
+                            channel_set = true;
+                        }
                             // Burst loop for effectiveness
                             for (int burst = 0; burst < 25; burst++) {
                                 deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
@@ -269,9 +262,6 @@ static void deauth_task(void *param) {
                 if (strcmp((char *)ap_info[i].ssid, (char *)selected_ap_local.ssid) == 0) {
                     int ch = ap_info[i].primary;
                     wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
-#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-                    if (ch > 14) sec = WIFI_SECOND_CHAN_ABOVE;
-#endif
                     esp_wifi_set_channel(ch, sec);
                     for (int burst = 0; burst < 25; burst++) {
                         deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
@@ -328,9 +318,33 @@ static void deauth_task(void *param) {
 void deauth_attack_start(void) {
     if (!deauth_task_running) {
         ap_manager_stop_services();
+
+        // Ensure WiFi is fully stopped before configuring
+        esp_wifi_stop();
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        // Set protocols for dual-band chips (C5/C6) BEFORE starting WiFi to enable 5GHz
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        wifi_protocols_t p = {
+            .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR,
+            .ghz_5g = WIFI_PROTOCOL_11A | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AC | WIFI_PROTOCOL_11AX,
+        };
+        esp_err_t proto_err = esp_wifi_set_protocols(WIFI_IF_AP, &p);
+        if (proto_err != ESP_OK) {
+            printf("Warning: Failed to set 5GHz protocols: %s\n", esp_err_to_name(proto_err));
+        } else {
+            printf("5GHz protocols set successfully\n");
+        }
+        ESP_ERROR_CHECK(esp_wifi_start());
+#else
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP)); // Set AP mode for 802.11 TX
         esp_wifi_start();
+        // For non-dual-band chips, use 2.4GHz protocols only
+        (void)esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+#endif
         printf("Restarting Wi-Fi\n");
+
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         status_display_show_attack("Deauth", "starting");
 #endif
@@ -414,8 +428,31 @@ void deauth_attack_start_station(void) {
         return;
     }
     ap_manager_stop_services(); // stop AP and HTTP server
+
+    // Ensure WiFi is fully stopped before configuring
+    esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // Set protocols for dual-band chips (C5/C6) BEFORE starting WiFi to enable 5GHz
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    wifi_protocols_t p = {
+        .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR,
+        .ghz_5g = WIFI_PROTOCOL_11A | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AC | WIFI_PROTOCOL_11AX,
+    };
+    esp_err_t proto_err = esp_wifi_set_protocols(WIFI_IF_AP, &p);
+    if (proto_err != ESP_OK) {
+        printf("Warning: Failed to set 5GHz protocols: %s\n", esp_err_to_name(proto_err));
+    } else {
+        printf("5GHz protocols set successfully\n");
+    }
+    ESP_ERROR_CHECK(esp_wifi_start());
+#else
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP)); // switch to AP mode for deauth
     ESP_ERROR_CHECK(esp_wifi_start()); // restart Wi-Fi interface without HTTP server
+    (void)esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+#endif
+
     glog("Deauthing station %02X:%02X:%02X:%02X:%02X:%02X from AP %02X:%02X:%02X:%02X:%02X:%02X, starting background task...\n",
          selected_station_local.station_mac[0], selected_station_local.station_mac[1], selected_station_local.station_mac[2], 
          selected_station_local.station_mac[3], selected_station_local.station_mac[4], selected_station_local.station_mac[5],
@@ -440,11 +477,8 @@ static void deauth_station_task(void *param) {
     if (deauth_channel < 1 || deauth_channel > MAX_WIFI_CHANNEL) {
         deauth_channel = 1; // fallback channel
     }
-    wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
-#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-    if (deauth_channel > 14) sec = WIFI_SECOND_CHAN_ABOVE;
-#endif
-    (void)esp_wifi_set_channel(deauth_channel, sec);
+    // Use NONE for all channels - WIFI_SECOND_CHAN_ABOVE is only for 2.4GHz HT40
+    (void)esp_wifi_set_channel(deauth_channel, WIFI_SECOND_CHAN_NONE);
     uint32_t last_log = xTaskGetTickCount() * portTICK_PERIOD_MS;
     for (;;) {
         for (int burst = 0; burst < 25; burst++) {

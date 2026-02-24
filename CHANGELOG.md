@@ -25,6 +25,7 @@
 - Added auto upload to WiGLE - @Play2BReal
 - Control app updates - @tototo31
 - Added Flipper Zero Companion App documentation - @tototo31
+- Fixed 5Ghz deauthing
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3
