@@ -1114,6 +1114,19 @@ void keyboard_view_set_placeholder(const char *text){
     update_input_label();
 }
 
+void keyboard_view_set_initial_text(const char *text) {
+    memset(input_buffer, 0, sizeof(input_buffer));
+    input_len = 0;
+    if (text) {
+        size_t n = strlen(text);
+        if (n >= sizeof(input_buffer)) n = sizeof(input_buffer) - 1;
+        memcpy(input_buffer, text, n);
+        input_buffer[n] = '\0';
+        input_len = (int)n;
+    }
+    update_input_label();
+}
+
 void keyboard_view_set_return_view(View *view) {
     keyboard_return_view = view;
 }

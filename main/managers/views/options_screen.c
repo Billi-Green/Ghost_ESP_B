@@ -55,6 +55,9 @@ typedef enum {
     SETTINGS_CAT_NETWORK,
     SETTINGS_CAT_POWER_SYSTEM,
     SETTINGS_CAT_WIGLE,
+#ifdef CONFIG_USE_IO_EXPANDER
+    SETTINGS_CAT_IO_BUTTONS,
+#endif
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -75,7 +78,10 @@ static SettingsCategory settings_categories[] = {
 #endif
     {"Network",        SETTINGS_CAT_NETWORK,       false, NULL},
     {"Power & System", SETTINGS_CAT_POWER_SYSTEM,  false, NULL},
-{"WiGLE", SETTINGS_CAT_WIGLE, false, NULL},
+    {"WiGLE", SETTINGS_CAT_WIGLE, false, NULL},
+#ifdef CONFIG_USE_IO_EXPANDER
+    {"IO Buttons", SETTINGS_CAT_IO_BUTTONS, true, "CONFIG_USE_IO_EXPANDER"},
+#endif
 };
 
 static int current_settings_category = -1;
@@ -392,7 +398,14 @@ static SettingsItem settings_items[] = {
     {"Help", SETTING_WIGLE_HELP, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
 };
 
+#define IO_BTN_EDIT_P10 0x1000
+#define IO_BTN_EDIT_P11 0x1001
+#define IO_BTN_EDIT_P12 0x1002
+
 static int get_settings_count_for_category(SettingsCategoryId cat_id) {
+#ifdef CONFIG_USE_IO_EXPANDER
+    if (cat_id == SETTINGS_CAT_IO_BUTTONS) return 3;
+#endif
     int count = 0;
     int settings_count = sizeof(settings_items) / sizeof(settings_items[0]);
     for (int i = 0; i < settings_count; i++) {
@@ -404,6 +417,14 @@ static int get_settings_count_for_category(SettingsCategoryId cat_id) {
 }
 
 static int get_setting_index_in_category(int position_in_category, SettingsCategoryId cat_id) {
+#ifdef CONFIG_USE_IO_EXPANDER
+    if (cat_id == SETTINGS_CAT_IO_BUTTONS) {
+        if (position_in_category == 0) return IO_BTN_EDIT_P10;
+        if (position_in_category == 1) return IO_BTN_EDIT_P11;
+        if (position_in_category == 2) return IO_BTN_EDIT_P12;
+        return -1;
+    }
+#endif
     int current_pos = 0;
     int settings_count = sizeof(settings_items) / sizeof(settings_items[0]);
     for (int i = 0; i < settings_count; i++) {
@@ -524,6 +545,7 @@ static void update_settings_arrows_visibility(void) {
             if (lv_obj_get_user_data(child) == (void *)2) {
 #ifdef CONFIG_USE_TOUCHSCREEN
                 // On touch devices, always show arrows
+                (void)is_selected;
                 lv_obj_clear_flag(child, LV_OBJ_FLAG_HIDDEN);
 #else
                 // On non-touch devices, only show arrows on selected item
@@ -624,6 +646,11 @@ static void dual_comm_karma_custom_ssids_cb(const char *text);
 static void dual_comm_dns_lookup_kb_cb(const char *text);
 static void dual_comm_traceroute_kb_cb(const char *text);
 static void dual_comm_http_request_kb_cb(const char *text);
+#ifdef CONFIG_USE_IO_EXPANDER
+static void iobtn_p10_kb_cb(const char *text);
+static void iobtn_p11_kb_cb(const char *text);
+static void iobtn_p12_kb_cb(const char *text);
+#endif
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 static void zigbee_capture_kb_cb(const char *text);
 #endif
@@ -1212,10 +1239,38 @@ static void change_current_row(bool increment)
         return;
     }
     int setting_idx = (int)(intptr_t)udata;
+#ifdef CONFIG_USE_IO_EXPANDER
+    if (setting_idx == IO_BTN_EDIT_P10 || setting_idx == IO_BTN_EDIT_P11 || setting_idx == IO_BTN_EDIT_P12) {
+        int btn = (setting_idx == IO_BTN_EDIT_P10) ? 0 : (setting_idx == IO_BTN_EDIT_P11) ? 1 : 2;
+        const char *cur = (btn == 0) ? settings_get_io_btn_p10_cmd(&G_Settings)
+                         : (btn == 1) ? settings_get_io_btn_p11_cmd(&G_Settings)
+                         : settings_get_io_btn_p12_cmd(&G_Settings);
+        keyboard_view_set_return_view(&options_menu_view);
+        keyboard_view_set_placeholder("Command (e.g. nfc read)");
+        keyboard_view_set_initial_text(cur ? cur : "");
+        keyboard_view_set_submit_callback(btn == 0 ? iobtn_p10_kb_cb : btn == 1 ? iobtn_p11_kb_cb : iobtn_p12_kb_cb);
+        display_manager_switch_view(&keyboard_view);
+        return;
+    }
+#endif
     change_setting_value(setting_idx, increment);
 }
 
 static void change_setting_value(int setting_index, bool increment) {
+#ifdef CONFIG_USE_IO_EXPANDER
+    if (setting_index == IO_BTN_EDIT_P10 || setting_index == IO_BTN_EDIT_P11 || setting_index == IO_BTN_EDIT_P12) {
+        int btn = (setting_index == IO_BTN_EDIT_P10) ? 0 : (setting_index == IO_BTN_EDIT_P11) ? 1 : 2;
+        const char *cur = (btn == 0) ? settings_get_io_btn_p10_cmd(&G_Settings)
+                         : (btn == 1) ? settings_get_io_btn_p11_cmd(&G_Settings)
+                         : settings_get_io_btn_p12_cmd(&G_Settings);
+        keyboard_view_set_return_view(&options_menu_view);
+        keyboard_view_set_placeholder("Command (e.g. nfc read)");
+        keyboard_view_set_initial_text(cur ? cur : "");
+        keyboard_view_set_submit_callback(btn == 0 ? iobtn_p10_kb_cb : btn == 1 ? iobtn_p11_kb_cb : iobtn_p12_kb_cb);
+        display_manager_switch_view(&keyboard_view);
+        return;
+    }
+#endif
     SettingsItem *item = &settings_items[setting_index];
     int new_value = item->current_value;
     
@@ -1684,7 +1739,6 @@ void option_event_cb(lv_event_t *e) {
     bool view_switched = false; 
 
     static const char *last_option = NULL;
-    static unsigned long last_time_ms = 0;
     unsigned long now_ms = (unsigned long)(esp_timer_get_time() / 1000ULL);
     
     if (now_ms - createdTimeInMs <= 500) {
@@ -1714,6 +1768,21 @@ void option_event_cb(lv_event_t *e) {
         }
 
         int setting_index = (int)(intptr_t)udata;
+#ifdef CONFIG_USE_IO_EXPANDER
+        if (setting_index == IO_BTN_EDIT_P10 || setting_index == IO_BTN_EDIT_P11 || setting_index == IO_BTN_EDIT_P12) {
+            int btn = (setting_index == IO_BTN_EDIT_P10) ? 0 : (setting_index == IO_BTN_EDIT_P11) ? 1 : 2;
+            const char *cur = (btn == 0) ? settings_get_io_btn_p10_cmd(&G_Settings)
+                             : (btn == 1) ? settings_get_io_btn_p11_cmd(&G_Settings)
+                             : settings_get_io_btn_p12_cmd(&G_Settings);
+            keyboard_view_set_return_view(&options_menu_view);
+            keyboard_view_set_placeholder("Command (e.g. nfc read)");
+            keyboard_view_set_initial_text(cur ? cur : "");
+            keyboard_view_set_submit_callback(btn == 0 ? iobtn_p10_kb_cb : btn == 1 ? iobtn_p11_kb_cb : iobtn_p12_kb_cb);
+            display_manager_switch_view(&keyboard_view);
+            option_invoked = false;
+            return;
+        }
+#endif
         change_setting_value(setting_index, true);
         option_invoked = false;
         return;
@@ -3367,6 +3436,27 @@ static void switch_to_settings_category(int cat_idx) {
     rebuild_current_menu();
 }
 
+#ifdef CONFIG_USE_IO_EXPANDER
+static void iobtn_p10_kb_cb(const char *text) {
+    settings_set_io_btn_p10_cmd(&G_Settings, text ? text : "");
+    settings_save(&G_Settings);
+    keyboard_view_set_submit_callback(NULL);
+    display_manager_switch_view(&options_menu_view);
+}
+static void iobtn_p11_kb_cb(const char *text) {
+    settings_set_io_btn_p11_cmd(&G_Settings, text ? text : "");
+    settings_save(&G_Settings);
+    keyboard_view_set_submit_callback(NULL);
+    display_manager_switch_view(&options_menu_view);
+}
+static void iobtn_p12_kb_cb(const char *text) {
+    settings_set_io_btn_p12_cmd(&G_Settings, text ? text : "");
+    settings_save(&G_Settings);
+    keyboard_view_set_submit_callback(NULL);
+    display_manager_switch_view(&options_menu_view);
+}
+#endif
+
 static void ssh_scan_kb_cb(const char *text) {
     if (!text || strlen(text) == 0) {
         error_popup_create("Please enter a valid IP address");
@@ -3612,6 +3702,37 @@ static void menu_builder_cb(lv_timer_t *t)
                     all_current_options_processed = true;
                 }
             } else {
+#ifdef CONFIG_USE_IO_EXPANDER
+                if (current_settings_category == SETTINGS_CAT_IO_BUTTONS) {
+                    const char *p10 = settings_get_io_btn_p10_cmd(&G_Settings);
+                    const char *p11 = settings_get_io_btn_p11_cmd(&G_Settings);
+                    const char *p12 = settings_get_io_btn_p12_cmd(&G_Settings);
+                    const char *cmds[] = { p10, p11, p12 };
+                    static const char *io_btn_labels[] = { "Center", "Right", "Left" };
+                    int indices[] = { IO_BTN_EDIT_P10, IO_BTN_EDIT_P11, IO_BTN_EDIT_P12 };
+                    for (int k = 0; k < 3 && built_this_tick < BATCH; k++) {
+                        if (build_item_index <= k) {
+                            char row[128];
+                            const char *c = (cmds[k] && cmds[k][0]) ? cmds[k] : "(none)";
+                            snprintf(row, sizeof(row), "%s: %s", io_btn_labels[k], c);
+                            if (strlen(row) > 100) { row[97] = '.'; row[98] = '.'; row[99] = '\0'; }
+                            lv_obj_t *btn = options_view_add_item(g_options_view, row, option_event_cb, (void *)(intptr_t)indices[k]);
+                            if (!btn) break;
+                            lv_obj_set_user_data(btn, (void *)(intptr_t)indices[k]);
+                            lv_obj_set_height(btn, button_height_global);
+                            num_items++;
+                            built_this_tick++;
+                            build_item_index++;
+                            if (num_items == 1) {
+                                select_option_item(0);
+                                options_view_refresh_selected_item(g_options_view);
+                            }
+                        }
+                    }
+                    if (build_item_index >= 3) all_current_options_processed = true;
+                } else
+#endif
+                {
                 int settings_count = sizeof(settings_items) / sizeof(settings_items[0]);
                 int items_in_category = 0;
                 
@@ -3647,6 +3768,7 @@ static void menu_builder_cb(lv_timer_t *t)
                 
                 if (build_item_index >= items_in_category) {
                     all_current_options_processed = true;
+                }
                 }
             }
         } else {
