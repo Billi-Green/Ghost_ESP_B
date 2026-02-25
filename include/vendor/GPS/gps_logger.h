@@ -51,6 +51,7 @@ typedef struct {
 } wardriving_data_t;
 
 // Function prototypes
+bool csv_should_log_wifi_ap(const char *bssid, int rssi, const char *ssid);
 esp_err_t csv_write_header(FILE *f);
 void get_next_csv_file_name(char *file_name_buffer, const char *base_name);
 int get_next_csv_file_index(const char *base_name);

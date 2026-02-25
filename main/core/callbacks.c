@@ -1,5 +1,6 @@
 #include "core/callbacks.h"
 #include "esp_wifi.h"
+#include "esp_random.h"
 #include "managers/gps_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/views/terminal_screen.h"
@@ -44,7 +45,7 @@ static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8
 #else
 #define MAX_WIFI_CHANNEL 13
 #endif
-#define CHANNEL_HOP_INTERVAL_MS 200
+#define CHANNEL_HOP_INTERVAL_MS 120
 #define RECENT_SSID_COUNT 5
 #define LOG_DELAY_MS 5000
 #define PROBE_DEDUPE_TIMEOUT_MS 1000
@@ -105,16 +106,29 @@ static uint8_t wardrive_channels[WIFI_CHANNELS_MAX];
 static uint8_t wardrive_channel_count = 0;
 static uint8_t wardrive_channel_idx = 0;
 
+static void shuffle_channels(uint8_t *arr, uint8_t n) {
+    for (uint8_t i = n - 1; i > 0; i--) {
+        uint8_t j = esp_random() % (i + 1);
+        uint8_t tmp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = tmp;
+    }
+}
+
 static void wardrive_build_channel_list(void) {
     wardrive_channel_count = wifi_channels_build_country_list(wardrive_channels, WIFI_CHANNELS_MAX);
+    
     if (wardrive_channel_count == 0) {
-        // Fallback to full channel list
         uint8_t fallback[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,
             36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165};
-        memcpy(wardrive_channels, fallback, sizeof(fallback));
-        wardrive_channel_count = sizeof(fallback);
+        uint8_t count = sizeof(fallback);
+        if (count > WIFI_CHANNELS_MAX) count = WIFI_CHANNELS_MAX;
+        memcpy(wardrive_channels, fallback, count);
+        wardrive_channel_count = count;
     }
-    ESP_LOGI(TAG, "Wardrive channel list: %d channels", wardrive_channel_count);
+    
+    shuffle_channels(wardrive_channels, wardrive_channel_count);
+    ESP_LOGI(TAG, "Wardrive: %d channels (shuffled)", wardrive_channel_count);
 }
 
 static uint32_t hash_ssid(const char *ssid);
@@ -1137,6 +1151,7 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     int rssi = pkt->rx_ctrl.rssi;
     int channel = pkt->rx_ctrl.channel;
+    bool ssid_malformed = false;
 
     char encryption_type[8] = "OPEN";
     bool found_wpa = false;
@@ -1162,10 +1177,11 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             memcpy(ssid, &payload[index + 2], ie_len);
             ssid[ie_len] = '\0';
             trim_trailing(ssid);
-            // Sanitize: replace non-printable / non-ASCII bytes
+            // Sanitize: detect and mark malformed SSIDs
             for (char *p = ssid; *p; p++) {
                 if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7E) {
                     *p = '?';
+                    ssid_malformed = true;
                 }
             }
         }
@@ -1228,6 +1244,11 @@ rsn_done:
         }
 
         index += (2 + ie_len);
+        
+        // Early exit: stop parsing once we have SSID, channel from DS param, and security
+        if (ssid[0] != '\0' && found_rsn) {
+            break;
+        }
     }
 
     if (!found_rsn && !found_wpa) {
@@ -1262,8 +1283,11 @@ rsn_done:
             sizeof(wardriving_data.encryption_type) - 1);
     wardriving_data.encryption_type[sizeof(wardriving_data.encryption_type) - 1] = '\0';
 
-    // Skip entries with empty SSIDs — hidden networks aren't useful for WiGLE
+    // Log hidden networks with placeholder for WiGLE compatibility
     if (ssid[0] == '\0') {
+        strncpy(wardriving_data.ssid, "<hidden>", sizeof(wardriving_data.ssid) - 1);
+        wardriving_data.ssid[sizeof(wardriving_data.ssid) - 1] = '\0';
+    } else if (ssid_malformed) {
         return;
     }
 

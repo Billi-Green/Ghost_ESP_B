@@ -44,7 +44,7 @@ static size_t csv_pre_header_len = 0;
 
 static esp_err_t csv_flush_buffer_to_file_unlocked(void);
 
-#define WD_DEDUPE_SIZE 64
+#define WD_DEDUPE_SIZE 128
 
 typedef struct {
     uint32_t hash;
@@ -202,22 +202,46 @@ static void csv_build_pre_header(void) {
     csv_pre_header_len = (size_t)n;
 }
 
-static wd_dedupe_entry_t *wd_wifi_dedupe_find_mut(uint32_t hash) {
-    for (size_t i = 0; i < WD_DEDUPE_SIZE; i++) {
+bool csv_should_log_wifi_ap(const char *bssid, int rssi, const char *ssid) {
+    if (!bssid) return false;
+    
+    uint32_t hash = wd_hash_mac(bssid);
+    bool ssid_empty = (!ssid || ssid[0] == '\0');
+    
+    if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
+    
+    // Linear search for existing entry
+    wd_dedupe_entry_t *entry = NULL;
+    for (int i = 0; i < WD_DEDUPE_SIZE; i++) {
         if ((wd_wifi_dedupe[i].flags & WD_FLAG_USED) && wd_wifi_dedupe[i].hash == hash) {
-            return &wd_wifi_dedupe[i];
+            entry = &wd_wifi_dedupe[i];
+            break;
         }
     }
-    return NULL;
-}
-
-static wd_dedupe_entry_t *wd_ble_dedupe_find_mut(uint32_t hash) {
-    for (size_t i = 0; i < WD_DEDUPE_SIZE; i++) {
-        if ((wd_ble_dedupe[i].flags & WD_FLAG_USED) && wd_ble_dedupe[i].hash == hash) {
-            return &wd_ble_dedupe[i];
+    
+    bool should_log = false;
+    
+    if (entry == NULL) {
+        // New AP - add to dedupe table
+        entry = &wd_wifi_dedupe[wd_wifi_idx];
+        wd_wifi_idx = (wd_wifi_idx + 1) % WD_DEDUPE_SIZE;
+        entry->hash = hash;
+        entry->flags = WD_FLAG_USED | (ssid_empty ? WD_FLAG_NAME_EMPTY : 0);
+        entry->best_rssi = (int8_t)rssi;
+        should_log = true;
+    } else {
+        // Known AP - log if we now have an SSID (was hidden) or signal is 3dB better
+        if ((entry->flags & WD_FLAG_NAME_EMPTY) && !ssid_empty) {
+            should_log = true;
+            entry->flags &= ~WD_FLAG_NAME_EMPTY;
+        } else if (rssi > entry->best_rssi + 3) {
+            should_log = true;
+            entry->best_rssi = (int8_t)rssi;
         }
     }
-    return NULL;
+    
+    if (csv_mutex) xSemaphoreGive(csv_mutex);
+    return should_log;
 }
 
 static const char *wigle_wifi_capabilities(const char *enc) {
@@ -415,7 +439,16 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
 
     if (data->ble_data.is_ble_device) {
         uint32_t hash = wd_hash_mac(data->ble_data.ble_mac);
-        wd_dedupe_entry_t *entry = wd_ble_dedupe_find_mut(hash);
+        
+        // Linear search for existing BLE entry
+        wd_dedupe_entry_t *entry = NULL;
+        for (int i = 0; i < WD_DEDUPE_SIZE; i++) {
+            if ((wd_ble_dedupe[i].flags & WD_FLAG_USED) && wd_ble_dedupe[i].hash == hash) {
+                entry = &wd_ble_dedupe[i];
+                break;
+            }
+        }
+        
         bool name_empty = (data->ble_data.ble_name[0] == '\0');
         bool should_log = false;
         if (entry == NULL) {
@@ -470,35 +503,11 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
                        data->longitude,
                        altitude_val,
                        data->accuracy,
-                       mfgr_str);
+                        mfgr_str);
     } else {
-        uint32_t hash = wd_hash_mac(data->bssid);
-        wd_dedupe_entry_t *entry = wd_wifi_dedupe_find_mut(hash);
-        bool ssid_empty = (data->ssid[0] == '\0');
-        bool should_log = false;
-        if (entry == NULL) {
-            entry = &wd_wifi_dedupe[wd_wifi_idx];
-            wd_wifi_idx = (wd_wifi_idx + 1) % WD_DEDUPE_SIZE;
-            entry->hash = hash;
-            entry->flags = WD_FLAG_USED | (ssid_empty ? WD_FLAG_NAME_EMPTY : 0);
-            entry->best_rssi = (int8_t)data->rssi;
-            count_unique_wifi = true;
-            should_log = true;
-        } else {
-            if ((entry->flags & WD_FLAG_NAME_EMPTY) && !ssid_empty) {
-                should_log = true;
-                entry->flags &= ~WD_FLAG_NAME_EMPTY;
-            }
-            if (data->rssi > entry->best_rssi + 5) {
-                should_log = true;
-                entry->best_rssi = (int8_t)data->rssi;
-            }
-        }
-
-        if (!should_log) {
-            if (csv_mutex) xSemaphoreGive(csv_mutex);
-            return ESP_OK;
-        }
+        // WiFi dedupe already done in csv_should_log_wifi_ap() early check
+        // Just write the data
+        count_unique_wifi = true;
 
         int frequency;
         if (data->channel == 14) {
