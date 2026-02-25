@@ -360,6 +360,9 @@ static const SettingDescriptor k_settings_desc[] = {
     {"flappy_name", ST_STRING, OFF(flappy_ghost_name), "Custom", 65, 0, 0},
     {"timezone", ST_STRING, OFF(selected_timezone), "Custom", 25, 0, 0},
     {"accent_color", ST_STRING, OFF(selected_hex_accent_color), "Custom", 25, 0, 0},
+    {"io_btn_p10_cmd", ST_STRING, OFF(io_btn_p10_cmd), "IO Button", 129, 0, 0},
+    {"io_btn_p11_cmd", ST_STRING, OFF(io_btn_p11_cmd), "IO Button", 129, 0, 0},
+    {"io_btn_p12_cmd", ST_STRING, OFF(io_btn_p12_cmd), "IO Button", 129, 0, 0},
 };
 
 static const SettingDescriptor *find_setting_desc(const char *name) {
@@ -6656,6 +6659,10 @@ void handle_settings_cmd(int argc, char **argv) {
         glog("    flappy_name       - Flappy Ghost name\n");
         glog("    timezone          - Selected timezone\n");
         glog("    accent_color      - Accent color (hex)\n");
+        glog("  IO expander buttons (P10/P11/P12):\n");
+        glog("    io_btn_p10_cmd    - Command to run when P10 pressed (empty = joystick)\n");
+        glog("    io_btn_p11_cmd    - Command to run when P11 pressed (empty = joystick)\n");
+        glog("    io_btn_p12_cmd    - Command to run when P12 pressed (empty = joystick)\n");
         return;
     }
 
@@ -7961,6 +7968,33 @@ void handle_input_cmd(int argc, char **argv) {
     }
 }
 
+void handle_iobtn_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: iobtn <1|2|3> [command]\n");
+        glog("  Button 1 = P10, 2 = P11, 3 = P12. Show or set command run on press.\n");
+        glog("  Omit [command] to show current; use \"\" to clear (then button sends joystick event).\n");
+        return;
+    }
+    int btn = atoi(argv[1]);
+    if (btn < 1 || btn > 3) {
+        glog("Button must be 1, 2, or 3 (P10, P11, P12)\n");
+        return;
+    }
+    const char *cur = NULL;
+    if (btn == 1) cur = settings_get_io_btn_p10_cmd(&G_Settings);
+    else if (btn == 2) cur = settings_get_io_btn_p11_cmd(&G_Settings);
+    else cur = settings_get_io_btn_p12_cmd(&G_Settings);
+    if (argc == 2) {
+        glog("P1%u: \"%s\"\n", (unsigned)(btn + 9), cur && cur[0] ? cur : "(none)");
+        return;
+    }
+    if (btn == 1) settings_set_io_btn_p10_cmd(&G_Settings, argv[2]);
+    else if (btn == 2) settings_set_io_btn_p11_cmd(&G_Settings, argv[2]);
+    else settings_set_io_btn_p12_cmd(&G_Settings, argv[2]);
+    settings_save(&G_Settings);
+    glog("P1%u command set to \"%s\"\n", (unsigned)(btn + 9), argv[2][0] ? argv[2] : "(cleared)");
+}
+
 void handle_usb_kbd_cmd(int argc, char **argv) {
     if (argc < 2) {
         glog("Usage: usbkbd <on|off|status>\n");
@@ -8368,6 +8402,7 @@ void register_commands() {
 #endif
     register_command("mirror", handle_mirror_cmd);
     register_command("input", handle_input_cmd);
+    register_command("iobtn", handle_iobtn_cmd);
     register_command("identify", handle_identify_cmd);
 #if CONFIG_IDF_TARGET_ESP32S3
     register_command("usbkbd", handle_usb_kbd_cmd);

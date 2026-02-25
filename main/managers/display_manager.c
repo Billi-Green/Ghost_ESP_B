@@ -31,6 +31,9 @@
 #include "driver/i2c.h"
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
+#ifdef CONFIG_USE_IO_EXPANDER
+#include "io_manager/io_manager.h"
+#endif
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 
@@ -2227,6 +2230,51 @@ void hardware_input_task(void *pvParameters) {
         }
       }
     }
+#ifdef CONFIG_USE_IO_EXPANDER
+    /* P10, P11, P12 (B1, B2, B3): if a command is set, run it; else send as joystick 5/6/7 */
+    {
+        static bool prev_b1 = false, prev_b2 = false, prev_b3 = false;
+        btn_event_t states = {0};
+        if (io_manager_get_cached_button_states(&states) == ESP_OK) {
+            if (states.b1 && !prev_b1) {
+                last_touch_time = xTaskGetTickCount();
+                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                const char *cmd = settings_get_io_btn_p10_cmd(&G_Settings);
+                if (cmd && cmd[0] != '\0') {
+                    simulateCommand(cmd);
+                } else {
+                    InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 5 };
+                    xQueueSend(input_queue, &ev, pdMS_TO_TICKS(10));
+                }
+            }
+            if (states.b2 && !prev_b2) {
+                last_touch_time = xTaskGetTickCount();
+                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                const char *cmd = settings_get_io_btn_p11_cmd(&G_Settings);
+                if (cmd && cmd[0] != '\0') {
+                    simulateCommand(cmd);
+                } else {
+                    InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 6 };
+                    xQueueSend(input_queue, &ev, pdMS_TO_TICKS(10));
+                }
+            }
+            if (states.b3 && !prev_b3) {
+                last_touch_time = xTaskGetTickCount();
+                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                const char *cmd = settings_get_io_btn_p12_cmd(&G_Settings);
+                if (cmd && cmd[0] != '\0') {
+                    simulateCommand(cmd);
+                } else {
+                    InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 7 };
+                    xQueueSend(input_queue, &ev, pdMS_TO_TICKS(10));
+                }
+            }
+            prev_b1 = states.b1;
+            prev_b2 = states.b2;
+            prev_b3 = states.b3;
+        }
+    }
+#endif
 #endif
  #endif
 
