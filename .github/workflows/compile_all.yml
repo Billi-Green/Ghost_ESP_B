@@ -76,16 +76,16 @@ jobs:
           path: |
             ~/esp-idf
             ~/.espressif
-          key: esp-idf-v5.5-${{ runner.os }}-v2
+          key: esp-idf-v5.5.3-${{ runner.os }}-v2
           restore-keys: |
-            esp-idf-v5.5-${{ runner.os }}-
+            esp-idf-v5.5.3-${{ runner.os }}-
 
       - name: Install ESP-IDF
         if: steps.cache-idf.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y wget git flex bison gperf python3-pip python3-setuptools cmake ninja-build ccache libffi-dev libssl-dev dfu-util
-          git clone -b v5.5 --depth 1 https://github.com/espressif/esp-idf.git ~/esp-idf
+          git clone -b v5.5.3 --depth 1 https://github.com/espressif/esp-idf.git ~/esp-idf
           ~/esp-idf/install.sh
 
       - name: Apply Custom SDK Config

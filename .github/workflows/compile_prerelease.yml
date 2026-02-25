@@ -72,9 +72,9 @@ jobs:
           path: |
             ~/esp-idf
             ~/.espressif
-          key: esp-idf-v5.5-${{ runner.os }}-v2
+          key: esp-idf-v5.5.3-${{ runner.os }}-v2
           restore-keys: |
-            esp-idf-v5.5-${{ runner.os }}-
+            esp-idf-v5.5.3-${{ runner.os }}-
 
       - name: Install ESP-IDF Dependencies
         if: steps.cache-idf.outputs.cache-hit != 'true'
@@ -85,7 +85,7 @@ jobs:
       - name: Install ESP-IDF
         if: steps.cache-idf.outputs.cache-hit != 'true'
         run: |
-          git clone -b v5.5 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
+          git clone -b v5.5.3 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
           ~/esp-idf/install.sh
 
       - name: Apply Custom SDK Config
