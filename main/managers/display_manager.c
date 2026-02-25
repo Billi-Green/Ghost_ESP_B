@@ -2241,6 +2241,7 @@ void hardware_input_task(void *pvParameters) {
                 if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
                 const char *cmd = settings_get_io_btn_p10_cmd(&G_Settings);
                 if (cmd && cmd[0] != '\0') {
+                    display_manager_switch_view(&terminal_view);
                     simulateCommand(cmd);
                 } else {
                     InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 5 };
@@ -2252,6 +2253,7 @@ void hardware_input_task(void *pvParameters) {
                 if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
                 const char *cmd = settings_get_io_btn_p11_cmd(&G_Settings);
                 if (cmd && cmd[0] != '\0') {
+                    display_manager_switch_view(&terminal_view);
                     simulateCommand(cmd);
                 } else {
                     InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 6 };
@@ -2263,6 +2265,7 @@ void hardware_input_task(void *pvParameters) {
                 if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
                 const char *cmd = settings_get_io_btn_p12_cmd(&G_Settings);
                 if (cmd && cmd[0] != '\0') {
+                    display_manager_switch_view(&terminal_view);
                     simulateCommand(cmd);
                 } else {
                     InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 7 };
