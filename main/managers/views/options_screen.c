@@ -1247,6 +1247,7 @@ static void change_current_row(bool increment)
                          : settings_get_io_btn_p12_cmd(&G_Settings);
         keyboard_view_set_return_view(&options_menu_view);
         keyboard_view_set_placeholder("Command (e.g. nfc read)");
+        keyboard_view_set_start_caps(false);
         keyboard_view_set_initial_text(cur ? cur : "");
         keyboard_view_set_submit_callback(btn == 0 ? iobtn_p10_kb_cb : btn == 1 ? iobtn_p11_kb_cb : iobtn_p12_kb_cb);
         display_manager_switch_view(&keyboard_view);
@@ -1265,6 +1266,7 @@ static void change_setting_value(int setting_index, bool increment) {
                          : settings_get_io_btn_p12_cmd(&G_Settings);
         keyboard_view_set_return_view(&options_menu_view);
         keyboard_view_set_placeholder("Command (e.g. nfc read)");
+        keyboard_view_set_start_caps(false);
         keyboard_view_set_initial_text(cur ? cur : "");
         keyboard_view_set_submit_callback(btn == 0 ? iobtn_p10_kb_cb : btn == 1 ? iobtn_p11_kb_cb : iobtn_p12_kb_cb);
         display_manager_switch_view(&keyboard_view);
@@ -1776,6 +1778,7 @@ void option_event_cb(lv_event_t *e) {
                              : settings_get_io_btn_p12_cmd(&G_Settings);
             keyboard_view_set_return_view(&options_menu_view);
             keyboard_view_set_placeholder("Command (e.g. nfc read)");
+            keyboard_view_set_start_caps(false);
             keyboard_view_set_initial_text(cur ? cur : "");
             keyboard_view_set_submit_callback(btn == 0 ? iobtn_p10_kb_cb : btn == 1 ? iobtn_p11_kb_cb : iobtn_p12_kb_cb);
             display_manager_switch_view(&keyboard_view);
