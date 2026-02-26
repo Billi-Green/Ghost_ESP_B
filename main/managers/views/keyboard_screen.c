@@ -509,7 +509,7 @@ static void keyboard_build_step(lv_timer_t *t) {
     int keys_area_height = screen_height - keys_start_y;
     int key_height = (keys_area_height / num_rows) - 4;
     int built = 0;
-    const int batch = 1;
+    const int batch = 4;
     // timing for profiling heavy steps
     int64_t t0 = esp_timer_get_time();
     while (built < batch && keyboard_build_row < num_rows) {

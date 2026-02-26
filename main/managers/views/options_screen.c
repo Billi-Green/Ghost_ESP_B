@@ -3216,14 +3216,24 @@ static void rebuild_current_menu(void) {
                 case WIFI_MENU_MISC: options = wifi_misc_options; break;
                 case WIFI_MENU_EVIL_PORTAL_SELECT:
                 {
-                    // Always try to populate the portal list if not already done
                     if (!evil_portal_names || !evil_portal_options) {
                         ESP_LOGI(TAG, "Re-populating evil portal selector...");
                         
-                        // First, allocate a temporary buffer to count portals safely
+                        bool jit_mounted = false;
+                        bool display_suspended = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+                        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+                            if (!sd_card_manager.is_initialized) {
+                                if (sd_card_mount_for_flush(&display_suspended) == ESP_OK) {
+                                    jit_mounted = true;
+                                }
+                            }
+                        }
+#endif
                         char (*temp_buffer)[MAX_PORTAL_NAME] = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
                         if (!temp_buffer) {
                             ESP_LOGE(TAG, "Failed to allocate temp buffer for portal counting");
+                            if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
                             static const char *fallback_options[] = {"default", NULL};
                             options = fallback_options;
                             break;
@@ -3231,50 +3241,42 @@ static void rebuild_current_menu(void) {
                         
                         int count = get_evil_portal_list(temp_buffer);
                         
-                        if (count <= 0) {
-                            // Use static fallback for no portals case (no heap allocation)
-                            free(temp_buffer);
-                            static const char *no_portals_options[] = {"No portal files found", "default", NULL};
-                            options = no_portals_options;
-                            break;
-                        }
-                        
-                        // Allocate only the memory we actually need for final storage
-                        evil_portal_names = malloc(sizeof(char[MAX_PORTAL_NAME]) * count);
-                        evil_portal_options = malloc(sizeof(char*) * (count + 1));
+                        evil_portal_names = malloc(sizeof(char[MAX_PORTAL_NAME]) * (count + 1));
+                        evil_portal_options = malloc(sizeof(char*) * (count + 2));
                         
                         if (!evil_portal_names || !evil_portal_options) {
                             ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
-                            // Clean up allocations
                             free(temp_buffer);
                             if (evil_portal_names) free(evil_portal_names);
                             if (evil_portal_options) free(evil_portal_options);
                             evil_portal_names = NULL;
                             evil_portal_options = NULL;
-                            // Fallback to default options
+                            if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
                             static const char *fallback_options[] = {"default", NULL};
                             options = fallback_options;
                             break;
                         }
                         
-                        // Copy only the portals we need from temp buffer
-                        for (int i = 0; i < count; ++i) {
-                            strcpy(evil_portal_names + i * MAX_PORTAL_NAME, temp_buffer[i]);
-                            evil_portal_options[i] = evil_portal_names + i * MAX_PORTAL_NAME;
-                        }
-                        evil_portal_options[count] = NULL;
+                        strcpy(evil_portal_names, "default");
+                        evil_portal_options[0] = evil_portal_names;
                         
-                        // Free the temporary buffer
+                        for (int i = 0; i < count; ++i) {
+                            strcpy(evil_portal_names + (i + 1) * MAX_PORTAL_NAME, temp_buffer[i]);
+                            evil_portal_options[i + 1] = evil_portal_names + (i + 1) * MAX_PORTAL_NAME;
+                        }
+                        evil_portal_options[count + 1] = NULL;
+                        
                         free(temp_buffer);
                         
-                        ESP_LOGI(TAG, "Loaded %d portals (using %zu bytes)", count, 
-                                sizeof(char[MAX_PORTAL_NAME]) * count + sizeof(char*) * (count + 1));
+                        if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
+                        
+                        ESP_LOGI(TAG, "Loaded %d portals + default (using %zu bytes)", count, 
+                                sizeof(char[MAX_PORTAL_NAME]) * (count + 1) + sizeof(char*) * (count + 2));
                     }
                     
                     if (evil_portal_options) {
                         options = evil_portal_options;
                     } else {
-                        // Fallback if somehow still NULL
                         static const char *fallback_options[] = {"default", NULL};
                         options = fallback_options;
                     }
@@ -3582,7 +3584,7 @@ static void menu_builder_cb(lv_timer_t *t)
         menu_build_timer = NULL;
         return;
     }
-    const int BATCH = 3;
+    const int BATCH = 6;
     int built_this_tick = 0;
     bool all_current_options_processed = false;
     

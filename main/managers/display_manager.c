@@ -1837,7 +1837,7 @@ void hardware_input_task(void *pvParameters) {
               if (is_backlight_dimmed) {
                 set_backlight_brightness(100);
                 is_backlight_dimmed = false;
-                vTaskDelay(pdMS_TO_TICKS(100));
+                vTaskDelay(pdMS_TO_TICKS(20));
               }
               
               InputEvent event;
@@ -2084,7 +2084,7 @@ void hardware_input_task(void *pvParameters) {
             set_backlight_brightness(100);
             is_backlight_dimmed = false;
             skip_event = true;
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(20));
           }
 
           if (!skip_event) {
@@ -2200,13 +2200,13 @@ void hardware_input_task(void *pvParameters) {
           ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
         }
 
-        if (i == 2 || i == 4) {
+        if (i == 0 || i == 2 || i == 3 || i == 4) {
           joystick_repeat_next_ms[i] = dm_now_ms() + JOYSTICK_REPEAT_INITIAL_DELAY_MS;
         }
         continue;
       }
 
-      if (i != 2 && i != 4) continue;
+      if (i != 0 && i != 2 && i != 3 && i != 4) continue;
 
       if (!joystick_get_button_state(&joysticks[i])) {
         joystick_repeat_next_ms[i] = 0;
@@ -2255,7 +2255,7 @@ void hardware_input_task(void *pvParameters) {
       if (was_woken_by_interrupt) {
         was_woken_by_interrupt = false; // Consume the flag
         skip_event = true;
-        vTaskDelay(pdMS_TO_TICKS(100)); // Debounce period
+        vTaskDelay(pdMS_TO_TICKS(30)); // Debounce period
       } else
 #endif
       if (is_backlight_dimmed) {
@@ -2264,7 +2264,7 @@ void hardware_input_task(void *pvParameters) {
         set_backlight_brightness(100);
         is_backlight_dimmed = false;
         skip_event = true;
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(20));
 #endif
       }
       if (!skip_event) {

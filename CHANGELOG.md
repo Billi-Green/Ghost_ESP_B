@@ -29,6 +29,9 @@
 - Fixed a crash when stopping deauth
 - Directly iterate to channels when deauthing multiple APs
 - Optimised wardriving dwell times, added active probing and improved validation
+- Added SD JIT mounting for custom evil portal menu option
+- Shortened delays for misc display menu building for more responsive feel
+- Fixed joystick repeat only working vertically
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3
