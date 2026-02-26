@@ -61,6 +61,7 @@ static uint8_t wd_wifi_idx = 0;
 static uint8_t wd_ble_idx = 0;
 static uint32_t wd_wifi_unique_logged = 0;
 static uint32_t wd_ble_unique_logged = 0;
+static uint32_t wd_wifi_hidden_count = 0;
 
 static uint32_t wd_hash_mac(const char *mac) {
     uint32_t hash = 2166136261u;
@@ -276,7 +277,7 @@ bool csv_buffer_has_pending_data(void) {
 uint32_t csv_get_unique_wifi_ap_count(void) {
     uint32_t count = 0;
     if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
-    count = wd_wifi_unique_logged;
+    count = wd_wifi_unique_logged - wd_wifi_hidden_count;
     if (csv_mutex) xSemaphoreGive(csv_mutex);
     return count;
 }
@@ -376,6 +377,7 @@ esp_err_t csv_file_open(const char *base_file_name) {
     wd_ble_idx = 0;
     wd_wifi_unique_logged = 0;
     wd_ble_unique_logged = 0;
+    wd_wifi_hidden_count = 0;
     memset(wd_wifi_dedupe, 0, sizeof(wd_wifi_dedupe));
     memset(wd_ble_dedupe, 0, sizeof(wd_ble_dedupe));
 
@@ -570,6 +572,10 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
 
     if (count_unique_wifi) {
         wd_wifi_unique_logged++;
+        // Track hidden networks separately
+        if (data->ssid[0] == '\0' || strcmp(data->ssid, "<hidden>") == 0) {
+            wd_wifi_hidden_count++;
+        }
     }
 
     if (csv_mutex) xSemaphoreGive(csv_mutex);

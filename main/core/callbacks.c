@@ -45,7 +45,7 @@ static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8
 #else
 #define MAX_WIFI_CHANNEL 13
 #endif
-#define CHANNEL_HOP_INTERVAL_MS 120
+#define CHANNEL_HOP_INTERVAL_MS 100
 #define RECENT_SSID_COUNT 5
 #define LOG_DELAY_MS 5000
 #define PROBE_DEDUPE_TIMEOUT_MS 1000
@@ -556,6 +556,36 @@ static bool ssid_hash_exists(pineap_network_t *network, uint32_t hash) {
     return false;
 }
 
+static void wardrive_send_probe_request(void) {
+    // Broadcast probe request frame
+    uint8_t probe_req[] = {
+        0x40, 0x00,                         // Frame Control: Probe Request
+        0x00, 0x00,                         // Duration
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // Destination: broadcast
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source: filled below
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // BSSID: broadcast
+        0x00, 0x00,                         // Sequence Control
+        // SSID IE (wildcard - empty means "any SSID")
+        0x00, 0x00,
+        // Supported Rates IE
+        0x01, 0x08, 0x02, 0x04, 0x0b, 0x16, 0x0c, 0x12, 0x18, 0x24,
+        // Extended Supported Rates IE
+        0x32, 0x04, 0x30, 0x48, 0x60, 0x6c,
+        // DS Parameter Set (current channel)
+        0x03, 0x01, 0x01  // Channel placeholder
+    };
+    
+    // Get our MAC address
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    memcpy(&probe_req[10], mac, 6);
+    
+    // Set current channel in DS Parameter Set
+    probe_req[sizeof(probe_req) - 1] = wardrive_channel;
+    
+    esp_wifi_80211_tx(WIFI_IF_STA, probe_req, sizeof(probe_req), false);
+}
+
 static void wardrive_hop_timer_callback(void *arg) {
     if (!wardriving_hopping_active)
         return;
@@ -563,6 +593,9 @@ static void wardrive_hop_timer_callback(void *arg) {
     wardrive_channel_idx = (wardrive_channel_idx + 1) % wardrive_channel_count;
     wardrive_channel = wardrive_channels[wardrive_channel_idx];
     esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE);
+    
+    // Send probe request to trigger AP responses
+    wardrive_send_probe_request();
     
     static int hop_count = 0;
     hop_count++;
