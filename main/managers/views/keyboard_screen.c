@@ -794,7 +794,6 @@ static void keyboard_destroy() {
     }
 }
 
-#ifdef CONFIG_USE_JOYSTICK
 // Fires once after KEYBOARD_HOLD_INVERT_MS while select is still held on a letter.
 // Flips the label to inverted case; release will then type the inverted character.
 static void keyboard_hold_invert_cb(lv_timer_t *t) {
@@ -813,7 +812,6 @@ static void keyboard_hold_invert_cb(lv_timer_t *t) {
     lv_btnmatrix_set_btn_ctrl(key_matrix, id, LV_BTNMATRIX_CTRL_CHECKED);
     joy_focused_btn_id = id;
 }
-#endif
 
 static void handle_hardware_button_press_keyboard(InputEvent *event) {
 
@@ -904,8 +902,6 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
         int button = event->data.joystick_index;
         bool pressed = event->data.joystick_pressed;
         const int *row_lens = get_current_row_lengths();
-        int prev_row = cursor_row;
-        int prev_col = cursor_col;
 
         // Navigation buttons (only on press, not release)
         if (pressed) {
