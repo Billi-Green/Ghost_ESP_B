@@ -26,6 +26,9 @@
 - Control app updates - @tototo31
 - Added Flipper Zero Companion App documentation - @tototo31
 - Fixed 5Ghz deauthing
+- Fixed a crash when stopping deauth
+- Directly iterate to channels when deauthing multiple APs
+- Optimised wardriving dwell times, added active probing and improved validation
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3
