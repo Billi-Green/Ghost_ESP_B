@@ -17,7 +17,7 @@
 - Fixed a crash when deinitializing BLE
 - Improved BLE Spam
 - Deauth: fixed 5GHz HT40 tuning, added burst loops, and removed rate limiting
-- Fixed GPS satellites logic
+- Fixed GPS satellites logic  
 - Fixed misc Wardriving issues
 - Added New Wardriving and GPS info display view
 - Reorganized settings menu into more categories
@@ -32,6 +32,8 @@
 - Added SD JIT mounting for custom evil portal menu option
 - Shortened delays for misc display menu building for more responsive feel
 - Fixed joystick repeat only working vertically
+- Added hold to invert letter case on joystick select in keyboard view
+- Improved clock view responsiveness
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3

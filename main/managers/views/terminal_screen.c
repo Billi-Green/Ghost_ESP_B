@@ -825,7 +825,7 @@ void terminal_view_create(void) {
     display_manager_add_status_bar("Terminal");
 
     if (!terminal_update_timer) {
-        terminal_update_timer = lv_timer_create(process_queued_messages_callback, 50, NULL);
+        terminal_update_timer = lv_timer_create(process_queued_messages_callback, 30, NULL);
         if (!terminal_update_timer) {
             ESP_LOGE(TAG, "Failed to create terminal update timer");
         }

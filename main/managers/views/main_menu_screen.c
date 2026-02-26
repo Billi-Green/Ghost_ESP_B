@@ -31,7 +31,7 @@ LV_IMG_DECLARE(accelerometer_icon);
 
 static const char *TAG = "MainMenu";
 
-#define ANIM_DURATION 60 // Animation duration in milliseconds HIGH: 30, LOW: 120
+#define ANIM_DURATION 40 // Animation duration in milliseconds HIGH: 30, LOW: 120
 
 // Menu layout types
 typedef enum {
@@ -68,10 +68,6 @@ static int grid_card_height = 0;
 
 // List layout variables
 static lv_obj_t **list_buttons = NULL;
-
-const View *pending_view_to_switch = NULL;
-static EOptionsMenuType pending_menu_type;
-static bool menu_item_selected = false;
 
 typedef struct {
   const char *name;
@@ -325,44 +321,7 @@ static void animate_nav_button_press(lv_obj_t *btn) {
     lv_obj_set_style_text_color(label, lv_color_hex(0xFFFF00), 0);
 
     // Return label to original color after a short delay
-    lv_timer_create(restore_label_color_cb, 150, label);
-}
-
-static void button_click_anim_cb(lv_anim_t *a) {
-    if (pending_view_to_switch) {
-        if (pending_view_to_switch == &options_menu_view) {
-            SelectedMenuType = pending_menu_type;
-            ESP_LOGI(TAG, "button_click_anim_cb: Set SelectedMenuType=%d for options menu", SelectedMenuType);
-        }
-        display_manager_switch_view((View *)pending_view_to_switch);
-        pending_view_to_switch = NULL;
-    }
-}
-
-static void animate_button_click(lv_obj_t *btn) {
-    // Animate opacity down and back up
-    int anim_duration = ANIM_DURATION / 8; // Half duration for click effect - divide by 8 for faster click effect
-    if (anim_duration < 10) anim_duration = 10; // Ensure minimum duration
-    
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, btn);
-    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_50);
-    lv_anim_set_time(&a, anim_duration);
-    lv_anim_set_exec_cb(&a, anim_set_opa);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_start(&a);
-
-    lv_anim_t a2;
-    lv_anim_init(&a2);
-    lv_anim_set_var(&a2, btn);
-    lv_anim_set_values(&a2, LV_OPA_50, LV_OPA_COVER);
-    lv_anim_set_time(&a2, anim_duration);
-    lv_anim_set_exec_cb(&a2, anim_set_opa);
-    lv_anim_set_path_cb(&a2, lv_anim_path_ease_in);
-    lv_anim_set_ready_cb(&a2, button_click_anim_cb);
-    lv_anim_start(&a2);
-    
+    lv_timer_create(restore_label_color_cb, 80, label);
 }
 
 // rebuild the single-item carousel card when selection changes
@@ -938,32 +897,11 @@ static void handle_menu_item_selection(int item_index) {
         return;
     }
 
-    pending_view_to_switch = target_view;
-    pending_menu_type = target_type;
-    menu_item_selected = true;
-
-    lv_obj_t *anim_target = NULL;
-    if (current_layout == MENU_LAYOUT_CAROUSEL && current_item_obj) {
-        anim_target = current_item_obj;
-    } else if (current_layout == MENU_LAYOUT_GRID_CARDS && grid_cards && item_index >= 0 && item_index < num_items) {
-        anim_target = grid_cards[item_index];
-    } else if (current_layout == MENU_LAYOUT_GRID && grid_buttons && item_index >= 0 && item_index < num_items) {
-        anim_target = grid_buttons[item_index];
-    } else if (current_layout == MENU_LAYOUT_LIST && list_buttons && item_index >= 0 && item_index < num_items) {
-        anim_target = list_buttons[item_index];
+    if (target_view == &options_menu_view) {
+        SelectedMenuType = target_type;
+        ESP_LOGI(TAG, "handle_menu_item_selection: Set SelectedMenuType=%d for options menu", SelectedMenuType);
     }
-
-    if (anim_target) {
-        animate_button_click(anim_target);
-    } else {
-        ESP_LOGI(TAG, "No animation target found for menu item selection");
-        if (pending_view_to_switch == &options_menu_view) {
-            SelectedMenuType = pending_menu_type;
-            ESP_LOGI(TAG, "handle_menu_item_selection: Set SelectedMenuType=%d for options menu (no animation)", SelectedMenuType);
-        }
-        display_manager_switch_view((View *)pending_view_to_switch);
-        pending_view_to_switch = NULL;
-    }
+    display_manager_switch_view((View *)target_view);
 }
 
 /**

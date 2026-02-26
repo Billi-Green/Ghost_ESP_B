@@ -1471,7 +1471,16 @@ static void display_manager_switch_view_internal(View *view) {
     ESP_LOGI(TAG, "Switching view from %s to %s", dm.current_view ? dm.current_view->name : "NULL", view->name);
     if (dm.current_view && dm.current_view->root) {
       display_manager_previous_view = dm.current_view;
-      display_manager_fade_out(dm.current_view->root, fade_out_ready_cb, view);
+      if (dm.current_view->destroy) {
+        dm.current_view->destroy();
+      }
+      dm.current_view = view;
+      if (view->get_hardwareinput_callback) {
+        view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
+      }
+      view->create();
+      lv_obj_set_style_opa(view->root, LV_OPA_COVER, 0);
+      if (status_bar) lv_obj_set_style_opa(status_bar, LV_OPA_COVER, 0);
     } else {
       display_manager_previous_view = dm.current_view;
       dm.current_view = view;
@@ -1479,7 +1488,8 @@ static void display_manager_switch_view_internal(View *view) {
         view->get_hardwareinput_callback((void **)&dm.current_view->input_callback);
       }
       view->create();
-      display_manager_fade_in(view->root);
+      lv_obj_set_style_opa(view->root, LV_OPA_COVER, 0);
+      if (status_bar) lv_obj_set_style_opa(status_bar, LV_OPA_COVER, 0);
     }
     xSemaphoreGive(dm.mutex);
   } else {
@@ -2165,6 +2175,7 @@ void hardware_input_task(void *pvParameters) {
             InputEvent event;
             event.type = INPUT_TYPE_JOYSTICK;
             event.data.joystick_index = direction;
+            event.data.joystick_pressed = true;
             xQueueSend(input_queue, &event, pdMS_TO_TICKS(10));
           }
           
@@ -2177,11 +2188,18 @@ void hardware_input_task(void *pvParameters) {
         trackball_right_flag = false;
       }
       
-      if (joystick_just_pressed(&joysticks[1])) {
+      if (joystick_just_released(&joysticks[1])) {
+        InputEvent event;
+        event.type = INPUT_TYPE_JOYSTICK;
+        event.data.joystick_index = 1;
+        event.data.joystick_pressed = false;
+        xQueueSend(input_queue, &event, pdMS_TO_TICKS(10));
+      } else if (joystick_just_pressed(&joysticks[1])) {
         last_touch_time = xTaskGetTickCount();
         InputEvent event;
         event.type = INPUT_TYPE_JOYSTICK;
         event.data.joystick_index = 1;
+        event.data.joystick_pressed = true;
         xQueueSend(input_queue, &event, pdMS_TO_TICKS(10));
       }
     }
@@ -2190,11 +2208,37 @@ void hardware_input_task(void *pvParameters) {
     for (int i = 0; i < 5; i++) {
       if (joysticks[i].pin < 0) continue;
 
+      // For the select button (index 1), check release BEFORE press so that
+      // joystick_just_released() sees the state before joystick_just_pressed()
+      // clears it. Release events are only sent for index 1.
+      if (i == 1) {
+        if (joystick_just_released(&joysticks[1])) {
+          InputEvent event;
+          event.type = INPUT_TYPE_JOYSTICK;
+          event.data.joystick_index = 1;
+          event.data.joystick_pressed = false;
+          xQueueSend(input_queue, &event, pdMS_TO_TICKS(10));
+          continue;
+        } else if (joystick_just_pressed(&joysticks[1])) {
+          last_touch_time = xTaskGetTickCount();
+          InputEvent event;
+          event.type = INPUT_TYPE_JOYSTICK;
+          event.data.joystick_index = 1;
+          event.data.joystick_pressed = true;
+          if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+            ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
+          }
+          continue;
+        }
+        continue;
+      }
+
       if (joystick_just_pressed(&joysticks[i])) {
         last_touch_time = xTaskGetTickCount();
         InputEvent event;
         event.type = INPUT_TYPE_JOYSTICK;
         event.data.joystick_index = i;
+        event.data.joystick_pressed = true;
 
         if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
           ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
@@ -2221,6 +2265,7 @@ void hardware_input_task(void *pvParameters) {
         InputEvent event;
         event.type = INPUT_TYPE_JOYSTICK;
         event.data.joystick_index = i;
+        event.data.joystick_pressed = true;
 
         if (xQueueSend(input_queue, &event, 0) == pdTRUE) {
           joystick_repeat_next_ms[i] = now_ms + JOYSTICK_REPEAT_INTERVAL_MS;
@@ -2367,6 +2412,13 @@ void processEvent() {
       xSemaphoreGive(dm.mutex);
 
       ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
+      // Joystick release events are only meaningful in the keyboard view.
+      // All other views only check joystick_index and would double-fire on release.
+      if (event.type == INPUT_TYPE_JOYSTICK && !event.data.joystick_pressed &&
+          strcmp(view_name, "Keyboard Screen") != 0) {
+        processed++;
+        continue;
+      }
       if (input_callback) input_callback(&event);
     }
     processed++;
@@ -2395,7 +2447,12 @@ void processEvent() {
         xSemaphoreGive(dm.mutex);
 
         ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
-        if (input_callback) input_callback(&event);
+        if (event.type == INPUT_TYPE_JOYSTICK && !event.data.joystick_pressed &&
+            strcmp(view_name, "Keyboard Screen") != 0) {
+          // drop release event for non-keyboard views
+        } else if (input_callback) {
+          input_callback(&event);
+        }
       }
     }
   }
