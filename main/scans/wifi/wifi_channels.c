@@ -95,6 +95,12 @@ uint8_t wifi_channels_build_country_list(uint8_t *channels, uint8_t max_count) {
         for (int i = 0; i < sizeof(eu_5ghz) && count < max_count; i++) {
             channels[count++] = eu_5ghz[i];
         }
+    } else if (strcmp(country.cc, "AU") == 0 || strcmp(country.cc, "NZ") == 0) {
+        // Australia/New Zealand: UNII-1, UNII-2, UNII-3 (no DFS mid-band)
+        uint8_t au_5ghz[] = {36, 40, 44, 48, 52, 56, 60, 64, 149, 153, 157, 161, 165};
+        for (int i = 0; i < sizeof(au_5ghz) && count < max_count; i++) {
+            channels[count++] = au_5ghz[i];
+        }
     } else {
         // Default: UNII-1 only (most permissive worldwide)
         uint8_t default_5ghz[] = {36, 40, 44, 48};

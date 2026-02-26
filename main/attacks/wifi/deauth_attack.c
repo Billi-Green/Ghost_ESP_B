@@ -55,6 +55,8 @@ static uint32_t deauth_packets_sent = 0;
 static TaskHandle_t deauth_task_handle = NULL;
 static TaskHandle_t deauth_station_task_handle = NULL;
 static bool deauth_task_running = false;
+static volatile bool deauth_stop_requested = false;
+static volatile bool deauth_station_stop_requested = false;
 
 // Station selection (local to this module for station deauth)
 static station_ap_pair_t selected_station_local;
@@ -228,7 +230,7 @@ static void deauth_task(void *param) {
     uint32_t last_log = 0;
     uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     
-    while (1) {
+    while (!deauth_stop_requested) {
         if (selected_ap_count_local > 0 && selected_aps_local != NULL) {
             // Iterate through selected APs directly instead of all channels
             // This ensures each selected AP gets proper time on its channel
@@ -310,6 +312,8 @@ static void deauth_task(void *param) {
             last_log = now;
         }
     }
+    deauth_task_handle = NULL;
+    vTaskDelete(NULL);
 }
 
 void deauth_attack_start(void) {
@@ -388,6 +392,7 @@ void deauth_attack_start(void) {
 #endif
         }
         
+        deauth_stop_requested = false;
         xTaskCreate(deauth_task, "deauth_task", 4096, NULL, 5, &deauth_task_handle);
         deauth_task_running = true;
         rgb_manager_set_color(&rgb_manager, -1, 255, 0, 0, false);
@@ -401,15 +406,29 @@ void deauth_attack_stop(void) {
         printf("Stopping deauth transmission...\n");
         TERMINAL_VIEW_ADD_TEXT("Stopping deauth transmission...\n");
         status_display_show_status("Deauth Stopping");
+        
+        deauth_stop_requested = true;
+        
         if (deauth_task_handle != NULL) {
-            vTaskDelete(deauth_task_handle);
-            deauth_task_handle = NULL;
-            deauth_task_running = false;
-            rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
-            esp_wifi_stop();
-            ap_manager_start_services();
-            status_display_show_status("Deauth Stopped");
+            TaskHandle_t handle_to_check = deauth_task_handle;
+            int wait_count = 0;
+            while (deauth_task_handle != NULL && wait_count < 100) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                wait_count++;
+            }
+            
+            if (deauth_task_handle != NULL) {
+                vTaskDelete(deauth_task_handle);
+                deauth_task_handle = NULL;
+            }
         }
+        
+        deauth_task_running = false;
+        deauth_stop_requested = false;
+        rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
+        esp_wifi_stop();
+        ap_manager_start_services();
+        status_display_show_status("Deauth Stopped");
     } else {
         status_display_show_status("No Deauth Active");
     }
@@ -455,6 +474,7 @@ void deauth_attack_start_station(void) {
          selected_station_local.station_mac[3], selected_station_local.station_mac[4], selected_station_local.station_mac[5],
          selected_station_local.ap_bssid[0], selected_station_local.ap_bssid[1], selected_station_local.ap_bssid[2], 
          selected_station_local.ap_bssid[3], selected_station_local.ap_bssid[4], selected_station_local.ap_bssid[5]);
+    deauth_station_stop_requested = false;
     xTaskCreate(deauth_station_task, "deauth_station", 4096, NULL, 5, &deauth_station_task_handle);
     station_selected_local = false;
 }
@@ -477,7 +497,7 @@ static void deauth_station_task(void *param) {
     // Use NONE for all channels - WIFI_SECOND_CHAN_ABOVE is only for 2.4GHz HT40
     (void)esp_wifi_set_channel(deauth_channel, WIFI_SECOND_CHAN_NONE);
     uint32_t last_log = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    for (;;) {
+    while (!deauth_station_stop_requested) {
         for (int burst = 0; burst < 25; burst++) {
             deauth_attack_broadcast(selected_station_local.ap_bssid, deauth_channel, selected_station_local.station_mac);
         }
@@ -489,12 +509,25 @@ static void deauth_station_task(void *param) {
             last_log = now;
         }
     }
+    deauth_station_task_handle = NULL;
+    vTaskDelete(NULL);
 }
 
 bool deauth_attack_stop_station(void) {
     if (deauth_station_task_handle != NULL) {
-        vTaskDelete(deauth_station_task_handle);
-        deauth_station_task_handle = NULL;
+        deauth_station_stop_requested = true;
+        
+        int wait_count = 0;
+        while (deauth_station_task_handle != NULL && wait_count < 100) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            wait_count++;
+        }
+        
+        if (deauth_station_task_handle != NULL) {
+            vTaskDelete(deauth_station_task_handle);
+            deauth_station_task_handle = NULL;
+        }
+        deauth_station_stop_requested = false;
         ap_manager_start_services();
         return true;
     }

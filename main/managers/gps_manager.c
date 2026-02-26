@@ -253,21 +253,44 @@ void gps_manager_deinit(GPSManager *manager) {
 #define MIN_SPEED_THRESHOLD 0.1   // Minimum 0.1 m/s (~0.36 km/h)
 #define MAX_SPEED_THRESHOLD 340.0 // Maximum 340 m/s (~1224 km/h)
 
+// GPS validity cache - avoid repeated validation on every beacon
+static TickType_t last_gps_valid_tick = 0;
+static bool last_gps_valid_state = false;
+static bool gps_cache_initialized = false;
+#define GPS_VALID_CACHE_MS 200  // Cache validity for 200ms
+
 esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (!data || !nmea_hdl) {
         return ESP_ERR_INVALID_ARG;
     }
-    gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
+    
+    // Early deduplication check - skip expensive GPS validation for known APs
     if (!data->ble_data.is_ble_device) {
-        if (!gps->valid || gps->fix < GPS_FIX_GPS || gps->fix_mode < GPS_MODE_2D ||
-            gps->sats_in_use < 3) {
-            return ESP_ERR_INVALID_STATE;
+        if (!csv_should_log_wifi_ap(data->bssid, data->rssi, data->ssid)) {
+            return ESP_OK;  // Silently skip - already logged or signal not better
         }
+    }
+    
+    gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
+    
+    // Check GPS validity with caching to reduce CPU overhead on high-volume scanning
+    TickType_t now = xTaskGetTickCount();
+    bool gps_is_valid;
+    
+    if (!gps_cache_initialized || (now - last_gps_valid_tick) > pdMS_TO_TICKS(GPS_VALID_CACHE_MS)) {
+        // Cache expired or not initialized - perform full validation
+        gps_is_valid = gps->valid && gps->fix >= GPS_FIX_GPS && 
+                       gps->fix_mode >= GPS_MODE_2D && gps->sats_in_use >= 3;
+        last_gps_valid_state = gps_is_valid;
+        last_gps_valid_tick = now;
+        gps_cache_initialized = true;
     } else {
-        if (!gps->valid || gps->fix < GPS_FIX_GPS || gps->fix_mode < GPS_MODE_2D ||
-            gps->sats_in_use < 3) {
-            return ESP_ERR_INVALID_STATE;
-        }
+        // Use cached result
+        gps_is_valid = last_gps_valid_state;
+    }
+    
+    if (!gps_is_valid) {
+        return ESP_ERR_INVALID_STATE;
     }
 
     // Validate GPS data
@@ -355,7 +378,6 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
 
     // Update display periodically
     static TickType_t last_status_tick = 0;
-    TickType_t now = xTaskGetTickCount();
     if (last_status_tick == 0 || (now - last_status_tick) >= pdMS_TO_TICKS(GPS_STATUS_PERIOD_MS)) {
         last_status_tick = now;
         // Determine GPS fix status
