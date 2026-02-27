@@ -7962,7 +7962,8 @@ void handle_input_cmd(int argc, char **argv) {
     if (input_queue) {
         InputEvent evt = {
             .type = INPUT_TYPE_JOYSTICK,
-            .data.joystick_index = joystick_index
+            .data.joystick_index = joystick_index,
+            .data.joystick_pressed = true
         };
         xQueueSend(input_queue, &evt, 0);
     }

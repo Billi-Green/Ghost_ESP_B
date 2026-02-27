@@ -72,7 +72,7 @@ void wigle_set_api_key(const char *key) {
     FSettings *s = &G_Settings;
     strncpy(s->wigle_api_key, key, sizeof(s->wigle_api_key) - 1);
     s->wigle_api_key[sizeof(s->wigle_api_key) - 1] = '\0';
-    settings_save(s);
+    settings_persist_setting(SETTING_WIGLE_API_KEY);
 }
 
 const char *wigle_get_api_key(void) {

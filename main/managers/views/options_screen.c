@@ -470,6 +470,7 @@ static lv_obj_t *back_btn = NULL;
 
 // WiGLE help popup
 static lv_obj_t *wigle_help_popup = NULL;
+static lv_obj_t *wigle_help_close_btn = NULL;
 
 // --- Add Bluetooth submenu arrays and state ---
 static const char *bluetooth_main_options[] = {
@@ -1179,6 +1180,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             int popup_h = LV_VER_RES - 40;
             wigle_help_popup = popup_create_container(lv_layer_top(), popup_w, popup_h);
             lv_obj_set_style_bg_color(wigle_help_popup, lv_color_hex(0x1E1E1E), 0);
+            lv_obj_add_flag(wigle_help_popup, LV_OBJ_FLAG_CLICKABLE);
             
             lv_obj_t *title = lv_label_create(wigle_help_popup);
             lv_label_set_text(title, "WiGLE Setup Help");
@@ -1207,6 +1209,8 @@ static void apply_setting_change(int setting_index, int new_value) {
             lv_obj_set_style_text_font(help_label, &lv_font_montserrat_10, 0);
             
             lv_obj_t *close_btn = lv_btn_create(wigle_help_popup);
+            wigle_help_close_btn = close_btn;
+            lv_obj_add_flag(close_btn, LV_OBJ_FLAG_CLICKABLE);
             lv_obj_set_size(close_btn, 80, 30);
             lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -5);
             lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x444444), 0);
@@ -1284,6 +1288,8 @@ static void change_setting_value(int setting_index, bool increment) {
     
     apply_setting_change(setting_index, new_value);
     
+    if (!menu_container) return;
+    
     lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
     if (current_item) {
         lv_obj_t *label = NULL;
@@ -1333,6 +1339,19 @@ void handle_hardware_button_press_options(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
+            // When popup is open, only handle close button touches
+            if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
+                if (wigle_help_close_btn && lv_obj_is_valid(wigle_help_close_btn)) {
+                    lv_area_t area; lv_obj_get_coords(wigle_help_close_btn, &area);
+                    if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
+                        data->point.y >= area.y1 && data->point.y <= area.y2) {
+                        wigle_help_close_cb(NULL);
+                    }
+                }
+                // Consume all other touches when popup is open
+                opt_touch_started = false;
+                return;
+            }
             // existing "press" logic unchanged...
             if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
                 lv_area_t area; lv_obj_get_coords(scroll_up_btn, &area);
@@ -3187,6 +3206,7 @@ static void wigle_help_close_cb(lv_event_t *e) {
     if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
         lvgl_obj_del_safe(&wigle_help_popup);
     }
+    wigle_help_close_btn = NULL;
 }
 
 static void wigle_test_result_async(void *data) {
@@ -3288,14 +3308,24 @@ static void rebuild_current_menu(void) {
                 case WIFI_MENU_MISC: options = wifi_misc_options; break;
                 case WIFI_MENU_EVIL_PORTAL_SELECT:
                 {
-                    // Always try to populate the portal list if not already done
                     if (!evil_portal_names || !evil_portal_options) {
                         ESP_LOGI(TAG, "Re-populating evil portal selector...");
                         
-                        // First, allocate a temporary buffer to count portals safely
+                        bool jit_mounted = false;
+                        bool display_suspended = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+                        if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+                            if (!sd_card_manager.is_initialized) {
+                                if (sd_card_mount_for_flush(&display_suspended) == ESP_OK) {
+                                    jit_mounted = true;
+                                }
+                            }
+                        }
+#endif
                         char (*temp_buffer)[MAX_PORTAL_NAME] = malloc(sizeof(char[MAX_PORTALS][MAX_PORTAL_NAME]));
                         if (!temp_buffer) {
                             ESP_LOGE(TAG, "Failed to allocate temp buffer for portal counting");
+                            if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
                             static const char *fallback_options[] = {"default", NULL};
                             options = fallback_options;
                             break;
@@ -3303,50 +3333,42 @@ static void rebuild_current_menu(void) {
                         
                         int count = get_evil_portal_list(temp_buffer);
                         
-                        if (count <= 0) {
-                            // Use static fallback for no portals case (no heap allocation)
-                            free(temp_buffer);
-                            static const char *no_portals_options[] = {"No portal files found", "default", NULL};
-                            options = no_portals_options;
-                            break;
-                        }
-                        
-                        // Allocate only the memory we actually need for final storage
-                        evil_portal_names = malloc(sizeof(char[MAX_PORTAL_NAME]) * count);
-                        evil_portal_options = malloc(sizeof(char*) * (count + 1));
+                        evil_portal_names = malloc(sizeof(char[MAX_PORTAL_NAME]) * (count + 1));
+                        evil_portal_options = malloc(sizeof(char*) * (count + 2));
                         
                         if (!evil_portal_names || !evil_portal_options) {
                             ESP_LOGE(TAG, "Failed to allocate memory for portal list!");
-                            // Clean up allocations
                             free(temp_buffer);
                             if (evil_portal_names) free(evil_portal_names);
                             if (evil_portal_options) free(evil_portal_options);
                             evil_portal_names = NULL;
                             evil_portal_options = NULL;
-                            // Fallback to default options
+                            if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
                             static const char *fallback_options[] = {"default", NULL};
                             options = fallback_options;
                             break;
                         }
                         
-                        // Copy only the portals we need from temp buffer
-                        for (int i = 0; i < count; ++i) {
-                            strcpy(evil_portal_names + i * MAX_PORTAL_NAME, temp_buffer[i]);
-                            evil_portal_options[i] = evil_portal_names + i * MAX_PORTAL_NAME;
-                        }
-                        evil_portal_options[count] = NULL;
+                        strcpy(evil_portal_names, "default");
+                        evil_portal_options[0] = evil_portal_names;
                         
-                        // Free the temporary buffer
+                        for (int i = 0; i < count; ++i) {
+                            strcpy(evil_portal_names + (i + 1) * MAX_PORTAL_NAME, temp_buffer[i]);
+                            evil_portal_options[i + 1] = evil_portal_names + (i + 1) * MAX_PORTAL_NAME;
+                        }
+                        evil_portal_options[count + 1] = NULL;
+                        
                         free(temp_buffer);
                         
-                        ESP_LOGI(TAG, "Loaded %d portals (using %zu bytes)", count, 
-                                sizeof(char[MAX_PORTAL_NAME]) * count + sizeof(char*) * (count + 1));
+                        if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
+                        
+                        ESP_LOGI(TAG, "Loaded %d portals + default (using %zu bytes)", count, 
+                                sizeof(char[MAX_PORTAL_NAME]) * (count + 1) + sizeof(char*) * (count + 2));
                     }
                     
                     if (evil_portal_options) {
                         options = evil_portal_options;
                     } else {
-                        // Fallback if somehow still NULL
                         static const char *fallback_options[] = {"default", NULL};
                         options = fallback_options;
                     }
@@ -3675,7 +3697,7 @@ static void menu_builder_cb(lv_timer_t *t)
         menu_build_timer = NULL;
         return;
     }
-    const int BATCH = 3;
+    const int BATCH = 6;
     int built_this_tick = 0;
     bool all_current_options_processed = false;
     

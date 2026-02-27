@@ -837,6 +837,10 @@ void settings_persist_setting(SettingsType setting) {
             key = NVS_BADUSB_KB_KEY;
             break;
 #endif
+        case SETTING_WIGLE_API_KEY:
+            err = nvs_set_str(nvsHandle, NVS_WIGLE_API_KEY, G_Settings.wigle_api_key);
+            key = NVS_WIGLE_API_KEY;
+            break;
         case SETTING_WIGLE_AUTO_UPLOAD:
             err = nvs_set_u8(nvsHandle, NVS_WIGLE_AUTO_UPLOAD_KEY, G_Settings.wigle_auto_upload ? 1 : 0);
             key = NVS_WIGLE_AUTO_UPLOAD_KEY;
