@@ -850,8 +850,22 @@ esp_err_t portal_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    // Otherwise, proceed with streaming from URL or file
+    // Otherwise, proceed with streaming from URL or file.
+    // JIT mount SD for somethingsomething template (SPI bus shared with display).
+    // file_handler() uses the same pattern for portal asset files.
+    bool portal_jit_display_suspended = false;
+    bool portal_jit_did_mount = false;
+    bool portal_is_local_file = (strncmp(PORTALURL, "http://", 7) != 0 &&
+                                 strncmp(PORTALURL, "https://", 8) != 0);
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (portal_is_local_file && !sd_card_manager.is_initialized) {
+            portal_jit_did_mount = (sd_card_mount_for_flush(&portal_jit_display_suspended) == ESP_OK);
+        }
+    }
+#endif
     esp_err_t err = stream_data_to_client(req, PORTALURL, "text/html");
+    if (portal_jit_did_mount) sd_card_unmount_after_flush(portal_jit_display_suspended);
 
     if (err != ESP_OK) {
         const char *err_msg = esp_err_to_name(err);

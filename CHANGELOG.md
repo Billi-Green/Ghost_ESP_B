@@ -34,6 +34,10 @@
 - Fixed joystick repeat only working vertically
 - Added hold to invert letter case on joystick select in keyboard view
 - Improved clock view responsiveness
+- Fixed evil portal JIT mounting
+- Fixed crash on the Setup Wizard screen
+- Fixed touch handler for the WiGLE help popup
+- Fixed saving of WiGLE API credentials to mirror other setting saves
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3

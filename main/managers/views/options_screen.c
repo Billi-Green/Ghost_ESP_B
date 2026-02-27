@@ -449,6 +449,7 @@ static lv_obj_t *back_btn = NULL;
 
 // WiGLE help popup
 static lv_obj_t *wigle_help_popup = NULL;
+static lv_obj_t *wigle_help_close_btn = NULL;
 
 // --- Add Bluetooth submenu arrays and state ---
 static const char *bluetooth_main_options[] = {
@@ -1152,6 +1153,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             int popup_h = LV_VER_RES - 40;
             wigle_help_popup = popup_create_container(lv_layer_top(), popup_w, popup_h);
             lv_obj_set_style_bg_color(wigle_help_popup, lv_color_hex(0x1E1E1E), 0);
+            lv_obj_add_flag(wigle_help_popup, LV_OBJ_FLAG_CLICKABLE);
             
             lv_obj_t *title = lv_label_create(wigle_help_popup);
             lv_label_set_text(title, "WiGLE Setup Help");
@@ -1180,6 +1182,8 @@ static void apply_setting_change(int setting_index, int new_value) {
             lv_obj_set_style_text_font(help_label, &lv_font_montserrat_10, 0);
             
             lv_obj_t *close_btn = lv_btn_create(wigle_help_popup);
+            wigle_help_close_btn = close_btn;
+            lv_obj_add_flag(close_btn, LV_OBJ_FLAG_CLICKABLE);
             lv_obj_set_size(close_btn, 80, 30);
             lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -5);
             lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x444444), 0);
@@ -1226,6 +1230,8 @@ static void change_setting_value(int setting_index, bool increment) {
     }
     
     apply_setting_change(setting_index, new_value);
+    
+    if (!menu_container) return;
     
     lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
     if (current_item) {
@@ -1276,6 +1282,19 @@ void handle_hardware_button_press_options(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
+            // When popup is open, only handle close button touches
+            if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
+                if (wigle_help_close_btn && lv_obj_is_valid(wigle_help_close_btn)) {
+                    lv_area_t area; lv_obj_get_coords(wigle_help_close_btn, &area);
+                    if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
+                        data->point.y >= area.y1 && data->point.y <= area.y2) {
+                        wigle_help_close_cb(NULL);
+                    }
+                }
+                // Consume all other touches when popup is open
+                opt_touch_started = false;
+                return;
+            }
             // existing "press" logic unchanged...
             if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
                 lv_area_t area; lv_obj_get_coords(scroll_up_btn, &area);
@@ -3115,6 +3134,7 @@ static void wigle_help_close_cb(lv_event_t *e) {
     if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
         lvgl_obj_del_safe(&wigle_help_popup);
     }
+    wigle_help_close_btn = NULL;
 }
 
 static void wigle_test_result_async(void *data) {

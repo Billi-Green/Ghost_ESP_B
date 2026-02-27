@@ -1531,7 +1531,11 @@ void display_manager_run_on_lvgl(void (*fn)(void *), void *arg) {
 
 void display_manager_switch_view(View *view) {
   if (view == NULL) return;
-  display_manager_run_on_lvgl(dm_switch_async_cb, view);
+  dm_lvgl_call_t *call = malloc(sizeof(*call));
+  if (!call) return;
+  call->fn = dm_switch_async_cb;
+  call->arg = view;
+  lv_async_call(dm_run_on_lvgl_async_cb, call);
 }
 
 void display_manager_destroy_current_view(void) {
@@ -1549,12 +1553,11 @@ View *display_manager_get_current_view(void) { return dm.current_view; }
 bool display_manager_is_available(void) { return display_manager_init_success; }
 
 void display_manager_fill_screen(lv_color_t color) {
-  static lv_style_t style;
-  lv_style_init(&style);
-  lv_style_set_bg_color(&style, color);
-  lv_style_set_bg_opa(&style, LV_OPA_COVER);
-  lv_obj_set_scrollbar_mode(lv_scr_act(), LV_SCROLLBAR_MODE_OFF);
-  lv_obj_add_style(lv_scr_act(), &style, LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_t *scr = lv_scr_act();
+  if (!scr) return;
+  lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_bg_color(scr, color, LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
 void display_manager_suspend_lvgl_task(void) {
