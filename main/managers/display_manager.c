@@ -15,6 +15,12 @@
 #include "managers/views/options_screen.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/views/clock_screen.h"
+#include "managers/views/compass_screen.h"
+#include "managers/views/accelerometer_screen.h"
+#include "managers/views/infrared_view.h"
+#include "managers/views/nfc_view.h"
+#include "managers/views/badusb_view.h"
+#include "managers/views/app_gallery_screen.h"
 #include "managers/encoder_manager.h"
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +37,9 @@
 #include "driver/i2c.h"
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
+#ifdef CONFIG_USE_IO_EXPANDER
+#include "io_manager/io_manager.h"
+#endif
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 
@@ -2291,6 +2300,153 @@ void hardware_input_task(void *pvParameters) {
         }
       }
     }
+#ifdef CONFIG_USE_IO_EXPANDER
+    /* P10, P11, P12 (B1, B2, B3): if a command is set, run it; else send as joystick 5/6/7 */
+    {
+        static bool prev_b1 = false, prev_b2 = false, prev_b3 = false;
+        btn_event_t states = {0};
+        if (io_manager_get_cached_button_states(&states) == ESP_OK) {
+            if (states.b1 && !prev_b1) {
+                last_touch_time = xTaskGetTickCount();
+                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                const char *cmd = settings_get_io_btn_p10_cmd(&G_Settings);
+                if (cmd && cmd[0] != '\0') {
+                    if (strncmp(cmd, "view:", 5) == 0) {
+                        if (strcmp(cmd, "view:wifi") == 0) {
+                            SelectedMenuType = OT_Wifi;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:ble") == 0) {
+                            SelectedMenuType = OT_Bluetooth;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:nfc") == 0) {
+                            display_manager_switch_view(&nfc_view);
+                        } else if (strcmp(cmd, "view:ir") == 0) {
+                            display_manager_switch_view(&infrared_view);
+                        } else if (strcmp(cmd, "view:badusb") == 0) {
+                            display_manager_switch_view(&badusb_view);
+                        } else if (strcmp(cmd, "view:gps") == 0) {
+                            SelectedMenuType = OT_GPS;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:compass") == 0) {
+                            display_manager_switch_view(&compass_view);
+                        } else if (strcmp(cmd, "view:accel") == 0) {
+                            display_manager_switch_view(&accelerometer_view);
+                        } else if (strcmp(cmd, "view:clock") == 0) {
+                            display_manager_switch_view(&clock_view);
+                        } else if (strcmp(cmd, "view:apps") == 0) {
+                            display_manager_switch_view(&apps_menu_view);
+                        } else if (strcmp(cmd, "view:settings") == 0) {
+                            SelectedMenuType = OT_Settings;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:ghostlink") == 0) {
+                            SelectedMenuType = OT_DualComm;
+                            display_manager_switch_view(&options_menu_view);
+                        }
+                    } else {
+                        display_manager_switch_view(&terminal_view);
+                        simulateCommand(cmd);
+                    }
+                } else {
+                    InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 5 };
+                    xQueueSend(input_queue, &ev, pdMS_TO_TICKS(10));
+                }
+            }
+            if (states.b2 && !prev_b2) {
+                last_touch_time = xTaskGetTickCount();
+                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                const char *cmd = settings_get_io_btn_p11_cmd(&G_Settings);
+                if (cmd && cmd[0] != '\0') {
+                    if (strncmp(cmd, "view:", 5) == 0) {
+                        if (strcmp(cmd, "view:wifi") == 0) {
+                            SelectedMenuType = OT_Wifi;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:ble") == 0) {
+                            SelectedMenuType = OT_Bluetooth;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:nfc") == 0) {
+                            display_manager_switch_view(&nfc_view);
+                        } else if (strcmp(cmd, "view:ir") == 0) {
+                            display_manager_switch_view(&infrared_view);
+                        } else if (strcmp(cmd, "view:badusb") == 0) {
+                            display_manager_switch_view(&badusb_view);
+                        } else if (strcmp(cmd, "view:gps") == 0) {
+                            SelectedMenuType = OT_GPS;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:compass") == 0) {
+                            display_manager_switch_view(&compass_view);
+                        } else if (strcmp(cmd, "view:accel") == 0) {
+                            display_manager_switch_view(&accelerometer_view);
+                        } else if (strcmp(cmd, "view:clock") == 0) {
+                            display_manager_switch_view(&clock_view);
+                        } else if (strcmp(cmd, "view:apps") == 0) {
+                            display_manager_switch_view(&apps_menu_view);
+                        } else if (strcmp(cmd, "view:settings") == 0) {
+                            SelectedMenuType = OT_Settings;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:ghostlink") == 0) {
+                            SelectedMenuType = OT_DualComm;
+                            display_manager_switch_view(&options_menu_view);
+                        }
+                    } else {
+                        display_manager_switch_view(&terminal_view);
+                        simulateCommand(cmd);
+                    }
+                } else {
+                    InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 6 };
+                    xQueueSend(input_queue, &ev, pdMS_TO_TICKS(10));
+                }
+            }
+            if (states.b3 && !prev_b3) {
+                last_touch_time = xTaskGetTickCount();
+                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                const char *cmd = settings_get_io_btn_p12_cmd(&G_Settings);
+                if (cmd && cmd[0] != '\0') {
+                    if (strncmp(cmd, "view:", 5) == 0) {
+                        if (strcmp(cmd, "view:wifi") == 0) {
+                            SelectedMenuType = OT_Wifi;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:ble") == 0) {
+                            SelectedMenuType = OT_Bluetooth;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:nfc") == 0) {
+                            display_manager_switch_view(&nfc_view);
+                        } else if (strcmp(cmd, "view:ir") == 0) {
+                            display_manager_switch_view(&infrared_view);
+                        } else if (strcmp(cmd, "view:badusb") == 0) {
+                            display_manager_switch_view(&badusb_view);
+                        } else if (strcmp(cmd, "view:gps") == 0) {
+                            SelectedMenuType = OT_GPS;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:compass") == 0) {
+                            display_manager_switch_view(&compass_view);
+                        } else if (strcmp(cmd, "view:accel") == 0) {
+                            display_manager_switch_view(&accelerometer_view);
+                        } else if (strcmp(cmd, "view:clock") == 0) {
+                            display_manager_switch_view(&clock_view);
+                        } else if (strcmp(cmd, "view:apps") == 0) {
+                            display_manager_switch_view(&apps_menu_view);
+                        } else if (strcmp(cmd, "view:settings") == 0) {
+                            SelectedMenuType = OT_Settings;
+                            display_manager_switch_view(&options_menu_view);
+                        } else if (strcmp(cmd, "view:ghostlink") == 0) {
+                            SelectedMenuType = OT_DualComm;
+                            display_manager_switch_view(&options_menu_view);
+                        }
+                    } else {
+                        display_manager_switch_view(&terminal_view);
+                        simulateCommand(cmd);
+                    }
+                } else {
+                    InputEvent ev = { .type = INPUT_TYPE_JOYSTICK, .data.joystick_index = 7 };
+                    xQueueSend(input_queue, &ev, pdMS_TO_TICKS(10));
+                }
+            }
+            prev_b1 = states.b1;
+            prev_b2 = states.b2;
+            prev_b3 = states.b3;
+        }
+    }
+#endif
 #endif
  #endif
 

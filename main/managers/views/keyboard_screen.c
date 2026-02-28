@@ -22,6 +22,9 @@ static lv_obj_t *root = NULL;
 static lv_obj_t *input_label = NULL;
 static char input_buffer[128] = {0};
 static int input_len = 0;
+static char pending_initial_text[128] = {0};
+static bool has_pending_initial_text = false;
+static bool start_with_caps = true;
 static KeyboardSubmitCallback submit_callback = NULL;
 
 static bool is_caps = true;
@@ -640,10 +643,20 @@ static void destroy_key_buttons(void) {
 }
 
 static void keyboard_create() {
-    is_caps = true; // Start in caps mode
+    is_caps = start_with_caps;
+    start_with_caps = true; /* reset so next open gets default (caps) */
     is_symbols_mode = false;
     input_len = 0;
     memset(input_buffer, 0, sizeof(input_buffer));
+    if (has_pending_initial_text) {
+        size_t n = strnlen(pending_initial_text, sizeof(pending_initial_text) - 1);
+        if (n > 0) {
+            memcpy(input_buffer, pending_initial_text, n + 1);
+            input_len = (int)n;
+        }
+        has_pending_initial_text = false;
+        memset(pending_initial_text, 0, sizeof(pending_initial_text));
+    }
 
     int screen_height = LV_VER_RES;
     int status_bar_height = GUI_STATUS_BAR_HEIGHT;
@@ -1248,6 +1261,34 @@ void keyboard_view_set_placeholder(const char *text){
     memset(input_buffer, 0, sizeof(input_buffer));
     input_len = 0;
     update_input_label();
+}
+
+void keyboard_view_set_start_caps(bool start_caps) {
+    start_with_caps = start_caps;
+}
+
+void keyboard_view_set_initial_text(const char *text) {
+    memset(pending_initial_text, 0, sizeof(pending_initial_text));
+    has_pending_initial_text = true;
+    if (text && text[0] != '\0') {
+        size_t n = strlen(text);
+        if (n >= sizeof(pending_initial_text)) n = sizeof(pending_initial_text) - 1;
+        memcpy(pending_initial_text, text, n + 1);
+    }
+    /* If view already exists, apply now so it shows without waiting for next create */
+    if (root != NULL) {
+        memset(input_buffer, 0, sizeof(input_buffer));
+        input_len = 0;
+        if (text && text[0] != '\0') {
+            size_t n = strlen(text);
+            if (n >= sizeof(input_buffer)) n = sizeof(input_buffer) - 1;
+            memcpy(input_buffer, text, n + 1);
+            input_buffer[n] = '\0';
+            input_len = (int)n;
+        }
+        has_pending_initial_text = false;
+        update_input_label();
+    }
 }
 
 void keyboard_view_set_return_view(View *view) {
