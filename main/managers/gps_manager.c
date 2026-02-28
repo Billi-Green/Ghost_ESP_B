@@ -88,6 +88,13 @@ void gps_manager_init(GPSManager *manager) {
 #ifdef CONFIG_HAS_GPS // need to verify we have gps enabled
     current_rx_pin = CONFIG_GPS_UART_RX_PIN;
 #endif  
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "marauderv4") == 0 && custom_gps_pin == 0) {
+        /* Marauder reference firmware uses Serial2 with RX on GPIO4 for V4 boards. */
+        current_rx_pin = 4;
+    }
+#endif
  
     if (custom_gps_pin > 0) { // if a custom pin was set this will be > 0. If its zero we can assume no custom pin was set.
     current_rx_pin=custom_gps_pin;
@@ -101,17 +108,23 @@ void gps_manager_init(GPSManager *manager) {
     vTaskDelay(pdMS_TO_TICKS(10));
 
     gpio_set_direction(current_rx_pin, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(current_rx_pin, GPIO_FLOATING);
+    gpio_set_pull_mode(current_rx_pin, GPIO_PULLUP_ONLY);
 
     config.uart.rx_pin = current_rx_pin; //set uart pin for uart init
-    #ifdef CONFIG_USE_TDISPLAY_S3
-    config.uart.uart_port = UART_NUM_2; // Explicitly set UART3 for GPS
+    #if defined(CONFIG_USE_TDISPLAY_S3) || defined(CONFIG_IDF_TARGET_ESP32)
+    config.uart.uart_port = UART_NUM_2; // ESP32 boards typically wire GPS to UART2
     #else
-    config.uart.uart_port = UART_NUM_1; // Explicitly set UART1 for GPS
+    config.uart.uart_port = UART_NUM_1;
     #endif
-#ifdef CONFIG_GPS_UART_BAUD_RATE // if we have a custom baud rate set in the build config
-    config.uart.baud_rate = CONFIG_GPS_UART_BAUD_RATE; // set gps baud rate to the build config
-#endif  
+
+#ifdef CONFIG_GPS_UART_BAUD_RATE
+    config.uart.baud_rate = CONFIG_GPS_UART_BAUD_RATE;
+#endif
+
+    glog("GPS UART%d RX: IO%d @ %lu\n",
+         (int)config.uart.uart_port,
+         (int)config.uart.rx_pin,
+         (unsigned long)config.uart.baud_rate);
 
 #ifdef CONFIG_IS_GHOST_BOARD // always want ghost board to be using pin 2
     config.uart.rx_pin = 2;

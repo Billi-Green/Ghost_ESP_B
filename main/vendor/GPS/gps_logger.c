@@ -915,3 +915,39 @@ void gps_info_display_task(void *pvParameters) {
         vTaskDelay(delay);
     }
 }
+
+void csv_file_close_fast() {
+    if (csv_file != NULL) {
+        if (csv_flush_task != NULL) {
+            vTaskDelete(csv_flush_task);
+            csv_flush_task = NULL;
+        }
+
+        /* Fast close for UI transitions: drop pending RAM buffer to avoid blocking I/O. */
+        buffer_offset = 0;
+
+        fclose(csv_file);
+        csv_file = NULL;
+        if (csv_mutex != NULL) {
+            vSemaphoreDelete(csv_mutex);
+            csv_mutex = NULL;
+        }
+        if (csv_file_path[0] != '\0') {
+            gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
+            const char *mount = "/mnt";
+            const char *rel_path = csv_file_path + strlen(mount);
+            if (*rel_path == '/') rel_path++;
+            FILINFO finfo;
+            if (f_stat(rel_path, &finfo) == FR_OK) {
+                uint16_t year = gps_get_absolute_year(gps->date.year);
+                finfo.fdate = ((year - 1980) << 9) | (gps->date.month << 5) | gps->date.day;
+                finfo.ftime = (gps->tim.hour << 11) | (gps->tim.minute << 5) | (gps->tim.second / 2);
+                f_utime(rel_path, &finfo);
+            }
+            if (csv_file_path[0] != '\0') {
+                wigle_queue_add(csv_file_path);
+            }
+        }
+        glog("CSV file fast-closed.\n");
+    }
+}

@@ -1281,7 +1281,7 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   /* width * 8 gives ~8 lines of buffer which balances responsiveness and RAM use */
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
 #elif defined(CONFIG_IDF_TARGET_ESP32)
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 1] __attribute__((aligned(4)));
 #else
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
@@ -1308,8 +1308,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   /* single buffer mode: use width * 5 for responsive drawing without excessive RAM */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
 #elif defined(CONFIG_IDF_TARGET_ESP32)
-  /* single buffer mode: use width * 3 for ESP32 to save DRAM */
-  lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 3);
+  /* single buffer mode: one scanline for maximum DRAM savings on ESP32 */
+  lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 1);
 #else
   /* default: double buffer for smoother drawing */
   lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);

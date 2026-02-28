@@ -32,6 +32,7 @@
 - Improved clock view responsiveness
 - Increased BadUSB VSense delay to improve reliability of USB enumeration
 - Miscellaneous fixes, improvements and refactors
+- Fixed feberis pro spelling
 
 ### Fixed
 - Fixed station deauth channel lookup
@@ -53,6 +54,7 @@
 - Fixed joystick and touch input not checking if display is dimmed
 - Fixed wardrive exiting when waking the display with a touch press
 - Fixed NFC saved tag popup having vertically aligned buttons instead of horizontal
+- Fixed Marauder v4 SD Card mounting
 
 ## Revival v1.9.3
 

@@ -311,11 +311,9 @@ static void wardriving_input_callback(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
         if (event->data.touch_data.state == LV_INDEV_STATE_PR) {
             touch_press_active = true;
-        } else if (event->data.touch_data.state == LV_INDEV_STATE_REL) {
-            if (touch_press_active) {
-                touch_press_active = false;
-                display_manager_switch_view(&main_menu_view);
-            }
+        } else if (event->data.touch_data.state == LV_INDEV_STATE_REL && touch_press_active) {
+            touch_press_active = false;
+            display_manager_switch_view(&main_menu_view);
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
         display_manager_switch_view(&main_menu_view);
@@ -515,6 +513,8 @@ void wardriving_view_create(void) {
 }
 
 void wardriving_view_destroy(void) {
+    bool had_capture_mode = (wardriving_scan_mode || wardriving_ble_mode);
+
     if (update_timer) {
         lv_timer_del(update_timer);
         update_timer = NULL;
@@ -539,8 +539,11 @@ void wardriving_view_destroy(void) {
         wardriving_scan_mode = false;
     }
 
-    if (wardriving_initialized_gps) {
+    /* GPS-info-only mode can return immediately; avoid blocking LVGL on deinit. */
+    if (wardriving_initialized_gps && had_capture_mode) {
         gps_manager_deinit(&g_gpsManager);
+        wardriving_initialized_gps = false;
+    } else if (wardriving_initialized_gps) {
         wardriving_initialized_gps = false;
     }
     

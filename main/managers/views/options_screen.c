@@ -14,7 +14,7 @@
 #include "managers/sd_card_manager.h"  /* MAX_PORTAL_NAME, sd_card_list_dir_paged */
 
 /* MAX_PORTALS / MAX_PORTAL_NAME come from sd_card_manager.h */
-#define PORTAL_PAGE_SIZE 15   /* portal filenames shown per page */
+#define PORTAL_PAGE_SIZE 8    /* keep portal pages small to avoid LVGL stalls */
 
 static char selected_portal[MAX_PORTAL_NAME] = {0};
 static char selected_karma_portal[MAX_PORTAL_NAME] = {0};
@@ -3677,6 +3677,7 @@ static void rebuild_current_menu(void) {
                     }
 #endif
                     options = portal_load_page();
+                    timer_period = 25;
                     if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
                     break;
                 }
@@ -3695,6 +3696,7 @@ static void rebuild_current_menu(void) {
                     }
 #endif
                     options = portal_load_page();
+                    timer_period = 25;
                     if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
                     break;
                 }
@@ -4037,11 +4039,15 @@ static void menu_builder_cb(lv_timer_t *t)
         menu_build_timer = NULL;
         return;
     }
-    const int BATCH = 6;
+    const bool is_portal_select =
+        (!is_settings_mode) &&
+        (SelectedMenuType == OT_Wifi) &&
+        (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT ||
+         current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT);
+
+    const int BATCH = is_portal_select ? 2 : 6;
     int built_this_tick = 0;
     bool all_current_options_processed = false;
-    
-    taskYIELD();
 
     bool back_option_was_added_in_previous_tick = (bool)(intptr_t)t->user_data;
 
