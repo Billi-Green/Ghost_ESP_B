@@ -18,6 +18,7 @@
 #include "esp_timer.h"
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 static const char *TAG = "WardriveScreen";
 
@@ -41,6 +42,14 @@ static bool wardriving_initialized_gps = false;
 static bool wardriving_scan_mode = false;
 static bool wardriving_ble_mode = false;
 static bool touch_press_active = false;
+
+static bool should_force_gps_deinit_on_exit(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    return (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+#else
+    return false;
+#endif
+}
 
 static uint32_t accent_color = 0x00FFFF;
 static uint32_t bg_color = 0x0A0A0A;
@@ -514,6 +523,7 @@ void wardriving_view_create(void) {
 
 void wardriving_view_destroy(void) {
     bool had_capture_mode = (wardriving_scan_mode || wardriving_ble_mode);
+    bool force_deinit_for_template = should_force_gps_deinit_on_exit();
 
     if (update_timer) {
         lv_timer_del(update_timer);
@@ -539,8 +549,8 @@ void wardriving_view_destroy(void) {
         wardriving_scan_mode = false;
     }
 
-    /* GPS-info-only mode can return immediately; avoid blocking LVGL on deinit. */
-    if (wardriving_initialized_gps && had_capture_mode) {
+    /* For somethingsomething template, always fully release GPS+UART on exit. */
+    if (wardriving_initialized_gps && (had_capture_mode || force_deinit_for_template)) {
         gps_manager_deinit(&g_gpsManager);
         wardriving_initialized_gps = false;
     } else if (wardriving_initialized_gps) {
