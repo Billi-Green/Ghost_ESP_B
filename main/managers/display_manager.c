@@ -2224,12 +2224,18 @@ void hardware_input_task(void *pvParameters) {
           continue;
         } else if (joystick_just_pressed(&joysticks[1])) {
           last_touch_time = xTaskGetTickCount();
-          InputEvent event;
-          event.type = INPUT_TYPE_JOYSTICK;
-          event.data.joystick_index = 1;
-          event.data.joystick_pressed = true;
-          if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
+          if (is_backlight_dimmed || is_backlight_off) {
+            set_backlight_brightness(100);
+            is_backlight_dimmed = false;
+            is_backlight_off = false;
+          } else {
+            InputEvent event;
+            event.type = INPUT_TYPE_JOYSTICK;
+            event.data.joystick_index = 1;
+            event.data.joystick_pressed = true;
+            if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+              ESP_LOGE(TAG, "Failed to send joystick input to queue\n");
+            }
           }
           continue;
         }
@@ -2238,6 +2244,15 @@ void hardware_input_task(void *pvParameters) {
 
       if (joystick_just_pressed(&joysticks[i])) {
         last_touch_time = xTaskGetTickCount();
+
+        if (is_backlight_dimmed || is_backlight_off) {
+          set_backlight_brightness(100);
+          is_backlight_dimmed = false;
+          is_backlight_off = false;
+          joystick_repeat_next_ms[i] = 0;
+          continue;
+        }
+
         InputEvent event;
         event.type = INPUT_TYPE_JOYSTICK;
         event.data.joystick_index = i;
@@ -2306,11 +2321,12 @@ void hardware_input_task(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(30)); // Debounce period
       } else
 #endif
-      if (is_backlight_dimmed) {
+      if (is_backlight_dimmed || is_backlight_off) {
 // Disable tap-to-wake, use button interrupt instead.
 #ifndef CONFIG_IS_S3TWATCH
         set_backlight_brightness(100);
         is_backlight_dimmed = false;
+        is_backlight_off = false;
         skip_event = true;
         vTaskDelay(pdMS_TO_TICKS(20));
 #endif
