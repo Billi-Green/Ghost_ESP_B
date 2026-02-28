@@ -472,7 +472,7 @@ void popup_layout_buttons_responsive(
             lv_coord_t gap_reduction = (required_reduction + (count - 2)) / (count - 1);
             if (gap_reduction > gap) gap_reduction = gap;
             min_possible_gap = gap - gap_reduction;
-            if (min_possible_gap < 2) min_possible_gap = 2;
+            if (min_possible_gap < 0) min_possible_gap = 0;
             gap = min_possible_gap;
             total_w = 0;
             for (int i = 0; i < count; ++i) total_w += btn_widths[i];

@@ -29,6 +29,7 @@
 - Optimised wardriving dwell times, added active probing and improved validation
 - Shortened delays for misc display menu building for more responsive feel
 - Improved clock view responsiveness
+- Increased BadUSB VSense delay to improve reliability of USB enumeration
 - Miscellaneous fixes, improvements and refactors
 
 ### Fixed
@@ -48,6 +49,9 @@
 - Fixed listing large amounts of evil portals on displays
 - Fixed crash starting karma attack
 - Fixed 'stop' not stopping the karma attack
+- Fixed joystick and touch input not checking if display is dimmed
+- Fixed wardrive exiting when waking the display with a touch press
+- Fixed NFC saved tag popup having vertically aligned buttons instead of horizontal
 
 ## Revival v1.9.3
 

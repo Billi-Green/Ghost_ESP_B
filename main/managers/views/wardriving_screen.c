@@ -40,6 +40,7 @@ static lv_obj_t *compass_needle = NULL;
 static bool wardriving_initialized_gps = false;
 static bool wardriving_scan_mode = false;
 static bool wardriving_ble_mode = false;
+static bool touch_press_active = false;
 
 static uint32_t accent_color = 0x00FFFF;
 static uint32_t bg_color = 0x0A0A0A;
@@ -308,8 +309,13 @@ static void update_display_cb(lv_timer_t *timer) {
 
 static void wardriving_input_callback(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
-        if (event->data.touch_data.state == LV_INDEV_STATE_REL) {
-            display_manager_switch_view(&main_menu_view);
+        if (event->data.touch_data.state == LV_INDEV_STATE_PR) {
+            touch_press_active = true;
+        } else if (event->data.touch_data.state == LV_INDEV_STATE_REL) {
+            if (touch_press_active) {
+                touch_press_active = false;
+                display_manager_switch_view(&main_menu_view);
+            }
         }
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
         display_manager_switch_view(&main_menu_view);
@@ -329,6 +335,8 @@ void wardriving_view_create(void) {
     if (wardriving_view.root != NULL) {
         return;
     }
+
+    touch_press_active = false;
     
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     accent_color = theme_palette_get_accent(theme);
