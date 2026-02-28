@@ -4,45 +4,50 @@
 
 ## Revival v1.9.4
 
+### Added
+- Added `wifistatus` CLI command to show connection status and saved network info
+- Added new wardriving and GPS info display view
+- Added Factory Reset option to wipe NVS and reboot
+- Added auto upload to WiGLE - @Play2BReal
+- Added control app updates - @tototo31
+- Added Flipper Zero Companion App documentation - @tototo31
+- Added SD JIT mounting for custom evil portal menu option
+- Added hold to invert letter case on joystick select in keyboard view
+- Added option to select custom portal for karma attack
+
+### Changed
 - 'chipinfo' command now shows firmware version and enabled build features (Display, NFC, BadUSB, IR, GPS, etc.)
 - Use country-appropriate channel list in main deauth task
-- Fixed station deauth channel lookup
-- Fixed GPS latitude parsing for GLL sentences (was using 3-digit degree width instead of 2)
 - Improved GPS Info display with fix mode, satellites in view, and cleaner logging
 - Moved multiple attacks and scans to separate files for maintainability
 - Significantly optimised port scan memory usage
-- Fixed BLE not initializing when selecting a flipper
 - Slightly increased IR Learn task size to prevent crash
-- Added `wifistatus` CLI command to show connection status and saved network info
-- Fixed a crash when deinitializing BLE
 - Improved BLE Spam
 - Deauth: fixed 5GHz HT40 tuning, added burst loops, and removed rate limiting
-- Fixed GPS satellites logic  
-- Fixed misc Wardriving issues
-- Added New Wardriving and GPS info display view
 - Reorganized settings menu into more categories
-- Added Factory Reset option to wipe NVS and reboot
-- Added auto upload to WiGLE - @Play2BReal
-- Control app updates - @tototo31
-- Added Flipper Zero Companion App documentation - @tototo31
-- Fixed 5Ghz deauthing
-- Fixed a crash when stopping deauth
 - Directly iterate to channels when deauthing multiple APs
 - Optimised wardriving dwell times, added active probing and improved validation
-- Added SD JIT mounting for custom evil portal menu option
 - Shortened delays for misc display menu building for more responsive feel
-- Fixed joystick repeat only working vertically
-- Added hold to invert letter case on joystick select in keyboard view
 - Improved clock view responsiveness
+- Miscellaneous fixes, improvements and refactors
+
+### Fixed
+- Fixed station deauth channel lookup
+- Fixed GPS latitude parsing for GLL sentences (was using 3-digit degree width instead of 2)
+- Fixed BLE not initializing when selecting a flipper
+- Fixed crash when deinitializing BLE
+- Fixed GPS satellites logic
+- Fixed misc wardriving issues
+- Fixed 5GHz deauthing
+- Fixed crash when stopping deauth
+- Fixed joystick repeat only working vertically
 - Fixed evil portal JIT mounting
 - Fixed crash on the Setup Wizard screen
 - Fixed touch handler for the WiGLE help popup
 - Fixed saving of WiGLE API credentials to mirror other setting saves
 - Fixed listing large amounts of evil portals on displays
-- Added option to select custom portal for karma attack
-- Fixed a crash starting karma attack
-- 'stop' now stops the karma attack
-- Miscellaneous fixes, improvements and refactors
+- Fixed crash starting karma attack
+- Fixed 'stop' not stopping the karma attack
 
 ## Revival v1.9.3
 
