@@ -156,6 +156,20 @@ static bool use_html_buffer = false;
 static bool portal_sd_jit_mounted = false;
 static bool portal_display_suspended = false;
 
+// Pre-loaded portal file cache for somethingsomething (JIT SPI-shared SD) builds.
+// The file is read once during portal startup while the SD is mounted in the
+// command-task context, avoiding a cross-task SPI bus re-init on every HTTP request.
+static char  *portal_file_cache      = NULL;
+static size_t portal_file_cache_size = 0;
+
+static void portal_clear_file_cache(void) {
+    if (portal_file_cache != NULL) {
+        free(portal_file_cache);
+        portal_file_cache = NULL;
+    }
+    portal_file_cache_size = 0;
+}
+
 #define PORTAL_KEYSTROKE_BUF_SZ 512
 #define PORTAL_CREDS_BUF_SZ 384
 static char s_portal_keystroke_buf[PORTAL_KEYSTROKE_BUF_SZ];
@@ -838,6 +852,20 @@ esp_err_t portal_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
+    // Serve from pre-loaded portal file cache (JIT SD-mount builds: somethingsomething).
+    // This avoids re-mounting the SD from the HTTP server task where SPI bus contention
+    // with the display causes the mount to fail and returns an error page to the client.
+    if (portal_file_cache != NULL && portal_file_cache_size > 0) {
+        ESP_LOGI(TAG, "Using pre-loaded portal file cache (%zu bytes)", portal_file_cache_size);
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked");
+        httpd_resp_send_chunk(req, portal_file_cache, portal_file_cache_size);
+        httpd_resp_send_chunk(req, CAPTURE_JS_SNIPPET, strlen(CAPTURE_JS_SNIPPET));
+        httpd_resp_send_chunk(req, NULL, 0);
+        ESP_LOGI(TAG, "Served portal from file cache with JS injection.");
+        return ESP_OK;
+    }
+
     // Check if we should serve the default embedded portal
     if (strcmp(PORTALURL, "INTERNAL_DEFAULT_PORTAL") == 0) {
         httpd_resp_set_type(req, "text/html");
@@ -1310,7 +1338,48 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
         }
     }
 
-    // Unmount SD after filename generation to free SPI bus for display/WiFi operations
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    // For JIT-mount builds (somethingsomething): while the SD card is still mounted,
+    // pre-load the custom portal HTML file into a heap buffer so that portal_handler()
+    // can serve it without needing to re-mount the SD from the HTTP server task context
+    // (which races with the display SPI bus and causes the mount to fail).
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        portal_clear_file_cache();  // discard any leftover cache from a previous portal run
+        bool is_local = (URLorFilePath != NULL &&
+                         strncmp(URLorFilePath, "http://", 7) != 0 &&
+                         strncmp(URLorFilePath, "https://", 8) != 0 &&
+                         strcmp(URLorFilePath, "default") != 0);
+        if (is_local && sd_card_manager.is_initialized) {
+            FILE *pf = fopen(URLorFilePath, "r");
+            if (pf != NULL) {
+                fseek(pf, 0, SEEK_END);
+                long pf_size = ftell(pf);
+                rewind(pf);
+                if (pf_size > 0) {
+                    char *pf_buf = malloc((size_t)pf_size + 1);
+                    if (pf_buf != NULL) {
+                        size_t pf_read = fread(pf_buf, 1, (size_t)pf_size, pf);
+                        pf_buf[pf_read] = '\0';
+                        portal_file_cache      = pf_buf;
+                        portal_file_cache_size = pf_read;
+                        ESP_LOGI(TAG, "Portal file pre-loaded into cache: %zu bytes from %s",
+                                 pf_read, URLorFilePath);
+                    } else {
+                        ESP_LOGW(TAG, "Portal file cache: malloc failed for %ld bytes", pf_size);
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Portal file cache: fseek/ftell returned %ld for %s", pf_size, URLorFilePath);
+                }
+                fclose(pf);
+            } else {
+                ESP_LOGW(TAG, "Portal file cache: cannot open %s for pre-load", URLorFilePath);
+            }
+        }
+    }
+#endif
+
+    // Unmount SD after filename generation (and portal file pre-load) to free SPI bus
+    // for display/WiFi operations.
     if (portal_sd_jit_mounted) {
         sd_card_unmount_after_flush(portal_display_suspended);
         // Reset flags since we've unmounted - handlers will JIT mount on demand
@@ -1377,9 +1446,22 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     esp_wifi_set_ps(WIFI_PS_NONE);
 
-    // be conservative for client compatibility (esp32-c5 can do more, but this avoids weird auth edge cases)
+    // be conservative for client compatibility (2.4GHz only, HT20 for max compatibility)
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    {
+        // Dual-band chips in WIFI_BAND_MODE_AUTO require the plural APIs
+        wifi_bandwidths_t bws = { .ghz_2g = WIFI_BW_HT20, .ghz_5g = WIFI_BW_HT20 };
+        (void)esp_wifi_set_bandwidths(WIFI_IF_AP, &bws);
+        wifi_protocols_t p = {
+            .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N,
+            .ghz_5g = WIFI_PROTOCOL_11A | WIFI_PROTOCOL_11N,
+        };
+        (void)esp_wifi_set_protocols(WIFI_IF_AP, &p);
+    }
+#else
     (void)esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
     (void)esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+#endif
     dnsserver.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
     dnsserver.ip.type = ESP_IPADDR_TYPE_V4;
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &ap_config));
@@ -1443,6 +1525,8 @@ void wifi_manager_stop_evil_portal() {
     
     // Free captured HTML buffer when portal stops to reclaim RAM
     wifi_manager_clear_html_buffer();
+    // Free pre-loaded portal file cache (JIT SD-mount builds)
+    portal_clear_file_cache();
 
     if (dns_handle != NULL) {
         stop_dns_server(dns_handle);
@@ -3277,6 +3361,7 @@ static int karma_ssid_count = 0;
 static int karma_ssid_index = 0;
 static uint32_t last_ssid_change_time = 0;
 static bool karma_ssid_manual_mode = false;
+static char karma_portal_file[256] = "default";
 
 
 // Helper to add SSID to cache if not present
@@ -3308,6 +3393,15 @@ void wifi_manager_set_karma_ssid_list(const char **ssids, int count) {
     }
     karma_ssid_index = 0;
     karma_ssid_manual_mode = true;
+}
+
+void wifi_manager_set_karma_portal_file(const char *path) {
+    if (path && strlen(path) < sizeof(karma_portal_file)) {
+        strncpy(karma_portal_file, path, sizeof(karma_portal_file) - 1);
+        karma_portal_file[sizeof(karma_portal_file) - 1] = '\0';
+    } else {
+        strncpy(karma_portal_file, "default", sizeof(karma_portal_file));
+    }
 }
 
 // Helper function to send a probe response to a station
@@ -3397,9 +3491,9 @@ static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t 
 }
 
 static void karma_start_portal_for_ssid(const char *ssid) {
-    // Use the default portal, SSID as AP name, open AP (no password)
+    // Use the configured portal file (default or custom from SD), SSID as AP name, open AP
     if (!karma_portal_active) {
-        wifi_manager_start_evil_portal("default", ssid, "", ssid, "portal.local");
+        wifi_manager_start_evil_portal(karma_portal_file, ssid, "", ssid, "portal.local");
         karma_portal_active = true;
         printf("[KARMA] Evil portal started for SSID: %s\n", ssid);
         TERMINAL_VIEW_ADD_TEXT("[KARMA] Evil portal started for SSID: %s\n", ssid);
@@ -3510,6 +3604,7 @@ void wifi_manager_stop_karma(void) {
     karma_ssid_count = 0;
     karma_ssid_index = 0;
     karma_ssid_manual_mode = false;
+    strncpy(karma_portal_file, "default", sizeof(karma_portal_file));
     // Task will clean up itself
 }
 

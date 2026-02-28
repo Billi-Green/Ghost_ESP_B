@@ -813,6 +813,7 @@ void handle_stop_flipper(int argc, char **argv) {
     dhcp_starvation_stop();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
+    wifi_manager_stop_karma();            // stop karma attack (sets flag; task self-exits)
     wifi_manager_stop_evil_portal();  // stop evil portal and flush credentials
     wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
     wifi_manager_stop_beacon();  // stop beacon spam

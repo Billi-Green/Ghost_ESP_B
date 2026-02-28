@@ -38,6 +38,10 @@
 - Fixed crash on the Setup Wizard screen
 - Fixed touch handler for the WiGLE help popup
 - Fixed saving of WiGLE API credentials to mirror other setting saves
+- Fixed listing large amounts of evil portals on displays
+- Added option to select custom portal for karma attack
+- Fixed a crash starting karma attack
+- 'stop' now stops the karma attack
 - Miscellaneous fixes, improvements and refactors
 
 ## Revival v1.9.3

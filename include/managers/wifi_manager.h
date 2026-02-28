@@ -265,6 +265,7 @@ void wifi_manager_clear_scan_results(void);
 void wifi_manager_start_karma(void);
 void wifi_manager_stop_karma(void);
 void wifi_manager_set_karma_ssid_list(const char **ssids, int count);
+void wifi_manager_set_karma_portal_file(const char *path);
 
 // RSSI tracking functions
 void wifi_manager_track_ap(void);

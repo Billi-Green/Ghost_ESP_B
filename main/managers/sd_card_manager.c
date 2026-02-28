@@ -1274,3 +1274,57 @@ int get_evil_portal_list(char portal_names[MAX_PORTALS][MAX_PORTAL_NAME]) {
     closedir(dir);
     return count;
 }
+
+int sd_card_list_dir_paged(const char *dir_path, const char *ext,
+                            int offset, int max_count,
+                            char (*out_names)[MAX_PORTAL_NAME],
+                            bool *out_has_more) {
+    if (out_has_more) *out_has_more = false;
+    if (!dir_path || !out_names || max_count <= 0) return -1;
+
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        ESP_LOGW(TAG, "sd_card_list_dir_paged: failed to open '%s'", dir_path);
+        return -1;
+    }
+
+    struct dirent *entry;
+    int skipped   = 0;
+    int collected = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        /* ---- regular-file check (FAT may return DT_UNKNOWN) ---- */
+        bool is_reg = (entry->d_type == DT_REG);
+        if (!is_reg && entry->d_type == DT_UNKNOWN) {
+            char fullpath[256];
+            int n = snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, entry->d_name);
+            if (n > 0 && n < (int)sizeof(fullpath)) {
+                struct stat st;
+                if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode)) is_reg = true;
+            }
+        }
+        if (!is_reg) continue;
+
+        /* ---- optional extension filter ---- */
+        if (ext) {
+            const char *dot = strrchr(entry->d_name, '.');
+            if (!dot || strcmp(dot, ext) != 0) continue;
+        }
+
+        /* ---- pagination ---- */
+        if (skipped < offset) { skipped++; continue; }
+
+        if (collected < max_count) {
+            strncpy(out_names[collected], entry->d_name, MAX_PORTAL_NAME - 1);
+            out_names[collected][MAX_PORTAL_NAME - 1] = '\0';
+            collected++;
+        } else {
+            /* one extra entry confirms a following page exists */
+            if (out_has_more) *out_has_more = true;
+            break;
+        }
+    }
+
+    closedir(dir);
+    return collected;
+}
