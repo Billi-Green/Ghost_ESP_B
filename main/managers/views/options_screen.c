@@ -1966,6 +1966,7 @@ void option_event_cb(lv_event_t *e) {
     }
 
     if (SelectedMenuType == OT_IOButtonPresets) {
+#ifdef CONFIG_USE_IO_EXPANDER
         int preset_idx = -1;
         for (int i = 0; i < NUM_IO_BTN_PRESETS; i++) {
             if (strcmp(Selected_Option, io_btn_presets[i].name) == 0) {
@@ -2006,6 +2007,10 @@ void option_event_cb(lv_event_t *e) {
         }
         option_invoked = false;
         return;
+#else
+        option_invoked = false;
+        return;
+#endif
     }
 
     if (SelectedMenuType == OT_DualComm) {
