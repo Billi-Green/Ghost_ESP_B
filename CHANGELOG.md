@@ -14,6 +14,7 @@
 - Added SD JIT mounting for custom evil portal menu option
 - Added hold to invert letter case on joystick select in keyboard view
 - Added option to select custom portal for karma attack
+- Add IO expander programmable button commands - @tototo31
 
 ### Changed
 - 'chipinfo' command now shows firmware version and enabled build features (Display, NFC, BadUSB, IR, GPS, etc.)
