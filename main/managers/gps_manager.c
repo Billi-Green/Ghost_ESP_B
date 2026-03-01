@@ -65,6 +65,18 @@ static bool gps_should_use_software_rx(void) {
     return false;
 }
 
+static void gps_soft_try_release_rgb_rmt(void) {
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    rgb_manager_rmt_release();
+#endif
+}
+
+static void gps_soft_try_reacquire_rgb_rmt(void) {
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    rgb_manager_rmt_reacquire();
+#endif
+}
+
 nmea_parser_handle_t nmea_hdl;
 
 gps_date_t cacheddate = {0};
@@ -202,7 +214,7 @@ void gps_manager_init(GPSManager *manager) {
         if (!nmea_hdl) {
             esp_err_t soft_err = minmea_soft_get_last_error();
             if (soft_err == ESP_ERR_NOT_FOUND) {
-                rgb_manager_rmt_release();
+                gps_soft_try_release_rgb_rmt();
                 gps_soft_released_rgb_rmt = true;
                 nmea_hdl = minmea_soft_start((gpio_num_t)current_rx_pin, config.uart.baud_rate);
                 gps_soft_mode_active = (nmea_hdl != NULL);
@@ -220,7 +232,7 @@ void gps_manager_init(GPSManager *manager) {
                      esp_err_to_name(soft_err));
             glog("Soft GPS RX init failed: %s\n", esp_err_to_name(soft_err));
             if (gps_soft_released_rgb_rmt) {
-                rgb_manager_rmt_reacquire();
+                gps_soft_try_reacquire_rgb_rmt();
                 gps_soft_released_rgb_rmt = false;
             }
         } else {
@@ -370,7 +382,7 @@ void gps_manager_deinit(GPSManager *manager) {
             if (gps_soft_mode_active) {
                 minmea_soft_stop(nmea_hdl);
                 if (gps_soft_released_rgb_rmt) {
-                    rgb_manager_rmt_reacquire();
+                    gps_soft_try_reacquire_rgb_rmt();
                     gps_soft_released_rgb_rmt = false;
                 }
             } else {
@@ -386,7 +398,7 @@ void gps_manager_deinit(GPSManager *manager) {
         status_display_show_status("GPS Deinit");
         gps_soft_mode_active = false;
         if (gps_soft_released_rgb_rmt) {
-            rgb_manager_rmt_reacquire();
+            gps_soft_try_reacquire_rgb_rmt();
             gps_soft_released_rgb_rmt = false;
         }
         if (!gps_should_preserve_dualcomm()) {
@@ -542,14 +554,6 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
                                  : (gps->fix_mode == GPS_MODE_2D)             ? "Basic"
                                  : (gps->fix_mode == GPS_MODE_3D)             ? "Locked"
                                                                               : "Unknown";
-
-        // Determine accuracy based on HDOP
-        const char *accuracy = (gps->dop_h < 0.0 || gps->dop_h > 50.0) ? "Invalid"
-                               : (gps->dop_h <= 1.0)                   ? "Perfect"
-                               : (gps->dop_h <= 2.0)                   ? "High"
-                               : (gps->dop_h <= 5.0)                   ? "Good"
-                               : (gps->dop_h <= 10.0)                  ? "Okay"
-                                                                       : "Poor";
 
         // Convert speed from m/s to km/h for display with validation
         float speed_kmh = 0.0;
