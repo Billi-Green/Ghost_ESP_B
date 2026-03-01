@@ -391,7 +391,12 @@ void wardriving_view_create(void) {
 
         bool peer_helper_ok = false;
         if (esp_comm_manager_is_connected()) {
-            peer_helper_ok = esp_comm_manager_send_command("startwd", "--helper");
+            char helper_args[256] = "--helper";
+            char helper_plan_csv[192] = {0};
+            if (wardriving_get_helper_channel_plan_csv(helper_plan_csv, sizeof(helper_plan_csv))) {
+                snprintf(helper_args, sizeof(helper_args), "--helper --channels %s", helper_plan_csv);
+            }
+            peer_helper_ok = esp_comm_manager_send_command("startwd", helper_args);
             glog(peer_helper_ok
                      ? "Wardrive helper started on peer (split-channel).\n"
                      : "Wardrive helper not started on peer; continuing local only.\n");

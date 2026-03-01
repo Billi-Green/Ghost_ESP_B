@@ -15,6 +15,7 @@
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 #include <sys/time.h>
 #include "esp_rom_sys.h"  // Contains esp_rom_printf
@@ -50,6 +51,7 @@ static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8
 #define CHANNEL_HOP_INTERVAL_MS 100
 #define WARDRIVE_STREAM_VERSION 1
 #define WARDRIVE_HELPER_DEDUPE_SIZE 128
+#define WARDRIVE_HELPER_REFRESH_MS 25000
 #define RECENT_SSID_COUNT 5
 #define LOG_DELAY_MS 5000
 #define PROBE_DEDUPE_TIMEOUT_MS 1000
@@ -77,6 +79,13 @@ static uint32_t wardrive_log_ok = 0;
 static uint32_t wardrive_gps_rejected = 0;
 static uint32_t wardrive_helper_rx_observations = 0;
 static uint32_t wardrive_helper_merged_ok = 0;
+static uint32_t wardrive_helper_tx_new = 0;
+static uint32_t wardrive_helper_tx_ssid_promo = 0;
+static uint32_t wardrive_helper_tx_rssi = 0;
+static uint32_t wardrive_helper_tx_refresh = 0;
+static uint32_t wardrive_helper_tx_suppressed = 0;
+static uint32_t wardrive_helper_stream_send_ok = 0;
+static uint32_t wardrive_helper_stream_send_fail = 0;
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #define BLE_WD_SEEN_SIZE 64
@@ -129,6 +138,8 @@ typedef enum {
 typedef struct {
     uint32_t hash;
     int8_t best_rssi;
+    uint32_t last_sent_ms;
+    bool ssid_empty;
     bool used;
 } wardrive_helper_dedupe_t;
 
@@ -136,19 +147,23 @@ static wardrive_role_t wardrive_role = WARDRIVE_ROLE_PRIMARY;
 static bool wardrive_peer_assist_active = false;
 static wardrive_helper_dedupe_t wardrive_helper_dedupe[WARDRIVE_HELPER_DEDUPE_SIZE];
 static uint8_t wardrive_helper_dedupe_idx = 0;
+static uint8_t wardrive_forced_helper_channels[WIFI_CHANNELS_MAX] = {0};
+static uint8_t wardrive_forced_helper_channel_count = 0;
 
 static void wardrive_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data);
 static uint8_t wardrive_select_auth_code(const char *encryption_type);
 static const char *wardrive_auth_code_to_string(uint8_t auth_code);
 static uint32_t wardrive_hash_bssid(const uint8_t *bssid);
-static bool wardrive_helper_should_send(const uint8_t *bssid, int8_t rssi);
+static bool wardrive_helper_should_send(const uint8_t *bssid, int8_t rssi, const char *ssid);
 static bool wardrive_send_helper_observation(const uint8_t *bssid,
                                              uint8_t channel,
                                              int8_t rssi,
                                              uint8_t auth_code,
                                              const char *ssid);
+static inline uint32_t now_ms_u32(void);
 static uint32_t wardrive_get_hop_interval_ms(void);
 static void wardrive_apply_hop_interval(void);
+static uint8_t wardrive_build_full_channel_list(uint8_t *full_channels);
 
 static uint8_t wardrive_select_auth_code(const char *encryption_type) {
     if (!encryption_type) {
@@ -199,15 +214,44 @@ static uint32_t wardrive_hash_bssid(const uint8_t *bssid) {
     return hash ? hash : 1u;
 }
 
-static bool wardrive_helper_should_send(const uint8_t *bssid, int8_t rssi) {
+static bool wardrive_helper_should_send(const uint8_t *bssid, int8_t rssi, const char *ssid) {
     uint32_t hash = wardrive_hash_bssid(bssid);
+    uint32_t now_ms = now_ms_u32();
+    bool ssid_empty = (!ssid || ssid[0] == '\0');
+
     for (int i = 0; i < WARDRIVE_HELPER_DEDUPE_SIZE; i++) {
         wardrive_helper_dedupe_t *entry = &wardrive_helper_dedupe[i];
         if (entry->used && entry->hash == hash) {
-            if (rssi > entry->best_rssi + 3) {
-                entry->best_rssi = rssi;
+            if (entry->ssid_empty && !ssid_empty) {
+                entry->ssid_empty = false;
+                if (rssi > entry->best_rssi) {
+                    entry->best_rssi = rssi;
+                }
+                entry->last_sent_ms = now_ms;
+                wardrive_helper_tx_ssid_promo++;
                 return true;
             }
+            if (rssi > entry->best_rssi + 3) {
+                entry->best_rssi = rssi;
+                if (!ssid_empty) {
+                    entry->ssid_empty = false;
+                }
+                entry->last_sent_ms = now_ms;
+                wardrive_helper_tx_rssi++;
+                return true;
+            }
+            if ((uint32_t)(now_ms - entry->last_sent_ms) >= WARDRIVE_HELPER_REFRESH_MS) {
+                if (rssi > entry->best_rssi) {
+                    entry->best_rssi = rssi;
+                }
+                if (!ssid_empty) {
+                    entry->ssid_empty = false;
+                }
+                entry->last_sent_ms = now_ms;
+                wardrive_helper_tx_refresh++;
+                return true;
+            }
+            wardrive_helper_tx_suppressed++;
             return false;
         }
     }
@@ -216,7 +260,10 @@ static bool wardrive_helper_should_send(const uint8_t *bssid, int8_t rssi) {
     slot->used = true;
     slot->hash = hash;
     slot->best_rssi = rssi;
+    slot->last_sent_ms = now_ms;
+    slot->ssid_empty = ssid_empty;
     wardrive_helper_dedupe_idx = (uint8_t)((wardrive_helper_dedupe_idx + 1) % WARDRIVE_HELPER_DEDUPE_SIZE);
+    wardrive_helper_tx_new++;
     return true;
 }
 
@@ -282,14 +329,12 @@ static void wardrive_apply_hop_interval(void) {
     ESP_LOGI(TAG, "Wardrive: hop interval now %lu ms", (unsigned long)interval_ms);
 }
 
-static void wardrive_build_channel_list(void) {
-    uint8_t full_channels[WIFI_CHANNELS_MAX] = {0};
-    uint8_t channels_24[WIFI_CHANNELS_MAX] = {0};
-    uint8_t channels_5[WIFI_CHANNELS_MAX] = {0};
-    uint8_t channels_24_count = 0;
-    uint8_t channels_5_count = 0;
-    uint8_t full_count = wifi_channels_build_country_list(full_channels, WIFI_CHANNELS_MAX);
+static uint8_t wardrive_build_full_channel_list(uint8_t *full_channels) {
+    if (!full_channels) {
+        return 0;
+    }
 
+    uint8_t full_count = wifi_channels_build_country_list(full_channels, WIFI_CHANNELS_MAX);
     if (full_count == 0) {
         uint8_t fallback[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,
             36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165};
@@ -298,6 +343,17 @@ static void wardrive_build_channel_list(void) {
         memcpy(full_channels, fallback, count);
         full_count = count;
     }
+
+    return full_count;
+}
+
+static void wardrive_build_channel_list(void) {
+    uint8_t full_channels[WIFI_CHANNELS_MAX] = {0};
+    uint8_t channels_24[WIFI_CHANNELS_MAX] = {0};
+    uint8_t channels_5[WIFI_CHANNELS_MAX] = {0};
+    uint8_t channels_24_count = 0;
+    uint8_t channels_5_count = 0;
+    uint8_t full_count = wardrive_build_full_channel_list(full_channels);
 
     for (uint8_t i = 0; i < full_count; i++) {
         if (full_channels[i] <= 14) {
@@ -321,7 +377,10 @@ static void wardrive_build_channel_list(void) {
             }
         }
     } else {
-        if (channels_24_count > 0) {
+        if (wardrive_forced_helper_channel_count > 0) {
+            memcpy(wardrive_channels, wardrive_forced_helper_channels, wardrive_forced_helper_channel_count);
+            wardrive_channel_count = wardrive_forced_helper_channel_count;
+        } else if (channels_24_count > 0) {
             memcpy(wardrive_channels, channels_24, channels_24_count);
             wardrive_channel_count = channels_24_count;
         } else {
@@ -337,13 +396,56 @@ static void wardrive_build_channel_list(void) {
     }
 
     ESP_LOGI(TAG,
-             "Wardrive: role=%s channels=%d/%d assist=%s bands(2.4=%d,5=%d)",
+             "Wardrive: role=%s channels=%d/%d assist=%s bands(2.4=%d,5=%d) forced_helper=%d",
              wardrive_role == WARDRIVE_ROLE_PRIMARY ? "primary" : "helper",
              wardrive_channel_count,
              full_count,
              wardrive_peer_assist_active ? "on" : "off",
              channels_24_count,
-             channels_5_count);
+             channels_5_count,
+             wardrive_forced_helper_channel_count);
+}
+
+static uint8_t wardrive_parse_channel_csv(const char *csv, uint8_t *out, uint8_t out_max) {
+    if (!csv || !out || out_max == 0) {
+        return 0;
+    }
+
+    char buf[192];
+    strncpy(buf, csv, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    uint8_t count = 0;
+    char *tok = strtok(buf, ",");
+    while (tok && count < out_max) {
+        while (*tok && isspace((unsigned char)*tok)) tok++;
+        char *end = tok + strlen(tok);
+        while (end > tok && isspace((unsigned char)end[-1])) {
+            end--;
+        }
+        *end = '\0';
+
+        if (*tok != '\0') {
+            char *num_end = NULL;
+            long ch = strtol(tok, &num_end, 10);
+            if (num_end != tok && *num_end == '\0' && ch >= 1 && ch <= MAX_WIFI_CHANNEL) {
+                bool exists = false;
+                for (uint8_t i = 0; i < count; i++) {
+                    if (out[i] == (uint8_t)ch) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    out[count++] = (uint8_t)ch;
+                }
+            }
+        }
+
+        tok = strtok(NULL, ",");
+    }
+
+    return count;
 }
 
 static uint32_t hash_ssid(const char *ssid);
@@ -1077,13 +1179,20 @@ static void wardrive_heartbeat_cb(void *arg) {
 
     size_t pending = csv_get_pending_bytes();
 
-    glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
+    glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu tx(n/p/r/t/s)=%lu/%lu/%lu/%lu/%lu send(ok/fail)=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
          (unsigned long)wardrive_wifi_frames_seen,
          (unsigned long)wardrive_log_ok,
          (unsigned long)wardrive_log_attempts,
          (unsigned long)wardrive_gps_rejected,
          (unsigned long)wardrive_helper_merged_ok,
          (unsigned long)wardrive_helper_rx_observations,
+         (unsigned long)wardrive_helper_tx_new,
+         (unsigned long)wardrive_helper_tx_ssid_promo,
+         (unsigned long)wardrive_helper_tx_rssi,
+         (unsigned long)wardrive_helper_tx_refresh,
+         (unsigned long)wardrive_helper_tx_suppressed,
+         (unsigned long)wardrive_helper_stream_send_ok,
+         (unsigned long)wardrive_helper_stream_send_fail,
          (unsigned)wardrive_channel,
          (unsigned long)up_m,
          (unsigned long)up_rem_s,
@@ -1101,6 +1210,13 @@ static void start_wardrive_heartbeat(void) {
     wardrive_gps_rejected = 0;
     wardrive_helper_rx_observations = 0;
     wardrive_helper_merged_ok = 0;
+    wardrive_helper_tx_new = 0;
+    wardrive_helper_tx_ssid_promo = 0;
+    wardrive_helper_tx_rssi = 0;
+    wardrive_helper_tx_refresh = 0;
+    wardrive_helper_tx_suppressed = 0;
+    wardrive_helper_stream_send_ok = 0;
+    wardrive_helper_stream_send_fail = 0;
     memset(wardrive_helper_dedupe, 0, sizeof(wardrive_helper_dedupe));
     wardrive_helper_dedupe_idx = 0;
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -1314,8 +1430,83 @@ void wardriving_register_stream_handler(void) {
     ESP_LOGI(TAG, "Wardrive stream handler: %s", ok ? "OK" : "FAIL");
 }
 
+bool wardriving_get_helper_channel_plan_csv(char *out, size_t out_len) {
+    if (!out || out_len == 0) {
+        return false;
+    }
+
+    uint8_t full_channels[WIFI_CHANNELS_MAX] = {0};
+    uint8_t channels_24[WIFI_CHANNELS_MAX] = {0};
+    uint8_t full_count = wardrive_build_full_channel_list(full_channels);
+    uint8_t channels_24_count = 0;
+
+    for (uint8_t i = 0; i < full_count; i++) {
+        if (full_channels[i] <= 14 && channels_24_count < WIFI_CHANNELS_MAX) {
+            channels_24[channels_24_count++] = full_channels[i];
+        }
+    }
+
+    uint8_t plan[WIFI_CHANNELS_MAX] = {0};
+    uint8_t plan_count = 0;
+    if (channels_24_count > 0) {
+        memcpy(plan, channels_24, channels_24_count);
+        plan_count = channels_24_count;
+    } else {
+        for (uint8_t i = 1; i < full_count && plan_count < WIFI_CHANNELS_MAX; i += 2) {
+            plan[plan_count++] = full_channels[i];
+        }
+    }
+
+    if (plan_count == 0) {
+        out[0] = '\0';
+        return false;
+    }
+
+    size_t pos = 0;
+    for (uint8_t i = 0; i < plan_count; i++) {
+        int wrote = snprintf(out + pos, out_len - pos, (i == 0) ? "%u" : ",%u", (unsigned)plan[i]);
+        if (wrote <= 0 || (size_t)wrote >= (out_len - pos)) {
+            out[0] = '\0';
+            return false;
+        }
+        pos += (size_t)wrote;
+    }
+
+    return true;
+}
+
+bool wardriving_set_helper_channels_from_csv(const char *csv) {
+    if (!csv || csv[0] == '\0') {
+        wardrive_forced_helper_channel_count = 0;
+        return true;
+    }
+
+    uint8_t parsed[WIFI_CHANNELS_MAX] = {0};
+    uint8_t count = wardrive_parse_channel_csv(csv, parsed, WIFI_CHANNELS_MAX);
+    if (count == 0) {
+        wardrive_forced_helper_channel_count = 0;
+        return false;
+    }
+
+    memcpy(wardrive_forced_helper_channels, parsed, count);
+    wardrive_forced_helper_channel_count = count;
+
+    if (wardrive_role == WARDRIVE_ROLE_HELPER) {
+        wardrive_build_channel_list();
+        wardrive_channel_idx = 0;
+        if (wardrive_channel_count > 0) {
+            wardrive_channel = wardrive_channels[0];
+            (void)esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE);
+        }
+        wardrive_apply_hop_interval();
+    }
+
+    return true;
+}
+
 void start_wardriving(void) {
     wardrive_role = WARDRIVE_ROLE_PRIMARY;
+    wardrive_forced_helper_channel_count = 0;
     start_wardrive_channel_hopping();
     start_wardrive_heartbeat();
 }
@@ -1332,6 +1523,7 @@ void stop_wardriving(void) {
     stop_wardrive_channel_hopping();
     wardrive_role = WARDRIVE_ROLE_PRIMARY;
     wardrive_peer_assist_active = false;
+    wardrive_forced_helper_channel_count = 0;
 }
 
 void wardriving_set_peer_assist(bool enabled) {
@@ -1847,12 +2039,17 @@ rsn_done:
 
     if (wardrive_role == WARDRIVE_ROLE_HELPER) {
         const char *tx_ssid = (ssid[0] == '\0') ? "" : ssid;
-        if (wardrive_helper_should_send(bssid, (int8_t)rssi)) {
-            (void)wardrive_send_helper_observation(bssid,
-                                                   (uint8_t)channel,
-                                                   (int8_t)rssi,
-                                                   wardrive_select_auth_code(encryption_type),
-                                                   tx_ssid);
+        if (wardrive_helper_should_send(bssid, (int8_t)rssi, tx_ssid)) {
+            bool send_ok = wardrive_send_helper_observation(bssid,
+                                                            (uint8_t)channel,
+                                                            (int8_t)rssi,
+                                                            wardrive_select_auth_code(encryption_type),
+                                                            tx_ssid);
+            if (send_ok) {
+                wardrive_helper_stream_send_ok++;
+            } else {
+                wardrive_helper_stream_send_fail++;
+            }
         }
         return;
     }

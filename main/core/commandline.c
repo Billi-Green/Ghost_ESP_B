@@ -3622,12 +3622,24 @@ void handle_time_cmd(int argc, char **argv) {
 void handle_startwd(int argc, char **argv) {
     bool stop_flag = false;
     bool helper_mode = false;
+    char helper_channels_csv[192] = {0};
+    bool helper_channels_set = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0) {
             stop_flag = true;
         } else if (strcmp(argv[i], "--helper") == 0) {
             helper_mode = true;
+        } else if (strcmp(argv[i], "--channels") == 0) {
+            if (i + 1 >= argc) {
+                glog("startwd: --channels requires a value\n");
+                return;
+            }
+            strncpy(helper_channels_csv, argv[++i], sizeof(helper_channels_csv) - 1);
+            helper_channels_set = true;
+        } else if (strncmp(argv[i], "--channels=", 11) == 0) {
+            strncpy(helper_channels_csv, argv[i] + 11, sizeof(helper_channels_csv) - 1);
+            helper_channels_set = true;
         }
     }
 
@@ -3653,11 +3665,19 @@ void handle_startwd(int argc, char **argv) {
             glog("Wardriving stopped.\n");
             status_display_show_status("Wardrive Stop");
         } else {
+            (void)wardriving_set_helper_channels_from_csv(NULL);
             glog("Wardriving helper stopped.\n");
             status_display_show_status("WD Helper Stop");
         }
     } else {
         if (helper_mode) {
+            if (helper_channels_set) {
+                if (!wardriving_set_helper_channels_from_csv(helper_channels_csv)) {
+                    glog("Wardriving helper: invalid channel list, using default helper channels.\n");
+                }
+            } else {
+                (void)wardriving_set_helper_channels_from_csv(NULL);
+            }
             wifi_manager_start_monitor_mode(wardriving_scan_callback);
             start_wardriving_helper();
             glog("Wardriving helper started.\n");
@@ -3677,7 +3697,12 @@ void handle_startwd(int argc, char **argv) {
         bool peer_helper_ok = false;
         if (!esp_comm_manager_is_remote_command()) {
             if (esp_comm_manager_is_connected()) {
-                peer_helper_ok = esp_comm_manager_send_command("startwd", "--helper");
+                char helper_args[256] = "--helper";
+                char helper_plan_csv[192] = {0};
+                if (wardriving_get_helper_channel_plan_csv(helper_plan_csv, sizeof(helper_plan_csv))) {
+                    snprintf(helper_args, sizeof(helper_args), "--helper --channels %s", helper_plan_csv);
+                }
+                peer_helper_ok = esp_comm_manager_send_command("startwd", helper_args);
                 glog(peer_helper_ok
                          ? "Wardrive helper started on peer (split-channel).\n"
                          : "Wardrive helper not started on peer; continuing local only.\n");
@@ -4123,7 +4148,7 @@ void handle_help(int argc, char **argv) {
         glog("\nGPS Commands:\n\n");
         glog("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo [-s]\n\n");
         glog("gpspin\n    Set GPS RX pin for external GPS module.\n    Usage: gpspin <pin>\n\n");
-        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [-s] [--helper]\n\n");
+        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [-s] [--helper] [--channels <csv>]\n\n");
         return;
     }
     if (strcmp(category, "portal") == 0) {
@@ -5228,15 +5253,37 @@ void handle_sd_cmd(int argc, char **argv) {
             return;
         }
 
+        bool raw_output = (strcmp(sub, "cat") == 0);
         long offset = 0;
         size_t max_bytes = 0;
-        if (argc >= 4) {
-            offset = strtol(argv[3], NULL, 10);
-            if (offset < 0) offset = 0;
-        }
-        if (argc >= 5) {
-            int mb = atoi(argv[4]);
-            if (mb > 0) max_bytes = (size_t)mb;
+        int numeric_arg_count = 0;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--raw") == 0) {
+                raw_output = true;
+                continue;
+            }
+
+            char *endptr = NULL;
+            long v = strtol(argv[i], &endptr, 10);
+            if (endptr == argv[i] || *endptr != '\0') {
+                glog("SD:ERR:invalid_arg:%s\n", argv[i]);
+                sd_cli_cleanup();
+                return;
+            }
+
+            if (numeric_arg_count == 0) {
+                offset = v;
+                if (offset < 0) offset = 0;
+            } else if (numeric_arg_count == 1) {
+                if (v > 0) {
+                    max_bytes = (size_t)v;
+                }
+            } else {
+                glog("SD:ERR:too_many_args\n");
+                sd_cli_cleanup();
+                return;
+            }
+            numeric_arg_count++;
         }
 
         FILE *f = fopen(resolved, "rb");
@@ -5254,10 +5301,12 @@ void handle_sd_cmd(int argc, char **argv) {
             max_bytes = (size_t)(file_size - offset);
         }
 
-        glog("SD:READ:BEGIN:%s\n", resolved);
-        glog("SD:READ:SIZE:%ld\n", file_size);
-        glog("SD:READ:OFFSET:%ld\n", offset);
-        glog("SD:READ:LENGTH:%zu\n", max_bytes);
+        if (!raw_output) {
+            glog("SD:READ:BEGIN:%s\n", resolved);
+            glog("SD:READ:SIZE:%ld\n", file_size);
+            glog("SD:READ:OFFSET:%ld\n", offset);
+            glog("SD:READ:LENGTH:%zu\n", max_bytes);
+        }
 
         char *buf = malloc(1024);
         if (!buf) {
@@ -5276,22 +5325,32 @@ void handle_sd_cmd(int argc, char **argv) {
             }
             size_t out_written = fwrite(buf, 1, to_write, stdout);
             if (out_written != to_write) {
-                glog("\nSD:ERR:stdout_write_failed\n");
+                if (raw_output) {
+                    glog("SD:ERR:stdout_write_failed\n");
+                } else {
+                    glog("\nSD:ERR:stdout_write_failed\n");
+                }
                 read_failed = true;
                 break;
             }
             total_read += to_write;
         }
         if (ferror(f)) {
-            glog("\nSD:ERR:file_read_failed\n");
+            if (raw_output) {
+                glog("SD:ERR:file_read_failed\n");
+            } else {
+                glog("\nSD:ERR:file_read_failed\n");
+            }
             read_failed = true;
         }
         free(buf);
         fclose(f);
 
-        glog("\nSD:READ:END:bytes=%zu\n", total_read);
-        if (!read_failed) {
-            glog("SD:OK\n");
+        if (!raw_output) {
+            glog("\nSD:READ:END:bytes=%zu\n", total_read);
+            if (!read_failed) {
+                glog("SD:OK\n");
+            }
         }
         sd_cli_cleanup();
         return;
@@ -6940,10 +6999,10 @@ void handle_chameleon_cmd(int argc, char **argv) {
         }
         
         if (pin != NULL) {
-            printf("Connecting to Chameleon Ultra with %lu second timeout and PIN...\n", timeout);
+            printf("Connecting to Chameleon Ultra with %lu second timeout and PIN...\n", (unsigned long)timeout);
             TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra with PIN...\n");
         } else {
-            printf("Connecting to Chameleon Ultra with %lu second timeout...\n", timeout);
+            printf("Connecting to Chameleon Ultra with %lu second timeout...\n", (unsigned long)timeout);
             TERMINAL_VIEW_ADD_TEXT("Connecting to Chameleon Ultra...\n");
         }
         

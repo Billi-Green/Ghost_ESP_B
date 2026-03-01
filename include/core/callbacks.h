@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "vendor/GPS/MicroNMEA.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <esp_timer.h>
 #include <time.h>
 
@@ -40,6 +41,8 @@ void stop_wardriving(void);
 void wardriving_set_peer_assist(bool enabled);
 bool wardriving_is_helper_mode(void);
 void wardriving_register_stream_handler(void);
+bool wardriving_get_helper_channel_plan_csv(char *out, size_t out_len);
+bool wardriving_set_helper_channels_from_csv(const char *csv);
 
 uint32_t wardriving_get_ap_count(void);
 
