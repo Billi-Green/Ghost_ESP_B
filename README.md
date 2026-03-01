@@ -1,10 +1,10 @@
-# Ghost ESP: Revival
+# GhostESP: Revival
 
 > **Note:** this is a detached fork of [Spooky's GhostESP](https://github.com/Spooks4576/Ghost_ESP) which has been archived and not in development anymore.
 
-**⭐️ Enjoying Ghost ESP? Please give the repo a star!**
+**⭐️ Enjoying GhostESP? Please give the repo a star!**
 
-Ghost ESP turns your ESP32 into a powerful, cheap and helpful wireless testing tool. Built on ESP-IDF.
+GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing tool. Built on ESP-IDF.
 
 ---
 
