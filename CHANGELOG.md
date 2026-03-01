@@ -31,11 +31,24 @@
 - Shortened delays for misc display menu building for more responsive feel
 - Improved clock view responsiveness
 - Increased BadUSB VSense delay to improve reliability of USB enumeration
+- Improved CLI `scan` validation and status messaging for invalid durations and failed timed scans
+- Improved CLI `sd` read/write/append reliability checks to report short writes and stream errors
+- Improved task startup error handling for DIAL, Karma, Deauth, Beacon, EAPOL, DHCP Starvation, and SAE Flood
+- Improved BLE capture startup flow to fail fast when handler registration or scan start fails
+- Optimized PineAP detection memory model by lazily allocating detection tables at start and freeing them on stop
+- Reworked PineAP detection logging to use a single queued worker task instead of per-detection task creation
+- Reworked PCAP writer buffering to use a fixed static packet slot pool instead of per-packet heap allocations
 - Miscellaneous fixes, improvements and refactors
 - Fixed feberis pro spelling
 
 ### Fixed
 - Fixed station deauth channel lookup
+- Fixed potential NULL dereference in command registration when `strdup` fails under low memory
+- Fixed silent serial startup failures by validating queue and task creation in `serial_manager_init`
+- Fixed race-prone stop behavior in SAE flood by waiting for task exit before freeing crypto context
+- Fixed race-prone restart behavior in Karma and Beacon by waiting/cleaning lingering tasks on stop
+- Fixed DHCP starvation reporting success while socket/send operations were failing
+- Fixed `select` CLI parse errors that omitted the invalid token and improved index list boundary checks
 - Fixed GPS latitude parsing for GLL sentences (was using 3-digit degree width instead of 2)
 - Fixed BLE not initializing when selecting a flipper
 - Fixed crash when deinitializing BLE

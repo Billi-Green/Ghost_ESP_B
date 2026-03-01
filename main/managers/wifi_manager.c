@@ -2989,10 +2989,19 @@ void wifi_manager_get_scan_results_data(uint16_t *count, wifi_ap_record_t **aps)
     *aps = scanned_aps;
 }
 
-void wifi_manager_start_scan_with_time(int seconds) {
+esp_err_t wifi_manager_start_scan_with_time(int seconds) {
     ap_manager_stop_services();
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) {
+        printf("Failed to set WiFi mode for timed scan: %s\n", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        printf("Failed to start WiFi for timed scan: %s\n", esp_err_to_name(err));
+        return err;
+    }
 
     wifi_scan_config_t scan_config = {
         .ssid = NULL,
@@ -3011,18 +3020,23 @@ void wifi_manager_start_scan_with_time(int seconds) {
         TERMINAL_VIEW_ADD_TEXT(buf);
     }
 
-    esp_err_t err = esp_wifi_scan_start(&scan_config, false);
+    err = esp_wifi_scan_start(&scan_config, false);
     if (err != ESP_OK) {
         printf("WiFi scan failed to start: %s\n", esp_err_to_name(err));
         TERMINAL_VIEW_ADD_TEXT("WiFi scan failed to start\n");
-        return;
+        return err;
     }
 
     vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
 
     wifi_manager_stop_scan();
-    ESP_ERROR_CHECK(esp_wifi_stop());
+    err = esp_wifi_stop();
+    if (err != ESP_OK) {
+        printf("Failed to stop WiFi after timed scan: %s\n", esp_err_to_name(err));
+        return err;
+    }
     // ESP_ERROR_CHECK(ap_manager_start_services()); // Removed: Rely on caller (handle_combined_scan) to restart AP services
+    return ESP_OK;
 }
 
 // Station scan channel hopping functions moved to station_scan.c module
@@ -3586,12 +3600,18 @@ void wifi_manager_start_karma(void) {
         TERMINAL_VIEW_ADD_TEXT("Karma attack already running\n");
         return;
     }
-    karma_running = true;
     if (!karma_ssid_manual_mode) {
         karma_ssid_count = 0;
         karma_ssid_index = 0;
     }
-    xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
+    BaseType_t rc = xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
+    if (rc != pdPASS) {
+        printf("Failed to start Karma task (%ld)\n", (long)rc);
+        TERMINAL_VIEW_ADD_TEXT("Failed to start Karma task\n");
+        karma_task_handle = NULL;
+        return;
+    }
+    karma_running = true;
 }
 
 void wifi_manager_stop_karma(void) {
@@ -3605,7 +3625,15 @@ void wifi_manager_stop_karma(void) {
     karma_ssid_index = 0;
     karma_ssid_manual_mode = false;
     strncpy(karma_portal_file, "default", sizeof(karma_portal_file));
-    // Task will clean up itself
+    int wait_count = 0;
+    while (karma_task_handle != NULL && wait_count < 30) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        wait_count++;
+    }
+    if (karma_task_handle != NULL) {
+        vTaskDelete(karma_task_handle);
+        karma_task_handle = NULL;
+    }
 }
 
 // rssi tracking for selected ap and sta

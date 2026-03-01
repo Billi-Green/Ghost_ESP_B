@@ -593,7 +593,7 @@ static bool wait_for_ble_ready(void) {
     return true;
 }
 
-void ble_start_scanning(void) {
+bool ble_start_scanning(void) {
     if (!ble_initialized) {
         ble_init();
     }
@@ -602,7 +602,7 @@ void ble_start_scanning(void) {
         ESP_LOGE(TAG_BLE, "BLE stack not ready");
         TERMINAL_VIEW_ADD_TEXT("BLE stack not ready\n");
         status_display_show_status("BLE Not Ready");
-        return;
+        return false;
     }
 
     if (ble_gap_disc_active()) {
@@ -630,10 +630,12 @@ void ble_start_scanning(void) {
         ESP_LOGE(TAG_BLE, "Error starting BLE scan");
         TERMINAL_VIEW_ADD_TEXT("Error starting BLE scan\n");
         status_display_show_status("BLE Scan Fail");
+        return false;
     } else {
         ESP_LOGI(TAG_BLE, "Scanning started...");
         TERMINAL_VIEW_ADD_TEXT("Scanning started...\n");
         status_display_show_status("BLE Scanning");
+        return true;
     }
 }
 
@@ -996,7 +998,12 @@ void ble_start_capture(void) {
     }
 
     // Register BLE handler only after file is open
-    ble_register_handler(ble_pcap_callback);
+    err = ble_register_handler(ble_pcap_callback);
+    if (err != ESP_OK) {
+        ESP_LOGE("BLE_PCAP", "Failed to register BLE capture handler: %s", esp_err_to_name(err));
+        pcap_file_close();
+        return;
+    }
 
     // Create a timer to flush the buffer periodically
     esp_timer_create_args_t timer_args = {.callback = (esp_timer_cb_t)pcap_flush_buffer_to_file,
@@ -1006,7 +1013,16 @@ void ble_start_capture(void) {
         esp_timer_start_periodic(flush_timer, 1000000); // Flush every second
     }
 
-    ble_start_scanning();
+    if (!ble_start_scanning()) {
+        ble_unregister_handler(ble_pcap_callback);
+        if (flush_timer != NULL) {
+            esp_timer_stop(flush_timer);
+            esp_timer_delete(flush_timer);
+            flush_timer = NULL;
+        }
+        pcap_file_close();
+        return;
+    }
     status_display_show_status("BLE Capture On");
 }
 
@@ -1031,7 +1047,11 @@ void ble_start_capture_wireshark(void) {
     }
 
     /* Register BLE handler to emit HCI packets into the PCAP buffer */
-    ble_register_handler(ble_pcap_callback);
+    esp_err_t err = ble_register_handler(ble_pcap_callback);
+    if (err != ESP_OK) {
+        ESP_LOGE("BLE_PCAP", "Failed to register BLE wireshark handler: %s", esp_err_to_name(err));
+        return;
+    }
 
     /* Flush more frequently for better live capture latency */
     esp_timer_create_args_t timer_args = {.callback = (esp_timer_cb_t)pcap_flush_buffer_to_file,
@@ -1041,7 +1061,15 @@ void ble_start_capture_wireshark(void) {
         esp_timer_start_periodic(flush_timer, 200000);
     }
 
-    ble_start_scanning();
+    if (!ble_start_scanning()) {
+        ble_unregister_handler(ble_pcap_callback);
+        if (flush_timer != NULL) {
+            esp_timer_stop(flush_timer);
+            esp_timer_delete(flush_timer);
+            flush_timer = NULL;
+        }
+        return;
+    }
     status_display_show_status("BLE Wireshark");
 }
 

@@ -204,9 +204,15 @@ void register_command(const char *name, CommandFunction function) {
     Command *new_command = (Command *)malloc(sizeof(Command));
     if (new_command == NULL) {
         // Handle memory allocation failure
+        glog("Failed to register command '%s': out of memory\n", name);
         return;
     }
     new_command->name = strdup(name);
+    if (new_command->name == NULL) {
+        glog("Failed to register command '%s': out of memory\n", name);
+        free(new_command);
+        return;
+    }
     new_command->function = function;
     new_command->next = command_list_head;
     command_list_head = new_command;
@@ -249,6 +255,7 @@ void handle_unknown_command(const char *cmd) {
 }
 
 void cmd_wifi_scan_start(int argc, char **argv) {
+    esp_err_t timed_scan_err = ESP_OK;
     if (argc > 1) {
         if (strcmp(argv[1], "-stop") == 0) {
             cmd_wifi_scan_stop(argc, argv);
@@ -259,13 +266,27 @@ void cmd_wifi_scan_start(int argc, char **argv) {
             wifi_manager_start_live_ap_scan();
             return;
         }
-        int seconds = atoi(argv[1]);
-        wifi_manager_start_scan_with_time(seconds);
+        char *endptr = NULL;
+        long seconds_long = strtol(argv[1], &endptr, 10);
+        if (endptr == argv[1] || *endptr != '\0') {
+            glog("Invalid scan duration '%s'. Use an integer number of seconds.\n", argv[1]);
+            return;
+        }
+        if (seconds_long < 1 || seconds_long > 120) {
+            glog("Scan duration out of range (%ld). Valid range is 1-120 seconds.\n", seconds_long);
+            return;
+        }
+        timed_scan_err = wifi_manager_start_scan_with_time((int)seconds_long);
+        if (timed_scan_err != ESP_OK) {
+            glog("WiFi timed scan failed: %s\n", esp_err_to_name(timed_scan_err));
+            status_display_show_status("Scan Failed");
+            return;
+        }
     } else {
         wifi_manager_start_scan();
     }
     wifi_manager_print_scan_results_with_oui();
-    status_display_show_status("Scan Started");
+    status_display_show_status("Scan Complete");
 }
 
 void cmd_wifi_scan_stop(int argc, char **argv) {
@@ -279,8 +300,15 @@ void cmd_wifi_scan_stop(int argc, char **argv) {
     pcap_file_close();
 
     // Reset WiFi to a good state
-    esp_wifi_stop();
-    esp_wifi_start();
+    esp_err_t stop_err = esp_wifi_stop();
+    esp_err_t start_err = esp_wifi_start();
+
+    if (stop_err != ESP_OK || start_err != ESP_OK) {
+        glog("WiFi scan stop completed with recovery errors (stop=%s, start=%s).\n",
+             esp_err_to_name(stop_err), esp_err_to_name(start_err));
+        status_display_show_status("Scan Stop Warn");
+        return;
+    }
 
     glog("WiFi scan stopped.\n");
     status_display_show_status("Scan Stopped");
@@ -682,7 +710,7 @@ void handle_select_cmd(int argc, char **argv) {
             if (*endptr == '\0') {
                 wifi_manager_select_ap(num);
             } else {
-                glog("Error: is not a valid number.\n");
+                glog("Error: '%s' is not a valid number.\n", input);
             }
         } else {
             int indices[32];
@@ -700,6 +728,11 @@ void handle_select_cmd(int argc, char **argv) {
                 }
                 token = strtok(NULL, ",");
             }
+
+            if (token != NULL) {
+                glog("Error: too many indices (max 32).\n");
+                return;
+            }
             
             if (count > 0) {
                 wifi_manager_select_multiple_aps(indices, count);
@@ -713,7 +746,7 @@ void handle_select_cmd(int argc, char **argv) {
         if (*endptr == '\0') {
             wifi_manager_select_station(num);
         } else {
-            glog("Error: is not a valid number.\n");
+            glog("Error: '%s' is not a valid number.\n", argv[2]);
         }
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     } else if (strcmp(argv[1], "-airtag") == 0) {
@@ -849,7 +882,10 @@ void handle_dial_command(int argc, char **argv) {
             dial_manager_set_device_name(argv[i]);
         }
     }
-    xTaskCreate(&discover_task, "discover_task", DISCOVER_TASK_STACK, NULL, 5, NULL);
+    BaseType_t rc = xTaskCreate(&discover_task, "discover_task", DISCOVER_TASK_STACK, NULL, 5, NULL);
+    if (rc != pdPASS) {
+        glog("Failed to start DIAL discovery task (err=%ld).\n", (long)rc);
+    }
 }
 
 static void dump_task_stacks(void) {
@@ -5184,19 +5220,31 @@ void handle_sd_cmd(int argc, char **argv) {
 
         size_t total_read = 0;
         size_t n;
+        bool read_failed = false;
         while (total_read < max_bytes && (n = fread(buf, 1, 1024, f)) > 0) {
             size_t to_write = n;
             if (total_read + to_write > max_bytes) {
                 to_write = max_bytes - total_read;
             }
-            fwrite(buf, 1, to_write, stdout);
+            size_t out_written = fwrite(buf, 1, to_write, stdout);
+            if (out_written != to_write) {
+                glog("\nSD:ERR:stdout_write_failed\n");
+                read_failed = true;
+                break;
+            }
             total_read += to_write;
+        }
+        if (ferror(f)) {
+            glog("\nSD:ERR:file_read_failed\n");
+            read_failed = true;
         }
         free(buf);
         fclose(f);
 
         glog("\nSD:READ:END:bytes=%zu\n", total_read);
-        glog("SD:OK\n");
+        if (!read_failed) {
+            glog("SD:OK\n");
+        }
         sd_cli_cleanup();
         return;
     }
@@ -5248,11 +5296,16 @@ void handle_sd_cmd(int argc, char **argv) {
         }
 
         size_t written = fwrite(decoded, 1, olen, f);
+        int write_failed = ferror(f);
         fclose(f);
         free(decoded);
 
         glog("SD:WRITE:bytes=%zu\n", written);
-        glog("SD:OK:created:%s\n", path);
+        if (write_failed || written != olen) {
+            glog("SD:ERR:short_write:%s\n", path);
+        } else {
+            glog("SD:OK:created:%s\n", path);
+        }
         sd_cli_cleanup();
         return;
     }
@@ -5304,11 +5357,16 @@ void handle_sd_cmd(int argc, char **argv) {
         }
 
         size_t written = fwrite(decoded, 1, olen, f);
+        int write_failed = ferror(f);
         fclose(f);
         free(decoded);
 
         glog("SD:APPEND:bytes=%zu\n", written);
-        glog("SD:OK:appended:%s\n", path);
+        if (write_failed || written != olen) {
+            glog("SD:ERR:short_write:%s\n", path);
+        } else {
+            glog("SD:OK:appended:%s\n", path);
+        }
         sd_cli_cleanup();
         return;
     }

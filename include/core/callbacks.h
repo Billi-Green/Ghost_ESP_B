@@ -2,7 +2,6 @@
 #define CALLBACKS_H
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "vendor/GPS/MicroNMEA.h"
 #include <esp_timer.h>
 #include <time.h>
@@ -23,20 +22,11 @@ typedef struct {
   // Circular buffer for recent SSIDs
   char recent_ssids[RECENT_SSID_COUNT][33];
   uint8_t recent_ssid_index;
-  TaskHandle_t log_task_handle;
+  uint32_t log_due_ms;
+  bool log_pending;
   int8_t last_channel;
   int8_t last_rssi;
 } pineap_network_t;
-
-// Structure for passing data to logging task
-typedef struct {
-  uint8_t bssid[6];
-  char recent_ssids[RECENT_SSID_COUNT][33];
-  int ssid_count;
-  int8_t channel;
-  int8_t rssi;
-  struct pineap_network_t *network; // Add network pointer
-} pineap_log_data_t;
 
 // PineAP detection control functions
 void start_pineap_detection(void);

@@ -924,8 +924,14 @@ esp_err_t sd_card_append_file(const char *path, const void *data, size_t size) {
     printf("Failed to open file for appending\n");
     return ESP_FAIL;
   }
-  fwrite(data, 1, size, f);
+  size_t written = fwrite(data, 1, size, f);
+  int write_failed = ferror(f);
   fclose(f);
+  if (write_failed || written != size) {
+    printf("Failed to append full data to file: %s (%zu/%zu bytes)\n", path, written,
+           size);
+    return ESP_FAIL;
+  }
   printf("Data appended to file: %s\n", path);
   return ESP_OK;
 }
@@ -941,8 +947,13 @@ esp_err_t sd_card_write_file(const char *path, const void *data, size_t size) {
     printf("Failed to open file for writing\n");
     return ESP_FAIL;
   }
-  fwrite(data, 1, size, f);
+  size_t written = fwrite(data, 1, size, f);
+  int write_failed = ferror(f);
   fclose(f);
+  if (write_failed || written != size) {
+    printf("Failed to write full file: %s (%zu/%zu bytes)\n", path, written, size);
+    return ESP_FAIL;
+  }
   printf("File written: %s\n", path);
   return ESP_OK;
 }

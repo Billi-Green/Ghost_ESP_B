@@ -232,7 +232,7 @@ bool wifi_manager_arp_scan_subnet(void);
 extern const uint16_t COMMON_PORTS[];
 extern const size_t NUM_PORTS;
 
-void wifi_manager_start_scan_with_time(int seconds);
+esp_err_t wifi_manager_start_scan_with_time(int seconds);
 
 void wifi_manager_scanall_chart(void);
 

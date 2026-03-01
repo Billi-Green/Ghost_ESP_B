@@ -166,8 +166,24 @@ void eapol_logoff_start(void) {
 #ifdef CONFIG_WITH_STATUS_DISPLAY
     status_display_show_attack("EAPOL logoff", "running");
 #endif
-    xTaskCreate(eapol_logoff_task, "eapol_logoff", 2048, NULL, 5, &eapol_logoff_task_handle);
-    xTaskCreate(eapol_logoff_display_task, "eapol_disp", 3072, NULL, 5, &eapol_logoff_display_task_handle);
+    BaseType_t attack_rc = xTaskCreate(eapol_logoff_task, "eapol_logoff", 2048, NULL, 5, &eapol_logoff_task_handle);
+    BaseType_t display_rc = xTaskCreate(eapol_logoff_display_task, "eapol_disp", 3072, NULL, 5, &eapol_logoff_display_task_handle);
+    if (attack_rc != pdPASS || display_rc != pdPASS) {
+        glog("EAPOL Logoff failed to start (attack=%ld, display=%ld)\n", (long)attack_rc, (long)display_rc);
+        eapol_logoff_running = false;
+        if (eapol_logoff_task_handle) {
+            vTaskDelete(eapol_logoff_task_handle);
+            eapol_logoff_task_handle = NULL;
+        }
+        if (eapol_logoff_display_task_handle) {
+            vTaskDelete(eapol_logoff_display_task_handle);
+            eapol_logoff_display_task_handle = NULL;
+        }
+#ifdef CONFIG_WITH_STATUS_DISPLAY
+        status_display_show_status("EAPOL start failed");
+#endif
+        return;
+    }
 }
 
 void eapol_logoff_stop(void) {

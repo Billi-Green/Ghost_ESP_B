@@ -19,6 +19,7 @@
 #include "esp_rom_sys.h"  // Contains esp_rom_printf
 #include <esp_timer.h>  // For esp_timer_get_time
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 // prototypes for static inline helpers
 static inline bool is_packet_valid(const wifi_promiscuous_pkt_t *pkt, wifi_promiscuous_pkt_type_t type);
@@ -56,7 +57,7 @@ static const uint8_t pineapple_ouis[][3] = {
     {0x00, 0x13, 0x37},
 };
 static const size_t pineapple_oui_count = sizeof(pineapple_ouis) / sizeof(pineapple_ouis[0]);
-static pineap_network_t pineap_networks[MAX_PINEAP_NETWORKS];
+static pineap_network_t *pineap_networks = NULL;
 static int pineap_network_count = 0;
 static bool pineap_detection_active = false;
 static uint8_t current_channel = 1;
@@ -286,13 +287,46 @@ static bool beacon_should_emit_limited(const uint8_t *bssid, bool ssid_has_text)
 // queued writer to avoid heavy work in promiscuous callback
 typedef struct {
     uint16_t length;
-    uint8_t *buffer;
+    uint8_t data[768];
+    bool in_use;
+} pcap_pool_slot_t;
+
+typedef struct {
+    uint8_t slot_idx;
     pcap_capture_type_t cap_type;
 } pcap_q_item_t;
 
 #define EAPOL_Q_LEN 64
+#define PCAP_POOL_SLOTS 16
 static QueueHandle_t s_pcap_q = NULL;
 static TaskHandle_t s_pcap_writer_task = NULL;
+static pcap_pool_slot_t s_pcap_pool[PCAP_POOL_SLOTS];
+static portMUX_TYPE s_pcap_pool_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static int pcap_pool_acquire_slot(void) {
+    int slot = -1;
+    taskENTER_CRITICAL(&s_pcap_pool_lock);
+    for (int i = 0; i < PCAP_POOL_SLOTS; i++) {
+        if (!s_pcap_pool[i].in_use) {
+            s_pcap_pool[i].in_use = true;
+            slot = i;
+            break;
+        }
+    }
+    taskEXIT_CRITICAL(&s_pcap_pool_lock);
+    return slot;
+}
+
+static void pcap_pool_release_slot(uint8_t slot_idx) {
+    if (slot_idx >= PCAP_POOL_SLOTS) {
+        return;
+    }
+
+    taskENTER_CRITICAL(&s_pcap_pool_lock);
+    s_pcap_pool[slot_idx].in_use = false;
+    s_pcap_pool[slot_idx].length = 0;
+    taskEXIT_CRITICAL(&s_pcap_pool_lock);
+}
 
 static void pcap_writer_task(void *arg) {
     (void)arg;
@@ -300,9 +334,12 @@ static void pcap_writer_task(void *arg) {
     uint32_t processed = 0;
     for (;;) {
         if (xQueueReceive(s_pcap_q, &item, pdMS_TO_TICKS(500)) == pdTRUE) {
-            if (item.buffer && item.length > 0) {
-                pcap_write_packet_to_buffer(item.buffer, item.length, item.cap_type);
-                free(item.buffer);
+            if (item.slot_idx < PCAP_POOL_SLOTS) {
+                pcap_pool_slot_t *slot = &s_pcap_pool[item.slot_idx];
+                if (slot->length > 0) {
+                    pcap_write_packet_to_buffer(slot->data, slot->length, item.cap_type);
+                }
+                pcap_pool_release_slot(item.slot_idx);
             }
             processed++;
             if ((processed & 0xFF) == 0) { // log occasionally to avoid spam
@@ -332,14 +369,26 @@ static inline void enqueue_pcap_write_typed(const uint8_t *payload, uint16_t len
     if (!payload || len == 0) return;
     ensure_pcap_queue_started();
     if (!s_pcap_q) return;
+
+    if (len > sizeof(s_pcap_pool[0].data)) {
+        return;
+    }
+
+    int slot = pcap_pool_acquire_slot();
+    if (slot < 0) {
+        return;
+    }
+
+    pcap_pool_slot_t *pool_slot = &s_pcap_pool[slot];
+    pool_slot->length = len;
+    memcpy(pool_slot->data, payload, len);
+
     pcap_q_item_t item = {0};
-    item.length = len;
-    item.buffer = (uint8_t *)malloc(len);
     item.cap_type = cap_type;
-    if (!item.buffer) return;
-    memcpy(item.buffer, payload, len);
+    item.slot_idx = (uint8_t)slot;
+
     if (xQueueSend(s_pcap_q, &item, 0) != pdTRUE) {
-        free(item.buffer);
+        pcap_pool_release_slot((uint8_t)slot);
     }
 }
 
@@ -354,14 +403,18 @@ void cleanup_pcap_queue(void) {
         s_pcap_writer_task = NULL;
     }
     if (s_pcap_q != NULL) {
-        // drain any remaining items and free their buffers
+        // drain any remaining items and release pool slots
         pcap_q_item_t item;
         while (xQueueReceive(s_pcap_q, &item, 0) == pdTRUE) {
-            if (item.buffer) free(item.buffer);
+            pcap_pool_release_slot(item.slot_idx);
         }
         vQueueDelete(s_pcap_q);
         s_pcap_q = NULL;
     }
+
+    taskENTER_CRITICAL(&s_pcap_pool_lock);
+    memset(s_pcap_pool, 0, sizeof(s_pcap_pool));
+    taskEXIT_CRITICAL(&s_pcap_pool_lock);
 }
 
 static const char *suspicious_names[] STORE_DATA_ATTR = {
@@ -442,10 +495,53 @@ typedef struct {
     time_t last_update_time;
 } blacklisted_ap_t;
 
-static blacklisted_ap_t blacklist[MAX_PINEAP_NETWORKS];
+static blacklisted_ap_t *blacklist = NULL;
 static int blacklist_count = 0;
 
+typedef struct {
+    uint8_t network_index;
+    uint32_t due_ms;
+} pineap_log_event_t;
+
+#define PINEAP_LOG_QUEUE_LEN 8
+static QueueHandle_t s_pineap_log_queue = NULL;
+static TaskHandle_t s_pineap_log_task = NULL;
+
+static inline uint32_t now_ms_u32(void) {
+    return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static bool allocate_pineap_tables(void) {
+    if (pineap_networks != NULL && blacklist != NULL) {
+        return true;
+    }
+
+    pineap_network_t *new_networks = calloc(MAX_PINEAP_NETWORKS, sizeof(*new_networks));
+    blacklisted_ap_t *new_blacklist = calloc(MAX_PINEAP_NETWORKS, sizeof(*new_blacklist));
+    if (new_networks == NULL || new_blacklist == NULL) {
+        free(new_networks);
+        free(new_blacklist);
+        return false;
+    }
+
+    pineap_networks = new_networks;
+    blacklist = new_blacklist;
+    return true;
+}
+
+static void free_pineap_tables(void) {
+    free(pineap_networks);
+    pineap_networks = NULL;
+    free(blacklist);
+    blacklist = NULL;
+    pineap_network_count = 0;
+    blacklist_count = 0;
+}
+
 static bool is_blacklisted(const uint8_t *bssid) {
+    if (blacklist == NULL) {
+        return false;
+    }
     for (int i = 0; i < blacklist_count; i++) {
         if (memcmp(blacklist[i].bssid, bssid, 6) == 0) {
             return true;
@@ -455,6 +551,9 @@ static bool is_blacklisted(const uint8_t *bssid) {
 }
 
 static bool should_update_blacklisted(const uint8_t *bssid) {
+    if (blacklist == NULL) {
+        return false;
+    }
     for (int i = 0; i < blacklist_count; i++) {
         if (memcmp(blacklist[i].bssid, bssid, 6) == 0) {
             time_t current_time = time(NULL);
@@ -470,6 +569,9 @@ static bool should_update_blacklisted(const uint8_t *bssid) {
 }
 
 static void add_to_blacklist(const uint8_t *bssid) {
+    if (blacklist == NULL) {
+        return;
+    }
     time_t current_time = time(NULL);
 
     // First check if BSSID exists
@@ -519,6 +621,10 @@ static void stop_channel_hopping(void) {
 }
 
 static pineap_network_t *find_or_create_network(const uint8_t *bssid) {
+    if (pineap_networks == NULL) {
+        return NULL;
+    }
+
     for (int i = 0; i < pineap_network_count; i++) {
         if (compare_bssid(pineap_networks[i].bssid, bssid)) {
             return &pineap_networks[i];
@@ -533,6 +639,8 @@ static pineap_network_t *find_or_create_network(const uint8_t *bssid) {
         network->has_pineapple_oui = is_pineapple_oui(bssid);
         network->oui_logged = false;
         network->first_seen = time(NULL);
+        network->log_due_ms = 0;
+        network->log_pending = false;
         return network;
     }
 
@@ -717,10 +825,94 @@ static void stop_wardrive_heartbeat(void) {
     }
 }
 
+static void pineap_log_worker_task(void *arg) {
+    (void)arg;
+    pineap_log_event_t ev;
+
+    for (;;) {
+        if (xQueueReceive(s_pineap_log_queue, &ev, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        uint32_t now = now_ms_u32();
+        if (ev.due_ms > now) {
+            vTaskDelay(pdMS_TO_TICKS(ev.due_ms - now));
+        }
+
+        if (!pineap_detection_active || pineap_networks == NULL) {
+            continue;
+        }
+
+        if (ev.network_index >= (uint8_t)pineap_network_count) {
+            continue;
+        }
+
+        pineap_network_t *network = &pineap_networks[ev.network_index];
+        if (!network->log_pending || network->log_due_ms != ev.due_ms) {
+            continue;
+        }
+
+        char mac_str[18];
+        format_mac_address(network->bssid, mac_str, sizeof(mac_str), false);
+
+        char ssids_str[256] = {0};
+        int valid_ssid_count = build_recent_ssids_string(network, ssids_str, sizeof(ssids_str));
+
+        if (valid_ssid_count >= MIN_SSIDS_FOR_DETECTION) {
+            pulse_once(&rgb_manager, 255, 0, 255);
+
+            for (int i = 0; i < pineap_network_count; i++) {
+                if (i != (network - pineap_networks) &&
+                    strcasecmp(network->recent_ssids[0], pineap_networks[i].recent_ssids[0]) == 0) {
+                    char other_mac_str[18];
+                    format_mac_address(pineap_networks[i].bssid, other_mac_str, sizeof(other_mac_str), false);
+                    glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %s and\n%s\n",
+                         network->recent_ssids[0], mac_str, other_mac_str);
+                }
+            }
+
+            log_pineap_details(network, "Pineapple detected!", ssids_str, valid_ssid_count);
+        }
+
+        network->log_pending = false;
+        network->log_due_ms = 0;
+    }
+}
+
+static void start_pineap_log_worker(void) {
+    if (s_pineap_log_queue == NULL) {
+        s_pineap_log_queue = xQueueCreate(PINEAP_LOG_QUEUE_LEN, sizeof(pineap_log_event_t));
+    }
+    if (s_pineap_log_queue != NULL && s_pineap_log_task == NULL) {
+        if (xTaskCreate(pineap_log_worker_task, "pineap_logw", 1792, NULL, 1, &s_pineap_log_task) != pdPASS) {
+            s_pineap_log_task = NULL;
+        }
+    }
+}
+
+static void stop_pineap_log_worker(void) {
+    if (s_pineap_log_task != NULL) {
+        vTaskDelete(s_pineap_log_task);
+        s_pineap_log_task = NULL;
+    }
+    if (s_pineap_log_queue != NULL) {
+        vQueueDelete(s_pineap_log_queue);
+        s_pineap_log_queue = NULL;
+    }
+}
+
 void start_pineap_detection(void) {
+    if (!allocate_pineap_tables()) {
+        glog("PineAP: failed to allocate detection tables\n");
+        return;
+    }
+
     pineap_detection_active = true;
     pineap_network_count = 0;
-    memset(pineap_networks, 0, sizeof(pineap_networks));
+    blacklist_count = 0;
+    memset(pineap_networks, 0, MAX_PINEAP_NETWORKS * sizeof(*pineap_networks));
+    memset(blacklist, 0, MAX_PINEAP_NETWORKS * sizeof(*blacklist));
+    start_pineap_log_worker();
     wardrive_build_channel_list();
     wardrive_channel_idx = 0;
     current_channel = wardrive_channels[0];
@@ -730,6 +922,8 @@ void start_pineap_detection(void) {
 void stop_pineap_detection(void) {
     pineap_detection_active = false;
     stop_channel_hopping();
+    stop_pineap_log_worker();
+    free_pineap_tables();
 }
 
 void start_wardriving(void) {
@@ -750,73 +944,6 @@ uint32_t wardriving_get_ap_count(void) {
     static const char flash_fmt[] STORE_STR_ATTR = fmt; \
     esp_rom_printf(flash_fmt, ##__VA_ARGS__); \
 } while(0)
-
-void log_pineap_detection(void *arg) {
-    pineap_log_data_t *log_data = (pineap_log_data_t *)arg;
-    pineap_network_t *network = log_data->network;
-
-    vTaskDelay(pdMS_TO_TICKS(5000));
-
-    char mac_str[18];
-    format_mac_address(log_data->bssid, mac_str, sizeof(mac_str), false);
-
-    char ssids_str[256] = {0};
-    int valid_ssid_count =
-        build_recent_ssids_string(network, ssids_str, sizeof(ssids_str));
-
-    // Only log if we have valid SSIDs
-    if (valid_ssid_count >= MIN_SSIDS_FOR_DETECTION) {
-        // Pulse RGB purple (red + blue) to indicate Pineapple detection
-        pulse_once(&rgb_manager, 255, 0, 255);
-
-        // Evil Twin Detection: Check for same SSID from different BSSIDs
-        for (int i = 0; i < pineap_network_count; i++) {
-            if (i != (network - pineap_networks) && // Skip self
-                strcasecmp(network->recent_ssids[0], pineap_networks[i].recent_ssids[0]) == 0) {
-                // format the other network's BSSID into a string before logging
-                char other_mac_str[18];
-                format_mac_address(pineap_networks[i].bssid, other_mac_str, sizeof(other_mac_str), false);
-
-                glog("Evil Twin Detected:\nSame SSID '%.100s'\nfrom BSSID %s and\n%s\n",
-                     network->recent_ssids[0], mac_str, other_mac_str);
-            }
-        }
-
-        log_pineap_details(network, "Pineapple detected!", ssids_str, valid_ssid_count);
-    }
-
-    free(log_data);
-    network->log_task_handle = NULL; // Clear handle before deletion
-    vTaskDelete(NULL);
-}
-
-static void start_log_task(pineap_network_t *network, const char *new_ssid, int8_t channel,
-                           int8_t rssi) {
-    // Check if a task is already running
-    if (network->log_task_handle != NULL) {
-        TaskHandle_t existing_handle = network->log_task_handle;
-        network->log_task_handle = NULL; // Clear it first to avoid race conditions
-        vTaskDelete(existing_handle);    // Clean up existing task
-    }
-
-    pineap_log_data_t *log_data = malloc(sizeof(pineap_log_data_t));
-    if (!log_data)
-        return;
-
-    // Copy network data
-    memcpy(log_data->bssid, network->bssid, 6);
-    memcpy(log_data->recent_ssids, network->recent_ssids, sizeof(network->recent_ssids));
-    log_data->ssid_count = network->ssid_count;
-    log_data->channel = channel;
-    log_data->rssi = rssi;
-    log_data->network = network;
-    BaseType_t result = xTaskCreate(log_pineap_detection, "pineap_log", 1024, log_data, 1,
-                                    &network->log_task_handle);
-    if (result != pdPASS) {
-        free(log_data);
-        network->log_task_handle = NULL;
-    }
-}
 
 // Helper function to check if SSID is valid and unique
 static bool is_valid_unique_ssid(const char *new_ssid, pineap_network_t *network) {
@@ -995,20 +1122,16 @@ void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) 
             network->is_pineap = true;
             add_to_blacklist(hdr->addr3);
 
-            // Create new logging task if previous one has completed
-            if (network->log_task_handle == NULL) {
-                pineap_log_data_t *log_data = malloc(sizeof(pineap_log_data_t));
-                if (!log_data)
-                    return;
-
-                memcpy(log_data->bssid, network->bssid, 6);
-                log_data->network = network; // Pass network pointer for up-to-date info
-
-                BaseType_t result = xTaskCreate(log_pineap_detection, "pineap_log", 1024, log_data,
-                                                1, &network->log_task_handle);
-                if (result != pdPASS) {
-                    free(log_data);
-                    network->log_task_handle = NULL;
+            if (!network->log_pending && s_pineap_log_queue != NULL) {
+                pineap_log_event_t ev = {
+                    .network_index = (uint8_t)(network - pineap_networks),
+                    .due_ms = now_ms_u32() + 5000
+                };
+                network->log_due_ms = ev.due_ms;
+                network->log_pending = true;
+                if (xQueueSend(s_pineap_log_queue, &ev, 0) != pdTRUE) {
+                    network->log_pending = false;
+                    network->log_due_ms = 0;
                 }
             }
 
