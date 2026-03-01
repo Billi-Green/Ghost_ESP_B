@@ -3,6 +3,7 @@
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
 #include "vendor/GPS/MicroNMEA.h"
+#include <stdbool.h>
 #include <esp_timer.h>
 #include <time.h>
 
@@ -34,7 +35,11 @@ void stop_pineap_detection(void);
 
 // Wardriving channel hopping control functions
 void start_wardriving(void);
+void start_wardriving_helper(void);
 void stop_wardriving(void);
+void wardriving_set_peer_assist(bool enabled);
+bool wardriving_is_helper_mode(void);
+void wardriving_register_stream_handler(void);
 
 uint32_t wardriving_get_ap_count(void);
 

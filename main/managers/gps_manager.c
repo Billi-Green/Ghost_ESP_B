@@ -16,9 +16,12 @@
 #include <string.h>
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
+#include "managers/rgb_manager.h"
+#include "vendor/GPS/minmea_soft.h"
 #include <esp_heap_caps.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <time.h>
 
 typedef struct {
     StackType_t *stack;
@@ -29,11 +32,38 @@ typedef struct {
 static gps_task_static_res_t g_gps_check_task_res = {0};
 
 static const char *GPS_TAG = "GPS";
+
+/* Workaround for stale LSP indexers that miss minmea_soft.h prototype. */
+extern esp_err_t minmea_soft_get_last_error(void);
+extern void minmea_soft_get_stats(minmea_soft_stats_t *out_stats);
+/* Keep explicit wardriving dedupe prototypes for toolchains/indexers that miss transitive headers. */
+extern bool csv_wifi_ap_should_log_peek(const char *bssid, int rssi, const char *ssid);
+extern void csv_wifi_ap_log_commit(const char *bssid, int rssi, const char *ssid);
 bool has_valid_cached_date = false;
 static bool gps_connection_logged = false;
 static TaskHandle_t gps_check_task_handle = NULL;
 static bool gps_timeout_detected = false;
+static bool gps_soft_mode_active = false;
+static bool gps_soft_released_rgb_rmt = false;
 static void check_gps_connection_task(void *pvParameters);
+
+static bool gps_should_preserve_dualcomm(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        return true;
+    }
+#endif
+    return false;
+}
+
+static bool gps_should_use_software_rx(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        return true;
+    }
+#endif
+    return false;
+}
 
 nmea_parser_handle_t nmea_hdl;
 
@@ -81,6 +111,30 @@ void gps_manager_init(GPSManager *manager) {
     gps_connection_logged = false;
     gps_timeout_detected = false;
 
+    if (!has_valid_cached_date) {
+        time_t now = 0;
+        (void)time(&now);
+        if (now > 0) {
+            struct tm tm_now = {0};
+            if (localtime_r(&now, &tm_now) != NULL) {
+                int abs_year = tm_now.tm_year + 1900;
+                if (abs_year >= 2000 && abs_year <= 2099) {
+                    cacheddate.year = (uint16_t)(abs_year - 2000);
+                    cacheddate.month = (uint8_t)(tm_now.tm_mon + 1);
+                    cacheddate.day = (uint8_t)tm_now.tm_mday;
+                    if (is_valid_date(&cacheddate)) {
+                        has_valid_cached_date = true;
+                        ESP_LOGI(GPS_TAG,
+                                 "Seeded cached GPS date from system time: %04d-%02d-%02d",
+                                 gps_get_absolute_year(cacheddate.year),
+                                 cacheddate.month,
+                                 cacheddate.day);
+                    }
+                }
+            }
+        }
+    }
+
     nmea_parser_config_t config = NMEA_PARSER_CONFIG_DEFAULT();
     uint8_t current_rx_pin=0; 
     uint8_t custom_gps_pin=settings_get_gps_rx_pin(&G_Settings); //load custom pin from NVS settings
@@ -102,7 +156,9 @@ void gps_manager_init(GPSManager *manager) {
 
     glog("GPS RX: IO%d\n", current_rx_pin);
 
-    esp_comm_manager_deinit();
+    if (!gps_should_preserve_dualcomm()) {
+        esp_comm_manager_deinit();
+    }
 
     gpio_reset_pin(current_rx_pin);
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -117,27 +173,68 @@ void gps_manager_init(GPSManager *manager) {
     config.uart.uart_port = UART_NUM_1;
     #endif
 
+    gps_soft_mode_active = false;
+
 #ifdef CONFIG_GPS_UART_BAUD_RATE
     config.uart.baud_rate = CONFIG_GPS_UART_BAUD_RATE;
 #endif
 
-    glog("GPS UART%d RX: IO%d @ %lu\n",
-         (int)config.uart.uart_port,
-         (int)config.uart.rx_pin,
-         (unsigned long)config.uart.baud_rate);
+    if (gps_should_use_software_rx()) {
+        glog("GPS soft RX: IO%d @ %lu\n",
+             (int)config.uart.rx_pin,
+             (unsigned long)config.uart.baud_rate);
+    } else {
+        glog("GPS UART%d RX: IO%d @ %lu\n",
+             (int)config.uart.uart_port,
+             (int)config.uart.rx_pin,
+             (unsigned long)config.uart.baud_rate);
+    }
 
 #ifdef CONFIG_IS_GHOST_BOARD // always want ghost board to be using pin 2
     config.uart.rx_pin = 2;
 #endif
 
-    nmea_hdl = nmea_parser_init(&config);
+    gps_soft_released_rgb_rmt = false;
+    if (gps_should_use_software_rx()) {
+        nmea_hdl = minmea_soft_start((gpio_num_t)current_rx_pin, config.uart.baud_rate);
+        gps_soft_mode_active = (nmea_hdl != NULL);
+
+        if (!nmea_hdl) {
+            esp_err_t soft_err = minmea_soft_get_last_error();
+            if (soft_err == ESP_ERR_NOT_FOUND) {
+                rgb_manager_rmt_release();
+                gps_soft_released_rgb_rmt = true;
+                nmea_hdl = minmea_soft_start((gpio_num_t)current_rx_pin, config.uart.baud_rate);
+                gps_soft_mode_active = (nmea_hdl != NULL);
+            }
+        }
+    } else {
+        nmea_hdl = nmea_parser_init(&config);
+    }
+
     if (!nmea_hdl) {
-        ESP_LOGE(GPS_TAG, "Failed to initialize NMEA parser");
+        if (gps_should_use_software_rx()) {
+            esp_err_t soft_err = minmea_soft_get_last_error();
+            ESP_LOGE(GPS_TAG,
+                     "Failed to initialize soft GPS RX (%s)",
+                     esp_err_to_name(soft_err));
+            glog("Soft GPS RX init failed: %s\n", esp_err_to_name(soft_err));
+            if (gps_soft_released_rgb_rmt) {
+                rgb_manager_rmt_reacquire();
+                gps_soft_released_rgb_rmt = false;
+            }
+        } else {
+            ESP_LOGE(GPS_TAG, "Failed to initialize NMEA parser");
+        }
         manager->isinitilized = false;
-        esp_comm_manager_init_with_defaults();
+        if (!gps_should_preserve_dualcomm()) {
+            esp_comm_manager_init_with_defaults();
+        }
         return;
     }
-    nmea_parser_add_handler(nmea_hdl, gps_event_handler, NULL);
+    if (!gps_soft_mode_active) {
+        nmea_parser_add_handler(nmea_hdl, gps_event_handler, NULL);
+    }
     manager->isinitilized = true;
     status_display_show_status("GPS Initialized");
 
@@ -210,6 +307,19 @@ static void check_gps_connection_task(void *pvParameters) {
             (gps->tim.hour != 0 || gps->tim.minute != 0 || gps->tim.second != 0 ||
              gps->latitude != 0 || gps->longitude != 0)) {
             glog("GPS Connected\nReceiving data, please wait...\n");
+
+            if (gps_soft_mode_active) {
+                minmea_soft_stats_t stats = {0};
+                minmea_soft_get_stats(&stats);
+                glog("GPS soft stats: valid=%lu rmc=%lu gga=%lu gsa=%lu gsv=%lu vtg=%lu\n",
+                     (unsigned long)stats.valid_sentences,
+                     (unsigned long)stats.rmc_count,
+                     (unsigned long)stats.gga_count,
+                     (unsigned long)stats.gsa_count,
+                     (unsigned long)stats.gsv_count,
+                     (unsigned long)stats.vtg_count);
+            }
+
             gps_connection_logged = true;
             gps_check_task_handle = NULL;
             vTaskDelete(NULL);
@@ -220,6 +330,18 @@ static void check_gps_connection_task(void *pvParameters) {
     }
 
     // If we reach here, connection check timed out
+    if (gps_soft_mode_active) {
+        minmea_soft_stats_t stats = {0};
+        minmea_soft_get_stats(&stats);
+        glog("GPS soft timeout stats: valid=%lu rmc=%lu gga=%lu gsa=%lu gsv=%lu vtg=%lu\n",
+             (unsigned long)stats.valid_sentences,
+             (unsigned long)stats.rmc_count,
+             (unsigned long)stats.gga_count,
+             (unsigned long)stats.gsa_count,
+             (unsigned long)stats.gsv_count,
+             (unsigned long)stats.vtg_count);
+    }
+
     glog("GPS Module Connection Timeout\nCheck your connections\n");
     gps_timeout_detected = true;
     gps_check_task_handle = NULL;
@@ -245,8 +367,16 @@ void gps_manager_deinit(GPSManager *manager) {
         g_gps_check_task_res.stack_words = 0;
 
         if (nmea_hdl) {
-            nmea_parser_remove_handler(nmea_hdl, gps_event_handler);
-            nmea_parser_deinit(nmea_hdl);
+            if (gps_soft_mode_active) {
+                minmea_soft_stop(nmea_hdl);
+                if (gps_soft_released_rgb_rmt) {
+                    rgb_manager_rmt_reacquire();
+                    gps_soft_released_rgb_rmt = false;
+                }
+            } else {
+                nmea_parser_remove_handler(nmea_hdl, gps_event_handler);
+                nmea_parser_deinit(nmea_hdl);
+            }
             nmea_hdl = NULL;
         } else {
             ESP_LOGW(GPS_TAG, "gps_manager_deinit called but nmea_hdl is NULL");
@@ -254,7 +384,14 @@ void gps_manager_deinit(GPSManager *manager) {
         manager->isinitilized = false;
         gps_connection_logged = false;
         status_display_show_status("GPS Deinit");
-        esp_comm_manager_init_with_defaults();
+        gps_soft_mode_active = false;
+        if (gps_soft_released_rgb_rmt) {
+            rgb_manager_rmt_reacquire();
+            gps_soft_released_rgb_rmt = false;
+        }
+        if (!gps_should_preserve_dualcomm()) {
+            esp_comm_manager_init_with_defaults();
+        }
     } else {
         status_display_show_status("GPS Not Init");
     }
@@ -276,12 +413,15 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (!data || !nmea_hdl) {
         return ESP_ERR_INVALID_ARG;
     }
-    
-    // Early deduplication check - skip expensive GPS validation for known APs
+
+    // Fast non-mutating dedupe check for Wi-Fi observations.
+    // Commit happens only after successful CSV write.
+    bool should_commit_wifi_dedupe = false;
     if (!data->ble_data.is_ble_device) {
-        if (!csv_should_log_wifi_ap(data->bssid, data->rssi, data->ssid)) {
+        if (!csv_wifi_ap_should_log_peek(data->bssid, data->rssi, data->ssid)) {
             return ESP_OK;  // Silently skip - already logged or signal not better
         }
+        should_commit_wifi_dedupe = true;
     }
     
     gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
@@ -387,6 +527,10 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (ret != ESP_OK) {
         ESP_LOGE(GPS_TAG, "Failed to write wardriving data to CSV buffer");
         return ret;
+    }
+
+    if (should_commit_wifi_dedupe) {
+        csv_wifi_ap_log_commit(data->bssid, data->rssi, data->ssid);
     }
 
     // Update display periodically

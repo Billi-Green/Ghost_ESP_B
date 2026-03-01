@@ -1,4 +1,5 @@
 #include "core/commandline.h"
+#include "core/callbacks.h"
 #include "core/serial_manager.h"
 #include "core/system_manager.h"
 #include "core/ghostesp_version.h"
@@ -205,6 +206,7 @@ void app_main(void) {
         int32_t comm_rx = G_Settings.esp_comm_rx_pin;
         MEASURE_INIT_RAM("Comm Manager", esp_comm_manager_init((gpio_num_t)comm_tx, (gpio_num_t)comm_rx, DEFAULT_BAUD_RATE));
     }
+    wardriving_register_stream_handler();
     usb_keyboard_manager_register_stream_handler();
 #ifdef CONFIG_HAS_BADUSB
     badusb_manager_register_stream_handler();

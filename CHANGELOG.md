@@ -7,6 +7,8 @@
 ### Added
 - Added `wifistatus` CLI command to show connection status and saved network info
 - Added new wardriving and GPS info display view
+- Added GhostLink split-channel wardriving helper mode (`startwd --helper`) with helper-to-primary observation streaming
+- Added optional software NMEA RX backend (`minmea_soft`) for template-specific GPS routing constraints
 - Added Factory Reset option to wipe NVS and reboot
 - Added auto upload to WiGLE - @Play2BReal
 - Added control app updates - @tototo31
@@ -28,6 +30,9 @@
 - Reorganized settings menu into more categories
 - Directly iterate to channels when deauthing multiple APs
 - Optimised wardriving dwell times, added active probing and improved validation
+- Wardriving now builds role-aware channel plans for split capture (primary 5 GHz, helper 2.4 GHz when both are available)
+- Wardriving heartbeat now reports helper merge stats (`helper=merged/received`) for link visibility
+- Reworked wardriving Wi-Fi dedupe into peek/commit flow to avoid consuming dedupe state before a successful CSV write
 - Shortened delays for misc display menu building for more responsive feel
 - Improved clock view responsiveness
 - Increased BadUSB VSense delay to improve reliability of USB enumeration
@@ -54,6 +59,7 @@
 - Fixed crash when deinitializing BLE
 - Fixed GPS satellites logic
 - Fixed misc wardriving issues
+- Fixed wardriving AP loss where entries seen before a valid GPS fix could be skipped later by premature dedupe mutation
 - Fixed 5GHz deauthing
 - Fixed crash when stopping deauth
 - Fixed joystick repeat only working vertically

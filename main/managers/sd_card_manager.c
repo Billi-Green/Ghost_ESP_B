@@ -30,7 +30,7 @@ static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
 
 /* time multiplex spi when display and sd share the spi bus */
-#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && defined(CONFIG_SHARED_TFT_SD_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
 #include "lvgl_helpers.h"
 #include "lvgl_tft/disp_spi.h"
 #include "lvgl_spi_conf.h"
@@ -114,7 +114,7 @@ static void display_spi_resume_after_sd(void) {}
 #endif
 
 static inline void shared_spi_guard_resume_lvgl_if_needed(bool guard_active) {
-#if defined(CONFIG_SHARED_TFT_SD_SPI) && defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
   if (guard_active) display_manager_resume_lvgl_task();
 #else
   (void)guard_active;
@@ -122,7 +122,7 @@ static inline void shared_spi_guard_resume_lvgl_if_needed(bool guard_active) {
 }
 
 static int sd_spi_host_id(void) {
-#if defined(CONFIG_SHARED_TFT_SD_SPI) && defined(TFT_SPI_HOST)
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && defined(TFT_SPI_HOST)
   return TFT_SPI_HOST;
 #elif defined(CONFIG_IDF_TARGET_ESP32)
   return SPI3_HOST;
@@ -451,7 +451,7 @@ esp_err_t sd_card_init(void) {
   printf("Initializing SD card in SPI mode using configured pins...\n");
 
   bool shared_spi_guard_active = false;
-#if defined(CONFIG_SHARED_TFT_SD_SPI) && defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
   if (is_shared_display_sd_spi()) {
     shared_spi_guard_active = true;
     display_manager_suspend_lvgl_task();

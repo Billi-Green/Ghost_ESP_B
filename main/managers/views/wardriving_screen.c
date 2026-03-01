@@ -6,6 +6,8 @@
 #include "vendor/GPS/MicroNMEA.h"
 #include "vendor/GPS/gps_logger.h"
 #include "core/callbacks.h"
+#include "core/esp_comm_manager.h"
+#include "core/glog.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -19,6 +21,8 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+
+extern uint32_t csv_get_unique_wifi_ap_count_including_hidden(void);
 
 static const char *TAG = "WardriveScreen";
 
@@ -35,12 +39,14 @@ static lv_obj_t *lbl_coords = NULL;
 static lv_obj_t *lbl_accuracy = NULL;
 static lv_obj_t *lbl_altitude = NULL;
 static lv_obj_t *lbl_sd_status = NULL;
+static lv_obj_t *lbl_link_mode = NULL;
 static lv_obj_t *compass_arc = NULL;
 static lv_obj_t *compass_needle = NULL;
 
 static bool wardriving_initialized_gps = false;
 static bool wardriving_scan_mode = false;
 static bool wardriving_ble_mode = false;
+static bool wardriving_peer_helper_active = false;
 static bool touch_press_active = false;
 
 static bool should_force_gps_deinit_on_exit(void) {
@@ -179,6 +185,7 @@ static void update_display_cb(lv_timer_t *timer) {
         if (lbl_coords) lv_label_set_text(lbl_coords, "---'N  ---'E");
         if (lbl_accuracy) lv_label_set_text(lbl_accuracy, "--");
         if (lbl_altitude) lv_label_set_text(lbl_altitude, "---m");
+        if (lbl_link_mode) lv_label_set_text(lbl_link_mode, "Standalone");
         return;
     }
     
@@ -188,17 +195,22 @@ static void update_display_cb(lv_timer_t *timer) {
     bool has_fix = gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D;
     
     char fix_display_buf[32];
+    uint8_t sats_visible = (gps->sats_in_view > 0) ? gps->sats_in_view : gps->sats_in_use;
     if (!has_fix) {
         no_fix_toggle_counter++;
         if (no_fix_toggle_counter >= 3) {
             no_fix_toggle_counter = 0;
             no_fix_show_sats = !no_fix_show_sats;
         }
-        if (!no_fix_show_sats || gps->sats_in_view == 0) {
+        if (!no_fix_show_sats || sats_visible == 0) {
             strncpy(fix_display_buf, "No Fix", sizeof(fix_display_buf) - 1);
             fix_display_buf[sizeof(fix_display_buf) - 1] = '\0';
         } else {
-            snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats in view", gps->sats_in_view);
+            if (gps->sats_in_view > 0) {
+                snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats in view", gps->sats_in_view);
+            } else {
+                snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats tracked", gps->sats_in_use);
+            }
         }
         fix_status = fix_display_buf;
     } else {
@@ -232,6 +244,12 @@ static void update_display_cb(lv_timer_t *timer) {
     if (lbl_fix_status) {
         lv_label_set_text(lbl_fix_status, fix_status);
     }
+
+    if (lbl_link_mode) {
+        bool ghostlink_enabled = wardriving_scan_mode && wardriving_peer_helper_active &&
+                                 esp_comm_manager_is_connected() && !wardriving_is_helper_mode();
+        lv_label_set_text(lbl_link_mode, ghostlink_enabled ? "GhostLink" : "Standalone");
+    }
     
     if (lbl_fix_icon) {
         if (has_fix) {
@@ -256,7 +274,7 @@ static void update_display_cb(lv_timer_t *timer) {
 #else
             ? 0
 #endif
-            : csv_get_unique_wifi_ap_count();
+            : csv_get_unique_wifi_ap_count_including_hidden();
         char aps_buf[16];
         snprintf(aps_buf, sizeof(aps_buf), "%u", (unsigned int)ap_count);
         lv_label_set_text(lbl_aps, aps_buf);
@@ -344,6 +362,7 @@ void wardriving_view_create(void) {
     }
 
     touch_press_active = false;
+    wardriving_peer_helper_active = false;
     
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     accent_color = theme_palette_get_accent(theme);
@@ -369,6 +388,18 @@ void wardriving_view_create(void) {
         csv_ok = (csv_file_open("wardriving") == ESP_OK);
         wifi_manager_start_monitor_mode(wardriving_scan_callback);
         start_wardriving();
+
+        bool peer_helper_ok = false;
+        if (esp_comm_manager_is_connected()) {
+            peer_helper_ok = esp_comm_manager_send_command("startwd", "--helper");
+            glog(peer_helper_ok
+                     ? "Wardrive helper started on peer (split-channel).\n"
+                     : "Wardrive helper not started on peer; continuing local only.\n");
+        } else {
+            glog("Wardrive helper unavailable: no GhostLink peer connected.\n");
+        }
+        wardriving_set_peer_assist(peer_helper_ok);
+        wardriving_peer_helper_active = peer_helper_ok;
     }
     
     display_manager_fill_screen(lv_color_hex(bg_color));
@@ -455,15 +486,15 @@ void wardriving_view_create(void) {
     lv_obj_set_style_text_font(lbl_speed, title_font, 0);
     lv_obj_set_style_text_color(lbl_speed, lv_color_hex(text_color), 0);
     
-    lv_obj_t *heading_card = create_card(speed_row, 48);
-    lv_obj_t *heading_title = lv_label_create(heading_card);
-    lv_label_set_text(heading_title, "Heading");
-    lv_obj_set_style_text_font(heading_title, small_font, 0);
-    lv_obj_set_style_text_color(heading_title, lv_color_hex(dim_color), 0);
-    lbl_heading = lv_label_create(heading_card);
-    lv_label_set_text(lbl_heading, "--");
-    lv_obj_set_style_text_font(lbl_heading, title_font, 0);
-    lv_obj_set_style_text_color(lbl_heading, lv_color_hex(accent_color), 0);
+    lv_obj_t *mode_card = create_card(speed_row, 48);
+    lv_obj_t *mode_title = lv_label_create(mode_card);
+    lv_label_set_text(mode_title, "Mode");
+    lv_obj_set_style_text_font(mode_title, small_font, 0);
+    lv_obj_set_style_text_color(mode_title, lv_color_hex(dim_color), 0);
+    lbl_link_mode = lv_label_create(mode_card);
+    lv_label_set_text(lbl_link_mode, "Standalone");
+    lv_obj_set_style_text_font(lbl_link_mode, body_font, 0);
+    lv_obj_set_style_text_color(lbl_link_mode, lv_color_hex(accent_color), 0);
     
     lv_obj_t *coords_card = create_card(content, 100);
     lv_obj_t *coords_title = lv_label_create(coords_card);
@@ -541,6 +572,14 @@ void wardriving_view_destroy(void) {
         wardriving_ble_mode = false;
     } else if (wardriving_scan_mode) {
         stop_wardriving();
+        if (esp_comm_manager_is_connected()) {
+            bool peer_stop_ok = esp_comm_manager_send_command("startwd", "-s --helper");
+            glog(peer_stop_ok
+                     ? "Wardrive helper stop sent to peer.\n"
+                     : "Wardrive helper stop could not be sent to peer.\n");
+        }
+        wardriving_set_peer_assist(false);
+        wardriving_peer_helper_active = false;
         wifi_manager_stop_monitor_mode();
         if (csv_buffer_has_pending_data()) {
             csv_flush_buffer_to_file();
@@ -573,8 +612,10 @@ void wardriving_view_destroy(void) {
     lbl_accuracy = NULL;
     lbl_altitude = NULL;
     lbl_sd_status = NULL;
+    lbl_link_mode = NULL;
     compass_arc = NULL;
     compass_needle = NULL;
+    wardriving_peer_helper_active = false;
 }
 
 void wardriving_view_set_scan_mode(bool enabled) {

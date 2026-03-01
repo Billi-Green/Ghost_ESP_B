@@ -800,6 +800,15 @@ void handle_stop_flipper(int argc, char **argv) {
     }
 
     stop_wardriving();
+    if (!esp_comm_manager_is_remote_command()) {
+        if (esp_comm_manager_is_connected()) {
+            bool peer_stop_ok = esp_comm_manager_send_command("startwd", "-s --helper");
+            glog(peer_stop_ok
+                     ? "Wardrive helper stop sent to peer.\n"
+                     : "Wardrive helper stop could not be sent to peer.\n");
+        }
+        wardriving_set_peer_assist(false);
+    }
     wifi_manager_stop_deauth();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
     ble_stop();
@@ -3612,25 +3621,50 @@ void handle_time_cmd(int argc, char **argv) {
 
 void handle_startwd(int argc, char **argv) {
     bool stop_flag = false;
+    bool helper_mode = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0) {
             stop_flag = true;
-            break;
+        } else if (strcmp(argv[i], "--helper") == 0) {
+            helper_mode = true;
         }
     }
 
     if (stop_flag) {
+        if (!helper_mode && !esp_comm_manager_is_remote_command()) {
+            if (esp_comm_manager_is_connected()) {
+                bool peer_stop_ok = esp_comm_manager_send_command("startwd", "-s --helper");
+                glog(peer_stop_ok
+                         ? "Wardrive helper stop sent to peer.\n"
+                         : "Wardrive helper stop could not be sent to peer.\n");
+            }
+            wardriving_set_peer_assist(false);
+        }
+
         stop_wardriving();
         wifi_manager_stop_monitor_mode();
-        if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
-            csv_flush_buffer_to_file();
+        if (!helper_mode) {
+            if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
+                csv_flush_buffer_to_file();
+            }
+            csv_file_close();
+            gps_manager_deinit(&g_gpsManager);
+            glog("Wardriving stopped.\n");
+            status_display_show_status("Wardrive Stop");
+        } else {
+            glog("Wardriving helper stopped.\n");
+            status_display_show_status("WD Helper Stop");
         }
-        csv_file_close();
-        gps_manager_deinit(&g_gpsManager);
-        glog("Wardriving stopped.\n");
-        status_display_show_status("Wardrive Stop");
     } else {
+        if (helper_mode) {
+            wifi_manager_start_monitor_mode(wardriving_scan_callback);
+            start_wardriving_helper();
+            glog("Wardriving helper started.\n");
+            status_display_show_status("WD Helper Start");
+            return;
+        }
+
         gps_manager_init(&g_gpsManager);
         esp_err_t err = csv_file_open("wardriving");
         if (err != ESP_OK) {
@@ -3639,6 +3673,20 @@ void handle_startwd(int argc, char **argv) {
         }
         wifi_manager_start_monitor_mode(wardriving_scan_callback);
         start_wardriving();
+
+        bool peer_helper_ok = false;
+        if (!esp_comm_manager_is_remote_command()) {
+            if (esp_comm_manager_is_connected()) {
+                peer_helper_ok = esp_comm_manager_send_command("startwd", "--helper");
+                glog(peer_helper_ok
+                         ? "Wardrive helper started on peer (split-channel).\n"
+                         : "Wardrive helper not started on peer; continuing local only.\n");
+            } else {
+                glog("Wardrive helper unavailable: no GhostLink peer connected.\n");
+            }
+        }
+        wardriving_set_peer_assist(peer_helper_ok);
+
         glog("Wardriving started.\n");
         status_display_show_status("Wardrive Start");
     }
@@ -4075,7 +4123,7 @@ void handle_help(int argc, char **argv) {
         glog("\nGPS Commands:\n\n");
         glog("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo [-s]\n\n");
         glog("gpspin\n    Set GPS RX pin for external GPS module.\n    Usage: gpspin <pin>\n\n");
-        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [seconds]\n\n");
+        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [-s] [--helper]\n\n");
         return;
     }
     if (strcmp(category, "portal") == 0) {
