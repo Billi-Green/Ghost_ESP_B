@@ -19,6 +19,9 @@
 #define SOFT_RX_BIT_TOLERANCE_PCT 35
 #define SOFT_RX_MEM_BLOCK_SYMBOLS 48
 #define SOFT_RX_SIGNAL_RANGE_MAX_NS 30000000
+#define SOFT_RX_STATS_LOG_MS 20000
+#define SOFT_RX_UNKNOWN_LOG_BUDGET 4
+#define SOFT_RX_GGA_NOFIX_LOG_BUDGET 3
 
 typedef struct {
     uint32_t start_us;
@@ -650,7 +653,7 @@ static void minmea_soft_task(void *arg) {
         }
 
         TickType_t now = xTaskGetTickCount();
-        if ((now - last_stats_tick) >= pdMS_TO_TICKS(5000)) {
+        if ((now - last_stats_tick) >= pdMS_TO_TICKS(SOFT_RX_STATS_LOG_MS)) {
             minmea_soft_log_stats_rolling();
             last_stats_tick = now;
         }
@@ -662,8 +665,8 @@ static void minmea_soft_task(void *arg) {
 nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
     s_minmea_soft_last_error = ESP_OK;
     memset(&s_minmea_soft_stats, 0, sizeof(s_minmea_soft_stats));
-    s_minmea_soft_unknown_log_budget = 8;
-    s_minmea_soft_gga_nofix_log_budget = 10;
+    s_minmea_soft_unknown_log_budget = SOFT_RX_UNKNOWN_LOG_BUDGET;
+    s_minmea_soft_gga_nofix_log_budget = SOFT_RX_GGA_NOFIX_LOG_BUDGET;
 
     minmea_soft_ctx_t *ctx = (minmea_soft_ctx_t *)calloc(1, sizeof(minmea_soft_ctx_t));
     if (!ctx) {

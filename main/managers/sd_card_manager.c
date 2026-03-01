@@ -28,6 +28,7 @@
 
 static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
+static bool s_sd_log_levels_tuned = false;
 
 /* time multiplex spi when display and sd share the spi bus */
 #if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
@@ -310,6 +311,11 @@ static void sdmmc_card_print_info(const sdmmc_card_t *card) {
 
 esp_err_t sd_card_init(void) {
   esp_err_t ret = ESP_FAIL;
+
+  if (!s_sd_log_levels_tuned) {
+    esp_log_level_set("sdspi_transaction", ESP_LOG_WARN);
+    s_sd_log_levels_tuned = true;
+  }
 
   if (sd_card_manager.is_initialized) {
     ESP_LOGI(TAG, "sd_card_init: already initialized");

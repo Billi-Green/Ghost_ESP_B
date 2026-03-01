@@ -223,7 +223,7 @@ static void update_display_cb(lv_timer_t *timer) {
         logged_coords_no_fix = true;
         if (gps_debug_count < 3) {
             gps_debug_count++;
-            ESP_LOGI(TAG, "GPS Debug: coords but no fix! valid=%d fix=%d sats_in_use=%d dop_h=%.1f lat=%.6f lon=%.6f",
+            ESP_LOGD(TAG, "GPS Debug: coords but no fix! valid=%d fix=%d sats_in_use=%d dop_h=%.1f lat=%.6f lon=%.6f",
                      gps->valid, gps->fix, gps->sats_in_use, gps->dop_h, gps->latitude, gps->longitude);
         }
     } else if (gps->latitude == 0.0 && gps->longitude == 0.0) {
@@ -236,7 +236,7 @@ static void update_display_cb(lv_timer_t *timer) {
         last_sats_warn_state = sats_warn;
         if (gps_debug_count < 3) {
             gps_debug_count++;
-            ESP_LOGI(TAG, "GPS Debug: sats_in_use=%d sats_in_view=%d dop_h=%.1f valid=%d fix=%d fix_mode=%d",
+            ESP_LOGD(TAG, "GPS Debug: sats_in_use=%d sats_in_view=%d dop_h=%.1f valid=%d fix=%d fix_mode=%d",
                      gps->sats_in_use, gps->sats_in_view, gps->dop_h, gps->valid, gps->fix, gps->fix_mode);
         }
     }

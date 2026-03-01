@@ -1091,7 +1091,7 @@ static void wardrive_hop_timer_callback(void *arg) {
     
     static int hop_count = 0;
     hop_count++;
-    if (hop_count % 50 == 0) {
+    if (hop_count % 200 == 0) {
         ESP_LOGI(TAG, "Wardrive hopped to channel %d (hop #%d)", wardrive_channel, hop_count);
     }
 }
@@ -1179,26 +1179,42 @@ static void wardrive_heartbeat_cb(void *arg) {
 
     size_t pending = csv_get_pending_bytes();
 
-    glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu tx(n/p/r/t/s)=%lu/%lu/%lu/%lu/%lu send(ok/fail)=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
-         (unsigned long)wardrive_wifi_frames_seen,
-         (unsigned long)wardrive_log_ok,
-         (unsigned long)wardrive_log_attempts,
-         (unsigned long)wardrive_gps_rejected,
-         (unsigned long)wardrive_helper_merged_ok,
-         (unsigned long)wardrive_helper_rx_observations,
-         (unsigned long)wardrive_helper_tx_new,
-         (unsigned long)wardrive_helper_tx_ssid_promo,
-         (unsigned long)wardrive_helper_tx_rssi,
-         (unsigned long)wardrive_helper_tx_refresh,
-         (unsigned long)wardrive_helper_tx_suppressed,
-         (unsigned long)wardrive_helper_stream_send_ok,
-         (unsigned long)wardrive_helper_stream_send_fail,
-         (unsigned)wardrive_channel,
-         (unsigned long)up_m,
-         (unsigned long)up_rem_s,
-         fix_status,
-         (unsigned)sats,
-         (unsigned)pending);
+    if (wardrive_role == WARDRIVE_ROLE_HELPER) {
+        glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu tx(n/p/r/t/s)=%lu/%lu/%lu/%lu/%lu send(ok/fail)=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
+             (unsigned long)wardrive_wifi_frames_seen,
+             (unsigned long)wardrive_log_ok,
+             (unsigned long)wardrive_log_attempts,
+             (unsigned long)wardrive_gps_rejected,
+             (unsigned long)wardrive_helper_merged_ok,
+             (unsigned long)wardrive_helper_rx_observations,
+             (unsigned long)wardrive_helper_tx_new,
+             (unsigned long)wardrive_helper_tx_ssid_promo,
+             (unsigned long)wardrive_helper_tx_rssi,
+             (unsigned long)wardrive_helper_tx_refresh,
+             (unsigned long)wardrive_helper_tx_suppressed,
+             (unsigned long)wardrive_helper_stream_send_ok,
+             (unsigned long)wardrive_helper_stream_send_fail,
+             (unsigned)wardrive_channel,
+             (unsigned long)up_m,
+             (unsigned long)up_rem_s,
+             fix_status,
+             (unsigned)sats,
+             (unsigned)pending);
+    } else {
+        glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
+             (unsigned long)wardrive_wifi_frames_seen,
+             (unsigned long)wardrive_log_ok,
+             (unsigned long)wardrive_log_attempts,
+             (unsigned long)wardrive_gps_rejected,
+             (unsigned long)wardrive_helper_merged_ok,
+             (unsigned long)wardrive_helper_rx_observations,
+             (unsigned)wardrive_channel,
+             (unsigned long)up_m,
+             (unsigned long)up_rem_s,
+             fix_status,
+             (unsigned)sats,
+             (unsigned)pending);
+    }
 }
 
 static void start_wardrive_heartbeat(void) {
