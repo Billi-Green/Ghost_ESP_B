@@ -84,7 +84,6 @@ extern wps_network_t detected_wps_networks[MAX_WPS_NETWORKS];
 extern int detected_network_count;
 extern esp_timer_handle_t stop_timer;
 extern int should_store_wps;
-static uint8_t router_ip[4];
 
 // Controls whether probe listening writes PCAP data to SD (no UART fallback)
 extern bool g_listen_probes_save_to_sd;

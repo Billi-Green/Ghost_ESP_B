@@ -13,6 +13,7 @@
 #include "scans/wifi/wifi_channels.h"
 #include <ctype.h>
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
@@ -510,19 +511,59 @@ typedef struct {
 } pcap_q_item_t;
 
 #define EAPOL_Q_LEN 64
-#define PCAP_POOL_SLOTS 16
+#if defined(CONFIG_IDF_TARGET_ESP32S2)
+#define PCAP_POOL_SLOTS_DEFAULT 10
+#define PCAP_POOL_SLOTS_MIN 4
+#else
+#define PCAP_POOL_SLOTS_DEFAULT 16
+#define PCAP_POOL_SLOTS_MIN 8
+#endif
 static QueueHandle_t s_pcap_q = NULL;
 static TaskHandle_t s_pcap_writer_task = NULL;
-static pcap_pool_slot_t s_pcap_pool[PCAP_POOL_SLOTS];
+static pcap_pool_slot_t *s_pcap_pool = NULL;
+static size_t s_pcap_pool_slots = 0;
 static portMUX_TYPE s_pcap_pool_lock = portMUX_INITIALIZER_UNLOCKED;
 
+static bool pcap_pool_init(void) {
+    if (s_pcap_pool != NULL && s_pcap_pool_slots > 0) {
+        return true;
+    }
+
+    size_t slots = PCAP_POOL_SLOTS_DEFAULT;
+    while (slots >= PCAP_POOL_SLOTS_MIN) {
+        pcap_pool_slot_t *pool = (pcap_pool_slot_t *)heap_caps_calloc(slots, sizeof(pcap_pool_slot_t), MALLOC_CAP_8BIT);
+        if (pool != NULL) {
+            s_pcap_pool = pool;
+            s_pcap_pool_slots = slots;
+            ESP_LOGI(TAG, "PCAP pool allocated: %lu slots (%lu bytes)",
+                     (unsigned long)s_pcap_pool_slots,
+                     (unsigned long)(s_pcap_pool_slots * sizeof(pcap_pool_slot_t)));
+            return true;
+        }
+        if (slots == PCAP_POOL_SLOTS_MIN) {
+            break;
+        }
+        slots = (slots > 2) ? (slots - 2) : PCAP_POOL_SLOTS_MIN;
+        if (slots < PCAP_POOL_SLOTS_MIN) {
+            slots = PCAP_POOL_SLOTS_MIN;
+        }
+    }
+
+    ESP_LOGE(TAG, "PCAP pool allocation failed");
+    return false;
+}
+
 static int pcap_pool_acquire_slot(void) {
+    if (s_pcap_pool == NULL || s_pcap_pool_slots == 0) {
+        return -1;
+    }
+
     int slot = -1;
     taskENTER_CRITICAL(&s_pcap_pool_lock);
-    for (int i = 0; i < PCAP_POOL_SLOTS; i++) {
+    for (size_t i = 0; i < s_pcap_pool_slots; i++) {
         if (!s_pcap_pool[i].in_use) {
             s_pcap_pool[i].in_use = true;
-            slot = i;
+            slot = (int)i;
             break;
         }
     }
@@ -531,7 +572,7 @@ static int pcap_pool_acquire_slot(void) {
 }
 
 static void pcap_pool_release_slot(uint8_t slot_idx) {
-    if (slot_idx >= PCAP_POOL_SLOTS) {
+    if (s_pcap_pool == NULL || s_pcap_pool_slots == 0 || slot_idx >= s_pcap_pool_slots) {
         return;
     }
 
@@ -547,7 +588,7 @@ static void pcap_writer_task(void *arg) {
     uint32_t processed = 0;
     for (;;) {
         if (xQueueReceive(s_pcap_q, &item, pdMS_TO_TICKS(500)) == pdTRUE) {
-            if (item.slot_idx < PCAP_POOL_SLOTS) {
+            if (s_pcap_pool != NULL && item.slot_idx < s_pcap_pool_slots) {
                 pcap_pool_slot_t *slot = &s_pcap_pool[item.slot_idx];
                 if (slot->length > 0) {
                     pcap_write_packet_to_buffer(slot->data, slot->length, item.cap_type);
@@ -570,11 +611,17 @@ static void pcap_writer_task(void *arg) {
 }
 
 static inline void ensure_pcap_queue_started(void) {
-    if (s_pcap_q == NULL) {
-        s_pcap_q = xQueueCreate(EAPOL_Q_LEN, sizeof(pcap_q_item_t));
-        if (s_pcap_q != NULL && s_pcap_writer_task == NULL) {
-            xTaskCreate(pcap_writer_task, "pcap_wr", 3072, NULL, 5, &s_pcap_writer_task);
-        }
+    if (s_pcap_q != NULL) {
+        return;
+    }
+
+    if (!pcap_pool_init()) {
+        return;
+    }
+
+    s_pcap_q = xQueueCreate(EAPOL_Q_LEN, sizeof(pcap_q_item_t));
+    if (s_pcap_q != NULL && s_pcap_writer_task == NULL) {
+        xTaskCreate(pcap_writer_task, "pcap_wr", 3072, NULL, 5, &s_pcap_writer_task);
     }
 }
 
@@ -582,6 +629,10 @@ static inline void enqueue_pcap_write_typed(const uint8_t *payload, uint16_t len
     if (!payload || len == 0) return;
     ensure_pcap_queue_started();
     if (!s_pcap_q) return;
+
+    if (s_pcap_pool == NULL || s_pcap_pool_slots == 0) {
+        return;
+    }
 
     if (len > sizeof(s_pcap_pool[0].data)) {
         return;
@@ -625,9 +676,15 @@ void cleanup_pcap_queue(void) {
         s_pcap_q = NULL;
     }
 
-    taskENTER_CRITICAL(&s_pcap_pool_lock);
-    memset(s_pcap_pool, 0, sizeof(s_pcap_pool));
-    taskEXIT_CRITICAL(&s_pcap_pool_lock);
+    if (s_pcap_pool != NULL) {
+        pcap_pool_slot_t *pool_to_free = NULL;
+        taskENTER_CRITICAL(&s_pcap_pool_lock);
+        pool_to_free = s_pcap_pool;
+        s_pcap_pool = NULL;
+        s_pcap_pool_slots = 0;
+        taskEXIT_CRITICAL(&s_pcap_pool_lock);
+        heap_caps_free(pool_to_free);
+    }
 }
 
 static const char *suspicious_names[] STORE_DATA_ATTR = {
