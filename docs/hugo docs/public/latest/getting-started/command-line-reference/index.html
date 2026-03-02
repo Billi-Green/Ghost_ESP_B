@@ -117,6 +117,9 @@
       
       
     
+      
+      
+    
   
   
   
@@ -189,6 +192,8 @@
           <select id="sidebar-version" class="sidebar__version-select" data-version-select>
             
               <option value="latest" selected>Latest</option>
+            
+              <option value="v1.9.4">v1.9.4</option>
             
               <option value="v1.9.3">v1.9.3</option>
             
@@ -301,6 +306,8 @@
                 </button>
                 <div class="collapse sidebar__group-items" id="collapse-latestgps">
                   <a href="/latest/gps/" class="sidebar__sublink">Overview</a>
+                  
+                    <a href="/latest/gps/wardriving/" class="sidebar__sublink">Wardriving</a>
                   
                     <a href="/latest/gps/wigle/" class="sidebar__sublink">WiGLE Upload</a>
                   
@@ -537,6 +544,7 @@
     </li>
     <li><a href="#rgb">RGB</a></li>
     <li><a href="#status-display-if-present">Status display (if present)</a></li>
+    <li><a href="#io-expander-buttons-if-present">IO expander buttons (if present)</a></li>
     <li><a href="#infrared">Infrared</a></li>
     <li><a href="#gps">GPS</a></li>
     <li><a href="#ethernet">Ethernet</a>
@@ -877,6 +885,28 @@
 </ul>
 </li>
 </ul>
+
+
+
+<h2 id="io-expander-buttons-if-present">
+  IO expander buttons (if present)
+  <a class="heading-anchor" href="#io-expander-buttons-if-present" aria-label="Copy link to this section">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none" transform="rotate(45 12 12)">
+        <path d="M14 12c0 2.761-2.239 5-5 5H7a5 5 0 110-10h.5"></path>
+        <path d="M10 12c0-2.761 2.239-5 5-5h2a5 5 0 010 10h-.5"></path>
+      </g>
+    </svg>
+  </a>
+</h2>
+
+<p>Available on boards with <strong>CONFIG_USE_IO_EXPANDER</strong>. Three physical buttons (P10, P11 “Right button”, P12) can each run a custom CLI command or act as a joystick button when no command is set.</p>
+<ul>
+<li><strong><code>iobtn &lt;1|2|3&gt; [command]</code></strong> — View or set the command for button 1 (P10), 2 (P11), or 3 (P12). Without <code>command</code>, prints the current command (or “(none)”). With <code>command</code>, saves it and runs it on the next press. Example: <code>iobtn 1 nfc read</code>.</li>
+<li><strong><code>settings get io_btn_p10_cmd</code></strong> / <strong><code>settings set io_btn_p10_cmd &lt;value&gt;</code></strong> — Same for P10; use <code>io_btn_p11_cmd</code> and <code>io_btn_p12_cmd</code> for P11 and P12.</li>
+</ul>
+<p>On press, the device switches to the terminal view and runs the command. To use a button as a normal joystick action instead, clear its command (e.g. <code>iobtn 1 &quot;&quot;</code> or <code>settings set io_btn_p10_cmd &quot;&quot;</code>).</p>
+<p><strong>On-device UI:</strong> <strong>Settings → IO Buttons</strong> lets you edit each button’s command with the keyboard; the current command is pre-filled when editing.</p>
 
 
 

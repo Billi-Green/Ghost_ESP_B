@@ -117,6 +117,9 @@
       
       
     
+      
+      
+    
   
   
   
@@ -189,6 +192,8 @@
           <select id="sidebar-version" class="sidebar__version-select" data-version-select>
             
               <option value="latest" selected>Latest</option>
+            
+              <option value="v1.9.4">v1.9.4</option>
             
               <option value="v1.9.3">v1.9.3</option>
             
@@ -301,6 +306,8 @@
                 </button>
                 <div class="collapse show sidebar__group-items" id="collapse-latestgps">
                   <a href="/latest/gps/" class="sidebar__sublink">Overview</a>
+                  
+                    <a href="/latest/gps/wardriving/" class="sidebar__sublink">Wardriving</a>
                   
                     <a href="/latest/gps/wigle/" class="sidebar__sublink sidebar__sublink--active">WiGLE Upload</a>
                   
@@ -508,6 +515,7 @@
       <nav id="TableOfContents">
   <ul>
     <li><a href="#prerequisites">Prerequisites</a></li>
+    <li><a href="#2-minute-setup">2-Minute Setup</a></li>
     <li><a href="#getting-wigle-api-credentials">Getting WiGLE API Credentials</a></li>
     <li><a href="#configuration">Configuration</a>
       <ul>
@@ -517,7 +525,9 @@
     </li>
     <li><a href="#cli-commands">CLI Commands</a></li>
     <li><a href="#auto-upload">Auto Upload</a></li>
+    <li><a href="#queueing-and-duplicate-protection-important">Queueing and Duplicate Protection (Important)</a></li>
     <li><a href="#manual-upload">Manual Upload</a></li>
+    <li><a href="#view-wigle-stats">View WiGLE Stats</a></li>
     <li><a href="#data-donation">Data Donation</a></li>
     <li><a href="#csv-format">CSV Format</a></li>
     <li><a href="#troubleshooting">Troubleshooting</a></li>
@@ -548,6 +558,42 @@
 <li>Wi-Fi connection (for uploading)</li>
 <li>WiGLE account with API credentials</li>
 </ul>
+
+
+
+<h2 id="2-minute-setup">
+  2-Minute Setup
+  <a class="heading-anchor" href="#2-minute-setup" aria-label="Copy link to this section">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none" transform="rotate(45 12 12)">
+        <path d="M14 12c0 2.761-2.239 5-5 5H7a5 5 0 110-10h.5"></path>
+        <path d="M10 12c0-2.761 2.239-5 5-5h2a5 5 0 010 10h-.5"></path>
+      </g>
+    </svg>
+  </a>
+</h2>
+
+<ol>
+<li>
+<p>Get credentials from <a href="https://wigle.net/account">wigle.net/account</a> (<code>APIName:APIToken</code>)</p>
+</li>
+<li>
+<p>Set API key:</p>
+<pre tabindex="0"><code>wigle API &lt;APIName&gt;:&lt;APIToken&gt;
+</code></pre></li>
+<li>
+<p>(Recommended) Enable upload on Wi-Fi connect:</p>
+<pre tabindex="0"><code>wigle auto on
+</code></pre></li>
+<li>
+<p>(Recommended) Donate mapped data:</p>
+<pre tabindex="0"><code>wigle donate on
+</code></pre></li>
+<li>
+<p>Verify settings:</p>
+<pre tabindex="0"><code>wigle show
+</code></pre></li>
+</ol>
 
 
 
@@ -591,8 +637,11 @@
 
 <ol>
 <li>Open <strong>Menu → Settings → Wigle</strong></li>
-<li>Toggle <strong>Auto Upload</strong> to enable automatic uploads when WiFi connects</li>
+<li>Toggle <strong>Auto Upload</strong> to enable automatic uploads when Wi-Fi (STA) connects</li>
 <li>Toggle <strong>Donate Data</strong> to share your scans with WiGLE (recommended)</li>
+<li>Use <strong>Manual Upload</strong> to browse CSV files in <code>/mnt/ghostesp/gps/</code></li>
+<li>Select a CSV to view details (file name, Wi-Fi row count, total row count), then press <strong>Upload</strong></li>
+<li>Use <strong>View WiGLE Stats</strong> to fetch and display account stats for the current API key</li>
 </ol>
 
 
@@ -601,7 +650,7 @@
 
 <p>Set your API key:</p>
 <pre tabindex="0"><code>wigle API &lt;APIName&gt;:&lt;APIToken&gt;
-</code></pre><p>Enable auto-upload at boot:</p>
+</code></pre><p>Enable auto-upload when STA gets an IP:</p>
 <pre tabindex="0"><code>wigle auto on
 </code></pre><p>Enable data donation:</p>
 <pre tabindex="0"><code>wigle donate on
@@ -636,7 +685,7 @@
       </tr>
       <tr>
           <td><code>wigle auto on/off</code></td>
-          <td>Enable/disable auto-upload at boot</td>
+          <td>Enable/disable auto-upload on Wi-Fi (STA) connect</td>
       </tr>
       <tr>
           <td><code>wigle donate on/off</code></td>
@@ -651,8 +700,20 @@
           <td>List previously uploaded files</td>
       </tr>
       <tr>
-          <td><code>wigle upload</code></td>
-          <td>Manually trigger upload</td>
+          <td><code>wigle files [page]</code></td>
+          <td>List CSV files in <code>/mnt/ghostesp/gps/</code> (paged)</td>
+      </tr>
+      <tr>
+          <td><code>wigle upload &lt;filename&gt;</code></td>
+          <td>Upload one CSV file manually</td>
+      </tr>
+      <tr>
+          <td><code>wigle upload all</code></td>
+          <td>Upload all pending queued files</td>
+      </tr>
+      <tr>
+          <td><code>wigle stats</code></td>
+          <td>Show WiGLE account stats for current credentials</td>
       </tr>
   </tbody>
 </table>
@@ -671,13 +732,45 @@
   </a>
 </h2>
 
-<p>When <strong>Auto Upload</strong> is enabled, GhostESP will automatically upload any pending CSV files when:</p>
+<p>When <strong>Auto Upload</strong> is enabled, GhostESP automatically starts <code>wigle upload all</code> when:</p>
 <ol>
-<li>The device connects to Wi-Fi (STA mode)</li>
+<li>The device gets a Wi-Fi STA IP address</li>
 <li>An API key is configured</li>
-<li>There are CSV files that haven&rsquo;t been uploaded yet</li>
+<li>There are queued/pending CSV files</li>
 </ol>
-<p>Files are tracked in a queue to prevent duplicate uploads.</p>
+<p>The auto-upload task starts in the background shortly after connect, so the CLI/UI stays responsive.</p>
+
+
+
+<h2 id="queueing-and-duplicate-protection-important">
+  Queueing and Duplicate Protection (Important)
+  <a class="heading-anchor" href="#queueing-and-duplicate-protection-important" aria-label="Copy link to this section">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none" transform="rotate(45 12 12)">
+        <path d="M14 12c0 2.761-2.239 5-5 5H7a5 5 0 110-10h.5"></path>
+        <path d="M10 12c0-2.761 2.239-5 5-5h2a5 5 0 010 10h-.5"></path>
+      </g>
+    </svg>
+  </a>
+</h2>
+
+<p>GhostESP uses two small state files on SD:</p>
+<ul>
+<li>Upload queue: <code>/mnt/ghostesp/.wigle_queue</code></li>
+<li>Uploaded memory: <code>/mnt/ghostesp/.wigle_uploaded</code></li>
+</ul>
+<p>How this works:</p>
+<ol>
+<li>Wardriving CSV files are queued after capture/close</li>
+<li>Upload worker reads queue and validates each CSV</li>
+<li>Successful uploads are recorded in uploaded-memory as <code>basename,size</code></li>
+<li>Failed uploads stay queued for retry</li>
+</ol>
+<p>Duplicate prevention key is <strong>file basename + size</strong>.</p>
+<ul>
+<li>Same name and same size: skipped as already uploaded</li>
+<li>Renamed file (different basename): treated as a different upload record</li>
+</ul>
 
 
 
@@ -693,9 +786,40 @@
   </a>
 </h2>
 
-<p>To manually trigger an upload:</p>
-<pre tabindex="0"><code>wigle upload
-</code></pre><p>This will process all pending CSV files and upload them to WiGLE.</p>
+<p>List available CSVs (page 1 by default):</p>
+<pre tabindex="0"><code>wigle files
+</code></pre><p>List another page:</p>
+<pre tabindex="0"><code>wigle files 2
+</code></pre><p>Upload a single file:</p>
+<pre tabindex="0"><code>wigle upload wardriving_12.csv
+</code></pre><p>Upload all queued files:</p>
+<pre tabindex="0"><code>wigle upload all
+</code></pre><p>Manual upload checks:</p>
+<ul>
+<li>Filename safety (must be a CSV basename, no path traversal)</li>
+<li>File exists and is not empty</li>
+<li>WiGLE CSV pre-header present (<code>WigleWifi-1.6...</code>)</li>
+<li>At least one data row exists (header-only files are skipped)</li>
+</ul>
+<p>The display menu and CLI return immediate success/failure feedback.</p>
+
+
+
+<h2 id="view-wigle-stats">
+  View WiGLE Stats
+  <a class="heading-anchor" href="#view-wigle-stats" aria-label="Copy link to this section">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none" transform="rotate(45 12 12)">
+        <path d="M14 12c0 2.761-2.239 5-5 5H7a5 5 0 110-10h.5"></path>
+        <path d="M10 12c0-2.761 2.239-5 5-5h2a5 5 0 010 10h-.5"></path>
+      </g>
+    </svg>
+  </a>
+</h2>
+
+<p>Fetch user stats for the current account:</p>
+<pre tabindex="0"><code>wigle stats
+</code></pre><p>The same stats call is available from <strong>Settings → Wigle → View WiGLE Stats</strong> on display builds.</p>
 
 
 
@@ -734,9 +858,14 @@
 </h2>
 
 <p>GhostESP generates WiGLE-compatible CSV files in the standard format:</p>
-<pre tabindex="0"><code>WigleWifi-1.6,appRelease=2.0.0,model=GhostESP,release=2.0.0,device=GhostESP,display=LCD,board=ESP32,brand=GhostESP
-MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type
+<pre tabindex="0"><code>WigleWifi-1.6,appRelease=GhostESP &lt;version&gt;,model=&lt;board&gt;,release=&lt;version&gt;,device=GhostESP,display=NONE,board=&lt;board&gt;,brand=GhostESP,star=Sol,body=3,subBody=0
+MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,RCOIs,MfgrId,Type
 </code></pre><p>Files are saved to <code>/mnt/ghostesp/gps/</code> on your SD card.</p>
+<p>Typical names:</p>
+<ul>
+<li><code>wardriving_&lt;n&gt;.csv</code></li>
+<li><code>ble_wardriving_&lt;n&gt;.csv</code></li>
+</ul>
 
 
 
@@ -754,9 +883,10 @@ MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,CurrentLatitude,CurrentLongitude,Altitu
 
 <ul>
 <li><strong>&ldquo;no API key set&rdquo;</strong>: Run <code>wigle API &lt;name&gt;:&lt;token&gt;</code> to configure credentials</li>
-<li><strong>Upload fails</strong>: Ensure device is connected to Wi-Fi and has internet access</li>
+<li><strong>Upload fails</strong>: Ensure device is connected to Wi-Fi STA mode and has internet access</li>
 <li><strong>Files not uploading</strong>: Check that CSV files exist in <code>/mnt/ghostesp/gps/</code></li>
-<li><strong>Duplicate uploads</strong>: The upload queue tracks files by name and size to prevent duplicates</li>
+<li><strong>&ldquo;CSV has no data rows&rdquo;</strong>: Usually means capture had no accepted GPS rows (for example no valid fix)</li>
+<li><strong>Duplicate uploads</strong>: Upload memory tracks files by <code>basename,size</code> to prevent re-uploading the same file</li>
 </ul>
 
 
@@ -774,12 +904,22 @@ MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,CurrentLatitude,CurrentLongitude,Altitu
 </h2>
 
 <ul>
-<li>Uploads require an active Wi-Fi connection (not AP mode)</li>
+<li>Uploads require active Wi-Fi STA connectivity (AP mode alone is not enough)</li>
 <li>Large uploads may take time depending on file size and connection speed</li>
 <li>Upload progress is shown in the terminal/logs</li>
 <li>Files remain on SD card after successful upload</li>
 </ul>
 
+  
+    <nav class="doc__nav" aria-label="Document navigation">
+      
+        <a class="doc__nav-link doc__nav-link--prev" href="/latest/gps/wardriving/">
+          <span>← Previous</span>
+          <span>Wardriving</span>
+        </a>
+      
+      
+    </nav>
   
 </article>
 

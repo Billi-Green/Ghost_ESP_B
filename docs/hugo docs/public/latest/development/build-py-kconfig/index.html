@@ -117,6 +117,9 @@
       
       
     
+      
+      
+    
   
   
   
@@ -189,6 +192,8 @@
           <select id="sidebar-version" class="sidebar__version-select" data-version-select>
             
               <option value="latest" selected>Latest</option>
+            
+              <option value="v1.9.4">v1.9.4</option>
             
               <option value="v1.9.3">v1.9.3</option>
             
@@ -301,6 +306,8 @@
                 </button>
                 <div class="collapse sidebar__group-items" id="collapse-latestgps">
                   <a href="/latest/gps/" class="sidebar__sublink">Overview</a>
+                  
+                    <a href="/latest/gps/wardriving/" class="sidebar__sublink">Wardriving</a>
                   
                     <a href="/latest/gps/wigle/" class="sidebar__sublink">WiGLE Upload</a>
                   
@@ -638,6 +645,7 @@
 <li><strong>Rotate status display 180 degrees</strong>: Optional rotation setting.</li>
 </ul>
 <p>The status display shows system information, attack status, and idle animations when configured. It&rsquo;s particularly useful for boards like the Heltec V3 which includes an onboard OLED display.</p>
+<p>On boards that use the IO expander, three buttons on the expander (P10, P11, P12) can be programmed to run CLI commands or act as joystick buttons. Configure them via <strong>Settings → IO Buttons</strong> on the device or the <code>iobtn</code> and <code>settings</code> commands; see the <a href="/getting-started/command-line-reference/#io-expander-buttons-if-present">CLI reference</a>.</p>
 
 
 

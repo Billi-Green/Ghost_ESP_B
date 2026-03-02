@@ -54,6 +54,10 @@
     <changefreq>weekly</changefreq>
     <priority>0.5</priority>
   </url><url>
+    <loc>//localhost:1313/latest/gps/wardriving/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url><url>
     <loc>//localhost:1313/latest/wifi/basics/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.5</priority>
