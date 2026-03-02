@@ -1311,8 +1311,6 @@ esp_err_t wigle_get_stats(char *message, size_t message_len) {
     long long total_locs = cJSON_IsNumber(total_loc_json) ? (long long)total_loc_json->valuedouble : 0;
 
     snprintf(message, message_len,
-             "WiGLE Account Stats\n"
-             "-------------------\n"
              "User: %s\n"
              "Global Rank: %lld\n"
              "Monthly Rank: %lld\n"
