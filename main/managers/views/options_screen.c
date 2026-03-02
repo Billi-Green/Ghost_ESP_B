@@ -15,6 +15,7 @@
 
 /* MAX_PORTALS / MAX_PORTAL_NAME come from sd_card_manager.h */
 #define PORTAL_PAGE_SIZE 8    /* keep portal pages small to avoid LVGL stalls */
+#define WIGLE_CSV_PAGE_SIZE 8
 
 static char selected_portal[MAX_PORTAL_NAME] = {0};
 static char selected_karma_portal[MAX_PORTAL_NAME] = {0};
@@ -23,6 +24,13 @@ static char *evil_portal_names = NULL;   /* flat name storage for current page *
 static const char **evil_portal_options = NULL; /* NULL-terminated pointer array  */
 static int   portal_page_offset   = 0;   /* first file index of current page    */
 static bool  portal_has_next_page = false;
+
+static char *wigle_csv_names = NULL;
+static const char **wigle_csv_options = NULL;
+static int wigle_csv_page_offset = 0;
+static bool wigle_csv_has_next_page = false;
+static bool wigle_csv_browser_active = false;
+static char selected_wigle_csv[MAX_PORTAL_NAME] = {0};
 
 
 #include "managers/views/keyboard_screen.h"
@@ -411,6 +419,8 @@ static SettingsItem settings_items[] = {
     {"Donate Data", SETTING_WIGLE_DONATE, bool_options, 2, 1, SETTINGS_CAT_WIGLE, false, NULL},
     {"Test API Key", SETTING_WIGLE_TEST_API, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"Help", SETTING_WIGLE_HELP, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
+    {"Manual Upload", SETTING_WIGLE_MANUAL_UPLOAD, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
+    {"View WiGLE Stats", SETTING_WIGLE_STATS, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
 };
 
 #define IO_BTN_EDIT_P10 0x1000
@@ -552,6 +562,21 @@ static lv_obj_t *back_btn = NULL;
 // WiGLE help popup
 static lv_obj_t *wigle_help_popup = NULL;
 static lv_obj_t *wigle_help_close_btn = NULL;
+
+// WiGLE manual-upload popup
+static lv_obj_t *wigle_manual_popup = NULL;
+static lv_obj_t *wigle_manual_upload_btn = NULL;
+static lv_obj_t *wigle_manual_close_btn = NULL;
+static lv_obj_t *wigle_manual_info_label = NULL;
+static int wigle_manual_popup_selected = 0;
+
+// WiGLE stats popup
+static lv_obj_t *wigle_stats_popup = NULL;
+static lv_obj_t *wigle_stats_down_btn = NULL;
+static lv_obj_t *wigle_stats_close_btn = NULL;
+static lv_obj_t *wigle_stats_body_label = NULL;
+static lv_obj_t *wigle_stats_scroll = NULL;
+static int wigle_stats_popup_selected = 1;
 
 // --- Add Bluetooth submenu arrays and state ---
 static const char *bluetooth_main_options[] = {
@@ -718,7 +743,19 @@ static void update_scroll_buttons_visibility(void) {
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void wigle_help_close_cb(lv_event_t *e); // Forward Declaration for WiGLE help close
+static void wigle_manual_popup_close_cb(lv_event_t *e);
+static void wigle_manual_popup_upload_cb(lv_event_t *e);
+static void wigle_manual_popup_update_selection(void);
+static void wigle_stats_popup_open(void);
+static void wigle_stats_popup_close_cb(lv_event_t *e);
+static void wigle_stats_popup_scroll(int delta_y);
+static void wigle_stats_popup_scroll_down_cb(lv_event_t *e);
+static void wigle_stats_popup_update_selection(void);
+static void wigle_stats_popup_activate_selected(void);
+static void wigle_get_popup_geometry(int *popup_w, int *popup_h, int *y_offset);
 static void wigle_test_result_cb(bool success, const char *message);
+static void wigle_manual_upload_result_cb(bool success, const char *message);
+static void wigle_stats_result_cb(bool success, const char *message);
 static void wifi_connect_kb_cb(const char *text);
 static void ssh_scan_kb_cb(const char *text);
 static void dual_comm_connect_kb_cb(const char *text);
@@ -730,6 +767,9 @@ static void karma_portal_ssids_cb(const char *input);
 static void dual_comm_dns_lookup_kb_cb(const char *text);
 static void dual_comm_traceroute_kb_cb(const char *text);
 static void dual_comm_http_request_kb_cb(const char *text);
+static void wigle_csv_free_cache(void);
+static const char **wigle_csv_load_page(void);
+static void wigle_show_csv_details_popup(const char *filename);
 #ifdef CONFIG_USE_IO_EXPANDER
 static void iobtn_p10_kb_cb(const char *text);
 static void iobtn_p11_kb_cb(const char *text);
@@ -815,6 +855,8 @@ const char *options_menu_type_to_string(EOptionsMenuType menuType) {
         return "Settings";
     case OT_IOButtonPresets:
         return "IO Button Action";
+    case OT_WigleManualUpload:
+        return "WiGLE Upload";
     default:
         return "Unknown";
     }
@@ -941,6 +983,10 @@ void options_menu_create() {
         break;
     case OT_IOButtonPresets:
         is_settings_mode = false;
+        break;
+    case OT_WigleManualUpload:
+        is_settings_mode = false;
+        options = wigle_csv_load_page();
         break;
     default: options = NULL; break;
     }
@@ -1318,6 +1364,37 @@ static void apply_setting_change(int setting_index, int new_value) {
             
             return;
         }
+        case SETTING_WIGLE_MANUAL_UPLOAD: {
+            wigle_csv_page_offset = 0;
+            wigle_csv_browser_active = true;
+            SelectedMenuType = OT_WigleManualUpload;
+            is_settings_mode = false;
+            rebuild_current_menu();
+            return;
+        }
+        case SETTING_WIGLE_STATS: {
+            if (wigle_is_stats_in_progress()) {
+                wigle_stats_popup_open();
+                wigle_set_stats_callback(wigle_stats_result_cb);
+                if (wigle_stats_body_label && lv_obj_is_valid(wigle_stats_body_label)) {
+                    lv_label_set_text(wigle_stats_body_label, "Stats request already running...\nPress Close to exit.");
+                }
+                return;
+            }
+            wigle_stats_popup_open();
+            if (wigle_stats_body_label && lv_obj_is_valid(wigle_stats_body_label)) {
+                lv_label_set_text(wigle_stats_body_label, "Loading WiGLE stats...");
+            }
+            wigle_set_stats_callback(wigle_stats_result_cb);
+            esp_err_t err = wigle_get_stats_async();
+            if (err != ESP_OK) {
+                wigle_set_stats_callback(NULL);
+                if (wigle_stats_body_label && lv_obj_is_valid(wigle_stats_body_label)) {
+                    lv_label_set_text(wigle_stats_body_label, "Failed to start stats request");
+                }
+            }
+            return;
+        }
     }
     
     // Save only the changed setting to NVS (Granular Save)
@@ -1418,6 +1495,18 @@ void handle_hardware_button_press_options(InputEvent *event) {
             return;
         }
     }
+    if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+        if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            wigle_manual_popup_close_cb(NULL);
+            return;
+        }
+    }
+    if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+        if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            wigle_stats_popup_close_cb(NULL);
+            return;
+        }
+    }
 
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
@@ -1432,6 +1521,58 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     }
                 }
                 // Consume all other touches when popup is open
+                opt_touch_started = false;
+                return;
+            }
+            if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+                if (wigle_manual_close_btn && lv_obj_is_valid(wigle_manual_close_btn)) {
+                    lv_area_t c_area; lv_obj_get_coords(wigle_manual_close_btn, &c_area);
+                    if (data->point.x >= c_area.x1 && data->point.x <= c_area.x2 &&
+                        data->point.y >= c_area.y1 && data->point.y <= c_area.y2) {
+                        wigle_manual_popup_selected = 1;
+                        wigle_manual_popup_update_selection();
+                        wigle_manual_popup_close_cb(NULL);
+                        opt_touch_started = false;
+                        return;
+                    }
+                }
+                if (wigle_manual_upload_btn && lv_obj_is_valid(wigle_manual_upload_btn)) {
+                    lv_area_t u_area; lv_obj_get_coords(wigle_manual_upload_btn, &u_area);
+                    if (data->point.x >= u_area.x1 && data->point.x <= u_area.x2 &&
+                        data->point.y >= u_area.y1 && data->point.y <= u_area.y2) {
+                        wigle_manual_popup_selected = 0;
+                        wigle_manual_popup_update_selection();
+                        wigle_manual_popup_upload_cb(NULL);
+                        opt_touch_started = false;
+                        return;
+                    }
+                }
+                opt_touch_started = false;
+                return;
+            }
+            if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+                if (wigle_stats_down_btn && lv_obj_is_valid(wigle_stats_down_btn)) {
+                    lv_area_t d_area; lv_obj_get_coords(wigle_stats_down_btn, &d_area);
+                    if (data->point.x >= d_area.x1 && data->point.x <= d_area.x2 &&
+                        data->point.y >= d_area.y1 && data->point.y <= d_area.y2) {
+                        wigle_stats_popup_selected = 0;
+                        wigle_stats_popup_update_selection();
+                        wigle_stats_popup_activate_selected();
+                        opt_touch_started = false;
+                        return;
+                    }
+                }
+                if (wigle_stats_close_btn && lv_obj_is_valid(wigle_stats_close_btn)) {
+                    lv_area_t s_area; lv_obj_get_coords(wigle_stats_close_btn, &s_area);
+                    if (data->point.x >= s_area.x1 && data->point.x <= s_area.x2 &&
+                        data->point.y >= s_area.y1 && data->point.y <= s_area.y2) {
+                        wigle_stats_popup_selected = 1;
+                        wigle_stats_popup_update_selection();
+                        wigle_stats_popup_activate_selected();
+                        opt_touch_started = false;
+                        return;
+                    }
+                }
                 opt_touch_started = false;
                 return;
             }
@@ -1482,7 +1623,8 @@ void handle_hardware_button_press_options(InputEvent *event) {
             int thr_y = LV_VER_RES / OPT_SWIPE_THRESHOLD_RATIO;
             // Lower threshold for portal HTML lists (short lists need a lighter swipe)
             if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT ||
-                current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT) {
+                current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT ||
+                SelectedMenuType == OT_WigleManualUpload) {
                 thr_y = LV_VER_RES / 20; // much more sensitive for short lists
             }
             int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
@@ -1596,6 +1738,31 @@ void handle_hardware_button_press_options(InputEvent *event) {
     } else if (event->type == INPUT_TYPE_JOYSTICK) {
         int button = event->data.joystick_index;
         ESP_LOGI(TAG, "Joystick index = %d", button);
+
+        if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+            if (button == 0 || button == 2 || button == 3 || button == 4) {
+                wigle_manual_popup_selected = (wigle_manual_popup_selected + 1) % 2;
+                wigle_manual_popup_update_selection();
+            } else if (button == 1) {
+                if (wigle_manual_popup_selected == 0) {
+                    wigle_manual_popup_upload_cb(NULL);
+                } else {
+                    wigle_manual_popup_close_cb(NULL);
+                }
+            }
+            return;
+        }
+
+        if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+            if (button == 0 || button == 2 || button == 3 || button == 4) {
+                wigle_stats_popup_selected = (wigle_stats_popup_selected + 1) % 2;
+                wigle_stats_popup_update_selection();
+            } else if (button == 1) {
+                wigle_stats_popup_activate_selected();
+            }
+            return;
+        }
+
         if (button == 2) {
             select_option_item(selected_item_index - 1);
         } else if (button == 4) {
@@ -1670,6 +1837,35 @@ void handle_hardware_button_press_options(InputEvent *event) {
     } else if (event->type == INPUT_TYPE_KEYBOARD) {
         uint8_t keyValue = event->data.key_value;
 
+        if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+            if (keyValue == 'h' || keyValue == 'l' || keyValue == ',' || keyValue == ';' || keyValue == '/' || keyValue == '.') {
+                wigle_manual_popup_selected = (wigle_manual_popup_selected + 1) % 2;
+                wigle_manual_popup_update_selection();
+            } else if (keyValue == 13) {
+                if (wigle_manual_popup_selected == 0) wigle_manual_popup_upload_cb(NULL);
+                else wigle_manual_popup_close_cb(NULL);
+            } else if (keyValue == 29 || keyValue == '`') {
+                wigle_manual_popup_close_cb(NULL);
+            }
+            return;
+        }
+
+        if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+            if (keyValue == 'h' || keyValue == 'l') {
+                wigle_stats_popup_selected = (wigle_stats_popup_selected + 1) % 2;
+                wigle_stats_popup_update_selection();
+            } else if (keyValue == 'k' || keyValue == 44 || keyValue == ',' || keyValue == 59 || keyValue == ';') {
+                wigle_stats_popup_scroll(-40);
+            } else if (keyValue == 'j' || keyValue == 47 || keyValue == '/' || keyValue == 46 || keyValue == '.') {
+                wigle_stats_popup_scroll(40);
+            } else if (keyValue == 13) {
+                wigle_stats_popup_activate_selected();
+            } else if (keyValue == 29 || keyValue == '`') {
+                wigle_stats_popup_close_cb(NULL);
+            }
+            return;
+        }
+
         // --- Vim keybinds ---
         if (keyValue == 'h') { // Vim left
             ESP_LOGI(TAG, "Vim 'h' pressed (left)");
@@ -1739,6 +1935,27 @@ void handle_hardware_button_press_options(InputEvent *event) {
             back_event_cb(NULL);
         }
     } else if (event->type == INPUT_TYPE_ENCODER) {
+        if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+            if (event->data.encoder.button) {
+                if (wigle_manual_popup_selected == 0) wigle_manual_popup_upload_cb(NULL);
+                else wigle_manual_popup_close_cb(NULL);
+            } else {
+                wigle_manual_popup_selected = (wigle_manual_popup_selected + 1) % 2;
+                wigle_manual_popup_update_selection();
+            }
+            return;
+        }
+
+        if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+            if (event->data.encoder.button) {
+                wigle_stats_popup_activate_selected();
+            } else if (event->data.encoder.direction != 0) {
+                wigle_stats_popup_selected = (wigle_stats_popup_selected + 1) % 2;
+                wigle_stats_popup_update_selection();
+            }
+            return;
+        }
+
         if (event->data.encoder.button) {
             // Encoder button press - treat as select/enter/cycle
             if (is_settings_mode) {
@@ -1961,6 +2178,30 @@ void option_event_cb(lv_event_t *e) {
     // Handle the "Back" option specifically (for encoder/joystick modes)
     if (strcmp(Selected_Option, "__BACK_OPTION__") == 0) {
         back_event_cb(NULL);
+        option_invoked = false;
+        return;
+    }
+
+    if (SelectedMenuType == OT_WigleManualUpload) {
+        if (strcmp(Selected_Option, "No CSV files found") == 0) {
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "Next >") == 0) {
+            wigle_csv_page_offset += WIGLE_CSV_PAGE_SIZE;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "< Prev") == 0) {
+            wigle_csv_page_offset -= WIGLE_CSV_PAGE_SIZE;
+            if (wigle_csv_page_offset < 0) wigle_csv_page_offset = 0;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+
+        wigle_show_csv_details_popup(Selected_Option);
         option_invoked = false;
         return;
     }
@@ -3425,6 +3666,13 @@ void options_menu_destroy() {
 
     portal_page_offset = 0;
     portal_free_cache();
+
+    wigle_csv_page_offset = 0;
+    wigle_csv_browser_active = false;
+    selected_wigle_csv[0] = '\0';
+    wigle_csv_free_cache();
+    wigle_manual_popup_close_cb(NULL);
+    wigle_stats_popup_close_cb(NULL);
 }
 
 void get_options_menu_callback(void **callback) { *callback = options_menu_view.input_callback; }
@@ -3467,11 +3715,88 @@ static void wigle_test_result_cb(bool success, const char *message) {
     lv_async_call(wigle_test_result_async, args);
 }
 
+static void wigle_manual_upload_result_async(void *data) {
+    uint8_t *args = (uint8_t *)data;
+    bool success = args[0];
+    char *message = (char *)(&args[1]);
+    wigle_set_manual_upload_callback(NULL);
+
+    if (wigle_manual_info_label && lv_obj_is_valid(wigle_manual_info_label)) {
+        lv_label_set_text(wigle_manual_info_label, message);
+    }
+    if (success) {
+        wigle_csv_free_cache();
+        rebuild_current_menu();
+    }
+    free(data);
+}
+
+static void wigle_manual_upload_result_cb(bool success, const char *message) {
+    size_t len = strlen(message) + 1;
+    uint8_t *args = malloc(sizeof(bool) + len);
+    if (!args) return;
+    args[0] = success;
+    memcpy(&args[1], message, len);
+    lv_async_call(wigle_manual_upload_result_async, args);
+}
+
+static void wigle_stats_result_async(void *data) {
+    uint8_t *args = (uint8_t *)data;
+    (void)args[0];
+    char *message = (char *)(&args[1]);
+    wigle_set_stats_callback(NULL);
+
+    if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup) &&
+        wigle_stats_body_label && lv_obj_is_valid(wigle_stats_body_label)) {
+        lv_label_set_text(wigle_stats_body_label, message);
+        if (wigle_stats_close_btn && lv_obj_is_valid(wigle_stats_close_btn)) {
+            lv_obj_t *lbl = lv_obj_get_child(wigle_stats_close_btn, 0);
+            if (lbl) lv_label_set_text(lbl, "Close");
+        }
+    }
+    free(data);
+}
+
+static void wigle_stats_result_cb(bool success, const char *message) {
+    size_t len = strlen(message) + 1;
+    uint8_t *args = malloc(sizeof(bool) + len);
+    if (!args) return;
+    args[0] = success;
+    memcpy(&args[1], message, len);
+    lv_async_call(wigle_stats_result_async, args);
+}
+
 static void back_event_cb(lv_event_t *e) {
 
     // Save settings when exiting options menu
     if (is_settings_mode) {
         settings_save(&G_Settings);
+    }
+
+    if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
+        wigle_help_close_cb(NULL);
+        return;
+    }
+    if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+        wigle_manual_popup_close_cb(NULL);
+        return;
+    }
+    if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+        wigle_stats_popup_close_cb(NULL);
+        return;
+    }
+
+    if (SelectedMenuType == OT_WigleManualUpload || wigle_csv_browser_active) {
+        wigle_csv_page_offset = 0;
+        wigle_csv_browser_active = false;
+        selected_wigle_csv[0] = '\0';
+        wigle_csv_free_cache();
+        SelectedMenuType = OT_Settings;
+        is_settings_mode = true;
+        current_settings_category = SETTINGS_CAT_WIGLE;
+        settings_submenu_depth = 1;
+        rebuild_current_menu();
+        return;
     }
 
     // If in Evil Portal select submenu, go back to Evil Portal menu
@@ -3518,6 +3843,309 @@ static void back_event_cb(lv_event_t *e) {
     }
     // Otherwise, go back to main menu
     display_manager_switch_view(&main_menu_view);
+}
+
+static void wigle_csv_free_cache(void) {
+    if (wigle_csv_names) { free(wigle_csv_names); wigle_csv_names = NULL; }
+    if (wigle_csv_options) { free(wigle_csv_options); wigle_csv_options = NULL; }
+}
+
+static const char **wigle_csv_load_page(void) {
+    static const char *empty[] = {"No CSV files found", NULL};
+
+    wigle_csv_free_cache();
+
+    char (*file_names)[MAX_PORTAL_NAME] = malloc(WIGLE_CSV_PAGE_SIZE * MAX_PORTAL_NAME);
+    if (!file_names) {
+        ESP_LOGE(TAG, "wigle_csv_load_page: OOM for file name buffer");
+        return empty;
+    }
+
+    int count = wigle_list_csv_files_paged(
+        wigle_csv_page_offset,
+        WIGLE_CSV_PAGE_SIZE,
+        file_names,
+        &wigle_csv_has_next_page);
+
+    if (count < 0) {
+        free(file_names);
+        return empty;
+    }
+
+    bool show_prev = (wigle_csv_page_offset > 0);
+    bool show_next = wigle_csv_has_next_page;
+    int total = (show_prev ? 1 : 0) + count + (show_next ? 1 : 0);
+
+    if (total == 0) {
+        free(file_names);
+        return empty;
+    }
+
+    wigle_csv_names = malloc(MAX_PORTAL_NAME * (size_t)total);
+    wigle_csv_options = malloc(sizeof(char *) * ((size_t)total + 1));
+    if (!wigle_csv_names || !wigle_csv_options) {
+        free(file_names);
+        wigle_csv_free_cache();
+        return empty;
+    }
+
+    int idx = 0;
+    if (show_prev) {
+        strcpy(wigle_csv_names + idx * MAX_PORTAL_NAME, "< Prev");
+        wigle_csv_options[idx] = wigle_csv_names + idx * MAX_PORTAL_NAME;
+        idx++;
+    }
+    for (int i = 0; i < count; i++) {
+        strcpy(wigle_csv_names + idx * MAX_PORTAL_NAME, file_names[i]);
+        wigle_csv_options[idx] = wigle_csv_names + idx * MAX_PORTAL_NAME;
+        idx++;
+    }
+    if (show_next) {
+        strcpy(wigle_csv_names + idx * MAX_PORTAL_NAME, "Next >");
+        wigle_csv_options[idx] = wigle_csv_names + idx * MAX_PORTAL_NAME;
+        idx++;
+    }
+    wigle_csv_options[idx] = NULL;
+
+    free(file_names);
+    return wigle_csv_options;
+}
+
+static void wigle_manual_popup_close_cb(lv_event_t *e) {
+    (void)e;
+    wigle_set_manual_upload_callback(NULL);
+    if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+        lvgl_obj_del_safe(&wigle_manual_popup);
+    }
+    wigle_manual_upload_btn = NULL;
+    wigle_manual_close_btn = NULL;
+    wigle_manual_info_label = NULL;
+    wigle_manual_popup_selected = 0;
+}
+
+static void wigle_manual_popup_update_selection(void) {
+    lv_obj_t *btns[2] = { wigle_manual_upload_btn, wigle_manual_close_btn };
+    popup_update_selection(btns, 2, wigle_manual_popup_selected);
+}
+
+static void wigle_get_popup_geometry(int *popup_w, int *popup_h, int *y_offset) {
+    int w = (LV_HOR_RES <= 240) ? (LV_HOR_RES - 20) : (LV_HOR_RES - 30);
+    int h;
+    int y = 0;
+
+    if (LV_VER_RES <= 135) {
+        h = 130;
+        y = 0;
+    } else if (LV_VER_RES <= 200) {
+        h = (LV_VER_RES < 200) ? (LV_VER_RES - 30) : 160;
+        if (h < 120) h = 120;
+        y = 10;
+    } else {
+        h = (LV_VER_RES <= 240) ? 140 : 160;
+        y = 10;
+    }
+
+    if (popup_w) *popup_w = w;
+    if (popup_h) *popup_h = h;
+    if (y_offset) *y_offset = y;
+}
+
+static void wigle_stats_popup_close_cb(lv_event_t *e) {
+    (void)e;
+    wigle_set_stats_callback(NULL);
+    if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+        lvgl_obj_del_safe(&wigle_stats_popup);
+    }
+    wigle_stats_down_btn = NULL;
+    wigle_stats_close_btn = NULL;
+    wigle_stats_body_label = NULL;
+    wigle_stats_scroll = NULL;
+    wigle_stats_popup_selected = 1;
+}
+
+static void wigle_stats_popup_scroll(int delta_y) {
+    if (!wigle_stats_scroll || !lv_obj_is_valid(wigle_stats_scroll) || delta_y == 0) {
+        return;
+    }
+
+    lv_obj_update_layout(wigle_stats_scroll);
+    lv_coord_t y = lv_obj_get_scroll_y(wigle_stats_scroll);
+    if (delta_y > 0 && lv_obj_get_scroll_bottom(wigle_stats_scroll) <= 0) {
+        lv_obj_scroll_to_y(wigle_stats_scroll, 0, LV_ANIM_OFF);
+        return;
+    }
+
+    lv_obj_scroll_to_y(wigle_stats_scroll, y + delta_y, LV_ANIM_OFF);
+}
+
+static void wigle_stats_popup_scroll_down_cb(lv_event_t *e) {
+    (void)e;
+    wigle_stats_popup_scroll(40);
+}
+
+static void wigle_stats_popup_update_selection(void) {
+    lv_obj_t *btns[2] = { wigle_stats_down_btn, wigle_stats_close_btn };
+    popup_update_selection(btns, 2, wigle_stats_popup_selected);
+}
+
+static void wigle_stats_popup_activate_selected(void) {
+    if (wigle_stats_popup_selected == 0) {
+        wigle_stats_popup_scroll(40);
+    } else {
+        wigle_stats_popup_close_cb(NULL);
+    }
+}
+
+static void wigle_stats_popup_open(void) {
+    if (wigle_stats_popup && lv_obj_is_valid(wigle_stats_popup)) {
+        return;
+    }
+
+    int popup_w = 0;
+    int popup_h = 0;
+    int y_offset = 0;
+    wigle_get_popup_geometry(&popup_w, &popup_h, &y_offset);
+    wigle_stats_popup = popup_create_container_with_offset(lv_layer_top(), popup_w, popup_h, y_offset);
+    lv_obj_set_style_bg_color(wigle_stats_popup, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_add_flag(wigle_stats_popup, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *title = popup_create_title_label(wigle_stats_popup, "WiGLE Stats", &lv_font_montserrat_12, 5);
+    (void)title;
+
+    int scroll_h = popup_h - 76;
+    if (scroll_h < 58) scroll_h = 58;
+    wigle_stats_scroll = popup_create_scroll_area(wigle_stats_popup, popup_w - 16, scroll_h,
+                                                   LV_ALIGN_TOP_MID, 0, 24);
+    wigle_stats_body_label = lv_label_create(wigle_stats_scroll);
+    lv_label_set_long_mode(wigle_stats_body_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(wigle_stats_body_label, popup_w - 24);
+    lv_obj_set_style_text_color(wigle_stats_body_label, lv_color_hex(0xCCCCCC), 0);
+    lv_obj_set_style_text_font(wigle_stats_body_label,
+                               (LV_VER_RES <= 200) ? &lv_font_montserrat_10 : &lv_font_montserrat_12,
+                               0);
+    lv_obj_set_style_text_line_space(wigle_stats_body_label, 3, 0);
+    lv_label_set_text(wigle_stats_body_label, "Loading WiGLE stats...");
+
+    wigle_stats_down_btn = popup_add_styled_button(
+        wigle_stats_popup, "Down", 88, 32,
+        LV_ALIGN_BOTTOM_LEFT, 10, -8,
+        &lv_font_montserrat_12,
+        wigle_stats_popup_scroll_down_cb, NULL);
+    wigle_stats_close_btn = popup_add_styled_button(
+        wigle_stats_popup, "Close", 96, 32,
+        LV_ALIGN_BOTTOM_RIGHT, -10, -8,
+        &lv_font_montserrat_12,
+        wigle_stats_popup_close_cb, NULL);
+
+    lv_obj_t *btns[2] = { wigle_stats_down_btn, wigle_stats_close_btn };
+    PopupButtonLayoutConfig cfg = {
+        .min_w = 80,
+        .max_w = 140,
+        .min_threshold = 64,
+        .gap = 10,
+    };
+    popup_layout_buttons_responsive(wigle_stats_popup, btns, 2, -8, &cfg);
+    wigle_stats_popup_selected = 1;
+    wigle_stats_popup_update_selection();
+}
+
+static void wigle_manual_popup_upload_cb(lv_event_t *e) {
+    (void)e;
+    if (!selected_wigle_csv[0]) {
+        error_popup_create("No CSV selected");
+        return;
+    }
+    if (wigle_is_manual_upload_in_progress()) {
+        error_popup_create("Upload already in progress");
+        return;
+    }
+
+    if (wigle_manual_info_label && lv_obj_is_valid(wigle_manual_info_label)) {
+        lv_label_set_text_fmt(wigle_manual_info_label,
+                              "Name: %s\n\nUploading...", selected_wigle_csv);
+    }
+    wigle_set_manual_upload_callback(wigle_manual_upload_result_cb);
+    esp_err_t err = wigle_upload_single_csv_async(selected_wigle_csv);
+    if (err != ESP_OK) {
+        wigle_set_manual_upload_callback(NULL);
+        if (wigle_manual_info_label && lv_obj_is_valid(wigle_manual_info_label)) {
+            lv_label_set_text(wigle_manual_info_label, "Failed to start upload.");
+        }
+        return;
+    }
+}
+
+static void wigle_show_csv_details_popup(const char *filename) {
+    if (!filename || !filename[0]) {
+        error_popup_create("Invalid CSV name");
+        return;
+    }
+
+    int wifi_rows = 0;
+    int total_rows = 0;
+    esp_err_t err = wigle_get_csv_info(filename, &wifi_rows, &total_rows);
+    if (err != ESP_OK) {
+        error_popup_create("Failed to read CSV info");
+        return;
+    }
+
+    strncpy(selected_wigle_csv, filename, sizeof(selected_wigle_csv) - 1);
+    selected_wigle_csv[sizeof(selected_wigle_csv) - 1] = '\0';
+
+    if (wigle_manual_popup && lv_obj_is_valid(wigle_manual_popup)) {
+        lvgl_obj_del_safe(&wigle_manual_popup);
+    }
+
+    int popup_w = 0;
+    int popup_h = 0;
+    int y_offset = 0;
+    wigle_get_popup_geometry(&popup_w, &popup_h, &y_offset);
+    wigle_manual_popup = popup_create_container_with_offset(lv_layer_top(), popup_w, popup_h, y_offset);
+    lv_obj_set_style_bg_color(wigle_manual_popup, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_add_flag(wigle_manual_popup, LV_OBJ_FLAG_CLICKABLE);
+
+    popup_create_title_label(wigle_manual_popup, "WiGLE Manual Upload", &lv_font_montserrat_12, 5);
+
+    int info_scroll_h = popup_h - 76;
+    if (info_scroll_h < 58) info_scroll_h = 58;
+    lv_obj_t *info_scroll = popup_create_scroll_area(wigle_manual_popup, popup_w - 16, info_scroll_h,
+                                                     LV_ALIGN_TOP_MID, 0, 28);
+    wigle_manual_info_label = lv_label_create(info_scroll);
+    lv_label_set_long_mode(wigle_manual_info_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(wigle_manual_info_label, popup_w - 24);
+    lv_obj_set_style_text_color(wigle_manual_info_label, lv_color_hex(0xCCCCCC), 0);
+    lv_obj_set_style_text_font(wigle_manual_info_label,
+                               (LV_VER_RES <= 200) ? &lv_font_montserrat_10 : &lv_font_montserrat_12,
+                               0);
+    lv_obj_set_style_text_line_space(wigle_manual_info_label, 2, 0);
+
+    char details[220];
+    snprintf(details, sizeof(details),
+             "Name: %s\nWiFi rows: %d\nTotal rows: %d",
+             filename, wifi_rows, total_rows);
+    lv_label_set_text(wigle_manual_info_label, details);
+
+    wigle_manual_upload_btn = popup_add_styled_button(
+        wigle_manual_popup, "Upload", 90, 32,
+        LV_ALIGN_BOTTOM_LEFT, 10, -8,
+        &lv_font_montserrat_12,
+        wigle_manual_popup_upload_cb, NULL);
+    wigle_manual_close_btn = popup_add_styled_button(
+        wigle_manual_popup, "Cancel", 90, 32,
+        LV_ALIGN_BOTTOM_RIGHT, -10, -8,
+        &lv_font_montserrat_12,
+        wigle_manual_popup_close_cb, NULL);
+
+    lv_obj_t *btns[2] = { wigle_manual_upload_btn, wigle_manual_close_btn };
+    PopupButtonLayoutConfig cfg = {
+        .min_w = 80,
+        .max_w = 140,
+        .min_threshold = 64,
+        .gap = 10,
+    };
+    popup_layout_buttons_responsive(wigle_manual_popup, btns, 2, -8, &cfg);
+    wigle_manual_popup_selected = 0;
+    wigle_manual_popup_update_selection();
 }
 
 /* -----------------------------------------------------------------------
@@ -3733,6 +4361,10 @@ static void rebuild_current_menu(void) {
         case OT_IOButtonPresets:
             is_settings_mode = false;
             options = get_io_btn_preset_options();
+            break;
+        case OT_WigleManualUpload:
+            options = wigle_csv_load_page();
+            timer_period = 25;
             break;
         default: break;
         }
@@ -4041,9 +4673,10 @@ static void menu_builder_cb(lv_timer_t *t)
     }
     const bool is_portal_select =
         (!is_settings_mode) &&
-        (SelectedMenuType == OT_Wifi) &&
-        (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT ||
-         current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT);
+        ((SelectedMenuType == OT_Wifi &&
+          (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT ||
+           current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT)) ||
+         SelectedMenuType == OT_WigleManualUpload);
 
     const int BATCH = is_portal_select ? 2 : 6;
     int built_this_tick = 0;
