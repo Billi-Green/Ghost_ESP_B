@@ -13,7 +13,7 @@
 - Added auto upload to WiGLE - @Play2BReal
 - Added WiGLE manual upload browser in display settings with paged CSV list and per-file upload actions
 - Added WiGLE stats popup in display settings with scroll and close controls
-- Added WiGLE CLI commands: `wigle files [page]`, `wigle upload <filename>`, and `wigle stats`
+- Added WiGLE CLI commands: `wigle files [page]`, `wigle upload <filename>`, and `wigle stats` - @Play2BReal, @jaylikesbunda
 - Added control app updates - @tototo31
 - Added Flipper Zero Companion App documentation - @tototo31
 - Added SD JIT mounting for custom evil portal menu option
