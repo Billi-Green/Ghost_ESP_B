@@ -1178,9 +1178,11 @@ static void wardrive_heartbeat_cb(void *arg) {
     uint32_t up_rem_s = up_s % 60;
 
     size_t pending = csv_get_pending_bytes();
+    size_t heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t heap_largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
 
     if (wardrive_role == WARDRIVE_ROLE_HELPER) {
-        glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu tx(n/p/r/t/s)=%lu/%lu/%lu/%lu/%lu send(ok/fail)=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
+        glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu tx(n/p/r/t/s)=%lu/%lu/%lu/%lu/%lu send(ok/fail)=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB heap=%u/%uB\n",
              (unsigned long)wardrive_wifi_frames_seen,
              (unsigned long)wardrive_log_ok,
              (unsigned long)wardrive_log_attempts,
@@ -1199,9 +1201,11 @@ static void wardrive_heartbeat_cb(void *arg) {
              (unsigned long)up_rem_s,
              fix_status,
              (unsigned)sats,
-             (unsigned)pending);
+             (unsigned)pending,
+             (unsigned)heap_free,
+             (unsigned)heap_largest);
     } else {
-        glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB\n",
+        glog("Wardrive: ap=%lu logged=%lu/%lu gpsrej=%lu helper=%lu/%lu ch=%u up=%lum%02lus gps=%s/%u pending=%uB heap=%u/%uB\n",
              (unsigned long)wardrive_wifi_frames_seen,
              (unsigned long)wardrive_log_ok,
              (unsigned long)wardrive_log_attempts,
@@ -1213,7 +1217,9 @@ static void wardrive_heartbeat_cb(void *arg) {
              (unsigned long)up_rem_s,
              fix_status,
              (unsigned)sats,
-             (unsigned)pending);
+             (unsigned)pending,
+             (unsigned)heap_free,
+             (unsigned)heap_largest);
     }
 }
 
@@ -1916,6 +1922,9 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     const uint8_t *payload = pkt->payload;
     int len = pkt->rx_ctrl.sig_len;
+    if (len < 36) {
+        return;
+    }
 
     uint8_t frame_type = hdr->frame_ctrl & 0xFC;
     if (frame_type != 0x80 && frame_type != 0x50) {
@@ -1926,8 +1935,17 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     int index = 36;
     char ssid[33] = {0};
+    bool ssid_ie_seen = false;
     uint8_t bssid[6];
     memcpy(bssid, hdr->addr3, 6);
+    if ((bssid[0] & 0x01) != 0) {
+        return;
+    }
+    static const uint8_t zero_bssid[6] = {0};
+    static const uint8_t ff_bssid[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    if (memcmp(bssid, zero_bssid, 6) == 0 || memcmp(bssid, ff_bssid, 6) == 0) {
+        return;
+    }
 
     int rssi = pkt->rx_ctrl.rssi;
     int channel = pkt->rx_ctrl.channel;
@@ -1950,10 +1968,11 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
         /* sanity checks: ensure IE length is reasonable and within bounds */
         if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
-            break;
+            return;
         }
 
         if (id == 0 && ie_len <= 32) {
+            ssid_ie_seen = true;
             memcpy(ssid, &payload[index + 2], ie_len);
             ssid[ie_len] = '\0';
             trim_trailing(ssid);
@@ -2011,7 +2030,7 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             }
 rsn_done:
             
-        } else if (id == 221) {
+        } else if (id == 221 && ie_len >= 4) {
             uint32_t oui =
                 (payload[index + 2] << 16) | (payload[index + 3] << 8) | payload[index + 4];
             uint8_t oui_type = payload[index + 5];
@@ -2031,9 +2050,13 @@ rsn_done:
         }
     }
 
+    if (!ssid_ie_seen) {
+        return;
+    }
+
     if (!found_rsn && !found_wpa) {
         size_t copy_len = sizeof(encryption_type) - 1;
-        if (privacy_required) {
+        if (privacy_required && ssid_ie_seen) {
             strncpy(encryption_type, "WEP", copy_len);
         } else {
             strncpy(encryption_type, "OPEN", copy_len);

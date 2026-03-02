@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <esp_heap_caps.h>
 #include "ff.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -44,7 +45,8 @@ static size_t csv_pre_header_len = 0;
 
 static esp_err_t csv_flush_buffer_to_file_unlocked(void);
 
-#define WD_DEDUPE_SIZE 128
+#define WD_DEDUPE_SIZE_INTERNAL 128
+#define WD_DEDUPE_SIZE_PSRAM 1024
 
 typedef struct {
     uint32_t hash;
@@ -55,10 +57,12 @@ typedef struct {
 #define WD_FLAG_USED       0x01
 #define WD_FLAG_NAME_EMPTY 0x02
 
-static wd_dedupe_entry_t wd_wifi_dedupe[WD_DEDUPE_SIZE];
-static wd_dedupe_entry_t wd_ble_dedupe[WD_DEDUPE_SIZE];
-static uint8_t wd_wifi_idx = 0;
-static uint8_t wd_ble_idx = 0;
+static wd_dedupe_entry_t *wd_wifi_dedupe = NULL;
+static wd_dedupe_entry_t *wd_ble_dedupe = NULL;
+static size_t wd_dedupe_size = 0;
+static bool wd_dedupe_in_psram = false;
+static size_t wd_wifi_idx = 0;
+static size_t wd_ble_idx = 0;
 static uint32_t wd_wifi_unique_logged = 0;
 static uint32_t wd_ble_unique_logged = 0;
 static uint32_t wd_wifi_hidden_count = 0;
@@ -72,6 +76,110 @@ static uint32_t wd_hash_mac(const char *mac) {
         hash *= 16777619u;
     }
     return hash;
+}
+
+static bool wd_is_pow2(size_t v) {
+    return v && ((v & (v - 1)) == 0);
+}
+
+static size_t wd_probe_index(uint32_t hash, size_t step) {
+    size_t mask = wd_dedupe_size - 1;
+    return ((size_t)hash + step) & mask;
+}
+
+static void wd_free_dedupe_tables(void) {
+    if (wd_wifi_dedupe) {
+        heap_caps_free(wd_wifi_dedupe);
+        wd_wifi_dedupe = NULL;
+    }
+    if (wd_ble_dedupe) {
+        heap_caps_free(wd_ble_dedupe);
+        wd_ble_dedupe = NULL;
+    }
+    wd_dedupe_size = 0;
+    wd_dedupe_in_psram = false;
+}
+
+static bool wd_allocate_dedupe_tables(void) {
+    if (wd_wifi_dedupe && wd_ble_dedupe && wd_is_pow2(wd_dedupe_size)) {
+        return true;
+    }
+
+    wd_free_dedupe_tables();
+
+    size_t target_size = WD_DEDUPE_SIZE_INTERNAL;
+    uint32_t caps = MALLOC_CAP_8BIT;
+
+#if CONFIG_SPIRAM
+    target_size = WD_DEDUPE_SIZE_PSRAM;
+    caps |= MALLOC_CAP_SPIRAM;
+#endif
+
+    wd_wifi_dedupe = heap_caps_calloc(target_size, sizeof(wd_dedupe_entry_t), caps);
+    wd_ble_dedupe = heap_caps_calloc(target_size, sizeof(wd_dedupe_entry_t), caps);
+
+    if (!wd_wifi_dedupe || !wd_ble_dedupe) {
+        if (wd_wifi_dedupe) {
+            heap_caps_free(wd_wifi_dedupe);
+            wd_wifi_dedupe = NULL;
+        }
+        if (wd_ble_dedupe) {
+            heap_caps_free(wd_ble_dedupe);
+            wd_ble_dedupe = NULL;
+        }
+
+        target_size = WD_DEDUPE_SIZE_INTERNAL;
+        wd_wifi_dedupe = calloc(target_size, sizeof(wd_dedupe_entry_t));
+        wd_ble_dedupe = calloc(target_size, sizeof(wd_dedupe_entry_t));
+        wd_dedupe_in_psram = false;
+    } else {
+        wd_dedupe_in_psram = (target_size == WD_DEDUPE_SIZE_PSRAM);
+    }
+
+    if (!wd_wifi_dedupe || !wd_ble_dedupe) {
+        wd_free_dedupe_tables();
+        return false;
+    }
+
+    wd_dedupe_size = target_size;
+    return true;
+}
+
+static wd_dedupe_entry_t *wd_lookup_entry(wd_dedupe_entry_t *table, uint32_t hash) {
+    if (!table || !wd_is_pow2(wd_dedupe_size)) {
+        return NULL;
+    }
+
+    for (size_t step = 0; step < wd_dedupe_size; step++) {
+        size_t idx = wd_probe_index(hash, step);
+        wd_dedupe_entry_t *entry = &table[idx];
+        if (!(entry->flags & WD_FLAG_USED)) {
+            return NULL;
+        }
+        if (entry->hash == hash) {
+            return entry;
+        }
+    }
+
+    return NULL;
+}
+
+static wd_dedupe_entry_t *wd_insert_entry(wd_dedupe_entry_t *table, uint32_t hash, size_t *ring_idx) {
+    if (!table || !ring_idx || !wd_is_pow2(wd_dedupe_size)) {
+        return NULL;
+    }
+
+    for (size_t step = 0; step < wd_dedupe_size; step++) {
+        size_t idx = wd_probe_index(hash, step);
+        wd_dedupe_entry_t *entry = &table[idx];
+        if (!(entry->flags & WD_FLAG_USED)) {
+            return entry;
+        }
+    }
+
+    wd_dedupe_entry_t *entry = &table[*ring_idx];
+    *ring_idx = (*ring_idx + 1) & (wd_dedupe_size - 1);
+    return entry;
 }
 
 static void csv_escape_field(char *out, size_t out_len, const char *in) {
@@ -204,12 +312,7 @@ static void csv_build_pre_header(void) {
 }
 
 static wd_dedupe_entry_t *csv_find_wifi_dedupe_entry(uint32_t hash) {
-    for (int i = 0; i < WD_DEDUPE_SIZE; i++) {
-        if ((wd_wifi_dedupe[i].flags & WD_FLAG_USED) && wd_wifi_dedupe[i].hash == hash) {
-            return &wd_wifi_dedupe[i];
-        }
-    }
-    return NULL;
+    return wd_lookup_entry(wd_wifi_dedupe, hash);
 }
 
 static bool csv_wifi_dedupe_should_log(const wd_dedupe_entry_t *entry, int rssi, bool ssid_empty) {
@@ -249,14 +352,26 @@ void csv_wifi_ap_log_commit(const char *bssid, int rssi, const char *ssid) {
 
     wd_dedupe_entry_t *entry = csv_find_wifi_dedupe_entry(hash);
     if (entry == NULL) {
-        entry = &wd_wifi_dedupe[wd_wifi_idx];
-        wd_wifi_idx = (wd_wifi_idx + 1) % WD_DEDUPE_SIZE;
+        entry = wd_insert_entry(wd_wifi_dedupe, hash, &wd_wifi_idx);
+        if (!entry) {
+            if (csv_mutex) xSemaphoreGive(csv_mutex);
+            return;
+        }
+
         entry->hash = hash;
         entry->flags = WD_FLAG_USED | (ssid_empty ? WD_FLAG_NAME_EMPTY : 0);
         entry->best_rssi = (int8_t)rssi;
+
+        wd_wifi_unique_logged++;
+        if (ssid_empty) {
+            wd_wifi_hidden_count++;
+        }
     } else {
         if ((entry->flags & WD_FLAG_NAME_EMPTY) && !ssid_empty) {
             entry->flags &= ~WD_FLAG_NAME_EMPTY;
+            if (wd_wifi_hidden_count > 0) {
+                wd_wifi_hidden_count--;
+            }
         }
         if (rssi > entry->best_rssi) {
             entry->best_rssi = (int8_t)rssi;
@@ -410,13 +525,26 @@ esp_err_t csv_file_open(const char *base_file_name) {
         csv_mutex = xSemaphoreCreateMutex();
     }
 
+    if (!wd_allocate_dedupe_tables()) {
+        glog("Failed to allocate wardrive dedupe tables\n");
+        if (csv_file) {
+            fclose(csv_file);
+            csv_file = NULL;
+        }
+        return ESP_ERR_NO_MEM;
+    }
+
     wd_wifi_idx = 0;
     wd_ble_idx = 0;
     wd_wifi_unique_logged = 0;
     wd_ble_unique_logged = 0;
     wd_wifi_hidden_count = 0;
-    memset(wd_wifi_dedupe, 0, sizeof(wd_wifi_dedupe));
-    memset(wd_ble_dedupe, 0, sizeof(wd_ble_dedupe));
+    memset(wd_wifi_dedupe, 0, wd_dedupe_size * sizeof(wd_dedupe_entry_t));
+    memset(wd_ble_dedupe, 0, wd_dedupe_size * sizeof(wd_dedupe_entry_t));
+
+    glog("Wardrive dedupe table: %u entries (%s)\n",
+         (unsigned)wd_dedupe_size,
+         wd_dedupe_in_psram ? "PSRAM" : "internal RAM");
 
     esp_err_t ret = csv_write_header(csv_file);
     if (ret != ESP_OK) {
@@ -451,6 +579,10 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     if (!gps)
         return ESP_ERR_INVALID_STATE;
 
+    if (!wd_wifi_dedupe || !wd_ble_dedupe || !wd_is_pow2(wd_dedupe_size)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     char timestamp[24];
     gps_date_t date_to_use = gps->date;
     if (!is_valid_date(&gps->date)) {
@@ -472,27 +604,22 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
 
     static char data_line[CSV_GPS_BUFFER_SIZE];
     int len;
-    bool count_unique_wifi = false;
 
     if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
 
     if (data->ble_data.is_ble_device) {
         uint32_t hash = wd_hash_mac(data->ble_data.ble_mac);
         
-        // Linear search for existing BLE entry
-        wd_dedupe_entry_t *entry = NULL;
-        for (int i = 0; i < WD_DEDUPE_SIZE; i++) {
-            if ((wd_ble_dedupe[i].flags & WD_FLAG_USED) && wd_ble_dedupe[i].hash == hash) {
-                entry = &wd_ble_dedupe[i];
-                break;
-            }
-        }
+        wd_dedupe_entry_t *entry = wd_lookup_entry(wd_ble_dedupe, hash);
         
         bool name_empty = (data->ble_data.ble_name[0] == '\0');
         bool should_log = false;
         if (entry == NULL) {
-            entry = &wd_ble_dedupe[wd_ble_idx];
-            wd_ble_idx = (wd_ble_idx + 1) % WD_DEDUPE_SIZE;
+            entry = wd_insert_entry(wd_ble_dedupe, hash, &wd_ble_idx);
+            if (!entry) {
+                if (csv_mutex) xSemaphoreGive(csv_mutex);
+                return ESP_ERR_NO_MEM;
+            }
             entry->hash = hash;
             entry->flags = WD_FLAG_USED | (name_empty ? WD_FLAG_NAME_EMPTY : 0);
             entry->best_rssi = (int8_t)data->ble_data.ble_rssi;
@@ -545,8 +672,6 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
                         mfgr_str);
     } else {
         // WiFi dedupe is handled in gps_manager via peek/commit.
-        count_unique_wifi = true;
-
         int frequency;
         if (data->channel == 14) {
             frequency = 2484;
@@ -605,14 +730,6 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
 
     memcpy(csv_buffer + buffer_offset, data_line, len);
     buffer_offset += len;
-
-    if (count_unique_wifi) {
-        wd_wifi_unique_logged++;
-        // Track hidden networks separately
-        if (data->ssid[0] == '\0' || strcmp(data->ssid, "<hidden>") == 0) {
-            wd_wifi_hidden_count++;
-        }
-    }
 
     if (csv_mutex) xSemaphoreGive(csv_mutex);
 
@@ -761,6 +878,7 @@ void csv_file_close() {
                 wigle_queue_add(csv_file_path);
             }
         }
+        wd_free_dedupe_tables();
         glog("CSV file closed.\n");
     }
 }
@@ -984,6 +1102,7 @@ void csv_file_close_fast() {
                 wigle_queue_add(csv_file_path);
             }
         }
+        wd_free_dedupe_tables();
         glog("CSV file fast-closed.\n");
     }
 }

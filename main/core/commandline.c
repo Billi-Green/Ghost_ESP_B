@@ -1087,12 +1087,14 @@ void handle_wifi_connection(int argc, char **argv) {
 
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
-    
+
 #ifdef CONFIG_HAS_RTC_CLOCK
     esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
 #endif
-    
-    esp_sntp_init();
+
+    if (!esp_sntp_enabled()) {
+        esp_sntp_init();
+    }
 }
 
 void handle_wifi_disconnect(int argc, char **argv)

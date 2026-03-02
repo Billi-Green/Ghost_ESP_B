@@ -579,7 +579,7 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
         } else {
             glog(GPS_STATUS_MESSAGE,
                  fix_status,
-                 (unsigned long)csv_get_unique_wifi_ap_count(),
+                 (unsigned long)csv_get_unique_wifi_ap_count_including_hidden(),
                  data->gps_quality.satellites_used,
                  gps->sats_in_view,
                  speed_kmh,

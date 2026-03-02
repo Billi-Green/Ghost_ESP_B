@@ -57,6 +57,8 @@
 - Fixed GPS latitude parsing for GLL sentences (was using 3-digit degree width instead of 2)
 - Fixed BLE not initializing when selecting a flipper
 - Fixed crash when deinitializing BLE
+- Fixed "Connect to saved WiFi" resets on repeated use
+- Improved wardriving dedupe and AP counting accuracy
 - Fixed GPS satellites logic
 - Fixed misc wardriving issues
 - Fixed wardriving AP loss where entries seen before a valid GPS fix could be skipped later by premature dedupe mutation
