@@ -113,9 +113,10 @@ GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing to
 
 </details>
 
-## Feature Comparison Snapshot
+## ESP32 Firmware Comparison
 
-![Feature comparison](assets/feature-comparison.svg)
+<img width="800" height="2400" alt="image" src="https://github.com/user-attachments/assets/005c96f0-4d0a-4f97-926c-99059dfb9e21" />
+
 
 
 
