@@ -6,6 +6,7 @@
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
+#include "gui/theme_palette_api.h"
 #include "io_manager.h"
 #include "managers/views/wardriving_screen.h"
 #include "managers/wigle_manager.h"
@@ -60,6 +61,10 @@ static char selected_wigle_csv[MAX_PORTAL_NAME] = {0};
 #include "managers/views/accelerometer_screen.h"
 #include "managers/views/clock_screen.h"
 #include "managers/views/app_gallery_screen.h"
+
+uint32_t theme_palette_get_background(uint8_t theme);
+uint32_t theme_palette_get_surface_alt(uint8_t theme);
+uint32_t theme_palette_get_text(uint8_t theme);
 
 
 #define KARMA_MAX_SSIDS 64
@@ -361,7 +366,7 @@ typedef struct {
 
 static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
 static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
-static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest"};
+static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest", "Cherry Blossom", "Soft Sand"};
 static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
@@ -383,7 +388,7 @@ static SettingsItem settings_items[] = {
 #endif
     {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0, SETTINGS_CAT_DISPLAY, false, NULL},
     
-    {"Menu Theme", SETTING_MENU_THEME, theme_options, 15, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Menu Theme", SETTING_MENU_THEME, theme_options, 17, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
@@ -898,10 +903,15 @@ void options_menu_create() {
 
     /* Styling handled by options_view */
 
-    display_manager_fill_screen(lv_color_hex(0x121212));
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t bg_color = lv_color_hex(theme_palette_get_background(theme));
+    lv_color_t control_color = lv_color_hex(theme_palette_get_surface_alt(theme));
+    lv_color_t control_text_color = lv_color_hex(theme_palette_get_text(theme));
+
+    display_manager_fill_screen(bg_color);
     lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
 
-    root = gui_screen_create_root(NULL, NULL, lv_color_hex(0x121212), LV_OPA_COVER);
+    root = gui_screen_create_root(NULL, NULL, bg_color, LV_OPA_COVER);
     options_menu_view.root = root;
     const int STATUS_BAR_HEIGHT = 20;
     g_options_view = options_view_create(root, options_menu_type_to_string(SelectedMenuType));
@@ -1018,13 +1028,14 @@ void options_menu_create() {
     scroll_up_btn = lv_btn_create(root);
     lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
     lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
-    lv_obj_set_style_bg_color(scroll_up_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scroll_up_btn, control_color, LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_up_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_up_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(scroll_up_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(scroll_up_btn, scroll_options_up, LV_EVENT_CLICKED, NULL);
     lv_obj_t *up_label = lv_label_create(scroll_up_btn);
     lv_label_set_text(up_label, LV_SYMBOL_UP);
+    lv_obj_set_style_text_color(up_label, control_text_color, 0);
     lv_obj_center(up_label);
     /* hide scroll buttons until the menu is built and we know if scrolling is required */
     lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
@@ -1032,20 +1043,21 @@ void options_menu_create() {
     scroll_down_btn = lv_btn_create(root);
     lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
     lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
-    lv_obj_set_style_bg_color(scroll_down_btn, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scroll_down_btn, control_color, LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_down_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_down_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(scroll_down_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(scroll_down_btn, scroll_options_down, LV_EVENT_CLICKED, NULL);
     lv_obj_t *down_label = lv_label_create(scroll_down_btn);
     lv_label_set_text(down_label, LV_SYMBOL_DOWN);
+    lv_obj_set_style_text_color(down_label, control_text_color, 0);
     lv_obj_center(down_label);
     lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
 
     back_btn = lv_btn_create(root);
     lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
     lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x555555), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(back_btn, control_color, LV_PART_MAIN);
     lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN);
     lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
@@ -1053,6 +1065,7 @@ void options_menu_create() {
     lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_set_style_text_color(back_label, control_text_color, 0);
     lv_obj_center(back_label);
 #endif
     createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);

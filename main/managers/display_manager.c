@@ -43,6 +43,9 @@
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 
+uint32_t theme_palette_get_surface_alt(uint8_t theme);
+uint32_t theme_palette_get_text_muted(uint8_t theme);
+
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
 #include "vendor/m5/m5gfx_wrapper.h"
@@ -691,33 +694,6 @@ void fade_in_cb(void *obj, int32_t v) {
 }
 
 static void rainbow_effect_cb(lv_timer_t *timer) {
-  if (!status_bar || !lv_obj_is_valid(status_bar)) {
-    return;
-  }
-
-  rainbow_hue = (rainbow_hue + 5) % 360;
-
-  lv_color_t color = lv_color_hsv_to_rgb(rainbow_hue, 100, 100);
-
-  lv_obj_set_style_border_color(status_bar, color, 0);
-
-  if (wifi_label && lv_obj_is_valid(wifi_label)) {
-    lv_obj_set_style_text_color(wifi_label, color, 0);
-  }
-  if (bt_label && lv_obj_is_valid(bt_label)) {
-    lv_obj_set_style_text_color(bt_label, color, 0);
-  }
-  if (sd_label && lv_obj_is_valid(sd_label)) {
-    lv_obj_set_style_text_color(sd_label, color, 0);
-  }
-  if (battery_label && lv_obj_is_valid(battery_label)) {
-    lv_obj_set_style_text_color(battery_label, color, 0);
-  }
-  if (mainlabel && lv_obj_is_valid(mainlabel)) {
-    lv_obj_set_style_text_color(mainlabel, color, 0);
-  }
-
-  lv_obj_invalidate(status_bar);
 }
 
 void display_manager_set_rainbow_mode(bool enable) {
@@ -891,7 +867,8 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   lv_obj_invalidate(status_bar);
 
   // set status bar icon colors based on power save mode and AP state
-  lv_color_t default_color = lv_color_hex(0xCCCCCC);
+  uint8_t theme = settings_get_menu_theme(&G_Settings);
+  lv_color_t default_color = lv_color_hex(theme_palette_get_text_muted(theme));
   lv_color_t gray_color = lv_color_hex(0x808080); // Gray for inactive state
   
   // WiFi icon color logic
@@ -989,8 +966,10 @@ void display_manager_update_status_bar_color(void) {
 
   uint8_t theme = settings_get_menu_theme(&G_Settings);
   lv_color_t accent_color = lv_color_hex(theme_palette_get_accent(theme));
-  lv_color_t text_color = lv_color_hex(0x999999);
+  lv_color_t status_bg_color = lv_color_hex(theme_palette_get_surface_alt(theme));
+  lv_color_t text_color = lv_color_hex(theme_palette_get_text_muted(theme));
   
+  lv_obj_set_style_bg_color(status_bar, status_bg_color, LV_PART_MAIN);
   lv_obj_set_style_border_color(status_bar, accent_color, LV_PART_MAIN);
 
   // Reset all status bar label colors when leaving rainbow mode
@@ -1015,6 +994,10 @@ void display_manager_update_status_bar_color(void) {
 
 void display_manager_add_status_bar(const char *CurrentMenuName) {
     const char *label_text = CurrentMenuName ? CurrentMenuName : "";
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t status_bg_color = lv_color_hex(theme_palette_get_surface_alt(theme));
+    lv_color_t status_text_color = lv_color_hex(theme_palette_get_text_muted(theme));
+
     if (status_bar && lv_obj_is_valid(status_bar)) {
         if (mainlabel && lv_obj_is_valid(mainlabel)) {
             lv_label_set_text(mainlabel, label_text);
@@ -1034,14 +1017,11 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
     status_bar = lv_obj_create(lv_scr_act());
   lv_obj_set_size(status_bar, LV_HOR_RES, 20);
   lv_obj_align(status_bar, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x333333), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(status_bar, status_bg_color, LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(status_bar, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_border_side(status_bar, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
   lv_obj_set_style_border_width(status_bar, 1, LV_PART_MAIN);
-  {
-    uint8_t theme = settings_get_menu_theme(&G_Settings);
-    lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
-  }
+  lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
   lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(status_bar, 0, LV_PART_MAIN);
 
@@ -1054,7 +1034,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   // fill left container
   mainlabel = lv_label_create(left_container);
   lv_label_set_text(mainlabel, label_text);
-  lv_obj_set_style_text_color(mainlabel, lv_color_hex(0x999999), 0);
+  lv_obj_set_style_text_color(mainlabel, status_text_color, 0);
   lv_obj_set_style_text_font(mainlabel, &lv_font_montserrat_14, 0);
 
   // Create Status bar right container
@@ -1068,25 +1048,25 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   // add sd status to right container
   sd_label = lv_label_create(right_container);
   lv_label_set_text(sd_label, LV_SYMBOL_SD_CARD);
-  lv_obj_set_style_text_color(sd_label, lv_color_hex(0xCCCCCC), 0);
+  lv_obj_set_style_text_color(sd_label, status_text_color, 0);
   lv_obj_set_style_text_font(sd_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
   // add ble status to right container
   bt_label = lv_label_create(right_container);
   lv_label_set_text(bt_label, LV_SYMBOL_BLUETOOTH);
-  lv_obj_set_style_text_color(bt_label, lv_color_hex(0xCCCCCC), 0);
+  lv_obj_set_style_text_color(bt_label, status_text_color, 0);
   lv_obj_set_style_text_font(bt_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
   // add wifi status to right container
   wifi_label = lv_label_create(right_container);
   lv_label_set_text(wifi_label, LV_SYMBOL_WIFI);
-  lv_obj_set_style_text_color(wifi_label, lv_color_hex(0xCCCCCC), 0);
+  lv_obj_set_style_text_color(wifi_label, status_text_color, 0);
   lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
   // add battery status to right container
   battery_label = lv_label_create(right_container);
   lv_label_set_text(battery_label, "");
-  lv_obj_set_style_text_color(battery_label, lv_color_hex(0xCCCCCC), 0);
+  lv_obj_set_style_text_color(battery_label, status_text_color, 0);
   lv_obj_set_style_text_font(battery_label, &lv_font_montserrat_12, 0);
   lv_obj_add_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
 

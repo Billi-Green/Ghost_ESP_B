@@ -20,6 +20,7 @@
 - Added hold to invert letter case on joystick select in keyboard view
 - Added option to select custom portal for karma attack
 - Add IO expander programmable button commands - @tototo31
+- Added 'Cherry Blossom' and 'Soft Sand' themes
 
 ### Changed
 - 'chipinfo' command now shows firmware version and enabled build features (Display, NFC, BadUSB, IR, GPS, etc.)
@@ -46,6 +47,9 @@
 - Optimized PineAP detection memory model by lazily allocating detection tables at start and freeing them on stop
 - Reworked PineAP detection logging to use a single queued worker task instead of per-detection task creation
 - Reworked PCAP writer buffering to use a fixed static packet slot pool instead of per-packet heap allocations
+- Reduced splash screen hold time from 2000ms to 900ms
+- Refactored surface colors to be consistent across the UI
+- Changed default screen timeout to 30s
 - Miscellaneous fixes, improvements and refactors
 - Fixed feberis pro spelling
 
@@ -62,7 +66,6 @@
 - Fixed crash when deinitializing BLE
 - Fixed BLE stop hangs by draining active scan callbacks before shutdown and reducing heavy callback work
 - Potentially fixed "Connect to saved WiFi" resets on repeated use
-- Improved wardriving dedupe and AP counting accuracy
 - Fixed GPS satellites logic
 - Fixed misc wardriving issues
 - Fixed wardriving AP loss where entries seen before a valid GPS fix could be skipped later by premature dedupe mutation

@@ -9,6 +9,8 @@
 #include "gui/theme_palette_api.h"
 #include "esp_log.h"
 
+uint32_t theme_palette_get_background(uint8_t theme);
+
 static const char *TAG = "ClockScreens";
 
 static lv_obj_t *clock_container;
@@ -151,9 +153,9 @@ void clock_create(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     uint32_t accent_color = theme_palette_get_accent(theme);
     
-    // Keep original background color
-    display_manager_fill_screen(lv_color_hex(0x121212));
-    clock_container = gui_screen_create_root(NULL, "Clock", lv_color_hex(0x121212), LV_OPA_COVER);
+    lv_color_t bg_color = lv_color_hex(theme_palette_get_background(theme));
+    display_manager_fill_screen(bg_color);
+    clock_container = gui_screen_create_root(NULL, "Clock", bg_color, LV_OPA_COVER);
     clock_view.root = clock_container;
     lv_obj_t *content = gui_screen_create_content(clock_container, GUI_STATUS_BAR_HEIGHT);
 
@@ -248,4 +250,4 @@ View clock_view = {
     .input_callback = clock_event_handler,
     .name = "Clock",
     .get_hardwareinput_callback = get_clock_callback
-}; 
+};
