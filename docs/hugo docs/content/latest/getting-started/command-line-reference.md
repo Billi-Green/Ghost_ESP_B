@@ -19,7 +19,6 @@ toc: true
 - **`reboot`** — Soft restart the device.
 - **`timezone <TZ>`** — Set timezone, e.g., `timezone EST5EDT,M3.2.0,M11.1.0`.
 - **`stop`** — Stops all active attacks, scans, and background tasks. Also restarts Wi-Fi if it was suspended by BLE.
-- **`crash`** / **`panic`** — Intentionally trigger a crash (useful for verifying coredump capture during development).
 
 ### Core dumps (flash builds only)
 

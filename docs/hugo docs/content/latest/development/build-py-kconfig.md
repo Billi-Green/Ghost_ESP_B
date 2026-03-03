@@ -46,7 +46,7 @@ idf.py menuconfig
 
 Use the menu to browse `GhostESP Options → GhostESP Features`. Save and exit when finished.
 
-### Enabling core dumps to flash (for debugging)
+### Enabling core dumps to flash
 
 GhostESP can capture ESP-IDF core dumps into a dedicated flash partition after a crash. When enabled, the device exposes a `coredump` CLI command (plus extra coredump status lines in `chipinfo`).
 
