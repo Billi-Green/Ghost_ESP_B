@@ -96,6 +96,8 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "freertos/queue.h"
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
+#include "esp_partition.h"
+#include "esp_core_dump.h"
 #include "managers/aerial_detector_manager.h"
 #include "managers/wigle_manager.h"
 
@@ -3832,10 +3834,114 @@ void handle_scan_ssh(int argc, char **argv) {
 }
 
 void handle_crash(int argc, char **argv) {
+    glog("Triggering crash for coredump test...\n");
+    (void)argc;
+    (void)argv;
+    /* Intentional null pointer write to trigger panic; coredump will be saved to flash. */
     int *ptr = NULL;
     *ptr = 42;
 }
 
+/* Read coredump partition and print summary or stream base64 for host decode. */
+void handle_coredump_cmd(int argc, char **argv) {
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA,
+        ESP_PARTITION_SUBTYPE_DATA_COREDUMP,
+        NULL);
+    if (part == NULL) {
+        glog("No coredump partition found. Check partition table.\n");
+        return;
+    }
+
+    const int do_dump = (argc > 1 && strcmp(argv[1], "dump") == 0);
+
+    if (do_dump) {
+        /* Stream partition as base64 so user can save and run: idf.py coredump-info -c <file> */
+        glog("=== COREDUMP BASE64 START ===\n");
+        glog("Save the lines below to a file (e.g. coredump.b64), then run:\n");
+        glog("  idf.py coredump-info -c coredump.b64\n");
+        glog("(Omit the start/end marker lines from the file.)\n");
+        uint8_t buf[768];  /* multiple of 3 for base64 */
+        char b64[1024 + 8];
+        size_t offset = 0;
+        while (offset < part->size) {
+            size_t chunk = (part->size - offset) > sizeof(buf) ? sizeof(buf) : (part->size - offset);
+            if (esp_partition_read(part, offset, buf, chunk) != ESP_OK) {
+                glog("\nRead error at offset %u\n", (unsigned)offset);
+                break;
+            }
+            size_t written = 0;
+            int ret = mbedtls_base64_encode((unsigned char *)b64, sizeof(b64), &written, buf, chunk);
+            if (ret != 0) {
+                glog("\nBase64 encode error\n");
+                break;
+            }
+            b64[written] = '\0';
+            glog("%s", b64);
+            offset += chunk;
+        }
+        glog("\n=== COREDUMP BASE64 END ===\n");
+        return;
+    }
+
+    /* Summary: partition info and whether it contains valid coredump data.
+     * ESP-IDF may write a small header (e.g. checksum) before the ELF, so scan
+     * the first 128 bytes for ELF magic (0x7f 'E' 'L' 'F') instead of only offset 0. */
+    uint8_t head[128];
+    size_t head_len = part->size < sizeof(head) ? (size_t)part->size : sizeof(head);
+    if (esp_partition_read(part, 0, head, head_len) != ESP_OK) {
+        glog("Failed to read coredump partition.\n");
+        return;
+    }
+    int elf_offset = -1;
+    for (size_t i = 0; i + 4 <= head_len; i++) {
+        if (head[i] == 0x7f && head[i + 1] == 'E' && head[i + 2] == 'L' && head[i + 3] == 'F') {
+            elf_offset = (int)i;
+            break;
+        }
+    }
+    const int is_elf = (elf_offset >= 0);
+
+    glog("Coredump partition: %s, size %u bytes\n", part->label, (unsigned)part->size);
+
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    /* Use ESP-IDF API to parse and print panic reason from coredump in flash */
+    {
+        char panic_reason[256];
+        esp_err_t err = esp_core_dump_get_panic_reason(panic_reason, sizeof(panic_reason));
+        if (err == ESP_OK && panic_reason[0] != '\0') {
+            glog("Panic reason: %s\n", panic_reason);
+        } else if (err == ESP_ERR_NOT_FOUND) {
+            /* Do not call esp_core_dump_get_summary() here: it uses too much stack and can
+             * cause Stack protection fault in SerialTask (same task as CLI). */
+            glog("Panic reason: (not available on device; run idf.py coredump-info on host)\n");
+        } else {
+            glog("Panic reason: (error %s)\n", esp_err_to_name(err));
+        }
+    }
+#endif
+
+    if (is_elf) {
+        glog("Coredump data: present (ELF format");
+        if (elf_offset > 0) {
+            glog(", ELF at offset %d", elf_offset);
+        }
+        glog(").\n");
+        glog("For full backtrace run on host: idf.py coredump-info\n");
+    } else {
+        /* Check for empty (all 0xff) or binary format */
+        int empty = 1;
+        for (size_t i = 0; i < head_len && empty; i++) {
+            if (head[i] != 0xff) empty = 0;
+        }
+        if (empty != 0) {
+            glog("Coredump data: partition empty (no crash recorded yet).\n");
+        } else {
+            glog("Coredump data: present (binary format).\n");
+            glog("For full backtrace run on host: idf.py coredump-info\n");
+        }
+    }
+}
 
 // Help command
 void handle_help(int argc, char **argv) {
@@ -4106,6 +4212,15 @@ void handle_help(int argc, char **argv) {
         glog("        - CPU cores and features\n");
         glog("        - Flash size and memory info\n");
         glog("        - ESP-IDF version\n\n");
+        glog("crash / panic\n");
+        glog("    Description: Intentionally trigger a crash (for coredump testing).\n");
+        glog("    Usage: crash   or   panic\n");
+        glog("    The device will panic and save a coredump to flash; use idf.py coredump-info to inspect.\n\n");
+        glog("coredump [dump]\n");
+        glog("    Description: Read coredump details from flash and print to serial.\n");
+        glog("    Usage: coredump       - Print summary (partition size, whether coredump present).\n");
+        glog("           coredump dump  - Stream coredump as base64; save to file and run idf.py coredump-info -c <file> on host.\n");
+        glog("    With device connected, 'idf.py coredump-info' on host shows full panic reason and backtrace.\n\n");
         glog("timezone\n");
         glog("    Description: Set the display timezone for the clock view.\n");
         glog("    Usage: timezone <TZ_STRING>\n\n");
@@ -8578,9 +8693,11 @@ void register_commands() {
     register_command("stopspoof", handle_stop_spoof);
     register_command("chameleon", handle_chameleon_cmd);
 #endif
-#ifdef DEBUG
+#ifndef DEBUG
     register_command("crash", handle_crash);
 #endif
+    register_command("panic", handle_crash);
+    register_command("coredump", handle_coredump_cmd);
     register_command("pineap", handle_pineap_detection);
     register_command("apcred", handle_apcred);
     register_command("apenable", handle_ap_enable_cmd);
