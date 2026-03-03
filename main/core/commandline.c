@@ -1226,7 +1226,7 @@ void handle_start_portal(int argc, char **argv) {
     glog("Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, psk, domain ? domain : "(default)");
     char log_buf[256];
     snprintf(log_buf, sizeof(log_buf), "Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, (strlen(psk) > 0 ? psk : "<Open>"), domain ? domain : "(default)");
-    TERMINAL_VIEW_ADD_TEXT(log_buf);
+    TERMINAL_VIEW_ADD_TEXT("%s", log_buf);
     wifi_manager_start_evil_portal(final_url_or_path, NULL, psk, ap_ssid, domain);
 }
 
@@ -3680,6 +3680,11 @@ void handle_startwd(int argc, char **argv) {
             } else {
                 (void)wardriving_set_helper_channels_from_csv(NULL);
             }
+
+            if (!g_gpsManager.isinitilized) {
+                gps_manager_init(&g_gpsManager);
+            }
+
             wifi_manager_start_monitor_mode(wardriving_scan_callback);
             start_wardriving_helper();
             glog("Wardriving helper started.\n");
@@ -3687,7 +3692,24 @@ void handle_startwd(int argc, char **argv) {
             return;
         }
 
-        gps_manager_init(&g_gpsManager);
+        bool prefer_peer_only = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+        prefer_peer_only = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) &&
+                           !esp_comm_manager_is_remote_command() &&
+                           esp_comm_manager_is_connected();
+#endif
+
+        if (prefer_peer_only) {
+            gps_manager_set_peer_gps_preferred(true);
+            gps_manager_clear_peer_fix();
+            if (g_gpsManager.isinitilized) {
+                gps_manager_deinit(&g_gpsManager);
+            }
+            glog("Wardriving: peer GPS preferred, local soft GPS disabled.\n");
+        } else {
+            gps_manager_set_peer_gps_preferred(false);
+            gps_manager_init(&g_gpsManager);
+        }
         esp_err_t err = csv_file_open("wardriving");
         if (err != ESP_OK) {
             glog("Failed to open CSV for wardriving\n");
@@ -3713,6 +3735,15 @@ void handle_startwd(int argc, char **argv) {
             }
         }
         wardriving_set_peer_assist(peer_helper_ok);
+
+        if (prefer_peer_only && !peer_helper_ok) {
+            gps_manager_set_peer_gps_preferred(false);
+            gps_manager_clear_peer_fix();
+            if (!g_gpsManager.isinitilized) {
+                gps_manager_init(&g_gpsManager);
+            }
+            glog("Wardriving: peer helper unavailable, falling back to local GPS.\n");
+        }
 
         glog("Wardriving started.\n");
         status_display_show_status("Wardrive Start");
@@ -4533,13 +4564,24 @@ void handle_gps_info(int argc, char **argv) {
             }
             
             gps_manager_deinit(&g_gpsManager);
+            gps_manager_set_peer_gps_preferred(false);
+            gps_manager_clear_peer_fix();
             printf("GPS info display stopped.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info display stopped.\n");
             status_display_show_status("GPS Info Off");
         }
     } else {
         if (gps_info_task_handle == NULL) {
-            gps_manager_init(&g_gpsManager);
+            bool peer_connected = esp_comm_manager_is_connected();
+            gps_manager_set_peer_gps_preferred(peer_connected);
+            if (!peer_connected) {
+                gps_manager_clear_peer_fix();
+            }
+            if (!peer_connected) {
+                gps_manager_init(&g_gpsManager);
+            } else if (g_gpsManager.isinitilized) {
+                gps_manager_deinit(&g_gpsManager);
+            }
 
             // Wait a moment for GPS initialization
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -4594,6 +4636,13 @@ void handle_gps_info(int argc, char **argv) {
             gps_info_task_handle = created_task;
             printf("GPS info started.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info started.\n");
+            if (peer_connected) {
+                printf("GPS source: peer stream preferred.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS source: peer stream preferred.\n");
+            } else {
+                printf("GPS source: local parser.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS source: local parser.\n");
+            }
             status_display_show_status("GPS Info On");
         }
     }
@@ -4617,12 +4666,21 @@ void handle_ble_wardriving(int argc, char **argv) {
         }
         csv_file_close();
         gps_manager_deinit(&g_gpsManager);
+        gps_manager_set_peer_gps_preferred(false);
+        gps_manager_clear_peer_fix();
         printf("BLE wardriving stopped.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving stopped.\n");
         status_display_show_status("BLE Drive Off");
     } else {
-        if (!g_gpsManager.isinitilized) {
+        bool peer_connected = esp_comm_manager_is_connected();
+        gps_manager_set_peer_gps_preferred(peer_connected);
+        if (!peer_connected) {
+            gps_manager_clear_peer_fix();
+        }
+        if (!peer_connected && !g_gpsManager.isinitilized) {
             gps_manager_init(&g_gpsManager);
+        } else if (peer_connected && g_gpsManager.isinitilized) {
+            gps_manager_deinit(&g_gpsManager);
         }
 
         // Open CSV file for BLE wardriving
@@ -4637,6 +4695,13 @@ void handle_ble_wardriving(int argc, char **argv) {
         ble_register_handler(ble_wardriving_callback);
         printf("BLE wardriving started.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving started.\n");
+        if (peer_connected) {
+            printf("BLE wardriving GPS source: peer stream preferred.\n");
+            TERMINAL_VIEW_ADD_TEXT("BLE wardriving GPS source: peer stream preferred.\n");
+        } else {
+            printf("BLE wardriving GPS source: local parser.\n");
+            TERMINAL_VIEW_ADD_TEXT("BLE wardriving GPS source: local parser.\n");
+        }
         status_display_show_status("BLE Drive On");
     }
 }

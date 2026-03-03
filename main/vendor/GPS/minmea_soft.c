@@ -15,17 +15,25 @@
 #include <string.h>
 
 #define SOFT_RX_LINE_MAX 160
-#define SOFT_RX_MAX_SYMBOLS 512
+#define SOFT_RX_MAX_SYMBOLS 256
 #define SOFT_RX_EVENT_QUEUE_LEN 8
 #define SOFT_RX_RESOLUTION_HZ 1000000
 #define SOFT_RX_BIT_TOLERANCE_PCT 35
 #define SOFT_RX_MEM_BLOCK_SYMBOLS 48
-#define SOFT_RX_SIGNAL_RANGE_MAX_NS 30000000
+#define SOFT_RX_SIGNAL_MIN_DIV 64
+#define SOFT_RX_SIGNAL_MAX_BITS 40
+#define SOFT_RX_SIGNAL_RANGE_MIN_NS_FLOOR 1000
+#define SOFT_RX_SIGNAL_RANGE_MIN_NS_CEIL 2500
+#define SOFT_RX_SIGNAL_RANGE_MAX_NS_FLOOR 1000000
+#define SOFT_RX_SIGNAL_RANGE_MAX_NS_CEIL 8000000
 #define SOFT_RX_STATS_LOG_MS 20000
 #define SOFT_RX_UNKNOWN_LOG_BUDGET 4
 #define SOFT_RX_GGA_NOFIX_LOG_BUDGET 3
 #define SOFT_RX_TASK_PRIORITY 9
 #define SOFT_RX_REARM_RETRY_MS 100
+#define SOFT_RX_REARM_RETRY_LOG_MS 2000
+#define SOFT_RX_LOCAL_TURNOVER_STALL_MS 1000
+#define SOFT_RX_LOCAL_TURNOVER_COOLDOWN_MS 1200
 
 typedef struct {
     uint32_t start_us;
@@ -80,6 +88,8 @@ static void minmea_soft_log_stats_rolling(void) {
         cur.rx_queue_drops < last.rx_queue_drops ||
         cur.rx_rearm_failures < last.rx_rearm_failures ||
         cur.rx_rearm_recovers < last.rx_rearm_recovers ||
+        cur.rx_local_turnovers < last.rx_local_turnovers ||
+        cur.rx_local_turnover_failures < last.rx_local_turnover_failures ||
         cur.line_overflow < last.line_overflow ||
         cur.max_line_len < last.max_line_len ||
         cur.rx_symbols < last.rx_symbols ||
@@ -99,12 +109,15 @@ static void minmea_soft_log_stats_rolling(void) {
     }
 
     ESP_LOGI(TAG,
-             "5s stats: events=%lu edges=%lu qdrop=%lu rearm=%lu/%lu ovf=%lu maxlen=%lu symbols=%lu bytes=%lu frames=%lu frame_err=%lu lines=%lu valid=%lu csum_fail=%lu unk=%lu gga=%lu gsa=%lu gsv=%lu rmc=%lu vtg=%lu",
+             "5s stats: events=%lu edges=%lu edge_probe=%s qdrop=%lu rearm=%lu/%lu turn=%lu/%lu ovf=%lu maxlen=%lu symbols=%lu bytes=%lu frames=%lu frame_err=%lu lines=%lu valid=%lu csum_fail=%lu unk=%lu gga=%lu gsa=%lu gsv=%lu rmc=%lu vtg=%lu",
              (unsigned long)(cur.rx_events - last.rx_events),
              (unsigned long)(cur.raw_gpio_edges - last.raw_gpio_edges),
+             cur.edge_probe_ok ? "ok" : "n/a",
              (unsigned long)(cur.rx_queue_drops - last.rx_queue_drops),
              (unsigned long)(cur.rx_rearm_failures - last.rx_rearm_failures),
              (unsigned long)(cur.rx_rearm_recovers - last.rx_rearm_recovers),
+             (unsigned long)(cur.rx_local_turnovers - last.rx_local_turnovers),
+             (unsigned long)(cur.rx_local_turnover_failures - last.rx_local_turnover_failures),
              (unsigned long)(cur.line_overflow - last.line_overflow),
              (unsigned long)cur.max_line_len,
              (unsigned long)(cur.rx_symbols - last.rx_symbols),
@@ -134,26 +147,98 @@ void minmea_soft_get_stats(minmea_soft_stats_t *out_stats) {
     *out_stats = s_minmea_soft_stats;
 }
 
+static uint32_t minmea_soft_clamp_u32(uint32_t value, uint32_t low, uint32_t high) {
+    if (value < low) {
+        return low;
+    }
+    if (value > high) {
+        return high;
+    }
+    return value;
+}
+
+static uint32_t minmea_soft_signal_min_ns(const minmea_soft_ctx_t *ctx) {
+    if (!ctx || ctx->bit_time_us == 0) {
+        return SOFT_RX_SIGNAL_RANGE_MIN_NS_FLOOR;
+    }
+    uint32_t bit_time_ns = ctx->bit_time_us * 1000U;
+    uint32_t candidate = bit_time_ns / SOFT_RX_SIGNAL_MIN_DIV;
+    return minmea_soft_clamp_u32(candidate,
+                                 SOFT_RX_SIGNAL_RANGE_MIN_NS_FLOOR,
+                                 SOFT_RX_SIGNAL_RANGE_MIN_NS_CEIL);
+}
+
+static uint32_t minmea_soft_signal_max_ns(const minmea_soft_ctx_t *ctx) {
+    if (!ctx || ctx->bit_time_us == 0) {
+        return SOFT_RX_SIGNAL_RANGE_MAX_NS_FLOOR;
+    }
+    uint32_t bit_time_ns = ctx->bit_time_us * 1000U;
+    uint32_t candidate = bit_time_ns * SOFT_RX_SIGNAL_MAX_BITS;
+    return minmea_soft_clamp_u32(candidate,
+                                 SOFT_RX_SIGNAL_RANGE_MAX_NS_FLOOR,
+                                 SOFT_RX_SIGNAL_RANGE_MAX_NS_CEIL);
+}
+
 static bool minmea_soft_arm_receive(minmea_soft_ctx_t *ctx, bool log_error) {
     if (!ctx || !ctx->rx_chan) {
         return false;
     }
 
+    uint32_t signal_min_ns = minmea_soft_signal_min_ns(ctx);
+    uint32_t signal_max_ns = minmea_soft_signal_max_ns(ctx);
+
     rmt_receive_config_t rx_cfg = {
-        .signal_range_min_ns = 1000,
-        .signal_range_max_ns = SOFT_RX_SIGNAL_RANGE_MAX_NS,
+        .signal_range_min_ns = signal_min_ns,
+        .signal_range_max_ns = signal_max_ns,
     };
 
     esp_err_t err = rmt_receive(ctx->rx_chan,
                                 ctx->rx_symbols[ctx->active_buffer],
                                 sizeof(ctx->rx_symbols[ctx->active_buffer]),
                                 &rx_cfg);
+    if (err == ESP_ERR_INVALID_ARG && signal_min_ns != 1000U) {
+        rx_cfg.signal_range_min_ns = 1000U;
+        err = rmt_receive(ctx->rx_chan,
+                          ctx->rx_symbols[ctx->active_buffer],
+                          sizeof(ctx->rx_symbols[ctx->active_buffer]),
+                          &rx_cfg);
+    }
     if (err != ESP_OK) {
+        s_minmea_soft_last_error = err;
         if (log_error) {
             ESP_LOGW(TAG, "rmt_receive failed: %s", esp_err_to_name(err));
         }
         return false;
     }
+    return true;
+}
+
+static bool minmea_soft_force_turnover(minmea_soft_ctx_t *ctx) {
+    if (!ctx || !ctx->rx_chan) {
+        return false;
+    }
+
+    s_minmea_soft_stats.rx_local_turnovers++;
+
+    esp_err_t err = rmt_disable(ctx->rx_chan);
+    if (err != ESP_OK) {
+        s_minmea_soft_last_error = err;
+        s_minmea_soft_stats.rx_local_turnover_failures++;
+        return false;
+    }
+
+    err = rmt_enable(ctx->rx_chan);
+    if (err != ESP_OK) {
+        s_minmea_soft_last_error = err;
+        s_minmea_soft_stats.rx_local_turnover_failures++;
+        return false;
+    }
+
+    if (!minmea_soft_arm_receive(ctx, false)) {
+        s_minmea_soft_stats.rx_local_turnover_failures++;
+        return false;
+    }
+
     return true;
 }
 
@@ -685,11 +770,16 @@ static void minmea_soft_task(void *arg) {
 
     TickType_t last_stats_tick = xTaskGetTickCount();
     TickType_t last_rearm_try_tick = 0;
+    TickType_t last_rearm_fail_log_tick = 0;
+    TickType_t last_rx_event_tick = last_stats_tick;
+    TickType_t last_local_turnover_tick = 0;
+    uint32_t last_edge_count = 0;
 
     while (ctx->running) {
         soft_rx_event_copy_t event = {0};
         if (xQueueReceive(ctx->event_queue, &event, pdMS_TO_TICKS(500)) == pdTRUE) {
             s_minmea_soft_stats.rx_events++;
+            last_rx_event_tick = xTaskGetTickCount();
             s_minmea_soft_stats.rx_symbols += (uint32_t)event.num_symbols;
             if (event.num_symbols > 0) {
                 minmea_soft_process_symbols(ctx, ctx->rx_symbols[event.buffer_idx], event.num_symbols);
@@ -701,8 +791,38 @@ static void minmea_soft_task(void *arg) {
             if (minmea_soft_arm_receive(ctx, false)) {
                 ctx->rearm_pending = false;
                 s_minmea_soft_stats.rx_rearm_recovers++;
+            } else if ((last_rearm_fail_log_tick == 0) ||
+                       ((now - last_rearm_fail_log_tick) >= pdMS_TO_TICKS(SOFT_RX_REARM_RETRY_LOG_MS))) {
+                ESP_LOGW(TAG,
+                         "RMT rearm retry failed: %s",
+                         esp_err_to_name(s_minmea_soft_last_error));
+                last_rearm_fail_log_tick = now;
             }
             last_rearm_try_tick = now;
+        }
+
+        if (!ctx->rearm_pending &&
+            s_minmea_soft_stats.edge_probe_ok &&
+            (now - last_rx_event_tick) >= pdMS_TO_TICKS(SOFT_RX_LOCAL_TURNOVER_STALL_MS)) {
+            uint32_t edge_count = s_minmea_soft_stats.raw_gpio_edges;
+            bool edges_moving = edge_count != last_edge_count;
+            bool cooldown_done =
+                (last_local_turnover_tick == 0) ||
+                ((now - last_local_turnover_tick) >= pdMS_TO_TICKS(SOFT_RX_LOCAL_TURNOVER_COOLDOWN_MS));
+            if (edges_moving && cooldown_done) {
+                if (minmea_soft_force_turnover(ctx)) {
+                    ESP_LOGW(TAG, "Local RMT turnover after stall (edges moving, no rx events)");
+                    last_rx_event_tick = now;
+                    ctx->rearm_pending = false;
+                } else {
+                    ESP_LOGW(TAG, "Local RMT turnover failed: %s", esp_err_to_name(s_minmea_soft_last_error));
+                    ctx->rearm_pending = true;
+                }
+                last_local_turnover_tick = now;
+            }
+            last_edge_count = edge_count;
+        } else {
+            last_edge_count = s_minmea_soft_stats.raw_gpio_edges;
         }
 
         if ((now - last_stats_tick) >= pdMS_TO_TICKS(SOFT_RX_STATS_LOG_MS)) {
@@ -717,6 +837,7 @@ static void minmea_soft_task(void *arg) {
 nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
     s_minmea_soft_last_error = ESP_OK;
     memset(&s_minmea_soft_stats, 0, sizeof(s_minmea_soft_stats));
+    s_minmea_soft_stats.edge_probe_ok = false;
     s_minmea_soft_unknown_log_budget = SOFT_RX_UNKNOWN_LOG_BUDGET;
     s_minmea_soft_gga_nofix_log_budget = SOFT_RX_GGA_NOFIX_LOG_BUDGET;
 
@@ -805,6 +926,7 @@ nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
         return NULL;
     }
 
+    bool edge_probe_ok = false;
     if (!s_gpio_isr_service_ready) {
         err = gpio_install_isr_service(0);
         if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
@@ -817,14 +939,27 @@ nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
     err = gpio_set_intr_type(rx_pin, GPIO_INTR_ANYEDGE);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "gpio_set_intr_type failed: %s", esp_err_to_name(err));
-    } else if (s_gpio_isr_service_ready) {
+    } else if (!s_gpio_isr_service_ready) {
+        ESP_LOGW(TAG, "edge telemetry unavailable: gpio ISR service not ready");
+    } else {
         err = gpio_isr_handler_add(rx_pin, minmea_soft_gpio_edge_isr, ctx);
         if (err == ESP_OK) {
-            ctx->edge_isr_registered = true;
-            (void)gpio_intr_enable(rx_pin);
+            err = gpio_intr_enable(rx_pin);
+            if (err == ESP_OK) {
+                ctx->edge_isr_registered = true;
+                edge_probe_ok = true;
+            } else {
+                ESP_LOGW(TAG, "gpio_intr_enable failed: %s", esp_err_to_name(err));
+                (void)gpio_isr_handler_remove(rx_pin);
+            }
         } else {
             ESP_LOGW(TAG, "gpio_isr_handler_add failed: %s", esp_err_to_name(err));
         }
+    }
+
+    s_minmea_soft_stats.edge_probe_ok = edge_probe_ok;
+    if (!edge_probe_ok) {
+        ESP_LOGW(TAG, "GPIO edge telemetry unavailable on IO%d", (int)rx_pin);
     }
 
     if (xTaskCreate(minmea_soft_task,
@@ -840,6 +975,7 @@ nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
             (void)gpio_isr_handler_remove(rx_pin);
             ctx->edge_isr_registered = false;
         }
+        s_minmea_soft_stats.edge_probe_ok = false;
         rmt_disable(ctx->rx_chan);
         rmt_del_channel(ctx->rx_chan);
         vQueueDelete(ctx->event_queue);
@@ -857,6 +993,7 @@ nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
             (void)gpio_isr_handler_remove(rx_pin);
             ctx->edge_isr_registered = false;
         }
+        s_minmea_soft_stats.edge_probe_ok = false;
         rmt_disable(ctx->rx_chan);
         rmt_del_channel(ctx->rx_chan);
         vQueueDelete(ctx->event_queue);
@@ -866,9 +1003,13 @@ nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
     }
 
     ESP_LOGI(TAG,
-             "Soft GPS RMT RX started on IO%d @ %lu",
+             "Soft GPS RMT RX started on IO%d @ %lu (edge_probe=%s range=%u..%u ns symbols=%u)",
              (int)rx_pin,
-             (unsigned long)baud_rate);
+             (unsigned long)baud_rate,
+             edge_probe_ok ? "ok" : "n/a",
+             (unsigned)minmea_soft_signal_min_ns(ctx),
+             (unsigned)minmea_soft_signal_max_ns(ctx),
+             (unsigned)SOFT_RX_MAX_SYMBOLS);
     return (nmea_parser_handle_t)ctx;
 }
 
@@ -890,6 +1031,8 @@ esp_err_t minmea_soft_stop(nmea_parser_handle_t handle) {
         (void)gpio_isr_handler_remove(ctx->rx_pin);
         ctx->edge_isr_registered = false;
     }
+
+    s_minmea_soft_stats.edge_probe_ok = false;
 
     if (ctx->rx_chan) {
         (void)rmt_disable(ctx->rx_chan);

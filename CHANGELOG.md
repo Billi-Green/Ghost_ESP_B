@@ -6,8 +6,8 @@
 
 ### Changed
 - Wardriving dedupe now includes APs when RSSI differs lower or higher for better trilateration support
-- Wardriving screen now shows `GPS Stale` when soft GPS data stops refreshing
-- Wardriving view now auto-restarts GPS on entry if the parser is initialized but stale/missing
+- Wardriving screen now shows `GPS Stale` when GPS data stops refreshing
+- The Wired Hatter's Banshee GPS routing now uses S3 UART GPS on the GhostLink peer streamed over GhostLink to the C5 primary instead of relying on C5 soft GPS RX which has reliability issues
 - 'Scan Access Points' and 'List AP" menu options has been refactored to use a new UI system for better UX (let us know what you think :)
 
 ### Fixed
