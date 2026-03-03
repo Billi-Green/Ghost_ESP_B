@@ -5,18 +5,18 @@
 ## Revival v1.9.5
 
 ### Changed
-- Wardriving dedupe now logs APs when RSSI differs lower or higher for better trilateration support
+- Wardriving dedupe now includes APs when RSSI differs lower or higher for better trilateration support
+- Wardriving screen now shows `GPS Stale` when soft GPS data stops refreshing
+- Wardriving view now auto-restarts GPS on entry if the parser is initialized but stale/missing
+- 'Scan Access Points' and 'List AP" menu options has been refactored to use a new UI system for better UX (let us know what you think :)
 
 ### Fixed
 - Fixed new soft GPS parser losing first bytes of sentences by implementing double-buffering to eliminate re-arm gap
-- Potentially fixed wardriving crash caused by O(n) linear probing in dedupe table
-- Ring buffer now wraps gracefully and can handle unlimited APs with dedupe for last 128/1024 entries
-- Fixed APs being logged with wrong GPS coordinates when fix is lost (coords persist in GPS struct)
-- Fixed callback capturing stale GPS coords without checking fix validity
-- Added final coordinate validation to prevent logging APs with invalid location data
+- Fixed soft GPS receive getting stuck after an RMT re-arm failure by adding retry recovery and re-arm telemetry counters
+- Fixed wardriving writing stale last-known coordinates when GPS fix flags remained set but no fresh `GPS_UPDATE` events were arriving
 - Fixed watchdog timeout during CSV UART streaming by releasing mutex before slow writes
 - Potentially fixed watchdog timeout wardriving crash when writing to SD by making CSV buffer flush asynchronous
-
+- Potentially fixed wardriving crash caused by O(n) linear probing in dedupe table
 
 
 ## Revival v1.9.4

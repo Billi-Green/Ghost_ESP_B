@@ -192,24 +192,35 @@ static void update_display_cb(lv_timer_t *timer) {
     gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
     
     const char *fix_status = get_fix_status_string(gps);
-    bool has_fix = gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D;
+    bool gps_recent = gps_manager_has_recent_update();
+    bool gps_seen_update = gps_manager_has_seen_update();
+    bool has_fix = gps_recent && gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D;
     
     char fix_display_buf[32];
     uint8_t sats_visible = (gps->sats_in_view > 0) ? gps->sats_in_view : gps->sats_in_use;
     if (!has_fix) {
-        no_fix_toggle_counter++;
-        if (no_fix_toggle_counter >= 3) {
-            no_fix_toggle_counter = 0;
-            no_fix_show_sats = !no_fix_show_sats;
-        }
-        if (!no_fix_show_sats || sats_visible == 0) {
-            strncpy(fix_display_buf, "No Fix", sizeof(fix_display_buf) - 1);
+        if (!gps_recent) {
+            strncpy(fix_display_buf,
+                    gps_seen_update ? "GPS Stale" : "Acquiring",
+                    sizeof(fix_display_buf) - 1);
             fix_display_buf[sizeof(fix_display_buf) - 1] = '\0';
+            no_fix_toggle_counter = 0;
+            no_fix_show_sats = false;
         } else {
-            if (gps->sats_in_view > 0) {
-                snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats in view", gps->sats_in_view);
+            no_fix_toggle_counter++;
+            if (no_fix_toggle_counter >= 3) {
+                no_fix_toggle_counter = 0;
+                no_fix_show_sats = !no_fix_show_sats;
+            }
+            if (!no_fix_show_sats || sats_visible == 0) {
+                strncpy(fix_display_buf, "No Fix", sizeof(fix_display_buf) - 1);
+                fix_display_buf[sizeof(fix_display_buf) - 1] = '\0';
             } else {
-                snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats tracked", gps->sats_in_use);
+                if (gps->sats_in_view > 0) {
+                    snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats in view", gps->sats_in_view);
+                } else {
+                    snprintf(fix_display_buf, sizeof(fix_display_buf), "%d Sats tracked", gps->sats_in_use);
+                }
             }
         }
         fix_status = fix_display_buf;
@@ -263,7 +274,7 @@ static void update_display_cb(lv_timer_t *timer) {
     
     if (lbl_sats) {
         char sats_buf[16];
-        snprintf(sats_buf, sizeof(sats_buf), "%d", gps->sats_in_use);
+        snprintf(sats_buf, sizeof(sats_buf), "%d/%d", gps->sats_in_use, gps->sats_in_view);
         lv_label_set_text(lbl_sats, sats_buf);
     }
     
@@ -371,6 +382,13 @@ void wardriving_view_create(void) {
     const lv_font_t *body_font = get_body_font();
     const lv_font_t *small_font = get_small_font();
     
+    bool gps_stale_or_missing = g_gpsManager.isinitilized &&
+                                (!nmea_hdl || !gps_manager_has_recent_update());
+    if (gps_stale_or_missing) {
+        ESP_LOGW(TAG, "GPS parser stale/missing on entry; restarting GPS");
+        gps_manager_deinit(&g_gpsManager);
+    }
+
     if (!g_gpsManager.isinitilized) {
         gps_manager_init(&g_gpsManager);
         wardriving_initialized_gps = true;

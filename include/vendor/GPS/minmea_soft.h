@@ -7,6 +7,12 @@
 
 typedef struct {
     uint32_t rx_events;
+    uint32_t raw_gpio_edges;
+    uint32_t rx_queue_drops;
+    uint32_t rx_rearm_failures;
+    uint32_t rx_rearm_recovers;
+    uint32_t line_overflow;
+    uint32_t max_line_len;
     uint32_t rx_symbols;
     uint32_t bytes_decoded;
     uint32_t frame_attempts;

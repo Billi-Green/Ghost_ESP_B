@@ -62,6 +62,16 @@ static inline const lv_font_t *get_value_font(const detail_view_t *dv) {
     return (dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 }
 
+static inline lv_coord_t get_info_row_height(const detail_view_t *dv) {
+    int h = dv->btn_h - 6;
+    if (h < 20) h = 20;
+    return (lv_coord_t)h;
+}
+
+static inline lv_coord_t get_action_row_height(const detail_view_t *dv) {
+    return (lv_coord_t)(dv->btn_h + 4);
+}
+
 static inline void get_theme_colors(lv_color_t *bg, lv_color_t *surface, lv_color_t *surface_alt, lv_color_t *text, lv_color_t *accent) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     if (bg) *bg = lv_color_hex(theme_palette_get_background(theme));
@@ -129,6 +139,7 @@ static int find_next_selectable(detail_view_t *dv, int start, int dir) {
 }
 
 detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
+    (void)title;
     if (!parent) parent = lv_scr_act();
     detail_view_t *dv = (detail_view_t *)calloc(1, sizeof(detail_view_t));
     if (!dv) return NULL;
@@ -136,6 +147,11 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     int w = LV_HOR_RES;
     int h = LV_VER_RES;
     int STATUS_BAR_HEIGHT = 20;
+#ifdef CONFIG_USE_TOUCHSCREEN
+    int TOUCH_NAV_HEIGHT = 50;
+#else
+    int TOUCH_NAV_HEIGHT = 0;
+#endif
     bool small = (w <= 240 || h <= 240);
     dv->btn_h = small ? 28 : 34;
     dv->selected = -1;
@@ -146,10 +162,14 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     get_theme_colors(&bg, &surface, &surface_alt, &text, NULL);
     
     dv->container = lv_obj_create(parent);
-    lv_obj_set_size(dv->container, w, h - STATUS_BAR_HEIGHT);
+    lv_coord_t content_h = h - STATUS_BAR_HEIGHT - TOUCH_NAV_HEIGHT;
+    if (content_h < 60) content_h = 60;
+    lv_obj_set_size(dv->container, w, content_h);
     lv_obj_align(dv->container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT);
     lv_obj_set_style_bg_color(dv->container, bg, 0);
     lv_obj_set_style_pad_all(dv->container, 0, 0);
+    lv_obj_set_style_pad_row(dv->container, 0, 0);
+    lv_obj_set_style_pad_column(dv->container, 0, 0);
     lv_obj_set_style_border_width(dv->container, 0, 0);
     lv_obj_set_style_radius(dv->container, 0, 0);
     lv_obj_set_scrollbar_mode(dv->container, LV_SCROLLBAR_MODE_OFF);
@@ -162,20 +182,31 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     lv_obj_set_style_bg_color(dv->info_panel, surface, 0);
     lv_obj_set_style_bg_opa(dv->info_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(dv->info_panel, 0, 0);
+    lv_obj_set_style_pad_top(dv->info_panel, 3, 0);
+    lv_obj_set_style_pad_row(dv->info_panel, 0, 0);
     lv_obj_set_style_border_width(dv->info_panel, 0, 0);
     lv_obj_set_style_radius(dv->info_panel, 0, 0);
     lv_obj_set_scrollbar_mode(dv->info_panel, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(dv->info_panel, LV_FLEX_FLOW_COLUMN);
     lv_obj_clear_flag(dv->info_panel, LV_OBJ_FLAG_SCROLLABLE);
     
-    dv->action_list = lv_list_create(dv->container);
+    dv->action_list = lv_obj_create(dv->container);
     lv_obj_set_width(dv->action_list, LV_PCT(100));
     lv_obj_set_flex_grow(dv->action_list, 1);
-    lv_obj_set_style_bg_color(dv->action_list, bg, 0);
+    lv_obj_set_style_bg_color(dv->action_list, surface, 0);
     lv_obj_set_style_pad_all(dv->action_list, 0, 0);
+    lv_obj_set_style_pad_top(dv->action_list, 0, 0);
+    lv_obj_set_style_pad_bottom(dv->action_list, 0, 0);
+    lv_obj_set_style_pad_left(dv->action_list, 0, 0);
+    lv_obj_set_style_pad_right(dv->action_list, 0, 0);
+    lv_obj_set_style_pad_row(dv->action_list, 0, 0);
+    lv_obj_set_style_pad_column(dv->action_list, 0, 0);
     lv_obj_set_style_border_width(dv->action_list, 0, 0);
     lv_obj_set_style_radius(dv->action_list, 0, 0);
-    lv_obj_set_scrollbar_mode(dv->action_list, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(dv->action_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(dv->action_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_scroll_dir(dv->action_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(dv->action_list, LV_SCROLLBAR_MODE_AUTO);
     
     lv_style_init(&dv->style_item);
     lv_style_set_bg_color(&dv->style_item, surface);
@@ -206,7 +237,7 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     lv_style_set_border_width(&dv->style_divider, 0);
     lv_style_set_radius(&dv->style_divider, 0);
     
-    if (title && *title) display_manager_add_status_bar(title);
+    display_manager_add_status_bar("Details");
     
     return dv;
 }
@@ -223,10 +254,12 @@ void detail_view_add_info(detail_view_t *dv, const char *label, const char *valu
     ensure_capacity(dv, dv->count + 1);
     
     lv_obj_t *btn = lv_obj_create(dv->info_panel);
-    lv_obj_set_height(btn, dv->btn_h);
+    lv_obj_set_height(btn, get_info_row_height(dv));
     lv_obj_set_width(btn, LV_PCT(100));
     lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_top(btn, 0, 0);
+    lv_obj_set_style_pad_bottom(btn, 0, 0);
     lv_obj_set_style_pad_left(btn, 8, 0);
     lv_obj_set_style_pad_right(btn, 8, 0);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0x000000), 0);
@@ -274,34 +307,37 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
         if (dv->rows[i].type == DETAIL_ROW_ACTION) zebra_idx++;
     }
     
-    lv_obj_t *btn = lv_list_add_btn(dv->action_list, NULL, label ? label : "");
+    lv_obj_t *btn = lv_obj_create(dv->action_list);
     if (!btn) return;
     
-    lv_obj_set_height(btn, dv->btn_h);
+    lv_obj_set_width(btn, LV_PCT(100));
+    lv_obj_set_height(btn, get_action_row_height(dv));
     lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_top(btn, 0, 0);
+    lv_obj_set_style_pad_bottom(btn, 0, 0);
     lv_obj_set_style_pad_left(btn, 8, 0);
     lv_obj_set_style_pad_right(btn, 8, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_radius(btn, 0, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_style(btn, get_zebra_style(dv, zebra_idx), 0);
     
     if (on_click) {
         lv_obj_add_event_cb(btn, on_click, LV_EVENT_CLICKED, user_data);
     }
     
-    lv_obj_t *lbl = lv_obj_get_child(btn, 0);
-    if (lbl) {
-        lv_obj_set_style_text_font(lbl, get_item_font(dv), 0);
-        lv_color_t text;
-        get_theme_colors(NULL, NULL, NULL, &text, NULL);
-        lv_obj_set_style_text_color(lbl, text, 0);
-        lv_obj_set_width(lbl, LV_PCT(100));
-        lv_obj_set_user_data(lbl, (void *)1);
-    }
+    lv_obj_t *lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, label ? label : "");
+    lv_obj_set_style_text_font(lbl, get_item_font(dv), 0);
+    lv_color_t text;
+    get_theme_colors(NULL, NULL, NULL, &text, NULL);
+    lv_obj_set_style_text_color(lbl, text, 0);
+    lv_obj_set_user_data(lbl, (void *)1);
     
     lv_obj_t *arrow = lv_label_create(btn);
     lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
     lv_obj_set_style_text_font(arrow, get_item_font(dv), 0);
-    lv_color_t text;
     get_theme_colors(NULL, NULL, NULL, &text, NULL);
     lv_obj_set_style_text_color(arrow, text, 0);
     lv_obj_set_user_data(arrow, (void *)2);
@@ -329,14 +365,20 @@ void detail_view_add_header(detail_view_t *dv, const char *text) {
     if (!dv || !dv->action_list) return;
     ensure_capacity(dv, dv->count + 1);
     
-    lv_obj_t *btn = lv_list_add_btn(dv->action_list, NULL, text ? text : "");
+    lv_obj_t *btn = lv_obj_create(dv->action_list);
     if (!btn) return;
     
+    lv_obj_set_width(btn, LV_PCT(100));
     lv_obj_set_height(btn, dv->btn_h);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_radius(btn, 0, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_style(btn, &dv->style_header, 0);
     
-    lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+    lv_obj_t *lbl = lv_label_create(btn);
     if (lbl) {
+        lv_label_set_text(lbl, text ? text : "");
         const lv_font_t *font = (dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
         lv_obj_set_style_text_font(lbl, font, 0);
         lv_color_t txt;
@@ -445,7 +487,7 @@ void detail_view_refresh_styles(detail_view_t *dv) {
     
     lv_obj_set_style_bg_color(dv->container, bg, 0);
     lv_obj_set_style_bg_color(dv->info_panel, surface, 0);
-    lv_obj_set_style_bg_color(dv->action_list, bg, 0);
+    lv_obj_set_style_bg_color(dv->action_list, surface, 0);
     
     lv_style_set_bg_color(&dv->style_item, surface);
     lv_style_set_bg_color(&dv->style_item_alt, surface_alt);

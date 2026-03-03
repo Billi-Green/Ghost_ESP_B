@@ -1786,6 +1786,7 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
     switch (event_id) {
     case GPS_UPDATE:
         gps = (gps_t *)event_data;
+        gps_manager_note_update();
         gps_try_sync_time_from_fix(gps);
         
         // Add status display messages for GPS fix status
