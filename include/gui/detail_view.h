@@ -46,6 +46,8 @@ void detail_view_clear(detail_view_t *dv);
 
 lv_obj_t *detail_view_get_list(detail_view_t *dv);
 
+lv_obj_t *detail_view_get_selected_obj(detail_view_t *dv);
+
 void detail_view_refresh_styles(detail_view_t *dv);
 
 #ifdef __cplusplus
