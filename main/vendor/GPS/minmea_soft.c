@@ -29,8 +29,11 @@ typedef struct {
     uint8_t level;
 } soft_uart_segment_t;
 
+#define SOFT_RX_NUM_BUFFERS 2
+
 typedef struct {
     size_t num_symbols;
+    uint8_t buffer_idx;
 } soft_rx_event_copy_t;
 
 typedef struct {
@@ -41,7 +44,8 @@ typedef struct {
     TaskHandle_t task;
     QueueHandle_t event_queue;
     rmt_channel_handle_t rx_chan;
-    rmt_symbol_word_t rx_symbols[SOFT_RX_MAX_SYMBOLS];
+    rmt_symbol_word_t rx_symbols[SOFT_RX_NUM_BUFFERS][SOFT_RX_MAX_SYMBOLS];
+    volatile uint8_t active_buffer;
     soft_uart_segment_t *segments;
     size_t segments_capacity;
     volatile bool running;
@@ -112,15 +116,13 @@ static bool minmea_soft_arm_receive(minmea_soft_ctx_t *ctx) {
     }
 
     rmt_receive_config_t rx_cfg = {
-        /* Keep glitch filter very small; large values are rejected on C5. */
         .signal_range_min_ns = 1000,
-        /* Keep one receive active across multi-sentence bursts to reduce rearm gaps. */
         .signal_range_max_ns = SOFT_RX_SIGNAL_RANGE_MAX_NS,
     };
 
     esp_err_t err = rmt_receive(ctx->rx_chan,
-                                ctx->rx_symbols,
-                                sizeof(ctx->rx_symbols),
+                                ctx->rx_symbols[ctx->active_buffer],
+                                sizeof(ctx->rx_symbols[ctx->active_buffer]),
                                 &rx_cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "rmt_receive failed: %s", esp_err_to_name(err));
@@ -138,11 +140,19 @@ static bool minmea_soft_on_rx_done(rmt_channel_handle_t channel,
         return false;
     }
 
-    soft_rx_event_copy_t event = {0};
-    event.num_symbols = edata->num_symbols;
-    if (event.num_symbols > SOFT_RX_MAX_SYMBOLS) {
-        event.num_symbols = SOFT_RX_MAX_SYMBOLS;
+    uint8_t completed_buf = ctx->active_buffer;
+    size_t num_symbols = edata->num_symbols;
+    if (num_symbols > SOFT_RX_MAX_SYMBOLS) {
+        num_symbols = SOFT_RX_MAX_SYMBOLS;
     }
+
+    ctx->active_buffer = (ctx->active_buffer + 1) % SOFT_RX_NUM_BUFFERS;
+    (void)minmea_soft_arm_receive(ctx);
+
+    soft_rx_event_copy_t event = {
+        .num_symbols = num_symbols,
+        .buffer_idx = completed_buf
+    };
 
     BaseType_t hp_task_woken = pdFALSE;
     xQueueSendFromISR(ctx->event_queue, &event, &hp_task_woken);
@@ -645,10 +655,7 @@ static void minmea_soft_task(void *arg) {
             s_minmea_soft_stats.rx_events++;
             s_minmea_soft_stats.rx_symbols += (uint32_t)event.num_symbols;
             if (event.num_symbols > 0) {
-                minmea_soft_process_symbols(ctx, ctx->rx_symbols, event.num_symbols);
-            }
-            if (ctx->running) {
-                (void)minmea_soft_arm_receive(ctx);
+                minmea_soft_process_symbols(ctx, ctx->rx_symbols[event.buffer_idx], event.num_symbols);
             }
         }
 
@@ -679,6 +686,7 @@ nmea_parser_handle_t minmea_soft_start(gpio_num_t rx_pin, uint32_t baud_rate) {
     ctx->baud_rate = baud_rate;
     ctx->bit_time_us = (baud_rate == 0) ? 104 : (1000000U / baud_rate);
     ctx->running = true;
+    ctx->active_buffer = 0;
     ctx->line_len = 0;
     ctx->gps.parent.fix = GPS_FIX_INVALID;
     ctx->gps.parent.fix_mode = GPS_MODE_INVALID;

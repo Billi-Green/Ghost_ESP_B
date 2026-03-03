@@ -2067,7 +2067,8 @@ rsn_done:
     double latitude = 0;
     double longitude = 0;
 
-    if (gps != NULL) {
+    // Only capture coords if GPS has a valid fix (coords persist in struct when fix is lost)
+    if (gps != NULL && gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D) {
         latitude = gps->latitude;
         longitude = gps->longitude;
     }

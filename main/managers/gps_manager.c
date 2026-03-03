@@ -486,8 +486,15 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
                  gps_get_absolute_year(cacheddate.year), cacheddate.month, cacheddate.day);
     }
 
-    data->latitude = gps->latitude;
-    data->longitude = gps->longitude;
+    // Use coordinates from callback if already set and valid (preserves location where AP was seen)
+    // Otherwise use current GPS coordinates as fallback
+    bool incoming_coords_valid = (data->latitude != 0.0 || data->longitude != 0.0) &&
+                                  data->latitude >= -90.0 && data->latitude <= 90.0 &&
+                                  data->longitude >= -180.0 && data->longitude <= 180.0;
+    if (!incoming_coords_valid) {
+        data->latitude = gps->latitude;
+        data->longitude = gps->longitude;
+    }
     data->altitude = gps->altitude;
     data->accuracy = gps->dop_h * 5.0;
 
@@ -532,6 +539,12 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
     if (gps->dop_h < 0.0 || gps->dop_p < 0.0 || gps->dop_v < 0.0 || gps->dop_h > 50.0 ||
         gps->dop_p > 50.0 || gps->dop_v > 50.0) {
         ESP_LOGW(GPS_TAG, "Out-of-range DOP: H=%f P=%f V=%f", gps->dop_h, gps->dop_p, gps->dop_v);
+        return ESP_OK;
+    }
+
+    // Final validation of coordinates that will be written to CSV
+    if (data->latitude == 0.0 && data->longitude == 0.0) {
+        ESP_LOGD(GPS_TAG, "Skipping log: final coordinates are (0,0)");
         return ESP_OK;
     }
 

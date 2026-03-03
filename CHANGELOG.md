@@ -2,6 +2,23 @@
 
 
 
+## Revival v1.9.5
+
+### Changed
+- Wardriving dedupe now logs APs when RSSI differs lower or higher for better trilateration support
+
+### Fixed
+- Fixed new soft GPS parser losing first bytes of sentences by implementing double-buffering to eliminate re-arm gap
+- Potentially fixed wardriving crash caused by O(n) linear probing in dedupe table
+- Ring buffer now wraps gracefully and can handle unlimited APs with dedupe for last 128/1024 entries
+- Fixed APs being logged with wrong GPS coordinates when fix is lost (coords persist in GPS struct)
+- Fixed callback capturing stale GPS coords without checking fix validity
+- Added final coordinate validation to prevent logging APs with invalid location data
+- Fixed watchdog timeout during CSV UART streaming by releasing mutex before slow writes
+- Potentially fixed watchdog timeout wardriving crash when writing to SD by making CSV buffer flush asynchronous
+
+
+
 ## Revival v1.9.4
 
 ### Added

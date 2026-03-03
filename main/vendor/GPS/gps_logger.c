@@ -38,7 +38,12 @@ static char csv_base_name[32] = "wardriving";
 static bool gps_connection_logged = false;
 static SemaphoreHandle_t csv_mutex = NULL;
 static TaskHandle_t csv_flush_task = NULL;
+static volatile bool csv_flush_requested = false;
 static bool csv_header_pending_uart = false;
+
+static void csv_request_flush(void) {
+    csv_flush_requested = true;
+}
 
 static char csv_pre_header[256];
 static size_t csv_pre_header_len = 0;
@@ -47,6 +52,7 @@ static esp_err_t csv_flush_buffer_to_file_unlocked(void);
 
 #define WD_DEDUPE_SIZE_INTERNAL 128
 #define WD_DEDUPE_SIZE_PSRAM 1024
+#define WD_PROBE_MAX 16
 
 typedef struct {
     uint32_t hash;
@@ -150,7 +156,7 @@ static wd_dedupe_entry_t *wd_lookup_entry(wd_dedupe_entry_t *table, uint32_t has
         return NULL;
     }
 
-    for (size_t step = 0; step < wd_dedupe_size; step++) {
+    for (size_t step = 0; step < WD_PROBE_MAX; step++) {
         size_t idx = wd_probe_index(hash, step);
         wd_dedupe_entry_t *entry = &table[idx];
         if (!(entry->flags & WD_FLAG_USED)) {
@@ -169,7 +175,7 @@ static wd_dedupe_entry_t *wd_insert_entry(wd_dedupe_entry_t *table, uint32_t has
         return NULL;
     }
 
-    for (size_t step = 0; step < wd_dedupe_size; step++) {
+    for (size_t step = 0; step < WD_PROBE_MAX; step++) {
         size_t idx = wd_probe_index(hash, step);
         wd_dedupe_entry_t *entry = &table[idx];
         if (!(entry->flags & WD_FLAG_USED)) {
@@ -322,7 +328,7 @@ static bool csv_wifi_dedupe_should_log(const wd_dedupe_entry_t *entry, int rssi,
     if ((entry->flags & WD_FLAG_NAME_EMPTY) && !ssid_empty) {
         return true;
     }
-    if (rssi > entry->best_rssi + 3) {
+    if (abs(rssi - entry->best_rssi) > 3) {
         return true;
     }
     return false;
@@ -373,9 +379,7 @@ void csv_wifi_ap_log_commit(const char *bssid, int rssi, const char *ssid) {
                 wd_wifi_hidden_count--;
             }
         }
-        if (rssi > entry->best_rssi) {
-            entry->best_rssi = (int8_t)rssi;
-        }
+        entry->best_rssi = (int8_t)rssi;
     }
 
     if (csv_mutex) xSemaphoreGive(csv_mutex);
@@ -444,6 +448,7 @@ uint32_t csv_get_unique_ble_device_count(void) {
 
 size_t csv_get_pending_bytes(void) {
     size_t pending = 0;
+    
     if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
     pending = buffer_offset;
     if (csv_mutex) xSemaphoreGive(csv_mutex);
@@ -453,11 +458,21 @@ size_t csv_get_pending_bytes(void) {
 static void csv_flush_task_fn(void *arg) {
     for (;;) {
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-        bool gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0);
+        bool gating_template = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 1);
 #else
         bool gating_template = false;
 #endif
-        vTaskDelay(pdMS_TO_TICKS(gating_template ? 10000 : 2000));
+        if (gating_template) {
+            vTaskDelay(pdMS_TO_TICKS(10000));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            if (csv_flush_requested) {
+                csv_flush_requested = false;
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+            }
+        }
+        
         csv_flush_buffer_to_file();
     }
 }
@@ -630,8 +645,10 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
                 should_log = true;
                 entry->flags &= ~WD_FLAG_NAME_EMPTY;
             }
-            if (data->ble_data.ble_rssi > entry->best_rssi + 5) {
+            if (abs(data->ble_data.ble_rssi - entry->best_rssi) > 5) {
                 should_log = true;
+            }
+            if (should_log) {
                 entry->best_rssi = (int8_t)data->ble_data.ble_rssi;
             }
         }
@@ -709,12 +726,12 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     }
 
     if (buffer_offset + len >= GPS_BUFFER_SIZE) {
-        esp_err_t err = csv_flush_buffer_to_file_unlocked();
-        if (err != ESP_OK) {
+        csv_flush_requested = true;
+        while (buffer_offset + len >= GPS_BUFFER_SIZE) {
             if (csv_mutex) xSemaphoreGive(csv_mutex);
-            return err;
+            vTaskDelay(pdMS_TO_TICKS(1));
+            if (csv_mutex) xSemaphoreTake(csv_mutex, portMAX_DELAY);
         }
-        buffer_offset = 0;
     }
 
     if (csv_file == NULL && csv_header_pending_uart && buffer_offset == 0) {
