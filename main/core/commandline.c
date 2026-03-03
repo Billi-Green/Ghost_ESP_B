@@ -3842,14 +3842,31 @@ void handle_crash(int argc, char **argv) {
     *ptr = 42;
 }
 
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 /* Read coredump partition and print summary or stream base64 for host decode. */
-void handle_coredump_cmd(int argc, char **argv) {
+static void handle_coredump_cmd(int argc, char **argv) {
     const esp_partition_t *part = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA,
         ESP_PARTITION_SUBTYPE_DATA_COREDUMP,
         NULL);
     if (part == NULL) {
         glog("No coredump partition found. Check partition table.\n");
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "erase") == 0) {
+        /* Use partition erase on all targets (esp_core_dump_image_erase can fail on plain ESP32). */
+        size_t esz = part->erase_size;
+        size_t to_erase = (part->size / esz) * esz;
+        if (to_erase == 0) {
+            to_erase = esz;
+        }
+        esp_err_t err = esp_partition_erase_range(part, 0, to_erase);
+        if (err == ESP_OK) {
+            glog("Coredump partition erased.\n");
+        } else {
+            glog("Failed to erase coredump: %s\n", esp_err_to_name(err));
+        }
         return;
     }
 
@@ -3942,6 +3959,7 @@ void handle_coredump_cmd(int argc, char **argv) {
         }
     }
 }
+#endif /* CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH */
 
 // Help command
 void handle_help(int argc, char **argv) {
@@ -4216,11 +4234,14 @@ void handle_help(int argc, char **argv) {
         glog("    Description: Intentionally trigger a crash (for coredump testing).\n");
         glog("    Usage: crash   or   panic\n");
         glog("    The device will panic and save a coredump to flash; use idf.py coredump-info to inspect.\n\n");
-        glog("coredump [dump]\n");
-        glog("    Description: Read coredump details from flash and print to serial.\n");
-        glog("    Usage: coredump       - Print summary (partition size, whether coredump present).\n");
-        glog("           coredump dump  - Stream coredump as base64; save to file and run idf.py coredump-info -c <file> on host.\n");
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+        glog("coredump [dump|erase]\n");
+        glog("    Description: Read or clear coredump in flash.\n");
+        glog("    Usage: coredump        - Print summary (partition size, whether coredump present).\n");
+        glog("           coredump dump   - Stream coredump as base64; save to file and run idf.py coredump-info -c <file> on host.\n");
+        glog("           coredump erase  - Erase coredump partition (clears saved crash).\n");
         glog("    With device connected, 'idf.py coredump-info' on host shows full panic reason and backtrace.\n\n");
+#endif
         glog("timezone\n");
         glog("    Description: Set the display timezone for the clock view.\n");
         glog("    Usage: timezone <TZ_STRING>\n\n");
@@ -6878,6 +6899,9 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #if defined(CONFIG_USING_MMC) || defined(CONFIG_USING_MMC_1_BIT)
     glog("    SD Card (MMC)\n");
 #endif
+#ifdef CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    glog("    Core Dump\n");
+#endif
     
     glog("[CHIPINFO_END]\n");
     
@@ -8693,11 +8717,13 @@ void register_commands() {
     register_command("stopspoof", handle_stop_spoof);
     register_command("chameleon", handle_chameleon_cmd);
 #endif
-#ifndef DEBUG
+#ifdef DEBUG
     register_command("crash", handle_crash);
 #endif
     register_command("panic", handle_crash);
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     register_command("coredump", handle_coredump_cmd);
+#endif
     register_command("pineap", handle_pineap_detection);
     register_command("apcred", handle_apcred);
     register_command("apenable", handle_ap_enable_cmd);
