@@ -88,6 +88,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "esp_heap_trace.h"
+#include "esp_memory_utils.h"
 #include <dirent.h>
 #include "managers/infrared_manager.h"
 #include "core/universal_ir.h"
@@ -96,10 +97,9 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "freertos/queue.h"
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
-#include "esp_partition.h"
-#include "esp_core_dump.h"
 #include "managers/aerial_detector_manager.h"
 #include "managers/wigle_manager.h"
+#include "managers/config_manager.h"
 
 #include "attacks/wifi/dhcp_starvation.h"
 static const char *TAG = "Commandline";
@@ -158,6 +158,7 @@ void handle_aerial_stop_cmd(int argc, char **argv);
 void handle_aerial_spoof_cmd(int argc, char **argv);
 void handle_aerial_spoof_stop_cmd(int argc, char **argv);
 void handle_wigle_cmd(int argc, char **argv);
+void handle_loadconfig_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -3865,132 +3866,10 @@ void handle_scan_ssh(int argc, char **argv) {
 }
 
 void handle_crash(int argc, char **argv) {
-    glog("Triggering crash for coredump test...\n");
-    (void)argc;
-    (void)argv;
-    /* Intentional null pointer write to trigger panic; coredump will be saved to flash. */
     int *ptr = NULL;
     *ptr = 42;
 }
 
-#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
-/* Read coredump partition and print summary or stream base64 for host decode. */
-static void handle_coredump_cmd(int argc, char **argv) {
-    const esp_partition_t *part = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA,
-        ESP_PARTITION_SUBTYPE_DATA_COREDUMP,
-        NULL);
-    if (part == NULL) {
-        glog("No coredump partition found. Check partition table.\n");
-        return;
-    }
-
-    if (argc > 1 && strcmp(argv[1], "erase") == 0) {
-        /* Use partition erase on all targets (esp_core_dump_image_erase can fail on plain ESP32). */
-        size_t esz = part->erase_size;
-        size_t to_erase = (part->size / esz) * esz;
-        if (to_erase == 0) {
-            to_erase = esz;
-        }
-        esp_err_t err = esp_partition_erase_range(part, 0, to_erase);
-        if (err == ESP_OK) {
-            glog("Coredump partition erased.\n");
-        } else {
-            glog("Failed to erase coredump: %s\n", esp_err_to_name(err));
-        }
-        return;
-    }
-
-    const int do_dump = (argc > 1 && strcmp(argv[1], "dump") == 0);
-
-    if (do_dump) {
-        /* Stream partition as base64 so user can save and run: idf.py coredump-info -c <file> */
-        glog("=== COREDUMP BASE64 START ===\n");
-        glog("Save the lines below to a file (e.g. coredump.b64), then run:\n");
-        glog("  idf.py coredump-info -c coredump.b64\n");
-        glog("(Omit the start/end marker lines from the file.)\n");
-        uint8_t buf[768];  /* multiple of 3 for base64 */
-        char b64[1024 + 8];
-        size_t offset = 0;
-        while (offset < part->size) {
-            size_t chunk = (part->size - offset) > sizeof(buf) ? sizeof(buf) : (part->size - offset);
-            if (esp_partition_read(part, offset, buf, chunk) != ESP_OK) {
-                glog("\nRead error at offset %u\n", (unsigned)offset);
-                break;
-            }
-            size_t written = 0;
-            int ret = mbedtls_base64_encode((unsigned char *)b64, sizeof(b64), &written, buf, chunk);
-            if (ret != 0) {
-                glog("\nBase64 encode error\n");
-                break;
-            }
-            b64[written] = '\0';
-            glog("%s", b64);
-            offset += chunk;
-        }
-        glog("\n=== COREDUMP BASE64 END ===\n");
-        return;
-    }
-
-    /* Summary: partition info and whether it contains valid coredump data.
-     * ESP-IDF may write a small header (e.g. checksum) before the ELF, so scan
-     * the first 128 bytes for ELF magic (0x7f 'E' 'L' 'F') instead of only offset 0. */
-    uint8_t head[128];
-    size_t head_len = part->size < sizeof(head) ? (size_t)part->size : sizeof(head);
-    if (esp_partition_read(part, 0, head, head_len) != ESP_OK) {
-        glog("Failed to read coredump partition.\n");
-        return;
-    }
-    int elf_offset = -1;
-    for (size_t i = 0; i + 4 <= head_len; i++) {
-        if (head[i] == 0x7f && head[i + 1] == 'E' && head[i + 2] == 'L' && head[i + 3] == 'F') {
-            elf_offset = (int)i;
-            break;
-        }
-    }
-    const int is_elf = (elf_offset >= 0);
-
-    glog("Coredump partition: %s, size %u bytes\n", part->label, (unsigned)part->size);
-
-#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
-    /* Use ESP-IDF API to parse and print panic reason from coredump in flash */
-    {
-        char panic_reason[256];
-        esp_err_t err = esp_core_dump_get_panic_reason(panic_reason, sizeof(panic_reason));
-        if (err == ESP_OK && panic_reason[0] != '\0') {
-            glog("Panic reason: %s\n", panic_reason);
-        } else if (err == ESP_ERR_NOT_FOUND) {
-            /* Do not call esp_core_dump_get_summary() here: it uses too much stack and can
-             * cause Stack protection fault in SerialTask (same task as CLI). */
-            glog("Panic reason: (not available on device; run idf.py coredump-info on host)\n");
-        } else {
-            glog("Panic reason: (error %s)\n", esp_err_to_name(err));
-        }
-    }
-#endif
-
-    if (is_elf) {
-        glog("Coredump data: present (ELF format");
-        if (elf_offset > 0) {
-            glog(", ELF at offset %d", elf_offset);
-        }
-        glog(").\n");
-        glog("For full backtrace run on host: idf.py coredump-info\n");
-    } else {
-        /* Check for empty (all 0xff) or binary format */
-        int empty = 1;
-        for (size_t i = 0; i < head_len && empty; i++) {
-            if (head[i] != 0xff) empty = 0;
-        }
-        if (empty != 0) {
-            glog("Coredump data: partition empty (no crash recorded yet).\n");
-        } else {
-            glog("Coredump data: present (binary format).\n");
-            glog("For full backtrace run on host: idf.py coredump-info\n");
-        }
-    }
-}
-#endif /* CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH */
 
 // Help command
 void handle_help(int argc, char **argv) {
@@ -4261,18 +4140,6 @@ void handle_help(int argc, char **argv) {
         glog("        - CPU cores and features\n");
         glog("        - Flash size and memory info\n");
         glog("        - ESP-IDF version\n\n");
-        glog("crash\n");
-        glog("    Description: Intentionally trigger a crash (for coredump testing).\n");
-        glog("    Usage: crash\n");
-        glog("    The device will panic and save a coredump to flash; use idf.py coredump-info to inspect.\n\n");
-#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
-        glog("coredump [dump|erase]\n");
-        glog("    Description: Read or clear coredump in flash.\n");
-        glog("    Usage: coredump        - Print summary (partition size, whether coredump present).\n");
-        glog("           coredump dump   - Stream coredump as base64; save to file and run idf.py coredump-info -c <file> on host.\n");
-        glog("           coredump erase  - Erase coredump partition (clears saved crash).\n");
-        glog("    With device connected, 'idf.py coredump-info' on host shows full panic reason and backtrace.\n\n");
-#endif
         glog("timezone\n");
         glog("    Description: Set the display timezone for the clock view.\n");
         glog("    Usage: timezone <TZ_STRING>\n\n");
@@ -6964,9 +6831,6 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #if defined(CONFIG_USING_MMC) || defined(CONFIG_USING_MMC_1_BIT)
     glog("    SD Card (MMC)\n");
 #endif
-#ifdef CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
-    glog("    Core Dump\n");
-#endif
     
     glog("[CHIPINFO_END]\n");
     
@@ -8601,6 +8465,42 @@ void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
     }
 }
 
+void handle_loadconfig_cmd(int argc, char **argv) {
+    glog("Loading configuration from SD card...\n");
+    
+    esp_err_t config_err = config_manager_load_from_sd();
+    
+    if (config_err == ESP_OK) {
+        glog("\n=== Configuration Loaded Successfully ===\n");
+        
+        // Show what was loaded
+        const char *ssid = settings_get_sta_ssid(&G_Settings);
+        if (ssid && ssid[0]) {
+            glog("WiFi SSID: %s\n", ssid);
+            glog("WiFi Password: (set)\n");
+        }
+        
+        if (G_Settings.wigle_api_key[0]) {
+            glog("Wigle Token: (set)\n");
+        }
+        
+        glog("Wigle Auto Upload: %s\n", settings_get_wigle_auto_upload(&G_Settings) ? "on" : "off");
+        glog("Wigle Donate: %s\n", settings_get_wigle_donate(&G_Settings) ? "on" : "off");
+        
+        glog("\nSettings saved to NVS.\n");
+        glog("Reconfiguring WiFi...\n");
+        
+        wifi_manager_configure_sta_from_settings();
+        
+        glog("Configuration applied successfully!\n");
+    } else if (config_err == ESP_ERR_NOT_FOUND) {
+        glog("Error: config.cfg not found on SD card\n");
+        glog("Expected location: /mnt/ghostesp/config.cfg\n");
+    } else {
+        glog("Error: Failed to load config.cfg: %s\n", esp_err_to_name(config_err));
+    }
+}
+
 void handle_wigle_cmd(int argc, char **argv) {
     if (argc < 2) {
         glog("wigle API <name>:<token>  - Set Wigle API key (from wigle.net/account)\n");
@@ -8785,9 +8685,6 @@ void register_commands() {
 #ifdef DEBUG
     register_command("crash", handle_crash);
 #endif
-#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
-    register_command("coredump", handle_coredump_cmd);
-#endif
     register_command("pineap", handle_pineap_detection);
     register_command("apcred", handle_apcred);
     register_command("apenable", handle_ap_enable_cmd);
@@ -8869,6 +8766,7 @@ void register_commands() {
     register_command("aerialspoof", handle_aerial_spoof_cmd);
     register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
     register_command("wigle", handle_wigle_cmd);
+    register_command("loadconfig", handle_loadconfig_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
 

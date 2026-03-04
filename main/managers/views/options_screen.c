@@ -10,6 +10,7 @@
 #include "io_manager.h"
 #include "managers/views/wardriving_screen.h"
 #include "managers/wigle_manager.h"
+#include "managers/config_manager.h"
 #include "gui/popup.h"
 #include "core/utils.h"
 #include "managers/sd_card_manager.h"  /* MAX_PORTAL_NAME, sd_card_list_dir_paged */
@@ -471,6 +472,7 @@ static SettingsItem settings_items[] = {
     
     {"Auto Upload", SETTING_WIGLE_AUTO_UPLOAD, bool_options, 2, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"Donate Data", SETTING_WIGLE_DONATE, bool_options, 2, 1, SETTINGS_CAT_WIGLE, false, NULL},
+    {"Load Config from SD", SETTING_LOAD_CONFIG, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"Test API Key", SETTING_WIGLE_TEST_API, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"Help", SETTING_WIGLE_HELP, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"Manual Upload", SETTING_WIGLE_MANUAL_UPLOAD, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
@@ -1392,6 +1394,40 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_WIGLE_DONATE:
             settings_set_wigle_donate(&G_Settings, new_value == 1);
             break;
+        case SETTING_LOAD_CONFIG: {
+            // Load config from SD card
+            esp_err_t config_err = config_manager_load_from_sd();
+            
+            if (config_err == ESP_OK) {
+                // Build success message showing what was loaded
+                char msg[256];
+                int len = snprintf(msg, sizeof(msg), "Config Loaded!\n\n");
+                
+                const char *ssid = settings_get_sta_ssid(&G_Settings);
+                if (ssid && ssid[0]) {
+                    len += snprintf(msg + len, sizeof(msg) - len, "WiFi: %s\n", ssid);
+                }
+                
+                if (G_Settings.wigle_api_key[0]) {
+                    len += snprintf(msg + len, sizeof(msg) - len, "Wigle: Set\n");
+                }
+                
+                len += snprintf(msg + len, sizeof(msg) - len, "Upload: %s\n",
+                    settings_get_wigle_auto_upload(&G_Settings) ? "On" : "Off");
+                len += snprintf(msg + len, sizeof(msg) - len, "Donate: %s\n",
+                    settings_get_wigle_donate(&G_Settings) ? "On" : "Off");
+                
+                // Reconfigure WiFi
+                wifi_manager_configure_sta_from_settings();
+                
+                error_popup_create(msg);
+            } else if (config_err == ESP_ERR_NOT_FOUND) {
+                error_popup_create("Config not found\n\nPlace config.cfg at:\n/ghostesp/config.cfg");
+            } else {
+                error_popup_create("Failed to load config");
+            }
+            return;
+        }
         case SETTING_WIGLE_TEST_API: {
             if (wigle_is_test_in_progress()) {
                 return;
