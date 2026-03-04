@@ -13,6 +13,10 @@
 #include "gui/popup.h"
 #include "core/utils.h"
 #include "managers/sd_card_manager.h"  /* MAX_PORTAL_NAME, sd_card_list_dir_paged */
+#include "gui/paged_menu.h"
+#include "gui/scan_status.h"
+#include "gui/detail_view.h"
+#include "scans/wifi/ap_scan.h"
 
 /* MAX_PORTALS / MAX_PORTAL_NAME come from sd_card_manager.h */
 #define PORTAL_PAGE_SIZE 8    /* keep portal pages small to avoid LVGL stalls */
@@ -32,6 +36,49 @@ static int wigle_csv_page_offset = 0;
 static bool wigle_csv_has_next_page = false;
 static bool wigle_csv_browser_active = false;
 static char selected_wigle_csv[MAX_PORTAL_NAME] = {0};
+
+#define AP_LIST_PAGE_SIZE 10
+static paged_menu_t *ap_list_menu = NULL;
+static scan_status_t *ap_scan_status = NULL;
+static detail_view_t *ap_detail_view = NULL;
+static int selected_ap_index = -1;
+static char ap_connect_ssid[64] = {0};
+static lv_timer_t *ap_scan_poll_timer = NULL;
+
+static void ap_scan_complete_callback(void);
+static void ap_detail_back_cb(lv_event_t *e);
+static void ap_scan_poll_timer_cb(lv_timer_t *timer);
+static void ap_list_cleanup(void);
+
+static bool start_ap_scan_flow(void) {
+    ap_list_cleanup();
+    ap_scan_status = scan_status_create("Scanning APs");
+    lv_timer_handler();
+
+    esp_err_t err = ap_scan_start_async();
+    if (err != ESP_OK) {
+        if (ap_scan_status) {
+            scan_status_close(ap_scan_status);
+            ap_scan_status = NULL;
+        }
+        return false;
+    }
+
+    ap_scan_poll_timer = lv_timer_create(ap_scan_poll_timer_cb, 100, NULL);
+    return true;
+}
+
+static void ap_scan_poll_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+    lv_timer_handler();
+    
+    if (ap_scan_check_done()) {
+        lv_timer_del(ap_scan_poll_timer);
+        ap_scan_poll_timer = NULL;
+        ap_scan_finish_async();
+        ap_scan_complete_callback();
+    }
+}
 
 
 #include "managers/views/keyboard_screen.h"
@@ -123,7 +170,9 @@ typedef enum {
     WIFI_MENU_CONNECTION,
     WIFI_MENU_MISC,
     WIFI_MENU_EVIL_PORTAL_SELECT,
-    WIFI_MENU_KARMA_PORTAL_SELECT
+    WIFI_MENU_KARMA_PORTAL_SELECT,
+    WIFI_MENU_AP_LIST,
+    WIFI_MENU_AP_DETAILS
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -545,6 +594,7 @@ unsigned long createdTimeInMs = 0;
 static int opt_touch_start_x;
 static int opt_touch_start_y;
 static bool opt_touch_started = false;
+static WifiMenuState opt_touch_wifi_state = WIFI_MENU_MAIN;
 #if CONFIG_LV_TOUCH_CONTROLLER_XPT2046
 static const int OPT_SWIPE_THRESHOLD_RATIO = 1;
 #else
@@ -724,12 +774,22 @@ static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
 
 // helper to show/hide touch scroll buttons based on list overflow
 static void update_scroll_buttons_visibility(void) {
-    if (!menu_container || !lv_obj_is_valid(menu_container)) return;
-    // ensure layout is up to date before querying scroll metrics
-    lv_obj_update_layout(menu_container);
-    lv_coord_t sb = lv_obj_get_scroll_bottom(menu_container);
-    lv_coord_t st = lv_obj_get_scroll_top(menu_container);
-    bool needs_scroll = (sb > 0) || (st > 0);
+    lv_obj_t *target = NULL;
+    bool force_show = false;
+
+    if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+        target = detail_view_get_list(ap_detail_view);
+        force_show = true;
+    } else {
+        target = menu_container;
+    }
+
+    if (!target || !lv_obj_is_valid(target)) return;
+    lv_obj_update_layout(target);
+    lv_coord_t sb = lv_obj_get_scroll_bottom(target);
+    lv_coord_t st = lv_obj_get_scroll_top(target);
+    bool needs_scroll = force_show || (sb > 0) || (st > 0);
+
     if (needs_scroll) {
         if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
             lv_obj_clear_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
@@ -739,6 +799,9 @@ static void update_scroll_buttons_visibility(void) {
             lv_obj_clear_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
             lv_obj_move_foreground(scroll_down_btn);
         }
+        if (back_btn && lv_obj_is_valid(back_btn)) {
+            lv_obj_move_foreground(back_btn);
+        }
     } else {
         if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
         if (scroll_down_btn && lv_obj_is_valid(scroll_down_btn)) lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
@@ -747,6 +810,10 @@ static void update_scroll_buttons_visibility(void) {
 
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
+static void ap_list_cleanup(void); // Forward Declaration for AP list cleanup
+static void ap_scan_complete_callback(void); // Forward Declaration for AP scan complete
+static void ap_detail_back_cb(lv_event_t *e); // Forward Declaration for AP detail back
+static void show_ap_detail(int ap_index); // Forward Declaration for AP detail view
 static void wigle_help_close_cb(lv_event_t *e); // Forward Declaration for WiGLE help close
 static void wigle_manual_popup_close_cb(lv_event_t *e);
 static void wigle_manual_popup_upload_cb(lv_event_t *e);
@@ -835,15 +902,34 @@ display_manager_switch_view(&terminal_view);
 
 // Add scroll functions
 static void scroll_options_up(lv_event_t *e) {
+    (void)e;
+    if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+        detail_view_move_selection(ap_detail_view, -1);
+        return;
+    }
     if (!menu_container) return;
     lv_coord_t scroll_amt = lv_obj_get_height(menu_container) / 2;
     lv_obj_scroll_by_bounded(menu_container, 0, scroll_amt, LV_ANIM_OFF);
 }
 
 static void scroll_options_down(lv_event_t *e) {
+    (void)e;
+    if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+        detail_view_move_selection(ap_detail_view, 1);
+        return;
+    }
     if (!menu_container) return;
     lv_coord_t scroll_amt = lv_obj_get_height(menu_container) / 2;
     lv_obj_scroll_by_bounded(menu_container, 0, -scroll_amt, LV_ANIM_OFF);
+}
+
+static void touch_back_button_cb(lv_event_t *e) {
+    (void)e;
+    if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+        ap_detail_back_cb(NULL);
+        return;
+    }
+    back_event_cb(NULL);
 }
 
 const char *options_menu_type_to_string(EOptionsMenuType menuType) {
@@ -895,6 +981,7 @@ void options_menu_create() {
     }
     
     option_invoked = false;
+    opt_touch_started = false;
     selected_item_index = 0;  // Reset selection to first item for new menu
     int screen_width = LV_HOR_RES;
     int screen_height = LV_VER_RES;
@@ -955,6 +1042,10 @@ void options_menu_create() {
                 options = evil_portal_options;
                 break;
             }
+            case WIFI_MENU_AP_LIST:
+            case WIFI_MENU_AP_DETAILS:
+                // Handled in rebuild_current_menu
+                break;
         }
         break;
     case OT_Bluetooth:
@@ -1025,7 +1116,7 @@ void options_menu_create() {
 
     /* Status bar already handled by options_view_create */
 #ifdef CONFIG_USE_TOUCHSCREEN
-    scroll_up_btn = lv_btn_create(root);
+    scroll_up_btn = lv_btn_create(lv_scr_act());
     lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
     lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
     lv_obj_set_style_bg_color(scroll_up_btn, control_color, LV_PART_MAIN);
@@ -1040,7 +1131,7 @@ void options_menu_create() {
     /* hide scroll buttons until the menu is built and we know if scrolling is required */
     lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
 
-    scroll_down_btn = lv_btn_create(root);
+    scroll_down_btn = lv_btn_create(lv_scr_act());
     lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
     lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
     lv_obj_set_style_bg_color(scroll_down_btn, control_color, LV_PART_MAIN);
@@ -1054,7 +1145,7 @@ void options_menu_create() {
     lv_obj_center(down_label);
     lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
 
-    back_btn = lv_btn_create(root);
+    back_btn = lv_btn_create(lv_scr_act());
     lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
     lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING);
     lv_obj_set_style_bg_color(back_btn, control_color, LV_PART_MAIN);
@@ -1062,7 +1153,7 @@ void options_menu_create() {
     lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN);
     lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(back_btn, touch_back_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_set_style_text_color(back_label, control_text_color, 0);
@@ -1612,15 +1703,26 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 lv_area_t area; lv_obj_get_coords(back_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
-                    back_event_cb(NULL);
+                    touch_back_button_cb(NULL);
                     opt_touch_started = false;
                     return;
                 }
+            }
+            // Handle touch start for detail_view
+            if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+                if (!opt_touch_started) {
+                    opt_touch_started = true;
+                    opt_touch_start_x = data->point.x;
+                    opt_touch_start_y = data->point.y;
+                    opt_touch_wifi_state = current_wifi_menu_state;
+                }
+                return;
             }
             if (!opt_touch_started) {
                 opt_touch_started = true;
                 opt_touch_start_x = data->point.x;
                 opt_touch_start_y = data->point.y;
+                opt_touch_wifi_state = current_wifi_menu_state;
             }
             return;
         }
@@ -1628,6 +1730,44 @@ void handle_hardware_button_press_options(InputEvent *event) {
         if (data->state == LV_INDEV_STATE_REL) {
             if (!opt_touch_started) return;
             opt_touch_started = false;
+
+            // Handle touch for detail_view (use saved state from touch start)
+            if (ap_detail_view && opt_touch_wifi_state == WIFI_MENU_AP_DETAILS) {
+                lv_obj_t *action_list = detail_view_get_list(ap_detail_view);
+                if (action_list && lv_obj_is_valid(action_list)) {
+                    lv_area_t list_area;
+                    lv_obj_get_coords(action_list, &list_area);
+                    
+                    int dx = data->point.x - opt_touch_start_x;
+                    int dy = data->point.y - opt_touch_start_y;
+                    int thr_y = LV_VER_RES / 20;
+                    
+                    // Scroll handling
+                    if (abs(dy) > thr_y) {
+                        lv_obj_scroll_by_bounded(action_list, 0, dy, LV_ANIM_OFF);
+                        return;
+                    }
+                    
+                    // Tap handling - find which action was tapped
+                    if (abs(dy) <= thr_y && abs(dx) <= thr_y) {
+                        uint32_t child_cnt = lv_obj_get_child_cnt(action_list);
+                        for (uint32_t i = 0; i < child_cnt; i++) {
+                            lv_obj_t *child = lv_obj_get_child(action_list, (int32_t)i);
+                            if (!child) continue;
+                            
+                            lv_area_t btn_area;
+                            lv_obj_get_coords(child, &btn_area);
+                            
+                            if (data->point.x >= btn_area.x1 && data->point.x <= btn_area.x2 &&
+                                data->point.y >= btn_area.y1 && data->point.y <= btn_area.y2) {
+                                lv_event_send(child, LV_EVENT_CLICKED, NULL);
+                                return;
+                            }
+                        }
+                    }
+                }
+                return;
+            }
 
             int dx = data->point.x - opt_touch_start_x;
             int dy = data->point.y - opt_touch_start_y;
@@ -1637,10 +1777,15 @@ void handle_hardware_button_press_options(InputEvent *event) {
             // Lower threshold for portal HTML lists (short lists need a lighter swipe)
             if (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT ||
                 current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT ||
+                current_wifi_menu_state == WIFI_MENU_AP_LIST ||
                 SelectedMenuType == OT_WigleManualUpload) {
                 thr_y = LV_VER_RES / 20; // much more sensitive for short lists
             }
             int thr_x = LV_HOR_RES / OPT_SWIPE_THRESHOLD_RATIO;
+
+            if (!menu_container || !lv_obj_is_valid(menu_container)) {
+                return;
+            }
 
             // Check if swipe started in menu container (allow release outside for natural swipes)
             lv_area_t cont_area;
@@ -1772,6 +1917,62 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 wigle_stats_popup_update_selection();
             } else if (button == 1) {
                 wigle_stats_popup_activate_selected();
+            }
+            return;
+        }
+        
+        if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+            if (button == 2) {
+                detail_view_move_selection(ap_detail_view, -1);
+            } else if (button == 4) {
+                detail_view_move_selection(ap_detail_view, 1);
+            } else if (button == 1) {
+                lv_obj_t *obj = detail_view_get_selected_obj(ap_detail_view);
+                if (obj && lv_obj_is_valid(obj)) {
+                    lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+                }
+            } else if (button == 0 || button == 3) {
+                ap_detail_back_cb(NULL);
+            }
+            return;
+        }
+        
+        if (current_wifi_menu_state == WIFI_MENU_AP_LIST && ap_list_menu) {
+            if (button == 2) {
+                if (selected_item_index > 0) {
+                    selected_item_index--;
+                }
+                select_option_item(selected_item_index);
+            } else if (button == 4) {
+                const char **opts = paged_menu_get_options(ap_list_menu);
+                int count = 0;
+                for (int i = 0; opts[i]; i++) count++;
+                if (selected_item_index < count - 1) {
+                    selected_item_index++;
+                }
+                select_option_item(selected_item_index);
+            } else if (button == 1) {
+                const char **opts = paged_menu_get_options(ap_list_menu);
+                const char *selected_option = opts[selected_item_index];
+                
+                if (selected_option) {
+                    if (strcmp(selected_option, "< Prev") == 0) {
+                        paged_menu_page_prev(ap_list_menu);
+                        rebuild_current_menu();
+                    } else if (strcmp(selected_option, "Next >") == 0) {
+                        paged_menu_page_next(ap_list_menu);
+                        rebuild_current_menu();
+                    } else if (strcmp(selected_option, "No items found") != 0) {
+                        int offset = paged_menu_get_page_offset(ap_list_menu);
+                        int skip = paged_menu_has_prev(ap_list_menu) ? 1 : 0;
+                        int idx = offset + (selected_item_index - skip);
+                        show_ap_detail(idx);
+                    }
+                }
+            } else if (button == 0 || button == 3) {
+                ap_list_cleanup();
+                current_wifi_menu_state = WIFI_MENU_SCAN_SELECT;
+                rebuild_current_menu();
             }
             return;
         }
@@ -2917,10 +3118,44 @@ void option_event_cb(lv_event_t *e) {
     }
 
     if (strcmp(Selected_Option, "Scan Access Points") == 0) {
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("scanap");
-        view_switched = true;
+        if (!start_ap_scan_flow()) {
+            error_popup_create("Scan failed to start");
+        }
+        option_invoked = false;
+        return;
+    }
+    
+    else if (current_wifi_menu_state == WIFI_MENU_AP_LIST) {
+        if (strcmp(Selected_Option, "No items found") == 0) {
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "< Prev") == 0) {
+            paged_menu_page_prev(ap_list_menu);
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "Next >") == 0) {
+            paged_menu_page_next(ap_list_menu);
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        
+        int offset = paged_menu_get_page_offset(ap_list_menu);
+        const char **opts = paged_menu_get_options(ap_list_menu);
+        int skip = paged_menu_has_prev(ap_list_menu) ? 1 : 0;
+        
+        for (int i = 0; opts[i]; i++) {
+            if (strcmp(opts[i], Selected_Option) == 0) {
+                int idx = offset + (i - skip);
+                show_ap_detail(idx);
+                break;
+            }
+        }
+        option_invoked = false;
+        return;
     }
 
     else if (strcmp(Selected_Option, "Scan APs Live") == 0) {
@@ -2931,10 +3166,22 @@ void option_event_cb(lv_event_t *e) {
     }
 
     else if (strcmp(Selected_Option, "List Access Points") == 0) {
-        terminal_set_return_view(&options_menu_view);
-        display_manager_switch_view(&terminal_view);
-        simulateCommand("list -a");
-        view_switched = true;
+        uint16_t ap_count_local = ap_scan_get_count();
+        if (ap_count_local > 0) {
+            if (ap_list_menu) {
+                paged_menu_reset(ap_list_menu);
+            }
+            current_wifi_menu_state = WIFI_MENU_AP_LIST;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+
+        if (!start_ap_scan_flow()) {
+            error_popup_create("Scan failed to start");
+        }
+        option_invoked = false;
+        return;
     }
 
     else if (strcmp(Selected_Option, "Scan All (AP & Station)") == 0) {
@@ -3651,6 +3898,12 @@ void handle_option_directly(const char *Selected_Option) {
 }
 
 void options_menu_destroy() {
+    opt_touch_started = false;
+
+    lvgl_obj_del_safe(&back_btn);
+    lvgl_obj_del_safe(&scroll_up_btn);
+    lvgl_obj_del_safe(&scroll_down_btn);
+
     // Delete the root object (deletes all children recursively)
     lvgl_obj_del_safe(&options_menu_view.root);
     if (g_options_view) {
@@ -3829,6 +4082,23 @@ static void back_event_cb(lv_event_t *e) {
         rebuild_current_menu();
         return;
     }
+    // If in AP details view, go back to AP list
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+        if (ap_detail_view) {
+            detail_view_destroy(ap_detail_view);
+            ap_detail_view = NULL;
+        }
+        current_wifi_menu_state = WIFI_MENU_AP_LIST;
+        rebuild_current_menu();
+        return;
+    }
+    // If in AP list view, go back to Scan & Select menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_AP_LIST) {
+        ap_list_cleanup();
+        current_wifi_menu_state = WIFI_MENU_SCAN_SELECT;
+        rebuild_current_menu();
+        return;
+    }
     // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -3922,6 +4192,287 @@ static const char **wigle_csv_load_page(void) {
 
     free(file_names);
     return wigle_csv_options;
+}
+
+static int ap_list_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX], bool *has_more, void *user_data) {
+    (void)user_data;
+    
+    uint16_t count = 0;
+    wifi_ap_record_t *aps = NULL;
+    ap_scan_get_results(&count, &aps);
+    
+    if (!aps || count == 0) {
+        *has_more = false;
+        return 0;
+    }
+    
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    uint32_t muted_color = theme_palette_get_text_muted(theme);
+    char color_code[16];
+    snprintf(color_code, sizeof(color_code), "#%06X", (unsigned int)(muted_color & 0xFFFFFFu));
+    
+    int loaded = 0;
+    for (int i = offset; i < (int)count && loaded < page_size; i++) {
+        const char *band = (aps[i].primary >= 36) ? "5G" : "2.4G";
+        
+        if (aps[i].ssid[0] == 0) {
+            snprintf(names[loaded], PAGED_MENU_NAME_MAX, "Hidden Network %s %s Ch:%d#",
+                     color_code, band, aps[i].primary);
+        } else {
+            char ssid_trunc[28] = {0};
+            strncpy(ssid_trunc, (const char *)aps[i].ssid, sizeof(ssid_trunc) - 1);
+            snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s %s %s Ch:%d#",
+                     ssid_trunc, color_code, band, aps[i].primary);
+        }
+        loaded++;
+    }
+    
+    *has_more = (offset + loaded) < (int)count;
+    return loaded;
+}
+
+static void ap_list_cleanup(void) {
+    if (ap_scan_poll_timer) {
+        lv_timer_del(ap_scan_poll_timer);
+        ap_scan_poll_timer = NULL;
+    }
+    if (ap_list_menu) {
+        paged_menu_destroy(ap_list_menu);
+        ap_list_menu = NULL;
+    }
+    if (ap_scan_status) {
+        scan_status_close(ap_scan_status);
+        ap_scan_status = NULL;
+    }
+    if (ap_detail_view) {
+        detail_view_destroy(ap_detail_view);
+        ap_detail_view = NULL;
+    }
+}
+
+static const char **ap_list_get_options(void) {
+    if (!ap_list_menu) {
+        ap_list_menu = paged_menu_create(AP_LIST_PAGE_SIZE, ap_list_load_fn, NULL);
+    }
+    return paged_menu_get_options(ap_list_menu);
+}
+
+static const char *auth_mode_to_string(wifi_auth_mode_t mode) {
+    switch (mode) {
+        case WIFI_AUTH_OPEN: return "Open";
+        case WIFI_AUTH_WEP: return "WEP";
+        case WIFI_AUTH_WPA_PSK: return "WPA-PSK";
+        case WIFI_AUTH_WPA2_PSK: return "WPA2-PSK";
+        case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
+        case WIFI_AUTH_WPA3_PSK: return "WPA3-PSK";
+        case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3";
+        default: return "Unknown";
+    }
+}
+
+static void ap_deauth_cb(lv_event_t *e) {
+    (void)e;
+    if (selected_ap_index >= 0) {
+        ap_scan_select(selected_ap_index);
+        wifi_manager_select_ap(selected_ap_index);
+        if (ap_detail_view) {
+            detail_view_destroy(ap_detail_view);
+            ap_detail_view = NULL;
+        }
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("attack -d");
+    }
+}
+
+static void ap_track_cb(lv_event_t *e) {
+    (void)e;
+    if (selected_ap_index >= 0) {
+        if (ap_scan_select(selected_ap_index) != ESP_OK) {
+            error_popup_create("Failed to select AP");
+            return;
+        }
+        wifi_manager_select_ap(selected_ap_index);
+        if (ap_detail_view) {
+            detail_view_destroy(ap_detail_view);
+            ap_detail_view = NULL;
+        }
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("trackap");
+    }
+}
+
+static void ap_connect_password_cb(const char *text) {
+    if (ap_connect_ssid[0] == '\0') {
+        error_popup_create("SSID unavailable");
+        keyboard_view_set_submit_callback(NULL);
+        return;
+    }
+
+    const char *pass = text ? text : "";
+    if (strlen(pass) >= 64) {
+        error_popup_create("pass too long");
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "connect \"%s\" \"%s\"", ap_connect_ssid, pass);
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+
+    ap_connect_ssid[0] = '\0';
+    keyboard_view_set_submit_callback(NULL);
+}
+
+static void ap_connect_cb(lv_event_t *e) {
+    (void)e;
+
+    if (selected_ap_index < 0) {
+        return;
+    }
+
+    uint16_t count = 0;
+    wifi_ap_record_t *aps = NULL;
+    ap_scan_get_results(&count, &aps);
+    if (!aps || selected_ap_index >= (int)count) {
+        error_popup_create("AP not found");
+        return;
+    }
+
+    wifi_ap_record_t *ap = &aps[selected_ap_index];
+    if (ap->ssid[0] == 0) {
+        error_popup_create("Hidden SSID unsupported");
+        return;
+    }
+
+    if (ap_scan_select(selected_ap_index) != ESP_OK) {
+        error_popup_create("Failed to select AP");
+        return;
+    }
+    wifi_manager_select_ap(selected_ap_index);
+
+    char ssid[33] = {0};
+    strncpy(ssid, (const char *)ap->ssid, sizeof(ssid) - 1);
+
+    if (ap->authmode == WIFI_AUTH_OPEN) {
+        char cmd[256];
+        snprintf(cmd, sizeof(cmd), "connect \"%s\" \"\"", ssid);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand(cmd);
+        return;
+    }
+
+    strncpy(ap_connect_ssid, ssid, sizeof(ap_connect_ssid) - 1);
+    ap_connect_ssid[sizeof(ap_connect_ssid) - 1] = '\0';
+
+    char placeholder[64];
+    snprintf(placeholder, sizeof(placeholder), "Password for %.24s", ap_connect_ssid);
+    keyboard_view_set_return_view(&options_menu_view);
+    keyboard_view_set_submit_callback(ap_connect_password_cb);
+    keyboard_view_set_placeholder(placeholder);
+    display_manager_switch_view(&keyboard_view);
+}
+
+static void ap_select_cb(lv_event_t *e) {
+    (void)e;
+    if (selected_ap_index >= 0) {
+        if (ap_scan_select(selected_ap_index) != ESP_OK) {
+            error_popup_create("Failed to select AP");
+            return;
+        }
+        wifi_manager_select_ap(selected_ap_index);
+        ap_detail_back_cb(NULL);
+    }
+}
+
+static void ap_detail_back_cb(lv_event_t *e) {
+    (void)e;
+    if (ap_detail_view) {
+        detail_view_destroy(ap_detail_view);
+        ap_detail_view = NULL;
+    }
+    current_wifi_menu_state = WIFI_MENU_AP_LIST;
+    options_menu_view.root = NULL;
+    display_manager_switch_view(&options_menu_view);
+}
+
+static void show_ap_detail(int ap_index) {
+    uint16_t count = 0;
+    wifi_ap_record_t *aps = NULL;
+    ap_scan_get_results(&count, &aps);
+    
+    if (!aps || ap_index < 0 || ap_index >= (int)count) {
+        error_popup_create("AP not found");
+        return;
+    }
+    
+    selected_ap_index = ap_index;
+    wifi_ap_record_t *ap = &aps[ap_index];
+    
+    char ssid[33] = {0};
+    if (ap->ssid[0] == 0) {
+        strcpy(ssid, "<Hidden>");
+    } else {
+        strncpy(ssid, (const char *)ap->ssid, 32);
+    }
+    
+    if (menu_build_timer) {
+        lv_timer_del(menu_build_timer);
+        menu_build_timer = NULL;
+    }
+    
+    if (g_options_view) {
+        options_view_destroy(g_options_view);
+        g_options_view = NULL;
+    }
+    menu_container = NULL;
+    
+    ap_detail_view = detail_view_create(lv_scr_act(), NULL);
+    
+    detail_view_add_info(ap_detail_view, "SSID", ssid);
+    
+    char bssid[18];
+    snprintf(bssid, sizeof(bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
+             ap->bssid[0], ap->bssid[1], ap->bssid[2],
+             ap->bssid[3], ap->bssid[4], ap->bssid[5]);
+    detail_view_add_info(ap_detail_view, "BSSID", bssid);
+    
+    detail_view_add_infof(ap_detail_view, "Channel", "%d", ap->primary);
+    detail_view_add_infof(ap_detail_view, "RSSI", "%d dBm", ap->rssi);
+    detail_view_add_info(ap_detail_view, "Security", auth_mode_to_string(ap->authmode));
+    
+    detail_view_add_info(ap_detail_view, "Actions", "");
+    detail_view_add_action(ap_detail_view, "Deauth", ap_deauth_cb, NULL);
+    detail_view_add_action(ap_detail_view, "Connect", ap_connect_cb, NULL);
+    detail_view_add_action(ap_detail_view, "Track AP", ap_track_cb, NULL);
+    detail_view_add_action(ap_detail_view, "Select AP", ap_select_cb, NULL);
+    detail_view_add_back(ap_detail_view, ap_detail_back_cb, NULL);
+    
+    current_wifi_menu_state = WIFI_MENU_AP_DETAILS;
+#ifdef CONFIG_USE_TOUCHSCREEN
+    update_scroll_buttons_visibility();
+#endif
+}
+
+static void ap_scan_complete_callback(void) {
+    if (ap_scan_status) {
+        scan_status_close(ap_scan_status);
+        ap_scan_status = NULL;
+    }
+    
+    uint16_t count = ap_scan_get_count();
+    if (count == 0) {
+        error_popup_create("No APs found");
+        current_wifi_menu_state = WIFI_MENU_SCAN_SELECT;
+        rebuild_current_menu();
+        return;
+    }
+    
+    current_wifi_menu_state = WIFI_MENU_AP_LIST;
+    rebuild_current_menu();
 }
 
 static void wigle_manual_popup_close_cb(lv_event_t *e) {
@@ -4341,6 +4892,13 @@ static void rebuild_current_menu(void) {
                     if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
                     break;
                 }
+                case WIFI_MENU_AP_LIST:
+                    options = ap_list_get_options();
+                    timer_period = 25;
+                    break;
+                case WIFI_MENU_AP_DETAILS:
+                    options = NULL;
+                    break;
             }
             break;
         case OT_Bluetooth:
@@ -4397,7 +4955,13 @@ static void rebuild_current_menu(void) {
             options_view_set_title(g_options_view, "Settings");
         }
     } else {
-        options_view_set_title(g_options_view, options_menu_type_to_string(SelectedMenuType));
+        if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_AP_LIST) {
+            options_view_set_title(g_options_view, "APs Found");
+        } else if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+            options_view_set_title(g_options_view, "AP Details");
+        } else {
+            options_view_set_title(g_options_view, options_menu_type_to_string(SelectedMenuType));
+        }
     }
     
     // start incremental build with longer period for smoother operation
@@ -4688,7 +5252,8 @@ static void menu_builder_cb(lv_timer_t *t)
         (!is_settings_mode) &&
         ((SelectedMenuType == OT_Wifi &&
           (current_wifi_menu_state == WIFI_MENU_EVIL_PORTAL_SELECT ||
-           current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT)) ||
+           current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT ||
+           current_wifi_menu_state == WIFI_MENU_AP_LIST)) ||
          SelectedMenuType == OT_WigleManualUpload);
 
     const int BATCH = is_portal_select ? 2 : 6;
