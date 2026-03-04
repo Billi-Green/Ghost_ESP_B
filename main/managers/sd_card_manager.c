@@ -1063,6 +1063,8 @@ static esp_err_t ensure_sd_dir_exists(const char *path) {
 
 esp_err_t sd_card_setup_directory_structure() {
   const char *root_dir = "/mnt/ghostesp";
+  const char *logs_dir = "/mnt/ghostesp/logs";
+  const char *coredumps_dir = "/mnt/ghostesp/logs/coredumps";
   const char *debug_dir = "/mnt/ghostesp/debug";
   const char *pcaps_dir = "/mnt/ghostesp/pcaps";
   const char *scans_dir = "/mnt/ghostesp/scans";
@@ -1082,6 +1084,12 @@ esp_err_t sd_card_setup_directory_structure() {
   if (ret != ESP_OK) return ret;
 
   ret = ensure_sd_dir_exists(gps_dir);
+  if (ret != ESP_OK) return ret;
+
+  ret = ensure_sd_dir_exists(logs_dir);
+  if (ret != ESP_OK) return ret;
+
+  ret = ensure_sd_dir_exists(coredumps_dir);
   if (ret != ESP_OK) return ret;
 
   ret = ensure_sd_dir_exists(debug_dir);
