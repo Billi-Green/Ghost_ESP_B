@@ -4261,9 +4261,9 @@ void handle_help(int argc, char **argv) {
         glog("        - CPU cores and features\n");
         glog("        - Flash size and memory info\n");
         glog("        - ESP-IDF version\n\n");
-        glog("crash / panic\n");
+        glog("crash\n");
         glog("    Description: Intentionally trigger a crash (for coredump testing).\n");
-        glog("    Usage: crash   or   panic\n");
+        glog("    Usage: crash\n");
         glog("    The device will panic and save a coredump to flash; use idf.py coredump-info to inspect.\n\n");
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
         glog("coredump [dump|erase]\n");
@@ -8785,7 +8785,6 @@ void register_commands() {
 #ifdef DEBUG
     register_command("crash", handle_crash);
 #endif
-    register_command("panic", handle_crash);
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     register_command("coredump", handle_coredump_cmd);
 #endif
