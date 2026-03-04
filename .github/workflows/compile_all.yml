@@ -28,6 +28,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
@@ -164,7 +165,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.target.name }}
+          name: artifact-${{ matrix.target.zip_name }}
           path: ${{ matrix.target.zip_name }}
 
   update_manifest_for_commit:
@@ -184,6 +185,12 @@ jobs:
         with:
           path: all_build_artifacts
 
+      - name: Fetch current run artifact index
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > artifact_index.json
+
       - name: Update root manifest with commit configs
         run: |
           python3 - <<'PY'
@@ -195,6 +202,7 @@ jobs:
 
           repo = os.environ["GITHUB_REPOSITORY"]
           sha = os.environ["GITHUB_SHA"]
+          run_id = os.environ["GITHUB_RUN_ID"]
           now = datetime.now(timezone.utc).isoformat()
 
           path = "firmware-manifest.json"
@@ -214,14 +222,25 @@ jobs:
           manifest["updated_at"] = now
 
           zips = sorted({os.path.basename(p) for p in glob.glob("all_build_artifacts/**/*.zip", recursive=True)})
+          with open("artifact_index.json", "r", encoding="utf-8") as fp:
+            artifact_index = json.load(fp)
+          artifacts = artifact_index.get("artifacts", [])
+          artifact_ids = {a.get("name"): a.get("id") for a in artifacts if a.get("name") and a.get("id")}
+
           items = []
           for zip_name in zips:
+            artifact_name = f"artifact-{zip_name}"
+            artifact_id = artifact_ids.get(artifact_name)
+            download_url = None
+            if artifact_id is not None:
+              download_url = f"https://github.com/{repo}/actions/runs/{run_id}/artifacts/{artifact_id}"
             items.append({
               "config": Path(zip_name).stem,
               "zip_name": zip_name,
               "channel": "commit",
               "release_tag": None,
-              "download_url": None,
+              "download_url": download_url,
+              "artifact_run_url": f"https://github.com/{repo}/actions/runs/{run_id}",
             })
 
           commits = manifest.setdefault("commits", {})
