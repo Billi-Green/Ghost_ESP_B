@@ -6,6 +6,7 @@
 
 ### Added
 - Added auto saving of coredumps and cli commands for debugging - @tototo31
+- Add NRF24 native + ghostlink support for The Wired Hatter's Banshee with a frequency analyzer
 
 ### Changed
 - Wardriving dedupe now includes APs when RSSI differs lower or higher for better trilateration support
