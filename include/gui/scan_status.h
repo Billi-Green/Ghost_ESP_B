@@ -12,6 +12,8 @@ scan_status_t *scan_status_create(const char *message);
 
 void scan_status_update(scan_status_t *ss, const char *message);
 
+void scan_status_set_subtext(scan_status_t *ss, const char *subtext);
+
 void scan_status_set_progress(scan_status_t *ss, int current, int total);
 
 void scan_status_close(scan_status_t *ss);
