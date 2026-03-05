@@ -4,6 +4,9 @@
 
 ## Revival v1.9.5
 
+### Added
+- Added auto saving of coredumps and cli commands for debugging - @tototo31
+
 ### Changed
 - Wardriving dedupe now includes APs when RSSI differs lower or higher for better trilateration support
 - Wardriving screen now shows `GPS Stale` when GPS data stops refreshing
