@@ -96,6 +96,8 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "freertos/queue.h"
 #include "managers/usb_keyboard_manager.h"
 #include "mbedtls/base64.h"
+#include "esp_partition.h"
+#include "esp_core_dump.h"
 #include "managers/aerial_detector_manager.h"
 #include "managers/wigle_manager.h"
 
@@ -1226,7 +1228,7 @@ void handle_start_portal(int argc, char **argv) {
     glog("Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, psk, domain ? domain : "(default)");
     char log_buf[256];
     snprintf(log_buf, sizeof(log_buf), "Starting portal with AP_SSID: %s, PSK: %s, Domain: %s\n", ap_ssid, (strlen(psk) > 0 ? psk : "<Open>"), domain ? domain : "(default)");
-    TERMINAL_VIEW_ADD_TEXT(log_buf);
+    TERMINAL_VIEW_ADD_TEXT("%s", log_buf);
     wifi_manager_start_evil_portal(final_url_or_path, NULL, psk, ap_ssid, domain);
 }
 
@@ -3680,6 +3682,11 @@ void handle_startwd(int argc, char **argv) {
             } else {
                 (void)wardriving_set_helper_channels_from_csv(NULL);
             }
+
+            if (!g_gpsManager.isinitilized) {
+                gps_manager_init(&g_gpsManager);
+            }
+
             wifi_manager_start_monitor_mode(wardriving_scan_callback);
             start_wardriving_helper();
             glog("Wardriving helper started.\n");
@@ -3687,7 +3694,24 @@ void handle_startwd(int argc, char **argv) {
             return;
         }
 
-        gps_manager_init(&g_gpsManager);
+        bool prefer_peer_only = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+        prefer_peer_only = (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) &&
+                           !esp_comm_manager_is_remote_command() &&
+                           esp_comm_manager_is_connected();
+#endif
+
+        if (prefer_peer_only) {
+            gps_manager_set_peer_gps_preferred(true);
+            gps_manager_clear_peer_fix();
+            if (g_gpsManager.isinitilized) {
+                gps_manager_deinit(&g_gpsManager);
+            }
+            glog("Wardriving: peer GPS preferred, local soft GPS disabled.\n");
+        } else {
+            gps_manager_set_peer_gps_preferred(false);
+            gps_manager_init(&g_gpsManager);
+        }
         esp_err_t err = csv_file_open("wardriving");
         if (err != ESP_OK) {
             glog("Failed to open CSV for wardriving\n");
@@ -3713,6 +3737,15 @@ void handle_startwd(int argc, char **argv) {
             }
         }
         wardriving_set_peer_assist(peer_helper_ok);
+
+        if (prefer_peer_only && !peer_helper_ok) {
+            gps_manager_set_peer_gps_preferred(false);
+            gps_manager_clear_peer_fix();
+            if (!g_gpsManager.isinitilized) {
+                gps_manager_init(&g_gpsManager);
+            }
+            glog("Wardriving: peer helper unavailable, falling back to local GPS.\n");
+        }
 
         glog("Wardriving started.\n");
         status_display_show_status("Wardrive Start");
@@ -3832,10 +3865,132 @@ void handle_scan_ssh(int argc, char **argv) {
 }
 
 void handle_crash(int argc, char **argv) {
+    glog("Triggering crash for coredump test...\n");
+    (void)argc;
+    (void)argv;
+    /* Intentional null pointer write to trigger panic; coredump will be saved to flash. */
     int *ptr = NULL;
     *ptr = 42;
 }
 
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+/* Read coredump partition and print summary or stream base64 for host decode. */
+static void handle_coredump_cmd(int argc, char **argv) {
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA,
+        ESP_PARTITION_SUBTYPE_DATA_COREDUMP,
+        NULL);
+    if (part == NULL) {
+        glog("No coredump partition found. Check partition table.\n");
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "erase") == 0) {
+        /* Use partition erase on all targets (esp_core_dump_image_erase can fail on plain ESP32). */
+        size_t esz = part->erase_size;
+        size_t to_erase = (part->size / esz) * esz;
+        if (to_erase == 0) {
+            to_erase = esz;
+        }
+        esp_err_t err = esp_partition_erase_range(part, 0, to_erase);
+        if (err == ESP_OK) {
+            glog("Coredump partition erased.\n");
+        } else {
+            glog("Failed to erase coredump: %s\n", esp_err_to_name(err));
+        }
+        return;
+    }
+
+    const int do_dump = (argc > 1 && strcmp(argv[1], "dump") == 0);
+
+    if (do_dump) {
+        /* Stream partition as base64 so user can save and run: idf.py coredump-info -c <file> */
+        glog("=== COREDUMP BASE64 START ===\n");
+        glog("Save the lines below to a file (e.g. coredump.b64), then run:\n");
+        glog("  idf.py coredump-info -c coredump.b64\n");
+        glog("(Omit the start/end marker lines from the file.)\n");
+        uint8_t buf[768];  /* multiple of 3 for base64 */
+        char b64[1024 + 8];
+        size_t offset = 0;
+        while (offset < part->size) {
+            size_t chunk = (part->size - offset) > sizeof(buf) ? sizeof(buf) : (part->size - offset);
+            if (esp_partition_read(part, offset, buf, chunk) != ESP_OK) {
+                glog("\nRead error at offset %u\n", (unsigned)offset);
+                break;
+            }
+            size_t written = 0;
+            int ret = mbedtls_base64_encode((unsigned char *)b64, sizeof(b64), &written, buf, chunk);
+            if (ret != 0) {
+                glog("\nBase64 encode error\n");
+                break;
+            }
+            b64[written] = '\0';
+            glog("%s", b64);
+            offset += chunk;
+        }
+        glog("\n=== COREDUMP BASE64 END ===\n");
+        return;
+    }
+
+    /* Summary: partition info and whether it contains valid coredump data.
+     * ESP-IDF may write a small header (e.g. checksum) before the ELF, so scan
+     * the first 128 bytes for ELF magic (0x7f 'E' 'L' 'F') instead of only offset 0. */
+    uint8_t head[128];
+    size_t head_len = part->size < sizeof(head) ? (size_t)part->size : sizeof(head);
+    if (esp_partition_read(part, 0, head, head_len) != ESP_OK) {
+        glog("Failed to read coredump partition.\n");
+        return;
+    }
+    int elf_offset = -1;
+    for (size_t i = 0; i + 4 <= head_len; i++) {
+        if (head[i] == 0x7f && head[i + 1] == 'E' && head[i + 2] == 'L' && head[i + 3] == 'F') {
+            elf_offset = (int)i;
+            break;
+        }
+    }
+    const int is_elf = (elf_offset >= 0);
+
+    glog("Coredump partition: %s, size %u bytes\n", part->label, (unsigned)part->size);
+
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    /* Use ESP-IDF API to parse and print panic reason from coredump in flash */
+    {
+        char panic_reason[256];
+        esp_err_t err = esp_core_dump_get_panic_reason(panic_reason, sizeof(panic_reason));
+        if (err == ESP_OK && panic_reason[0] != '\0') {
+            glog("Panic reason: %s\n", panic_reason);
+        } else if (err == ESP_ERR_NOT_FOUND) {
+            /* Do not call esp_core_dump_get_summary() here: it uses too much stack and can
+             * cause Stack protection fault in SerialTask (same task as CLI). */
+            glog("Panic reason: (not available on device; run idf.py coredump-info on host)\n");
+        } else {
+            glog("Panic reason: (error %s)\n", esp_err_to_name(err));
+        }
+    }
+#endif
+
+    if (is_elf) {
+        glog("Coredump data: present (ELF format");
+        if (elf_offset > 0) {
+            glog(", ELF at offset %d", elf_offset);
+        }
+        glog(").\n");
+        glog("For full backtrace run on host: idf.py coredump-info\n");
+    } else {
+        /* Check for empty (all 0xff) or binary format */
+        int empty = 1;
+        for (size_t i = 0; i < head_len && empty; i++) {
+            if (head[i] != 0xff) empty = 0;
+        }
+        if (empty != 0) {
+            glog("Coredump data: partition empty (no crash recorded yet).\n");
+        } else {
+            glog("Coredump data: present (binary format).\n");
+            glog("For full backtrace run on host: idf.py coredump-info\n");
+        }
+    }
+}
+#endif /* CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH */
 
 // Help command
 void handle_help(int argc, char **argv) {
@@ -4106,6 +4261,18 @@ void handle_help(int argc, char **argv) {
         glog("        - CPU cores and features\n");
         glog("        - Flash size and memory info\n");
         glog("        - ESP-IDF version\n\n");
+        glog("crash\n");
+        glog("    Description: Intentionally trigger a crash (for coredump testing).\n");
+        glog("    Usage: crash\n");
+        glog("    The device will panic and save a coredump to flash; use idf.py coredump-info to inspect.\n\n");
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+        glog("coredump [dump|erase]\n");
+        glog("    Description: Read or clear coredump in flash.\n");
+        glog("    Usage: coredump        - Print summary (partition size, whether coredump present).\n");
+        glog("           coredump dump   - Stream coredump as base64; save to file and run idf.py coredump-info -c <file> on host.\n");
+        glog("           coredump erase  - Erase coredump partition (clears saved crash).\n");
+        glog("    With device connected, 'idf.py coredump-info' on host shows full panic reason and backtrace.\n\n");
+#endif
         glog("timezone\n");
         glog("    Description: Set the display timezone for the clock view.\n");
         glog("    Usage: timezone <TZ_STRING>\n\n");
@@ -4533,13 +4700,24 @@ void handle_gps_info(int argc, char **argv) {
             }
             
             gps_manager_deinit(&g_gpsManager);
+            gps_manager_set_peer_gps_preferred(false);
+            gps_manager_clear_peer_fix();
             printf("GPS info display stopped.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info display stopped.\n");
             status_display_show_status("GPS Info Off");
         }
     } else {
         if (gps_info_task_handle == NULL) {
-            gps_manager_init(&g_gpsManager);
+            bool peer_connected = esp_comm_manager_is_connected();
+            gps_manager_set_peer_gps_preferred(peer_connected);
+            if (!peer_connected) {
+                gps_manager_clear_peer_fix();
+            }
+            if (!peer_connected) {
+                gps_manager_init(&g_gpsManager);
+            } else if (g_gpsManager.isinitilized) {
+                gps_manager_deinit(&g_gpsManager);
+            }
 
             // Wait a moment for GPS initialization
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -4594,6 +4772,13 @@ void handle_gps_info(int argc, char **argv) {
             gps_info_task_handle = created_task;
             printf("GPS info started.\n");
             TERMINAL_VIEW_ADD_TEXT("GPS info started.\n");
+            if (peer_connected) {
+                printf("GPS source: peer stream preferred.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS source: peer stream preferred.\n");
+            } else {
+                printf("GPS source: local parser.\n");
+                TERMINAL_VIEW_ADD_TEXT("GPS source: local parser.\n");
+            }
             status_display_show_status("GPS Info On");
         }
     }
@@ -4617,12 +4802,21 @@ void handle_ble_wardriving(int argc, char **argv) {
         }
         csv_file_close();
         gps_manager_deinit(&g_gpsManager);
+        gps_manager_set_peer_gps_preferred(false);
+        gps_manager_clear_peer_fix();
         printf("BLE wardriving stopped.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving stopped.\n");
         status_display_show_status("BLE Drive Off");
     } else {
-        if (!g_gpsManager.isinitilized) {
+        bool peer_connected = esp_comm_manager_is_connected();
+        gps_manager_set_peer_gps_preferred(peer_connected);
+        if (!peer_connected) {
+            gps_manager_clear_peer_fix();
+        }
+        if (!peer_connected && !g_gpsManager.isinitilized) {
             gps_manager_init(&g_gpsManager);
+        } else if (peer_connected && g_gpsManager.isinitilized) {
+            gps_manager_deinit(&g_gpsManager);
         }
 
         // Open CSV file for BLE wardriving
@@ -4637,6 +4831,13 @@ void handle_ble_wardriving(int argc, char **argv) {
         ble_register_handler(ble_wardriving_callback);
         printf("BLE wardriving started.\n");
         TERMINAL_VIEW_ADD_TEXT("BLE wardriving started.\n");
+        if (peer_connected) {
+            printf("BLE wardriving GPS source: peer stream preferred.\n");
+            TERMINAL_VIEW_ADD_TEXT("BLE wardriving GPS source: peer stream preferred.\n");
+        } else {
+            printf("BLE wardriving GPS source: local parser.\n");
+            TERMINAL_VIEW_ADD_TEXT("BLE wardriving GPS source: local parser.\n");
+        }
         status_display_show_status("BLE Drive On");
     }
 }
@@ -6763,6 +6964,9 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #if defined(CONFIG_USING_MMC) || defined(CONFIG_USING_MMC_1_BIT)
     glog("    SD Card (MMC)\n");
 #endif
+#ifdef CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    glog("    Core Dump\n");
+#endif
     
     glog("[CHIPINFO_END]\n");
     
@@ -8580,6 +8784,9 @@ void register_commands() {
 #endif
 #ifdef DEBUG
     register_command("crash", handle_crash);
+#endif
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    register_command("coredump", handle_coredump_cmd);
 #endif
     register_command("pineap", handle_pineap_detection);
     register_command("apcred", handle_apcred);

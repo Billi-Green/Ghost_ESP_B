@@ -2,6 +2,30 @@
 
 
 
+## Revival v1.9.5
+
+### Added
+- Added auto saving of coredumps and cli commands for debugging - @tototo31
+
+### Changed
+- Wardriving dedupe now includes APs when RSSI differs lower or higher for better trilateration support
+- Wardriving screen now shows `GPS Stale` when GPS data stops refreshing
+- The Wired Hatter's Banshee GPS routing now uses S3 UART GPS on the GhostLink peer streamed over GhostLink to the C5 primary instead of relying on C5 soft GPS RX which has reliability issues
+- Refactored WiFi options for better UX
+  - Removed individual select and track options
+  - Added new details view for listing APs, Stations and both combined
+- Station scan now parses 802.11 frame control (type/subtype/DS bits) for better validation
+- Station scan now captures data frames in addition to management frames for better detection
+
+### Fixed
+- Fixed new soft GPS parser losing first bytes of sentences by implementing double-buffering to eliminate re-arm gap
+- Fixed soft GPS receive getting stuck after an RMT re-arm failure by adding retry recovery and re-arm telemetry counters
+- Fixed wardriving writing stale last-known coordinates when GPS fix flags remained set but no fresh `GPS_UPDATE` events were arriving
+- Fixed watchdog timeout during CSV UART streaming by releasing mutex before slow writes
+- Potentially fixed watchdog timeout wardriving crash when writing to SD by making CSV buffer flush asynchronous
+- Potentially fixed wardriving crash caused by O(n) linear probing in dedupe table
+
+
 ## Revival v1.9.4
 
 ### Added
