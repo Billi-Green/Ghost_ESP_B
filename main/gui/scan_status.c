@@ -103,6 +103,9 @@ scan_status_t *scan_status_create(const char *message) {
     ss->progress_label = lv_label_create(ss->container);
     lv_obj_set_style_text_font(ss->progress_label, get_small_font_for_screen(), 0);
     lv_obj_set_style_text_color(ss->progress_label, text, 0);
+    lv_obj_set_width(ss->progress_label, LV_PCT(100));
+    lv_label_set_long_mode(ss->progress_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(ss->progress_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(ss->progress_label, LV_ALIGN_CENTER, 0, 30);
     lv_label_set_text(ss->progress_label, "");
     lv_obj_add_flag(ss->progress_label, LV_OBJ_FLAG_HIDDEN);
@@ -125,14 +128,26 @@ void scan_status_update(scan_status_t *ss, const char *message) {
     }
 }
 
+void scan_status_set_subtext(scan_status_t *ss, const char *subtext) {
+    if (!ss || !ss->active || !ss->progress_label) return;
+
+    if (!subtext || subtext[0] == '\0') {
+        lv_label_set_text(ss->progress_label, "");
+        lv_obj_add_flag(ss->progress_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_label_set_text(ss->progress_label, subtext);
+    lv_obj_clear_flag(ss->progress_label, LV_OBJ_FLAG_HIDDEN);
+}
+
 void scan_status_set_progress(scan_status_t *ss, int current, int total) {
     if (!ss || !ss->active) return;
     
     if (total > 0 && ss->progress_label) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%d / %d", current, total);
-        lv_label_set_text(ss->progress_label, buf);
-        lv_obj_clear_flag(ss->progress_label, LV_OBJ_FLAG_HIDDEN);
+        scan_status_set_subtext(ss, buf);
     }
 }
 
