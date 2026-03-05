@@ -43,6 +43,9 @@
 
 #ifdef CONFIG_WITH_SCREEN
 #include "managers/views/splash_screen.h"
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+#include "managers/views/nrf24_analyzer_view.h"
+#endif
 #endif
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 #include "managers/status_display_manager.h"
@@ -451,6 +454,9 @@ void app_main(void) {
     usb_keyboard_manager_register_stream_handler();
 #ifdef CONFIG_HAS_BADUSB
     badusb_manager_register_stream_handler();
+#endif
+#if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
+    nrf24_analyzer_register_stream_handler();
 #endif
 
     ESP_LOGI(TAG, "Initializing AP Manager");

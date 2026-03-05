@@ -281,6 +281,9 @@ static void stop_station_scan_flow(void) {
 #include "managers/views/accelerometer_screen.h"
 #include "managers/views/clock_screen.h"
 #include "managers/views/app_gallery_screen.h"
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+#include "managers/views/nrf24_analyzer_view.h"
+#endif
 
 uint32_t theme_palette_get_background(uint8_t theme);
 uint32_t theme_palette_get_surface_alt(uint8_t theme);
@@ -434,6 +437,10 @@ static const char *wifi_main_options[] = {
 
 static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
                                     "BLE Wardriving",   NULL};
+
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+static const char *nrf24_options[] = {"Frequency Analyzer", NULL};
+#endif
 
 // Dual Comm is split into a small state machine with submenus to avoid
 // one giant list that can starve LVGL.
@@ -704,6 +711,9 @@ static const io_btn_preset_t io_btn_presets[] = {
 #endif
 #ifdef CONFIG_HAS_ACCELEROMETER
     {"Accelerometer", "view:accel", &accelerometer_view},
+#endif
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+    {"NRF24", "view:nrf24", &options_menu_view},
 #endif
     {"Clock", "view:clock", &clock_view},
     {"Apps", "view:apps", &apps_menu_view},
@@ -1156,6 +1166,8 @@ const char *options_menu_type_to_string(EOptionsMenuType menuType) {
         return "GPS";
     case OT_DualComm:
         return "GhostLink";
+    case OT_NRF24:
+        return "NRF24";
     case OT_Settings:
         return "Settings";
     case OT_IOButtonPresets:
@@ -1287,6 +1299,13 @@ void options_menu_create() {
         }
         break;
     case OT_GPS: options = gps_options; break;
+    case OT_NRF24:
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+        options = nrf24_options;
+#else
+        options = NULL;
+#endif
+        break;
     case OT_DualComm:
         switch (current_dualcomm_menu_state) {
             case DUALCOMM_MENU_MAIN:     options = dual_comm_main_options; break;
@@ -3451,6 +3470,20 @@ void option_event_cb(lv_event_t *e) {
         }
         return;
     }
+
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+    if (SelectedMenuType == OT_NRF24) {
+        if (strcmp(Selected_Option, "Frequency Analyzer") == 0) {
+            display_manager_switch_view(&nrf24_analyzer_view);
+            view_switched = true;
+        }
+
+        if (!view_switched) {
+            option_invoked = false;
+        }
+        return;
+    }
+#endif
 
     if (SelectedMenuType == OT_Wifi) {
         if (current_wifi_menu_state == WIFI_MENU_MAIN) {
@@ -5922,6 +5955,13 @@ static void rebuild_current_menu(void) {
             }
             break;
         case OT_GPS: options = gps_options; break;
+        case OT_NRF24:
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+            options = nrf24_options;
+#else
+            options = NULL;
+#endif
+            break;
         case OT_DualComm:
             switch (current_dualcomm_menu_state) {
                 case DUALCOMM_MENU_MAIN:     options = dual_comm_main_options; break;

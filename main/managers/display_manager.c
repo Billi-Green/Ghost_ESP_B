@@ -2315,6 +2315,9 @@ void hardware_input_task(void *pvParameters) {
                             display_manager_switch_view(&clock_view);
                         } else if (strcmp(cmd, "view:apps") == 0) {
                             display_manager_switch_view(&apps_menu_view);
+                        } else if (strcmp(cmd, "view:nrf24") == 0) {
+                            SelectedMenuType = OT_NRF24;
+                            display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:settings") == 0) {
                             SelectedMenuType = OT_Settings;
                             display_manager_switch_view(&options_menu_view);
@@ -2360,6 +2363,9 @@ void hardware_input_task(void *pvParameters) {
                             display_manager_switch_view(&clock_view);
                         } else if (strcmp(cmd, "view:apps") == 0) {
                             display_manager_switch_view(&apps_menu_view);
+                        } else if (strcmp(cmd, "view:nrf24") == 0) {
+                            SelectedMenuType = OT_NRF24;
+                            display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:settings") == 0) {
                             SelectedMenuType = OT_Settings;
                             display_manager_switch_view(&options_menu_view);
@@ -2405,6 +2411,9 @@ void hardware_input_task(void *pvParameters) {
                             display_manager_switch_view(&clock_view);
                         } else if (strcmp(cmd, "view:apps") == 0) {
                             display_manager_switch_view(&apps_menu_view);
+                        } else if (strcmp(cmd, "view:nrf24") == 0) {
+                            SelectedMenuType = OT_NRF24;
+                            display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:settings") == 0) {
                             SelectedMenuType = OT_Settings;
                             display_manager_switch_view(&options_menu_view);
