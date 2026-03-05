@@ -9,6 +9,7 @@
 - Wardriving screen now shows `GPS Stale` when GPS data stops refreshing
 - The Wired Hatter's Banshee GPS routing now uses S3 UART GPS on the GhostLink peer streamed over GhostLink to the C5 primary instead of relying on C5 soft GPS RX which has reliability issues
 - 'Scan Access Points' and 'List AP" menu options has been refactored to use a new UI system for better UX (let us know what you think :)
+- Station scan now captures data frames in addition to management frames for better detection
 
 ### Fixed
 - Fixed new soft GPS parser losing first bytes of sentences by implementing double-buffering to eliminate re-arm gap
