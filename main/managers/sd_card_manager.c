@@ -122,6 +122,9 @@ static void display_spi_resume_after_sd(void) {
   s_display_spi_suspended_flag = false;
 }
 #else
+static bool display_sd_spi_pins_match(void) { return false; }
+static bool is_shared_display_sd_spi(void) { return false; }
+static bool display_spi_requires_rebind_for_sd(void) { return false; }
 static bool display_spi_suspend_for_sd(void) { return false; }
 static void display_spi_resume_after_sd(void) {}
 #endif
