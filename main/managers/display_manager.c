@@ -46,6 +46,8 @@
 uint32_t theme_palette_get_surface_alt(uint8_t theme);
 uint32_t theme_palette_get_text_muted(uint8_t theme);
 
+#define LVGL_TICK_TASK_STACK_SIZE 8192
+
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
 #include "vendor/m5/m5gfx_wrapper.h"
@@ -1435,7 +1437,7 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 
 
 #ifndef CONFIG_JC3248W535EN_LCD // JC3248W535EN has its own lvgl task
-xTaskCreate(lvgl_tick_task, "LVGL Tick Task", 4096, NULL,
+xTaskCreate(lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE, NULL,
             RENDERING_TASK_PRIORITY, &lvgl_task_handle);
 #endif
 if (xTaskCreate(hardware_input_task, "RawInput", 4096, NULL,

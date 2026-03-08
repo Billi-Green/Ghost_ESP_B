@@ -36,6 +36,10 @@ void detail_view_set_selected(detail_view_t *dv, int index);
 
 void detail_view_move_selection(detail_view_t *dv, int delta);
 
+bool detail_view_step_up(detail_view_t *dv);
+
+bool detail_view_step_down(detail_view_t *dv);
+
 int detail_view_get_selected(const detail_view_t *dv);
 
 int detail_view_get_count(const detail_view_t *dv);
@@ -45,6 +49,8 @@ detail_row_type_t detail_view_get_row_type(const detail_view_t *dv, int index);
 void detail_view_clear(detail_view_t *dv);
 
 lv_obj_t *detail_view_get_list(detail_view_t *dv);
+
+lv_obj_t *detail_view_get_info_panel(detail_view_t *dv);
 
 lv_obj_t *detail_view_get_selected_obj(detail_view_t *dv);
 

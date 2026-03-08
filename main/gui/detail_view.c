@@ -25,6 +25,11 @@ typedef struct {
     char *value;
 } detail_info_item_t;
 
+typedef enum {
+    DETAIL_NAV_REGION_INFO = 0,
+    DETAIL_NAV_REGION_ACTIONS = 1
+} detail_nav_region_t;
+
 struct detail_view_t {
     lv_obj_t *container;
     lv_obj_t *info_panel;
@@ -44,7 +49,14 @@ struct detail_view_t {
     int info_count;
     detail_info_item_t *info_items;
     int info_capacity;
+    lv_coord_t content_h;
+    bool compact_layout;
+    detail_nav_region_t nav_region;
 };
+
+static inline bool detail_view_should_use_compact_layout(int w, int h) {
+    return (w > h && h <= 160);
+}
 
 static inline void ensure_capacity(detail_view_t *dv, int need) {
     if (dv->capacity >= need) return;
@@ -97,21 +109,89 @@ static inline lv_style_t *get_zebra_style(detail_view_t *dv, int idx) {
 }
 
 static inline const lv_font_t *get_item_font(const detail_view_t *dv) {
+    if (dv->compact_layout) return &lv_font_montserrat_10;
     return (dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 }
 
 static inline const lv_font_t *get_value_font(const detail_view_t *dv) {
+    if (dv->compact_layout) return &lv_font_montserrat_10;
     return (dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
 }
 
 static inline lv_coord_t get_info_row_height(const detail_view_t *dv) {
+    if (dv->compact_layout) return 14;
     int h = dv->btn_h - 10;
     if (h < 18) h = 18;
     return (lv_coord_t)h;
 }
 
 static inline lv_coord_t get_action_row_height(const detail_view_t *dv) {
+    if (dv->compact_layout) return 20;
     return (lv_coord_t)(dv->btn_h + 4);
+}
+
+static inline lv_coord_t get_info_panel_height(const detail_view_t *dv) {
+    lv_coord_t info_h = get_info_row_height(dv) * dv->info_count;
+    if (info_h < 0) info_h = 0;
+
+    if (!dv->compact_layout) {
+        return info_h;
+    }
+
+    lv_coord_t cap = (dv->content_h * 2) / 5;
+    if (cap < 36) cap = 36;
+    if (cap > 52) cap = 52;
+    if (info_h > cap) info_h = cap;
+    return info_h;
+}
+
+static inline lv_coord_t get_info_scroll_step(const detail_view_t *dv) {
+    lv_coord_t step = get_info_row_height(dv) * 2;
+    if (step < 12) step = 12;
+    return step;
+}
+
+static inline bool detail_view_info_can_scroll(detail_view_t *dv) {
+    if (!dv || !dv->info_panel || !lv_obj_is_valid(dv->info_panel)) return false;
+    if (dv->container && lv_obj_is_valid(dv->container)) {
+        lv_obj_update_layout(dv->container);
+    }
+    lv_obj_update_layout(dv->info_panel);
+    return lv_obj_get_scroll_top(dv->info_panel) > 0 || lv_obj_get_scroll_bottom(dv->info_panel) > 0;
+}
+
+static inline bool detail_view_scroll_info(detail_view_t *dv, int dir) {
+    if (!detail_view_info_can_scroll(dv)) return false;
+    lv_coord_t before_top = lv_obj_get_scroll_top(dv->info_panel);
+    lv_coord_t before_bottom = lv_obj_get_scroll_bottom(dv->info_panel);
+    lv_coord_t step = get_info_scroll_step(dv);
+
+    if (dir > 0) {
+        if (before_bottom <= step) {
+            lv_obj_scroll_by_bounded(dv->info_panel, 0, -before_bottom, LV_ANIM_OFF);
+        } else {
+            lv_obj_scroll_by_bounded(dv->info_panel, 0, -step, LV_ANIM_OFF);
+        }
+    } else {
+        if (before_top <= step) {
+            lv_obj_scroll_by_bounded(dv->info_panel, 0, before_top, LV_ANIM_OFF);
+        } else {
+            lv_obj_scroll_by_bounded(dv->info_panel, 0, step, LV_ANIM_OFF);
+        }
+    }
+
+    lv_obj_update_layout(dv->info_panel);
+    lv_coord_t after_top = lv_obj_get_scroll_top(dv->info_panel);
+    lv_coord_t after_bottom = lv_obj_get_scroll_bottom(dv->info_panel);
+    return before_top != after_top || before_bottom != after_bottom;
+}
+
+static inline int detail_view_get_last_selectable(detail_view_t *dv) {
+    if (!dv || dv->count <= 0) return -1;
+    for (int i = dv->count - 1; i >= 0; --i) {
+        if (dv->rows[i].selectable) return i;
+    }
+    return -1;
 }
 
 static inline void get_theme_colors(lv_color_t *bg, lv_color_t *surface, lv_color_t *surface_alt, lv_color_t *text, lv_color_t *accent) {
@@ -128,6 +208,9 @@ static void detail_view_sync_info_canvas(detail_view_t *dv) {
     lv_coord_t h = get_info_row_height(dv) * dv->info_count;
     if (h < 0) h = 0;
     lv_obj_set_height(dv->info_canvas, h);
+    if (dv->info_panel && lv_obj_is_valid(dv->info_panel)) {
+        lv_obj_set_height(dv->info_panel, get_info_panel_height(dv));
+    }
     lv_obj_invalidate(dv->info_canvas);
 }
 
@@ -169,9 +252,9 @@ static void detail_view_info_draw_event(lv_event_t *e) {
     value_dsc.flag = LV_TEXT_FLAG_EXPAND;
 
     lv_coord_t row_h = get_info_row_height(dv);
-    lv_coord_t x_pad = 6;
+    lv_coord_t x_pad = dv->compact_layout ? 4 : 6;
     lv_coord_t row_w = lv_area_get_width(&obj_coords);
-    lv_coord_t split_x = obj_coords.x1 + (row_w * 40) / 100;
+    lv_coord_t split_x = obj_coords.x1 + (row_w * (dv->compact_layout ? 34 : 40)) / 100;
     bool zebra = settings_get_zebra_menus_enabled(&G_Settings);
 
     for (int i = 0; i < dv->info_count; i++) {
@@ -308,10 +391,12 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     int TOUCH_NAV_HEIGHT = 0;
 #endif
     bool small = (w <= 240 || h <= 240);
-    dv->btn_h = small ? 28 : 34;
+    dv->compact_layout = detail_view_should_use_compact_layout(w, h);
+    dv->btn_h = dv->compact_layout ? 20 : (small ? 28 : 34);
     dv->selected = -1;
     dv->first_selectable = -1;
     dv->info_count = 0;
+    dv->nav_region = DETAIL_NAV_REGION_INFO;
     
     lv_color_t bg, surface, surface_alt, text;
     get_theme_colors(&bg, &surface, &surface_alt, &text, NULL);
@@ -319,6 +404,7 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     dv->container = lv_obj_create(parent);
     lv_coord_t content_h = h - STATUS_BAR_HEIGHT - TOUCH_NAV_HEIGHT;
     if (content_h < 60) content_h = 60;
+    dv->content_h = content_h;
     lv_obj_set_size(dv->container, w, content_h);
     lv_obj_align(dv->container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT);
     lv_obj_set_style_bg_color(dv->container, bg, 0);
@@ -333,17 +419,20 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     
     dv->info_panel = lv_obj_create(dv->container);
     lv_obj_set_width(dv->info_panel, LV_PCT(100));
-    lv_obj_set_height(dv->info_panel, LV_SIZE_CONTENT);
+    lv_obj_set_height(dv->info_panel, 0);
     lv_obj_set_style_bg_color(dv->info_panel, surface, 0);
     lv_obj_set_style_bg_opa(dv->info_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(dv->info_panel, 0, 0);
-    lv_obj_set_style_pad_top(dv->info_panel, 1, 0);
+    lv_obj_set_style_pad_top(dv->info_panel, dv->compact_layout ? 0 : 1, 0);
     lv_obj_set_style_pad_row(dv->info_panel, 0, 0);
     lv_obj_set_style_border_width(dv->info_panel, 0, 0);
     lv_obj_set_style_radius(dv->info_panel, 0, 0);
-    lv_obj_set_scrollbar_mode(dv->info_panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(dv->info_panel, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(dv->info_panel, dv->compact_layout ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(dv->info_panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_clear_flag(dv->info_panel, LV_OBJ_FLAG_SCROLLABLE);
+    if (!dv->compact_layout) {
+        lv_obj_clear_flag(dv->info_panel, LV_OBJ_FLAG_SCROLLABLE);
+    }
 
     dv->info_canvas = lv_obj_create(dv->info_panel);
     lv_obj_set_width(dv->info_canvas, LV_PCT(100));
@@ -466,11 +555,11 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
     lv_obj_set_width(btn, LV_PCT(100));
     lv_obj_set_height(btn, get_action_row_height(dv));
     lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_top(btn, 0, 0);
     lv_obj_set_style_pad_bottom(btn, 0, 0);
-    lv_obj_set_style_pad_left(btn, 8, 0);
-    lv_obj_set_style_pad_right(btn, 8, 0);
+    lv_obj_set_style_pad_left(btn, dv->compact_layout ? 6 : 8, 0);
+    lv_obj_set_style_pad_right(btn, dv->compact_layout ? 6 : 8, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_radius(btn, 0, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
@@ -487,6 +576,8 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
     get_theme_colors(NULL, NULL, NULL, &text, NULL);
     lv_obj_set_style_text_color(lbl, text, 0);
     lv_obj_set_user_data(lbl, (void *)1);
+    lv_obj_set_flex_grow(lbl, 1);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     
     lv_obj_t *arrow = lv_label_create(btn);
     lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
@@ -494,6 +585,7 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
     get_theme_colors(NULL, NULL, NULL, &text, NULL);
     lv_obj_set_style_text_color(arrow, text, 0);
     lv_obj_set_user_data(arrow, (void *)2);
+    lv_obj_set_style_text_align(arrow, LV_TEXT_ALIGN_RIGHT, 0);
 #ifndef CONFIG_USE_TOUCHSCREEN
     lv_obj_add_flag(arrow, LV_OBJ_FLAG_HIDDEN);
 #endif
@@ -508,7 +600,12 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
     
     if (dv->selected < 0 && dv->first_selectable == dv->count) {
         dv->selected = dv->count;
-        apply_selected_style(dv, btn, true);
+        if (detail_view_info_can_scroll(dv)) {
+            dv->nav_region = DETAIL_NAV_REGION_INFO;
+        } else {
+            dv->nav_region = DETAIL_NAV_REGION_ACTIONS;
+            apply_selected_style(dv, btn, true);
+        }
     }
     
     dv->count++;
@@ -532,7 +629,7 @@ void detail_view_add_header(detail_view_t *dv, const char *text) {
     lv_obj_t *lbl = lv_label_create(btn);
     if (lbl) {
         lv_label_set_text(lbl, text ? text : "");
-        const lv_font_t *font = (dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+        const lv_font_t *font = dv->compact_layout ? &lv_font_montserrat_10 : ((dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
         lv_obj_set_style_text_font(lbl, font, 0);
         lv_color_t txt;
         get_theme_colors(NULL, NULL, NULL, &txt, NULL);
@@ -577,13 +674,14 @@ void detail_view_set_selected(detail_view_t *dv, int index) {
     if (!dv->rows[index].selectable) {
         index = find_next_selectable(dv, index, 1);
     }
-    if (dv->selected == index) return;
+    if (dv->selected == index && dv->nav_region == DETAIL_NAV_REGION_ACTIONS) return;
     
     if (dv->selected >= 0 && dv->selected < dv->count) {
         apply_selected_style(dv, dv->rows[dv->selected].obj, false);
     }
     
     dv->selected = index;
+    dv->nav_region = DETAIL_NAV_REGION_ACTIONS;
     apply_selected_style(dv, dv->rows[dv->selected].obj, true);
     lv_obj_scroll_to_view(dv->rows[dv->selected].obj, LV_ANIM_OFF);
 }
@@ -593,6 +691,61 @@ void detail_view_move_selection(detail_view_t *dv, int delta) {
     
     int new_idx = find_next_selectable(dv, dv->selected, delta > 0 ? 1 : -1);
     detail_view_set_selected(dv, new_idx);
+}
+
+bool detail_view_step_down(detail_view_t *dv) {
+    if (!dv) return false;
+
+    if (dv->nav_region == DETAIL_NAV_REGION_INFO) {
+        if (detail_view_scroll_info(dv, 1)) {
+            return true;
+        }
+        dv->nav_region = DETAIL_NAV_REGION_ACTIONS;
+        if (dv->first_selectable >= 0) {
+            detail_view_set_selected(dv, dv->first_selectable);
+            return true;
+        }
+        return false;
+    }
+
+    if (dv->selected < 0 && dv->first_selectable >= 0) {
+        detail_view_set_selected(dv, dv->first_selectable);
+        return true;
+    }
+
+    int next_idx = find_next_selectable(dv, dv->selected, 1);
+    if (next_idx != dv->selected) {
+        detail_view_set_selected(dv, next_idx);
+        return true;
+    }
+
+    return false;
+}
+
+bool detail_view_step_up(detail_view_t *dv) {
+    if (!dv) return false;
+
+    if (dv->nav_region == DETAIL_NAV_REGION_ACTIONS) {
+        if (dv->selected >= 0 && dv->selected != dv->first_selectable) {
+            int prev_idx = find_next_selectable(dv, dv->selected, -1);
+            if (prev_idx != dv->selected) {
+                detail_view_set_selected(dv, prev_idx);
+                return true;
+            }
+        }
+
+        if (detail_view_info_can_scroll(dv)) {
+            if (dv->selected >= 0 && dv->selected < dv->count) {
+                apply_selected_style(dv, dv->rows[dv->selected].obj, false);
+            }
+            dv->nav_region = DETAIL_NAV_REGION_INFO;
+            return detail_view_scroll_info(dv, -1);
+        }
+
+        return false;
+    }
+
+    return detail_view_scroll_info(dv, -1);
 }
 
 int detail_view_get_selected(const detail_view_t *dv) {
@@ -629,6 +782,10 @@ void detail_view_clear(detail_view_t *dv) {
 
 lv_obj_t *detail_view_get_list(detail_view_t *dv) {
     return dv ? dv->action_list : NULL;
+}
+
+lv_obj_t *detail_view_get_info_panel(detail_view_t *dv) {
+    return dv ? dv->info_panel : NULL;
 }
 
 lv_obj_t *detail_view_get_selected_obj(detail_view_t *dv) {
