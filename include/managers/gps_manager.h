@@ -45,7 +45,9 @@ bool gps_manager_has_seen_update(void);
 void gps_manager_set_peer_gps_preferred(bool enabled);
 bool gps_manager_is_peer_gps_preferred(void);
 void gps_manager_clear_peer_fix(void);
+void gps_manager_update_local_snapshot(const gps_t *fix);
 void gps_manager_update_peer_fix(const gps_peer_fix_t *fix);
+bool gps_manager_get_local_gps_snapshot(gps_t *out_gps);
 bool gps_manager_get_active_gps_snapshot(gps_t *out_gps, bool *using_peer);
 GPSManager g_gpsManager;
 

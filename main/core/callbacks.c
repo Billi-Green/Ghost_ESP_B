@@ -383,47 +383,45 @@ static bool wardrive_send_helper_observation(const uint8_t *bssid,
     uint8_t gps_minute = 0;
     uint8_t gps_second = 0;
 
-    if (nmea_hdl != NULL && gps_manager_has_recent_update()) {
-        gps_t *gps = &((esp_gps_t *)nmea_hdl)->parent;
-        if (gps != NULL) {
-            gps_flags |= WARDRIVE_STREAM_FLAG_GPS_PRESENT;
-            sats_in_use = gps->sats_in_use;
-            sats_in_view = gps->sats_in_view;
-            fix = (uint8_t)gps->fix;
-            fix_mode = (uint8_t)gps->fix_mode;
+    gps_t local_gps = {0};
+    if (gps_manager_has_recent_update() && gps_manager_get_local_gps_snapshot(&local_gps)) {
+        gps_flags |= WARDRIVE_STREAM_FLAG_GPS_PRESENT;
+        sats_in_use = local_gps.sats_in_use;
+        sats_in_view = local_gps.sats_in_view;
+        fix = (uint8_t)local_gps.fix;
+        fix_mode = (uint8_t)local_gps.fix_mode;
 
-            if (gps->dop_h >= 0.0f && gps->dop_h <= 6553.5f) {
-                hdop_x10 = (uint16_t)(gps->dop_h * 10.0f);
-            }
+        if (local_gps.dop_h >= 0.0f && local_gps.dop_h <= 6553.5f) {
+            hdop_x10 = (uint16_t)(local_gps.dop_h * 10.0f);
+        }
 
-            if (wardrive_is_valid_date(&gps->date)) {
-                gps_flags |= WARDRIVE_STREAM_FLAG_GPS_DATE_VALID;
-            }
-            if (wardrive_is_valid_time(&gps->tim)) {
-                gps_flags |= WARDRIVE_STREAM_FLAG_GPS_TIME_VALID;
-            }
-            gps_day = gps->date.day;
-            gps_month = gps->date.month;
-            gps_year = gps->date.year;
-            gps_hour = gps->tim.hour;
-            gps_minute = gps->tim.minute;
-            gps_second = gps->tim.second;
+        if (wardrive_is_valid_date(&local_gps.date)) {
+            gps_flags |= WARDRIVE_STREAM_FLAG_GPS_DATE_VALID;
+        }
+        if (wardrive_is_valid_time(&local_gps.tim)) {
+            gps_flags |= WARDRIVE_STREAM_FLAG_GPS_TIME_VALID;
+        }
+        gps_day = local_gps.date.day;
+        gps_month = local_gps.date.month;
+        gps_year = local_gps.date.year;
+        gps_hour = local_gps.tim.hour;
+        gps_minute = local_gps.tim.minute;
+        gps_second = local_gps.tim.second;
 
-            if (gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D &&
-                gps->latitude >= -90.0f && gps->latitude <= 90.0f &&
-                gps->longitude >= -180.0f && gps->longitude <= 180.0f) {
-                gps_flags |= WARDRIVE_STREAM_FLAG_GPS_FIX;
-                lat_e7 = (int32_t)(gps->latitude * 10000000.0f);
-                lon_e7 = (int32_t)(gps->longitude * 10000000.0f);
-                float alt = gps->altitude * 10.0f;
-                if (alt > 32767.0f) {
-                    alt = 32767.0f;
-                }
-                if (alt < -32768.0f) {
-                    alt = -32768.0f;
-                }
-                alt_dm = (int16_t)alt;
+        if (local_gps.valid && local_gps.fix >= GPS_FIX_GPS && local_gps.fix_mode >= GPS_MODE_2D &&
+            local_gps.latitude >= -90.0f && local_gps.latitude <= 90.0f &&
+            local_gps.longitude >= -180.0f && local_gps.longitude <= 180.0f) {
+            gps_flags |= WARDRIVE_STREAM_FLAG_GPS_FIX;
+            lat_e7 = (int32_t)(local_gps.latitude * 10000000.0f);
+            lon_e7 = (int32_t)(local_gps.longitude * 10000000.0f);
+            float alt = local_gps.altitude * 10.0f;
+            if (alt > 32767.0f) {
+                alt = 32767.0f;
             }
+            if (alt < -32768.0f) {
+                alt = -32768.0f;
+            }
+            alt_dm = (int16_t)alt;
         }
     }
 
@@ -454,12 +452,12 @@ static bool wardrive_send_helper_observation(const uint8_t *bssid,
 }
 
 static bool wardrive_send_peer_gps_stream(void) {
-    if (!esp_comm_manager_is_connected() || nmea_hdl == NULL) {
+    if (!esp_comm_manager_is_connected()) {
         return false;
     }
 
-    gps_t *gps_local = &((esp_gps_t *)nmea_hdl)->parent;
-    if (!gps_local) {
+    gps_t gps_local = {0};
+    if (!gps_manager_get_local_gps_snapshot(&gps_local)) {
         return false;
     }
 
@@ -468,25 +466,25 @@ static bool wardrive_send_peer_gps_stream(void) {
     payload[pos++] = GPS_STREAM_VERSION;
 
     uint8_t flags = GPS_STREAM_FLAG_PRESENT;
-    bool has_fix = gps_local->valid &&
-                   gps_local->fix >= GPS_FIX_GPS &&
-                   gps_local->fix_mode >= GPS_MODE_2D &&
-                   gps_local->latitude >= -90.0f && gps_local->latitude <= 90.0f &&
-                   gps_local->longitude >= -180.0f && gps_local->longitude <= 180.0f;
+    bool has_fix = gps_local.valid &&
+                   gps_local.fix >= GPS_FIX_GPS &&
+                   gps_local.fix_mode >= GPS_MODE_2D &&
+                   gps_local.latitude >= -90.0f && gps_local.latitude <= 90.0f &&
+                   gps_local.longitude >= -180.0f && gps_local.longitude <= 180.0f;
     if (has_fix) {
         flags |= GPS_STREAM_FLAG_FIX;
     }
-    if (wardrive_is_valid_date(&gps_local->date)) {
+    if (wardrive_is_valid_date(&gps_local.date)) {
         flags |= GPS_STREAM_FLAG_DATE_VALID;
     }
-    if (wardrive_is_valid_time(&gps_local->tim)) {
+    if (wardrive_is_valid_time(&gps_local.tim)) {
         flags |= GPS_STREAM_FLAG_TIME_VALID;
     }
     payload[pos++] = flags;
 
-    int32_t lat_e7 = has_fix ? (int32_t)(gps_local->latitude * 10000000.0f) : 0;
-    int32_t lon_e7 = has_fix ? (int32_t)(gps_local->longitude * 10000000.0f) : 0;
-    float alt_dm_f = gps_local->altitude * 10.0f;
+    int32_t lat_e7 = has_fix ? (int32_t)(gps_local.latitude * 10000000.0f) : 0;
+    int32_t lon_e7 = has_fix ? (int32_t)(gps_local.longitude * 10000000.0f) : 0;
+    float alt_dm_f = gps_local.altitude * 10.0f;
     if (alt_dm_f > 32767.0f) {
         alt_dm_f = 32767.0f;
     }
@@ -496,11 +494,11 @@ static bool wardrive_send_peer_gps_stream(void) {
     int16_t alt_dm = (int16_t)alt_dm_f;
 
     uint16_t hdop_x10 = 0;
-    if (isfinite(gps_local->dop_h) && gps_local->dop_h >= 0.0f && gps_local->dop_h <= 6553.5f) {
-        hdop_x10 = (uint16_t)(gps_local->dop_h * 10.0f);
+    if (isfinite(gps_local.dop_h) && gps_local.dop_h >= 0.0f && gps_local.dop_h <= 6553.5f) {
+        hdop_x10 = (uint16_t)(gps_local.dop_h * 10.0f);
     }
 
-    float speed_x100_f = gps_local->speed * 100.0f;
+    float speed_x100_f = gps_local.speed * 100.0f;
     if (!isfinite(speed_x100_f)) {
         speed_x100_f = 0.0f;
     }
@@ -512,7 +510,7 @@ static bool wardrive_send_peer_gps_stream(void) {
     }
     int16_t speed_x100 = (int16_t)speed_x100_f;
 
-    float course_x100_f = gps_local->cog * 100.0f;
+    float course_x100_f = gps_local.cog * 100.0f;
     if (!isfinite(course_x100_f)) {
         course_x100_f = 0.0f;
     }
@@ -530,23 +528,23 @@ static bool wardrive_send_peer_gps_stream(void) {
     pos += 4;
     wardrive_put_i16le(payload + pos, alt_dm);
     pos += 2;
-    payload[pos++] = gps_local->sats_in_use;
-    payload[pos++] = gps_local->sats_in_view;
-    payload[pos++] = (uint8_t)gps_local->fix;
-    payload[pos++] = (uint8_t)gps_local->fix_mode;
+    payload[pos++] = gps_local.sats_in_use;
+    payload[pos++] = gps_local.sats_in_view;
+    payload[pos++] = (uint8_t)gps_local.fix;
+    payload[pos++] = (uint8_t)gps_local.fix_mode;
     wardrive_put_i16le(payload + pos, (int16_t)hdop_x10);
     pos += 2;
     wardrive_put_i16le(payload + pos, speed_x100);
     pos += 2;
     wardrive_put_i16le(payload + pos, course_x100);
     pos += 2;
-    payload[pos++] = gps_local->date.day;
-    payload[pos++] = gps_local->date.month;
-    wardrive_put_i16le(payload + pos, (int16_t)gps_local->date.year);
+    payload[pos++] = gps_local.date.day;
+    payload[pos++] = gps_local.date.month;
+    wardrive_put_i16le(payload + pos, (int16_t)gps_local.date.year);
     pos += 2;
-    payload[pos++] = gps_local->tim.hour;
-    payload[pos++] = gps_local->tim.minute;
-    payload[pos++] = gps_local->tim.second;
+    payload[pos++] = gps_local.tim.hour;
+    payload[pos++] = gps_local.tim.minute;
+    payload[pos++] = gps_local.tim.second;
 
     return esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_GPS, payload, pos);
 }
@@ -554,6 +552,7 @@ static bool wardrive_send_peer_gps_stream(void) {
 static void peer_gps_stream_task(void *arg) {
     (void)arg;
     int64_t last_init_try_ms = 0;
+    gps_t gps_local = {0};
 
     while (1) {
         if (esp_comm_manager_is_connected()) {
@@ -568,7 +567,7 @@ static void peer_gps_stream_task(void *arg) {
             }
 #endif
 
-            if (nmea_hdl != NULL) {
+            if (gps_manager_get_local_gps_snapshot(&gps_local)) {
                 if (wardrive_send_peer_gps_stream()) {
                     peer_gps_stream_tx_ok++;
                 } else {
@@ -1440,8 +1439,11 @@ static void wardrive_heartbeat_cb(void *arg) {
 
     if (have_active_gps) {
         gps_local = &gps_snapshot;
-    } else if (nmea_hdl != NULL && !peer_preferred) {
-        gps_local = &((esp_gps_t *)nmea_hdl)->parent;
+    } else if (!peer_preferred) {
+        static gps_t local_snapshot = {0};
+        if (gps_manager_get_local_gps_snapshot(&local_snapshot)) {
+            gps_local = &local_snapshot;
+        }
     }
 
     if (gps_local != NULL) {
@@ -2276,6 +2278,7 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
     switch (event_id) {
     case GPS_UPDATE:
         gps = (gps_t *)event_data;
+        gps_manager_update_local_snapshot(gps);
         gps_manager_note_update();
         gps_try_sync_time_from_fix(gps);
         
@@ -2406,16 +2409,16 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     }
 
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
-    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
-    wifi_ieee80211_mac_hdr_t hdr_copy;
-    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));
-    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
-
-    const uint8_t *payload = pkt->payload;
     int len = pkt->rx_ctrl.sig_len;
     if (len < 36) {
         return;
     }
+
+    const uint8_t *payload = pkt->payload;
+    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)payload;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
 
     uint8_t frame_type = hdr->frame_ctrl & 0xFC;
     if (frame_type != 0x80 && frame_type != 0x50) {
@@ -2951,16 +2954,14 @@ void ble_wardriving_callback(struct ble_gap_event *event, void *arg) {
     }
 
     // Get GPS data from the global handle, if available
-    if (nmea_hdl != NULL) {
-        gps_t *gps_local = &((esp_gps_t *)nmea_hdl)->parent;
-        if (gps_local != NULL && gps_local->valid) {
-            wardriving_data.gps_quality.satellites_used = gps_local->sats_in_use;
-            wardriving_data.gps_quality.hdop = gps_local->dop_h;
-            wardriving_data.gps_quality.speed = gps_local->speed;
-            wardriving_data.gps_quality.course = gps_local->cog;
-            wardriving_data.gps_quality.fix_quality = gps_local->fix;
-            wardriving_data.gps_quality.has_valid_fix = (gps_local->fix >= GPS_FIX_GPS);
-        }
+    gps_t gps_local = {0};
+    if (gps_manager_get_local_gps_snapshot(&gps_local) && gps_local.valid) {
+        wardriving_data.gps_quality.satellites_used = gps_local.sats_in_use;
+        wardriving_data.gps_quality.hdop = gps_local.dop_h;
+        wardriving_data.gps_quality.speed = gps_local.speed;
+        wardriving_data.gps_quality.course = gps_local.cog;
+        wardriving_data.gps_quality.fix_quality = gps_local.fix;
+        wardriving_data.gps_quality.has_valid_fix = (gps_local.fix >= GPS_FIX_GPS);
     }
     
 

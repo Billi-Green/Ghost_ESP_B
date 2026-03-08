@@ -799,6 +799,9 @@ static volatile bool g_ir_universal_send_cancel = false;
 
 static TaskHandle_t g_ir_rx_learn_task = NULL;
 
+void wifi_manager_cancel_connect(void);
+void wifi_manager_stop_visualizer(void);
+
 #ifdef CONFIG_WITH_ETHERNET
 static volatile bool g_eth_scan_cancel = false;
 #endif
@@ -819,10 +822,11 @@ void handle_stop_flipper(int argc, char **argv) {
         wardriving_set_peer_assist(false);
     }
     wifi_manager_stop_deauth();
+    wifi_manager_cancel_connect();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    ble_stop();
-    ble_stop_gatt_scan();
     ble_spam_stop();
+    ble_stop_gatt_scan();
+    ble_stop();
 #endif
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
@@ -885,8 +889,7 @@ void handle_stop_flipper(int argc, char **argv) {
 
     // kill any feature tasks we spawned that may still be around
     if (VisualizerHandle != NULL) {
-        vTaskDelete(VisualizerHandle);
-        VisualizerHandle = NULL;
+        wifi_manager_stop_visualizer();
     }
     settings_restart_rgb_effect();
 }
@@ -1094,14 +1097,14 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
+    if (!esp_sntp_enabled()) {
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
 
 #ifdef CONFIG_HAS_RTC_CLOCK
-    esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
+        esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
 #endif
 
-    if (!esp_sntp_enabled()) {
         esp_sntp_init();
     }
 }
@@ -1118,8 +1121,7 @@ void handle_wifi_disconnect(int argc, char **argv)
 
     // kill any lingering visualizer task started on connect
     if (VisualizerHandle != NULL) {
-        vTaskDelete(VisualizerHandle);
-        VisualizerHandle = NULL;
+        wifi_manager_stop_visualizer();
     }
 }
 

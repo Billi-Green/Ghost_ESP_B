@@ -22,9 +22,15 @@
 - Fixed new soft GPS parser losing first bytes of sentences by implementing double-buffering to eliminate re-arm gap
 - Fixed soft GPS receive getting stuck after an RMT re-arm failure by adding retry recovery and re-arm telemetry counters
 - Fixed wardriving writing stale last-known coordinates when GPS fix flags remained set but no fresh `GPS_UPDATE` events were arriving
+- Fixed a peer-helper wardriving crash risk caused by reading the live GPS parser handle while it could be deinitialized during helper/local GPS handoff
+- Fixed a wardriving packet parsing crash risk by validating short management frames before copying the 802.11 header
 - Fixed watchdog timeout during CSV UART streaming by releasing mutex before slow writes
 - Potentially fixed watchdog timeout wardriving crash when writing to SD by making CSV buffer flush asynchronous
 - Potentially fixed wardriving crash caused by O(n) linear probing in dedupe table
+- Fixed BLE stop/exit races by stopping spam, spoofing, and scan modules before NimBLE deinit and waiting for the BLE spam task to exit cleanly
+- Fixed repeated saved-WiFi reconnect failures after BLE use by restarting the Wi-Fi driver when needed and cancelling in-progress retries when `stop` is used
+- Fixed a saved-WiFi reconnect crash where the UDP visualizer task could leak its socket, fail to rebind port `6677`, and abort when the task returned
+- Fixed a saved-WiFi reconnect crash caused by reconfiguring SNTP while the SNTP client was already running
 
 
 ## Revival v1.9.4
