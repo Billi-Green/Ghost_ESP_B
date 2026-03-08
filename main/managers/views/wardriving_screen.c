@@ -238,7 +238,7 @@ static void update_display_cb(lv_timer_t *timer) {
     bool using_peer = false;
     bool have_active_gps = gps_manager_get_active_gps_snapshot(&gps_snapshot, &using_peer);
 
-    if (!nmea_hdl && !have_active_gps && !peer_preferred) {
+    if (!g_gpsManager.isinitilized && !have_active_gps && !peer_preferred) {
         if (lbl_fix_status) lv_label_set_text(lbl_fix_status, "No GPS");
         if (lbl_fix_icon) lv_label_set_text(lbl_fix_icon, LV_SYMBOL_CLOSE);
         if (lbl_fix_icon) lv_obj_set_style_text_color(lbl_fix_icon, lv_color_hex(error_color), 0);
@@ -254,11 +254,12 @@ static void update_display_cb(lv_timer_t *timer) {
     }
 
     gps_t zero_gps = {0};
+    gps_t local_gps = {0};
     gps_t *gps = &zero_gps;
     if (have_active_gps) {
         gps = &gps_snapshot;
-    } else if (nmea_hdl && !peer_preferred) {
-        gps = &((esp_gps_t *)nmea_hdl)->parent;
+    } else if (!peer_preferred && gps_manager_get_local_gps_snapshot(&local_gps)) {
+        gps = &local_gps;
     }
     
     const char *fix_status = get_fix_status_string(gps);
@@ -541,8 +542,10 @@ void wardriving_view_create(void) {
     } else {
         gps_manager_set_peer_gps_preferred(false);
         if (!defer_local_for_peer_helper) {
+            gps_t local_gps = {0};
             bool gps_stale_or_missing = g_gpsManager.isinitilized &&
-                                        (!nmea_hdl || !gps_manager_has_recent_update());
+                                        (!gps_manager_get_local_gps_snapshot(&local_gps) ||
+                                         !gps_manager_has_recent_update());
             if (gps_stale_or_missing) {
                 ESP_LOGW(TAG, "GPS parser stale/missing on entry; restarting GPS");
                 gps_manager_deinit(&g_gpsManager);

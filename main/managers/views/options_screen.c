@@ -92,6 +92,54 @@ static void station_detail_back_cb(lv_event_t *e);
 static void show_station_detail(int station_index);
 static void station_list_cleanup(void);
 
+static bool use_compact_wifi_detail_layout(void) {
+    return (LV_HOR_RES > LV_VER_RES && LV_VER_RES <= 160);
+}
+
+static bool handle_wifi_detail_keyboard(uint8_t key_value) {
+    detail_view_t *active_detail = NULL;
+    lv_event_cb_t back_cb = NULL;
+
+    if (ap_detail_view) {
+        active_detail = ap_detail_view;
+        back_cb = ap_detail_back_cb;
+    } else if (sta_detail_view) {
+        active_detail = sta_detail_view;
+        back_cb = station_detail_back_cb;
+    }
+
+    if (!active_detail) {
+        return false;
+    }
+
+    if (key_value == LV_KEY_UP || key_value == 'k' || key_value == ';') {
+        detail_view_step_up(active_detail);
+        return true;
+    }
+
+    if (key_value == LV_KEY_DOWN || key_value == 'j' || key_value == '.') {
+        detail_view_step_down(active_detail);
+        return true;
+    }
+
+    if (key_value == LV_KEY_LEFT || key_value == 44 || key_value == ',' || key_value == 'h' ||
+        key_value == LV_KEY_ESC || key_value == 29 || key_value == '`') {
+        if (back_cb) back_cb(NULL);
+        return true;
+    }
+
+    if (key_value == LV_KEY_RIGHT || key_value == 47 || key_value == '/' || key_value == 'l' ||
+        key_value == LV_KEY_ENTER || key_value == 13) {
+        lv_obj_t *obj = detail_view_get_selected_obj(active_detail);
+        if (obj && lv_obj_is_valid(obj)) {
+            lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+        }
+        return true;
+    }
+
+    return false;
+}
+
 static bool start_scan_all_flow(void) {
     scanall_list_cleanup();
     station_list_cleanup();
@@ -116,7 +164,6 @@ static bool start_ap_scan_flow(void) {
         snprintf(wait_msg, sizeof(wait_msg), "Please wait %d seconds", AP_SCAN_ESTIMATE_SECONDS);
         scan_status_set_subtext(ap_scan_status, wait_msg);
     }
-    lv_timer_handler();
 
     esp_err_t err = ap_scan_start_async();
     if (err != ESP_OK) {
@@ -134,7 +181,6 @@ static bool start_ap_scan_flow(void) {
 
 static void ap_scan_poll_timer_cb(lv_timer_t *timer) {
     (void)timer;
-    lv_timer_handler();
 
     if (ap_scan_status) {
         int64_t elapsed_ms = (esp_timer_get_time() - ap_scan_ui_start_time) / 1000;
@@ -173,7 +219,6 @@ static bool start_station_scan_flow(void) {
 
     sta_scan_status = scan_status_create("Scanning Stations");
     station_scan_set_subtext(0);
-    lv_timer_handler();
 
     station_scan_start();
     if (!station_scan_is_active()) {
@@ -193,7 +238,6 @@ static bool start_station_scan_flow(void) {
 
 static void station_scan_poll_timer_cb(lv_timer_t *timer) {
     (void)timer;
-    lv_timer_handler();
 
     int64_t now_us = esp_timer_get_time();
     int64_t elapsed_ms = (now_us - sta_scan_start_time) / 1000;
@@ -282,6 +326,9 @@ static void stop_station_scan_flow(void) {
 #include "managers/views/accelerometer_screen.h"
 #include "managers/views/clock_screen.h"
 #include "managers/views/app_gallery_screen.h"
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+#include "managers/views/nrf24_analyzer_view.h"
+#endif
 
 uint32_t theme_palette_get_background(uint8_t theme);
 uint32_t theme_palette_get_surface_alt(uint8_t theme);
@@ -435,6 +482,10 @@ static const char *wifi_main_options[] = {
 
 static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
                                     "BLE Wardriving",   NULL};
+
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+static const char *nrf24_options[] = {"Frequency Analyzer", NULL};
+#endif
 
 // Dual Comm is split into a small state machine with submenus to avoid
 // one giant list that can starve LVGL.
@@ -706,6 +757,9 @@ static const io_btn_preset_t io_btn_presets[] = {
 #endif
 #ifdef CONFIG_HAS_ACCELEROMETER
     {"Accelerometer", "view:accel", &accelerometer_view},
+#endif
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+    {"NRF24", "view:nrf24", &options_menu_view},
 #endif
     {"Clock", "view:clock", &clock_view},
     {"Apps", "view:apps", &apps_menu_view},
@@ -1108,11 +1162,11 @@ display_manager_switch_view(&terminal_view);
 static void scroll_options_up(lv_event_t *e) {
     (void)e;
     if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
-        detail_view_move_selection(ap_detail_view, -1);
+        detail_view_step_up(ap_detail_view);
         return;
     }
     if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
-        detail_view_move_selection(sta_detail_view, -1);
+        detail_view_step_up(sta_detail_view);
         return;
     }
     if (!menu_container) return;
@@ -1123,11 +1177,11 @@ static void scroll_options_up(lv_event_t *e) {
 static void scroll_options_down(lv_event_t *e) {
     (void)e;
     if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
-        detail_view_move_selection(ap_detail_view, 1);
+        detail_view_step_down(ap_detail_view);
         return;
     }
     if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
-        detail_view_move_selection(sta_detail_view, 1);
+        detail_view_step_down(sta_detail_view);
         return;
     }
     if (!menu_container) return;
@@ -1158,6 +1212,8 @@ const char *options_menu_type_to_string(EOptionsMenuType menuType) {
         return "GPS";
     case OT_DualComm:
         return "GhostLink";
+    case OT_NRF24:
+        return "NRF24";
     case OT_Settings:
         return "Settings";
     case OT_IOButtonPresets:
@@ -1289,6 +1345,13 @@ void options_menu_create() {
         }
         break;
     case OT_GPS: options = gps_options; break;
+    case OT_NRF24:
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+        options = nrf24_options;
+#else
+        options = NULL;
+#endif
+        break;
     case OT_DualComm:
         switch (current_dualcomm_menu_state) {
             case DUALCOMM_MENU_MAIN:     options = dual_comm_main_options; break;
@@ -2471,6 +2534,10 @@ void handle_hardware_button_press_options(InputEvent *event) {
             return;
         }
 
+        if (handle_wifi_detail_keyboard(keyValue)) {
+            return;
+        }
+
         // --- Vim keybinds ---
         if (keyValue == 'h') { // Vim left
             ESP_LOGI(TAG, "Vim 'h' pressed (left)");
@@ -3487,6 +3554,20 @@ void option_event_cb(lv_event_t *e) {
         }
         return;
     }
+
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+    if (SelectedMenuType == OT_NRF24) {
+        if (strcmp(Selected_Option, "Frequency Analyzer") == 0) {
+            display_manager_switch_view(&nrf24_analyzer_view);
+            view_switched = true;
+        }
+
+        if (!view_switched) {
+            option_invoked = false;
+        }
+        return;
+    }
+#endif
 
     if (SelectedMenuType == OT_Wifi) {
         if (current_wifi_menu_state == WIFI_MENU_MAIN) {
@@ -5266,6 +5347,7 @@ static void show_ap_detail(int ap_index) {
 
     selected_ap_index = ap_index;
     wifi_ap_record_t *ap = &aps[ap_index];
+    bool compact_detail = use_compact_wifi_detail_layout();
     
     char ssid[33] = {0};
     if (ap->ssid[0] == 0) {
@@ -5293,12 +5375,14 @@ static void show_ap_detail(int ap_index) {
     snprintf(bssid, sizeof(bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
              ap->bssid[0], ap->bssid[1], ap->bssid[2],
              ap->bssid[3], ap->bssid[4], ap->bssid[5]);
-    detail_view_add_info(ap_detail_view, "BSSID", bssid);
+    detail_view_add_info(ap_detail_view, compact_detail ? "BSSID" : "BSSID", bssid);
     
-    detail_view_add_infof(ap_detail_view, "Channel / RSSI", "%d / %d dBm", ap->primary, ap->rssi);
+    detail_view_add_infof(ap_detail_view, compact_detail ? "Ch/RSSI" : "Channel / RSSI", "%d / %d dBm", ap->primary, ap->rssi);
     detail_view_add_info(ap_detail_view, "Security", auth_mode_to_string(ap->authmode));
-    
-    detail_view_add_info(ap_detail_view, "Actions:", "");
+
+    if (!compact_detail) {
+        detail_view_add_info(ap_detail_view, "Actions:", "");
+    }
     detail_view_add_action(ap_detail_view, "Deauth", ap_deauth_cb, NULL);
     detail_view_add_action(ap_detail_view, "Connect", ap_connect_cb, NULL);
     detail_view_add_action(ap_detail_view, "Track AP", ap_track_cb, NULL);
@@ -5429,6 +5513,7 @@ static void show_station_detail(int station_index) {
 
     selected_station_index = station_index;
     station_ap_pair_t *station = &station_ap_list[station_index];
+    bool compact_detail = use_compact_wifi_detail_layout();
 
     char sta_mac[18];
     char ap_bssid[18];
@@ -5455,13 +5540,14 @@ static void show_station_detail(int station_index) {
     menu_container = NULL;
 
     sta_detail_view = detail_view_create(lv_scr_act(), NULL);
-    detail_view_add_info(sta_detail_view, "Station MAC", sta_mac);
-    detail_view_add_info(sta_detail_view, "Station Vendor", sta_vendor);
-    detail_view_add_info(sta_detail_view, "Associated AP", ap_ssid);
+    detail_view_add_info(sta_detail_view, compact_detail ? "Station" : "Station MAC", sta_mac);
+    detail_view_add_info(sta_detail_view, compact_detail ? "Vendor" : "Station Vendor", sta_vendor);
+    detail_view_add_info(sta_detail_view, compact_detail ? "AP" : "Associated AP", ap_ssid);
     detail_view_add_info(sta_detail_view, "AP BSSID", ap_bssid);
-    detail_view_add_info(sta_detail_view, "AP Vendor", ap_vendor);
-
-    detail_view_add_info(sta_detail_view, "Actions:", "");
+    if (!compact_detail) {
+        detail_view_add_info(sta_detail_view, "AP Vendor", ap_vendor);
+        detail_view_add_info(sta_detail_view, "Actions:", "");
+    }
     detail_view_add_action(sta_detail_view, "Deauth", station_deauth_cb, NULL);
     detail_view_add_action(sta_detail_view, "Track Station", station_track_cb, NULL);
     detail_view_add_action(sta_detail_view, "Select Station", station_select_cb, NULL);
@@ -5958,6 +6044,13 @@ static void rebuild_current_menu(void) {
             }
             break;
         case OT_GPS: options = gps_options; break;
+        case OT_NRF24:
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+            options = nrf24_options;
+#else
+            options = NULL;
+#endif
+            break;
         case OT_DualComm:
             switch (current_dualcomm_menu_state) {
                 case DUALCOMM_MENU_MAIN:     options = dual_comm_main_options; break;

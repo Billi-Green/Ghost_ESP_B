@@ -6,6 +6,7 @@
 
 ### Added
 - Added auto saving of coredumps and cli commands for debugging - @tototo31
+- Add NRF24 native + ghostlink support for The Wired Hatter's Banshee with a frequency analyzer
 
 ### Changed
 - Wardriving dedupe now includes APs when RSSI differs lower or higher for better trilateration support
@@ -14,6 +15,7 @@
 - Refactored WiFi options for better UX
   - Removed individual select and track options
   - Added new details view for listing APs, Stations and both combined
+- Improved Wi-Fi details view on Cardputer-sized screens with a compact layout and staged detail/action navigation so clipped details can be scrolled before action rows without cutting off the details view
 - Station scan now parses 802.11 frame control (type/subtype/DS bits) for better validation
 - Station scan now captures data frames in addition to management frames for better detection
 
@@ -21,9 +23,16 @@
 - Fixed new soft GPS parser losing first bytes of sentences by implementing double-buffering to eliminate re-arm gap
 - Fixed soft GPS receive getting stuck after an RMT re-arm failure by adding retry recovery and re-arm telemetry counters
 - Fixed wardriving writing stale last-known coordinates when GPS fix flags remained set but no fresh `GPS_UPDATE` events were arriving
+- Fixed a peer-helper wardriving crash risk caused by reading the live GPS parser handle while it could be deinitialized during helper/local GPS handoff
+- Fixed a wardriving packet parsing crash risk by validating short management frames before copying the 802.11 header
 - Fixed watchdog timeout during CSV UART streaming by releasing mutex before slow writes
 - Potentially fixed watchdog timeout wardriving crash when writing to SD by making CSV buffer flush asynchronous
 - Potentially fixed wardriving crash caused by O(n) linear probing in dedupe table
+- Fixed BLE stop/exit races by stopping spam, spoofing, and scan modules before NimBLE deinit and waiting for the BLE spam task to exit cleanly
+- Fixed repeated saved-WiFi reconnect failures after BLE use by restarting the Wi-Fi driver when needed and cancelling in-progress retries when `stop` is used
+- Fixed a saved-WiFi reconnect crash where the UDP visualizer task could leak its socket, fail to rebind port `6677`, and abort when the task returned
+- Fixed a saved-WiFi reconnect crash caused by reconfiguring SNTP while the SNTP client was already running
+- Fixed Cardputer Wi-Fi scan/detail instability by removing re-entrant LVGL timer handling, increasing the LVGL tick task stack, and correcting display/SD SPI separation and guard checks during startup
 
 
 ## Revival v1.9.4

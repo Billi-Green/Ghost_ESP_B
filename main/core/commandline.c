@@ -101,7 +101,11 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "esp_core_dump.h"
 #include "managers/aerial_detector_manager.h"
 #include "managers/wigle_manager.h"
-#include "managers/config_manager.h"
+#include "managers/nrf24_remote_manager.h"
+
+#if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
+#include "managers/views/nrf24_analyzer_view.h"
+#endif
 
 #include "attacks/wifi/dhcp_starvation.h"
 static const char *TAG = "Commandline";
@@ -161,6 +165,7 @@ void handle_aerial_spoof_cmd(int argc, char **argv);
 void handle_aerial_spoof_stop_cmd(int argc, char **argv);
 void handle_wigle_cmd(int argc, char **argv);
 void handle_loadconfig_cmd(int argc, char **argv);
+void handle_nrf24_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -795,6 +800,9 @@ static volatile bool g_ir_universal_send_cancel = false;
 
 static TaskHandle_t g_ir_rx_learn_task = NULL;
 
+void wifi_manager_cancel_connect(void);
+void wifi_manager_stop_visualizer(void);
+
 #ifdef CONFIG_WITH_ETHERNET
 static volatile bool g_eth_scan_cancel = false;
 #endif
@@ -815,10 +823,11 @@ void handle_stop_flipper(int argc, char **argv) {
         wardriving_set_peer_assist(false);
     }
     wifi_manager_stop_deauth();
+    wifi_manager_cancel_connect();
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    ble_stop();
-    ble_stop_gatt_scan();
     ble_spam_stop();
+    ble_stop_gatt_scan();
+    ble_stop();
 #endif
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
         csv_flush_buffer_to_file();
@@ -881,8 +890,7 @@ void handle_stop_flipper(int argc, char **argv) {
 
     // kill any feature tasks we spawned that may still be around
     if (VisualizerHandle != NULL) {
-        vTaskDelete(VisualizerHandle);
-        VisualizerHandle = NULL;
+        wifi_manager_stop_visualizer();
     }
     settings_restart_rgb_effect();
 }
@@ -1090,14 +1098,14 @@ void handle_wifi_connection(int argc, char **argv) {
 #endif
     }
 
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
+    if (!esp_sntp_enabled()) {
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
 
 #ifdef CONFIG_HAS_RTC_CLOCK
-    esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
+        esp_sntp_set_time_sync_notification_cb(sntp_time_sync_callback);
 #endif
 
-    if (!esp_sntp_enabled()) {
         esp_sntp_init();
     }
 }
@@ -1114,8 +1122,7 @@ void handle_wifi_disconnect(int argc, char **argv)
 
     // kill any lingering visualizer task started on connect
     if (VisualizerHandle != NULL) {
-        vTaskDelete(VisualizerHandle);
-        VisualizerHandle = NULL;
+        wifi_manager_stop_visualizer();
     }
 }
 
@@ -6911,6 +6918,9 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
     glog("    BadUSB\n");
 #endif
+#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
+    glog("    NRF24\n");
+#endif
 #ifdef CONFIG_HAS_INFRARED
     glog("    Infrared TX\n");
 #endif
@@ -7735,6 +7745,132 @@ static size_t badusb_join_args(char *out, size_t out_len, int argc, char **argv,
         out[used] = '\0';
     }
     return used;
+}
+
+void handle_nrf24_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: nrf24 <start|stop|pause|resume|status|state>\n");
+        return;
+    }
+
+    const char *sub = argv[1];
+    bool remote_request = esp_comm_manager_is_remote_command();
+
+#if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
+    if (strcmp(sub, "state") == 0) {
+        if (argc >= 3) {
+            nrf24_analyzer_view_update_remote_state(argv[2]);
+        }
+        return;
+    }
+#endif
+
+#ifdef CONFIG_HAS_NRF24
+    bool stream_to_peer = remote_request && esp_comm_manager_is_connected();
+
+    if (strcmp(sub, "start") == 0) {
+        bool ok = nrf24_remote_manager_start(stream_to_peer);
+        if (ok) {
+            glog("NRF24 analyzer started\n");
+            glog("NRF24 cfg: SPI%d MOSI=%d MISO=%d SCK=%d CSN=%d CE=%d\n",
+                 CONFIG_NRF24_SPI_HOST,
+                 CONFIG_NRF24_SPI_MOSI_PIN,
+                 CONFIG_NRF24_SPI_MISO_PIN,
+                 CONFIG_NRF24_SPI_SCK_PIN,
+                 CONFIG_NRF24_CSN_PIN,
+                 CONFIG_NRF24_CE_PIN);
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("nrf24", "state started");
+            }
+        } else {
+            glog("NRF24 analyzer failed to start: %s\n", nrf24_remote_manager_get_last_error());
+            glog("NRF24 cfg: SPI%d MOSI=%d MISO=%d SCK=%d CSN=%d CE=%d\n",
+                 CONFIG_NRF24_SPI_HOST,
+                 CONFIG_NRF24_SPI_MOSI_PIN,
+                 CONFIG_NRF24_SPI_MISO_PIN,
+                 CONFIG_NRF24_SPI_SCK_PIN,
+                 CONFIG_NRF24_CSN_PIN,
+                 CONFIG_NRF24_CE_PIN);
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("nrf24", "state error");
+            }
+        }
+        return;
+    }
+
+    if (strcmp(sub, "stop") == 0) {
+        if (!nrf24_remote_manager_is_running()) {
+            glog("NRF24 analyzer already stopped\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("nrf24", "state stopped");
+            }
+            return;
+        }
+        nrf24_remote_manager_stop();
+        glog("NRF24 analyzer stopping\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("nrf24", "state stopped");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "pause") == 0) {
+        if (!nrf24_remote_manager_is_running()) {
+            glog("NRF24 analyzer is not running\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("nrf24", "state error");
+            }
+            return;
+        }
+        nrf24_remote_manager_set_paused(true);
+        glog("NRF24 analyzer paused\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("nrf24", "state paused");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "resume") == 0) {
+        if (!nrf24_remote_manager_is_running()) {
+            glog("NRF24 analyzer is not running\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("nrf24", "state error");
+            }
+            return;
+        }
+        nrf24_remote_manager_set_paused(false);
+        glog("NRF24 analyzer resumed\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("nrf24", "state resumed");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "status") == 0) {
+        glog("NRF24 running: %s\n", nrf24_remote_manager_is_running() ? "yes" : "no");
+        glog("NRF24 paused: %s\n", nrf24_remote_manager_is_paused() ? "yes" : "no");
+        glog("NRF24 last error: %s\n", nrf24_remote_manager_get_last_error());
+        glog("NRF24 cfg: SPI%d MOSI=%d MISO=%d SCK=%d CSN=%d CE=%d\n",
+             CONFIG_NRF24_SPI_HOST,
+             CONFIG_NRF24_SPI_MOSI_PIN,
+             CONFIG_NRF24_SPI_MISO_PIN,
+             CONFIG_NRF24_SPI_SCK_PIN,
+             CONFIG_NRF24_CSN_PIN,
+             CONFIG_NRF24_CE_PIN);
+        return;
+    }
+
+    glog("Unknown nrf24 subcommand: %s\n", sub);
+#else
+#ifdef CONFIG_HAS_NRF24_REMOTE
+    glog("NRF24 local scanner not enabled on this build (remote/display role only)\n");
+#else
+    glog("NRF24 not enabled on this build\n");
+#endif
+    if (remote_request && esp_comm_manager_is_connected()) {
+        esp_comm_manager_send_command("nrf24", "state error");
+    }
+#endif
 }
 
 static void badusb_strip_quotes(char *text) {
@@ -8877,6 +9013,7 @@ void register_commands() {
 #ifdef CONFIG_HAS_INFRARED
     register_command("ir", handle_ir_cmd);
 #endif
+    register_command("nrf24", handle_nrf24_cmd);
     register_command("badusb", handle_badusb_cmd);
 #ifdef CONFIG_WITH_ETHERNET
     register_command("ethup", handle_eth_up_cmd);
