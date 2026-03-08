@@ -151,7 +151,7 @@ static const char *sd_spi_host_name(int host_id) {
 }
 
 static int sd_spi_host_id(void) {
-#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI)
+#if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && defined(TFT_SPI_HOST)
   if (is_shared_display_sd_spi()) {
     return TFT_SPI_HOST;
   }
