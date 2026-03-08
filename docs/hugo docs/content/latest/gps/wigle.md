@@ -20,7 +20,7 @@ Upload your wardriving CSV captures to [WiGLE.net](https://wigle.net) to contrib
 1. Get your "Encoded for Use" token from [wigle.net/account](https://wigle.net/account)
 2. Set API token:
    ```
-   wigle token <EncodedForUseToken>
+   wigle API <EncodedForUseToken>
    ```
 
 ### Option 2: Using Legacy Format
@@ -95,7 +95,7 @@ wigle show
 
 | Command | Description |
 |---------|-------------|
-| `wigle token <encoded>` | Set WiGLE Encoded for Use token (recommended) |
+| `wigle API <encoded>` | Set WiGLE Encoded for Use token (recommended) |
 | `wigle API <name>:<token>` | Set WiGLE API credentials (legacy format) |
 | `wigle auto on/off` | Enable/disable auto-upload on Wi-Fi (STA) connect |
 | `wigle donate on/off` | Enable/disable data donation |
@@ -225,7 +225,7 @@ See [SD Card Configuration](../../getting-started/sd-card-config) for complete d
 
 ## Troubleshooting
 
-- **"no API key set"**: Run `wigle token <encoded>` or `wigle API <name>:<token>` to configure credentials
+- **"no API key set"**: Run `wigle API <encoded>` or `wigle API <name>:<token>` to configure credentials
 - **Upload fails**: Ensure device is connected to Wi-Fi STA mode and has internet access
 - **Files not uploading**: Check that CSV files exist in `/mnt/ghostesp/gps/`
 - **"CSV has no data rows"**: Usually means capture had no accepted GPS rows (for example no valid fix)

@@ -163,7 +163,7 @@ Keep a backup config.cfg with your preferred settings for easy restoration.
 - Verify field names are spelled correctly
 
 ### Settings Not Applying
-- Check NVS storage is not full (view with `settings show`)
+- Check NVS storage is not full (run `settings list` to verify CLI access)
 - Verify values are valid (e.g., `true`/`false` for boolean fields)
 - Try loading config again
 
@@ -220,8 +220,8 @@ Donate=true
 |---------|-------------|
 | `loadconfig` | Load settings from config.cfg on SD card |
 | `wigle show` | Display current WiGLE settings |
-| `wifi show` | Display current WiFi settings |
-| `settings show` | Display all current settings |
+| `wifistatus` | Display current WiFi connection and saved SSID status |
+| `settings list` | List all available settings |
 
 ## See Also
 

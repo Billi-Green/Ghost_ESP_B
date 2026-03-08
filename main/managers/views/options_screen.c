@@ -1727,7 +1727,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             }
             const char *api_key = wigle_get_api_key();
             if (!api_key || api_key[0] == '\0') {
-                error_popup_create("No API key set\nUse CLI: wigle API <name>:<token>");
+                error_popup_create("No API key set\nUse CLI: wigle API <encoded|name:token>");
                 return;
             }
             error_popup_create("Testing API key...");
@@ -1768,8 +1768,10 @@ static void apply_setting_change(int setting_index, int new_value) {
             const char *help_text = 
                 "1. Create free account at wigle.net\n"
                 "2. Account > API section\n"
-                "3. Copy API Name & Token\n\n"
-                "CLI: wigle API <name>:<token>\n"
+                "3. Copy Encoded for Use token\n"
+                "   (or API Name:Token)\n\n"
+                "CLI: wigle API <encoded|name:token>\n"
+                "Ex: wigle API QUJDMTIzOkRFRjQ1Ng==\n"
                 "Ex: wigle API ABC123:DEF456\n\n"
                 "Auto Upload: Upload CSV when WiFi connects\n"
                 "Donate: Share scans publicly (recommended)\n\n"

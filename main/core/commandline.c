@@ -101,6 +101,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "esp_core_dump.h"
 #include "managers/aerial_detector_manager.h"
 #include "managers/wigle_manager.h"
+#include "managers/config_manager.h"
 #include "managers/nrf24_remote_manager.h"
 
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
@@ -4333,7 +4334,7 @@ void handle_help(int argc, char **argv) {
     }
     if (strcmp(category, "wigle") == 0) {
         glog("\nWiGLE Commands:\n\n");
-        glog("wigle API <name>:<token>\n    Set WiGLE API credentials.\n\n");
+        glog("wigle API <encoded|name:token>\n    Set WiGLE API credentials (encoded token or legacy format).\n\n");
         glog("wigle auto on/off\n    Enable/disable auto-upload.\n\n");
         glog("wigle donate on/off\n    Enable/disable WiGLE donate flag.\n\n");
         glog("wigle show\n    Show WiGLE settings.\n\n");
@@ -8779,7 +8780,7 @@ void handle_loadconfig_cmd(int argc, char **argv) {
 
 void handle_wigle_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("wigle API <name>:<token>  - Set Wigle API key (from wigle.net/account)\n");
+        glog("wigle API <encoded|name:token>  - Set Wigle API key from wigle.net/account\n");
         glog("wigle auto on/off          - Auto-upload at boot\n");
         glog("wigle donate on/off        - Donate data to Wigle\n");
         glog("wigle show                 - Show current settings\n");
@@ -8792,7 +8793,7 @@ void handle_wigle_cmd(int argc, char **argv) {
     }
     if (strcmp(argv[1], "API") == 0 || strcmp(argv[1], "api") == 0) {
         if (argc < 3) {
-            glog("Usage: wigle API <APIName>:<APIToken>\n");
+            glog("Usage: wigle API <EncodedForUseToken|APIName:APIToken>\n");
             glog("Get credentials from https://wigle.net/account\n");
             return;
         }

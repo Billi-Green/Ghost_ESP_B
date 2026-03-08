@@ -54,49 +54,62 @@ static bool parse_bool(const char *value) {
 
 /**
  * Process a single key=value line from config file.
+ * Returns true when a known key is applied.
  */
-static void process_config_line(const char *key, const char *value) {
-    if (!key || !*key || !value || !*value) return;
+static bool process_config_line(const char *key, const char *value) {
+    if (!key || !*key || !value || !*value) return false;
     
     // WiFi credentials
     if (strcasecmp(key, "SSID") == 0) {
         settings_set_sta_ssid(&G_Settings, value);
         glog("Config: WiFi SSID set to '%s'\n", value);
+        return true;
     }
     else if (strcasecmp(key, "PASSKEY") == 0) {
         settings_set_sta_password(&G_Settings, value);
         glog("Config: WiFi password set\n");
+        return true;
     }
     // Wigle settings
     else if (strcasecmp(key, "EncodedForUseToken") == 0) {
         wigle_set_api_key(value);
         glog("Config: Wigle EncodedForUseToken set\n");
+        return true;
     }
     else if (strcasecmp(key, "AutoUpload") == 0) {
         bool enabled = parse_bool(value);
         settings_set_wigle_auto_upload(&G_Settings, enabled);
         glog("Config: Wigle AutoUpload set to %s\n", enabled ? "on" : "off");
+        return true;
     }
     else if (strcasecmp(key, "Donate") == 0) {
         bool enabled = parse_bool(value);
         settings_set_wigle_donate(&G_Settings, enabled);
         glog("Config: Wigle Donate set to %s\n", enabled ? "on" : "off");
+        return true;
     }
+
+    return false;
 }
 
 esp_err_t config_manager_load_from_sd(void) {
     // Mount SD card using JIT mounting (for Wired Hatters Banshee and similar configs)
+    bool was_mounted_before = sd_card_manager.is_initialized;
+    bool did_mount = false;
     bool display_was_suspended = false;
     esp_err_t mount_err = sd_card_mount_for_flush(&display_was_suspended);
     if (mount_err != ESP_OK) {
         glog("Config: Failed to mount SD card: %s\n", esp_err_to_name(mount_err));
         return mount_err;
     }
+    did_mount = !was_mounted_before;
     
     FILE *f = fopen(CONFIG_FILE_PATH, "r");
     if (!f) {
-        // Config file doesn't exist - unmount and return
-        sd_card_unmount_after_flush(display_was_suspended);
+        // Config file doesn't exist - unmount only if this function mounted SD
+        if (did_mount) {
+            sd_card_unmount_after_flush(display_was_suspended);
+        }
         return ESP_ERR_NOT_FOUND;
     }
     
@@ -140,8 +153,11 @@ esp_err_t config_manager_load_from_sd(void) {
         // Empty values are valid (will be skipped by process_config_line)
         if (*key) {
             if (*value) {
-                process_config_line(key, value);
-                settings_applied++;
+                if (process_config_line(key, value)) {
+                    settings_applied++;
+                } else {
+                    glog("Config: Line %d: Unknown key '%s', skipping\n", line_num, key);
+                }
             } else {
                 // Log empty value but don't count it
                 glog("Config: Line %d: Empty value for key '%s', skipping\n", line_num, key);
@@ -151,8 +167,10 @@ esp_err_t config_manager_load_from_sd(void) {
     
     fclose(f);
     
-    // Unmount SD card after reading
-    sd_card_unmount_after_flush(display_was_suspended);
+    // Unmount SD card after reading only when mounted in this function
+    if (did_mount) {
+        sd_card_unmount_after_flush(display_was_suspended);
+    }
     
     if (settings_applied > 0) {
         glog("Config: Successfully applied %d settings from config.cfg\n", settings_applied);

@@ -937,7 +937,7 @@ static esp_err_t wigle_process_queue(const char *api_key) {
 esp_err_t wigle_upload_all(void) {
     const char *api_key = wigle_get_api_key();
     if (!api_key || api_key[0] == '\0') {
-        glog("Wigle: no API key set. Use 'wigle token <encoded>' or 'wigle API <name>:<token>'\n");
+        glog("Wigle: no API key set. Use 'wigle API <encoded>' or 'wigle API <name>:<token>'\n");
         return ESP_ERR_INVALID_STATE;
     }
 
