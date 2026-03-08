@@ -88,6 +88,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "esp_heap_trace.h"
+#include "esp_memory_utils.h"
 #include <dirent.h>
 #include "managers/infrared_manager.h"
 #include "core/universal_ir.h"
@@ -100,6 +101,7 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "esp_core_dump.h"
 #include "managers/aerial_detector_manager.h"
 #include "managers/wigle_manager.h"
+#include "managers/config_manager.h"
 #include "managers/nrf24_remote_manager.h"
 
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
@@ -3918,8 +3920,8 @@ static void handle_coredump_cmd(int argc, char **argv) {
         glog("Save the lines below to a file (e.g. coredump.b64), then run:\n");
         glog("  idf.py coredump-info -c coredump.b64\n");
         glog("(Omit the start/end marker lines from the file.)\n");
-        uint8_t buf[768];  /* multiple of 3 for base64 */
-        char b64[1024 + 8];
+        uint8_t buf[768]; /* multiple of 3 for base64 */
+        char b64[1032];
         size_t offset = 0;
         while (offset < part->size) {
             size_t chunk = (part->size - offset) > sizeof(buf) ? sizeof(buf) : (part->size - offset);
@@ -3961,7 +3963,6 @@ static void handle_coredump_cmd(int argc, char **argv) {
 
     glog("Coredump partition: %s, size %u bytes\n", part->label, (unsigned)part->size);
 
-#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     /* Use ESP-IDF API to parse and print panic reason from coredump in flash */
     {
         char panic_reason[256];
@@ -3976,7 +3977,6 @@ static void handle_coredump_cmd(int argc, char **argv) {
             glog("Panic reason: (error %s)\n", esp_err_to_name(err));
         }
     }
-#endif
 
     if (is_elf) {
         glog("Coredump data: present (ELF format");
@@ -3989,7 +3989,9 @@ static void handle_coredump_cmd(int argc, char **argv) {
         /* Check for empty (all 0xff) or binary format */
         int empty = 1;
         for (size_t i = 0; i < head_len && empty; i++) {
-            if (head[i] != 0xff) empty = 0;
+            if (head[i] != 0xff) {
+                empty = 0;
+            }
         }
         if (empty != 0) {
             glog("Coredump data: partition empty (no crash recorded yet).\n");
@@ -4000,6 +4002,7 @@ static void handle_coredump_cmd(int argc, char **argv) {
     }
 }
 #endif /* CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH */
+
 
 // Help command
 void handle_help(int argc, char **argv) {
@@ -4328,7 +4331,7 @@ void handle_help(int argc, char **argv) {
     }
     if (strcmp(category, "wigle") == 0) {
         glog("\nWiGLE Commands:\n\n");
-        glog("wigle API <name>:<token>\n    Set WiGLE API credentials.\n\n");
+        glog("wigle API <encoded|name:token>\n    Set WiGLE API credentials (encoded token or legacy format).\n\n");
         glog("wigle auto on/off\n    Enable/disable auto-upload.\n\n");
         glog("wigle donate on/off\n    Enable/disable WiGLE donate flag.\n\n");
         glog("wigle show\n    Show WiGLE settings.\n\n");
@@ -8736,9 +8739,45 @@ void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
     }
 }
 
+void handle_loadconfig_cmd(int argc, char **argv) {
+    glog("Loading configuration from SD card...\n");
+    
+    esp_err_t config_err = config_manager_load_from_sd();
+    
+    if (config_err == ESP_OK) {
+        glog("\n=== Configuration Loaded Successfully ===\n");
+        
+        // Show what was loaded
+        const char *ssid = settings_get_sta_ssid(&G_Settings);
+        if (ssid && ssid[0]) {
+            glog("WiFi SSID: %s\n", ssid);
+            glog("WiFi Password: (set)\n");
+        }
+        
+        if (G_Settings.wigle_api_key[0]) {
+            glog("Wigle Token: (set)\n");
+        }
+        
+        glog("Wigle Auto Upload: %s\n", settings_get_wigle_auto_upload(&G_Settings) ? "on" : "off");
+        glog("Wigle Donate: %s\n", settings_get_wigle_donate(&G_Settings) ? "on" : "off");
+        
+        glog("\nSettings saved to NVS.\n");
+        glog("Reconfiguring WiFi...\n");
+        
+        wifi_manager_configure_sta_from_settings();
+        
+        glog("Configuration applied successfully!\n");
+    } else if (config_err == ESP_ERR_NOT_FOUND) {
+        glog("Error: config.cfg not found on SD card\n");
+        glog("Expected location: /mnt/ghostesp/config.cfg\n");
+    } else {
+        glog("Error: Failed to load config.cfg: %s\n", esp_err_to_name(config_err));
+    }
+}
+
 void handle_wigle_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("wigle API <name>:<token>  - Set Wigle API key (from wigle.net/account)\n");
+        glog("wigle API <encoded|name:token>  - Set Wigle API key from wigle.net/account\n");
         glog("wigle auto on/off          - Auto-upload at boot\n");
         glog("wigle donate on/off        - Donate data to Wigle\n");
         glog("wigle show                 - Show current settings\n");
@@ -8751,7 +8790,7 @@ void handle_wigle_cmd(int argc, char **argv) {
     }
     if (strcmp(argv[1], "API") == 0 || strcmp(argv[1], "api") == 0) {
         if (argc < 3) {
-            glog("Usage: wigle API <APIName>:<APIToken>\n");
+            glog("Usage: wigle API <EncodedForUseToken|APIName:APIToken>\n");
             glog("Get credentials from https://wigle.net/account\n");
             return;
         }
@@ -9005,6 +9044,7 @@ void register_commands() {
     register_command("aerialspoof", handle_aerial_spoof_cmd);
     register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
     register_command("wigle", handle_wigle_cmd);
+    register_command("loadconfig", handle_loadconfig_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
 
