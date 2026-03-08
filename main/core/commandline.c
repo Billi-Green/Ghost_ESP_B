@@ -4176,9 +4176,6 @@ void handle_help(int argc, char **argv) {
         glog("    Description: List discovered AirTags\n");
         glog("    Usage: list -airtags\n\n");
         glog("select -airtag <index>\n\n");
-        glog("blescan\n");
-        glog("    Description: Start Bluetooth Low Energy (BLE) scan.\n");
-        glog("    Usage: blescan [seconds]\n\n");
         return;
     }
 
