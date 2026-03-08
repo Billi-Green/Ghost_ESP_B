@@ -5328,8 +5328,10 @@ static void ap_detail_back_cb(lv_event_t *e) {
     SelectedMenuType = OT_Wifi;
     current_wifi_menu_state = return_state;
     suppress_wifi_state_reset_once = true;
-    options_menu_view.root = NULL;
-    display_manager_switch_view(&options_menu_view);
+    display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
+#ifdef CONFIG_USE_TOUCHSCREEN
+    update_scroll_buttons_visibility();
+#endif
 }
 
 static void show_ap_detail(int ap_index) {
@@ -5362,12 +5364,6 @@ static void show_ap_detail(int ap_index) {
         lv_timer_del(menu_build_timer);
         menu_build_timer = NULL;
     }
-    
-    if (g_options_view) {
-        options_view_destroy(g_options_view);
-        g_options_view = NULL;
-    }
-    menu_container = NULL;
     
     ap_detail_view = detail_view_create(lv_scr_act(), NULL);
     
@@ -5497,8 +5493,10 @@ static void station_detail_back_cb(lv_event_t *e) {
     SelectedMenuType = OT_Wifi;
     current_wifi_menu_state = return_state;
     suppress_wifi_state_reset_once = true;
-    options_menu_view.root = NULL;
-    display_manager_switch_view(&options_menu_view);
+    display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
+#ifdef CONFIG_USE_TOUCHSCREEN
+    update_scroll_buttons_visibility();
+#endif
 }
 
 static void show_station_detail(int station_index) {
@@ -5534,12 +5532,6 @@ static void show_station_detail(int station_index) {
         lv_timer_del(menu_build_timer);
         menu_build_timer = NULL;
     }
-
-    if (g_options_view) {
-        options_view_destroy(g_options_view);
-        g_options_view = NULL;
-    }
-    menu_container = NULL;
 
     sta_detail_view = detail_view_create(lv_scr_act(), NULL);
     detail_view_add_info(sta_detail_view, compact_detail ? "Station" : "Station MAC", sta_mac);

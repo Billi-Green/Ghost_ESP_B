@@ -31,6 +31,7 @@
 - Fixed repeated saved-WiFi reconnect failures after BLE use by restarting the Wi-Fi driver when needed and cancelling in-progress retries when `stop` is used
 - Fixed multiple potential crashes when re-connecting to saved WiFi
 - Fixed potential crash on device start-up
+- Fixed Wi-Fi AP/station detail view overlaying behind recreated main menu content when backing out of scan flows
 - Fixed a peer-helper wardriving crash risk caused by reading the live GPS parser handle while it could be deinitialized during helper/local GPS handoff
 - Fixed a wardriving packet parsing crash risk by validating short management frames before copying the 802.11 header
 - Removed incorrect blescan help log
