@@ -19,6 +19,7 @@
 - Station scan now parses 802.11 frame control (type/subtype/DS bits) for better validation
 - Station scan now captures data frames in addition to management frames for better detection
 - Improved new Wi-Fi details view on Cardputer-sized screens
+- Rewrote 'Visualiser' and desktop streamer (formerly known as Rave)
 
 ### Fixed
 - Fixed new soft GPS parser losing first bytes of sentences by implementing double-buffering to eliminate re-arm gap

@@ -32,13 +32,14 @@
 #include <dhcpserver/dhcpserver.h>
 #include <esp_http_server.h>
 #include <esp_random.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <mdns.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
-#ifdef WITH_SCREEN
+#if defined(CONFIG_WITH_SCREEN) || defined(WITH_SCREEN)
 #include "managers/views/music_visualizer.h"
 #endif
 #include "managers/sd_card_manager.h"
@@ -68,6 +69,10 @@
 #include "scans/wifi/ap_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "scans/wifi/wifi_channels.h"
+
+void music_visualizer_view_update(const uint8_t *amplitudes,
+                                  const char *track_name,
+                                  const char *artist_name);
 
 // Defines for Wireshark channel validation
 #if !defined(MAX_WIFI_CHANNEL)
@@ -458,6 +463,20 @@ void wifi_manager_stop_visualizer(void) {
 
     if (visualizer_socket >= 0) {
         shutdown(visualizer_socket, 0);
+    }
+}
+
+void wifi_manager_start_visualizer(bool for_screen) {
+    if (VisualizerHandle != NULL) {
+        return;
+    }
+
+    if (for_screen) {
+#if defined(CONFIG_WITH_SCREEN) || defined(WITH_SCREEN)
+        xTaskCreate(screen_music_visualizer_task, "udp_server", 4096, NULL, 5, &VisualizerHandle);
+#endif
+    } else {
+        xTaskCreate(animate_led_based_on_amplitude, "udp_server", 4096, NULL, 5, &VisualizerHandle);
     }
 }
 
@@ -2065,6 +2084,10 @@ void wifi_manager_deauth_station(void) {
 
 #define MAX_PAYLOAD 64
 #define UDP_PORT 6677
+#define VIS_DISCOVERY_PORT 6678
+#define VIS_DISCOVERY_PAYLOAD "GHOSTESP_RAVE_DISCOVER_V1"
+#define VIS_RECV_TIMEOUT_MS 250
+#define VIS_DISCOVERY_INTERVAL_US 1000000ULL
 #define TRACK_NAME_LEN 32
 #define ARTIST_NAME_LEN 32
 #define NUM_BARS 15
@@ -2072,14 +2095,17 @@ void wifi_manager_deauth_station(void) {
 void screen_music_visualizer_task(void *pvParameters) {
     (void)pvParameters;
     char rx_buffer[128];
-    char track_name[TRACK_NAME_LEN + 1];
-    char artist_name[ARTIST_NAME_LEN + 1];
     uint8_t amplitudes[NUM_BARS];
 
     struct sockaddr_in dest_addr;
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(UDP_PORT);
     dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    struct sockaddr_in helper_discovery_addr;
+    helper_discovery_addr.sin_family = AF_INET;
+    helper_discovery_addr.sin_port = htons(VIS_DISCOVERY_PORT);
+    helper_discovery_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
     visualizer_stop_requested = false;
 
@@ -2094,6 +2120,12 @@ void screen_music_visualizer_task(void *pvParameters) {
 
     printf("Socket created\n");
 
+    struct timeval recv_timeout = {
+        .tv_sec = 0,
+        .tv_usec = VIS_RECV_TIMEOUT_MS * 1000,
+    };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
+
     int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
     if (err < 0) {
         printf("Socket unable to bind: errno %d\n", errno);
@@ -2105,10 +2137,26 @@ void screen_music_visualizer_task(void *pvParameters) {
 
     printf("Socket bound, port %d\n", UDP_PORT);
 
-    while (!visualizer_stop_requested) {
-        printf("Waiting for data...\n");
+    int discover_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (discover_sock >= 0) {
+        int broadcast_enable = 1;
+        setsockopt(discover_sock, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable));
+    }
+    int64_t last_discovery_us = 0;
 
-        struct sockaddr_in6 source_addr;
+    while (!visualizer_stop_requested) {
+        int64_t now_us = esp_timer_get_time();
+        if (discover_sock >= 0 && (now_us - last_discovery_us) >= VIS_DISCOVERY_INTERVAL_US) {
+            sendto(discover_sock,
+                   VIS_DISCOVERY_PAYLOAD,
+                   strlen(VIS_DISCOVERY_PAYLOAD),
+                   0,
+                   (struct sockaddr *)&helper_discovery_addr,
+                   sizeof(helper_discovery_addr));
+            last_discovery_us = now_us;
+        }
+
+        struct sockaddr_in source_addr;
         socklen_t socklen = sizeof(source_addr);
 
         int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0,
@@ -2117,24 +2165,35 @@ void screen_music_visualizer_task(void *pvParameters) {
             if (visualizer_stop_requested) {
                 break;
             }
-            printf("recvfrom failed: errno %d\n", errno);
-            break;
+
+            int err = errno;
+            if (err == EAGAIN || err == EWOULDBLOCK || err == ETIMEDOUT || err == EINTR) {
+                continue;
+            }
+
+            if (err == ENETDOWN || err == ENETUNREACH || err == EHOSTUNREACH ||
+                err == ENOTCONN || err == EADDRNOTAVAIL) {
+                vTaskDelay(pdMS_TO_TICKS(80));
+                continue;
+            }
+
+            if (err == EBADF || err == ENOTSOCK) {
+                printf("recvfrom socket invalid: errno %d\n", err);
+                break;
+            }
+
+            printf("recvfrom transient error: errno %d\n", err);
+            vTaskDelay(pdMS_TO_TICKS(80));
+            continue;
         }
 
         rx_buffer[len] = '\0';
 
         if (len >= TRACK_NAME_LEN + ARTIST_NAME_LEN + NUM_BARS) {
-
-            memcpy(track_name, rx_buffer, TRACK_NAME_LEN);
-            track_name[TRACK_NAME_LEN] = '\0';
-
-            memcpy(artist_name, rx_buffer + TRACK_NAME_LEN, ARTIST_NAME_LEN);
-            artist_name[ARTIST_NAME_LEN] = '\0';
-
             memcpy(amplitudes, rx_buffer + TRACK_NAME_LEN + ARTIST_NAME_LEN, NUM_BARS);
 
-#ifdef WITH_SCREEN
-            music_visualizer_view_update(amplitudes, track_name, artist_name);
+#if defined(CONFIG_WITH_SCREEN) || defined(WITH_SCREEN)
+            music_visualizer_view_update(amplitudes, "LIVE INPUT", "Desktop Audio (Wi-Fi)");
 #endif
         } else {
             printf("Received packet of unexpected size\n");
@@ -2145,6 +2204,9 @@ void screen_music_visualizer_task(void *pvParameters) {
         printf("Shutting down socket and restarting...\n");
         shutdown(sock, 0);
         close(sock);
+    }
+    if (discover_sock >= 0) {
+        close(discover_sock);
     }
 
     visualizer_socket = -1;

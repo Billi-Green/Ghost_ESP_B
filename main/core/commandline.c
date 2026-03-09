@@ -103,6 +103,8 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "managers/wigle_manager.h"
 #include "managers/config_manager.h"
 #include "managers/nrf24_remote_manager.h"
+#include "managers/views/music_visualizer.h"
+#include "managers/views/app_gallery_screen.h"
 
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
 #include "managers/views/nrf24_analyzer_view.h"
@@ -1090,14 +1092,6 @@ void handle_wifi_connection(int argc, char **argv) {
     }
     wifi_manager_set_manual_disconnect(false);
     wifi_manager_connect_wifi(ssid, password);
-
-    if (VisualizerHandle == NULL) {
-#ifdef WITH_SCREEN
-        xTaskCreate(screen_music_visualizer_task, "udp_server", 4096, NULL, 5, &VisualizerHandle);
-#else
-        xTaskCreate(animate_led_based_on_amplitude, "udp_server", 4096, NULL, 5, &VisualizerHandle);
-#endif
-    }
 
     if (!esp_sntp_enabled()) {
         esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
@@ -8462,6 +8456,29 @@ void handle_mirror_cmd(int argc, char **argv) {
     }
 }
 
+void handle_raveport_cmd(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    glog("RAVE_SERIAL A55AC33C 79\n");
+}
+
+void handle_rave_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: rave <on|off>\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "on") == 0) {
+        display_manager_switch_view(&music_visualizer_view);
+        glog("Visualizer opened\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        display_manager_switch_view(&apps_menu_view);
+        glog("Visualizer closed\n");
+    } else {
+        glog("Usage: rave <on|off>\n");
+    }
+}
+
 void handle_identify_cmd(int argc, char **argv) {
     (void)argc; (void)argv;
     glog("GHOSTESP_OK\n");
@@ -9031,6 +9048,8 @@ void register_commands() {
     register_command("ethhttp", handle_eth_http_cmd);
 #endif
     register_command("mirror", handle_mirror_cmd);
+    register_command("rave", handle_rave_cmd);
+    register_command("raveport", handle_raveport_cmd);
     register_command("input", handle_input_cmd);
     register_command("iobtn", handle_iobtn_cmd);
     register_command("identify", handle_identify_cmd);

@@ -4456,6 +4456,7 @@ void options_menu_destroy() {
     gui_nav_history_clear();
     scan_all_flow_active = false;
     scan_all_started_station_phase = false;
+    ap_list_cleanup();
     scanall_list_cleanup();
     station_list_cleanup();
 
