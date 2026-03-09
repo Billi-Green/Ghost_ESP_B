@@ -7,6 +7,12 @@ toc: true
 
 `Visualizer` is the on-device music visualizer app (previously labeled Rave Mode). It renders a live 15-band spectrum from audio sent over USB serial or UDP.
 
+## Recommended Download (Windows)
+
+Start here for the easiest setup:
+
+- [`rave_tray.exe`](https://github.com/GhostESP-Revival/GhostESP/blob/Development-deki/scripts/Audio%20Visualizers/rave_tray.exe)
+
 The current transport supports:
 
 - High-rate USB serial streaming with compact binary frames
@@ -26,13 +32,13 @@ From the device UI, open **Apps -> Visualizer**.
 
 You can also open it from CLI:
 
-```bash
+```
 rave on
 ```
 
 Close with:
 
-```bash
+```
 rave off
 ```
 
@@ -44,7 +50,7 @@ USB is usually the smoothest path for realtime updates.
 2. Open **Apps -> Visualizer** on the device
 3. Run the launcher:
 
-```bat
+```
 rave_helper.bat
 ```
 
@@ -57,7 +63,7 @@ rave_helper.bat
 2. Open **Apps -> Visualizer**
 3. Run the launcher:
 
-```bat
+```
 rave_helper.bat
 ```
 
@@ -72,7 +78,7 @@ When IP is blank:
 
 You can disable discovery and use classic routing:
 
-```bat
+```
 python "_internal\Display_Visualizer.py" --no-discovery 255.255.255.255
 ```
 
@@ -80,7 +86,7 @@ python "_internal\Display_Visualizer.py" --no-discovery 255.255.255.255
 
 For normal use, run the launcher and use its menu:
 
-```bat
+```
 rave_helper.bat
 ```
 
@@ -95,12 +101,12 @@ The launcher already handles:
 
 If you want a persistent desktop helper, you can build and run the tray binary:
 
-```bat
+```
 _dev\build_rave_tray.bat
 rave_tray.exe
 ```
 
-```bash
+```
 chmod +x "_dev/build_rave_tray.sh"
 ./_dev/build_rave_tray.sh
 ./rave_tray
@@ -123,7 +129,7 @@ Tray menu actions:
 
 Direct script arguments are optional and mainly for troubleshooting or automation.
 
-```bat
+```
 python "_internal\Display_Visualizer.py" --list-sources
 python "_internal\Display_Visualizer.py" --list-ports
 ```
