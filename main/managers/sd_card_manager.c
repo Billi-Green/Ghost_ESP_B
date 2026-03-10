@@ -152,13 +152,9 @@ static const char *sd_spi_host_name(int host_id) {
 
 static int sd_spi_host_id(void) {
 #if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && defined(TFT_SPI_HOST)
-#if defined(CONFIG_IDF_TARGET_ESP32)
-  return TFT_SPI_HOST;
-#else
   if (is_shared_display_sd_spi()) {
     return TFT_SPI_HOST;
   }
-#endif
 #endif
 #if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3)
   return SPI3_HOST;
