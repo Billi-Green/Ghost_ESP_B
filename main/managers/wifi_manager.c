@@ -636,7 +636,10 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
             buffer = g_stream_buf;
             used_global = true;
         } else {
-            buffer = (char *)malloc(CHUNK_SIZE + 1);
+            buffer = (char *)heap_caps_malloc(CHUNK_SIZE + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (buffer == NULL) {
+                buffer = (char *)malloc(CHUNK_SIZE + 1);
+            }
             if (buffer == NULL) {
                 fclose(file);
                 return ESP_FAIL;
@@ -726,7 +729,10 @@ esp_err_t stream_data_to_client(httpd_req_t *req, const char *url, const char *c
                 buffer = g_stream_buf;
                 used_global = true;
             } else {
-                buffer = (char *)malloc(CHUNK_SIZE + 1);
+                buffer = (char *)heap_caps_malloc(CHUNK_SIZE + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (buffer == NULL) {
+                    buffer = (char *)malloc(CHUNK_SIZE + 1);
+                }
                 if (buffer == NULL) {
                     esp_http_client_cleanup(client);
                     return ESP_FAIL;
