@@ -2,6 +2,16 @@
 
 
 
+## Revival v1.9.6
+
+### Changed
+- Optimised CYD WiFi config values to save memory
+- Enabled dynamic fatfs buffers for all CYD configs to save memory
+
+### Fixed
+- Fixed FreeRTOS xTaskCreateStatic stack size bug, saving significant memory
+- Fixed SD/SPI regression causing some devices to not function
+
 ## Revival v1.9.5
 
 ### Added

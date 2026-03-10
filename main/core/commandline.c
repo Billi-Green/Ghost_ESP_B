@@ -4760,7 +4760,7 @@ void handle_gps_info(int argc, char **argv) {
                 return;
             }
             
-            TaskHandle_t created_task = xTaskCreateStatic(gps_info_display_task, "gps_info", stack_words, NULL, 1, gps_task_stack, gps_task_tcb);
+            TaskHandle_t created_task = xTaskCreateStatic(gps_info_display_task, "gps_info", stack_size, NULL, 1, gps_task_stack, gps_task_tcb);
             if (created_task == NULL) {
                 heap_caps_free(gps_task_stack);
                 heap_caps_free(gps_task_tcb);
