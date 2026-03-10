@@ -22,6 +22,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "managers/status_display_manager.h"
+#include "managers/display_manager.h"
+#include "lvgl_tft/disp_spi.h"
 
 #define MAX_PORTALS 32
 #define MAX_PORTAL_NAME 64
