@@ -66,6 +66,7 @@
 #include "attacks/wifi/beacon_spam.h"
 #include "attacks/wifi/eapol_logoff.h"
 #include "attacks/wifi/sae_flood.h"
+#include "attacks/wifi/channel_switch_attack.h"
 #include "scans/wifi/ap_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "scans/wifi/wifi_channels.h"
@@ -3507,6 +3508,19 @@ void wifi_manager_stop_sae_flood(void) {
 
 void wifi_manager_sae_flood_help(void) {
     sae_flood_help();
+}
+
+// Channel Switch Attack - delegated to channel_switch_attack module
+void wifi_manager_start_channel_switch_attack(void) {
+    channel_switch_attack_start();
+}
+
+void wifi_manager_stop_channel_switch_attack(void) {
+    channel_switch_attack_stop();
+}
+
+bool wifi_manager_is_channel_switch_attack_running(void) {
+    return channel_switch_attack_is_running();
 }
 
 void wifi_manager_set_html_from_uart(void) {

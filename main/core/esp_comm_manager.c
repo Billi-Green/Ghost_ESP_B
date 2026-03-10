@@ -389,7 +389,6 @@ static bool send_packet(const comm_packet_t* packet) {
 static void tx_task(void* arg) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
     comm_packet_t packet;
-    TickType_t last_stack_log = 0;
 
     while (comm->initialized) {
         if (xQueueReceive(comm->tx_queue, &packet, pdMS_TO_TICKS(100)) == pdPASS) {
@@ -408,12 +407,6 @@ static void tx_task(void* arg) {
                 }
             }
         }
-
-        TickType_t now = xTaskGetTickCount();
-        if (now - last_stack_log >= pdMS_TO_TICKS(10000)) {
-            printf("Comm TX stack HWM: %u bytes free\n", (unsigned)uxTaskGetStackHighWaterMark(NULL));
-            last_stack_log = now;
-        }
     }
 
     for (;;) {
@@ -424,7 +417,6 @@ static void tx_task(void* arg) {
 static void rx_task(void* arg) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
     uint8_t rx_buffer[COMM_BUFFER_SIZE];
-    TickType_t last_stats_log = 0;
 
     while (comm->initialized) {
         int len = uart_read_bytes(s_uart_num, rx_buffer, COMM_BUFFER_SIZE, pdMS_TO_TICKS(10));
@@ -547,15 +539,9 @@ static void rx_task(void* arg) {
                 }
             }
 
-            if (now - last_stats_log >= pdMS_TO_TICKS(10000)) {
-                printf("Comm RX stack HWM: %u bytes free\n", (unsigned)uxTaskGetStackHighWaterMark(NULL));
-                last_stats_log = now;
-            }
-
             int drained = uart_read_bytes(s_uart_num, rx_buffer, COMM_BUFFER_SIZE, 0);
             if (drained > 0) {
                 len = drained;
-                now = xTaskGetTickCount();
             } else {
                 len = 0;
             }
@@ -1002,7 +988,6 @@ static void command_executor_task(void* arg) {
                 // Restore the previous remote command flag state
                 esp_comm_manager_set_remote_command_flag(was_remote);
             }
-            printf("Comm CMD exec stack HWM: %u bytes free\n", (unsigned)uxTaskGetStackHighWaterMark(NULL));
         }
     }
 
@@ -1014,17 +999,10 @@ static void command_executor_task(void* arg) {
 static void protocol_task(void* arg) {
     esp_comm_manager_t* comm = (esp_comm_manager_t*)arg;
     comm_packet_t packet;
-    TickType_t last_stack_log = 0;
 
     while(comm->initialized) {
         if (xQueueReceive(comm->rx_packet_queue, &packet, pdMS_TO_TICKS(10)) == pdPASS) {
             handle_received_packet(comm, &packet);
-        }
-
-        TickType_t now = xTaskGetTickCount();
-        if (now - last_stack_log >= pdMS_TO_TICKS(10000)) {
-            printf("Comm Protocol stack HWM: %u bytes free\n", (unsigned)uxTaskGetStackHighWaterMark(NULL));
-            last_stack_log = now;
         }
     }
 

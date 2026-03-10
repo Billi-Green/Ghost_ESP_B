@@ -4,6 +4,9 @@
 
 ## Revival v1.9.6
 
+### Added
+- Added Channel Switch attack
+
 ### Changed
 - Optimised CYD WiFi config values to save memory
 - Enabled dynamic fatfs buffers for all CYD configs to save memory
