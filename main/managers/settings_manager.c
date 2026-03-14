@@ -84,6 +84,13 @@ static const char *NVS_IO_BTN_P10_CMD_KEY = "io_btn_p10";
 static const char *NVS_IO_BTN_P11_CMD_KEY = "io_btn_p11";
 static const char *NVS_IO_BTN_P12_CMD_KEY = "io_btn_p12";
 
+// MIC RGB Visualizer NVS keys
+static const char *NVS_MIC_VISUALIZER_MODE_KEY = "mic_vis_mode";
+static const char *NVS_MIC_COLOR_MODE_KEY = "mic_color";
+static const char *NVS_MIC_SENSITIVITY_KEY = "mic_sens";
+static const char *NVS_MIC_SMOOTHING_KEY = "mic_smooth";
+static const char *NVS_MIC_CONTRAST_KEY = "mic_contrast";
+static const char *NVS_MIC_MIRROR_MODE_KEY = "mic_mirror";
 
 static const char *TAG = "SettingsManager";
 
@@ -191,6 +198,13 @@ void settings_set_defaults(FSettings *settings) {
   settings->io_btn_p10_cmd[0] = '\0';
   settings->io_btn_p11_cmd[0] = '\0';
   settings->io_btn_p12_cmd[0] = '\0';
+  // MIC RGB Visualizer defaults
+  settings->mic_visualizer_mode = MIC_MODE_4BAND_SPECTRUM;
+  settings->mic_color_mode = MIC_COLOR_RAINBOW;
+  settings->mic_sensitivity = 50; // 50% default
+  settings->mic_smoothing = 30; // 30% default
+  settings->mic_contrast = 2; // Medium contrast
+  settings->mic_mirror_mode = false;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -636,6 +650,37 @@ void settings_load(FSettings *settings) {
   err = nvs_get_u8(nvsHandle, NVS_BADUSB_KB_KEY, &value_u8);
   if (err == ESP_OK) settings->badusb_kb_layout = value_u8;
 #endif
+
+  // Load MIC RGB Visualizer settings
+  err = nvs_get_u8(nvsHandle, NVS_MIC_VISUALIZER_MODE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->mic_visualizer_mode = (MicVisualizerMode)value_u8;
+  }
+  
+  err = nvs_get_u8(nvsHandle, NVS_MIC_COLOR_MODE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->mic_color_mode = (MicColorMode)value_u8;
+  }
+  
+  err = nvs_get_u8(nvsHandle, NVS_MIC_SENSITIVITY_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->mic_sensitivity = value_u8;
+  }
+  
+  err = nvs_get_u8(nvsHandle, NVS_MIC_SMOOTHING_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->mic_smoothing = value_u8;
+  }
+  
+  err = nvs_get_u8(nvsHandle, NVS_MIC_CONTRAST_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->mic_contrast = value_u8;
+  }
+  
+  err = nvs_get_u8(nvsHandle, NVS_MIC_MIRROR_MODE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->mic_mirror_mode = (bool)value_u8;
+  }
 }
 
 static void update_rainbow_effect(const FSettings *settings) {
@@ -706,6 +751,11 @@ void settings_restart_rgb_effect(void) {
         rgb_manager_set_color(&rgb_manager, -1, 255, 255, 255, false);
     } else if (mode == RGB_MODE_PINK) {
         rgb_manager_set_color(&rgb_manager, -1, 255, 192, 203, false);
+    } else if (mode == RGB_MODE_MIC_VISUALIZER) {
+        // MIC visualizer mode - LEDs are controlled by GhostLink stream
+        // Just clear LEDs here, the stream handler will take over
+        rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
+        ESP_LOGI(TAG, "RGB Mode: MIC Visualizer (controlled via GhostLink)");
     } else {
         // Normal mode
         rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
@@ -853,6 +903,33 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_u8(nvsHandle, NVS_WIGLE_DONATE_KEY, G_Settings.wigle_donate ? 1 : 0);
             key = NVS_WIGLE_DONATE_KEY;
             break;
+        case SETTING_MIC_VISUALIZER_MODE:
+            err = nvs_set_u8(nvsHandle, NVS_MIC_VISUALIZER_MODE_KEY, (uint8_t)G_Settings.mic_visualizer_mode);
+            key = NVS_MIC_VISUALIZER_MODE_KEY;
+            break;
+        case SETTING_MIC_COLOR_MODE:
+            err = nvs_set_u8(nvsHandle, NVS_MIC_COLOR_MODE_KEY, (uint8_t)G_Settings.mic_color_mode);
+            key = NVS_MIC_COLOR_MODE_KEY;
+            break;
+        case SETTING_MIC_SENSITIVITY:
+            err = nvs_set_u8(nvsHandle, NVS_MIC_SENSITIVITY_KEY, G_Settings.mic_sensitivity);
+            key = NVS_MIC_SENSITIVITY_KEY;
+            break;
+        case SETTING_MIC_SMOOTHING:
+            err = nvs_set_u8(nvsHandle, NVS_MIC_SMOOTHING_KEY, G_Settings.mic_smoothing);
+            key = NVS_MIC_SMOOTHING_KEY;
+            break;
+        case SETTING_MIC_CONTRAST:
+            err = nvs_set_u8(nvsHandle, NVS_MIC_CONTRAST_KEY, G_Settings.mic_contrast);
+            key = NVS_MIC_CONTRAST_KEY;
+            break;
+        case SETTING_MIC_MIRROR_MODE:
+            err = nvs_set_u8(nvsHandle, NVS_MIC_MIRROR_MODE_KEY, G_Settings.mic_mirror_mode ? 1 : 0);
+            key = NVS_MIC_MIRROR_MODE_KEY;
+            break;
+        case SETTING_MIC_CALIBRATE:
+            // Action only, not persisted
+            return;
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -1013,6 +1090,14 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_BADUSB_RAND_KEY, settings->badusb_randomize ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_BADUSB_KB_KEY, settings->badusb_kb_layout);
 #endif
+
+    // Save MIC RGB Visualizer settings
+    nvs_set_u8(nvsHandle, NVS_MIC_VISUALIZER_MODE_KEY, (uint8_t)settings->mic_visualizer_mode);
+    nvs_set_u8(nvsHandle, NVS_MIC_COLOR_MODE_KEY, (uint8_t)settings->mic_color_mode);
+    nvs_set_u8(nvsHandle, NVS_MIC_SENSITIVITY_KEY, settings->mic_sensitivity);
+    nvs_set_u8(nvsHandle, NVS_MIC_SMOOTHING_KEY, settings->mic_smoothing);
+    nvs_set_u8(nvsHandle, NVS_MIC_CONTRAST_KEY, settings->mic_contrast);
+    nvs_set_u8(nvsHandle, NVS_MIC_MIRROR_MODE_KEY, settings->mic_mirror_mode ? 1 : 0);
 
     esp_err_t err = nvs_commit(nvsHandle);
     if (err != ESP_OK) {
@@ -1551,5 +1636,84 @@ void settings_reset_badusb_defaults(FSettings *settings) {
   strcpy(settings->badusb_product, "HID Keyboard");
   settings->badusb_randomize = false;
   settings->badusb_kb_layout = KB_LAYOUT_US;
+}
+
+// MIC RGB Visualizer getters and setters
+void settings_set_mic_visualizer_mode(FSettings *settings, MicVisualizerMode mode) {
+  if (settings) {
+    settings->mic_visualizer_mode = mode;
+  }
+}
+
+MicVisualizerMode settings_get_mic_visualizer_mode(const FSettings *settings) {
+  return settings ? settings->mic_visualizer_mode : MIC_MODE_4BAND_SPECTRUM;
+}
+
+void settings_set_mic_color_mode(FSettings *settings, MicColorMode mode) {
+  if (settings) {
+    settings->mic_color_mode = mode;
+  }
+}
+
+MicColorMode settings_get_mic_color_mode(const FSettings *settings) {
+  return settings ? settings->mic_color_mode : MIC_COLOR_RAINBOW;
+}
+
+void settings_set_mic_sensitivity(FSettings *settings, uint8_t sensitivity) {
+  if (settings) {
+    if (sensitivity > 100) sensitivity = 100;
+    settings->mic_sensitivity = sensitivity;
+  }
+}
+
+uint8_t settings_get_mic_sensitivity(const FSettings *settings) {
+  return settings ? settings->mic_sensitivity : 50;
+}
+
+void settings_set_mic_smoothing(FSettings *settings, uint8_t smoothing) {
+  if (settings) {
+    if (smoothing > 100) smoothing = 100;
+    settings->mic_smoothing = smoothing;
+  }
+}
+
+uint8_t settings_get_mic_smoothing(const FSettings *settings) {
+  return settings ? settings->mic_smoothing : 30;
+}
+
+void settings_set_mic_contrast(FSettings *settings, uint8_t contrast) {
+  if (settings) {
+    if (contrast < 1) contrast = 1;
+    if (contrast > 5) contrast = 5;
+    settings->mic_contrast = contrast;
+  }
+}
+
+uint8_t settings_get_mic_contrast(const FSettings *settings) {
+  return settings ? settings->mic_contrast : 2;
+}
+
+void settings_set_mic_mirror_mode(FSettings *settings, bool enabled) {
+  if (settings) {
+    settings->mic_mirror_mode = enabled;
+  }
+}
+
+bool settings_get_mic_mirror_mode(const FSettings *settings) {
+  return settings ? settings->mic_mirror_mode : false;
+}
+
+void settings_set_mic_calibrate(FSettings *settings, bool calibrate) {
+  // This is an action trigger, actual calibration happens elsewhere
+  if (settings && calibrate) {
+    // Trigger calibration via goertzel_restart_cal() or similar
+    extern void goertzel_restart_cal(void);
+    goertzel_restart_cal();
+  }
+}
+
+bool settings_get_mic_calibrate(const FSettings *settings) {
+  // Calibration is a one-shot action, always returns false
+  return false;
 }
 #endif

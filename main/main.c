@@ -51,6 +51,10 @@
 #include "managers/status_display_manager.h"
 #endif
 
+#ifdef CONFIG_HAS_MIC
+#include "managers/microphone/mic_visualizer.h"
+#endif
+
 // Helper macro for measuring RAM usage
 #define MEASURE_INIT_RAM(name, init_call) do { \
     size_t before = heap_caps_get_free_size(MALLOC_CAP_8BIT); \
@@ -455,6 +459,11 @@ void app_main(void) {
 #ifdef CONFIG_HAS_BADUSB
     badusb_manager_register_stream_handler();
 #endif
+#ifdef CONFIG_HAS_MIC
+    // Initialize MIC visualizer (will start sending amplitude over GhostLink when connected)
+    mic_visualizer_init();
+    mic_visualizer_start();
+#endif
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
     nrf24_analyzer_register_stream_handler();
 #endif
@@ -569,6 +578,13 @@ void app_main(void) {
             // Restore saved static color at boot
             rgb_manager_apply_static_from_settings();
         }
+        
+#ifdef CONFIG_ENABLE_MIC_RGB_VISUALIZER
+        // Register MIC amplitude stream handler for RGB visualizer
+        if (initialized) {
+            rgb_manager_register_mic_stream_handler();
+        }
+#endif
     }
 
     ESP_LOGI(TAG, "Build config used: %s", CONFIG_BUILD_CONFIG_TEMPLATE);

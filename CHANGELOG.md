@@ -2,6 +2,16 @@
 
 
 
+## Revival v1.9.7
+
+### Added
+- MIC RGB visualizer adapted from SensoryBridge by Connor Nishijima (https://github.com/connornishijima/SensoryBridge)
+
+### Changed
+- Disabled mDNS for Ethernet interface to prevent crashes
+- Disabled SD SPI on somethingsomething2
+- Upped GhostLink baudrate between The Wired Hatter's Banshee chips to 460800
+
 ## Revival v1.9.6
 
 ### Added

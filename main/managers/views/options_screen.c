@@ -305,6 +305,7 @@ static void stop_station_scan_flow(void) {
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "managers/views/error_popup.h"
+#include "core/esp_comm_manager.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/terminal_screen.h"
 #include "managers/views/number_pad_screen.h"
@@ -351,6 +352,9 @@ typedef enum {
 #ifdef CONFIG_USE_IO_EXPANDER
     SETTINGS_CAT_IO_BUTTONS,
 #endif
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+    SETTINGS_CAT_MIC_RGB,
+#endif
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -374,6 +378,9 @@ static SettingsCategory settings_categories[] = {
     {"WiGLE", SETTINGS_CAT_WIGLE, false, NULL},
 #ifdef CONFIG_USE_IO_EXPANDER
     {"IO Buttons", SETTINGS_CAT_IO_BUTTONS, true, "CONFIG_USE_IO_EXPANDER"},
+#endif
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+    {"MIC Visualizer", SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
 #endif
 };
 
@@ -661,7 +668,14 @@ typedef struct {
     const char *condition_config;
 } SettingsItem;
 
+// RGB mode options - MIC Visualizer only available when enabled in config
+#ifdef CONFIG_ENABLE_MIC_RGB_VISUALIZER
+static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink", "MIC Visualizer"};
+#define RGB_MODE_COUNT 14
+#else
 static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
+#define RGB_MODE_COUNT 13
+#endif
 static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
 static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest", "Cherry Blossom", "Soft Sand"};
 static const char *bool_options[] = {"Off", "On"};
@@ -678,6 +692,39 @@ static const char *brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+static const char *mic_visualizer_mode_options[] = {
+    "4-Band Spectrum", 
+    "VU Meter", 
+    "Kaleidoscope", 
+    "Waveform", 
+    "Bloom",
+    "Peak Meter"
+};
+
+static const char *mic_color_mode_options[] = {
+    "Rainbow",
+    "Chromatic",
+    "Single Hue",
+    "Fire",
+    "Ocean",
+    "Forest",
+    "Heat"
+};
+
+static const char *mic_sensitivity_options[] = {
+    "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
+};
+
+static const char *mic_smoothing_options[] = {
+    "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
+};
+
+static const char *mic_contrast_options[] = {
+    "1", "2", "3", "4", "5"
+};
+#endif
+
 static SettingsItem settings_items[] = {
     {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1, SETTINGS_CAT_DISPLAY, false, NULL},
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
@@ -690,7 +737,7 @@ static SettingsItem settings_items[] = {
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     
-    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, 13, 0, SETTINGS_CAT_LED_RGB, false, NULL},
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, RGB_MODE_COUNT, 0, SETTINGS_CAT_LED_RGB, false, NULL},
     {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_LED_RGB, false, NULL},
     
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1, SETTINGS_CAT_NAVIGATION, false, NULL},
@@ -724,6 +771,16 @@ static SettingsItem settings_items[] = {
     {"Help", SETTING_WIGLE_HELP, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"Manual Upload", SETTING_WIGLE_MANUAL_UPLOAD, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
     {"View WiGLE Stats", SETTING_WIGLE_STATS, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
+    
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+    {"Visualizer Mode", SETTING_MIC_VISUALIZER_MODE, mic_visualizer_mode_options, 6, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+    {"Color Mode", SETTING_MIC_COLOR_MODE, mic_color_mode_options, 7, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+    {"Sensitivity", SETTING_MIC_SENSITIVITY, mic_sensitivity_options, 10, 4, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+    {"Smoothing", SETTING_MIC_SMOOTHING, mic_smoothing_options, 11, 3, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+    {"Contrast", SETTING_MIC_CONTRAST, mic_contrast_options, 5, 1, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+    {"Mirror Mode", SETTING_MIC_MIRROR_MODE, bool_options, 2, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+    {"Calibrate", SETTING_MIC_CALIBRATE, action_options, 1, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+#endif
 };
 
 #define IO_BTN_EDIT_P10 0x1000
@@ -1548,12 +1605,42 @@ static void load_current_settings_values(void) {
             case SETTING_WIGLE_DONATE:
                 settings_items[i].current_value = settings_get_wigle_donate(&G_Settings) ? 1 : 0;
                 break;
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+            case SETTING_MIC_VISUALIZER_MODE:
+                settings_items[i].current_value = (int)settings_get_mic_visualizer_mode(&G_Settings);
+                break;
+            case SETTING_MIC_COLOR_MODE:
+                settings_items[i].current_value = (int)settings_get_mic_color_mode(&G_Settings);
+                break;
+            case SETTING_MIC_SENSITIVITY:
+                settings_items[i].current_value = (settings_get_mic_sensitivity(&G_Settings) / 10) - 1;
+                if (settings_items[i].current_value < 0) settings_items[i].current_value = 0;
+                break;
+            case SETTING_MIC_SMOOTHING:
+                settings_items[i].current_value = settings_get_mic_smoothing(&G_Settings) / 10;
+                break;
+            case SETTING_MIC_CONTRAST:
+                settings_items[i].current_value = settings_get_mic_contrast(&G_Settings) - 1;
+                if (settings_items[i].current_value < 0) settings_items[i].current_value = 0;
+                break;
+            case SETTING_MIC_MIRROR_MODE:
+                settings_items[i].current_value = settings_get_mic_mirror_mode(&G_Settings) ? 1 : 0;
+                break;
+#endif
             default:
                 settings_items[i].current_value = 0;
                 break;
         }
     }
 }
+
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+static void mic_cal_done_timer_cb(lv_timer_t *timer) {
+    lv_timer_del(timer);
+    error_popup_destroy();
+    error_popup_create("Calibration complete!");
+}
+#endif
 
 static void apply_setting_change(int setting_index, int new_value) {
     SettingsItem *item = &settings_items[setting_index];
@@ -1827,6 +1914,41 @@ static void apply_setting_change(int setting_index, int new_value) {
             }
             return;
         }
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+        case SETTING_MIC_VISUALIZER_MODE:
+            settings_set_mic_visualizer_mode(&G_Settings, (MicVisualizerMode)new_value);
+            break;
+        case SETTING_MIC_COLOR_MODE:
+            settings_set_mic_color_mode(&G_Settings, (MicColorMode)new_value);
+            break;
+        case SETTING_MIC_SENSITIVITY:
+            settings_set_mic_sensitivity(&G_Settings, (new_value + 1) * 10);
+            break;
+        case SETTING_MIC_SMOOTHING:
+            settings_set_mic_smoothing(&G_Settings, new_value * 10);
+            break;
+        case SETTING_MIC_CONTRAST:
+            settings_set_mic_contrast(&G_Settings, new_value + 1);
+            break;
+        case SETTING_MIC_MIRROR_MODE:
+            settings_set_mic_mirror_mode(&G_Settings, new_value == 1);
+            break;
+#if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
+        case SETTING_MIC_CALIBRATE:
+#ifdef CONFIG_HAS_MIC
+            settings_set_mic_calibrate(&G_Settings, true);
+#else
+            if (!esp_comm_manager_is_connected()) {
+                error_popup_create("Not connected to MIC device");
+                return;
+            }
+            simulateCommand("commsend mic_cal");
+#endif
+            error_popup_create_persistent("Calibrating mic...\n\nPlease stay quiet!");
+            lv_timer_create(mic_cal_done_timer_cb, 8500, NULL);
+            return;
+#endif
+#endif
     }
     
     // Save only the changed setting to NVS (Granular Save)

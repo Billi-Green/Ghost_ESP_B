@@ -1,3 +1,12 @@
+/*
+ * RGB Manager
+ * 
+ * MIC RGB visualization modes inspired by Sensory Bridge
+ * by Connor Nishijima (https://github.com/connornishijima/SensoryBridge)
+ * 
+ * Licensed under GPL-3.0 (same as Sensory Bridge)
+ */
+
 #include "soc/soc_caps.h"
 #include "managers/rgb_manager.h"
 #include "managers/rgb_effects/rgb_effect_helpers.h"
@@ -11,11 +20,504 @@
 #include "math.h"
 #include "core/utils.h"
 #include "managers/status_display_manager.h"
+#include "core/esp_comm_manager.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 static const char *TAG = "RGBManager";
 static SemaphoreHandle_t rgb_mutex = NULL;
 static bool rgb_power_transition_active = false;
 static int rgb_power_transition_lock_depth = 0;
+
+// MIC Visualizer stream handling
+static volatile uint8_t mic_last_amplitude = 0;
+static volatile uint8_t mic_last_bands[4] = {0, 0, 0, 0};
+static uint32_t mic_rx_counter = 0;
+
+/**
+ * @brief Get color from palette based on mode and position
+ * Inspired by Sensory Bridge palette system
+ */
+static void get_mic_palette_color(uint8_t position, uint8_t intensity, 
+                                   uint8_t *r, uint8_t *g, uint8_t *b) {
+    MicColorMode color_mode = settings_get_mic_color_mode(&G_Settings);
+    
+    switch (color_mode) {
+        case MIC_COLOR_CHROMATIC: {
+            // Musical note colors (12-tone)
+            uint8_t note = (position * 12) / 255;
+            const uint8_t note_r[12] = {255, 255, 255, 0, 0, 0, 0, 75, 148, 255, 255, 255};
+            const uint8_t note_g[12] = {0, 127, 255, 255, 255, 255, 0, 0, 0, 0, 127, 191};
+            const uint8_t note_b[12] = {0, 0, 0, 0, 127, 255, 255, 255, 255, 0, 0, 0};
+            *r = (note_r[note] * intensity) / 255;
+            *g = (note_g[note] * intensity) / 255;
+            *b = (note_b[note] * intensity) / 255;
+            break;
+        }
+        case MIC_COLOR_SINGLE_HUE: {
+            // Single hue with varying saturation/brightness
+            uint8_t hue = 0; // Could be configurable, default to red
+            // Simple HSV to RGB for red hue
+            *r = intensity;
+            *g = (position * intensity) / 510; // Half green
+            *b = 0;
+            break;
+        }
+        case MIC_COLOR_PALETTE_FIRE: {
+            // Fire gradient: black->red->orange->yellow->white
+            if (position < 64) {
+                *r = (position * 4 * intensity) / 255;
+                *g = 0;
+                *b = 0;
+            } else if (position < 128) {
+                *r = intensity;
+                *g = ((position - 64) * 4 * intensity) / 255;
+                *b = 0;
+            } else if (position < 192) {
+                *r = intensity;
+                *g = intensity;
+                *b = ((position - 128) * 4 * intensity) / 255;
+            } else {
+                *r = intensity;
+                *g = intensity;
+                *b = intensity;
+            }
+            break;
+        }
+        case MIC_COLOR_PALETTE_OCEAN: {
+            // Ocean: dark blue->blue->cyan->white
+            if (position < 85) {
+                *r = 0;
+                *g = 0;
+                *b = (64 + (position * 3)) * intensity / 255;
+            } else if (position < 170) {
+                *r = 0;
+                *g = ((position - 85) * 3 * intensity) / 255;
+                *b = intensity;
+            } else {
+                *r = ((position - 170) * 3 * intensity) / 255;
+                *g = intensity;
+                *b = intensity;
+            }
+            break;
+        }
+        case MIC_COLOR_PALETTE_FOREST: {
+            // Forest: dark green->green->lime->yellow
+            if (position < 85) {
+                *r = 0;
+                *g = (64 + (position * 2)) * intensity / 255;
+                *b = 0;
+            } else if (position < 170) {
+                *r = ((position - 85) * 3 * intensity) / 255;
+                *g = intensity;
+                *b = 0;
+            } else {
+                *r = intensity;
+                *g = intensity;
+                *b = ((position - 170) * 2 * intensity) / 255;
+            }
+            break;
+        }
+        case MIC_COLOR_PALETTE_HEAT: {
+            // Heat map: black->purple->red->orange->yellow->white
+            if (position < 51) {
+                *r = (position * 5 * intensity) / 255;
+                *g = 0;
+                *b = (position * 5 * intensity) / 255;
+            } else if (position < 102) {
+                *r = intensity;
+                *g = 0;
+                *b = ((102 - position) * 5 * intensity) / 255;
+            } else if (position < 153) {
+                *r = intensity;
+                *g = ((position - 102) * 5 * intensity) / 255;
+                *b = 0;
+            } else if (position < 204) {
+                *r = intensity;
+                *g = intensity;
+                *b = ((position - 153) * 5 * intensity) / 255;
+            } else {
+                *r = intensity;
+                *g = intensity;
+                *b = ((position - 204) * 5 * intensity) / 255;
+            }
+            break;
+        }
+        case MIC_COLOR_RAINBOW:
+        default: {
+            // Default rainbow gradient
+            const uint8_t rainbow_r[4] = {255, 255,   0,   0};
+            const uint8_t rainbow_g[4] = {  0, 127, 255,   0};
+            const uint8_t rainbow_b[4] = {  0,   0,   0, 255};
+            uint8_t idx = (position * 4) / 256;
+            if (idx > 3) idx = 3;
+            *r = (rainbow_r[idx] * intensity) / 255;
+            *g = (rainbow_g[idx] * intensity) / 255;
+            *b = (rainbow_b[idx] * intensity) / 255;
+            break;
+        }
+    }
+}
+
+/**
+ * @brief Apply contrast (square iterations) to value
+ * Inspired by Sensory Bridge SQUARE_ITER
+ */
+static uint8_t apply_contrast(uint8_t value, uint8_t iterations) {
+    float fval = value / 255.0f;
+    for (uint8_t i = 0; i < iterations && i < 5; i++) {
+        fval = fval * fval;
+    }
+    uint16_t result = (uint16_t)(fval * 255.0f);
+    return (result > 255) ? 255 : (uint8_t)result;
+}
+
+/**
+ * @brief Render 4-band spectrum analyzer
+ */
+static void render_4band_spectrum(uint8_t bands[4], uint8_t amplitude, int num_leds) {
+    uint8_t max_brightness = settings_get_neopixel_max_brightness(&G_Settings);
+    uint8_t brightness = (amplitude * max_brightness) / 100;
+    if (brightness > max_brightness) brightness = max_brightness;
+    
+    uint8_t contrast = settings_get_mic_contrast(&G_Settings);
+    bool mirror = settings_get_mic_mirror_mode(&G_Settings);
+    
+    int leds_per_band = num_leds / (mirror ? 8 : 4);
+    if (leds_per_band < 1) leds_per_band = 1;
+    
+    // Clear all LEDs first
+    for (int i = 0; i < num_leds; i++) {
+        led_strip_set_pixel(rgb_manager.strip, i, 0, 0, 0);
+    }
+    
+    for (int section = 0; section < 4; section++) {
+        // Apply contrast
+        uint8_t band_val = apply_contrast(bands[section], contrast);
+        int leds_lit = (band_val * leds_per_band) / 255;
+        if (leds_lit > leds_per_band) leds_lit = leds_per_band;
+        
+        int section_start = section * leds_per_band;
+        
+        for (int j = 0; j < leds_per_band; j++) {
+            int i = section_start + j;
+            if (i >= num_leds) break;
+            
+            if (j < leds_lit) {
+                // Position within section for color gradient
+                uint8_t position = (section * 64) + (j * 64 / leds_per_band);
+                // Fade toward tip
+                uint8_t fade = ((leds_lit - j) * 255) / (leds_lit > 0 ? leds_lit : 1);
+                uint8_t intensity = (brightness * fade) / 255;
+                
+                uint8_t r, g, b;
+                get_mic_palette_color(position, intensity, &r, &g, &b);
+                led_strip_set_pixel(rgb_manager.strip, i, r, g, b);
+                
+                // Mirror mode
+                if (mirror) {
+                    int mirror_idx = num_leds - 1 - i;
+                    led_strip_set_pixel(rgb_manager.strip, mirror_idx, r, g, b);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @brief Render VU meter (bar from left to right)
+ */
+static void render_vu_meter(uint8_t bands[4], uint8_t amplitude, int num_leds) {
+    uint8_t max_brightness = settings_get_neopixel_max_brightness(&G_Settings);
+    uint8_t brightness = (amplitude * max_brightness) / 100;
+    if (brightness > max_brightness) brightness = max_brightness;
+    
+    uint8_t contrast = settings_get_mic_contrast(&G_Settings);
+    
+    uint8_t max_band = bands[0];
+    for (int i = 1; i < 4; i++) {
+        if (bands[i] > max_band) max_band = bands[i];
+    }
+    
+    uint8_t display_val = apply_contrast(max_band, contrast);
+    int leds_lit = (display_val * num_leds) / 255;
+    if (leds_lit > num_leds) leds_lit = num_leds;
+    
+    for (int i = 0; i < num_leds; i++) {
+        led_strip_set_pixel(rgb_manager.strip, i, 0, 0, 0);
+    }
+    
+    for (int i = 0; i < leds_lit; i++) {
+        uint8_t position = (i * 255) / num_leds;
+        uint8_t fade = ((leds_lit - i) * 255) / (leds_lit > 0 ? leds_lit : 1);
+        uint8_t intensity = (brightness * fade) / 255;
+        
+        uint8_t r, g, b;
+        get_mic_palette_color(position, intensity, &r, &g, &b);
+        led_strip_set_pixel(rgb_manager.strip, i, r, g, b);
+    }
+}
+
+/**
+ * @brief Render peak meter with decay
+ */
+static uint8_t peak_value = 0;
+static uint32_t last_peak_time = 0;
+static MicVisualizerMode last_peak_mode = MIC_MODE_4BAND_SPECTRUM;
+
+static void render_peak_meter(uint8_t bands[4], uint8_t amplitude, int num_leds) {
+    uint8_t max_brightness = settings_get_neopixel_max_brightness(&G_Settings);
+    MicVisualizerMode current_mode = settings_get_mic_visualizer_mode(&G_Settings);
+    
+    if (current_mode != last_peak_mode) {
+        peak_value = 0;
+        last_peak_time = 0;
+        last_peak_mode = current_mode;
+    }
+    
+    uint8_t contrast = settings_get_mic_contrast(&G_Settings);
+    uint8_t smoothing = settings_get_mic_smoothing(&G_Settings);
+    
+    uint8_t max_band = bands[0];
+    for (int i = 1; i < 4; i++) {
+        if (bands[i] > max_band) max_band = bands[i];
+    }
+    max_band = apply_contrast(max_band, contrast);
+    
+    uint32_t now = pdTICKS_TO_MS(xTaskGetTickCount());
+    if (max_band > peak_value) {
+        peak_value = max_band;
+        last_peak_time = now;
+    } else {
+        uint32_t decay_delay = 50 + (smoothing * 5);
+        if (now - last_peak_time > decay_delay) {
+            if (peak_value > 10) peak_value -= 10;
+            else peak_value = 0;
+            last_peak_time = now;
+        }
+    }
+    
+    uint8_t brightness = (amplitude * max_brightness) / 100;
+    int leds_lit = (peak_value * num_leds) / 255;
+    if (leds_lit > num_leds) leds_lit = num_leds;
+    
+    for (int i = 0; i < num_leds; i++) {
+        led_strip_set_pixel(rgb_manager.strip, i, 0, 0, 0);
+    }
+    
+    for (int i = 0; i < leds_lit; i++) {
+        uint8_t position = (i * 255) / num_leds;
+        uint8_t r, g, b;
+        get_mic_palette_color(position, brightness, &r, &g, &b);
+        led_strip_set_pixel(rgb_manager.strip, i, r, g, b);
+    }
+}
+
+/**
+ * @brief Render waveform (oscilloscope style)
+ */
+static uint8_t waveform_buffer[64] = {0};
+static uint8_t waveform_idx = 0;
+static MicVisualizerMode last_waveform_mode = MIC_MODE_4BAND_SPECTRUM;
+
+static void render_waveform(uint8_t bands[4], uint8_t amplitude, int num_leds) {
+    uint8_t max_brightness = settings_get_neopixel_max_brightness(&G_Settings);
+    MicVisualizerMode current_mode = settings_get_mic_visualizer_mode(&G_Settings);
+    
+    if (current_mode != last_waveform_mode) {
+        memset(waveform_buffer, 0, sizeof(waveform_buffer));
+        waveform_idx = 0;
+        last_waveform_mode = current_mode;
+    }
+
+    waveform_buffer[waveform_idx] = amplitude;
+    waveform_idx = (waveform_idx + 1) % 64;
+
+    for (int i = 0; i < num_leds; i++) {
+        led_strip_set_pixel(rgb_manager.strip, i, 0, 0, 0);
+    }
+
+    for (int i = 0; i < num_leds; i++) {
+        int buf_offset = (i * 64) / num_leds;
+        int buffer_idx = (waveform_idx + buf_offset) % 64;
+        uint8_t val = waveform_buffer[buffer_idx];
+
+        if (val > 0) {
+            uint8_t position = (i * 255) / num_leds;
+            uint8_t intensity = ((uint16_t)val * max_brightness * 2) / 100;
+            if (intensity > 255) intensity = 255;
+            uint8_t r, g, b;
+            get_mic_palette_color(position, intensity, &r, &g, &b);
+            led_strip_set_pixel(rgb_manager.strip, i, r, g, b);
+        }
+    }
+}
+
+/**
+ * @brief Render bloom effect (center-expanding trails)
+ */
+static uint8_t bloom_buffer[160] = {0};
+static MicVisualizerMode last_bloom_mode = MIC_MODE_4BAND_SPECTRUM;
+
+static void render_bloom(uint8_t bands[4], uint8_t amplitude, int num_leds) {
+    uint8_t max_brightness = settings_get_neopixel_max_brightness(&G_Settings);
+    uint8_t contrast = settings_get_mic_contrast(&G_Settings);
+    uint8_t smoothing = settings_get_mic_smoothing(&G_Settings);
+    MicVisualizerMode current_mode = settings_get_mic_visualizer_mode(&G_Settings);
+    
+    if (current_mode != last_bloom_mode) {
+        memset(bloom_buffer, 0, sizeof(bloom_buffer));
+        last_bloom_mode = current_mode;
+    }
+    
+    if (num_leds > 160) num_leds = 160;
+    
+    uint8_t max_band = bands[0];
+    for (int i = 1; i < 4; i++) {
+        if (bands[i] > max_band) max_band = bands[i];
+    }
+    uint8_t input = apply_contrast(max_band, contrast);
+    
+    int center = num_leds / 2;
+    bloom_buffer[center] = input;
+    
+    uint8_t decay = 240 - (smoothing * 2);
+    for (int i = 0; i < num_leds; i++) {
+        uint16_t val = (bloom_buffer[i] * decay) / 256;
+        bloom_buffer[i] = (val > 255) ? 255 : (uint8_t)val;
+    }
+    
+    for (int i = 0; i < center; i++) {
+        bloom_buffer[i] = bloom_buffer[num_leds - 1 - i];
+    }
+    
+    uint8_t brightness = (amplitude * max_brightness) / 100;
+    for (int i = 0; i < num_leds; i++) {
+        uint8_t val = bloom_buffer[i];
+        if (val > 5) {
+            uint8_t position = (i * 255) / num_leds;
+            uint8_t intensity = (val * brightness) / 255;
+            uint8_t r, g, b;
+            get_mic_palette_color(position, intensity, &r, &g, &b);
+            led_strip_set_pixel(rgb_manager.strip, i, r, g, b);
+        } else {
+            led_strip_set_pixel(rgb_manager.strip, i, 0, 0, 0);
+        }
+    }
+}
+
+/**
+ * @brief Stream handler for MIC frequency+amplitude data from GhostLink
+ * New format (5 bytes): [bass, low_mid, high_mid, treble, amplitude]
+ * Legacy format (1 byte): [amplitude] - still supported
+ * 
+ * Supports multiple visualization modes inspired by Sensory Bridge
+ */
+void rgb_manager_mic_amplitude_handler(uint8_t channel, const uint8_t* data, 
+                                       size_t length, void* user_data) {
+    if (length < 1) return;
+    if (settings_get_rgb_mode(&G_Settings) != RGB_MODE_MIC_VISUALIZER) return;
+    if (!rgb_manager.strip) return;
+    
+    // Parse frequency bands and amplitude
+    uint8_t bands[4];
+    uint8_t amplitude;
+    
+    if (length >= 5) {
+        bands[0] = data[0];
+        bands[1] = data[1];
+        bands[2] = data[2];
+        bands[3] = data[3];
+        amplitude = data[4];
+        mic_last_bands[0] = bands[0];
+        mic_last_bands[1] = bands[1];
+        mic_last_bands[2] = bands[2];
+        mic_last_bands[3] = bands[3];
+    } else {
+        amplitude = data[0];
+        bands[0] = bands[1] = bands[2] = bands[3] = amplitude;
+    }
+    mic_last_amplitude = amplitude;
+    
+    int num_leds = rgb_manager.num_leds > 0 ? rgb_manager.num_leds : 36;
+    if (num_leds > 160) num_leds = 160; // Limit to prevent buffer overflow
+    
+    // Apply sensitivity setting (scale both bands and amplitude)
+    uint8_t sensitivity = settings_get_mic_sensitivity(&G_Settings);
+    uint8_t scale_factor = 50 + (sensitivity * 2); // 50% to 250%
+    for (int i = 0; i < 4; i++) {
+        uint16_t scaled = ((uint16_t)bands[i] * scale_factor) / 50;
+        bands[i] = (scaled > 255) ? 255 : (uint8_t)scaled;
+    }
+    {
+        uint16_t amp_scaled = ((uint16_t)amplitude * scale_factor) / 50;
+        amplitude = (amp_scaled > 255) ? 255 : (uint8_t)amp_scaled;
+    }
+
+    // Fallback: if overall amplitude is near zero but band energy is present
+    // (e.g. quiet pure tones, SPH0645 high-pass rolloff at low frequencies),
+    // derive a proportional brightness from the strongest band so the LEDs
+    // still respond instead of going black.
+    if (amplitude < 8) {
+        uint8_t band_max = 0;
+        for (int i = 0; i < 4; i++) {
+            if (bands[i] > band_max) band_max = bands[i];
+        }
+        if (band_max > 16) {
+            uint8_t fallback = band_max / 5;  // 20% of peak band energy
+            if (fallback > amplitude) amplitude = fallback;
+        }
+    }
+
+    // Route to appropriate renderer based on mode
+    MicVisualizerMode mode = settings_get_mic_visualizer_mode(&G_Settings);
+    switch (mode) {
+        case MIC_MODE_VU_METER:
+            render_vu_meter(bands, amplitude, num_leds);
+            break;
+        case MIC_MODE_PEAK_METER:
+            render_peak_meter(bands, amplitude, num_leds);
+            break;
+        case MIC_MODE_WAVEFORM:
+            render_waveform(bands, amplitude, num_leds);
+            break;
+        case MIC_MODE_BLOOM:
+            render_bloom(bands, amplitude, num_leds);
+            break;
+        case MIC_MODE_KALEIDOSCOPE:
+            // Kaleidoscope is complex, fall back to spectrum for now
+            render_4band_spectrum(bands, amplitude, num_leds);
+            break;
+        case MIC_MODE_4BAND_SPECTRUM:
+        default:
+            render_4band_spectrum(bands, amplitude, num_leds);
+            break;
+    }
+    
+    led_strip_refresh(rgb_manager.strip);
+    
+    // Debug logging
+    mic_rx_counter++;
+    if (mic_rx_counter % 50 == 0) {
+        ESP_LOGI(TAG, "MIC Mode=%d: B=%d L=%d H=%d T=%d A=%d", 
+                 mode, bands[0], bands[1], bands[2], bands[3], amplitude);
+    }
+}
+
+/**
+ * @brief Register the MIC amplitude stream handler
+ * Call this during system initialization
+ */
+void rgb_manager_register_mic_stream_handler(void) {
+    esp_comm_manager_register_stream_handler(
+        COMM_STREAM_CHANNEL_MIC_AMPLITUDE,
+        rgb_manager_mic_amplitude_handler,
+        NULL
+    );
+    ESP_LOGI(TAG, "Registered MIC amplitude stream handler");
+}
 
 void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms);
 

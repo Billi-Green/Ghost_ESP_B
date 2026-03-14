@@ -8924,6 +8924,16 @@ void handle_wigle_cmd(int argc, char **argv) {
     glog("Unknown wigle command: %s\n", argv[1]);
 }
 
+#ifdef CONFIG_HAS_MIC
+static void handle_mic_cal_cmd(int argc, char **argv) {
+    extern void goertzel_restart_cal(void);
+    extern void mic_restart_noise_cal(void);
+    goertzel_restart_cal();
+    mic_restart_noise_cal();
+    glog("MIC calibration restarted\n");
+}
+#endif
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -9071,6 +9081,9 @@ void register_commands() {
     register_command("aerialspoof", handle_aerial_spoof_cmd);
     register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
     register_command("wigle", handle_wigle_cmd);
+#ifdef CONFIG_HAS_MIC
+    register_command("mic_cal", handle_mic_cal_cmd);
+#endif
     register_command("loadconfig", handle_loadconfig_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);

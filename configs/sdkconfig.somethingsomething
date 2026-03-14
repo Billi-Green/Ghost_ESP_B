@@ -708,6 +708,7 @@ CONFIG_BUILD_CONFIG_TEMPLATE="somethingsomething"
 CONFIG_USE_NEOPIXEL=y
 CONFIG_LED_DATA_PIN=9
 CONFIG_NUM_LEDS=36
+CONFIG_ENABLE_MIC_RGB_VISUALIZER=y
 # end of LED Options
 
 #
@@ -797,6 +798,12 @@ CONFIG_NFC_IRQ_PIN=-1
 CONFIG_NFC_RST_PIN=-1
 # end of NFC Options
 # end of Misc Options
+
+#
+# Microphone Configuration
+#
+# CONFIG_HAS_MIC is not set
+# end of Microphone Configuration
 
 #
 # GPS Configuration
