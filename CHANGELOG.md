@@ -12,6 +12,9 @@
 - Disabled SD SPI on somethingsomething2
 - Upped GhostLink baudrate between The Wired Hatter's Banshee chips to 460800
 
+### Fixed
+- Added back missing RGB pulse for flipper detection
+
 ## Revival v1.9.6
 
 ### Added

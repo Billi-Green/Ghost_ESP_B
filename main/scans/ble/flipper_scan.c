@@ -318,7 +318,8 @@ static void ble_findtheflippers_callback(struct ble_gap_event *event, size_t len
              "     Name: %s,\n"
              "     RSSI: %d dBm\n",
              discovered_flipper_count, type_str,
-             advertisementMac, advertisementName, advertisementRssi);
+advertisementMac, advertisementName, advertisementRssi);
+        pulse_once(&rgb_manager, 255, 165, 0);
         discovered_flipper_count++;
     }
 }
