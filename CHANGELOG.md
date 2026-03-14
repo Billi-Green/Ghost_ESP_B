@@ -8,6 +8,8 @@
 - MIC RGB visualizer adapted from SensoryBridge by Connor Nishijima (https://github.com/connornishijima/SensoryBridge)
 
 ### Changed
+- Reduced WiFi RX/TX buffer counts and LWIP pool sizes across all configs to lower memory usage
+- Standardised FATFS sector size to 512, disabled per-file cache, and enabled dynamic buffers across all configs for better SD stability
 - Disabled mDNS for Ethernet interface to prevent crashes
 - Disabled SD SPI on somethingsomething2
 - Upped GhostLink baudrate between The Wired Hatter's Banshee chips to 460800
