@@ -15,6 +15,7 @@
 - Upped GhostLink baudrate between The Wired Hatter's Banshee chips to 460800
 
 ### Fixed
+- Fixed beacon spam not broadcasting any SSIDs due to race condition where task flag was set after task creation
 - Added back missing RGB pulse for flipper detection
 - Fixed boot crash loop on devices without RTC hardware by replacing ESP_ERROR_CHECK with graceful error handling in RTC driver
 
