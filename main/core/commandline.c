@@ -40,6 +40,7 @@
 #include "managers/ethernet/eth_fingerprint.h"
 #include "managers/ethernet/eth_utils.h"
 #include "managers/ethernet/eth_http.h"
+#include "attacks/ethernet/eth_arp_poison.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/etharp.h"
 #include "lwip/netif.h"
@@ -904,6 +905,7 @@ void handle_stop_flipper(int argc, char **argv) {
 #endif
 #ifdef CONFIG_WITH_ETHERNET
     g_eth_scan_cancel = true;
+    if (eth_arp_poison_is_running()) eth_arp_poison_stop();
 #endif
     // ensure pcap is properly flushed and closed
     pcap_file_close();
@@ -3571,6 +3573,25 @@ http_done:
     glog("Total received: %zu bytes\n", total_received);
     
     status_display_show_status(is_https ? "HTTPS OK" : "HTTP OK");
+}
+
+void handle_eth_poison_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: ethpoison <start|stop|list|status>\n");
+        return;
+    }
+    if (strcmp(argv[1], "start") == 0) {
+        eth_arp_poison_start();
+    } else if (strcmp(argv[1], "stop") == 0) {
+        eth_arp_poison_stop();
+    } else if (strcmp(argv[1], "list") == 0) {
+        eth_arp_poison_print_domains();
+    } else if (strcmp(argv[1], "status") == 0) {
+        eth_arp_poison_print_status();
+    } else {
+        glog("Unknown subcommand: %s\n", argv[1]);
+        glog("Usage: ethpoison <start|stop|list|status>\n");
+    }
 }
 #endif
 
@@ -9086,6 +9107,7 @@ void register_commands() {
     register_command("ethserv", handle_eth_serv_cmd);
     register_command("ethntp", handle_eth_ntp_cmd);
     register_command("ethhttp", handle_eth_http_cmd);
+    register_command("ethpoison", handle_eth_poison_cmd);
 #endif
     register_command("mirror", handle_mirror_cmd);
     register_command("rave", handle_rave_cmd);

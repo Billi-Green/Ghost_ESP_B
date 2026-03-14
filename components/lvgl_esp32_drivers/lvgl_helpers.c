@@ -9,6 +9,7 @@
 #include "sdkconfig.h"
 #include "lvgl_helpers.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 #include "lvgl_tft/disp_spi.h"
 #include "lvgl_touch/tp_spi.h"
@@ -107,6 +108,8 @@ void lvgl_driver_init(void)
 /* Display controller initialization */
 #if defined CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI
     ESP_LOGI(TAG, "Initializing SPI master for display");
+    ESP_LOGI(TAG, "Internal DMA RAM free: %d bytes",
+        heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
 #ifndef CONFIG_USE_7_INCHER
     lvgl_spi_driver_init(TFT_SPI_HOST,
         DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,

@@ -92,6 +92,8 @@ static const char *NVS_MIC_SMOOTHING_KEY = "mic_smooth";
 static const char *NVS_MIC_CONTRAST_KEY = "mic_contrast";
 static const char *NVS_MIC_MIRROR_MODE_KEY = "mic_mirror";
 
+static const char *NVS_GHOSTLINK_SPLIT_VIEW_KEY = "glink_split";
+
 static const char *TAG = "SettingsManager";
 
 static nvs_handle_t nvsHandle;
@@ -205,6 +207,7 @@ void settings_set_defaults(FSettings *settings) {
   settings->mic_smoothing = 30; // 30% default
   settings->mic_contrast = 2; // Medium contrast
   settings->mic_mirror_mode = false;
+  settings->ghostlink_split_view = true; // Default to split view
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -681,6 +684,11 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->mic_mirror_mode = (bool)value_u8;
   }
+  
+  err = nvs_get_u8(nvsHandle, NVS_GHOSTLINK_SPLIT_VIEW_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->ghostlink_split_view = (bool)value_u8;
+  }
 }
 
 static void update_rainbow_effect(const FSettings *settings) {
@@ -930,6 +938,10 @@ void settings_persist_setting(SettingsType setting) {
         case SETTING_MIC_CALIBRATE:
             // Action only, not persisted
             return;
+        case SETTING_GHOSTLINK_SPLIT_VIEW:
+            err = nvs_set_u8(nvsHandle, NVS_GHOSTLINK_SPLIT_VIEW_KEY, G_Settings.ghostlink_split_view ? 1 : 0);
+            key = NVS_GHOSTLINK_SPLIT_VIEW_KEY;
+            break;
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -1098,6 +1110,7 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_MIC_SMOOTHING_KEY, settings->mic_smoothing);
     nvs_set_u8(nvsHandle, NVS_MIC_CONTRAST_KEY, settings->mic_contrast);
     nvs_set_u8(nvsHandle, NVS_MIC_MIRROR_MODE_KEY, settings->mic_mirror_mode ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_GHOSTLINK_SPLIT_VIEW_KEY, settings->ghostlink_split_view ? 1 : 0);
 
     esp_err_t err = nvs_commit(nvsHandle);
     if (err != ESP_OK) {
@@ -1717,3 +1730,13 @@ bool settings_get_mic_calibrate(const FSettings *settings) {
   return false;
 }
 #endif
+
+void settings_set_ghostlink_split_view(FSettings *settings, bool enabled) {
+  if (settings) {
+    settings->ghostlink_split_view = enabled;
+  }
+}
+
+bool settings_get_ghostlink_split_view(const FSettings *settings) {
+  return settings ? settings->ghostlink_split_view : true;
+}

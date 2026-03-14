@@ -68,7 +68,7 @@
 /*********************
  *      DEFINES
  *********************/
-#define SPI_TRANSACTION_POOL_SIZE 50	/* maximum number of DMA transactions simultaneously in-flight */
+#define SPI_TRANSACTION_POOL_SIZE 16	/* maximum number of DMA transactions simultaneously in-flight */
 
 /* DMA Transactions to reserve before queueing additional DMA transactions. A 1/10th seems to be a good balance. Too many (or all) and it will increase latency. */
 #define SPI_TRANSACTION_POOL_RESERVE_PERCENTAGE 10

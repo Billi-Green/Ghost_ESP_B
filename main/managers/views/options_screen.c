@@ -355,6 +355,7 @@ typedef enum {
 #if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
     SETTINGS_CAT_MIC_RGB,
 #endif
+    SETTINGS_CAT_GHOSTLINK,
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -382,6 +383,7 @@ static SettingsCategory settings_categories[] = {
 #if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
     {"MIC Visualizer", SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
 #endif
+    {"GhostLink", SETTINGS_CAT_GHOSTLINK, false, NULL},
 };
 
 static int current_settings_category = -1;
@@ -652,6 +654,7 @@ static const char *dual_comm_ethernet_options[] = {
     "Sync NTP Time",
     "Network Stats",
     "Show Config",
+    "ARP Poison",
     NULL
 };
 
@@ -781,6 +784,7 @@ static SettingsItem settings_items[] = {
     {"Mirror Mode", SETTING_MIC_MIRROR_MODE, bool_options, 2, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
     {"Calibrate", SETTING_MIC_CALIBRATE, action_options, 1, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
 #endif
+    {"Split Terminal", SETTING_GHOSTLINK_SPLIT_VIEW, bool_options, 2, 1, SETTINGS_CAT_GHOSTLINK, false, NULL},
 };
 
 #define IO_BTN_EDIT_P10 0x1000
@@ -1627,6 +1631,9 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = settings_get_mic_mirror_mode(&G_Settings) ? 1 : 0;
                 break;
 #endif
+            case SETTING_GHOSTLINK_SPLIT_VIEW:
+                settings_items[i].current_value = settings_get_ghostlink_split_view(&G_Settings) ? 1 : 0;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -1949,6 +1956,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             return;
 #endif
 #endif
+        case SETTING_GHOSTLINK_SPLIT_VIEW:
+            settings_set_ghostlink_split_view(&G_Settings, new_value == 1);
+            break;
     }
     
     // Save only the changed setting to NVS (Granular Save)
@@ -3663,6 +3673,12 @@ void option_event_cb(lv_event_t *e) {
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend ethconfig show");
+        } else if (strcmp(Selected_Option, "ARP Poison") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend ethpoison start");
+            view_switched = true;
         } else if (strcmp(Selected_Option, "USB Host On") == 0) {
             terminal_set_return_view(&options_menu_view);
             display_manager_switch_view(&terminal_view);

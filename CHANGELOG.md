@@ -6,6 +6,7 @@
 
 ### Added
 - MIC RGB visualizer adapted from SensoryBridge by Connor Nishijima (https://github.com/connornishijima/SensoryBridge)
+- Ethernet ARP poisoning attack with bidirectional spoofing, ICMP ping sweep, passive host discovery, DNS interception using network's actual DNS server, and IP packet forwarding
 
 ### Changed
 - Reduced WiFi RX/TX buffer counts and LWIP pool sizes across all configs to lower memory usage

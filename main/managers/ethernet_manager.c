@@ -560,6 +560,12 @@ esp_netif_t *ethernet_manager_get_netif(void)
     return s_eth_netif;
 }
 
+esp_err_t ethernet_manager_transmit_raw(const uint8_t *buf, size_t len)
+{
+    if (!s_eth_handle) return ESP_ERR_INVALID_STATE;
+    return esp_eth_transmit(s_eth_handle, (void *)buf, len);
+}
+
 esp_err_t ethernet_manager_get_dhcp_server_ip(ip4_addr_t *server_ip)
 {
     if (server_ip == NULL) {
