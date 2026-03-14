@@ -14,6 +14,7 @@
 
 ### Fixed
 - Added back missing RGB pulse for flipper detection
+- Fixed boot crash loop on devices without RTC hardware by replacing ESP_ERROR_CHECK with graceful error handling in RTC driver
 
 ## Revival v1.9.6
 

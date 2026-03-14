@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "math.h"
+#include <stdlib.h>
 #include "core/utils.h"
 #include "managers/status_display_manager.h"
 #include "core/esp_comm_manager.h"
@@ -35,6 +36,7 @@ static int rgb_power_transition_lock_depth = 0;
 static volatile uint8_t mic_last_amplitude = 0;
 static volatile uint8_t mic_last_bands[4] = {0, 0, 0, 0};
 static uint32_t mic_rx_counter = 0;
+static volatile bool mic_stream_suspended = false;
 
 /**
  * @brief Get color from palette based on mode and position
@@ -419,7 +421,12 @@ void rgb_manager_mic_amplitude_handler(uint8_t channel, const uint8_t* data,
                                        size_t length, void* user_data) {
     if (length < 1) return;
     if (settings_get_rgb_mode(&G_Settings) != RGB_MODE_MIC_VISUALIZER) return;
+    if (mic_stream_suspended) return;
     if (!rgb_manager.strip) return;
+    if (rgb_power_transition_active) return;
+    
+    if (!rgb_mutex) return;
+    if (xSemaphoreTakeRecursive(rgb_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
     
     // Parse frequency bands and amplitude
     uint8_t bands[4];
@@ -498,6 +505,8 @@ void rgb_manager_mic_amplitude_handler(uint8_t channel, const uint8_t* data,
     
     led_strip_refresh(rgb_manager.strip);
     
+    xSemaphoreGiveRecursive(rgb_mutex);
+    
     // Debug logging
     mic_rx_counter++;
     if (mic_rx_counter % 50 == 0) {
@@ -517,6 +526,10 @@ void rgb_manager_register_mic_stream_handler(void) {
         NULL
     );
     ESP_LOGI(TAG, "Registered MIC amplitude stream handler");
+}
+
+void rgb_manager_set_mic_stream_suspended(bool suspended) {
+    mic_stream_suspended = suspended;
 }
 
 void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms);
@@ -1020,6 +1033,10 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
     return;
   }
 
+  if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_MIC_VISUALIZER) {
+    return;
+  }
+
   int brightness = 0;
   int direction = 1;
 
@@ -1088,7 +1105,7 @@ void pulse_once(RGBManager_t *rgb_manager, uint8_t red, uint8_t green,
       // Restore static color from settings
       rgb_manager_apply_static_from_settings();
     }
-  }
+}
 }
 
 esp_err_t rgb_manager_set_color(RGBManager_t *rgb_manager, int led_idx,

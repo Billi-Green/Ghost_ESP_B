@@ -115,6 +115,8 @@ void rgb_manager_power_transition_begin(void);
 
 void rgb_manager_power_transition_end(void);
 
+void rgb_manager_set_mic_stream_suspended(bool suspended);
+
 #ifdef CONFIG_IDF_TARGET_ESP32C5
 void rgb_manager_rmt_release(void);
 void rgb_manager_rmt_reacquire(void);
@@ -127,6 +129,7 @@ void rgb_manager_rmt_reacquire(void);
  * a GhostLink peer device with a microphone.
  */
 void rgb_manager_register_mic_stream_handler(void);
+
 #endif
 
 extern RGBManager_t rgb_manager;

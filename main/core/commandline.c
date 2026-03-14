@@ -23,6 +23,9 @@
 #include "managers/sd_card_manager.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
+#ifdef CONFIG_HAS_MIC
+#include "managers/microphone/mic_visualizer.h"
+#endif
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
@@ -817,6 +820,15 @@ static volatile bool g_eth_scan_cancel = false;
 #endif
 
 void handle_stop_flipper(int argc, char **argv) {
+#ifdef CONFIG_ENABLE_MIC_RGB_VISUALIZER
+    rgb_manager_set_mic_stream_suspended(true);
+#endif
+
+#ifdef CONFIG_HAS_MIC
+    bool restart_mic_visualizer = mic_visualizer_is_running();
+    mic_visualizer_stop();
+#endif
+
     if (g_ir_universal_send_task != NULL) {
         g_ir_universal_send_cancel = true;
     }
@@ -903,6 +915,16 @@ void handle_stop_flipper(int argc, char **argv) {
         wifi_manager_stop_visualizer();
     }
     settings_restart_rgb_effect();
+
+#ifdef CONFIG_HAS_MIC
+    if (restart_mic_visualizer) {
+        mic_visualizer_start();
+    }
+#endif
+
+#ifdef CONFIG_ENABLE_MIC_RGB_VISUALIZER
+    rgb_manager_set_mic_stream_suspended(false);
+#endif
 }
 
 void handle_dial_command(int argc, char **argv) {
