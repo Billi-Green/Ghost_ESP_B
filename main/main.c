@@ -35,6 +35,7 @@
 
 #ifdef CONFIG_WITH_ETHERNET
 #include "managers/ethernet_manager.h"
+#include "managers/ethernet/eth_comm_handler.h"
 #endif
 
 #ifdef CONFIG_HAS_BADUSB
@@ -458,6 +459,9 @@ void app_main(void) {
     usb_keyboard_manager_register_stream_handler();
 #ifdef CONFIG_HAS_BADUSB
     badusb_manager_register_stream_handler();
+#endif
+#ifdef CONFIG_WITH_ETHERNET
+    eth_comm_handler_init();
 #endif
 #ifdef CONFIG_HAS_MIC
     // Initialize MIC visualizer (will start sending amplitude over GhostLink when connected)

@@ -26,4 +26,27 @@ void eth_arp_poison_print_creds(void);
 // Print current status (host, domain, cookie, cred counts, running state).
 void eth_arp_poison_print_status(void);
 
+// --- Snapshot API for UI display ---
+
+typedef struct {
+    char    ip_str[16];
+    uint8_t mac[6];
+} eth_arp_poison_host_snapshot_t;
+
+typedef struct {
+    bool    running;
+    int     host_count;
+    int     domain_count;
+    int     cookie_count;
+    int     cred_count;
+    eth_arp_poison_host_snapshot_t hosts[32];
+    char    domains[50][64];
+    char    cookies[10][48];
+    char    creds[10][64];
+} eth_arp_poison_snapshot_t;
+
+// Atomically copies all live state under the internal mutex.
+// Returns false if the mutex has not been initialized yet (attack never started).
+bool eth_arp_poison_get_snapshot(eth_arp_poison_snapshot_t *out);
+
 #endif // CONFIG_WITH_ETHERNET

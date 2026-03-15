@@ -10,6 +10,7 @@
 #include "gui/theme_palette_api.h"
 #include "io_manager.h"
 #include "managers/views/wardriving_screen.h"
+#include "managers/views/ethernet_screen.h"
 #include "managers/wigle_manager.h"
 #include "managers/config_manager.h"
 #include "gui/popup.h"
@@ -3111,8 +3112,7 @@ void option_event_cb(lv_event_t *e) {
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Ethernet") == 0) {
-                current_dualcomm_menu_state = DUALCOMM_MENU_ETHERNET;
-                display_manager_switch_view(&options_menu_view);
+                display_manager_switch_view(&ethernet_screen_view);
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Keyboard") == 0) {

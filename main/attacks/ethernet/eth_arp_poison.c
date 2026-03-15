@@ -950,4 +950,25 @@ void eth_arp_poison_print_creds(void)
         glog("  %d. %s\n", i + 1, s_creds[i]);
 }
 
+bool eth_arp_poison_get_snapshot(eth_arp_poison_snapshot_t *out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!s_hosts_mutex) return false;
+    if (xSemaphoreTake(s_hosts_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return false;
+    out->running      = s_running;
+    out->host_count   = s_host_count;
+    out->domain_count = s_domain_count;
+    out->cookie_count = s_cookie_count;
+    out->cred_count   = s_cred_count;
+    for (int i = 0; i < s_host_count && i < 32; i++) {
+        ip4addr_ntoa_r(&s_hosts[i].ip, out->hosts[i].ip_str, sizeof(out->hosts[i].ip_str));
+        memcpy(out->hosts[i].mac, s_hosts[i].mac, 6);
+    }
+    memcpy(out->domains, s_domains, sizeof(s_domains));
+    memcpy(out->cookies, s_cookies, sizeof(s_cookies));
+    memcpy(out->creds,   s_creds,   sizeof(s_creds));
+    xSemaphoreGive(s_hosts_mutex);
+    return true;
+}
+
 #endif // CONFIG_WITH_ETHERNET

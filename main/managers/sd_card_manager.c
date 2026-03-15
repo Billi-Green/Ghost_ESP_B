@@ -112,7 +112,10 @@ static void display_spi_resume_after_sd(void) {
     ESP_LOGE("sd_card", "display_spi_resume: bus init failed: %s", esp_err_to_name(ret));
     /* fall through — still resume LVGL task to prevent watchdog */
   } else {
-    disp_spi_add_device(TFT_SPI_HOST);
+    esp_err_t add_ret = disp_spi_add_device(TFT_SPI_HOST);
+    if (add_ret != ESP_OK) {
+      ESP_LOGE("sd_card", "display_spi_resume: add device failed: %s", esp_err_to_name(add_ret));
+    }
   }
   /* resume lvgl refresh */
   lv_disp_t *disp = lv_disp_get_default();

@@ -1442,9 +1442,9 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
 
     bool result = send_packet(&packet);
     if (result) {
-        printf("Sent command: %s\n", command);
+        printf("Sent command: %s %s\n", command, data ? data : "");
         char log_msg[64];
-        snprintf(log_msg, sizeof(log_msg), "I: Sent command: %s\n", command);
+        snprintf(log_msg, sizeof(log_msg), "I: Sent command: %s %s\n", command, data ? data : "");
         ap_manager_add_log(log_msg);
         terminal_view_add_text(log_msg);
     }

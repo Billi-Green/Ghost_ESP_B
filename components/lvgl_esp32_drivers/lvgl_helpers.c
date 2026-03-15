@@ -10,6 +10,7 @@
 #include "lvgl_helpers.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_err.h"
 
 #include "lvgl_tft/disp_spi.h"
 #include "lvgl_touch/tp_spi.h"
@@ -175,7 +176,7 @@ void lvgl_i2c_locking(void* leader)
  * We could use the ESP_IDF_VERSION_VAL macro available in the "esp_idf_version.h"
  * header available since ESP-IDF v4.
  */
-bool lvgl_spi_driver_init(int host,
+esp_err_t lvgl_spi_driver_init(int host,
     int miso_pin, int mosi_pin, int sclk_pin,
     int max_transfer_sz,
     int dma_channel,
@@ -212,5 +213,5 @@ bool lvgl_spi_driver_init(int host,
 #endif
     //assert(ret == ESP_OK);
 
-    return ESP_OK != ret;
+    return ret;
 }
