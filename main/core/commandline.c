@@ -3577,7 +3577,7 @@ http_done:
 
 void handle_eth_poison_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("Usage: ethpoison <start|stop|list|status>\n");
+        glog("Usage: ethpoison <start|stop|list|cookies|creds|status>\n");
         return;
     }
     if (strcmp(argv[1], "start") == 0) {
@@ -3586,11 +3586,15 @@ void handle_eth_poison_cmd(int argc, char **argv) {
         eth_arp_poison_stop();
     } else if (strcmp(argv[1], "list") == 0) {
         eth_arp_poison_print_domains();
+    } else if (strcmp(argv[1], "cookies") == 0) {
+        eth_arp_poison_print_cookies();
+    } else if (strcmp(argv[1], "creds") == 0) {
+        eth_arp_poison_print_creds();
     } else if (strcmp(argv[1], "status") == 0) {
         eth_arp_poison_print_status();
     } else {
         glog("Unknown subcommand: %s\n", argv[1]);
-        glog("Usage: ethpoison <start|stop|list|status>\n");
+        glog("Usage: ethpoison <start|stop|list|cookies|creds|status>\n");
     }
 }
 #endif

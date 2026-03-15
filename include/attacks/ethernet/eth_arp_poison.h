@@ -5,7 +5,7 @@
 
 #ifdef CONFIG_WITH_ETHERNET
 
-// Start ARP poisoning + DNS proxy attack.
+// Start ARP poisoning + DNS/SNI/HTTP/FTP interception attack.
 // Discovers hosts, sends spoofed ARP replies, and transparently proxies DNS.
 esp_err_t eth_arp_poison_start(void);
 
@@ -14,10 +14,16 @@ esp_err_t eth_arp_poison_stop(void);
 
 bool eth_arp_poison_is_running(void);
 
-// Print all captured domains to the log.
+// Print all captured domains (DNS, SNI, HTTP URLs) to the log.
 void eth_arp_poison_print_domains(void);
 
-// Print current status (host count, domain count, running state).
+// Print all captured cookies to the log.
+void eth_arp_poison_print_cookies(void);
+
+// Print all captured credentials (HTTP Auth, FTP) to the log.
+void eth_arp_poison_print_creds(void);
+
+// Print current status (host, domain, cookie, cred counts, running state).
 void eth_arp_poison_print_status(void);
 
 #endif // CONFIG_WITH_ETHERNET

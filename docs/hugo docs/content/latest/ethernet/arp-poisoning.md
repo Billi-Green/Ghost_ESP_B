@@ -1,6 +1,6 @@
 ---
 title: "ARP Poisoning"
-description: "Man-in-the-middle attack via ARP spoofing with DNS interception."
+description: "Man-in-the-middle attack via ARP spoofing with DNS, SNI, HTTP, and FTP interception."
 weight: 25
 ---
 
@@ -14,6 +14,11 @@ The ARP poisoning attack:
 - Uses ICMP ping sweep + ARP scan for fast host discovery
 - Passively discovers new hosts at runtime
 - Intercepts and logs all DNS queries
+- Extracts TLS Server Name Indication (SNI) from HTTPS connections
+- Captures HTTP Host headers and request URLs
+- Captures HTTP cookies for session hijacking
+- Captures HTTP Authorization headers (Basic auth, Bearer tokens)
+- Captures FTP credentials (USER/PASS commands)
 - Proxies DNS using the network's actual DNS server
 - Forwards IP packets for transparent MITM
 
@@ -29,6 +34,7 @@ This will:
 3. Begin bidirectional ARP poisoning
 4. Start DNS proxy on port 53
 5. Enable passive host discovery
+6. Enable packet inspection for SNI, HTTP, and FTP
 
 ## Stopping the Attack
 
@@ -39,7 +45,7 @@ ethpoison stop
 This will:
 1. Stop all poisoning tasks
 2. Restore ARP tables to correct values
-3. Display captured domain count
+3. Display captured counts
 
 ## Viewing Status
 
@@ -52,14 +58,32 @@ ethpoison status
 Shows:
 - Running state
 - Number of poisoned hosts
-- Number of captured domains
+- Number of captured domains (DNS + SNI + HTTP URLs)
+- Number of captured cookies
+- Number of captured credentials
 
 ## Viewing Captured Domains
 
-List all DNS queries that were intercepted:
+List all domains/URLs that were intercepted:
 
 ```
 ethpoison list
+```
+
+## Viewing Captured Cookies
+
+List all HTTP cookies that were captured:
+
+```
+ethpoison cookies
+```
+
+## Viewing Captured Credentials
+
+List all credentials that were captured (HTTP Auth, FTP):
+
+```
+ethpoison creds
 ```
 
 ## How It Works
@@ -67,8 +91,11 @@ ethpoison list
 1. **Host Discovery**: ICMP echo requests wake up hosts, followed by ARP scanning
 2. **ARP Spoofing**: Sends forged ARP replies claiming to be the gateway (to victims) and each victim (to the gateway)
 3. **DNS Interception**: Receives DNS queries on port 53, logs them, forwards to the real DNS server
-4. **Packet Forwarding**: Relays non-local traffic to maintain connectivity
-5. **Passive Discovery**: Monitors network traffic to discover new hosts without rescanning
+4. **SNI Extraction**: Parses TLS ClientHello packets to extract server names from HTTPS connections
+5. **HTTP Inspection**: Extracts request URLs, Host headers, Cookies, and Authorization from HTTP traffic
+6. **FTP Capture**: Monitors port 21 for USER and PASS commands
+7. **Packet Forwarding**: Relays non-local traffic to maintain connectivity
+8. **Passive Discovery**: Monitors network traffic to discover new hosts without rescanning
 
 ## Requirements
 
@@ -81,3 +108,6 @@ ethpoison list
 - The attack automatically uses the network's DNS server from DHCP
 - New hosts discovered passively are automatically added to the poison list
 - Stopping the attack restores ARP tables to prevent network disruption
+- SNI extraction works even with HTTPS (encrypted content, but server name is visible)
+- Cookies and Authorization are captured from unencrypted HTTP traffic only
+- FTP credentials are captured in plaintext on port 21
