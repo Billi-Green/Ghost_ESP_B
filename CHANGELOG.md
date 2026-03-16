@@ -14,10 +14,11 @@
 - Disabled mDNS for Ethernet interface to prevent crashes
 - Disabled SD SPI on somethingsomething2
 - Upped GhostLink baudrate between The Wired Hatter's Banshee chips to 460800
+- GhostLink ethernet uses new detail view instead of terminal
 
 ### Fixed
 - Fixed beacon spam not broadcasting any SSIDs due to race condition where task flag was set after task creation
-- Added back missing RGB pulse for flipper detection
+- Added back missing RGB pulse for flipper and airtag detection
 - Fixed boot crash loop on devices without RTC hardware by replacing ESP_ERROR_CHECK with graceful error handling in RTC driver
 
 ## Revival v1.9.6

@@ -122,8 +122,8 @@ static void mic_visualizer_task(void *arg) {
         was_connected = is_connected;
         loop_counter++;
         
-        // Target ~20 FPS (50ms delay)
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Target ~33 FPS (30ms delay)
+        vTaskDelay(pdMS_TO_TICKS(30));
     }
     
     ESP_LOGI(TAG, "MIC visualizer task stopped");

@@ -911,9 +911,9 @@ static void poison_monitor_cb(lv_timer_t *t) {
 
     // Update live stats header
     if (s_poison_stats_lbl && lv_obj_is_valid(s_poison_stats_lbl)) {
-        char stats[64];
-        snprintf(stats, sizeof(stats), "%d hosts  |  %d domains  |  %d creds",
-                 s_poison.host_count, s_poison.domain_count, s_poison.cred_count);
+        char stats[96];
+        snprintf(stats, sizeof(stats), "%d hosts  |  %d domains  |  %d cookies  |  %d creds",
+                 s_poison.host_count, s_poison.domain_count, s_poison.cookie_count, s_poison.cred_count);
         lv_label_set_text(s_poison_stats_lbl, stats);
     }
 
@@ -1155,9 +1155,9 @@ static void build_poison_monitor(void) {
     lv_obj_set_style_text_color(hdr_lbl, lv_color_hex(accent_color), 0);
 
     s_poison_stats_lbl = lv_label_create(hdr);
-    char stats[64];
-    snprintf(stats, sizeof(stats), "%d hosts  |  %d domains  |  %d creds",
-             s_poison.host_count, s_poison.domain_count, s_poison.cred_count);
+    char stats[96];
+    snprintf(stats, sizeof(stats), "%d hosts  |  %d domains  |  %d cookies  |  %d creds",
+             s_poison.host_count, s_poison.domain_count, s_poison.cookie_count, s_poison.cred_count);
     lv_label_set_text(s_poison_stats_lbl, stats);
     lv_obj_set_style_text_color(s_poison_stats_lbl, lv_color_hex(muted_color), 0);
     lv_obj_set_style_text_font(s_poison_stats_lbl, &lv_font_montserrat_10, 0);
