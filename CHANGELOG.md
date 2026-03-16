@@ -15,6 +15,7 @@
 - Disabled SD SPI on somethingsomething2
 - Upped GhostLink baudrate between The Wired Hatter's Banshee chips to 460800
 - GhostLink ethernet uses new detail view instead of terminal
+- Moved Flipper, Airtag and Skimmer display options to New 'Detect Devices' menu using detail view like 'Scan APs'
 
 ### Fixed
 - Fixed beacon spam not broadcasting any SSIDs due to race condition where task flag was set after task creation
