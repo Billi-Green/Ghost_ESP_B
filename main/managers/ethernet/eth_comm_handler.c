@@ -222,12 +222,12 @@ static void remote_poison_monitor_task(void *arg) {
 }
 
 // -----------------------------------------------------------------------
-// Command callback — called by esp_comm_manager when peer sends command.
-// Matches comm_command_callback_t: void (*)(const char*, const char*, void*)
+// Handle a remote "ethernet" command routed from the main GhostLink
+// command dispatcher.
 // -----------------------------------------------------------------------
-static void eth_command_cb(const char *command, const char *data, void *ud) {
-    if (!command || strcmp(command, "ethernet") != 0) return;
-    if (!data) return;
+bool eth_comm_handler_handle_command(const char *command, const char *data) {
+    if (!command || strcmp(command, "ethernet") != 0) return false;
+    if (!data) return true;
 
     ESP_LOGI(TAG, "Received ethernet command: %s", data);
 
@@ -261,14 +261,15 @@ static void eth_command_cb(const char *command, const char *data, void *ud) {
         // already cancelled above; acknowledge
         eth_stream_record("S|done");
     }
+
+    return true;
 }
 
 // -----------------------------------------------------------------------
 // Public API
 // -----------------------------------------------------------------------
 void eth_comm_handler_init(void) {
-    ESP_LOGI(TAG, "Registering ethernet command handler");
-    esp_comm_manager_set_command_callback(eth_command_cb, NULL);
+    ESP_LOGI(TAG, "Ethernet GhostLink handler ready");
 }
 
 void eth_comm_handler_deinit(void) {

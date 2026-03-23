@@ -37,6 +37,7 @@
 #endif
 #ifdef CONFIG_WITH_ETHERNET
 #include "managers/ethernet_manager.h"
+#include "managers/ethernet/eth_comm_handler.h"
 #include "managers/ethernet/eth_fingerprint.h"
 #include "managers/ethernet/eth_utils.h"
 #include "managers/ethernet/eth_http.h"
@@ -6806,6 +6807,10 @@ static void comm_command_callback(const char* command, const char* data, void* u
     static char full_command[128];
     
 #ifdef CONFIG_WITH_ETHERNET
+    if (eth_comm_handler_handle_command(command, data)) {
+        return;
+    }
+
     if (strcmp(command, "stop") == 0) {
         g_eth_scan_cancel = true;
     }
