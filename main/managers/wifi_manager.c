@@ -395,7 +395,15 @@ static inline bool stream_buf_lock(void) {
     }
     if (xSemaphoreTake(g_stream_buf_mutex, portMAX_DELAY) != pdTRUE) return false;
     if (g_stream_buf == NULL) {
-        g_stream_buf = (char *)heap_caps_malloc(CHUNK_SIZE + 1, MALLOC_CAP_8BIT);
+#if CONFIG_SPIRAM
+        g_stream_buf = (char *)heap_caps_malloc(CHUNK_SIZE + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (g_stream_buf == NULL) {
+            ESP_LOGW(TAG, "PSRAM g_stream_buf failed, trying internal RAM");
+            g_stream_buf = (char *)malloc(CHUNK_SIZE + 1);
+        }
+#else
+        g_stream_buf = (char *)malloc(CHUNK_SIZE + 1);
+#endif
         if (g_stream_buf == NULL) {
             xSemaphoreGive(g_stream_buf_mutex);
             return false;
@@ -1403,7 +1411,16 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
                 long pf_size = ftell(pf);
                 rewind(pf);
                 if (pf_size > 0) {
-                    char *pf_buf = malloc((size_t)pf_size + 1);
+                    char *pf_buf = NULL;
+#if CONFIG_SPIRAM
+                    pf_buf = (char*)heap_caps_malloc((size_t)pf_size + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                    if (pf_buf == NULL) {
+                        ESP_LOGW(TAG, "PSRAM portal_file_cache failed, trying internal RAM");
+                        pf_buf = malloc((size_t)pf_size + 1);
+                    }
+#else
+                    pf_buf = malloc((size_t)pf_size + 1);
+#endif
                     if (pf_buf != NULL) {
                         size_t pf_read = fread(pf_buf, 1, (size_t)pf_size, pf);
                         pf_buf[pf_read] = '\0';
@@ -1742,12 +1759,14 @@ void wifi_manager_stop_monitor_mode() {
 }
 
 void wifi_manager_init(void) {
+    size_t mem_start = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    ESP_LOGI(TAG, "wifi_manager_init: starting with %d bytes INTERNAL RAM free", (int)mem_start);
 
     // --- Memory check before WiFi init ---
-    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (free_heap < (45 * 1024)) {
-        ESP_LOGW(TAG, "WARNING: Less than 45KB of free RAM available (%d bytes). WiFi may fail to initialize or operate reliably!", (int)free_heap);
-        TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB RAM free (%d bytes). WiFi may not initialize or operate reliably!\n", (int)free_heap);
+        ESP_LOGW(TAG, "WARNING: Less than 45KB of free internal RAM available (%d bytes). WiFi may fail to initialize or operate reliably!", (int)free_heap);
+        TERMINAL_VIEW_ADD_TEXT("WARNING: <45KB internal RAM free (%d bytes). WiFi may not initialize or operate reliably!\n", (int)free_heap);
     }
 
     esp_log_level_set("wifi", ESP_LOG_ERROR); // Only show errors, not warnings
@@ -1755,22 +1774,34 @@ void wifi_manager_init(void) {
     // Disable WiFi power saving to improve connection stability
     esp_wifi_set_ps(WIFI_PS_NONE);
 
+    ESP_LOGI(TAG, "wifi_manager: initializing NVS...");
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
+    ESP_LOGI(TAG, "wifi_manager: NVS init done, free internal RAM: %d bytes (used: %d)", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), 
+             (int)(mem_start - heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
 
     // Initialize the TCP/IP stack and WiFi driver
+    ESP_LOGI(TAG, "wifi_manager: initializing netif...");
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     wifiAP = esp_netif_create_default_wifi_ap();
     wifiSTA = esp_netif_create_default_wifi_sta();
+    ESP_LOGI(TAG, "wifi_manager: netif init done, free internal RAM: %d bytes (used: %d)", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), 
+             (int)(mem_start - heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
 
     // Initialize WiFi with default settings
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 
+    ESP_LOGI(TAG, "wifi_manager: initializing WiFi driver...");
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_LOGI(TAG, "wifi_manager: WiFi driver init done, free internal RAM: %d bytes (used: %d)", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), 
+             (int)(mem_start - heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
 
     // configure country based on saved setting
     static const struct { const char *code; uint8_t schan; uint8_t nchan; } country_table[] = {
@@ -1799,13 +1830,19 @@ void wifi_manager_init(void) {
 #endif
 
     // Create the WiFi event group
+    ESP_LOGI(TAG, "wifi_manager: creating event group...");
     wifi_event_group = xEventGroupCreate();
+    ESP_LOGI(TAG, "wifi_manager: event group created, free internal RAM: %d bytes", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     // Register the event handler for WiFi events
+    ESP_LOGI(TAG, "wifi_manager: registering event handlers...");
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                         &wifi_event_handler, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                         &wifi_event_handler, NULL, NULL));
+    ESP_LOGI(TAG, "wifi_manager: event handlers registered, free internal RAM: %d bytes", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     // AP-side diagnostics (connect/disconnect + dhcp assignment). helps debug portal connect failures.
     if (!g_ap_diag_registered) {
@@ -1822,9 +1859,13 @@ void wifi_manager_init(void) {
     }
 
     // Set WiFi mode to STA (station)
+    ESP_LOGI(TAG, "wifi_manager: setting WiFi mode to APSTA...");
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_LOGI(TAG, "wifi_manager: WiFi mode set, free internal RAM: %d bytes", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     // Configure the SoftAP settings
+    ESP_LOGI(TAG, "wifi_manager: configuring AP...");
     wifi_config_t ap_config = {
         .ap = {.ssid = "",
                .ssid_len = strlen(""),
@@ -1837,8 +1878,12 @@ void wifi_manager_init(void) {
 
     // Apply the AP configuration
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    
     // Start the Wi-Fi AP
+    ESP_LOGI(TAG, "wifi_manager: starting WiFi (esp_wifi_start)...");
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "wifi_manager: WiFi started, free internal RAM: %d bytes", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     
     // Additional WiFi stability settings
     // Set maximum TX power to improve signal strength
@@ -1848,12 +1893,19 @@ void wifi_manager_init(void) {
     esp_wifi_set_inactive_time(WIFI_IF_STA, 60); // 60 seconds before considering connection inactive
 
     // Initialize global CA certificate store
+    ESP_LOGI(TAG, "wifi_manager: attaching CA certificate bundle...");
     ret = esp_crt_bundle_attach(NULL);
     if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "wifi_manager: CA bundle attached, free internal RAM: %d bytes", 
+                 (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         printf("Global CA certificate store initialized successfully.\n");
     } else {
         printf("Failed to initialize global CA certificate store: %s\n", esp_err_to_name(ret));
     }
+    
+    size_t mem_end = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    ESP_LOGI(TAG, "wifi_manager_init: COMPLETE. Total used: %d bytes, free internal RAM: %d bytes", 
+             (int)(mem_start - mem_end), (int)mem_end);
 }
 
 void wifi_manager_configure_sta_from_settings(void) {
@@ -3526,7 +3578,15 @@ bool wifi_manager_is_channel_switch_attack_running(void) {
 void wifi_manager_set_html_from_uart(void) {
     use_html_buffer = true;
     if (html_buffer == NULL) {
+#if CONFIG_SPIRAM
+        html_buffer = (char*)heap_caps_malloc(MAX_HTML_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (html_buffer == NULL) {
+            ESP_LOGW(TAG, "PSRAM html_buffer failed, trying internal RAM");
+            html_buffer = (char*)malloc(MAX_HTML_BUFFER_SIZE);
+        }
+#else
         html_buffer = (char*)malloc(MAX_HTML_BUFFER_SIZE);
+#endif
         if (html_buffer == NULL) {
             printf("Failed to allocate HTML buffer\n");
             use_html_buffer = false;

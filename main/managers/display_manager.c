@@ -48,6 +48,16 @@ uint32_t theme_palette_get_text_muted(uint8_t theme);
 
 #define LVGL_TICK_TASK_STACK_SIZE 8192
 
+#ifndef CONFIG_JC3248W535EN_LCD
+static TaskHandle_t lvgl_tick_task_handle = NULL;
+static StackType_t *lvgl_tick_task_stack = NULL;
+static StaticTask_t *lvgl_tick_task_buffer = NULL;
+
+static TaskHandle_t hardware_input_task_handle = NULL;
+static StackType_t *hardware_input_task_stack = NULL;
+static StaticTask_t *hardware_input_task_buffer = NULL;
+#endif
+
 #ifdef CONFIG_USE_CARDPUTER
 #include "vendor/keyboard_handler.h"
 #include "vendor/m5/m5gfx_wrapper.h"
@@ -1140,6 +1150,8 @@ void apply_power_management_config(bool power_save_enabled) {
 }
 
 void display_manager_init(void) {
+  ESP_LOGI(TAG, "display_manager_init: starting, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   static bool lvgl_lock_registered = false;
   if (!lvgl_lock_registered) {
@@ -1147,6 +1159,7 @@ void display_manager_init(void) {
     lvgl_lock_registered = true;
   }
 
+  ESP_LOGI(TAG, "display_manager: configuring power management...");
   esp_pm_config_t pm_cfg = {
     .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
     .min_freq_mhz = 80,
@@ -1156,6 +1169,8 @@ void display_manager_init(void) {
   if (pm_err != ESP_OK) {
     ESP_LOGW(TAG, "pm configure failed: %s", esp_err_to_name(pm_err));
   }
+  ESP_LOGI(TAG, "display_manager: power management configured, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   apply_power_management_config(settings_get_power_save_enabled(&G_Settings));
 
@@ -1193,6 +1208,8 @@ void display_manager_init(void) {
     ESP_LOGI(TAG, "Backlight GPIO not configured; skipping LEDC channel init");
   }
   #endif
+  ESP_LOGI(TAG, "display_manager: LEDC configured, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
 #ifdef CONFIG_USE_TDECK
 set_keyboard_brightness(0xFF); // Set to 100% brightness
@@ -1239,7 +1256,10 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
     ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(i2c_ret));
   }
 #endif
+  ESP_LOGI(TAG, "display_manager: initializing LVGL...");
   lv_init();
+  ESP_LOGI(TAG, "display_manager: LVGL core init done, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #ifdef CONFIG_USE_CARDPUTER
   init_m5gfx_display();
 #elif defined(CONFIG_USE_TDISPLAY_S3)
@@ -1251,6 +1271,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #else
   lvgl_driver_init();
 #endif
+  ESP_LOGI(TAG, "display_manager: display driver init done, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #endif // CONFIG_JC3248W535EN_LCD
 
 #if !defined(CONFIG_USE_7_INCHER) && !defined(CONFIG_JC3248W535EN_LCD)
@@ -1268,6 +1290,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
   static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
 #endif
+  ESP_LOGI(TAG, "display_manager: draw buffers allocated, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   /* Determine display resolution */
 #ifdef CONFIG_USE_CARDPUTER
@@ -1306,6 +1330,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   disp_drv.flush_cb = invert_flush_cb;
   disp_drv.draw_buf = &disp_buf;
   lv_disp_drv_register(&disp_drv);
+  ESP_LOGI(TAG, "display_manager: display driver registered, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
 #elif defined(CONFIG_JC3248W535EN_LCD)
   esp_err_t ret = lcd_axs15231b_init();
@@ -1340,6 +1366,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
     ESP_LOGE(TAG, "Failed to create input queue\n");
     return;
   }
+  ESP_LOGI(TAG, "display_manager: mutex and queue created, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
 #ifdef CONFIG_USE_CARDPUTER
   keyboard_init(&gkeyboard);
@@ -1436,14 +1464,48 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   set_backlight_brightness(100);
 
 
-#ifndef CONFIG_JC3248W535EN_LCD // JC3248W535EN has its own lvgl task
-xTaskCreate(lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE, NULL,
-            RENDERING_TASK_PRIORITY, &lvgl_task_handle);
+#ifndef CONFIG_JC3248W535EN_LCD
+    // Allocate LVGL tick task stack from PSRAM
+    lvgl_tick_task_stack = heap_caps_malloc(LVGL_TICK_TASK_STACK_SIZE * sizeof(StackType_t), MALLOC_CAP_SPIRAM);
+    lvgl_tick_task_buffer = malloc(sizeof(StaticTask_t));
+    if (lvgl_tick_task_stack && lvgl_tick_task_buffer) {
+        lvgl_tick_task_handle = xTaskCreateStatic(
+            lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE,
+            NULL, RENDERING_TASK_PRIORITY,
+            lvgl_tick_task_stack, lvgl_tick_task_buffer);
+        ESP_LOGI(TAG, "LVGL tick task stack allocated from PSRAM: %d bytes", 
+                 (int)(LVGL_TICK_TASK_STACK_SIZE * sizeof(StackType_t)));
+    } else {
+        ESP_LOGE(TAG, "Failed to allocate LVGL tick task stack from PSRAM, falling back to internal");
+        xTaskCreate(lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE, NULL,
+                    RENDERING_TASK_PRIORITY, &lvgl_tick_task_handle);
+    }
+    ESP_LOGI(TAG, "After LVGL task creation, free internal RAM: %d bytes", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+    // Allocate hardware input task stack from PSRAM
+    hardware_input_task_stack = heap_caps_malloc(4096 * sizeof(StackType_t), MALLOC_CAP_SPIRAM);
+    hardware_input_task_buffer = malloc(sizeof(StaticTask_t));
+    if (hardware_input_task_stack && hardware_input_task_buffer) {
+        hardware_input_task_handle = xTaskCreateStatic(
+            hardware_input_task, "RawInput", 4096,
+            NULL, HARDWARE_INPUT_TASK_PRIORITY,
+            hardware_input_task_stack, hardware_input_task_buffer);
+        ESP_LOGI(TAG, "Hardware input task stack allocated from PSRAM: %d bytes", (int)(4096 * sizeof(StackType_t)));
+        input_task_handle = hardware_input_task_handle;
+    } else {
+        ESP_LOGE(TAG, "Failed to allocate hardware input task stack from PSRAM, falling back to internal");
+        if (xTaskCreate(hardware_input_task, "RawInput", 4096, NULL,
+                        HARDWARE_INPUT_TASK_PRIORITY, &input_task_handle) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create RawInput task\n");
+        }
+    }
+    ESP_LOGI(TAG, "After RawInput task creation, free internal RAM: %d bytes", 
+             (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #endif
-if (xTaskCreate(hardware_input_task, "RawInput", 4096, NULL,
-                HARDWARE_INPUT_TASK_PRIORITY, &input_task_handle) != pdPASS) {
-    ESP_LOGE(TAG, "Failed to create RawInput task\n");
-}
+
+ESP_LOGI(TAG, "display_manager_init: COMPLETE, free internal RAM: %d bytes", 
+         (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 }
 
 bool display_manager_register_view(View *view) {

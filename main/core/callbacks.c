@@ -104,6 +104,8 @@ static uint32_t peer_gps_stream_tx_fail = 0;
 static uint32_t peer_gps_stream_rx_packets = 0;
 static uint32_t peer_gps_stream_rx_fix_packets = 0;
 static TaskHandle_t peer_gps_stream_task_handle = NULL;
+static StackType_t *peer_gps_stream_stack = NULL;
+static StaticTask_t *peer_gps_stream_tcb = NULL;
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #define BLE_WD_SEEN_SIZE 64
@@ -1921,14 +1923,29 @@ void wardriving_register_stream_handler(void) {
     ESP_LOGI(TAG, "Peer GPS stream handler: %s", gps_ok ? "OK" : "FAIL");
 
     if (peer_gps_stream_task_handle == NULL) {
-        BaseType_t rc = xTaskCreate(peer_gps_stream_task,
-                                    "peer_gps_stream",
-                                    3072,
-                                    NULL,
-                                    3,
-                                    &peer_gps_stream_task_handle);
-        if (rc != pdPASS) {
-            peer_gps_stream_task_handle = NULL;
+        peer_gps_stream_stack = heap_caps_malloc(3072 * sizeof(StackType_t), MALLOC_CAP_SPIRAM);
+        peer_gps_stream_tcb = malloc(sizeof(StaticTask_t));
+        if (peer_gps_stream_stack && peer_gps_stream_tcb) {
+            peer_gps_stream_task_handle = xTaskCreateStatic(
+                peer_gps_stream_task,
+                "peer_gps_stream",
+                3072,
+                NULL,
+                3,
+                peer_gps_stream_stack,
+                peer_gps_stream_tcb);
+            ESP_LOGI(TAG, "Peer GPS stream task stack allocated from PSRAM: %d bytes", 
+                     (int)(3072 * sizeof(StackType_t)));
+        }
+        if (!peer_gps_stream_task_handle) {
+            if (peer_gps_stream_stack) {
+                free(peer_gps_stream_stack);
+                peer_gps_stream_stack = NULL;
+            }
+            if (peer_gps_stream_tcb) {
+                free(peer_gps_stream_tcb);
+                peer_gps_stream_tcb = NULL;
+            }
             ESP_LOGW(TAG, "Peer GPS stream task create failed");
         }
     }

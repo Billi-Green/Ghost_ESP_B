@@ -383,6 +383,9 @@ static void sdmmc_card_print_info(const sdmmc_card_t *card) {
 esp_err_t sd_card_init(void) {
   esp_err_t ret = ESP_FAIL;
 
+  ESP_LOGI(TAG, "sd_card_init: starting, free internal RAM: %d bytes", 
+           (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
   if (!s_sd_log_levels_tuned) {
     esp_log_level_set("sdspi_transaction", ESP_LOG_WARN);
     s_sd_log_levels_tuned = true;
