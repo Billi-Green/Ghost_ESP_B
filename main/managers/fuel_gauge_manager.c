@@ -6,6 +6,8 @@
 #include <string.h>
 #include "esp_pm.h"
 #include "io_manager/i2c_bus_lock.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 #ifdef CONFIG_USE_BQ27220_FUEL_GAUGE
 
@@ -647,6 +649,30 @@ static bool is_initialized = false;
 static bool i2c_initialized_by_us = false;
 static fuel_gauge_data_t last_data = {0};
 static volatile bool s_paused = false;
+static int8_t s_nvs_soc = -1;
+static uint32_t s_last_nvs_save = 0;
+
+#define NVS_NAMESPACE "fuelgauge"
+#define NVS_KEY_SOC    "soc"
+#define NVS_SAVE_INTERVAL_S 60
+
+static void nvs_save_soc(uint8_t soc) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, NVS_KEY_SOC, soc);
+    nvs_commit(h);
+    nvs_close(h);
+    s_nvs_soc = (int8_t)soc;
+}
+
+static int8_t nvs_load_soc(void) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return -1;
+    uint8_t val = 0;
+    esp_err_t err = nvs_get_u8(h, NVS_KEY_SOC, &val);
+    nvs_close(h);
+    return (err == ESP_OK) ? (int8_t)val : -1;
+}
 
 #if CONFIG_PM_ENABLE
 static esp_pm_lock_handle_t fg_i2c_pm_lock = NULL;
@@ -781,34 +807,60 @@ bool fuel_gauge_manager_init(void) {
     }
 
     ESP_LOGI(TAG, "MAX17048 detected, version: 0x%04X", version);
-    
-    // Perform a full software reset to clear any stale ModelGauge data
-    max17048_write_word(MAX17048_REG_CMD, 0x5400);
-    vTaskDelay(pdMS_TO_TICKS(50));
 
-    // Set RCOMP to standard LiPo value (0x97) to stabilize ModelGauge
-    // CONFIG register is at 0x0C. High byte is RCOMP.
-    uint16_t config_reg = max17048_read_word(MAX17048_REG_CONFIG);
-    if (config_reg != 0xFFFF) {
-        uint16_t new_config = (config_reg & 0x00FF) | 0x9700;
-        max17048_write_word(MAX17048_REG_CONFIG, new_config);
+    s_nvs_soc = nvs_load_soc();
+    if (s_nvs_soc >= 0) {
+        ESP_LOGI(TAG, "Loaded SOC from NVS: %d%%", s_nvs_soc);
+    }
+    
+    // Only perform a software reset if the MAX17048 itself experienced a power-on reset.
+    // The POR bit (bit 1 of STATUS register) is set when the chip loses power.
+    // If the ESP resets but the fuel gauge stays powered (e.g. USB still plugged in),
+    // the chip retains its learned ModelGauge state and we should NOT wipe it.
+    uint16_t status = max17048_read_word(MAX17048_REG_STATUS);
+    if (status != 0xFFFF && (status & 0x02)) {
+        ESP_LOGI(TAG, "MAX17048 POR bit set - performing software reset");
+        max17048_write_word(MAX17048_REG_CMD, 0x5400);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    } else {
+        ESP_LOGI(TAG, "MAX17048 POR bit clear - skipping reset (learned data intact)");
+    }
+
+    bool did_reset = (status != 0xFFFF && (status & 0x02));
+
+    if (did_reset) {
+        // Set RCOMP to standard LiPo value (0x97) to stabilize ModelGauge
+        // CONFIG register is at 0x0C. High byte is RCOMP.
+        uint16_t config_reg = max17048_read_word(MAX17048_REG_CONFIG);
+        if (config_reg != 0xFFFF) {
+            uint16_t new_config = (config_reg & 0x00FF) | 0x9700;
+            max17048_write_word(MAX17048_REG_CONFIG, new_config);
+            
+            // Verify write
+            uint16_t verify = max17048_read_word(MAX17048_REG_CONFIG);
+            if ((verify & 0xFF00) == 0x9700) {
+                ESP_LOGI(TAG, "RCOMP set successfully: 0x%04X", verify);
+            } else {
+                ESP_LOGW(TAG, "RCOMP write mismatch! Got: 0x%04X", verify);
+            }
+        }
+
+        // Quick start to update SOC immediately after reset/config
+        uint16_t current_mode = max17048_read_word(MAX17048_REG_MODE);
+        if (current_mode != 0xFFFF) {
+            max17048_write_word(MAX17048_REG_MODE, current_mode | 0x4000); // Set QuickStart bit
+        }
         
-        // Verify write
-        uint16_t verify = max17048_read_word(MAX17048_REG_CONFIG);
-        if ((verify & 0xFF00) == 0x9700) {
-            ESP_LOGI(TAG, "RCOMP set successfully: 0x%04X", verify);
-        } else {
-            ESP_LOGW(TAG, "RCOMP write mismatch! Got: 0x%04X", verify);
+        vTaskDelay(pdMS_TO_TICKS(100));
+
+        // After reset, the chip's SOC is voltage-based and unreliable when plugged in.
+        // Seed last_data from NVS so the hysteresis/smoothing starts from a sane value.
+        if (s_nvs_soc >= 0) {
+            last_data.percentage = (uint8_t)s_nvs_soc;
+            last_data.is_initialized = true;
+            ESP_LOGI(TAG, "Seeding fuel gauge from NVS SOC: %d%%", s_nvs_soc);
         }
     }
-
-    // Quick start to update SOC immediately after reset/config
-    uint16_t current_mode = max17048_read_word(MAX17048_REG_MODE);
-    if (current_mode != 0xFFFF) {
-        max17048_write_word(MAX17048_REG_MODE, current_mode | 0x4000); // Set QuickStart bit
-    }
-    
-    vTaskDelay(pdMS_TO_TICKS(100));
 
     memset(&last_data, 0, sizeof(last_data));
     last_data.is_initialized = true;
@@ -911,6 +963,13 @@ bool fuel_gauge_manager_get_data(fuel_gauge_data_t *data) {
 
     // Update cache
     memcpy(&last_data, data, sizeof(fuel_gauge_data_t));
+
+    // Periodically save SOC to NVS so we survive fuel gauge power loss
+    uint32_t now = xTaskGetTickCount() / configTICK_RATE_HZ;
+    if (now - s_last_nvs_save >= NVS_SAVE_INTERVAL_S) {
+        s_last_nvs_save = now;
+        nvs_save_soc(data->percentage);
+    }
 
     return true;
 }
