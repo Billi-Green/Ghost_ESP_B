@@ -49,10 +49,6 @@ uint32_t theme_palette_get_text_muted(uint8_t theme);
 #define LVGL_TICK_TASK_STACK_SIZE 8192
 
 #ifndef CONFIG_JC3248W535EN_LCD
-static TaskHandle_t lvgl_tick_task_handle = NULL;
-static StackType_t *lvgl_tick_task_stack = NULL;
-static StaticTask_t *lvgl_tick_task_buffer = NULL;
-
 static TaskHandle_t hardware_input_task_handle = NULL;
 static StackType_t *hardware_input_task_stack = NULL;
 static StaticTask_t *hardware_input_task_buffer = NULL;
@@ -1465,21 +1461,10 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 
 
 #ifndef CONFIG_JC3248W535EN_LCD
-    // Allocate LVGL tick task stack from PSRAM
-    lvgl_tick_task_stack = heap_caps_malloc(LVGL_TICK_TASK_STACK_SIZE * sizeof(StackType_t), MALLOC_CAP_SPIRAM);
-    lvgl_tick_task_buffer = malloc(sizeof(StaticTask_t));
-    if (lvgl_tick_task_stack && lvgl_tick_task_buffer) {
-        lvgl_tick_task_handle = xTaskCreateStatic(
-            lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE,
-            NULL, RENDERING_TASK_PRIORITY,
-            lvgl_tick_task_stack, lvgl_tick_task_buffer);
-        ESP_LOGI(TAG, "LVGL tick task stack allocated from PSRAM: %d bytes", 
-                 (int)(LVGL_TICK_TASK_STACK_SIZE * sizeof(StackType_t)));
-    } else {
-        ESP_LOGE(TAG, "Failed to allocate LVGL tick task stack from PSRAM, falling back to internal");
-        xTaskCreate(lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE, NULL,
-                    RENDERING_TASK_PRIORITY, &lvgl_tick_task_handle);
-    }
+    // LVGL tick task - use internal RAM for stability
+    xTaskCreate(lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE, NULL,
+                RENDERING_TASK_PRIORITY, &lvgl_task_handle);
+    ESP_LOGI(TAG, "LVGL tick task stack allocated from internal RAM");
     ESP_LOGI(TAG, "After LVGL task creation, free internal RAM: %d bytes", 
              (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
@@ -1495,6 +1480,10 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
         input_task_handle = hardware_input_task_handle;
     } else {
         ESP_LOGE(TAG, "Failed to allocate hardware input task stack from PSRAM, falling back to internal");
+        if (hardware_input_task_stack) free(hardware_input_task_stack);
+        if (hardware_input_task_buffer) free(hardware_input_task_buffer);
+        hardware_input_task_stack = NULL;
+        hardware_input_task_buffer = NULL;
         if (xTaskCreate(hardware_input_task, "RawInput", 4096, NULL,
                         HARDWARE_INPUT_TASK_PRIORITY, &input_task_handle) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create RawInput task\n");
