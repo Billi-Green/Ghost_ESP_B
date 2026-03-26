@@ -6,6 +6,7 @@
 - Fixed channel_enabled flag not being reset when RMT operations fail
 - Added beacon_spam_broadcast_karma function that uses real AP MAC so BSSID matches probe responses
 - Karma now skips channel hopping when AP has connected clients
+- Fixed crash when opening WebUI File Manager and improved styling 
 
 ## Revival v1.9.7
 
