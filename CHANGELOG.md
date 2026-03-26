@@ -2,7 +2,7 @@
 
 ## Revival v1.9.8
 - Fixed crash on The Wired Hatter's Banshee S3 chip when enabling USB Keyboard caused by running out of input interrupts
-- Banshee C5 internal memory optimisations
+- The Wired Hatter's Banshee C5 internal memory optimisations
 - Fixed channel_enabled flag not being reset when RMT operations fail
 - Added beacon_spam_broadcast_karma function that uses real AP MAC so BSSID matches probe responses
 - Karma now skips channel hopping when AP has connected clients
