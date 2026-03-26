@@ -76,12 +76,12 @@ void music_visualizer_view_update(const uint8_t *amplitudes,
                                   const char *artist_name);
 
 // Defines for Wireshark channel validation
-#if !defined(MAX_WIFI_CHANNEL)
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
 #define MAX_WIFI_CHANNEL 165
+#elif defined(CONFIG_IDF_TARGET_ESP32C6)
+#define MAX_WIFI_CHANNEL 13
 #else
 #define MAX_WIFI_CHANNEL 13
-#endif
 #endif
 
 #define MAX_DEVICES 255
@@ -106,7 +106,7 @@ static volatile bool live_ap_hopping_active = false;
 static uint32_t last_live_print_ms = 0;
 static uint16_t live_last_printed_index = 0;
 
-#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
 static const uint8_t live_ap_channels[] = {
     1,2,3,4,5,6,7,8,9,10,11,12,13,
     36,40,44,48,52,56,60,64,
@@ -1511,21 +1511,8 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     esp_wifi_set_ps(WIFI_PS_NONE);
 
     // be conservative for client compatibility (2.4GHz only, HT20 for max compatibility)
-#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-    {
-        // Dual-band chips in WIFI_BAND_MODE_AUTO require the plural APIs
-        wifi_bandwidths_t bws = { .ghz_2g = WIFI_BW_HT20, .ghz_5g = WIFI_BW_HT20 };
-        (void)esp_wifi_set_bandwidths(WIFI_IF_AP, &bws);
-        wifi_protocols_t p = {
-            .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N,
-            .ghz_5g = WIFI_PROTOCOL_11A | WIFI_PROTOCOL_11N,
-        };
-        (void)esp_wifi_set_protocols(WIFI_IF_AP, &p);
-    }
-#else
     (void)esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
     (void)esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-#endif
     dnsserver.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
     dnsserver.ip.type = ESP_IPADDR_TYPE_V4;
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &ap_config));
@@ -3302,7 +3289,7 @@ static void wireshark_channel_hop_timer_callback(void *arg) {
     // determine if 5ghz or 2.4ghz
     wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
     
-    #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    #if defined(CONFIG_IDF_TARGET_ESP32C5)
     if (channel > 14) {
         // 5ghz channel - use ht40
         second = WIFI_SECOND_CHAN_ABOVE;
@@ -3799,12 +3786,23 @@ static void karma_stop_portal_if_active(void) {
 static void karma_task(void *param) {
     printf("Karma attack started\n");
     TERMINAL_VIEW_ADD_TEXT("Karma attack started\n");
+
+    // Enable promiscuous mode for capturing probe requests
     wifi_promiscuous_filter_t filter = { .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT };
-    esp_wifi_set_promiscuous_filter(&filter);
-    esp_wifi_set_promiscuous(true);
+    esp_err_t err = esp_wifi_set_promiscuous_filter(&filter);
+    if (err != ESP_OK) {
+        printf("Karma: failed to set promiscuous filter: %s\n", esp_err_to_name(err));
+    }
+    err = esp_wifi_set_promiscuous(true);
+    if (err != ESP_OK) {
+        printf("Karma: failed to enable promiscuous mode: %s\n", esp_err_to_name(err));
+    }
     esp_wifi_set_promiscuous_rx_cb(karma_probe_request_callback);
 
     last_ssid_change_time = esp_timer_get_time() / 1000;
+
+    printf("Karma: entering loop, ssid_count=%d, ap_sta_has_ip=%d\n", karma_ssid_count, ap_sta_has_ip);
+    fflush(stdout);
 
     // If only one SSID, set it once and don't rotate
     if (karma_ssid_count == 1) {
@@ -3819,15 +3817,19 @@ static void karma_task(void *param) {
             }
         };
         strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[0], 32);
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-        ESP_ERROR_CHECK(esp_wifi_start());
+        err = esp_wifi_set_mode(WIFI_MODE_AP);
+        if (err != ESP_OK) printf("Karma: set_mode failed: %s\n", esp_err_to_name(err));
+        err = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+        if (err != ESP_OK) printf("Karma: set_config failed: %s\n", esp_err_to_name(err));
+        err = esp_wifi_start();
+        if (err != ESP_OK) printf("Karma: start failed: %s\n", esp_err_to_name(err));
         printf("Karma using single SSID: %s\n", karma_ssid_cache[0]);
         TERMINAL_VIEW_ADD_TEXT("Karma using single SSID: %s\n", karma_ssid_cache[0]);
         karma_start_portal_for_ssid(karma_ssid_cache[0]);
     }
 
     while (karma_running) {
+        printf("Karma: loop start, ssid_count=%d, ap_sta_has_ip=%d\n", karma_ssid_count, ap_sta_has_ip);
         uint32_t now = esp_timer_get_time() / 1000;
         // Only rotate if more than one SSID
         if (!ap_sta_has_ip && karma_ssid_count > 1 && (now - last_ssid_change_time > 5000)) {
@@ -3842,22 +3844,23 @@ static void karma_task(void *param) {
                 }
             };
             strncpy((char *)ap_config.ap.ssid, karma_ssid_cache[karma_ssid_index], 32);
-            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+            err = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+            if (err != ESP_OK) printf("Karma: set_config failed: %s\n", esp_err_to_name(err));
             printf("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
             TERMINAL_VIEW_ADD_TEXT("Karma rotating to SSID: %s\n", karma_ssid_cache[karma_ssid_index]);
             karma_start_portal_for_ssid(karma_ssid_cache[karma_ssid_index]);
             karma_ssid_index = (karma_ssid_index + 1) % karma_ssid_count;
             last_ssid_change_time = now;
         }
-    
+     
         // Send beacon frames for all cached SSIDs (every 500ms)
         if (!ap_sta_has_ip) {
             for (int i = 0; i < karma_ssid_count; ++i) {
-                wifi_manager_broadcast_ap(karma_ssid_cache[i]);
+                beacon_spam_broadcast_karma(karma_ssid_cache[i]);
                 vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between beacons
             }
         }
-    
+     
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     esp_wifi_set_promiscuous(false);
@@ -3877,14 +3880,15 @@ void wifi_manager_start_karma(void) {
         karma_ssid_count = 0;
         karma_ssid_index = 0;
     }
+    karma_running = true;
     BaseType_t rc = xTaskCreate(karma_task, "karma_task", 4096, NULL, 5, &karma_task_handle);
     if (rc != pdPASS) {
         printf("Failed to start Karma task (%ld)\n", (long)rc);
         TERMINAL_VIEW_ADD_TEXT("Failed to start Karma task\n");
+        karma_running = false;
         karma_task_handle = NULL;
         return;
     }
-    karma_running = true;
 }
 
 void wifi_manager_stop_karma(void) {
@@ -3903,10 +3907,17 @@ void wifi_manager_stop_karma(void) {
         vTaskDelay(pdMS_TO_TICKS(100));
         wait_count++;
     }
+
     if (karma_task_handle != NULL) {
         vTaskDelete(karma_task_handle);
         karma_task_handle = NULL;
     }
+    printf("Karma attack stopped\n");
+    TERMINAL_VIEW_ADD_TEXT("Karma attack stopped\n");
+}
+
+bool wifi_manager_karma_is_running(void) {
+    return karma_running;
 }
 
 // rssi tracking for selected ap and sta
