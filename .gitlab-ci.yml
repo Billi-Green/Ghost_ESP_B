@@ -1,3 +1,22 @@
+spec:
+  inputs:
+    buildType:
+      description: "Select the build type"
+      options:
+        - "build-only"
+        - "prerelease"
+        - "all"
+      default: "build-only"
+    releaseVersion:
+      description: "Release tag (e.g. v1.7.2). Leave empty to auto-generate"
+      type: string
+      default: ""
+    releaseName:
+      description: "Release name (e.g. 'Bug Fix Release'). Leave empty for auto-generated"
+      type: string
+      default: ""
+
+---
 stages:
   - build
   - manifest
@@ -10,7 +29,7 @@ workflow:
     - when: always
 
 variables:
-  IDF_DOCKER_TAG: "release-v5.5.3"
+  IDF_DOCKER_TAG: "v5.5.3"
 
 build:
   stage: build
@@ -311,6 +330,8 @@ create_prerelease:
     - for f in *.zip; do [ -f "$f" ] && cp "$f" release_assets/; done
     - ls -lh release_assets
     - |
+      RELEASE_VERSION="$[[ inputs.releaseVersion ]]"
+      RELEASE_NAME="$[[ inputs.releaseName ]]"
       if [ -n "$RELEASE_VERSION" ]; then TAG_NAME="$RELEASE_VERSION"; else TAG_NAME="prerelease-$(date +'%Y%m%d-%H%M%S')-${CI_COMMIT_SHA:0:7}"; fi
       if [ -n "$RELEASE_NAME" ]; then TITLE="$RELEASE_NAME"; elif [ -n "$RELEASE_VERSION" ]; then TITLE="Release $TAG_NAME"; else TITLE="Pre-release $(date +'%Y-%m-%d %H:%M:%S')"; fi
       echo "TAG_NAME=$TAG_NAME" >> build.env
@@ -435,7 +456,7 @@ create_prerelease:
     reports:
       dotenv: build.env
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web" && $BUILD_TYPE == "prerelease"
+    - if: $CI_PIPELINE_SOURCE == "web" && "$[[ inputs.buildType ]]" == "prerelease"
       when: manual
 
 create_release:
@@ -452,6 +473,8 @@ create_release:
     - for f in *.zip; do [ -f "$f" ] && cp "$f" release_assets/; done
     - ls -lh release_assets
     - |
+      RELEASE_VERSION="$[[ inputs.releaseVersion ]]"
+      RELEASE_NAME="$[[ inputs.releaseName ]]"
       if [ -n "$RELEASE_VERSION" ]; then TAG_NAME="$RELEASE_VERSION"; else TAG_NAME="v$(date +'%Y.%m.%d')-${CI_COMMIT_SHA:0:7}"; fi
       if [ -n "$RELEASE_NAME" ]; then TITLE="$RELEASE_NAME"; elif [ -n "$RELEASE_VERSION" ]; then TITLE="Release $TAG_NAME"; else TITLE="Release $(date +'%Y-%m-%d %H:%M:%S')"; fi
       echo "TAG_NAME=$TAG_NAME" >> build.env
@@ -576,5 +599,5 @@ create_release:
     reports:
       dotenv: build.env
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web" && $BUILD_TYPE == "all"
+    - if: $CI_PIPELINE_SOURCE == "web" && "$[[ inputs.buildType ]]" == "all"
       when: manual
