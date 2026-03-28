@@ -449,7 +449,7 @@ create_prerelease:
           config=Config(signature_version="s3v4"),
       )
       bucket = os.environ["R2_BUCKET"]
-      tag = os.environ["TAG_NAME"]
+      tag = os.environ["TAG"]
 
       for zip_path in sorted(glob.glob("release_assets/*.zip")):
           key = f"releases/{tag}/{os.path.basename(zip_path)}"
@@ -625,7 +625,7 @@ create_release:
           config=Config(signature_version="s3v4"),
       )
       bucket = os.environ["R2_BUCKET"]
-      tag = os.environ["TAG_NAME"]
+      tag = os.environ["TAG"]
 
       for zip_path in sorted(glob.glob("release_assets/*.zip")):
           key = f"releases/{tag}/{os.path.basename(zip_path)}"
