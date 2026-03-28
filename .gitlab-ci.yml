@@ -196,7 +196,9 @@ build:
   script:
     - . $IDF_PATH/export.sh
     - sed -i 's/#if FF_USE_DYN_BUFFER/#if !FF_FS_TINY \&\& FF_USE_DYN_BUFFER/' $IDF_PATH/components/fatfs/src/ff.c
+    - rm -f sdkconfig sdkconfig.defaults
     - cp $SDKCONFIG_FILE sdkconfig.defaults
+    - cp $SDKCONFIG_FILE sdkconfig
     - export IDF_TARGET=$IDF_TARGET
     - export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
     - idf.py clean

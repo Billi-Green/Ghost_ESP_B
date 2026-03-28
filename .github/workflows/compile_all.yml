@@ -111,7 +111,10 @@ jobs:
           sed -i 's/#if FF_USE_DYN_BUFFER/#if !FF_FS_TINY \&\& FF_USE_DYN_BUFFER/' ~/esp-idf/components/fatfs/src/ff.c
 
       - name: Apply Custom SDK Config
-        run: cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
+        run: |
+          rm -f sdkconfig sdkconfig.defaults
+          cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
+          cp "${{ matrix.target.sdkconfig_file }}" sdkconfig
 
       - name: Set up ESP-IDF Environment
         run: |
