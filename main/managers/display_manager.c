@@ -34,7 +34,7 @@
 #include "core/serial_manager.h"
 #include "managers/wifi_manager.h"
 #include "managers/rgb_manager.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "soc/soc_caps.h"
 #include "io_manager/i2c_bus_lock.h"
 #ifdef CONFIG_USE_IO_EXPANDER
@@ -52,6 +52,9 @@ uint32_t theme_palette_get_text_muted(uint8_t theme);
 static TaskHandle_t hardware_input_task_handle = NULL;
 static StackType_t *hardware_input_task_stack = NULL;
 static StaticTask_t *hardware_input_task_buffer = NULL;
+#ifdef CONFIG_USE_TDISPLAY_S3
+static i2c_master_bus_handle_t s_touch_i2c_bus = NULL;
+#endif
 #endif
 
 #ifdef CONFIG_USE_CARDPUTER
@@ -268,7 +271,7 @@ static void invert_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
     
     screen_mirror_send_area(area, color_p);
     
-#ifdef CONFIG_USE_CARDPUTER
+#if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
     m5stack_lvgl_render_callback(drv, area, color_p);
 #elif defined(CONFIG_USE_TDISPLAY_S3)
     i80_display_flush_cb(drv, area, color_p);
@@ -1232,31 +1235,31 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   // Initialize I2C driver for touch functionality
 #ifdef CONFIG_USE_TDISPLAY_S3
   ESP_LOGI(TAG, "Initializing I2C for touch functionality");
-  i2c_config_t i2c_config = {
-    .mode = I2C_MODE_MASTER,
-    .sda_io_num = 18,  // TDisplay S3 I2C SDA pin
-    .scl_io_num = 17,  // TDisplay S3 I2C SCL pin
-    .sda_pullup_en = GPIO_PULLUP_ENABLE,
-    .scl_pullup_en = GPIO_PULLUP_ENABLE,
-    .master.clk_speed = 100000,  // Standard I2C speed for CST816
-  };
-  esp_err_t i2c_ret = i2c_param_config(I2C_NUM_0, &i2c_config);
+  esp_err_t i2c_ret = i2c_master_get_bus_handle(I2C_NUM_0, &s_touch_i2c_bus);
+  if (i2c_ret == ESP_ERR_NOT_FOUND) {
+    i2c_master_bus_config_t i2c_config = {
+      .i2c_port = I2C_NUM_0,
+      .sda_io_num = 18,
+      .scl_io_num = 17,
+      .clk_source = I2C_CLK_SRC_DEFAULT,
+      .glitch_ignore_cnt = 7,
+      .intr_priority = 0,
+      .trans_queue_depth = 0,
+      .flags.enable_internal_pullup = true,
+    };
+    i2c_ret = i2c_new_master_bus(&i2c_config, &s_touch_i2c_bus);
+  }
   if (i2c_ret == ESP_OK) {
-    i2c_ret = i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
-    if (i2c_ret == ESP_OK) {
-      ESP_LOGI(TAG, "I2C driver initialized successfully");
-    } else {
-      ESP_LOGE(TAG, "Failed to install I2C driver: %s", esp_err_to_name(i2c_ret));
-    }
+    ESP_LOGI(TAG, "I2C bus ready for touch functionality");
   } else {
-    ESP_LOGE(TAG, "Failed to configure I2C parameters: %s", esp_err_to_name(i2c_ret));
+    ESP_LOGE(TAG, "Failed to initialize touch I2C bus: %s", esp_err_to_name(i2c_ret));
   }
 #endif
   ESP_LOGI(TAG, "display_manager: initializing LVGL...");
   lv_init();
   ESP_LOGI(TAG, "display_manager: LVGL core init done, free internal RAM: %d bytes", 
            (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-#ifdef CONFIG_USE_CARDPUTER
+#if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   init_m5gfx_display();
 #elif defined(CONFIG_USE_TDISPLAY_S3)
   esp_err_t ret = i80_display_init();
@@ -1290,7 +1293,7 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
            (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   /* Determine display resolution */
-#ifdef CONFIG_USE_CARDPUTER
+#if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   int width = get_m5gfx_width();
   int height = get_m5gfx_height();
 #elif defined(CONFIG_USE_TDISPLAY_S3)
@@ -1303,7 +1306,7 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 
   static lv_disp_draw_buf_t disp_buf;
 /* Initialize draw buffer: prefer single-buffer on cardputer, ESP32, and ESP32-C5 */
-#if defined(CONFIG_USE_CARDPUTER)
+#if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   /* single buffer mode: small buffer for low-memory cardputer */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 2);
 #elif defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32S2)
@@ -1631,6 +1634,9 @@ void set_backlight_brightness(uint8_t percentage) {
 #elif defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
     if (CONFIG_LV_DISP_PIN_BCKL >= 0) {
         uint32_t duty = (percentage * ((1 << LEDC_TIMER_10_BIT) - 1)) / 100;
+#if !defined(CONFIG_LV_BACKLIGHT_ACTIVE_LVL)
+        duty = ((1 << LEDC_TIMER_10_BIT) - 1) - duty;
+#endif
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
     } else {
@@ -1687,10 +1693,10 @@ void set_backlight_brightness(uint8_t percentage) {
         {
             if (!wifi_manager_is_evil_portal_active()) {
                 wifi_config_t cfg;
-                if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
                     original_beacon_interval = cfg.ap.beacon_interval;
                     cfg.ap.beacon_interval = 1000;
-                    esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+                    esp_wifi_set_config(WIFI_IF_AP, &cfg);
                 }
                 esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
             }
@@ -1717,9 +1723,9 @@ void set_backlight_brightness(uint8_t percentage) {
             if (!wifi_manager_is_evil_portal_active()) {
                 esp_wifi_set_ps(WIFI_PS_NONE);
                 wifi_config_t cfg;
-                if (esp_wifi_get_config(ESP_IF_WIFI_AP, &cfg) == ESP_OK) {
+                if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
                     cfg.ap.beacon_interval = original_beacon_interval;
-                    esp_wifi_set_config(ESP_IF_WIFI_AP, &cfg);
+                    esp_wifi_set_config(WIFI_IF_AP, &cfg);
                 }
             }
         }

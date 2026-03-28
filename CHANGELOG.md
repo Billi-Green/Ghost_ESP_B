@@ -1,8 +1,11 @@
 # Ghost ESP Changelog
 
 ## Revival v1.9.8
+- Migrated project to ESP-IDF v6.0
 - Fixed crash on The Wired Hatter's Banshee S3 chip when enabling USB Keyboard caused by running out of input interrupts
 - The Wired Hatter's Banshee C5 internal memory optimisations
+- Improved The Wired Hatter's fuel gauge handling
+- Potentially fixed issue where the C5 on the Banshee would run out of DMA
 - Fixed channel_enabled flag not being reset when RMT operations fail
 - Added beacon_spam_broadcast_karma function that uses real AP MAC so BSSID matches probe responses
 - Karma now skips channel hopping when AP has connected clients

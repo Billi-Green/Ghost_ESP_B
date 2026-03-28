@@ -1,7 +1,6 @@
 #include "managers/sd_card_manager.h"
 #include "core/utils.h"
 #include "driver/gpio.h"
-#include "driver/i2c.h"
 #include "driver/sdmmc_defs.h"
 #include "driver/sdmmc_host.h"
 #include "driver/sdmmc_types.h"

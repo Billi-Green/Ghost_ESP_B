@@ -54,7 +54,7 @@ static const char* nfc_get_detected_title(void);
 #include "freertos/task.h"
 #ifdef CONFIG_NFC_PN532
 #include "pn532.h"
-#include "driver/i2c.h"
+#include "driver/i2c_types.h"
 #include "pn532_driver.h"
 #include "pn532_driver_i2c.h"
 #endif

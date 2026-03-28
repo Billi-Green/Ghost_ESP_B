@@ -28,8 +28,8 @@
 static inline bool is_packet_valid(const wifi_promiscuous_pkt_t *pkt, wifi_promiscuous_pkt_type_t type);
 static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8_t target_channel);
 
-#define STORE_STR_ATTR __attribute__((section(".rodata.str")))
-#define STORE_DATA_ATTR __attribute__((section(".rodata.data")))
+#define STORE_STR_ATTR
+#define STORE_DATA_ATTR
 #define WPS_OUI 0x0050f204
 #define TAG "WIFI_MONITOR"
 #define WPS_CONF_METHODS_PBC 0x0080

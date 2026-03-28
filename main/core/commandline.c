@@ -60,8 +60,9 @@
 #include <time.h>
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#include "mbedtls/private/entropy.h"
+#include "mbedtls/private/ctr_drbg.h"
 #include "mbedtls/error.h"
 
 // Forward declaration - esp_netif_get_netif_impl is not in public API but exists internally
@@ -3203,32 +3204,16 @@ void handle_eth_http_cmd(int argc, char **argv) {
         // HTTPS using mbedTLS
         // Use static contexts to reduce stack usage (mbedTLS contexts are very large ~5KB+)
         // Since this is a synchronous command handler, static is safe
-        static mbedtls_entropy_context entropy;
-        static mbedtls_ctr_drbg_context ctr_drbg;
         static mbedtls_net_context server_fd;
         static mbedtls_ssl_context ssl;
         static mbedtls_ssl_config conf;
         static bool tls_initialized = false;
-        const char *pers = "ghost_esp_https";
 
         // Initialize contexts (only once, reuse for subsequent calls)
         if (!tls_initialized) {
-            mbedtls_entropy_init(&entropy);
-            mbedtls_ctr_drbg_init(&ctr_drbg);
             mbedtls_net_init(&server_fd);
             mbedtls_ssl_init(&ssl);
             mbedtls_ssl_config_init(&conf);
-            if (mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-                                      (const unsigned char *)pers, strlen(pers)) != 0) {
-                glog("mbedTLS RNG seed failed\n");
-                mbedtls_ssl_config_free(&conf);
-                mbedtls_ssl_free(&ssl);
-                mbedtls_net_free(&server_fd);
-                mbedtls_ctr_drbg_free(&ctr_drbg);
-                mbedtls_entropy_free(&entropy);
-                status_display_show_status("TLS Init Fail");
-                return;
-            }
             tls_initialized = true;
         } else {
             // Clean up previous connection state and reinit
@@ -3256,7 +3241,6 @@ void handle_eth_http_cmd(int argc, char **argv) {
 
         // Set authmode to optional (skip certificate verification for simplicity)
         mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
-        mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
         mbedtls_ssl_conf_read_timeout(&conf, 10000); // 10 second timeout
 
         // Setup SSL
@@ -3309,8 +3293,6 @@ void handle_eth_http_cmd(int argc, char **argv) {
                 glog("TLS handshake failed: -0x%04x - %s\n", -ret, error_buf);
                 mbedtls_ssl_free(&ssl);
                 mbedtls_ssl_config_free(&conf);
-                mbedtls_ctr_drbg_free(&ctr_drbg);
-                mbedtls_entropy_free(&entropy);
                 mbedtls_net_free(&server_fd);
                 tls_initialized = false;
                 status_display_show_status("TLS Handshake Fail");

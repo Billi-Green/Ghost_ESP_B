@@ -29,7 +29,7 @@ workflow:
     - when: always
 
 variables:
-  IDF_DOCKER_TAG: "v5.5.3"
+  IDF_DOCKER_TAG: "release-v6.0"
   R2_ENDPOINT: "https://2c8b11c572ea0e7bbc6ac6f5a87d81c8.r2.cloudflarestorage.com"
   R2_BUCKET: "ghostesp-releases"
   R2_CDN_URL: "https://cdn.arcdatabase.net"

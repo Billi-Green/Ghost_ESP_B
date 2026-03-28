@@ -53,12 +53,13 @@
 #include "core/commandline.h"
 #include "freertos/task.h"
 #include "freertos/portmacro.h"
-#include "mbedtls/ecp.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/sha256.h"
-#include "mbedtls/hmac_drbg.h"
-#include "mbedtls/bignum.h"
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#include "mbedtls/private/ecp.h"
+#include "mbedtls/private/ctr_drbg.h"
+#include "mbedtls/private/entropy.h"
+#include "mbedtls/private/sha256.h"
+#include "mbedtls/private/hmac_drbg.h"
+#include "mbedtls/private/bignum.h"
 #include "core/serial_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/status_display_manager.h"
@@ -1511,11 +1512,11 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     esp_wifi_set_ps(WIFI_PS_NONE);
 
     // be conservative for client compatibility (2.4GHz only, HT20 for max compatibility)
-    (void)esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+    (void)esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
     (void)esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
     dnsserver.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
     dnsserver.ip.type = ESP_IPADDR_TYPE_V4;
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &ap_config));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     esp_err_t start_err = esp_wifi_start();
     if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_NOT_STARTED) {
         ESP_LOGE(TAG, "portal start: esp_wifi_start failed: %s", esp_err_to_name(start_err));
@@ -3105,7 +3106,7 @@ void wifi_manager_connect_wifi(const char *ssid, const char *password) {
         return;
     }
 
-    err = esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config);
+    err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     if (err != ESP_OK) {
         printf("Failed to configure STA: %s\n", esp_err_to_name(err));
         TERMINAL_VIEW_ADD_TEXT("Failed to configure WiFi\n");
