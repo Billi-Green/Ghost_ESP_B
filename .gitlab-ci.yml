@@ -30,6 +30,9 @@ workflow:
 
 variables:
   IDF_DOCKER_TAG: "v5.5.3"
+  R2_ENDPOINT: "https://2c8b11c572ea0e7bbc6ac6f5a87d81c8.r2.cloudflarestorage.com"
+  R2_BUCKET: "ghostesp-releases"
+  R2_CDN_URL: "https://cdn.arcdatabase.net"
 
 build:
   stage: build
@@ -324,7 +327,8 @@ create_prerelease:
   variables:
     GIT_DEPTH: 0
   before_script:
-    - apt-get update && apt-get install -y git curl
+    - apt-get update && apt-get install -y git curl python3-pip
+    - pip3 install boto3 --break-system-packages
   script:
     - mkdir -p release_assets
     - for f in *.zip; do [ -f "$f" ] && cp "$f" release_assets/; done
@@ -334,8 +338,8 @@ create_prerelease:
       RELEASE_NAME="$[[ inputs.releaseName ]]"
       if [ -n "$RELEASE_VERSION" ]; then TAG_NAME="$RELEASE_VERSION"; else TAG_NAME="prerelease-$(date +'%Y%m%d-%H%M%S')-${CI_COMMIT_SHA:0:7}"; fi
       if [ -n "$RELEASE_NAME" ]; then TITLE="$RELEASE_NAME"; elif [ -n "$RELEASE_VERSION" ]; then TITLE="Release $TAG_NAME"; else TITLE="Pre-release $(date +'%Y-%m-%d %H:%M:%S')"; fi
-      echo "TAG_NAME=$TAG_NAME" >> build.env
-      echo "RELEASE_TITLE=$TITLE" >> build.env
+      echo "TAG_NAME='$TAG_NAME'" >> build.env
+      echo "RELEASE_TITLE='$TITLE'" >> build.env
       echo "Generated Tag: $TAG_NAME"
       echo "Generated Title: $TITLE"
     - source build.env
@@ -350,6 +354,7 @@ create_prerelease:
 
       project_path = os.environ["CI_PROJECT_PATH"]
       project_url = os.environ["CI_PROJECT_URL"]
+      cdn_base = os.environ.get("R2_CDN_URL", "")
       tag = os.environ["TAG"]
       channel = os.environ["CHANNEL"]
       sha = os.environ["CI_COMMIT_SHA"]
@@ -375,14 +380,19 @@ create_prerelease:
       for zip_path in sorted(glob.glob("release_assets/*.zip")):
           zip_name = os.path.basename(zip_path)
           stem = Path(zip_name).stem
-          download_url = f"{project_url}/-/packages/generic/ghost-esp/{tag}/{zip_name}"
-          items.append({
+          gitlab_url = f"{project_url}/-/packages/generic/ghost-esp/{tag}/{zip_name}"
+          cdn_url = f"{cdn_base}/releases/{tag}/{zip_name}" if cdn_base else None
+          item = {
               "config": stem,
               "zip_name": zip_name,
               "channel": channel,
               "release_tag": tag,
-              "download_url": download_url,
-          })
+              "download_url": cdn_url or gitlab_url,
+              "mirrors": [],
+          }
+          if cdn_url:
+              item["mirrors"].append({"label": "GitLab", "url": gitlab_url})
+          items.append(item)
 
       commits = manifest.setdefault("commits", {})
       entry = commits.get(sha, {})
@@ -417,13 +427,39 @@ create_prerelease:
       fi
     - |
       source build.env
+      echo "Uploading to GitLab packages..."
       for zip in release_assets/*.zip; do
         zip_name=$(basename "$zip")
-        echo "Uploading $zip_name..."
+        echo "  Uploading $zip_name to GitLab..."
         curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
              --upload-file "$zip" \
-             "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ghost-esp/${TAG_NAME}/${zip_name}" || echo "Warning: Upload failed for $zip_name"
+             "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ghost-esp/${TAG_NAME}/${zip_name}" || echo "Warning: GitLab upload failed for $zip_name"
       done
+    - |
+      source build.env
+      echo "Uploading to Cloudflare R2..."
+      python3 << 'PY'
+      import glob, os, boto3
+      from botocore.config import Config
+
+      s3 = boto3.client("s3",
+          endpoint_url=os.environ["R2_ENDPOINT"],
+          aws_access_key_id=os.environ["R2_ACCESS_KEY"],
+          aws_secret_access_key=os.environ["R2_SECRET_KEY"],
+          config=Config(signature_version="s3v4"),
+      )
+      bucket = os.environ["R2_BUCKET"]
+      tag = os.environ["TAG_NAME"]
+
+      for zip_path in sorted(glob.glob("release_assets/*.zip")):
+          key = f"releases/{tag}/{os.path.basename(zip_path)}"
+          print(f"  Uploading {os.path.basename(zip_path)} -> {key}")
+          s3.upload_file(zip_path, bucket, key)
+
+      manifest_key = f"manifests/prerelease.json"
+      s3.upload_file("firmware-manifest.json", bucket, manifest_key, ExtraArgs={"ContentType": "application/json"})
+      print(f"  Uploaded manifest -> {manifest_key}")
+      PY
     - |
       source build.env
       ASSETS_JSON="["
@@ -467,7 +503,8 @@ create_release:
   variables:
     GIT_DEPTH: 0
   before_script:
-    - apt-get update && apt-get install -y git curl
+    - apt-get update && apt-get install -y git curl python3-pip
+    - pip3 install boto3 --break-system-packages
   script:
     - mkdir -p release_assets
     - for f in *.zip; do [ -f "$f" ] && cp "$f" release_assets/; done
@@ -477,8 +514,8 @@ create_release:
       RELEASE_NAME="$[[ inputs.releaseName ]]"
       if [ -n "$RELEASE_VERSION" ]; then TAG_NAME="$RELEASE_VERSION"; else TAG_NAME="v$(date +'%Y.%m.%d')-${CI_COMMIT_SHA:0:7}"; fi
       if [ -n "$RELEASE_NAME" ]; then TITLE="$RELEASE_NAME"; elif [ -n "$RELEASE_VERSION" ]; then TITLE="Release $TAG_NAME"; else TITLE="Release $(date +'%Y-%m-%d %H:%M:%S')"; fi
-      echo "TAG_NAME=$TAG_NAME" >> build.env
-      echo "RELEASE_TITLE=$TITLE" >> build.env
+      echo "TAG_NAME='$TAG_NAME'" >> build.env
+      echo "RELEASE_TITLE='$TITLE'" >> build.env
       echo "Generated Tag: $TAG_NAME"
       echo "Generated Title: $TITLE"
     - source build.env
@@ -493,6 +530,7 @@ create_release:
 
       project_path = os.environ["CI_PROJECT_PATH"]
       project_url = os.environ["CI_PROJECT_URL"]
+      cdn_base = os.environ.get("R2_CDN_URL", "")
       tag = os.environ["TAG"]
       channel = os.environ["CHANNEL"]
       sha = os.environ["CI_COMMIT_SHA"]
@@ -518,14 +556,19 @@ create_release:
       for zip_path in sorted(glob.glob("release_assets/*.zip")):
           zip_name = os.path.basename(zip_path)
           stem = Path(zip_name).stem
-          download_url = f"{project_url}/-/packages/generic/ghost-esp/{tag}/{zip_name}"
-          items.append({
+          gitlab_url = f"{project_url}/-/packages/generic/ghost-esp/{tag}/{zip_name}"
+          cdn_url = f"{cdn_base}/releases/{tag}/{zip_name}" if cdn_base else None
+          item = {
               "config": stem,
               "zip_name": zip_name,
               "channel": channel,
               "release_tag": tag,
-              "download_url": download_url,
-          })
+              "download_url": cdn_url or gitlab_url,
+              "mirrors": [],
+          }
+          if cdn_url:
+              item["mirrors"].append({"label": "GitLab", "url": gitlab_url})
+          items.append(item)
 
       commits = manifest.setdefault("commits", {})
       entry = commits.get(sha, {})
@@ -560,13 +603,39 @@ create_release:
       fi
     - |
       source build.env
+      echo "Uploading to GitLab packages..."
       for zip in release_assets/*.zip; do
         zip_name=$(basename "$zip")
-        echo "Uploading $zip_name..."
+        echo "  Uploading $zip_name to GitLab..."
         curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
              --upload-file "$zip" \
-             "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ghost-esp/${TAG_NAME}/${zip_name}" || echo "Warning: Upload failed for $zip_name"
+             "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ghost-esp/${TAG_NAME}/${zip_name}" || echo "Warning: GitLab upload failed for $zip_name"
       done
+    - |
+      source build.env
+      echo "Uploading to Cloudflare R2..."
+      python3 << 'PY'
+      import glob, os, boto3
+      from botocore.config import Config
+
+      s3 = boto3.client("s3",
+          endpoint_url=os.environ["R2_ENDPOINT"],
+          aws_access_key_id=os.environ["R2_ACCESS_KEY"],
+          aws_secret_access_key=os.environ["R2_SECRET_KEY"],
+          config=Config(signature_version="s3v4"),
+      )
+      bucket = os.environ["R2_BUCKET"]
+      tag = os.environ["TAG_NAME"]
+
+      for zip_path in sorted(glob.glob("release_assets/*.zip")):
+          key = f"releases/{tag}/{os.path.basename(zip_path)}"
+          print(f"  Uploading {os.path.basename(zip_path)} -> {key}")
+          s3.upload_file(zip_path, bucket, key)
+
+      manifest_key = f"manifests/stable.json"
+      s3.upload_file("firmware-manifest.json", bucket, manifest_key, ExtraArgs={"ContentType": "application/json"})
+      print(f"  Uploaded manifest -> {manifest_key}")
+      PY
     - |
       source build.env
       ASSETS_JSON="["
