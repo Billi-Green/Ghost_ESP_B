@@ -211,6 +211,15 @@ build:
     - printf "\n# CONFIG_FATFS_USE_DYN_BUFFERS is not set\n" >> sdkconfig
     - printf "\n# CONFIG_ESP_GDBSTUB_ENABLED is not set\n" >> sdkconfig.defaults
     - printf "\n# CONFIG_ESP_GDBSTUB_ENABLED is not set\n" >> sdkconfig
+    - python3 - <<'PY'
+      import pathlib
+      import os
+      p = pathlib.Path(os.environ["IDF_PATH"]) / "components/esp_gdbstub/src/gdbstub.c"
+      s = p.read_text(encoding="utf-8")
+      needle = "#if (CONFIG_ESP_SYSTEM_GDBSTUB_RUNTIME || CONFIG_ESP_GDBSTUB_SUPPORT_TASKS)"
+      s = s.replace(needle, "#if 1")
+      p.write_text(s, encoding="utf-8")
+      PY
     - export IDF_TARGET=$IDF_TARGET
     - export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
     - idf.py clean
