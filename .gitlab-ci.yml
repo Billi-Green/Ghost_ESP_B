@@ -209,6 +209,8 @@ build:
     - cp $SDKCONFIG_FILE sdkconfig
     - printf "\n# CONFIG_FATFS_USE_DYN_BUFFERS is not set\n" >> sdkconfig.defaults
     - printf "\n# CONFIG_FATFS_USE_DYN_BUFFERS is not set\n" >> sdkconfig
+    - printf "\n# CONFIG_ESP_GDBSTUB_ENABLED is not set\n" >> sdkconfig.defaults
+    - printf "\n# CONFIG_ESP_GDBSTUB_ENABLED is not set\n" >> sdkconfig
     - export IDF_TARGET=$IDF_TARGET
     - export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
     - idf.py clean
