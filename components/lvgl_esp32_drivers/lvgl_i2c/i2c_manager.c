@@ -154,9 +154,19 @@ static esp_err_t i2c_manager_add_device(i2c_port_num_t port, uint16_t addr, i2c_
         return ESP_ERR_INVALID_ARG;
     }
 
+    i2c_addr_bit_len_t addr_len = I2C_ADDR_BIT_LEN_7;
+    uint16_t device_addr = addr;
+
+#ifdef I2C_ADDR_BIT_LEN_10
+    if (addr & I2C_ADDR_10) {
+        addr_len = I2C_ADDR_BIT_LEN_10;
+        device_addr = addr & 0x3FF;
+    }
+#endif
+
     i2c_device_config_t dev_config = {
-        .dev_addr_length = (addr & I2C_ADDR_10) ? I2C_ADDR_BIT_LEN_10 : I2C_ADDR_BIT_LEN_7,
-        .device_address = (addr & I2C_ADDR_10) ? (addr & 0x3FF) : addr,
+        .dev_addr_length = addr_len,
+        .device_address = device_addr,
         .scl_speed_hz = i2c_port_speed(port),
         .scl_wait_us = 0,
     };
