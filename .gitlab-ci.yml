@@ -201,6 +201,7 @@ build:
         SDKCONFIG_FILE: "configs/sdkconfig.ACE_S3"
         ZIP_NAME: "ACE_S3.zip"
   script:
+    - $IDF_PATH/install.sh
     - . $IDF_PATH/export.sh
     - sed -i 's/#if FF_USE_DYN_BUFFER/#if !FF_FS_TINY \&\& FF_USE_DYN_BUFFER/' $IDF_PATH/components/fatfs/src/ff.c
     - rm -f sdkconfig sdkconfig.defaults
