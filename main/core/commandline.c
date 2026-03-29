@@ -75,6 +75,8 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
