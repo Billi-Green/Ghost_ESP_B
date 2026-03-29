@@ -38,7 +38,14 @@ build:
   stage: build
   image: espressif/idf:${IDF_DOCKER_TAG}
   before_script:
-    - apt-get update && apt-get install -y zip
+    - apt-get update && apt-get install -y zip software-properties-common gnupg
+    - add-apt-repository -y ppa:deadsnakes/ppa
+    - apt-get update && apt-get install -y python3.11 python3.11-venv python3.11-distutils
+    - mkdir -p .ci-bin
+    - ln -sf "$(command -v python3.11)" .ci-bin/python3
+    - export PATH="$CI_PROJECT_DIR/.ci-bin:$PATH"
+    - export IDF_PYTHON_ENV_PATH="$CI_PROJECT_DIR/.idf-python-env"
+    - python3 --version
   parallel:
     matrix:
       - TARGET_NAME: "esp32-generic"
