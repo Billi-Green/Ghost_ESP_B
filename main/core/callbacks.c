@@ -2477,8 +2477,8 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        /* sanity checks: ensure IE length is reasonable and within bounds */
-        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length fits within bounds */
+        if (index + 2 + ie_len > len) {
             return;
         }
 
@@ -2818,7 +2818,9 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
 
     const uint8_t *payload = pkt->payload;
     int len = pkt->rx_ctrl.sig_len;
@@ -2830,7 +2832,6 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     int index = 36;
     char ssid[33] = {0};
-    bool wps_found = false;
     uint8_t bssid[6];
     memcpy(bssid, hdr->addr3, 6);
 
@@ -2838,8 +2839,8 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        /* sanity checks: ensure IE length is reasonable and within bounds */
-        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length fits within bounds */
+        if (index + 2 + ie_len > len) {
             break;
         }
 
@@ -2859,8 +2860,6 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             uint8_t oui_type = payload[index + 5];
 
             if (oui == 0x0050f2 && oui_type == 0x04) {
-                wps_found = true;
-
                 int attr_index = index + 6;
                 int wps_ie_end = index + 2 + ie_len;
 
