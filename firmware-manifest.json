@@ -11539,6 +11539,327 @@
       "source_commit": "a2b2f7cf22a0ff07b68455b30cc18e664d371e56",
       "updated_at": "2026-03-08T08:59:26.953203+00:00"
     },
+    "c1ee860fb0339289a1bb4c957d5261de861d694c": {
+      "configs": [
+        {
+          "channel": "commit",
+          "config": "ACE_C5",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ACE_C5.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "ACE_S3",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ACE_S3.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "AwokMini",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/AwokMini.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Banshee_C5",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Banshee_C5.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Banshee_S3",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Banshee_S3.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2432S028R",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2432S028R.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2USB",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2USB.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2USB2.4Inch.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2USB2.4Inch_C.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYDDualUSB",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYDDualUSB.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYDMicroUSB",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYDMicroUSB.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CardputerADV",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CardputerADV.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Crowtech_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Crowtech_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ESP32-S3-Cardputer.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "FeberisPro",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/FeberisPro.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Flipper_JCMK_GPS.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "HeltecV3",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/HeltecV3.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/JC3248W535EN_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/JCMK_DevBoardPro.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-S3TWatch-2020.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-T-Deck.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-TDisplayS3-Touch.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-TEmbedC1101.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Lolin_S3_Pro.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/MarauderV4_FlipperHub.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/MarauderV6_AwokDual.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Poltergeist",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Poltergeist.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/RabbitLabs_Minion.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Sunton_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Sunton_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Waveshare_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Waveshare_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32c3-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32c3-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32c5-generic-v01.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32c6-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32c6-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32s2-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32s2-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32s3-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32s3-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32v5_awok",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32v5_awok.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "ghostboard",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ghostboard.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ghostboard.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "presskit",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/presskit.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "presskit.zip"
+        }
+      ],
+      "last_channel": "commit",
+      "last_tag": null,
+      "release_refs": [],
+      "source_commit": "c1ee860fb0339289a1bb4c957d5261de861d694c",
+      "updated_at": "2026-03-29T12:38:16.948317+00:00"
+    },
     "d158e531da6f3d5beee6ef13ee1301dbd05a3f45": {
       "configs": [
         {
@@ -15636,5 +15957,5 @@
   "generated_by": "compile_all.yml",
   "repository": "fyoudeki/ghostesp",
   "schema_version": 2,
-  "updated_at": "2026-03-28T05:19:40.009404+00:00"
+  "updated_at": "2026-03-29T12:38:16.948317+00:00"
 }
