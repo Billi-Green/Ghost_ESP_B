@@ -524,7 +524,11 @@ static void learn_remote_event_cb(lv_event_t *e);
 #endif
 
 static void cleanup_transmit_popup(void *obj);
+#ifdef CONFIG_HAS_INFRARED_RX
 static void cleanup_learning_popup(void *obj);
+#else
+static void cleanup_learning_popup(void *obj) { (void)obj; }
+#endif
 static void universal_transmit_task(void *arg);
 static void dazzler_event_cb(lv_event_t *e);
 static void dazzler_stop_cb(lv_event_t *e);

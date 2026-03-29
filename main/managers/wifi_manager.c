@@ -819,7 +819,7 @@ const char *get_content_type(const char *uri) {
     return "application/octet-stream"; // Default to binary stream if unknown
 }
 
-const char *get_host_from_req(httpd_req_t *req) {
+char *get_host_from_req(httpd_req_t *req) {
     size_t buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
     if (buf_len > 1) {
         char *host = malloc(buf_len);
@@ -2815,7 +2815,9 @@ static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (frame_subtype != 0x08 && frame_subtype != 0x05) return;
 
     const wifi_ieee80211_packet_t *ipkt = (const wifi_ieee80211_packet_t *)payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(hdr_copy));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
     const uint8_t *bssid = hdr->addr3;
 
     if (bssid_already_listed(bssid)) return;
@@ -3933,7 +3935,9 @@ static void wifi_track_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(hdr_copy));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
     
     int8_t rssi = pkt->rx_ctrl.rssi;
     bool match = false;

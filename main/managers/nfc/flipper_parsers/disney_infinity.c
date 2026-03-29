@@ -84,7 +84,7 @@ static bool disney_infinity_parse(const NfcDevice* device, FuriString* parsed_da
             FURI_LOG_W(TAG, "Invalid UID for Disney Infinity parse (len=%u)", (unsigned)uid_len);
             break;
         }
-        MfClassicSectorTrailer* sec_tr =
+        const MfClassicSectorTrailer* sec_tr =
             mf_classic_get_sector_trailer_by_sector(data, verify_sector);
         if(!sec_tr) break;
 
