@@ -787,7 +787,6 @@ esp_err_t sd_card_init(void) {
   }
 #endif
 #endif
-#endif
 
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
       .format_if_mount_failed = false,
@@ -842,12 +841,14 @@ esp_err_t sd_card_init(void) {
     sd_card_update_cached_stats();
     sd_card_unmount_with_context(SD_UNMOUNT_CONTEXT_JIT);
     if (display_was_suspended) {
+      ESP_LOGI(TAG, "Calling display_spi_resume_after_sd()");
       display_spi_resume_after_sd();
     }
     return ESP_OK;
   }
 
   return ESP_OK;
+#endif
 
   // Common failure handling
   if (ret != ESP_OK) {
