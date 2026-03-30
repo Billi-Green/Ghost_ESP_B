@@ -1433,6 +1433,7 @@ void options_menu_create() {
         switch (current_bluetooth_menu_state) {
             case BLUETOOTH_MENU_MAIN: options = bluetooth_main_options; break;
             case BLUETOOTH_MENU_DETECT_LIST:
+#ifndef CONFIG_IDF_TARGET_ESP32S2
                 if (ble_device_detect_is_tracking()) {
                     ble_device_detect_stop_tracking();
                 }
@@ -1442,6 +1443,7 @@ void options_menu_create() {
                 if (ble_device_detect_get_count() <= 0 && !ble_device_detect_is_active()) {
                     start_ble_detect_flow();
                 }
+#endif
                 options = ble_detect_list_get_options();
                 break;
             case BLUETOOTH_MENU_DETECT_DETAILS: options = NULL; break;
@@ -6651,6 +6653,7 @@ static void rebuild_current_menu(void) {
             switch (current_bluetooth_menu_state) {
                 case BLUETOOTH_MENU_MAIN: options = bluetooth_main_options; break;
                 case BLUETOOTH_MENU_DETECT_LIST:
+#ifndef CONFIG_IDF_TARGET_ESP32S2
                     if (ble_device_detect_is_tracking()) {
                         ble_device_detect_stop_tracking();
                     }
@@ -6660,6 +6663,7 @@ static void rebuild_current_menu(void) {
                     if (ble_device_detect_get_count() <= 0 && !ble_device_detect_is_active()) {
                         start_ble_detect_flow();
                     }
+#endif
                     options = ble_detect_list_get_options();
                     timer_period = 25;
                     break;
