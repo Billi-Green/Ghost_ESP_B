@@ -21,6 +21,7 @@
 #include "gui/detail_view.h"
 #include "gui/nav_history.h"
 #include "scans/wifi/ap_scan.h"
+#include "managers/ble_manager.h"
 #include "scans/ble/device_detect_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "esp_timer.h"
@@ -87,6 +88,7 @@ static const char **ap_list_get_options(void);
 static const char **sta_list_get_options(void);
 static const char **scanall_list_get_options(void);
 static const char **ble_detect_list_get_options(void);
+static void ble_detect_poll_timer_cb(lv_timer_t *timer);
 static void ap_scan_complete_callback(void);
 static void ap_detail_back_cb(lv_event_t *e);
 static void ap_scan_poll_timer_cb(lv_timer_t *timer);
@@ -1430,7 +1432,18 @@ void options_menu_create() {
     case OT_Bluetooth:
         switch (current_bluetooth_menu_state) {
             case BLUETOOTH_MENU_MAIN: options = bluetooth_main_options; break;
-            case BLUETOOTH_MENU_DETECT_LIST: options = ble_detect_list_get_options(); break;
+            case BLUETOOTH_MENU_DETECT_LIST:
+                if (ble_device_detect_is_tracking()) {
+                    ble_device_detect_stop_tracking();
+                }
+                if (ble_device_detect_is_active() && !ble_is_initialized()) {
+                    ble_device_detect_stop();
+                }
+                if (ble_device_detect_get_count() <= 0 && !ble_device_detect_is_active()) {
+                    start_ble_detect_flow();
+                }
+                options = ble_detect_list_get_options();
+                break;
             case BLUETOOTH_MENU_DETECT_DETAILS: options = NULL; break;
             case BLUETOOTH_MENU_SPAM: options = bluetooth_spam_options; break;
             case BLUETOOTH_MENU_RAW: options = bluetooth_raw_options; break;
@@ -5481,9 +5494,14 @@ static void ble_detect_list_cleanup(void) {
 
     selected_ble_detect_index = -1;
     ble_detect_last_count = -1;
-    ble_device_detect_stop_tracking();
-    if (ble_device_detect_is_active()) {
-        ble_device_detect_stop();
+    if (ble_device_detect_is_tracking()) {
+        // Keep BLE scan running for tracking updates in terminal
+        // Only clean up UI elements above
+    } else {
+        ble_device_detect_stop_tracking();
+        if (ble_device_detect_is_active()) {
+            ble_device_detect_stop();
+        }
     }
 }
 
@@ -6633,6 +6651,15 @@ static void rebuild_current_menu(void) {
             switch (current_bluetooth_menu_state) {
                 case BLUETOOTH_MENU_MAIN: options = bluetooth_main_options; break;
                 case BLUETOOTH_MENU_DETECT_LIST:
+                    if (ble_device_detect_is_tracking()) {
+                        ble_device_detect_stop_tracking();
+                    }
+                    if (ble_device_detect_is_active() && !ble_is_initialized()) {
+                        ble_device_detect_stop();
+                    }
+                    if (ble_device_detect_get_count() <= 0 && !ble_device_detect_is_active()) {
+                        start_ble_detect_flow();
+                    }
                     options = ble_detect_list_get_options();
                     timer_period = 25;
                     break;

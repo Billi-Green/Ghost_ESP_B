@@ -345,6 +345,7 @@ static void create_apps_list_menu(void) {
     lv_obj_set_flex_align(apps_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(apps_container, LV_HOR_RES > 200 ? 16 : 10, 0);
     lv_obj_set_style_pad_row(apps_container, 6, 0);
+    lv_obj_add_flag(apps_container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(apps_container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(apps_container, LV_SCROLLBAR_MODE_AUTO);
 

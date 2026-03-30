@@ -449,10 +449,20 @@ bool ble_device_detect_start_tracking(int index) {
     memcpy(&dev, &s_devices[index], sizeof(dev));
 
     if (!s_scan_active) {
-        ble_device_detect_start();
-        if (!s_scan_active) {
+        if (!ble_is_initialized()) {
+            ble_init();
+        }
+        if (!ble_wait_for_ready()) {
+            ESP_LOGE(TAG, "BLE stack not ready for detect scan");
             return false;
         }
+        ble_unregister_handler(ble_device_detect_callback);
+        ble_register_handler(ble_device_detect_callback);
+        if (!ble_start_scanning()) {
+            ble_unregister_handler(ble_device_detect_callback);
+            return false;
+        }
+        s_scan_active = true;
     }
 
     s_tracking.active = true;

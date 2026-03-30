@@ -9,6 +9,7 @@
 #include "managers/views/keyboard_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/display_manager.h"
+#include "scans/ble/device_detect_scan.h"
 #include "gui/screen_layout.h"
 #include "gui/lvgl_safe.h"
 #include "esp_timer.h"
@@ -593,7 +594,11 @@ static void stop_all_operations(void) {
     terminal_dualcomm_only = false;
 
     // call stop handler directly instead of queuing it
-    handle_stop_flipper(0, NULL);
+    // but skip BLE teardown if we're returning from BLE detect tracking
+    bool ble_tracking_active = ble_device_detect_is_tracking();
+    if (!ble_tracking_active) {
+        handle_stop_flipper(0, NULL);
+    }
 
     // now switch the view
     if (terminal_return_view) {
