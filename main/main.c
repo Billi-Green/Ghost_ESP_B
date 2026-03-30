@@ -1,3 +1,4 @@
+#include "boot_banner_text.h"
 #include "core/commandline.h"
 #include "core/callbacks.h"
 #include "core/serial_manager.h"
@@ -19,6 +20,7 @@
 #include "managers/ble_manager.h"
 #endif
 #include <esp_log.h>
+#include "esp_random.h"
 #include "esp_sleep.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -69,6 +71,22 @@ RGBManager_t rgb_manager;  // Global instance for entire project
 
 int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) { return 0; }
 static const char *TAG = "Main.c";
+
+static void print_boot_banner(void) {
+    static const char *const banners[] = {
+        BOOT_BANNER_BLOCK,
+        BOOT_BANNER_GHOSTS,
+        BOOT_BANNER_PEOPLE,
+        BOOT_BANNER_DEVILS,
+        BOOT_BANNER_OGRE,
+        BOOT_BANNER_RECTANGLES,
+        BOOT_BANNER_SLANT,
+        BOOT_BANNER_SOFT,
+    };
+    const size_t n = sizeof(banners) / sizeof(banners[0]);
+    unsigned idx = (unsigned)(esp_random() % n);
+    printf("%s\n", banners[idx]);
+}
 
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 #define COREDUMP_ROOT_DIR "/mnt/ghostesp"
@@ -643,11 +661,7 @@ void app_main(void) {
 #endif
 
     ESP_LOGI(TAG, "Ghost ESP INIT complete.");
-    printf("    ####  #   #  ####   ####  #####   ####  ####  #####\n");
-    printf("   #      #   # #    #  #       #     #     #     #   #\n");
-    printf("   #  ### ##### #    #  ####    #     ####  ####  #####\n");
-    printf("   #   #  #   # #    #     #    #     #        #  #\n");
-    printf("    ####  #   #  ####   ####    #     ##### ####  #\n");
+    print_boot_banner();
     printf("\n");
     printf("ghostcli> Type 'help' for available commands\n");
 }
