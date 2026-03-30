@@ -670,12 +670,13 @@ static void update_ui(lv_timer_t *timer) {
 
     lv_img_set_src(s_ghost, pick_ghost_sprite(&snap));
 
+    int small_screen_y_offset = (LV_VER_RES <= 135) ? 8 : 0;
     if (is_portrait_layout()) {
         ghost_x = (LV_HOR_RES / 2) - (GHOST_W / 2);
         ghost_base_y = (LV_VER_RES * 16) / 100 + layout->ghost_y_offset;
     } else {
         ghost_x = (split / 2) - (GHOST_H / 2);
-        ghost_base_y = compact_landscape ? 2 : layout->ghost_y_offset;
+        ghost_base_y = (compact_landscape ? 2 : layout->ghost_y_offset) + small_screen_y_offset;
     }
     if (show_bubble) {
         ghost_x += layout->ghost_x_offset;
@@ -749,7 +750,7 @@ static void update_ui(lv_timer_t *timer) {
         lv_obj_align(s_state_label, LV_ALIGN_TOP_MID, 0, state_y);
     } else {
         lv_obj_set_width(s_state_label, split - 24);
-        lv_obj_align(s_state_label, LV_ALIGN_TOP_LEFT, 16, compact_landscape ? 58 : (ghost_base_y + GHOST_H + 8));
+        lv_obj_align(s_state_label, LV_ALIGN_TOP_LEFT, 16, compact_landscape ? (58 + small_screen_y_offset) : (ghost_base_y + GHOST_H + 8));
         lv_obj_set_style_text_align(s_state_label, LV_TEXT_ALIGN_LEFT, 0);
     }
 
@@ -767,7 +768,11 @@ static void update_ui(lv_timer_t *timer) {
     }
 
     lv_obj_clear_flag(s_state_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(s_reason_label, LV_OBJ_FLAG_HIDDEN);
+    if (LV_VER_RES <= 135) {
+        lv_obj_add_flag(s_reason_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(s_reason_label, LV_OBJ_FLAG_HIDDEN);
+    }
 
     if (snap.running) {
         if (has_touch_controls()) {
@@ -915,19 +920,27 @@ static void update_ui(lv_timer_t *timer) {
         set_stat(2, "LEVEL", buf);
         snprintf(buf, sizeof(buf), "%lu", total_captures);
         set_stat(3, "CAPTURES", total_captures ? buf : "--");
-        snprintf(buf, sizeof(buf), "%lu", (unsigned long)snap.total_sessions);
-        set_stat(4, "RUNS", snap.total_sessions ? buf : "--");
-        if (total_captures > 0 && snap.attempts > 0) {
-            unsigned long successful_attempts = total_captures;
-            if (successful_attempts > snap.attempts) {
-                successful_attempts = snap.attempts;
-            }
-            unsigned int rate = (unsigned)((successful_attempts * 100u) / snap.attempts);
-            snprintf(buf, sizeof(buf), "%u%%", rate);
+        if (LV_VER_RES <= 135) {
+            snprintf(buf, sizeof(buf), "%u%%", (total_captures > 0 && snap.attempts > 0)
+                     ? (unsigned)((total_captures * 100u) / snap.attempts) : 0);
+            set_stat(4, "RATE", (total_captures > 0 && snap.attempts > 0) ? buf : "--");
+            lv_obj_add_flag(s_stats[5][0], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_stats[5][1], LV_OBJ_FLAG_HIDDEN);
         } else {
-            snprintf(buf, sizeof(buf), "--");
+            snprintf(buf, sizeof(buf), "%lu", (unsigned long)snap.total_sessions);
+            set_stat(4, "RUNS", snap.total_sessions ? buf : "--");
+            if (total_captures > 0 && snap.attempts > 0) {
+                unsigned long successful_attempts = total_captures;
+                if (successful_attempts > snap.attempts) {
+                    successful_attempts = snap.attempts;
+                }
+                unsigned int rate = (unsigned)((successful_attempts * 100u) / snap.attempts);
+                snprintf(buf, sizeof(buf), "%u%%", rate);
+            } else {
+                snprintf(buf, sizeof(buf), "--");
+            }
+            set_stat(5, "RATE", buf);
         }
-        set_stat(5, "RATE", buf);
         
         int xp_bar_width, bar_x;
         if (is_portrait_layout()) {
@@ -1031,12 +1044,12 @@ static void normalize_input(InputEvent *event, bool *up, bool *down, bool *left,
             else if (event->data.joystick_index == 1) *select = true;
             break;
         case INPUT_TYPE_KEYBOARD:
-            if (event->data.key_value == LV_KEY_UP) *up = true;
-            else if (event->data.key_value == LV_KEY_DOWN) *down = true;
-            else if (event->data.key_value == LV_KEY_LEFT) *left = true;
-            else if (event->data.key_value == LV_KEY_RIGHT) *right = true;
-            else if (event->data.key_value == LV_KEY_ENTER || event->data.key_value == '\n' || event->data.key_value == '\r') *select = true;
-            else if (event->data.key_value == LV_KEY_ESC || event->data.key_value == 27) *back = true;
+            if (event->data.key_value == LV_KEY_UP || event->data.key_value == ';' || event->data.key_value == 'k') *up = true;
+            else if (event->data.key_value == LV_KEY_DOWN || event->data.key_value == '.' || event->data.key_value == 'j') *down = true;
+            else if (event->data.key_value == LV_KEY_LEFT || event->data.key_value == ',' || event->data.key_value == 'h') *left = true;
+            else if (event->data.key_value == LV_KEY_RIGHT || event->data.key_value == '/' || event->data.key_value == 'l') *right = true;
+            else if (event->data.key_value == LV_KEY_ENTER || event->data.key_value == '\n' || event->data.key_value == '\r' || event->data.key_value == 13) *select = true;
+            else if (event->data.key_value == LV_KEY_ESC || event->data.key_value == 27 || event->data.key_value == 29 || event->data.key_value == '`') *back = true;
             break;
         case INPUT_TYPE_ENCODER:
             if (event->data.encoder.button) *select = true;
