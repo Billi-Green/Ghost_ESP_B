@@ -1,4 +1,5 @@
 #include "managers/views/app_gallery_screen.h"
+#include "managers/views/ghostchi_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/terminal_screen.h"
@@ -36,6 +37,7 @@ typedef struct {
 static app_item_t app_items[] = {
     {"Visualizer", &rave, 4, {{0}}, &music_visualizer_view},
     {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view},
+    {"Ghostchi", &ghost, 2, {{0}}, &ghostchi_view},
     {"Back", NULL, 0, {{0}}, NULL},
 };
 
@@ -169,22 +171,28 @@ static void update_app_item(bool slide_left) {
         lv_img_set_src(icon, app_items[selected_app_index].icon);
 
         const int icon_size = 50;
-        lv_obj_set_size(icon, icon_size, icon_size);
-        lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
         lv_img_set_antialias(icon, false);
         lv_obj_set_style_img_recolor(icon, app_items[selected_app_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
         lv_obj_set_style_clip_corner(icon, false, 0);
 
-        int icon_x_offset = -3;
-        int icon_y_offset = -5;
-        int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
-        int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
-        lv_obj_set_pos(icon, x_pos, y_pos);
         lv_coord_t img_width = app_items[selected_app_index].icon->header.w;
         lv_coord_t img_height = app_items[selected_app_index].icon->header.h;
-        ESP_LOGD(TAG, "Button size: %d x %d, Set Icon size: %d x %d, Original: %d x %d, Pos: %d, %d\n",
-               btn_size, btn_size, icon_size, icon_size, img_width, img_height, x_pos, y_pos);
+        if (img_width > 0 && img_height > 0) {
+            int zoom_w = (icon_size * 256) / img_width;
+            int zoom_h = (icon_size * 256) / img_height;
+            int zoom = LV_MIN(zoom_w, zoom_h);
+            if (zoom > 512) zoom = 512;
+            lv_img_set_zoom(icon, zoom);
+        }
+        int icon_x_offset = -3;
+        int icon_y_offset = -5;
+        if (app_items[selected_app_index].view == &ghostchi_view) {
+            icon_x_offset = 9;
+        }
+        int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
+        int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
+        lv_obj_align(icon, LV_ALIGN_TOP_LEFT, x_pos, y_pos);
     }
 
     if (LV_HOR_RES > 150) {

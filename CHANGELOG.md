@@ -1,6 +1,7 @@
 # Ghost ESP Changelog
 
 ## Revival v1.9.8
+- Added New 'Ghostchi' App 
 - Migrated project to ESP-IDF v6.0
 - Fixed crash on The Wired Hatter's Banshee S3 chip when enabling USB Keyboard caused by running out of input interrupts
 - The Wired Hatter's Banshee C5 internal memory optimisations
@@ -11,6 +12,9 @@
 - Karma now skips channel hopping when AP has connected clients
 - Fixed crash when opening WebUI File Manager and improved styling
 - Moved lvgl tick task back out of psram to resolve wd triggering on setup wizard
+- Fixed airtag tracking not working
+- Added missing encoder controls to the detail view
+- Fixed TEmbedCC1101 fuel gague init
 
 ## Revival v1.9.7
 

@@ -757,9 +757,25 @@ static hs_entry_t hs_table[HS_TABLE_MAX];
 static uint8_t hs_count_local = 0;
 static uint8_t hs_insert_idx_local = 0;
 static uint32_t hs_found_count = 0;
+static bool s_pcap_enabled = true;
 
 static inline bool mac_equal(const uint8_t *a, const uint8_t *b) {
     return memcmp(a, b, 6) == 0;
+}
+
+uint32_t wifi_callbacks_get_handshake_count(void) {
+    return hs_found_count;
+}
+
+void wifi_callbacks_reset_handshake_tracking(void) {
+    memset(hs_table, 0, sizeof(hs_table));
+    hs_count_local = 0;
+    hs_insert_idx_local = 0;
+    hs_found_count = 0;
+}
+
+void wifi_callbacks_set_pcap_enabled(bool enabled) {
+    s_pcap_enabled = enabled;
 }
 
 static const char *msg_name(uint8_t m) {
@@ -982,12 +998,14 @@ static void pcap_writer_task(void *arg) {
                 UBaseType_t hwm_words = uxTaskGetStackHighWaterMark(NULL);
                 glog("PCAP writer HWM (bytes): %lu\n", (unsigned long)hwm_words);
             }
-            if ((processed & 0x1F) == 0) {
+            if ((processed & 0x1F) == 0 && pcap_auto_flush_enabled()) {
                 pcap_flush_buffer_to_file();
             }
         } else {
             // periodic flush even if idle
-            pcap_flush_buffer_to_file();
+            if (pcap_auto_flush_enabled()) {
+                pcap_flush_buffer_to_file();
+            }
         }
     }
 }
@@ -1039,6 +1057,7 @@ static inline void enqueue_pcap_write_typed(const uint8_t *payload, uint16_t len
 }
 
 static inline void enqueue_pcap_write(const uint8_t *payload, uint16_t len) {
+    if (!s_pcap_enabled) return;
     enqueue_pcap_write_typed(payload, len, PCAP_CAPTURE_WIFI);
 }
 

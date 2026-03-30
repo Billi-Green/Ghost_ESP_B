@@ -310,7 +310,7 @@ static esp_err_t fuel_gauge_reset(void) {
 
 static esp_err_t fuel_gauge_i2c_init(void) {
     esp_err_t ret = i2c_master_get_bus_handle(I2C_MASTER_NUM, &fg_i2c_bus);
-    if (ret == ESP_ERR_NOT_FOUND) {
+    if (ret == ESP_ERR_NOT_FOUND || ret == ESP_ERR_INVALID_STATE) {
         i2c_master_bus_config_t conf = {
             .i2c_port = I2C_MASTER_NUM,
             .sda_io_num = CONFIG_BQ27220_I2C_SDA_PIN,
@@ -740,7 +740,7 @@ static esp_err_t max17048_write_word(uint8_t reg, uint16_t data) {
 
 static esp_err_t fuel_gauge_i2c_init(void) {
     esp_err_t ret = i2c_master_get_bus_handle(I2C_MASTER_NUM, &fg_i2c_bus);
-    if (ret == ESP_ERR_NOT_FOUND) {
+    if (ret == ESP_ERR_NOT_FOUND || ret == ESP_ERR_INVALID_STATE) {
         i2c_master_bus_config_t conf = {
             .i2c_port = I2C_MASTER_NUM,
             .sda_io_num = CONFIG_MAX17048_I2C_SDA_PIN,

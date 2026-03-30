@@ -2872,6 +2872,40 @@ void handle_hardware_button_press_options(InputEvent *event) {
             return;
         }
 
+        if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
+            if (event->data.encoder.button) {
+                lv_obj_t *obj = detail_view_get_selected_obj(ap_detail_view);
+                if (obj && lv_obj_is_valid(obj)) lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+            } else if (event->data.encoder.direction < 0) {
+                detail_view_step_up(ap_detail_view);
+            } else if (event->data.encoder.direction > 0) {
+                detail_view_step_down(ap_detail_view);
+            }
+            return;
+        }
+        if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
+            if (event->data.encoder.button) {
+                lv_obj_t *obj = detail_view_get_selected_obj(sta_detail_view);
+                if (obj && lv_obj_is_valid(obj)) lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+            } else if (event->data.encoder.direction < 0) {
+                detail_view_step_up(sta_detail_view);
+            } else if (event->data.encoder.direction > 0) {
+                detail_view_step_down(sta_detail_view);
+            }
+            return;
+        }
+        if (ble_detect_detail_view && current_bluetooth_menu_state == BLUETOOTH_MENU_DETECT_DETAILS) {
+            if (event->data.encoder.button) {
+                lv_obj_t *obj = detail_view_get_selected_obj(ble_detect_detail_view);
+                if (obj && lv_obj_is_valid(obj)) lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+            } else if (event->data.encoder.direction < 0) {
+                detail_view_step_up(ble_detect_detail_view);
+            } else if (event->data.encoder.direction > 0) {
+                detail_view_step_down(ble_detect_detail_view);
+            }
+            return;
+        }
+
         if (event->data.encoder.button) {
             // Encoder button press - treat as select/enter/cycle
             if (is_settings_mode) {

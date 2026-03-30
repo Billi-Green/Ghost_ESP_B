@@ -19,6 +19,7 @@
 #include "esp_partition.h"
 #include "wear_levelling.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "managers/status_display_manager.h"
 #include "managers/display_manager.h"
@@ -30,6 +31,9 @@
 static const char *TAG = "SD_Card_Manager";
 static const char *NVS_NAMESPACE = "sd_config";
 static bool s_sd_log_levels_tuned = false;
+static SemaphoreHandle_t s_sd_jit_mutex = NULL;
+static uint32_t s_sd_jit_mount_depth = 0;
+static bool s_sd_jit_display_suspended = false;
 
 /* time multiplex spi when display and sd share the spi bus */
 #if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
@@ -238,6 +242,13 @@ static void sd_spi_bus_release_if_tracked(void) {
 }
 
 static sd_card_cached_stats_t s_cached_stats = { .valid = false, .used_pct = 0 };
+
+static SemaphoreHandle_t sd_card_get_jit_mutex(void) {
+    if (s_sd_jit_mutex == NULL) {
+        s_sd_jit_mutex = xSemaphoreCreateMutex();
+    }
+    return s_sd_jit_mutex;
+}
 
 static void sd_card_update_cached_stats(void) {
     if (!sd_card_manager.is_initialized) {
@@ -690,7 +701,6 @@ esp_err_t sd_card_init(void) {
     }
   }
 #elif !defined(CONFIG_USE_TDECK)
-#if !defined(CONFIG_ENCODER_INA)
 #if defined(CONFIG_IDF_TARGET_ESP32)
   {
     ESP_LOGI(TAG, "ESP32: Attempting spi_bus_initialize on host %d (%s)", sd_host_id, sd_spi_host_name(sd_host_id));
@@ -839,8 +849,6 @@ esp_err_t sd_card_init(void) {
 
   return ESP_OK;
 
-#endif
-
   // Common failure handling
   if (ret != ESP_OK) {
       // Restore backup config if init failed with loaded pins
@@ -861,9 +869,21 @@ esp_err_t sd_card_init(void) {
 
 // mount sd just-in-time for short io, then unmount after
 esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
+  SemaphoreHandle_t jit_mutex = sd_card_get_jit_mutex();
+
   if (display_was_suspended) *display_was_suspended = false;
+  if (jit_mutex == NULL) {
+    return ESP_ERR_NO_MEM;
+  }
+  if (xSemaphoreTake(jit_mutex, portMAX_DELAY) != pdTRUE) {
+    return ESP_ERR_TIMEOUT;
+  }
   // If already mounted, nothing to do
   if (sd_card_manager.is_initialized) {
+    if (s_sd_jit_mount_depth > 0) {
+      ++s_sd_jit_mount_depth;
+    }
+    xSemaphoreGive(jit_mutex);
     return ESP_OK;
   }
 
@@ -898,6 +918,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
     esp_err_t bus_ret = spi_bus_initialize(host_id, &bus_config, dmabus);
     if (bus_ret != ESP_OK && bus_ret != ESP_ERR_INVALID_STATE) {
       if (display_was_suspended && *display_was_suspended) display_spi_resume_after_sd();
+      xSemaphoreGive(jit_mutex);
       return bus_ret;
     }
     if (bus_ret == ESP_OK) {
@@ -926,27 +947,56 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   if (ret != ESP_OK) {
     sd_spi_bus_release_if_tracked();
     if (display_was_suspended && *display_was_suspended) display_spi_resume_after_sd();
+    xSemaphoreGive(jit_mutex);
     return ret;
   }
   sd_card_manager.is_initialized = true;
   s_mount_type = MOUNT_SPI;
+  s_sd_jit_mount_depth = 1;
+  s_sd_jit_display_suspended = display_was_suspended && *display_was_suspended;
   sd_card_update_cached_stats();
   s_next_unmount_tick = xTaskGetTickCount() + pdMS_TO_TICKS(300);
   status_display_show_status("SD Active");
+  xSemaphoreGive(jit_mutex);
   return ESP_OK;
 #else
   // For SDMMC, if not mounted try normal init path quickly
+  xSemaphoreGive(jit_mutex);
   return sd_card_init();
 #endif
 }
 
 void sd_card_unmount_after_flush(bool display_was_suspended) {
-  /* fuck it, unmount now so the display can safely resume without bus contention */
-  if (sd_card_manager.is_initialized) {
-    sd_card_unmount_with_context(SD_UNMOUNT_CONTEXT_JIT);
+  SemaphoreHandle_t jit_mutex = sd_card_get_jit_mutex();
+  bool resume_display = false;
+
+  (void)display_was_suspended;
+  if (jit_mutex == NULL) {
+    return;
   }
-  /* always attempt resume; it's idempotent and guards internally */
-  display_spi_resume_after_sd();
+  if (xSemaphoreTake(jit_mutex, portMAX_DELAY) != pdTRUE) {
+    return;
+  }
+
+  if (s_sd_jit_mount_depth == 0) {
+    xSemaphoreGive(jit_mutex);
+    return;
+  }
+
+  --s_sd_jit_mount_depth;
+  if (s_sd_jit_mount_depth == 0) {
+    resume_display = s_sd_jit_display_suspended;
+    s_sd_jit_display_suspended = false;
+    if (sd_card_manager.is_initialized) {
+      sd_card_unmount_with_context(SD_UNMOUNT_CONTEXT_JIT);
+    }
+  }
+
+  xSemaphoreGive(jit_mutex);
+
+  if (resume_display) {
+    display_spi_resume_after_sd();
+  }
 }
 
 void sd_card_unmount_with_context(sd_unmount_context_t context) {
@@ -989,6 +1039,8 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    s_sd_jit_mount_depth = 0;
+    s_sd_jit_display_suspended = false;
     
     // Show appropriate status based on context
     switch (context) {
@@ -1015,6 +1067,8 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    s_sd_jit_mount_depth = 0;
+    s_sd_jit_display_suspended = false;
     
     // Show appropriate status based on context
     switch (context) {
