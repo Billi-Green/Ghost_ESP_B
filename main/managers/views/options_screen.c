@@ -714,6 +714,7 @@ static const char *bool_options[] = {"Off", "On"};
 static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
 static const char *menu_layout_options[] = {"Carousel", "Grid", "List"};
+static const char *bg_shade_options[] = {"Darkest", "Darker", "Dark", "Medium"};
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static const char *idle_animation_options[] = {"Game of Life", "Ghost", "Starfield", "HUD", "Matrix", "Flying Ghosts", "Spiral", "Falling Leaves", "Bouncing Text"};
 static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
@@ -767,6 +768,8 @@ static SettingsItem settings_items[] = {
     {"Menu Theme", SETTING_MENU_THEME, theme_options, 17, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"BG Shade", SETTING_MENU_BG_SHADE, bg_shade_options, 4, 1, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Rounded Menus", SETTING_MENU_ROUNDED, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, RGB_MODE_COUNT, 0, SETTINGS_CAT_LED_RGB, false, NULL},
@@ -950,12 +953,13 @@ static options_view_t *g_options_view = NULL;
 // Add button declarations and constants
 static lv_obj_t *scroll_up_btn = NULL;
 static lv_obj_t *scroll_down_btn = NULL;
-#define SCROLL_BTN_SIZE 40
-#define SCROLL_BTN_PADDING 5
+#define SCROLL_BTN_SIZE 28
+#define SCROLL_BTN_PADDING 3
 static bool touch_on_scroll_btn = false; // Flag active between press and release on scroll buttons
 
 // Add button declaration for back button
 static lv_obj_t *back_btn = NULL;
+static lv_obj_t *touch_bar = NULL;
 
 // WiGLE help popup
 static lv_obj_t *wigle_help_popup = NULL;
@@ -1373,12 +1377,6 @@ void options_menu_create() {
     const int STATUS_BAR_HEIGHT = 20;
     g_options_view = options_view_create(root, options_menu_type_to_string(SelectedMenuType));
     menu_container = options_view_get_list(g_options_view);
-#ifdef CONFIG_USE_TOUCHSCREEN
-    const int BUTTON_AREA_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
-    int container_height = screen_height - STATUS_BAR_HEIGHT - BUTTON_AREA_HEIGHT;
-    lv_obj_set_size(menu_container, screen_width, container_height);
-    lv_obj_align(menu_container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT);
-#endif
 
     // Scroll button visibility is updated once after the menu is fully built
 
@@ -1516,9 +1514,23 @@ void options_menu_create() {
 
     /* Status bar already handled by options_view_create */
 #ifdef CONFIG_USE_TOUCHSCREEN
-    scroll_up_btn = lv_btn_create(lv_scr_act());
+    const int TOUCH_BAR_HEIGHT = SCROLL_BTN_SIZE + SCROLL_BTN_PADDING * 2;
+    const int BUTTON_AREA_HEIGHT = TOUCH_BAR_HEIGHT;
+    int container_height = screen_height - STATUS_BAR_HEIGHT - BUTTON_AREA_HEIGHT;
+    lv_obj_set_size(menu_container, screen_width, container_height);
+    lv_obj_align(menu_container, LV_ALIGN_TOP_MID, 0, STATUS_BAR_HEIGHT);
+
+    touch_bar = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(touch_bar);
+    lv_obj_set_size(touch_bar, screen_width, TOUCH_BAR_HEIGHT);
+    lv_obj_align(touch_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(touch_bar, bg_color, 0);
+    lv_obj_set_style_bg_opa(touch_bar, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(touch_bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    scroll_up_btn = lv_btn_create(touch_bar);
     lv_obj_set_size(scroll_up_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
-    lv_obj_align(scroll_up_btn, LV_ALIGN_BOTTOM_LEFT, SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
+    lv_obj_align(scroll_up_btn, LV_ALIGN_LEFT_MID, SCROLL_BTN_PADDING, 0);
     lv_obj_set_style_bg_color(scroll_up_btn, control_color, LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_up_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_up_btn, 0, LV_PART_MAIN);
@@ -1528,12 +1540,25 @@ void options_menu_create() {
     lv_label_set_text(up_label, LV_SYMBOL_UP);
     lv_obj_set_style_text_color(up_label, control_text_color, 0);
     lv_obj_center(up_label);
-    /* hide scroll buttons until the menu is built and we know if scrolling is required */
     lv_obj_add_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN);
 
-    scroll_down_btn = lv_btn_create(lv_scr_act());
+    back_btn = lv_btn_create(touch_bar);
+    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 24, SCROLL_BTN_SIZE);
+    lv_obj_align(back_btn, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(back_btn, control_color, LV_PART_MAIN);
+    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(back_btn, 8, LV_PART_MAIN);
+    lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(back_btn, touch_back_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, "Back");
+    lv_obj_set_style_text_color(back_label, control_text_color, 0);
+    lv_obj_center(back_label);
+
+    scroll_down_btn = lv_btn_create(touch_bar);
     lv_obj_set_size(scroll_down_btn, SCROLL_BTN_SIZE, SCROLL_BTN_SIZE);
-    lv_obj_align(scroll_down_btn, LV_ALIGN_BOTTOM_RIGHT, -SCROLL_BTN_PADDING, -SCROLL_BTN_PADDING);
+    lv_obj_align(scroll_down_btn, LV_ALIGN_RIGHT_MID, -SCROLL_BTN_PADDING, 0);
     lv_obj_set_style_bg_color(scroll_down_btn, control_color, LV_PART_MAIN);
     lv_obj_set_style_radius(scroll_down_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_border_width(scroll_down_btn, 0, LV_PART_MAIN);
@@ -1544,20 +1569,6 @@ void options_menu_create() {
     lv_obj_set_style_text_color(down_label, control_text_color, 0);
     lv_obj_center(down_label);
     lv_obj_add_flag(scroll_down_btn, LV_OBJ_FLAG_HIDDEN);
-
-    back_btn = lv_btn_create(lv_scr_act());
-    lv_obj_set_size(back_btn, SCROLL_BTN_SIZE + 20, SCROLL_BTN_SIZE);
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -SCROLL_BTN_PADDING);
-    lv_obj_set_style_bg_color(back_btn, control_color, LV_PART_MAIN);
-    lv_obj_set_style_radius(back_btn, 5, LV_PART_MAIN);
-    lv_obj_set_style_pad_hor(back_btn, 10, LV_PART_MAIN);
-    lv_obj_set_style_border_width(back_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(back_btn, touch_back_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
-    lv_obj_set_style_text_color(back_label, control_text_color, 0);
-    lv_obj_center(back_label);
 #endif
     createdTimeInMs = (unsigned long)(esp_timer_get_time() / 1000ULL);
 }
@@ -1607,6 +1618,12 @@ static void load_current_settings_values(void) {
                 break;
             case SETTING_ZEBRA_MENUS:
                 settings_items[i].current_value = settings_get_zebra_menus_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_MENU_BG_SHADE:
+                settings_items[i].current_value = settings_get_menu_bg_shade(&G_Settings);
+                break;
+            case SETTING_MENU_ROUNDED:
+                settings_items[i].current_value = settings_get_menu_rounded(&G_Settings) ? 1 : 0;
                 break;
             case SETTING_NAV_BUTTONS:
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
@@ -1748,6 +1765,26 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_ZEBRA_MENUS:
             settings_set_zebra_menus_enabled(&G_Settings, new_value == 1);
+            if (g_options_view) {
+                options_view_refresh_styles(g_options_view);
+                update_settings_arrows_visibility();
+            }
+            break;
+        case SETTING_MENU_BG_SHADE:
+            settings_set_menu_bg_shade(&G_Settings, (uint8_t)new_value);
+            display_manager_update_status_bar_color();
+            if (g_options_view) {
+                options_view_refresh_styles(g_options_view);
+                update_settings_arrows_visibility();
+            }
+            if (touch_bar && lv_obj_is_valid(touch_bar)) {
+                uint8_t t = settings_get_menu_theme(&G_Settings);
+                lv_color_t tb_bg = lv_color_hex(theme_palette_get_background(t));
+                lv_obj_set_style_bg_color(touch_bar, tb_bg, 0);
+            }
+            break;
+        case SETTING_MENU_ROUNDED:
+            settings_set_menu_rounded(&G_Settings, new_value == 1);
             if (g_options_view) {
                 options_view_refresh_styles(g_options_view);
                 update_settings_arrows_visibility();
@@ -4835,6 +4872,7 @@ void options_menu_destroy() {
     lvgl_obj_del_safe(&back_btn);
     lvgl_obj_del_safe(&scroll_up_btn);
     lvgl_obj_del_safe(&scroll_down_btn);
+    lvgl_obj_del_safe(&touch_bar);
 
     // Delete the root object (deletes all children recursively)
     lvgl_obj_del_safe(&options_menu_view.root);
@@ -4848,6 +4886,7 @@ void options_menu_destroy() {
     back_btn = NULL;
     scroll_up_btn = NULL;
     scroll_down_btn = NULL;
+    touch_bar = NULL;
 
     // Reset state variables
     selected_item_index = 0;

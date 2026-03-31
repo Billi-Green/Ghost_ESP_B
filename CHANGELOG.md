@@ -15,9 +15,12 @@
 - Fixed airtag tracking not working
 - Added missing encoder controls to the detail view
 - Fixed TEmbedCC1101 fuel gague init
-- Optimised LVGL memory footprint across all configs
-- Increased CYD display buffer for smoother rendering
+- Optimised LVGL memory footprint across all configs by disabling unused components
+- Increased CYD display buffer for significantly smoother rendering
 - Rename 'Normal' main menu layout to 'Carousel'
+- Added option to change background shade of options
+- Added option to enable rounded menu items and set as default on
+- Restyled touch control bar to be more compact and clean
 
 ## Revival v1.9.7
 
