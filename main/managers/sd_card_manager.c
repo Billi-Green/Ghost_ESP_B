@@ -111,14 +111,15 @@ static void display_spi_resume_after_sd(void) {
   }
   esp_err_t ret = lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
                               SPI_BUS_MAX_TRANSFER_SZ, 1, DISP_SPI_IO2, DISP_SPI_IO3);
-  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-    ESP_LOGE("sd_card", "display_spi_resume: bus init failed: %s", esp_err_to_name(ret));
-    /* fall through — still resume LVGL task to prevent watchdog */
-  } else {
+  if (ret == ESP_OK) {
     esp_err_t add_ret = disp_spi_add_device(TFT_SPI_HOST);
     if (add_ret != ESP_OK) {
       ESP_LOGE("sd_card", "display_spi_resume: add device failed: %s", esp_err_to_name(add_ret));
     }
+  } else if (ret == ESP_ERR_INVALID_STATE) {
+    ESP_LOGW("sd_card", "display_spi_resume: bus already initialized, skipping re-init");
+  } else {
+    ESP_LOGE("sd_card", "display_spi_resume: bus init failed: %s", esp_err_to_name(ret));
   }
   /* resume lvgl refresh */
   lv_disp_t *disp = lv_disp_get_default();
@@ -657,17 +658,14 @@ esp_err_t sd_card_init(void) {
   /* select spi host slot for target */
   host.slot = sd_spi_host_id();
 
-  spi_bus_config_t bus_config;
-
-  memset(&bus_config, 0, sizeof(spi_bus_config_t));
-
-  bus_config.miso_io_num = sd_card_manager.spi_miso_pin;
-  bus_config.mosi_io_num = sd_card_manager.spi_mosi_pin;
-  bus_config.sclk_io_num = sd_card_manager.spi_clk_pin;
-  /* reduce dma pressure for sd spi */
-  bus_config.max_transfer_sz = 8192;
-
-  /* Keep CS idle-high before card probe to avoid false command framing. */
+  spi_bus_config_t bus_config = {
+    .mosi_io_num = sd_card_manager.spi_mosi_pin,
+    .miso_io_num = sd_card_manager.spi_miso_pin,
+    .sclk_io_num = sd_card_manager.spi_clk_pin,
+    .quadwp_io_num = -1,
+    .quadhd_io_num = -1,
+    .max_transfer_sz = 8192,
+  };
   gpio_set_direction(sd_card_manager.spi_cs_pin, GPIO_MODE_OUTPUT);
   gpio_set_level(sd_card_manager.spi_cs_pin, 1);
   vTaskDelay(pdMS_TO_TICKS(2));
@@ -710,14 +708,11 @@ esp_err_t sd_card_init(void) {
       bus_init_success = true;
       s_spi_bus_initialized = true;
       s_spi_host_id = sd_host_id;
-      ESP_LOGI(TAG, "ESP32: Bus init success, s_spi_bus_initialized=true");
     } else if (bus_ret == ESP_ERR_INVALID_STATE) {
-      /* Bus already initialized - don't free it, just reuse like ESP32S3 does */
       ESP_LOGW(TAG, "SPI bus %d already initialized. Reusing existing bus.", sd_host_id);
       s_spi_host_id = sd_host_id;
     } else {
-      ESP_LOGE(TAG, "ESP32: spi_bus_initialize failed with %s, calling shared_spi_guard_resume_lvgl_if_needed(%d)", 
-               esp_err_to_name(bus_ret), shared_spi_guard_active);
+      ESP_LOGE(TAG, "ESP32: spi_bus_initialize failed with %s", esp_err_to_name(bus_ret));
       shared_spi_guard_resume_lvgl_if_needed(shared_spi_guard_active);
       printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
       return bus_ret;
@@ -820,9 +815,13 @@ esp_err_t sd_card_init(void) {
   if (ret != ESP_OK) {
     ESP_LOGI(TAG, "Mount failed, bus_init_success=%d", bus_init_success);
     printf("Failed to mount filesystem: %s\n", esp_err_to_name(ret));
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
     if (bus_init_success) {
       sd_spi_bus_release_if_tracked();
     }
+#else
+    (void)bus_init_success;
+#endif
     if (display_was_suspended) {
       ESP_LOGI(TAG, "Calling display_spi_resume_after_sd()");
       display_spi_resume_after_sd();
@@ -898,18 +897,19 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   host.max_freq_khz = 4000;       /* 4 MHz for ESP32-C5 to avoid timeout issues */
 #endif
 
-  spi_bus_config_t bus_config; memset(&bus_config, 0, sizeof(spi_bus_config_t));
-  bus_config.miso_io_num = sd_card_manager.spi_miso_pin;
-  bus_config.mosi_io_num = sd_card_manager.spi_mosi_pin;
-  bus_config.sclk_io_num = sd_card_manager.spi_clk_pin;
-  bus_config.max_transfer_sz = 8192;
+  spi_bus_config_t bus_config = {
+    .mosi_io_num = sd_card_manager.spi_mosi_pin,
+    .miso_io_num = sd_card_manager.spi_miso_pin,
+    .sclk_io_num = sd_card_manager.spi_clk_pin,
+    .max_transfer_sz = 8192,
+  };
 
   gpio_set_direction(sd_card_manager.spi_cs_pin, GPIO_MODE_OUTPUT);
   gpio_set_level(sd_card_manager.spi_cs_pin, 1);
   vTaskDelay(pdMS_TO_TICKS(2));
 
 #if defined(CONFIG_IDF_TARGET_ESP32)
-  int dmabus = 2;
+  int dmabus = SPI_DMA_CH_AUTO;
 #else
   int dmabus = SPI_DMA_CH_AUTO;
 #endif
