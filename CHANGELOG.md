@@ -1,7 +1,7 @@
 # Ghost ESP Changelog
 
 ## Revival v1.9.8
-- Added New 'Ghostchi' App 
+- Added New 'Ghostchi' App - assets by pr3!
 - Migrated project to ESP-IDF v6.0
 - Added Wi-Fi multi-select flows for APs and stations in the Scan & Select menu so multiple targets can be selected from the paged detail lists before running attacks/actions
 - Fixed crash on The Wired Hatter's Banshee S3 chip when enabling USB Keyboard caused by running out of input interrupts
