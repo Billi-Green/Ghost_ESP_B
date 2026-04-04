@@ -403,7 +403,7 @@ static const char *bubble_text(const ghostchi_snapshot_t *snap,
     switch (phase) {
         case 0: return "signal's there.";
         case 1: return "could scan.";
-        default: return "pick something.";
+        default: return "drawn by pr3!";
     }
 }
 
