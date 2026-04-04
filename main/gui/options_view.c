@@ -76,6 +76,7 @@ static void apply_selected_style(options_view_t *ov, lv_obj_t *item, bool on) {
         lv_color_t txt = theme_palette_is_bright(theme) ? lv_color_hex(0x000000) : lv_color_hex(0xFFFFFF);
         lv_style_set_bg_color(&ov->style_selected, c);
         lv_style_set_bg_grad_color(&ov->style_selected, c);
+        lv_style_set_border_width(&ov->style_selected, 0);
         lv_obj_add_style(item, &ov->style_selected, 0);
         for (uint32_t i = 0; i < child_cnt; ++i) {
             lv_obj_t *child = lv_obj_get_child(item, (int32_t)i);

@@ -81,6 +81,14 @@ static bool sta_scan_stopped_by_user = false;
 static bool scan_all_flow_active = false;
 static bool scan_all_started_station_phase = false;
 
+static bool *g_ap_multi_selected = NULL;
+static int g_ap_multi_count = 0;
+static paged_menu_t *ap_multi_menu = NULL;
+
+static bool *g_sta_multi_selected = NULL;
+static int g_sta_multi_count = 0;
+static paged_menu_t *sta_multi_menu = NULL;
+
 static bool start_ap_scan_flow(void);
 static void station_format_mac(const uint8_t mac[6], char *out, size_t out_size);
 static void scanall_select_row(int row_idx);
@@ -108,6 +116,28 @@ static void stop_ble_detect_flow(void);
 static void ble_detect_list_cleanup(void);
 static void ble_detect_detail_back_cb(lv_event_t *e);
 static void show_ble_detect_detail(int device_index);
+
+static int ap_multi_select_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX], bool *has_more, void *user_data);
+static void ap_multi_select_toggle(int ap_index);
+static void ap_multi_select_all(void);
+static void ap_multi_select_none(void);
+static void ap_multi_select_confirm(void);
+static void ap_multi_select_cleanup(void);
+static void ap_multi_select_back_cb(lv_event_t *e);
+static void ap_multi_select_handle_selection(const char *option, void *user_data);
+static const char **ap_multi_select_get_options(void);
+
+static int sta_multi_select_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX], bool *has_more, void *user_data);
+static void sta_multi_select_toggle(int sta_index);
+static void sta_multi_select_all(void);
+static void sta_multi_select_none(void);
+static void sta_multi_select_confirm(void);
+static void sta_multi_select_cleanup(void);
+static void sta_multi_select_back_cb(lv_event_t *e);
+static void sta_multi_select_handle_selection(const char *option, void *user_data);
+static const char **sta_multi_select_get_options(void);
+static bool multi_select_option_is_toggled(int option_index, const char *option);
+static void style_multi_select_row(lv_obj_t *btn, bool toggled);
 
 static bool use_compact_wifi_detail_layout(void) {
     return (LV_HOR_RES > LV_VER_RES && LV_VER_RES <= 160);
@@ -435,7 +465,9 @@ typedef enum {
     WIFI_MENU_AP_DETAILS,
     WIFI_MENU_STA_LIST,
     WIFI_MENU_STA_DETAILS,
-    WIFI_MENU_SCANALL_LIST
+    WIFI_MENU_SCANALL_LIST,
+    WIFI_MENU_AP_MULTI_SELECT,
+    WIFI_MENU_STA_MULTI_SELECT
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -494,7 +526,8 @@ static const char *wifi_capture_options[] = {
 
 static const char *wifi_scan_select_options[] = {
     "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan AP + STA",
-    "List Access Points", "List Stations", "List AP + STA", NULL
+    "List Access Points", "List Stations", "List AP + STA",
+    "Multi-Select APs", "Multi-Select Stations", NULL
 };
 
 static const char *wifi_environment_options[] = {
@@ -1424,6 +1457,12 @@ void options_menu_create() {
                 break;
             case WIFI_MENU_SCANALL_LIST:
                 options = scanall_list_get_options();
+                break;
+            case WIFI_MENU_AP_MULTI_SELECT:
+                options = ap_multi_select_get_options();
+                break;
+            case WIFI_MENU_STA_MULTI_SELECT:
+                options = sta_multi_select_get_options();
                 break;
         }
         break;
@@ -4074,6 +4113,74 @@ void option_event_cb(lv_event_t *e) {
         return;
     }
 
+    else if (current_wifi_menu_state == WIFI_MENU_AP_MULTI_SELECT) {
+        if (strcmp(Selected_Option, "No items found") == 0) {
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "< Prev") == 0) {
+            paged_menu_page_prev(ap_multi_menu);
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "Next >") == 0) {
+            paged_menu_page_next(ap_multi_menu);
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+
+        int offset = paged_menu_get_page_offset(ap_multi_menu);
+        const char **opts = paged_menu_get_options(ap_multi_menu);
+        int skip = paged_menu_has_prev(ap_multi_menu) ? 1 : 0;
+
+        for (int i = 0; opts[i]; i++) {
+            if (opts[i] == Selected_Option || strcmp(opts[i], Selected_Option) == 0) {
+                int idx = offset + (i - skip);
+                ap_multi_select_toggle(idx);
+                rebuild_current_menu();
+                break;
+            }
+        }
+        option_invoked = false;
+        return;
+    }
+
+    else if (current_wifi_menu_state == WIFI_MENU_STA_MULTI_SELECT) {
+        if (strcmp(Selected_Option, "No items found") == 0) {
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "< Prev") == 0) {
+            paged_menu_page_prev(sta_multi_menu);
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        if (strcmp(Selected_Option, "Next >") == 0) {
+            paged_menu_page_next(sta_multi_menu);
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+
+        int offset = paged_menu_get_page_offset(sta_multi_menu);
+        const char **opts = paged_menu_get_options(sta_multi_menu);
+        int skip = paged_menu_has_prev(sta_multi_menu) ? 1 : 0;
+
+        for (int i = 0; opts[i]; i++) {
+            if (opts[i] == Selected_Option || strcmp(opts[i], Selected_Option) == 0) {
+                int idx = offset + (i - skip);
+                sta_multi_select_toggle(idx);
+                rebuild_current_menu();
+                break;
+            }
+        }
+        option_invoked = false;
+        return;
+    }
+
     else if (current_wifi_menu_state == WIFI_MENU_SCANALL_LIST) {
         if (strcmp(Selected_Option, "No items found") == 0) {
             option_invoked = false;
@@ -4212,6 +4319,46 @@ void option_event_cb(lv_event_t *e) {
         if (!start_scan_all_flow()) {
             error_popup_create("Scan failed to start");
         }
+        option_invoked = false;
+        return;
+    }
+
+    else if (strcmp(Selected_Option, "Multi-Select APs") == 0) {
+        uint16_t ap_count_local = ap_scan_get_count();
+        if (ap_count_local > 0) {
+            ap_multi_select_cleanup();
+            g_ap_multi_count = ap_count_local;
+            g_ap_multi_selected = calloc(g_ap_multi_count, sizeof(bool));
+            if (g_ap_multi_selected == NULL) {
+                error_popup_create("Failed to allocate selection");
+                g_ap_multi_count = 0;
+            }
+            current_wifi_menu_state = WIFI_MENU_AP_MULTI_SELECT;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        error_popup_create("No APs scanned");
+        option_invoked = false;
+        return;
+    }
+
+    else if (strcmp(Selected_Option, "Multi-Select Stations") == 0) {
+        int sta_count_local = station_scan_get_count();
+        if (sta_count_local > 0) {
+            sta_multi_select_cleanup();
+            g_sta_multi_count = sta_count_local;
+            g_sta_multi_selected = calloc(g_sta_multi_count, sizeof(bool));
+            if (g_sta_multi_selected == NULL) {
+                error_popup_create("Failed to allocate selection");
+                g_sta_multi_count = 0;
+            }
+            current_wifi_menu_state = WIFI_MENU_STA_MULTI_SELECT;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        error_popup_create("No stations scanned");
         option_invoked = false;
         return;
     }
@@ -5084,6 +5231,20 @@ static void back_event_cb(lv_event_t *e) {
         rebuild_current_menu();
         return;
     }
+    // If in AP multi-select view, confirm selection and go back to Scan & Select menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_AP_MULTI_SELECT) {
+        ap_multi_select_confirm();
+        current_wifi_menu_state = WIFI_MENU_SCAN_SELECT;
+        rebuild_current_menu();
+        return;
+    }
+    // If in station multi-select view, confirm selection and go back to Scan & Select menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_STA_MULTI_SELECT) {
+        sta_multi_select_confirm();
+        current_wifi_menu_state = WIFI_MENU_SCAN_SELECT;
+        rebuild_current_menu();
+        return;
+    }
     // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
         current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -5244,6 +5405,168 @@ static const char **ap_list_get_options(void) {
         ap_list_menu = paged_menu_create(AP_LIST_PAGE_SIZE, ap_list_load_fn, NULL);
     }
     return paged_menu_get_options(ap_list_menu);
+}
+
+#define AP_MULTI_SELECT_PAGE_SIZE 10
+
+static int ap_multi_select_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX], bool *has_more, void *user_data) {
+    (void)user_data;
+
+    uint16_t count = 0;
+    wifi_ap_record_t *aps = NULL;
+    ap_scan_get_results(&count, &aps);
+
+    if (!aps || count == 0 || g_ap_multi_selected == NULL) {
+        *has_more = false;
+        return 0;
+    }
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    uint32_t muted_color = theme_palette_get_text_muted(theme);
+    uint32_t accent_color = theme_palette_get_accent(theme);
+    char muted_color_code[16];
+    char accent_color_code[16];
+    snprintf(muted_color_code, sizeof(muted_color_code), "#%06X", (unsigned int)(muted_color & 0xFFFFFFu));
+    snprintf(accent_color_code, sizeof(accent_color_code), "#%06X", (unsigned int)(accent_color & 0xFFFFFFu));
+
+    int loaded = 0;
+    for (int i = offset; i < (int)count && loaded < page_size; i++) {
+        const char *band = (aps[i].primary >= 36) ? "5G" : "2.4G";
+
+        if (aps[i].ssid[0] == 0) {
+            if (g_ap_multi_selected[i]) {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s Hidden Network# %s %s Ch:%d#",
+                         accent_color_code, muted_color_code, band, aps[i].primary);
+            } else {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "Hidden Network %s %s Ch:%d#",
+                         muted_color_code, band, aps[i].primary);
+            }
+        } else {
+            char ssid_trunc[28] = {0};
+            strncpy(ssid_trunc, (const char *)aps[i].ssid, sizeof(ssid_trunc) - 1);
+            if (g_ap_multi_selected[i]) {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s %s# %s %s Ch:%d#",
+                         accent_color_code, ssid_trunc, muted_color_code, band, aps[i].primary);
+            } else {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s %s %s Ch:%d#",
+                         ssid_trunc, muted_color_code, band, aps[i].primary);
+            }
+        }
+        loaded++;
+    }
+
+    *has_more = (offset + loaded) < (int)count;
+    return loaded;
+}
+
+static const char **ap_multi_select_get_options(void) {
+    if (!ap_multi_menu) {
+        ap_multi_menu = paged_menu_create(AP_MULTI_SELECT_PAGE_SIZE, ap_multi_select_load_fn, NULL);
+        paged_menu_set_callbacks(ap_multi_menu, ap_multi_select_handle_selection, NULL, NULL, NULL);
+    }
+    return paged_menu_get_options(ap_multi_menu);
+}
+
+static void ap_multi_select_toggle(int ap_index) {
+    if (g_ap_multi_selected == NULL || ap_index < 0 || ap_index >= g_ap_multi_count) {
+        return;
+    }
+    g_ap_multi_selected[ap_index] = !g_ap_multi_selected[ap_index];
+}
+
+static void ap_multi_select_all(void) {
+    if (g_ap_multi_selected == NULL) return;
+    for (int i = 0; i < g_ap_multi_count; i++) {
+        g_ap_multi_selected[i] = true;
+    }
+}
+
+static void ap_multi_select_none(void) {
+    if (g_ap_multi_selected == NULL) return;
+    for (int i = 0; i < g_ap_multi_count; i++) {
+        g_ap_multi_selected[i] = false;
+    }
+}
+
+static void ap_multi_select_confirm(void) {
+    if (g_ap_multi_selected == NULL) {
+        ap_multi_select_cleanup();
+        return;
+    }
+
+    int selected_count = 0;
+    for (int i = 0; i < g_ap_multi_count; i++) {
+        if (g_ap_multi_selected[i]) {
+            selected_count++;
+        }
+    }
+
+    if (selected_count > 0) {
+        int *indices = malloc(selected_count * sizeof(int));
+        if (indices != NULL) {
+            int idx = 0;
+            for (int i = 0; i < g_ap_multi_count; i++) {
+                if (g_ap_multi_selected[i]) {
+                    indices[idx++] = i;
+                }
+            }
+            wifi_manager_select_multiple_aps(indices, selected_count);
+            free(indices);
+        }
+    }
+
+    ap_multi_select_cleanup();
+}
+
+static void ap_multi_select_cleanup(void) {
+    if (ap_multi_menu) {
+        paged_menu_destroy(ap_multi_menu);
+        ap_multi_menu = NULL;
+    }
+    if (g_ap_multi_selected != NULL) {
+        free(g_ap_multi_selected);
+        g_ap_multi_selected = NULL;
+    }
+    g_ap_multi_count = 0;
+}
+
+static void ap_multi_select_back_cb(lv_event_t *e) {
+    (void)e;
+    ap_multi_select_confirm();
+}
+
+static void ap_multi_select_handle_selection(const char *option, void *user_data) {
+    (void)user_data;
+
+    if (strcmp(option, "< Prev") == 0) {
+        paged_menu_page_prev(ap_multi_menu);
+        rebuild_current_menu();
+        return;
+    }
+
+    if (strcmp(option, "Next >") == 0) {
+        paged_menu_page_next(ap_multi_menu);
+        rebuild_current_menu();
+        return;
+    }
+
+    uint16_t count = ap_scan_get_count();
+    int page_offset = paged_menu_get_page_offset(ap_multi_menu);
+
+    for (int i = 0; i < (int)count; i++) {
+        char test_name[PAGED_MENU_NAME_MAX];
+        bool has_more = false;
+        char names[1][PAGED_MENU_NAME_MAX];
+        ap_multi_select_load_fn(page_offset + i, 1, names, &has_more, NULL);
+        if (has_more == false && page_offset + i >= (int)count) {
+            break;
+        }
+        if (strcmp(option, names[0]) == 0) {
+            ap_multi_select_toggle(page_offset + i);
+            rebuild_current_menu();
+            return;
+        }
+    }
 }
 
 static void sanitize_recolor_text(char *text) {
@@ -5845,6 +6168,229 @@ static const char **sta_list_get_options(void) {
         sta_list_menu = paged_menu_create(STA_LIST_PAGE_SIZE, sta_list_load_fn, NULL);
     }
     return paged_menu_get_options(sta_list_menu);
+}
+
+#define STA_MULTI_SELECT_PAGE_SIZE 10
+
+static int sta_multi_select_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX], bool *has_more, void *user_data) {
+    (void)user_data;
+
+    int count = station_scan_get_count();
+    if (count <= 0 || g_sta_multi_selected == NULL) {
+        *has_more = false;
+        return 0;
+    }
+
+    uint16_t ap_count = 0;
+    wifi_ap_record_t *aps = NULL;
+    ap_scan_get_results(&ap_count, &aps);
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    uint32_t muted_color = theme_palette_get_text_muted(theme);
+    uint32_t accent_color = theme_palette_get_accent(theme);
+    char muted_color_code[16];
+    char accent_color_code[16];
+    snprintf(muted_color_code, sizeof(muted_color_code), "#%06X", (unsigned int)(muted_color & 0xFFFFFFu));
+    snprintf(accent_color_code, sizeof(accent_color_code), "#%06X", (unsigned int)(accent_color & 0xFFFFFFu));
+
+    int loaded = 0;
+    for (int i = offset; i < count && loaded < page_size; i++) {
+        char sta_mac[18];
+        char sta_vendor[64] = {0};
+        char ap_ssid[33];
+        int ap_channel = 0;
+
+        station_format_mac(station_ap_list[i].station_mac, sta_mac, sizeof(sta_mac));
+        bool has_vendor = ouis_lookup_vendor(sta_mac, sta_vendor, sizeof(sta_vendor));
+        station_lookup_ap_ssid(station_ap_list[i].ap_bssid, ap_ssid, sizeof(ap_ssid));
+
+        for (int j = 0; j < (int)ap_count; j++) {
+            if (memcmp(aps[j].bssid, station_ap_list[i].ap_bssid, 6) == 0) {
+                ap_channel = aps[j].primary;
+                break;
+            }
+        }
+
+        const char *display_name = has_vendor ? sta_vendor : sta_mac;
+        char display_name_trunc[28] = {0};
+        char ap_ssid_trunc[20] = {0};
+        strncpy(display_name_trunc, display_name, sizeof(display_name_trunc) - 1);
+        strncpy(ap_ssid_trunc, ap_ssid, sizeof(ap_ssid_trunc) - 1);
+
+        for (size_t k = 0; k < sizeof(ap_ssid_trunc) && ap_ssid_trunc[k] != '\0'; k++) {
+            if (ap_ssid_trunc[k] == '#') {
+                ap_ssid_trunc[k] = '.';
+            }
+        }
+
+        if (ap_channel > 0) {
+            if (g_sta_multi_selected[i]) {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s %s# -> %s%s Ch:%d#",
+                         accent_color_code, display_name_trunc, muted_color_code, ap_ssid_trunc, ap_channel);
+            } else {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s -> %s%s Ch:%d#",
+                         display_name_trunc, muted_color_code, ap_ssid_trunc, ap_channel);
+            }
+        } else {
+            if (g_sta_multi_selected[i]) {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s %s# -> %s%s#",
+                         accent_color_code, display_name_trunc, muted_color_code, ap_ssid_trunc);
+            } else {
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s -> %s%s#",
+                         display_name_trunc, muted_color_code, ap_ssid_trunc);
+            }
+        }
+        loaded++;
+    }
+
+    *has_more = (offset + loaded) < count;
+    return loaded;
+}
+
+static const char **sta_multi_select_get_options(void) {
+    if (!sta_multi_menu) {
+        sta_multi_menu = paged_menu_create(STA_MULTI_SELECT_PAGE_SIZE, sta_multi_select_load_fn, NULL);
+        paged_menu_set_callbacks(sta_multi_menu, sta_multi_select_handle_selection, NULL, NULL, NULL);
+    }
+    return paged_menu_get_options(sta_multi_menu);
+}
+
+static void sta_multi_select_toggle(int sta_index) {
+    if (g_sta_multi_selected == NULL || sta_index < 0 || sta_index >= g_sta_multi_count) {
+        return;
+    }
+    g_sta_multi_selected[sta_index] = !g_sta_multi_selected[sta_index];
+}
+
+static void sta_multi_select_all(void) {
+    if (g_sta_multi_selected == NULL) return;
+    for (int i = 0; i < g_sta_multi_count; i++) {
+        g_sta_multi_selected[i] = true;
+    }
+}
+
+static void sta_multi_select_none(void) {
+    if (g_sta_multi_selected == NULL) return;
+    for (int i = 0; i < g_sta_multi_count; i++) {
+        g_sta_multi_selected[i] = false;
+    }
+}
+
+static void sta_multi_select_confirm(void) {
+    if (g_sta_multi_selected == NULL) {
+        sta_multi_select_cleanup();
+        return;
+    }
+
+    int selected_count = 0;
+    for (int i = 0; i < g_sta_multi_count; i++) {
+        if (g_sta_multi_selected[i]) {
+            selected_count++;
+        }
+    }
+
+    if (selected_count > 0) {
+        int *indices = malloc(selected_count * sizeof(int));
+        if (indices != NULL) {
+            int idx = 0;
+            for (int i = 0; i < g_sta_multi_count; i++) {
+                if (g_sta_multi_selected[i]) {
+                    indices[idx++] = i;
+                }
+            }
+            station_scan_select_multiple(indices, selected_count);
+            free(indices);
+        }
+    }
+
+    sta_multi_select_cleanup();
+}
+
+static void sta_multi_select_cleanup(void) {
+    if (sta_multi_menu) {
+        paged_menu_destroy(sta_multi_menu);
+        sta_multi_menu = NULL;
+    }
+    if (g_sta_multi_selected != NULL) {
+        free(g_sta_multi_selected);
+        g_sta_multi_selected = NULL;
+    }
+    g_sta_multi_count = 0;
+}
+
+static void sta_multi_select_back_cb(lv_event_t *e) {
+    (void)e;
+    sta_multi_select_confirm();
+}
+
+static void sta_multi_select_handle_selection(const char *option, void *user_data) {
+    (void)user_data;
+
+    if (strcmp(option, "< Prev") == 0) {
+        paged_menu_page_prev(sta_multi_menu);
+        rebuild_current_menu();
+        return;
+    }
+
+    if (strcmp(option, "Next >") == 0) {
+        paged_menu_page_next(sta_multi_menu);
+        rebuild_current_menu();
+        return;
+    }
+
+    int count = station_scan_get_count();
+    int page_offset = paged_menu_get_page_offset(sta_multi_menu);
+
+    for (int i = 0; i < count; i++) {
+        char names[1][PAGED_MENU_NAME_MAX];
+        bool has_more = false;
+        sta_multi_select_load_fn(page_offset + i, 1, names, &has_more, NULL);
+        if (has_more == false && page_offset + i >= count) {
+            break;
+        }
+        if (strcmp(option, names[0]) == 0) {
+            sta_multi_select_toggle(page_offset + i);
+            rebuild_current_menu();
+            return;
+        }
+    }
+}
+
+static bool multi_select_option_is_toggled(int option_index, const char *option) {
+    if (!option || strcmp(option, "< Prev") == 0 || strcmp(option, "Next >") == 0 || strcmp(option, "No items found") == 0) {
+        return false;
+    }
+
+    if (SelectedMenuType != OT_Wifi) {
+        return false;
+    }
+
+    if (current_wifi_menu_state == WIFI_MENU_AP_MULTI_SELECT && ap_multi_menu && g_ap_multi_selected) {
+        int skip = paged_menu_has_prev(ap_multi_menu) ? 1 : 0;
+        int idx = paged_menu_get_page_offset(ap_multi_menu) + (option_index - skip);
+        return idx >= 0 && idx < g_ap_multi_count && g_ap_multi_selected[idx];
+    }
+
+    if (current_wifi_menu_state == WIFI_MENU_STA_MULTI_SELECT && sta_multi_menu && g_sta_multi_selected) {
+        int skip = paged_menu_has_prev(sta_multi_menu) ? 1 : 0;
+        int idx = paged_menu_get_page_offset(sta_multi_menu) + (option_index - skip);
+        return idx >= 0 && idx < g_sta_multi_count && g_sta_multi_selected[idx];
+    }
+
+    return false;
+}
+
+static void style_multi_select_row(lv_obj_t *btn, bool toggled) {
+    if (!btn || !toggled) {
+        return;
+    }
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
+
+    lv_obj_set_style_bg_color(btn, accent, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_20, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
 }
 
 static const char *auth_mode_to_string(wifi_auth_mode_t mode) {
@@ -6686,6 +7232,14 @@ static void rebuild_current_menu(void) {
                     options = scanall_list_get_options();
                     timer_period = 25;
                     break;
+                case WIFI_MENU_AP_MULTI_SELECT:
+                    options = ap_multi_select_get_options();
+                    timer_period = 25;
+                    break;
+                case WIFI_MENU_STA_MULTI_SELECT:
+                    options = sta_multi_select_get_options();
+                    timer_period = 25;
+                    break;
             }
             break;
         case OT_Bluetooth:
@@ -6772,6 +7326,10 @@ static void rebuild_current_menu(void) {
             options_view_set_title(g_options_view, "Station Details");
         } else if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_SCANALL_LIST) {
             options_view_set_title(g_options_view, "Scan All Results");
+        } else if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_AP_MULTI_SELECT) {
+            options_view_set_title(g_options_view, "Select APs");
+        } else if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_STA_MULTI_SELECT) {
+            options_view_set_title(g_options_view, "Select Stations");
         } else {
             options_view_set_title(g_options_view, options_menu_type_to_string(SelectedMenuType));
         }
@@ -7193,6 +7751,7 @@ static void menu_builder_cb(lv_timer_t *t)
                 }
                 lv_obj_set_height(btn, row_height);
                 options_view_relayout_item(g_options_view, btn);
+                style_multi_select_row(btn, multi_select_option_is_toggled(build_item_index, opt));
                 num_items++;
                 built_this_tick++;
                 build_item_index++;

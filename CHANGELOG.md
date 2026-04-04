@@ -3,6 +3,7 @@
 ## Revival v1.9.8
 - Added New 'Ghostchi' App 
 - Migrated project to ESP-IDF v6.0
+- Added Wi-Fi multi-select flows for APs and stations in the Scan & Select menu so multiple targets can be selected from the paged detail lists before running attacks/actions
 - Fixed crash on The Wired Hatter's Banshee S3 chip when enabling USB Keyboard caused by running out of input interrupts
 - The Wired Hatter's Banshee C5 internal memory optimisations
 - Improved The Wired Hatter's fuel gauge handling
@@ -21,6 +22,7 @@
 - Added option to change background shade of options
 - Added option to enable rounded menu items and set as default on
 - Restyled touch control bar to be more compact and clean
+- Wi-Fi capture commands now lock to the selected AP's channel when one AP is selected, or hop only across the selected AP channels when multiple APs are selected
 
 ## Revival v1.9.7
 
