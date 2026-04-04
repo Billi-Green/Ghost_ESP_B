@@ -318,6 +318,9 @@ static const char *bubble_text(const ghostchi_snapshot_t *snap,
     act_slot = (uint32_t)((esp_timer_get_time() / 9000000ULL) % 6ULL);
     if (!snap->sd_ready) return "";
 
+    if (act_slot == 5)
+        return "drawn by pr3!";
+
     /* Activity-driven interrupts — fire for one 9s slot per 54s cycle */
     if (act && act_slot == 0) {
         if (act->battery_valid && act->battery_pct < 15 && !act->battery_charging)
@@ -342,17 +345,43 @@ static const char *bubble_text(const ghostchi_snapshot_t *snap,
             return "battery's dying.";
         switch (snap->state) {
             case GHOSTCHI_STATE_SWEEP:
+                if (act_slot == 4)
+                    return phase == 0 ? "out for a walk." : (phase == 1 ? "just roaming." : "seeing what's up.");
+                if (act_slot >= 3)
+                    return phase == 0 ? "checking again." : (phase == 1 ? "still looking." : "sweeping through.");
                 return phase == 0 ? "scanning." : (phase == 1 ? "same channels." : "still scanning.");
             case GHOSTCHI_STATE_LOCK:
-                if (snap->confidence > 75)
-                    return phase == 0 ? "almost. probably." : (phase == 1 ? "any second now." : "got a feel for it.");
-                return phase == 0 ? "waiting on a packet." : (phase == 1 ? "listening." : "patience.");
+                if (snap->confidence > 75) {
+                    if (act_slot == 4)
+                        return phase == 0 ? "got a vibe." : (phase == 1 ? "this looks good." : "stay with me.");
+                    return act_slot >= 3
+                               ? (phase == 0 ? "close enough." : (phase == 1 ? "right there." : "looks promising."))
+                               : (phase == 0 ? "almost. probably." : (phase == 1 ? "any second now." : "got a feel for it."));
+                }
+                if (act_slot == 4)
+                    return phase == 0 ? "hanging on." : (phase == 1 ? "just a sec." : "being patient.");
+                return act_slot >= 3
+                           ? (phase == 0 ? "just listening." : (phase == 1 ? "not yet." : "holding here."))
+                           : (phase == 0 ? "waiting on a packet." : (phase == 1 ? "listening." : "patience."));
             case GHOSTCHI_STATE_STIM:
-                return phase == 0 ? "fine. deauthing." : (phase == 1 ? "pushing them." : "making noise.");
+                if (act_slot == 4)
+                    return phase == 0 ? "getting loud." : (phase == 1 ? "bit rude, yeah." : "wake up already.");
+                return act_slot >= 3
+                           ? (phase == 0 ? "forcing it." : (phase == 1 ? "nudging them." : "stirring things up."))
+                           : (phase == 0 ? "fine. deauthing." : (phase == 1 ? "pushing them." : "making noise."));
             case GHOSTCHI_STATE_COOLDOWN:
-                if (snap->handshakes)
-                    return phase == 0 ? "logged it." : (phase == 1 ? "that's one." : "captured.");
-                return phase == 0 ? "wasn't the one." : (phase == 1 ? "missed it." : "nothing this time.");
+                if (snap->handshakes) {
+                    if (act_slot == 4)
+                        return phase == 0 ? "nice." : (phase == 1 ? "I'll take it." : "good little haul.");
+                    return act_slot >= 3
+                               ? (phase == 0 ? "saved it." : (phase == 1 ? "good enough." : "got the packet."))
+                               : (phase == 0 ? "logged it." : (phase == 1 ? "that's one." : "captured."));
+                }
+                if (act_slot == 4)
+                    return phase == 0 ? "eh, whatever." : (phase == 1 ? "next one maybe." : "can't win all.");
+                return act_slot >= 3
+                           ? (phase == 0 ? "not this one." : (phase == 1 ? "came up empty." : "moving on."))
+                           : (phase == 0 ? "wasn't the one." : (phase == 1 ? "missed it." : "nothing this time."));
             case GHOSTCHI_STATE_STOPPING:
                 return phase == 0 ? "done. for now." : (phase == 1 ? "winding down." : "that's enough.");
             default:
@@ -361,9 +390,25 @@ static const char *bubble_text(const ghostchi_snapshot_t *snap,
     }
 
     if (ghostchi_is_thriving(snap)) {
-        if (hours < 2) return phase == 0 ? "it worked." : (phase == 1 ? "took long enough." : "one for the log.");
-        if (hours < 8) return phase == 0 ? "could go again." : (phase == 1 ? "whenever." : "nothing else on.");
-        return phase == 0 ? "been a while." : (phase == 1 ? "the whole time." : "run me already.");
+        if (hours < 2) {
+            if (act_slot == 4)
+                return phase == 0 ? "pretty good." : (phase == 1 ? "I'm into it." : "that was fun.");
+            return act_slot >= 3
+                       ? (phase == 0 ? "went alright." : (phase == 1 ? "not too bad." : "could do more."))
+                       : (phase == 0 ? "it worked." : (phase == 1 ? "took long enough." : "one for the log."));
+        }
+        if (hours < 8) {
+            if (act_slot == 4)
+                return phase == 0 ? "still buzzing." : (phase == 1 ? "I'm around." : "say the word.");
+            return act_slot >= 3
+                       ? (phase == 0 ? "still awake." : (phase == 1 ? "say when." : "I'm ready."))
+                       : (phase == 0 ? "could go again." : (phase == 1 ? "whenever." : "nothing else on."));
+        }
+        if (act_slot == 4)
+            return phase == 0 ? "just vibing." : (phase == 1 ? "wide awake." : "let's do stuff.");
+        return act_slot >= 3
+                   ? (phase == 0 ? "still here." : (phase == 1 ? "same as ever." : "give me something."))
+                   : (phase == 0 ? "been a while." : (phase == 1 ? "the whole time." : "run me already."));
     }
     if (snap->total_sessions == 0) {
         switch (phase) {
@@ -380,6 +425,20 @@ static const char *bubble_text(const ghostchi_snapshot_t *snap,
         }
     }
     if (hours >= 8) {
+        if (act_slot == 4) {
+            switch (phase) {
+                case 0: return "kinda sleepy.";
+                case 1: return "slow day.";
+                default: return "I'm still here.";
+            }
+        }
+        if (act_slot >= 3) {
+            switch (phase) {
+                case 0: return "dead quiet.";
+                case 1: return "nothing moving.";
+                default: return "same as before.";
+            }
+        }
         switch (phase) {
             case 0: return "quiet.";
             case 1: return "just watching.";
@@ -387,6 +446,20 @@ static const char *bubble_text(const ghostchi_snapshot_t *snap,
         }
     }
     if (hours >= 2) {
+        if (act_slot == 4) {
+            switch (phase) {
+                case 0: return "pretty calm.";
+                case 1: return "no rush.";
+                default: return "we can chill.";
+            }
+        }
+        if (act_slot >= 3) {
+            switch (phase) {
+                case 0: return "all clear.";
+                case 1: return "your call.";
+                default: return "nothing urgent.";
+            }
+        }
         switch (phase) {
             case 0: return "probably clear.";
             case 1: return "up to you.";
@@ -394,16 +467,44 @@ static const char *bubble_text(const ghostchi_snapshot_t *snap,
         }
     }
     if (snap->handshakes > 0) {
+        if (act_slot == 4) {
+            switch (phase) {
+                case 0: return "I've got one.";
+                case 1: return "feeling lucky.";
+                default: return "maybe again.";
+            }
+        }
+        if (act_slot >= 3) {
+            switch (phase) {
+                case 0: return "had one before.";
+                case 1: return "might again.";
+                default: return "worth a try.";
+            }
+        }
         switch (phase) {
             case 0: return "got one earlier.";
             case 1: return "not bad, actually.";
             default: return "could happen again.";
         }
     }
+    if (act_slot == 4) {
+        switch (phase) {
+            case 0: return "I'm bored.";
+            case 1: return "do a thing.";
+            default: return "I'm just here.";
+        }
+    }
+    if (act_slot >= 3) {
+        switch (phase) {
+            case 0: return "something's out there.";
+            case 1: return "could check.";
+            default: return "your move.";
+        }
+    }
     switch (phase) {
         case 0: return "signal's there.";
         case 1: return "could scan.";
-        default: return "drawn by pr3!";
+        default: return "pick something.";
     }
 }
 
