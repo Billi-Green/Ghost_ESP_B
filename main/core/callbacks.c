@@ -28,8 +28,8 @@
 static inline bool is_packet_valid(const wifi_promiscuous_pkt_t *pkt, wifi_promiscuous_pkt_type_t type);
 static inline bool is_on_target_channel(const wifi_promiscuous_pkt_t *pkt, uint8_t target_channel);
 
-#define STORE_STR_ATTR __attribute__((section(".rodata.str")))
-#define STORE_DATA_ATTR __attribute__((section(".rodata.data")))
+#define STORE_STR_ATTR
+#define STORE_DATA_ATTR
 #define WPS_OUI 0x0050f204
 #define TAG "WIFI_MONITOR"
 #define WPS_CONF_METHODS_PBC 0x0080
@@ -757,9 +757,25 @@ static hs_entry_t hs_table[HS_TABLE_MAX];
 static uint8_t hs_count_local = 0;
 static uint8_t hs_insert_idx_local = 0;
 static uint32_t hs_found_count = 0;
+static bool s_pcap_enabled = true;
 
 static inline bool mac_equal(const uint8_t *a, const uint8_t *b) {
     return memcmp(a, b, 6) == 0;
+}
+
+uint32_t wifi_callbacks_get_handshake_count(void) {
+    return hs_found_count;
+}
+
+void wifi_callbacks_reset_handshake_tracking(void) {
+    memset(hs_table, 0, sizeof(hs_table));
+    hs_count_local = 0;
+    hs_insert_idx_local = 0;
+    hs_found_count = 0;
+}
+
+void wifi_callbacks_set_pcap_enabled(bool enabled) {
+    s_pcap_enabled = enabled;
 }
 
 static const char *msg_name(uint8_t m) {
@@ -982,12 +998,14 @@ static void pcap_writer_task(void *arg) {
                 UBaseType_t hwm_words = uxTaskGetStackHighWaterMark(NULL);
                 glog("PCAP writer HWM (bytes): %lu\n", (unsigned long)hwm_words);
             }
-            if ((processed & 0x1F) == 0) {
+            if ((processed & 0x1F) == 0 && pcap_auto_flush_enabled()) {
                 pcap_flush_buffer_to_file();
             }
         } else {
             // periodic flush even if idle
-            pcap_flush_buffer_to_file();
+            if (pcap_auto_flush_enabled()) {
+                pcap_flush_buffer_to_file();
+            }
         }
     }
 }
@@ -1039,6 +1057,7 @@ static inline void enqueue_pcap_write_typed(const uint8_t *payload, uint16_t len
 }
 
 static inline void enqueue_pcap_write(const uint8_t *payload, uint16_t len) {
+    if (!s_pcap_enabled) return;
     enqueue_pcap_write_typed(payload, len, PCAP_CAPTURE_WIFI);
 }
 
@@ -2477,8 +2496,8 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        /* sanity checks: ensure IE length is reasonable and within bounds */
-        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length fits within bounds */
+        if (index + 2 + ie_len > len) {
             return;
         }
 
@@ -2818,7 +2837,9 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
 
     const uint8_t *payload = pkt->payload;
     int len = pkt->rx_ctrl.sig_len;
@@ -2830,7 +2851,6 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     int index = 36;
     char ssid[33] = {0};
-    bool wps_found = false;
     uint8_t bssid[6];
     memcpy(bssid, hdr->addr3, 6);
 
@@ -2838,8 +2858,8 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         uint8_t id = payload[index];
         uint8_t ie_len = payload[index + 1];
 
-        /* sanity checks: ensure IE length is reasonable and within bounds */
-        if (ie_len > MAX_IE_LEN || index + 2 + ie_len > len) {
+        /* sanity checks: ensure IE length fits within bounds */
+        if (index + 2 + ie_len > len) {
             break;
         }
 
@@ -2859,8 +2879,6 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             uint8_t oui_type = payload[index + 5];
 
             if (oui == 0x0050f2 && oui_type == 0x04) {
-                wps_found = true;
-
                 int attr_index = index + 6;
                 int wps_ie_end = index + 2 + ie_len;
 

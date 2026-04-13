@@ -53,12 +53,13 @@
 #include "core/commandline.h"
 #include "freertos/task.h"
 #include "freertos/portmacro.h"
-#include "mbedtls/ecp.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/sha256.h"
-#include "mbedtls/hmac_drbg.h"
-#include "mbedtls/bignum.h"
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#include "mbedtls/private/ecp.h"
+#include "mbedtls/private/ctr_drbg.h"
+#include "mbedtls/private/entropy.h"
+#include "mbedtls/private/sha256.h"
+#include "mbedtls/private/hmac_drbg.h"
+#include "mbedtls/private/bignum.h"
 #include "core/serial_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/status_display_manager.h"
@@ -101,6 +102,8 @@ void music_visualizer_view_update(const uint8_t *amplitudes,
 static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 static esp_err_t start_live_ap_channel_hopping(void);
 static void stop_live_ap_channel_hopping(void);
+static bool callback_uses_selected_ap_capture_plan(wifi_promiscuous_cb_t_t callback);
+static void apply_selected_ap_capture_channel_plan(wifi_promiscuous_cb_t_t callback);
 static esp_timer_handle_t live_ap_channel_hop_timer = NULL;
 static volatile bool live_ap_hopping_active = false;
 static uint32_t last_live_print_ms = 0;
@@ -818,7 +821,7 @@ const char *get_content_type(const char *uri) {
     return "application/octet-stream"; // Default to binary stream if unknown
 }
 
-const char *get_host_from_req(httpd_req_t *req) {
+char *get_host_from_req(httpd_req_t *req) {
     size_t buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
     if (buf_len > 1) {
         char *host = malloc(buf_len);
@@ -1511,11 +1514,11 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
     esp_wifi_set_ps(WIFI_PS_NONE);
 
     // be conservative for client compatibility (2.4GHz only, HT20 for max compatibility)
-    (void)esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+    (void)esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
     (void)esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
     dnsserver.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
     dnsserver.ip.type = ESP_IPADDR_TYPE_V4;
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &ap_config));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     esp_err_t start_err = esp_wifi_start();
     if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_NOT_STARTED) {
         ESP_LOGE(TAG, "portal start: esp_wifi_start failed: %s", esp_err_to_name(start_err));
@@ -1628,31 +1631,7 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     // preventing channel hopping (e.g. wardriving only sees one channel).
     esp_wifi_disconnect();
 
-    // for EAPOL, stop ALL hopping and lock to selected AP channel
-    if (callback == wifi_eapol_scan_callback) {
-        // Stop any existing channel hopping first
-        if (station_scan_is_active()) {
-            station_scan_stop();
-        }
-        if (live_ap_hopping_active) {
-            stop_live_ap_channel_hopping();
-        }
-        if (wireshark_hopping_active) {
-            wifi_manager_stop_wireshark_channel_hop();
-        }
-        
-        extern wifi_ap_record_t selected_ap;
-        if (selected_ap.ssid[0] != '\0' && selected_ap.primary > 0) {
-            esp_err_t ch_err = esp_wifi_set_channel(selected_ap.primary, WIFI_SECOND_CHAN_NONE);
-            if (ch_err == ESP_OK) {
-                printf("EAPOL: locked to channel %d (hopping stopped)\n", selected_ap.primary);
-            } else {
-                printf("EAPOL: failed to set channel %d: %s\n", selected_ap.primary, esp_err_to_name(ch_err));
-            }
-        } else {
-            printf("EAPOL: no AP selected, channel hopping disabled\n");
-        }
-    }
+    apply_selected_ap_capture_channel_plan(callback);
 
     // Set hardware-level promiscuous filter based on callback type
     wifi_promiscuous_filter_t filter = {0};
@@ -1677,12 +1656,20 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
 
-    // Verify current channel for EAPOL
-    if (callback == wifi_eapol_scan_callback) {
+    // Verify current channel for capture callbacks that use selected AP channel plans.
+    if (callback_uses_selected_ap_capture_plan(callback)) {
         uint8_t ch_primary = 0; wifi_second_chan_t ch_second = WIFI_SECOND_CHAN_NONE;
         esp_err_t get_err = esp_wifi_get_channel(&ch_primary, &ch_second);
         if (get_err == ESP_OK) {
-            printf("EAPOL: current channel verified as %u\n", ch_primary);
+            const char *cap_name = "CAPTURE";
+            if (callback == wifi_probe_scan_callback) cap_name = "PROBE";
+            else if (callback == wifi_deauth_scan_callback) cap_name = "DEAUTH";
+            else if (callback == wifi_beacon_scan_callback) cap_name = "BEACON";
+            else if (callback == wifi_raw_scan_callback) cap_name = "RAW";
+            else if (callback == wifi_eapol_scan_callback) cap_name = "EAPOL";
+            else if (callback == wifi_pwn_scan_callback) cap_name = "PWN";
+            else if (callback == wifi_wps_detection_callback) cap_name = "WPS";
+            printf("%s: current channel verified as %u\n", cap_name, ch_primary);
         }
     }
 
@@ -2814,7 +2801,9 @@ static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (frame_subtype != 0x08 && frame_subtype != 0x05) return;
 
     const wifi_ieee80211_packet_t *ipkt = (const wifi_ieee80211_packet_t *)payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(hdr_copy));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
     const uint8_t *bssid = hdr->addr3;
 
     if (bssid_already_listed(bssid)) return;
@@ -3105,7 +3094,7 @@ void wifi_manager_connect_wifi(const char *ssid, const char *password) {
         return;
     }
 
-    err = esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config);
+    err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     if (err != ESP_OK) {
         printf("Failed to configure STA: %s\n", esp_err_to_name(err));
         TERMINAL_VIEW_ADD_TEXT("Failed to configure WiFi\n");
@@ -3297,6 +3286,119 @@ static void wireshark_channel_hop_timer_callback(void *arg) {
     #endif
     
     esp_wifi_set_channel(channel, second);
+}
+
+static bool callback_uses_selected_ap_capture_plan(wifi_promiscuous_cb_t_t callback) {
+    return callback == wifi_probe_scan_callback ||
+           callback == wifi_deauth_scan_callback ||
+           callback == wifi_beacon_scan_callback ||
+           callback == wifi_raw_scan_callback ||
+           callback == wifi_eapol_scan_callback ||
+           callback == wifi_pwn_scan_callback ||
+           callback == wifi_wps_detection_callback;
+}
+
+static void apply_selected_ap_capture_channel_plan(wifi_promiscuous_cb_t_t callback) {
+    if (!callback_uses_selected_ap_capture_plan(callback)) {
+        return;
+    }
+
+    if (station_scan_is_active()) {
+        station_scan_stop();
+    }
+    if (live_ap_hopping_active) {
+        stop_live_ap_channel_hopping();
+    }
+    if (wireshark_hopping_active) {
+        wifi_manager_stop_wireshark_channel_hop();
+    }
+
+    const char *cap_name = "CAPTURE";
+    if (callback == wifi_probe_scan_callback) cap_name = "PROBE";
+    else if (callback == wifi_deauth_scan_callback) cap_name = "DEAUTH";
+    else if (callback == wifi_beacon_scan_callback) cap_name = "BEACON";
+    else if (callback == wifi_raw_scan_callback) cap_name = "RAW";
+    else if (callback == wifi_eapol_scan_callback) cap_name = "EAPOL";
+    else if (callback == wifi_pwn_scan_callback) cap_name = "PWN";
+    else if (callback == wifi_wps_detection_callback) cap_name = "WPS";
+
+    if (selected_ap_count <= 0 || selected_aps == NULL) {
+        printf("%s: no AP selected, channel hopping disabled\n", cap_name);
+        return;
+    }
+
+    uint8_t unique_channels[50] = {0};
+    int unique_count = 0;
+    for (int i = 0; i < selected_ap_count && unique_count < (int)(sizeof(unique_channels) / sizeof(unique_channels[0])); i++) {
+        uint8_t channel = selected_aps[i].primary;
+        if (channel == 0) {
+            continue;
+        }
+
+        bool seen = false;
+        for (int j = 0; j < unique_count; j++) {
+            if (unique_channels[j] == channel) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) {
+            unique_channels[unique_count++] = channel;
+        }
+    }
+
+    if (unique_count <= 0) {
+        printf("%s: selected APs have no valid channel, channel hopping disabled\n", cap_name);
+        return;
+    }
+
+    if (unique_count == 1) {
+        esp_err_t ch_err = esp_wifi_set_channel(unique_channels[0], WIFI_SECOND_CHAN_NONE);
+        if (ch_err == ESP_OK) {
+            printf("%s: locked to channel %d\n", cap_name, unique_channels[0]);
+        } else {
+            printf("%s: failed to set channel %d: %s\n", cap_name, unique_channels[0], esp_err_to_name(ch_err));
+        }
+        return;
+    }
+
+    memcpy(wireshark_channels, unique_channels, (size_t)unique_count * sizeof(uint8_t));
+    wireshark_channels_count = (size_t)unique_count;
+    wireshark_channel_index = 0;
+
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    if (wireshark_channels[0] > 14) {
+        second = WIFI_SECOND_CHAN_ABOVE;
+    }
+#endif
+    esp_wifi_set_channel(wireshark_channels[0], second);
+
+    esp_timer_create_args_t timer_args = {
+        .callback = wireshark_channel_hop_timer_callback,
+        .name = "wireshark_hop"
+    };
+
+    esp_err_t err = esp_timer_create(&timer_args, &wireshark_channel_hop_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create selected AP capture hop timer");
+        return;
+    }
+
+    err = esp_timer_start_periodic(wireshark_channel_hop_timer, WIRESHARK_CHANNEL_HOP_INTERVAL_MS * 1000);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start selected AP capture hop timer");
+        esp_timer_delete(wireshark_channel_hop_timer);
+        wireshark_channel_hop_timer = NULL;
+        return;
+    }
+
+    wireshark_hopping_active = true;
+    printf("%s: hopping selected AP channels (%d)", cap_name, unique_count);
+    for (int i = 0; i < unique_count; i++) {
+        printf("%s%d", (i == 0) ? ": " : ",", unique_channels[i]);
+    }
+    printf("\n");
 }
 
 void wifi_manager_start_wireshark_channel_hop(void) {
@@ -3932,7 +4034,9 @@ static void wifi_track_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
-    const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(hdr_copy));
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
     
     int8_t rssi = pkt->rx_ctrl.rssi;
     bool match = false;

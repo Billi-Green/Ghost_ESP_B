@@ -520,9 +520,7 @@ esp_err_t api_sd_card_delete_file_handler(httpd_req_t *req) {
             snprintf(filepath, sizeof(filepath), "%s", path);
             ESP_LOGI(TAG, "Deleting file: %s", filepath);
 
-            struct _reent r;
-            memset(&r, 0, sizeof(struct _reent));
-            int res = _unlink_r(&r, filepath);
+            int res = unlink(filepath);
             if (res == 0) {
                 ESP_LOGI(TAG, "File deleted successfully");
                 httpd_resp_set_status(req, "200 OK");

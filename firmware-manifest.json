@@ -1,5 +1,1049 @@
 {
   "commits": {
+    "0421c60f3b0c87febe239ca9acc168ebed4b11d3": {
+      "configs": [
+        {
+          "channel": "prerelease",
+          "config": "ACE_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/ACE_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/ACE_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ACE_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/ACE_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/ACE_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "AwokMini",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/AwokMini.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/AwokMini.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Banshee_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Banshee_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Banshee_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Banshee_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2432S028R",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/CYD2432S028R.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/CYD2432S028R.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/CYD2USB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/CYD2USB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/CYD2USB2.4Inch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/CYD2USB2.4Inch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/CYD2USB2.4Inch_C.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/CYD2USB2.4Inch_C.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDDualUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/CYDDualUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/CYDDualUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDMicroUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/CYDMicroUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/CYDMicroUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CardputerADV",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/CardputerADV.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/CardputerADV.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Crowtech_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Crowtech_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Crowtech_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/ESP32-S3-Cardputer.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/ESP32-S3-Cardputer.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "FeberisPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/FeberisPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/FeberisPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Flipper_JCMK_GPS.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Flipper_JCMK_GPS.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "HeltecV3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/HeltecV3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/HeltecV3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/JC3248W535EN_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/JC3248W535EN_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/JCMK_DevBoardPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/JCMK_DevBoardPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/LilyGo-S3TWatch-2020.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/LilyGo-S3TWatch-2020.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/LilyGo-T-Deck.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/LilyGo-T-Deck.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/LilyGo-TDisplayS3-Touch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/LilyGo-TDisplayS3-Touch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/LilyGo-TEmbedC1101.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/LilyGo-TEmbedC1101.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Lolin_S3_Pro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Lolin_S3_Pro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/MarauderV4_FlipperHub.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/MarauderV4_FlipperHub.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/MarauderV6_AwokDual.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/MarauderV6_AwokDual.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Poltergeist",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Poltergeist.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Poltergeist.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/RabbitLabs_Minion.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/RabbitLabs_Minion.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Sunton_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Sunton_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Sunton_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Waveshare_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/Waveshare_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/Waveshare_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/esp32-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/esp32-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/esp32c3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/esp32c3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/esp32c5-generic-v01.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/esp32c5-generic-v01.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c6-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/esp32c6-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/esp32c6-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s2-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/esp32s2-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/esp32s2-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/esp32s3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/esp32s3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32v5_awok",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/esp32v5_awok.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/esp32v5_awok.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ghostboard",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/ghostboard.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/ghostboard.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "ghostboard.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "presskit",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-051939-0421c60/presskit.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-051939-0421c60/presskit.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-051939-0421c60",
+          "zip_name": "presskit.zip"
+        }
+      ],
+      "last_channel": "prerelease",
+      "last_tag": "prerelease-20260328-051939-0421c60",
+      "release_refs": [
+        {
+          "channel": "prerelease",
+          "tag": "prerelease-20260328-051939-0421c60",
+          "updated_at": "2026-03-28T05:19:40.009404+00:00"
+        }
+      ],
+      "source_commit": "0421c60f3b0c87febe239ca9acc168ebed4b11d3",
+      "updated_at": "2026-03-28T05:19:40.009404+00:00"
+    },
+    "09245addb1b98d5e998ef8667e8cc414dbe8e32f": {
+      "configs": [
+        {
+          "channel": "prerelease",
+          "config": "ACE_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/ACE_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/ACE_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ACE_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/ACE_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/ACE_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "AwokMini",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/AwokMini.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/AwokMini.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Banshee_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Banshee_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Banshee_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Banshee_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2432S028R",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/CYD2432S028R.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/CYD2432S028R.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/CYD2USB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/CYD2USB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/CYD2USB2.4Inch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/CYD2USB2.4Inch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/CYD2USB2.4Inch_C.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/CYD2USB2.4Inch_C.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDDualUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/CYDDualUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/CYDDualUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDMicroUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/CYDMicroUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/CYDMicroUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CardputerADV",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/CardputerADV.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/CardputerADV.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Crowtech_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Crowtech_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Crowtech_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/ESP32-S3-Cardputer.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/ESP32-S3-Cardputer.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "FeberisPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/FeberisPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/FeberisPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Flipper_JCMK_GPS.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Flipper_JCMK_GPS.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "HeltecV3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/HeltecV3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/HeltecV3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/JC3248W535EN_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/JC3248W535EN_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/JCMK_DevBoardPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/JCMK_DevBoardPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/LilyGo-S3TWatch-2020.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/LilyGo-S3TWatch-2020.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/LilyGo-T-Deck.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/LilyGo-T-Deck.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/LilyGo-TDisplayS3-Touch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/LilyGo-TDisplayS3-Touch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/LilyGo-TEmbedC1101.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/LilyGo-TEmbedC1101.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Lolin_S3_Pro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Lolin_S3_Pro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/MarauderV4_FlipperHub.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/MarauderV4_FlipperHub.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/MarauderV6_AwokDual.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/MarauderV6_AwokDual.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Poltergeist",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Poltergeist.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Poltergeist.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/RabbitLabs_Minion.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/RabbitLabs_Minion.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Sunton_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Sunton_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Sunton_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Waveshare_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/Waveshare_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/Waveshare_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/esp32-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/esp32-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/esp32c3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/esp32c3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/esp32c5-generic-v01.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/esp32c5-generic-v01.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c6-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/esp32c6-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/esp32c6-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s2-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/esp32s2-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/esp32s2-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/esp32s3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/esp32s3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32v5_awok",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/esp32v5_awok.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/esp32v5_awok.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ghostboard",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/ghostboard.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/ghostboard.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "ghostboard.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "presskit",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260328-035844-09245ad/presskit.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260328-035844-09245ad/presskit.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260328-035844-09245ad",
+          "zip_name": "presskit.zip"
+        }
+      ],
+      "last_channel": "prerelease",
+      "last_tag": "prerelease-20260328-035844-09245ad",
+      "release_refs": [
+        {
+          "channel": "prerelease",
+          "tag": "prerelease-20260328-035844-09245ad",
+          "updated_at": "2026-03-28T03:58:44.179202+00:00"
+        }
+      ],
+      "source_commit": "09245addb1b98d5e998ef8667e8cc414dbe8e32f",
+      "updated_at": "2026-03-28T03:58:44.179202+00:00"
+    },
     "0a75c34239fa536d1b0f66ca0b2cc371d0df1456": {
       "configs": [
         {
@@ -3927,6 +4971,528 @@
       ],
       "source_commit": "3d6797b4fdd001f6389fa3193105778e32ab14f8",
       "updated_at": "2026-03-10T19:39:50.774841+00:00"
+    },
+    "454f029a3e5edab0f86714b5fd12671ac0ed86f9": {
+      "configs": [
+        {
+          "channel": "prerelease",
+          "config": "ACE_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/ACE_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/ACE_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ACE_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/ACE_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/ACE_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "AwokMini",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/AwokMini.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/AwokMini.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Banshee_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Banshee_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Banshee_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Banshee_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2432S028R",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/CYD2432S028R.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/CYD2432S028R.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/CYD2USB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/CYD2USB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/CYD2USB2.4Inch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/CYD2USB2.4Inch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/CYD2USB2.4Inch_C.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/CYD2USB2.4Inch_C.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDDualUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/CYDDualUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/CYDDualUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDMicroUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/CYDMicroUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/CYDMicroUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CardputerADV",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/CardputerADV.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/CardputerADV.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Crowtech_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Crowtech_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Crowtech_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/ESP32-S3-Cardputer.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/ESP32-S3-Cardputer.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "FeberisPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/FeberisPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/FeberisPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Flipper_JCMK_GPS.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Flipper_JCMK_GPS.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "HeltecV3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/HeltecV3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/HeltecV3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/JC3248W535EN_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/JC3248W535EN_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/JCMK_DevBoardPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/JCMK_DevBoardPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/LilyGo-S3TWatch-2020.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/LilyGo-S3TWatch-2020.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/LilyGo-T-Deck.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/LilyGo-T-Deck.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/LilyGo-TDisplayS3-Touch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/LilyGo-TDisplayS3-Touch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/LilyGo-TEmbedC1101.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/LilyGo-TEmbedC1101.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Lolin_S3_Pro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Lolin_S3_Pro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/MarauderV4_FlipperHub.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/MarauderV4_FlipperHub.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/MarauderV6_AwokDual.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/MarauderV6_AwokDual.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Poltergeist",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Poltergeist.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Poltergeist.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/RabbitLabs_Minion.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/RabbitLabs_Minion.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Sunton_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Sunton_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Sunton_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Waveshare_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/Waveshare_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/Waveshare_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/esp32-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/esp32-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/esp32c3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/esp32c3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/esp32c5-generic-v01.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/esp32c5-generic-v01.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c6-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/esp32c6-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/esp32c6-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s2-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/esp32s2-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/esp32s2-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/esp32s3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/esp32s3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32v5_awok",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/esp32v5_awok.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/esp32v5_awok.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ghostboard",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/ghostboard.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/ghostboard.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "ghostboard.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "presskit",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-102824-454f029/presskit.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-102824-454f029/presskit.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-102824-454f029",
+          "zip_name": "presskit.zip"
+        }
+      ],
+      "last_channel": "prerelease",
+      "last_tag": "prerelease-20260331-102824-454f029",
+      "release_refs": [
+        {
+          "channel": "prerelease",
+          "tag": "prerelease-20260331-102824-454f029",
+          "updated_at": "2026-03-31T10:28:24.735964+00:00"
+        }
+      ],
+      "source_commit": "454f029a3e5edab0f86714b5fd12671ac0ed86f9",
+      "updated_at": "2026-03-31T10:28:24.735964+00:00"
     },
     "496e68b65d97a9daad0c69acbbe4adc099fe11cd": {
       "configs": [
@@ -10495,6 +12061,849 @@
       "source_commit": "a2b2f7cf22a0ff07b68455b30cc18e664d371e56",
       "updated_at": "2026-03-08T08:59:26.953203+00:00"
     },
+    "c1ee860fb0339289a1bb4c957d5261de861d694c": {
+      "configs": [
+        {
+          "channel": "commit",
+          "config": "ACE_C5",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ACE_C5.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "ACE_S3",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ACE_S3.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "AwokMini",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/AwokMini.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Banshee_C5",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Banshee_C5.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Banshee_S3",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Banshee_S3.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2432S028R",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2432S028R.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2USB",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2USB.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2USB2.4Inch.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYD2USB2.4Inch_C.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYDDualUSB",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYDDualUSB.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CYDMicroUSB",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CYDMicroUSB.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "CardputerADV",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/CardputerADV.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Crowtech_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Crowtech_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ESP32-S3-Cardputer.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "FeberisPro",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/FeberisPro.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Flipper_JCMK_GPS.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "HeltecV3",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/HeltecV3.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/JC3248W535EN_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/JCMK_DevBoardPro.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-S3TWatch-2020.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-T-Deck.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-TDisplayS3-Touch.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/LilyGo-TEmbedC1101.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Lolin_S3_Pro.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/MarauderV4_FlipperHub.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/MarauderV6_AwokDual.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Poltergeist",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Poltergeist.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/RabbitLabs_Minion.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Sunton_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Sunton_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "Waveshare_LCD",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/Waveshare_LCD.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32c3-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32c3-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32c5-generic-v01.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32c6-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32c6-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32s2-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32s2-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32s3-generic",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32s3-generic.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "esp32v5_awok",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/esp32v5_awok.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "ghostboard",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/ghostboard.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "ghostboard.zip"
+        },
+        {
+          "channel": "commit",
+          "config": "presskit",
+          "download_url": "https://gitlab.com/fyoudeki/ghostesp/-/jobs/artifacts/c1ee860fb0339289a1bb4c957d5261de861d694c/raw/presskit.zip?job=build",
+          "pipeline_url": "https://gitlab.com/fyoudeki/ghostesp/-/pipelines/2416204711",
+          "release_tag": null,
+          "zip_name": "presskit.zip"
+        }
+      ],
+      "last_channel": "commit",
+      "last_tag": null,
+      "release_refs": [],
+      "source_commit": "c1ee860fb0339289a1bb4c957d5261de861d694c",
+      "updated_at": "2026-03-29T12:38:16.948317+00:00"
+    },
+    "cda86ad432a08d6ab386a7df05bbdef5202bdcbf": {
+      "configs": [
+        {
+          "channel": "prerelease",
+          "config": "ACE_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/ACE_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/ACE_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ACE_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/ACE_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/ACE_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "AwokMini",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/AwokMini.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/AwokMini.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Banshee_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Banshee_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Banshee_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Banshee_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2432S028R",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/CYD2432S028R.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/CYD2432S028R.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/CYD2USB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/CYD2USB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/CYD2USB2.4Inch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/CYD2USB2.4Inch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/CYD2USB2.4Inch_C.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/CYD2USB2.4Inch_C.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDDualUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/CYDDualUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/CYDDualUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDMicroUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/CYDMicroUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/CYDMicroUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CardputerADV",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/CardputerADV.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/CardputerADV.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Crowtech_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Crowtech_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Crowtech_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/ESP32-S3-Cardputer.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/ESP32-S3-Cardputer.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "FeberisPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/FeberisPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/FeberisPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Flipper_JCMK_GPS.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Flipper_JCMK_GPS.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "HeltecV3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/HeltecV3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/HeltecV3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/JC3248W535EN_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/JC3248W535EN_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/JCMK_DevBoardPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/JCMK_DevBoardPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/LilyGo-S3TWatch-2020.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/LilyGo-S3TWatch-2020.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/LilyGo-T-Deck.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/LilyGo-T-Deck.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/LilyGo-TDisplayS3-Touch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/LilyGo-TDisplayS3-Touch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/LilyGo-TEmbedC1101.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/LilyGo-TEmbedC1101.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Lolin_S3_Pro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Lolin_S3_Pro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/MarauderV4_FlipperHub.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/MarauderV4_FlipperHub.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/MarauderV6_AwokDual.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/MarauderV6_AwokDual.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Poltergeist",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Poltergeist.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Poltergeist.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/RabbitLabs_Minion.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/RabbitLabs_Minion.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Sunton_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Sunton_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Sunton_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Waveshare_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/Waveshare_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/Waveshare_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/esp32-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/esp32-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/esp32c3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/esp32c3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/esp32c5-generic-v01.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/esp32c5-generic-v01.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c6-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/esp32c6-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/esp32c6-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s2-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/esp32s2-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/esp32s2-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/esp32s3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/esp32s3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32v5_awok",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/esp32v5_awok.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/esp32v5_awok.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ghostboard",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/ghostboard.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/ghostboard.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "ghostboard.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "presskit",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260331-005124-cda86ad/presskit.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260331-005124-cda86ad/presskit.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260331-005124-cda86ad",
+          "zip_name": "presskit.zip"
+        }
+      ],
+      "last_channel": "prerelease",
+      "last_tag": "prerelease-20260331-005124-cda86ad",
+      "release_refs": [
+        {
+          "channel": "prerelease",
+          "tag": "prerelease-20260331-005124-cda86ad",
+          "updated_at": "2026-03-31T00:51:24.268725+00:00"
+        }
+      ],
+      "source_commit": "cda86ad432a08d6ab386a7df05bbdef5202bdcbf",
+      "updated_at": "2026-03-31T00:51:24.268725+00:00"
+    },
     "d158e531da6f3d5beee6ef13ee1301dbd05a3f45": {
       "configs": [
         {
@@ -13409,6 +15818,528 @@
       "source_commit": "f10fddaeff884092101fa86527681b5d899832ba",
       "updated_at": "2026-03-08T09:09:30.456717+00:00"
     },
+    "f7944c93d54bb990b83f271c8397810054abf567": {
+      "configs": [
+        {
+          "channel": "prerelease",
+          "config": "ACE_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/ACE_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/ACE_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ACE_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/ACE_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/ACE_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "AwokMini",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/AwokMini.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/AwokMini.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_C5",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Banshee_C5.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Banshee_C5.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Banshee_S3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Banshee_S3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Banshee_S3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2432S028R",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/CYD2432S028R.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/CYD2432S028R.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/CYD2USB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/CYD2USB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/CYD2USB2.4Inch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/CYD2USB2.4Inch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/CYD2USB2.4Inch_C.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/CYD2USB2.4Inch_C.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDDualUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/CYDDualUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/CYDDualUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CYDMicroUSB",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/CYDMicroUSB.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/CYDMicroUSB.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "CardputerADV",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/CardputerADV.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/CardputerADV.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Crowtech_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Crowtech_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Crowtech_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/ESP32-S3-Cardputer.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/ESP32-S3-Cardputer.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "FeberisPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/FeberisPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/FeberisPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Flipper_JCMK_GPS.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Flipper_JCMK_GPS.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "HeltecV3",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/HeltecV3.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/HeltecV3.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/JC3248W535EN_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/JC3248W535EN_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/JCMK_DevBoardPro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/JCMK_DevBoardPro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/LilyGo-S3TWatch-2020.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/LilyGo-S3TWatch-2020.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/LilyGo-T-Deck.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/LilyGo-T-Deck.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/LilyGo-TDisplayS3-Touch.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/LilyGo-TDisplayS3-Touch.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/LilyGo-TEmbedC1101.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/LilyGo-TEmbedC1101.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Lolin_S3_Pro.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Lolin_S3_Pro.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/MarauderV4_FlipperHub.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/MarauderV4_FlipperHub.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/MarauderV6_AwokDual.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/MarauderV6_AwokDual.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Poltergeist",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Poltergeist.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Poltergeist.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/RabbitLabs_Minion.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/RabbitLabs_Minion.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Sunton_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Sunton_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Sunton_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "Waveshare_LCD",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/Waveshare_LCD.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/Waveshare_LCD.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/esp32-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/esp32-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/esp32c3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/esp32c3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/esp32c5-generic-v01.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/esp32c5-generic-v01.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32c6-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/esp32c6-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/esp32c6-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s2-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/esp32s2-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/esp32s2-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32s3-generic",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/esp32s3-generic.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/esp32s3-generic.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "esp32v5_awok",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/esp32v5_awok.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/esp32v5_awok.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "ghostboard",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/ghostboard.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/ghostboard.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "ghostboard.zip"
+        },
+        {
+          "channel": "prerelease",
+          "config": "presskit",
+          "download_url": "https://cdn.arcdatabase.net/releases/prerelease-20260404-114715-f7944c9/presskit.zip",
+          "mirrors": [
+            {
+              "label": "GitLab",
+              "url": "https://gitlab.com/fyoudeki/ghostesp/-/packages/generic/ghost-esp/prerelease-20260404-114715-f7944c9/presskit.zip"
+            }
+          ],
+          "release_tag": "prerelease-20260404-114715-f7944c9",
+          "zip_name": "presskit.zip"
+        }
+      ],
+      "last_channel": "prerelease",
+      "last_tag": "prerelease-20260404-114715-f7944c9",
+      "release_refs": [
+        {
+          "channel": "prerelease",
+          "tag": "prerelease-20260404-114715-f7944c9",
+          "updated_at": "2026-04-04T11:47:15.735600+00:00"
+        }
+      ],
+      "source_commit": "f7944c93d54bb990b83f271c8397810054abf567",
+      "updated_at": "2026-04-04T11:47:15.735600+00:00"
+    },
     "fd8e0491f0424eb43808bc15514734e981bb0dd1": {
       "configs": [
         {
@@ -14590,7 +17521,7 @@
     }
   },
   "generated_by": "compile_all.yml",
-  "repository": "GhostESP-Revival/GhostESP",
+  "repository": "fyoudeki/ghostesp",
   "schema_version": 2,
-  "updated_at": "2026-03-27T03:30:29.557983+00:00"
+  "updated_at": "2026-04-04T11:47:15.735600+00:00"
 }

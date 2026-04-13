@@ -82,7 +82,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - uses: actions/cache@v4
         id: cache-idf
@@ -90,9 +90,9 @@ jobs:
           path: |
             ~/esp-idf
             ~/.espressif
-          key: esp-idf-v5.5.3-${{ runner.os }}-v2
+          key: esp-idf-v6.0-${{ runner.os }}-v1
           restore-keys: |
-            esp-idf-v5.5.3-${{ runner.os }}-
+            esp-idf-v6.0-${{ runner.os }}-
 
       - name: Install ESP-IDF Dependencies
         if: steps.cache-idf.outputs.cache-hit != 'true'
@@ -103,15 +103,14 @@ jobs:
       - name: Install ESP-IDF
         if: steps.cache-idf.outputs.cache-hit != 'true'
         run: |
-          git clone -b v5.5.3 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
+          git clone -b v6.0 --depth 1 --recursive https://github.com/espressif/esp-idf.git ~/esp-idf
           ~/esp-idf/install.sh
 
-      - name: Patch ESP-IDF fatfs
-        run: |
-          sed -i 's/#if FF_USE_DYN_BUFFER/#if !FF_FS_TINY \&\& FF_USE_DYN_BUFFER/' ~/esp-idf/components/fatfs/src/ff.c
-
       - name: Apply Custom SDK Config
-        run: cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
+        run: |
+          rm -f sdkconfig sdkconfig.defaults
+          cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
+          cp "${{ matrix.target.sdkconfig_file }}" sdkconfig
 
       - name: Set up ESP-IDF Environment
         run: |

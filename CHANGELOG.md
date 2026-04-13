@@ -1,13 +1,28 @@
 # Ghost ESP Changelog
 
 ## Revival v1.9.8
+- Added New 'Ghostchi' App - assets by pr3!
+- Migrated project to ESP-IDF v6.0
+- Added Wi-Fi multi-select flows for APs and stations in the Scan & Select menu so multiple targets can be selected from the paged detail lists before running attacks/actions
 - Fixed crash on The Wired Hatter's Banshee S3 chip when enabling USB Keyboard caused by running out of input interrupts
 - The Wired Hatter's Banshee C5 internal memory optimisations
+- Improved The Wired Hatter's fuel gauge handling
+- Potentially fixed issue where the C5 on the Banshee would run out of DMA
 - Fixed channel_enabled flag not being reset when RMT operations fail
 - Added beacon_spam_broadcast_karma function that uses real AP MAC so BSSID matches probe responses
 - Karma now skips channel hopping when AP has connected clients
 - Fixed crash when opening WebUI File Manager and improved styling
 - Moved lvgl tick task back out of psram to resolve wd triggering on setup wizard
+- Fixed airtag tracking not working
+- Added missing encoder controls to the detail view
+- Fixed TEmbedCC1101 fuel gague init
+- Optimised LVGL memory footprint across all configs by disabling unused components
+- Increased CYD display buffer for significantly smoother rendering
+- Rename 'Normal' main menu layout to 'Carousel'
+- Added option to change background shade of options
+- Added option to enable rounded menu items and set as default on
+- Restyled touch control bar to be more compact and clean
+- Wi-Fi capture commands now lock to the selected AP's channel when one AP is selected, or hop only across the selected AP channels when multiple APs are selected
 
 ## Revival v1.9.7
 
