@@ -111,12 +111,20 @@ jobs:
           rm -f sdkconfig sdkconfig.defaults
           cp "${{ matrix.target.sdkconfig_file }}" sdkconfig.defaults
           cp "${{ matrix.target.sdkconfig_file }}" sdkconfig
+          printf "\n# CONFIG_FATFS_USE_DYN_BUFFERS is not set\n" >> sdkconfig.defaults
+          printf "\n# CONFIG_FATFS_USE_DYN_BUFFERS is not set\n" >> sdkconfig
+          printf "\n# CONFIG_ESP_GDBSTUB_ENABLED is not set\n" >> sdkconfig.defaults
+          printf "\n# CONFIG_ESP_GDBSTUB_ENABLED is not set\n" >> sdkconfig
 
       - name: Set up ESP-IDF Environment
         run: |
           . ~/esp-idf/export.sh
           export IDF_TARGET=${{ matrix.target.idf_target }}
           echo "IDF_TARGET=${{ matrix.target.idf_target }}" >> $GITHUB_ENV
+
+      - name: Patch gdbstub Source
+        run: |
+          python3 -c "import os,pathlib; p=pathlib.Path(os.path.expanduser('~/esp-idf'))/'components/esp_gdbstub/src/gdbstub.c'; s=p.read_text(encoding='utf-8'); s=s.replace('#if (CONFIG_ESP_SYSTEM_GDBSTUB_RUNTIME || CONFIG_ESP_GDBSTUB_SUPPORT_TASKS)', '#if 1'); p.write_text(s, encoding='utf-8')"
 
       - name: Clean and Build Project
         env:
