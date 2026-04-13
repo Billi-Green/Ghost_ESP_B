@@ -35,6 +35,12 @@
 #define GHOSTCHI_COOLDOWN_IDLE_MS 1500u
 #define GHOSTCHI_COOLDOWN_SUCCESS_MS 1800u
 
+#if CONFIG_SPIRAM
+#define GHOSTCHI_SESSION_LOG_BUFFER_SIZE 2048u
+#else
+#define GHOSTCHI_SESSION_LOG_BUFFER_SIZE 256u
+#endif
+
 typedef struct __attribute__((packed)) {
     uint8_t bssid[6];
     uint8_t channel;
@@ -92,6 +98,8 @@ static ghostchi_learn_entry_t s_learn[GHOSTCHI_LEARN_MAX];
 static size_t s_learn_count = 0;
 static bool s_storage_ready = false;
 static char s_session_log_path[128];
+static char s_session_log_buffer[GHOSTCHI_SESSION_LOG_BUFFER_SIZE];
+static size_t s_session_log_buffer_len = 0;
 static uint32_t s_phase_deadline_ms = 0;
 static uint32_t s_handshakes_before = 0;
 static uint32_t s_total_handshakes = 0;
@@ -106,6 +114,7 @@ static bool s_pcap_capture_enabled = false;
 
 static void save_learning(void);
 static void save_state(void);
+static void flush_session_log(void);
 esp_err_t pcap_file_open_in_dir(const char *base_file_name,
                                 const char *dir_path,
                                 pcap_capture_type_t capture_type);
@@ -277,24 +286,76 @@ static void snapshot_set_target(const wifi_ap_record_t *ap, uint16_t score, uint
 }
 
 static void session_log(const char *fmt, ...) {
+    char line[192];
     bool display_was_suspended = false;
     bool mounted_here = false;
     FILE *f = NULL;
+    size_t line_len;
     va_list args;
     if (s_session_log_path[0] == '\0') {
         return;
     }
+    va_start(args, fmt);
+    line_len = (size_t)vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+
+    if (line_len >= sizeof(line)) {
+        line_len = sizeof(line) - 1;
+    }
+
+    if (line_len == 0) {
+        return;
+    }
+
+    if (line_len > sizeof(s_session_log_buffer)) {
+        if (!ghostchi_sd_begin(&display_was_suspended, &mounted_here)) {
+            return;
+        }
+        f = fopen(s_session_log_path, "a");
+        if (f) {
+            (void)fwrite(line, 1, line_len, f);
+            fflush(f);
+            fclose(f);
+        }
+        ghostchi_sd_end(display_was_suspended, mounted_here);
+        return;
+    }
+
+    if (s_session_log_buffer_len + line_len > sizeof(s_session_log_buffer)) {
+        flush_session_log();
+    }
+
+    if (s_session_log_buffer_len + line_len > sizeof(s_session_log_buffer)) {
+        return;
+    }
+
+    memcpy(s_session_log_buffer + s_session_log_buffer_len, line, line_len);
+    s_session_log_buffer_len += line_len;
+}
+
+static void flush_session_log(void) {
+    bool display_was_suspended = false;
+    bool mounted_here = false;
+    FILE *f = NULL;
+
+    if (s_session_log_path[0] == '\0' || s_session_log_buffer_len == 0) {
+        return;
+    }
+
     if (!ghostchi_sd_begin(&display_was_suspended, &mounted_here)) {
         return;
     }
+
     f = fopen(s_session_log_path, "a");
-    va_start(args, fmt);
     if (f) {
-        vfprintf(f, fmt, args);
-        fflush(f);
+        size_t written = fwrite(s_session_log_buffer, 1, s_session_log_buffer_len, f);
+        if (written == s_session_log_buffer_len) {
+            fflush(f);
+            s_session_log_buffer_len = 0;
+        }
         fclose(f);
     }
-    va_end(args);
+
     ghostchi_sd_end(display_was_suspended, mounted_here);
 }
 
@@ -498,6 +559,7 @@ static void open_session_log(void) {
     snprintf(path, sizeof(path), "%s/%s.log", GHOSTCHI_LOG_DIR, name);
     strncpy(s_session_log_path, path, sizeof(s_session_log_path) - 1);
     s_session_log_path[sizeof(s_session_log_path) - 1] = '\0';
+    s_session_log_buffer_len = 0;
     if (s_lock && xSemaphoreTake(s_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
         strncpy(s_snapshot.session_name, name, sizeof(s_snapshot.session_name) - 1);
         s_snapshot.session_name[sizeof(s_snapshot.session_name) - 1] = '\0';
@@ -714,9 +776,11 @@ static void ghostchi_finalize_stop(void) {
     
     s_last_session_end_valid = rtc_now_s(&rtc_now);
     s_last_session_end_s = s_last_session_end_valid ? rtc_now : 0;
+    flush_session_log();
     save_state();
     save_learning();
     s_session_log_path[0] = '\0';
+    s_session_log_buffer_len = 0;
     status_display_show_status("Ghostchi Off");
     s_running = false;
     s_stop_requested = false;

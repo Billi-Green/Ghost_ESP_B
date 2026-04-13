@@ -30,7 +30,12 @@ typedef struct {
 } pcap_packet_header_t;
 
 #define MAX_FILE_NAME_LENGTH 128
+
+#if CONFIG_SPIRAM
+#define PCAP_BUFFER_SIZE 8192
+#else
 #define PCAP_BUFFER_SIZE 5120
+#endif
 
 #define DLT_IEEE802_11_RADIO 127
 #define DLT_BLUETOOTH_HCI_H4 187
