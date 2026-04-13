@@ -23,6 +23,7 @@
 - Added option to enable rounded menu items and set as default on
 - Restyled touch control bar to be more compact and clean
 - Wi-Fi capture commands now lock to the selected AP's channel when one AP is selected, or hop only across the selected AP channels when multiple APs are selected
+- Added a random ascii art boot banner to the serial log - @tototo31
 
 ## Revival v1.9.7
 
