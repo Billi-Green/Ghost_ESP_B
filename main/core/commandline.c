@@ -685,9 +685,19 @@ void handle_attack_cmd(int argc, char **argv) {
             wifi_manager_start_sae_flood(argv[2]);
             status_display_show_status("SAE Start");
             return;
+        } else if (strcmp(argv[1], "-g") == 0) {
+            if (argc < 4) {
+                glog("Usage: attack -g <ssid> <password>\n");
+                status_display_show_status("GTK Usage");
+                return;
+            }
+            glog("GTK Abuse test starting...\n");
+            wifi_manager_start_gtk_abuse(argv[2], argv[3]);
+            status_display_show_status("GTK Start");
+            return;
         }
     }
-    glog("Usage: attack -d (deauth) | attack -c (channel switch) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood)\n");
+    glog("Usage: attack -d (deauth) | attack -c (channel switch) | attack -e (EAPOL logoff) | attack -s <password> (SAE flood) | attack -g <ssid> <password> (GTK abuse)\n");
     status_display_show_status("Attack Usage");
 }
 
@@ -718,6 +728,7 @@ void handle_stop_deauth(int argc, char **argv) {
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
     wifi_manager_stop_channel_switch_attack();
+    wifi_manager_stop_gtk_abuse();
     glog("All WiFi attacks stopped...\n");
     status_display_show_status("Attacks Off");
 }

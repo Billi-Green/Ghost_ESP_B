@@ -261,6 +261,12 @@ void wifi_manager_start_sae_flood(const char *password);
 void wifi_manager_stop_sae_flood(void);
 void wifi_manager_sae_flood_help(void);
 
+// GTK Abuse Test
+void wifi_manager_start_gtk_abuse(const char *ssid, const char *password);
+void wifi_manager_stop_gtk_abuse(void);
+bool wifi_manager_gtk_abuse_is_running(void);
+void wifi_manager_gtk_abuse_display(void);
+
 // Channel Switch Attack (CSA)
 void wifi_manager_start_channel_switch_attack(void);
 void wifi_manager_stop_channel_switch_attack(void);

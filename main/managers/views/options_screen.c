@@ -71,6 +71,9 @@ static paged_menu_t *ble_detect_list_menu = NULL;
 static detail_view_t *ble_detect_detail_view = NULL;
 static lv_timer_t *ble_detect_poll_timer = NULL;
 static scan_status_t *ble_detect_status = NULL;
+static char gtk_abuse_ssid[33];
+static scan_status_t *gtk_abuse_status = NULL;
+static detail_view_t *gtk_abuse_detail_view = NULL;
 static int ble_detect_last_count = -1;
 static int selected_ble_detect_index = -1;
 static int selected_station_index = -1;
@@ -116,6 +119,7 @@ static void stop_ble_detect_flow(void);
 static void ble_detect_list_cleanup(void);
 static void ble_detect_detail_back_cb(lv_event_t *e);
 static void show_ble_detect_detail(int device_index);
+static void gtk_abuse_back_cb(lv_event_t *e);
 
 static int ap_multi_select_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX], bool *has_more, void *user_data);
 static void ap_multi_select_toggle(int ap_index);
@@ -150,6 +154,9 @@ static bool handle_wifi_detail_keyboard(uint8_t key_value) {
     if (ap_detail_view) {
         active_detail = ap_detail_view;
         back_cb = ap_detail_back_cb;
+    } else if (gtk_abuse_detail_view) {
+        active_detail = gtk_abuse_detail_view;
+        back_cb = gtk_abuse_back_cb;
     } else if (sta_detail_view) {
         active_detail = sta_detail_view;
         back_cb = station_detail_back_cb;
@@ -371,6 +378,8 @@ static void ble_detect_set_subtext(int found_count) {
 #include "managers/views/number_pad_screen.h"
 #include "managers/views/setup_wizard_screen.h"
 #include "managers/wifi_manager.h"
+#include "core/wpa_crypto.h"
+#include "attacks/wifi/gtk_abuse.h"
 #include "managers/settings_manager.h"
 #include "esp_log.h"
 #include "core/glog.h"
@@ -505,6 +514,7 @@ static const char *wifi_attacks_options[] = {
     "Beacon Spam - Rickroll",
     "Beacon Spam - List",
     "Start EAPOL Logoff",
+    "Start GTK Abuse",
     "Start DHCP-Starve",
     "Stop DHCP-Starve",
     "Start Karma Attack",
@@ -1286,6 +1296,10 @@ static void scroll_options_up(lv_event_t *e) {
         detail_view_step_up(ap_detail_view);
         return;
     }
+    if (gtk_abuse_detail_view) {
+        detail_view_step_up(gtk_abuse_detail_view);
+        return;
+    }
     if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
         detail_view_step_up(sta_detail_view);
         return;
@@ -1303,6 +1317,10 @@ static void scroll_options_down(lv_event_t *e) {
     (void)e;
     if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
         detail_view_step_down(ap_detail_view);
+        return;
+    }
+    if (gtk_abuse_detail_view) {
+        detail_view_step_down(gtk_abuse_detail_view);
         return;
     }
     if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
@@ -2310,6 +2328,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
             // Handle touch start for detail_view
             if ((ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) ||
+                gtk_abuse_detail_view ||
                 (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) ||
                 (ble_detect_detail_view &&
                  current_bluetooth_menu_state == BLUETOOTH_MENU_DETECT_DETAILS)) {
@@ -2340,6 +2359,8 @@ void handle_hardware_button_press_options(InputEvent *event) {
             detail_view_t *active_detail_view = NULL;
             if (ap_detail_view && opt_touch_wifi_state == WIFI_MENU_AP_DETAILS) {
                 active_detail_view = ap_detail_view;
+            } else if (gtk_abuse_detail_view) {
+                active_detail_view = gtk_abuse_detail_view;
             } else if (sta_detail_view && opt_touch_wifi_state == WIFI_MENU_STA_DETAILS) {
                 active_detail_view = sta_detail_view;
             } else if (ble_detect_detail_view &&
@@ -2552,6 +2573,22 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 }
             } else if (button == 0 || button == 3) {
                 ap_detail_back_cb(NULL);
+            }
+            return;
+        }
+
+        if (gtk_abuse_detail_view) {
+            if (button == 2) {
+                detail_view_move_selection(gtk_abuse_detail_view, -1);
+            } else if (button == 4) {
+                detail_view_move_selection(gtk_abuse_detail_view, 1);
+            } else if (button == 1) {
+                lv_obj_t *obj = detail_view_get_selected_obj(gtk_abuse_detail_view);
+                if (obj && lv_obj_is_valid(obj)) {
+                    lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+                }
+            } else if (button == 0 || button == 3) {
+                gtk_abuse_back_cb(NULL);
             }
             return;
         }
@@ -2975,6 +3012,17 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
             return;
         }
+        if (gtk_abuse_detail_view) {
+            if (event->data.encoder.button) {
+                lv_obj_t *obj = detail_view_get_selected_obj(gtk_abuse_detail_view);
+                if (obj && lv_obj_is_valid(obj)) lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+            } else if (event->data.encoder.direction < 0) {
+                detail_view_step_up(gtk_abuse_detail_view);
+            } else if (event->data.encoder.direction > 0) {
+                detail_view_step_down(gtk_abuse_detail_view);
+            }
+            return;
+        }
         if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
             if (event->data.encoder.button) {
                 lv_obj_t *obj = detail_view_get_selected_obj(sta_detail_view);
@@ -3102,6 +3150,117 @@ static void karma_custom_ssids_cb(const char *input) {
     display_manager_switch_view(&terminal_view);
     TERMINAL_VIEW_ADD_TEXT("Karma attack started with custom SSIDs\n");
     keyboard_view_set_submit_callback(NULL);
+}
+
+static void gtk_abuse_back_cb(lv_event_t *e) {
+    (void)e;
+    if (gtk_abuse_is_running()) {
+        wifi_manager_stop_gtk_abuse();
+    }
+    if (gtk_abuse_status) {
+        scan_status_close(gtk_abuse_status);
+        gtk_abuse_status = NULL;
+    }
+    if (gtk_abuse_detail_view) {
+        detail_view_destroy(gtk_abuse_detail_view);
+        gtk_abuse_detail_view = NULL;
+    }
+    SelectedMenuType = OT_Wifi;
+    suppress_wifi_state_reset_once = true;
+    display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
+#ifdef CONFIG_USE_TOUCHSCREEN
+    update_scroll_buttons_visibility();
+#endif
+    current_wifi_menu_state = WIFI_MENU_ATTACKS;
+}
+
+static void gtk_abuse_poll_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+
+    if (gtk_abuse_is_running()) return;
+
+    if (timer) lv_timer_del(timer);
+
+    if (gtk_abuse_status) {
+        scan_status_close(gtk_abuse_status);
+        gtk_abuse_status = NULL;
+    }
+
+    SelectedMenuType = OT_Wifi;
+    suppress_wifi_state_reset_once = true;
+    keyboard_view_set_submit_callback(NULL);
+
+    if (menu_build_timer) {
+        lv_timer_del(menu_build_timer);
+        menu_build_timer = NULL;
+    }
+
+    if (gtk_abuse_detail_view) {
+        detail_view_destroy(gtk_abuse_detail_view);
+        gtk_abuse_detail_view = NULL;
+    }
+
+    const gtk_abuse_result_t *r = gtk_abuse_get_result();
+    gtk_abuse_detail_view = detail_view_create(lv_scr_act(), "GTK Abuse Result");
+    detail_view_t *dv = gtk_abuse_detail_view;
+    bool compact_detail = use_compact_wifi_detail_layout();
+
+    detail_view_add_info(dv, "SSID", r->ssid);
+    detail_view_add_info(dv, "Target", r->gateway_ip[0] ? r->gateway_ip : "-");
+    detail_view_add_info(dv, "Valid",
+                         !r->gtk_validation_available ? "N/A" :
+                         (r->gtk_validated ? "YES" : "NO"));
+
+    if (r->isolation_broken) {
+        detail_view_add_info(dv, "Verdict", "Broken");
+        detail_view_add_info(dv, "Status", "Reply seen");
+    } else if (r->frame_injected) {
+        detail_view_add_info(dv, "Verdict", "Unconfirmed");
+        detail_view_add_info(dv, "Status", "No reply seen");
+    } else if (r->connected) {
+        detail_view_add_info(dv, "Verdict", "Failed");
+        detail_view_add_info(dv, "Status", "GTK extract failed");
+    } else {
+        detail_view_add_info(dv, "Verdict", "Failed");
+        detail_view_add_info(dv, "Status", "Connection failed");
+    }
+
+    if (!compact_detail) {
+        detail_view_add_info(dv, "Actions:", "");
+    }
+
+    detail_view_add_back(dv, gtk_abuse_back_cb, NULL);
+    current_wifi_menu_state = WIFI_MENU_ATTACKS;
+}
+
+static void gtk_abuse_password_cb(const char *input) {
+    SelectedMenuType = OT_Wifi;
+    current_wifi_menu_state = WIFI_MENU_ATTACKS;
+    suppress_wifi_state_reset_once = true;
+    display_manager_switch_view(&options_menu_view);
+
+    if (gtk_abuse_status) {
+        scan_status_close(gtk_abuse_status);
+    }
+    gtk_abuse_status = scan_status_create("GTK Abuse Test");
+    if (gtk_abuse_status) scan_status_set_subtext(gtk_abuse_status, "Connecting...");
+
+    wifi_manager_start_gtk_abuse(gtk_abuse_ssid, input ? input : "");
+    TERMINAL_VIEW_ADD_TEXT("GTK Abuse test started for %s\n", gtk_abuse_ssid);
+    keyboard_view_set_submit_callback(NULL);
+
+    lv_timer_create(gtk_abuse_poll_timer_cb, 500, NULL);
+}
+
+static void gtk_abuse_ssid_cb(const char *input) {
+    if (!input || strlen(input) == 0) {
+        error_popup_create("Please enter an SSID.");
+        return;
+    }
+    strlcpy(gtk_abuse_ssid, input, sizeof(gtk_abuse_ssid));
+    keyboard_view_set_submit_callback(gtk_abuse_password_cb);
+    keyboard_view_set_placeholder("Password");
+    keyboard_view_set_initial_text("");
 }
 
 // Called after the user picks a portal file and optionally types SSIDs.
@@ -4467,6 +4626,13 @@ display_manager_switch_view(&terminal_view);
         simulateCommand("attack -e");
         view_switched = true;
     }
+    else if (strcmp(Selected_Option, "Start GTK Abuse") == 0) {
+        keyboard_view_set_return_view(&options_menu_view);
+        keyboard_view_set_submit_callback(gtk_abuse_ssid_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("Network SSID");
+        return;
+    }
 
     else if (strcmp(Selected_Option, "Start Karma Attack") == 0) {
         wifi_manager_start_karma();
@@ -5208,6 +5374,11 @@ static void back_event_cb(lv_event_t *e) {
     // If in station details view, go back to station list
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
         station_detail_back_cb(NULL);
+        return;
+    }
+    // If in GTK abuse status/result view, return to the attacks menu
+    if (SelectedMenuType == OT_Wifi && (gtk_abuse_detail_view || gtk_abuse_status)) {
+        gtk_abuse_back_cb(NULL);
         return;
     }
     // If in AP list view, go back to Scan & Select menu

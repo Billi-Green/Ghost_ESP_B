@@ -66,6 +66,7 @@
 #include "attacks/wifi/eapol_logoff.h"
 #include "attacks/wifi/sae_flood.h"
 #include "attacks/wifi/channel_switch_attack.h"
+#include "attacks/wifi/gtk_abuse.h"
 #include "scans/wifi/ap_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "scans/wifi/wifi_channels.h"
@@ -3647,6 +3648,23 @@ void wifi_manager_stop_sae_flood(void) {
 
 void wifi_manager_sae_flood_help(void) {
     sae_flood_help();
+}
+
+// GTK Abuse Test - delegated to gtk_abuse module
+void wifi_manager_start_gtk_abuse(const char *ssid, const char *password) {
+    gtk_abuse_start(ssid, password);
+}
+
+void wifi_manager_stop_gtk_abuse(void) {
+    gtk_abuse_stop();
+}
+
+bool wifi_manager_gtk_abuse_is_running(void) {
+    return gtk_abuse_is_running();
+}
+
+void wifi_manager_gtk_abuse_display(void) {
+    gtk_abuse_display();
 }
 
 // Channel Switch Attack - delegated to channel_switch_attack module

@@ -5,6 +5,7 @@
 ### Added
 - Added New 'Ghostchi' App - assets by pr3!
 - Added Wi-Fi multi-select flows for APs and stations in the Scan & Select menu so multiple targets can be selected from the paged detail lists before running attacks/actions
+- Added GTK abuse testing flow for checking client isolation bypass behavior after joining a target Wi-Fi network
 - Added beacon_spam_broadcast_karma function that uses real AP MAC so BSSID matches probe responses
 - Added missing encoder controls to the detail view
 - Added option to change background shade of options
