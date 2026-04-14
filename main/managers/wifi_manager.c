@@ -61,8 +61,6 @@
 #include "mbedtls/private/hmac_drbg.h"
 #include "mbedtls/private/bignum.h"
 #include "core/serial_manager.h"
-#include "managers/settings_manager.h"
-#include "managers/status_display_manager.h"
 #include "attacks/wifi/deauth_attack.h"
 #include "attacks/wifi/beacon_spam.h"
 #include "attacks/wifi/eapol_logoff.h"

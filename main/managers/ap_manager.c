@@ -41,7 +41,6 @@ static const char *TAG = "ap_manager";
 #include "esp_vfs_fat.h"
 #include "esp_heap_caps.h"
 #include "managers/status_display_manager.h"
-#include "core/utils.h"
 #include "managers/auth_digest.h"
 
 #ifndef IN6_IS_ADDR_V4MAPPED
@@ -417,7 +416,14 @@ static esp_err_t api_sd_card_post_handler(httpd_req_t *req) {
 
     const char *file_path = path_item->valuestring;
 
-    // Open the file
+    if (strncmp(file_path, "/mnt", 4) != 0) {
+        ESP_LOGE(TAG, "Path traversal rejected: %s", file_path);
+        cJSON_Delete(json);
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_sendstr(req, "{\"error\": \"Access denied: path must be under /mnt.\"}");
+        return ESP_FAIL;
+    }
+
     FILE *file = fopen(file_path, "rb");
     if (!file) {
         ESP_LOGE(TAG, "Failed to open file: %s", file_path);
@@ -518,6 +524,14 @@ esp_err_t api_sd_card_delete_file_handler(httpd_req_t *req) {
         char path[256];
         if (httpd_query_key_value(query, "path", path, sizeof(path)) == ESP_OK) {
             snprintf(filepath, sizeof(filepath), "%s", path);
+
+            if (strncmp(filepath, "/mnt", 4) != 0) {
+                ESP_LOGE(TAG, "Path traversal rejected in delete: %s", filepath);
+                httpd_resp_set_status(req, "403 Forbidden");
+                httpd_resp_send(req, "Access denied: path must be under /mnt", HTTPD_RESP_USE_STRLEN);
+                return ESP_FAIL;
+            }
+
             ESP_LOGI(TAG, "Deleting file: %s", filepath);
 
             int res = unlink(filepath);
@@ -591,14 +605,15 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
                         strncpy(original_filename, filename_start, filename_end - filename_start);
 
                         // Allocate memory for the full file path
-                        file_path = malloc(strlen(path_param) + strlen(original_filename) + 2);
+                        size_t file_path_size = strlen(path_param) + strlen(original_filename) + 2;
+                        file_path = malloc(file_path_size);
                         if (!file_path) {
                             free(buf);
                             httpd_resp_set_status(req, "500 Internal Server Error");
                             httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed for file path.\"}");
                             return ESP_FAIL;
                         }
-                        snprintf(file_path, MAX_PATH_LENGTH + 128, "%s/%s", path_param, original_filename);
+                        snprintf(file_path, file_path_size, "%s/%s", path_param, original_filename);
                         
                         ESP_LOGI(TAG, "Writing to file: %s", file_path);
                         file = fopen(file_path, "wb");
@@ -644,11 +659,7 @@ static esp_err_t api_sd_card_upload_handler(httpd_req_t *req) {
                 if (end_boundary) {
                     long new_size = end_boundary - file_buf;
                     rewind(file);
-#ifdef _WIN32
-                    _chsize(_fileno(file), new_size);
-#else
                     ftruncate(fileno(file), new_size);
-#endif
                 }
                 free(file_buf);
             }
@@ -1196,7 +1207,7 @@ static esp_err_t http_get_handler(httpd_req_t *req) {
     }
 
     if (httpd_req_get_hdr_value_str(req, "Authorization", auth_buffer, sizeof(auth_buffer)) == ESP_OK) {
-        ESP_LOGI(TAG, "Authorization header: %s", auth_buffer);
+        ESP_LOGD(TAG, "Authorization header: %s", auth_buffer);
         if (strncmp(auth_buffer, "Digest ", 7) == 0) {
             char *fields = auth_buffer + 7;
             char username[64] = {0};
@@ -1397,11 +1408,19 @@ static esp_err_t api_clear_logs_handler(httpd_req_t *req) {
 static esp_err_t api_settings_handler(httpd_req_t *req) {
     WEBUI_GUARD_OR_RETURN(req);
     int total_len = req->content_len;
+    if (total_len <= 0 || total_len > 4096) {
+        httpd_resp_set_status(req, "413 Payload Too Large");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\": \"Payload too large or empty.\"}");
+        return ESP_FAIL;
+    }
     int cur_len = 0;
     int received = 0;
     char *buf = malloc(total_len + 1);
     if (!buf) {
         glog("Failed to allocate memory for JSON payload\n");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed.\"}");
         return ESP_FAIL;
     }
 
@@ -1410,17 +1429,20 @@ static esp_err_t api_settings_handler(httpd_req_t *req) {
         if (received <= 0) {
             free(buf);
             glog("Failed to receive JSON payload\n");
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_sendstr(req, "{\"error\": \"Failed to receive payload.\"}");
             return ESP_FAIL;
         }
         cur_len += received;
     }
-    buf[total_len] = '\0'; // Null-terminate the received data
+    buf[total_len] = '\0';
 
-    // Parse JSON
     cJSON *root = cJSON_Parse(buf);
     free(buf);
     if (!root) {
         glog("Failed to parse JSON\n");
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\": \"Invalid JSON.\"}");
         return ESP_FAIL;
     }
 

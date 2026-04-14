@@ -528,7 +528,8 @@ static void reset_setting_value(const SettingDescriptor *d, FSettings *s, const 
     void *dst = sb + d->offset;
     switch (d->type) {
         case ST_STRING:
-            strncpy((char *)dst, (const char *)src, d->str_capacity - 1), ((char *)dst)[d->str_capacity - 1] = '\0';
+            strncpy((char *)dst, (const char *)src, d->str_capacity - 1);
+            ((char *)dst)[d->str_capacity - 1] = '\0';
             break;
         case ST_BOOL:
             *(bool *)dst = *(const bool *)src; break;
@@ -1249,7 +1250,7 @@ void handle_start_portal(int argc, char **argv) {
         return;
     }
     char final_url_or_path[MAX_PORTAL_PATH_LEN];
-    strcpy(final_url_or_path, url);
+    snprintf(final_url_or_path, sizeof(final_url_or_path), "%s", url);
 
     // Only prepend /mnt/ if it's not the default portal and doesn't already start with /mnt/
     if (strcmp(url, "default") != 0 && strncmp(final_url_or_path, "/mnt/ghostesp/evil_portal/portals/", 5) != 0) {
@@ -1751,7 +1752,29 @@ void handle_capture_scan(int argc, char **argv) {
         ble_start_skimmer_detection();
 
     }
+    #endif
+
+    if (strcmp(capturetype, "-probe") != 0 &&
+        strcmp(capturetype, "-deauth") != 0 &&
+        strcmp(capturetype, "-beacon") != 0 &&
+        strcmp(capturetype, "-raw") != 0 &&
+        strcmp(capturetype, "-eapol") != 0 &&
+        strcmp(capturetype, "-pwn") != 0 &&
+        strcmp(capturetype, "-wps") != 0 &&
+        strcmp(capturetype, "-wireshark") != 0 &&
+        strcmp(capturetype, "-stop") != 0
+#ifndef CONFIG_IDF_TARGET_ESP32S2
+        && strcmp(capturetype, "-wiresharkble") != 0
+        && strcmp(capturetype, "-ble") != 0
+        && strcmp(capturetype, "-skimmer") != 0
 #endif
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        && strcmp(capturetype, "-802154") != 0
+#endif
+    ) {
+        glog("Error: Unknown capture type '%s'.\n", capturetype);
+        status_display_show_status("Capture Unknown");
+    }
 }
 
 void stop_portal(int argc, char **argv) {
@@ -3594,7 +3617,7 @@ void handle_settime_cmd(int argc, char **argv) {
     }
     
     long timestamp = strtol(argv[1], NULL, 10);
-    if (timestamp <= 0) {
+    if (timestamp < 0) {
         glog("Invalid timestamp: %s\n", argv[1]);
         status_display_show_status("SetTime Invalid");
         return;
@@ -4949,9 +4972,21 @@ void handle_apcred(int argc, char **argv) {
     const char *new_ssid = argv[1];
     const char *new_password = argv[2];
 
+    if (strlen(new_ssid) > 32) {
+        glog("Error: SSID must be 32 characters or less\n");
+        status_display_show_status("SSID Too Long");
+        return;
+    }
+
     if (strlen(new_password) < 8) {
         glog("Error: Password must be at least 8 characters\n");
         status_display_show_status("Password Weak");
+        return;
+    }
+
+    if (strlen(new_password) > 63) {
+        glog("Error: Password must be 63 characters or less\n");
+        status_display_show_status("Password Too Long");
         return;
     }
 
@@ -4967,8 +5002,8 @@ void handle_apcred(int argc, char **argv) {
 #endif
         },
     };
-    strcpy((char *)ap_config.ap.ssid, new_ssid);
-    strcpy((char *)ap_config.ap.password, new_password);
+    snprintf((char *)ap_config.ap.ssid, sizeof(ap_config.ap.ssid), "%s", new_ssid);
+    snprintf((char *)ap_config.ap.password, sizeof(ap_config.ap.password), "%s", new_password);
     
     // Force the new config immediately
     esp_wifi_set_config(WIFI_IF_AP, &ap_config);
@@ -5930,6 +5965,13 @@ void handle_congestion_cmd(int argc, char **argv) {
     int unique_count = 0;
     int *channels = malloc(ap_count * sizeof(int));
     int *counts = malloc(ap_count * sizeof(int));
+    if (!channels || !counts) {
+        free(channels);
+        free(counts);
+        glog("Error: Failed to allocate memory for channel counts.\n");
+        status_display_show_status("Congest OOM");
+        return;
+    }
     int max_count = 0;
     for (int i = 0; i < ap_count; i++) {
         int ch = ap_records[i].primary;

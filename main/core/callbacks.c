@@ -652,7 +652,7 @@ static void wardrive_build_channel_list(void) {
             memcpy(wardrive_channels, channels_5, channels_5_count);
             wardrive_channel_count = channels_5_count;
         } else {
-            for (uint8_t i = 0; i < full_count; i += 2) {
+            for (uint8_t i = 0; i < full_count && wardrive_channel_count < WIFI_CHANNELS_MAX; i += 2) {
                 wardrive_channels[wardrive_channel_count++] = full_channels[i];
             }
         }
@@ -664,7 +664,7 @@ static void wardrive_build_channel_list(void) {
             memcpy(wardrive_channels, channels_24, channels_24_count);
             wardrive_channel_count = channels_24_count;
         } else {
-            for (uint8_t i = 1; i < full_count; i += 2) {
+            for (uint8_t i = 1; i < full_count && wardrive_channel_count < WIFI_CHANNELS_MAX; i += 2) {
                 wardrive_channels[wardrive_channel_count++] = full_channels[i];
             }
         }
@@ -1266,7 +1266,6 @@ static void channel_hop_timer_callback(void *arg) {
     if (!pineap_detection_active)
         return;
 
-    wardrive_build_channel_list();
     wardrive_channel_idx = (wardrive_channel_idx + 1) % wardrive_channel_count;
     current_channel = wardrive_channels[wardrive_channel_idx];
     esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
@@ -1593,7 +1592,7 @@ static void start_wardrive_heartbeat(void) {
 
     (void)esp_timer_stop(wardrive_heartbeat_timer);
     esp_err_t start_err = esp_timer_start_periodic(wardrive_heartbeat_timer,
-                                                   (uint64_t)LOG_DELAY_MS * 1000ULL);
+                                                    (uint64_t)WARDRIVE_HEARTBEAT_INTERVAL_MS * 1000ULL);
     if (start_err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start wardrive heartbeat timer: %s", esp_err_to_name(start_err));
     }
@@ -2334,7 +2333,7 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
     }
 }
 
-bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2) {
+static bool compare_bssid(const uint8_t *bssid1, const uint8_t *bssid2) {
     for (int i = 0; i < 6; i++) {
         if (bssid1[i] != bssid2[i]) {
             return false;
@@ -2407,6 +2406,10 @@ bool is_probe_response(const wifi_promiscuous_pkt_t *pkt) {
 }
 
 bool is_eapol_response(const wifi_promiscuous_pkt_t *pkt) {
+    if (pkt->rx_ctrl.sig_len < 34) {
+        return false;
+    }
+
     const uint8_t *frame = pkt->payload;
 
     if ((frame[30] == 0x88 && frame[31] == 0x8E) || (frame[32] == 0x88 && frame[33] == 0x8E)) {
@@ -2696,6 +2699,7 @@ void wifi_pwn_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (type != WIFI_PKT_MGMT)
         return;
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    if (!is_packet_valid(pkt, type)) return;
     if (pkt->rx_ctrl.sig_len > 0) {
         enqueue_pcap_write(pkt->payload, pkt->rx_ctrl.sig_len);
     }
@@ -2742,6 +2746,7 @@ void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         bool is_pairwise = (key_info & 0x0008) != 0;
         bool is_install = (key_info & 0x0040) != 0;
         bool is_ack = (key_info & 0x0080) != 0;
+        bool is_secure = (key_info & 0x0200) != 0;
 
         const uint8_t *addr1 = frame + 4;
         const uint8_t *addr2 = frame + 10;
@@ -2756,9 +2761,9 @@ void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             if (!has_mic && is_ack && !is_install) {
                 msg = 1;  // M1: AP->STA, no MIC, no Install
             } else if (has_mic) {
-                if (is_ack && is_install) msg = 3;        // M3
-                else if (!is_ack && !is_install) msg = 2; // M2
-                else if (!is_ack && is_install) msg = 4;  // M4
+                if (is_ack && is_install) msg = 3;             // M3
+                else if (!is_ack && !is_install && !is_secure) msg = 2; // M2
+                else if (!is_ack && !is_install && is_secure) msg = 4;  // M4
             }
             if (msg > 0) {
                 process_eapol_candidate_pair(ap_mac, sta_mac, replay, is_ack, msg);
@@ -2905,18 +2910,18 @@ void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
                         }
 
                         if (should_store_wps == 1) {
-                            wps_network_t new_network;
-                            strncpy(new_network.ssid, ssid, sizeof(new_network.ssid) - 1);
-                            new_network.ssid[sizeof(new_network.ssid) - 1] =
-                                '\0'; // Ensure null termination
-                            memcpy(new_network.bssid, bssid, sizeof(new_network.bssid));
-                            new_network.wps_enabled = true;
-                            new_network.wps_mode = config_methods & (WPS_CONF_METHODS_PIN_DISPLAY |
-                                                                     WPS_CONF_METHODS_PIN_KEYPAD)
-                                                       ? WPS_MODE_PIN
-                                                       : WPS_MODE_PBC;
-
-                            detected_wps_networks[detected_network_count++] = new_network;
+                            if (detected_network_count < MAX_WPS_NETWORKS) {
+                                wps_network_t new_network;
+                                strncpy(new_network.ssid, ssid, sizeof(new_network.ssid) - 1);
+                                new_network.ssid[sizeof(new_network.ssid) - 1] = '\0';
+                                memcpy(new_network.bssid, bssid, sizeof(new_network.bssid));
+                                new_network.wps_enabled = true;
+                                new_network.wps_mode = config_methods & (WPS_CONF_METHODS_PIN_DISPLAY |
+                                                                         WPS_CONF_METHODS_PIN_KEYPAD)
+                                                           ? WPS_MODE_PIN
+                                                           : WPS_MODE_PBC;
+                                detected_wps_networks[detected_network_count++] = new_network;
+                            }
                         } else {
                             enqueue_pcap_write(pkt->payload, pkt->rx_ctrl.sig_len);
                         }

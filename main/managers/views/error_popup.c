@@ -57,6 +57,7 @@ void error_popup_destroy(void) {
 }
 
 void error_popup_create(const char *message) {
+    if (!message) return;
 
     ESP_LOGE(TAG, "Error popup called with message: %s", message);
 

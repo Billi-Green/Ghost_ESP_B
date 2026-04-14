@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "esp_log.h"
 
 uint32_t theme_palette_get_background(uint8_t theme);
 uint32_t theme_palette_get_surface(uint8_t theme);

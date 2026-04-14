@@ -260,7 +260,6 @@ static void rename_remote_keyboard_callback(const char *name) {
     char filename_part[64];
     
     strncpy(safe_dir_path, dir_path, sizeof(safe_dir_path) - 1);
-    strncpy(safe_dir_path, dir_path, sizeof(safe_dir_path) - 1);
     safe_dir_path[sizeof(safe_dir_path) - 1] = '\0';
     
     strncpy(filename_part, truncated_name, sizeof(filename_part) - 1);
@@ -956,9 +955,11 @@ static bool read_universal_batch(FILE *f, const char *command, universal_batch_t
                 else if (strncmp(s, "data:",5)==0) {
                     char *p=s+5; size_t cnt=0; char *t=p;
                     while(*t){while(*t&&isspace((unsigned char)*t))t++;if(!*t)break;cnt++;while(*t&&!isspace((unsigned char)*t))t++;}
-                    uint32_t *arr=heap_caps_malloc(cnt*sizeof(uint32_t), MALLOC_CAP_DEFAULT | MALLOC_CAP_SPIRAM); size_t ii=0; char *endp;
+                    uint32_t *arr=heap_caps_malloc(cnt*sizeof(uint32_t), MALLOC_CAP_DEFAULT | MALLOC_CAP_SPIRAM);
+                    if (!arr) { sig.payload.raw.timings=NULL; sig.payload.raw.timings_size=0; }
+                    else { size_t ii=0; char *endp;
                     while(*p){while(*p&&isspace((unsigned char)*p))p++;if(!*p)break;arr[ii++]=strtoul(p,&endp,10);p=endp;}
-                    sig.payload.raw.timings=arr; sig.payload.raw.timings_size=cnt;
+                    sig.payload.raw.timings=arr; sig.payload.raw.timings_size=cnt; }
                 }
             } else {
                 if (strncmp(s, "protocol:",9)==0) {
@@ -1182,9 +1183,11 @@ static void universal_transmit_task(void *arg) {
                 else if (strncmp(s, "data:",5)==0) {
                     char *p=s+5; size_t cnt=0; char *t=p;
                     while(*t){while(*t&&isspace((unsigned char)*t))t++;if(!*t)break;cnt++;while(*t&&!isspace((unsigned char)*t))t++;}
-                    uint32_t *arr=malloc(cnt*sizeof(uint32_t)); size_t ii=0; char *endp;
+                    uint32_t *arr=malloc(cnt*sizeof(uint32_t));
+                    if (!arr) { sig.payload.raw.timings=NULL; sig.payload.raw.timings_size=0; }
+                    else { size_t ii=0; char *endp;
                     while(*p){while(*p&&isspace((unsigned char)*p))p++;if(!*p)break;arr[ii++]=strtoul(p,&endp,10);p=endp;}
-                    sig.payload.raw.timings=arr; sig.payload.raw.timings_size=cnt;
+                    sig.payload.raw.timings=arr; sig.payload.raw.timings_size=cnt; }
                 }
             } else {
                 if (strncmp(s, "protocol:",9)==0) {

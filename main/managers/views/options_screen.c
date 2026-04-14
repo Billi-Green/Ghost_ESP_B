@@ -377,7 +377,6 @@ static void ble_detect_set_subtext(int found_count) {
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "esp_log.h"
 #include "managers/views/keyboard_screen.h"
 #include "managers/usb_keyboard_manager.h"
 #include "managers/views/badusb_view.h"
@@ -1674,10 +1673,12 @@ static void load_current_settings_values(void) {
             settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
                 break;
             case SETTING_MAX_BRIGHTNESS:
-                settings_items[i].current_value = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
+                { int bv = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
+                  settings_items[i].current_value = (bv < 0) ? 0 : bv; }
                 break;
             case SETTING_NEOPIXEL_BRIGHTNESS:
-                settings_items[i].current_value = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
+                { int nv = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
+                  settings_items[i].current_value = (nv < 0) ? 0 : nv; }
                 break;
 #ifdef CONFIG_USE_ENCODER
             case SETTING_ENCODER_INVERT:
@@ -3167,9 +3168,8 @@ static void karma_portal_ssids_cb(const char *input) {
 void option_event_cb(lv_event_t *e) {
     if (option_invoked) return;
     option_invoked = true;
-    bool view_switched = false; 
+    bool view_switched = false;
 
-    static const char *last_option = NULL;
     unsigned long now_ms = (unsigned long)(esp_timer_get_time() / 1000ULL);
     
     if (now_ms - createdTimeInMs <= 500) {

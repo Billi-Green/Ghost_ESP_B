@@ -323,6 +323,7 @@ static void terminal_push_incoming(const char *data, size_t len) {
       size_t chunk = (size_t)(nl - p);
       // append chunk to builder
       build_reserve(build_len + chunk + 1);
+      if (!build_line_buf) { break; }
       if (chunk) memcpy(build_line_buf + build_len, p, chunk);
       build_len += chunk;
       // trim trailing CR
@@ -334,6 +335,7 @@ static void terminal_push_incoming(const char *data, size_t len) {
     } else {
       // no newline, accumulate remainder
       build_reserve(build_len + rem + 1);
+      if (!build_line_buf) { break; }
       if (rem) memcpy(build_line_buf + build_len, p, rem);
       build_len += rem;
       break;
