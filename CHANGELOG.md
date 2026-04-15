@@ -1,5 +1,10 @@
 # Ghost ESP Changelog
 
+## Revival v1.9.9
+
+### Added
+- Added passive jamming detection engine to the NRF24 frequency analyzer that identifies known 2.4GHz threat signatures in real time during normal spectrum scanning
+
 ## Revival v1.9.8
 
 ### Added
