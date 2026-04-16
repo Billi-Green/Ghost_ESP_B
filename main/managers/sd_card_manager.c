@@ -1311,6 +1311,12 @@ esp_err_t sd_card_setup_directory_structure() {
   if (ret != ESP_OK) return ret;
 #endif
 
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+  const char *subghz_dir = "/mnt/ghostesp/subghz";
+  ret = ensure_sd_dir_exists(subghz_dir);
+  if (ret != ESP_OK) return ret;
+#endif
+
   printf("Directory structure successfully set up.\n");
   return ESP_OK;
 }

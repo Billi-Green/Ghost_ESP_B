@@ -1,0 +1,2473 @@
+#include "managers/views/subghz_view.h"
+#include "sdkconfig.h"
+
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+
+#include "core/esp_comm_manager.h"
+#include "gui/lvgl_safe.h"
+#include "gui/options_view.h"
+#include "gui/popup.h"
+#include "gui/theme_palette_api.h"
+#include "managers/settings_manager.h"
+#include "managers/sd_card_manager.h"
+#include "managers/status_display_manager.h"
+#include "managers/subghz_decoders.h"
+#include "managers/subghz_remote_manager.h"
+#include "managers/views/error_popup.h"
+#include "managers/views/main_menu_screen.h"
+#include "managers/views/options_screen.h"
+
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include <stdbool.h>
+#include <dirent.h>
+#include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#ifndef CONFIG_SUBGHZ_BASE_FREQ_MHZ
+#define CONFIG_SUBGHZ_BASE_FREQ_MHZ 43392
+#endif
+
+#define SUBGHZ_BASE_FREQ_HZ ((int)CONFIG_SUBGHZ_BASE_FREQ_MHZ * 10000)
+
+#ifndef CONFIG_SUBGHZ_CHANNEL_STEP_KHZ
+#define CONFIG_SUBGHZ_CHANNEL_STEP_KHZ 200
+#endif
+
+#ifndef CONFIG_SUBGHZ_ANALYZER_SETTLE_US
+#define CONFIG_SUBGHZ_ANALYZER_SETTLE_US 250
+#endif
+
+#ifndef CONFIG_SUBGHZ_ANALYZER_CHANNELS_PER_TICK
+#define CONFIG_SUBGHZ_ANALYZER_CHANNELS_PER_TICK 8
+#endif
+
+typedef enum {
+    SUBGHZ_POPUP_START = 0,
+    SUBGHZ_POPUP_STOP,
+    SUBGHZ_POPUP_BACK,
+    SUBGHZ_POPUP_COUNT
+} subghz_popup_control_t;
+
+typedef enum {
+    SUBGHZ_CAPTURE_MODE_NORMAL = 0,
+    SUBGHZ_CAPTURE_MODE_RAW,
+} subghz_capture_mode_t;
+
+typedef enum {
+    SUBGHZ_CAPTURE_POPUP_SAVE = 0,
+    SUBGHZ_CAPTURE_POPUP_CONTINUE,
+    SUBGHZ_CAPTURE_POPUP_BACK,
+    SUBGHZ_CAPTURE_POPUP_COUNT
+} subghz_capture_popup_control_t;
+
+typedef enum {
+    SUBGHZ_SAVED_POPUP_REPLAY = 0,
+    SUBGHZ_SAVED_POPUP_DELETE,
+    SUBGHZ_SAVED_POPUP_BACK,
+    SUBGHZ_SAVED_POPUP_COUNT
+} subghz_saved_popup_control_t;
+
+typedef enum {
+    SUBGHZ_PENDING_NONE = 0,
+    SUBGHZ_PENDING_CAPTURE,
+    SUBGHZ_PENDING_SAVE,
+    SUBGHZ_PENDING_REPLAY,
+    SUBGHZ_PENDING_LIST
+} subghz_pending_action_t;
+
+static const char *TAG = "SubGHzView";
+
+static lv_obj_t *s_root = NULL;
+static options_view_t *s_ov = NULL;
+static lv_obj_t *s_scan_row = NULL;
+static lv_obj_t *s_capture_row = NULL;
+static lv_obj_t *s_raw_capture_row = NULL;
+static lv_obj_t *s_back_row = NULL;
+
+static lv_obj_t *s_popup = NULL;
+static lv_obj_t *s_status_label = NULL;
+static lv_obj_t *s_freq_label = NULL;
+static lv_obj_t *s_graph = NULL;
+static lv_obj_t *s_start_btn = NULL;
+static lv_obj_t *s_stop_btn = NULL;
+static lv_obj_t *s_popup_back_btn = NULL;
+static lv_timer_t *s_timer = NULL;
+
+static lv_obj_t *s_capture_popup = NULL;
+static lv_obj_t *s_capture_status_label = NULL;
+static lv_obj_t *s_capture_signal_label = NULL;
+static lv_obj_t *s_capture_save_btn = NULL;
+static lv_obj_t *s_capture_continue_btn = NULL;
+static lv_obj_t *s_capture_back_btn = NULL;
+static bool s_capture_waiting_signal = false;
+static bool s_capture_ready = false;
+static int s_capture_signal_hits = 0;
+static bool s_capture_was_running = false;
+static subghz_capture_popup_control_t s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
+static subghz_capture_mode_t s_capture_mode = SUBGHZ_CAPTURE_MODE_NORMAL;
+
+static lv_obj_t *s_saved_popup = NULL;
+static lv_obj_t *s_saved_status_label = NULL;
+static lv_obj_t *s_saved_title_label = NULL;
+static lv_obj_t *s_saved_replay_btn = NULL;
+static lv_obj_t *s_saved_delete_btn = NULL;
+static lv_obj_t *s_saved_back_btn = NULL;
+static char **s_saved_file_paths = NULL;
+static int s_saved_file_count = 0;
+static int s_saved_page = 0;
+static int s_saved_index = 0;
+static bool s_in_saved_list = false;
+static subghz_saved_popup_control_t s_saved_popup_selected = SUBGHZ_SAVED_POPUP_REPLAY;
+
+static uint8_t s_levels[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
+static uint8_t s_peaks[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
+static uint8_t s_cursor = 0;
+static int32_t s_capture_raw[SUBGHZ_RAW_MAX_DURATIONS] = {0};
+static size_t s_capture_raw_count = 0;
+static uint8_t s_capture_preview_cursor = 0;
+static bool s_capture_buffer_valid = false;
+static char s_capture_name[SUBGHZ_SNAPSHOT_NAME_MAX] = "capture";
+static int32_t s_remote_raw_work[SUBGHZ_RAW_MAX_DURATIONS] = {0};
+static size_t s_remote_raw_expected = 0;
+static size_t s_remote_raw_received = 0;
+static subghz_decoded_signal_t s_remote_decoded = {0};
+
+static int subghz_normalize_decoded_bits(const char *protocol, int bits) {
+    if (protocol && strcmp(protocol, "KeeLoq") == 0 && bits >= 64) {
+        return 64;
+    }
+    return bits;
+}
+
+#define SUBGHZ_CAPTURE_SIGNAL_THRESHOLD 65
+#define SUBGHZ_CAPTURE_SIGNAL_HITS      2
+#define SUBGHZ_SNAPSHOT_DIR             "/mnt/ghostesp/subghz"
+#define SUBGHZ_SNAPSHOT_EXT             ".sub"
+
+static bool s_remote_mode = false;
+static volatile bool s_remote_stream_online = false;
+static volatile bool s_remote_error = false;
+static volatile bool s_remote_paused = true;
+static subghz_popup_control_t s_popup_selected = SUBGHZ_POPUP_START;
+static subghz_pending_action_t s_pending_action = SUBGHZ_PENDING_NONE;
+static int64_t s_pending_action_deadline_us = 0;
+
+static void subghz_open_capture_popup(void);
+static void subghz_open_saved_popup(void);
+static void subghz_saved_list_reload(void);
+static void subghz_scan_row_cb(lv_event_t *e);
+static void subghz_capture_row_cb(lv_event_t *e);
+static void subghz_raw_capture_row_cb(lv_event_t *e);
+static void subghz_back_row_cb(lv_event_t *e);
+static void subghz_saved_back_btn_cb(lv_event_t *e);
+static void subghz_capture_primary_btn_cb(lv_event_t *e);
+static void subghz_capture_continue_btn_cb(lv_event_t *e);
+static void subghz_capture_back_btn_cb(lv_event_t *e);
+static void subghz_capture_mark_ready(void);
+static void subghz_capture_mark_ready_with_decoded(const subghz_decoded_signal_t *decoded);
+static void subghz_capture_popup_update_buttons(void);
+static bool subghz_build_snapshot_detail_text(const char *name, char *out, size_t out_len);
+
+static bool subghz_is_remote_mode(void) {
+#if defined(CONFIG_HAS_SUBGHZ_REMOTE) && !defined(CONFIG_HAS_SUBGHZ)
+    return true;
+#else
+    return false;
+#endif
+}
+
+static bool point_inside_obj(lv_obj_t *obj, lv_coord_t x, lv_coord_t y) {
+    if (!obj || !lv_obj_is_valid(obj)) {
+        return false;
+    }
+
+    lv_area_t area;
+    lv_obj_get_coords(obj, &area);
+    return (x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2);
+}
+
+static void subghz_apply_popup_selection(void) {
+    popup_set_button_selected(s_start_btn, s_popup_selected == SUBGHZ_POPUP_START);
+    popup_set_button_selected(s_stop_btn, s_popup_selected == SUBGHZ_POPUP_STOP);
+    popup_set_button_selected(s_popup_back_btn, s_popup_selected == SUBGHZ_POPUP_BACK);
+}
+
+static void subghz_show_action_status(const char *msg) {
+    if (!msg || msg[0] == '\0') {
+        return;
+    }
+
+    status_display_show_status(msg);
+
+    if (s_status_label && lv_obj_is_valid(s_status_label)) {
+        lv_label_set_text(s_status_label, msg);
+    }
+}
+
+static void subghz_show_feedback_popup(const char *title, const char *detail) {
+    char popup_msg[220];
+    if (title && detail && detail[0] != '\0') {
+        snprintf(popup_msg, sizeof(popup_msg), "%s\n%s", title, detail);
+    } else if (title) {
+        snprintf(popup_msg, sizeof(popup_msg), "%s", title);
+    } else if (detail) {
+        snprintf(popup_msg, sizeof(popup_msg), "%s", detail);
+    } else {
+        snprintf(popup_msg, sizeof(popup_msg), "SubGHz update");
+    }
+
+    error_popup_create(popup_msg);
+}
+
+static const char *subghz_pending_action_label(subghz_pending_action_t action) {
+    switch (action) {
+    case SUBGHZ_PENDING_CAPTURE:
+        return "capture";
+    case SUBGHZ_PENDING_SAVE:
+        return "save";
+    case SUBGHZ_PENDING_REPLAY:
+        return "replay";
+    case SUBGHZ_PENDING_LIST:
+        return "list";
+    default:
+        return "request";
+    }
+}
+
+static void subghz_set_pending_action(subghz_pending_action_t action, uint32_t timeout_ms) {
+    s_pending_action = action;
+    s_pending_action_deadline_us = esp_timer_get_time() + ((int64_t)timeout_ms * 1000LL);
+}
+
+static void subghz_clear_pending_action(void) {
+    s_pending_action = SUBGHZ_PENDING_NONE;
+    s_pending_action_deadline_us = 0;
+}
+
+static void subghz_fail_pending_action(const char *reason) {
+    if (s_pending_action == SUBGHZ_PENDING_NONE) {
+        return;
+    }
+
+    const char *label = subghz_pending_action_label(s_pending_action);
+    char msg[128];
+    if (reason && reason[0] != '\0') {
+        snprintf(msg, sizeof(msg), "Remote %s failed: %s", label, reason);
+    } else {
+        snprintf(msg, sizeof(msg), "Remote %s failed", label);
+    }
+
+    subghz_show_action_status(msg);
+    subghz_show_feedback_popup("SubGHz error", msg);
+    s_remote_error = true;
+    subghz_clear_pending_action();
+}
+
+static void subghz_capture_popup_update_buttons(void) {
+    if (!s_capture_popup || !lv_obj_is_valid(s_capture_popup)) {
+        return;
+    }
+
+    if (s_capture_save_btn && lv_obj_is_valid(s_capture_save_btn)) {
+        lv_obj_t *lbl = lv_obj_get_child(s_capture_save_btn, 0);
+        if (lbl && lv_obj_is_valid(lbl)) {
+            if (s_capture_ready) {
+                lv_label_set_text(lbl, "Save");
+                lv_obj_clear_state(s_capture_save_btn, LV_STATE_DISABLED);
+            } else {
+                lv_label_set_text(lbl, "Stop");
+                lv_obj_clear_state(s_capture_save_btn, LV_STATE_DISABLED);
+            }
+        }
+    }
+
+    if (s_capture_continue_btn && lv_obj_is_valid(s_capture_continue_btn)) {
+        if (s_capture_ready) {
+            lv_obj_clear_state(s_capture_continue_btn, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(s_capture_continue_btn, LV_STATE_DISABLED);
+        }
+    }
+
+    popup_set_button_selected(s_capture_save_btn, s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_SAVE);
+    popup_set_button_selected(
+        s_capture_continue_btn,
+        s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_CONTINUE);
+    popup_set_button_selected(s_capture_back_btn, s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_BACK);
+}
+
+static void subghz_saved_popup_update_buttons(void) {
+    popup_set_button_selected(s_saved_replay_btn, s_saved_popup_selected == SUBGHZ_SAVED_POPUP_REPLAY);
+    popup_set_button_selected(s_saved_delete_btn, s_saved_popup_selected == SUBGHZ_SAVED_POPUP_DELETE);
+    popup_set_button_selected(s_saved_back_btn, s_saved_popup_selected == SUBGHZ_SAVED_POPUP_BACK);
+}
+
+static void subghz_saved_popup_refresh_text(void) {
+    if (!s_saved_status_label || !lv_obj_is_valid(s_saved_status_label)) {
+        return;
+    }
+
+    if (s_saved_file_count <= 0 || !s_saved_file_paths) {
+        lv_label_set_text(s_saved_status_label, "No captures on SD\n/mnt/ghostesp/subghz");
+        if (s_saved_replay_btn && lv_obj_is_valid(s_saved_replay_btn)) {
+            lv_obj_add_state(s_saved_replay_btn, LV_STATE_DISABLED);
+        }
+        if (s_saved_delete_btn && lv_obj_is_valid(s_saved_delete_btn)) {
+            lv_obj_add_state(s_saved_delete_btn, LV_STATE_DISABLED);
+        }
+        return;
+    }
+
+    if (s_saved_index < 0) {
+        s_saved_index = 0;
+    }
+    if (s_saved_index >= s_saved_file_count) {
+        s_saved_index = s_saved_file_count - 1;
+    }
+
+    if (s_saved_replay_btn && lv_obj_is_valid(s_saved_replay_btn)) {
+        lv_obj_clear_state(s_saved_replay_btn, LV_STATE_DISABLED);
+    }
+    if (s_saved_delete_btn && lv_obj_is_valid(s_saved_delete_btn)) {
+        lv_obj_clear_state(s_saved_delete_btn, LV_STATE_DISABLED);
+    }
+
+    char msg[2048];
+    if (!subghz_build_snapshot_detail_text(s_saved_file_paths[s_saved_index], msg, sizeof(msg))) {
+        snprintf(msg, sizeof(msg), "%d/%d\nFailed to read capture details", s_saved_index + 1, s_saved_file_count);
+    }
+    lv_label_set_text(s_saved_status_label, msg);
+}
+
+static void subghz_sanitize_snapshot_name(const char *name_hint, char *out, size_t out_len) {
+    if (!out || out_len == 0) {
+        return;
+    }
+
+    size_t pos = 0;
+    if (name_hint) {
+        for (size_t i = 0; name_hint[i] != '\0' && pos < out_len - 1; i++) {
+            char c = name_hint[i];
+            if ((c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') ||
+                c == '_' || c == '-') {
+                out[pos++] = c;
+            } else if (c == ' ' || c == '.') {
+                out[pos++] = '_';
+            }
+        }
+    }
+
+    if (pos == 0) {
+        snprintf(out, out_len, "capture_%08X", (unsigned)(esp_timer_get_time() / 1000ULL));
+        return;
+    }
+
+    out[pos] = '\0';
+}
+
+static bool subghz_sd_begin(bool *display_was_suspended) {
+    if (display_was_suspended) {
+        *display_was_suspended = false;
+    }
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ||
+        strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0) {
+        esp_err_t mount_err = sd_card_mount_for_flush(display_was_suspended);
+        if (mount_err != ESP_OK) {
+            return false;
+        }
+        (void)sd_card_setup_directory_structure();
+    }
+#endif
+
+    return true;
+}
+
+static void subghz_sd_end(bool display_was_suspended) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ||
+        strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0) {
+        sd_card_unmount_after_flush(display_was_suspended);
+    }
+#else
+    (void)display_was_suspended;
+#endif
+}
+
+static bool subghz_local_save_snapshot(const char *name_hint,
+                                       const int32_t *durations,
+                                       size_t duration_count,
+                                       const subghz_decoded_signal_t *decoded,
+                                       char *out_name,
+                                       size_t out_name_len,
+                                       char *out_error,
+                                       size_t out_error_len) {
+    if ((!durations || duration_count == 0) && !(decoded && decoded->decoded)) {
+        if (out_error && out_error_len) snprintf(out_error, out_error_len, "No capture data");
+        return false;
+    }
+
+    bool display_was_suspended = false;
+    if (!subghz_sd_begin(&display_was_suspended)) {
+        if (out_error && out_error_len) snprintf(out_error, out_error_len, "SD mount failed");
+        return false;
+    }
+
+    if (mkdir(SUBGHZ_SNAPSHOT_DIR, 0777) != 0 && errno != EEXIST) {
+        if (out_error && out_error_len) snprintf(out_error, out_error_len, "Failed to create subghz dir");
+        subghz_sd_end(display_was_suspended);
+        return false;
+    }
+
+    char safe_name[SUBGHZ_SNAPSHOT_NAME_MAX];
+    subghz_sanitize_snapshot_name(name_hint, safe_name, sizeof(safe_name));
+
+    char path[192];
+    snprintf(path, sizeof(path), "%s/%s%s", SUBGHZ_SNAPSHOT_DIR, safe_name, SUBGHZ_SNAPSHOT_EXT);
+
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        if (out_error && out_error_len) snprintf(out_error, out_error_len, "Failed to open snapshot file");
+        subghz_sd_end(display_was_suspended);
+        return false;
+    }
+
+    fprintf(f, "Filetype: Flipper SubGhz Key File\n");
+    fprintf(f, "Version: 1\n");
+    int save_freq = (decoded && decoded->decoded && decoded->frequency_hz > 0)
+                        ? decoded->frequency_hz
+                        : SUBGHZ_BASE_FREQ_HZ;
+    fprintf(f, "Frequency: %d\n", save_freq);
+    fprintf(f, "Preset: FuriHalSubGhzPresetOok650Async\n");
+
+    if (decoded && decoded->decoded) {
+        int bits = subghz_normalize_decoded_bits(decoded->protocol, decoded->bits);
+        fprintf(f, "Protocol: %s\n", decoded->protocol);
+        fprintf(f, "Bit: %d\n", bits);
+        int num_bytes = (bits + 7) / 8;
+        fputs("Key: ", f);
+        for (int i = num_bytes - 1; i >= 0; i--) {
+            fprintf(f, "%02X", (unsigned)((decoded->code >> (i * 8)) & 0xFF));
+            if (i > 0) fputc(' ', f);
+        }
+        fputc('\n', f);
+        fprintf(f, "Manufacture: Unknown\n");
+    } else {
+        fprintf(f, "Protocol: RAW\n");
+
+        int values_on_line = 0;
+        bool wrote_prefix = false;
+
+        for (size_t i = 0; i < duration_count; i++) {
+            if ((values_on_line % 512) == 0) {
+                fprintf(f, wrote_prefix ? "\nRAW_Data: " : "RAW_Data: ");
+                wrote_prefix = true;
+            }
+            fprintf(f, "%ld", (long)durations[i]);
+            if (i + 1 < duration_count) {
+                fputc(' ', f);
+            }
+            values_on_line++;
+        }
+        fputc('\n', f);
+    }
+
+    fclose(f);
+    subghz_sd_end(display_was_suspended);
+
+    if (out_name && out_name_len > 0) {
+        snprintf(out_name, out_name_len, "%s", safe_name);
+    }
+    if (out_error && out_error_len > 0) {
+        out_error[0] = '\0';
+    }
+    return true;
+}
+
+static int subghz_local_list_snapshots(char names[][SUBGHZ_SNAPSHOT_NAME_MAX], int max_names) {
+    if (!names || max_names <= 0) {
+        return 0;
+    }
+
+    bool display_was_suspended = false;
+    if (!subghz_sd_begin(&display_was_suspended)) {
+        return 0;
+    }
+
+    DIR *dir = opendir(SUBGHZ_SNAPSHOT_DIR);
+    if (!dir) {
+        subghz_sd_end(display_was_suspended);
+        return 0;
+    }
+
+    int count = 0;
+    struct dirent *ent = NULL;
+    const size_t ext_len = strlen(SUBGHZ_SNAPSHOT_EXT);
+    while ((ent = readdir(dir)) != NULL) {
+        const char *name = ent->d_name;
+        if (!name || name[0] == '.') {
+            continue;
+        }
+
+        size_t len = strlen(name);
+        if (len <= ext_len) {
+            continue;
+        }
+        if (strcmp(name + (len - ext_len), SUBGHZ_SNAPSHOT_EXT) != 0) {
+            continue;
+        }
+
+        if (count < max_names) {
+            size_t copy_len = len - ext_len;
+            if (copy_len >= SUBGHZ_SNAPSHOT_NAME_MAX) {
+                copy_len = SUBGHZ_SNAPSHOT_NAME_MAX - 1;
+            }
+            memcpy(names[count], name, copy_len);
+            names[count][copy_len] = '\0';
+        }
+        count++;
+    }
+
+    closedir(dir);
+    subghz_sd_end(display_was_suspended);
+    return count;
+}
+
+static void subghz_saved_list_clear(void) {
+    if (s_saved_file_paths) {
+        for (int i = 0; i < s_saved_file_count; i++) {
+            free(s_saved_file_paths[i]);
+        }
+        free(s_saved_file_paths);
+    }
+    s_saved_file_paths = NULL;
+    s_saved_file_count = 0;
+    s_saved_page = 0;
+    s_saved_index = 0;
+}
+
+static void subghz_saved_list_item_cb(lv_event_t *e) {
+    const char *path = (const char *)lv_event_get_user_data(e);
+    if (!path) {
+        return;
+    }
+
+    for (int i = 0; i < s_saved_file_count; i++) {
+        if (s_saved_file_paths[i] && strcmp(s_saved_file_paths[i], path) == 0) {
+            s_saved_index = i;
+            break;
+        }
+    }
+    subghz_open_saved_popup();
+}
+
+static void subghz_back_to_root_menu(void) {
+    s_in_saved_list = false;
+    subghz_saved_list_clear();
+    if (!s_ov) {
+        return;
+    }
+
+    options_view_clear(s_ov);
+    options_view_set_title(s_ov, "SubGHz");
+    s_scan_row = options_view_add_item(s_ov, "Capture", subghz_scan_row_cb, NULL);
+    s_raw_capture_row = options_view_add_item(s_ov, "Raw Capture", subghz_raw_capture_row_cb, NULL);
+    s_capture_row = options_view_add_item(s_ov, "Saved", subghz_capture_row_cb, NULL);
+    s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
+    options_view_set_selected(s_ov, 0);
+}
+
+static void subghz_saved_list_prev_page_cb(lv_event_t *e) {
+    (void)e;
+    if (s_saved_page > 0) {
+        s_saved_page--;
+        subghz_saved_list_reload();
+    }
+}
+
+static void subghz_saved_list_next_page_cb(lv_event_t *e) {
+    (void)e;
+    const int per_page = 7;
+    int max_page = (s_saved_file_count <= 0) ? 0 : ((s_saved_file_count - 1) / per_page);
+    if (s_saved_page < max_page) {
+        s_saved_page++;
+        subghz_saved_list_reload();
+    }
+}
+
+static void subghz_saved_list_reload(void) {
+    if (!s_ov) {
+        return;
+    }
+
+    options_view_clear(s_ov);
+    s_in_saved_list = true;
+    options_view_set_title(s_ov, "Saved Signals");
+
+    if (!s_saved_file_paths) {
+        bool susp = false;
+        bool did = subghz_sd_begin(&susp);
+        DIR *d = opendir(SUBGHZ_SNAPSHOT_DIR);
+        if (d) {
+            struct dirent *de;
+            int count = 0;
+            while ((de = readdir(d)) != NULL) {
+                if (de->d_name[0] == '.') continue;
+                size_t len = strlen(de->d_name);
+                size_t ext_len = strlen(SUBGHZ_SNAPSHOT_EXT);
+                if (len > ext_len && strcmp(de->d_name + len - ext_len, SUBGHZ_SNAPSHOT_EXT) == 0) {
+                    count++;
+                }
+            }
+            rewinddir(d);
+            if (count > 0) {
+                s_saved_file_paths = (char **)calloc((size_t)count, sizeof(char *));
+            }
+            int idx = 0;
+            while ((de = readdir(d)) != NULL) {
+                if (de->d_name[0] == '.') continue;
+                size_t len = strlen(de->d_name);
+                size_t ext_len = strlen(SUBGHZ_SNAPSHOT_EXT);
+                if (!(len > ext_len && strcmp(de->d_name + len - ext_len, SUBGHZ_SNAPSHOT_EXT) == 0)) continue;
+                size_t need = strlen(SUBGHZ_SNAPSHOT_DIR) + 1 + len + 1;
+                char *copy = (char *)malloc(need);
+                if (!copy) continue;
+                snprintf(copy, need, "%s/%s", SUBGHZ_SNAPSHOT_DIR, de->d_name);
+                if (s_saved_file_paths && idx < count) {
+                    s_saved_file_paths[idx++] = copy;
+                } else {
+                    free(copy);
+                }
+            }
+            s_saved_file_count = idx;
+            closedir(d);
+        }
+        if (did) {
+            subghz_sd_end(susp);
+        }
+    }
+
+    const int per_page = 7;
+    int max_page = (s_saved_file_count <= 0) ? 0 : ((s_saved_file_count - 1) / per_page);
+    if (s_saved_page > max_page) {
+        s_saved_page = max_page;
+    }
+    int start = s_saved_page * per_page;
+    int end = start + per_page;
+    if (end > s_saved_file_count) {
+        end = s_saved_file_count;
+    }
+
+    if (s_saved_file_count == 0) {
+        options_view_add_item(s_ov, "No .sub files", NULL, NULL);
+    } else {
+        for (int i = start; i < end; i++) {
+            const char *name = strrchr(s_saved_file_paths[i], '/');
+            name = name ? (name + 1) : s_saved_file_paths[i];
+            options_view_add_item(s_ov, name, subghz_saved_list_item_cb, s_saved_file_paths[i]);
+        }
+    }
+
+    if (s_saved_page > 0) {
+        options_view_add_item(s_ov, "< Prev Page", subghz_saved_list_prev_page_cb, NULL);
+    }
+    if (s_saved_page < max_page) {
+        options_view_add_item(s_ov, "Next Page >", subghz_saved_list_next_page_cb, NULL);
+    }
+    s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
+    options_view_set_selected(s_ov, 0);
+}
+
+static void subghz_analyze_raw_signal(const int32_t *dur, size_t count, char *out, size_t out_len) {
+    if (!dur || count < 4 || !out || out_len == 0) {
+        if (out && out_len > 0) out[0] = '\0';
+        return;
+    }
+
+    subghz_decoded_signal_t decoded;
+    if (subghz_decode_signal(dur, count, &decoded) && decoded.decoded) {
+        snprintf(out, out_len, "%s", decoded.info);
+        return;
+    }
+
+    int32_t min_hi = INT32_MAX, max_hi = 0, min_lo = INT32_MAX, max_lo = 0;
+    int pulse_count = 0;
+    for (size_t j = 0; j < count && pulse_count < 100; j++) {
+        int32_t v = dur[j] > 0 ? dur[j] : -dur[j];
+        if (dur[j] > 0) {
+            if (v < min_hi) min_hi = v;
+            if (v > max_hi) max_hi = v;
+        } else {
+            if (v < min_lo) min_lo = v;
+            if (v > max_lo) max_lo = v;
+        }
+        pulse_count++;
+    }
+    if (pulse_count > 4) {
+        snprintf(out, out_len, "RAW %zu pulses\nHi:%d-%d Lo:%d-%d",
+                 count, (int)min_hi, (int)max_hi, (int)min_lo, (int)max_lo);
+    } else {
+        snprintf(out, out_len, "RAW %zu pulses", count);
+    }
+}
+
+static bool subghz_build_snapshot_detail_text(const char *name, char *out, size_t out_len) {
+    if (!name || !out || out_len == 0) {
+        return false;
+    }
+
+    char path[192];
+    if (strchr(name, '/') != NULL || strchr(name, '\\') != NULL) {
+        snprintf(path, sizeof(path), "%s", name);
+    } else {
+        snprintf(path, sizeof(path), "/mnt/ghostesp/subghz/%s.sub", name);
+    }
+
+    bool display_was_suspended = false;
+    if (!subghz_sd_begin(&display_was_suspended)) {
+        return false;
+    }
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        subghz_sd_end(display_was_suspended);
+        return false;
+    }
+
+    int frequency_hz = SUBGHZ_BASE_FREQ_HZ;
+    char protocol[64] = "RAW";
+    int bit_count = 0;
+    char key_hex[128] = {0};
+    int values = 0;
+    int32_t raw_vals[512];
+    size_t raw_count = 0;
+    bool in_raw_data = false;
+
+    char line[384];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "Frequency:", 10) == 0) {
+            in_raw_data = false;
+            frequency_hz = atoi(line + 10);
+        } else if (strncmp(line, "Protocol:", 9) == 0) {
+            in_raw_data = false;
+            char *val = line + 9;
+            while (*val == ' ') val++;
+            char *nl = strchr(val, '\n');
+            if (nl) *nl = '\0';
+            snprintf(protocol, sizeof(protocol), "%.63s", val);
+        } else if (strncmp(line, "Bit:", 4) == 0) {
+            in_raw_data = false;
+            bit_count = atoi(line + 4);
+        } else if (strncmp(line, "Key:", 4) == 0) {
+            in_raw_data = false;
+            char *val = line + 4;
+            while (*val == ' ') val++;
+            char *nl = strchr(val, '\n');
+            if (nl) *nl = '\0';
+            snprintf(key_hex, sizeof(key_hex), "%.127s", val);
+        } else if (strncmp(line, "RAW_Data:", 9) == 0) {
+            in_raw_data = true;
+            char *csv = line + 9;
+            char *nl = strchr(csv, '\n');
+            if (nl) *nl = '\0';
+            char *saveptr = NULL;
+            char *tok = strtok_r(csv, " ,", &saveptr);
+            while (tok) {
+                if (*tok != '\0') {
+                    values++;
+                    if (raw_count < 512) {
+                        raw_vals[raw_count++] = (int32_t)strtol(tok, NULL, 10);
+                    }
+                }
+                tok = strtok_r(NULL, " ,", &saveptr);
+            }
+        } else if (in_raw_data) {
+            char *csv = line;
+            char *nl = strchr(csv, '\n');
+            if (nl) *nl = '\0';
+            char *saveptr = NULL;
+            char *tok = strtok_r(csv, " ,", &saveptr);
+            while (tok) {
+                if (*tok != '\0') {
+                    values++;
+                    if (raw_count < 512) {
+                        raw_vals[raw_count++] = (int32_t)strtol(tok, NULL, 10);
+                    }
+                }
+                tok = strtok_r(NULL, " ,", &saveptr);
+            }
+        }
+    }
+    fclose(f);
+    subghz_sd_end(display_was_suspended);
+
+    char decode_buf[128] = {0};
+    if (strcmp(protocol, "RAW") == 0 && raw_count > 0) {
+        subghz_analyze_raw_signal(raw_vals, raw_count, decode_buf, sizeof(decode_buf));
+    }
+
+    if (strcmp(protocol, "RAW") != 0 && key_hex[0] != '\0') {
+        snprintf(out, out_len,
+                 "Freq: %.3f MHz\n%s %dbit\nKey: %s\n%s",
+                 (double)frequency_hz / 1000000.0,
+                 protocol, bit_count, key_hex,
+                 strrchr(path, '/') ? strrchr(path, '/') + 1 : name);
+    } else if (decode_buf[0] != '\0') {
+        snprintf(out, out_len,
+                 "Freq: %.3f MHz\n%s\nValues: %d\n%s",
+                 (double)frequency_hz / 1000000.0,
+                 decode_buf,
+                 values,
+                 strrchr(path, '/') ? strrchr(path, '/') + 1 : name);
+    } else {
+        snprintf(out, out_len,
+                 "Freq: %.3f MHz  Prot: %s\nValues: %d\n%s",
+                 (double)frequency_hz / 1000000.0,
+                 protocol,
+                 values,
+                 strrchr(path, '/') ? strrchr(path, '/') + 1 : name);
+    }
+    return true;
+}
+
+static bool subghz_parse_raw_file(const char *path, int32_t *out, size_t max_count, size_t *out_count) {
+    if (!path || !out || max_count == 0) {
+        return false;
+    }
+
+    bool display_was_suspended = false;
+    if (!subghz_sd_begin(&display_was_suspended)) {
+        return false;
+    }
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        subghz_sd_end(display_was_suspended);
+        return false;
+    }
+
+    size_t count = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "RAW_Data:", 9) != 0) {
+            continue;
+        }
+        char *saveptr = NULL;
+        char *tok = strtok_r(line + 9, " ,\r\n", &saveptr);
+        while (tok && count < max_count) {
+            out[count++] = (int32_t)strtol(tok, NULL, 10);
+            tok = strtok_r(NULL, " ,\r\n", &saveptr);
+        }
+    }
+    fclose(f);
+    subghz_sd_end(display_was_suspended);
+    if (out_count) {
+        *out_count = count;
+    }
+    return count > 0;
+}
+
+static bool subghz_parse_decoded_file(const char *path, subghz_decoded_signal_t *out_decoded) {
+    if (!path || !out_decoded) {
+        return false;
+    }
+
+    bool display_was_suspended = false;
+    if (!subghz_sd_begin(&display_was_suspended)) {
+        return false;
+    }
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        subghz_sd_end(display_was_suspended);
+        return false;
+    }
+
+    memset(out_decoded, 0, sizeof(*out_decoded));
+    char protocol[SUBGHZ_DECODED_PROTO_MAX] = {0};
+    int bits = 0;
+    int frequency_hz = 0;
+    uint64_t code = 0;
+    int key_bytes = 0;
+
+    char line[384];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "Frequency:", 10) == 0) {
+            frequency_hz = atoi(line + 10);
+        } else if (strncmp(line, "Protocol:", 9) == 0) {
+            char *v = line + 9;
+            while (*v == ' ') v++;
+            char *nl = strchr(v, '\n');
+            if (nl) *nl = '\0';
+            snprintf(protocol, sizeof(protocol), "%.*s", (int)sizeof(protocol) - 1, v);
+        } else if (strncmp(line, "Bit:", 4) == 0) {
+            bits = atoi(line + 4);
+        } else if (strncmp(line, "Key:", 4) == 0) {
+            char *v = line + 4;
+            while (*v == ' ') v++;
+            char *nl = strchr(v, '\n');
+            if (nl) *nl = '\0';
+            char *saveptr = NULL;
+            char *tok = strtok_r(v, " ", &saveptr);
+            while (tok) {
+                unsigned long b = strtoul(tok, NULL, 16);
+                code = (code << 8) | (uint64_t)(b & 0xFFUL);
+                key_bytes++;
+                tok = strtok_r(NULL, " ", &saveptr);
+            }
+        }
+    }
+
+    fclose(f);
+    subghz_sd_end(display_was_suspended);
+
+    if (protocol[0] == '\0' || strcmp(protocol, "RAW") == 0 || key_bytes <= 0) {
+        return false;
+    }
+
+    out_decoded->decoded = true;
+    out_decoded->code = code;
+    out_decoded->bits = subghz_normalize_decoded_bits(protocol, (bits > 0) ? bits : (key_bytes * 8));
+    snprintf(out_decoded->protocol, sizeof(out_decoded->protocol), "%s", protocol);
+    if (out_decoded->bits > 32) {
+        snprintf(out_decoded->info, sizeof(out_decoded->info), "%s %dbit\nCode:0x%016llX",
+                 out_decoded->protocol, out_decoded->bits, (unsigned long long)out_decoded->code);
+    } else {
+        snprintf(out_decoded->info, sizeof(out_decoded->info), "%s %dbit\nCode:0x%08llX",
+                 out_decoded->protocol, out_decoded->bits, (unsigned long long)out_decoded->code);
+    }
+    return true;
+}
+
+static bool subghz_send_remote_replay(const int32_t *durations, size_t count) {
+    if (!esp_comm_manager_is_connected() || !durations || count == 0) {
+        return false;
+    }
+
+    uint8_t start_pkt[4] = { SUBGHZ_STREAM_VERSION, 4, (uint8_t)(count & 0xFF), (uint8_t)((count >> 8) & 0xFF) };
+    if (!esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, start_pkt, sizeof(start_pkt))) {
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    size_t offset = 0;
+    while (offset < count) {
+        size_t chunk = count - offset;
+        if (chunk > 19) {
+            chunk = 19;
+        }
+        uint8_t pkt[5 + 19 * 4] = {0};
+        pkt[0] = SUBGHZ_STREAM_VERSION;
+        pkt[1] = 5;
+        pkt[2] = (uint8_t)(offset & 0xFF);
+        pkt[3] = (uint8_t)((offset >> 8) & 0xFF);
+        pkt[4] = (uint8_t)chunk;
+        for (size_t i = 0; i < chunk; i++) {
+            int32_t v = durations[offset + i];
+            size_t base = 5 + i * 4;
+            pkt[base + 0] = (uint8_t)(v & 0xFF);
+            pkt[base + 1] = (uint8_t)((v >> 8) & 0xFF);
+            pkt[base + 2] = (uint8_t)((v >> 16) & 0xFF);
+            pkt[base + 3] = (uint8_t)((v >> 24) & 0xFF);
+        }
+        if (!esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, pkt, 5 + chunk * 4)) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+        offset += chunk;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(20));
+    uint8_t end_pkt[2] = { SUBGHZ_STREAM_VERSION, 6 };
+    return esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, end_pkt, sizeof(end_pkt));
+}
+
+static void subghz_graph_draw_event(lv_event_t *e) {
+    lv_obj_t *obj = lv_event_get_target(e);
+    if (!obj || obj != s_graph) {
+        return;
+    }
+
+    lv_draw_ctx_t *draw_ctx = lv_event_get_draw_ctx(e);
+    if (!draw_ctx || !draw_ctx->clip_area) {
+        return;
+    }
+
+    lv_area_t area;
+    lv_obj_get_coords(obj, &area);
+
+    lv_draw_rect_dsc_t bg;
+    lv_draw_rect_dsc_init(&bg);
+    bg.bg_opa = LV_OPA_COVER;
+    bg.bg_color = lv_color_hex(theme_palette_get_surface(settings_get_menu_theme(&G_Settings)));
+    bg.border_width = 0;
+    bg.radius = 4;
+    lv_draw_rect(draw_ctx, &bg, &area);
+
+    lv_coord_t width = (area.x2 - area.x1 + 1);
+    lv_coord_t height = (area.y2 - area.y1 + 1);
+    if (width <= 4 || height <= 4) {
+        return;
+    }
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t bar_color = lv_color_hex(theme_palette_get_accent(theme));
+    lv_color_t peak_color = lv_color_hex(theme_palette_get_text_muted(theme));
+
+    lv_draw_rect_dsc_t bar;
+    lv_draw_rect_dsc_init(&bar);
+    bar.border_width = 0;
+    bar.radius = 1;
+    bar.bg_color = bar_color;
+    bar.bg_opa = LV_OPA_90;
+
+    lv_draw_rect_dsc_t peak;
+    lv_draw_rect_dsc_init(&peak);
+    peak.border_width = 0;
+    peak.radius = 0;
+    peak.bg_color = peak_color;
+    peak.bg_opa = LV_OPA_COVER;
+
+    for (int ch = 0; ch < SUBGHZ_SCANNER_CHANNEL_COUNT; ch++) {
+        lv_coord_t x1 = area.x1 + (ch * width) / SUBGHZ_SCANNER_CHANNEL_COUNT;
+        lv_coord_t x2 = area.x1 + ((ch + 1) * width) / SUBGHZ_SCANNER_CHANNEL_COUNT - 1;
+        if (x2 < x1) {
+            x2 = x1;
+        }
+
+        int lvl = s_levels[ch];
+        if (lvl < 0) lvl = 0;
+        if (lvl > 100) lvl = 100;
+        lv_coord_t bar_h = (lv_coord_t)((lvl * (height - 2)) / 100);
+        if (bar_h < 1) {
+            bar_h = 1;
+        }
+
+        lv_area_t bar_area = {
+            .x1 = x1,
+            .y1 = area.y2 - bar_h + 1,
+            .x2 = x2,
+            .y2 = area.y2,
+        };
+        lv_draw_rect(draw_ctx, &bar, &bar_area);
+
+        int peak_lvl = s_peaks[ch];
+        if (peak_lvl < 0) peak_lvl = 0;
+        if (peak_lvl > 100) peak_lvl = 100;
+        lv_coord_t peak_h = (lv_coord_t)((peak_lvl * (height - 2)) / 100);
+        lv_coord_t peak_y = area.y2 - peak_h;
+        if (peak_y < area.y1) {
+            peak_y = area.y1;
+        }
+
+        lv_area_t peak_area = {
+            .x1 = x1,
+            .y1 = peak_y,
+            .x2 = x2,
+            .y2 = peak_y,
+        };
+        lv_draw_rect(draw_ctx, &peak, &peak_area);
+    }
+
+    lv_draw_line_dsc_t cursor;
+    lv_draw_line_dsc_init(&cursor);
+    cursor.color = lv_color_hex(theme_palette_get_text(theme));
+    cursor.width = 1;
+    lv_coord_t cursor_x = area.x1 + (s_cursor * width) / SUBGHZ_SCANNER_CHANNEL_COUNT;
+    lv_point_t p1 = { .x = cursor_x, .y = area.y1 };
+    lv_point_t p2 = { .x = cursor_x, .y = area.y2 };
+    lv_draw_line(draw_ctx, &cursor, &p1, &p2);
+}
+
+static void subghz_refresh_status_labels(void) {
+    if (!s_status_label || !lv_obj_is_valid(s_status_label)) {
+        return;
+    }
+
+    if (s_remote_mode) {
+        if (s_remote_error) {
+            lv_label_set_text(s_status_label, "Peer error");
+        } else if (!esp_comm_manager_is_connected()) {
+            lv_label_set_text(s_status_label, "GhostLink disconnected");
+        } else if (!s_remote_stream_online) {
+            lv_label_set_text(s_status_label, "Waiting for peer stream...");
+        } else {
+            lv_label_set_text(s_status_label, s_remote_paused ? "Remote scan paused" : "Remote scan active");
+        }
+    } else if (!subghz_remote_manager_is_running()) {
+        lv_label_set_text(s_status_label, "Scanner stopped");
+    } else {
+        lv_label_set_text(s_status_label,
+                          subghz_remote_manager_is_paused() ? "Scanner paused" : "Scanner active");
+    }
+
+    if (s_freq_label && lv_obj_is_valid(s_freq_label)) {
+        float mhz = (float)CONFIG_SUBGHZ_BASE_FREQ_MHZ / 100.0f +
+                    ((float)s_cursor * (float)CONFIG_SUBGHZ_CHANNEL_STEP_KHZ / 1000.0f);
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Ch %u  %.3f MHz", (unsigned)s_cursor, mhz);
+        lv_label_set_text(s_freq_label, msg);
+    }
+}
+
+static void subghz_capture_snapshot_action(void) {
+    subghz_open_capture_popup();
+}
+
+static void subghz_save_snapshot_action(void) {
+    subghz_show_feedback_popup("SubGHz", "Use Capture and wait for a signal, then Save from the capture popup");
+}
+
+static void subghz_load_snapshot_action(void) {
+    if (s_saved_file_count <= 0 || !s_saved_file_paths || !s_saved_file_paths[s_saved_index]) {
+        subghz_show_feedback_popup("SubGHz", "No saved capture selected");
+        return;
+    }
+
+    int32_t durations[SUBGHZ_RAW_MAX_DURATIONS];
+    size_t count = 0;
+    if (!subghz_parse_raw_file(s_saved_file_paths[s_saved_index], durations, SUBGHZ_RAW_MAX_DURATIONS, &count)) {
+        subghz_decoded_signal_t decoded;
+        if (!subghz_parse_decoded_file(s_saved_file_paths[s_saved_index], &decoded)) {
+            subghz_show_feedback_popup("SubGHz error", "Failed to parse snapshot file");
+            return;
+        }
+        if (!subghz_build_raw_from_decoded(decoded.protocol, decoded.code, decoded.bits,
+                                           durations, SUBGHZ_RAW_MAX_DURATIONS, &count)) {
+            subghz_show_feedback_popup("SubGHz error", "Replay unsupported for this protocol");
+            return;
+        }
+    }
+
+    if (s_remote_mode) {
+        if (subghz_send_remote_replay(durations, count)) {
+            subghz_show_feedback_popup("SubGHz", "Replay streamed to remote radio");
+        } else {
+            subghz_show_feedback_popup("SubGHz error", "Failed to stream replay to remote");
+        }
+        return;
+    }
+
+    if (subghz_remote_manager_transmit_raw(durations, count)) {
+        subghz_show_feedback_popup("SubGHz", "Replay transmitted");
+    } else {
+        subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
+    }
+}
+
+static void subghz_list_snapshots_action(void) {
+    subghz_saved_list_reload();
+}
+
+static void subghz_close_popup(bool stop_scan) {
+    if (stop_scan) {
+        if (s_remote_mode) {
+            if (esp_comm_manager_is_connected()) {
+                (void)esp_comm_manager_send_command("subghz", "stop");
+            }
+        } else {
+            subghz_remote_manager_stop();
+        }
+    }
+
+    lvgl_obj_del_safe(&s_popup);
+    s_status_label = NULL;
+    s_freq_label = NULL;
+    s_graph = NULL;
+    s_start_btn = NULL;
+    s_stop_btn = NULL;
+    s_popup_back_btn = NULL;
+    s_popup_selected = SUBGHZ_POPUP_START;
+}
+
+static void subghz_start_scan(void) {
+    if (s_remote_mode) {
+        if (!esp_comm_manager_is_connected()) {
+            s_remote_error = true;
+            subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
+            subghz_refresh_status_labels();
+            return;
+        }
+        if (esp_comm_manager_send_command("subghz", "start")) {
+            s_remote_stream_online = false;
+            s_remote_error = false;
+            s_remote_paused = false;
+        } else {
+            s_remote_error = true;
+        }
+    } else {
+        if (!subghz_remote_manager_start(false)) {
+            ESP_LOGW(TAG, "Failed to start local scanner: %s", subghz_remote_manager_get_last_error());
+            subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
+        }
+    }
+
+    subghz_refresh_status_labels();
+}
+
+static void subghz_stop_scan(void) {
+    if (s_remote_mode) {
+        if (esp_comm_manager_is_connected()) {
+            (void)esp_comm_manager_send_command("subghz", "stop");
+        }
+        s_remote_paused = true;
+        s_remote_stream_online = false;
+    } else {
+        subghz_remote_manager_stop();
+    }
+
+    subghz_refresh_status_labels();
+}
+
+static void subghz_close_capture_popup(void) {
+    if (!s_capture_popup || !lv_obj_is_valid(s_capture_popup)) {
+        return;
+    }
+
+    if (s_remote_mode) {
+        if (esp_comm_manager_is_connected()) {
+            (void)esp_comm_manager_send_command("subghz", "capture_off");
+        }
+    } else {
+        subghz_remote_manager_set_raw_capture_enabled(false);
+    }
+
+    if (!s_capture_was_running) {
+        if (s_remote_mode) {
+            if (esp_comm_manager_is_connected()) {
+                (void)esp_comm_manager_send_command("subghz", "stop");
+            }
+        } else {
+            subghz_remote_manager_stop();
+        }
+    } else if (s_capture_ready) {
+        if (s_remote_mode) {
+            if (esp_comm_manager_is_connected()) {
+                (void)esp_comm_manager_send_command("subghz", "resume");
+            }
+        } else {
+            subghz_remote_manager_set_paused(false);
+        }
+    }
+
+    lvgl_obj_del_safe(&s_capture_popup);
+    s_capture_status_label = NULL;
+    s_capture_signal_label = NULL;
+    s_capture_save_btn = NULL;
+    s_capture_continue_btn = NULL;
+    s_capture_back_btn = NULL;
+    s_capture_waiting_signal = false;
+    s_capture_ready = false;
+    s_capture_signal_hits = 0;
+    s_capture_was_running = false;
+    s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
+}
+
+static void subghz_capture_continue_waiting(void) {
+    s_capture_waiting_signal = true;
+    s_capture_ready = false;
+    s_capture_signal_hits = 0;
+    s_capture_popup_selected = (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW)
+        ? SUBGHZ_CAPTURE_POPUP_SAVE : SUBGHZ_CAPTURE_POPUP_BACK;
+    s_capture_buffer_valid = false;
+    s_capture_raw_count = 0;
+    s_remote_raw_expected = 0;
+    s_remote_raw_received = 0;
+    memset(&s_remote_decoded, 0, sizeof(s_remote_decoded));
+    if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+        if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+            lv_label_set_text(s_capture_status_label, "Capturing... press Stop");
+        } else {
+            lv_label_set_text(s_capture_status_label, "Waiting for decoded signal...");
+        }
+    }
+    subghz_capture_popup_update_buttons();
+}
+
+static void subghz_capture_primary_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (s_capture_ready) {
+        s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
+        subghz_capture_popup_update_buttons();
+
+        if (!s_capture_buffer_valid) {
+            subghz_show_feedback_popup("SubGHz error", "No capture buffered");
+            return;
+        }
+
+        char saved_name[SUBGHZ_SNAPSHOT_NAME_MAX];
+        char save_err[96];
+        const char *fmt_msg = "Capture saved in Flipper RAW format";
+        if (subghz_local_save_snapshot(
+                s_capture_name,
+                s_capture_raw,
+                s_capture_raw_count,
+                s_remote_decoded.decoded ? &s_remote_decoded : NULL,
+                saved_name,
+                sizeof(saved_name),
+                save_err,
+                sizeof(save_err))) {
+            snprintf(s_capture_name, sizeof(s_capture_name), "%s", saved_name);
+            if (s_remote_decoded.decoded) fmt_msg = "Decoded signal saved";
+            subghz_show_feedback_popup("SubGHz", fmt_msg);
+        } else {
+            subghz_show_feedback_popup("SubGHz error", save_err);
+        }
+    } else {
+        if (s_remote_mode) {
+            if (esp_comm_manager_is_connected()) {
+                (void)esp_comm_manager_send_command("subghz", "capture_off");
+                (void)esp_comm_manager_send_command("subghz", "pause");
+            }
+        } else {
+            subghz_remote_manager_set_raw_capture_enabled(false);
+            subghz_remote_manager_set_paused(true);
+        }
+
+        size_t raw_count = 0;
+        bool got = false;
+        if (s_remote_mode) {
+            got = (s_capture_raw_count > 0);
+            raw_count = s_capture_raw_count;
+        } else {
+            got = subghz_remote_manager_take_raw_capture(s_capture_raw, SUBGHZ_RAW_MAX_DURATIONS, &raw_count);
+        }
+
+        if (got && raw_count > 0) {
+            s_capture_raw_count = raw_count;
+            s_capture_buffer_valid = true;
+            subghz_capture_mark_ready();
+        } else {
+            if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+                lv_label_set_text(s_capture_status_label, "No signal captured");
+            }
+        }
+    }
+}
+
+static void subghz_capture_continue_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_capture_ready) {
+        return;
+    }
+
+    s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_CONTINUE;
+    subghz_capture_popup_update_buttons();
+
+    if (s_remote_mode) {
+        if (!esp_comm_manager_is_connected()) {
+            subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
+            return;
+        }
+        (void)esp_comm_manager_send_command("subghz", "resume");
+    } else {
+        subghz_remote_manager_set_paused(false);
+    }
+
+    subghz_capture_continue_waiting();
+}
+
+static void subghz_capture_back_btn_cb(lv_event_t *e) {
+    (void)e;
+    s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
+    subghz_capture_popup_update_buttons();
+    subghz_close_capture_popup();
+}
+
+static void subghz_open_capture_popup(void) {
+    if (s_capture_popup && lv_obj_is_valid(s_capture_popup)) {
+        subghz_close_capture_popup();
+    }
+
+    lv_coord_t popup_w = (LV_HOR_RES <= 240) ? (LV_HOR_RES - 20) : (LV_HOR_RES - 30);
+    lv_coord_t popup_h = (LV_VER_RES <= 200) ? (LV_VER_RES - 30) : 190;
+    if (popup_w < 220) popup_w = 220;
+    if (popup_h < 150) popup_h = 150;
+
+    s_capture_popup = popup_create_container(lv_scr_act(), popup_w, popup_h);
+    lv_obj_center(s_capture_popup);
+
+    const char *title = (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "Raw Capture" : "Capture";
+    popup_create_title_label(s_capture_popup, title, &lv_font_montserrat_16, 8);
+    s_capture_status_label = popup_create_body_label(
+        s_capture_popup,
+        "Waiting for valid signal...",
+        popup_w - 20,
+        false,
+        &lv_font_montserrat_12,
+        32);
+    s_capture_signal_label = popup_create_body_label(
+        s_capture_popup,
+        "Signal threshold: 65%",
+        popup_w - 20,
+        true,
+        &lv_font_montserrat_12,
+        52);
+    lv_obj_set_style_text_align(s_capture_status_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(s_capture_signal_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_max_height(s_capture_signal_label, 60, 0);
+    lv_obj_set_scrollbar_mode(s_capture_signal_label, LV_SCROLLBAR_MODE_AUTO);
+
+    const lv_font_t *btn_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+    s_capture_save_btn = popup_add_styled_button(
+        s_capture_popup,
+        "Stop",
+        72,
+        30,
+        LV_ALIGN_BOTTOM_LEFT,
+        8,
+        -8,
+        btn_font,
+        subghz_capture_primary_btn_cb,
+        NULL);
+    s_capture_continue_btn = popup_add_styled_button(
+        s_capture_popup,
+        "Continue",
+        92,
+        30,
+        LV_ALIGN_BOTTOM_MID,
+        0,
+        -8,
+        btn_font,
+        subghz_capture_continue_btn_cb,
+        NULL);
+    s_capture_back_btn = popup_add_styled_button(
+        s_capture_popup,
+        "Back",
+        72,
+        30,
+        LV_ALIGN_BOTTOM_RIGHT,
+        -8,
+        -8,
+        btn_font,
+        subghz_capture_back_btn_cb,
+        NULL);
+
+    lv_obj_t *btns[3] = { s_capture_save_btn, s_capture_continue_btn, s_capture_back_btn };
+    popup_layout_buttons_responsive(s_capture_popup, btns, 3, -8, NULL);
+
+    s_capture_was_running = s_remote_mode ? (s_remote_stream_online && !s_remote_paused)
+                                          : subghz_remote_manager_is_running();
+
+    if (s_remote_mode) {
+        if (!esp_comm_manager_is_connected()) {
+            subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
+            subghz_close_capture_popup();
+            return;
+        }
+        if (!s_capture_was_running) {
+            (void)esp_comm_manager_send_command("subghz", "start");
+        }
+        (void)esp_comm_manager_send_command("subghz", "capture_on");
+    } else {
+        if (!s_capture_was_running) {
+            if (!subghz_remote_manager_start(false)) {
+                subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
+                subghz_close_capture_popup();
+                return;
+            }
+        }
+        subghz_remote_manager_set_raw_capture_enabled(true);
+    }
+
+    subghz_capture_continue_waiting();
+}
+
+static void subghz_close_saved_popup(void) {
+    lvgl_obj_del_safe(&s_saved_popup);
+    s_saved_title_label = NULL;
+    s_saved_status_label = NULL;
+    s_saved_replay_btn = NULL;
+    s_saved_delete_btn = NULL;
+    s_saved_back_btn = NULL;
+    s_saved_index = 0;
+    s_saved_popup_selected = SUBGHZ_SAVED_POPUP_REPLAY;
+}
+
+static void subghz_saved_replay_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (s_saved_file_count <= 0 || !s_saved_file_paths || !s_saved_file_paths[s_saved_index]) return;
+    s_saved_popup_selected = SUBGHZ_SAVED_POPUP_REPLAY;
+    subghz_saved_popup_update_buttons();
+    subghz_load_snapshot_action();
+}
+
+static void subghz_saved_delete_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (s_saved_file_count <= 0 || !s_saved_file_paths || !s_saved_file_paths[s_saved_index]) return;
+    s_saved_popup_selected = SUBGHZ_SAVED_POPUP_DELETE;
+    subghz_saved_popup_update_buttons();
+    if (remove(s_saved_file_paths[s_saved_index]) == 0) {
+        subghz_show_feedback_popup("SubGHz", "Capture deleted");
+        subghz_close_saved_popup();
+        subghz_saved_list_reload();
+    } else {
+        subghz_show_feedback_popup("SubGHz error", "Failed to delete capture");
+    }
+}
+
+static void subghz_capture_mark_ready(void) {
+    s_capture_buffer_valid = true;
+    subghz_sanitize_snapshot_name(NULL, s_capture_name, sizeof(s_capture_name));
+    s_capture_preview_cursor = s_cursor;
+
+    if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+        lv_label_set_text(s_capture_status_label, "Signal captured");
+    }
+    if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label)) {
+        char decode_buf[96] = {0};
+        if (s_capture_raw_count > 0) {
+            subghz_analyze_raw_signal(s_capture_raw, s_capture_raw_count, decode_buf, sizeof(decode_buf));
+        }
+        char msg[128];
+        if (decode_buf[0] != '\0') {
+            snprintf(msg, sizeof(msg), "%s  Ch %u", decode_buf, (unsigned)s_capture_preview_cursor);
+        } else {
+            snprintf(msg, sizeof(msg), "Capture %s  Ch %u", s_capture_name, (unsigned)s_capture_preview_cursor);
+        }
+        lv_label_set_text(s_capture_signal_label, msg);
+    }
+
+    s_capture_waiting_signal = false;
+    s_capture_ready = true;
+    s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
+    subghz_capture_popup_update_buttons();
+
+    if (s_remote_mode) {
+        if (esp_comm_manager_is_connected()) {
+            (void)esp_comm_manager_send_command("subghz", "pause");
+        }
+    } else {
+        subghz_remote_manager_set_paused(true);
+    }
+}
+
+static void subghz_capture_mark_ready_with_decoded(const subghz_decoded_signal_t *decoded) {
+    if (decoded) {
+        s_remote_decoded = *decoded;
+    }
+    s_capture_buffer_valid = true;
+    subghz_sanitize_snapshot_name(NULL, s_capture_name, sizeof(s_capture_name));
+    s_capture_preview_cursor = s_cursor;
+
+    if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+        lv_label_set_text(s_capture_status_label, "Signal decoded");
+    }
+    if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label) && decoded) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "%.244s  Ch %u", decoded->info, (unsigned)s_capture_preview_cursor);
+        lv_label_set_text(s_capture_signal_label, msg);
+    }
+
+    s_capture_waiting_signal = false;
+    s_capture_ready = true;
+    s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
+    subghz_capture_popup_update_buttons();
+
+    if (s_remote_mode) {
+        if (esp_comm_manager_is_connected()) {
+            (void)esp_comm_manager_send_command("subghz", "pause");
+        }
+    } else {
+        subghz_remote_manager_set_paused(true);
+    }
+}
+
+static void subghz_saved_back_btn_cb(lv_event_t *e) {
+    (void)e;
+    subghz_close_saved_popup();
+}
+
+static void subghz_open_saved_popup(void) {
+    if (s_saved_popup && lv_obj_is_valid(s_saved_popup)) {
+        subghz_close_saved_popup();
+    }
+
+    lv_coord_t popup_w = (LV_HOR_RES <= 240) ? (LV_HOR_RES - 16) : (LV_HOR_RES - 26);
+    lv_coord_t popup_h = (LV_VER_RES <= 200) ? (LV_VER_RES - 24) : 190;
+    if (popup_w < 220) popup_w = 220;
+    if (popup_h < 150) popup_h = 150;
+
+    s_saved_popup = popup_create_container(lv_scr_act(), popup_w, popup_h);
+    lv_obj_center(s_saved_popup);
+
+    s_saved_title_label = popup_create_title_label(s_saved_popup, "Saved Capture", &lv_font_montserrat_16, 8);
+    s_saved_status_label = popup_create_body_label(
+        s_saved_popup,
+        "Loading...",
+        popup_w - 20,
+        true,
+        &lv_font_montserrat_12,
+        38);
+    lv_obj_set_style_text_align(s_saved_status_label, LV_TEXT_ALIGN_LEFT, 0);
+
+    const lv_font_t *btn_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+    s_saved_replay_btn = popup_add_styled_button(
+        s_saved_popup,
+        "Replay",
+        68,
+        30,
+        LV_ALIGN_BOTTOM_LEFT,
+        6,
+        -8,
+        btn_font,
+        subghz_saved_replay_btn_cb,
+        NULL);
+    s_saved_delete_btn = popup_add_styled_button(
+        s_saved_popup,
+        "Delete",
+        68,
+        30,
+        LV_ALIGN_BOTTOM_LEFT,
+        80,
+        -8,
+        btn_font,
+        subghz_saved_delete_btn_cb,
+        NULL);
+    s_saved_back_btn = popup_add_styled_button(
+        s_saved_popup,
+        "Back",
+        68,
+        30,
+        LV_ALIGN_BOTTOM_RIGHT,
+        -6,
+        -8,
+        btn_font,
+        subghz_saved_back_btn_cb,
+        NULL);
+
+    lv_obj_t *btns[3] = { s_saved_replay_btn, s_saved_delete_btn, s_saved_back_btn };
+    popup_layout_buttons_responsive(s_saved_popup, btns, 3, -8, NULL);
+
+    s_saved_popup_selected = SUBGHZ_SAVED_POPUP_REPLAY;
+    subghz_saved_popup_refresh_text();
+    subghz_saved_popup_update_buttons();
+}
+
+static void subghz_select_row(void) {
+    if (s_in_saved_list) {
+        int sel = options_view_get_selected(s_ov);
+        int item_count = options_view_get_item_count(s_ov);
+        if (item_count <= 0) {
+            return;
+        }
+        if (sel == item_count - 1) {
+            subghz_back_to_root_menu();
+            return;
+        }
+
+        int visible_files = s_saved_file_count - s_saved_page * 7;
+        if (visible_files > 7) visible_files = 7;
+        int has_prev = (s_saved_page > 0) ? 1 : 0;
+        int has_next = ((s_saved_page + 1) * 7 < s_saved_file_count) ? 1 : 0;
+        if (sel < visible_files) {
+            s_saved_index = s_saved_page * 7 + sel;
+            subghz_open_saved_popup();
+        } else if (has_prev && sel == visible_files) {
+            subghz_saved_list_prev_page_cb(NULL);
+        } else if (has_next && sel == visible_files + has_prev) {
+            subghz_saved_list_next_page_cb(NULL);
+        }
+        return;
+    }
+
+    int sel = options_view_get_selected(s_ov);
+    if (sel == 0) {
+        s_capture_mode = SUBGHZ_CAPTURE_MODE_NORMAL;
+        subghz_capture_snapshot_action();
+    } else if (sel == 1) {
+        s_capture_mode = SUBGHZ_CAPTURE_MODE_RAW;
+        subghz_capture_snapshot_action();
+    } else if (sel == 2) {
+        subghz_list_snapshots_action();
+    } else {
+        display_manager_switch_view(&main_menu_view);
+    }
+}
+
+static void subghz_scan_row_cb(lv_event_t *e) {
+    (void)e;
+    if (s_ov) {
+        options_view_set_selected(s_ov, 0);
+    }
+    s_capture_mode = SUBGHZ_CAPTURE_MODE_NORMAL;
+    subghz_capture_snapshot_action();
+}
+
+static void subghz_raw_capture_row_cb(lv_event_t *e) {
+    (void)e;
+    if (s_ov) {
+        options_view_set_selected(s_ov, 1);
+    }
+    s_capture_mode = SUBGHZ_CAPTURE_MODE_RAW;
+    subghz_capture_snapshot_action();
+}
+
+static void subghz_back_row_cb(lv_event_t *e) {
+    (void)e;
+    if (s_in_saved_list) {
+        subghz_back_to_root_menu();
+        return;
+    }
+    if (s_ov) {
+        options_view_set_selected(s_ov, 3);
+    }
+    display_manager_switch_view(&main_menu_view);
+}
+
+static void subghz_capture_row_cb(lv_event_t *e) {
+    (void)e;
+    if (s_ov) {
+        options_view_set_selected(s_ov, 2);
+    }
+    subghz_saved_list_reload();
+}
+
+static void subghz_save_row_cb(lv_event_t *e) {
+    (void)e;
+    subghz_save_snapshot_action();
+}
+
+static void subghz_load_row_cb(lv_event_t *e) {
+    (void)e;
+    subghz_load_snapshot_action();
+}
+
+static void subghz_list_row_cb(lv_event_t *e) {
+    (void)e;
+    subghz_saved_list_reload();
+}
+
+static void subghz_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+
+    bool scanner_popup_open = s_popup && lv_obj_is_valid(s_popup);
+    bool capture_popup_open = s_capture_popup && lv_obj_is_valid(s_capture_popup);
+    if (!scanner_popup_open && !capture_popup_open) {
+        return;
+    }
+
+    if (s_remote_mode) {
+        if (!esp_comm_manager_is_connected()) {
+            s_remote_stream_online = false;
+            if (s_pending_action != SUBGHZ_PENDING_NONE) {
+                subghz_fail_pending_action("GhostLink disconnected");
+            }
+        }
+    } else {
+        (void)subghz_remote_manager_get_levels(s_levels, sizeof(s_levels), &s_cursor);
+
+        if (s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_waiting_signal && s_capture_mode != SUBGHZ_CAPTURE_MODE_RAW) {
+            subghz_decoded_signal_t decoded;
+            if (subghz_remote_manager_take_decode_result(&decoded)) {
+                s_capture_raw_count = 0;
+                s_capture_buffer_valid = true;
+                subghz_capture_mark_ready_with_decoded(&decoded);
+                goto done_local;
+            }
+        }
+
+        size_t raw_count = 0;
+        if (subghz_remote_manager_take_raw_capture(s_remote_raw_work, SUBGHZ_RAW_MAX_DURATIONS, &raw_count)) {
+            if (raw_count > 0 && s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_waiting_signal) {
+                if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+                    if (s_capture_raw_count + raw_count <= SUBGHZ_RAW_MAX_DURATIONS) {
+                        memcpy(s_capture_raw + s_capture_raw_count, s_remote_raw_work, raw_count * sizeof(int32_t));
+                        s_capture_raw_count += raw_count;
+                    } else {
+                        s_capture_raw_count = raw_count;
+                        memcpy(s_capture_raw, s_remote_raw_work, raw_count * sizeof(int32_t));
+                    }
+                    s_capture_buffer_valid = true;
+                    if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label)) {
+                        char msg[64];
+                        snprintf(msg, sizeof(msg), "Captured %zu pulses", s_capture_raw_count);
+                        lv_label_set_text(s_capture_signal_label, msg);
+                    }
+                } else {
+                    bool decoded_ok = false;
+                    subghz_decoded_signal_t decoded;
+                    memset(&decoded, 0, sizeof(decoded));
+                    if (raw_count >= 16) {
+                        if (subghz_decode_signal(s_remote_raw_work, raw_count, &decoded) && decoded.decoded) {
+                            decoded_ok = true;
+                            memcpy(s_capture_raw, s_remote_raw_work, raw_count * sizeof(int32_t));
+                            s_capture_raw_count = raw_count;
+                        }
+                    }
+                    if (!decoded_ok) {
+                        if (s_capture_raw_count + raw_count <= SUBGHZ_RAW_MAX_DURATIONS) {
+                            memcpy(s_capture_raw + s_capture_raw_count, s_remote_raw_work, raw_count * sizeof(int32_t));
+                            s_capture_raw_count += raw_count;
+                        } else {
+                            s_capture_raw_count = raw_count;
+                            memcpy(s_capture_raw, s_remote_raw_work, raw_count * sizeof(int32_t));
+                        }
+                        if (s_capture_raw_count >= 16) {
+                            if (subghz_decode_signal(s_capture_raw, s_capture_raw_count, &decoded) && decoded.decoded) {
+                                decoded_ok = true;
+                            }
+                        }
+                    }
+                    if (decoded_ok) {
+                        subghz_capture_mark_ready_with_decoded(&decoded);
+                    }
+                }
+            }
+        }
+    }
+    done_local:
+
+    if (s_pending_action != SUBGHZ_PENDING_NONE && esp_timer_get_time() >= s_pending_action_deadline_us) {
+        subghz_fail_pending_action("no peer response (unsupported or offline)");
+    }
+
+    for (int i = 0; i < SUBGHZ_SCANNER_CHANNEL_COUNT; i++) {
+        if (s_levels[i] > s_peaks[i]) {
+            s_peaks[i] = s_levels[i];
+        } else if (s_peaks[i] > 0) {
+            s_peaks[i]--;
+        }
+    }
+
+    if (s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_waiting_signal) {
+        int strong = 0;
+        for (int i = 0; i < SUBGHZ_SCANNER_CHANNEL_COUNT; i++) {
+            if (s_levels[i] >= SUBGHZ_CAPTURE_SIGNAL_THRESHOLD) {
+                strong++;
+            }
+        }
+
+        if (strong > 0) {
+            s_capture_signal_hits++;
+            if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label)) {
+                char msg[96];
+                snprintf(msg, sizeof(msg), "Signal %d%%  hits %d/%d", s_levels[s_cursor], s_capture_signal_hits, SUBGHZ_CAPTURE_SIGNAL_HITS);
+                lv_label_set_text(s_capture_signal_label, msg);
+            }
+        } else if (s_capture_signal_hits > 0) {
+            s_capture_signal_hits--;
+        }
+    }
+
+    if (scanner_popup_open) {
+        subghz_refresh_status_labels();
+    }
+    if (scanner_popup_open && s_graph && lv_obj_is_valid(s_graph)) {
+        lv_obj_invalidate(s_graph);
+    }
+}
+
+static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data) {
+    (void)channel;
+    (void)user_data;
+
+    if (!data || length < 2) {
+        return;
+    }
+    if (data[0] != SUBGHZ_STREAM_VERSION) {
+        return;
+    }
+
+    uint8_t packet_type = data[1];
+    if (packet_type == 1) {
+        if (length < 4) {
+            return;
+        }
+        s_remote_raw_expected = (size_t)data[2] | ((size_t)data[3] << 8);
+        if (s_remote_raw_expected > SUBGHZ_RAW_MAX_DURATIONS) {
+            s_remote_raw_expected = SUBGHZ_RAW_MAX_DURATIONS;
+        }
+        s_remote_raw_received = 0;
+        return;
+    }
+
+    if (packet_type == 2) {
+        if (length < 5) {
+            return;
+        }
+        size_t offset = (size_t)data[2] | ((size_t)data[3] << 8);
+        size_t count = (size_t)data[4];
+        if (length < 5 + count * 4 || offset + count > SUBGHZ_RAW_MAX_DURATIONS) {
+            return;
+        }
+        for (size_t i = 0; i < count; i++) {
+            size_t base = 5 + i * 4;
+            int32_t v = (int32_t)((uint32_t)data[base] |
+                                  ((uint32_t)data[base + 1] << 8) |
+                                  ((uint32_t)data[base + 2] << 16) |
+                                  ((uint32_t)data[base + 3] << 24));
+            s_remote_raw_work[offset + i] = v;
+        }
+        if (offset + count > s_remote_raw_received) {
+            s_remote_raw_received = offset + count;
+        }
+        return;
+    }
+
+    if (packet_type == 3) {
+        if (s_remote_raw_received > 0) {
+            size_t new_count = s_remote_raw_received;
+            if (new_count > SUBGHZ_RAW_MAX_DURATIONS) {
+                new_count = SUBGHZ_RAW_MAX_DURATIONS;
+            }
+            if (s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_waiting_signal) {
+                if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+                    if (s_capture_raw_count + new_count <= SUBGHZ_RAW_MAX_DURATIONS) {
+                        memcpy(s_capture_raw + s_capture_raw_count, s_remote_raw_work, new_count * sizeof(int32_t));
+                        s_capture_raw_count += new_count;
+                    } else {
+                        s_capture_raw_count = new_count;
+                        memcpy(s_capture_raw, s_remote_raw_work, s_capture_raw_count * sizeof(int32_t));
+                    }
+                    s_capture_buffer_valid = true;
+                } else {
+                    bool decoded_ok = false;
+                    subghz_decoded_signal_t decoded;
+                    memset(&decoded, 0, sizeof(decoded));
+                    if (new_count >= 16) {
+                        if (subghz_decode_signal(s_remote_raw_work, new_count, &decoded) && decoded.decoded) {
+                            decoded_ok = true;
+                            memcpy(s_capture_raw, s_remote_raw_work, new_count * sizeof(int32_t));
+                            s_capture_raw_count = new_count;
+                        }
+                    }
+                    if (!decoded_ok) {
+                        if (s_capture_raw_count + new_count <= SUBGHZ_RAW_MAX_DURATIONS) {
+                            memcpy(s_capture_raw + s_capture_raw_count, s_remote_raw_work, new_count * sizeof(int32_t));
+                            s_capture_raw_count += new_count;
+                        } else {
+                            s_capture_raw_count = new_count;
+                            memcpy(s_capture_raw, s_remote_raw_work, s_capture_raw_count * sizeof(int32_t));
+                        }
+                        if (s_capture_raw_count >= 16) {
+                            if (subghz_decode_signal(s_capture_raw, s_capture_raw_count, &decoded) && decoded.decoded) {
+                                decoded_ok = true;
+                            }
+                        }
+                    }
+                    if (decoded_ok) {
+                        subghz_capture_mark_ready_with_decoded(&decoded);
+                    }
+                }
+            } else {
+                s_capture_raw_count = new_count;
+                memcpy(s_capture_raw, s_remote_raw_work, s_capture_raw_count * sizeof(int32_t));
+            }
+        }
+        return;
+    }
+
+    if (packet_type == 8) {
+        if (length < 12) return;
+        uint8_t name_len = data[2];
+        if (length < (size_t)(3 + name_len + 8 + 1)) return;
+        if (name_len >= SUBGHZ_DECODED_PROTO_MAX) name_len = SUBGHZ_DECODED_PROTO_MAX - 1;
+
+        if (s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_mode != SUBGHZ_CAPTURE_MODE_RAW) {
+            subghz_decoded_signal_t decoded;
+            memset(&decoded, 0, sizeof(decoded));
+            memcpy(decoded.protocol, data + 3, name_len);
+            decoded.protocol[name_len] = '\0';
+            size_t code_pos = 3 + name_len;
+            uint64_t code = 0;
+            for (int i = 0; i < 8; i++) code |= ((uint64_t)data[code_pos + i]) << (i * 8);
+            decoded.code = code;
+            decoded.bits = subghz_normalize_decoded_bits(decoded.protocol, (int)data[code_pos + 8]);
+            decoded.decoded = true;
+
+            if (decoded.bits > 32) {
+                snprintf(decoded.info, sizeof(decoded.info), "%s %dbit\nCode:0x%016llX",
+                         decoded.protocol, decoded.bits, (unsigned long long)decoded.code);
+            } else {
+                int pos = 0;
+                pos += snprintf(decoded.info + pos, sizeof(decoded.info) - pos,
+                                "%s %dbit\nCode:0x", decoded.protocol, decoded.bits);
+                uint32_t c = (uint32_t)decoded.code;
+                for (int i = decoded.bits - 4; i >= 0; i -= 4) {
+                    if (pos < (int)sizeof(decoded.info) - 2)
+                        pos += snprintf(decoded.info + pos, sizeof(decoded.info) - pos,
+                                        "%X", (unsigned)((c >> i) & 0xF));
+                }
+            }
+
+            s_capture_buffer_valid = true;
+            subghz_capture_mark_ready_with_decoded(&decoded);
+        }
+        return;
+    }
+
+    if (packet_type != 0) {
+        return;
+    }
+
+    if (length < 5) {
+        return;
+    }
+
+    uint8_t cursor = data[2];
+    uint8_t start_ch = data[3];
+    uint8_t count = data[4];
+
+    if (count == 0 || count > 32 || (size_t)(5 + count) > length) {
+        return;
+    }
+
+    for (uint8_t i = 0; i < count; i++) {
+        uint8_t ch = (uint8_t)((start_ch + i) % SUBGHZ_SCANNER_CHANNEL_COUNT);
+        s_levels[ch] = data[5 + i];
+        if (s_levels[ch] > s_peaks[ch]) {
+            s_peaks[ch] = s_levels[ch];
+        }
+    }
+
+    s_cursor = (uint8_t)(cursor % SUBGHZ_SCANNER_CHANNEL_COUNT);
+    s_remote_stream_online = true;
+    s_remote_error = false;
+}
+
+void subghz_view_register_stream_handler(void) {
+    (void)esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_SUBGHZ, subghz_stream_rx_cb, NULL);
+}
+
+void subghz_view_update_remote_state(const char *state) {
+    if (!state) {
+        return;
+    }
+
+    if (strcmp(state, "started") == 0 || strcmp(state, "running") == 0) {
+        s_remote_stream_online = true;
+        s_remote_error = false;
+        s_remote_paused = false;
+        subghz_clear_pending_action();
+    } else if (strcmp(state, "paused") == 0) {
+        s_remote_stream_online = true;
+        s_remote_error = false;
+        s_remote_paused = true;
+        subghz_clear_pending_action();
+    } else if (strcmp(state, "resumed") == 0) {
+        s_remote_stream_online = true;
+        s_remote_error = false;
+        s_remote_paused = false;
+        subghz_clear_pending_action();
+    } else if (strcmp(state, "stopped") == 0) {
+        s_remote_stream_online = false;
+        s_remote_paused = true;
+        subghz_clear_pending_action();
+    } else if (strcmp(state, "error") == 0) {
+        s_remote_error = true;
+        s_remote_stream_online = false;
+        s_remote_paused = true;
+        subghz_fail_pending_action("peer returned error");
+    } else if (strcmp(state, "capture_ok") == 0) {
+        subghz_clear_pending_action();
+        subghz_show_action_status("Remote capture complete");
+        subghz_show_feedback_popup("SubGHz", "Remote capture complete");
+    } else if (strcmp(state, "capture_error") == 0) {
+        subghz_fail_pending_action("capture failed");
+    } else if (strcmp(state, "save_ok") == 0) {
+        subghz_clear_pending_action();
+        subghz_show_action_status("Remote save complete");
+        subghz_show_feedback_popup("SubGHz", "Remote snapshot saved");
+    } else if (strcmp(state, "save_error") == 0) {
+        subghz_fail_pending_action("save failed");
+    } else if (strcmp(state, "load_ok") == 0) {
+        subghz_clear_pending_action();
+        subghz_show_action_status("Remote replay complete");
+        subghz_show_feedback_popup("SubGHz", "Remote replay complete");
+    } else if (strcmp(state, "load_error") == 0) {
+        subghz_fail_pending_action("replay failed");
+    } else if (strcmp(state, "list_ok") == 0) {
+        subghz_clear_pending_action();
+        subghz_show_action_status("Remote list complete");
+        subghz_show_feedback_popup("SubGHz", "Remote list complete (check terminal)");
+    } else if (strcmp(state, "list_empty") == 0) {
+        subghz_clear_pending_action();
+        subghz_show_action_status("Remote list empty");
+        subghz_show_feedback_popup("SubGHz", "No remote snapshots found");
+    } else if (strcmp(state, "list_error") == 0) {
+        subghz_fail_pending_action("list failed");
+    }
+}
+
+static void subghz_input_handler(InputEvent *event) {
+    if (!event) {
+        return;
+    }
+
+    if (s_capture_popup && lv_obj_is_valid(s_capture_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_REL) {
+                if (point_inside_obj(s_capture_save_btn, d->point.x, d->point.y)) {
+                    subghz_capture_primary_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_capture_continue_btn, d->point.x, d->point.y)) {
+                    subghz_capture_continue_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_capture_back_btn, d->point.x, d->point.y)) {
+                    subghz_capture_back_btn_cb(NULL);
+                    return;
+                }
+            }
+        } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER ||
+                   event->type == INPUT_TYPE_KEYBOARD) {
+            int dir = 0;
+            bool activate = false;
+            bool back = false;
+
+            if (event->type == INPUT_TYPE_JOYSTICK) {
+                int ji = event->data.joystick_index;
+                if (ji == 0) dir = -1;
+                else if (ji == 3) dir = 1;
+                else if (ji == 1) activate = true;
+            } else if (event->type == INPUT_TYPE_ENCODER) {
+                if (event->data.encoder.button) activate = true;
+                else dir = (event->data.encoder.direction > 0) ? -1 : ((event->data.encoder.direction < 0) ? 1 : 0);
+            } else {
+                int kv = event->data.key_value;
+                if (kv == 13 || kv == 10) activate = true;
+                else if (kv == 27 || kv == LV_KEY_ESC || kv == '`') back = true;
+                else if (kv == ',' || kv == ';' || kv == LV_KEY_LEFT) dir = -1;
+                else if (kv == '.' || kv == '/' || kv == LV_KEY_RIGHT) dir = 1;
+            }
+
+            if (back || event->type == INPUT_TYPE_EXIT_BUTTON) {
+                subghz_capture_back_btn_cb(NULL);
+                return;
+            }
+
+            if (dir != 0) {
+                int selected = ((int)s_capture_popup_selected + dir + SUBGHZ_CAPTURE_POPUP_COUNT) % SUBGHZ_CAPTURE_POPUP_COUNT;
+                s_capture_popup_selected = (subghz_capture_popup_control_t)selected;
+                subghz_capture_popup_update_buttons();
+                return;
+            }
+
+            if (activate) {
+                if (s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_SAVE) subghz_capture_primary_btn_cb(NULL);
+                else if (s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_CONTINUE) subghz_capture_continue_btn_cb(NULL);
+                else subghz_capture_back_btn_cb(NULL);
+                return;
+            }
+        } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            subghz_capture_back_btn_cb(NULL);
+            return;
+        }
+
+        return;
+    }
+
+    if (s_saved_popup && lv_obj_is_valid(s_saved_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_REL) {
+                if (point_inside_obj(s_saved_replay_btn, d->point.x, d->point.y)) {
+                    subghz_saved_replay_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_saved_delete_btn, d->point.x, d->point.y)) {
+                    subghz_saved_delete_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_saved_back_btn, d->point.x, d->point.y)) {
+                    subghz_saved_back_btn_cb(NULL);
+                    return;
+                }
+            }
+        } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER ||
+                   event->type == INPUT_TYPE_KEYBOARD) {
+            int dir = 0;
+            bool activate = false;
+            bool back = false;
+
+            if (event->type == INPUT_TYPE_JOYSTICK) {
+                int ji = event->data.joystick_index;
+                if (ji == 0) dir = -1;
+                else if (ji == 3) dir = 1;
+                else if (ji == 1) activate = true;
+            } else if (event->type == INPUT_TYPE_ENCODER) {
+                if (event->data.encoder.button) activate = true;
+                else dir = (event->data.encoder.direction > 0) ? -1 : ((event->data.encoder.direction < 0) ? 1 : 0);
+            } else {
+                int kv = event->data.key_value;
+                if (kv == 13 || kv == 10) activate = true;
+                else if (kv == 27 || kv == LV_KEY_ESC || kv == '`') back = true;
+                else if (kv == ',' || kv == ';' || kv == LV_KEY_LEFT) dir = -1;
+                else if (kv == '.' || kv == '/' || kv == LV_KEY_RIGHT) dir = 1;
+            }
+
+            if (back || event->type == INPUT_TYPE_EXIT_BUTTON) {
+                subghz_saved_back_btn_cb(NULL);
+                return;
+            }
+
+            if (dir != 0) {
+                int selected = ((int)s_saved_popup_selected + dir + SUBGHZ_SAVED_POPUP_COUNT) % SUBGHZ_SAVED_POPUP_COUNT;
+                s_saved_popup_selected = (subghz_saved_popup_control_t)selected;
+                subghz_saved_popup_update_buttons();
+                return;
+            }
+
+            if (activate) {
+                if (s_saved_popup_selected == SUBGHZ_SAVED_POPUP_REPLAY) subghz_saved_replay_btn_cb(NULL);
+                else if (s_saved_popup_selected == SUBGHZ_SAVED_POPUP_DELETE) subghz_saved_delete_btn_cb(NULL);
+                else subghz_saved_back_btn_cb(NULL);
+                return;
+            }
+        } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            subghz_saved_back_btn_cb(NULL);
+            return;
+        }
+
+        return;
+    }
+
+    if (s_popup && lv_obj_is_valid(s_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_REL) {
+                if (point_inside_obj(s_start_btn, d->point.x, d->point.y)) {
+                    subghz_start_scan();
+                    return;
+                }
+                if (point_inside_obj(s_stop_btn, d->point.x, d->point.y)) {
+                    subghz_stop_scan();
+                    return;
+                }
+                if (point_inside_obj(s_popup_back_btn, d->point.x, d->point.y)) {
+                    subghz_close_popup(true);
+                    return;
+                }
+            }
+        } else if (event->type == INPUT_TYPE_JOYSTICK) {
+            int ji = event->data.joystick_index;
+            if (ji == 0) {
+                s_popup_selected = (subghz_popup_control_t)((s_popup_selected + SUBGHZ_POPUP_COUNT - 1) % SUBGHZ_POPUP_COUNT);
+                subghz_apply_popup_selection();
+            } else if (ji == 3) {
+                s_popup_selected = (subghz_popup_control_t)((s_popup_selected + 1) % SUBGHZ_POPUP_COUNT);
+                subghz_apply_popup_selection();
+            } else if (ji == 1) {
+                if (s_popup_selected == SUBGHZ_POPUP_START) subghz_start_scan();
+                else if (s_popup_selected == SUBGHZ_POPUP_STOP) subghz_stop_scan();
+                else subghz_close_popup(true);
+            }
+            return;
+        } else if (event->type == INPUT_TYPE_ENCODER) {
+            if (event->data.encoder.button) {
+                if (s_popup_selected == SUBGHZ_POPUP_START) subghz_start_scan();
+                else if (s_popup_selected == SUBGHZ_POPUP_STOP) subghz_stop_scan();
+                else subghz_close_popup(true);
+                return;
+            }
+
+            if (event->data.encoder.direction > 0) {
+                s_popup_selected = (subghz_popup_control_t)((s_popup_selected + SUBGHZ_POPUP_COUNT - 1) % SUBGHZ_POPUP_COUNT);
+            } else if (event->data.encoder.direction < 0) {
+                s_popup_selected = (subghz_popup_control_t)((s_popup_selected + 1) % SUBGHZ_POPUP_COUNT);
+            }
+            subghz_apply_popup_selection();
+            return;
+        } else if (event->type == INPUT_TYPE_KEYBOARD) {
+            int kv = event->data.key_value;
+            if (kv == 13 || kv == 10) {
+                if (s_popup_selected == SUBGHZ_POPUP_START) subghz_start_scan();
+                else if (s_popup_selected == SUBGHZ_POPUP_STOP) subghz_stop_scan();
+                else subghz_close_popup(true);
+                return;
+            }
+            if (kv == 27 || kv == 'c' || kv == 'C' || kv == '`') {
+                subghz_close_popup(true);
+                return;
+            }
+            if (kv == 's' || kv == 'S') {
+                subghz_start_scan();
+                return;
+            }
+            if (kv == 'x' || kv == 'X') {
+                subghz_stop_scan();
+                return;
+            }
+            if (kv == 44 || kv == ',' || kv == ';') {
+                s_popup_selected = (subghz_popup_control_t)((s_popup_selected + SUBGHZ_POPUP_COUNT - 1) % SUBGHZ_POPUP_COUNT);
+                subghz_apply_popup_selection();
+                return;
+            }
+            if (kv == 47 || kv == '/' || kv == '.') {
+                s_popup_selected = (subghz_popup_control_t)((s_popup_selected + 1) % SUBGHZ_POPUP_COUNT);
+                subghz_apply_popup_selection();
+                return;
+            }
+        } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            subghz_close_popup(true);
+            return;
+        }
+
+        return;
+    }
+
+    if (event->type == INPUT_TYPE_TOUCH) {
+        lv_indev_data_t *d = &event->data.touch_data;
+        if (d->state == LV_INDEV_STATE_REL) {
+            if (!s_in_saved_list && point_inside_obj(s_scan_row, d->point.x, d->point.y)) {
+                if (s_ov) options_view_set_selected(s_ov, 0);
+                s_capture_mode = SUBGHZ_CAPTURE_MODE_NORMAL;
+                subghz_capture_snapshot_action();
+                return;
+            }
+            if (!s_in_saved_list && s_raw_capture_row && point_inside_obj(s_raw_capture_row, d->point.x, d->point.y)) {
+                if (s_ov) options_view_set_selected(s_ov, 1);
+                s_capture_mode = SUBGHZ_CAPTURE_MODE_RAW;
+                subghz_capture_snapshot_action();
+                return;
+            }
+            if (!s_in_saved_list && point_inside_obj(s_capture_row, d->point.x, d->point.y)) {
+                if (s_ov) options_view_set_selected(s_ov, 2);
+                subghz_list_snapshots_action();
+                return;
+            }
+            if (point_inside_obj(s_back_row, d->point.x, d->point.y)) {
+                if (s_in_saved_list) {
+                    subghz_back_to_root_menu();
+                } else {
+                    display_manager_switch_view(&main_menu_view);
+                }
+                return;
+            }
+        }
+    } else if (event->type == INPUT_TYPE_JOYSTICK) {
+        int ji = event->data.joystick_index;
+        if (ji == 2) {
+            options_view_move_selection(s_ov, -1);
+        } else if (ji == 4) {
+            options_view_move_selection(s_ov, 1);
+        } else if (ji == 1) {
+            subghz_select_row();
+        } else if (ji == 0) {
+            if (s_in_saved_list) subghz_back_to_root_menu();
+            else display_manager_switch_view(&main_menu_view);
+        }
+    } else if (event->type == INPUT_TYPE_ENCODER) {
+        if (event->data.encoder.button) {
+            subghz_select_row();
+            return;
+        }
+        if (event->data.encoder.direction > 0) {
+            options_view_move_selection(s_ov, -1);
+        } else if (event->data.encoder.direction < 0) {
+            options_view_move_selection(s_ov, 1);
+        }
+    } else if (event->type == INPUT_TYPE_KEYBOARD) {
+        int kv = event->data.key_value;
+        if (kv == LV_KEY_UP || kv == 'k' || kv == ';') {
+            options_view_move_selection(s_ov, -1);
+        } else if (kv == LV_KEY_DOWN || kv == 'j' || kv == '.') {
+            options_view_move_selection(s_ov, 1);
+        } else if (kv == 13 || kv == 10 || kv == LV_KEY_RIGHT || kv == '/') {
+            subghz_select_row();
+        } else if (kv == LV_KEY_ESC || kv == 27 || kv == LV_KEY_LEFT || kv == ',' || kv == '`') {
+            if (s_in_saved_list) subghz_back_to_root_menu();
+            else display_manager_switch_view(&main_menu_view);
+        }
+    } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+        if (s_in_saved_list) subghz_back_to_root_menu();
+        else display_manager_switch_view(&main_menu_view);
+    }
+}
+
+void subghz_view_create(void) {
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t bg = lv_color_hex(theme_palette_get_background(theme));
+
+    s_root = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_root, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_root, bg, 0);
+    lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_root, 0, 0);
+    lv_obj_set_style_radius(s_root, 0, 0);
+    lv_obj_set_style_pad_all(s_root, 0, 0);
+    lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
+
+    subghz_view.root = s_root;
+
+    s_ov = options_view_create(s_root, "SubGHz");
+    s_scan_row = options_view_add_item(s_ov, "Capture", subghz_scan_row_cb, NULL);
+    s_raw_capture_row = options_view_add_item(s_ov, "Raw Capture", subghz_raw_capture_row_cb, NULL);
+    s_capture_row = options_view_add_item(s_ov, "Saved", subghz_capture_row_cb, NULL);
+    s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
+    options_view_set_selected(s_ov, 0);
+
+    s_remote_mode = subghz_is_remote_mode();
+    s_remote_stream_online = false;
+    s_remote_error = false;
+    s_remote_paused = true;
+    s_in_saved_list = false;
+    subghz_clear_pending_action();
+    s_cursor = 0;
+    memset(s_levels, 0, sizeof(s_levels));
+    memset(s_peaks, 0, sizeof(s_peaks));
+
+    s_timer = lv_timer_create(subghz_timer_cb, 110, NULL);
+}
+
+void subghz_view_destroy(void) {
+    subghz_close_popup(true);
+    subghz_close_saved_popup();
+    subghz_saved_list_clear();
+    s_in_saved_list = false;
+
+    lvgl_timer_del_safe(&s_timer);
+
+    if (s_ov) {
+        options_view_destroy(s_ov);
+        s_ov = NULL;
+    }
+
+    s_scan_row = NULL;
+    s_capture_row = NULL;
+    s_raw_capture_row = NULL;
+    s_back_row = NULL;
+
+    lvgl_obj_del_safe(&s_root);
+    subghz_view.root = NULL;
+
+    memset(s_levels, 0, sizeof(s_levels));
+    memset(s_peaks, 0, sizeof(s_peaks));
+    s_cursor = 0;
+    s_remote_stream_online = false;
+    s_remote_error = false;
+    s_remote_paused = true;
+    subghz_clear_pending_action();
+}
+
+static void get_subghz_callback(void **callback) {
+    if (callback) {
+        *callback = subghz_view.input_callback;
+    }
+}
+
+View subghz_view = {
+    .root = NULL,
+    .create = subghz_view_create,
+    .destroy = subghz_view_destroy,
+    .input_callback = subghz_input_handler,
+    .name = "SubGHz",
+    .get_hardwareinput_callback = get_subghz_callback
+};
+
+#endif

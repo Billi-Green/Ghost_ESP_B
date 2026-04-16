@@ -398,6 +398,9 @@ static void ble_detect_set_subtext(int found_count) {
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
 #include "managers/views/nrf24_analyzer_view.h"
 #endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+#include "managers/views/subghz_view.h"
+#endif
 
 uint32_t theme_palette_get_background(uint8_t theme);
 uint32_t theme_palette_get_surface_alt(uint8_t theme);
@@ -567,6 +570,9 @@ static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS 
 
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
 static const char *nrf24_options[] = {"Frequency Analyzer", NULL};
+#endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+static const char *subghz_options[] = {"SubGHz", NULL};
 #endif
 
 // Dual Comm is split into a small state machine with submenus to avoid
@@ -896,6 +902,9 @@ static const io_btn_preset_t io_btn_presets[] = {
 #endif
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
     {"NRF24", "view:nrf24", &options_menu_view},
+#endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+    {"SubGHz", "view:subghz", &subghz_view},
 #endif
     {"Clock", "view:clock", &clock_view},
     {"Apps", "view:apps", &apps_menu_view},
@@ -1365,6 +1374,8 @@ const char *options_menu_type_to_string(EOptionsMenuType menuType) {
         return "GhostLink";
     case OT_NRF24:
         return "NRF24";
+    case OT_SubGhz:
+        return "SubGHz";
     case OT_Settings:
         return "Settings";
     case OT_IOButtonPresets:
@@ -1511,6 +1522,13 @@ void options_menu_create() {
     case OT_NRF24:
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
         options = nrf24_options;
+#else
+        options = NULL;
+#endif
+        break;
+    case OT_SubGhz:
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+        options = subghz_options;
 #else
         options = NULL;
 #endif
@@ -4098,6 +4116,20 @@ void option_event_cb(lv_event_t *e) {
     if (SelectedMenuType == OT_NRF24) {
         if (strcmp(Selected_Option, "Frequency Analyzer") == 0) {
             display_manager_switch_view(&nrf24_analyzer_view);
+            view_switched = true;
+        }
+
+        if (!view_switched) {
+            option_invoked = false;
+        }
+        return;
+    }
+#endif
+
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+    if (SelectedMenuType == OT_SubGhz) {
+        if (strcmp(Selected_Option, "SubGHz") == 0) {
+            display_manager_switch_view(&subghz_view);
             view_switched = true;
         }
 
@@ -7442,6 +7474,13 @@ static void rebuild_current_menu(void) {
         case OT_NRF24:
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
             options = nrf24_options;
+#else
+            options = NULL;
+#endif
+            break;
+        case OT_SubGhz:
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+            options = subghz_options;
 #else
             options = NULL;
 #endif

@@ -27,6 +27,7 @@
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "managers/usb_keyboard_manager.h"
+#include "managers/subghz_remote_manager.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -48,6 +49,12 @@
 #include "managers/views/splash_screen.h"
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
 #include "managers/views/nrf24_analyzer_view.h"
+#endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+#include "managers/views/subghz_view.h"
+#endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+#include "managers/subghz_remote_manager.h"
 #endif
 #endif
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -489,6 +496,11 @@ void app_main(void) {
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
     nrf24_analyzer_register_stream_handler();
 #endif
+#if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE))
+    subghz_view_register_stream_handler();
+#elif defined(CONFIG_HAS_SUBGHZ)
+    subghz_remote_manager_register_stream_handler();
+#endif
 
     ESP_LOGI(TAG, "Initializing AP Manager");
     MEASURE_INIT_RAM("AP Manager", ap_manager_init());
@@ -542,8 +554,7 @@ void app_main(void) {
     }
 #endif
 
-    esp_err_t err = 0;
-    MEASURE_INIT_RAM("SD Card init", err = sd_card_init());
+    MEASURE_INIT_RAM("SD Card init", sd_card_init());
 
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredump_autosave_on_boot();

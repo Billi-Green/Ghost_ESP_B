@@ -22,9 +22,14 @@
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
 #include "managers/views/badusb_view.h"
 #endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+#include "managers/views/subghz_view.h"
+#endif
 #ifdef CONFIG_HAS_ACCELEROMETER
 #include "managers/views/accelerometer_screen.h"
 #endif
+
+static void handle_menu_item_selection(int item_index);
 
 uint32_t theme_palette_get_background(uint8_t theme);
 uint32_t theme_palette_get_surface(uint8_t theme);
@@ -101,6 +106,9 @@ menu_item_t menu_items[] = {
 #endif
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
     {"NRF24", &nrf24, 4, {{0}}},
+#endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+    {"SubGHz", &nrf24, 4, {{0}}},
 #endif
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
     {"BadUSB", &usb, 3, {{0}}},
@@ -861,6 +869,9 @@ static void handle_menu_item_selection(int item_index) {
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
         {"NRF24", OT_NRF24, &options_menu_view},
 #endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+        {"SubGHz", 0, &subghz_view},
+#endif
         {"Apps", 0, &apps_menu_view},
         {"Clock", 0, &clock_view},
         {"Settings", OT_Settings, &options_menu_view},
@@ -895,6 +906,8 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("NFC Menu");
             } else if (strcmp(menu_actions[i].name, "NRF24") == 0) {
                 status_display_show_status("NRF24 Menu");
+            } else if (strcmp(menu_actions[i].name, "SubGHz") == 0) {
+                status_display_show_status("SubGHz");
             } else if (strcmp(menu_actions[i].name, "Apps") == 0) {
                 status_display_show_status("Apps Menu");
             } else if (strcmp(menu_actions[i].name, "Clock") == 0) {

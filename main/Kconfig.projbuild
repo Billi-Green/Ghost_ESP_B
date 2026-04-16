@@ -341,6 +341,14 @@ menu "Ghost ESP Options"
                 commands to a paired NRF24-capable peer over GhostLink/commsend.
                 The display device does not scan RF directly - it only provides the UI.
 
+        config HAS_SUBGHZ_REMOTE
+            bool "Enable SubGHz Remote (display controls via GhostLink peer)"
+            default n
+            help
+                Enable SubGHz scanner controls on a display controller that routes
+                commands to a paired CC1101-capable peer over GhostLink/commsend.
+                The display device does not scan RF directly - it only provides the UI.
+
         config HAS_BATTERY
             bool "Enable power saving"
             default n
@@ -674,6 +682,106 @@ menu "Ghost ESP Options"
                 depends on HAS_NRF24
                 help
                     Number of channels processed each analyzer timer tick.
+
+        endmenu
+
+        menu "SubGHz Options"
+
+            config HAS_SUBGHZ
+                bool "Enable SubGHz App (CC1101)"
+                default n
+                help
+                    Enable the SubGHz app menu, popup scanner UI, and CC1101 backend.
+
+            config SUBGHZ_SPI_HOST
+                int "SubGHz SPI Host"
+                range 2 3
+                default 2
+                depends on HAS_SUBGHZ
+                help
+                    SPI host for CC1101 (2 = SPI2_HOST, 3 = SPI3_HOST).
+
+            config SUBGHZ_SPI_MOSI_PIN
+                int "SubGHz MOSI Pin"
+                default 18
+                depends on HAS_SUBGHZ
+                help
+                    GPIO pin for CC1101 MOSI.
+
+            config SUBGHZ_SPI_MISO_PIN
+                int "SubGHz MISO Pin"
+                default 38
+                depends on HAS_SUBGHZ
+                help
+                    GPIO pin for CC1101 MISO.
+
+            config SUBGHZ_SPI_SCK_PIN
+                int "SubGHz SCK Pin"
+                default 40
+                depends on HAS_SUBGHZ
+                help
+                    GPIO pin for CC1101 SCK.
+
+            config SUBGHZ_CSN_PIN
+                int "SubGHz CSN Pin"
+                default 39
+                depends on HAS_SUBGHZ
+                help
+                    GPIO pin for CC1101 CSN (chip select).
+
+            config SUBGHZ_GDO0_PIN
+                int "SubGHz GDO0 Pin"
+                default 41
+                depends on HAS_SUBGHZ
+                help
+                    GPIO pin connected to CC1101 GDO0.
+
+            config SUBGHZ_GDO2_PIN
+                int "SubGHz GDO2 Pin (optional, -1 to disable)"
+                default -1
+                depends on HAS_SUBGHZ
+                help
+                    Optional GPIO pin connected to CC1101 GDO2.
+
+            config SUBGHZ_SPI_CLOCK_HZ
+                int "SubGHz SPI Clock (Hz)"
+                range 500000 10000000
+                default 4000000
+                depends on HAS_SUBGHZ
+                help
+                    SPI clock used to communicate with the CC1101 module.
+
+            config SUBGHZ_BASE_FREQ_MHZ
+                int "SubGHz Base Frequency (MHz * 100)"
+                range 30000 92800
+                default 43392
+                depends on HAS_SUBGHZ
+                help
+                    Base tuning frequency in MHz*100 (e.g. 43392 = 433.92 MHz).
+
+            config SUBGHZ_CHANNEL_STEP_KHZ
+                int "SubGHz Channel Step (kHz)"
+                range 25 500
+                default 200
+                depends on HAS_SUBGHZ
+                help
+                    Approximate channel step shown by the UI while scanning.
+
+            config SUBGHZ_ANALYZER_CHANNELS_PER_TICK
+                int "SubGHz Channels per Tick"
+                range 1 32
+                default 8
+                depends on HAS_SUBGHZ
+                help
+                    Number of channels sampled each scanner task tick.
+
+            config SUBGHZ_ANALYZER_SETTLE_US
+                int "SubGHz Settle Time (us)"
+                range 100 5000
+                default 250
+                depends on HAS_SUBGHZ
+                help
+                    Delay after tuning a channel before reading RSSI.
 
         endmenu
 

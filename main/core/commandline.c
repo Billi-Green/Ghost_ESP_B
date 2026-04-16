@@ -111,11 +111,15 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "managers/wigle_manager.h"
 #include "managers/config_manager.h"
 #include "managers/nrf24_remote_manager.h"
+#include "managers/subghz_remote_manager.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/app_gallery_screen.h"
 
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
 #include "managers/views/nrf24_analyzer_view.h"
+#endif
+#if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE))
+#include "managers/views/subghz_view.h"
 #endif
 
 #include "attacks/wifi/dhcp_starvation.h"
@@ -177,6 +181,7 @@ void handle_aerial_spoof_stop_cmd(int argc, char **argv);
 void handle_wigle_cmd(int argc, char **argv);
 void handle_loadconfig_cmd(int argc, char **argv);
 void handle_nrf24_cmd(int argc, char **argv);
+void handle_subghz_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -7010,6 +7015,9 @@ void handle_chip_info_cmd(int argc, char **argv) {
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
     glog("    NRF24\n");
 #endif
+#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
+    glog("    SubGHz\n");
+#endif
 #ifdef CONFIG_HAS_INFRARED
     glog("    Infrared TX\n");
 #endif
@@ -7958,6 +7966,216 @@ void handle_nrf24_cmd(int argc, char **argv) {
 #endif
     if (remote_request && esp_comm_manager_is_connected()) {
         esp_comm_manager_send_command("nrf24", "state error");
+    }
+#endif
+}
+
+void handle_subghz_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: subghz <start|stop|pause|resume|status|capture|capture_on|capture_off|save|load|list|replay|state>\n");
+        return;
+    }
+
+    const char *sub = argv[1];
+    bool remote_request = esp_comm_manager_is_remote_command();
+
+#if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE))
+    if (strcmp(sub, "state") == 0) {
+        if (argc >= 3) {
+            subghz_view_update_remote_state(argv[2]);
+        }
+        return;
+    }
+#endif
+
+#ifdef CONFIG_HAS_SUBGHZ
+    bool stream_to_peer = remote_request && esp_comm_manager_is_connected();
+
+    if (strcmp(sub, "start") == 0) {
+        bool ok = subghz_remote_manager_start(stream_to_peer);
+        if (ok) {
+            glog("SubGHz scanner started\n");
+            glog("SubGHz cfg: SPI%d MOSI=%d MISO=%d SCK=%d CSN=%d GDO0=%d GDO2=%d\n",
+                 CONFIG_SUBGHZ_SPI_HOST,
+                 CONFIG_SUBGHZ_SPI_MOSI_PIN,
+                 CONFIG_SUBGHZ_SPI_MISO_PIN,
+                 CONFIG_SUBGHZ_SPI_SCK_PIN,
+                 CONFIG_SUBGHZ_CSN_PIN,
+                 CONFIG_SUBGHZ_GDO0_PIN,
+                 CONFIG_SUBGHZ_GDO2_PIN);
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state started");
+            }
+        } else {
+            glog("SubGHz scanner failed to start: %s\n", subghz_remote_manager_get_last_error());
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state error");
+            }
+        }
+        return;
+    }
+
+    if (strcmp(sub, "stop") == 0) {
+        if (!subghz_remote_manager_is_running()) {
+            glog("SubGHz scanner already stopped\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state stopped");
+            }
+            return;
+        }
+        subghz_remote_manager_stop();
+        glog("SubGHz scanner stopping\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("subghz", "state stopped");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "pause") == 0) {
+        if (!subghz_remote_manager_is_running()) {
+            glog("SubGHz scanner is not running\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state error");
+            }
+            return;
+        }
+        subghz_remote_manager_set_paused(true);
+        glog("SubGHz scanner paused\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("subghz", "state paused");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "resume") == 0) {
+        if (!subghz_remote_manager_is_running()) {
+            glog("SubGHz scanner is not running\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state error");
+            }
+            return;
+        }
+        subghz_remote_manager_set_paused(false);
+        glog("SubGHz scanner resumed\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("subghz", "state resumed");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "status") == 0) {
+        glog("SubGHz running: %s\n", subghz_remote_manager_is_running() ? "yes" : "no");
+        glog("SubGHz paused: %s\n", subghz_remote_manager_is_paused() ? "yes" : "no");
+        glog("SubGHz last error: %s\n", subghz_remote_manager_get_last_error());
+        glog("SubGHz active snapshot: %s\n", subghz_remote_manager_get_active_snapshot_name());
+        glog("SubGHz cfg: SPI%d MOSI=%d MISO=%d SCK=%d CSN=%d GDO0=%d GDO2=%d\n",
+             CONFIG_SUBGHZ_SPI_HOST,
+             CONFIG_SUBGHZ_SPI_MOSI_PIN,
+             CONFIG_SUBGHZ_SPI_MISO_PIN,
+             CONFIG_SUBGHZ_SPI_SCK_PIN,
+             CONFIG_SUBGHZ_CSN_PIN,
+             CONFIG_SUBGHZ_GDO0_PIN,
+             CONFIG_SUBGHZ_GDO2_PIN);
+        return;
+    }
+
+    if (strcmp(sub, "capture_on") == 0) {
+        subghz_remote_manager_set_raw_capture_enabled(true);
+        glog("SubGHz raw capture enabled\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("subghz", "state capture_on");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "capture_off") == 0) {
+        subghz_remote_manager_set_raw_capture_enabled(false);
+        glog("SubGHz raw capture disabled\n");
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("subghz", "state capture_off");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "capture") == 0) {
+        const char *name_hint = (argc >= 3) ? argv[2] : NULL;
+        if (subghz_remote_manager_capture_snapshot(name_hint)) {
+            glog("SubGHz snapshot captured: %s\n", subghz_remote_manager_get_active_snapshot_name());
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state capture_ok");
+            }
+        } else {
+            glog("SubGHz capture failed: %s\n", subghz_remote_manager_get_last_error());
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state capture_error");
+            }
+        }
+        return;
+    }
+
+    if (strcmp(sub, "save") == 0) {
+        const char *name_hint = (argc >= 3) ? argv[2] : NULL;
+        char saved_path[192] = {0};
+        if (subghz_remote_manager_save_snapshot(name_hint, saved_path, sizeof(saved_path))) {
+            glog("SubGHz snapshot saved: %s\n", saved_path);
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state save_ok");
+            }
+        } else {
+            glog("SubGHz save failed: %s\n", subghz_remote_manager_get_last_error());
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state save_error");
+            }
+        }
+        return;
+    }
+
+    if (strcmp(sub, "load") == 0 || strcmp(sub, "replay") == 0) {
+        const char *target = (argc >= 3) ? argv[2] : "last";
+        if (subghz_remote_manager_load_snapshot(target)) {
+            glog("SubGHz snapshot loaded: %s\n", subghz_remote_manager_get_active_snapshot_name());
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state load_ok");
+            }
+        } else {
+            glog("SubGHz load failed: %s\n", subghz_remote_manager_get_last_error());
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state load_error");
+            }
+        }
+        return;
+    }
+
+    if (strcmp(sub, "list") == 0) {
+        char names[12][SUBGHZ_SNAPSHOT_NAME_MAX];
+        int n = subghz_remote_manager_list_snapshots(names, 12);
+        if (n <= 0) {
+            glog("No SubGHz snapshots found\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state list_empty");
+            }
+            return;
+        }
+        int shown = (n < 12) ? n : 12;
+        glog("SubGHz snapshots (%d total, showing %d):\n", n, shown);
+        for (int i = 0; i < shown; i++) {
+            glog("  %s\n", names[i]);
+        }
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("subghz", "state list_ok");
+        }
+        return;
+    }
+
+    glog("Unknown subghz subcommand: %s\n", sub);
+#else
+#ifdef CONFIG_HAS_SUBGHZ_REMOTE
+    glog("SubGHz local scanner not enabled on this build (remote/display role only)\n");
+#else
+    glog("SubGHz not enabled on this build\n");
+#endif
+    if (remote_request && esp_comm_manager_is_connected()) {
+        esp_comm_manager_send_command("subghz", "state error");
     }
 #endif
 }
@@ -9136,6 +9354,7 @@ void register_commands() {
     register_command("ir", handle_ir_cmd);
 #endif
     register_command("nrf24", handle_nrf24_cmd);
+    register_command("subghz", handle_subghz_cmd);
     register_command("badusb", handle_badusb_cmd);
 #ifdef CONFIG_WITH_ETHERNET
     register_command("ethup", handle_eth_up_cmd);
