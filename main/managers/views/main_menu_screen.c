@@ -38,6 +38,7 @@ uint32_t theme_palette_get_text(uint8_t theme);
 LV_IMG_DECLARE(dualcomm);
 LV_IMG_DECLARE(accelerometer_icon);
 LV_IMG_DECLARE(nrf24);
+LV_IMG_DECLARE(subghz);
 
 static const char *TAG = "MainMenu";
 
@@ -108,7 +109,7 @@ menu_item_t menu_items[] = {
     {"NRF24", &nrf24, 4, {{0}}},
 #endif
 #if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
-    {"SubGHz", &nrf24, 4, {{0}}},
+    {"SubGHz", &subghz, 4, {{0}}},
 #endif
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
     {"BadUSB", &usb, 3, {{0}}},

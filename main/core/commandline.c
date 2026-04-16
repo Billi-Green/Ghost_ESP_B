@@ -7972,7 +7972,7 @@ void handle_nrf24_cmd(int argc, char **argv) {
 
 void handle_subghz_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("Usage: subghz <start|stop|pause|resume|status|capture|capture_on|capture_off|save|load|list|replay|state>\n");
+        glog("Usage: subghz <start|stop|pause|resume|status|capture|capture_on|capture_off|cycle_freq|save|load|list|replay|state>\n");
         return;
     }
 
@@ -8093,6 +8093,17 @@ void handle_subghz_cmd(int argc, char **argv) {
         glog("SubGHz raw capture disabled\n");
         if (stream_to_peer) {
             esp_comm_manager_send_command("subghz", "state capture_off");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "cycle_freq") == 0) {
+        subghz_remote_manager_cycle_frequency();
+        glog("SubGHz freq: %s\n", subghz_remote_manager_get_frequency_label());
+        if (stream_to_peer) {
+            char state_cmd[64];
+            snprintf(state_cmd, sizeof(state_cmd), "state freq_%s", subghz_remote_manager_get_frequency_label());
+            esp_comm_manager_send_command("subghz", state_cmd);
         }
         return;
     }

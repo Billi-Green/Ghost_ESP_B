@@ -1716,13 +1716,13 @@ static bool sd_emit_nice_flo(int32_t *out, size_t max_count, size_t *count, uint
 static bool sd_emit_keeloq(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
     const int32_t te_s = 400;
     const int32_t te_l = 800;
+    const int32_t gap = te_s * 40;
     if (bits != 64) {
         return false;
     }
 
     for (int r = 0; r < 3; r++) {
-        if (!sd_push(out, max_count, count, -(te_s * 10))) return false;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 11; i++) {
             if (!sd_push_pair(out, max_count, count, te_s, te_s)) return false;
         }
         if (!sd_push_pair(out, max_count, count, te_s, te_s * 10)) return false;
@@ -1736,7 +1736,9 @@ static bool sd_emit_keeloq(int32_t *out, size_t max_count, size_t *count, uint64
             }
         }
 
-        if (!sd_push(out, max_count, count, -(te_s * 50))) return false;
+        if (!sd_push_pair(out, max_count, count, te_s, te_l)) return false;
+        if (!sd_push(out, max_count, count, te_s)) return false;
+        if (!sd_push(out, max_count, count, -gap)) return false;
     }
 
     return true;

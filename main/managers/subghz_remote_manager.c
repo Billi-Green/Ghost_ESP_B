@@ -7,8 +7,10 @@
 #include "core/esp_comm_manager.h"
 
 #include "driver/gpio.h"
+#include "driver/rmt_tx.h"
 #include "driver/spi_master.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -17,6 +19,7 @@
 #include "freertos/queue.h"
 #include "managers/sd_card_manager.h"
 #include "rom/ets_sys.h"
+#include "soc/soc_caps.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -31,6 +34,18 @@
 #define SUBGHZ_SNAPSHOT_DIR "/mnt/ghostesp/subghz"
 #define SUBGHZ_SNAPSHOT_EXT ".sub"
 #define SUBGHZ_RAW_TIMEOUT_US 20000
+
+#define SUBGHZ_FREQ_COUNT 5
+static const uint32_t s_scan_freqs[SUBGHZ_FREQ_COUNT] = {
+    315000000U,
+    390000000U,
+    433920000U,
+    868350000U,
+    915000000U,
+};
+static const char *s_scan_freq_labels[SUBGHZ_FREQ_COUNT] = {
+    "315 MHz", "390 MHz", "433.92 MHz", "868.35 MHz", "915 MHz",
+};
 
 #define CC1101_REG_IOCFG2   0x00
 #define CC1101_REG_IOCFG0   0x02
@@ -70,11 +85,15 @@
 #define CC1101_STATUS_RSSI    0x34
 
 #define CC1101_STROBE_SRES  0x30
+#define CC1101_STROBE_SCAL  0x33
 #define CC1101_STROBE_SRX   0x34
 #define CC1101_STROBE_STX   0x35
 #define CC1101_STROBE_SIDLE 0x36
 #define CC1101_STROBE_SFRX  0x3A
 #define CC1101_STROBE_SFTX  0x3B
+
+#define SUBGHZ_RMT_RESOLUTION_HZ 1000000U
+#define SUBGHZ_RMT_MAX_DURATION_TICKS 32767U
 
 static const char *TAG = "SubGHzRemoteMgr";
 
@@ -103,6 +122,7 @@ static volatile uint32_t s_raw_last_time_us = 0;
 static volatile int32_t s_raw_workbufs[2][SUBGHZ_RAW_MAX_DURATIONS];
 static volatile uint8_t s_raw_isr_buf_idx = 0;
 static volatile size_t s_raw_worklen = 0;
+static volatile size_t s_raw_completed_len = 0;
 static volatile int s_raw_prev_level = 0;
 static volatile int32_t *s_raw_stream_ptr = NULL;
 static size_t s_raw_stream_count = 0;
@@ -110,15 +130,18 @@ static bool s_raw_capture_pending = false;
 static int32_t s_shared_buf[SUBGHZ_RAW_MAX_DURATIONS];
 static size_t s_rx_stream_expected = 0;
 static size_t s_rx_stream_received = 0;
+static uint32_t s_rx_stream_freq_hz = 0;
 static subghz_decoder_engine_t s_decoder_engine;
 static volatile bool s_decode_result_ready = false;
+static volatile uint32_t s_current_freq_hz = 433920000U;
+static volatile uint8_t s_current_freq_idx = 2;
 
 typedef struct {
     bool level;
     uint32_t duration;
 } subghz_edge_t;
 
-#define SUBGHZ_EDGE_QUEUE_LEN 64
+#define SUBGHZ_EDGE_QUEUE_LEN 256
 static QueueHandle_t s_edge_queue = NULL;
 static TaskHandle_t s_decoder_task = NULL;
 static volatile bool s_decoder_task_running = false;
@@ -284,10 +307,11 @@ static void subghz_raw_timeout_cb(void *arg) {
         s_raw_workbufs[s_raw_isr_buf_idx][s_raw_worklen++] = s_raw_prev_level ? (int32_t)delta : -(int32_t)delta;
     }
 
+    s_raw_completed_len = s_raw_worklen;
     s_raw_active = false;
-    s_raw_ready = (s_raw_worklen > 8);
+    s_raw_ready = (s_raw_completed_len > 8);
     s_raw_isr_buf_idx = 1 - s_raw_isr_buf_idx;
-    ESP_LOGI(TAG, "raw timeout: %lu transitions captured, ready=%d", (unsigned long)s_raw_worklen, s_raw_ready);
+    ESP_LOGI(TAG, "raw timeout: %lu transitions captured, ready=%d", (unsigned long)s_raw_completed_len, s_raw_ready);
 }
 
 static void subghz_stream_raw_capture(void) {
@@ -348,18 +372,24 @@ static void subghz_stream_decoded_result(void) {
     uint8_t name_len = 0;
     while (res->name[name_len] && name_len < 31) name_len++;
 
-    uint8_t pkt[2 + 1 + 8 + 1 + name_len + 1];
+    uint8_t pkt[2 + 1 + 8 + 1 + name_len + 1 + 4];
     size_t pos = 0;
     pkt[pos++] = SUBGHZ_STREAM_VERSION;
-    pkt[pos++] = 8;
+    pkt[pos++] = 9;
     pkt[pos++] = name_len;
     memcpy(pkt + pos, res->name, name_len); pos += name_len;
     uint64_t code = res->code;
     for (int i = 0; i < 8; i++) pkt[pos++] = (uint8_t)(code >> (i * 8));
     pkt[pos++] = (uint8_t)res->bits;
+    uint32_t freq = s_current_freq_hz;
+    pkt[pos++] = (uint8_t)(freq & 0xFF);
+    pkt[pos++] = (uint8_t)((freq >> 8) & 0xFF);
+    pkt[pos++] = (uint8_t)((freq >> 16) & 0xFF);
+    pkt[pos++] = (uint8_t)((freq >> 24) & 0xFF);
 
     (void)esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, pkt, pos);
-    ESP_LOGI(TAG, "streamed decoded: %s %dbit code=0x%llX", res->name, res->bits, (unsigned long long)res->code);
+    ESP_LOGI(TAG, "streamed decoded: %s %dbit code=0x%llX freq=%u",
+             res->name, res->bits, (unsigned long long)res->code, (unsigned)freq);
 }
 
 static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data) {
@@ -375,6 +405,13 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         s_rx_stream_expected = (size_t)data[2] | ((size_t)data[3] << 8);
         if (s_rx_stream_expected > SUBGHZ_RAW_MAX_DURATIONS) s_rx_stream_expected = SUBGHZ_RAW_MAX_DURATIONS;
         s_rx_stream_received = 0;
+        s_rx_stream_freq_hz = 0;
+        if (length >= 8) {
+            s_rx_stream_freq_hz = (uint32_t)data[4] |
+                                  ((uint32_t)data[5] << 8) |
+                                  ((uint32_t)data[6] << 16) |
+                                  ((uint32_t)data[7] << 24);
+        }
         return;
     }
     if (packet_type == 5) {
@@ -394,7 +431,7 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
     }
     if (packet_type == 6) {
         if (s_rx_stream_received > 0) {
-            (void)subghz_remote_manager_transmit_raw(s_shared_buf, s_rx_stream_received);
+            (void)subghz_remote_manager_transmit_raw(s_shared_buf, s_rx_stream_received, s_rx_stream_freq_hz);
         }
     }
 }
@@ -506,7 +543,7 @@ static esp_err_t cc1101_write_patable(const uint8_t *data, size_t len) {
     size_t total = 1 + len;
     uint8_t *buf = (uint8_t *)malloc(total);
     if (!buf) return ESP_ERR_NO_MEM;
-    buf[0] = 0x3E;
+    buf[0] = 0x7E;
     memcpy(&buf[1], data, len);
     spi_transaction_t t;
     memset(&t, 0, sizeof(t));
@@ -617,8 +654,8 @@ static esp_err_t subghz_hw_start(void) {
     (void)cc1101_strobe(CC1101_STROBE_SFRX);
     (void)cc1101_strobe(CC1101_STROBE_SFTX);
 
-    uint64_t freq_hz = (uint64_t)CONFIG_SUBGHZ_BASE_FREQ_MHZ * 10000ULL;
-    uint32_t freq_word = (uint32_t)((freq_hz * 65536ULL) / 26000000ULL);
+    s_current_freq_hz = (uint32_t)((uint64_t)CONFIG_SUBGHZ_BASE_FREQ_MHZ * 10000ULL);
+    uint32_t freq_word = (uint32_t)((((uint64_t)s_current_freq_hz) * 65536ULL) / 26000000ULL);
 
     err = cc1101_write_reg(CC1101_REG_IOCFG0, 0x0D);
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FIFOTHR, 0x07);
@@ -647,6 +684,7 @@ static esp_err_t subghz_hw_start(void) {
     }
 
     if (err == ESP_OK) err = cc1101_write_reg(0x0A, 0x00);
+    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SCAL);
     if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SRX);
 
     if (err != ESP_OK) {
@@ -683,6 +721,20 @@ static esp_err_t subghz_hw_start(void) {
              partnum);
 
     return ESP_OK;
+}
+
+static esp_err_t subghz_retune_frequency(uint32_t freq_hz) {
+    uint32_t freq_word = (uint32_t)((((uint64_t)freq_hz) * 65536ULL) / 26000000ULL);
+    esp_err_t err = cc1101_strobe(CC1101_STROBE_SIDLE);
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ2, (uint8_t)((freq_word >> 16) & 0xFF));
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ1, (uint8_t)((freq_word >> 8) & 0xFF));
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ0, (uint8_t)(freq_word & 0xFF));
+    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SCAL);
+    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SRX);
+    if (err == ESP_OK) {
+        s_current_freq_hz = freq_hz;
+    }
+    return err;
 }
 
 static void subghz_hw_stop(void) {
@@ -735,25 +787,27 @@ static void subghz_stream_chunk(uint8_t cursor, uint8_t start_ch, uint8_t count)
         count = 32;
     }
 
-    uint8_t pkt[5 + 32] = {0};
+    uint8_t pkt[7 + 32] = {0};
     pkt[0] = SUBGHZ_STREAM_VERSION;
     pkt[1] = 0;
     pkt[2] = cursor;
     pkt[3] = start_ch;
     pkt[4] = count;
+    pkt[5] = s_current_freq_idx;
+    pkt[6] = (uint8_t)(s_current_freq_hz & 0xFF);
 
     if (s_data_mutex) {
         xSemaphoreTake(s_data_mutex, portMAX_DELAY);
     }
     for (uint8_t i = 0; i < count; i++) {
         uint8_t ch = (uint8_t)((start_ch + i) % SUBGHZ_SCANNER_CHANNEL_COUNT);
-        pkt[5 + i] = s_levels[ch];
+        pkt[7 + i] = s_levels[ch];
     }
     if (s_data_mutex) {
         xSemaphoreGive(s_data_mutex);
     }
 
-    (void)esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, pkt, (size_t)(5 + count));
+    (void)esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, pkt, (size_t)(7 + count));
 }
 
 static void subghz_decoder_task(void *arg) {
@@ -803,7 +857,7 @@ static void subghz_scan_task(void *arg) {
 
     s_edge_queue = xQueueCreate(SUBGHZ_EDGE_QUEUE_LEN, sizeof(subghz_edge_t));
     s_decoder_task_running = true;
-    xTaskCreatePinnedToCore(subghz_decoder_task, "subghz_dec", 4096, NULL, 15, &s_decoder_task, 1);
+    xTaskCreatePinnedToCore(subghz_decoder_task, "subghz_dec", 5120, NULL, 15, &s_decoder_task, 1);
 
     if (subghz_hw_start() != ESP_OK) {
         if (s_stream_to_peer && esp_comm_manager_is_connected()) {
@@ -826,20 +880,20 @@ static void subghz_scan_task(void *arg) {
 
         if (s_raw_ready) {
             uint8_t completed_idx = 1 - s_raw_isr_buf_idx;
-            size_t len = s_raw_worklen;
+            size_t len = s_raw_completed_len;
             if (len > SUBGHZ_RAW_MAX_DURATIONS) {
                 len = SUBGHZ_RAW_MAX_DURATIONS;
             }
             s_raw_stream_ptr = (volatile int32_t *)s_raw_workbufs[completed_idx];
             s_raw_stream_count = len;
             s_raw_capture_pending = (len > 0);
-            s_raw_worklen = 0;
+            s_raw_completed_len = 0;
             s_raw_ready = false;
             subghz_stream_raw_capture();
         }
 
-        if (s_paused) {
-            vTaskDelay(pdMS_TO_TICKS(60));
+        if (s_paused || s_raw_capture_enabled) {
+            vTaskDelay(pdMS_TO_TICKS(s_raw_capture_enabled ? 10 : 60));
             continue;
         }
 
@@ -848,6 +902,14 @@ static void subghz_scan_task(void *arg) {
         if (channels_per_tick < 1) channels_per_tick = 1;
         if (channels_per_tick > 32) channels_per_tick = 32;
         if (settle_us < 100) settle_us = 100;
+
+        if (s_next_channel == 0) {
+            uint8_t next_idx = (s_current_freq_idx + 1) % SUBGHZ_FREQ_COUNT;
+            if (subghz_retune_frequency(s_scan_freqs[next_idx]) == ESP_OK) {
+                s_current_freq_idx = next_idx;
+                ESP_LOGI(TAG, "scan freq: %s", s_scan_freq_labels[next_idx]);
+            }
+        }
 
         uint8_t start_ch = s_next_channel;
 
@@ -887,6 +949,101 @@ static void subghz_scan_task(void *arg) {
 
     s_subghz_task = NULL;
     vTaskDelete(NULL);
+}
+
+static esp_err_t subghz_transmit_rmt(const int32_t *durations, size_t count) {
+    if (!durations || count == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    size_t chunk_count = 0;
+    for (size_t i = 0; i < count; i++) {
+        uint32_t duration = (uint32_t)llabs((long long)durations[i]);
+        if (duration == 0) {
+            continue;
+        }
+        chunk_count += (duration + SUBGHZ_RMT_MAX_DURATION_TICKS - 1U) / SUBGHZ_RMT_MAX_DURATION_TICKS;
+    }
+    if (chunk_count == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    size_t symbol_capacity = (chunk_count + 1U) / 2U;
+    rmt_symbol_word_t *symbols = heap_caps_malloc(symbol_capacity * sizeof(rmt_symbol_word_t), MALLOC_CAP_DMA);
+    if (!symbols) {
+        return ESP_ERR_NO_MEM;
+    }
+    memset(symbols, 0, symbol_capacity * sizeof(rmt_symbol_word_t));
+
+    size_t symbol_count = 0;
+    bool fill_first = true;
+    for (size_t i = 0; i < count; i++) {
+        bool level = durations[i] > 0;
+        uint32_t remaining = (uint32_t)llabs((long long)durations[i]);
+        while (remaining > 0) {
+            uint32_t chunk = remaining;
+            if (chunk > SUBGHZ_RMT_MAX_DURATION_TICKS) {
+                chunk = SUBGHZ_RMT_MAX_DURATION_TICKS;
+            }
+            if (fill_first) {
+                symbols[symbol_count].level0 = level;
+                symbols[symbol_count].duration0 = chunk;
+                fill_first = false;
+            } else {
+                symbols[symbol_count].level1 = level;
+                symbols[symbol_count].duration1 = chunk;
+                symbol_count++;
+                fill_first = true;
+            }
+            remaining -= chunk;
+        }
+    }
+    if (!fill_first) {
+        symbols[symbol_count].level1 = symbols[symbol_count].level0;
+        symbols[symbol_count].duration1 = 0;
+        symbol_count++;
+    }
+
+    size_t hw_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
+    if ((hw_symbols % 2U) != 0U) {
+        hw_symbols++;
+    }
+
+    rmt_channel_handle_t tx_chan = NULL;
+    rmt_encoder_handle_t copy_encoder = NULL;
+    esp_err_t err = ESP_OK;
+
+    rmt_tx_channel_config_t cfg = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .gpio_num = (gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN,
+        .mem_block_symbols = hw_symbols,
+        .resolution_hz = SUBGHZ_RMT_RESOLUTION_HZ,
+        .trans_queue_depth = 1,
+        .flags = {.with_dma = false, .invert_out = false},
+    };
+
+    err = rmt_new_tx_channel(&cfg, &tx_chan);
+    if (err == ESP_OK) err = rmt_enable(tx_chan);
+    if (err == ESP_OK) err = rmt_new_copy_encoder(&(rmt_copy_encoder_config_t){}, &copy_encoder);
+    if (err == ESP_OK) {
+        err = rmt_transmit(
+            tx_chan,
+            copy_encoder,
+            symbols,
+            symbol_count * sizeof(rmt_symbol_word_t),
+            &(rmt_transmit_config_t){.loop_count = 0});
+    }
+    if (err == ESP_OK) err = rmt_tx_wait_all_done(tx_chan, -1);
+
+    if (copy_encoder) {
+        (void)rmt_del_encoder(copy_encoder);
+    }
+    if (tx_chan) {
+        (void)rmt_disable(tx_chan);
+        (void)rmt_del_channel(tx_chan);
+    }
+    heap_caps_free(symbols);
+    return err;
 }
 
 bool subghz_remote_manager_start(bool stream_to_peer) {
@@ -1008,6 +1165,7 @@ bool subghz_remote_manager_take_decode_result(subghz_decoded_signal_t *out_resul
     snprintf(out_result->protocol, sizeof(out_result->protocol), "%s", res->name);
     out_result->code = res->code;
     out_result->bits = res->bits;
+    out_result->frequency_hz = (int)s_current_freq_hz;
     out_result->decoded = true;
 
     subghz_stream_decoder_format_result(res, out_result->info, sizeof(out_result->info));
@@ -1017,7 +1175,7 @@ bool subghz_remote_manager_take_decode_result(subghz_decoded_signal_t *out_resul
     return true;
 }
 
-bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count) {
+bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, uint32_t frequency_hz) {
     if (!durations || count == 0) {
         subghz_set_last_error("no raw durations");
         return false;
@@ -1034,12 +1192,25 @@ bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count) 
     }
 
     esp_err_t err = ESP_OK;
+
+    if (frequency_hz == 0) {
+        frequency_hz = (uint32_t)((uint64_t)CONFIG_SUBGHZ_BASE_FREQ_MHZ * 10000ULL);
+    }
+    uint64_t f_hz = (uint64_t)frequency_hz;
+    uint32_t freq_word = (uint32_t)((f_hz * 65536ULL) / 26000000ULL);
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ2, (uint8_t)((freq_word >> 16) & 0xFF));
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ1, (uint8_t)((freq_word >> 8) & 0xFF));
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ0, (uint8_t)(freq_word & 0xFF));
+
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_IOCFG0, 0x0D);
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_PKTCTRL0, 0x32);
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG2, 0x30);
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG3, 0x32);
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG4, 0x17);
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREND0, 0x11);
     if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SIDLE);
-    if (err == ESP_OK) err = cc1101_strobe(0x35);
+    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SFTX);
+    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_STX);
 
     if (err != ESP_OK) {
         subghz_set_last_error("tx setup failed");
@@ -1047,24 +1218,44 @@ bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count) 
         return false;
     }
 
+    bool tx_ready = false;
+    for (int retry = 0; retry < 100; retry++) {
+        uint8_t marc = 0;
+        if (cc1101_read_status(0x35, &marc) == ESP_OK && (marc & 0x1F) == 0x13) {
+            tx_ready = true;
+            break;
+        }
+        ets_delay_us(100);
+    }
+    if (!tx_ready) {
+        uint8_t marc = 0;
+        cc1101_read_status(0x35, &marc);
+        ESP_LOGE(TAG, "TX failed: MARCSTATE=0x%02X (expected 0x13)", marc);
+        subghz_set_last_error("cc1101 failed to enter TX");
+        subghz_hw_stop();
+        return false;
+    }
+    ESP_LOGI(TAG, "TX ready: freq=%u Hz, %lu durations", (unsigned)frequency_hz, (unsigned long)count);
+
     gpio_isr_handler_remove((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN);
     gpio_set_direction((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, 0);
-    ets_delay_us(100);
-    (void)cc1101_strobe(CC1101_STROBE_STX);
+    ets_delay_us(1000);
 
-    for (size_t i = 0; i < count; i++) {
-        int32_t v = durations[i];
-        gpio_set_level((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, v > 0 ? 1 : 0);
-        ets_delay_us((uint32_t)llabs((long long)v));
-    }
-
+    err = subghz_transmit_rmt(durations, count);
     gpio_set_level((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, 0);
-    ets_delay_us(100);
+
     (void)cc1101_strobe(CC1101_STROBE_SIDLE);
     gpio_set_direction((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, GPIO_MODE_INPUT);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "RMT TX failed: %s", esp_err_to_name(err));
+        subghz_set_last_error("hardware tx failed");
+        subghz_hw_stop();
+        return false;
+    }
     subghz_hw_stop();
     subghz_set_last_error("none");
+    ESP_LOGI(TAG, "TX complete");
     return true;
 }
 
@@ -1092,6 +1283,22 @@ void subghz_remote_manager_set_raw_capture_enabled(bool enabled) {
         }
         ESP_LOGI(TAG, "raw capture disabled (GDO0 intr DISABLE)");
     }
+}
+
+void subghz_remote_manager_cycle_frequency(void) {
+    uint8_t next_idx = (s_current_freq_idx + 1) % SUBGHZ_FREQ_COUNT;
+    if (subghz_retune_frequency(s_scan_freqs[next_idx]) == ESP_OK) {
+        s_current_freq_idx = next_idx;
+        ESP_LOGI(TAG, "cycle freq: %s", s_scan_freq_labels[next_idx]);
+    }
+}
+
+const char *subghz_remote_manager_get_frequency_label(void) {
+    return s_scan_freq_labels[s_current_freq_idx];
+}
+
+uint32_t subghz_remote_manager_get_frequency_hz(void) {
+    return s_current_freq_hz;
 }
 
 bool subghz_remote_manager_capture_snapshot(const char *name_hint) {
@@ -1150,7 +1357,7 @@ bool subghz_remote_manager_save_snapshot(const char *name_hint, char *out_path, 
 
     fprintf(f, "ghostesp_subghz_snapshot=1\n");
     fprintf(f, "name=%s\n", safe_name);
-    fprintf(f, "base_mhz=%d\n", CONFIG_SUBGHZ_BASE_FREQ_MHZ / 100);
+    fprintf(f, "base_mhz=%d\n", CONFIG_SUBGHZ_BASE_FREQ_MHZ);
     fprintf(f, "step_khz=%d\n", CONFIG_SUBGHZ_CHANNEL_STEP_KHZ);
     fprintf(f, "cursor=%u\n", (unsigned)s_snapshot_cursor);
     fputs("levels=", f);
@@ -1364,13 +1571,17 @@ bool subghz_remote_manager_take_decode_result(subghz_decoded_signal_t *out_resul
     (void)out_result;
     return false;
 }
-bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count) {
+bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, uint32_t frequency_hz) {
     (void)durations;
     (void)count;
+    (void)frequency_hz;
     return false;
 }
 void subghz_remote_manager_register_stream_handler(void) {}
 void subghz_remote_manager_set_raw_capture_enabled(bool enabled) { (void)enabled; }
+void subghz_remote_manager_cycle_frequency(void) {}
+const char *subghz_remote_manager_get_frequency_label(void) { return "N/A"; }
+uint32_t subghz_remote_manager_get_frequency_hz(void) { return 0; }
 bool subghz_remote_manager_capture_snapshot(const char *name_hint) {
     (void)name_hint;
     return false;

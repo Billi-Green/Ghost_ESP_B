@@ -64,7 +64,7 @@ typedef enum {
 
 typedef enum {
     SUBGHZ_CAPTURE_POPUP_SAVE = 0,
-    SUBGHZ_CAPTURE_POPUP_CONTINUE,
+    SUBGHZ_CAPTURE_POPUP_FREQ,
     SUBGHZ_CAPTURE_POPUP_BACK,
     SUBGHZ_CAPTURE_POPUP_COUNT
 } subghz_capture_popup_control_t;
@@ -75,6 +75,18 @@ typedef enum {
     SUBGHZ_SAVED_POPUP_BACK,
     SUBGHZ_SAVED_POPUP_COUNT
 } subghz_saved_popup_control_t;
+
+typedef enum {
+    SUBGHZ_FA_POPUP_START = 0,
+    SUBGHZ_FA_POPUP_STOP,
+    SUBGHZ_FA_POPUP_BACK,
+    SUBGHZ_FA_POPUP_COUNT
+} subghz_fa_popup_control_t;
+
+#define SUBGHZ_FA_BAND_COUNT 5
+#define SUBGHZ_FA_HISTORY_MAX 4
+#define SUBGHZ_FA_DETECT_THRESHOLD 50
+#define SUBGHZ_FA_DETECT_HITS 3
 
 typedef enum {
     SUBGHZ_PENDING_NONE = 0,
@@ -91,6 +103,7 @@ static options_view_t *s_ov = NULL;
 static lv_obj_t *s_scan_row = NULL;
 static lv_obj_t *s_capture_row = NULL;
 static lv_obj_t *s_raw_capture_row = NULL;
+static lv_obj_t *s_freq_analyzer_row = NULL;
 static lv_obj_t *s_back_row = NULL;
 
 static lv_obj_t *s_popup = NULL;
@@ -106,13 +119,14 @@ static lv_obj_t *s_capture_popup = NULL;
 static lv_obj_t *s_capture_status_label = NULL;
 static lv_obj_t *s_capture_signal_label = NULL;
 static lv_obj_t *s_capture_save_btn = NULL;
-static lv_obj_t *s_capture_continue_btn = NULL;
+static lv_obj_t *s_capture_freq_btn = NULL;
 static lv_obj_t *s_capture_back_btn = NULL;
 static bool s_capture_waiting_signal = false;
 static bool s_capture_ready = false;
 static int s_capture_signal_hits = 0;
 static bool s_capture_was_running = false;
 static subghz_capture_popup_control_t s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
+static char s_capture_freq_label[16] = "433.92 MHz";
 static subghz_capture_mode_t s_capture_mode = SUBGHZ_CAPTURE_MODE_NORMAL;
 
 static lv_obj_t *s_saved_popup = NULL;
@@ -127,6 +141,25 @@ static int s_saved_page = 0;
 static int s_saved_index = 0;
 static bool s_in_saved_list = false;
 static subghz_saved_popup_control_t s_saved_popup_selected = SUBGHZ_SAVED_POPUP_REPLAY;
+
+static lv_obj_t *s_fa_popup = NULL;
+static lv_obj_t *s_fa_freq_label = NULL;
+static lv_obj_t *s_fa_graph = NULL;
+static lv_obj_t *s_fa_history_label = NULL;
+static lv_obj_t *s_fa_start_btn = NULL;
+static lv_obj_t *s_fa_stop_btn = NULL;
+static lv_obj_t *s_fa_back_btn = NULL;
+static subghz_fa_popup_control_t s_fa_popup_selected = SUBGHZ_FA_POPUP_START;
+static bool s_fa_scanning = false;
+static uint32_t s_fa_detected_freq_hz = 0;
+static bool s_fa_signal_detected = false;
+static int s_fa_detect_hits = 0;
+static uint32_t s_fa_history_freq[SUBGHZ_FA_HISTORY_MAX] = {0};
+static uint8_t s_fa_history_count[SUBGHZ_FA_HISTORY_MAX] = {0};
+static int s_fa_history_entries = 0;
+static uint8_t s_fa_band_levels[SUBGHZ_FA_BAND_COUNT] = {0};
+static uint8_t s_fa_band_peaks[SUBGHZ_FA_BAND_COUNT] = {0};
+static uint8_t s_fa_active_band = 2;
 
 static uint8_t s_levels[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
 static uint8_t s_peaks[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
@@ -157,20 +190,30 @@ static bool s_remote_mode = false;
 static volatile bool s_remote_stream_online = false;
 static volatile bool s_remote_error = false;
 static volatile bool s_remote_paused = true;
+static volatile uint8_t s_remote_freq_idx = 2;
+static const uint32_t s_scan_freqs_hz[] = {
+    315000000U, 390000000U, 433920000U, 868350000U, 915000000U
+};
+static const char *s_scan_freq_labels[] = {
+    "315 MHz", "390 MHz", "433.92 MHz", "868.35 MHz", "915 MHz"
+};
 static subghz_popup_control_t s_popup_selected = SUBGHZ_POPUP_START;
 static subghz_pending_action_t s_pending_action = SUBGHZ_PENDING_NONE;
 static int64_t s_pending_action_deadline_us = 0;
 
 static void subghz_open_capture_popup(void);
 static void subghz_open_saved_popup(void);
+static void subghz_open_freq_analyzer_popup(void);
+static void subghz_close_freq_analyzer_popup(void);
 static void subghz_saved_list_reload(void);
 static void subghz_scan_row_cb(lv_event_t *e);
 static void subghz_capture_row_cb(lv_event_t *e);
 static void subghz_raw_capture_row_cb(lv_event_t *e);
+static void subghz_freq_analyzer_row_cb(lv_event_t *e);
 static void subghz_back_row_cb(lv_event_t *e);
 static void subghz_saved_back_btn_cb(lv_event_t *e);
 static void subghz_capture_primary_btn_cb(lv_event_t *e);
-static void subghz_capture_continue_btn_cb(lv_event_t *e);
+static void subghz_capture_freq_btn_cb(lv_event_t *e);
 static void subghz_capture_back_btn_cb(lv_event_t *e);
 static void subghz_capture_mark_ready(void);
 static void subghz_capture_mark_ready_with_decoded(const subghz_decoded_signal_t *decoded);
@@ -290,18 +333,14 @@ static void subghz_capture_popup_update_buttons(void) {
         }
     }
 
-    if (s_capture_continue_btn && lv_obj_is_valid(s_capture_continue_btn)) {
-        if (s_capture_ready) {
-            lv_obj_clear_state(s_capture_continue_btn, LV_STATE_DISABLED);
-        } else {
-            lv_obj_add_state(s_capture_continue_btn, LV_STATE_DISABLED);
-        }
+    if (s_capture_freq_btn && lv_obj_is_valid(s_capture_freq_btn)) {
+        lv_obj_clear_state(s_capture_freq_btn, LV_STATE_DISABLED);
     }
 
     popup_set_button_selected(s_capture_save_btn, s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_SAVE);
     popup_set_button_selected(
-        s_capture_continue_btn,
-        s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_CONTINUE);
+        s_capture_freq_btn,
+        s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_FREQ);
     popup_set_button_selected(s_capture_back_btn, s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_BACK);
 }
 
@@ -585,6 +624,7 @@ static void subghz_back_to_root_menu(void) {
     s_scan_row = options_view_add_item(s_ov, "Capture", subghz_scan_row_cb, NULL);
     s_raw_capture_row = options_view_add_item(s_ov, "Raw Capture", subghz_raw_capture_row_cb, NULL);
     s_capture_row = options_view_add_item(s_ov, "Saved", subghz_capture_row_cb, NULL);
+    s_freq_analyzer_row = options_view_add_item(s_ov, "Freq Analyzer", subghz_freq_analyzer_row_cb, NULL);
     s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
     options_view_set_selected(s_ov, 0);
 }
@@ -818,31 +858,22 @@ static bool subghz_build_snapshot_detail_text(const char *name, char *out, size_
         subghz_analyze_raw_signal(raw_vals, raw_count, decode_buf, sizeof(decode_buf));
     }
 
+    char freq_str[24];
+    snprintf(freq_str, sizeof(freq_str), "%.3f MHz", (double)frequency_hz / 1000000.0);
+
     if (strcmp(protocol, "RAW") != 0 && key_hex[0] != '\0') {
-        snprintf(out, out_len,
-                 "Freq: %.3f MHz\n%s %dbit\nKey: %s\n%s",
-                 (double)frequency_hz / 1000000.0,
-                 protocol, bit_count, key_hex,
-                 strrchr(path, '/') ? strrchr(path, '/') + 1 : name);
+        snprintf(out, out_len, "%s %dbit\n%s\n%s",
+                 protocol, bit_count, key_hex, freq_str);
     } else if (decode_buf[0] != '\0') {
-        snprintf(out, out_len,
-                 "Freq: %.3f MHz\n%s\nValues: %d\n%s",
-                 (double)frequency_hz / 1000000.0,
-                 decode_buf,
-                 values,
-                 strrchr(path, '/') ? strrchr(path, '/') + 1 : name);
+        snprintf(out, out_len, "%s\n%s",
+                 decode_buf, freq_str);
     } else {
-        snprintf(out, out_len,
-                 "Freq: %.3f MHz  Prot: %s\nValues: %d\n%s",
-                 (double)frequency_hz / 1000000.0,
-                 protocol,
-                 values,
-                 strrchr(path, '/') ? strrchr(path, '/') + 1 : name);
+        snprintf(out, out_len, "RAW\n%s", freq_str);
     }
     return true;
 }
 
-static bool subghz_parse_raw_file(const char *path, int32_t *out, size_t max_count, size_t *out_count) {
+static bool subghz_parse_raw_file(const char *path, int32_t *out, size_t max_count, size_t *out_count, uint32_t *out_frequency_hz) {
     if (!path || !out || max_count == 0) {
         return false;
     }
@@ -859,22 +890,27 @@ static bool subghz_parse_raw_file(const char *path, int32_t *out, size_t max_cou
     }
 
     size_t count = 0;
+    uint32_t freq = 0;
     char line[512];
     while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "RAW_Data:", 9) != 0) {
-            continue;
-        }
-        char *saveptr = NULL;
-        char *tok = strtok_r(line + 9, " ,\r\n", &saveptr);
-        while (tok && count < max_count) {
-            out[count++] = (int32_t)strtol(tok, NULL, 10);
-            tok = strtok_r(NULL, " ,\r\n", &saveptr);
+        if (strncmp(line, "Frequency:", 10) == 0) {
+            freq = (uint32_t)atoi(line + 10);
+        } else if (strncmp(line, "RAW_Data:", 9) == 0) {
+            char *saveptr = NULL;
+            char *tok = strtok_r(line + 9, " ,\r\n", &saveptr);
+            while (tok && count < max_count) {
+                out[count++] = (int32_t)strtol(tok, NULL, 10);
+                tok = strtok_r(NULL, " ,\r\n", &saveptr);
+            }
         }
     }
     fclose(f);
     subghz_sd_end(display_was_suspended);
     if (out_count) {
         *out_count = count;
+    }
+    if (out_frequency_hz) {
+        *out_frequency_hz = freq;
     }
     return count > 0;
 }
@@ -940,6 +976,7 @@ static bool subghz_parse_decoded_file(const char *path, subghz_decoded_signal_t 
     out_decoded->decoded = true;
     out_decoded->code = code;
     out_decoded->bits = subghz_normalize_decoded_bits(protocol, (bits > 0) ? bits : (key_bytes * 8));
+    out_decoded->frequency_hz = (frequency_hz > 0) ? frequency_hz : SUBGHZ_BASE_FREQ_HZ;
     snprintf(out_decoded->protocol, sizeof(out_decoded->protocol), "%s", protocol);
     if (out_decoded->bits > 32) {
         snprintf(out_decoded->info, sizeof(out_decoded->info), "%s %dbit\nCode:0x%016llX",
@@ -951,12 +988,17 @@ static bool subghz_parse_decoded_file(const char *path, subghz_decoded_signal_t 
     return true;
 }
 
-static bool subghz_send_remote_replay(const int32_t *durations, size_t count) {
+static bool subghz_send_remote_replay(const int32_t *durations, size_t count, uint32_t freq_hz) {
     if (!esp_comm_manager_is_connected() || !durations || count == 0) {
         return false;
     }
 
-    uint8_t start_pkt[4] = { SUBGHZ_STREAM_VERSION, 4, (uint8_t)(count & 0xFF), (uint8_t)((count >> 8) & 0xFF) };
+    uint8_t start_pkt[8] = {
+        SUBGHZ_STREAM_VERSION, 4,
+        (uint8_t)(count & 0xFF), (uint8_t)((count >> 8) & 0xFF),
+        (uint8_t)(freq_hz & 0xFF), (uint8_t)((freq_hz >> 8) & 0xFF),
+        (uint8_t)((freq_hz >> 16) & 0xFF), (uint8_t)((freq_hz >> 24) & 0xFF)
+    };
     if (!esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, start_pkt, sizeof(start_pkt))) {
         return false;
     }
@@ -1114,10 +1156,18 @@ static void subghz_refresh_status_labels(void) {
     }
 
     if (s_freq_label && lv_obj_is_valid(s_freq_label)) {
-        float mhz = (float)CONFIG_SUBGHZ_BASE_FREQ_MHZ / 100.0f +
-                    ((float)s_cursor * (float)CONFIG_SUBGHZ_CHANNEL_STEP_KHZ / 1000.0f);
+        uint32_t base_hz;
+        if (s_remote_mode) {
+            base_hz = s_scan_freqs_hz[s_remote_freq_idx];
+        } else {
+            base_hz = subghz_remote_manager_get_frequency_hz();
+        }
+        uint32_t ch_hz = base_hz + (uint32_t)s_cursor * (uint32_t)CONFIG_SUBGHZ_CHANNEL_STEP_KHZ * 1000U;
+        uint32_t mhz_int = ch_hz / 1000000U;
+        uint32_t khz_frac = (ch_hz % 1000000U) / 1000U;
         char msg[64];
-        snprintf(msg, sizeof(msg), "Ch %u  %.3f MHz", (unsigned)s_cursor, mhz);
+        snprintf(msg, sizeof(msg), "Ch %u  %lu.%03lu MHz", (unsigned)s_cursor,
+                 (unsigned long)mhz_int, (unsigned long)khz_frac);
         lv_label_set_text(s_freq_label, msg);
     }
 }
@@ -1138,21 +1188,26 @@ static void subghz_load_snapshot_action(void) {
 
     int32_t durations[SUBGHZ_RAW_MAX_DURATIONS];
     size_t count = 0;
-    if (!subghz_parse_raw_file(s_saved_file_paths[s_saved_index], durations, SUBGHZ_RAW_MAX_DURATIONS, &count)) {
-        subghz_decoded_signal_t decoded;
-        if (!subghz_parse_decoded_file(s_saved_file_paths[s_saved_index], &decoded)) {
-            subghz_show_feedback_popup("SubGHz error", "Failed to parse snapshot file");
-            return;
-        }
+    uint32_t file_freq_hz = 0;
+    subghz_decoded_signal_t decoded;
+
+    if (subghz_parse_raw_file(s_saved_file_paths[s_saved_index], durations, SUBGHZ_RAW_MAX_DURATIONS, &count, &file_freq_hz)) {
+        if (file_freq_hz == 0) file_freq_hz = (uint32_t)SUBGHZ_BASE_FREQ_HZ;
+    } else if (subghz_parse_decoded_file(s_saved_file_paths[s_saved_index], &decoded)) {
+        file_freq_hz = (uint32_t)decoded.frequency_hz;
+        if (file_freq_hz == 0) file_freq_hz = (uint32_t)SUBGHZ_BASE_FREQ_HZ;
         if (!subghz_build_raw_from_decoded(decoded.protocol, decoded.code, decoded.bits,
                                            durations, SUBGHZ_RAW_MAX_DURATIONS, &count)) {
             subghz_show_feedback_popup("SubGHz error", "Replay unsupported for this protocol");
             return;
         }
+    } else {
+        subghz_show_feedback_popup("SubGHz error", "Failed to parse snapshot file");
+        return;
     }
 
     if (s_remote_mode) {
-        if (subghz_send_remote_replay(durations, count)) {
+        if (subghz_send_remote_replay(durations, count, file_freq_hz)) {
             subghz_show_feedback_popup("SubGHz", "Replay streamed to remote radio");
         } else {
             subghz_show_feedback_popup("SubGHz error", "Failed to stream replay to remote");
@@ -1160,7 +1215,7 @@ static void subghz_load_snapshot_action(void) {
         return;
     }
 
-    if (subghz_remote_manager_transmit_raw(durations, count)) {
+    if (subghz_remote_manager_transmit_raw(durations, count, file_freq_hz)) {
         subghz_show_feedback_popup("SubGHz", "Replay transmitted");
     } else {
         subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
@@ -1266,7 +1321,7 @@ static void subghz_close_capture_popup(void) {
     s_capture_status_label = NULL;
     s_capture_signal_label = NULL;
     s_capture_save_btn = NULL;
-    s_capture_continue_btn = NULL;
+    s_capture_freq_btn = NULL;
     s_capture_back_btn = NULL;
     s_capture_waiting_signal = false;
     s_capture_ready = false;
@@ -1288,12 +1343,353 @@ static void subghz_capture_continue_waiting(void) {
     memset(&s_remote_decoded, 0, sizeof(s_remote_decoded));
     if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
         if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
-            lv_label_set_text(s_capture_status_label, "Capturing... press Stop");
+            char status[64];
+            snprintf(status, sizeof(status), "Raw: %s", s_capture_freq_label);
+            lv_label_set_text(s_capture_status_label, status);
         } else {
-            lv_label_set_text(s_capture_status_label, "Waiting for decoded signal...");
+            char status[64];
+            snprintf(status, sizeof(status), "Listening: %s", s_capture_freq_label);
+            lv_label_set_text(s_capture_status_label, status);
         }
     }
     subghz_capture_popup_update_buttons();
+}
+
+static void subghz_fa_apply_popup_selection(void) {
+    popup_set_button_selected(s_fa_start_btn, s_fa_popup_selected == SUBGHZ_FA_POPUP_START);
+    popup_set_button_selected(s_fa_stop_btn, s_fa_popup_selected == SUBGHZ_FA_POPUP_STOP);
+    popup_set_button_selected(s_fa_back_btn, s_fa_popup_selected == SUBGHZ_FA_POPUP_BACK);
+}
+
+static uint8_t subghz_fa_freq_to_band_idx(uint32_t freq_hz) {
+    for (int i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
+        if (freq_hz == s_scan_freqs_hz[i]) return (uint8_t)i;
+    }
+    uint32_t min_diff = UINT32_MAX;
+    uint8_t closest = 2;
+    for (int i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
+        uint32_t diff = (freq_hz > s_scan_freqs_hz[i]) ? (freq_hz - s_scan_freqs_hz[i]) : (s_scan_freqs_hz[i] - freq_hz);
+        if (diff < min_diff) { min_diff = diff; closest = (uint8_t)i; }
+    }
+    return closest;
+}
+
+static void subghz_fa_add_to_history(uint32_t freq_hz) {
+    if (freq_hz == 0) return;
+
+    uint32_t rounded = (freq_hz / 10000) * 10000;
+
+    for (int i = 0; i < s_fa_history_entries; i++) {
+        uint32_t hist_rounded = (s_fa_history_freq[i] / 10000) * 10000;
+        if (hist_rounded == rounded) {
+            if (s_fa_history_count[i] < 255) s_fa_history_count[i]++;
+            if (i > 0) {
+                uint32_t tmp_freq = s_fa_history_freq[i];
+                uint8_t tmp_cnt = s_fa_history_count[i];
+                for (int j = i; j > 0; j--) {
+                    s_fa_history_freq[j] = s_fa_history_freq[j - 1];
+                    s_fa_history_count[j] = s_fa_history_count[j - 1];
+                }
+                s_fa_history_freq[0] = tmp_freq;
+                s_fa_history_count[0] = tmp_cnt;
+            }
+            return;
+        }
+    }
+
+    if (s_fa_history_entries < SUBGHZ_FA_HISTORY_MAX) {
+        s_fa_history_entries++;
+    }
+    for (int i = s_fa_history_entries - 1; i > 0; i--) {
+        s_fa_history_freq[i] = s_fa_history_freq[i - 1];
+        s_fa_history_count[i] = s_fa_history_count[i - 1];
+    }
+    s_fa_history_freq[0] = rounded;
+    s_fa_history_count[0] = 1;
+}
+
+static void subghz_fa_update_history_label(void) {
+    if (!s_fa_history_label || !lv_obj_is_valid(s_fa_history_label)) return;
+
+    char buf[128];
+    size_t pos = 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "History:");
+    for (int i = 0; i < s_fa_history_entries && pos < sizeof(buf) - 20; i++) {
+        uint32_t f = s_fa_history_freq[i];
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+                        "\n%lu.%03lu MHz",
+                        (unsigned long)(f / 1000000U),
+                        (unsigned long)((f % 1000000U) / 1000U));
+        if (s_fa_history_count[i] > 1) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos, " x%d", s_fa_history_count[i]);
+        }
+    }
+    lv_label_set_text(s_fa_history_label, buf);
+}
+
+static void subghz_fa_graph_draw_event(lv_event_t *e) {
+    lv_obj_t *obj = lv_event_get_target(e);
+    if (!obj || obj != s_fa_graph) return;
+
+    lv_draw_ctx_t *draw_ctx = lv_event_get_draw_ctx(e);
+    if (!draw_ctx || !draw_ctx->clip_area) return;
+
+    lv_area_t coords;
+    lv_obj_get_coords(obj, &coords);
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t bg = lv_color_hex(theme_palette_get_surface(theme));
+    lv_color_t bg_alt = lv_color_hex(theme_palette_get_surface_alt(theme));
+    lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
+    lv_color_t text = lv_color_hex(theme_palette_get_text(theme));
+    lv_color_t text_muted = lv_color_hex(theme_palette_get_text_muted(theme));
+
+    lv_draw_rect_dsc_t rect_dsc;
+    lv_draw_rect_dsc_init(&rect_dsc);
+    rect_dsc.bg_opa = LV_OPA_COVER;
+    rect_dsc.bg_color = bg;
+    rect_dsc.border_width = 1;
+    rect_dsc.border_color = bg_alt;
+    rect_dsc.radius = 4;
+    lv_draw_rect(draw_ctx, &rect_dsc, &coords);
+
+    lv_coord_t pad_x = 6;
+    lv_coord_t pad_y = 4;
+    lv_coord_t x_axis_h = 14;
+    lv_coord_t plot_x1 = coords.x1 + pad_x;
+    lv_coord_t plot_x2 = coords.x2 - pad_x;
+    lv_coord_t plot_y1 = coords.y1 + pad_y;
+    lv_coord_t plot_y2 = coords.y2 - pad_y - x_axis_h;
+    lv_coord_t plot_w = plot_x2 - plot_x1 + 1;
+    lv_coord_t plot_h = plot_y2 - plot_y1 + 1;
+
+    if (plot_w <= 0 || plot_h <= 0) return;
+
+    rect_dsc.radius = 0;
+    rect_dsc.border_width = 0;
+    rect_dsc.bg_color = bg_alt;
+    for (int g = 1; g <= 3; ++g) {
+        lv_coord_t gy = plot_y2 - (plot_h * g) / 4;
+        lv_area_t line_area = { .x1 = plot_x1, .y1 = gy, .x2 = plot_x2, .y2 = gy };
+        lv_draw_rect(draw_ctx, &rect_dsc, &line_area);
+    }
+
+    int bar_gap = (plot_w > 200) ? 6 : (plot_w > 100) ? 4 : 2;
+    int total_gap = bar_gap * (SUBGHZ_FA_BAND_COUNT - 1);
+    int bar_w = (plot_w - total_gap) / SUBGHZ_FA_BAND_COUNT;
+    if (bar_w < 4) { bar_w = 4; bar_gap = (plot_w - bar_w * SUBGHZ_FA_BAND_COUNT) / (SUBGHZ_FA_BAND_COUNT - 1); if (bar_gap < 0) bar_gap = 0; }
+
+    static const char *band_labels[SUBGHZ_FA_BAND_COUNT] = { "315", "390", "433", "868", "915" };
+
+    for (int b = 0; b < SUBGHZ_FA_BAND_COUNT; b++) {
+        lv_coord_t bx1 = plot_x1 + b * (bar_w + bar_gap);
+        lv_coord_t bx2 = bx1 + bar_w - 1;
+
+        int lvl = s_fa_band_levels[b];
+        if (lvl > 100) lvl = 100;
+        if (lvl > 0) {
+            lv_coord_t bar_h = (lv_coord_t)((lvl * plot_h) / 100);
+            if (bar_h < 1) bar_h = 1;
+            lv_area_t bar_area = { .x1 = bx1, .y1 = plot_y2 - bar_h + 1, .x2 = bx2, .y2 = plot_y2 };
+            rect_dsc.bg_color = (b == s_fa_active_band) ? accent : text_muted;
+            rect_dsc.bg_opa = LV_OPA_90;
+            lv_draw_rect(draw_ctx, &rect_dsc, &bar_area);
+        }
+
+        if (s_fa_band_peaks[b] > 0) {
+            int pk = s_fa_band_peaks[b];
+            if (pk > 100) pk = 100;
+            lv_coord_t peak_y = plot_y2 - (lv_coord_t)((pk * plot_h) / 100);
+            if (peak_y < plot_y1) peak_y = plot_y1;
+            lv_area_t peak_area = { .x1 = bx1, .y1 = peak_y, .x2 = bx2, .y2 = peak_y };
+            rect_dsc.bg_color = text;
+            rect_dsc.bg_opa = LV_OPA_COVER;
+            lv_draw_rect(draw_ctx, &rect_dsc, &peak_area);
+        }
+
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.color = (b == s_fa_active_band) ? text : text_muted;
+        lbl.font = &lv_font_montserrat_10;
+        lv_area_t lbl_area = { .x1 = bx1 - 2, .y1 = plot_y2 + 2, .x2 = bx2 + 2, .y2 = coords.y2 - 1 };
+        lv_draw_label(draw_ctx, &lbl, &lbl_area, band_labels[b], NULL);
+    }
+}
+
+static void subghz_fa_start_scan(void) {
+    if (s_remote_mode) {
+        if (!esp_comm_manager_is_connected()) {
+            s_remote_error = true;
+            subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
+            return;
+        }
+        if (esp_comm_manager_send_command("subghz", "start")) {
+            s_remote_stream_online = false;
+            s_remote_error = false;
+            s_remote_paused = false;
+        } else {
+            s_remote_error = true;
+        }
+    } else {
+        if (!subghz_remote_manager_start(false)) {
+            subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
+        }
+    }
+    s_fa_scanning = true;
+    s_fa_signal_detected = false;
+    s_fa_detect_hits = 0;
+    s_fa_detected_freq_hz = 0;
+}
+
+static void subghz_fa_stop_scan(void) {
+    if (s_remote_mode) {
+        if (esp_comm_manager_is_connected()) {
+            (void)esp_comm_manager_send_command("subghz", "stop");
+        }
+        s_remote_paused = true;
+        s_remote_stream_online = false;
+    } else {
+        subghz_remote_manager_stop();
+    }
+    s_fa_scanning = false;
+    s_fa_signal_detected = false;
+    s_fa_detect_hits = 0;
+}
+
+static void subghz_close_freq_analyzer_popup(void) {
+    if (s_fa_scanning) {
+        subghz_fa_stop_scan();
+    }
+
+    lvgl_obj_del_safe(&s_fa_popup);
+    s_fa_freq_label = NULL;
+    s_fa_graph = NULL;
+    s_fa_history_label = NULL;
+    s_fa_start_btn = NULL;
+    s_fa_stop_btn = NULL;
+    s_fa_back_btn = NULL;
+    s_fa_popup_selected = SUBGHZ_FA_POPUP_START;
+    s_fa_scanning = false;
+    s_fa_signal_detected = false;
+    s_fa_detect_hits = 0;
+    s_fa_detected_freq_hz = 0;
+    memset(s_fa_band_levels, 0, sizeof(s_fa_band_levels));
+    memset(s_fa_band_peaks, 0, sizeof(s_fa_band_peaks));
+    s_fa_active_band = 2;
+}
+
+static void subghz_fa_start_btn_cb(lv_event_t *e) {
+    (void)e;
+    s_fa_popup_selected = SUBGHZ_FA_POPUP_START;
+    subghz_fa_apply_popup_selection();
+    subghz_fa_start_scan();
+}
+
+static void subghz_fa_stop_btn_cb(lv_event_t *e) {
+    (void)e;
+    s_fa_popup_selected = SUBGHZ_FA_POPUP_STOP;
+    subghz_fa_apply_popup_selection();
+    subghz_fa_stop_scan();
+}
+
+static void subghz_fa_back_btn_cb(lv_event_t *e) {
+    (void)e;
+    s_fa_popup_selected = SUBGHZ_FA_POPUP_BACK;
+    subghz_fa_apply_popup_selection();
+    subghz_close_freq_analyzer_popup();
+}
+
+static void subghz_open_freq_analyzer_popup(void) {
+    if (s_fa_popup && lv_obj_is_valid(s_fa_popup)) {
+        subghz_close_freq_analyzer_popup();
+    }
+
+    memset(s_fa_band_levels, 0, sizeof(s_fa_band_levels));
+    memset(s_fa_band_peaks, 0, sizeof(s_fa_band_peaks));
+    s_fa_active_band = 2;
+    s_fa_scanning = false;
+    s_fa_signal_detected = false;
+    s_fa_detect_hits = 0;
+    s_fa_detected_freq_hz = 0;
+    s_fa_popup_selected = SUBGHZ_FA_POPUP_START;
+
+    bool tiny = (LV_HOR_RES <= 128 || LV_VER_RES <= 80);
+    bool small = (LV_VER_RES <= 170 && !tiny);
+
+    lv_coord_t popup_w = tiny ? LV_HOR_RES : (LV_HOR_RES <= 240) ? (LV_HOR_RES - 10) : (LV_HOR_RES - 20);
+    lv_coord_t popup_h = tiny ? LV_VER_RES : (LV_VER_RES <= 200) ? (LV_VER_RES - 10) : (LV_VER_RES - 20);
+    if (!tiny && popup_w < 220) popup_w = 220;
+    if (!tiny && popup_h < 180) popup_h = 180;
+
+    s_fa_popup = popup_create_container(lv_scr_act(), popup_w, popup_h);
+    lv_obj_center(s_fa_popup);
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t text = lv_color_hex(theme_palette_get_text(theme));
+
+    const lv_font_t *title_font = tiny ? &lv_font_montserrat_10 : &lv_font_montserrat_14;
+    popup_create_title_label(s_fa_popup, "Freq Analyzer", title_font, tiny ? 2 : 6);
+
+    const lv_font_t *freq_font = tiny ? &lv_font_montserrat_10 : &lv_font_montserrat_16;
+    s_fa_freq_label = lv_label_create(s_fa_popup);
+    lv_label_set_text(s_fa_freq_label, "---.--- MHz");
+    lv_obj_set_style_text_color(s_fa_freq_label, text, 0);
+    lv_obj_set_style_text_font(s_fa_freq_label, freq_font, 0);
+    lv_label_set_long_mode(s_fa_freq_label, LV_LABEL_LONG_CLIP);
+    lv_obj_align(s_fa_freq_label, LV_ALIGN_TOP_MID, 0, tiny ? 14 : 26);
+
+    int graph_top = tiny ? 26 : (small ? 36 : 44);
+    int btn_h = tiny ? 16 : (small ? 24 : 28);
+    int btn_margin = tiny ? -2 : -6;
+    bool show_history = !tiny;
+    int history_h = show_history ? (small ? 32 : 48) : 0;
+    int graph_bottom = btn_h + history_h + (tiny ? 4 : 16);
+    int graph_h = popup_h - graph_top - graph_bottom;
+    if (graph_h < (tiny ? 20 : 50)) graph_h = tiny ? 20 : 50;
+
+    lv_coord_t inner_pad = tiny ? 2 : 6;
+    lv_coord_t inner_w = popup_w - inner_pad * 2 - 4;  // 4 = border 2*2
+    if (inner_w < 10) inner_w = 10;
+
+    s_fa_graph = lv_obj_create(s_fa_popup);
+    lv_obj_set_pos(s_fa_graph, inner_pad, graph_top);
+    lv_obj_set_size(s_fa_graph, inner_w, graph_h);
+    lv_obj_set_style_bg_opa(s_fa_graph, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_fa_graph, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_fa_graph, 0, LV_PART_MAIN);
+    lv_obj_add_flag(s_fa_graph, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_fa_graph, subghz_fa_graph_draw_event, LV_EVENT_DRAW_MAIN, NULL);
+
+    if (show_history) {
+        s_fa_history_label = lv_label_create(s_fa_popup);
+        lv_label_set_text(s_fa_history_label, "History:");
+        lv_obj_set_style_text_color(s_fa_history_label, text, 0);
+        lv_obj_set_style_text_font(s_fa_history_label, small ? &lv_font_montserrat_8 : &lv_font_montserrat_10, 0);
+        lv_obj_align(s_fa_history_label, LV_ALIGN_TOP_LEFT, 8, graph_top + graph_h + 4);
+        lv_obj_set_style_max_height(s_fa_history_label, history_h, 0);
+    }
+
+    const lv_font_t *btn_font = tiny ? &lv_font_montserrat_8 : (small ? &lv_font_montserrat_10 : &lv_font_montserrat_12);
+    int btn_w = tiny ? 40 : (small ? 58 : 68);
+    s_fa_start_btn = popup_add_styled_button(
+        s_fa_popup, "Start", btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, tiny ? 2 : 8, btn_margin, btn_font, subghz_fa_start_btn_cb, NULL);
+    s_fa_stop_btn = popup_add_styled_button(
+        s_fa_popup, "Stop", btn_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, btn_margin, btn_font, subghz_fa_stop_btn_cb, NULL);
+    s_fa_back_btn = popup_add_styled_button(
+        s_fa_popup, "Back", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, tiny ? -2 : -8, btn_margin, btn_font, subghz_fa_back_btn_cb, NULL);
+
+    lv_obj_t *fa_btns[3] = { s_fa_start_btn, s_fa_stop_btn, s_fa_back_btn };
+    popup_layout_buttons_responsive(s_fa_popup, fa_btns, 3, btn_margin, NULL);
+
+    subghz_fa_apply_popup_selection();
+}
+
+static void subghz_freq_analyzer_row_cb(lv_event_t *e) {
+    (void)e;
+    if (s_ov) {
+        options_view_set_selected(s_ov, 3);
+    }
+    subghz_open_freq_analyzer_popup();
 }
 
 static void subghz_capture_primary_btn_cb(lv_event_t *e) {
@@ -1357,13 +1753,10 @@ static void subghz_capture_primary_btn_cb(lv_event_t *e) {
     }
 }
 
-static void subghz_capture_continue_btn_cb(lv_event_t *e) {
+static void subghz_capture_freq_btn_cb(lv_event_t *e) {
     (void)e;
-    if (!s_capture_ready) {
-        return;
-    }
 
-    s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_CONTINUE;
+    s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_FREQ;
     subghz_capture_popup_update_buttons();
 
     if (s_remote_mode) {
@@ -1371,12 +1764,25 @@ static void subghz_capture_continue_btn_cb(lv_event_t *e) {
             subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
             return;
         }
-        (void)esp_comm_manager_send_command("subghz", "resume");
+        (void)esp_comm_manager_send_command("subghz", "cycle_freq");
     } else {
-        subghz_remote_manager_set_paused(false);
+        subghz_remote_manager_cycle_frequency();
     }
 
-    subghz_capture_continue_waiting();
+    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", subghz_remote_manager_get_frequency_label());
+    if (s_capture_freq_btn && lv_obj_is_valid(s_capture_freq_btn)) {
+        lv_obj_t *btn_label = lv_obj_get_child(s_capture_freq_btn, 0);
+        if (btn_label) lv_label_set_text(btn_label, s_capture_freq_label);
+    }
+    if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+        char status[64];
+        snprintf(status, sizeof(status), "Listening: %s", s_capture_freq_label);
+        lv_label_set_text(s_capture_status_label, status);
+    }
+
+    if (s_capture_ready) {
+        subghz_capture_continue_waiting();
+    }
 }
 
 static void subghz_capture_back_btn_cb(lv_event_t *e) {
@@ -1403,7 +1809,7 @@ static void subghz_open_capture_popup(void) {
     popup_create_title_label(s_capture_popup, title, &lv_font_montserrat_16, 8);
     s_capture_status_label = popup_create_body_label(
         s_capture_popup,
-        "Waiting for valid signal...",
+        "Waiting for signal...",
         popup_w - 20,
         false,
         &lv_font_montserrat_12,
@@ -1432,16 +1838,16 @@ static void subghz_open_capture_popup(void) {
         btn_font,
         subghz_capture_primary_btn_cb,
         NULL);
-    s_capture_continue_btn = popup_add_styled_button(
+    s_capture_freq_btn = popup_add_styled_button(
         s_capture_popup,
-        "Continue",
+        s_capture_freq_label,
         92,
         30,
         LV_ALIGN_BOTTOM_MID,
         0,
         -8,
         btn_font,
-        subghz_capture_continue_btn_cb,
+        subghz_capture_freq_btn_cb,
         NULL);
     s_capture_back_btn = popup_add_styled_button(
         s_capture_popup,
@@ -1455,11 +1861,13 @@ static void subghz_open_capture_popup(void) {
         subghz_capture_back_btn_cb,
         NULL);
 
-    lv_obj_t *btns[3] = { s_capture_save_btn, s_capture_continue_btn, s_capture_back_btn };
+    lv_obj_t *btns[3] = { s_capture_save_btn, s_capture_freq_btn, s_capture_back_btn };
     popup_layout_buttons_responsive(s_capture_popup, btns, 3, -8, NULL);
 
     s_capture_was_running = s_remote_mode ? (s_remote_stream_online && !s_remote_paused)
                                           : subghz_remote_manager_is_running();
+
+    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", subghz_remote_manager_get_frequency_label());
 
     if (s_remote_mode) {
         if (!esp_comm_manager_is_connected()) {
@@ -1533,9 +1941,9 @@ static void subghz_capture_mark_ready(void) {
         }
         char msg[128];
         if (decode_buf[0] != '\0') {
-            snprintf(msg, sizeof(msg), "%s  Ch %u", decode_buf, (unsigned)s_capture_preview_cursor);
+            snprintf(msg, sizeof(msg), "%s", decode_buf);
         } else {
-            snprintf(msg, sizeof(msg), "Capture %s  Ch %u", s_capture_name, (unsigned)s_capture_preview_cursor);
+            snprintf(msg, sizeof(msg), "Capture %s", s_capture_name);
         }
         lv_label_set_text(s_capture_signal_label, msg);
     }
@@ -1567,7 +1975,12 @@ static void subghz_capture_mark_ready_with_decoded(const subghz_decoded_signal_t
     }
     if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label) && decoded) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "%.244s  Ch %u", decoded->info, (unsigned)s_capture_preview_cursor);
+        if (decoded->frequency_hz > 0) {
+            snprintf(msg, sizeof(msg), "%.3f MHz\n%.230s",
+                     (double)decoded->frequency_hz / 1000000.0, decoded->info);
+        } else {
+            snprintf(msg, sizeof(msg), "%.244s", decoded->info);
+        }
         lv_label_set_text(s_capture_signal_label, msg);
     }
 
@@ -1692,6 +2105,8 @@ static void subghz_select_row(void) {
         subghz_capture_snapshot_action();
     } else if (sel == 2) {
         subghz_list_snapshots_action();
+    } else if (sel == 3) {
+        subghz_open_freq_analyzer_popup();
     } else {
         display_manager_switch_view(&main_menu_view);
     }
@@ -1722,7 +2137,7 @@ static void subghz_back_row_cb(lv_event_t *e) {
         return;
     }
     if (s_ov) {
-        options_view_set_selected(s_ov, 3);
+        options_view_set_selected(s_ov, 4);
     }
     display_manager_switch_view(&main_menu_view);
 }
@@ -1755,7 +2170,8 @@ static void subghz_timer_cb(lv_timer_t *timer) {
 
     bool scanner_popup_open = s_popup && lv_obj_is_valid(s_popup);
     bool capture_popup_open = s_capture_popup && lv_obj_is_valid(s_capture_popup);
-    if (!scanner_popup_open && !capture_popup_open) {
+    bool fa_popup_open = s_fa_popup && lv_obj_is_valid(s_fa_popup);
+    if (!scanner_popup_open && !capture_popup_open && !fa_popup_open) {
         return;
     }
 
@@ -1868,6 +2284,82 @@ static void subghz_timer_cb(lv_timer_t *timer) {
     if (scanner_popup_open && s_graph && lv_obj_is_valid(s_graph)) {
         lv_obj_invalidate(s_graph);
     }
+
+    if (fa_popup_open) {
+        if (!s_remote_mode && subghz_remote_manager_is_running()) {
+            uint8_t cur_band_idx = subghz_fa_freq_to_band_idx(subghz_remote_manager_get_frequency_hz());
+            s_fa_active_band = cur_band_idx;
+            uint8_t tmp[SUBGHZ_SCANNER_CHANNEL_COUNT];
+            uint8_t tmp_cur;
+            if (subghz_remote_manager_get_levels(tmp, SUBGHZ_SCANNER_CHANNEL_COUNT, &tmp_cur)) {
+                uint8_t max_lvl = 0;
+                for (int i = 0; i < SUBGHZ_SCANNER_CHANNEL_COUNT; i++) {
+                    if (tmp[i] > max_lvl) max_lvl = tmp[i];
+                }
+                s_fa_band_levels[cur_band_idx] = max_lvl;
+                if (max_lvl > s_fa_band_peaks[cur_band_idx])
+                    s_fa_band_peaks[cur_band_idx] = max_lvl;
+            }
+        }
+
+        for (int b = 0; b < SUBGHZ_FA_BAND_COUNT; b++) {
+            if (s_fa_band_peaks[b] > 0) s_fa_band_peaks[b]--;
+            if (s_fa_band_levels[b] > 0 && b != s_fa_active_band) {
+                if (s_fa_band_levels[b] > 2) s_fa_band_levels[b] -= 2;
+                else s_fa_band_levels[b] = 0;
+            }
+        }
+
+        int best_band = -1;
+        uint8_t best_lvl = 0;
+        uint16_t total_lvl = 0;
+        for (int b = 0; b < SUBGHZ_FA_BAND_COUNT; b++) {
+            total_lvl += s_fa_band_levels[b];
+            if (s_fa_band_levels[b] > best_lvl) {
+                best_lvl = s_fa_band_levels[b];
+                best_band = b;
+            }
+        }
+        uint8_t avg_lvl = (uint8_t)(total_lvl / SUBGHZ_FA_BAND_COUNT);
+
+        bool is_outlier = (best_band >= 0 && best_lvl >= SUBGHZ_FA_DETECT_THRESHOLD
+                          && best_lvl >= avg_lvl + 25);
+
+        if (is_outlier) {
+            s_fa_detect_hits++;
+            if (s_fa_detect_hits >= SUBGHZ_FA_DETECT_HITS) {
+                uint32_t new_freq = s_scan_freqs_hz[best_band];
+                if (!s_fa_signal_detected || new_freq != s_fa_detected_freq_hz) {
+                    s_fa_signal_detected = true;
+                    s_fa_detected_freq_hz = new_freq;
+                    subghz_fa_add_to_history(new_freq);
+                    subghz_fa_update_history_label();
+                }
+            }
+        } else {
+            if (s_fa_detect_hits > 0) s_fa_detect_hits--;
+            if (s_fa_detect_hits == 0) s_fa_signal_detected = false;
+        }
+
+        if (s_fa_freq_label && lv_obj_is_valid(s_fa_freq_label)) {
+            if (s_fa_signal_detected && s_fa_detected_freq_hz > 0) {
+                uint32_t mhz = s_fa_detected_freq_hz / 1000000U;
+                uint32_t khz = (s_fa_detected_freq_hz % 1000000U) / 1000U;
+                lv_label_set_text_fmt(s_fa_freq_label, "%lu.%03lu MHz",
+                                     (unsigned long)mhz, (unsigned long)khz);
+            } else if (best_band >= 0 && best_lvl > 0) {
+                lv_label_set_text_fmt(s_fa_freq_label, "%s ~%d%%",
+                                     s_scan_freq_labels[best_band], best_lvl);
+            } else {
+                lv_label_set_text(s_fa_freq_label, "---.--- MHz");
+            }
+        }
+
+
+        if (s_fa_graph && lv_obj_is_valid(s_fa_graph)) {
+            lv_obj_invalidate(s_fa_graph);
+        }
+    }
 }
 
 static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data) {
@@ -1970,7 +2462,7 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         return;
     }
 
-    if (packet_type == 8) {
+    if (packet_type == 8 || packet_type == 9) {
         if (length < 12) return;
         uint8_t name_len = data[2];
         if (length < (size_t)(3 + name_len + 8 + 1)) return;
@@ -1987,6 +2479,16 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
             decoded.code = code;
             decoded.bits = subghz_normalize_decoded_bits(decoded.protocol, (int)data[code_pos + 8]);
             decoded.decoded = true;
+
+            if (packet_type == 9 && length >= (size_t)(3 + name_len + 8 + 1 + 4)) {
+                size_t freq_pos = code_pos + 9;
+                decoded.frequency_hz = (int)((uint32_t)data[freq_pos] |
+                                             ((uint32_t)data[freq_pos + 1] << 8) |
+                                             ((uint32_t)data[freq_pos + 2] << 16) |
+                                             ((uint32_t)data[freq_pos + 3] << 24));
+            } else {
+                decoded.frequency_hz = SUBGHZ_BASE_FREQ_HZ;
+            }
 
             if (decoded.bits > 32) {
                 snprintf(decoded.info, sizeof(decoded.info), "%s %dbit\nCode:0x%016llX",
@@ -2013,23 +2515,39 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         return;
     }
 
-    if (length < 5) {
+    if (length < 7) {
         return;
     }
 
     uint8_t cursor = data[2];
     uint8_t start_ch = data[3];
     uint8_t count = data[4];
+    s_remote_freq_idx = data[5];
+    if (s_remote_freq_idx > 4) s_remote_freq_idx = 2;
 
-    if (count == 0 || count > 32 || (size_t)(5 + count) > length) {
+    if (count == 0 || count > 32 || (size_t)(7 + count) > length) {
         return;
     }
 
     for (uint8_t i = 0; i < count; i++) {
         uint8_t ch = (uint8_t)((start_ch + i) % SUBGHZ_SCANNER_CHANNEL_COUNT);
-        s_levels[ch] = data[5 + i];
+        s_levels[ch] = data[7 + i];
         if (s_levels[ch] > s_peaks[ch]) {
             s_peaks[ch] = s_levels[ch];
+        }
+    }
+
+    if (s_fa_popup && lv_obj_is_valid(s_fa_popup)) {
+        uint8_t max_lvl = 0;
+        for (uint8_t i = 0; i < count; i++) {
+            if (data[7 + i] > max_lvl) max_lvl = data[7 + i];
+        }
+        uint8_t bi = s_remote_freq_idx;
+        if (bi < SUBGHZ_FA_BAND_COUNT) {
+            s_fa_band_levels[bi] = max_lvl;
+            s_fa_active_band = bi;
+            if (max_lvl > s_fa_band_peaks[bi])
+                s_fa_band_peaks[bi] = max_lvl;
         }
     }
 
@@ -2077,6 +2595,17 @@ void subghz_view_update_remote_state(const char *state) {
         subghz_show_feedback_popup("SubGHz", "Remote capture complete");
     } else if (strcmp(state, "capture_error") == 0) {
         subghz_fail_pending_action("capture failed");
+    } else if (strncmp(state, "freq_", 5) == 0) {
+        snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", state + 5);
+        if (s_capture_freq_btn && lv_obj_is_valid(s_capture_freq_btn)) {
+            lv_obj_t *btn_label = lv_obj_get_child(s_capture_freq_btn, 0);
+            if (btn_label) lv_label_set_text(btn_label, s_capture_freq_label);
+        }
+        if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+            char status[64];
+            snprintf(status, sizeof(status), "Listening: %s", s_capture_freq_label);
+            lv_label_set_text(s_capture_status_label, status);
+        }
     } else if (strcmp(state, "save_ok") == 0) {
         subghz_clear_pending_action();
         subghz_show_action_status("Remote save complete");
@@ -2115,8 +2644,8 @@ static void subghz_input_handler(InputEvent *event) {
                     subghz_capture_primary_btn_cb(NULL);
                     return;
                 }
-                if (point_inside_obj(s_capture_continue_btn, d->point.x, d->point.y)) {
-                    subghz_capture_continue_btn_cb(NULL);
+                if (point_inside_obj(s_capture_freq_btn, d->point.x, d->point.y)) {
+                    subghz_capture_freq_btn_cb(NULL);
                     return;
                 }
                 if (point_inside_obj(s_capture_back_btn, d->point.x, d->point.y)) {
@@ -2160,7 +2689,7 @@ static void subghz_input_handler(InputEvent *event) {
 
             if (activate) {
                 if (s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_SAVE) subghz_capture_primary_btn_cb(NULL);
-                else if (s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_CONTINUE) subghz_capture_continue_btn_cb(NULL);
+                else if (s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_FREQ) subghz_capture_freq_btn_cb(NULL);
                 else subghz_capture_back_btn_cb(NULL);
                 return;
             }
@@ -2231,6 +2760,71 @@ static void subghz_input_handler(InputEvent *event) {
             }
         } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
             subghz_saved_back_btn_cb(NULL);
+            return;
+        }
+
+        return;
+    }
+
+    if (s_fa_popup && lv_obj_is_valid(s_fa_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_REL) {
+                if (point_inside_obj(s_fa_start_btn, d->point.x, d->point.y)) {
+                    subghz_fa_start_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_fa_stop_btn, d->point.x, d->point.y)) {
+                    subghz_fa_stop_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_fa_back_btn, d->point.x, d->point.y)) {
+                    subghz_fa_back_btn_cb(NULL);
+                    return;
+                }
+            }
+        } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER ||
+                   event->type == INPUT_TYPE_KEYBOARD) {
+            int dir = 0;
+            bool activate = false;
+            bool back = false;
+
+            if (event->type == INPUT_TYPE_JOYSTICK) {
+                int ji = event->data.joystick_index;
+                if (ji == 0) dir = -1;
+                else if (ji == 3) dir = 1;
+                else if (ji == 1) activate = true;
+            } else if (event->type == INPUT_TYPE_ENCODER) {
+                if (event->data.encoder.button) activate = true;
+                else dir = (event->data.encoder.direction > 0) ? -1 : ((event->data.encoder.direction < 0) ? 1 : 0);
+            } else {
+                int kv = event->data.key_value;
+                if (kv == 13 || kv == 10) activate = true;
+                else if (kv == 27 || kv == LV_KEY_ESC || kv == '`') back = true;
+                else if (kv == ',' || kv == ';' || kv == LV_KEY_LEFT) dir = -1;
+                else if (kv == '.' || kv == '/' || kv == LV_KEY_RIGHT) dir = 1;
+            }
+
+            if (back || event->type == INPUT_TYPE_EXIT_BUTTON) {
+                subghz_fa_back_btn_cb(NULL);
+                return;
+            }
+
+            if (dir != 0) {
+                int selected = ((int)s_fa_popup_selected + dir + SUBGHZ_FA_POPUP_COUNT) % SUBGHZ_FA_POPUP_COUNT;
+                s_fa_popup_selected = (subghz_fa_popup_control_t)selected;
+                subghz_fa_apply_popup_selection();
+                return;
+            }
+
+            if (activate) {
+                if (s_fa_popup_selected == SUBGHZ_FA_POPUP_START) subghz_fa_start_btn_cb(NULL);
+                else if (s_fa_popup_selected == SUBGHZ_FA_POPUP_STOP) subghz_fa_stop_btn_cb(NULL);
+                else subghz_fa_back_btn_cb(NULL);
+                return;
+            }
+        } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            subghz_fa_back_btn_cb(NULL);
             return;
         }
 
@@ -2341,6 +2935,11 @@ static void subghz_input_handler(InputEvent *event) {
                 subghz_list_snapshots_action();
                 return;
             }
+            if (!s_in_saved_list && s_freq_analyzer_row && point_inside_obj(s_freq_analyzer_row, d->point.x, d->point.y)) {
+                if (s_ov) options_view_set_selected(s_ov, 3);
+                subghz_open_freq_analyzer_popup();
+                return;
+            }
             if (point_inside_obj(s_back_row, d->point.x, d->point.y)) {
                 if (s_in_saved_list) {
                     subghz_back_to_root_menu();
@@ -2409,6 +3008,7 @@ void subghz_view_create(void) {
     s_scan_row = options_view_add_item(s_ov, "Capture", subghz_scan_row_cb, NULL);
     s_raw_capture_row = options_view_add_item(s_ov, "Raw Capture", subghz_raw_capture_row_cb, NULL);
     s_capture_row = options_view_add_item(s_ov, "Saved", subghz_capture_row_cb, NULL);
+    s_freq_analyzer_row = options_view_add_item(s_ov, "Freq Analyzer", subghz_freq_analyzer_row_cb, NULL);
     s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
     options_view_set_selected(s_ov, 0);
 
@@ -2427,6 +3027,7 @@ void subghz_view_create(void) {
 
 void subghz_view_destroy(void) {
     subghz_close_popup(true);
+    subghz_close_freq_analyzer_popup();
     subghz_close_saved_popup();
     subghz_saved_list_clear();
     s_in_saved_list = false;
@@ -2441,6 +3042,7 @@ void subghz_view_destroy(void) {
     s_scan_row = NULL;
     s_capture_row = NULL;
     s_raw_capture_row = NULL;
+    s_freq_analyzer_row = NULL;
     s_back_row = NULL;
 
     lvgl_obj_del_safe(&s_root);
