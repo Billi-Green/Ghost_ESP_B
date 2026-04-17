@@ -204,8 +204,8 @@ float mic_calculate_rms(const int32_t *samples, size_t num_samples) {
 
     // Log diagnostic every ~5 seconds
     static int diag_counter = 0;
-    if (++diag_counter % 100 == 0) {
-        ESP_LOGI(TAG, "Samples: min=%ld max=%ld clips=%d zeros=%d normal=%d",
+    if (++diag_counter % 500 == 0) {
+        ESP_LOGD(TAG, "Samples: min=%ld max=%ld clips=%d zeros=%d normal=%d",
                  (long)min_val, (long)max_val, clip_count, zero_count, normal_count);
     }
     

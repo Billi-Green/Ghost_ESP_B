@@ -14,8 +14,11 @@ typedef struct {
     uint64_t code;
     int bits;
     int frequency_hz;
+    int te;
     bool decoded;
 } subghz_decoded_signal_t;
+
+int32_t subghz_protocol_te(const char *protocol);
 
 bool subghz_decode_princeton(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
 bool subghz_decode_came(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);

@@ -97,6 +97,22 @@ GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing to
 </details>
 
 <details>
+<summary><strong>SubGHz Features</strong></summary>
+
+- Signal scanning across 64 channels
+- Frequency analyzer with waterfall display
+- Signal capture and decoding
+- 20+ protocol decoders based on Flipper Unleashed/xMasterX
+- Signal transmission and replay
+- Saved signals as `.sub` files
+- Flipper SubGhz Key File format compatibility
+- CC1101 hardware support
+- Frequency bands: 315, 390, 433.92, 868.35, 915 MHz
+- Full CLI support
+
+</details>
+
+<details>
 <summary><strong>Additional Features</strong></summary>
 
 - GhostLink (dual-device command and display interface)
@@ -289,15 +305,23 @@ Special thanks to:
       <sub><a href="https://github.com/connornishijima/SensoryBridge">SensoryBridge</a> - MIC RGB visualizer algorithms &amp; inspiration</sub>
     </td>
     <td align="center">
-      <!-- Empty cell for symmetry -->
+      <a href="https://github.com/DarkFlippers">
+        <img src="https://github.com/DarkFlippers.png" width="80" height="80" style="border-radius: 50%;" alt="DarkFlippers"/><br/>
+        <b>DarkFlippers</b>
+      </a><br/>
+      <sub>Flipper Zero Unleashed firmware (SubGHz protocol decoders)</sub>
     </td>
     <td align="center">
-      <!-- Empty cell for symmetry -->
+      <a href="https://github.com/xMasterX">
+        <img src="https://github.com/xMasterX.png" width="80" height="80" style="border-radius: 50%;" alt="xMasterX"/><br/>
+        <b>xMasterX</b>
+      </a><br/>
+      <sub>Flipper Zero Unleashed SubGHz improvements</sub>
     </td>
   </tr>
 </table>
 
-> Portions of the IR and NFC functionality are adapted from the open-source Flipper Zero firmware by flipperdevices and its community contributors.
+> Portions of the IR, NFC, and SubGHz functionality are adapted from the open-source Flipper Zero firmware by flipperdevices, DarkFlippers, xMasterX and their community contributors.
 
 ---
 

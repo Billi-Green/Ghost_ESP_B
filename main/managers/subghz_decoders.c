@@ -1582,6 +1582,31 @@ static const subghz_decoder_entry_t s_decoders[] = {
 
 #define NUM_DECODERS (sizeof(s_decoders) / sizeof(s_decoders[0]))
 
+int32_t subghz_protocol_te(const char *protocol) {
+    if (!protocol) return 0;
+    if (strcmp(protocol, "Princeton") == 0) return 390;
+    if (strcmp(protocol, "CAME") == 0) return 320;
+    if (strcmp(protocol, "Nice FLO") == 0) return 700;
+    if (strcmp(protocol, "PT2260") == 0) return 350;
+    if (strcmp(protocol, "PT2262") == 0) return 350;
+    if (strcmp(protocol, "CAME Atomo") == 0) return 600;
+    if (strcmp(protocol, "Nice FLO-R-S") == 0) return 500;
+    if (strcmp(protocol, "Chamberlain") == 0) return 1000;
+    if (strcmp(protocol, "Linear") == 0) return 500;
+    if (strcmp(protocol, "Linear D3") == 0) return 500;
+    if (strcmp(protocol, "UNILARM") == 0) return 320;
+    if (strcmp(protocol, "GangQi") == 0) return 500;
+    if (strcmp(protocol, "Holtek") == 0) return 430;
+    if (strcmp(protocol, "Holtek HT12x") == 0) return 320;
+    if (strcmp(protocol, "Doitrand") == 0) return 400;
+    if (strcmp(protocol, "Gate TX") == 0) return 350;
+    if (strcmp(protocol, "KeeLoq") == 0) return 400;
+    if (strcmp(protocol, "FAAC SLH") == 0) return 255;
+    if (strcmp(protocol, "Alutech") == 0) return 400;
+    if (strcmp(protocol, "Marantec") == 0) return 1000;
+    return 0;
+}
+
 bool subghz_decode_signal(const int32_t *dur, size_t count, subghz_decoded_signal_t *result) {
     if (!dur || count < 4 || !result) return false;
 
@@ -1595,6 +1620,7 @@ bool subghz_decode_signal(const int32_t *dur, size_t count, subghz_decoded_signa
             result->code = code;
             result->bits = bits;
             snprintf(result->protocol, sizeof(result->protocol), "%s", s_decoders[d].name);
+            result->te = (int)subghz_protocol_te(s_decoders[d].name);
 
             if (s_decoders[d].format) {
                 s_decoders[d].format(code, bits, result->info, sizeof(result->info));

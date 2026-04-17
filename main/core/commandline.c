@@ -7982,7 +7982,12 @@ void handle_subghz_cmd(int argc, char **argv) {
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE))
     if (strcmp(sub, "state") == 0) {
         if (argc >= 3) {
-            subghz_view_update_remote_state(argv[2]);
+            char joined[64] = {0};
+            for (int i = 2; i < argc && i < 6; i++) {
+                if (i > 2) strlcat(joined, " ", sizeof(joined));
+                strlcat(joined, argv[i], sizeof(joined));
+            }
+            subghz_view_update_remote_state(joined);
         }
         return;
     }

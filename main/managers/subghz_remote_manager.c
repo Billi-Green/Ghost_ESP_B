@@ -78,7 +78,60 @@ static const char *s_scan_freq_labels[SUBGHZ_FREQ_COUNT] = {
 #define CC1101_REG_TEST2    0x2C
 #define CC1101_REG_TEST1    0x2D
 #define CC1101_REG_TEST0    0x2E
-#define CC1101_REG_WORCTRL  0x34
+#define CC1101_REG_FSCAL3   0x23
+#define CC1101_REG_FSCAL2   0x24
+#define CC1101_REG_FSCAL1   0x25
+#define CC1101_REG_FSCAL0   0x26
+#define CC1101_REG_WORCTRL  0x20
+
+typedef struct {
+    uint8_t reg;
+    uint8_t val;
+} cc1101_reg_entry_t;
+
+static const cc1101_reg_entry_t s_preset_ook270[] = {
+    {CC1101_REG_IOCFG0,   0x0D},
+    {CC1101_REG_FIFOTHR,  0x47},
+    {CC1101_REG_PKTCTRL0, 0x32},
+    {CC1101_REG_FSCTRL1,  0x06},
+    {CC1101_REG_MDMCFG0,  0x00},
+    {CC1101_REG_MDMCFG1,  0x00},
+    {CC1101_REG_MDMCFG2,  0x30},
+    {CC1101_REG_MDMCFG3,  0x32},
+    {CC1101_REG_MDMCFG4,  0x67},
+    {CC1101_REG_MCSM0,    0x18},
+    {CC1101_REG_FOCCFG,   0x18},
+    {CC1101_REG_AGCCTRL0, 0x40},
+    {CC1101_REG_AGCCTRL1, 0x00},
+    {CC1101_REG_AGCCTRL2, 0x03},
+    {CC1101_REG_WORCTRL,  0xFB},
+    {CC1101_REG_FREND0,   0x11},
+    {CC1101_REG_FREND1,   0xB6},
+    {0, 0},
+};
+
+static const cc1101_reg_entry_t s_preset_ook650[] = {
+    {CC1101_REG_IOCFG0,   0x0D},
+    {CC1101_REG_FIFOTHR,  0x07},
+    {CC1101_REG_PKTCTRL0, 0x32},
+    {CC1101_REG_FSCTRL1,  0x06},
+    {CC1101_REG_MDMCFG0,  0x00},
+    {CC1101_REG_MDMCFG1,  0x00},
+    {CC1101_REG_MDMCFG2,  0x30},
+    {CC1101_REG_MDMCFG3,  0x32},
+    {CC1101_REG_MDMCFG4,  0x17},
+    {CC1101_REG_MCSM0,    0x18},
+    {CC1101_REG_FOCCFG,   0x18},
+    {CC1101_REG_AGCCTRL0, 0x91},
+    {CC1101_REG_AGCCTRL1, 0x00},
+    {CC1101_REG_AGCCTRL2, 0x07},
+    {CC1101_REG_WORCTRL,  0xFB},
+    {CC1101_REG_FREND0,   0x11},
+    {CC1101_REG_FREND1,   0xB6},
+    {0, 0},
+};
+
+static const uint8_t s_ook_patable[8] = {0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 #define CC1101_STATUS_PARTNUM 0x30
 #define CC1101_STATUS_VERSION 0x31
@@ -131,6 +184,7 @@ static int32_t s_shared_buf[SUBGHZ_RAW_MAX_DURATIONS];
 static size_t s_rx_stream_expected = 0;
 static size_t s_rx_stream_received = 0;
 static uint32_t s_rx_stream_freq_hz = 0;
+static subghz_preset_t s_rx_stream_preset = SUBGHZ_PRESET_OOK270_ASYNC;
 static subghz_decoder_engine_t s_decoder_engine;
 static volatile bool s_decode_result_ready = false;
 static volatile uint32_t s_current_freq_hz = 433920000U;
@@ -152,6 +206,21 @@ static void IRAM_ATTR subghz_gdo0_isr_handler(void *arg);
 static void subghz_raw_timeout_cb(void *arg);
 static void subghz_stream_raw_capture(void);
 static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data);
+static esp_err_t cc1101_write_reg(uint8_t reg, uint8_t value);
+static esp_err_t cc1101_write_patable(const uint8_t *data, size_t len);
+static esp_err_t subghz_apply_preset(subghz_preset_t preset);
+
+static esp_err_t subghz_apply_preset(subghz_preset_t preset) {
+    const cc1101_reg_entry_t *tbl = (preset == SUBGHZ_PRESET_OOK270_ASYNC) ? s_preset_ook270 : s_preset_ook650;
+    esp_err_t err = ESP_OK;
+    for (int i = 0; tbl[i].reg != 0 && err == ESP_OK; i++) {
+        err = cc1101_write_reg(tbl[i].reg, tbl[i].val);
+    }
+    if (err == ESP_OK) {
+        err = cc1101_write_patable(s_ook_patable, 8);
+    }
+    return err;
+}
 
 static void subghz_build_default_snapshot_name(char *out, size_t out_len) {
     if (!out || out_len == 0) {
@@ -333,11 +402,11 @@ static void subghz_stream_raw_capture(void) {
     size_t offset = 0;
     while (offset < s_raw_stream_count) {
         size_t chunk = s_raw_stream_count - offset;
-        if (chunk > 19) {
-            chunk = 19;
+        if (chunk > 13) {
+            chunk = 13;
         }
 
-        uint8_t pkt[5 + 19 * 4] = {0};
+        uint8_t pkt[5 + 13 * 4] = {0};
         pkt[0] = SUBGHZ_STREAM_VERSION;
         pkt[1] = 2;
         pkt[2] = (uint8_t)(offset & 0xFF);
@@ -406,11 +475,15 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         if (s_rx_stream_expected > SUBGHZ_RAW_MAX_DURATIONS) s_rx_stream_expected = SUBGHZ_RAW_MAX_DURATIONS;
         s_rx_stream_received = 0;
         s_rx_stream_freq_hz = 0;
+        s_rx_stream_preset = SUBGHZ_PRESET_OOK270_ASYNC;
         if (length >= 8) {
             s_rx_stream_freq_hz = (uint32_t)data[4] |
                                   ((uint32_t)data[5] << 8) |
                                   ((uint32_t)data[6] << 16) |
-                                  ((uint32_t)data[7] << 24);
+                                  ((uint32_t)data[7] << 0x18);
+        }
+        if (length >= 9) {
+            s_rx_stream_preset = (data[8] == 1) ? SUBGHZ_PRESET_OOK650_ASYNC : SUBGHZ_PRESET_OOK270_ASYNC;
         }
         return;
     }
@@ -418,7 +491,10 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         if (length < 5) return;
         size_t offset = (size_t)data[2] | ((size_t)data[3] << 8);
         size_t count = (size_t)data[4];
-        if (length < 5 + count * 4 || offset + count > SUBGHZ_RAW_MAX_DURATIONS) return;
+        if (length < 5 + count * 4 || offset + count > SUBGHZ_RAW_MAX_DURATIONS) {
+            ESP_LOGE(TAG, "Stream chunk DROPPED: bounds check fail");
+            return;
+        }
         for (size_t i = 0; i < count; i++) {
             size_t base = 5 + i * 4;
             s_shared_buf[offset + i] = (int32_t)((uint32_t)data[base] |
@@ -427,11 +503,21 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
                                                     ((uint32_t)data[base + 3] << 24));
         }
         if (offset + count > s_rx_stream_received) s_rx_stream_received = offset + count;
+        if (offset == 0 && count > 0) {
+            ESP_LOGD(TAG, "Stream chunk[0]: count=%u first4=%ld %ld %ld %ld",
+                     (unsigned)count,
+                     (long)s_shared_buf[0], (long)s_shared_buf[1],
+                     (long)s_shared_buf[2], (long)s_shared_buf[3]);
+        }
         return;
     }
     if (packet_type == 6) {
         if (s_rx_stream_received > 0) {
-            (void)subghz_remote_manager_transmit_raw(s_shared_buf, s_rx_stream_received, s_rx_stream_freq_hz);
+            ESP_LOGD(TAG, "Stream TX trigger: %lu durations, first4=%ld %ld %ld %ld",
+                     (unsigned long)s_rx_stream_received,
+                     (long)s_shared_buf[0], (long)s_shared_buf[1],
+                     (long)s_shared_buf[2], (long)s_shared_buf[3]);
+            (void)subghz_remote_manager_transmit_raw(s_shared_buf, s_rx_stream_received, s_rx_stream_freq_hz, s_rx_stream_preset);
         }
     }
 }
@@ -536,6 +622,17 @@ static esp_err_t cc1101_strobe(uint8_t strobe_cmd) {
     uint8_t tx[1] = { strobe_cmd };
     uint8_t rx[1] = {0};
     return subghz_spi_transfer(tx, rx, sizeof(tx));
+}
+
+static esp_err_t cc1101_get_state(uint8_t *state) {
+    if (!state) return ESP_ERR_INVALID_ARG;
+    uint8_t tx[1] = { 0x3D };
+    uint8_t rx[1] = {0};
+    esp_err_t err = subghz_spi_transfer(tx, rx, sizeof(tx));
+    if (err == ESP_OK) {
+        *state = (rx[0] >> 4) & 0x07;
+    }
+    return err;
 }
 
 static esp_err_t cc1101_write_patable(const uint8_t *data, size_t len) {
@@ -657,31 +754,11 @@ static esp_err_t subghz_hw_start(void) {
     s_current_freq_hz = (uint32_t)((uint64_t)CONFIG_SUBGHZ_BASE_FREQ_MHZ * 10000ULL);
     uint32_t freq_word = (uint32_t)((((uint64_t)s_current_freq_hz) * 65536ULL) / 26000000ULL);
 
-    err = cc1101_write_reg(CC1101_REG_IOCFG0, 0x0D);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FIFOTHR, 0x07);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_PKTCTRL0, 0x32);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FSCTRL1, 0x06);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ2, (uint8_t)((freq_word >> 16) & 0xFF));
+    err = cc1101_write_reg(CC1101_REG_FREQ2, (uint8_t)((freq_word >> 16) & 0xFF));
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ1, (uint8_t)((freq_word >> 8) & 0xFF));
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ0, (uint8_t)(freq_word & 0xFF));
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG0, 0x00);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG1, 0x00);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG2, 0x30);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG3, 0x32);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG4, 0x17);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MCSM0, 0x18);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FOCCFG, 0x18);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_AGCCTRL0, 0x91);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_AGCCTRL1, 0x00);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_AGCCTRL2, 0x07);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_WORCTRL, 0xFB);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREND0, 0x11);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREND1, 0xB6);
 
-    if (err == ESP_OK) {
-        static const uint8_t ook_patable[8] = { 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-        err = cc1101_write_patable(ook_patable, 8);
-    }
+    if (err == ESP_OK) err = subghz_apply_preset(SUBGHZ_PRESET_OOK650_ASYNC);
 
     if (err == ESP_OK) err = cc1101_write_reg(0x0A, 0x00);
     if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SCAL);
@@ -951,101 +1028,6 @@ static void subghz_scan_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-static esp_err_t subghz_transmit_rmt(const int32_t *durations, size_t count) {
-    if (!durations || count == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    size_t chunk_count = 0;
-    for (size_t i = 0; i < count; i++) {
-        uint32_t duration = (uint32_t)llabs((long long)durations[i]);
-        if (duration == 0) {
-            continue;
-        }
-        chunk_count += (duration + SUBGHZ_RMT_MAX_DURATION_TICKS - 1U) / SUBGHZ_RMT_MAX_DURATION_TICKS;
-    }
-    if (chunk_count == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    size_t symbol_capacity = (chunk_count + 1U) / 2U;
-    rmt_symbol_word_t *symbols = heap_caps_malloc(symbol_capacity * sizeof(rmt_symbol_word_t), MALLOC_CAP_DMA);
-    if (!symbols) {
-        return ESP_ERR_NO_MEM;
-    }
-    memset(symbols, 0, symbol_capacity * sizeof(rmt_symbol_word_t));
-
-    size_t symbol_count = 0;
-    bool fill_first = true;
-    for (size_t i = 0; i < count; i++) {
-        bool level = durations[i] > 0;
-        uint32_t remaining = (uint32_t)llabs((long long)durations[i]);
-        while (remaining > 0) {
-            uint32_t chunk = remaining;
-            if (chunk > SUBGHZ_RMT_MAX_DURATION_TICKS) {
-                chunk = SUBGHZ_RMT_MAX_DURATION_TICKS;
-            }
-            if (fill_first) {
-                symbols[symbol_count].level0 = level;
-                symbols[symbol_count].duration0 = chunk;
-                fill_first = false;
-            } else {
-                symbols[symbol_count].level1 = level;
-                symbols[symbol_count].duration1 = chunk;
-                symbol_count++;
-                fill_first = true;
-            }
-            remaining -= chunk;
-        }
-    }
-    if (!fill_first) {
-        symbols[symbol_count].level1 = symbols[symbol_count].level0;
-        symbols[symbol_count].duration1 = 0;
-        symbol_count++;
-    }
-
-    size_t hw_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
-    if ((hw_symbols % 2U) != 0U) {
-        hw_symbols++;
-    }
-
-    rmt_channel_handle_t tx_chan = NULL;
-    rmt_encoder_handle_t copy_encoder = NULL;
-    esp_err_t err = ESP_OK;
-
-    rmt_tx_channel_config_t cfg = {
-        .clk_src = RMT_CLK_SRC_DEFAULT,
-        .gpio_num = (gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN,
-        .mem_block_symbols = hw_symbols,
-        .resolution_hz = SUBGHZ_RMT_RESOLUTION_HZ,
-        .trans_queue_depth = 1,
-        .flags = {.with_dma = false, .invert_out = false},
-    };
-
-    err = rmt_new_tx_channel(&cfg, &tx_chan);
-    if (err == ESP_OK) err = rmt_enable(tx_chan);
-    if (err == ESP_OK) err = rmt_new_copy_encoder(&(rmt_copy_encoder_config_t){}, &copy_encoder);
-    if (err == ESP_OK) {
-        err = rmt_transmit(
-            tx_chan,
-            copy_encoder,
-            symbols,
-            symbol_count * sizeof(rmt_symbol_word_t),
-            &(rmt_transmit_config_t){.loop_count = 0});
-    }
-    if (err == ESP_OK) err = rmt_tx_wait_all_done(tx_chan, -1);
-
-    if (copy_encoder) {
-        (void)rmt_del_encoder(copy_encoder);
-    }
-    if (tx_chan) {
-        (void)rmt_disable(tx_chan);
-        (void)rmt_del_channel(tx_chan);
-    }
-    heap_caps_free(symbols);
-    return err;
-}
-
 bool subghz_remote_manager_start(bool stream_to_peer) {
     s_stream_to_peer = stream_to_peer;
     s_stop_requested = false;
@@ -1166,6 +1148,7 @@ bool subghz_remote_manager_take_decode_result(subghz_decoded_signal_t *out_resul
     out_result->code = res->code;
     out_result->bits = res->bits;
     out_result->frequency_hz = (int)s_current_freq_hz;
+    out_result->te = (int)res->te_short;
     out_result->decoded = true;
 
     subghz_stream_decoder_format_result(res, out_result->info, sizeof(out_result->info));
@@ -1175,7 +1158,7 @@ bool subghz_remote_manager_take_decode_result(subghz_decoded_signal_t *out_resul
     return true;
 }
 
-bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, uint32_t frequency_hz) {
+bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, uint32_t frequency_hz, subghz_preset_t preset) {
     if (!durations || count == 0) {
         subghz_set_last_error("no raw durations");
         return false;
@@ -1187,11 +1170,87 @@ bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, 
     if (!subghz_validate_pin_config()) {
         return false;
     }
-    if (subghz_hw_start() != ESP_OK) {
+
+    rmt_channel_handle_t tx_chan = NULL;
+    rmt_encoder_handle_t copy_encoder = NULL;
+    rmt_symbol_word_t *symbols = NULL;
+
+    s_spi_host = subghz_spi_host_from_config();
+
+    gpio_isr_handler_remove((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN);
+    gpio_set_level((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, 0);
+    gpio_config_t gdo_cfg = {
+        .pin_bit_mask = (1ULL << CONFIG_SUBGHZ_GDO0_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&gdo_cfg);
+    if (err != ESP_OK) {
+        subghz_set_last_error("gdo0 output config failed");
         return false;
     }
 
-    esp_err_t err = ESP_OK;
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = CONFIG_SUBGHZ_SPI_MOSI_PIN,
+        .miso_io_num = CONFIG_SUBGHZ_SPI_MISO_PIN,
+        .sclk_io_num = CONFIG_SUBGHZ_SPI_SCK_PIN,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 32,
+    };
+    err = spi_bus_initialize(s_spi_host, &bus_cfg, SPI_DMA_CH_AUTO);
+    if (err == ESP_OK) {
+        s_spi_bus_initialized_by_us = true;
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        s_spi_bus_initialized_by_us = false;
+        err = ESP_OK;
+    }
+    if (err != ESP_OK) {
+        subghz_set_last_error("spi bus init failed");
+        return false;
+    }
+
+    spi_device_interface_config_t dev_cfg = {
+        .clock_speed_hz = CONFIG_SUBGHZ_SPI_CLOCK_HZ,
+        .mode = 0,
+        .spics_io_num = CONFIG_SUBGHZ_CSN_PIN,
+        .queue_size = 1,
+    };
+    err = spi_bus_add_device(s_spi_host, &dev_cfg, &s_spi_dev);
+    if (err != ESP_OK) {
+        subghz_set_last_error("add spi device failed");
+        if (s_spi_bus_initialized_by_us) {
+            spi_bus_free(s_spi_host);
+            s_spi_bus_initialized_by_us = false;
+        }
+        s_spi_dev = NULL;
+        return false;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(2));
+    err = cc1101_strobe(CC1101_STROBE_SIDLE);
+    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SRES);
+    if (err != ESP_OK) {
+        subghz_set_last_error("radio reset failed");
+        subghz_hw_stop();
+        return false;
+    }
+    ets_delay_us(1000);
+    (void)cc1101_strobe(CC1101_STROBE_SIDLE);
+    (void)cc1101_strobe(CC1101_STROBE_SFRX);
+    (void)cc1101_strobe(CC1101_STROBE_SFTX);
+
+    err = cc1101_write_reg(CC1101_REG_IOCFG0, 0x2E);
+    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_IOCFG2, 0x2E);
+    if (err != ESP_OK) {
+        subghz_set_last_error("tx reset sequence failed");
+        subghz_hw_stop();
+        return false;
+    }
+
+    err = subghz_apply_preset(preset);
 
     if (frequency_hz == 0) {
         frequency_hz = (uint32_t)((uint64_t)CONFIG_SUBGHZ_BASE_FREQ_MHZ * 10000ULL);
@@ -1201,55 +1260,144 @@ bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, 
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ2, (uint8_t)((freq_word >> 16) & 0xFF));
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ1, (uint8_t)((freq_word >> 8) & 0xFF));
     if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ0, (uint8_t)(freq_word & 0xFF));
+    if (err == ESP_OK) err = cc1101_write_reg(0x0A, 0x00);
 
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_IOCFG0, 0x0D);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_PKTCTRL0, 0x32);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG2, 0x30);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG3, 0x32);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_MDMCFG4, 0x17);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREND0, 0x11);
-    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SIDLE);
-    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SFTX);
-    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_STX);
-
-    if (err != ESP_OK) {
-        subghz_set_last_error("tx setup failed");
-        subghz_hw_stop();
-        return false;
-    }
-
-    bool tx_ready = false;
-    for (int retry = 0; retry < 100; retry++) {
-        uint8_t marc = 0;
-        if (cc1101_read_status(0x35, &marc) == ESP_OK && (marc & 0x1F) == 0x13) {
-            tx_ready = true;
-            break;
+    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SCAL);
+    if (err == ESP_OK) {
+        for (int i = 0; i < 200; i++) {
+            uint8_t state = 0;
+            if (cc1101_get_state(&state) == ESP_OK && state == 0x00) {
+                break;
+            }
+            ets_delay_us(100);
         }
-        ets_delay_us(100);
     }
-    if (!tx_ready) {
-        uint8_t marc = 0;
-        cc1101_read_status(0x35, &marc);
-        ESP_LOGE(TAG, "TX failed: MARCSTATE=0x%02X (expected 0x13)", marc);
-        subghz_set_last_error("cc1101 failed to enter TX");
+    if (err != ESP_OK) {
+        subghz_set_last_error("tx register setup failed");
         subghz_hw_stop();
         return false;
     }
-    ESP_LOGI(TAG, "TX ready: freq=%u Hz, %lu durations", (unsigned)frequency_hz, (unsigned long)count);
 
-    gpio_isr_handler_remove((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN);
-    gpio_set_direction((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, GPIO_MODE_OUTPUT);
+    size_t chunk_count = 0;
+    for (size_t i = 0; i < count; i++) {
+        uint32_t dur = (uint32_t)llabs((long long)durations[i]);
+        if (dur == 0) continue;
+        chunk_count += (dur + SUBGHZ_RMT_MAX_DURATION_TICKS - 1U) / SUBGHZ_RMT_MAX_DURATION_TICKS;
+    }
+    if (chunk_count == 0) {
+        subghz_set_last_error("no valid durations");
+        subghz_hw_stop();
+        return false;
+    }
+
+    size_t symbol_capacity = (chunk_count + 1U) / 2U;
+    symbols = heap_caps_malloc(symbol_capacity * sizeof(rmt_symbol_word_t), MALLOC_CAP_DMA);
+    if (!symbols) {
+        subghz_set_last_error("rmt symbol alloc failed");
+        subghz_hw_stop();
+        return false;
+    }
+    memset(symbols, 0, symbol_capacity * sizeof(rmt_symbol_word_t));
+
+    size_t symbol_count = 0;
+    bool fill_first = true;
+    for (size_t i = 0; i < count; i++) {
+        bool level = durations[i] > 0;
+        uint32_t remaining = (uint32_t)llabs((long long)durations[i]);
+        while (remaining > 0) {
+            uint32_t chunk = remaining;
+            if (chunk > SUBGHZ_RMT_MAX_DURATION_TICKS) chunk = SUBGHZ_RMT_MAX_DURATION_TICKS;
+            if (fill_first) {
+                symbols[symbol_count].level0 = level;
+                symbols[symbol_count].duration0 = chunk;
+                fill_first = false;
+            } else {
+                symbols[symbol_count].level1 = level;
+                symbols[symbol_count].duration1 = chunk;
+                symbol_count++;
+                fill_first = true;
+            }
+            remaining -= chunk;
+        }
+    }
+    if (!fill_first) {
+        symbols[symbol_count].level1 = symbols[symbol_count].level0;
+        symbols[symbol_count].duration1 = 0;
+        symbol_count++;
+    }
+
+    size_t hw_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
+    if ((hw_symbols % 2U) != 0U) hw_symbols++;
+
+    rmt_tx_channel_config_t rmt_cfg = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .gpio_num = (gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN,
+        .mem_block_symbols = hw_symbols,
+        .resolution_hz = SUBGHZ_RMT_RESOLUTION_HZ,
+        .trans_queue_depth = 1,
+        .flags = {.with_dma = true, .invert_out = false},
+    };
+    err = rmt_new_tx_channel(&rmt_cfg, &tx_chan);
+    if (err == ESP_OK) err = rmt_enable(tx_chan);
+    if (err == ESP_OK) err = rmt_new_copy_encoder(&(rmt_copy_encoder_config_t){}, &copy_encoder);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "RMT setup failed: %s", esp_err_to_name(err));
+        subghz_set_last_error("rmt setup failed");
+        if (copy_encoder) rmt_del_encoder(copy_encoder);
+        if (tx_chan) { rmt_disable(tx_chan); rmt_del_channel(tx_chan); }
+        heap_caps_free(symbols);
+        subghz_hw_stop();
+        return false;
+    }
+
+    ESP_LOGI(TAG, "TX: freq=%u Hz, preset=%s, %lu durations",
+             (unsigned)frequency_hz,
+             (preset == SUBGHZ_PRESET_OOK270_ASYNC) ? "OOK270" : "OOK650",
+             (unsigned long)count);
+
+    err = cc1101_strobe(CC1101_STROBE_STX);
+    if (err != ESP_OK) {
+        subghz_set_last_error("stx failed");
+        goto tx_cleanup;
+    }
+
+    {
+        bool tx_ready = false;
+        for (int retry = 0; retry < 200; retry++) {
+            uint8_t state = 0;
+            if (cc1101_get_state(&state) == ESP_OK && state == 0x02) {
+                tx_ready = true;
+                break;
+            }
+            ets_delay_us(100);
+        }
+        if (!tx_ready) {
+            uint8_t state = 0;
+            cc1101_get_state(&state);
+            ESP_LOGE(TAG, "TX failed: STATE=0x%02X (expected 0x02 TX)", state);
+            subghz_set_last_error("cc1101 failed to enter TX");
+            goto tx_cleanup;
+        }
+    }
+
+    err = rmt_transmit(
+        tx_chan, copy_encoder, symbols,
+        symbol_count * sizeof(rmt_symbol_word_t),
+        &(rmt_transmit_config_t){.loop_count = 0});
+    if (err == ESP_OK) err = rmt_tx_wait_all_done(tx_chan, -1);
+
+tx_cleanup:
     gpio_set_level((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, 0);
-    ets_delay_us(1000);
-
-    err = subghz_transmit_rmt(durations, count);
-    gpio_set_level((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, 0);
-
     (void)cc1101_strobe(CC1101_STROBE_SIDLE);
     gpio_set_direction((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, GPIO_MODE_INPUT);
+
+    if (copy_encoder) rmt_del_encoder(copy_encoder);
+    if (tx_chan) { rmt_disable(tx_chan); rmt_del_channel(tx_chan); }
+    heap_caps_free(symbols);
+
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "RMT TX failed: %s", esp_err_to_name(err));
-        subghz_set_last_error("hardware tx failed");
+        ESP_LOGE(TAG, "TX failed: %s", esp_err_to_name(err));
+        subghz_set_last_error("tx failed");
         subghz_hw_stop();
         return false;
     }
@@ -1571,10 +1719,11 @@ bool subghz_remote_manager_take_decode_result(subghz_decoded_signal_t *out_resul
     (void)out_result;
     return false;
 }
-bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, uint32_t frequency_hz) {
+bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, uint32_t frequency_hz, subghz_preset_t preset) {
     (void)durations;
     (void)count;
     (void)frequency_hz;
+    (void)preset;
     return false;
 }
 void subghz_remote_manager_register_stream_handler(void) {}
