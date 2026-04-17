@@ -654,7 +654,9 @@ static void subghz_back_to_root_menu(void) {
     s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
     options_view_set_selected(s_ov, 0);
 
+#ifdef CONFIG_USE_TOUCHSCREEN
     subghz_update_scroll_buttons_visibility();
+#endif
 }
 
 static void subghz_saved_list_prev_page_cb(lv_event_t *e) {
@@ -757,7 +759,9 @@ static void subghz_saved_list_reload(void) {
     s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
     options_view_set_selected(s_ov, 0);
 
+#ifdef CONFIG_USE_TOUCHSCREEN
     subghz_update_scroll_buttons_visibility();
+#endif
 }
 
 static void subghz_analyze_raw_signal(const int32_t *dur, size_t count, char *out, size_t out_len) {
