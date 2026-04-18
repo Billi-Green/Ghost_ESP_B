@@ -1,5 +1,5 @@
 
-<img width="800" height="990" alt="ghostesp_white_text_logo2" src="https://github.com/user-attachments/assets/f2cb3bb4-ab79-4679-8db1-beddc306ba07" />
+<img width="800" alt="ghostesp_white_text_logo2" src="https://github.com/user-attachments/assets/f2cb3bb4-ab79-4679-8db1-beddc306ba07" />
 
 GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing tool. Built on ESP-IDF.
 
@@ -219,7 +219,7 @@ GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing to
 
 ## ESP32 Firmware Comparison
 
-<img width="800" height="2400" alt="image" src="https://github.com/user-attachments/assets/005c96f0-4d0a-4f97-926c-99059dfb9e21" />
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/005c96f0-4d0a-4f97-926c-99059dfb9e21" />
 
 
 
