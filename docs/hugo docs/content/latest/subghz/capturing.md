@@ -50,7 +50,7 @@ subghz save [name_hint]
 
 ## Protocol decoding
 
-GhostESP automatically attempts to decode captured signals using 20+ protocols including:
+GhostESP automatically attempts to decode captured signals using 30+ protocols including:
 
 - Princeton
 - CAME
@@ -59,6 +59,9 @@ GhostESP automatically attempts to decode captured signals using 20+ protocols i
 - Chamberlain
 - Linear
 - KeeLoq
+- Dooya
+- Dickert MAHS
+- Nord ICE
 - And many more (see [Supported Protocols]({{< relref "protocols.md" >}}))
 
 If the protocol is recognized, GhostESP displays:

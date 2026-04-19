@@ -7,6 +7,9 @@
 
 #define SUBGHZ_DECODED_PROTO_MAX 32
 #define SUBGHZ_DECODED_INFO_MAX 128
+#define SUBGHZ_PRESET_NAME_MAX 48
+#define SUBGHZ_CUSTOM_PRESET_BLOB_MAX 64
+#define SUBGHZ_PRESERVED_EXTRA_MAX 512
 
 typedef struct {
     char protocol[SUBGHZ_DECODED_PROTO_MAX];
@@ -16,6 +19,11 @@ typedef struct {
     int frequency_hz;
     int te;
     bool decoded;
+    char preset_name[SUBGHZ_PRESET_NAME_MAX];
+    char custom_preset_blob[SUBGHZ_CUSTOM_PRESET_BLOB_MAX];
+    char *preserved_extra;
+    bool raw_truncated;
+    uint32_t raw_truncated_count;
 } subghz_decoded_signal_t;
 
 int32_t subghz_protocol_te(const char *protocol);
@@ -40,6 +48,20 @@ bool subghz_decode_keeloq(const int32_t *dur, size_t count, uint64_t *out_code, 
 bool subghz_decode_faac_slh(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
 bool subghz_decode_alutech_at_4n(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
 bool subghz_decode_marantec(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_ansonic(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_bett(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_clemsa(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_dickert_mahs(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_dooya(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_elplast(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_marantec24(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_hollarm(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_hay21(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_feron(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_roger(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_treadmill37(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_keyfinder(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
+bool subghz_decode_nord_ice(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits);
 
 bool subghz_decode_signal(const int32_t *dur, size_t count, subghz_decoded_signal_t *result);
 bool subghz_build_raw_from_decoded(const char *protocol,
@@ -49,7 +71,7 @@ bool subghz_build_raw_from_decoded(const char *protocol,
                                    size_t max_count,
                                    size_t *out_count);
 
-#define SUBGHZ_STREAM_DECODER_MAX_PROTOCOLS 24
+#define SUBGHZ_STREAM_DECODER_MAX_PROTOCOLS 32
 
 typedef struct subghz_stream_decoder subghz_stream_decoder_t;
 

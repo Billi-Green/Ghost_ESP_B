@@ -4,7 +4,7 @@ description: "Reference for SubGHz protocols decoded by GhostESP"
 weight: 50
 ---
 
-GhostESP automatically attempts to decode captured signals using 20+ common SubGHz protocols. When a signal is successfully decoded, it can be reconstructed and transmitted reliably.
+GhostESP automatically attempts to decode captured signals using 30+ common SubGHz protocols. When a signal is successfully decoded, it can be reconstructed and transmitted reliably.
 
 ## Decoded protocols
 
@@ -94,6 +94,62 @@ GhostESP automatically attempts to decode captured signals using 20+ common SubG
 - **Common use**: Generic gate transmitters
 - **Frequency**: 433.92 MHz
 - **Bit length**: 24 bits
+
+### Ansonic
+- **Bit length**: 12 or 24 bits
+- **Encoding**: Fixed-code DIP-style encoding
+
+### Bett
+- **Bit length**: 18 bits
+- **Encoding**: Fixed-code DIP-style encoding
+
+### Clemsa
+- **Bit length**: 18 bits
+- **Encoding**: Fixed-code DIP-style encoding
+
+### Dickert MAHS
+- **Bit length**: 36 bits
+- **Decoded fields**: Factory code and user code
+
+### Dooya
+- **Bit length**: 40 bits
+- **Decoded fields**: Serial number, channel, and button
+
+### Elplast
+- **Bit length**: 18 bits
+- **Encoding**: Fixed-code DIP-style encoding
+
+### Marantec24
+- **Bit length**: 24 bits
+- **Decoded fields**: Serial number and button
+
+### Hollarm
+- **Bit length**: 42 bits
+- **Decoded fields**: Serial number, button, and checksum
+
+### Hay21
+- **Bit length**: 21 bits
+- **Decoded fields**: Serial number, button, and counter
+
+### Feron
+- **Bit length**: 32 bits
+- **Decoded fields**: Serial number and command
+
+### Roger
+- **Bit length**: 28 bits
+- **Decoded fields**: Serial number and button
+
+### Treadmill37
+- **Bit length**: 37 bits
+- **Decoded fields**: Serial number and button
+
+### KeyFinder
+- **Bit length**: 24 bits
+- **Decoded fields**: Serial number and device ID
+
+### Nord ICE
+- **Bit length**: 33 bits
+- **Decoded fields**: Serial number and button
 
 ## Raw signal fallback
 

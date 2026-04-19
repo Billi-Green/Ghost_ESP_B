@@ -512,7 +512,21 @@ static bool subghz_local_save_snapshot(const char *name_hint,
                         ? decoded->frequency_hz
                         : SUBGHZ_BASE_FREQ_HZ;
     fprintf(f, "Frequency: %d\n", save_freq);
-    fprintf(f, "Preset: FuriHalSubGhzPresetOok270Async\n");
+
+    const char *preset_str = "FuriHalSubGhzPresetOok270Async";
+    if (decoded && decoded->decoded && decoded->preset_name[0] != '\0') {
+        preset_str = decoded->preset_name;
+    } else if (decoded && decoded->decoded) {
+        subghz_preset_t dp = SUBGHZ_PRESET_OOK270_ASYNC;
+        /* infer from decoded if no preset_name */
+        (void)dp;
+    }
+    fprintf(f, "Preset: %s\n", preset_str);
+
+    if (decoded && decoded->decoded && decoded->custom_preset_blob[0] != '\0') {
+        fputs(decoded->custom_preset_blob, f);
+        fputc('\n', f);
+    }
 
     if (decoded && decoded->decoded) {
         int bits = subghz_normalize_decoded_bits(decoded->protocol, decoded->bits);
@@ -529,6 +543,9 @@ static bool subghz_local_save_snapshot(const char *name_hint,
             fprintf(f, "TE: %d\n", decoded->te);
         }
         fprintf(f, "Manufacture: Unknown\n");
+        if (decoded->preserved_extra) {
+            fputs(decoded->preserved_extra, f);
+        }
     } else {
         fprintf(f, "Protocol: RAW\n");
 
@@ -764,6 +781,41 @@ static void subghz_saved_list_reload(void) {
 #endif
 }
 
+static bool subghz_key_match(const char *line, const char *key) {
+    size_t klen = strlen(key);
+    for (size_t i = 0; i < klen; i++) {
+        char a = line[i], b = key[i];
+        if (a >= 'A' && a <= 'Z') a += 32;
+        if (b >= 'A' && b <= 'Z') b += 32;
+        if (a != b) return false;
+    }
+    return true;
+}
+
+static const char *subghz_skip_key_colon(const char *line, size_t key_len) {
+    const char *p = line + key_len;
+    while (*p == ' ' || *p == ':') p++;
+    return p;
+}
+
+static subghz_preset_t subghz_parse_preset(const char *v) {
+    if (strstr(v, "Ook650") || strstr(v, "OOK650") || strstr(v, "ook650"))
+        return SUBGHZ_PRESET_OOK650_ASYNC;
+    if (strstr(v, "2FSK") && strstr(v, "Dev238"))
+        return SUBGHZ_PRESET_2FSK_DEV238_ASYNC;
+    if (strstr(v, "2FSK") && strstr(v, "Dev476"))
+        return SUBGHZ_PRESET_2FSK_DEV476_ASYNC;
+    if (strstr(v, "Custom") || strstr(v, "custom"))
+        return SUBGHZ_PRESET_CUSTOM;
+    return SUBGHZ_PRESET_OOK270_ASYNC;
+}
+
+static void subghz_trim_newline(char *s) {
+    size_t len = strlen(s);
+    while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r' || s[len - 1] == ' '))
+        s[--len] = '\0';
+}
+
 static void subghz_analyze_raw_signal(const int32_t *dur, size_t count, char *out, size_t out_len) {
     if (!dur || count < 4 || !out || out_len == 0) {
         if (out && out_len > 0) out[0] = '\0';
@@ -825,63 +877,88 @@ static bool subghz_build_snapshot_detail_text(const char *name, char *out, size_
     int bit_count = 0;
     char key_hex[128] = {0};
     int values = 0;
-    int32_t raw_vals[512];
+    size_t raw_cap = SUBGHZ_RAW_INITIAL_CAP;
+    int32_t *raw_vals = (int32_t *)malloc(raw_cap * sizeof(int32_t));
     size_t raw_count = 0;
+    bool raw_truncated = false;
     bool in_raw_data = false;
 
     char line[384];
     while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "Frequency:", 10) == 0) {
+        subghz_trim_newline(line);
+        if (line[0] == '#' || line[0] == '\0') {
             in_raw_data = false;
-            frequency_hz = atoi(line + 10);
-        } else if (strncmp(line, "Protocol:", 9) == 0) {
+            continue;
+        }
+
+        if (subghz_key_match(line, "Frequency:")) {
             in_raw_data = false;
-            char *val = line + 9;
-            while (*val == ' ') val++;
-            char *nl = strchr(val, '\n');
-            if (nl) *nl = '\0';
+            frequency_hz = atoi(subghz_skip_key_colon(line, 10));
+        } else if (subghz_key_match(line, "Protocol:")) {
+            in_raw_data = false;
+            const char *val = subghz_skip_key_colon(line, 9);
             snprintf(protocol, sizeof(protocol), "%.63s", val);
-        } else if (strncmp(line, "Bit:", 4) == 0) {
+        } else if (subghz_key_match(line, "Bit:")) {
             in_raw_data = false;
-            bit_count = atoi(line + 4);
-        } else if (strncmp(line, "Key:", 4) == 0) {
+            bit_count = atoi(subghz_skip_key_colon(line, 4));
+        } else if (subghz_key_match(line, "Key:")) {
             in_raw_data = false;
-            char *val = line + 4;
-            while (*val == ' ') val++;
-            char *nl = strchr(val, '\n');
-            if (nl) *nl = '\0';
+            const char *val = subghz_skip_key_colon(line, 4);
             snprintf(key_hex, sizeof(key_hex), "%.127s", val);
-        } else if (strncmp(line, "RAW_Data:", 9) == 0) {
+        } else if (subghz_key_match(line, "RAW_Data:")) {
             in_raw_data = true;
-            char *csv = line + 9;
-            char *nl = strchr(csv, '\n');
-            if (nl) *nl = '\0';
+            char *csv = (char *)subghz_skip_key_colon(line, 9);
             char *saveptr = NULL;
             char *tok = strtok_r(csv, " ,", &saveptr);
             while (tok) {
                 if (*tok != '\0') {
                     values++;
-                    if (raw_count < 512) {
+                    if (raw_count < raw_cap) {
                         raw_vals[raw_count++] = (int32_t)strtol(tok, NULL, 10);
+                    } else if (raw_cap < (size_t)SUBGHZ_RAW_MAX_CAP) {
+                        size_t new_cap = raw_cap * 2;
+                        if (new_cap > (size_t)SUBGHZ_RAW_MAX_CAP) new_cap = SUBGHZ_RAW_MAX_CAP;
+                        int32_t *tmp = (int32_t *)realloc(raw_vals, new_cap * sizeof(int32_t));
+                        if (tmp) {
+                            raw_vals = tmp;
+                            raw_cap = new_cap;
+                            raw_vals[raw_count++] = (int32_t)strtol(tok, NULL, 10);
+                        } else {
+                            raw_truncated = true;
+                        }
+                    } else {
+                        raw_truncated = true;
                     }
                 }
                 tok = strtok_r(NULL, " ,", &saveptr);
             }
         } else if (in_raw_data) {
-            char *csv = line;
-            char *nl = strchr(csv, '\n');
-            if (nl) *nl = '\0';
             char *saveptr = NULL;
-            char *tok = strtok_r(csv, " ,", &saveptr);
+            char *tok = strtok_r(line, " ,", &saveptr);
             while (tok) {
                 if (*tok != '\0') {
                     values++;
-                    if (raw_count < 512) {
+                    if (raw_count < raw_cap) {
                         raw_vals[raw_count++] = (int32_t)strtol(tok, NULL, 10);
+                    } else if (raw_cap < (size_t)SUBGHZ_RAW_MAX_CAP) {
+                        size_t new_cap = raw_cap * 2;
+                        if (new_cap > (size_t)SUBGHZ_RAW_MAX_CAP) new_cap = SUBGHZ_RAW_MAX_CAP;
+                        int32_t *tmp = (int32_t *)realloc(raw_vals, new_cap * sizeof(int32_t));
+                        if (tmp) {
+                            raw_vals = tmp;
+                            raw_cap = new_cap;
+                            raw_vals[raw_count++] = (int32_t)strtol(tok, NULL, 10);
+                        } else {
+                            raw_truncated = true;
+                        }
+                    } else {
+                        raw_truncated = true;
                     }
                 }
                 tok = strtok_r(NULL, " ,", &saveptr);
             }
+        } else {
+            in_raw_data = false;
         }
     }
     fclose(f);
@@ -899,11 +976,22 @@ static bool subghz_build_snapshot_detail_text(const char *name, char *out, size_
         snprintf(out, out_len, "%s %dbit\n%s\n%s",
                  protocol, bit_count, key_hex, freq_str);
     } else if (decode_buf[0] != '\0') {
-        snprintf(out, out_len, "%s\n%s",
-                 decode_buf, freq_str);
+        if (raw_truncated) {
+            snprintf(out, out_len, "%s\n%s\n%zu pulses, truncated",
+                     decode_buf, freq_str, raw_count);
+        } else {
+            snprintf(out, out_len, "%s\n%s",
+                     decode_buf, freq_str);
+        }
     } else {
-        snprintf(out, out_len, "RAW\n%s", freq_str);
+        if (raw_truncated) {
+            snprintf(out, out_len, "RAW\n%s\n%zu pulses, truncated", freq_str, raw_count);
+        } else {
+            snprintf(out, out_len, "RAW\n%s", freq_str);
+        }
     }
+
+    free(raw_vals);
     return true;
 }
 
@@ -926,25 +1014,40 @@ static bool subghz_parse_raw_file(const char *path, int32_t *out, size_t max_cou
     size_t count = 0;
     uint32_t freq = 0;
     subghz_preset_t preset = SUBGHZ_PRESET_OOK270_ASYNC;
+    bool in_raw_data = false;
     char line[512];
     while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "Frequency:", 10) == 0) {
-            freq = (uint32_t)atoi(line + 10);
-        } else if (strncmp(line, "Preset:", 7) == 0) {
-            char *v = line + 7;
-            while (*v == ' ') v++;
-            if (strstr(v, "Ook650") || strstr(v, "OOK650") || strstr(v, "ook650")) {
-                preset = SUBGHZ_PRESET_OOK650_ASYNC;
-            } else {
-                preset = SUBGHZ_PRESET_OOK270_ASYNC;
-            }
-        } else if (strncmp(line, "RAW_Data:", 9) == 0) {
+        subghz_trim_newline(line);
+        if (line[0] == '#' || line[0] == '\0') {
+            in_raw_data = false;
+            continue;
+        }
+
+        if (subghz_key_match(line, "Frequency:")) {
+            in_raw_data = false;
+            freq = (uint32_t)atoi(subghz_skip_key_colon(line, 10));
+        } else if (subghz_key_match(line, "Preset:")) {
+            in_raw_data = false;
+            preset = subghz_parse_preset(subghz_skip_key_colon(line, 7));
+        } else if (subghz_key_match(line, "RAW_Data:")) {
+            in_raw_data = true;
             char *saveptr = NULL;
-            char *tok = strtok_r(line + 9, " ,\r\n", &saveptr);
+            char *tok = strtok_r((char *)subghz_skip_key_colon(line, 9), " ,", &saveptr);
             while (tok && count < max_count) {
                 out[count++] = (int32_t)strtol(tok, NULL, 10);
-                tok = strtok_r(NULL, " ,\r\n", &saveptr);
+                tok = strtok_r(NULL, " ,", &saveptr);
             }
+        } else if (in_raw_data) {
+            char *saveptr = NULL;
+            char *tok = strtok_r(line, " ,", &saveptr);
+            while (tok && count < max_count) {
+                if (*tok != '\0') {
+                    out[count++] = (int32_t)strtol(tok, NULL, 10);
+                }
+                tok = strtok_r(NULL, " ,", &saveptr);
+            }
+        } else {
+            in_raw_data = false;
         }
     }
     fclose(f);
@@ -985,41 +1088,77 @@ static bool subghz_parse_decoded_file(const char *path, subghz_decoded_signal_t 
     uint64_t code = 0;
     int key_bytes = 0;
     subghz_preset_t preset = SUBGHZ_PRESET_OOK270_ASYNC;
+    char preset_name[SUBGHZ_PRESET_NAME_MAX] = {0};
+    char extra_buf[SUBGHZ_PRESERVED_EXTRA_MAX] = {0};
+    size_t extra_len = 0;
+    bool in_custom_preset = false;
+    size_t custom_blob_len = 0;
 
     char line[384];
     while (fgets(line, sizeof(line), f)) {
-        if (strncmp(line, "Frequency:", 10) == 0) {
-            frequency_hz = atoi(line + 10);
-        } else if (strncmp(line, "Protocol:", 9) == 0) {
-            char *v = line + 9;
-            while (*v == ' ') v++;
-            char *nl = strchr(v, '\n');
-            if (nl) *nl = '\0';
-            snprintf(protocol, sizeof(protocol), "%.*s", (int)sizeof(protocol) - 1, v);
-        } else if (strncmp(line, "Preset:", 7) == 0) {
-            char *v = line + 7;
-            while (*v == ' ') v++;
-            if (strstr(v, "Ook650") || strstr(v, "OOK650") || strstr(v, "ook650")) {
-                preset = SUBGHZ_PRESET_OOK650_ASYNC;
+        subghz_trim_newline(line);
+        if (line[0] == '#' || line[0] == '\0') continue;
+
+        if (in_custom_preset) {
+            if (subghz_key_match(line, "Custom_preset_module:") ||
+                subghz_key_match(line, "Custom_preset_data:")) {
+                size_t line_len = strlen(line);
+                if (custom_blob_len + line_len + 1 < SUBGHZ_CUSTOM_PRESET_BLOB_MAX) {
+                    memcpy(out_decoded->custom_preset_blob + custom_blob_len, line, line_len);
+                    custom_blob_len += line_len;
+                    out_decoded->custom_preset_blob[custom_blob_len++] = '\n';
+                }
             } else {
-                preset = SUBGHZ_PRESET_OOK270_ASYNC;
+                in_custom_preset = false;
             }
-        } else if (strncmp(line, "Bit:", 4) == 0) {
-            bits = atoi(line + 4);
-        } else if (strncmp(line, "TE:", 3) == 0) {
-            te = atoi(line + 3);
-        } else if (strncmp(line, "Key:", 4) == 0) {
-            char *v = line + 4;
-            while (*v == ' ') v++;
-            char *nl = strchr(v, '\n');
-            if (nl) *nl = '\0';
+        }
+
+        if (subghz_key_match(line, "Frequency:")) {
+            frequency_hz = atoi(subghz_skip_key_colon(line, 10));
+        } else if (subghz_key_match(line, "Protocol:")) {
+            const char *val = subghz_skip_key_colon(line, 9);
+            snprintf(protocol, sizeof(protocol), "%.*s", (int)sizeof(protocol) - 1, val);
+        } else if (subghz_key_match(line, "Preset:")) {
+            const char *val = subghz_skip_key_colon(line, 7);
+            preset = subghz_parse_preset(val);
+            snprintf(preset_name, sizeof(preset_name), "%.*s", (int)sizeof(preset_name) - 1, val);
+            if (preset == SUBGHZ_PRESET_CUSTOM) {
+                in_custom_preset = true;
+            }
+        } else if (subghz_key_match(line, "Bit:")) {
+            bits = atoi(subghz_skip_key_colon(line, 4));
+        } else if (subghz_key_match(line, "TE:")) {
+            te = atoi(subghz_skip_key_colon(line, 3));
+        } else if (subghz_key_match(line, "Key:")) {
+            const char *val = subghz_skip_key_colon(line, 4);
             char *saveptr = NULL;
-            char *tok = strtok_r(v, " ", &saveptr);
+            char *tok = strtok_r((char *)val, " ", &saveptr);
             while (tok) {
                 unsigned long b = strtoul(tok, NULL, 16);
                 code = (code << 8) | (uint64_t)(b & 0xFFUL);
                 key_bytes++;
                 tok = strtok_r(NULL, " ", &saveptr);
+            }
+        } else if (subghz_key_match(line, "Manufacture:") ||
+                   subghz_key_match(line, "Repeat:") ||
+                   subghz_key_match(line, "Serial:") ||
+                   subghz_key_match(line, "Btn:") ||
+                   subghz_key_match(line, "Cnt:") ||
+                   subghz_key_match(line, "Seed:") ||
+                   subghz_key_match(line, "CounterMode:") ||
+                   subghz_key_match(line, "Key_Long:") ||
+                   subghz_key_match(line, "Filetype:") ||
+                   subghz_key_match(line, "Version:")) {
+            /* recognized but not consumed into code — preserve for round-trip */
+        } else if (!subghz_key_match(line, "RAW_Data:") &&
+                   !subghz_key_match(line, "Custom_preset_module:") &&
+                   !subghz_key_match(line, "Custom_preset_data:")) {
+            size_t line_len = strlen(line);
+            if (extra_len + line_len + 2 < SUBGHZ_PRESERVED_EXTRA_MAX) {
+                memcpy(extra_buf + extra_len, line, line_len);
+                extra_len += line_len;
+                extra_buf[extra_len++] = '\n';
+                extra_buf[extra_len] = '\0';
             }
         }
     }
@@ -1037,6 +1176,13 @@ static bool subghz_parse_decoded_file(const char *path, subghz_decoded_signal_t 
     out_decoded->frequency_hz = (frequency_hz > 0) ? frequency_hz : SUBGHZ_BASE_FREQ_HZ;
     out_decoded->te = (te > 0) ? te : (int)subghz_protocol_te(protocol);
     snprintf(out_decoded->protocol, sizeof(out_decoded->protocol), "%s", protocol);
+    snprintf(out_decoded->preset_name, sizeof(out_decoded->preset_name), "%s", preset_name);
+    if (extra_len > 0) {
+        out_decoded->preserved_extra = (char *)malloc(extra_len + 1);
+        if (out_decoded->preserved_extra) {
+            memcpy(out_decoded->preserved_extra, extra_buf, extra_len + 1);
+        }
+    }
     if (out_decoded->bits > 32) {
         snprintf(out_decoded->info, sizeof(out_decoded->info), "%s %dbit\nCode:0x%016llX",
                  out_decoded->protocol, out_decoded->bits, (unsigned long long)out_decoded->code);
@@ -1050,17 +1196,34 @@ static bool subghz_parse_decoded_file(const char *path, subghz_decoded_signal_t 
     return true;
 }
 
+static size_t subghz_sanitize_pulses(int32_t *durations, size_t count) {
+    if (!durations || count == 0) return 0;
+    size_t write = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (durations[i] == 0) continue;
+        durations[write++] = durations[i];
+    }
+    return write;
+}
+
 static bool subghz_send_remote_replay(const int32_t *durations, size_t count, uint32_t freq_hz, subghz_preset_t preset) {
     if (!esp_comm_manager_is_connected() || !durations || count == 0) {
         return false;
     }
 
-    uint8_t start_pkt[9] = {
-        SUBGHZ_STREAM_VERSION, 4,
+    uint8_t preset_byte = 0;
+    if (preset == SUBGHZ_PRESET_OOK650_ASYNC) preset_byte = 1;
+    else if (preset == SUBGHZ_PRESET_2FSK_DEV238_ASYNC) preset_byte = 2;
+    else if (preset == SUBGHZ_PRESET_2FSK_DEV476_ASYNC) preset_byte = 3;
+    else if (preset == SUBGHZ_PRESET_CUSTOM) preset_byte = 4;
+
+    uint8_t start_pkt[13] = {
+        SUBGHZ_STREAM_VERSION, 0x10,
         (uint8_t)(count & 0xFF), (uint8_t)((count >> 8) & 0xFF),
+        (uint8_t)((count >> 16) & 0xFF), (uint8_t)((count >> 24) & 0xFF),
         (uint8_t)(freq_hz & 0xFF), (uint8_t)((freq_hz >> 8) & 0xFF),
         (uint8_t)((freq_hz >> 16) & 0xFF), (uint8_t)((freq_hz >> 24) & 0xFF),
-        (uint8_t)((preset == SUBGHZ_PRESET_OOK650_ASYNC) ? 1 : 0)
+        preset_byte, 0, 0
     };
     if (!esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, start_pkt, sizeof(start_pkt))) {
         return false;
@@ -1075,7 +1238,7 @@ static bool subghz_send_remote_replay(const int32_t *durations, size_t count, ui
         }
         uint8_t pkt[5 + 13 * 4] = {0};
         pkt[0] = SUBGHZ_STREAM_VERSION;
-        pkt[1] = 5;
+        pkt[1] = 0x11;
         pkt[2] = (uint8_t)(offset & 0xFF);
         pkt[3] = (uint8_t)((offset >> 8) & 0xFF);
         pkt[4] = (uint8_t)chunk;
@@ -1095,7 +1258,7 @@ static bool subghz_send_remote_replay(const int32_t *durations, size_t count, ui
     }
 
     vTaskDelay(pdMS_TO_TICKS(20));
-    uint8_t end_pkt[2] = { SUBGHZ_STREAM_VERSION, 6 };
+    uint8_t end_pkt[2] = { SUBGHZ_STREAM_VERSION, 0x12 };
     return esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_SUBGHZ, end_pkt, sizeof(end_pkt));
 }
 
@@ -1253,20 +1416,31 @@ static void subghz_load_snapshot_action(void) {
     size_t count = 0;
     uint32_t file_freq_hz = 0;
     subghz_decoded_signal_t decoded;
+    memset(&decoded, 0, sizeof(decoded));
     subghz_preset_t preset = SUBGHZ_PRESET_OOK270_ASYNC;
+    bool have_raw = false;
 
     if (subghz_parse_raw_file(s_saved_file_paths[s_saved_index], durations, SUBGHZ_RAW_MAX_DURATIONS, &count, &file_freq_hz, &preset)) {
         if (file_freq_hz == 0) file_freq_hz = (uint32_t)SUBGHZ_BASE_FREQ_HZ;
+        have_raw = true;
     } else if (subghz_parse_decoded_file(s_saved_file_paths[s_saved_index], &decoded, &preset)) {
         file_freq_hz = (uint32_t)decoded.frequency_hz;
         if (file_freq_hz == 0) file_freq_hz = (uint32_t)SUBGHZ_BASE_FREQ_HZ;
         if (!subghz_build_raw_from_decoded(decoded.protocol, decoded.code, decoded.bits,
                                            durations, SUBGHZ_RAW_MAX_DURATIONS, &count)) {
+            if (decoded.preserved_extra) { free(decoded.preserved_extra); decoded.preserved_extra = NULL; }
             subghz_show_feedback_popup("SubGHz error", "Replay unsupported for this protocol");
             return;
         }
     } else {
         subghz_show_feedback_popup("SubGHz error", "Failed to parse snapshot file");
+        return;
+    }
+
+    count = subghz_sanitize_pulses(durations, count);
+    if (count == 0) {
+        if (decoded.preserved_extra) { free(decoded.preserved_extra); decoded.preserved_extra = NULL; }
+        subghz_show_feedback_popup("SubGHz error", "No valid pulses to replay");
         return;
     }
 
@@ -1276,6 +1450,7 @@ static void subghz_load_snapshot_action(void) {
         } else {
             subghz_show_feedback_popup("SubGHz error", "Failed to stream replay to remote");
         }
+        if (decoded.preserved_extra) { free(decoded.preserved_extra); decoded.preserved_extra = NULL; }
         return;
     }
 
@@ -1284,6 +1459,7 @@ static void subghz_load_snapshot_action(void) {
     } else {
         subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
     }
+    if (decoded.preserved_extra) { free(decoded.preserved_extra); decoded.preserved_extra = NULL; }
 }
 
 static void subghz_list_snapshots_action(void) {
@@ -1404,6 +1580,9 @@ static void subghz_capture_continue_waiting(void) {
     s_capture_raw_count = 0;
     s_remote_raw_expected = 0;
     s_remote_raw_received = 0;
+    if (s_remote_decoded.preserved_extra) {
+        free(s_remote_decoded.preserved_extra);
+    }
     memset(&s_remote_decoded, 0, sizeof(s_remote_decoded));
     if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
         if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
@@ -2028,7 +2207,13 @@ static void subghz_capture_mark_ready(void) {
 
 static void subghz_capture_mark_ready_with_decoded(const subghz_decoded_signal_t *decoded) {
     if (decoded) {
+        if (s_remote_decoded.preserved_extra) {
+            free(s_remote_decoded.preserved_extra);
+            s_remote_decoded.preserved_extra = NULL;
+        }
         s_remote_decoded = *decoded;
+        /* Transfer ownership of preserved_extra to s_remote_decoded */
+        ((subghz_decoded_signal_t *)decoded)->preserved_extra = NULL;
     }
     s_capture_buffer_valid = true;
     subghz_sanitize_snapshot_name(NULL, s_capture_name, sizeof(s_capture_name));
@@ -2473,16 +2658,23 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
     if (!data || length < 2) {
         return;
     }
-    if (data[0] != SUBGHZ_STREAM_VERSION) {
+    uint8_t ver = data[0];
+    if (ver != SUBGHZ_STREAM_VERSION && ver != 1) {
         return;
     }
 
     uint8_t packet_type = data[1];
-    if (packet_type == 1) {
-        if (length < 4) {
+
+    /* v2 REPLAY_BEGIN (0x10) or legacy start (4) */
+    if (packet_type == 0x10 || packet_type == 4) {
+        if (packet_type == 0x10 && length >= 8) {
+            s_remote_raw_expected = (size_t)data[2] | ((size_t)data[3] << 8) |
+                                    ((size_t)data[4] << 16) | ((size_t)data[5] << 24);
+        } else if (length >= 4) {
+            s_remote_raw_expected = (size_t)data[2] | ((size_t)data[3] << 8);
+        } else {
             return;
         }
-        s_remote_raw_expected = (size_t)data[2] | ((size_t)data[3] << 8);
         if (s_remote_raw_expected > SUBGHZ_RAW_MAX_DURATIONS) {
             s_remote_raw_expected = SUBGHZ_RAW_MAX_DURATIONS;
         }
@@ -2490,7 +2682,7 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         return;
     }
 
-    if (packet_type == 2) {
+    if (packet_type == 0x11 || packet_type == 5) {
         if (length < 5) {
             return;
         }
@@ -2513,7 +2705,7 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         return;
     }
 
-    if (packet_type == 3) {
+    if (packet_type == 0x12 || packet_type == 6) {
         if (s_remote_raw_received > 0) {
             size_t new_count = s_remote_raw_received;
             if (new_count > SUBGHZ_RAW_MAX_DURATIONS) {

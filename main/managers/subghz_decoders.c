@@ -891,27 +891,22 @@ bool subghz_decode_keeloq(const int32_t *dur, size_t count, uint64_t *out_code, 
     const int32_t te_s = 400, te_l = 800, te_d = 180;
 
     size_t start = 0;
-    for (size_t i = 2; i + 1 < count; i++) {
-        if (dur[i] > 0 && DURATION_DIFF(dur[i], te_s) < te_d) {
-            if (dur[i - 1] < 0 && DUR_ABS(dur[i - 1]) >= te_s * 8) {
-                size_t j = i;
-                int pre_ok = 1;
-                for (int k = 0; k < 4 && j + 1 < count; k++) {
-                    if (!(dur[j] > 0 && DURATION_DIFF(dur[j], te_s) < te_d &&
-                          dur[j + 1] < 0 && DURATION_DIFF(DUR_ABS(dur[j + 1]), te_s) < te_d)) {
-                        pre_ok = 0;
-                        break;
-                    }
-                    j += 2;
-                }
-                if (pre_ok && j + 1 < count) {
-                    if (dur[j] > 0 && DURATION_DIFF(dur[j], te_s) < te_d &&
-                        dur[j + 1] < 0 && DUR_ABS(dur[j + 1]) >= te_s * 5) {
-                        start = j + 2;
-                        break;
-                    }
-                }
+    for (size_t i = 0; i + 23 < count; i++) {
+        size_t j = i;
+        int pre_ok = 1;
+        for (int k = 0; k < 11; k++) {
+            if (!(dur[j] > 0 && DURATION_DIFF(dur[j], te_s) < te_d &&
+                  dur[j + 1] < 0 && DURATION_DIFF(DUR_ABS(dur[j + 1]), te_s) < te_d)) {
+                pre_ok = 0;
+                break;
             }
+            j += 2;
+        }
+        if (!pre_ok) continue;
+        if (dur[j] > 0 && DURATION_DIFF(dur[j], te_s) < te_d &&
+            dur[j + 1] < 0 && DURATION_DIFF(DUR_ABS(dur[j + 1]), te_s * 10) < te_d * 10) {
+            start = j + 2;
+            break;
         }
     }
     if (start == 0) return false;
@@ -1173,6 +1168,126 @@ static void format_keeloq(uint64_t code, int bits, char *out, size_t out_len) {
 
 static void format_marantec(uint64_t code, int bits, char *out, size_t out_len) {
     snprintf(out, out_len, "Marantec %dbit\nCode:0x%016llX", bits, (unsigned long long)code);
+}
+
+static void format_ansonic(uint64_t code, int bits, char *out, size_t out_len) {
+    int len = snprintf(out, out_len, "Ansonic %dbit\nDIP:", bits);
+    for (int i = 0; i < bits && len < (int)out_len - 2; i++) {
+        len += snprintf(out + len, out_len - len, "%d", (int)((code >> (bits - 1 - i)) & 1));
+    }
+}
+
+static void format_bett(uint64_t code, int bits, char *out, size_t out_len) {
+    int len = snprintf(out, out_len, "Bett %dbit\nDIP:", bits);
+    for (int i = 0; i < bits && len < (int)out_len - 2; i++) {
+        len += snprintf(out + len, out_len - len, "%d", (int)((code >> (bits - 1 - i)) & 1));
+    }
+}
+
+static void format_clemsa(uint64_t code, int bits, char *out, size_t out_len) {
+    int len = snprintf(out, out_len, "Clemsa %dbit\nDIP:", bits);
+    for (int i = 0; i < bits && len < (int)out_len - 2; i++) {
+        len += snprintf(out + len, out_len - len, "%d", (int)((code >> (bits - 1 - i)) & 1));
+    }
+}
+
+static void format_dickert_mahs(uint64_t code, int bits, char *out, size_t out_len) {
+    if (bits >= 36) {
+        uint32_t factory = (uint32_t)((code >> 12) & 0xFFFFFF);
+        uint32_t user = (uint32_t)(code & 0xFFF);
+        snprintf(out, out_len, "Dickert MAHS %dbit\nFac:0x%06lX User:0x%03lX", bits, factory, user);
+    } else {
+        snprintf(out, out_len, "Dickert MAHS %dbit\nCode:0x%016llX", bits, (unsigned long long)code);
+    }
+}
+
+static void format_dooya(uint64_t code, int bits, char *out, size_t out_len) {
+    if (bits >= 40) {
+        uint32_t serial = (uint32_t)((code >> 12) & 0xFFFFF);
+        uint8_t channel = (uint8_t)((code >> 8) & 0xF);
+        uint8_t button = (uint8_t)(code & 0xFF);
+        snprintf(out, out_len, "Dooya %dbit\nS/N:0x%05lX Ch:%d Btn:0x%02X", bits, serial, channel, button);
+    } else {
+        snprintf(out, out_len, "Dooya %dbit\nCode:0x%016llX", bits, (unsigned long long)code);
+    }
+}
+
+static void format_elplast(uint64_t code, int bits, char *out, size_t out_len) {
+    int len = snprintf(out, out_len, "Elplast %dbit\nDIP:", bits);
+    for (int i = 0; i < bits && len < (int)out_len - 2; i++) {
+        len += snprintf(out + len, out_len - len, "%d", (int)((code >> (bits - 1 - i)) & 1));
+    }
+}
+
+static void format_marantec24(uint64_t code, int bits, char *out, size_t out_len) {
+    snprintf(out, out_len, "Marantec24 %dbit\nKey:0x%06llX\nSerial:0x%05llX Btn:%01llX",
+             bits,
+             (unsigned long long)(code & 0xFFFFFFULL),
+             (unsigned long long)((code >> 4) & 0xFFFFFULL),
+             (unsigned long long)(code & 0xFULL));
+}
+
+static void format_hollarm(uint64_t code, int bits, char *out, size_t out_len) {
+    uint8_t sum = (uint8_t)(((code >> 32) & 0xFF) + ((code >> 24) & 0xFF) +
+                            ((code >> 16) & 0xFF) + ((code >> 8) & 0xFF));
+    snprintf(out, out_len, "Hollarm %dbit\nKey:0x%010llX\nSerial:0x%07llX Btn:%01llX Sum:%02X",
+             bits,
+             (unsigned long long)(code & 0x3FFFFFFFFFFULL),
+             (unsigned long long)((code >> 16) & 0x0FFFFFFFULL),
+             (unsigned long long)((code >> 8) & 0xFULL),
+             sum);
+}
+
+static void format_hay21(uint64_t code, int bits, char *out, size_t out_len) {
+    snprintf(out, out_len, "Hay21 %dbit\nKey:0x%06llX\nSerial:0x%02llX Btn:0x%02llX Cnt:%01llX",
+             bits,
+             (unsigned long long)(code & 0x1FFFFFULL),
+             (unsigned long long)((code >> 5) & 0xFFULL),
+             (unsigned long long)((code >> 13) & 0xFFULL),
+             (unsigned long long)((code >> 1) & 0xFULL));
+}
+
+static void format_feron(uint64_t code, int bits, char *out, size_t out_len) {
+    snprintf(out, out_len, "Feron %dbit\nKey:0x%08llX\nSerial:0x%04llX Cmd:0x%04llX",
+             bits,
+             (unsigned long long)(code & 0xFFFFFFFFULL),
+             (unsigned long long)((code >> 16) & 0xFFFFULL),
+             (unsigned long long)(code & 0xFFFFULL));
+}
+
+static void format_roger(uint64_t code, int bits, char *out, size_t out_len) {
+    snprintf(out, out_len, "Roger %dbit\nKey:0x%07llX\nSerial:0x%04llX Btn:%01llX End:%02llX",
+             bits,
+             (unsigned long long)(code & 0xFFFFFFFULL),
+             (unsigned long long)((code >> 12) & 0xFFFFULL),
+             (unsigned long long)((code >> 8) & 0xFULL),
+             (unsigned long long)(code & 0xFFULL));
+}
+
+static void format_treadmill37(uint64_t code, int bits, char *out, size_t out_len) {
+    snprintf(out, out_len, "Treadmill37 %dbit\nKey:0x%010llX\nSerial:0x%06llX Btn:%04llX",
+             bits,
+             (unsigned long long)(code & 0x1FFFFFFFFFULL),
+             (unsigned long long)((code >> 17) & 0x1FFFFFULL),
+             (unsigned long long)((code >> 1) & 0xFFFFULL));
+}
+
+static void format_keyfinder(uint64_t code, int bits, char *out, size_t out_len) {
+    snprintf(out, out_len, "KeyFinder %dbit\nKey:0x%06llX\nSerial:0x%05llX ID:%01llX",
+             bits,
+             (unsigned long long)(code & 0xFFFFFFULL),
+             (unsigned long long)((code >> 4) & 0xFFFFFULL),
+             (unsigned long long)(code & 0xFULL));
+}
+
+static void format_nord_ice(uint64_t code, int bits, char *out, size_t out_len) {
+    uint32_t serial = (uint32_t)((((code >> 15) << 9) | (code & 0x1FFULL)) & 0x3FFFFFFULL);
+    uint32_t btn = (uint32_t)((code >> 9) & 0x3FULL);
+    snprintf(out, out_len, "Nord ICE %dbit\nKey:0x%09llX\nSerial:0x%07lX Btn:%02lX",
+             bits,
+             (unsigned long long)(code & 0x1FFFFFFFFULL),
+             serial,
+             btn);
 }
 
 /* ============================================================
@@ -1456,6 +1571,18 @@ static const int s_vb_alutech[] = {72};
 static const int s_vb_nice_flor_s[] = {52, 76};
 static const int s_vb_atomo[] = {62};
 static const int s_vb_marantec[] = {49};
+static const int s_vb_ansonic[] = {12, 24};
+static const int s_vb_bett[] = {18};
+static const int s_vb_clemsa[] = {18};
+static const int s_vb_dickert_mahs[] = {36};
+static const int s_vb_dooya[] = {40};
+static const int s_vb_elplast[] = {18};
+static const int s_vb_hollarm[] = {42};
+static const int s_vb_hay21[] = {21};
+static const int s_vb_feron[] = {32};
+static const int s_vb_roger[] = {28};
+static const int s_vb_treadmill37[] = {37};
+static const int s_vb_nord_ice[] = {33};
 
 void subghz_engine_init(subghz_decoder_engine_t *engine) {
     memset(engine, 0, sizeof(*engine));
@@ -1481,8 +1608,6 @@ void subghz_engine_init(subghz_decoder_engine_t *engine) {
     PAIR_DEC(10, "FAAC SLH",     255,  595,  100, 100,    0,     0,         0, true,  false, 66, s_vb_faac_slh, 1, NULL);
     PAIR_DEC(11, "Alutech",      400,  800,  140, 280,    0,     0,         0, true,  true,  74, s_vb_alutech, 1, NULL);
     PAIR_DEC(12, "Chamberlain",  1000, 3000, 200, 200, 1000*25, 1000*53, 1000, false, false, 24, s_vb_chamberlain, 3, format_chamberlain);
-
-    #undef PAIR_DEC
 
     int idx = 13;
 
@@ -1514,6 +1639,33 @@ void subghz_engine_init(subghz_decoder_engine_t *engine) {
     d[idx].valid_bits_count = 1;
     d[idx].man_state = ManStateMid1;
     idx++;
+
+    PAIR_DEC(idx, "Ansonic",      500, 1000, 150, 300, 1000*10, 1000*16,    0, true, false, 24, s_vb_ansonic, 2, format_ansonic);
+    idx++;
+    PAIR_DEC(idx, "Bett",         800, 1600, 200, 400, 1600*4,  1600*8,      0, true, false, 18, s_vb_bett, 1, format_bett);
+    idx++;
+    PAIR_DEC(idx, "Clemsa",       375, 1125, 120, 360, 375*30,  375*42,      0, true, false, 18, s_vb_clemsa, 1, format_clemsa);
+    idx++;
+    PAIR_DEC(idx, "Dickert MAHS", 286,  572,  80, 160, 286*30,  286*42,      0, true, false, 36, s_vb_dickert_mahs, 1, format_dickert_mahs);
+    idx++;
+    PAIR_DEC(idx, "Dooya",        366,  733, 120, 240, 733*10,  733*16,      0, true, false, 40, s_vb_dooya, 1, format_dooya);
+    idx++;
+    PAIR_DEC(idx, "Elplast",      230, 1550, 160, 320, 1550*6,  1550*10,     0, true, false, 18, s_vb_elplast, 1, format_elplast);
+    idx++;
+    PAIR_DEC(idx, "Hollarm",      200, 1000, 200, 200, 200*8,   200*16,      0, true, false, 42, s_vb_hollarm, 1, format_hollarm);
+    idx++;
+    PAIR_DEC(idx, "Hay21",        300,  700, 150, 150, 700*4,   700*8,       0, true, false, 21, s_vb_hay21, 1, format_hay21);
+    idx++;
+    PAIR_DEC(idx, "Feron",        350,  750, 150, 150, 750*4,   750*8,       0, true, false, 32, s_vb_feron, 1, format_feron);
+    idx++;
+    PAIR_DEC(idx, "Roger",        500, 1000, 270, 270, 500*12,  500*24,      0, true, false, 28, s_vb_roger, 1, format_roger);
+    idx++;
+    PAIR_DEC(idx, "Treadmill37",  300,  900, 150, 150, 300*12,  300*28,      0, true, false, 37, s_vb_treadmill37, 1, format_treadmill37);
+    idx++;
+    PAIR_DEC(idx, "Nord ICE",     300,  800, 150, 150, 300*18,  300*30,      0, true, false, 33, s_vb_nord_ice, 1, format_nord_ice);
+    idx++;
+
+    #undef PAIR_DEC
 
     engine->count = (size_t)idx;
 }
@@ -1557,6 +1709,586 @@ void subghz_stream_decoder_format_result(const subghz_stream_decoder_t *dec, cha
     }
 }
 
+bool subghz_decode_ansonic(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 30) return false;
+    const int32_t te_s = 500, te_l = 1000, te_d = 150;
+    const int min_bits = 12;
+
+    for (size_t s = 0; s < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_l * 12) > te_d * 12) continue;
+
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d * 2) {
+                code = (code << 1) | 0;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d * 2 && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits >= min_bits) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_bett(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 30) return false;
+    const int32_t te_s = 800, te_l = 1600, te_d = 200;
+    const int min_bits = 18;
+
+    for (size_t s = 0; s < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DUR_ABS(dur[s]) < te_l * 4) continue;
+
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d * 2) {
+                code = (code << 1) | 0;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d * 2 && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits >= min_bits) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_clemsa(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 30) return false;
+    const int32_t te_s = 375, te_l = 1125, te_d = 120;
+    const int min_bits = 18;
+
+    for (size_t s = 0; s < count; s++) {
+        if (dur[s] >= 0) continue;
+        int32_t asyn = DUR_ABS(dur[s]);
+        if (DURATION_DIFF(asyn, te_s * 36) > te_d * 10) continue;
+
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d * 3) {
+                code = (code << 1) | 0;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d * 3 && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits >= min_bits) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_dickert_mahs(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 40) return false;
+    const int32_t te_s = 286, te_l = 572, te_d = 80;
+    const int min_bits = 36;
+
+    for (size_t s = 0; s < count; s++) {
+        if (dur[s] >= 0) continue;
+        int32_t asyn = DUR_ABS(dur[s]);
+        if (DURATION_DIFF(asyn, te_s * 36) > te_d * 10) continue;
+
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d * 2) {
+                code = (code << 1) | 0;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d * 2 && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits >= min_bits) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_dooya(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 40) return false;
+    const int32_t te_s = 366, te_l = 733, te_d = 120;
+    const int min_bits = 40;
+
+    for (size_t s = 0; s < count; s++) {
+        if (dur[s] >= 0) continue;
+        int32_t asyn = DUR_ABS(dur[s]);
+        if (DURATION_DIFF(asyn, te_l * 12) > te_d * 20) continue;
+
+        size_t i = s + 1;
+        if (i >= count || dur[i] <= 0) continue;
+        int32_t start_hi = DUR_ABS(dur[i]);
+        if (DURATION_DIFF(start_hi, te_s * 13) > te_d * 5) continue;
+
+        i++;
+        if (i >= count || dur[i] >= 0) continue;
+        int32_t start_lo = DUR_ABS(dur[i]);
+        if (DURATION_DIFF(start_lo, te_l * 2) > te_d * 3) continue;
+
+        i++;
+        uint64_t code = 0;
+        int bits = 0;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d * 2) {
+                code = (code << 1) | 0;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d * 2 && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits >= min_bits) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_elplast(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 30) return false;
+    const int32_t te_s = 230, te_l = 1550, te_d = 160;
+    const int min_bits = 18;
+
+    for (size_t s = 0; s < count; s++) {
+        if (dur[s] >= 0) continue;
+        int32_t asyn = DUR_ABS(dur[s]);
+        if (DURATION_DIFF(asyn, te_l * 8) > te_d * 13) continue;
+
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                code = (code << 1) | 0;
+                bits++;
+            } else if (DURATION_DIFF(alo, te_l * 8) < te_d * 13) {
+                if (DURATION_DIFF(ahi, te_l) < te_d) {
+                    code = (code << 1) | 1;
+                    bits++;
+                } else if (DURATION_DIFF(ahi, te_s) < te_d) {
+                    code = (code << 1) | 0;
+                    bits++;
+                }
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits >= min_bits) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_marantec24(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 20) return false;
+    const int32_t te_s = 800, te_l = 1600, te_d = 200;
+    for (size_t s = 0; s + 2 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_l * 9 + te_s) > te_d * 5 &&
+            DURATION_DIFF(DUR_ABS(dur[s]), te_l * 9) > te_d * 5) continue;
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s * 3) < te_d * 2) {
+                code = (code << 1);
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l * 2) < te_d * 2) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(alo, te_l * 9 + te_s) < te_d * 5 || DURATION_DIFF(alo, te_l * 9) < te_d * 5) {
+                if (DURATION_DIFF(ahi, te_l) < te_d) {
+                    code = (code << 1);
+                    bits++;
+                } else if (DURATION_DIFF(ahi, te_s) < te_d) {
+                    code = (code << 1) | 1;
+                    bits++;
+                }
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 24) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_hollarm(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 40) return false;
+    const int32_t te_s = 200, te_l = 1000, te_d = 200;
+    for (size_t s = 0; s + 2 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_s * 12) > te_d * 2) continue;
+        uint64_t raw = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                raw = (raw << 1);
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_s * 8) < te_d) {
+                raw = (raw << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(alo, te_s * 12) < te_d) {
+                raw = (raw << 1);
+                bits++;
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 42) {
+            uint64_t code = raw >> 2;
+            uint8_t sum = (uint8_t)(((code >> 32) & 0xFF) + ((code >> 24) & 0xFF) +
+                                    ((code >> 16) & 0xFF) + ((code >> 8) & 0xFF));
+            if (sum == (uint8_t)(code & 0xFF)) {
+                *out_code = code;
+                *out_bits = bits;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_hay21(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 24) return false;
+    const int32_t te_s = 300, te_l = 700, te_d = 150;
+    for (size_t s = 0; s + 2 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_l * 6) > te_d * 3) continue;
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                code = (code << 1);
+                bits++;
+            } else if (DURATION_DIFF(alo, te_l * 6) < te_d * 2) {
+                if (DURATION_DIFF(ahi, te_l) < te_d) {
+                    code = (code << 1) | 1;
+                    bits++;
+                } else if (DURATION_DIFF(ahi, te_s) < te_d) {
+                    code = (code << 1);
+                    bits++;
+                }
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 21) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_feron(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 34) return false;
+    const int32_t te_s = 350, te_l = 750, te_d = 150;
+    for (size_t s = 0; s + 2 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_l * 6) > te_d * 4) continue;
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                code = (code << 1);
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(alo, te_s + 150) < te_d) {
+                if (DURATION_DIFF(ahi, te_s) < te_d) {
+                    code = (code << 1);
+                    bits++;
+                } else if (DURATION_DIFF(ahi, te_l) < te_d) {
+                    code = (code << 1) | 1;
+                    bits++;
+                }
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 32) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_roger(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 30) return false;
+    const int32_t te_s = 500, te_l = 1000, te_d = 270;
+    for (size_t s = 0; s + 2 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_s * 19) > te_d * 5) continue;
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                code = (code << 1);
+                bits++;
+            } else if (DURATION_DIFF(alo, te_s * 19) < te_d * 5) {
+                if (DURATION_DIFF(ahi, te_l) < te_d) {
+                    code = (code << 1) | 1;
+                    bits++;
+                } else if (DURATION_DIFF(ahi, te_s) < te_d) {
+                    code = (code << 1);
+                    bits++;
+                }
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 28) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_treadmill37(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 40) return false;
+    const int32_t te_s = 300, te_l = 900, te_d = 150;
+    for (size_t s = 0; s + 2 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_s * 20) > te_d * 4) continue;
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                code = (code << 1);
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(alo, te_s * 20) < te_d * 4) {
+                if (DURATION_DIFF(ahi, te_s) < te_d) {
+                    code = (code << 1);
+                    bits++;
+                } else if (DURATION_DIFF(ahi, te_l) < te_d) {
+                    code = (code << 1) | 1;
+                    bits++;
+                }
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 37) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_keyfinder(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 40) return false;
+    const int32_t te_s = 400, te_l = 1200, te_d = 150;
+    for (size_t s = 0; s + 10 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_s * 10) > te_d * 5) continue;
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 24) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1);
+                bits++;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 24 && i + 7 < count) {
+            bool suffix_ok = true;
+            for (int k = 0; k < 3; k++) {
+                int32_t hi = dur[i + k * 2], lo = dur[i + k * 2 + 1];
+                if (hi <= 0 || lo >= 0 || DURATION_DIFF(DUR_ABS(hi), te_s) > te_d || DURATION_DIFF(DUR_ABS(lo), te_s) > te_d) {
+                    suffix_ok = false;
+                    break;
+                }
+            }
+            if (suffix_ok) {
+                int32_t hi = dur[i + 6], lo = dur[i + 7];
+                if (hi > 0 && lo < 0 && DURATION_DIFF(DUR_ABS(hi), te_s) < te_d && DURATION_DIFF(DUR_ABS(lo), te_s * 10) < te_d * 5) {
+                    *out_code = code;
+                    *out_bits = bits;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool subghz_decode_nord_ice(const int32_t *dur, size_t count, uint64_t *out_code, int *out_bits) {
+    if (count < 36) return false;
+    const int32_t te_s = 300, te_l = 800, te_d = 150;
+    for (size_t s = 0; s + 2 < count; s++) {
+        if (dur[s] >= 0) continue;
+        if (DURATION_DIFF(DUR_ABS(dur[s]), te_s * 25) > te_d * 11) continue;
+        uint64_t code = 0;
+        int bits = 0;
+        size_t i = s + 1;
+        while (i + 1 < count && bits < 64) {
+            int32_t hi = dur[i], lo = dur[i + 1];
+            if (hi <= 0 || lo >= 0) break;
+            int32_t ahi = DUR_ABS(hi), alo = DUR_ABS(lo);
+            if (DURATION_DIFF(ahi, te_s) < te_d && DURATION_DIFF(alo, te_l) < te_d) {
+                code = (code << 1);
+                bits++;
+            } else if (DURATION_DIFF(ahi, te_l) < te_d && DURATION_DIFF(alo, te_s) < te_d) {
+                code = (code << 1) | 1;
+                bits++;
+            } else if (DURATION_DIFF(alo, te_s * 25) < te_d * 11) {
+                if (DURATION_DIFF(ahi, te_s) < te_d) {
+                    code = (code << 1);
+                    bits++;
+                } else if (DURATION_DIFF(ahi, te_l) < te_d) {
+                    code = (code << 1) | 1;
+                    bits++;
+                }
+                break;
+            } else {
+                break;
+            }
+            i += 2;
+        }
+        if (bits == 33) {
+            *out_code = code;
+            *out_bits = bits;
+            return true;
+        }
+    }
+    return false;
+}
+
 static const subghz_decoder_entry_t s_decoders[] = {
     {"Princeton",    subghz_decode_princeton,      format_princeton},
     {"CAME",         subghz_decode_came,            format_came},
@@ -1578,6 +2310,20 @@ static const subghz_decoder_entry_t s_decoders[] = {
     {"FAAC SLH",     subghz_decode_faac_slh,        NULL},
     {"Alutech",      subghz_decode_alutech_at_4n,   NULL},
     {"Marantec",     subghz_decode_marantec,        format_marantec},
+    {"Ansonic",      subghz_decode_ansonic,          format_ansonic},
+    {"Bett",         subghz_decode_bett,             format_bett},
+    {"Clemsa",       subghz_decode_clemsa,           format_clemsa},
+    {"Dickert MAHS", subghz_decode_dickert_mahs,      format_dickert_mahs},
+    {"Dooya",        subghz_decode_dooya,            format_dooya},
+    {"Elplast",      subghz_decode_elplast,          format_elplast},
+    {"Marantec24",   subghz_decode_marantec24,       format_marantec24},
+    {"Hollarm",      subghz_decode_hollarm,          format_hollarm},
+    {"Hay21",        subghz_decode_hay21,            format_hay21},
+    {"Feron",        subghz_decode_feron,            format_feron},
+    {"Roger",        subghz_decode_roger,            format_roger},
+    {"Treadmill37",  subghz_decode_treadmill37,      format_treadmill37},
+    {"KeyFinder",    subghz_decode_keyfinder,        format_keyfinder},
+    {"Nord ICE",     subghz_decode_nord_ice,         format_nord_ice},
 };
 
 #define NUM_DECODERS (sizeof(s_decoders) / sizeof(s_decoders[0]))
@@ -1604,6 +2350,20 @@ int32_t subghz_protocol_te(const char *protocol) {
     if (strcmp(protocol, "FAAC SLH") == 0) return 255;
     if (strcmp(protocol, "Alutech") == 0) return 400;
     if (strcmp(protocol, "Marantec") == 0) return 1000;
+    if (strcmp(protocol, "Ansonic") == 0) return 500;
+    if (strcmp(protocol, "Bett") == 0) return 800;
+    if (strcmp(protocol, "Clemsa") == 0) return 375;
+    if (strcmp(protocol, "Dickert MAHS") == 0) return 286;
+    if (strcmp(protocol, "Dooya") == 0) return 366;
+    if (strcmp(protocol, "Elplast") == 0) return 230;
+    if (strcmp(protocol, "Marantec24") == 0) return 800;
+    if (strcmp(protocol, "Hollarm") == 0) return 200;
+    if (strcmp(protocol, "Hay21") == 0) return 300;
+    if (strcmp(protocol, "Feron") == 0) return 350;
+    if (strcmp(protocol, "Roger") == 0) return 500;
+    if (strcmp(protocol, "Treadmill37") == 0) return 300;
+    if (strcmp(protocol, "KeyFinder") == 0) return 400;
+    if (strcmp(protocol, "Nord ICE") == 0) return 300;
     return 0;
 }
 
@@ -1951,6 +2711,242 @@ static bool sd_emit_faac_slh(int32_t *out, size_t max_count, size_t *count, uint
     return true;
 }
 
+static bool sd_emit_ansonic(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 500, te_l = 1000;
+    if (bits <= 0 || bits > 64) return false;
+    for (int r = 0; r < 3; r++) {
+        if (!sd_push(out, max_count, count, -(te_l * 12 + te_s))) return false;
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            int32_t high = bit ? te_l : te_s;
+            int32_t low = bit ? te_s : te_l;
+            if (!sd_push(out, max_count, count, high)) return false;
+            if (!sd_push(out, max_count, count, -low)) return false;
+        }
+        if (!sd_push(out, max_count, count, -(te_l * 4))) return false;
+    }
+    return true;
+}
+
+static bool sd_emit_bett(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 800, te_l = 1600;
+    if (bits <= 0 || bits > 64) return false;
+    for (int r = 0; r < 3; r++) {
+        if (!sd_push(out, max_count, count, -(te_l * 4))) return false;
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            int32_t high = bit ? te_l : te_s;
+            int32_t low = bit ? te_s : te_l;
+            if (!sd_push(out, max_count, count, high)) return false;
+            if (!sd_push(out, max_count, count, -low)) return false;
+        }
+        if (!sd_push(out, max_count, count, -(te_l * 4))) return false;
+    }
+    return true;
+}
+
+static bool sd_emit_clemsa(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 375, te_l = 1125;
+    if (bits <= 0 || bits > 64) return false;
+    for (int r = 0; r < 3; r++) {
+        if (!sd_push(out, max_count, count, -(te_s * 36))) return false;
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            int32_t high = bit ? te_l : te_s;
+            int32_t low = bit ? te_s : te_l;
+            if (!sd_push(out, max_count, count, high)) return false;
+            if (!sd_push(out, max_count, count, -low)) return false;
+        }
+        if (!sd_push(out, max_count, count, -(te_s * 36))) return false;
+    }
+    return true;
+}
+
+static bool sd_emit_dickert_mahs(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 286, te_l = 572;
+    if (bits <= 0 || bits > 64) return false;
+    for (int r = 0; r < 3; r++) {
+        if (!sd_push(out, max_count, count, -(te_s * 36))) return false;
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            int32_t high = bit ? te_l : te_s;
+            int32_t low = bit ? te_s : te_l;
+            if (!sd_push(out, max_count, count, high)) return false;
+            if (!sd_push(out, max_count, count, -low)) return false;
+        }
+        if (!sd_push(out, max_count, count, -(te_s * 36))) return false;
+    }
+    return true;
+}
+
+static bool sd_emit_dooya(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 366, te_l = 733;
+    if (bits <= 0 || bits > 64) return false;
+    for (int r = 0; r < 3; r++) {
+        if (!sd_push(out, max_count, count, -(te_l * 12 + te_l))) return false;
+        if (!sd_push(out, max_count, count, te_s * 13)) return false;
+        if (!sd_push(out, max_count, count, -(te_l * 2))) return false;
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            int32_t high = bit ? te_l : te_s;
+            int32_t low = bit ? te_s : te_l;
+            if (!sd_push(out, max_count, count, high)) return false;
+            if (!sd_push(out, max_count, count, -low)) return false;
+        }
+        if (!sd_push(out, max_count, count, -(te_l * 12))) return false;
+    }
+    return true;
+}
+
+static bool sd_emit_elplast(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 230, te_l = 1550;
+    if (bits <= 0 || bits > 64) return false;
+    for (int r = 0; r < 3; r++) {
+        if (!sd_push(out, max_count, count, -(te_l * 8))) return false;
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (bit) {
+                if (!sd_push(out, max_count, count, te_l)) return false;
+                if (b == 0) {
+                    if (!sd_push(out, max_count, count, -(te_l * 8))) return false;
+                } else {
+                    if (!sd_push(out, max_count, count, -te_s)) return false;
+                }
+            } else {
+                if (!sd_push(out, max_count, count, te_s)) return false;
+                if (b == 0) {
+                    if (!sd_push(out, max_count, count, -(te_l * 8))) return false;
+                } else {
+                    if (!sd_push(out, max_count, count, -te_l)) return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static bool sd_emit_marantec24(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 800, te_l = 1600;
+    if (bits != 24) return false;
+    for (int r = 0; r < 3; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (bit) {
+                if (!sd_push(out, max_count, count, te_s)) return false;
+                if (!sd_push(out, max_count, count, -(b == 0 ? (te_l * 9 + te_s) : (te_l * 2)))) return false;
+            } else {
+                if (!sd_push(out, max_count, count, te_l)) return false;
+                if (!sd_push(out, max_count, count, -(b == 0 ? (te_l * 9 + te_s) : (te_s * 3)))) return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool sd_emit_hollarm(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 200, te_l = 1000;
+    uint64_t raw = code << 2;
+    if (bits != 42) return false;
+    for (int r = 0; r < 3; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(raw, b);
+            if (!sd_push(out, max_count, count, te_s)) return false;
+            if (!sd_push(out, max_count, count, -(b == 0 ? (te_s * 12) : (bit ? (te_s * 8) : te_l)))) return false;
+        }
+    }
+    return true;
+}
+
+static bool sd_emit_hay21(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 300, te_l = 700;
+    if (bits != 21) return false;
+    for (int r = 0; r < 3; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (!sd_push(out, max_count, count, bit ? te_l : te_s)) return false;
+            if (!sd_push(out, max_count, count, -(b == 0 ? (te_l * 6) : (bit ? te_s : te_l)))) return false;
+        }
+    }
+    return true;
+}
+
+static bool sd_emit_feron(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 350, te_l = 750;
+    if (bits != 32) return false;
+    for (int r = 0; r < 3; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (!sd_push(out, max_count, count, bit ? te_l : te_s)) return false;
+            if (b == 0) {
+                if (!sd_push(out, max_count, count, -(te_s + 150))) return false;
+                if (!sd_push(out, max_count, count, te_s + 150)) return false;
+                if (!sd_push(out, max_count, count, -(te_l * 6))) return false;
+            } else {
+                if (!sd_push(out, max_count, count, -(bit ? te_s : te_l))) return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool sd_emit_roger(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 500, te_l = 1000;
+    if (bits != 28) return false;
+    for (int r = 0; r < 3; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (!sd_push(out, max_count, count, bit ? te_l : te_s)) return false;
+            if (!sd_push(out, max_count, count, -(b == 0 ? (te_s * 19) : (bit ? te_s : te_l)))) return false;
+        }
+    }
+    return true;
+}
+
+static bool sd_emit_treadmill37(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 300, te_l = 900;
+    if (bits != 37) return false;
+    for (int r = 0; r < 3; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (!sd_push(out, max_count, count, bit ? te_l : te_s)) return false;
+            if (!sd_push(out, max_count, count, -(b == 0 ? (te_s * 20) : (bit ? te_s : te_l)))) return false;
+        }
+    }
+    return true;
+}
+
+static bool sd_emit_keyfinder(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 400, te_l = 1200;
+    if (bits != 24) return false;
+    for (int r = 0; r < 5; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (!sd_push(out, max_count, count, bit ? te_s : te_l)) return false;
+            if (!sd_push(out, max_count, count, -(bit ? te_l : te_s))) return false;
+        }
+        for (int i = 0; i < 3; i++) {
+            if (!sd_push(out, max_count, count, te_s)) return false;
+            if (!sd_push(out, max_count, count, -te_s)) return false;
+        }
+        if (!sd_push(out, max_count, count, te_s)) return false;
+        if (!sd_push(out, max_count, count, -(te_s * 10))) return false;
+    }
+    return true;
+}
+
+static bool sd_emit_nord_ice(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
+    const int32_t te_s = 300, te_l = 800;
+    if (bits != 33) return false;
+    for (int r = 0; r < 3; r++) {
+        for (int b = bits - 1; b >= 0; b--) {
+            bool bit = sd_get_code_bit(code, b);
+            if (!sd_push(out, max_count, count, bit ? te_l : te_s)) return false;
+            if (!sd_push(out, max_count, count, -(b == 0 ? (te_s * 25) : (bit ? te_s : te_l)))) return false;
+        }
+    }
+    return true;
+}
+
 static bool sd_emit_alutech(int32_t *out, size_t max_count, size_t *count, uint64_t code, int bits) {
     const int32_t te_s = 400;
     const int32_t te_l = 800;
@@ -2167,6 +3163,34 @@ bool subghz_build_raw_from_decoded(const char *protocol,
         else ok = sd_emit_pt226x(out, max_count, &count, code, bits);
     } else if (strcmp(protocol, "Marantec") == 0) {
         ok = sd_emit_marantec(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Ansonic") == 0) {
+        ok = sd_emit_ansonic(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Bett") == 0) {
+        ok = sd_emit_bett(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Clemsa") == 0) {
+        ok = sd_emit_clemsa(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Dickert MAHS") == 0) {
+        ok = sd_emit_dickert_mahs(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Dooya") == 0) {
+        ok = sd_emit_dooya(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Elplast") == 0) {
+        ok = sd_emit_elplast(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Marantec24") == 0) {
+        ok = sd_emit_marantec24(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Hollarm") == 0) {
+        ok = sd_emit_hollarm(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Hay21") == 0) {
+        ok = sd_emit_hay21(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Feron") == 0) {
+        ok = sd_emit_feron(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Roger") == 0) {
+        ok = sd_emit_roger(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Treadmill37") == 0) {
+        ok = sd_emit_treadmill37(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "KeyFinder") == 0) {
+        ok = sd_emit_keyfinder(out, max_count, &count, code, bits);
+    } else if (strcmp(protocol, "Nord ICE") == 0) {
+        ok = sd_emit_nord_ice(out, max_count, &count, code, bits);
     }
 
     if (ok && out_count) {

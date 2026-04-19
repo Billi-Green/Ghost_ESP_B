@@ -464,30 +464,51 @@ static void subghz_stream_decoded_result(void) {
 static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data) {
     (void)channel;
     (void)user_data;
-    if (!data || length < 2 || data[0] != SUBGHZ_STREAM_VERSION) {
-        return;
-    }
+    if (!data || length < 2) return;
+    uint8_t ver = data[0];
+    if (ver != SUBGHZ_STREAM_VERSION && ver != 1) return;
 
     uint8_t packet_type = data[1];
-    if (packet_type == 4) {
-        if (length < 4) return;
-        s_rx_stream_expected = (size_t)data[2] | ((size_t)data[3] << 8);
+
+    /* v2 REPLAY_BEGIN (0x10) or legacy start (4) */
+    if (packet_type == 0x10 || packet_type == 4) {
+        if (packet_type == 0x10 && length >= 8) {
+            s_rx_stream_expected = (size_t)data[2] | ((size_t)data[3] << 8) |
+                                    ((size_t)data[4] << 16) | ((size_t)data[5] << 24);
+            s_rx_stream_freq_hz = (uint32_t)data[6] |
+                                  ((uint32_t)data[7] << 8) |
+                                  ((uint32_t)data[8] << 16) |
+                                  ((uint32_t)data[9] << 0x18);
+            if (length >= 11) {
+                uint8_t pb = data[10];
+                if (pb == 1) s_rx_stream_preset = SUBGHZ_PRESET_OOK650_ASYNC;
+                else if (pb == 2) s_rx_stream_preset = SUBGHZ_PRESET_2FSK_DEV238_ASYNC;
+                else if (pb == 3) s_rx_stream_preset = SUBGHZ_PRESET_2FSK_DEV476_ASYNC;
+                else if (pb == 4) s_rx_stream_preset = SUBGHZ_PRESET_CUSTOM;
+                else s_rx_stream_preset = SUBGHZ_PRESET_OOK270_ASYNC;
+            }
+        } else if (length >= 4) {
+            s_rx_stream_expected = (size_t)data[2] | ((size_t)data[3] << 8);
+            s_rx_stream_freq_hz = 0;
+            s_rx_stream_preset = SUBGHZ_PRESET_OOK270_ASYNC;
+            if (length >= 8) {
+                s_rx_stream_freq_hz = (uint32_t)data[4] |
+                                      ((uint32_t)data[5] << 8) |
+                                      ((uint32_t)data[6] << 16) |
+                                      ((uint32_t)data[7] << 0x18);
+            }
+            if (length >= 9) {
+                s_rx_stream_preset = (data[8] == 1) ? SUBGHZ_PRESET_OOK650_ASYNC : SUBGHZ_PRESET_OOK270_ASYNC;
+            }
+        } else {
+            return;
+        }
         if (s_rx_stream_expected > SUBGHZ_RAW_MAX_DURATIONS) s_rx_stream_expected = SUBGHZ_RAW_MAX_DURATIONS;
         s_rx_stream_received = 0;
-        s_rx_stream_freq_hz = 0;
-        s_rx_stream_preset = SUBGHZ_PRESET_OOK270_ASYNC;
-        if (length >= 8) {
-            s_rx_stream_freq_hz = (uint32_t)data[4] |
-                                  ((uint32_t)data[5] << 8) |
-                                  ((uint32_t)data[6] << 16) |
-                                  ((uint32_t)data[7] << 0x18);
-        }
-        if (length >= 9) {
-            s_rx_stream_preset = (data[8] == 1) ? SUBGHZ_PRESET_OOK650_ASYNC : SUBGHZ_PRESET_OOK270_ASYNC;
-        }
+        if (s_rx_stream_freq_hz == 0) s_rx_stream_freq_hz = 433920000;
         return;
     }
-    if (packet_type == 5) {
+    if (packet_type == 0x11 || packet_type == 5) {
         if (length < 5) return;
         size_t offset = (size_t)data[2] | ((size_t)data[3] << 8);
         size_t count = (size_t)data[4];
@@ -511,7 +532,7 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         }
         return;
     }
-    if (packet_type == 6) {
+    if (packet_type == 0x12 || packet_type == 6) {
         if (s_rx_stream_received > 0) {
             ESP_LOGD(TAG, "Stream TX trigger: %lu durations, first4=%ld %ld %ld %ld",
                      (unsigned long)s_rx_stream_received,

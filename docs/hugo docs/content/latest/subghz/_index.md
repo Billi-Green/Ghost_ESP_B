@@ -22,7 +22,7 @@ GhostESP includes SubGHz radio tools for scanning, capturing, and transmitting s
 - **Signal scanning** - Monitor activity across 64 channels in real-time
 - **Frequency analyzer** - Visualize signal strength across bands to find active frequencies
 - **Signal capture** - Record and decode signals from remotes and transmitters
-- **Protocol decoding** - Automatic detection of 20+ common protocols
+- **Protocol decoding** - Automatic detection of 30+ common protocols
 - **Signal transmission** - Replay captured signals to control devices
 - **Saved signals** - Store and manage captured signals as `.sub` files
 - **Flipper compatibility** - Uses Flipper SubGhz Key File format
@@ -31,10 +31,12 @@ GhostESP includes SubGHz radio tools for scanning, capturing, and transmitting s
 
 GhostESP uses **dedicated protocol decoders based on Flipper Zero Unleashed/xMasterX firmware**, providing professional-grade signal analysis capabilities:
 
-- **20+ protocol decoders** with precise timing constants for each protocol
+- **30+ protocol decoders** with precise timing constants for each protocol
 - **Real-time decoding engine** with edge queue processing
 - **Proven implementation** - same decoders used by industry-standard Flipper Zero
 - **Supports complex encodings** including Manchester and multi-bit protocols
+
+Recently added support includes Ansonic, Bett, Clemsa, Dickert MAHS, Dooya, Elplast, Marantec24, Hollarm, Hay21, Feron, Roger, Treadmill37, KeyFinder, and Nord ICE.
 
 Unlike other ESP32 firmwares that rely on generic libraries like RCSwitch (10-15 protocols), GhostESP's dedicated decoders offer superior accuracy and support for a wider range of static code protocols.
 

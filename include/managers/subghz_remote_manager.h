@@ -7,13 +7,19 @@
 #include "managers/subghz_decoders.h"
 
 #define SUBGHZ_SCANNER_CHANNEL_COUNT 64
-#define SUBGHZ_STREAM_VERSION 1
+#define SUBGHZ_STREAM_VERSION 2
 #define SUBGHZ_SNAPSHOT_NAME_MAX 64
-#define SUBGHZ_RAW_MAX_DURATIONS 512
+#define SUBGHZ_RAW_MAX_DURATIONS 1024
+#define SUBGHZ_RAW_INITIAL_CAP 1024
+#define SUBGHZ_RAW_MAX_CAP 16384
 
 typedef enum {
     SUBGHZ_PRESET_OOK270_ASYNC = 0,
     SUBGHZ_PRESET_OOK650_ASYNC = 1,
+    SUBGHZ_PRESET_2FSK_DEV238_ASYNC = 2,
+    SUBGHZ_PRESET_2FSK_DEV476_ASYNC = 3,
+    SUBGHZ_PRESET_CUSTOM = 4,
+    SUBGHZ_PRESET_UNKNOWN = 5,
 } subghz_preset_t;
 
 bool subghz_remote_manager_start(bool stream_to_peer);
