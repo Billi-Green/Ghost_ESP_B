@@ -145,6 +145,14 @@ static bool s_capture_waiting_signal = false;
 static bool s_capture_ready = false;
 static int s_capture_signal_hits = 0;
 static bool s_capture_was_running = false;
+static bool s_capture_was_running_known = false;
+static bool s_capture_remote_arm_pending = false;
+static bool s_capture_defer_popup_open = false;
+static bool s_capture_stop_pending = false;
+static int64_t s_capture_stop_deadline_us = 0;
+static int64_t s_capture_popup_opened_us = 0;
+static bool s_capture_popup_open_pending = false;
+static bool s_capture_popup_sync_pending = false;
 static subghz_capture_popup_control_t s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
 static char s_capture_freq_label[16] = "433.92 MHz";
 static subghz_capture_mode_t s_capture_mode = SUBGHZ_CAPTURE_MODE_NORMAL;
@@ -238,6 +246,14 @@ static void subghz_capture_back_btn_cb(lv_event_t *e);
 static void subghz_capture_mark_ready(void);
 static void subghz_capture_mark_ready_with_decoded(const subghz_decoded_signal_t *decoded);
 static void subghz_capture_popup_update_buttons(void);
+static void subghz_capture_refresh_frequency_label(void);
+static void subghz_capture_reset_state_for_new_attempt(void);
+static void subghz_capture_apply_waiting_ui(bool arming_remote);
+static bool subghz_capture_popup_ignore_activation(void);
+static void subghz_capture_continue_waiting(void);
+static uint8_t subghz_capture_get_frequency_index(void);
+static void subghz_capture_set_frequency_index(uint8_t idx);
+static bool subghz_capture_begin_remote(bool defer_popup_open);
 static bool subghz_build_snapshot_detail_text(const char *name, char *out, size_t out_len);
 #ifdef CONFIG_USE_TOUCHSCREEN
 static void subghz_update_scroll_buttons_visibility(void);
@@ -324,6 +340,14 @@ static void subghz_fail_pending_action(const char *reason) {
         return;
     }
 
+    bool deferred_capture_without_popup = s_capture_defer_popup_open &&
+        (!s_capture_popup || !lv_obj_is_valid(s_capture_popup));
+    s_capture_remote_arm_pending = false;
+    s_capture_defer_popup_open = false;
+    if (deferred_capture_without_popup) {
+        s_capture_was_running_known = false;
+    }
+
     const char *label = subghz_pending_action_label(s_pending_action);
     char msg[128];
     if (reason && reason[0] != '\0') {
@@ -338,17 +362,119 @@ static void subghz_fail_pending_action(const char *reason) {
     subghz_clear_pending_action();
 }
 
+static void subghz_capture_refresh_frequency_label(void) {
+    const char *label = NULL;
+
+    if (s_remote_mode) {
+        if (s_capture_freq_label[0] != '\0' && strcmp(s_capture_freq_label, "N/A") != 0) {
+            return;
+        }
+        uint8_t idx = (s_remote_freq_idx < SUBGHZ_FA_BAND_COUNT) ? s_remote_freq_idx : 2;
+        label = s_scan_freq_labels[idx];
+    } else {
+        const char *manager_label = subghz_remote_manager_get_frequency_label();
+        if (manager_label && manager_label[0] != '\0' && strcmp(manager_label, "N/A") != 0) {
+            label = manager_label;
+        }
+    }
+
+    if (!label || label[0] == '\0' || strcmp(label, "N/A") == 0) {
+        if (s_capture_freq_label[0] != '\0' && strcmp(s_capture_freq_label, "N/A") != 0) {
+            return;
+        }
+        label = s_scan_freq_labels[2];
+    }
+
+    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", label);
+}
+
+static void subghz_capture_reset_state_for_new_attempt(void) {
+    s_capture_waiting_signal = false;
+    s_capture_ready = false;
+    s_capture_signal_hits = 0;
+    s_capture_popup_selected = (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW)
+        ? SUBGHZ_CAPTURE_POPUP_SAVE : SUBGHZ_CAPTURE_POPUP_BACK;
+    s_capture_buffer_valid = false;
+    s_capture_raw_count = 0;
+    s_remote_raw_expected = 0;
+    s_remote_raw_received = 0;
+    s_capture_stop_pending = false;
+    s_capture_stop_deadline_us = 0;
+    s_capture_popup_open_pending = false;
+    s_capture_popup_sync_pending = false;
+    if (s_remote_decoded.preserved_extra) {
+        free(s_remote_decoded.preserved_extra);
+        s_remote_decoded.preserved_extra = NULL;
+    }
+    memset(&s_remote_decoded, 0, sizeof(s_remote_decoded));
+}
+
+static void subghz_capture_apply_waiting_ui(bool arming_remote) {
+    if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+        if (arming_remote) {
+            lv_label_set_text(s_capture_status_label, "Arming remote capture...");
+        } else if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+            char status[64];
+            snprintf(status, sizeof(status), "Raw: %s", s_capture_freq_label);
+            lv_label_set_text(s_capture_status_label, status);
+        } else {
+            char status[64];
+            snprintf(status, sizeof(status), "Listening: %s", s_capture_freq_label);
+            lv_label_set_text(s_capture_status_label, status);
+        }
+    }
+
+    if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label)) {
+        lv_label_set_text(s_capture_signal_label,
+                          arming_remote ? "Waiting for peer acknowledgement" : "Signal threshold: 65%");
+    }
+
+    subghz_capture_popup_update_buttons();
+}
+
+static bool subghz_capture_popup_ignore_activation(void) {
+    if (s_capture_popup_opened_us <= 0) {
+        return false;
+    }
+    int64_t age_us = esp_timer_get_time() - s_capture_popup_opened_us;
+    bool ignore = age_us < 400000LL;
+    if (ignore) {
+        ESP_LOGI(TAG, "ignoring capture popup activation age=%lldus", (long long)age_us);
+    }
+    return ignore;
+}
+
 static void subghz_capture_popup_update_buttons(void) {
     if (!s_capture_popup || !lv_obj_is_valid(s_capture_popup)) {
         return;
     }
 
+    bool arming_remote = s_capture_remote_arm_pending || s_capture_stop_pending;
+    bool capture_stopped_without_data = s_capture_ready && !s_capture_buffer_valid;
+
     if (s_capture_save_btn && lv_obj_is_valid(s_capture_save_btn)) {
         lv_obj_t *lbl = lv_obj_get_child(s_capture_save_btn, 0);
         if (lbl && lv_obj_is_valid(lbl)) {
-            if (s_capture_ready) {
-                lv_label_set_text(lbl, "Save");
-                lv_obj_clear_state(s_capture_save_btn, LV_STATE_DISABLED);
+            if (arming_remote) {
+                lv_label_set_text(lbl, "Wait");
+                lv_obj_add_state(s_capture_save_btn, LV_STATE_DISABLED);
+            } else if (s_capture_ready) {
+                if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+                    if (capture_stopped_without_data) {
+                        lv_label_set_text(lbl, "Start");
+                        lv_obj_clear_state(s_capture_save_btn, LV_STATE_DISABLED);
+                    } else {
+                        lv_label_set_text(lbl, "Save");
+                        lv_obj_clear_state(s_capture_save_btn, LV_STATE_DISABLED);
+                    }
+                } else {
+                    lv_label_set_text(lbl, "Save");
+                    if (s_capture_buffer_valid) {
+                        lv_obj_clear_state(s_capture_save_btn, LV_STATE_DISABLED);
+                    } else {
+                        lv_obj_add_state(s_capture_save_btn, LV_STATE_DISABLED);
+                    }
+                }
             } else {
                 lv_label_set_text(lbl, "Stop");
                 lv_obj_clear_state(s_capture_save_btn, LV_STATE_DISABLED);
@@ -357,7 +483,21 @@ static void subghz_capture_popup_update_buttons(void) {
     }
 
     if (s_capture_freq_btn && lv_obj_is_valid(s_capture_freq_btn)) {
-        lv_obj_clear_state(s_capture_freq_btn, LV_STATE_DISABLED);
+        lv_obj_t *lbl = lv_obj_get_child(s_capture_freq_btn, 0);
+        if (lbl && lv_obj_is_valid(lbl)) {
+            if (arming_remote) {
+                lv_label_set_text(lbl, s_capture_freq_label);
+                lv_obj_add_state(s_capture_freq_btn, LV_STATE_DISABLED);
+            } else if (s_capture_ready && s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+                lv_label_set_text(lbl, "Start");
+                lv_obj_clear_state(s_capture_freq_btn, LV_STATE_DISABLED);
+            } else {
+                lv_label_set_text(lbl, s_capture_freq_label);
+                lv_obj_clear_state(s_capture_freq_btn, LV_STATE_DISABLED);
+            }
+        } else {
+            lv_obj_clear_state(s_capture_freq_btn, LV_STATE_DISABLED);
+        }
     }
 
     popup_set_button_selected(s_capture_save_btn, s_capture_popup_selected == SUBGHZ_CAPTURE_POPUP_SAVE);
@@ -1399,7 +1539,24 @@ static void subghz_refresh_status_labels(void) {
 }
 
 static void subghz_capture_snapshot_action(void) {
+    if (s_remote_mode) {
+        s_capture_was_running = s_remote_stream_online && !s_remote_paused;
+        s_capture_was_running_known = true;
+        subghz_capture_refresh_frequency_label();
+        ESP_LOGI(TAG,
+                 "remote capture request mode=%s freq=%s defer_popup=1",
+                 (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "raw" : "normal",
+                 s_capture_freq_label);
+        if (!subghz_capture_begin_remote(true)) {
+            s_capture_was_running_known = false;
+        }
+        return;
+    }
+
     subghz_open_capture_popup();
+    if (s_capture_popup && lv_obj_is_valid(s_capture_popup)) {
+        subghz_capture_continue_waiting();
+    }
 }
 
 static void subghz_save_snapshot_action(void) {
@@ -1567,35 +1724,121 @@ static void subghz_close_capture_popup(void) {
     s_capture_ready = false;
     s_capture_signal_hits = 0;
     s_capture_was_running = false;
+    s_capture_was_running_known = false;
+    s_capture_remote_arm_pending = false;
+    s_capture_defer_popup_open = false;
+    s_capture_stop_pending = false;
+    s_capture_stop_deadline_us = 0;
+    s_capture_popup_opened_us = 0;
+    s_capture_popup_open_pending = false;
+    s_capture_popup_sync_pending = false;
     s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
 }
 
 static void subghz_capture_continue_waiting(void) {
-    s_capture_waiting_signal = true;
-    s_capture_ready = false;
-    s_capture_signal_hits = 0;
-    s_capture_popup_selected = (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW)
-        ? SUBGHZ_CAPTURE_POPUP_SAVE : SUBGHZ_CAPTURE_POPUP_BACK;
-    s_capture_buffer_valid = false;
-    s_capture_raw_count = 0;
-    s_remote_raw_expected = 0;
-    s_remote_raw_received = 0;
-    if (s_remote_decoded.preserved_extra) {
-        free(s_remote_decoded.preserved_extra);
-    }
-    memset(&s_remote_decoded, 0, sizeof(s_remote_decoded));
-    if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
-        if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
-            char status[64];
-            snprintf(status, sizeof(status), "Raw: %s", s_capture_freq_label);
-            lv_label_set_text(s_capture_status_label, status);
+    bool should_resume = s_capture_ready;
+    if (!should_resume) {
+        if (s_remote_mode) {
+            should_resume = s_capture_was_running && s_remote_paused;
         } else {
-            char status[64];
-            snprintf(status, sizeof(status), "Listening: %s", s_capture_freq_label);
-            lv_label_set_text(s_capture_status_label, status);
+            should_resume = s_capture_was_running && subghz_remote_manager_is_paused();
         }
     }
-    subghz_capture_popup_update_buttons();
+
+    subghz_capture_reset_state_for_new_attempt();
+
+    if (s_remote_mode) {
+        s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
+        if (!subghz_capture_begin_remote(false)) {
+            s_capture_waiting_signal = false;
+            s_capture_ready = true;
+            s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
+            if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+                lv_label_set_text(s_capture_status_label, "Failed to arm remote capture");
+            }
+            subghz_capture_popup_update_buttons();
+            return;
+        }
+        subghz_capture_apply_waiting_ui(true);
+        return;
+    } else {
+        if (should_resume) {
+            subghz_remote_manager_set_paused(false);
+        } else if (!subghz_remote_manager_is_running()) {
+            if (!subghz_remote_manager_start(false)) {
+                s_capture_waiting_signal = false;
+                s_capture_ready = true;
+                s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
+                if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+                    lv_label_set_text(s_capture_status_label, subghz_remote_manager_get_last_error());
+                }
+                subghz_capture_popup_update_buttons();
+                return;
+            }
+        }
+        subghz_remote_manager_set_raw_capture_enabled(true);
+    }
+
+    s_capture_waiting_signal = true;
+    subghz_capture_apply_waiting_ui(false);
+}
+
+static uint8_t subghz_capture_get_frequency_index(void) {
+    for (uint8_t i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
+        if (strcmp(s_capture_freq_label, s_scan_freq_labels[i]) == 0) {
+            return i;
+        }
+    }
+
+    if (s_remote_mode && s_remote_freq_idx < SUBGHZ_FA_BAND_COUNT) {
+        return s_remote_freq_idx;
+    }
+
+    return 2;
+}
+
+static void subghz_capture_set_frequency_index(uint8_t idx) {
+    if (idx >= SUBGHZ_FA_BAND_COUNT) {
+        idx = 2;
+    }
+    s_remote_freq_idx = idx;
+    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", s_scan_freq_labels[idx]);
+}
+
+static bool subghz_capture_begin_remote(bool defer_popup_open) {
+    if (!esp_comm_manager_is_connected()) {
+        s_capture_remote_arm_pending = false;
+        s_capture_defer_popup_open = false;
+        subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
+        return false;
+    }
+
+    uint8_t freq_idx = subghz_capture_get_frequency_index();
+    uint32_t frequency_hz = s_scan_freqs_hz[freq_idx];
+    char cmd[64];
+    snprintf(cmd,
+             sizeof(cmd),
+             "capture_begin %s %lu",
+             (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "raw" : "normal",
+             (unsigned long)frequency_hz);
+
+    ESP_LOGI(TAG, "sending remote capture cmd='%s' defer_popup=%d", cmd, defer_popup_open ? 1 : 0);
+
+    if (!esp_comm_manager_send_command("subghz", cmd)) {
+        s_capture_remote_arm_pending = false;
+        s_capture_defer_popup_open = false;
+        s_remote_error = true;
+        subghz_show_feedback_popup("SubGHz error", "Failed to send remote capture command");
+        return false;
+    }
+
+    s_capture_remote_arm_pending = true;
+    s_capture_defer_popup_open = defer_popup_open;
+    s_remote_error = false;
+    s_remote_paused = false;
+    subghz_set_pending_action(SUBGHZ_PENDING_CAPTURE, 3000);
+    subghz_show_action_status("Arming remote capture...");
+    return true;
 }
 
 static void subghz_fa_apply_popup_selection(void) {
@@ -1936,8 +2179,46 @@ static void subghz_freq_analyzer_row_cb(lv_event_t *e) {
 }
 
 static void subghz_capture_primary_btn_cb(lv_event_t *e) {
-    (void)e;
+    ESP_LOGI(TAG,
+             "capture primary pressed src=%s ready=%d mode=%s stop_pending=%d raw_count=%lu",
+             e ? "lvgl" : "internal",
+             s_capture_ready ? 1 : 0,
+             (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "raw" : "normal",
+             s_capture_stop_pending ? 1 : 0,
+             (unsigned long)s_capture_raw_count);
+    if (subghz_capture_popup_ignore_activation()) {
+        return;
+    }
     if (s_capture_ready) {
+        if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+            s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
+            subghz_capture_popup_update_buttons();
+
+            if (!s_capture_buffer_valid) {
+                subghz_capture_continue_waiting();
+                return;
+            }
+
+            char saved_name[SUBGHZ_SNAPSHOT_NAME_MAX];
+            char save_err[96];
+            const char *fmt_msg = "Raw capture saved in Flipper RAW format";
+            if (subghz_local_save_snapshot(
+                    s_capture_name,
+                    s_capture_raw,
+                    s_capture_raw_count,
+                    NULL,
+                    saved_name,
+                    sizeof(saved_name),
+                    save_err,
+                    sizeof(save_err))) {
+                snprintf(s_capture_name, sizeof(s_capture_name), "%s", saved_name);
+                subghz_show_feedback_popup("SubGHz", fmt_msg);
+            } else {
+                subghz_show_feedback_popup("SubGHz error", save_err);
+            }
+            return;
+        }
+
         s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
         subghz_capture_popup_update_buttons();
 
@@ -1967,8 +2248,25 @@ static void subghz_capture_primary_btn_cb(lv_event_t *e) {
     } else {
         if (s_remote_mode) {
             if (esp_comm_manager_is_connected()) {
+                ESP_LOGI(TAG,
+                         "remote capture stop requested mode=%s raw_count=%lu",
+                         (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "raw" : "normal",
+                         (unsigned long)s_capture_raw_count);
                 (void)esp_comm_manager_send_command("subghz", "capture_off");
                 (void)esp_comm_manager_send_command("subghz", "pause");
+            }
+            if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+                s_capture_stop_pending = true;
+                s_capture_stop_deadline_us = esp_timer_get_time() + 1500000LL;
+                ESP_LOGI(TAG, "waiting for remote raw stream stop_deadline=%lld", (long long)s_capture_stop_deadline_us);
+                if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+                    lv_label_set_text(s_capture_status_label, "Waiting for raw capture...");
+                }
+                if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label)) {
+                    lv_label_set_text(s_capture_signal_label, "Finishing remote raw capture");
+                }
+                subghz_capture_popup_update_buttons();
+                return;
             }
         } else {
             subghz_remote_manager_set_raw_capture_enabled(false);
@@ -1989,15 +2287,36 @@ static void subghz_capture_primary_btn_cb(lv_event_t *e) {
             s_capture_buffer_valid = true;
             subghz_capture_mark_ready();
         } else {
+            s_capture_ready = true;
+            s_capture_buffer_valid = false;
+            s_capture_waiting_signal = false;
+            s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
             if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
                 lv_label_set_text(s_capture_status_label, "No signal captured");
             }
+            subghz_capture_popup_update_buttons();
         }
     }
 }
 
 static void subghz_capture_freq_btn_cb(lv_event_t *e) {
-    (void)e;
+    ESP_LOGI(TAG,
+             "capture freq pressed src=%s ready=%d mode=%s label=%s",
+             e ? "lvgl" : "internal",
+             s_capture_ready ? 1 : 0,
+             (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "raw" : "normal",
+             s_capture_freq_label);
+    if (subghz_capture_popup_ignore_activation()) {
+        return;
+    }
+
+    if (s_capture_ready && s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+        s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_FREQ;
+        subghz_capture_popup_update_buttons();
+
+        subghz_capture_continue_waiting();
+        return;
+    }
 
     s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_FREQ;
     subghz_capture_popup_update_buttons();
@@ -2007,12 +2326,13 @@ static void subghz_capture_freq_btn_cb(lv_event_t *e) {
             subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
             return;
         }
-        (void)esp_comm_manager_send_command("subghz", "cycle_freq");
+        uint8_t next_idx = (uint8_t)((subghz_capture_get_frequency_index() + 1) % SUBGHZ_FA_BAND_COUNT);
+        subghz_capture_set_frequency_index(next_idx);
     } else {
         subghz_remote_manager_cycle_frequency();
+        subghz_capture_refresh_frequency_label();
     }
 
-    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", subghz_remote_manager_get_frequency_label());
     if (s_capture_freq_btn && lv_obj_is_valid(s_capture_freq_btn)) {
         lv_obj_t *btn_label = lv_obj_get_child(s_capture_freq_btn, 0);
         if (btn_label) lv_label_set_text(btn_label, s_capture_freq_label);
@@ -2023,13 +2343,20 @@ static void subghz_capture_freq_btn_cb(lv_event_t *e) {
         lv_label_set_text(s_capture_status_label, status);
     }
 
-    if (s_capture_ready) {
+    if (s_capture_waiting_signal || s_capture_ready) {
         subghz_capture_continue_waiting();
     }
 }
 
 static void subghz_capture_back_btn_cb(lv_event_t *e) {
-    (void)e;
+    ESP_LOGI(TAG,
+             "capture back pressed src=%s ready=%d mode=%s",
+             e ? "lvgl" : "internal",
+             s_capture_ready ? 1 : 0,
+             (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "raw" : "normal");
+    if (subghz_capture_popup_ignore_activation()) {
+        return;
+    }
     s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
     subghz_capture_popup_update_buttons();
     subghz_close_capture_popup();
@@ -2047,6 +2374,12 @@ static void subghz_open_capture_popup(void) {
 
     s_capture_popup = popup_create_container(lv_scr_act(), popup_w, popup_h);
     lv_obj_center(s_capture_popup);
+    s_capture_popup_opened_us = esp_timer_get_time();
+    ESP_LOGI(TAG,
+             "capture popup opened mode=%s popup=%p freq=%s",
+             (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "raw" : "normal",
+             (void *)s_capture_popup,
+             s_capture_freq_label);
 
     const char *title = (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "Raw Capture" : "Capture";
     popup_create_title_label(s_capture_popup, title, &lv_font_montserrat_16, 8);
@@ -2065,7 +2398,7 @@ static void subghz_open_capture_popup(void) {
         &lv_font_montserrat_12,
         52);
     lv_obj_set_style_text_align(s_capture_status_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_align(s_capture_signal_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_align(s_capture_signal_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_max_height(s_capture_signal_label, 60, 0);
     lv_obj_set_scrollbar_mode(s_capture_signal_label, LV_SCROLLBAR_MODE_AUTO);
 
@@ -2107,33 +2440,19 @@ static void subghz_open_capture_popup(void) {
     lv_obj_t *btns[3] = { s_capture_save_btn, s_capture_freq_btn, s_capture_back_btn };
     popup_layout_buttons_responsive(s_capture_popup, btns, 3, -8, NULL);
 
-    s_capture_was_running = s_remote_mode ? (s_remote_stream_online && !s_remote_paused)
-                                          : subghz_remote_manager_is_running();
-
-    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", subghz_remote_manager_get_frequency_label());
-
-    if (s_remote_mode) {
-        if (!esp_comm_manager_is_connected()) {
-            subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
-            subghz_close_capture_popup();
-            return;
-        }
-        if (!s_capture_was_running) {
-            (void)esp_comm_manager_send_command("subghz", "start");
-        }
-        (void)esp_comm_manager_send_command("subghz", "capture_on");
-    } else {
-        if (!s_capture_was_running) {
-            if (!subghz_remote_manager_start(false)) {
-                subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
-                subghz_close_capture_popup();
-                return;
-            }
-        }
-        subghz_remote_manager_set_raw_capture_enabled(true);
+    if (!s_capture_was_running_known) {
+        s_capture_was_running = s_remote_mode ? (s_remote_stream_online && !s_remote_paused)
+                                              : subghz_remote_manager_is_running();
+        s_capture_was_running_known = true;
     }
 
-    subghz_capture_continue_waiting();
+    subghz_capture_refresh_frequency_label();
+
+    if (s_remote_mode && !esp_comm_manager_is_connected()) {
+        subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
+        subghz_close_capture_popup();
+        return;
+    }
 }
 
 static void subghz_close_saved_popup(void) {
@@ -2170,23 +2489,30 @@ static void subghz_saved_delete_btn_cb(lv_event_t *e) {
 }
 
 static void subghz_capture_mark_ready(void) {
+    s_capture_stop_pending = false;
+    s_capture_stop_deadline_us = 0;
     s_capture_buffer_valid = true;
     subghz_sanitize_snapshot_name(NULL, s_capture_name, sizeof(s_capture_name));
     s_capture_preview_cursor = s_cursor;
 
     if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
-        lv_label_set_text(s_capture_status_label, "Signal captured");
+        lv_label_set_text(s_capture_status_label,
+                          (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) ? "Raw capture buffered" : "Signal captured");
     }
     if (s_capture_signal_label && lv_obj_is_valid(s_capture_signal_label)) {
-        char decode_buf[96] = {0};
-        if (s_capture_raw_count > 0) {
-            subghz_analyze_raw_signal(s_capture_raw, s_capture_raw_count, decode_buf, sizeof(decode_buf));
-        }
         char msg[128];
-        if (decode_buf[0] != '\0') {
-            snprintf(msg, sizeof(msg), "%s", decode_buf);
+        if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+            snprintf(msg, sizeof(msg), "Captured %lu pulses", (unsigned long)s_capture_raw_count);
         } else {
-            snprintf(msg, sizeof(msg), "Capture %s", s_capture_name);
+            char decode_buf[96] = {0};
+            if (s_capture_raw_count > 0) {
+                subghz_analyze_raw_signal(s_capture_raw, s_capture_raw_count, decode_buf, sizeof(decode_buf));
+            }
+            if (decode_buf[0] != '\0') {
+                snprintf(msg, sizeof(msg), "%s", decode_buf);
+            } else {
+                snprintf(msg, sizeof(msg), "Capture %s", s_capture_name);
+            }
         }
         lv_label_set_text(s_capture_signal_label, msg);
     }
@@ -2195,17 +2521,11 @@ static void subghz_capture_mark_ready(void) {
     s_capture_ready = true;
     s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
     subghz_capture_popup_update_buttons();
-
-    if (s_remote_mode) {
-        if (esp_comm_manager_is_connected()) {
-            (void)esp_comm_manager_send_command("subghz", "pause");
-        }
-    } else {
-        subghz_remote_manager_set_paused(true);
-    }
 }
 
 static void subghz_capture_mark_ready_with_decoded(const subghz_decoded_signal_t *decoded) {
+    s_capture_stop_pending = false;
+    s_capture_stop_deadline_us = 0;
     if (decoded) {
         if (s_remote_decoded.preserved_extra) {
             free(s_remote_decoded.preserved_extra);
@@ -2273,7 +2593,7 @@ static void subghz_open_saved_popup(void) {
         true,
         &lv_font_montserrat_12,
         38);
-    lv_obj_set_style_text_align(s_saved_status_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_align(s_saved_status_label, LV_TEXT_ALIGN_CENTER, 0);
 
     const lv_font_t *btn_font = (LV_VER_RES <= 240) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
     s_saved_replay_btn = popup_add_styled_button(
@@ -2460,6 +2780,19 @@ static void subghz_timer_cb(lv_timer_t *timer) {
     bool scanner_popup_open = s_popup && lv_obj_is_valid(s_popup);
     bool capture_popup_open = s_capture_popup && lv_obj_is_valid(s_capture_popup);
     bool fa_popup_open = s_fa_popup && lv_obj_is_valid(s_fa_popup);
+
+    if (s_capture_popup_open_pending && !capture_popup_open) {
+        ESP_LOGI(TAG, "timer opening deferred capture popup");
+        s_capture_popup_open_pending = false;
+        subghz_open_capture_popup();
+        capture_popup_open = s_capture_popup && lv_obj_is_valid(s_capture_popup);
+    }
+    if (s_capture_popup_sync_pending && capture_popup_open) {
+        ESP_LOGI(TAG, "timer syncing deferred capture popup state");
+        s_capture_popup_sync_pending = false;
+        subghz_capture_apply_waiting_ui(false);
+    }
+
     if (!scanner_popup_open && !capture_popup_open && !fa_popup_open) {
         return;
     }
@@ -2537,6 +2870,25 @@ static void subghz_timer_cb(lv_timer_t *timer) {
 
     if (s_pending_action != SUBGHZ_PENDING_NONE && esp_timer_get_time() >= s_pending_action_deadline_us) {
         subghz_fail_pending_action("no peer response (unsupported or offline)");
+    }
+
+    if (s_capture_stop_pending && esp_timer_get_time() >= s_capture_stop_deadline_us) {
+        s_capture_stop_pending = false;
+        s_capture_stop_deadline_us = 0;
+        if (s_capture_buffer_valid && s_capture_raw_count > 0) {
+            ESP_LOGI(TAG, "remote raw stop completed with %lu pulses buffered", (unsigned long)s_capture_raw_count);
+            subghz_capture_mark_ready();
+        } else {
+            ESP_LOGI(TAG, "remote raw stop timed out without buffered pulses");
+            s_capture_ready = true;
+            s_capture_buffer_valid = false;
+            s_capture_waiting_signal = false;
+            s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_SAVE;
+            if (s_capture_status_label && lv_obj_is_valid(s_capture_status_label)) {
+                lv_label_set_text(s_capture_status_label, "No signal captured");
+            }
+            subghz_capture_popup_update_buttons();
+        }
     }
 
     for (int i = 0; i < SUBGHZ_SCANNER_CHANNEL_COUNT; i++) {
@@ -2665,8 +3017,8 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
 
     uint8_t packet_type = data[1];
 
-    /* v2 REPLAY_BEGIN (0x10) or legacy start (4) */
-    if (packet_type == 0x10 || packet_type == 4) {
+    /* v2 stream begin (0x10), replay legacy (4), or raw capture legacy (1) */
+    if (packet_type == 0x10 || packet_type == 4 || packet_type == 1) {
         if (packet_type == 0x10 && length >= 8) {
             s_remote_raw_expected = (size_t)data[2] | ((size_t)data[3] << 8) |
                                     ((size_t)data[4] << 16) | ((size_t)data[5] << 24);
@@ -2682,7 +3034,7 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         return;
     }
 
-    if (packet_type == 0x11 || packet_type == 5) {
+    if (packet_type == 0x11 || packet_type == 5 || packet_type == 2) {
         if (length < 5) {
             return;
         }
@@ -2705,7 +3057,7 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         return;
     }
 
-    if (packet_type == 0x12 || packet_type == 6) {
+    if (packet_type == 0x12 || packet_type == 6 || packet_type == 3) {
         if (s_remote_raw_received > 0) {
             size_t new_count = s_remote_raw_received;
             if (new_count > SUBGHZ_RAW_MAX_DURATIONS) {
@@ -2713,6 +3065,10 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
             }
             if (s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_waiting_signal) {
                 if (s_capture_mode == SUBGHZ_CAPTURE_MODE_RAW) {
+                    ESP_LOGI(TAG,
+                             "received remote raw end packet new_count=%lu stop_pending=%d",
+                             (unsigned long)new_count,
+                             s_capture_stop_pending ? 1 : 0);
                     if (s_capture_raw_count + new_count <= SUBGHZ_RAW_MAX_DURATIONS) {
                         memcpy(s_capture_raw + s_capture_raw_count, s_remote_raw_work, new_count * sizeof(int32_t));
                         s_capture_raw_count += new_count;
@@ -2721,6 +3077,10 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
                         memcpy(s_capture_raw, s_remote_raw_work, s_capture_raw_count * sizeof(int32_t));
                     }
                     s_capture_buffer_valid = true;
+                    if (s_capture_stop_pending && s_capture_raw_count > 0) {
+                        ESP_LOGI(TAG, "marking remote raw capture ready total_count=%lu", (unsigned long)s_capture_raw_count);
+                        subghz_capture_mark_ready();
+                    }
                 } else {
                     bool decoded_ok = false;
                     subghz_decoded_signal_t decoded;
@@ -2764,7 +3124,8 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         if (length < (size_t)(3 + name_len + 8 + 1)) return;
         if (name_len >= SUBGHZ_DECODED_PROTO_MAX) name_len = SUBGHZ_DECODED_PROTO_MAX - 1;
 
-        if (s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_mode != SUBGHZ_CAPTURE_MODE_RAW) {
+        if (s_capture_popup && lv_obj_is_valid(s_capture_popup) && s_capture_waiting_signal &&
+            s_capture_mode != SUBGHZ_CAPTURE_MODE_RAW) {
             subghz_decoded_signal_t decoded;
             memset(&decoded, 0, sizeof(decoded));
             memcpy(decoded.protocol, data + 3, name_len);
@@ -2877,9 +3238,34 @@ void subghz_view_update_remote_state(const char *state) {
         s_remote_error = false;
         s_remote_paused = false;
         subghz_clear_pending_action();
+    } else if (strncmp(state, "capture_begin_ok", 16) == 0) {
+        ESP_LOGI(TAG, "remote state capture_begin_ok defer_popup=%d", s_capture_defer_popup_open ? 1 : 0);
+        s_remote_stream_online = true;
+        s_remote_error = false;
+        s_remote_paused = false;
+        subghz_clear_pending_action();
+        s_capture_remote_arm_pending = false;
+        bool should_open_popup = s_capture_defer_popup_open && (!s_capture_popup || !lv_obj_is_valid(s_capture_popup));
+        s_capture_defer_popup_open = false;
+        subghz_capture_reset_state_for_new_attempt();
+        s_capture_waiting_signal = true;
+        s_capture_popup_open_pending = should_open_popup;
+        s_capture_popup_sync_pending = true;
+    } else if (strncmp(state, "capture_begin_error", 19) == 0) {
+        const char *reason = state + 19;
+        while (*reason == ' ') {
+            reason++;
+        }
+        ESP_LOGI(TAG, "remote state capture_begin_error reason='%s'", reason);
+        subghz_fail_pending_action((*reason != '\0') ? reason : "capture arm failed");
     } else if (strcmp(state, "stopped") == 0) {
         s_remote_stream_online = false;
         s_remote_paused = true;
+        if (s_capture_defer_popup_open && (!s_capture_popup || !lv_obj_is_valid(s_capture_popup))) {
+            s_capture_was_running_known = false;
+        }
+        s_capture_remote_arm_pending = false;
+        s_capture_defer_popup_open = false;
         subghz_clear_pending_action();
     } else if (strcmp(state, "error") == 0) {
         s_remote_error = true;
@@ -2937,6 +3323,10 @@ static void subghz_input_handler(InputEvent *event) {
         if (event->type == INPUT_TYPE_TOUCH) {
             lv_indev_data_t *d = &event->data.touch_data;
             if (d->state == LV_INDEV_STATE_REL) {
+                if (s_capture_popup_opened_us > 0 &&
+                    (esp_timer_get_time() - s_capture_popup_opened_us) < 250000LL) {
+                    return;
+                }
                 if (point_inside_obj(s_capture_save_btn, d->point.x, d->point.y)) {
                     subghz_capture_primary_btn_cb(NULL);
                     return;

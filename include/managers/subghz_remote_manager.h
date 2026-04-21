@@ -27,6 +27,8 @@ void subghz_remote_manager_stop(void);
 void subghz_remote_manager_set_paused(bool paused);
 bool subghz_remote_manager_is_running(void);
 bool subghz_remote_manager_is_paused(void);
+bool subghz_remote_manager_is_ready(void);
+bool subghz_remote_manager_begin_capture(bool raw_mode, uint32_t frequency_hz, bool stream_to_peer, uint32_t timeout_ms);
 const char *subghz_remote_manager_get_last_error(void);
 bool subghz_remote_manager_get_levels(uint8_t *out_levels, size_t max_levels, uint8_t *out_cursor);
 bool subghz_remote_manager_take_raw_capture(int32_t *out_durations, size_t max_durations, size_t *out_count);
@@ -35,6 +37,7 @@ bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, 
 void subghz_remote_manager_register_stream_handler(void);
 void subghz_remote_manager_set_raw_capture_enabled(bool enabled);
 void subghz_remote_manager_cycle_frequency(void);
+bool subghz_remote_manager_set_frequency_hz(uint32_t frequency_hz);
 const char *subghz_remote_manager_get_frequency_label(void);
 uint32_t subghz_remote_manager_get_frequency_hz(void);
 bool subghz_remote_manager_capture_snapshot(const char *name_hint);

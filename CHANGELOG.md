@@ -3,7 +3,7 @@
 ## Revival v1.9.9
 
 ### Added
-- Added CC1101 SubGHz (The Wired Hatter's Banshee only atm) support with scanner, frequency analyzer (5-band chart with history), capture/replay and multi-band scanning (315/390/433.92/868.35/915 MHz)
+- Added CC1101 SubGHz (The Wired Hatter's Banshee only atm) support with frequency analyzer, capture/replay and multi-band scanning (315/390/433.92/868.35/915 MHz)
 - Added passive jamming detection engine to the NRF24 frequency analyzer that identifies known 2.4GHz threat signatures in real time during normal spectrum scanning
 
 ## Revival v1.9.8

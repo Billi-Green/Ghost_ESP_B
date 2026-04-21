@@ -163,6 +163,7 @@ static uint8_t s_levels[SUBGHZ_SCANNER_CHANNEL_COUNT];
 static uint8_t s_next_channel = 0;
 static char s_last_error[96] = "none";
 static SemaphoreHandle_t s_data_mutex = NULL;
+static SemaphoreHandle_t s_radio_mutex = NULL;
 static uint8_t s_snapshot_levels[SUBGHZ_SCANNER_CHANNEL_COUNT];
 static uint8_t s_snapshot_cursor = 0;
 static bool s_snapshot_valid = false;
@@ -189,6 +190,27 @@ static subghz_decoder_engine_t s_decoder_engine;
 static volatile bool s_decode_result_ready = false;
 static volatile uint32_t s_current_freq_hz = 433920000U;
 static volatile uint8_t s_current_freq_idx = 2;
+static volatile bool s_radio_ready = false;
+static volatile bool s_capture_request_pending = false;
+static volatile bool s_capture_request_raw = false;
+static volatile uint32_t s_capture_request_freq_hz = 433920000U;
+static volatile uint32_t s_capture_request_id = 0;
+static volatile uint32_t s_capture_completed_id = 0;
+static volatile bool s_capture_request_ok = false;
+static volatile bool s_capture_raw_mode_active = false;
+static char s_capture_request_error[96] = "none";
+
+static inline void subghz_radio_lock(void) {
+    if (s_radio_mutex) {
+        xSemaphoreTake(s_radio_mutex, portMAX_DELAY);
+    }
+}
+
+static inline void subghz_radio_unlock(void) {
+    if (s_radio_mutex) {
+        xSemaphoreGive(s_radio_mutex);
+    }
+}
 
 typedef struct {
     bool level;
@@ -202,13 +224,20 @@ static volatile bool s_decoder_task_running = false;
 
 static void subghz_hw_stop(void);
 static void subghz_set_last_error(const char *msg);
-static void IRAM_ATTR subghz_gdo0_isr_handler(void *arg);
+static void subghz_gdo0_isr_handler(void *arg);
 static void subghz_raw_timeout_cb(void *arg);
 static void subghz_stream_raw_capture(void);
 static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data);
 static esp_err_t cc1101_write_reg(uint8_t reg, uint8_t value);
 static esp_err_t cc1101_write_patable(const uint8_t *data, size_t len);
 static esp_err_t subghz_apply_preset(subghz_preset_t preset);
+static esp_err_t subghz_retune_frequency(uint32_t freq_hz);
+static int subghz_frequency_to_index(uint32_t frequency_hz);
+static void subghz_reset_capture_buffers(void);
+static void subghz_finalize_raw_capture(bool allow_short_capture);
+static void subghz_prepare_raw_capture_for_stream(void);
+static void subghz_finish_capture_request(uint32_t request_id, bool ok, const char *reason);
+static void subghz_process_capture_request(void);
 
 static esp_err_t subghz_apply_preset(subghz_preset_t preset) {
     const cc1101_reg_entry_t *tbl = (preset == SUBGHZ_PRESET_OOK270_ASYNC) ? s_preset_ook270 : s_preset_ook650;
@@ -323,6 +352,134 @@ static void subghz_set_last_error(const char *msg) {
     snprintf(s_last_error, sizeof(s_last_error), "%s", msg);
 }
 
+static int subghz_frequency_to_index(uint32_t frequency_hz) {
+    for (int i = 0; i < SUBGHZ_FREQ_COUNT; i++) {
+        if (s_scan_freqs[i] == frequency_hz) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void subghz_reset_capture_buffers(void) {
+    s_raw_active = false;
+    s_raw_ready = false;
+    s_raw_worklen = 0;
+    s_raw_completed_len = 0;
+    s_raw_stream_count = 0;
+    s_raw_capture_pending = false;
+    s_decode_result_ready = false;
+    if (s_raw_timeout_timer) {
+        esp_timer_stop(s_raw_timeout_timer);
+    }
+    if (s_edge_queue) {
+        xQueueReset(s_edge_queue);
+    }
+    subghz_engine_reset(&s_decoder_engine);
+}
+
+static void subghz_finalize_raw_capture(bool allow_short_capture) {
+    if (!s_raw_active) {
+        return;
+    }
+
+    uint32_t now_us = (uint32_t)esp_timer_get_time();
+    uint32_t delta = (now_us >= s_raw_last_time_us) ? (now_us - s_raw_last_time_us)
+                                                    : (UINT32_MAX - s_raw_last_time_us + now_us + 1U);
+    if (delta > 0 && s_raw_worklen < SUBGHZ_RAW_MAX_DURATIONS) {
+        s_raw_workbufs[s_raw_isr_buf_idx][s_raw_worklen++] = s_raw_prev_level ? (int32_t)delta : -(int32_t)delta;
+    }
+
+    s_raw_completed_len = s_raw_worklen;
+    s_raw_active = false;
+    s_raw_ready = allow_short_capture ? (s_raw_completed_len > 0) : (s_raw_completed_len > 8);
+    s_raw_isr_buf_idx = 1 - s_raw_isr_buf_idx;
+}
+
+static void subghz_prepare_raw_capture_for_stream(void) {
+    if (!s_raw_ready) {
+        return;
+    }
+
+    uint8_t completed_idx = 1 - s_raw_isr_buf_idx;
+    size_t len = s_raw_completed_len;
+    if (len > SUBGHZ_RAW_MAX_DURATIONS) {
+        len = SUBGHZ_RAW_MAX_DURATIONS;
+    }
+
+    s_raw_stream_ptr = (volatile int32_t *)s_raw_workbufs[completed_idx];
+    s_raw_stream_count = len;
+    s_raw_capture_pending = (len > 0);
+    s_raw_completed_len = 0;
+    s_raw_ready = false;
+}
+
+static void subghz_finish_capture_request(uint32_t request_id, bool ok, const char *reason) {
+    if (s_capture_request_id != request_id) {
+        return;
+    }
+
+    s_capture_request_ok = ok;
+    if (ok) {
+        snprintf(s_capture_request_error, sizeof(s_capture_request_error), "none");
+        subghz_set_last_error("none");
+    } else {
+        const char *msg = (reason && reason[0] != '\0') ? reason : "capture arm failed";
+        snprintf(s_capture_request_error, sizeof(s_capture_request_error), "%s", msg);
+        subghz_set_last_error(s_capture_request_error);
+    }
+    s_capture_request_pending = false;
+    s_capture_completed_id = request_id;
+}
+
+static void subghz_process_capture_request(void) {
+    if (!s_capture_request_pending) {
+        return;
+    }
+
+    uint32_t request_id = s_capture_request_id;
+    uint32_t frequency_hz = s_capture_request_freq_hz;
+    bool raw_mode = s_capture_request_raw;
+    int freq_idx = subghz_frequency_to_index(frequency_hz);
+    if (freq_idx < 0) {
+        subghz_finish_capture_request(request_id, false, "unsupported frequency");
+        return;
+    }
+
+    if (!s_spi_dev || !s_radio_ready) {
+        subghz_finish_capture_request(request_id, false, "radio not ready");
+        return;
+    }
+
+    ESP_LOGI(TAG, "arming %s capture @ %lu Hz", raw_mode ? "raw" : "normal", (unsigned long)frequency_hz);
+
+    s_paused = false;
+    if (s_raw_capture_enabled) {
+        subghz_remote_manager_set_raw_capture_enabled(false);
+    }
+    subghz_reset_capture_buffers();
+    s_capture_raw_mode_active = raw_mode;
+
+    esp_err_t err = subghz_retune_frequency(frequency_hz);
+    if (s_capture_request_id != request_id) {
+        return;
+    }
+    if (err != ESP_OK) {
+        subghz_finish_capture_request(request_id, false, subghz_remote_manager_get_last_error());
+        return;
+    }
+
+    s_current_freq_idx = (uint8_t)freq_idx;
+    subghz_remote_manager_set_raw_capture_enabled(true);
+    s_capture_raw_mode_active = raw_mode;
+    if (s_capture_request_id != request_id) {
+        subghz_remote_manager_set_raw_capture_enabled(false);
+        return;
+    }
+
+    subghz_finish_capture_request(request_id, true, NULL);
+}
+
 static void IRAM_ATTR subghz_gdo0_isr_handler(void *arg) {
     (void)arg;
     if (!s_raw_capture_enabled) return;
@@ -350,7 +507,7 @@ static void IRAM_ATTR subghz_gdo0_isr_handler(void *arg) {
         s_raw_workbufs[s_raw_isr_buf_idx][s_raw_worklen++] = s_raw_prev_level ? (int32_t)delta : -(int32_t)delta;
     }
 
-    if (s_edge_queue && !s_decode_result_ready && delta > 0) {
+    if (s_edge_queue && !s_capture_raw_mode_active && !s_decode_result_ready && delta > 0) {
         subghz_edge_t edge = { .level = (bool)s_raw_prev_level, .duration = delta };
         xQueueSendFromISR(s_edge_queue, &edge, NULL);
     }
@@ -369,23 +526,13 @@ static void subghz_raw_timeout_cb(void *arg) {
         return;
     }
 
-    uint32_t now_us = (uint32_t)esp_timer_get_time();
-    uint32_t delta = (now_us >= s_raw_last_time_us) ? (now_us - s_raw_last_time_us)
-                                                    : (UINT32_MAX - s_raw_last_time_us + now_us + 1U);
-    if (delta > 0 && s_raw_worklen < SUBGHZ_RAW_MAX_DURATIONS) {
-        s_raw_workbufs[s_raw_isr_buf_idx][s_raw_worklen++] = s_raw_prev_level ? (int32_t)delta : -(int32_t)delta;
-    }
-
-    s_raw_completed_len = s_raw_worklen;
-    s_raw_active = false;
-    s_raw_ready = (s_raw_completed_len > 8);
-    s_raw_isr_buf_idx = 1 - s_raw_isr_buf_idx;
+    subghz_finalize_raw_capture(false);
     ESP_LOGI(TAG, "raw timeout: %lu transitions captured, ready=%d", (unsigned long)s_raw_completed_len, s_raw_ready);
 }
 
 static void subghz_stream_raw_capture(void) {
     if (!s_stream_to_peer || !esp_comm_manager_is_connected() || !s_raw_capture_pending || s_raw_stream_count == 0 ||
-        s_decode_result_ready || s_paused) {
+        ((!s_capture_raw_mode_active) && s_decode_result_ready) || s_paused) {
         ESP_LOGI(TAG, "stream_raw: skip pending=%d count=%lu online=%d", s_raw_capture_pending, (unsigned long)s_raw_stream_count, esp_comm_manager_is_connected());
         return;
     }
@@ -571,10 +718,12 @@ static bool subghz_validate_pin_config(void) {
         subghz_set_last_error("invalid GDO0 pin");
         return false;
     }
-    if (gdo2 >= 0 && !GPIO_IS_VALID_GPIO(gdo2)) {
+#if CONFIG_SUBGHZ_GDO2_PIN >= 0
+    if (!GPIO_IS_VALID_GPIO(gdo2)) {
         subghz_set_last_error("invalid GDO2 pin");
         return false;
     }
+#endif
 
     int pins[6] = { mosi, miso, sck, csn, gdo0, gdo2 };
     for (int i = 0; i < 6; i++) {
@@ -683,9 +832,11 @@ static esp_err_t subghz_hw_start(void) {
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
-    if (CONFIG_SUBGHZ_GDO2_PIN >= 0) {
+#if CONFIG_SUBGHZ_GDO2_PIN >= 0
+    {
         gdo_cfg.pin_bit_mask |= (1ULL << CONFIG_SUBGHZ_GDO2_PIN);
     }
+#endif
 
     esp_err_t err = gpio_config(&gdo_cfg);
     if (err != ESP_OK) {
@@ -818,25 +969,65 @@ static esp_err_t subghz_hw_start(void) {
              version,
              partnum);
 
+    s_radio_ready = true;
+
     return ESP_OK;
 }
 
 static esp_err_t subghz_retune_frequency(uint32_t freq_hz) {
+    if (!s_spi_dev || !s_radio_ready) {
+        subghz_set_last_error("radio not ready");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    subghz_radio_lock();
+
     uint32_t freq_word = (uint32_t)((((uint64_t)freq_hz) * 65536ULL) / 26000000ULL);
+    const char *step = "SIDLE";
     esp_err_t err = cc1101_strobe(CC1101_STROBE_SIDLE);
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ2, (uint8_t)((freq_word >> 16) & 0xFF));
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ1, (uint8_t)((freq_word >> 8) & 0xFF));
-    if (err == ESP_OK) err = cc1101_write_reg(CC1101_REG_FREQ0, (uint8_t)(freq_word & 0xFF));
-    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SCAL);
-    if (err == ESP_OK) err = cc1101_strobe(CC1101_STROBE_SRX);
+    if (err == ESP_OK) {
+        step = "FREQ2";
+        err = cc1101_write_reg(CC1101_REG_FREQ2, (uint8_t)((freq_word >> 16) & 0xFF));
+    }
+    if (err == ESP_OK) {
+        step = "FREQ1";
+        err = cc1101_write_reg(CC1101_REG_FREQ1, (uint8_t)((freq_word >> 8) & 0xFF));
+    }
+    if (err == ESP_OK) {
+        step = "FREQ0";
+        err = cc1101_write_reg(CC1101_REG_FREQ0, (uint8_t)(freq_word & 0xFF));
+    }
+    if (err == ESP_OK) {
+        step = "SCAL";
+        err = cc1101_strobe(CC1101_STROBE_SCAL);
+    }
+    if (err == ESP_OK) {
+        step = "SRX";
+        err = cc1101_strobe(CC1101_STROBE_SRX);
+    }
+
+    subghz_radio_unlock();
+
     if (err == ESP_OK) {
         s_current_freq_hz = freq_hz;
+        subghz_set_last_error("none");
+    } else {
+        char reason[96];
+        snprintf(reason, sizeof(reason), "retune %s failed", step);
+        subghz_set_last_error(reason);
+        ESP_LOGW(TAG,
+                 "retune to %lu Hz failed at %s: %s",
+                 (unsigned long)freq_hz,
+                 step,
+                 esp_err_to_name(err));
     }
     return err;
 }
 
 static void subghz_hw_stop(void) {
+    s_radio_ready = false;
     s_raw_capture_enabled = false;
+    s_capture_raw_mode_active = false;
     gpio_isr_handler_remove((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN);
     if (s_raw_timeout_timer) {
         esp_timer_stop(s_raw_timeout_timer);
@@ -854,10 +1045,14 @@ static void subghz_hw_stop(void) {
 }
 
 static uint8_t subghz_sample_channel(uint8_t ch, int settle_us) {
+    subghz_radio_lock();
+
     if (cc1101_write_reg(0x0A, ch) != ESP_OK) {
+        subghz_radio_unlock();
         return 0;
     }
     if (cc1101_strobe(CC1101_STROBE_SRX) != ESP_OK) {
+        subghz_radio_unlock();
         return 0;
     }
 
@@ -865,8 +1060,11 @@ static uint8_t subghz_sample_channel(uint8_t ch, int settle_us) {
 
     uint8_t raw = 0;
     if (cc1101_read_status(CC1101_STATUS_RSSI, &raw) != ESP_OK) {
+        subghz_radio_unlock();
         return 0;
     }
+
+    subghz_radio_unlock();
 
     int8_t raw_signed = (int8_t)raw;
     int rssi_dbm = (raw_signed / 2) - 74;
@@ -951,6 +1149,11 @@ static void subghz_scan_task(void *arg) {
     s_raw_ready = false;
     s_raw_active = false;
     s_decode_result_ready = false;
+    s_capture_raw_mode_active = false;
+    s_capture_request_pending = false;
+    s_capture_request_ok = false;
+    s_capture_completed_id = 0;
+    snprintf(s_capture_request_error, sizeof(s_capture_request_error), "none");
     subghz_engine_init(&s_decoder_engine);
 
     s_edge_queue = xQueueCreate(SUBGHZ_EDGE_QUEUE_LEN, sizeof(subghz_edge_t));
@@ -969,25 +1172,24 @@ static void subghz_scan_task(void *arg) {
         return;
     }
 
+    bool skip_initial_freq_cycle = true;
+
     while (!s_stop_requested) {
-        if (s_decode_result_ready && s_stream_to_peer && esp_comm_manager_is_connected()) {
+        if (!s_capture_raw_mode_active && s_decode_result_ready && s_stream_to_peer && esp_comm_manager_is_connected()) {
             subghz_stream_decoded_result();
             s_decode_result_ready = false;
             subghz_engine_reset(&s_decoder_engine);
         }
 
         if (s_raw_ready) {
-            uint8_t completed_idx = 1 - s_raw_isr_buf_idx;
-            size_t len = s_raw_completed_len;
-            if (len > SUBGHZ_RAW_MAX_DURATIONS) {
-                len = SUBGHZ_RAW_MAX_DURATIONS;
-            }
-            s_raw_stream_ptr = (volatile int32_t *)s_raw_workbufs[completed_idx];
-            s_raw_stream_count = len;
-            s_raw_capture_pending = (len > 0);
-            s_raw_completed_len = 0;
-            s_raw_ready = false;
+            subghz_prepare_raw_capture_for_stream();
             subghz_stream_raw_capture();
+        }
+
+        if (s_capture_request_pending) {
+            subghz_process_capture_request();
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
         }
 
         if (s_paused || s_raw_capture_enabled) {
@@ -1002,10 +1204,14 @@ static void subghz_scan_task(void *arg) {
         if (settle_us < 100) settle_us = 100;
 
         if (s_next_channel == 0) {
-            uint8_t next_idx = (s_current_freq_idx + 1) % SUBGHZ_FREQ_COUNT;
-            if (subghz_retune_frequency(s_scan_freqs[next_idx]) == ESP_OK) {
-                s_current_freq_idx = next_idx;
-                ESP_LOGI(TAG, "scan freq: %s", s_scan_freq_labels[next_idx]);
+            if (skip_initial_freq_cycle) {
+                skip_initial_freq_cycle = false;
+            } else {
+                uint8_t next_idx = (s_current_freq_idx + 1) % SUBGHZ_FREQ_COUNT;
+                if (subghz_retune_frequency(s_scan_freqs[next_idx]) == ESP_OK) {
+                    s_current_freq_idx = next_idx;
+                    ESP_LOGI(TAG, "scan freq: %s", s_scan_freq_labels[next_idx]);
+                }
             }
         }
 
@@ -1057,6 +1263,9 @@ bool subghz_remote_manager_start(bool stream_to_peer) {
     if (!s_data_mutex) {
         s_data_mutex = xSemaphoreCreateMutex();
     }
+    if (!s_radio_mutex) {
+        s_radio_mutex = xSemaphoreCreateMutex();
+    }
 
     if (s_subghz_task) {
         subghz_set_last_error("none");
@@ -1091,6 +1300,80 @@ bool subghz_remote_manager_is_running(void) {
 
 bool subghz_remote_manager_is_paused(void) {
     return s_paused;
+}
+
+bool subghz_remote_manager_is_ready(void) {
+    return s_subghz_task != NULL && s_radio_ready;
+}
+
+bool subghz_remote_manager_begin_capture(bool raw_mode, uint32_t frequency_hz, bool stream_to_peer, uint32_t timeout_ms) {
+    if (subghz_frequency_to_index(frequency_hz) < 0) {
+        subghz_set_last_error("unsupported frequency");
+        return false;
+    }
+
+    if (!s_subghz_task) {
+        if (!subghz_remote_manager_start(stream_to_peer)) {
+            return false;
+        }
+    } else {
+        s_stream_to_peer = stream_to_peer;
+    }
+
+    int64_t ready_deadline_us = esp_timer_get_time() + ((int64_t)timeout_ms * 1000LL);
+    while (!subghz_remote_manager_is_ready()) {
+        if (!subghz_remote_manager_is_running()) {
+            if (strcmp(subghz_remote_manager_get_last_error(), "none") == 0) {
+                subghz_set_last_error("radio init timeout");
+            }
+            return false;
+        }
+        if (esp_timer_get_time() >= ready_deadline_us) {
+            subghz_set_last_error("radio init timeout");
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    uint32_t request_id = s_capture_request_id + 1;
+    if (request_id == 0) {
+        request_id = 1;
+    }
+    s_capture_request_raw = raw_mode;
+    s_capture_request_freq_hz = frequency_hz;
+    s_capture_request_ok = false;
+    snprintf(s_capture_request_error, sizeof(s_capture_request_error), "none");
+    s_capture_request_id = request_id;
+    s_capture_request_pending = true;
+
+    int64_t arm_deadline_us = esp_timer_get_time() + ((int64_t)timeout_ms * 1000LL);
+    while (s_capture_completed_id != request_id) {
+        if (!subghz_remote_manager_is_running()) {
+            if (strcmp(subghz_remote_manager_get_last_error(), "none") == 0) {
+                subghz_set_last_error("capture arm interrupted");
+            }
+            return false;
+        }
+        if (esp_timer_get_time() >= arm_deadline_us) {
+            s_capture_request_pending = false;
+            if (s_capture_request_id == request_id) {
+                s_capture_request_id = request_id + 1;
+            }
+            subghz_set_last_error("capture arm timeout");
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (!s_capture_request_ok) {
+        if (strcmp(s_capture_request_error, "none") != 0) {
+            subghz_set_last_error(s_capture_request_error);
+        }
+        return false;
+    }
+
+    subghz_set_last_error("none");
+    return true;
 }
 
 const char *subghz_remote_manager_get_last_error(void) {
@@ -1143,7 +1426,7 @@ bool subghz_remote_manager_take_raw_capture(int32_t *out_durations, size_t max_d
     if (copy > max_durations) {
         copy = max_durations;
     }
-    memcpy(out_durations, s_raw_stream_ptr, copy * sizeof(int32_t));
+    memcpy(out_durations, (const void *)s_raw_stream_ptr, copy * sizeof(int32_t));
     s_raw_capture_pending = false;
     if (out_count) {
         *out_count = copy;
@@ -1443,13 +1726,27 @@ void subghz_remote_manager_set_raw_capture_enabled(bool enabled) {
         ESP_LOGI(TAG, "raw capture enabled (GDO0 intr ANYEDGE)");
     } else if (!enabled && s_raw_capture_enabled) {
         gpio_set_intr_type((gpio_num_t)CONFIG_SUBGHZ_GDO0_PIN, GPIO_INTR_DISABLE);
-        s_raw_capture_enabled = false;
-        s_raw_active = false;
-        s_raw_ready = false;
-        s_raw_worklen = 0;
         if (s_raw_timeout_timer) {
             esp_timer_stop(s_raw_timeout_timer);
         }
+
+        if (s_raw_active) {
+            subghz_finalize_raw_capture(true);
+            ESP_LOGI(TAG,
+                     "raw capture flush on disable: %lu transitions ready=%d",
+                     (unsigned long)s_raw_completed_len,
+                     s_raw_ready ? 1 : 0);
+        }
+        if (s_raw_ready) {
+            subghz_prepare_raw_capture_for_stream();
+            subghz_stream_raw_capture();
+        }
+
+        s_raw_capture_enabled = false;
+        s_capture_raw_mode_active = false;
+        s_raw_active = false;
+        s_raw_ready = false;
+        s_raw_worklen = 0;
         ESP_LOGI(TAG, "raw capture disabled (GDO0 intr DISABLE)");
     }
 }
@@ -1460,6 +1757,21 @@ void subghz_remote_manager_cycle_frequency(void) {
         s_current_freq_idx = next_idx;
         ESP_LOGI(TAG, "cycle freq: %s", s_scan_freq_labels[next_idx]);
     }
+}
+
+bool subghz_remote_manager_set_frequency_hz(uint32_t frequency_hz) {
+    int freq_idx = subghz_frequency_to_index(frequency_hz);
+    if (freq_idx < 0) {
+        subghz_set_last_error("unsupported frequency");
+        return false;
+    }
+
+    if (subghz_retune_frequency(frequency_hz) != ESP_OK) {
+        return false;
+    }
+    s_current_freq_idx = (uint8_t)freq_idx;
+    ESP_LOGI(TAG, "set freq: %s", s_scan_freq_labels[freq_idx]);
+    return true;
 }
 
 const char *subghz_remote_manager_get_frequency_label(void) {
@@ -1719,6 +2031,14 @@ void subghz_remote_manager_stop(void) {}
 void subghz_remote_manager_set_paused(bool paused) { (void)paused; }
 bool subghz_remote_manager_is_running(void) { return false; }
 bool subghz_remote_manager_is_paused(void) { return false; }
+bool subghz_remote_manager_is_ready(void) { return false; }
+bool subghz_remote_manager_begin_capture(bool raw_mode, uint32_t frequency_hz, bool stream_to_peer, uint32_t timeout_ms) {
+    (void)raw_mode;
+    (void)frequency_hz;
+    (void)stream_to_peer;
+    (void)timeout_ms;
+    return false;
+}
 const char *subghz_remote_manager_get_last_error(void) { return "built without CONFIG_HAS_SUBGHZ"; }
 bool subghz_remote_manager_get_levels(uint8_t *out_levels, size_t max_levels, uint8_t *out_cursor) {
     (void)out_levels;
@@ -1750,6 +2070,10 @@ bool subghz_remote_manager_transmit_raw(const int32_t *durations, size_t count, 
 void subghz_remote_manager_register_stream_handler(void) {}
 void subghz_remote_manager_set_raw_capture_enabled(bool enabled) { (void)enabled; }
 void subghz_remote_manager_cycle_frequency(void) {}
+bool subghz_remote_manager_set_frequency_hz(uint32_t frequency_hz) {
+    (void)frequency_hz;
+    return false;
+}
 const char *subghz_remote_manager_get_frequency_label(void) { return "N/A"; }
 uint32_t subghz_remote_manager_get_frequency_hz(void) { return 0; }
 bool subghz_remote_manager_capture_snapshot(const char *name_hint) {

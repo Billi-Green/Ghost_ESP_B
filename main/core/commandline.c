@@ -7972,7 +7972,7 @@ void handle_nrf24_cmd(int argc, char **argv) {
 
 void handle_subghz_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("Usage: subghz <start|stop|pause|resume|status|capture|capture_on|capture_off|cycle_freq|save|load|list|replay|state>\n");
+        glog("Usage: subghz <start|stop|pause|resume|status|capture|capture_on|capture_off|capture_begin|cycle_freq|save|load|list|replay|state>\n");
         return;
     }
 
@@ -8030,9 +8030,6 @@ void handle_subghz_cmd(int argc, char **argv) {
         }
         subghz_remote_manager_stop();
         glog("SubGHz scanner stopping\n");
-        if (stream_to_peer) {
-            esp_comm_manager_send_command("subghz", "state stopped");
-        }
         return;
     }
 
@@ -8098,6 +8095,47 @@ void handle_subghz_cmd(int argc, char **argv) {
         glog("SubGHz raw capture disabled\n");
         if (stream_to_peer) {
             esp_comm_manager_send_command("subghz", "state capture_off");
+        }
+        return;
+    }
+
+    if (strcmp(sub, "capture_begin") == 0) {
+        if (argc < 4) {
+            glog("Usage: subghz capture_begin <normal|raw> <frequency_hz>\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state capture_begin_error invalid arguments");
+            }
+            return;
+        }
+
+        const char *mode = argv[2];
+        bool raw_mode = (strcmp(mode, "raw") == 0);
+        bool valid_mode = (strcmp(mode, "normal") == 0 || raw_mode);
+        uint32_t frequency_hz = (uint32_t)strtoul(argv[3], NULL, 10);
+        if (!valid_mode || frequency_hz == 0) {
+            glog("SubGHz capture begin failed: invalid arguments\n");
+            if (stream_to_peer) {
+                esp_comm_manager_send_command("subghz", "state capture_begin_error invalid arguments");
+            }
+            return;
+        }
+
+        if (!subghz_remote_manager_begin_capture(raw_mode, frequency_hz, stream_to_peer, 2000)) {
+            glog("SubGHz capture begin failed: %s\n", subghz_remote_manager_get_last_error());
+            if (stream_to_peer) {
+                char state_cmd[128];
+                snprintf(state_cmd,
+                         sizeof(state_cmd),
+                         "state capture_begin_error %s",
+                         subghz_remote_manager_get_last_error());
+                esp_comm_manager_send_command("subghz", state_cmd);
+            }
+            return;
+        }
+
+        glog("SubGHz capture armed: %s @ %s\n", mode, subghz_remote_manager_get_frequency_label());
+        if (stream_to_peer) {
+            esp_comm_manager_send_command("subghz", "state capture_begin_ok");
         }
         return;
     }
