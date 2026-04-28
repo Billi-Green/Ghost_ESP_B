@@ -10,6 +10,7 @@
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
+#include "gui/accessibility_fonts.h"
 #include "managers/views/error_popup.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/options_screen.h"
@@ -208,10 +209,44 @@ static joystick_t exit_button; // IO6 exit button
 
 #define FADE_DURATION_MS 10
 #define DEFAULT_DISPLAY_TIMEOUT_MS 30000
-#define JOYSTICK_REPEAT_INITIAL_DELAY_MS 350
-#define JOYSTICK_REPEAT_INTERVAL_MS 120
 
 uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT_MS;
+
+static inline uint32_t get_joystick_repeat_initial_delay(void) {
+    switch (settings_get_input_repeat_speed(&G_Settings)) {
+        case 0: return 600;  // Slow
+        case 1: return 350;  // Normal
+        case 2: return 150;  // Fast
+        default: return 350;
+    }
+}
+
+static inline uint32_t get_joystick_repeat_interval(void) {
+    switch (settings_get_input_repeat_speed(&G_Settings)) {
+        case 0: return 250;  // Slow
+        case 1: return 120;  // Normal
+        case 2: return 60;   // Fast
+        default: return 120;
+    }
+}
+
+static inline uint32_t get_tdeck_repeat_delay(void) {
+    switch (settings_get_input_repeat_speed(&G_Settings)) {
+        case 0: return 800;  // Slow
+        case 1: return 500;  // Normal
+        case 2: return 200;  // Fast
+        default: return 500;
+    }
+}
+
+static inline uint32_t get_tdeck_repeat_rate(void) {
+    switch (settings_get_input_repeat_speed(&G_Settings)) {
+        case 0: return 200;  // Slow
+        case 1: return 100;  // Normal
+        case 2: return 50;   // Fast
+        default: return 100;
+    }
+}
 
 static uint16_t original_beacon_interval = 100;
 
@@ -729,6 +764,14 @@ void display_manager_set_rainbow_mode(bool enable) {
 
 void display_manager_fade_out(lv_obj_t *obj, lv_anim_ready_cb_t ready_cb,
                               View *view) {
+  if (settings_get_reduced_motion(&G_Settings)) {
+    // Skip animation - set final state immediately
+    lv_obj_set_style_opa(obj, LV_OPA_TRANSP, 0);
+    if (ready_cb) {
+      ready_cb(&obj);
+    }
+    return;
+  }
   lv_anim_t anim;
   lv_anim_init(&anim);
   lv_anim_set_var(&anim, obj);
@@ -741,6 +784,11 @@ void display_manager_fade_out(lv_obj_t *obj, lv_anim_ready_cb_t ready_cb,
 }
 
 void display_manager_fade_in(lv_obj_t *obj) {
+  if (settings_get_reduced_motion(&G_Settings)) {
+    // Skip animation - set final state immediately
+    lv_obj_set_style_opa(obj, LV_OPA_COVER, 0);
+    return;
+  }
   lv_anim_t anim;
   lv_anim_init(&anim);
   lv_anim_set_var(&anim, obj);
@@ -1049,7 +1097,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   mainlabel = lv_label_create(left_container);
   lv_label_set_text(mainlabel, label_text);
   lv_obj_set_style_text_color(mainlabel, status_text_color, 0);
-  lv_obj_set_style_text_font(mainlabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(mainlabel, accessibility_get_font_title(), 0);
 
   // Create Status bar right container
   lv_obj_t *right_container = lv_obj_create(status_bar);
@@ -1063,25 +1111,25 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   sd_label = lv_label_create(right_container);
   lv_label_set_text(sd_label, LV_SYMBOL_SD_CARD);
   lv_obj_set_style_text_color(sd_label, status_text_color, 0);
-  lv_obj_set_style_text_font(sd_label, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_font(sd_label, accessibility_get_font_small(), 0);
   lv_obj_add_flag(sd_label, LV_OBJ_FLAG_HIDDEN);
   // add ble status to right container
   bt_label = lv_label_create(right_container);
   lv_label_set_text(bt_label, LV_SYMBOL_BLUETOOTH);
   lv_obj_set_style_text_color(bt_label, status_text_color, 0);
-  lv_obj_set_style_text_font(bt_label, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_font(bt_label, accessibility_get_font_small(), 0);
   lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
   // add wifi status to right container
   wifi_label = lv_label_create(right_container);
   lv_label_set_text(wifi_label, LV_SYMBOL_WIFI);
   lv_obj_set_style_text_color(wifi_label, status_text_color, 0);
-  lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_font(wifi_label, accessibility_get_font_small(), 0);
   lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_HIDDEN);
   // add battery status to right container
   battery_label = lv_label_create(right_container);
   lv_label_set_text(battery_label, "");
   lv_obj_set_style_text_color(battery_label, status_text_color, 0);
-  lv_obj_set_style_text_font(battery_label, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_font(battery_label, accessibility_get_font_small(), 0);
   lv_obj_add_flag(battery_label, LV_OBJ_FLAG_HIDDEN);
 
   bool HasBluetooth;
@@ -1832,8 +1880,6 @@ void hardware_input_task(void *pvParameters) {
   static uint32_t tdeck_repeat_start_ms = 0;
   static bool tdeck_repeat_active = false;
   static char tdeck_repeat_char = 0;
-  static const uint32_t TDECK_REPEAT_DELAY_MS = 500;   // Initial delay before repeat
-  static const uint32_t TDECK_REPEAT_RATE_MS = 100;    // Repeat rate
 
   gpio_set_direction(46, GPIO_MODE_INPUT);
   
@@ -1922,7 +1968,7 @@ void hardware_input_task(void *pvParameters) {
         if (key_pressed && tdeck_repeat_char != 0) {
           if (!tdeck_repeat_active) {
             // Check if initial delay has passed
-            if (now_ms - tdeck_repeat_start_ms >= TDECK_REPEAT_DELAY_MS) {
+            if (now_ms - tdeck_repeat_start_ms >= get_tdeck_repeat_delay()) {
               tdeck_repeat_active = true;
               tdeck_repeat_start_ms = now_ms; // Reset for repeat rate
               
@@ -1930,7 +1976,7 @@ void hardware_input_task(void *pvParameters) {
             }
           } else {
             // Check if repeat rate has passed
-            if (now_ms - tdeck_repeat_start_ms >= TDECK_REPEAT_RATE_MS) {
+            if (now_ms - tdeck_repeat_start_ms >= get_tdeck_repeat_rate()) {
               tdeck_repeat_start_ms = now_ms; // Reset for next repeat
               
               ESP_LOGD(TAG, "T-Deck key repeat: '%c'", current_char);
@@ -2314,7 +2360,7 @@ void hardware_input_task(void *pvParameters) {
         }
 
         if (i == 0 || i == 2 || i == 3 || i == 4) {
-          joystick_repeat_next_ms[i] = dm_now_ms() + JOYSTICK_REPEAT_INITIAL_DELAY_MS;
+          joystick_repeat_next_ms[i] = dm_now_ms() + get_joystick_repeat_initial_delay();
         }
         continue;
       }
@@ -2337,7 +2383,7 @@ void hardware_input_task(void *pvParameters) {
         event.data.joystick_pressed = true;
 
         if (xQueueSend(input_queue, &event, 0) == pdTRUE) {
-          joystick_repeat_next_ms[i] = now_ms + JOYSTICK_REPEAT_INTERVAL_MS;
+          joystick_repeat_next_ms[i] = now_ms + get_joystick_repeat_interval();
         }
       }
     }

@@ -14,7 +14,11 @@ lv_obj_t *img;
 static void fade_anim_cb(void *var, int32_t opacity);
 static void fade_out_cb(void *var);
 
-#define SPLASH_HOLD_MS 900
+static inline int get_splash_hold_ms(void) {
+    return settings_get_reduced_motion(&G_Settings) ? 50 : 900;
+}
+
+#define SPLASH_HOLD_MS get_splash_hold_ms()
 
 void splash_create(void) {
 

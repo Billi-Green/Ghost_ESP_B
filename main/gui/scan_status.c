@@ -1,6 +1,7 @@
 #include "gui/scan_status.h"
 #include "managers/display_manager.h"
 #include "managers/settings_manager.h"
+#include "gui/accessibility_fonts.h"
 #include "gui/theme_palette_api.h"
 #include "lvgl.h"
 #include <stdlib.h>
@@ -42,15 +43,15 @@ static lv_coord_t get_screen_height(void) {
 
 static const lv_font_t *get_font_for_screen(void) {
     lv_coord_t h = get_screen_height();
-    if (h <= 135) return &lv_font_montserrat_14;
-    return &lv_font_montserrat_16;
+    if (h <= 135) return accessibility_get_font_body();
+    return accessibility_get_font_title();
 }
 
 static const lv_font_t *get_small_font_for_screen(void) {
     lv_coord_t h = get_screen_height();
-    if (h <= 135) return &lv_font_montserrat_10;
-    if (h <= 200) return &lv_font_montserrat_12;
-    return &lv_font_montserrat_14;
+    if (h <= 135) return accessibility_get_font_small();
+    if (h <= 200) return accessibility_get_font_body();
+    return accessibility_get_font_body();
 }
 
 scan_status_t *scan_status_create(const char *message) {

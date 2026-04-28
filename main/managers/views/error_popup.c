@@ -6,6 +6,8 @@
 #include "esp_log.h"
 #include "gui/lvgl_safe.h"
 #include "lvgl.h"
+#include "managers/settings_manager.h"
+#include "gui/accessibility_fonts.h"
 
 static const char *TAG = "error_popup";
 
@@ -15,7 +17,12 @@ static lv_timer_t *error_popup_timer = NULL;
 static SemaphoreHandle_t popup_mutex = NULL;
 
 #define DISPLAY_DURATION_MS 2000
-#define ANIMATION_TIME_MS 150
+
+static inline int get_popup_anim_duration(void) {
+    return settings_get_reduced_motion(&G_Settings) ? 0 : 150;
+}
+
+#define ANIMATION_TIME_MS get_popup_anim_duration()
 
 static void fade_anim_cb(void *obj, int32_t value) {
     lv_obj_set_style_opa(obj, value, 0);
@@ -109,7 +116,7 @@ void error_popup_create(const char *message) {
         if (error_popup_label && lv_obj_is_valid(error_popup_label)) {
             int popup_width = LV_HOR_RES * 0.8;
             int padding = (LV_HOR_RES <= 128) ? 5 : 10;
-            const lv_font_t *font = (LV_HOR_RES <= 128) ? &lv_font_montserrat_8 : &lv_font_montserrat_12;
+            const lv_font_t *font = accessibility_get_font_small();
 
             lv_obj_set_style_opa(error_popup_root, LV_OPA_COVER, 0);
             lv_label_set_text(error_popup_label, message);
@@ -143,7 +150,7 @@ void error_popup_create(const char *message) {
 
     int popup_width = LV_HOR_RES * 0.8;
     int padding = (LV_HOR_RES <= 128) ? 5 : 10;
-    const lv_font_t *font = (LV_HOR_RES <= 128) ? &lv_font_montserrat_8 : &lv_font_montserrat_12;
+    const lv_font_t *font = accessibility_get_font_small();
     lv_obj_set_style_pad_all(error_popup_root, padding, 0);
     lv_obj_set_width(error_popup_root, popup_width);
     // container height and alignment will be set after label size is calculated
@@ -225,7 +232,7 @@ void error_popup_create_persistent(const char *message) {
 
     int popup_width = LV_HOR_RES * 0.8;
     int padding = (LV_HOR_RES <= 128) ? 5 : 10;
-    const lv_font_t *font = (LV_HOR_RES <= 128) ? &lv_font_montserrat_8 : &lv_font_montserrat_12;
+    const lv_font_t *font = accessibility_get_font_small();
     lv_obj_set_style_pad_all(error_popup_root, padding, 0);
     lv_obj_set_width(error_popup_root, popup_width);
 

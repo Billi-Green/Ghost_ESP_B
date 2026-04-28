@@ -132,6 +132,12 @@ typedef enum {
     SETTING_GHOSTLINK_SPLIT_VIEW,
     SETTING_MENU_BG_SHADE,
     SETTING_MENU_ROUNDED,
+    SETTING_EPILEPSY_WARNING,
+    SETTING_FONT_SIZE,
+    SETTING_REDUCED_MOTION,
+    SETTING_INPUT_REPEAT_SPEED,
+    SETTING_HIGH_CONTRAST,
+    SETTING_BOLD_TEXT,
 } SettingsType;
 
 
@@ -264,6 +270,12 @@ typedef struct {
     bool ghostlink_split_view;      // Split GhostLink terminal into two columns
     uint8_t menu_bg_shade;          // 0=Darkest, 1=Darker, 2=Dark, 3=Medium
     bool menu_rounded;              // Rounded corners on menu items
+    bool epilepsy_warning_enabled;  // Show warning before flashing LED effects
+    uint8_t font_size;              // 0=Small, 1=Normal, 2=Large
+    bool reduced_motion;            // Disable animations
+    uint8_t input_repeat_speed;     // 0=Slow, 1=Normal, 2=Fast
+    bool high_contrast;             // High contrast color overrides
+    bool bold_text;                 // Use larger font weight
 } FSettings;
 
 // Function declarations
@@ -496,6 +508,19 @@ void settings_set_menu_bg_shade(FSettings *settings, uint8_t shade);
 uint8_t settings_get_menu_bg_shade(const FSettings *settings);
 void settings_set_menu_rounded(FSettings *settings, bool enabled);
 bool settings_get_menu_rounded(const FSettings *settings);
+void settings_set_epilepsy_warning_enabled(FSettings *settings, bool enabled);
+bool settings_get_epilepsy_warning_enabled(const FSettings *settings);
+
+void settings_set_font_size(FSettings *settings, uint8_t size);
+uint8_t settings_get_font_size(const FSettings *settings);
+void settings_set_reduced_motion(FSettings *settings, bool enabled);
+bool settings_get_reduced_motion(const FSettings *settings);
+void settings_set_input_repeat_speed(FSettings *settings, uint8_t speed);
+uint8_t settings_get_input_repeat_speed(const FSettings *settings);
+void settings_set_high_contrast(FSettings *settings, bool enabled);
+bool settings_get_high_contrast(const FSettings *settings);
+void settings_set_bold_text(FSettings *settings, bool enabled);
+bool settings_get_bold_text(const FSettings *settings);
 
 extern FSettings G_Settings;
 

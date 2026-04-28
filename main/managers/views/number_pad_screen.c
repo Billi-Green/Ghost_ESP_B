@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "managers/views/terminal_screen.h"
+#include "gui/accessibility_fonts.h"
 #include "managers/views/options_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include <stdio.h>
@@ -122,7 +123,7 @@ static void number_pad_create() {
     lv_obj_set_style_outline_width(root, 0, 0);     // Remove outline
     
 
-    const lv_font_t *font = (screen_height >= 240) ? &lv_font_montserrat_16 : &lv_font_montserrat_12;
+    const lv_font_t *font = (screen_height >= 240) ? accessibility_get_font_body() : accessibility_get_font_small();
     int padding = 10;
     int display_height = (screen_height >= 240) ? 40 : 30;
 
