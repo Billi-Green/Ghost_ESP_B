@@ -5086,9 +5086,7 @@ void handle_rgb_mode(int argc, char **argv) {
         status_display_show_status("RGB Rainbow");
     } else if (strcasecmp(argv[1], "police") == 0) {
         if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
-            error_popup_create_persistent("EPILEPSY WARNING\nRapid flashing lights\nPress any key to continue...");
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            error_popup_destroy();
+            error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
         }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
@@ -5101,9 +5099,7 @@ void handle_rgb_mode(int argc, char **argv) {
         status_display_show_status("RGB Police");
     } else if (strcasecmp(argv[1], "strobe") == 0) {
         if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
-            error_popup_create_persistent("EPILEPSY WARNING\nRapid flashing lights\nPress any key to continue...");
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            error_popup_destroy();
+            error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
         }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
@@ -8725,9 +8721,7 @@ void handle_ir_cmd(int argc, char **argv) {
             }
             g_ir_universal_send_cancel = false;
             if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
-                error_popup_create_persistent("EPILEPSY WARNING\nRGB LED will flash\nduring IR transmission");
-                vTaskDelay(pdMS_TO_TICKS(3000));
-                error_popup_destroy();
+                error_popup_create("EPILEPSY WARNING\nRGB LED will flash\nduring IR transmission");
             }
             if (xTaskCreate(ir_universal_send_task, "ir_uni_sendall", 4096, args, 5, &g_ir_universal_send_task) != pdPASS) {
                 glog("IR: failed to start universal sendall task.\n");

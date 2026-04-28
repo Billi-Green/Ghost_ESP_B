@@ -2341,9 +2341,7 @@ static void command_event_execute(int idx) {
         if (idx < 0 || idx >= uni_command_count) return;
 
         if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
-            error_popup_create_persistent("EPILEPSY WARNING\nRGB LED will flash\nduring IR transmission");
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            error_popup_destroy();
+            error_popup_create("EPILEPSY WARNING\nRGB LED will flash\nduring IR transmission");
         }
 
         transmitting_popup = popup_create_container(lv_scr_act(), 200, 60);

@@ -827,7 +827,6 @@ static SettingsItem settings_items[] = {
     
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, RGB_MODE_COUNT, 0, SETTINGS_CAT_LED_RGB, false, NULL},
     {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_LED_RGB, false, NULL},
-    {"Epilepsy Warning", SETTING_EPILEPSY_WARNING, bool_options, 2, 1, SETTINGS_CAT_LED_RGB, false, NULL},
     
     {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1, SETTINGS_CAT_NAVIGATION, false, NULL},
     {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0, SETTINGS_CAT_NAVIGATION, false, NULL},
@@ -875,6 +874,7 @@ static SettingsItem settings_items[] = {
     {"Bold Text", SETTING_BOLD_TEXT, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"High Contrast", SETTING_HIGH_CONTRAST, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"Reduced Motion", SETTING_REDUCED_MOTION, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"Epilepsy Warning", SETTING_EPILEPSY_WARNING, bool_options, 2, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"Input Repeat Speed", SETTING_INPUT_REPEAT_SPEED, repeat_speed_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
 };
 
