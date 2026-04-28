@@ -26,6 +26,7 @@
 #include "scans/ble/device_detect_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "esp_timer.h"
+#include <stdint.h>
 
 /* MAX_PORTALS / MAX_PORTAL_NAME come from sd_card_manager.h */
 #define PORTAL_PAGE_SIZE 8    /* keep portal pages small to avoid LVGL stalls */
@@ -434,7 +435,7 @@ typedef enum {
 
 typedef struct {
     const char *name;
-    SettingsCategoryId id;
+    uint8_t id;
     bool conditional;
     const char *condition_config;
 } SettingsCategory;
@@ -742,11 +743,11 @@ static void load_current_settings_values(void);
 
 typedef struct {
     const char *label;
-    int setting_type;
+    int16_t setting_type;
     const char **value_options;
-    int value_count;
-    int current_value;
-    SettingsCategoryId category_id;
+    uint8_t value_count;
+    int16_t current_value;
+    uint8_t category_id;
     bool conditional;
     const char *condition_config;
 } SettingsItem;
