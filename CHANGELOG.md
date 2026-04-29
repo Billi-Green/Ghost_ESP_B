@@ -8,6 +8,7 @@
 
 ### Fixed
 - Fixed GPS info task stack corruption
+- Fixed Cardputer ADV `*` key being treated as backspace in text entry fields
 
 ## Revival v1.9.8
 
