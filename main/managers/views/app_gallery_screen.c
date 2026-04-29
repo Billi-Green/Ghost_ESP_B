@@ -2,8 +2,10 @@
 #include "managers/views/ghostchi_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/views/plugin_runner_view.h"
 #include "managers/views/terminal_screen.h"
 
+#include "managers/plugin_manager.h"
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
 #include "gui/lvgl_safe.h"
@@ -21,6 +23,8 @@ static const char *TAG = "AppGalleryScreen";
 
 #define ANIM_DURATION 60 // ms, use the same value in both files
 
+static void select_app_item(int index, bool slide_left);
+
 lv_obj_t *apps_container;
 static lv_obj_t *current_app_obj = NULL;
 static int selected_app_index = 0;
@@ -31,16 +35,18 @@ typedef struct {
     int palette_index;
     lv_color_t border_color;
     View *view;
+    char plugin_id[PLUGIN_APP_ID_MAX];
 } app_item_t;
 
-static app_item_t app_items[] = {
-    {"Visualizer", &rave, 4, {{0}}, &music_visualizer_view},
-    {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view},
-    {"Ghostchi", &ghost, 2, {{0}}, &ghostchi_view},
-    {"Back", NULL, 0, {{0}}, NULL},
+static const app_item_t builtin_app_items[] = {
+    {"Visualizer", &rave, 4, {{0}}, &music_visualizer_view, ""},
+    {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view, ""},
+    {"Ghostchi", &ghost, 2, {{0}}, &ghostchi_view, ""},
 };
 
-static int num_apps = sizeof(app_items) / sizeof(app_items[0]);
+#define MAX_APP_GALLERY_ITEMS (PLUGIN_APP_MAX_COUNT + 4)
+static app_item_t *app_items = NULL;
+static int num_apps = 0;
 lv_obj_t *back_button = NULL;
 
 // Add navigation button objects
@@ -68,11 +74,50 @@ static lv_color_t apps_bg_color;
 static lv_color_t apps_surface_color;
 static lv_color_t apps_text_color;
 
+static bool ensure_app_items(void) {
+    if (app_items) return true;
+    app_items = calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items));
+    if (!app_items) {
+        ESP_LOGE(TAG, "Failed to allocate app gallery items");
+        return false;
+    }
+    return true;
+}
+
 static void refresh_apps_surface_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     apps_bg_color = lv_color_hex(theme_palette_get_background(theme));
     apps_surface_color = lv_color_hex(theme_palette_get_surface(theme));
     apps_text_color = lv_color_hex(theme_palette_get_text(theme));
+}
+
+static void rebuild_app_items(void) {
+    num_apps = 0;
+    if (!ensure_app_items()) return;
+    memset(app_items, 0, sizeof(*app_items) * MAX_APP_GALLERY_ITEMS);
+
+    for (int i = 0; i < (int)(sizeof(builtin_app_items) / sizeof(builtin_app_items[0])) && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
+        app_items[num_apps++] = builtin_app_items[i];
+    }
+
+    plugin_manager_reload();
+    int plugin_count = plugin_manager_count();
+    for (int i = 0; i < plugin_count && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
+        const plugin_app_manifest_t *app = plugin_manager_get(i);
+        if (!app) continue;
+        app_items[num_apps].name = app->name;
+        app_items[num_apps].icon = &GESPAppGallery;
+        app_items[num_apps].palette_index = 3;
+        app_items[num_apps].view = &plugin_runner_view;
+        strncpy(app_items[num_apps].plugin_id, app->id, sizeof(app_items[num_apps].plugin_id) - 1);
+        num_apps++;
+    }
+
+    app_items[num_apps].name = "Back";
+    app_items[num_apps].icon = NULL;
+    app_items[num_apps].palette_index = 0;
+    app_items[num_apps].view = NULL;
+    num_apps++;
 }
 
 // Use the same theme palettes as the main menu to color app borders
@@ -114,6 +159,7 @@ static void apps_cleanup_layout(void) {
  * @brief Updates the displayed app item with animation
  */
 static void update_app_item(bool slide_left) {
+    if (!app_items || num_apps <= 0) return;
     static lv_obj_t *prev_app_obj = NULL;
 
     // Animate out old item if it exists
@@ -411,6 +457,8 @@ static void create_apps_list_menu(void) {
  * @brief Creates the apps menu screen view
  */
  void apps_menu_create(void) {
+    plugin_manager_init();
+    rebuild_app_items();
     refresh_apps_surface_colors();
     display_manager_fill_screen(apps_bg_color);
 
@@ -569,6 +617,7 @@ void apps_menu_destroy(void) {
  * @brief Selects an app item and updates the display
  */
 static void select_app_item(int index, bool slide_left) {
+    if (!app_items || num_apps <= 0) return;
     if (index < 0) index = num_apps - 1;
     if (index >= num_apps) index = 0;
 
@@ -620,6 +669,12 @@ static void handle_app_item_selection(int item_index) {
     }
 
     ESP_LOGI(TAG, "Launching app: %s (index %d)\n", app_items[item_index].name, item_index);
+
+    if (app_items[item_index].plugin_id[0] != '\0') {
+        plugin_runner_set_app(app_items[item_index].plugin_id);
+        display_manager_switch_view(&plugin_runner_view);
+        return;
+    }
 
     if (app_items[item_index].view == &terminal_view) {
         terminal_set_return_view(&apps_menu_view);

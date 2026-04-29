@@ -1280,18 +1280,37 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #if !defined(CONFIG_USE_7_INCHER) && !defined(CONFIG_JC3248W535EN_LCD)
 /* For cardputer (no PSRAM) use a single smaller buffer to save internal RAM.
    Single buffer increases flush frequency but greatly reduces RAM usage. */
+  static lv_color_t *buf1 = NULL;
+  static lv_color_t *buf2 = NULL;
+  size_t buf1_pixels;
+  size_t buf2_pixels = 0;
+
 #if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
+  buf1_pixels = CONFIG_TFT_WIDTH * 3;
 #elif defined(CONFIG_IDF_TARGET_ESP32C5)
   /* Use a single buffer on ESP32-C5 sized to provide a responsive feel on 240x320 displays */
   /* width * 8 gives ~8 lines of buffer which balances responsiveness and RAM use */
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
+  buf1_pixels = CONFIG_TFT_WIDTH * 5;
 #elif defined(CONFIG_IDF_TARGET_ESP32)
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 10] __attribute__((aligned(4)));
+  buf1_pixels = CONFIG_TFT_WIDTH * 10;
 #else
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
-  static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
+  buf1_pixels = CONFIG_TFT_WIDTH * 20;
+  buf2_pixels = CONFIG_TFT_WIDTH * 20;
 #endif
+  if (!buf1) {
+    buf1 = heap_caps_malloc(buf1_pixels * sizeof(*buf1), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  }
+  if (buf2_pixels > 0 && !buf2) {
+    buf2 = heap_caps_malloc(buf2_pixels * sizeof(*buf2), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  }
+  if (!buf1 || (buf2_pixels > 0 && !buf2)) {
+    ESP_LOGE(TAG, "display_manager: failed to allocate LVGL draw buffers");
+    free(buf1);
+    free(buf2);
+    buf1 = NULL;
+    buf2 = NULL;
+    return;
+  }
   ESP_LOGI(TAG, "display_manager: draw buffers allocated, free internal RAM: %d bytes", 
            (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 

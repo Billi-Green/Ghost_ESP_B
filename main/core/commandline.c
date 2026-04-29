@@ -114,6 +114,11 @@ void* esp_netif_get_netif_impl(esp_netif_t *esp_netif);
 #include "managers/subghz_remote_manager.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/app_gallery_screen.h"
+#include "managers/plugin_manager.h"
+#include "managers/plugin_loader.h"
+#ifdef CONFIG_WITH_SCREEN
+#include "managers/views/plugin_runner_view.h"
+#endif
 
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
 #include "managers/views/nrf24_analyzer_view.h"
@@ -9295,6 +9300,88 @@ static void handle_mic_cal_cmd(int argc, char **argv) {
 }
 #endif
 
+static void handle_apps_cmd(int argc, char **argv) {
+    if (argc < 2 || strcmp(argv[1], "help") == 0) {
+        glog("apps list\n");
+        glog("apps reload\n");
+        glog("apps info <id>\n");
+        glog("apps run <id>\n");
+        glog("apps stop\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "reload") == 0) {
+        int count = plugin_manager_reload();
+        if (count < 0) {
+            glog("apps reload failed: %s\n", plugin_manager_last_error());
+            return;
+        }
+        glog("apps reloaded: %d found\n", count);
+        return;
+    }
+
+    if (strcmp(argv[1], "list") == 0) {
+        if (plugin_manager_count() == 0) plugin_manager_reload();
+        int count = plugin_manager_count();
+        glog("SD apps: %d\n", count);
+        for (int i = 0; i < count; ++i) {
+            const plugin_app_manifest_t *app = plugin_manager_get(i);
+            if (!app) continue;
+            glog("  %s - %s v%s [%s]%s\n", app->id, app->name, app->version[0] ? app->version : "?",
+                 app->target[0] ? app->target : "any", app->unsafe ? " unsafe" : "");
+        }
+        return;
+    }
+
+    if (strcmp(argv[1], "info") == 0) {
+        if (argc < 3) {
+            glog("Usage: apps info <id>\n");
+            return;
+        }
+        if (plugin_manager_count() == 0) plugin_manager_reload();
+        const plugin_app_manifest_t *app = plugin_manager_find(argv[2]);
+        if (!app) {
+            glog("app not found: %s\n", argv[2]);
+            return;
+        }
+        glog("id: %s\nname: %s\nversion: %s\nauthor: %s\ntarget: %s\nentry: %s\napi: %u\nunsafe: %s\n",
+             app->id, app->name, app->version, app->author, app->target, app->entry,
+             (unsigned)app->api_version, app->unsafe ? "yes" : "no");
+        return;
+    }
+
+    if (strcmp(argv[1], "run") == 0) {
+        if (argc < 3) {
+            glog("Usage: apps run <id>\n");
+            return;
+        }
+        if (plugin_manager_count() == 0) plugin_manager_reload();
+#ifdef CONFIG_WITH_SCREEN
+        plugin_runner_set_app(argv[2]);
+        display_manager_switch_view(&plugin_runner_view);
+        glog("launching app in UI: %s\n", argv[2]);
+#else
+        plugin_loaded_app_t *loaded = NULL;
+        esp_err_t err = plugin_loader_load(argv[2], &loaded);
+        if (err != ESP_OK) {
+            glog("apps run failed: %s\n", plugin_loader_last_error());
+            return;
+        }
+        plugin_loader_start(loaded);
+        glog("app started: %s\n", argv[2]);
+#endif
+        return;
+    }
+
+    if (strcmp(argv[1], "stop") == 0) {
+        plugin_loader_unload(plugin_loader_current());
+        glog("app stopped\n");
+        return;
+    }
+
+    glog("unknown apps command: %s\n", argv[1]);
+}
+
 void register_commands() {
     command_init();
     register_command("help", handle_help);
@@ -9448,6 +9535,7 @@ void register_commands() {
     register_command("mic_cal", handle_mic_cal_cmd);
 #endif
     register_command("loadconfig", handle_loadconfig_cmd);
+    register_command("apps", handle_apps_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
 

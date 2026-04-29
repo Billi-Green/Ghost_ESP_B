@@ -1,0 +1,11 @@
+{
+  "id": "device_inspector",
+  "name": "Device Inspector",
+  "version": "1.0.0",
+  "author": "GhostESP",
+  "entry": "ghostesp_device_inspector.so",
+  "target": "esp32s3",
+  "api_version": 1,
+  "permissions": ["ui", "storage", "commands", "wifi", "tasks", "lvgl"],
+  "unsafe": true
+}

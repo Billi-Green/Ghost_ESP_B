@@ -104,6 +104,10 @@ if(CONFIG_USE_IO_EXPANDER)
     list(APPEND required_components io_manager)
 endif()
 
+if(CONFIG_ENABLE_NATIVE_SD_APPS)
+    list(APPEND required_components elf_loader)
+endif()
+
 # Add IEEE 802.15.4 component for Zigbee capture on ESP32-C5/C6
 if(idf_target STREQUAL "esp32c5" OR idf_target STREQUAL "esp32c6")
     list(APPEND required_components ieee802154)
