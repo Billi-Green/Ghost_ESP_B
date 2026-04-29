@@ -124,6 +124,7 @@ GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing to
 - Network printer output (`powerprinter`)
 - RGB LED modes
 - Timezone configuration (`timezone`)
+- Camera motion detection with SD card snapshot capture and Discord webhook alerts (XIAO S3 Sense)
 - Rave mode (display builds)
 
 </details>
