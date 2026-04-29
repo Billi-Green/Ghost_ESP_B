@@ -9,7 +9,7 @@ GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing to
 
 ## Get Started
 
-1. **Flash your device:** [flasher.ghostesp.net](https://flasher.ghostesp.net)
+1. **Flash your device:** [ghostesp.net/flasher](https://ghostesp.net/flasher)
 
 1. **Community & support:** [Discord](https://discord.gg/5cyNmUMgwh)
 
