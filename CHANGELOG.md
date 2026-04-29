@@ -6,6 +6,9 @@
 - Added CC1101 SubGHz (The Wired Hatter's Banshee only atm) support with frequency analyzer, capture/replay and multi-band scanning (315/390/433.92/868.35/915 MHz)
 - Added passive jamming detection engine to the NRF24 frequency analyzer that identifies known 2.4GHz threat signatures in real time during normal spectrum scanning
 
+### Fixed
+- Fixed GPS info task stack corruption
+
 ## Revival v1.9.8
 
 ### Added
