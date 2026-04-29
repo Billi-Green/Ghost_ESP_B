@@ -45,6 +45,10 @@
 #include "managers/badusb_manager.h"
 #endif
 
+#ifdef CONFIG_HAS_CAMERA
+#include "managers/motion_detector_manager.h"
+#endif
+
 #ifdef CONFIG_WITH_SCREEN
 #include "managers/views/splash_screen.h"
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
@@ -492,6 +496,9 @@ void app_main(void) {
     // Initialize MIC visualizer (will start sending amplitude over GhostLink when connected)
     mic_visualizer_init();
     mic_visualizer_start();
+#endif
+#ifdef CONFIG_HAS_CAMERA
+    motion_detector_init();
 #endif
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
     nrf24_analyzer_register_stream_handler();

@@ -28,6 +28,9 @@
 #endif
 #include "vendor/pcap.h"
 #include "vendor/printer.h"
+#ifdef CONFIG_HAS_CAMERA
+#include "managers/motion_detector_manager.h"
+#endif
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
 #include "managers/zigbee_manager.h"
 #endif
@@ -182,6 +185,9 @@ void handle_wigle_cmd(int argc, char **argv);
 void handle_loadconfig_cmd(int argc, char **argv);
 void handle_nrf24_cmd(int argc, char **argv);
 void handle_subghz_cmd(int argc, char **argv);
+#ifdef CONFIG_HAS_CAMERA
+void handle_motion_cmd(int argc, char **argv);
+#endif
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
@@ -9447,6 +9453,9 @@ void register_commands() {
 #ifdef CONFIG_HAS_MIC
     register_command("mic_cal", handle_mic_cal_cmd);
 #endif
+#ifdef CONFIG_HAS_CAMERA
+    register_command("motion", handle_motion_cmd);
+#endif
     register_command("loadconfig", handle_loadconfig_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
@@ -9609,3 +9618,114 @@ void handle_get_neopixel_brightness_cmd(int argc, char **argv) {
     uint8_t brightness = settings_get_neopixel_max_brightness(&G_Settings);
     glog("Current neopixel max brightness: %d%%\n", brightness);
 }
+
+#ifdef CONFIG_HAS_CAMERA
+void handle_motion_cmd(int argc, char **argv) {
+    if (argc < 2) {
+        glog("Usage: motion <command> [args]\n");
+        glog("Commands:\n");
+        glog("  motion start           - Start motion detection\n");
+        glog("  motion stop            - Stop motion detection\n");
+        glog("  motion status          - Show current state\n");
+        glog("  motion threshold <1-255>  - Set pixel diff threshold\n");
+        glog("  motion interval <100-10000> - Set interval in ms\n");
+        glog("  motion percent <1-100> - Set trigger percentage\n");
+        glog("  motion sample <1-32>   - Compare every Nth pixel\n");
+        glog("  motion snap <on|off>   - Enable/disable SD snapshots\n");
+        glog("  motion image <on|off>  - Attach image to Discord alert\n");
+        glog("  motion discord <url|off> - Send Discord embed alerts\n");
+        glog("  motion webhook <url|off> - Alias for discord/off\n");
+        glog("  motion cooldown <ms>    - Webhook alert cooldown\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "start") == 0) {
+        esp_err_t ret = motion_detector_start();
+        if (ret == ESP_OK) {
+            glog("[MOTION] Started\n");
+        } else {
+            glog("[MOTION] Failed to start\n");
+        }
+    } else if (strcmp(argv[1], "stop") == 0) {
+        motion_detector_stop();
+    } else if (strcmp(argv[1], "status") == 0) {
+        MotionDetectorState state = motion_detector_get_state();
+        glog("[MOTION] Status:\n");
+        glog("  Running:    %s\n", state.is_running ? "YES" : "NO");
+        glog("  Threshold:  %d\n", state.threshold);
+        glog("  Interval:   %dms\n", state.interval_ms);
+        glog("  Trigger:    %d%%\n", state.trigger_percent);
+        glog("  Sample:     every %d pixel(s)\n", state.sample_step);
+        glog("  PSRAM:      %s\n", state.using_psram ? "YES" : "NO");
+        glog("  Snapshots:  %s\n", state.save_snapshots ? "ON" : "OFF");
+        glog("  Image:      %s\n", state.send_discord_image ? "ON" : "OFF");
+        glog("  Webhook:    %s\n", state.webhook_enabled ? "configured" : "OFF");
+        glog("  Cooldown:   %dms\n", state.webhook_cooldown_ms);
+        glog("  Events:     %d\n", state.motion_count);
+    } else if (strcmp(argv[1], "threshold") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion threshold <1-255>\n");
+            return;
+        }
+        motion_detector_set_threshold(atoi(argv[2]));
+    } else if (strcmp(argv[1], "interval") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion interval <100-10000>\n");
+            return;
+        }
+        motion_detector_set_interval(atoi(argv[2]));
+    } else if (strcmp(argv[1], "percent") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion percent <1-100>\n");
+            return;
+        }
+        motion_detector_set_trigger_percent(atoi(argv[2]));
+    } else if (strcmp(argv[1], "sample") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion sample <1-32>\n");
+            return;
+        }
+        motion_detector_set_sample_step(atoi(argv[2]));
+    } else if (strcmp(argv[1], "snap") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion snap <on|off>\n");
+            return;
+        }
+        motion_detector_set_save_snapshots(strcmp(argv[2], "on") == 0);
+    } else if (strcmp(argv[1], "image") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion image <on|off>\n");
+            return;
+        }
+        motion_detector_set_discord_image(strcmp(argv[2], "on") == 0);
+    } else if (strcmp(argv[1], "discord") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion discord <discord_webhook_url|off>\n");
+            return;
+        }
+        if (strcmp(argv[2], "off") == 0) {
+            motion_detector_clear_webhook();
+        } else {
+            motion_detector_set_webhook(argv[2]);
+        }
+    } else if (strcmp(argv[1], "webhook") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion webhook <url|off>\n");
+            return;
+        }
+        if (strcmp(argv[2], "off") == 0) {
+            motion_detector_clear_webhook();
+        } else {
+            motion_detector_set_webhook(argv[2]);
+        }
+    } else if (strcmp(argv[1], "cooldown") == 0) {
+        if (argc < 3) {
+            glog("Usage: motion cooldown <ms>\n");
+            return;
+        }
+        motion_detector_set_webhook_cooldown(atoi(argv[2]));
+    } else {
+        glog("Unknown motion command: %s\n", argv[1]);
+    }
+}
+#endif

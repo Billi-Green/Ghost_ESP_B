@@ -212,6 +212,10 @@ GhostESP turns your ESP32 into a powerful, cheap and helpful wireless testing to
 - Minion
 
 - Sunton 7″
+
+- Seeed XIAO ESP32-S3 Sense
+
+- Seeed XIAO ESP32-C5
 </details>
 
 ---
