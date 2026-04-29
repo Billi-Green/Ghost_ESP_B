@@ -21,8 +21,8 @@ set(include_dirs
 
 set(COMPONENT_REQUIRES driver)
 
-# set driver sources only for supported platforms
-if(IDF_TARGET STREQUAL "esp32" OR IDF_TARGET STREQUAL "esp32s2" OR IDF_TARGET STREQUAL "esp32s3")
+# set driver sources only for esp32s3 (GhostESP camera target)
+if(IDF_TARGET STREQUAL "esp32s3")
   list(APPEND srcs
     driver/esp_camera.c
     driver/cam_hal.c
@@ -50,30 +50,9 @@ if(IDF_TARGET STREQUAL "esp32" OR IDF_TARGET STREQUAL "esp32s2" OR IDF_TARGET ST
     target/private_include
     )
 
-  if(IDF_TARGET STREQUAL "esp32")
-    list(APPEND srcs
-      target/xclk.c
-      target/esp32/ll_cam.c
-      )
-  endif()
-
-  if(IDF_TARGET STREQUAL "esp32s2")
-    list(APPEND srcs
-      target/xclk.c
-      target/esp32s2/ll_cam.c
-      target/tjpgd.c
-      )
-
-    list(APPEND priv_include_dirs
-      target/esp32s2/private_include
-      )
-  endif()
-
-  if(IDF_TARGET STREQUAL "esp32s3")
-    list(APPEND srcs
-      target/esp32s3/ll_cam.c
-      )
-  endif()
+  list(APPEND srcs
+    target/esp32s3/ll_cam.c
+    )
 
   set(priv_requires freertos nvs_flash)
 
