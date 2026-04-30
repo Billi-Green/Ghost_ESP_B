@@ -47,6 +47,7 @@
 
 #ifdef CONFIG_HAS_CAMERA
 #include "managers/motion_detector_manager.h"
+#include "managers/camera_stream_manager.h"
 #endif
 
 #ifdef CONFIG_WITH_SCREEN
@@ -499,6 +500,7 @@ void app_main(void) {
 #endif
 #ifdef CONFIG_HAS_CAMERA
     motion_detector_init();
+    camera_stream_init();
 #endif
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
     nrf24_analyzer_register_stream_handler();

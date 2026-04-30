@@ -5,8 +5,10 @@
 ### Added
 - Added CC1101 SubGHz (The Wired Hatter's Banshee only atm) support with frequency analyzer, capture/replay and multi-band scanning (315/390/433.92/868.35/915 MHz)
 - Added passive jamming detection engine to the NRF24 frequency analyzer that identifies known 2.4GHz threat signatures in real time during normal spectrum scanning
-- Added support for Seeed Studio XIAO ESP32-S3 Sense with camera-based motion detection
+- Added support for Seeed Studio XIAO ESP32-S3 Sense with motion detection
 - Added support for Seeed Studio XIAO ESP32-C5
+- Added support for Seeed Studio XIAO ESP32-S3
+- Added live MJPEG camera stream viewable at http://ghostesp.local/camera
 - Added camera motion detector CLI (`motion start/stop/status/threshold/interval/percent/snap/discord/webhook/cooldown`) with configurable sensitivity, SD card JPEG snapshots, and Discord webhook integration
 
 ### Fixed
