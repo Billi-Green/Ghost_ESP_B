@@ -8,6 +8,7 @@
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
 #include "gui/theme_palette_api.h"
+#include "gui/design_tokens.h"
 #include "io_manager.h"
 #include "managers/views/wardriving_screen.h"
 #include "managers/views/ethernet_screen.h"
@@ -1439,7 +1440,7 @@ void options_menu_create() {
 
     root = gui_screen_create_root(NULL, NULL, bg_color, LV_OPA_COVER);
     options_menu_view.root = root;
-    const int STATUS_BAR_HEIGHT = 20;
+    const int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_H;
     g_options_view = options_view_create(root, options_menu_type_to_string(SelectedMenuType));
     menu_container = options_view_get_list(g_options_view);
 
@@ -6237,7 +6238,6 @@ static void show_ble_detect_detail(int device_index) {
     }
     detail_view_add_info(ble_detect_detail_view, "MAC", mac);
     detail_view_add_infof(ble_detect_detail_view, "RSSI", "%d dBm", info.rssi);
-    detail_view_add_info(ble_detect_detail_view, "Proximity", rssi_to_proximity(info.rssi));
     detail_view_add_info(ble_detect_detail_view, "Actions:", "");
     detail_view_add_action(ble_detect_detail_view, "Track", ble_detect_track_cb, NULL);
     if (info.type == BLE_DETECT_DEVICE_AIRTAG) {
