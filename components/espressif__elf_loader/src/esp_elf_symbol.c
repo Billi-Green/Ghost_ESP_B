@@ -20,6 +20,7 @@
 #include "rom/ets_sys.h"
 
 #include "esp_log.h"
+#include "esp_idf_version.h"
 #include "esp_elf.h"
 
 #if CONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT
@@ -96,11 +97,13 @@ static const struct esp_elfsym g_esp_libc_elfsyms[] = {
 
     /* newlib */
 
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 0)
     ESP_ELFSYM_EXPORT(__errno),
     ESP_ELFSYM_EXPORT(__getreent),
+#endif
 #ifdef __HAVE_LOCALE_INFO__
     ESP_ELFSYM_EXPORT(__locale_ctype_ptr),
-#else
+#elif defined(_CTYPE_DATA)
     ESP_ELFSYM_EXPORT(_ctype_),
 #endif
 
