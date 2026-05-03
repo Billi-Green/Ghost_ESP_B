@@ -12,6 +12,7 @@
 - Added camera motion detector CLI (`motion start/stop/status/threshold/interval/percent/snap/discord/webhook/cooldown`) with configurable sensitivity, SD card JPEG snapshots, and Discord webhook integration
 
 ### Fixed
+- Fixed ESP32-C5 not discovering 5GHz channels above UNII-1 (e.g. 149-165) during WiFi scans by using correct country code API at boot
 - Fixed GPS info task stack corruption
 - Fixed Cardputer ADV `*` key being treated as backspace in text entry fields
 
