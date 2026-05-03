@@ -9,6 +9,7 @@
 - Added support for Seeed Studio XIAO ESP32-C5
 - Added support for Seeed Studio XIAO ESP32-S3
 - Added live MJPEG camera stream viewable at http://ghostesp.local/camera
+- Added SD card backup functionality for settings - @tototo31
 - Added camera motion detector CLI (`motion start/stop/status/threshold/interval/percent/snap/discord/webhook/cooldown`) with configurable sensitivity, SD card JPEG snapshots, and Discord webhook integration
 
 ### Fixed
