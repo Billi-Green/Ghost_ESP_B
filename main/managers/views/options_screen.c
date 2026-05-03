@@ -13,6 +13,8 @@
 #include "managers/views/ethernet_screen.h"
 #include "managers/wigle_manager.h"
 #include "managers/config_manager.h"
+#include "managers/settings_sd_backup.h"
+#include "managers/wifi_manager.h"
 #include "gui/popup.h"
 #include "core/utils.h"
 #include "managers/sd_card_manager.h"  /* MAX_PORTAL_NAME, sd_card_list_dir_paged */
@@ -845,6 +847,8 @@ static SettingsItem settings_items[] = {
     {"Auto Save Scans", SETTING_AUTO_SAVE_SCANS, bool_options, 2, 1, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
     {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
     {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+    {"Export Settings SD", SETTING_EXPORT_SETTINGS_SD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+    {"Import Settings SD", SETTING_IMPORT_SETTINGS_SD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
     {"Factory Reset", SETTING_FACTORY_RESET, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
     
     {"Auto Upload", SETTING_WIGLE_AUTO_UPLOAD, bool_options, 2, 0, SETTINGS_CAT_WIGLE, false, NULL},
@@ -1928,6 +1932,33 @@ static void apply_setting_change(int setting_index, int new_value) {
             display_manager_switch_view(&terminal_view);
             io_manager_scan_i2c();
             return;
+        case SETTING_EXPORT_SETTINGS_SD: {
+            esp_err_t err = settings_backup_export_to_sd();
+            if (err == ESP_OK) {
+                error_popup_create("Settings exported to SD\n\nghostesp/settings_backup.json");
+            } else if (err == ESP_ERR_NOT_FOUND) {
+                error_popup_create("SD card not available");
+            } else {
+                error_popup_create("Export failed\n\nCheck SD and ghostesp folder");
+            }
+            return;
+        }
+        case SETTING_IMPORT_SETTINGS_SD: {
+            esp_err_t err = settings_backup_import_from_sd();
+            if (err == ESP_OK) {
+                settings_backup_apply_runtime_after_import();
+                error_popup_create("Settings imported\n\nSaved to NVS.\nReboot for full effect.");
+            } else if (err == ESP_ERR_NOT_FOUND) {
+                error_popup_create("Backup not found\n\nghostesp/settings_backup.json");
+            } else if (err == ESP_ERR_INVALID_VERSION) {
+                error_popup_create("Invalid backup file\n\nWrong format or version");
+            } else if (err == ESP_ERR_INVALID_SIZE) {
+                error_popup_create("Backup file invalid\n\nSize out of range");
+            } else {
+                error_popup_create("Import failed");
+            }
+            return;
+        }
         case SETTING_FACTORY_RESET:
             nvs_flash_erase();
             esp_restart();
