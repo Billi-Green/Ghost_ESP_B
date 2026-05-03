@@ -15,6 +15,7 @@
 - Fixed ESP32-C5 not discovering 5GHz channels above UNII-1 (e.g. 149-165) during WiFi scans by using correct country code API at boot
 - Fixed GPS info task stack corruption
 - Fixed Cardputer ADV `*` key being treated as backspace in text entry fields
+- Fixed Poltergeist status display failing to initialize due to I2C port returning ESP_ERR_INVALID_STATE instead of ESP_ERR_NOT_FOUND (#308)
 
 ## Revival v1.9.8
 
