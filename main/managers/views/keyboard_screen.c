@@ -5,6 +5,7 @@
 #include "managers/views/main_menu_screen.h"
 #include "gui/screen_layout.h"
 #include "gui/accessibility_fonts.h"
+#include "gui/design_tokens.h"
 #include "managers/settings_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1085,7 +1086,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
         
         int screen_width = LV_HOR_RES;
         int screen_height = LV_VER_RES;
-        int status_bar_height = 20;
+        int status_bar_height = GUI_STATUS_BAR_H;
         int display_height = 40;
         int padding = 5;
         int keys_start_y = status_bar_height + display_height + padding * 2;
@@ -1360,7 +1361,7 @@ static void build_key_matrix(void) {
     if (!root) return;
     int screen_width = LV_HOR_RES;
     int screen_height = LV_VER_RES;
-    int status_bar_height = 20;
+    int status_bar_height = GUI_STATUS_BAR_H;
     int padding = 5;
     int display_height = 40;
     int keys_start_y = status_bar_height + display_height + padding * 2;
