@@ -1244,7 +1244,7 @@ menu "Ghost ESP Options"
     config ENABLE_NATIVE_SD_APPS
         bool "Enable native apps loaded from SD"
         default y
-        depends on IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32C61 || IDF_TARGET_ESP32P4
+        depends on IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32C61 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32C5
         select ELF_LOADER
         select ELF_DYNAMIC_LOAD_SHARED_OBJECT
         help
