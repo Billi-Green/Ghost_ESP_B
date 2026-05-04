@@ -16,6 +16,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #if CONFIG_ENABLE_NATIVE_SD_APPS
 #include "esp_elf.h"
@@ -76,6 +79,41 @@ static bool plugin_api_storage_write(const char *path, const void *data, size_t 
     return sd_card_write_file(path, data, len) == ESP_OK;
 }
 
+static bool plugin_api_storage_append(const char *path, const void *data, size_t len) {
+    if (!path || (!data && len > 0) || strncmp(path, "/mnt/ghostesp/", 14) != 0) return false;
+    return sd_card_append_file(path, data, len) == ESP_OK;
+}
+
+static bool plugin_api_storage_delete(const char *path) {
+    if (!path || strncmp(path, "/mnt/ghostesp/", 14) != 0) return false;
+    return unlink(path) == 0;
+}
+
+static bool plugin_api_storage_mkdir(const char *path) {
+    if (!path || strncmp(path, "/mnt/ghostesp/", 14) != 0) return false;
+    return sd_card_create_directory(path) == ESP_OK;
+}
+
+static int plugin_api_storage_list(const char *path, ghostesp_storage_entry_t *out, int max_entries) {
+    if (!path || !out || max_entries <= 0 || strncmp(path, "/mnt/ghostesp/", 14) != 0) return -1;
+    DIR *dir = opendir(path);
+    if (!dir) return -1;
+    int count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && count < max_entries) {
+        if (entry->d_name[0] == '.') continue;
+        strncpy(out[count].name, entry->d_name, GHOSTESP_STORAGE_NAME_MAX - 1);
+        out[count].name[GHOSTESP_STORAGE_NAME_MAX - 1] = '\0';
+        struct stat st;
+        char full_path[256];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        out[count].is_directory = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+        count++;
+    }
+    closedir(dir);
+    return count;
+}
+
 static void plugin_api_delay_ms(uint32_t ms) {
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
@@ -104,6 +142,18 @@ static bool plugin_api_wifi_stop_scan(void) {
 
 static uint16_t plugin_api_wifi_ap_count(void) {
     return ap_count;
+}
+
+static bool plugin_api_wifi_scan_get_ap(uint16_t index, ghostesp_wifi_ap_info_t *out) {
+    if (!out || index >= ap_count || !scanned_aps) return false;
+    wifi_ap_record_t *ap = &scanned_aps[index];
+    memcpy(out->bssid, ap->bssid, 6);
+    memcpy(out->ssid, ap->ssid, 32);
+    out->ssid[32] = '\0';
+    out->channel = ap->primary;
+    out->rssi = ap->rssi;
+    out->auth_mode = (uint8_t)ap->authmode;
+    return true;
 }
 
 static bool plugin_api_rgb_set_all(uint8_t red, uint8_t green, uint8_t blue) {
@@ -150,6 +200,10 @@ static ghostesp_api_t s_api = {
     .storage_exists = plugin_api_storage_exists,
     .storage_read = plugin_api_storage_read,
     .storage_write = plugin_api_storage_write,
+    .storage_append = plugin_api_storage_append,
+    .storage_delete = plugin_api_storage_delete,
+    .storage_mkdir = plugin_api_storage_mkdir,
+    .storage_list = plugin_api_storage_list,
     .malloc = malloc,
     .free = free,
     .delay_ms = plugin_api_delay_ms,
@@ -159,6 +213,7 @@ static ghostesp_api_t s_api = {
     .wifi_start_scan = plugin_api_wifi_start_scan,
     .wifi_stop_scan = plugin_api_wifi_stop_scan,
     .wifi_ap_count = plugin_api_wifi_ap_count,
+    .wifi_scan_get_ap = plugin_api_wifi_scan_get_ap,
     .rgb_set_all = plugin_api_rgb_set_all,
 };
 

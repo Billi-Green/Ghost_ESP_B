@@ -29,6 +29,21 @@ typedef struct {
     bool pressed;
 } ghostesp_input_event_t;
 
+typedef struct {
+    uint8_t bssid[6];
+    char ssid[33];
+    uint8_t channel;
+    int8_t rssi;
+    uint8_t auth_mode;
+} ghostesp_wifi_ap_info_t;
+
+#define GHOSTESP_STORAGE_NAME_MAX 64
+
+typedef struct {
+    char name[GHOSTESP_STORAGE_NAME_MAX];
+    bool is_directory;
+} ghostesp_storage_entry_t;
+
 typedef struct ghostesp_unsafe_api {
     uint32_t api_version;
     void *(*lv_scr_act)(void);
@@ -49,6 +64,10 @@ typedef struct ghostesp_api {
     bool (*storage_exists)(const char *path);
     int (*storage_read)(const char *path, void *buffer, size_t buffer_len);
     bool (*storage_write)(const char *path, const void *data, size_t len);
+    bool (*storage_append)(const char *path, const void *data, size_t len);
+    bool (*storage_delete)(const char *path);
+    bool (*storage_mkdir)(const char *path);
+    int (*storage_list)(const char *path, ghostesp_storage_entry_t *out, int max_entries);
     void *(*malloc)(size_t size);
     void (*free)(void *ptr);
     void (*delay_ms)(uint32_t ms);
@@ -58,6 +77,7 @@ typedef struct ghostesp_api {
     bool (*wifi_start_scan)(void);
     bool (*wifi_stop_scan)(void);
     uint16_t (*wifi_ap_count)(void);
+    bool (*wifi_scan_get_ap)(uint16_t index, ghostesp_wifi_ap_info_t *out);
     bool (*rgb_set_all)(uint8_t red, uint8_t green, uint8_t blue);
     const ghostesp_unsafe_api_t *unsafe;
 } ghostesp_api_t;

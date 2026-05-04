@@ -6,25 +6,43 @@
 static const ghostesp_api_t *api;
 static int selected;
 static int screen;
+static int scroll;
 
-static const char *items[] = {
+#define VISIBLE_LINES 7
+#define ARRAY_COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+static const char *menu_items[] = {
     "System stats",
-    "WiFi quick scan",
-    "RGB test pulse",
+    "WiFi scan",
+    "RGB pulse",
+    "Storage browser",
     "Storage write/read",
     "Unsafe probe",
 };
 
-static void draw_menu(void) {
-    api->ui_set_title("Device Inspector");
+static void draw_scrollable_list(const char *title, const char **items, int count, int sel, int off) {
+    api->ui_set_title(title);
     api->ui_clear();
-    api->ui_print("Native SD app test suite\n");
-    api->ui_print("Use up/down and select. Back exits.\n\n");
-
-    for (int i = 0; i < (int)(sizeof(items) / sizeof(items[0])); ++i) {
-        api->ui_print(i == selected ? "> " : "  ");
+    if (off > 0) api->ui_print("^\n");
+    for (int i = off; i < count && i < off + VISIBLE_LINES; i++) {
+        api->ui_print(i == sel ? "> " : "  ");
         api->ui_print(items[i]);
         api->ui_print("\n");
+    }
+    if (off + VISIBLE_LINES < count) api->ui_print("v\n");
+}
+
+static void draw_menu(void) {
+    draw_scrollable_list("Device Inspector", menu_items, ARRAY_COUNT(menu_items), selected, scroll);
+}
+
+static void adjust_scroll(void) {
+    if (selected < scroll) scroll = selected;
+    if (selected >= scroll + VISIBLE_LINES) scroll = selected - VISIBLE_LINES + 1;
+    if (scroll < 0) scroll = 0;
+    if (scroll > ARRAY_COUNT(menu_items) - VISIBLE_LINES) {
+        scroll = ARRAY_COUNT(menu_items) - VISIBLE_LINES;
+        if (scroll < 0) scroll = 0;
     }
 }
 
@@ -44,22 +62,32 @@ static void show_system_stats(void) {
 }
 
 static void run_wifi_scan(void) {
-    char line[128];
+    char line[160];
     api->ui_set_title("WiFi Scan");
     api->ui_clear();
-    api->ui_print("Starting AP scan through host API...\n");
+    api->ui_print("Scanning...\n");
     api->wifi_start_scan();
     api->delay_ms(2500);
-    snprintf(line, sizeof(line), "Known AP count: %u\n", (unsigned)api->wifi_ap_count());
+    uint16_t count = api->wifi_ap_count();
+    snprintf(line, sizeof(line), "APs: %u\n", (unsigned)count);
     api->ui_print(line);
-    api->ui_print("Open Terminal or native WiFi app for full results.\n");
+    for (uint16_t i = 0; i < count; i++) {
+        ghostesp_wifi_ap_info_t ap;
+        if (!api->wifi_scan_get_ap(i, &ap)) continue;
+        if (i >= 6) {
+            api->ui_print("...\n");
+            break;
+        }
+        snprintf(line, sizeof(line), "%s ch%d %ddBm\n", ap.ssid, ap.channel, ap.rssi);
+        api->ui_print(line);
+    }
     api->ui_print("\nSelect returns to menu.\n");
 }
 
 static void run_rgb_test(void) {
     api->ui_set_title("RGB Test");
     api->ui_clear();
-    api->ui_print("Pulsing RGB through host API...\n");
+    api->ui_print("Pulsing...\n");
     api->rgb_set_all(255, 0, 0);
     api->delay_ms(200);
     api->rgb_set_all(0, 255, 0);
@@ -70,11 +98,34 @@ static void run_rgb_test(void) {
     api->ui_print("Done.\n\nSelect returns to menu.\n");
 }
 
+static void run_storage_browser(void) {
+    const char *path = "/mnt/ghostesp/apps/device_inspector";
+    ghostesp_storage_entry_t entries[32];
+    char line[80];
+    int count = api->storage_list(path, entries, 32);
+    api->ui_set_title("Storage Browser");
+    api->ui_clear();
+    if (count < 0) {
+        api->ui_print("List failed.\n");
+    } else if (count == 0) {
+        api->ui_print("(empty)\n");
+    } else {
+        snprintf(line, sizeof(line), "%d items in app dir:\n", count);
+        api->ui_print(line);
+        for (int i = 0; i < count && i < 6; i++) {
+            snprintf(line, sizeof(line), "%s%s\n", entries[i].is_directory ? "[D] " : "[F] ", entries[i].name);
+            api->ui_print(line);
+        }
+        if (count > 6) api->ui_print("...\n");
+    }
+    api->ui_print("\nSelect returns to menu.\n");
+}
+
 static void run_storage_test(void) {
     const char *path = "/mnt/ghostesp/apps/device_inspector/last_run.txt";
     char line[160];
     char buf[96] = {0};
-    snprintf(line, sizeof(line), "uptime_ms=%lu\nheap=%lu\n",
+    snprintf(line, sizeof(line), "uptime=%lu\nheap=%lu\n",
              (unsigned long)api->system_uptime_ms(),
              (unsigned long)api->system_free_heap());
 
@@ -83,7 +134,10 @@ static void run_storage_test(void) {
     if (api->storage_write(path, line, strlen(line))) {
         api->ui_print("Wrote last_run.txt\n");
     } else {
-        api->ui_print("Write failed. Is SD mounted?\n");
+        api->ui_print("Write failed.\n");
+    }
+    if (api->storage_append(path, "appended\n", 9)) {
+        api->ui_print("Appended.\n");
     }
     int n = api->storage_read(path, buf, sizeof(buf) - 1);
     if (n > 0) {
@@ -100,13 +154,13 @@ static void run_unsafe_probe(void) {
     api->ui_clear();
     if (!api->unsafe) {
         api->ui_print("Unsafe API not available.\n");
-        api->ui_print("Enable CONFIG_NATIVE_SD_APPS_UNSAFE_MODE and set unsafe=true.\n");
+        api->ui_print("Enable unsafe mode in firmware.\n");
     } else {
         void *scr = api->unsafe->lv_scr_act();
         void *view = api->unsafe->display_get_current_view();
         snprintf(line, sizeof(line), "lv_scr_act: %p\ncurrent View: %p\n", scr, view);
         api->ui_print(line);
-        api->ui_print("Raw pointers are intentionally dangerous.\n");
+        api->ui_print("Raw pointers are dangerous.\n");
     }
     api->ui_print("\nSelect returns to menu.\n");
 }
@@ -117,8 +171,9 @@ static void open_selected(void) {
         case 0: show_system_stats(); break;
         case 1: run_wifi_scan(); break;
         case 2: run_rgb_test(); break;
-        case 3: run_storage_test(); break;
-        case 4: run_unsafe_probe(); break;
+        case 3: run_storage_browser(); break;
+        case 4: run_storage_test(); break;
+        case 5: run_unsafe_probe(); break;
         default: draw_menu(); break;
     }
 }
@@ -126,6 +181,7 @@ static void open_selected(void) {
 static void inspector_start(void) {
     selected = 0;
     screen = 0;
+    scroll = 0;
     api->log("device_inspector started");
     draw_menu();
 }
@@ -149,11 +205,13 @@ static void inspector_input(const ghostesp_input_event_t *event) {
 
     if (event->type == GHOSTESP_INPUT_UP || event->type == GHOSTESP_INPUT_LEFT) {
         selected--;
-        if (selected < 0) selected = (int)(sizeof(items) / sizeof(items[0])) - 1;
+        if (selected < 0) selected = ARRAY_COUNT(menu_items) - 1;
+        adjust_scroll();
         draw_menu();
     } else if (event->type == GHOSTESP_INPUT_DOWN || event->type == GHOSTESP_INPUT_RIGHT) {
         selected++;
-        if (selected >= (int)(sizeof(items) / sizeof(items[0]))) selected = 0;
+        if (selected >= ARRAY_COUNT(menu_items)) selected = 0;
+        adjust_scroll();
         draw_menu();
     } else if (event->type == GHOSTESP_INPUT_SELECT) {
         open_selected();
