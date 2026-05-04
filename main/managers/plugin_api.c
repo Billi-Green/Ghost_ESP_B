@@ -106,7 +106,10 @@ static int plugin_api_storage_list(const char *path, ghostesp_storage_entry_t *o
         out[count].name[GHOSTESP_STORAGE_NAME_MAX - 1] = '\0';
         struct stat st;
         char full_path[256];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
         snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+#pragma GCC diagnostic pop
         out[count].is_directory = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
         count++;
     }
