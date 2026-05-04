@@ -6,6 +6,7 @@
 #include "managers/gps_manager.h"
 #include "managers/sd_card_manager.h"
 #include "managers/wigle_manager.h"
+#include "gui/toast.h"
 #include "managers/views/terminal_screen.h"
 #include "sys/time.h"
 #include "vendor/GPS/MicroNMEA.h"
@@ -977,6 +978,7 @@ void csv_file_close() {
         }
         wd_free_dedupe_tables();
         glog("CSV file closed.\n");
+        toast_show("GPS log saved", TOAST_SUCCESS);
     }
 }
 
@@ -1220,5 +1222,6 @@ void csv_file_close_fast() {
         }
         wd_free_dedupe_tables();
         glog("CSV file fast-closed.\n");
+        toast_show("GPS log saved", TOAST_SUCCESS);
     }
 }

