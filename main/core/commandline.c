@@ -8076,7 +8076,7 @@ void handle_nrf24_cmd(int argc, char **argv) {
 
 void handle_subghz_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("Usage: subghz <start|stop|pause|resume|status|capture|capture_on|capture_off|capture_begin|cycle_freq|save|load|list|replay|state>\n");
+        glog("Usage: subghz <start|waterfall_start|stop|waterfall_stop|pause|resume|status|capture|capture_on|capture_off|capture_begin|cycle_freq|save|load|list|replay|state>\n");
         return;
     }
 
@@ -8100,10 +8100,11 @@ void handle_subghz_cmd(int argc, char **argv) {
 #ifdef CONFIG_HAS_SUBGHZ
     bool stream_to_peer = remote_request && esp_comm_manager_is_connected();
 
-    if (strcmp(sub, "start") == 0) {
-        bool ok = subghz_remote_manager_start(stream_to_peer);
+    if (strcmp(sub, "start") == 0 || strcmp(sub, "waterfall_start") == 0) {
+        bool waterfall_mode = (strcmp(sub, "waterfall_start") == 0);
+        bool ok = waterfall_mode ? subghz_remote_manager_start_waterfall(stream_to_peer) : subghz_remote_manager_start(stream_to_peer);
         if (ok) {
-            glog("SubGHz scanner started\n");
+            glog(waterfall_mode ? "SubGHz waterfall scanner started\n" : "SubGHz scanner started\n");
             glog("SubGHz cfg: SPI%d MOSI=%d MISO=%d SCK=%d CSN=%d GDO0=%d GDO2=%d\n",
                  CONFIG_SUBGHZ_SPI_HOST,
                  CONFIG_SUBGHZ_SPI_MOSI_PIN,
@@ -8113,7 +8114,7 @@ void handle_subghz_cmd(int argc, char **argv) {
                  CONFIG_SUBGHZ_GDO0_PIN,
                  CONFIG_SUBGHZ_GDO2_PIN);
             if (stream_to_peer) {
-                esp_comm_manager_send_command("subghz", "state started");
+                esp_comm_manager_send_command("subghz", waterfall_mode ? "state waterfall_started" : "state started");
             }
         } else {
             glog("SubGHz scanner failed to start: %s\n", subghz_remote_manager_get_last_error());
@@ -8124,7 +8125,7 @@ void handle_subghz_cmd(int argc, char **argv) {
         return;
     }
 
-    if (strcmp(sub, "stop") == 0) {
+    if (strcmp(sub, "stop") == 0 || strcmp(sub, "waterfall_stop") == 0) {
         if (!subghz_remote_manager_is_running()) {
             glog("SubGHz scanner already stopped\n");
             if (stream_to_peer) {

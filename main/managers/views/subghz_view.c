@@ -189,6 +189,67 @@ static uint8_t s_fa_band_levels[SUBGHZ_FA_BAND_COUNT] = {0};
 static uint8_t s_fa_band_peaks[SUBGHZ_FA_BAND_COUNT] = {0};
 static uint8_t s_fa_active_band = 2;
 
+#define WF_CHANNELS SUBGHZ_SCANNER_CHANNEL_COUNT
+#define WF_COMPOSITE_CHANNELS (SUBGHZ_FA_BAND_COUNT * SUBGHZ_SCANNER_CHANNEL_COUNT)
+#define WF_BAND_MASK_ALL ((1U << SUBGHZ_FA_BAND_COUNT) - 1U)
+#define WF_BAND_SEPARATOR_PX 1
+
+static lv_obj_t *s_wf_popup = NULL;
+static lv_obj_t *s_wf_graph = NULL;
+static lv_obj_t *s_wf_status_label = NULL;
+static lv_obj_t *s_wf_legend_labels[SUBGHZ_FA_BAND_COUNT] = {0};
+static lv_obj_t *s_wf_start_btn = NULL;
+static lv_obj_t *s_wf_stop_btn = NULL;
+static lv_obj_t *s_wf_back_btn = NULL;
+static lv_obj_t *s_waterfall_row = NULL;
+static lv_obj_t *s_wf_canvas = NULL;
+
+typedef enum {
+    SUBGHZ_WF_POPUP_START = 0,
+    SUBGHZ_WF_POPUP_STOP,
+    SUBGHZ_WF_POPUP_BACK,
+    SUBGHZ_WF_POPUP_COUNT
+} subghz_wf_popup_control_t;
+
+static subghz_wf_popup_control_t s_wf_popup_selected = SUBGHZ_WF_POPUP_START;
+static bool s_wf_scanning = false;
+
+static lv_color_t s_wf_palette[256];
+static lv_color_t *s_wf_fb = NULL;
+static lv_coord_t s_wf_fb_w = 0;
+static lv_coord_t s_wf_fb_h = 0;
+static uint8_t *s_wf_line = NULL;
+static lv_color_t *s_wf_prev_row = NULL;
+static bool s_wf_have_prev = false;
+static bool s_wf_center_zero = false;
+static bool s_wf_norm_ready = false;
+static int s_wf_noise_floor = 0;
+static int s_wf_signal_ceiling = 35;
+static const uint8_t s_wf_display_band_order[SUBGHZ_FA_BAND_COUNT] = { 0, 1, 2, 3, 4 };
+static uint8_t s_wf_band_lines[SUBGHZ_FA_BAND_COUNT][SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
+static uint8_t s_wf_band_mask = 0;
+static uint8_t s_wf_pending_composite[WF_COMPOSITE_CHANNELS] = {0};
+static uint16_t s_wf_pending_composite_count = 0;
+static uint16_t s_wf_pending_composite_seq = 0;
+static uint16_t s_wf_rendered_composite_seq = 0;
+static uint8_t s_wf_last_peak_band = 0;
+static uint8_t s_wf_last_peak_ch = 0;
+static uint8_t s_wf_last_peak_level = 0;
+static portMUX_TYPE s_wf_composite_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t s_wf_remote_line[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
+static uint8_t s_wf_remote_build_line[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
+static uint8_t s_wf_remote_count = 0;
+static uint8_t s_wf_remote_freq_idx = 2;
+static uint8_t s_wf_remote_last_cursor = 0;
+static uint16_t s_wf_remote_seq = 0;
+static uint16_t s_wf_remote_build_seq = 0;
+static uint8_t s_wf_remote_build_count = 0;
+static uint8_t s_wf_remote_build_received = 0;
+static uint8_t s_wf_remote_build_mask = 0;
+static uint16_t s_wf_rendered_remote_seq = 0;
+static bool s_wf_remote_ready = false;
+static bool s_wf_remote_have_cursor = false;
+
 static uint8_t s_levels[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
 static uint8_t s_peaks[SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
 static uint8_t s_cursor = 0;
@@ -233,6 +294,12 @@ static void subghz_open_capture_popup(void);
 static void subghz_open_saved_popup(void);
 static void subghz_open_freq_analyzer_popup(void);
 static void subghz_close_freq_analyzer_popup(void);
+static void subghz_open_waterfall_popup(void);
+static void subghz_close_waterfall_popup(void);
+static void subghz_waterfall_row_cb(lv_event_t *e);
+static void subghz_wf_start_btn_cb(lv_event_t *e);
+static void subghz_wf_stop_btn_cb(lv_event_t *e);
+static void subghz_wf_back_btn_cb(lv_event_t *e);
 static void subghz_saved_list_reload(void);
 static void subghz_scan_row_cb(lv_event_t *e);
 static void subghz_capture_row_cb(lv_event_t *e);
@@ -808,6 +875,7 @@ static void subghz_back_to_root_menu(void) {
     s_raw_capture_row = options_view_add_item(s_ov, "Raw Capture", subghz_raw_capture_row_cb, NULL);
     s_capture_row = options_view_add_item(s_ov, "Saved", subghz_capture_row_cb, NULL);
     s_freq_analyzer_row = options_view_add_item(s_ov, "Freq Analyzer", subghz_freq_analyzer_row_cb, NULL);
+    s_waterfall_row = options_view_add_item(s_ov, "Waterfall", subghz_waterfall_row_cb, NULL);
     s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
     options_view_set_selected(s_ov, 0);
 
@@ -2178,6 +2246,550 @@ static void subghz_freq_analyzer_row_cb(lv_event_t *e) {
     subghz_open_freq_analyzer_popup();
 }
 
+static void subghz_wf_init_palette(void) {
+    static bool initialized = false;
+    if (initialized) return;
+    for (int i = 0; i < 256; i++) {
+        uint8_t r, g, b;
+        if (i == 0) {
+            r = 0; g = 0; b = 0;
+        } else if (i < 12) {
+            r = 0; g = 0; b = 0;
+        } else if (i < 56) {
+            int t = i - 12;
+            r = 0;
+            g = 0;
+            b = (uint8_t)(12 + (t * 68) / 43);
+        } else if (i < 104) {
+            int t = i - 56;
+            r = (uint8_t)(8 + (t * 92) / 47);
+            g = 0;
+            b = (uint8_t)(80 + (t * 120) / 47);
+        } else if (i < 152) {
+            int t = i - 104;
+            r = (uint8_t)(100 + (t * 155) / 47);
+            g = 0;
+            b = (uint8_t)(200 - (t * 40) / 47);
+        } else if (i < 208) {
+            int t = i - 152;
+            r = 255;
+            g = (uint8_t)((t * 128) / 55);
+            b = (uint8_t)(160 - (t * 160) / 55);
+        } else {
+            int t = i - 208;
+            r = 255;
+            g = (uint8_t)(128 + (t * 127) / 47);
+            b = (uint8_t)((t * 255) / 47);
+        }
+        s_wf_palette[i] = lv_color_make(r, g, b);
+    }
+    initialized = true;
+}
+
+static void subghz_wf_store_band_line(uint8_t freq_idx, const uint8_t *levels, uint8_t count) {
+    if (!levels || count < 2 || freq_idx >= SUBGHZ_FA_BAND_COUNT) {
+        return;
+    }
+    if (count > SUBGHZ_SCANNER_CHANNEL_COUNT) {
+        count = SUBGHZ_SCANNER_CHANNEL_COUNT;
+    }
+
+    uint8_t normalized[SUBGHZ_SCANNER_CHANNEL_COUNT];
+    for (uint16_t x = 0; x < SUBGHZ_SCANNER_CHANNEL_COUNT; x++) {
+        uint16_t src = (uint16_t)((x * ((uint16_t)count - 1U) * 256U) / (SUBGHZ_SCANNER_CHANNEL_COUNT - 1U));
+        uint8_t ch = (uint8_t)(src >> 8);
+        uint8_t frac = (uint8_t)(src & 0xFF);
+        if (ch >= count - 1U) {
+            ch = (uint8_t)(count - 2U);
+            frac = 255;
+        }
+        normalized[x] = (uint8_t)((levels[ch] * (256 - frac) + levels[ch + 1] * frac) >> 8);
+    }
+
+    portENTER_CRITICAL(&s_wf_composite_lock);
+    memcpy(s_wf_band_lines[freq_idx], normalized, sizeof(normalized));
+    s_wf_band_mask |= (uint8_t)(1U << freq_idx);
+
+    if (s_wf_band_mask == WF_BAND_MASK_ALL) {
+        uint16_t dst = 0;
+        uint8_t peak_band = 0;
+        uint8_t peak_ch = 0;
+        uint8_t peak_level = 0;
+        for (uint8_t i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
+            uint8_t band = s_wf_display_band_order[i];
+            memcpy(&s_wf_pending_composite[dst], s_wf_band_lines[band], SUBGHZ_SCANNER_CHANNEL_COUNT);
+            for (uint8_t ch = 0; ch < SUBGHZ_SCANNER_CHANNEL_COUNT; ch++) {
+                uint8_t level = s_wf_band_lines[band][ch];
+                if (level > peak_level) {
+                    peak_level = level;
+                    peak_band = band;
+                    peak_ch = ch;
+                }
+            }
+            dst = (uint16_t)(dst + SUBGHZ_SCANNER_CHANNEL_COUNT);
+        }
+        s_wf_pending_composite_count = dst;
+        s_wf_pending_composite_seq++;
+        s_wf_last_peak_band = peak_band;
+        s_wf_last_peak_ch = peak_ch;
+        s_wf_last_peak_level = peak_level;
+        s_wf_band_mask = 0;
+    }
+    portEXIT_CRITICAL(&s_wf_composite_lock);
+}
+
+static bool subghz_wf_take_composite(uint8_t *out_levels, uint16_t max_levels, uint16_t *out_count) {
+    if (!out_levels || max_levels == 0 || !out_count) {
+        return false;
+    }
+
+    bool ready = false;
+    portENTER_CRITICAL(&s_wf_composite_lock);
+    if (s_wf_pending_composite_seq != s_wf_rendered_composite_seq && s_wf_pending_composite_count > 0) {
+        uint16_t copy_len = s_wf_pending_composite_count;
+        if (copy_len > max_levels) {
+            copy_len = max_levels;
+        }
+        memcpy(out_levels, s_wf_pending_composite, copy_len);
+        *out_count = copy_len;
+        s_wf_rendered_composite_seq = s_wf_pending_composite_seq;
+        ready = true;
+    }
+    portEXIT_CRITICAL(&s_wf_composite_lock);
+    return ready;
+}
+
+static void subghz_wf_reset_composite(void) {
+    portENTER_CRITICAL(&s_wf_composite_lock);
+    memset(s_wf_band_lines, 0, sizeof(s_wf_band_lines));
+    memset(s_wf_pending_composite, 0, sizeof(s_wf_pending_composite));
+    s_wf_band_mask = 0;
+    s_wf_pending_composite_count = 0;
+    s_wf_pending_composite_seq = 0;
+    s_wf_rendered_composite_seq = 0;
+    s_wf_last_peak_band = 0;
+    s_wf_last_peak_ch = 0;
+    s_wf_last_peak_level = 0;
+    portEXIT_CRITICAL(&s_wf_composite_lock);
+}
+
+static bool subghz_wf_render_line(const uint8_t *levels, uint16_t count) {
+    if (!s_wf_fb || !s_wf_line || s_wf_fb_w <= 0 || s_wf_fb_h <= 0) return false;
+    if (!levels || count < 2) return false;
+
+    int scroll_rows = 1;
+    if (scroll_rows >= s_wf_fb_h) scroll_rows = s_wf_fb_h - 1;
+    if (scroll_rows > 0) {
+        memmove(&s_wf_fb[scroll_rows * s_wf_fb_w], &s_wf_fb[0], (s_wf_fb_h - scroll_rows) * s_wf_fb_w * sizeof(lv_color_t));
+    }
+    bool had_prev = s_wf_have_prev;
+
+    uint16_t hist[101] = {0};
+    uint32_t row_sum = 0;
+    for (uint16_t i = 0; i < count; i++) {
+        int level = levels[i];
+        if (level < 0) level = 0;
+        if (level > 100) level = 100;
+        hist[level]++;
+        row_sum += level;
+    }
+    int row_avg = row_sum / count;
+    uint16_t p10_target = (uint16_t)((count + 9U) / 10U);
+    uint16_t p95_target = (uint16_t)((count * 95U + 99U) / 100U);
+    uint16_t acc = 0;
+    int row_p10 = 0;
+    int row_p95 = 100;
+    bool found_p10 = false;
+    for (int i = 0; i <= 100; i++) {
+        acc = (uint16_t)(acc + hist[i]);
+        if (!found_p10 && acc >= p10_target) {
+            row_p10 = i;
+            found_p10 = true;
+        }
+        if (acc >= p95_target) {
+            row_p95 = i;
+            break;
+        }
+    }
+
+    int row_floor = (row_p10 * 3 + row_avg) / 4;
+    int row_ceiling = row_p95;
+    if (row_ceiling < row_avg + 8) {
+        row_ceiling = row_avg + 8;
+    }
+    if (row_ceiling > 100) {
+        row_ceiling = 100;
+    }
+    if (!s_wf_norm_ready) {
+        s_wf_noise_floor = row_floor;
+        s_wf_signal_ceiling = row_ceiling;
+        s_wf_norm_ready = true;
+    } else {
+        s_wf_noise_floor = (s_wf_noise_floor * 31 + row_floor) / 32;
+        s_wf_signal_ceiling = (s_wf_signal_ceiling * 15 + row_ceiling) / 16;
+    }
+    if (s_wf_signal_ceiling < s_wf_noise_floor + 8) {
+        s_wf_signal_ceiling = s_wf_noise_floor + 8;
+    }
+    int contrast_span = s_wf_signal_ceiling - s_wf_noise_floor;
+    if (contrast_span < 24) contrast_span = 24;
+    int floor = s_wf_noise_floor + 1;
+    if (floor < 0) floor = 0;
+
+    lv_coord_t half_w = s_wf_fb_w / 2;
+    for (lv_coord_t x = 0; x < s_wf_fb_w; x++) {
+        bool separator = false;
+        if (count == WF_COMPOSITE_CHANNELS) {
+            for (uint8_t b = 1; b < SUBGHZ_FA_BAND_COUNT; b++) {
+                lv_coord_t sep_x = (lv_coord_t)(((int32_t)b * s_wf_fb_w) / SUBGHZ_FA_BAND_COUNT);
+                if (x >= sep_x - WF_BAND_SEPARATOR_PX && x <= sep_x + WF_BAND_SEPARATOR_PX) {
+                    separator = true;
+                    break;
+                }
+            }
+        }
+
+        int src;
+        if (s_wf_center_zero) {
+            int dist = (int)(x <= half_w ? half_w - x : x - half_w);
+            int max_dist = (int)(s_wf_fb_w <= 1 ? 1 : half_w);
+            src = (dist * ((int)count - 1) * 256) / max_dist;
+        } else {
+            src = (x * ((int)count - 1) * 256) / (s_wf_fb_w - 1);
+        }
+        int ch = src >> 8;
+        int frac = src & 0xFF;
+        if (ch >= (int)count - 1) {
+            ch = (int)count - 2;
+            frac = 255;
+        }
+
+        int level = ((int)levels[ch] * (256 - frac) + (int)levels[ch + 1] * frac) >> 8;
+        if (had_prev) {
+            level = ((int)s_wf_line[x] * 7 + level) >> 3;
+        }
+        s_wf_line[x] = (uint8_t)level;
+
+        int norm = level - floor;
+        if (norm < 0) norm = 0;
+        int intensity = (norm * 255) / contrast_span;
+        if (intensity < 0) intensity = 0;
+        if (intensity > 255) intensity = 255;
+        lv_color_t color = separator ? lv_color_black() : s_wf_palette[intensity];
+
+        lv_color_t prev_color = s_wf_prev_row ? s_wf_prev_row[x] : lv_color_black();
+        if (color.full != prev_color.full || !had_prev) {
+            for (int r = 0; r < scroll_rows; r++) {
+                s_wf_fb[r * s_wf_fb_w + x] = color;
+            }
+        }
+        if (s_wf_prev_row) {
+            s_wf_prev_row[x] = color;
+        }
+    }
+
+    s_wf_have_prev = true;
+    return true;
+}
+
+static bool subghz_wf_update_frame(void) {
+    uint8_t line[SUBGHZ_SCANNER_CHANNEL_COUNT];
+    uint8_t composite[WF_COMPOSITE_CHANNELS];
+    uint8_t count = 0;
+    uint16_t composite_count = 0;
+    uint8_t freq_idx = 0;
+
+    if (s_remote_mode) {
+        if (!subghz_wf_take_composite(composite, sizeof(composite), &composite_count)) {
+            return false;
+        }
+    } else if (!subghz_remote_manager_take_waterfall_line(line, sizeof(line), &count, &freq_idx, NULL)) {
+        return false;
+    } else {
+        subghz_wf_store_band_line(freq_idx, line, count);
+        if (!subghz_wf_take_composite(composite, sizeof(composite), &composite_count)) {
+            return false;
+        }
+    }
+
+    if (s_wf_status_label && lv_obj_is_valid(s_wf_status_label)) {
+        lv_label_set_text_fmt(s_wf_status_label, "Peak: %s ch %u Lv %u",
+                              s_scan_freq_labels[s_wf_last_peak_band],
+                              (unsigned)s_wf_last_peak_ch,
+                              (unsigned)s_wf_last_peak_level);
+    }
+
+    return subghz_wf_render_line(composite, composite_count);
+}
+
+static void subghz_wf_set_freq_label(uint8_t freq_idx) {
+    (void)freq_idx;
+    if (s_wf_status_label && lv_obj_is_valid(s_wf_status_label)) {
+        lv_label_set_text(s_wf_status_label, "Peak: ---.-- MHz ch -- Lv --");
+    }
+}
+
+static void subghz_wf_apply_popup_selection(void) {
+    popup_set_button_selected(s_wf_start_btn, s_wf_popup_selected == SUBGHZ_WF_POPUP_START);
+    popup_set_button_selected(s_wf_stop_btn, s_wf_popup_selected == SUBGHZ_WF_POPUP_STOP);
+    popup_set_button_selected(s_wf_back_btn, s_wf_popup_selected == SUBGHZ_WF_POPUP_BACK);
+}
+
+static void subghz_wf_start_scan(void) {
+    if (s_remote_mode) {
+        if (!esp_comm_manager_is_connected()) {
+            s_remote_error = true;
+            subghz_show_feedback_popup("SubGHz error", "GhostLink disconnected");
+            subghz_wf_set_freq_label(s_remote_freq_idx);
+            return;
+        }
+        if (esp_comm_manager_send_command("subghz", "waterfall_start")) {
+            s_remote_stream_online = false;
+            s_remote_error = false;
+            s_remote_paused = false;
+        } else {
+            s_remote_error = true;
+        }
+    } else {
+        if (!subghz_remote_manager_start_waterfall(false)) {
+            ESP_LOGW(TAG, "Failed to start local waterfall scanner: %s", subghz_remote_manager_get_last_error());
+            subghz_show_feedback_popup("SubGHz error", subghz_remote_manager_get_last_error());
+        }
+    }
+    s_wf_scanning = true;
+    s_wf_have_prev = false;
+    s_wf_norm_ready = false;
+    s_wf_noise_floor = 0;
+    s_wf_signal_ceiling = 100;
+    s_wf_remote_ready = false;
+    s_wf_remote_count = 0;
+    s_wf_remote_seq = 0;
+    s_wf_remote_build_seq = 0;
+    s_wf_remote_build_count = 0;
+    s_wf_remote_build_received = 0;
+    s_wf_remote_build_mask = 0;
+    s_wf_rendered_remote_seq = 0;
+    s_wf_remote_have_cursor = false;
+    subghz_wf_reset_composite();
+    subghz_wf_set_freq_label(0);
+    if (s_wf_fb && s_wf_line && s_wf_fb_w > 0 && s_wf_fb_h > 0) {
+        lv_color_t black = lv_color_black();
+        for (int i = 0; i < s_wf_fb_w * s_wf_fb_h; i++) {
+            s_wf_fb[i] = black;
+        }
+        memset(s_wf_line, 0, (size_t)s_wf_fb_w * sizeof(uint8_t));
+        if (s_wf_prev_row) {
+            for (int i = 0; i < s_wf_fb_w; i++) {
+                s_wf_prev_row[i] = black;
+            }
+        }
+        if (s_wf_canvas && lv_obj_is_valid(s_wf_canvas)) {
+            lv_obj_invalidate(s_wf_canvas);
+        }
+    }
+}
+
+static void subghz_wf_stop_scan(void) {
+    if (s_remote_mode) {
+        if (esp_comm_manager_is_connected()) {
+            (void)esp_comm_manager_send_command("subghz", "waterfall_stop");
+        }
+        s_remote_paused = true;
+        s_remote_stream_online = false;
+    } else {
+        subghz_remote_manager_stop();
+    }
+    s_wf_scanning = false;
+}
+
+static void subghz_open_waterfall_popup(void) {
+    if (s_wf_popup && lv_obj_is_valid(s_wf_popup)) {
+        subghz_close_waterfall_popup();
+    }
+
+    subghz_wf_init_palette();
+    s_wf_scanning = false;
+    s_wf_popup_selected = SUBGHZ_WF_POPUP_START;
+
+    bool tiny = (LV_HOR_RES <= 128 || LV_VER_RES <= 80);
+    bool small = (LV_VER_RES <= 170 && !tiny);
+
+    lv_coord_t popup_w = tiny ? LV_HOR_RES : (LV_HOR_RES <= 240) ? (LV_HOR_RES - 10) : (LV_HOR_RES - 20);
+    lv_coord_t popup_h = tiny ? LV_VER_RES : (LV_VER_RES <= 200) ? (LV_VER_RES - 10) : (LV_VER_RES - 20);
+    if (!tiny && popup_w < 220) popup_w = 220;
+    if (!tiny && popup_h < 180) popup_h = 180;
+
+    s_wf_popup = popup_create_container(lv_scr_act(), popup_w, popup_h);
+    lv_obj_center(s_wf_popup);
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t text = lv_color_hex(theme_palette_get_text(theme));
+
+    const lv_font_t *title_font = tiny ? &lv_font_montserrat_10 : &lv_font_montserrat_14;
+    popup_create_title_label(s_wf_popup, "Waterfall", title_font, tiny ? 2 : 6);
+
+    lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
+    const lv_font_t *status_font = tiny ? &lv_font_montserrat_8 : &lv_font_montserrat_10;
+    s_wf_status_label = lv_label_create(s_wf_popup);
+    lv_label_set_text(s_wf_status_label, "Peak: ---.-- MHz ch -- Lv --");
+    lv_obj_set_style_text_color(s_wf_status_label, text, 0);
+    lv_obj_set_style_text_font(s_wf_status_label, status_font, 0);
+    lv_label_set_long_mode(s_wf_status_label, LV_LABEL_LONG_CLIP);
+    lv_obj_align(s_wf_status_label, LV_ALIGN_TOP_MID, 0, tiny ? 14 : (small ? 26 : 28));
+
+    int graph_top = tiny ? 40 : (small ? 58 : 66);
+    int btn_h = tiny ? 16 : (small ? 22 : 26);
+    int btn_margin = tiny ? -2 : -8;
+    int graph_bottom = btn_h + (tiny ? 10 : (small ? 22 : 28));
+    int graph_h = popup_h - graph_top - graph_bottom;
+    int min_graph_h = tiny ? 18 : 40;
+    if (graph_h < min_graph_h) graph_h = min_graph_h;
+    int max_graph_h = popup_h - graph_top - btn_h - (tiny ? 8 : 18);
+    if (graph_h > max_graph_h) graph_h = max_graph_h;
+    if (graph_h < 10) graph_h = 10;
+
+    lv_coord_t inner_pad = tiny ? 2 : 8;
+    lv_coord_t inner_w = popup_w - inner_pad * 2;
+    if (inner_w < 10) inner_w = 10;
+
+    const char *legend_text[SUBGHZ_FA_BAND_COUNT] = { "315", "390", "433", "868", "915" };
+    lv_coord_t legend_y = graph_top - (tiny ? 12 : 18);
+    for (int i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
+        lv_coord_t x1 = (lv_coord_t)((i * inner_w) / SUBGHZ_FA_BAND_COUNT);
+        lv_coord_t x2 = (lv_coord_t)(((i + 1) * inner_w) / SUBGHZ_FA_BAND_COUNT);
+        lv_coord_t legend_w = x2 - x1;
+        if (legend_w < 1) legend_w = 1;
+        s_wf_legend_labels[i] = lv_label_create(s_wf_popup);
+        lv_label_set_text(s_wf_legend_labels[i], legend_text[i]);
+        lv_obj_set_style_text_color(s_wf_legend_labels[i], accent, 0);
+        lv_obj_set_style_text_font(s_wf_legend_labels[i], status_font, 0);
+        lv_label_set_long_mode(s_wf_legend_labels[i], LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(s_wf_legend_labels[i], legend_w);
+        lv_obj_set_style_text_align(s_wf_legend_labels[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(s_wf_legend_labels[i], LV_ALIGN_TOP_LEFT,
+                     inner_pad + x1, legend_y);
+    }
+
+    s_wf_graph = lv_obj_create(s_wf_popup);
+    lv_obj_set_size(s_wf_graph, inner_w, graph_h);
+    lv_obj_align(s_wf_graph, LV_ALIGN_TOP_MID, 0, graph_top);
+    lv_obj_set_style_bg_color(s_wf_graph, lv_color_hex(0x0A0A0A), 0);
+    lv_obj_set_style_bg_opa(s_wf_graph, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_wf_graph, 0, 0);
+    lv_obj_set_style_pad_all(s_wf_graph, 0, 0);
+    lv_obj_set_style_radius(s_wf_graph, 3, 0);
+    lv_obj_clear_flag(s_wf_graph, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_wf_canvas = lv_canvas_create(s_wf_graph);
+    s_wf_fb_w = inner_w;
+    s_wf_fb_h = graph_h;
+    free(s_wf_fb);
+    free(s_wf_line);
+    free(s_wf_prev_row);
+    s_wf_fb = calloc((size_t)s_wf_fb_w * (size_t)s_wf_fb_h, sizeof(lv_color_t));
+    s_wf_line = calloc((size_t)s_wf_fb_w, sizeof(uint8_t));
+    s_wf_prev_row = calloc((size_t)s_wf_fb_w, sizeof(lv_color_t));
+    if (s_wf_fb && s_wf_line) {
+        lv_color_t black = lv_color_black();
+        for (int i = 0; i < s_wf_fb_w * s_wf_fb_h; i++) {
+            s_wf_fb[i] = black;
+        }
+        lv_canvas_set_buffer(s_wf_canvas, s_wf_fb, s_wf_fb_w, s_wf_fb_h, LV_IMG_CF_TRUE_COLOR);
+        lv_obj_set_size(s_wf_canvas, s_wf_fb_w, s_wf_fb_h);
+        lv_img_set_antialias(s_wf_canvas, false);
+    } else {
+        free(s_wf_fb);
+        free(s_wf_line);
+        free(s_wf_prev_row);
+        s_wf_fb = NULL;
+        s_wf_line = NULL;
+        s_wf_prev_row = NULL;
+        s_wf_fb_w = 0;
+        s_wf_fb_h = 0;
+        lv_obj_add_flag(s_wf_canvas, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_align(s_wf_canvas, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_clear_flag(s_wf_canvas, LV_OBJ_FLAG_SCROLLABLE);
+
+    const lv_font_t *btn_font = tiny ? &lv_font_montserrat_8 : (small ? &lv_font_montserrat_10 : &lv_font_montserrat_12);
+    int btn_w = tiny ? 36 : (small ? 52 : 60);
+    s_wf_start_btn = popup_add_styled_button(
+        s_wf_popup, "Start", btn_w, btn_h, LV_ALIGN_BOTTOM_LEFT, tiny ? 2 : 8, btn_margin, btn_font, subghz_wf_start_btn_cb, NULL);
+    s_wf_stop_btn = popup_add_styled_button(
+        s_wf_popup, "Stop", btn_w, btn_h, LV_ALIGN_BOTTOM_MID, 0, btn_margin, btn_font, subghz_wf_stop_btn_cb, NULL);
+    s_wf_back_btn = popup_add_styled_button(
+        s_wf_popup, "Back", btn_w, btn_h, LV_ALIGN_BOTTOM_RIGHT, tiny ? -2 : -8, btn_margin, btn_font, subghz_wf_back_btn_cb, NULL);
+
+    lv_obj_t *wf_btns[3] = { s_wf_start_btn, s_wf_stop_btn, s_wf_back_btn };
+    popup_layout_buttons_responsive(s_wf_popup, wf_btns, 3, btn_margin, NULL);
+
+    subghz_wf_apply_popup_selection();
+    subghz_wf_start_scan();
+}
+
+static void subghz_close_waterfall_popup(void) {
+    if (s_wf_scanning) {
+        subghz_wf_stop_scan();
+    }
+    lvgl_obj_del_safe(&s_wf_popup);
+    s_wf_status_label = NULL;
+    memset(s_wf_legend_labels, 0, sizeof(s_wf_legend_labels));
+    s_wf_graph = NULL;
+    s_wf_start_btn = NULL;
+    s_wf_stop_btn = NULL;
+    s_wf_back_btn = NULL;
+    s_wf_canvas = NULL;
+    s_wf_popup_selected = SUBGHZ_WF_POPUP_START;
+    s_wf_scanning = false;
+    s_wf_have_prev = false;
+    s_wf_remote_ready = false;
+    s_wf_remote_count = 0;
+    s_wf_remote_seq = 0;
+    s_wf_remote_build_seq = 0;
+    s_wf_remote_build_count = 0;
+    s_wf_remote_build_received = 0;
+    s_wf_remote_build_mask = 0;
+    s_wf_rendered_remote_seq = 0;
+    subghz_wf_reset_composite();
+    free(s_wf_fb);
+    free(s_wf_line);
+    free(s_wf_prev_row);
+    s_wf_fb = NULL;
+    s_wf_line = NULL;
+    s_wf_prev_row = NULL;
+    s_wf_fb_w = 0;
+    s_wf_fb_h = 0;
+}
+
+static void subghz_wf_start_btn_cb(lv_event_t *e) {
+    (void)e;
+    s_wf_popup_selected = SUBGHZ_WF_POPUP_START;
+    subghz_wf_apply_popup_selection();
+    subghz_wf_start_scan();
+}
+
+static void subghz_wf_stop_btn_cb(lv_event_t *e) {
+    (void)e;
+    s_wf_popup_selected = SUBGHZ_WF_POPUP_STOP;
+    subghz_wf_apply_popup_selection();
+    subghz_wf_stop_scan();
+}
+
+static void subghz_wf_back_btn_cb(lv_event_t *e) {
+    (void)e;
+    s_wf_popup_selected = SUBGHZ_WF_POPUP_BACK;
+    subghz_wf_apply_popup_selection();
+    subghz_close_waterfall_popup();
+}
+
+static void subghz_waterfall_row_cb(lv_event_t *e) {
+    (void)e;
+    if (s_ov) {
+        options_view_set_selected(s_ov, 4);
+    }
+    subghz_open_waterfall_popup();
+}
+
 static void subghz_capture_primary_btn_cb(lv_event_t *e) {
     ESP_LOGI(TAG,
              "capture primary pressed src=%s ready=%d mode=%s stop_pending=%d raw_count=%lu",
@@ -2716,6 +3328,8 @@ static void subghz_select_row(void) {
         subghz_list_snapshots_action();
     } else if (sel == 3) {
         subghz_open_freq_analyzer_popup();
+    } else if (sel == 4) {
+        subghz_open_waterfall_popup();
     } else {
         display_manager_switch_view(&main_menu_view);
     }
@@ -2746,7 +3360,7 @@ static void subghz_back_row_cb(lv_event_t *e) {
         return;
     }
     if (s_ov) {
-        options_view_set_selected(s_ov, 4);
+        options_view_set_selected(s_ov, 5);
     }
     display_manager_switch_view(&main_menu_view);
 }
@@ -2793,7 +3407,9 @@ static void subghz_timer_cb(lv_timer_t *timer) {
         subghz_capture_apply_waiting_ui(false);
     }
 
-    if (!scanner_popup_open && !capture_popup_open && !fa_popup_open) {
+    bool wf_popup_open = s_wf_popup && lv_obj_is_valid(s_wf_popup);
+
+    if (!scanner_popup_open && !capture_popup_open && !fa_popup_open && !wf_popup_open) {
         return;
     }
 
@@ -3001,6 +3617,13 @@ static void subghz_timer_cb(lv_timer_t *timer) {
             lv_obj_invalidate(s_fa_graph);
         }
     }
+
+    if (wf_popup_open) {
+        bool wf_updated = subghz_wf_update_frame();
+        if (wf_updated && s_wf_canvas && lv_obj_is_valid(s_wf_canvas)) {
+            lv_obj_invalidate(s_wf_canvas);
+        }
+    }
 }
 
 static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t length, void *user_data) {
@@ -3169,6 +3792,89 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
         return;
     }
 
+    if (packet_type == SUBGHZ_STREAM_WATERFALL_LINE) {
+        if (length < 6) {
+            return;
+        }
+        uint8_t count = data[2];
+        if (count < 2 || count > SUBGHZ_SCANNER_CHANNEL_COUNT || (size_t)(6 + count) > length) {
+            return;
+        }
+        memcpy(s_wf_remote_line, data + 6, count);
+        s_wf_remote_count = count;
+        s_wf_remote_freq_idx = data[3];
+        if (s_wf_remote_freq_idx >= SUBGHZ_FA_BAND_COUNT) {
+            s_wf_remote_freq_idx = 2;
+        }
+        s_wf_remote_seq = (uint16_t)data[4] | ((uint16_t)data[5] << 8);
+        subghz_wf_store_band_line(s_wf_remote_freq_idx, s_wf_remote_line, count);
+        if (s_wf_remote_seq == 1 || (s_wf_remote_seq % 32U) == 0U) {
+            uint8_t peak = 0;
+            for (uint8_t i = 0; i < count; i++) {
+                if (s_wf_remote_line[i] > peak) {
+                    peak = s_wf_remote_line[i];
+                }
+            }
+            ESP_LOGI(TAG, "waterfall rx seq=%u freq_idx=%u bins=%u peak=%u", (unsigned)s_wf_remote_seq, (unsigned)s_wf_remote_freq_idx, (unsigned)count, (unsigned)peak);
+        }
+        s_wf_remote_ready = true;
+        s_remote_stream_online = true;
+        s_remote_error = false;
+        return;
+    }
+
+    if (packet_type == SUBGHZ_STREAM_WATERFALL_CHUNK) {
+        if (length < 8) {
+            return;
+        }
+        uint8_t total = data[2];
+        uint8_t freq_idx = data[3];
+        uint16_t seq = (uint16_t)data[4] | ((uint16_t)data[5] << 8);
+        uint8_t offset = data[6];
+        uint8_t chunk = data[7];
+        if (total < 2 || total > SUBGHZ_SCANNER_CHANNEL_COUNT || chunk == 0 || offset >= total ||
+            (uint8_t)(offset + chunk) > total || (size_t)(8 + chunk) > length) {
+            return;
+        }
+        if (freq_idx >= SUBGHZ_FA_BAND_COUNT) {
+            freq_idx = 2;
+        }
+        if (seq != s_wf_remote_build_seq || total != s_wf_remote_build_count || offset == 0) {
+            memset(s_wf_remote_build_line, 0, sizeof(s_wf_remote_build_line));
+            s_wf_remote_build_seq = seq;
+            s_wf_remote_build_count = total;
+            s_wf_remote_build_received = 0;
+            s_wf_remote_build_mask = 0;
+        }
+        uint8_t chunk_bit = (offset == 0) ? 1U : 2U;
+        if (s_wf_remote_build_mask & chunk_bit) {
+            return;
+        }
+        memcpy(s_wf_remote_build_line + offset, data + 8, chunk);
+        s_wf_remote_build_received = (uint8_t)(s_wf_remote_build_received + chunk);
+        s_wf_remote_build_mask |= chunk_bit;
+        if (s_wf_remote_build_received >= total && s_wf_remote_build_mask != 0) {
+            memcpy(s_wf_remote_line, s_wf_remote_build_line, total);
+            s_wf_remote_count = total;
+            s_wf_remote_freq_idx = freq_idx;
+            s_wf_remote_seq = seq;
+            s_wf_remote_ready = true;
+            subghz_wf_store_band_line(s_wf_remote_freq_idx, s_wf_remote_line, total);
+            if (s_wf_remote_seq == 1 || (s_wf_remote_seq % 32U) == 0U) {
+                uint8_t peak = 0;
+                for (uint8_t i = 0; i < total; i++) {
+                    if (s_wf_remote_line[i] > peak) {
+                        peak = s_wf_remote_line[i];
+                    }
+                }
+                ESP_LOGI(TAG, "waterfall rx seq=%u freq_idx=%u bins=%u peak=%u", (unsigned)s_wf_remote_seq, (unsigned)s_wf_remote_freq_idx, (unsigned)total, (unsigned)peak);
+            }
+        }
+        s_remote_stream_online = true;
+        s_remote_error = false;
+        return;
+    }
+
     if (packet_type != 0) {
         return;
     }
@@ -3210,6 +3916,15 @@ static void subghz_stream_rx_cb(uint8_t channel, const uint8_t *data, size_t len
     }
 
     s_cursor = (uint8_t)(cursor % SUBGHZ_SCANNER_CHANNEL_COUNT);
+    if (s_wf_remote_have_cursor && s_cursor < s_wf_remote_last_cursor) {
+        memcpy(s_wf_remote_line, s_levels, sizeof(s_wf_remote_line));
+        s_wf_remote_count = SUBGHZ_SCANNER_CHANNEL_COUNT;
+        s_wf_remote_freq_idx = s_remote_freq_idx;
+        s_wf_remote_seq++;
+        s_wf_remote_ready = true;
+    }
+    s_wf_remote_last_cursor = s_cursor;
+    s_wf_remote_have_cursor = true;
     s_remote_stream_online = true;
     s_remote_error = false;
 }
@@ -3223,7 +3938,7 @@ void subghz_view_update_remote_state(const char *state) {
         return;
     }
 
-    if (strcmp(state, "started") == 0 || strcmp(state, "running") == 0) {
+    if (strcmp(state, "started") == 0 || strcmp(state, "waterfall_started") == 0 || strcmp(state, "running") == 0) {
         s_remote_stream_online = true;
         s_remote_error = false;
         s_remote_paused = false;
@@ -3288,6 +4003,13 @@ void subghz_view_update_remote_state(const char *state) {
             char status[64];
             snprintf(status, sizeof(status), "Listening: %s", s_capture_freq_label);
             lv_label_set_text(s_capture_status_label, status);
+        }
+        for (int i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
+            if (strcmp(state + 5, s_scan_freq_labels[i]) == 0) {
+                s_remote_freq_idx = (uint8_t)i;
+                subghz_wf_set_freq_label(s_remote_freq_idx);
+                break;
+            }
         }
     } else if (strcmp(state, "save_ok") == 0) {
         subghz_clear_pending_action();
@@ -3518,6 +4240,71 @@ static void subghz_input_handler(InputEvent *event) {
         return;
     }
 
+    if (s_wf_popup && lv_obj_is_valid(s_wf_popup)) {
+        if (event->type == INPUT_TYPE_TOUCH) {
+            lv_indev_data_t *d = &event->data.touch_data;
+            if (d->state == LV_INDEV_STATE_REL) {
+                if (point_inside_obj(s_wf_start_btn, d->point.x, d->point.y)) {
+                    subghz_wf_start_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_wf_stop_btn, d->point.x, d->point.y)) {
+                    subghz_wf_stop_btn_cb(NULL);
+                    return;
+                }
+                if (point_inside_obj(s_wf_back_btn, d->point.x, d->point.y)) {
+                    subghz_wf_back_btn_cb(NULL);
+                    return;
+                }
+            }
+        } else if (event->type == INPUT_TYPE_JOYSTICK || event->type == INPUT_TYPE_ENCODER ||
+                   event->type == INPUT_TYPE_KEYBOARD) {
+            int dir = 0;
+            bool activate = false;
+            bool back = false;
+
+            if (event->type == INPUT_TYPE_JOYSTICK) {
+                int ji = event->data.joystick_index;
+                if (ji == 0) dir = -1;
+                else if (ji == 3) dir = 1;
+                else if (ji == 1) activate = true;
+            } else if (event->type == INPUT_TYPE_ENCODER) {
+                if (event->data.encoder.button) activate = true;
+                else dir = (event->data.encoder.direction > 0) ? -1 : ((event->data.encoder.direction < 0) ? 1 : 0);
+            } else {
+                int kv = event->data.key_value;
+                if (kv == 13 || kv == 10) activate = true;
+                else if (kv == 27 || kv == LV_KEY_ESC || kv == '`') back = true;
+                else if (kv == ',' || kv == ';' || kv == LV_KEY_LEFT) dir = -1;
+                else if (kv == '.' || kv == '/' || kv == LV_KEY_RIGHT) dir = 1;
+            }
+
+            if (back || event->type == INPUT_TYPE_EXIT_BUTTON) {
+                subghz_wf_back_btn_cb(NULL);
+                return;
+            }
+
+            if (dir != 0) {
+                int selected = ((int)s_wf_popup_selected + dir + SUBGHZ_WF_POPUP_COUNT) % SUBGHZ_WF_POPUP_COUNT;
+                s_wf_popup_selected = (subghz_wf_popup_control_t)selected;
+                subghz_wf_apply_popup_selection();
+                return;
+            }
+
+            if (activate) {
+                if (s_wf_popup_selected == SUBGHZ_WF_POPUP_START) subghz_wf_start_btn_cb(NULL);
+                else if (s_wf_popup_selected == SUBGHZ_WF_POPUP_STOP) subghz_wf_stop_btn_cb(NULL);
+                else subghz_wf_back_btn_cb(NULL);
+                return;
+            }
+        } else if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            subghz_wf_back_btn_cb(NULL);
+            return;
+        }
+
+        return;
+    }
+
     if (s_popup && lv_obj_is_valid(s_popup)) {
         if (event->type == INPUT_TYPE_TOUCH) {
             lv_indev_data_t *d = &event->data.touch_data;
@@ -3734,6 +4521,11 @@ static void subghz_input_handler(InputEvent *event) {
                 subghz_open_freq_analyzer_popup();
                 return;
             }
+            if (!s_in_saved_list && s_waterfall_row && point_inside_obj(s_waterfall_row, d->point.x, d->point.y)) {
+                if (s_ov) options_view_set_selected(s_ov, 4);
+                subghz_open_waterfall_popup();
+                return;
+            }
             if (point_inside_obj(s_back_row, d->point.x, d->point.y)) {
                 if (s_in_saved_list) {
                     subghz_back_to_root_menu();
@@ -3813,6 +4605,7 @@ void subghz_view_create(void) {
     s_raw_capture_row = options_view_add_item(s_ov, "Raw Capture", subghz_raw_capture_row_cb, NULL);
     s_capture_row = options_view_add_item(s_ov, "Saved", subghz_capture_row_cb, NULL);
     s_freq_analyzer_row = options_view_add_item(s_ov, "Freq Analyzer", subghz_freq_analyzer_row_cb, NULL);
+    s_waterfall_row = options_view_add_item(s_ov, "Waterfall", subghz_waterfall_row_cb, NULL);
     s_back_row = options_view_add_back_row(s_ov, subghz_back_row_cb, NULL);
     options_view_set_selected(s_ov, 0);
 
@@ -3881,12 +4674,13 @@ void subghz_view_create(void) {
     memset(s_levels, 0, sizeof(s_levels));
     memset(s_peaks, 0, sizeof(s_peaks));
 
-    s_timer = lv_timer_create(subghz_timer_cb, 110, NULL);
+    s_timer = lv_timer_create(subghz_timer_cb, 33, NULL);
 }
 
 void subghz_view_destroy(void) {
     subghz_close_popup(true);
     subghz_close_freq_analyzer_popup();
+    subghz_close_waterfall_popup();
     subghz_close_saved_popup();
     subghz_saved_list_clear();
     s_in_saved_list = false;
@@ -3902,6 +4696,7 @@ void subghz_view_destroy(void) {
     s_capture_row = NULL;
     s_raw_capture_row = NULL;
     s_freq_analyzer_row = NULL;
+    s_waterfall_row = NULL;
     s_back_row = NULL;
 
 #ifdef CONFIG_USE_TOUCHSCREEN

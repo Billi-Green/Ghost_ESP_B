@@ -48,6 +48,16 @@ static bool s_sd_jit_display_suspended = false;
 #include "managers/display_manager.h"
 static bool s_display_spi_suspended_flag = false;
 
+// track SPI bus initialization and mount type locally so we only free what we
+// initialized and always clear initialized state on unmount
+static bool s_spi_bus_initialized = false;
+static int s_spi_host_id = -1;
+typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_type_t;
+static sd_mount_type_t s_mount_type = MOUNT_NONE;
+static TickType_t s_next_unmount_tick = 0;
+
+static void sd_spi_bus_release_if_tracked(void);
+
 static bool display_sd_spi_pins_match(void) {
 #if defined(CONFIG_LV_DISP_SPI_MOSI) && defined(CONFIG_LV_DISP_SPI_CLK)
   bool mosi_match = (sd_card_manager.spi_mosi_pin == CONFIG_LV_DISP_SPI_MOSI);
@@ -117,7 +127,26 @@ static void display_spi_resume_after_sd(void) {
       ESP_LOGE("sd_card", "display_spi_resume: add device failed: %s", esp_err_to_name(add_ret));
     }
   } else if (ret == ESP_ERR_INVALID_STATE) {
-    ESP_LOGW("sd_card", "display_spi_resume: bus already initialized, skipping re-init");
+    if (s_spi_bus_initialized && s_spi_host_id == TFT_SPI_HOST) {
+      ESP_LOGW("sd_card", "display_spi_resume: SD still owns display SPI host, releasing before retry");
+      sd_spi_bus_release_if_tracked();
+      ret = lvgl_spi_driver_init(TFT_SPI_HOST, DISP_SPI_MISO, DISP_SPI_MOSI, DISP_SPI_CLK,
+                                 SPI_BUS_MAX_TRANSFER_SZ, 1, DISP_SPI_IO2, DISP_SPI_IO3);
+      if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE) {
+        esp_err_t add_ret = disp_spi_add_device(TFT_SPI_HOST);
+        if (add_ret != ESP_OK) {
+          ESP_LOGE("sd_card", "display_spi_resume: add device failed after retry: %s", esp_err_to_name(add_ret));
+        }
+      } else {
+        ESP_LOGE("sd_card", "display_spi_resume: retry bus init failed: %s", esp_err_to_name(ret));
+      }
+    } else {
+      ESP_LOGW("sd_card", "display_spi_resume: display SPI bus already initialized, re-adding display device");
+      esp_err_t add_ret = disp_spi_add_device(TFT_SPI_HOST);
+      if (add_ret != ESP_OK) {
+        ESP_LOGE("sd_card", "display_spi_resume: add device failed: %s", esp_err_to_name(add_ret));
+      }
+    }
   } else {
     ESP_LOGE("sd_card", "display_spi_resume: bus init failed: %s", esp_err_to_name(ret));
   }
@@ -191,14 +220,6 @@ sd_card_manager_t sd_card_manager = { // Change this based on board config
     .spi_mosi_pin = CONFIG_SD_SPI_MOSI_PIN
 #endif
 };
-
-// track SPI bus initialization and mount type locally so we only free what we
-// initialized and always clear initialized state on unmount
-static bool s_spi_bus_initialized = false;
-static int s_spi_host_id = -1;
-typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_type_t;
-static sd_mount_type_t s_mount_type = MOUNT_NONE;
-static TickType_t s_next_unmount_tick = 0;
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
 static int choose_free_s3_sd_spi_host(const spi_bus_config_t *bus_config, int dma_channel) {
