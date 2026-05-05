@@ -21,6 +21,7 @@ GhostESP includes SubGHz radio tools for scanning, capturing, and transmitting s
 
 - **Signal scanning** - Monitor activity across 64 channels in real-time
 - **Frequency analyzer** - Visualize signal strength across bands to find active frequencies
+- **Waterfall spectrum analyzer** - View a stable 5-band RSSI waterfall with 320 real RF bins per sweep
 - **Signal capture** - Record and decode signals from remotes and transmitters
 - **Protocol decoding** - Automatic detection of 30+ common protocols
 - **Signal transmission** - Replay captured signals to control devices
@@ -50,4 +51,5 @@ SubGHz requires a CC1101-based radio module. Not all GhostESP boards include thi
 - [Capturing Signals]({{< relref "capturing.md" >}}) - Record and decode signals
 - [Transmitting]({{< relref "transmitting.md" >}}) - Replay captured signals
 - [Frequency Analyzer]({{< relref "freq-analyzer.md" >}}) - Find active frequencies
+- [Waterfall Spectrum Analyzer]({{< relref "waterfall.md" >}}) - Visualize RSSI activity across common bands
 - [Supported Protocols]({{< relref "protocols.md" >}}) - Protocol reference

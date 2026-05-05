@@ -2,7 +2,7 @@
 title: "Waterfall Spectrum Analyzer"
 description: "Use the SubGHz waterfall to visualize CC1101 RSSI activity across common RF bands."
 keywords: ["SubGHz", "waterfall", "spectrum analyzer", "CC1101", "RSSI", "RF"]
-weight: 10
+weight: 28
 ---
 
 The SubGHz waterfall spectrum analyzer visualizes RF activity from a CC1101 radio using real RSSI measurements. It is designed to show where signal energy is present across common SubGHz bands without using fake FFT-derived output.
