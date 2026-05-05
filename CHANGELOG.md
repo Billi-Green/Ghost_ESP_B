@@ -29,6 +29,8 @@
 - Fixed GPS info task stack corruption
 - Fixed Cardputer ADV `*` key being treated as backspace in text entry fields
 - Fixed Poltergeist status display failing to initialize due to I2C port returning ESP_ERR_INVALID_STATE instead of ESP_ERR_NOT_FOUND (#308)
+- Fixed T-Deck ST7789 intermittent boot corruption by replacing init sequence with official LilyGo values and ensuring 120ms post-SWRESET delay
+- Removed premature backlight activation in disp_driver_init to prevent garbage frame visibility on cold boot
 
 ## Revival v1.9.8
 
