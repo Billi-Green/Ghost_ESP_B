@@ -18,6 +18,10 @@
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/options_screen.h"
 
+#ifdef CONFIG_HAS_MIC
+#include "managers/microphone/mic_driver.h"
+#endif
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -154,7 +158,7 @@ static int64_t s_capture_popup_opened_us = 0;
 static bool s_capture_popup_open_pending = false;
 static bool s_capture_popup_sync_pending = false;
 static subghz_capture_popup_control_t s_capture_popup_selected = SUBGHZ_CAPTURE_POPUP_BACK;
-static char s_capture_freq_label[16] = "433.92 MHz";
+static char s_capture_freq_label[16] = "433.92";
 static subghz_capture_mode_t s_capture_mode = SUBGHZ_CAPTURE_MODE_NORMAL;
 
 static lv_obj_t *s_saved_popup = NULL;
@@ -193,6 +197,7 @@ static uint8_t s_fa_active_band = 2;
 #define WF_COMPOSITE_CHANNELS (SUBGHZ_FA_BAND_COUNT * SUBGHZ_SCANNER_CHANNEL_COUNT)
 #define WF_BAND_MASK_ALL ((1U << SUBGHZ_FA_BAND_COUNT) - 1U)
 #define WF_BAND_SEPARATOR_PX 1
+#define WF_ROUND_DIV(a, b) (((a) + (b) / 2) / (b))
 
 static lv_obj_t *s_wf_popup = NULL;
 static lv_obj_t *s_wf_graph = NULL;
@@ -222,11 +227,9 @@ static uint8_t *s_wf_line = NULL;
 static lv_color_t *s_wf_prev_row = NULL;
 static bool s_wf_have_prev = false;
 static bool s_wf_center_zero = false;
-static bool s_wf_norm_ready = false;
-static int s_wf_noise_floor = 0;
-static int s_wf_signal_ceiling = 35;
 static const uint8_t s_wf_display_band_order[SUBGHZ_FA_BAND_COUNT] = { 0, 1, 2, 3, 4 };
 static uint8_t s_wf_band_lines[SUBGHZ_FA_BAND_COUNT][SUBGHZ_SCANNER_CHANNEL_COUNT] = {0};
+static uint8_t s_wf_band_raw_peak[SUBGHZ_FA_BAND_COUNT] = {0};
 static uint8_t s_wf_band_mask = 0;
 static uint8_t s_wf_pending_composite[WF_COMPOSITE_CHANNELS] = {0};
 static uint16_t s_wf_pending_composite_count = 0;
@@ -285,6 +288,9 @@ static const uint32_t s_scan_freqs_hz[] = {
 };
 static const char *s_scan_freq_labels[] = {
     "315 MHz", "390 MHz", "433.92 MHz", "868.35 MHz", "915 MHz"
+};
+static const char *s_scan_freq_short[] = {
+    "315", "390", "433.92", "868.35", "915"
 };
 static subghz_popup_control_t s_popup_selected = SUBGHZ_POPUP_START;
 static subghz_pending_action_t s_pending_action = SUBGHZ_PENDING_NONE;
@@ -437,19 +443,20 @@ static void subghz_capture_refresh_frequency_label(void) {
             return;
         }
         uint8_t idx = (s_remote_freq_idx < SUBGHZ_FA_BAND_COUNT) ? s_remote_freq_idx : 2;
-        label = s_scan_freq_labels[idx];
+        label = s_scan_freq_short[idx];
     } else {
         const char *manager_label = subghz_remote_manager_get_frequency_label();
         if (manager_label && manager_label[0] != '\0' && strcmp(manager_label, "N/A") != 0) {
-            label = manager_label;
+            uint8_t idx = subghz_capture_get_frequency_index();
+            label = s_scan_freq_short[idx];
         }
     }
 
-    if (!label || label[0] == '\0' || strcmp(label, "N/A") == 0) {
+    if (!label) {
         if (s_capture_freq_label[0] != '\0' && strcmp(s_capture_freq_label, "N/A") != 0) {
             return;
         }
-        label = s_scan_freq_labels[2];
+        label = s_scan_freq_short[2];
     }
 
     snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", label);
@@ -1853,7 +1860,7 @@ static void subghz_capture_continue_waiting(void) {
 
 static uint8_t subghz_capture_get_frequency_index(void) {
     for (uint8_t i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
-        if (strcmp(s_capture_freq_label, s_scan_freq_labels[i]) == 0) {
+        if (strcmp(s_capture_freq_label, s_scan_freq_short[i]) == 0) {
             return i;
         }
     }
@@ -1870,7 +1877,7 @@ static void subghz_capture_set_frequency_index(uint8_t idx) {
         idx = 2;
     }
     s_remote_freq_idx = idx;
-    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", s_scan_freq_labels[idx]);
+    snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", s_scan_freq_short[idx]);
 }
 
 static bool subghz_capture_begin_remote(bool defer_popup_open) {
@@ -2294,7 +2301,8 @@ static void subghz_wf_store_band_line(uint8_t freq_idx, const uint8_t *levels, u
         count = SUBGHZ_SCANNER_CHANNEL_COUNT;
     }
 
-    uint8_t normalized[SUBGHZ_SCANNER_CHANNEL_COUNT];
+    uint8_t resampled[SUBGHZ_SCANNER_CHANNEL_COUNT];
+    uint8_t raw_peak = 0;
     for (uint16_t x = 0; x < SUBGHZ_SCANNER_CHANNEL_COUNT; x++) {
         uint16_t src = (uint16_t)((x * ((uint16_t)count - 1U) * 256U) / (SUBGHZ_SCANNER_CHANNEL_COUNT - 1U));
         uint8_t ch = (uint8_t)(src >> 8);
@@ -2303,35 +2311,35 @@ static void subghz_wf_store_band_line(uint8_t freq_idx, const uint8_t *levels, u
             ch = (uint8_t)(count - 2U);
             frac = 255;
         }
-        normalized[x] = (uint8_t)((levels[ch] * (256 - frac) + levels[ch + 1] * frac) >> 8);
+        int level = ((int)levels[ch] * (256 - frac) + (int)levels[ch + 1] * frac) >> 8;
+        if (level < 0) level = 0;
+        if (level > 100) level = 100;
+        resampled[x] = (uint8_t)level;
+        if ((uint8_t)level > raw_peak) raw_peak = (uint8_t)level;
     }
+    s_wf_band_raw_peak[freq_idx] = raw_peak;
 
     portENTER_CRITICAL(&s_wf_composite_lock);
-    memcpy(s_wf_band_lines[freq_idx], normalized, sizeof(normalized));
+    memcpy(s_wf_band_lines[freq_idx], resampled, sizeof(resampled));
     s_wf_band_mask |= (uint8_t)(1U << freq_idx);
 
     if (s_wf_band_mask == WF_BAND_MASK_ALL) {
         uint16_t dst = 0;
         uint8_t peak_band = 0;
-        uint8_t peak_ch = 0;
         uint8_t peak_level = 0;
         for (uint8_t i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
             uint8_t band = s_wf_display_band_order[i];
             memcpy(&s_wf_pending_composite[dst], s_wf_band_lines[band], SUBGHZ_SCANNER_CHANNEL_COUNT);
-            for (uint8_t ch = 0; ch < SUBGHZ_SCANNER_CHANNEL_COUNT; ch++) {
-                uint8_t level = s_wf_band_lines[band][ch];
-                if (level > peak_level) {
-                    peak_level = level;
-                    peak_band = band;
-                    peak_ch = ch;
-                }
+            if (s_wf_band_raw_peak[band] >= peak_level) {
+                peak_level = s_wf_band_raw_peak[band];
+                peak_band = band;
             }
             dst = (uint16_t)(dst + SUBGHZ_SCANNER_CHANNEL_COUNT);
         }
         s_wf_pending_composite_count = dst;
         s_wf_pending_composite_seq++;
         s_wf_last_peak_band = peak_band;
-        s_wf_last_peak_ch = peak_ch;
+        s_wf_last_peak_ch = 0;
         s_wf_last_peak_level = peak_level;
         s_wf_band_mask = 0;
     }
@@ -2362,6 +2370,7 @@ static bool subghz_wf_take_composite(uint8_t *out_levels, uint16_t max_levels, u
 static void subghz_wf_reset_composite(void) {
     portENTER_CRITICAL(&s_wf_composite_lock);
     memset(s_wf_band_lines, 0, sizeof(s_wf_band_lines));
+    memset(s_wf_band_raw_peak, 0, sizeof(s_wf_band_raw_peak));
     memset(s_wf_pending_composite, 0, sizeof(s_wf_pending_composite));
     s_wf_band_mask = 0;
     s_wf_pending_composite_count = 0;
@@ -2384,71 +2393,8 @@ static bool subghz_wf_render_line(const uint8_t *levels, uint16_t count) {
     }
     bool had_prev = s_wf_have_prev;
 
-    uint16_t hist[101] = {0};
-    uint32_t row_sum = 0;
-    for (uint16_t i = 0; i < count; i++) {
-        int level = levels[i];
-        if (level < 0) level = 0;
-        if (level > 100) level = 100;
-        hist[level]++;
-        row_sum += level;
-    }
-    int row_avg = row_sum / count;
-    uint16_t p10_target = (uint16_t)((count + 9U) / 10U);
-    uint16_t p95_target = (uint16_t)((count * 95U + 99U) / 100U);
-    uint16_t acc = 0;
-    int row_p10 = 0;
-    int row_p95 = 100;
-    bool found_p10 = false;
-    for (int i = 0; i <= 100; i++) {
-        acc = (uint16_t)(acc + hist[i]);
-        if (!found_p10 && acc >= p10_target) {
-            row_p10 = i;
-            found_p10 = true;
-        }
-        if (acc >= p95_target) {
-            row_p95 = i;
-            break;
-        }
-    }
-
-    int row_floor = (row_p10 * 3 + row_avg) / 4;
-    int row_ceiling = row_p95;
-    if (row_ceiling < row_avg + 8) {
-        row_ceiling = row_avg + 8;
-    }
-    if (row_ceiling > 100) {
-        row_ceiling = 100;
-    }
-    if (!s_wf_norm_ready) {
-        s_wf_noise_floor = row_floor;
-        s_wf_signal_ceiling = row_ceiling;
-        s_wf_norm_ready = true;
-    } else {
-        s_wf_noise_floor = (s_wf_noise_floor * 31 + row_floor) / 32;
-        s_wf_signal_ceiling = (s_wf_signal_ceiling * 15 + row_ceiling) / 16;
-    }
-    if (s_wf_signal_ceiling < s_wf_noise_floor + 8) {
-        s_wf_signal_ceiling = s_wf_noise_floor + 8;
-    }
-    int contrast_span = s_wf_signal_ceiling - s_wf_noise_floor;
-    if (contrast_span < 24) contrast_span = 24;
-    int floor = s_wf_noise_floor + 1;
-    if (floor < 0) floor = 0;
-
     lv_coord_t half_w = s_wf_fb_w / 2;
     for (lv_coord_t x = 0; x < s_wf_fb_w; x++) {
-        bool separator = false;
-        if (count == WF_COMPOSITE_CHANNELS) {
-            for (uint8_t b = 1; b < SUBGHZ_FA_BAND_COUNT; b++) {
-                lv_coord_t sep_x = (lv_coord_t)(((int32_t)b * s_wf_fb_w) / SUBGHZ_FA_BAND_COUNT);
-                if (x >= sep_x - WF_BAND_SEPARATOR_PX && x <= sep_x + WF_BAND_SEPARATOR_PX) {
-                    separator = true;
-                    break;
-                }
-            }
-        }
-
         int src;
         if (s_wf_center_zero) {
             int dist = (int)(x <= half_w ? half_w - x : x - half_w);
@@ -2470,12 +2416,13 @@ static bool subghz_wf_render_line(const uint8_t *levels, uint16_t count) {
         }
         s_wf_line[x] = (uint8_t)level;
 
-        int norm = level - floor;
-        if (norm < 0) norm = 0;
-        int intensity = (norm * 255) / contrast_span;
+        int adj = (level - 25) * 2;
+        if (adj < 0) adj = 0;
+        if (adj > 100) adj = 100;
+        int intensity = (adj * 255) / 100;
         if (intensity < 0) intensity = 0;
         if (intensity > 255) intensity = 255;
-        lv_color_t color = separator ? lv_color_black() : s_wf_palette[intensity];
+        lv_color_t color = s_wf_palette[intensity];
 
         lv_color_t prev_color = s_wf_prev_row ? s_wf_prev_row[x] : lv_color_black();
         if (color.full != prev_color.full || !had_prev) {
@@ -2558,9 +2505,9 @@ static void subghz_wf_start_scan(void) {
     }
     s_wf_scanning = true;
     s_wf_have_prev = false;
-    s_wf_norm_ready = false;
-    s_wf_noise_floor = 0;
-    s_wf_signal_ceiling = 100;
+#ifdef CONFIG_HAS_MIC
+    mic_pause();
+#endif
     s_wf_remote_ready = false;
     s_wf_remote_count = 0;
     s_wf_remote_seq = 0;
@@ -2600,6 +2547,9 @@ static void subghz_wf_stop_scan(void) {
         subghz_remote_manager_stop();
     }
     s_wf_scanning = false;
+#ifdef CONFIG_HAS_MIC
+    mic_resume();
+#endif
 }
 
 static void subghz_open_waterfall_popup(void) {
@@ -2640,7 +2590,7 @@ static void subghz_open_waterfall_popup(void) {
     int graph_top = tiny ? 40 : (small ? 58 : 66);
     int btn_h = tiny ? 16 : (small ? 22 : 26);
     int btn_margin = tiny ? -2 : -8;
-    int graph_bottom = btn_h + (tiny ? 10 : (small ? 22 : 28));
+    int graph_bottom = btn_h + (tiny ? 14 : (small ? 28 : 34));
     int graph_h = popup_h - graph_top - graph_bottom;
     int min_graph_h = tiny ? 18 : 40;
     if (graph_h < min_graph_h) graph_h = min_graph_h;
@@ -2652,11 +2602,21 @@ static void subghz_open_waterfall_popup(void) {
     lv_coord_t inner_w = popup_w - inner_pad * 2;
     if (inner_w < 10) inner_w = 10;
 
+    s_wf_graph = lv_obj_create(s_wf_popup);
+    lv_obj_set_size(s_wf_graph, inner_w, graph_h);
+    lv_obj_align(s_wf_graph, LV_ALIGN_TOP_MID, 0, graph_top);
+    lv_obj_set_style_bg_color(s_wf_graph, lv_color_hex(0x0A0A0A), 0);
+    lv_obj_set_style_bg_opa(s_wf_graph, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_wf_graph, 0, 0);
+    lv_obj_set_style_pad_all(s_wf_graph, 0, 0);
+    lv_obj_set_style_radius(s_wf_graph, 4, 0);
+    lv_obj_set_style_clip_corner(s_wf_graph, true, 0);
+    lv_obj_clear_flag(s_wf_graph, LV_OBJ_FLAG_SCROLLABLE);
+
     const char *legend_text[SUBGHZ_FA_BAND_COUNT] = { "315", "390", "433", "868", "915" };
-    lv_coord_t legend_y = graph_top - (tiny ? 12 : 18);
     for (int i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
-        lv_coord_t x1 = (lv_coord_t)((i * inner_w) / SUBGHZ_FA_BAND_COUNT);
-        lv_coord_t x2 = (lv_coord_t)(((i + 1) * inner_w) / SUBGHZ_FA_BAND_COUNT);
+        lv_coord_t x1 = (lv_coord_t)WF_ROUND_DIV(i * inner_w, SUBGHZ_FA_BAND_COUNT);
+        lv_coord_t x2 = (lv_coord_t)WF_ROUND_DIV((i + 1) * inner_w, SUBGHZ_FA_BAND_COUNT);
         lv_coord_t legend_w = x2 - x1;
         if (legend_w < 1) legend_w = 1;
         s_wf_legend_labels[i] = lv_label_create(s_wf_popup);
@@ -2666,19 +2626,9 @@ static void subghz_open_waterfall_popup(void) {
         lv_label_set_long_mode(s_wf_legend_labels[i], LV_LABEL_LONG_CLIP);
         lv_obj_set_width(s_wf_legend_labels[i], legend_w);
         lv_obj_set_style_text_align(s_wf_legend_labels[i], LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_align(s_wf_legend_labels[i], LV_ALIGN_TOP_LEFT,
-                     inner_pad + x1, legend_y);
+        lv_obj_align_to(s_wf_legend_labels[i], s_wf_graph, LV_ALIGN_OUT_TOP_LEFT,
+                        x1, -(tiny ? 2 : 5));
     }
-
-    s_wf_graph = lv_obj_create(s_wf_popup);
-    lv_obj_set_size(s_wf_graph, inner_w, graph_h);
-    lv_obj_align(s_wf_graph, LV_ALIGN_TOP_MID, 0, graph_top);
-    lv_obj_set_style_bg_color(s_wf_graph, lv_color_hex(0x0A0A0A), 0);
-    lv_obj_set_style_bg_opa(s_wf_graph, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_wf_graph, 0, 0);
-    lv_obj_set_style_pad_all(s_wf_graph, 0, 0);
-    lv_obj_set_style_radius(s_wf_graph, 3, 0);
-    lv_obj_clear_flag(s_wf_graph, LV_OBJ_FLAG_SCROLLABLE);
 
     s_wf_canvas = lv_canvas_create(s_wf_graph);
     s_wf_fb_w = inner_w;
@@ -3029,7 +2979,7 @@ static void subghz_open_capture_popup(void) {
     s_capture_freq_btn = popup_add_styled_button(
         s_capture_popup,
         s_capture_freq_label,
-        110,
+        70,
         30,
         LV_ALIGN_BOTTOM_MID,
         0,
@@ -3994,7 +3944,13 @@ void subghz_view_update_remote_state(const char *state) {
     } else if (strcmp(state, "capture_error") == 0) {
         subghz_fail_pending_action("capture failed");
     } else if (strncmp(state, "freq_", 5) == 0) {
-        snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", state + 5);
+        const char *freq_text = state + 5;
+        for (uint8_t i = 0; i < SUBGHZ_FA_BAND_COUNT; i++) {
+            if (strcmp(freq_text, s_scan_freq_labels[i]) == 0) {
+                snprintf(s_capture_freq_label, sizeof(s_capture_freq_label), "%s", s_scan_freq_short[i]);
+                break;
+            }
+        }
         if (s_capture_freq_btn && lv_obj_is_valid(s_capture_freq_btn)) {
             lv_obj_t *btn_label = lv_obj_get_child(s_capture_freq_btn, 0);
             if (btn_label) lv_label_set_text(btn_label, s_capture_freq_label);
@@ -4464,7 +4420,6 @@ static void subghz_input_handler(InputEvent *event) {
                         int list_h = (int)(list_area.y2 - list_area.y1);
                         if (list_h > 0) {
                             int y_rel = (int)d->point.y - (int)list_area.y1;
-                            int sel = options_view_get_selected(s_ov);
                             if (y_rel < list_h / 3) {
                                 options_view_move_selection(s_ov, -1);
                                 return;

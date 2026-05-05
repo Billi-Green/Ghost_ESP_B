@@ -22,6 +22,7 @@
 - Status bar uses design token fonts and safe-area-aware padding
 - Tweaked theme palette surface colors across all background shade levels
 - Cleaned up terminal screen build config template conditionals
+- Removed default LVGL shadow from popup buttons
 
 ### Fixed
 - Fixed ESP32-C5 not discovering 5GHz channels above UNII-1 (e.g. 149-165) during WiFi scans by using correct country code API at boot and re-applying it after WiFi driver reinit during AP scans

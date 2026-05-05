@@ -25,6 +25,7 @@
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
 #ifdef CONFIG_HAS_MIC
+#include "managers/microphone/mic_driver.h"
 #include "managers/microphone/mic_visualizer.h"
 #endif
 #include "vendor/pcap.h"
@@ -8103,6 +8104,11 @@ void handle_subghz_cmd(int argc, char **argv) {
     if (strcmp(sub, "start") == 0 || strcmp(sub, "waterfall_start") == 0) {
         bool waterfall_mode = (strcmp(sub, "waterfall_start") == 0);
         bool ok = waterfall_mode ? subghz_remote_manager_start_waterfall(stream_to_peer) : subghz_remote_manager_start(stream_to_peer);
+#ifdef CONFIG_HAS_MIC
+        if (ok && waterfall_mode) {
+            mic_pause();
+        }
+#endif
         if (ok) {
             glog(waterfall_mode ? "SubGHz waterfall scanner started\n" : "SubGHz scanner started\n");
             glog("SubGHz cfg: SPI%d MOSI=%d MISO=%d SCK=%d CSN=%d GDO0=%d GDO2=%d\n",
@@ -8127,6 +8133,9 @@ void handle_subghz_cmd(int argc, char **argv) {
 
     if (strcmp(sub, "stop") == 0 || strcmp(sub, "waterfall_stop") == 0) {
         if (!subghz_remote_manager_is_running()) {
+#ifdef CONFIG_HAS_MIC
+            mic_resume();
+#endif
             glog("SubGHz scanner already stopped\n");
             if (stream_to_peer) {
                 esp_comm_manager_send_command("subghz", "state stopped");
@@ -8134,6 +8143,9 @@ void handle_subghz_cmd(int argc, char **argv) {
             return;
         }
         subghz_remote_manager_stop();
+#ifdef CONFIG_HAS_MIC
+        mic_resume();
+#endif
         glog("SubGHz scanner stopping\n");
         return;
     }
