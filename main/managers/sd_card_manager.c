@@ -35,6 +35,16 @@ static SemaphoreHandle_t s_sd_jit_mutex = NULL;
 static uint32_t s_sd_jit_mount_depth = 0;
 static bool s_sd_jit_display_suspended = false;
 
+// track SPI bus initialization and mount type locally so we only free what we
+// initialized and always clear initialized state on unmount
+static bool s_spi_bus_initialized = false;
+static int s_spi_host_id = -1;
+typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_type_t;
+static sd_mount_type_t s_mount_type = MOUNT_NONE;
+static TickType_t s_next_unmount_tick = 0;
+
+static void sd_spi_bus_release_if_tracked(void);
+
 /* time multiplex spi when display and sd share the spi bus */
 #if defined(CONFIG_WITH_SCREEN) && defined(CONFIG_LV_TFT_DISPLAY_PROTOCOL_SPI) && !defined(CONFIG_USE_TDISPLAY_S3)
 #include "lvgl_helpers.h"
@@ -47,16 +57,6 @@ static bool s_sd_jit_display_suspended = false;
 #endif
 #include "managers/display_manager.h"
 static bool s_display_spi_suspended_flag = false;
-
-// track SPI bus initialization and mount type locally so we only free what we
-// initialized and always clear initialized state on unmount
-static bool s_spi_bus_initialized = false;
-static int s_spi_host_id = -1;
-typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_type_t;
-static sd_mount_type_t s_mount_type = MOUNT_NONE;
-static TickType_t s_next_unmount_tick = 0;
-
-static void sd_spi_bus_release_if_tracked(void);
 
 static bool display_sd_spi_pins_match(void) {
 #if defined(CONFIG_LV_DISP_SPI_MOSI) && defined(CONFIG_LV_DISP_SPI_CLK)
