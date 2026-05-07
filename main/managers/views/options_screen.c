@@ -1207,6 +1207,16 @@ static void update_scroll_buttons_visibility(void) {
     }
 }
 
+static void reserve_detail_touch_bar_space(detail_view_t *dv) {
+#ifdef CONFIG_USE_TOUCHSCREEN
+    if (dv && touch_bar && lv_obj_is_valid(touch_bar)) {
+        detail_view_set_bottom_reserved(dv, lv_obj_get_height(touch_bar));
+    }
+#else
+    (void)dv;
+#endif
+}
+
 static void select_option_item(int index); // Forward Declaration
 static void back_event_cb(lv_event_t *e); // Forward Declaration for back button callback
 static void ap_list_cleanup(void); // Forward Declaration for AP list cleanup
@@ -3252,6 +3262,7 @@ static void gtk_abuse_poll_timer_cb(lv_timer_t *timer) {
 
     const gtk_abuse_result_t *r = gtk_abuse_get_result();
     gtk_abuse_detail_view = detail_view_create(lv_scr_act(), "GTK Abuse Result");
+    reserve_detail_touch_bar_space(gtk_abuse_detail_view);
     detail_view_t *dv = gtk_abuse_detail_view;
     bool compact_detail = use_compact_wifi_detail_layout();
 
@@ -6224,6 +6235,7 @@ static void show_ble_detect_detail(int device_index) {
         detail_view_destroy(ble_detect_detail_view);
     }
     ble_detect_detail_view = detail_view_create(lv_scr_act(), NULL);
+    reserve_detail_touch_bar_space(ble_detect_detail_view);
 
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", info.mac[0], info.mac[1],
@@ -6809,6 +6821,7 @@ static void show_ap_detail(int ap_index) {
     }
     
     ap_detail_view = detail_view_create(lv_scr_act(), NULL);
+    reserve_detail_touch_bar_space(ap_detail_view);
     
     detail_view_add_info(ap_detail_view, "SSID", ssid);
     
@@ -6977,6 +6990,7 @@ static void show_station_detail(int station_index) {
     }
 
     sta_detail_view = detail_view_create(lv_scr_act(), NULL);
+    reserve_detail_touch_bar_space(sta_detail_view);
     detail_view_add_info(sta_detail_view, compact_detail ? "Station" : "Station MAC", sta_mac);
     detail_view_add_info(sta_detail_view, compact_detail ? "Vendor" : "Station Vendor", sta_vendor);
     detail_view_add_info(sta_detail_view, compact_detail ? "AP" : "Associated AP", ap_ssid);

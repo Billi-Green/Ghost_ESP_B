@@ -387,11 +387,6 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     int w = LV_HOR_RES;
     int h = LV_VER_RES;
     int STATUS_BAR_HEIGHT = GUI_STATUS_BAR_H;
-#ifdef CONFIG_USE_TOUCHSCREEN
-    int TOUCH_NAV_HEIGHT = 50;
-#else
-    int TOUCH_NAV_HEIGHT = 0;
-#endif
     bool small = (w <= 240 || h <= 240);
     dv->compact_layout = detail_view_should_use_compact_layout(w, h);
     dv->btn_h = dv->compact_layout ? 20 : (small ? 28 : 34);
@@ -404,7 +399,7 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     get_theme_colors(&bg, &surface, &surface_alt, &text, &accent);
     
     dv->container = lv_obj_create(parent);
-    lv_coord_t content_h = h - STATUS_BAR_HEIGHT - TOUCH_NAV_HEIGHT;
+    lv_coord_t content_h = h - STATUS_BAR_HEIGHT;
     if (content_h < 60) content_h = 60;
     dv->content_h = content_h;
     lv_obj_set_size(dv->container, w, content_h);
@@ -780,6 +775,17 @@ void detail_view_clear(detail_view_t *dv) {
     dv->selected = -1;
     dv->first_selectable = -1;
     dv->info_count = 0;
+}
+
+void detail_view_set_bottom_reserved(detail_view_t *dv, lv_coord_t reserved_h) {
+    if (!dv || !dv->container || !lv_obj_is_valid(dv->container)) return;
+    if (reserved_h < 0) reserved_h = 0;
+
+    lv_coord_t content_h = LV_VER_RES - GUI_STATUS_BAR_H - reserved_h;
+    if (content_h < 60) content_h = 60;
+    dv->content_h = content_h;
+    lv_obj_set_height(dv->container, content_h);
+    detail_view_sync_info_canvas(dv);
 }
 
 lv_obj_t *detail_view_get_list(detail_view_t *dv) {
