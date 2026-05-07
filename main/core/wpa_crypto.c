@@ -47,7 +47,7 @@ static bool prf(const uint8_t *key, size_t key_len,
     offset += copy;
     free(merged);
 
-    while (offset < out_len) {
+while (offset < out_len) {
         counter++;
         size_t r_len = 20 + data_len + 1;
         uint8_t *r = (uint8_t *)malloc(r_len);

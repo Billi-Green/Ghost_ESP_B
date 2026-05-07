@@ -49,6 +49,12 @@
 - Fixed T-Deck ST7789 intermittent boot corruption by replacing init sequence with official LilyGo values and ensuring 120ms post-SWRESET delay
 - Removed premature backlight activation in disp_driver_init to prevent garbage frame visibility on cold boot
 - Fixed detail views reserving bottom space for touch controls when no touch control bar is rendered
+- Fixed DIAL device discovery blocking up to 20 seconds by reducing retry count from 10 to 5 and delay from 2s to 1s
+- Fixed memory leak in m5gfx_wrapper where Panel_ST7789 was allocated with new but never deleted on re-init
+- Fixed potential memory leaks in NFC view where ndef_details_result_t was not always freed when display was unavailable
+- Fixed malloc variable declaration issue in wpa_crypto PRF loop (size_t r_len moved inside loop)
+- Fixed O(n²) realloc pattern in infrared file list by implementing exponential growth with capacity tracking
+- Fixed WiFi connection retry having no user feedback by adding terminal status message before 3s delay
 
 ## Revival v1.9.8
 

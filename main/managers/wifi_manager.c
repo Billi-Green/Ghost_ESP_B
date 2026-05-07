@@ -3200,7 +3200,8 @@ void wifi_manager_connect_wifi(const char *ssid, const char *password) {
             esp_wifi_disconnect();
             retry_count++;
             if (retry_count < max_retries) {
-                vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay between retries
+                TERMINAL_VIEW_ADD_TEXT("Retrying connection (%d/%d)...\n", retry_count, max_retries);
+                vTaskDelay(pdMS_TO_TICKS(3000));
             }
         }
     }
