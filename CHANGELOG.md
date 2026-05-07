@@ -25,6 +25,22 @@
 - Removed default LVGL shadow from popup buttons
 
 ### Fixed
+- Fixed potential division by zero crash in wardrive channel hopping timer when channel list is empty
+- Fixed stack buffer overflow in BLE skimmer PCAP construction when processing oversized advertisement data from malicious BLE devices
+- Fixed TOCTOU race condition in glog and uart_share lazy mutex initialization that could leak mutexes and break mutual exclusion under concurrent startup
+- Fixed silent crypto failure in WPA PRF function where malloc errors produced garbage PTK output without signaling failure to callers
+- Fixed NULL pointer crash in evil portal HTTP server when heap is exhausted during Host header extraction
+- Fixed NULL pointer crash in WebUI settings API when JSON fields contain non-string types (e.g. numbers, null) — all cJSON valuestring accesses now guarded with cJSON_IsString()
+- Fixed path traversal vulnerabilities in WebUI file read, download, and delete handlers allowing `../` bypass of /mnt sandbox
+- Fixed NULL pointer crash in hex_to_lv_color when called with NULL input
+- Fixed out-of-bounds read in SAE flood monitor callback when receiving truncated authentication frames without length validation
+- Fixed race condition on static crypto buffers in SAE flood where monitor callback and flood task could corrupt each other's bignum state
+- Fixed stack overflow in SAE flood monitor callback by deferring heavy mbedTLS operations to the flood task context
+- Fixed use-after-free on global scanned_aps pointer in auto-deauth task — pointer now NULLed after free to prevent dangling access
+- Fixed auto-deauth task blocking the caller permanently by spawning it as a FreeRTOS task instead of calling it directly, with duplicate-spawn guard and proper stop cleanup
+- Fixed use-after-free in beacon spam where raw SSID pointer from command buffer was passed to task without copying — now uses strdup
+- Fixed NULL pointer crash in options_view realloc failure where unchecked return led to guaranteed dereference on OOM
+- Fixed silent out-of-bounds write in detail_view when realloc fails — ensure_capacity now returns bool and callers bail out safely
 - Fixed ESP32-C5 not discovering 5GHz channels above UNII-1 (e.g. 149-165) during WiFi scans by using correct country code API at boot and re-applying it after WiFi driver reinit during AP scans
 - Fixed RGB LED not turning off when stopping BLE device detection scan
 - Fixed GPS info task stack corruption

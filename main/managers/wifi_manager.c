@@ -824,6 +824,10 @@ char *get_host_from_req(httpd_req_t *req) {
     size_t buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
     if (buf_len > 1) {
         char *host = malloc(buf_len);
+        if (!host) {
+            httpd_resp_send_500(req);
+            return NULL;
+        }
         if (httpd_req_get_hdr_value_str(req, "Host", host, buf_len) == ESP_OK) {
             printf("Host header found: %s\n", host);
             return host; // Caller must free() this memory
@@ -846,6 +850,11 @@ esp_err_t file_handler(httpd_req_t *req) {
     {
         size_t maxlen = sizeof(local_path) - strlen("/mnt") - 1;
         snprintf(local_path, sizeof(local_path), "/mnt%.*s", (int)maxlen, uri);
+    }
+
+    if (strstr(local_path, "..") != NULL) {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
     }
 
     // somethingsomething template shares spi bus; sd may be unmounted most of the time

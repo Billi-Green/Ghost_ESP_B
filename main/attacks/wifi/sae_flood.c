@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "freertos/task.h"
 #include "freertos/portmacro.h"
+#include "freertos/semphr.h"
 #define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
 #include "mbedtls/private/ecp.h"
 #include "mbedtls/private/sha256.h"
@@ -77,6 +78,10 @@ static uint32_t sae_status0_rx = 0;
 static uint8_t sae_token_mac[6];
 static bool sae_token_mac_valid = false;
 
+static volatile bool sae_pending_peer = false;
+static uint8_t sae_pending_scalar[32];
+static uint8_t sae_pending_element[33];
+
 // SAE protocol state
 typedef struct {
     uint8_t peer_mac[6];
@@ -103,6 +108,7 @@ typedef struct {
 static sae_data_t sae_ctx;
 static bool sae_initialized = false;
 static portMUX_TYPE sae_lock = portMUX_INITIALIZER_UNLOCKED;
+static SemaphoreHandle_t sae_crypto_mutex = NULL;
 
 // Static buffers to reduce stack usage
 static uint8_t sae_pwd_seed[128];
@@ -134,6 +140,8 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1, 
                                 const uint8_t *addr2, const char *ssid,
                                 mbedtls_ecp_point *pwe, mbedtls_ecp_group *group) {
+    if (!sae_crypto_mutex) sae_crypto_mutex = xSemaphoreCreateMutex();
+    if (sae_crypto_mutex) xSemaphoreTake(sae_crypto_mutex, portMAX_DELAY);
     mbedtls_mpi x, y, tmp;
     int counter = 1;
     bool found = false;
@@ -195,6 +203,7 @@ static esp_err_t sae_derive_pwe(const char *password, const uint8_t *addr1,
     mbedtls_sha256_free(&sae_sha256);
     ESP_LOGI("SAE_PWE", "derive %s", found ? "ok" : "fail");
     
+    if (sae_crypto_mutex) xSemaphoreGive(sae_crypto_mutex);
     return found ? ESP_OK : ESP_FAIL;
 }
 
@@ -464,6 +473,15 @@ static void sae_flood_task(void *param) {
         if ((frame_counter % 100) == 0) {
             ESP_LOGI("SAE_LOOP", "alive fc=%d sent=%d", frame_counter, sae_flood_packets_sent);
         }
+        if (sae_pending_peer) {
+            const char *pwe_pwd = settings_get_sta_password(&G_Settings);
+            const char *pwe_ssid = (selected_ap.ssid[0] != '\0') ? (char*)selected_ap.ssid : NULL;
+            if (pwe_pwd && strlen(pwe_pwd) > 0) {
+                ESP_LOGI("SAE_FLOOD", "processing pending peer data");
+                sae_derive_pwe(pwe_pwd, sae_ctx.own_mac, sae_target_bssid, pwe_ssid, &sae_ctx.pwe, &sae_ctx.group);
+            }
+            sae_pending_peer = false;
+        }
         if (sae_token_mac_valid) {
             memcpy(spoofed_mac, sae_token_mac, 6);
         } else if (sae_mac_pool_ready) {
@@ -592,6 +610,9 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             sae_status76_rx++;
         } else if (status_code == 0) {
             ESP_LOGI("SAE_RX", "status 0 commit accepted");
+            size_t payload_len = (pkt->rx_ctrl.sig_len > 24) ? (size_t)pkt->rx_ctrl.sig_len - 24 : 0;
+            size_t remaining = (payload_len > 8) ? (payload_len - 8) : 0;
+            if (remaining < 64) return;
             uint16_t group_id = auth_body[6] | (auth_body[7] << 8);
             if (group_id == 19) {
                 mbedtls_mpi_read_binary(&sae_ctx.peer_scalar, auth_body + 8, 32);
@@ -614,11 +635,10 @@ static void sae_monitor_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
                     }
                 }
 
-                const char *pwd = settings_get_sta_password(&G_Settings);
-                const char *ssid = (selected_ap.ssid[0] != '\0') ? (char*)selected_ap.ssid : NULL;
-                if (pwd && strlen(pwd) > 0) {
-                    ESP_LOGI("SAE_RX", "derive pwe for confirm path");
-                    sae_derive_pwe(pwd, sae_ctx.own_mac, sae_target_bssid, ssid, &sae_ctx.pwe, &sae_ctx.group);
+                if (!sae_pending_peer) {
+                    memcpy(sae_pending_scalar, auth_body + 8, 32);
+                    memcpy(sae_pending_element, peer_element_buf, 33);
+                    sae_pending_peer = true;
                 }
                 
                 sae_status0_rx++;

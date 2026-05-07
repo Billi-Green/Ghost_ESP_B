@@ -60,14 +60,15 @@ static inline bool detail_view_should_use_compact_layout(int w, int h) {
     return (w > h && h <= 160);
 }
 
-static inline void ensure_capacity(detail_view_t *dv, int need) {
-    if (dv->capacity >= need) return;
+static inline bool ensure_capacity(detail_view_t *dv, int need) {
+    if (dv->capacity >= need) return true;
     int newcap = dv->capacity ? dv->capacity * 2 : 16;
     if (newcap < need) newcap = need;
     detail_row_t *new_rows = (detail_row_t *)realloc(dv->rows, sizeof(detail_row_t) * newcap);
-    if (!new_rows) return;
+    if (!new_rows) return false;
     dv->rows = new_rows;
     dv->capacity = newcap;
+    return true;
 }
 
 static bool ensure_info_capacity(detail_view_t *dv, int need) {
@@ -506,7 +507,7 @@ void detail_view_destroy(detail_view_t *dv) {
 void detail_view_add_info(detail_view_t *dv, const char *label, const char *value) {
     if (!dv || !dv->info_panel) return;
     if (!ensure_info_capacity(dv, dv->info_count + 1)) return;
-    ensure_capacity(dv, dv->count + 1);
+    if (!ensure_capacity(dv, dv->count + 1)) return;
 
     int info_idx = dv->info_count;
     dv->info_items[info_idx].label = detail_strdup(label ? label : "");
@@ -539,7 +540,7 @@ void detail_view_add_infof(detail_view_t *dv, const char *label, const char *fmt
 
 void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t on_click, void *user_data) {
     if (!dv || !dv->action_list) return;
-    ensure_capacity(dv, dv->count + 1);
+    if (!ensure_capacity(dv, dv->count + 1)) return;
     
     int zebra_idx = 0;
     for (int i = dv->info_count; i < dv->count; i++) {
@@ -610,7 +611,7 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
 
 void detail_view_add_header(detail_view_t *dv, const char *text) {
     if (!dv || !dv->action_list) return;
-    ensure_capacity(dv, dv->count + 1);
+    if (!ensure_capacity(dv, dv->count + 1)) return;
     
     lv_obj_t *btn = lv_obj_create(dv->action_list);
     if (!btn) return;
@@ -641,7 +642,7 @@ void detail_view_add_header(detail_view_t *dv, const char *text) {
 
 void detail_view_add_divider(detail_view_t *dv) {
     if (!dv || !dv->action_list) return;
-    ensure_capacity(dv, dv->count + 1);
+    if (!ensure_capacity(dv, dv->count + 1)) return;
     
     lv_obj_t *line = lv_obj_create(dv->action_list);
     lv_obj_set_size(line, LV_PCT(100), 2);
@@ -656,7 +657,9 @@ void detail_view_add_divider(detail_view_t *dv) {
 }
 
 lv_obj_t *detail_view_add_back(detail_view_t *dv, lv_event_cb_t on_click, void *user_data) {
+    int prev = dv->count;
     detail_view_add_action(dv, LV_SYMBOL_LEFT " Back", on_click, user_data);
+    if (dv->count == prev) return NULL;
     return dv->rows[dv->count - 1].obj;
 }
 

@@ -1382,6 +1382,7 @@ static void wardrive_hop_timer_callback(void *arg) {
         wardrive_apply_hop_interval();
     }
 
+    if (wardrive_channel_count == 0) return;
     wardrive_channel_idx = (wardrive_channel_idx + 1) % wardrive_channel_count;
     wardrive_channel = wardrive_channels[wardrive_channel_idx];
     esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE);
@@ -3108,6 +3109,7 @@ void ble_skimmer_scan_callback(struct ble_gap_event *event, void *arg) {
                     enhanced_packet[packet_len++] = (uint8_t)event->disc.rssi;
 
                     // Add device name length and name
+                    if (packet_len + 1 + name_len > sizeof(enhanced_packet)) break;
                     enhanced_packet[packet_len++] = (uint8_t)name_len;
                     memcpy(enhanced_packet + packet_len, device_name, name_len);
                     packet_len += name_len;
@@ -3115,11 +3117,13 @@ void ble_skimmer_scan_callback(struct ble_gap_event *event, void *arg) {
                     // Add reason for flagging
                     const char *reason = suspicious_names[i];
                     uint8_t reason_len = strlen(reason);
+                    if (packet_len + 1 + reason_len > sizeof(enhanced_packet)) break;
                     enhanced_packet[packet_len++] = reason_len;
                     memcpy(enhanced_packet + packet_len, reason, reason_len);
                     packet_len += reason_len;
 
                     // Add raw advertisement data
+                    if (packet_len + event->disc.length_data > sizeof(enhanced_packet)) break;
                     memcpy(enhanced_packet + packet_len, event->disc.data, event->disc.length_data);
                     packet_len += event->disc.length_data;
 

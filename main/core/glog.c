@@ -19,7 +19,17 @@ static char s_glog_q[GLOG_DEFER_MAX][GLOG_BUF_SIZE];
 static uint8_t s_q_head = 0, s_q_tail = 0, s_q_count = 0;
 
 static inline void glog_lock(void) {
-    if (!s_glog_mutex) s_glog_mutex = xSemaphoreCreateMutex();
+    if (!s_glog_mutex) {
+        static portMUX_TYPE init_mux = portMUX_INITIALIZER_UNLOCKED;
+        SemaphoreHandle_t new_mutex = xSemaphoreCreateMutex();
+        portENTER_CRITICAL(&init_mux);
+        if (!s_glog_mutex) {
+            s_glog_mutex = new_mutex;
+            new_mutex = NULL;
+        }
+        portEXIT_CRITICAL(&init_mux);
+        if (new_mutex) vSemaphoreDelete(new_mutex);
+    }
     if (s_glog_mutex) xSemaphoreTake(s_glog_mutex, portMAX_DELAY);
 }
 
