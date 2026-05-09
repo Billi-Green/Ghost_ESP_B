@@ -7,6 +7,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
+#include <stdbool.h>
+#include <string.h>
 
 #include "esp_log.h"
 
@@ -54,8 +56,7 @@ static void st7789_send_color(void *data, size_t length);
  **********************/
 void st7789_init(void)
 {
-#ifdef CONFIG_USE_TDECK
-    lcd_init_cmd_t st7789_init_cmds[] = {
+    static const lcd_init_cmd_t st7789_clean_init_cmds[] = {
         {ST7789_SLPOUT, {0}, 0x80},
         {ST7789_NORON, {0}, 0},
         {ST7789_MADCTL, {0x00}, 1},
@@ -78,8 +79,8 @@ void st7789_init(void)
         {ST7789_DISPON, {0}, 0x80},
         {0, {0}, 0xff},
     };
-#else
-    lcd_init_cmd_t st7789_init_cmds[] = {
+
+    static const lcd_init_cmd_t st7789_generic_init_cmds[] = {
         {0xCF, {0x00, 0x83, 0X30}, 3},
         {0xED, {0x64, 0x03, 0X12, 0X81}, 4},
         {ST7789_PWCTRL2, {0x85, 0x01, 0x79}, 3},
@@ -109,7 +110,19 @@ void st7789_init(void)
         {ST7789_SLPOUT, {0}, 0x80},
         {0, {0}, 0xff},
     };
+
+    bool use_clean_st7789_init = false;
+    bool nm_cyd_c5_panel = false;
+#ifdef CONFIG_USE_TDECK
+    use_clean_st7789_init = true;
+#elif defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+    nm_cyd_c5_panel = strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "NM-CYD-C5") == 0;
+    use_clean_st7789_init = nm_cyd_c5_panel;
 #endif
+
+    const lcd_init_cmd_t *st7789_init_cmds = use_clean_st7789_init
+        ? st7789_clean_init_cmds
+        : st7789_generic_init_cmds;
 
     //Initialize non-SPI GPIOs
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5,0,0)
@@ -153,10 +166,15 @@ void st7789_init(void)
     }
 
     st7789_set_orientation(CONFIG_LV_DISPLAY_ORIENTATION);
-#ifndef CONFIG_USE_TDECK
-    st7789_send_cmd(ST7789_DISPON);
-    vTaskDelay(20 / portTICK_PERIOD_MS);
-#endif
+    if (nm_cyd_c5_panel) {
+        st7789_send_cmd(ST7789_INVOFF);
+        st7789_send_cmd(ST7789_DISPON);
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+    }
+    if (!use_clean_st7789_init) {
+        st7789_send_cmd(ST7789_DISPON);
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+    }
 }
 
 /* The ST7789 display controller can drive up to 320*240 displays, when using a 240*240 or 240*135
