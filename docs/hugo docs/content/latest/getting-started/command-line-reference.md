@@ -156,7 +156,7 @@ All `sd` commands return machine-parsable output with prefixes like `SD:OK:`, `S
 
 Available on builds with **`CONFIG_HAS_CAMERA`**.
 
-- **`motion ...`** — Motion detector controls for onboard camera builds. See the full [Motion Detector]({{< relref "latest/camera/motion-detector.md" >}}) guide for setup, tuning, SD snapshots, and Discord webhooks.
+- **`motion ...`** — Motion detector controls for onboard camera builds. See the full [Motion Detector]({{< relref "../camera/motion-detector.md" >}}) guide for setup, tuning, SD snapshots, and Discord webhooks.
 
 ## RGB
 

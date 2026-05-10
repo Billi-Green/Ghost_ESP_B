@@ -225,7 +225,7 @@ GhostESP runs on a variety of ESP32 boards with varying feature support. This co
 
 ## Camera Support
 
-- **XIAO ESP32-S3 Sense** currently has the dedicated camera-enabled build and supports the [Motion Detector]({{< relref "latest/camera/motion-detector.md" >}}) feature.
+- **XIAO ESP32-S3 Sense** currently has the dedicated camera-enabled build and supports the [Motion Detector]({{< relref "../camera/motion-detector.md" >}}) feature.
 - The current motion detector implementation uses **QQVGA grayscale** capture for low RAM usage and fast comparisons.
 - **XIAO ESP32-C5** is a supported board config, but it does not include the onboard camera motion detector path used by the S3 Sense build.
 
@@ -243,11 +243,10 @@ The following table lists the vendor-specific boards supported by GhostESP with 
       </tr>
     </thead>
     <tbody>
-      <tr><td>CYD2USB</td><td><code>CYD2USB.zip</code></td><td><img src="../images/x.jpeg" alt="CYD2USB"></td></tr>
+      
       <tr><td>CYDMicroUSB</td><td><code>CYDMicroUSB.zip</code></td><td></td></tr>
       <tr><td>CYDDualUSB</td><td><code>CYDDualUSB.zip</code></td><td></td></tr>
       <tr><td>CYD2432S028R</td><td><code>CYD2432S028R.zip</code></td><td><img src="../images/CYD2432S028R.jpg" alt="CYD2432S028R"></td></tr>
-      <tr><td>CYD 2.4″ variants</td><td><code>CYD2USB2.4Inch.zip</code> or <code>CYD2USB2.4Inch_C.zip</code></td><td><img src="" alt="CYD 2.4″"></td></tr>
       <tr><td>Waveshare 7″</td><td><code>Waveshare_LCD.zip</code></td><td></td></tr>
       <tr><td>Crowtech 7″</td><td><code>Crowtech_LCD.zip</code></td><td></td></tr>
       <tr><td>Sunton 7″</td><td><code>Sunton_LCD.zip</code></td><td></td></tr>

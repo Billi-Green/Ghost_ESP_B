@@ -68,13 +68,13 @@ keywords: ["troubleshooting", "issues", "problems", "fix", "error"]
 
 ## Support and Resources
 
-- **GitHub Repository**: [github.com/jaylikesbunda/ghost_esp_app](https://github.com/jaylikesbunda/ghost_esp_app)
-- **Issues**: Report bugs or request features on the [GitHub Issues page](https://github.com/jaylikesbunda/ghost_esp_app/issues)
+- **GitHub Repository**: [github.com/GhostESP-Revival/GhostESP-FlipperCompanion](https://github.com/GhostESP-Revival/GhostESP-FlipperCompanion)
+- **Issues**: Report bugs or request features on the [GitHub Issues page](https://github.com/GhostESP-Revival/GhostESP-FlipperCompanion/issues)
 - **Discord**: Join the community on [Discord](https://discord.gg/5cyNmUMgwh)
 - **Documentation**: Check the docs at [docs.ghostesp.net](https://docs.ghostesp.net)
 
 ## Credits
 
 - **Original Developer**: Spooky ([Spooks4576](https://github.com/Spooks4576))
-- **Maintainer**: Jay Candel ([jaylikesbunda](https://github.com/jaylikesbunda))
+- **Maintainer**: Jay Candel ([GhostESP-Revival](https://github.com/GhostESP-Revival))
 - **Contributor**: @tototo31 ([tototo31](https://github.com/tototo31))

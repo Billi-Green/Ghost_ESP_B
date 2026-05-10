@@ -1314,6 +1314,10 @@ esp_err_t sd_card_setup_directory_structure() {
   ret = ensure_sd_dir_exists(evil_portal_portals_dir);
   if (ret != ESP_OK) return ret;
 
+  const char *dns_sinkhole_dir = "/mnt/ghostesp/dns_sinkhole";
+  ret = ensure_sd_dir_exists(dns_sinkhole_dir);
+  if (ret != ESP_OK) return ret;
+
   const char *infrared_dir = "/mnt/ghostesp/infrared";
   ret = ensure_sd_dir_exists(infrared_dir);
   if (ret != ESP_OK) return ret;

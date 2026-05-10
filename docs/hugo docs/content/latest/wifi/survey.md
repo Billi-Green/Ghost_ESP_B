@@ -82,7 +82,7 @@ Scan all wireless activity at once and save results to your SD card.
 1. Open **Menu → WiFi → Scanning → Sweep**.
    The device will run through each scan phase automatically.
 2. Wait for all phases to complete. Progress is shown on screen.
-3. Find results in `/ghostesp/sweeps/sweep_N.csv` on your SD card.
+3. Find results in `/mnt/ghostesp/sweeps/sweep_N.csv` on your SD card.
 
 ### Run a sweep from command line
 1. Run `sweep` to start with default timing (10 seconds per phase).

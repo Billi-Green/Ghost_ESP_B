@@ -44,7 +44,7 @@ Choose one:
 Use this method if you prefer manual control or the web flasher doesn't work.
 
 1. **Download the firmware**
-   - Go to **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
+   - Go to **[GhostESP Releases](https://github.com/GhostESP-Revival/GhostESP/releases)**.
    - Download the `.zip` file for your board.
    - Extract it with 7-Zip or your preferred tool.
 
@@ -74,11 +74,11 @@ Use this method if you prefer manual control or the web flasher doesn't work.
 Flash GhostESP using your Flipper Zero as the programmer. No PC required.
 
 1. **Install the GhostESP app**
-   - Download from the [Flipper app store](https://lab.flipper.net/apps) or **[releases](https://github.com/jaylikesbunda/ghost_esp_app/releases/latest)**.
+   - Download from the [Flipper app store](https://lab.flipper.net/apps) or **[releases](https://github.com/GhostESP-Revival/GhostESP-FlipperCompanion/releases/latest)**.
    - Copy the `.fap` file to your Flipper's SD card.
 
 2. **Download the firmware**
-   - Go to **[GhostESP Releases](https://github.com/jaylikesbunda/Ghost_ESP/releases)**.
+   - Go to **[GhostESP Releases](https://github.com/GhostESP-Revival/GhostESP/releases)**.
    - Download the `.zip` file that matches your ESP32 chip (e.g., `esp32-generic.zip` for a generic ESP32).
    - Extract the `.zip` file.
 

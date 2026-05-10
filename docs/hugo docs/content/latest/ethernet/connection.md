@@ -63,7 +63,13 @@ View or modify the MAC address:
 ethmac
 ```
 
-Shows current MAC address. Use with caution—changing MAC addresses may affect network access.
+Shows current MAC address.
+
+```
+ethmac set <xx:xx:xx:xx:xx:xx>
+```
+
+Set a custom MAC address. Use with caution—changing MAC addresses may affect network access.
 
 ## System Time
 

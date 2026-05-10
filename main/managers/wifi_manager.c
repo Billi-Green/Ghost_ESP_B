@@ -148,6 +148,16 @@ int selected_ap_count = 0;
 bool redirect_handled = false;
 httpd_handle_t evilportal_server = NULL;
 dns_server_handle_t dns_handle;
+static portMUX_TYPE dns_handle_mux = portMUX_INITIALIZER_UNLOCKED;
+
+dns_server_handle_t dns_handle_take(void) {
+    portENTER_CRITICAL(&dns_handle_mux);
+    dns_server_handle_t h = dns_handle;
+    dns_handle = NULL;
+    portEXIT_CRITICAL(&dns_handle_mux);
+    return h;
+}
+
 esp_netif_t *wifiAP;
 esp_netif_t *wifiSTA;
 static bool login_done = false;
@@ -603,6 +613,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+
+        {
+            dns_server_handle_t h = dns_handle_take();
+            if (h) stop_dns_server(h);
+        }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         glog("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
@@ -1327,8 +1342,8 @@ static void portal_stop_services_only(void) {
     login_done = false;
 
     if (dns_handle != NULL) {
-        stop_dns_server(dns_handle);
-        dns_handle = NULL;
+        dns_server_handle_t h = dns_handle_take();
+        if (h) stop_dns_server(h);
     }
 
     if (evilportal_server != NULL) {
@@ -1591,8 +1606,8 @@ void wifi_manager_stop_evil_portal() {
     portal_clear_file_cache();
 
     if (dns_handle != NULL) {
-        stop_dns_server(dns_handle);
-        dns_handle = NULL;
+        dns_server_handle_t h = dns_handle_take();
+        if (h) stop_dns_server(h);
     }
 
     if (evilportal_server != NULL) {
@@ -1612,6 +1627,46 @@ void wifi_manager_stop_evil_portal() {
     esp_log_level_set("wifi", ESP_LOG_ERROR);
 
     // jit unmount sd if we mounted it for portal start
+    if (portal_sd_jit_mounted) {
+        sd_card_unmount_after_flush(portal_display_suspended);
+        portal_sd_jit_mounted = false;
+        portal_display_suspended = false;
+    }
+
+    wifi_ctrl_unlock();
+}
+
+void wifi_manager_stop_evil_portal_keep_wifi(void) {
+    if (!wifi_ctrl_lock(pdMS_TO_TICKS(2000))) {
+        ESP_LOGE(TAG, "portal stop: wifi ctrl mutex lock failed");
+        return;
+    }
+
+    login_done = false;
+    portal_force_flush_to_sd();
+    current_creds_filename[0] = '\0';
+    current_keystrokes_filename[0] = '\0';
+    
+    wifi_manager_clear_html_buffer();
+    portal_clear_file_cache();
+
+    if (dns_handle != NULL) {
+        dns_server_handle_t h = dns_handle_take();
+        if (h) stop_dns_server(h);
+    }
+
+    if (evilportal_server != NULL) {
+        httpd_stop(evilportal_server);
+        evilportal_server = NULL;
+    }
+
+    // DON'T call wifi_stop_safely() - keep STA connected
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    ap_manager_start_services();
+
+    esp_log_level_set("wifi", ESP_LOG_ERROR);
+
     if (portal_sd_jit_mounted) {
         sd_card_unmount_after_flush(portal_display_suspended);
         portal_sd_jit_mounted = false;

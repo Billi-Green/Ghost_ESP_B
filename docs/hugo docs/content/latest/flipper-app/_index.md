@@ -11,7 +11,7 @@ The GhostESP Flipper Zero companion app provides a comprehensive graphical inter
 
 The companion app is a Flipper Application Package (`.fap`) that runs on Flipper Zero devices. It communicates with GhostESP firmware via serial/UART connection, providing an intuitive menu-driven interface for all major GhostESP features.
 
-**Repository**: [github.com/jaylikesbunda/ghost_esp_app](https://github.com/jaylikesbunda/ghost_esp_app)
+**Repository**: [github.com/GhostESP-Revival/GhostESP-FlipperCompanion](https://github.com/GhostESP-Revival/GhostESP-FlipperCompanion)
 
 ## Quick Links
 

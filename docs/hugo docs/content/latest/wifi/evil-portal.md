@@ -27,9 +27,8 @@ Create a fake Wi-Fi network that shows a login page when users connect.
 1. On the Flipper app, open **WiFi → Evil Portal & Network → Set Evil Portal HTML**.
 2. Pick your HTML file (up to 2048 bytes) from the file browser; it is sent and stored for the next start.
 3. Back in **Evil Portal**, choose **Evil Portal** to run the command. The UI appends `startportal` and prompts for arguments.
-   - Command format: `startportal file/default SSID PSK`.
-   - SSID/PSK should be entered without spaces (use dashes/underscores instead) or the command parser will split them incorrectly.
-   - If you already pushed HTML from the Flipper app, enter `default` for `<file>` to use the stored page automatically.
+   - Command format: `startportal <path|default> <SSID> [PSK]`.
+   - If using a custom HTML file, replace `<path>` with the filename. Use `default` for the built-in portal.
 4. Clients connecting to the network will see your uploaded portal.
 
 ### Command line
@@ -37,7 +36,6 @@ Create a fake Wi-Fi network that shows a login page when users connect.
 2. Run `startportal default MyNetworkName` to start with the built-in portal.
    Or use `startportal mypage.html MyNetworkName` for a custom page.
 3. (Optional) Add a password: `startportal mypage.html MyNetworkName MyPassword`.
-   - Avoid spaces in SSID/PSK here as well; use dashes/underscores so the CLI doesn't misparse arguments.
 4. Run `stopportal` or `stop` to shut it down.
 
 ## What gets recorded

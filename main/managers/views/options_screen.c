@@ -28,10 +28,14 @@
 #include "scans/ble/device_detect_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "esp_timer.h"
+#include "core/dns_server.h"
+#include "esp_heap_caps.h"
 
-/* MAX_PORTALS / MAX_PORTAL_NAME come from sd_card_manager.h */
 #define PORTAL_PAGE_SIZE 8    /* keep portal pages small to avoid LVGL stalls */
 #define WIGLE_CSV_PAGE_SIZE 8
+
+static detail_view_t *sinkhole_detail_view = NULL;
+static void sinkhole_detail_back_cb(lv_event_t *e);
 
 static char selected_portal[MAX_PORTAL_NAME] = {0};
 static char selected_karma_portal[MAX_PORTAL_NAME] = {0};
@@ -45,6 +49,15 @@ static char *wigle_csv_names = NULL;
 static const char **wigle_csv_options = NULL;
 static int wigle_csv_page_offset = 0;
 static bool wigle_csv_has_next_page = false;
+
+static char *blocklist_file_names = NULL;
+static const char **blocklist_file_options = NULL;
+static int blocklist_page_offset = 0;
+static bool blocklist_has_next_page = false;
+
+static void blocklist_free_cache(void);
+static const char **blocklist_load_page(void);
+#define BLOCKLIST_PAGE_SIZE 8
 static bool wigle_csv_browser_active = false;
 static char selected_wigle_csv[MAX_PORTAL_NAME] = {0};
 
@@ -481,7 +494,11 @@ typedef enum {
     WIFI_MENU_STA_DETAILS,
     WIFI_MENU_SCANALL_LIST,
     WIFI_MENU_AP_MULTI_SELECT,
-    WIFI_MENU_STA_MULTI_SELECT
+    WIFI_MENU_STA_MULTI_SELECT,
+    WIFI_MENU_DNS_SINKHOLE,
+    WIFI_MENU_DNS_SINKHOLE_DOWNLOAD,
+    WIFI_MENU_DNS_SINKHOLE_FILE_PICK,
+    WIFI_MENU_DNS_SINKHOLE_DETAILS
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -513,7 +530,7 @@ static bool nav_pop_wifi_detail_return(WifiMenuState *return_state_out) {
     return false;
 }
 
-static const char *wifi_attacks_options[] = {
+static const char * const wifi_attacks_options[] = {
     "Start Deauth Attack",
     "Start Channel Switch Attack",
     "Beacon Spam - Random",
@@ -530,7 +547,7 @@ static const char *wifi_attacks_options[] = {
     NULL
 };
 
-static const char *wifi_capture_options[] = {
+static const char * const wifi_capture_options[] = {
     "Capture Probe", "Capture Deauth", "Capture Beacon", "Capture Raw", "Capture Eapol",
     "Capture WPS", "Capture PWN",
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
@@ -539,43 +556,54 @@ static const char *wifi_capture_options[] = {
     "Listen for Probes", NULL
 };
 
-static const char *wifi_scan_select_options[] = {
+static const char * const wifi_scan_select_options[] = {
     "Scan Access Points", "Scan APs Live", "Scan Stations", "Scan AP + STA",
     "List Access Points", "List Stations", "List AP + STA",
     "Multi-Select APs", "Multi-Select Stations", NULL
 };
 
-static const char *wifi_environment_options[] = {
+static const char * const wifi_environment_options[] = {
     "Sweep", "PineAP Detection", "Channel Congestion", NULL
 };
 
-static const char *wifi_network_options[] = {
+static const char * const wifi_network_options[] = {
     "Scan LAN Devices", "ARP Scan Network", "Scan Open Ports", "Select LAN", NULL
 };
 
 static void switch_to_settings_category(int cat_idx);
 
-static const char *wifi_evil_portal_options[] = {
+static const char * const wifi_evil_portal_options[] = {
     "Start Evil Portal", "Start Custom Evil Portal", "Stop Evil Portal", NULL
 };
 
-
-static const char *wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
-
-static const char *wifi_misc_options[] = {"TV Cast (Dial Connect)", "Power Printer", "TP Link Test", NULL};
-
-static const char *wifi_main_options[] = {
-    "Attacks", "Scan & Select", "Environment", "Network", "Capture", "Evil Portal", "Connection", "Misc", NULL
+static const char * const wifi_dns_sinkhole_options[] = {
+    "Start Sinkhole", "Stop Sinkhole", "Sinkhole Status",
+    "Download Blocklist", "Toggle Logging", NULL
 };
 
-static const char *gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
+static const char * const wifi_dns_sinkhole_download_options[] = {
+    "Peter Lowe (3.5K ads)",
+    "OISD Basic (40K mixed)",
+    "StevenBlack (70K mixed)",
+    NULL
+};
+
+static const char * const wifi_connection_options[] = {"Connect to WiFi", "Connect to saved WiFi", "Reset AP Credentials", NULL};
+
+static const char * const wifi_misc_options[] = {"TV Cast (Dial Connect)", "Power Printer", "TP Link Test", NULL};
+
+static const char * const wifi_main_options[] = {
+    "Attacks", "Scan & Select", "Environment", "Network", "Capture", "Evil Portal", "DNS Sinkhole", "Connection", "Misc", NULL
+};
+
+static const char * const gps_options[] = {"Start Wardriving", "Stop Wardriving", "GPS Info",
                                     "BLE Wardriving",   NULL};
 
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
 static const char *nrf24_options[] = {"Frequency Analyzer", NULL};
 #endif
 #if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
-static const char *subghz_options[] = {"SubGHz", NULL};
+static const char * const subghz_options[] = {"SubGHz", NULL};
 #endif
 
 // Dual Comm is split into a small state machine with submenus to avoid
@@ -597,7 +625,7 @@ typedef enum {
 
 static DualCommMenuState current_dualcomm_menu_state = DUALCOMM_MENU_MAIN;
 
-static const char *dual_comm_main_options[] = {
+static const char * const dual_comm_main_options[] = {
     "Status",
     "Discovery / Session",
     "Scanning",
@@ -612,14 +640,14 @@ static const char *dual_comm_main_options[] = {
     NULL
 };
 
-static const char *dual_comm_keyboard_options[] = {
+static const char * const dual_comm_keyboard_options[] = {
     "USB Host On",
     "USB Host Off",
     "USB Host Status",
     NULL
 };
 
-static const char *dual_comm_session_options[] = {
+static const char * const dual_comm_session_options[] = {
     "Status",
     "Start Discovery",
     "Connect to Peer",
@@ -628,7 +656,7 @@ static const char *dual_comm_session_options[] = {
     NULL
 };
 
-static const char *dual_comm_scan_options[] = {
+static const char * const dual_comm_scan_options[] = {
     "Scan Access Points",
     "Scan APs Live",
     "Scan Stations",
@@ -649,7 +677,7 @@ static const char *dual_comm_scan_options[] = {
     NULL
 };
 
-static const char *dual_comm_wifi_options[] = {
+static const char * const dual_comm_wifi_options[] = {
     "Connect to WiFi",
     "Connect to saved WiFi",
     "Reset AP Credentials",
@@ -659,7 +687,7 @@ static const char *dual_comm_wifi_options[] = {
     NULL
 };
 
-static const char *dual_comm_attacks_options[] = {
+static const char * const dual_comm_attacks_options[] = {
     "Start Deauth Attack",
     "Start EAPOL Logoff",
     "Start DHCP-Starve",
@@ -670,7 +698,7 @@ static const char *dual_comm_attacks_options[] = {
     NULL
 };
 
-static const char *dual_comm_capture_options[] = {
+static const char * const dual_comm_capture_options[] = {
     "Capture Deauth",
     "Capture Probe",
     "Capture Beacon",
@@ -682,7 +710,7 @@ static const char *dual_comm_capture_options[] = {
     NULL
 };
 
-static const char *dual_comm_tools_options[] = {
+static const char * const dual_comm_tools_options[] = {
     "Start Evil Portal",
     "Stop Evil Portal",
     "Start Wardriving",
@@ -694,7 +722,7 @@ static const char *dual_comm_tools_options[] = {
     NULL
 };
 
-static const char *dual_comm_ble_options[] = {
+static const char * const dual_comm_ble_options[] = {
     "Start AirTag Scanner",
     "List AirTags",
     "Select AirTag",
@@ -713,13 +741,13 @@ static const char *dual_comm_ble_options[] = {
     NULL
 };
 
-static const char *dual_comm_gps_options[] = {
+static const char * const dual_comm_gps_options[] = {
     "GPS Info",
     "BLE Wardriving",
     NULL
 };
 
-static const char *dual_comm_ethernet_options[] = {
+static const char * const dual_comm_ethernet_options[] = {
     "Initialise",
     "Deinitialise",
     "Ethernet Info",
@@ -753,31 +781,31 @@ typedef struct {
 
 // RGB mode options - MIC Visualizer only available when enabled in config
 #ifdef CONFIG_ENABLE_MIC_RGB_VISUALIZER
-static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink", "MIC Visualizer"};
+static const char * const rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink", "MIC Visualizer"};
 #define RGB_MODE_COUNT 14
 #else
-static const char *rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
+static const char * const rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
 #define RGB_MODE_COUNT 13
 #endif
-static const char *timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
-static const char *theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest", "Cherry Blossom", "Soft Sand"};
-static const char *bool_options[] = {"Off", "On"};
-static const char *textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
+static const char * const timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
+static const char * const theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest", "Cherry Blossom", "Soft Sand"};
+static const char * const bool_options[] = {"Off", "On"};
+static const char * const textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
 static const uint32_t textcolor_values[] = {0x00FF00, 0xFFFFFF, 0xFF0000, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFA500};
-static const char *menu_layout_options[] = {"Carousel", "Grid", "List"};
-static const char *bg_shade_options[] = {"Darkest", "Darker", "Dark", "Medium"};
+static const char * const menu_layout_options[] = {"Carousel", "Grid", "List"};
+static const char * const bg_shade_options[] = {"Darkest", "Darker", "Dark", "Medium"};
 #ifdef CONFIG_WITH_STATUS_DISPLAY
-static const char *idle_animation_options[] = {"Game of Life", "Ghost", "Starfield", "HUD", "Matrix", "Flying Ghosts", "Spiral", "Falling Leaves", "Bouncing Text"};
-static const char *idle_delay_options[] = {"Never", "5s", "10s", "30s"};
+static const char * const idle_animation_options[] = {"Game of Life", "Ghost", "Starfield", "HUD", "Matrix", "Flying Ghosts", "Spiral", "Falling Leaves", "Bouncing Text"};
+static const char * const idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
-static const char *action_options[] = {"Press OK"};
+static const char * const action_options[] = {"Press OK"};
 
-static const char *brightness_options[] = {
+static const char * const brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
 #if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
-static const char *mic_visualizer_mode_options[] = {
+static const char * const mic_visualizer_mode_options[] = {
     "4-Band Spectrum", 
     "VU Meter", 
     "Kaleidoscope", 
@@ -786,7 +814,7 @@ static const char *mic_visualizer_mode_options[] = {
     "Peak Meter"
 };
 
-static const char *mic_color_mode_options[] = {
+static const char * const mic_color_mode_options[] = {
     "Rainbow",
     "Chromatic",
     "Single Hue",
@@ -796,15 +824,15 @@ static const char *mic_color_mode_options[] = {
     "Heat"
 };
 
-static const char *mic_sensitivity_options[] = {
+static const char * const mic_sensitivity_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
-static const char *mic_smoothing_options[] = {
+static const char * const mic_smoothing_options[] = {
     "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
-static const char *mic_contrast_options[] = {
+static const char * const mic_contrast_options[] = {
     "1", "2", "3", "4", "5"
 };
 #endif
@@ -1037,20 +1065,20 @@ static lv_obj_t *wigle_stats_scroll = NULL;
 static int wigle_stats_popup_selected = 1;
 
 // --- Add Bluetooth submenu arrays and state ---
-static const char *bluetooth_main_options[] = {
+static const char * const bluetooth_main_options[] = {
     "Detect Devices", "List Detected Devices", "GATT Scan", "Aerial Detector", "Spam", "Raw", NULL
 };
-static const char *bluetooth_spam_options[] = {
+static const char * const bluetooth_spam_options[] = {
     "BLE Spam - Apple", "BLE Spam - Microsoft", "BLE Spam - Samsung",
     "BLE Spam - Google", "BLE Spam - Random", "Stop BLE Spam", NULL
 };
-static const char *bluetooth_raw_options[] = {
+static const char * const bluetooth_raw_options[] = {
     "Raw BLE Scanner", NULL
 };
-static const char *bluetooth_gatt_options[] = {
+static const char * const bluetooth_gatt_options[] = {
     "Start GATT Scan", "List GATT Devices", "Select GATT Device", "Enumerate Services", "Track Device", NULL
 };
-static const char *bluetooth_aerial_options[] = {
+static const char * const bluetooth_aerial_options[] = {
     "Scan Aerial Devices", "List Aerial Devices", "Track Aerial Device", "Stop Aerial Scan", 
     "Spoof Test Drone", "Stop Spoofing", NULL
 };
@@ -1072,13 +1100,33 @@ static void menu_builder_cb(lv_timer_t *t);
 static void change_setting_value(int setting_index, bool increment); // Forward Declaration
 
 static lv_timer_t *menu_build_timer = NULL;
-static const char **current_options_list = NULL;
+static const char * const *current_options_list = NULL;
 static int build_item_index = 0;
 static int button_height_global = 0;
 static bool is_small_screen_global = false;
 
 static void rebuild_current_menu(void); // Forward declaration
 static void portal_free_cache(void);    // Forward declaration
+
+static void update_scroll_buttons_visibility(void);
+const char *options_menu_type_to_string(EOptionsMenuType menuType);
+
+static void sinkhole_detail_back_cb(lv_event_t *e) {
+    (void)e;
+    if (sinkhole_detail_view) {
+        detail_view_destroy(sinkhole_detail_view);
+        sinkhole_detail_view = NULL;
+    }
+    current_wifi_menu_state = WIFI_MENU_DNS_SINKHOLE;
+    SelectedMenuType = OT_Wifi;
+    suppress_wifi_state_reset_once = true;
+    rebuild_current_menu();
+    option_invoked = false;
+    display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
+#ifdef CONFIG_USE_TOUCHSCREEN
+    update_scroll_buttons_visibility();
+#endif
+}
 
 static void update_settings_arrows_visibility(void) {
     if (!menu_container || !lv_obj_is_valid(menu_container)) return;
@@ -1175,6 +1223,9 @@ static void update_scroll_buttons_visibility(void) {
         force_show = true;
     } else if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
         target = detail_view_get_list(sta_detail_view);
+        force_show = true;
+    } else if (sinkhole_detail_view && current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+        target = detail_view_get_list(sinkhole_detail_view);
         force_show = true;
     } else if (ble_detect_detail_view && current_bluetooth_menu_state == BLUETOOTH_MENU_DETECT_DETAILS) {
         target = detail_view_get_list(ble_detect_detail_view);
@@ -1320,6 +1371,10 @@ static void scroll_options_up(lv_event_t *e) {
         detail_view_step_up(ap_detail_view);
         return;
     }
+    if (sinkhole_detail_view && current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+        detail_view_step_up(sinkhole_detail_view);
+        return;
+    }
     if (gtk_abuse_detail_view) {
         detail_view_step_up(gtk_abuse_detail_view);
         return;
@@ -1343,6 +1398,10 @@ static void scroll_options_down(lv_event_t *e) {
         detail_view_step_down(ap_detail_view);
         return;
     }
+    if (sinkhole_detail_view && current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+        detail_view_step_down(sinkhole_detail_view);
+        return;
+    }
     if (gtk_abuse_detail_view) {
         detail_view_step_down(gtk_abuse_detail_view);
         return;
@@ -1364,6 +1423,10 @@ static void touch_back_button_cb(lv_event_t *e) {
     (void)e;
     if (ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) {
         ap_detail_back_cb(NULL);
+        return;
+    }
+    if (sinkhole_detail_view && current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+        sinkhole_detail_back_cb(NULL);
         return;
     }
     if (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) {
@@ -1456,9 +1519,8 @@ void options_menu_create() {
 
     // Scroll button visibility is updated once after the menu is fully built
 
-    const char **options = NULL;
+    const char * const *options = NULL;
     is_settings_mode = false;
-    
     switch (SelectedMenuType) {
     case OT_Wifi:
         switch (current_wifi_menu_state) {
@@ -1469,6 +1531,14 @@ void options_menu_create() {
             case WIFI_MENU_NETWORK: options = wifi_network_options; break;
             case WIFI_MENU_CAPTURE: options = wifi_capture_options; break;
             case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
+            case WIFI_MENU_DNS_SINKHOLE: options = wifi_dns_sinkhole_options; break;
+            case WIFI_MENU_DNS_SINKHOLE_DOWNLOAD: options = wifi_dns_sinkhole_download_options; break;
+            case WIFI_MENU_DNS_SINKHOLE_FILE_PICK:
+                options = blocklist_file_options;
+                break;
+            case WIFI_MENU_DNS_SINKHOLE_DETAILS:
+                options = NULL;
+                break;
             case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
             case WIFI_MENU_MISC: options = wifi_misc_options; break;
             case WIFI_MENU_EVIL_PORTAL_SELECT:
@@ -2388,6 +2458,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
             // Handle touch start for detail_view
             if ((ap_detail_view && current_wifi_menu_state == WIFI_MENU_AP_DETAILS) ||
+                (sinkhole_detail_view && current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) ||
                 gtk_abuse_detail_view ||
                 (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) ||
                 (ble_detect_detail_view &&
@@ -2419,6 +2490,8 @@ void handle_hardware_button_press_options(InputEvent *event) {
             detail_view_t *active_detail_view = NULL;
             if (ap_detail_view && opt_touch_wifi_state == WIFI_MENU_AP_DETAILS) {
                 active_detail_view = ap_detail_view;
+            } else if (sinkhole_detail_view && opt_touch_wifi_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+                active_detail_view = sinkhole_detail_view;
             } else if (gtk_abuse_detail_view) {
                 active_detail_view = gtk_abuse_detail_view;
             } else if (sta_detail_view && opt_touch_wifi_state == WIFI_MENU_STA_DETAILS) {
@@ -2633,6 +2706,22 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 }
             } else if (button == 0 || button == 3) {
                 ap_detail_back_cb(NULL);
+            }
+            return;
+        }
+
+        if (sinkhole_detail_view && current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+            if (button == 2) {
+                detail_view_move_selection(sinkhole_detail_view, -1);
+            } else if (button == 4) {
+                detail_view_move_selection(sinkhole_detail_view, 1);
+            } else if (button == 1) {
+                lv_obj_t *obj = detail_view_get_selected_obj(sinkhole_detail_view);
+                if (obj && lv_obj_is_valid(obj)) {
+                    lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+                }
+            } else if (button == 0 || button == 3) {
+                sinkhole_detail_back_cb(NULL);
             }
             return;
         }
@@ -3072,6 +3161,17 @@ void handle_hardware_button_press_options(InputEvent *event) {
             }
             return;
         }
+        if (sinkhole_detail_view && current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+            if (event->data.encoder.button) {
+                lv_obj_t *obj = detail_view_get_selected_obj(sinkhole_detail_view);
+                if (obj && lv_obj_is_valid(obj)) lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+            } else if (event->data.encoder.direction < 0) {
+                detail_view_step_up(sinkhole_detail_view);
+            } else if (event->data.encoder.direction > 0) {
+                detail_view_step_down(sinkhole_detail_view);
+            }
+            return;
+        }
         if (gtk_abuse_detail_view) {
             if (event->data.encoder.button) {
                 lv_obj_t *obj = detail_view_get_selected_obj(gtk_abuse_detail_view);
@@ -3227,6 +3327,7 @@ static void gtk_abuse_back_cb(lv_event_t *e) {
     }
     SelectedMenuType = OT_Wifi;
     suppress_wifi_state_reset_once = true;
+    option_invoked = false;
     display_manager_add_status_bar(options_menu_type_to_string(SelectedMenuType));
 #ifdef CONFIG_USE_TOUCHSCREEN
     update_scroll_buttons_visibility();
@@ -4191,6 +4292,7 @@ void option_event_cb(lv_event_t *e) {
             else if (strcmp(Selected_Option, "Network") == 0) current_wifi_menu_state = WIFI_MENU_NETWORK;
             else if (strcmp(Selected_Option, "Capture") == 0) current_wifi_menu_state = WIFI_MENU_CAPTURE;
             else if (strcmp(Selected_Option, "Evil Portal") == 0) current_wifi_menu_state = WIFI_MENU_EVIL_PORTAL;
+            else if (strcmp(Selected_Option, "DNS Sinkhole") == 0) current_wifi_menu_state = WIFI_MENU_DNS_SINKHOLE;
             else if (strcmp(Selected_Option, "Connection") == 0) current_wifi_menu_state = WIFI_MENU_CONNECTION;
             else if (strcmp(Selected_Option, "Misc") == 0) current_wifi_menu_state = WIFI_MENU_MISC;
             rebuild_current_menu();
@@ -4832,6 +4934,135 @@ display_manager_switch_view(&terminal_view);
         display_manager_switch_view(&keyboard_view);
         keyboard_view_set_placeholder("SSID");
         return;
+    }
+
+    else if (strcmp(Selected_Option, "Start Sinkhole") == 0) {
+        blocklist_page_offset = 0;
+        blocklist_free_cache();
+        const char **files = blocklist_load_page();
+        if (files && files[0]) {
+            current_wifi_menu_state = WIFI_MENU_DNS_SINKHOLE_FILE_PICK;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+        blocklist_free_cache();
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sinkhole start");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Stop Sinkhole") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sinkhole stop");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Sinkhole Status") == 0) {
+        if (sinkhole_detail_view) {
+            detail_view_destroy(sinkhole_detail_view);
+            sinkhole_detail_view = NULL;
+        }
+
+        sinkhole_detail_view = detail_view_create(lv_scr_act(), "DNS Sinkhole");
+        reserve_detail_touch_bar_space(sinkhole_detail_view);
+
+        if (dns_sinkhole_is_running()) {
+            uint32_t total = 0, blocked = 0;
+            dns_sinkhole_get_stats(&total, &blocked);
+
+            detail_view_add_info(sinkhole_detail_view, "Status", "Running");
+            detail_view_add_infof(sinkhole_detail_view, "Queries", "%lu",
+                                  (unsigned long)total);
+            detail_view_add_infof(sinkhole_detail_view, "Blocked", "%lu",
+                                  (unsigned long)blocked);
+            if (total > 0) {
+                char pct[16];
+                snprintf(pct, sizeof(pct), "%.1f%%",
+                         (float)blocked * 100.0f / (float)total);
+                detail_view_add_info(sinkhole_detail_view, "Block Rate", pct);
+            }
+            detail_view_add_info(sinkhole_detail_view, "Logging",
+                                 dns_sinkhole_get_logging() ? "ON" : "OFF");
+        } else {
+            detail_view_add_info(sinkhole_detail_view, "Status", "Stopped");
+        }
+
+        detail_view_add_info(sinkhole_detail_view, "Blocklist",
+                             sd_card_exists(SINKHOLE_BLOCKLIST_PATH) ? "Present" : "None");
+
+        detail_view_add_back(sinkhole_detail_view, sinkhole_detail_back_cb, NULL);
+        current_wifi_menu_state = WIFI_MENU_DNS_SINKHOLE_DETAILS;
+#ifdef CONFIG_USE_TOUCHSCREEN
+        update_scroll_buttons_visibility();
+#endif
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Download Blocklist") == 0) {
+        current_wifi_menu_state = WIFI_MENU_DNS_SINKHOLE_DOWNLOAD;
+        rebuild_current_menu();
+        option_invoked = false;
+        return;
+    }
+
+    else if (strcmp(Selected_Option, "Toggle Logging") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sinkhole log");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Peter Lowe (3.5K ads)") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sinkhole download 1");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "OISD Basic (40K mixed)") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sinkhole download 2");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "StevenBlack (70K mixed)") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("sinkhole download 3");
+        view_switched = true;
+    }
+
+    else if (current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_FILE_PICK &&
+             strcmp(Selected_Option, "Next >") == 0) {
+        blocklist_page_offset += BLOCKLIST_PAGE_SIZE;
+        blocklist_free_cache();
+        blocklist_load_page();
+        rebuild_current_menu();
+        option_invoked = false;
+        return;
+    }
+    else if (current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_FILE_PICK &&
+             strcmp(Selected_Option, "< Prev") == 0) {
+        blocklist_page_offset -= BLOCKLIST_PAGE_SIZE;
+        if (blocklist_page_offset < 0) blocklist_page_offset = 0;
+        blocklist_free_cache();
+        blocklist_load_page();
+        rebuild_current_menu();
+        option_invoked = false;
+        return;
+    }
+    else if (current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_FILE_PICK &&
+             Selected_Option && Selected_Option[0] != '\0') {
+        char cmd[300];
+        snprintf(cmd, sizeof(cmd), "sinkhole load %s", Selected_Option);
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand(cmd);
+        view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "Start Wardriving") == 0) {
@@ -5493,6 +5724,21 @@ static void back_event_cb(lv_event_t *e) {
     }
     // If in a Wi-Fi submenu (but not main), go back to main Wi-Fi menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
+        if (current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DOWNLOAD) {
+            current_wifi_menu_state = WIFI_MENU_DNS_SINKHOLE;
+            rebuild_current_menu();
+            return;
+        }
+        if (current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_FILE_PICK) {
+            blocklist_free_cache();
+            current_wifi_menu_state = WIFI_MENU_DNS_SINKHOLE;
+            rebuild_current_menu();
+            return;
+        }
+        if (current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+            sinkhole_detail_back_cb(NULL);
+            return;
+        }
         current_wifi_menu_state = WIFI_MENU_MAIN;
         rebuild_current_menu();
         return;
@@ -7392,6 +7638,82 @@ static const char **portal_load_page(void) {
     return evil_portal_options;
 }
 
+static void blocklist_free_cache(void) {
+    if (blocklist_file_names) { free(blocklist_file_names); blocklist_file_names = NULL; }
+    if (blocklist_file_options) { free(blocklist_file_options); blocklist_file_options = NULL; }
+}
+
+static const char **blocklist_load_page(void) {
+    blocklist_free_cache();
+
+    char (*file_names)[MAX_PORTAL_NAME] =
+        malloc(BLOCKLIST_PAGE_SIZE * MAX_PORTAL_NAME);
+    if (!file_names) return NULL;
+
+    int raw_count = sd_card_list_dir_paged(
+        SINKHOLE_DIR_PATH, ".txt",
+        blocklist_page_offset * BLOCKLIST_PAGE_SIZE, BLOCKLIST_PAGE_SIZE + 1,
+        file_names, &blocklist_has_next_page);
+
+    if (raw_count < 0) {
+        free(file_names);
+        return NULL;
+    }
+
+    int count = 0;
+    for (int i = 0; i < raw_count; i++) {
+        if (strcmp(file_names[i], "stats.txt") == 0) continue;
+        if (i != count) strcpy(file_names[count], file_names[i]);
+        count++;
+    }
+
+    blocklist_has_next_page = (raw_count > BLOCKLIST_PAGE_SIZE);
+    if (count > BLOCKLIST_PAGE_SIZE) {
+        count = BLOCKLIST_PAGE_SIZE;
+        blocklist_has_next_page = true;
+    }
+
+    bool show_prev = (blocklist_page_offset > 0);
+    bool show_next = blocklist_has_next_page;
+    int total = (show_prev ? 1 : 0) + count + (show_next ? 1 : 0);
+
+    if (total == 0) {
+        free(file_names);
+        return NULL;
+    }
+
+    blocklist_file_names   = malloc(MAX_PORTAL_NAME * (size_t)total);
+    blocklist_file_options = malloc(sizeof(char *) * ((size_t)total + 1));
+
+    if (!blocklist_file_names || !blocklist_file_options) {
+        free(file_names);
+        blocklist_free_cache();
+        return NULL;
+    }
+
+    int idx = 0;
+
+    if (show_prev) {
+        strcpy(blocklist_file_names + idx * MAX_PORTAL_NAME, "< Prev");
+        blocklist_file_options[idx] = blocklist_file_names + idx * MAX_PORTAL_NAME;
+        idx++;
+    }
+    for (int i = 0; i < count; i++) {
+        strcpy(blocklist_file_names + idx * MAX_PORTAL_NAME, file_names[i]);
+        blocklist_file_options[idx] = blocklist_file_names + idx * MAX_PORTAL_NAME;
+        idx++;
+    }
+    if (show_next) {
+        strcpy(blocklist_file_names + idx * MAX_PORTAL_NAME, "Next >");
+        blocklist_file_options[idx] = blocklist_file_names + idx * MAX_PORTAL_NAME;
+        idx++;
+    }
+    blocklist_file_options[idx] = NULL;
+
+    free(file_names);
+    return blocklist_file_options;
+}
+
 static void rebuild_current_menu(void) {
     lvgl_timer_del_safe(&menu_build_timer);
     
@@ -7405,7 +7727,7 @@ static void rebuild_current_menu(void) {
     build_item_index = 0;
     selected_item_index = 0;
     
-    const char **options = NULL;
+    const char * const *options = NULL;
     int timer_period = 15;
     
     if (is_settings_mode) {
@@ -7422,6 +7744,14 @@ static void rebuild_current_menu(void) {
                 case WIFI_MENU_NETWORK: options = wifi_network_options; break;
                 case WIFI_MENU_CAPTURE: options = wifi_capture_options; break;
                 case WIFI_MENU_EVIL_PORTAL: options = wifi_evil_portal_options; break;
+                case WIFI_MENU_DNS_SINKHOLE: options = wifi_dns_sinkhole_options; break;
+                case WIFI_MENU_DNS_SINKHOLE_DOWNLOAD: options = wifi_dns_sinkhole_download_options; break;
+                case WIFI_MENU_DNS_SINKHOLE_FILE_PICK:
+                    options = blocklist_file_options;
+                    break;
+                case WIFI_MENU_DNS_SINKHOLE_DETAILS:
+                    options = NULL;
+                    break;
                 case WIFI_MENU_CONNECTION: options = wifi_connection_options; break;
                 case WIFI_MENU_MISC: options = wifi_misc_options; break;
                 case WIFI_MENU_EVIL_PORTAL_SELECT:
@@ -7881,7 +8211,8 @@ static void menu_builder_cb(lv_timer_t *t)
            current_wifi_menu_state == WIFI_MENU_KARMA_PORTAL_SELECT ||
            current_wifi_menu_state == WIFI_MENU_AP_LIST ||
            current_wifi_menu_state == WIFI_MENU_STA_LIST ||
-           current_wifi_menu_state == WIFI_MENU_SCANALL_LIST)) ||
+           current_wifi_menu_state == WIFI_MENU_SCANALL_LIST ||
+           current_wifi_menu_state == WIFI_MENU_DNS_SINKHOLE_FILE_PICK)) ||
          SelectedMenuType == OT_WigleManualUpload);
 
     const int BATCH = is_portal_select ? 2 : 6;
@@ -7992,6 +8323,11 @@ static void menu_builder_cb(lv_timer_t *t)
         } else {
             while (current_options_list != NULL && current_options_list[build_item_index] != NULL && built_this_tick < BATCH) {
                 const char *opt = current_options_list[build_item_index];
+                if (strcmp(opt, "Download Blocklist") == 0 &&
+                    heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) <= 300 * 1024) {
+                    build_item_index++;
+                    continue;
+                }
                 lv_obj_t *btn = options_view_add_item(g_options_view, opt, option_event_cb, (void *)opt);
                 if (!btn) break;
                 lv_obj_set_user_data(btn, (void *)opt);

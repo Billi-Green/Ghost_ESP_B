@@ -21,7 +21,7 @@ keywords: ["install", "setup", "app store", "fap"]
 ## Method 2: Manual Installation
 
 1. **Download the latest release**
-   - Visit the [releases page](https://github.com/jaylikesbunda/ghost_esp_app/releases/latest)
+   - Visit the [releases page](https://github.com/GhostESP-Revival/GhostESP-FlipperCompanion/releases/latest)
    - Download the `.fap` file for your Flipper Zero firmware version
 
 2. **Transfer to Flipper Zero**
@@ -37,9 +37,9 @@ keywords: ["install", "setup", "app store", "fap"]
 The companion app is regularly updated to support new GhostESP firmware features. Always use the latest version of both:
 
 - **GhostESP Firmware**: Latest release from main repository
-- **Companion App**: Latest `.fap` from [releases](https://github.com/jaylikesbunda/ghost_esp_app/releases)
+- **Companion App**: Latest `.fap` from [releases](https://github.com/GhostESP-Revival/GhostESP-FlipperCompanion/releases)
 
-> **Note**: Older app versions may not support newer firmware features. Check the [changelog](https://github.com/jaylikesbunda/ghost_esp_app/blob/main/CHANGELOG.md) for compatibility information.
+> **Note**: Older app versions may not support newer firmware features. Check the [changelog](https://github.com/GhostESP-Revival/GhostESP-FlipperCompanion/blob/main/CHANGELOG.md) for compatibility information.
 
 ## Next Steps
 
