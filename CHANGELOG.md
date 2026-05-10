@@ -3,6 +3,7 @@
 ## Revival v1.9.9
 
 ### Added
+- Added DNS sinkhole with blocklist-based NXDOMAIN blocking, parent-domain matching, CNAME inspection, iOS/DoH bypass canaries, query logging, and PSRAM/no-PSRAM lookup paths
 - Added CC1101 SubGHz (The Wired Hatter's Banshee only atm) support with frequency analyzer, capture/replay and multi-band scanning (315/390/433.92/868.35/915 MHz)
 - Added passive jamming detection engine to the NRF24 frequency analyzer that identifies known 2.4GHz threat signatures in real time during normal spectrum scanning
 - Added support for Seeed Studio XIAO ESP32-S3 Sense with motion detection
@@ -1230,4 +1231,3 @@ Lighting:
 - New <https://ghostesp.net> website! - @jaylikesbunda
 - Ghost ESP Flipper App v1.1.8 - @jaylikesbunda
 - Cleanup README.md - @jaylikesbunda
-

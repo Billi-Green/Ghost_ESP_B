@@ -11,39 +11,50 @@ Run a portable DNS sinkhole that blocks ad domains and other unwanted hosts. Any
 ## Prerequisites
 
 - GhostESP device connected to a WiFi network (use `connect` first).
-- SD card inserted (required for devices without PSRAM; optional for PSRAM boards like ESP32-S3).
-- A blocklist file at `/mnt/ghostesp/dns_sinkhole/blocklist.txt` on the SD card.
+- SD card inserted. PSRAM boards can start without SD in proxy-only mode; no-PSRAM boards need SD to start.
+- For blocking, a blocklist file at `/mnt/ghostesp/dns_sinkhole/blocklist.txt` on the SD card.
   - The file must be a plain text file with one domain per line, sorted alphabetically.
   - A default blocklist is included with the firmware. You can add your own domains.
 
+PSRAM-enabled boards are recommended for large blocklists and on-device downloads. No-PSRAM boards are supported, but they rely on SD-card lookups and work best with smaller, sorted lists.
+
 ## How it works
 
-The DNS sinkhole listens on UDP port 53 and inspects every DNS query:
+The DNS sinkhole listens on UDP port 53 and checks each query:
 
-1. **Check the blocklist** — If the domain or one of its parent domains matches, the client receives a clean `NXDOMAIN` response.
-2. **Forward to upstream** — If the domain is not blocked, the query is forwarded to the upstream DNS server (auto-detected from your WiFi network, or falls back to `8.8.8.8`).
-3. **Return the response** — The upstream response is relayed back to the client.
+1. Match the domain, parent domains, and built-in bypass domains.
+2. Return `NXDOMAIN` when blocked.
+3. Forward allowed queries upstream and inspect CNAME answers before relaying them.
 
-Known Apple Private Relay, Firefox DoH canary, and DDR resolver-discovery domains are blocked automatically because they can bypass manual DNS settings.
+Apple Private Relay, Firefox DoH canary, and DDR resolver-discovery domains are blocked automatically because they can bypass manual DNS settings.
 
 ### Lookup paths by hardware
 
-| Configuration | Method | Speed |
-|---|---|---|
-| PSRAM enabled | Bloom filter + hash table in PSRAM | ~2-5 μs |
-| No PSRAM | 8 KB Bloom filter + SD binary-search verification | Avoids SD reads for most misses |
+**PSRAM boards**
 
-Both paths use a small heap-backed lookup cache to speed up repeated queries while keeping task stack usage low on no-PSRAM devices. No-PSRAM devices also build a fixed 8 KB Bloom filter from the SD blocklist; most non-blocked domains are rejected from RAM, while Bloom hits are verified with the SD binary search.
+- Load the SD blocklist into a Bloom filter and hash table in PSRAM.
+- After startup, lookups are handled from PSRAM.
+- If no SD blocklist exists, the sinkhole starts in proxy-only mode and does not block domains.
+
+**No-PSRAM boards**
+
+- Keep the sorted blocklist on SD.
+- Build a fixed 8 KB Bloom filter in internal RAM.
+- Most non-blocked domains are rejected from RAM; possible matches are verified with SD binary search.
+
+Both paths use a small heap-backed cache for repeated queries.
 
 > **Note**: Blocklist downloading is only available on PSRAM-enabled devices. On devices without PSRAM, copy a pre-sorted blocklist file to the SD card manually.
 
 ## Starting the sinkhole
 
-### On-device UI
+### On-Device UI
 
 1. Connect to a WiFi network first.
 2. Open **WiFi → DNS Sinkhole → Start**.
 3. The display will show "Sinkhole On" and the ESP's IP address.
+
+The on-device flow opens a terminal view while the sinkhole is active. Backing out of that terminal stops the sinkhole and restores the normal AP services.
 
 ### Command line
 
@@ -105,16 +116,15 @@ The internal access point (GhostNet) is automatically stopped while the sinkhole
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `sinkhole start [dns] [log]` | Start the DNS sinkhole |
-| `sinkhole stop` | Stop the DNS sinkhole |
-| `sinkhole status` | Show query count and blocked count |
-| `sinkhole download [n]` | Download a blocklist (PSRAM only; list sources with no argument) |
-| `sinkhole add <domain>` | Add a domain to the blocklist |
-| `sinkhole remove <domain>` | Remove a domain (restart to apply) |
-| `sinkhole reload` | Reload blocklist (restart to apply) |
-| `sinkhole log` | Toggle query logging to SD card |
+- `sinkhole start [upstream_dns] [log]` starts the sinkhole. Add `log` to enable query logging immediately.
+- `sinkhole stop` stops the sinkhole and restores AP services.
+- `sinkhole status` shows current query and block counts.
+- `sinkhole download [n]` lists or downloads built-in blocklists. PSRAM only.
+- `sinkhole load <filename>` copies a downloaded list to `blocklist.txt` and restarts.
+- `sinkhole add <domain>` inserts a domain into the sorted active blocklist.
+- `sinkhole remove <domain>` is a placeholder; stop and edit/reload the list manually for now.
+- `sinkhole reload` restarts the sinkhole to apply blocklist changes.
+- `sinkhole log <on|off>` toggles query logging.
 
 ## Query logging
 
@@ -149,6 +159,31 @@ To sort a blocklist on your PC:
 sort -f -u blocklist.txt > blocklist_sorted.txt
 ```
 
+### Downloading Blocklists
+
+Blocklist downloading requires WiFi, SD card storage, and a PSRAM-enabled device. The download command stores named source files in `/mnt/ghostesp/dns_sinkhole/`; it does not directly replace the active `blocklist.txt`.
+
+List available sources:
+
+```
+sinkhole download
+```
+
+Current built-in sources:
+
+- `1` Peter Lowe, saved as `peter_lowe.txt`
+- `2` OISD Basic, saved as `oisd.txt`
+- `3` StevenBlack, saved as `stevenblack.txt`
+
+Download a source, then load it as the active blocklist:
+
+```
+sinkhole download 1
+sinkhole load peter_lowe.txt
+```
+
+`sinkhole load` copies the selected file to `/mnt/ghostesp/dns_sinkhole/blocklist.txt` and restarts the sinkhole.
+
 ### Adding domains
 
 ```
@@ -160,7 +195,7 @@ This inserts the domain into the sorted blocklist file. Restart the sinkhole for
 ## Troubleshooting
 
 - **"STA not available"**: Connect to a WiFi network first using `connect`.
-- **"SD card required for DNS sinkhole (no PSRAM)"**: Your device has no PSRAM. Insert and mount an SD card before starting.
+- **"SD card required for DNS sinkhole (no PSRAM)"**: Insert and mount an SD card before starting.
 - **"Blocklist download requires a PSRAM-enabled device"**: Blocklist downloading is only supported on PSRAM-enabled devices. On devices without PSRAM, copy a pre-sorted blocklist file to `/mnt/ghostesp/dns_sinkhole/blocklist.txt` on the SD card manually.
 - **Queries not being blocked**: Verify the blocklist file exists at `/mnt/ghostesp/dns_sinkhole/blocklist.txt` and is sorted alphabetically. Check `sinkhole status` to see if blocked count is increasing.
 - **Pages not loading (forwarding broken)**: Ensure the GhostESP can reach the internet. The upstream DNS is auto-detected from your WiFi network. If it falls back to `8.8.8.8`, verify that UDP port 53 is not blocked on your network.
