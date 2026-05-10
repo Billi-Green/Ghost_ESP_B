@@ -246,7 +246,7 @@ This comparison is based on GhostESP's feature set and publicly available source
 | Beacon spam | [x] | [x] | [x] | [x] |
 | Karma / probe response attack | [x] | [x] | [x] |  |
 | Handshake / EAPOL capture | [x] | [x] | [x] |  |
-| PMKID capture / export | [x] | [x] | [x] |  |
+| PMKID capture / export | [x] |  | [x] |  |
 | Live Wireshark USB streaming | [x] |  |  |  |
 | WPA3 / SAE-specific testing | [x] |  |  |  |
 | EAPOL logoff attack | [x] |  |  |  |
@@ -267,23 +267,23 @@ This comparison is based on GhostESP's feature set and publicly available source
 | Split-channel wardriving helper | [x] |  |  |  |
 | GhostLink remote radio support | [x] |  |  |  |
 | Drone / OpenDroneID detect | [x] |  |  | [x] |
-| Drone / OpenDroneID spoof | [x] |  |  | [x] |
+| Drone / OpenDroneID spoof | [x] |  |  |  |
 | BLE scanning | [x] | [x] | [x] | [x] |
 | BLE spam modes | [x] | [x] | [x] | [x] |
 | AirTag scan / spoof | [x] | [x] | [x] | [x] |
-| Flipper Zero finder | [x] | [x] |  | [x] |
-| GATT / service enumeration | [x] | [x] | [x] |  |
+| Flipper Zero finder | [x] |  |  | [x] |
+| GATT / service enumeration | [x] |  | [x] |  |
 | BLE stream to Wireshark | [x] |  |  |  |
 | BLE skimmer detection | [x] |  |  | [x] |
-| FastPair / pairing exploit research |  | [x] | [x] |  |
+| FastPair / pairing exploit research |  | [x] | [x] | [x] |
 | BLE HID injection / DuckyScript over BLE |  | [x] |  |  |
-| BLE GATT honeypot / cloned peripheral |  |  | [x] |  |
-| BLE vulnerability profiling |  | [x] | [x] |  |
+| BLE GATT honeypot / cloned peripheral |  |  | [x] | [x] |
+| BLE vulnerability profiling |  | [x] |  |  |
 | Flock / surveillance detector |  |  | [x] | [x] |
 | PN532 NFC support | [x] | [x] | [x] |  |
 | Chameleon Ultra support | [x] | [x] |  |  |
 | Chameleon Ultra BLE control | [x] | [x] |  |  |
-| Flipper `.nfc` import/export | [x] | [x] |  |  |
+| Flipper `.nfc` import/export | [x] |  |  |  |
 | Flipper NFC parser set | [x] |  |  |  |
 | MIFARE Classic default-key attack | [x] | [x] | [x] |  |
 | MIFARE Classic full embedded dictionary | [x] |  |  |  |
@@ -297,11 +297,11 @@ This comparison is based on GhostESP's feature set and publicly available source
 | Flipper `.ir` file support | [x] | [x] |  |  |
 | Universal IR library transmit | [x] | [x] |  |  |
 | CC1101 SubGHz scan / replay | [x] | [x] | [x] |  |
-| CC1101 waterfall spectrum analyzer | [x] | [x] |  |  |
-| Flipper `.sub` compatibility | [x] | [x] |  |  |
+| CC1101 waterfall spectrum analyzer | [x] | [x] | [x] |  |
+| Flipper `.sub` compatibility | [x] | [x] |  | [x] |
 | SubGHz protocol decoders | [x] | [x] | [x] |  |
 | NRF24 spectrum analyzer | [x] | [x] | [x] | [x] |
-| NRF24 MouseJack |  | [x] | [x] |  |
+| NRF24 MouseJack |  |  | [x] |  |
 | Passive jamming detection | [x] |  | [x] |  |
 | Active RF jamming shipped | Not shipped | [x] | [x] | [x] |
 | Zigbee / 802.15.4 packet capture | [x] |  |  |  |
@@ -314,7 +314,7 @@ This comparison is based on GhostESP's feature set and publicly available source
 | DIAL / Chromecast testing | [x] |  |  |  |
 | On-device setup wizard | [x] |  |  |  |
 | Wired screen mirroring | [x] |  |  | [x] |
-| Web screen mirroring | [x] | [x] |  |  |
+| Web screen mirroring |  | [x] |  |  |
 | SD config backup / restore | [x] |  |  |  |
 | Battery monitoring / fuel gauge support | [x] | [x] | [x] |  |
 | Sensor / RTC hardware support | [x] | [x] |  |  |
@@ -324,7 +324,7 @@ This comparison is based on GhostESP's feature set and publicly available source
 | LoRa support |  | [x] |  |  |
 | FM radio support |  | [x] |  |  |
 
-> GhostESP does not ship active jamming features. Distribution, promotion, sale and use of jamming devices or firmware is illegal in many jurisdictions.
+> GhostESP does not ship active jamming features. Distribution, promotion, sale and use of jamming devices or firmware is illegal in many jurisdictions. 
 
 </details>
 
