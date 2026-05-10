@@ -18,6 +18,23 @@ Run a portable DNS sinkhole that blocks ad domains and other unwanted hosts. Any
 
 PSRAM-enabled boards are recommended for large blocklists and on-device downloads. No-PSRAM boards are supported, but they rely on SD-card lookups and work best with smaller, sorted lists.
 
+PSRAM-enabled configs include:
+
+- `TEmbedC1101`
+- `crowtech7inch`
+- `JC3248W535EN`
+- `sunton7inch`
+- `NM-CYD-C5`
+- `xiao_esp32c5`
+- `waveshare7inch`
+- `awokmini`
+- `xiao_esp32s3_sense`
+- `xiao_esp32s3`
+- `lolins3pro`
+- `tdeck`
+- `poltergeist`
+- The Banshee (`somethingsomething`)
+
 ## How it works
 
 The DNS sinkhole listens on UDP port 53 and checks each query:
