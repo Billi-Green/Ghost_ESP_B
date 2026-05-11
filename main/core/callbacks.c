@@ -1364,6 +1364,8 @@ static void wardrive_send_probe_request(void) {
     esp_wifi_80211_tx(WIFI_IF_STA, probe_req, sizeof(probe_req), false);
 }
 
+static int hop_count = 0;
+
 static void wardrive_hop_timer_callback(void *arg) {
     if (!wardriving_hopping_active)
         return;
@@ -1390,7 +1392,6 @@ static void wardrive_hop_timer_callback(void *arg) {
     // Send probe request to trigger AP responses
     wardrive_send_probe_request();
     
-    static int hop_count = 0;
     hop_count++;
     if (hop_count % 200 == 0) {
         ESP_LOGI(TAG, "Wardrive hopped to channel %d (hop #%d)", wardrive_channel, hop_count);
@@ -1413,6 +1414,7 @@ static esp_err_t start_wardrive_channel_hopping(void) {
     wardrive_channel_idx = 0;
     wardrive_channel = wardrive_channels[0];
     wardriving_hopping_active = true;
+    hop_count = 0;
     
     esp_err_t err = esp_wifi_set_channel(wardrive_channel, WIFI_SECOND_CHAN_NONE);
     ESP_LOGI(TAG, "Wardrive starting on channel %d (set_channel: %s)", wardrive_channel, esp_err_to_name(err));

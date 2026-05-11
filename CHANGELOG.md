@@ -60,6 +60,25 @@
 - Fixed O(n²) realloc pattern in infrared file list by implementing exponential growth with capacity tracking
 - Fixed WiFi connection retry having no user feedback by adding terminal status message before 3s delay
 - Fixed NFC touchscreen controls double-firing menu actions
+- Fixed CSV mutex use after free in wardriving close where flush task
+  referenced a deleted semaphore
+- Fixed wardriving scan callback blocking WiFi task forever when flush
+  could not keep up, now capped at 200ms with graceful fallback
+- Fixed dedupe tables leaked when closing without SD card, close path
+  now always frees task, mutex, and dedupe tables
+- Fixed dedupe race where scan callback accessed freed tables during
+  stop, added csv_closing flag to reject new writes during teardown
+- Fixed GPS quality data overwriting coordinates already set by caller
+- Fixed TOCTOU race on nmea_hdl during CSV close by snapshotting handle
+  before dereference
+- Fixed hop counter retaining stale state across start/stop cycles
+- Fixed CSV line truncation going undetected by validating line ends
+  with newline after incremental build
+- Fixed count functions racing with close by guarding against csv_closing
+  and NULL mutex
+- Reduced wardriving stack usage by ~462 bytes by replacing escape
+  buffers with direct incremental line build and replacing 150B gps_t
+  snapshot with 60B lightweight copy
 
 ## Revival v1.9.8
 
