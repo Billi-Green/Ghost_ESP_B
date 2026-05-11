@@ -20,6 +20,9 @@
 - Added "Item Borders" setting to toggle borders on main menu items and defaulted it to off
 
 ### Changed
+- Refactored main menu grid to flex rows with responsive column count and accent-colored selection highlight
+- Replaced carousel text arrows with LVGL symbol arrows and made icon size scale with button size
+- Solid-color themes now use a single consistent accent for all menu item borders instead of a tonal ramp
 - Rewrote app gallery carousel to reuse a single card with slide animation instead of creating/destroying objects per swipe
 - Nav button highlight now uses theme accent color instead of hardcoded yellow
 - Status bar uses design token fonts and safe-area-aware padding
