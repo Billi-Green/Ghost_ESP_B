@@ -42,6 +42,24 @@ static const char *TAG = "dns_server";
 
 static dns_server_handle_t s_sinkhole_handle = NULL;
 
+esp_netif_t *dns_sinkhole_find_netif(esp_netif_ip_info_t *out_ip) {
+    static const char * const if_keys[] = {
+        "WIFI_STA_DEF",
+        "ETH_DEF",
+        NULL,
+    };
+    for (int i = 0; if_keys[i]; i++) {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey(if_keys[i]);
+        if (!netif) continue;
+        esp_netif_ip_info_t ip;
+        if (esp_netif_get_ip_info(netif, &ip) != ESP_OK) continue;
+        if (ip.ip.addr == 0) continue;
+        if (out_ip) *out_ip = ip;
+        return netif;
+    }
+    return NULL;
+}
+
 typedef struct __attribute__((__packed__)) {
     uint16_t id;
     uint16_t flags;
@@ -1141,21 +1159,17 @@ dns_server_handle_t start_dns_server(dns_server_config_t *config) {
 }
 
 dns_server_handle_t start_dns_sinkhole(dns_sinkhole_config_t *config) {
-    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (!sta) {
-        ESP_LOGE(TAG, "STA interface not available");
-        return NULL;
-    }
     esp_netif_ip_info_t ip_info;
-    if (esp_netif_get_ip_info(sta, &ip_info) != ESP_OK) {
-        ESP_LOGE(TAG, "STA not connected");
+    esp_netif_t *netif = dns_sinkhole_find_netif(&ip_info);
+    if (!netif) {
+        ESP_LOGE(TAG, "No connected network interface (STA or ETH)");
         return NULL;
     }
 
     esp_netif_dns_info_t dns_info;
     uint32_t upstream = config->upstream_dns;
     if (!upstream) {
-        if (esp_netif_get_dns_info(sta, ESP_NETIF_DNS_MAIN, &dns_info) ==
+        if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_info) ==
             ESP_OK) {
             upstream = dns_info.ip.u_addr.ip4.addr;
         }
@@ -1163,7 +1177,7 @@ dns_server_handle_t start_dns_sinkhole(dns_sinkhole_config_t *config) {
         if ((upstream & ESP_IP4TOADDR(255, 255, 255, 0)) ==
                 ESP_IP4TOADDR(192, 168, 4, 0) ||
             upstream == 0) {
-            if (esp_netif_get_dns_info(sta, ESP_NETIF_DNS_BACKUP, &dns_info) ==
+            if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_info) ==
                 ESP_OK) {
                 upstream = dns_info.ip.u_addr.ip4.addr;
             }

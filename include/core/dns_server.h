@@ -111,6 +111,8 @@ void dns_sinkhole_set_logging(bool enabled);
 bool dns_sinkhole_get_logging(void);
 void dns_sinkhole_save_stats(void);
 
+esp_netif_t *dns_sinkhole_find_netif(esp_netif_ip_info_t *out_ip);
+
 #ifdef __cplusplus
 }
 #endif

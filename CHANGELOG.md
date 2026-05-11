@@ -56,6 +56,7 @@
 - Fixed malloc variable declaration issue in wpa_crypto PRF loop (size_t r_len moved inside loop)
 - Fixed O(n²) realloc pattern in infrared file list by implementing exponential growth with capacity tracking
 - Fixed WiFi connection retry having no user feedback by adding terminal status message before 3s delay
+- Fixed NFC touchscreen controls double-firing menu actions
 
 ## Revival v1.9.8
 

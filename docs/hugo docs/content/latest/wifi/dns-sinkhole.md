@@ -6,11 +6,11 @@ weight: 55
 
 Run a portable DNS sinkhole that blocks ad domains and other unwanted hosts. Any device on the same network that uses the GhostESP as its DNS server will receive `NXDOMAIN` for blocked domains.
 
-> **Note**: This feature requires a device connected to a WiFi network (STA mode). It is mutually exclusive with Evil Portal — starting one will stop the other.
+> **Note**: This feature requires a device connected to a network via WiFi or Ethernet. It is mutually exclusive with Evil Portal — starting one will stop the other.
 
 ## Prerequisites
 
-- GhostESP device connected to a WiFi network (use `connect` first).
+- GhostESP device connected to a network via WiFi (`connect`) or Ethernet.
 - SD card inserted. PSRAM boards can start without SD in proxy-only mode; no-PSRAM boards need SD to start.
 - For blocking, a blocklist file at `/mnt/ghostesp/dns_sinkhole/blocklist.txt` on the SD card.
   - The file must be a plain text file with one domain per line, sorted alphabetically.
@@ -67,7 +67,7 @@ Both paths use a small heap-backed cache for repeated queries.
 
 ### On-Device UI
 
-1. Connect to a WiFi network first.
+1. Connect to a network (WiFi via `connect`, or Ethernet) first.
 2. Open **WiFi → DNS Sinkhole → Start**.
 3. The display will show "Sinkhole On" and the ESP's IP address.
 
@@ -75,7 +75,7 @@ The on-device flow opens a terminal view while the sinkhole is active. Backing o
 
 ### Command line
 
-1. Connect to WiFi: `connect`
+1. Connect to a network: `connect` (WiFi) or connect Ethernet.
 2. Start the sinkhole: `sinkhole start`
 3. The ESP will log: `DNS sinkhole started on <IP>:53`
 
@@ -211,11 +211,11 @@ This inserts the domain into the sorted blocklist file. Restart the sinkhole for
 
 ## Troubleshooting
 
-- **"STA not available"**: Connect to a WiFi network first using `connect`.
+- **"No connected network interface"**: Connect via WiFi (`connect`) or Ethernet first.
 - **"SD card required for DNS sinkhole (no PSRAM)"**: Insert and mount an SD card before starting.
-- **"Blocklist download requires a PSRAM-enabled device"**: Blocklist downloading is only supported on PSRAM-enabled devices. On devices without PSRAM, copy a pre-sorted blocklist file to `/mnt/ghostesp/dns_sinkhole/blocklist.txt` on the SD card manually.
+- **Blocklist download requires a PSRAM-enabled device and network connectivity**: Blocklist downloading is only supported on PSRAM-enabled devices. On devices without PSRAM, copy a pre-sorted blocklist file to `/mnt/ghostesp/dns_sinkhole/blocklist.txt` on the SD card manually.
 - **Queries not being blocked**: Verify the blocklist file exists at `/mnt/ghostesp/dns_sinkhole/blocklist.txt` and is sorted alphabetically. Check `sinkhole status` to see if blocked count is increasing.
 - **Pages not loading (forwarding broken)**: Ensure the GhostESP can reach the internet. The upstream DNS is auto-detected from your WiFi network. If it falls back to `8.8.8.8`, verify that UDP port 53 is not blocked on your network.
 - **"DNS sinkhole: no blocklist, running in proxy mode"**: No blocklist file was found. The sinkhole will forward all queries without blocking. Add a blocklist and restart.
-- **Sinkhole stops when WiFi disconnects**: The sinkhole automatically stops if the STA connection is lost. Reconnect to WiFi and restart.
+- **Sinkhole stops when network disconnects**: If the primary interface (WiFi STA) disconnects, the sinkhole will stop. If connected via Ethernet only, it will continue running. Reconnect the network and restart if needed.
 - **Cannot start with Evil Portal running**: The sinkhole and Evil Portal are mutually exclusive. Stop one before starting the other.

@@ -9803,17 +9803,12 @@ void handle_sinkhole_cmd(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "start") == 0) {
-        esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-        if (!sta) {
-            glog("WiFi not initialized. Use 'connect' first.\n");
-            status_display_show_status("No WiFi");
-            return;
-        }
         esp_netif_ip_info_t ip_info;
-        if (esp_netif_get_ip_info(sta, &ip_info) != ESP_OK) {
-            glog("Not connected to WiFi.\n");
-            glog("Use 'connect' to join a network first.\n");
-            status_display_show_status("No WiFi");
+        esp_netif_t *netif = dns_sinkhole_find_netif(&ip_info);
+        if (!netif) {
+            glog("No connected network interface.\n");
+            glog("Use 'connect' to join WiFi or connect Ethernet first.\n");
+            status_display_show_status("No Network");
             return;
         }
 
@@ -9832,10 +9827,13 @@ void handle_sinkhole_cmd(int argc, char **argv) {
             if (h) stop_dns_server(h);
         }
 
-        ap_manager_stop_services_keep_wifi();
-        esp_wifi_set_mode(WIFI_MODE_STA);
-        esp_wifi_start();
-        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (sta) {
+            ap_manager_stop_services_keep_wifi();
+            esp_wifi_set_mode(WIFI_MODE_STA);
+            esp_wifi_start();
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
 
         uint32_t upstream = 0;
         bool enable_logging = false;

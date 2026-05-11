@@ -6,6 +6,8 @@ weight: 5
 
 Manage your Ethernet connection with configuration and status commands.
 
+> **Tip**: The Ethernet interface can be used with the DNS sinkhole — once connected via Ethernet, `sinkhole start` will use the Ethernet IP automatically. See [DNS Sinkhole](/wifi/dns-sinkhole) for details.
+
 ## Connection Status
 
 Check if Ethernet is connected and view link information:
