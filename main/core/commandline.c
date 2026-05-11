@@ -120,6 +120,7 @@ extern dns_server_handle_t dns_handle;
 #include "esp_partition.h"
 #include "esp_core_dump.h"
 #include "managers/aerial_detector_manager.h"
+#include "managers/flock_detector_manager.h"
 #include "managers/wigle_manager.h"
 #include "managers/config_manager.h"
 #include "managers/nrf24_remote_manager.h"
@@ -191,6 +192,9 @@ void handle_aerial_track_cmd(int argc, char **argv);
 void handle_aerial_stop_cmd(int argc, char **argv);
 void handle_aerial_spoof_cmd(int argc, char **argv);
 void handle_aerial_spoof_stop_cmd(int argc, char **argv);
+void handle_flock_scan_cmd(int argc, char **argv);
+void handle_flock_list_cmd(int argc, char **argv);
+void handle_flock_stop_cmd(int argc, char **argv);
 void handle_wigle_cmd(int argc, char **argv);
 void handle_loadconfig_cmd(int argc, char **argv);
 void handle_nrf24_cmd(int argc, char **argv);
@@ -904,6 +908,11 @@ void handle_stop_flipper(int argc, char **argv) {
         aerial_detector_stop_emulation();
     }
     aerial_detector_untrack_device();
+
+    // stop flock detector if running
+    if (flock_detector_is_running()) {
+        flock_detector_stop();
+    }
 
     // also stop any in-progress IR RX (ir rx / ir learn)
     infrared_manager_rx_cancel();
@@ -4393,6 +4402,15 @@ void handle_help(int argc, char **argv) {
         glog("    Usage: pineap [-s]\n");
         glog("    Arguments:\n");
         glog("        -s  : Stop PineAP detection\n\n");
+        glog("flockscan\n");
+        glog("    Description: Start Flock Safety camera detection.\n");
+        glog("    Usage: flockscan\n\n");
+        glog("flocklist\n");
+        glog("    Description: List detected Flock cameras.\n");
+        glog("    Usage: flocklist\n\n");
+        glog("flockstop\n");
+        glog("    Description: Stop Flock camera detection.\n");
+        glog("    Usage: flockstop\n\n");
         glog("Port Scanner\n");
         glog("    Description: Scan ports on local subnet or specific IP\n");
         glog("    Usage: scanports local\n");
@@ -9256,6 +9274,55 @@ void handle_aerial_spoof_stop_cmd(int argc, char **argv) {
     }
 }
 
+void handle_flock_scan_cmd(int argc, char **argv) {
+    if (flock_detector_is_running()) {
+        glog("Flock detection is already running. Use 'flockstop' to stop first.\n");
+        return;
+    }
+    flock_detector_init();
+    esp_err_t ret = flock_detector_start();
+    if (ret == ESP_OK) {
+        TERMINAL_VIEW_ADD_TEXT("Flock detection started\n");
+    } else {
+        glog("Failed to start flock detection — out of memory\n");
+    }
+}
+
+void handle_flock_list_cmd(int argc, char **argv) {
+    int count = flock_detector_get_count();
+    if (count == 0) {
+        glog("No surveillance devices detected yet.\n");
+        if (!flock_detector_is_running()) {
+            glog("Use 'flockscan' to start scanning.\n");
+        }
+        return;
+    }
+    glog("Surveillance Devices Detected (%d):\n", count);
+    glog("%-3s %-18s %-17s %-4s %-8s %3s %5s %s\n", "#", "MAC", "Method", "Conf", "Signal", "Ch", "Hits", "SSID");
+    glog("--- ------------------ ----------------- ---- -------- --- ----- ------\n");
+    for (int i = 0; i < count; i++) {
+        const FlockDetection *d = flock_detector_get_detection(i);
+        if (!d) continue;
+        const char *sig = (d->rssi > -50) ? "Strong" : (d->rssi > -70) ? "Medium" : "Weak";
+        char sigbuf[16];
+        snprintf(sigbuf, sizeof(sigbuf), "%s (%dd)", sig, d->rssi);
+        glog("%-3d %-18s %-17s %-4s %-8s %3d %5d %s\n",
+             i, d->mac, d->method,
+             d->confidence == FLOCK_CONF_HIGH ? "HIGH" : "LOW",
+             sigbuf, d->channel, d->count,
+             d->ssid[0] ? d->ssid : "-");
+    }
+}
+
+void handle_flock_stop_cmd(int argc, char **argv) {
+    if (!flock_detector_is_running()) {
+        glog("Flock detection is not currently running.\n");
+        return;
+    }
+    flock_detector_stop();
+    TERMINAL_VIEW_ADD_TEXT("Flock detection stopped\n");
+}
+
 void handle_loadconfig_cmd(int argc, char **argv) {
     glog("Loading configuration from SD card...\n");
     
@@ -10187,6 +10254,9 @@ void register_commands() {
     register_command("aerialstop", handle_aerial_stop_cmd);
     register_command("aerialspoof", handle_aerial_spoof_cmd);
     register_command("aerialspoofstop", handle_aerial_spoof_stop_cmd);
+    register_command("flockscan", handle_flock_scan_cmd);
+    register_command("flocklist", handle_flock_list_cmd);
+    register_command("flockstop", handle_flock_stop_cmd);
     register_command("wigle", handle_wigle_cmd);
 #ifdef CONFIG_HAS_MIC
     register_command("mic_cal", handle_mic_cal_cmd);

@@ -566,7 +566,7 @@ static const char * const wifi_scan_select_options[] = {
 };
 
 static const char * const wifi_environment_options[] = {
-    "Sweep", "PineAP Detection", "Channel Congestion", NULL
+    "Sweep", "PineAP Detection", "Flock Detection", "Channel Congestion", NULL
 };
 
 static const char * const wifi_network_options[] = {
@@ -669,6 +669,7 @@ static const char * const dual_comm_scan_options[] = {
     "ARP Scan Network",
     "Scan Open Ports",
     "PineAP Detection",
+    "Flock Detection",
     "Channel Congestion",
     "List Access Points",
     "List Stations",
@@ -3774,6 +3775,12 @@ void option_event_cb(lv_event_t *e) {
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend pineap");
             view_switched = true;
+        } else if (strcmp(Selected_Option, "Flock Detection") == 0) {
+            terminal_set_return_view(&options_menu_view);
+            terminal_set_dualcomm_filter(true);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand("commsend flockscan");
+            view_switched = true;
         } else if (strcmp(Selected_Option, "Channel Congestion") == 0) {
             terminal_set_return_view(&options_menu_view);
             terminal_set_dualcomm_filter(true);
@@ -5352,6 +5359,13 @@ display_manager_switch_view(&terminal_view);
         terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
         simulateCommand("pineap");
+        view_switched = true;
+    }
+
+    else if (strcmp(Selected_Option, "Flock Detection") == 0) {
+        terminal_set_return_view(&options_menu_view);
+        display_manager_switch_view(&terminal_view);
+        simulateCommand("flockscan");
         view_switched = true;
     }
 

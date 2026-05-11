@@ -16,6 +16,7 @@
 - Added slide transitions for screen navigation replacing fade transitions
 - Added pop-in animations for popups and scan status card
 - Added spinning arc spinner for scan status overlay replacing animated dots
+- Added Flock Safety camera detector based on bennjordan/flock-you
 
 ### Changed
 - Rewrote app gallery carousel to reuse a single card with slide animation instead of creating/destroying objects per swipe
