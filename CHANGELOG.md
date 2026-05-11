@@ -24,6 +24,7 @@
 - Tweaked theme palette surface colors across all background shade levels
 - Cleaned up terminal screen build config template conditionals
 - Removed default LVGL shadow from popup buttons
+- Improved fuel gague handling on the MAX17048 (Banshee), we now check SOC reported % against actual battery voltage
 
 ### Fixed
 - Fixed potential division by zero crash in wardrive channel hopping timer when channel list is empty
