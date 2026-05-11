@@ -17,6 +17,7 @@
 - Added pop-in animations for popups and scan status card
 - Added spinning arc spinner for scan status overlay replacing animated dots
 - Added Flock Safety camera detector based on bennjordan/flock-you
+- Added "Item Borders" setting to toggle borders on main menu items and defaulted it to off
 
 ### Changed
 - Rewrote app gallery carousel to reuse a single card with slide animation instead of creating/destroying objects per swipe
@@ -80,6 +81,7 @@
 - Reduced wardriving stack usage by ~462 bytes by replacing escape
   buffers with direct incremental line build and replacing 150B gps_t
   snapshot with 60B lightweight copy
+- Fixed inverted touch scroll direction on grid cards main menu layout
 
 ## Revival v1.9.8
 

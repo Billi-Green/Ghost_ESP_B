@@ -856,6 +856,7 @@ static SettingsItem settings_items[] = {
     {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"BG Shade", SETTING_MENU_BG_SHADE, bg_shade_options, 4, 1, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Rounded Menus", SETTING_MENU_ROUNDED, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Item Borders", SETTING_MENU_ITEM_BORDERS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, RGB_MODE_COUNT, 0, SETTINGS_CAT_LED_RGB, false, NULL},
@@ -1791,6 +1792,9 @@ static void load_current_settings_values(void) {
             case SETTING_MENU_ROUNDED:
                 settings_items[i].current_value = settings_get_menu_rounded(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_MENU_ITEM_BORDERS:
+                settings_items[i].current_value = settings_get_menu_item_borders(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_NAV_BUTTONS:
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
                 break;
@@ -1957,6 +1961,9 @@ static void apply_setting_change(int setting_index, int new_value) {
                 options_view_refresh_styles(g_options_view);
                 update_settings_arrows_visibility();
             }
+            break;
+        case SETTING_MENU_ITEM_BORDERS:
+            settings_set_menu_item_borders(&G_Settings, new_value == 1);
             break;
         case SETTING_NAV_BUTTONS:
             settings_set_nav_buttons_enabled(&G_Settings, new_value == 1);
