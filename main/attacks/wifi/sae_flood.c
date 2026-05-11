@@ -307,11 +307,14 @@ static void sanitize_password_input(const char *in, char *out, size_t out_size) 
     out[n] = '\0';
 }
 
+static uint8_t sae_inj_token_buf[128];
+static uint8_t sae_inj_element_x[32];
+static uint8_t sae_inj_element_buf[33];
+
 static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     int frame_len = 0;
     bool token_required_local = false;
     uint16_t token_len_local = 0;
-    uint8_t token_buf_local[128];
     
     // 802.11 Authentication header
     sae_frame_buffer[0] = 0xb0; sae_frame_buffer[1] = 0x00;
@@ -334,8 +337,8 @@ static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     token_required_local = sae_ctx.token_required;
     token_len_local = sae_ctx.token_len;
     if (token_required_local && token_len_local > 0) {
-        if (token_len_local > sizeof(token_buf_local)) token_len_local = sizeof(token_buf_local);
-        memcpy(token_buf_local, sae_ctx.token, token_len_local);
+        if (token_len_local > sizeof(sae_inj_token_buf)) token_len_local = sizeof(sae_inj_token_buf);
+        memcpy(sae_inj_token_buf, sae_ctx.token, token_len_local);
     }
     portEXIT_CRITICAL(&sae_lock);
     ESP_LOGI("SAE_TX", "commit hdr ok, token=%d len=%u", token_required_local, (unsigned)token_len_local);
@@ -407,21 +410,19 @@ static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
     }
     
     if (!used_cache) {
-        uint8_t element_x[32];
         size_t elen = 0;
-        uint8_t element_buf[33];
         if (mbedtls_ecp_point_write_binary(&sae_ctx.group, &sae_ctx.own_element,
                                            MBEDTLS_ECP_PF_COMPRESSED, &elen,
-                                           element_buf, sizeof(element_buf)) != 0 || elen < 33) {
+                                           sae_inj_element_buf, sizeof(sae_inj_element_buf)) != 0 || elen < 33) {
             return ESP_FAIL;
         }
-        memcpy(element_x, element_buf + 1, 32);
+        memcpy(sae_inj_element_x, sae_inj_element_buf + 1, 32);
         if ((size_t)frame_len + 32 + 32 > sizeof(sae_frame_buffer)) {
             return ESP_ERR_NO_MEM;
         }
         mbedtls_mpi_write_binary(&sae_ctx.own_scalar, sae_frame_buffer + frame_len, 32);
         frame_len += 32;
-        memcpy(sae_frame_buffer + frame_len, element_x, 32);
+        memcpy(sae_frame_buffer + frame_len, sae_inj_element_x, 32);
         frame_len += 32;
     }
     ESP_LOGI("SAE_TX", "frm len=%d", frame_len);
@@ -430,7 +431,7 @@ static esp_err_t inject_sae_commit_frame(uint8_t* src_mac, int frame_counter) {
         size_t remaining = sizeof(sae_frame_buffer) - frame_len;
         if ((size_t)token_len_local > remaining) token_len_local = (uint16_t)remaining;
         if (token_len_local > 0) {
-            memcpy(sae_frame_buffer + frame_len, token_buf_local, token_len_local);
+            memcpy(sae_frame_buffer + frame_len, sae_inj_token_buf, token_len_local);
             frame_len += token_len_local;
         }
     }

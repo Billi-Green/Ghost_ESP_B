@@ -540,6 +540,9 @@ static const char * const wifi_attacks_options[] = {
     "Start GTK Abuse",
     "Start DHCP-Starve",
     "Stop DHCP-Starve",
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    "Start SAE Flood",
+#endif
     "Start Karma Attack",
     "Start Karma Attack (Custom SSIDs)",
     "Start Karma Attack (Custom Portal)",
@@ -692,6 +695,9 @@ static const char * const dual_comm_attacks_options[] = {
     "Start EAPOL Logoff",
     "Start DHCP-Starve",
     "Stop DHCP-Starve",
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    "Start SAE Flood",
+#endif
     "Start Karma Attack",
     "Start Karma Attack (Custom SSIDs)",
     "Stop Karma Attack",
@@ -3414,6 +3420,15 @@ static void gtk_abuse_password_cb(const char *input) {
     lv_timer_create(gtk_abuse_poll_timer_cb, 500, NULL);
 }
 
+static void sae_flood_password_cb(const char *input) {
+    static char cmd[80];
+    snprintf(cmd, sizeof(cmd), "saeflood %s", input ? input : "");
+    terminal_set_return_view(&options_menu_view);
+    display_manager_switch_view(&terminal_view);
+    simulateCommand(cmd);
+    keyboard_view_set_submit_callback(NULL);
+}
+
 static void gtk_abuse_ssid_cb(const char *input) {
     if (!input || strlen(input) == 0) {
         error_popup_create("Please enter an SSID.");
@@ -3877,6 +3892,14 @@ void option_event_cb(lv_event_t *e) {
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend karma stop");
             view_switched = true;
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+        } else if (strcmp(Selected_Option, "Start SAE Flood") == 0) {
+            keyboard_view_set_return_view(&options_menu_view);
+            keyboard_view_set_submit_callback(sae_flood_password_cb);
+            display_manager_switch_view(&keyboard_view);
+            keyboard_view_set_placeholder("Password");
+            return;
+#endif
         } else if (strcmp(Selected_Option, "Start Karma Attack (Custom SSIDs)") == 0) {
             keyboard_view_set_submit_callback(dual_comm_karma_custom_ssids_cb);
             display_manager_switch_view(&keyboard_view);
@@ -4810,6 +4833,15 @@ display_manager_switch_view(&terminal_view);
         keyboard_view_set_placeholder("Network SSID");
         return;
     }
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+    else if (strcmp(Selected_Option, "Start SAE Flood") == 0) {
+        keyboard_view_set_return_view(&options_menu_view);
+        keyboard_view_set_submit_callback(sae_flood_password_cb);
+        display_manager_switch_view(&keyboard_view);
+        keyboard_view_set_placeholder("Password");
+        return;
+    }
+#endif
 
     else if (strcmp(Selected_Option, "Start Karma Attack") == 0) {
         wifi_manager_start_karma();

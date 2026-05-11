@@ -49,7 +49,9 @@ static inline void glog_emit(const char *buf) {
 void glog(const char *fmt, ...) {
     if (!fmt) return;
 
-    char buf[GLOG_BUF_SIZE];
+    glog_lock();
+
+    static char buf[GLOG_BUF_SIZE];
 
     va_list ap;
     va_start(ap, fmt);
@@ -57,6 +59,7 @@ void glog(const char *fmt, ...) {
     va_end(ap);
 
     if (written < 0) {
+        glog_unlock();
         return;
     }
 
@@ -75,7 +78,6 @@ void glog(const char *fmt, ...) {
         }
     }
 
-    glog_lock();
     if (s_glog_defer) {
         if (s_q_count == GLOG_DEFER_MAX) {
             s_q_head = (s_q_head + 1) % GLOG_DEFER_MAX;
@@ -105,7 +107,7 @@ void glog_flush_deferred(void) {
             glog_unlock();
             break;
         }
-        char out[GLOG_BUF_SIZE];
+        static char out[GLOG_BUF_SIZE];
         memcpy(out, s_glog_q[s_q_head], GLOG_BUF_SIZE);
         s_q_head = (s_q_head + 1) % GLOG_DEFER_MAX;
         s_q_count--;

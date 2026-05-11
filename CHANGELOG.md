@@ -27,6 +27,8 @@
 - Improved fuel gague handling on the MAX17048 (Banshee), we now check SOC reported % against actual battery voltage
 
 ### Fixed
+- Potentially fixed task stack overflow crashes in `sae_displ` and `eapol_logoff` tasks by making the glog format buffer static
+- Fixed SAE flood not being accessible from the display UI attacks menu (C5/C6 only)
 - Fixed potential division by zero crash in wardrive channel hopping timer when channel list is empty
 - Fixed stack buffer overflow in BLE skimmer PCAP construction when processing oversized advertisement data from malicious BLE devices
 - Fixed TOCTOU race condition in glog and uart_share lazy mutex initialization that could leak mutexes and break mutual exclusion under concurrent startup
