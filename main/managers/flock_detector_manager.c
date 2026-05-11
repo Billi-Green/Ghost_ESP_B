@@ -82,8 +82,8 @@ static void IRAM_ATTR enqueue_alert(FlockDetectMethod method, const uint8_t *mac
 #define FLOCK_HASH_MASK   (FLOCK_HASH_BUCKETS - 1)
 
 static FlockDetection *s_dets = NULL;
-static int s_det_bucket[FLOCK_HASH_BUCKETS];  // first index in chain, -1 = empty
-static int s_det_next[FLOCK_MAX_DETECTIONS];  // next index in chain, -1 = end
+static int *s_det_bucket = NULL;  // heap-allocated, FLOCK_HASH_BUCKETS entries
+static int *s_det_next = NULL;    // heap-allocated, FLOCK_MAX_DETECTIONS entries
 static int s_count = 0;
 static bool s_running = false;
 static SemaphoreHandle_t s_mutex = NULL;
@@ -100,6 +100,16 @@ static inline int mac_hash(const char *mac) {
 static void det_chain_init(void) {
     for (int i = 0; i < FLOCK_HASH_BUCKETS; i++) s_det_bucket[i] = -1;
     for (int i = 0; i < FLOCK_MAX_DETECTIONS; i++) s_det_next[i] = -1;
+}
+
+static void det_chain_alloc(void) {
+    s_det_bucket = malloc(FLOCK_HASH_BUCKETS * sizeof(int));
+    s_det_next = malloc(FLOCK_MAX_DETECTIONS * sizeof(int));
+}
+
+static void det_chain_free(void) {
+    free(s_det_bucket); s_det_bucket = NULL;
+    free(s_det_next); s_det_next = NULL;
 }
 
 static int det_find(const char *mac) {
@@ -340,10 +350,12 @@ esp_err_t flock_detector_start(void) {
 
     s_dets = calloc(FLOCK_MAX_DETECTIONS, sizeof(FlockDetection));
     s_alert_queue = calloc(FLOCK_ALERT_QUEUE_SIZE, sizeof(FlockAlertEntry));
-    if (!s_dets || !s_alert_queue) {
+    det_chain_alloc();
+    if (!s_dets || !s_alert_queue || !s_det_bucket || !s_det_next) {
         ESP_LOGE(TAG, "failed to allocate detection buffers");
         free(s_dets); s_dets = NULL;
         free(s_alert_queue); s_alert_queue = NULL;
+        det_chain_free();
         return ESP_ERR_NO_MEM;
     }
 
@@ -383,6 +395,7 @@ esp_err_t flock_detector_stop(void) {
     int found = s_count;
     free(s_dets); s_dets = NULL;
     free(s_alert_queue); s_alert_queue = NULL;
+    det_chain_free();
     s_count = 0;
 
     glog("[FLOCK] Scan stopped. %d surveillance device%s found.\n",
