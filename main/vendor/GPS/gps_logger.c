@@ -73,9 +73,10 @@ static void resolve_timestamp_for_file(gps_date_t *out_date, gps_time_t *out_tim
 }
 
 #define CSV_GPS_BUFFER_SIZE 512
+#define CSV_PRE_HEADER_SIZE 256
 
 static FILE *csv_file = NULL;
-static char csv_buffer[GPS_BUFFER_SIZE];
+static char *csv_buffer = NULL;
 static size_t buffer_offset = 0;
 static char csv_file_path[GPS_MAX_FILE_NAME_LENGTH];
 static char csv_base_name[32] = "wardriving";
@@ -90,7 +91,7 @@ static void csv_request_flush(void) {
     csv_flush_requested = true;
 }
 
-static char csv_pre_header[256];
+static char *csv_pre_header = NULL;
 static size_t csv_pre_header_len = 0;
 
 static esp_err_t csv_flush_buffer_to_file_unlocked(void);
@@ -387,7 +388,7 @@ static void csv_build_pre_header(void) {
     csv_escape_field(f10, sizeof(f10), "subBody=0");
 
     int n = snprintf(csv_pre_header,
-                     sizeof(csv_pre_header),
+                     CSV_PRE_HEADER_SIZE,
                      "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
                      f0,
                      f1,
@@ -405,9 +406,9 @@ static void csv_build_pre_header(void) {
         csv_pre_header_len = 0;
         return;
     }
-    if ((size_t)n >= sizeof(csv_pre_header)) {
-        csv_pre_header[sizeof(csv_pre_header) - 2] = '\n';
-        csv_pre_header[sizeof(csv_pre_header) - 1] = '\0';
+    if ((size_t)n >= CSV_PRE_HEADER_SIZE) {
+        csv_pre_header[CSV_PRE_HEADER_SIZE - 2] = '\n';
+        csv_pre_header[CSV_PRE_HEADER_SIZE - 1] = '\0';
         csv_pre_header_len = strlen(csv_pre_header);
         return;
     }
@@ -625,6 +626,16 @@ esp_err_t csv_file_open(const char *base_file_name) {
     csv_closing = false;
     char file_name[GPS_MAX_FILE_NAME_LENGTH];
 
+    if (!csv_buffer) {
+        csv_buffer = (char *)calloc(1, GPS_BUFFER_SIZE);
+        if (!csv_buffer) return ESP_ERR_NO_MEM;
+    }
+    if (!csv_pre_header) {
+        csv_pre_header = (char *)calloc(1, CSV_PRE_HEADER_SIZE);
+        if (!csv_pre_header) { free(csv_buffer); csv_buffer = NULL; return ESP_ERR_NO_MEM; }
+    }
+    buffer_offset = 0;
+
     csv_build_pre_header();
 
     // remember base name for later just-in-time open on somethingsomething
@@ -709,7 +720,7 @@ esp_err_t csv_write_data_to_buffer(wardriving_data_t *data) {
     if (!data)
         return ESP_ERR_INVALID_ARG;
 
-    if (!wd_wifi_dedupe || !wd_ble_dedupe || !wd_is_pow2(wd_dedupe_size)) {
+    if (!csv_buffer || !wd_wifi_dedupe || !wd_ble_dedupe || !wd_is_pow2(wd_dedupe_size)) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -1028,6 +1039,9 @@ void csv_file_close() {
     }
     buffer_offset = 0;
     csv_header_pending_uart = false;
+    if (csv_buffer) { free(csv_buffer); csv_buffer = NULL; }
+    if (csv_pre_header) { free(csv_pre_header); csv_pre_header = NULL; }
+    csv_pre_header_len = 0;
     if (csv_mutex != NULL) {
         vSemaphoreDelete(csv_mutex);
         csv_mutex = NULL;
@@ -1252,6 +1266,9 @@ void csv_file_close_fast() {
     /* Fast close for UI transitions: drop pending RAM buffer to avoid blocking I/O. */
     buffer_offset = 0;
     csv_header_pending_uart = false;
+    if (csv_buffer) { free(csv_buffer); csv_buffer = NULL; }
+    if (csv_pre_header) { free(csv_pre_header); csv_pre_header = NULL; }
+    csv_pre_header_len = 0;
 
     if (csv_file != NULL) {
         fclose(csv_file);
