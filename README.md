@@ -279,7 +279,7 @@ This comparison is based on GhostESP's feature set and publicly available source
 | BLE HID injection / DuckyScript over BLE |  | [x] |  |  |
 | BLE GATT honeypot / cloned peripheral |  |  | [x] | [x] |
 | BLE vulnerability profiling |  | [x] |  |  |
-| Flock / surveillance detector |  |  | [x] | [x] |
+| Flock / surveillance detector | [x] |  | [x] | [x] |
 | PN532 NFC support | [x] | [x] | [x] |  |
 | Chameleon Ultra support | [x] | [x] |  |  |
 | Chameleon Ultra BLE control | [x] | [x] |  |  |
