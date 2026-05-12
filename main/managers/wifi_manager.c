@@ -2083,6 +2083,25 @@ void wifi_manager_select_ap(int index) {
     if (err == ESP_OK) {
         // Update local selected_ap for compatibility with other functions
         ap_scan_get_selection(&selected_ap);
+        // Sync multi-AP selection so capture channel plan can lock to the AP's channel
+        if (selected_aps != NULL) {
+            free(selected_aps);
+            selected_aps = NULL;
+        }
+        wifi_ap_record_t *scan_aps = NULL;
+        int scan_count = 0;
+        ap_scan_get_selected(&scan_aps, &scan_count);
+        if (scan_count > 0 && scan_aps != NULL) {
+            selected_aps = malloc((size_t)scan_count * sizeof(wifi_ap_record_t));
+            if (selected_aps != NULL) {
+                memcpy(selected_aps, scan_aps, (size_t)scan_count * sizeof(wifi_ap_record_t));
+                selected_ap_count = scan_count;
+            } else {
+                selected_ap_count = 0;
+            }
+        } else {
+            selected_ap_count = 0;
+        }
     }
 }
 
