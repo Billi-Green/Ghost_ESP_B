@@ -15075,6 +15075,315 @@
       "source_commit": "510f89dfb780ba8e9ee84962baef1064481c5f99",
       "updated_at": "2026-04-13T04:34:53.680938+00:00"
     },
+    "53a7adbc8917640c2be697fe032c6cc7f07cc811": {
+      "configs": [
+        {
+          "channel": "stable",
+          "config": "ACE_C5",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/ACE_C5.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "ACE_C5.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "ACE_S3",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/ACE_S3.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "ACE_S3.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "AwokMini",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/AwokMini.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "AwokMini.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Banshee_C5",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Banshee_C5.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Banshee_C5.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Banshee_S3",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Banshee_S3.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Banshee_S3.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "CYD2432S028R",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/CYD2432S028R.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "CYD2432S028R.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "CYD2USB",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/CYD2USB.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "CYD2USB.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "CYD2USB2.4Inch",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/CYD2USB2.4Inch.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "CYD2USB2.4Inch.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "CYD2USB2.4Inch_C",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/CYD2USB2.4Inch_C.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "CYD2USB2.4Inch_C.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "CYDDualUSB",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/CYDDualUSB.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "CYDDualUSB.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "CYDMicroUSB",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/CYDMicroUSB.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "CYDMicroUSB.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "CardputerADV",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/CardputerADV.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "CardputerADV.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Crowtech_LCD",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Crowtech_LCD.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Crowtech_LCD.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "ESP32-S3-Cardputer",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/ESP32-S3-Cardputer.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "ESP32-S3-Cardputer.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "FeberisPro",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/FeberisPro.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "FeberisPro.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Flipper_JCMK_GPS",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Flipper_JCMK_GPS.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Flipper_JCMK_GPS.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "HeltecV3",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/HeltecV3.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "HeltecV3.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "JC3248W535EN_LCD",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/JC3248W535EN_LCD.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "JC3248W535EN_LCD.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "JCMK_DevBoardPro",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/JCMK_DevBoardPro.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "JCMK_DevBoardPro.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "LilyGo-S3TWatch-2020",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/LilyGo-S3TWatch-2020.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "LilyGo-S3TWatch-2020.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "LilyGo-T-Deck",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/LilyGo-T-Deck.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "LilyGo-T-Deck.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "LilyGo-TDisplayS3-Touch",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/LilyGo-TDisplayS3-Touch.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "LilyGo-TDisplayS3-Touch.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "LilyGo-TEmbedC1101",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/LilyGo-TEmbedC1101.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "LilyGo-TEmbedC1101.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Lolin_S3_Pro",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Lolin_S3_Pro.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Lolin_S3_Pro.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "MarauderV4_FlipperHub",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/MarauderV4_FlipperHub.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "MarauderV4_FlipperHub.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "MarauderV6_AwokDual",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/MarauderV6_AwokDual.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "MarauderV6_AwokDual.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "NM-CYD-C5",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/NM-CYD-C5.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "NM-CYD-C5.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Poltergeist",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Poltergeist.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Poltergeist.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "RabbitLabs_Minion",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/RabbitLabs_Minion.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "RabbitLabs_Minion.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Sunton_LCD",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Sunton_LCD.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Sunton_LCD.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "Waveshare_LCD",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/Waveshare_LCD.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "Waveshare_LCD.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "XIAO_C5",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/XIAO_C5.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "XIAO_C5.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "XIAO_S3",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/XIAO_S3.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "XIAO_S3.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "XIAO_S3_Sense",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/XIAO_S3_Sense.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "XIAO_S3_Sense.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "esp32-generic",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/esp32-generic.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "esp32-generic.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "esp32c3-generic",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/esp32c3-generic.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "esp32c3-generic.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "esp32c5-generic-v01",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/esp32c5-generic-v01.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "esp32c5-generic-v01.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "esp32c6-generic",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/esp32c6-generic.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "esp32c6-generic.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "esp32s2-generic",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/esp32s2-generic.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "esp32s2-generic.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "esp32s3-generic",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/esp32s3-generic.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "esp32s3-generic.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "esp32v5_awok",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/esp32v5_awok.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "esp32v5_awok.zip"
+        },
+        {
+          "channel": "stable",
+          "config": "ghostboard",
+          "download_url": "https://github.com/GhostESP-Revival/GhostESP/releases/download/v1.9.9/ghostboard.zip",
+          "release_tag": "v1.9.9",
+          "zip_name": "ghostboard.zip"
+        }
+      ],
+      "last_channel": "stable",
+      "last_tag": "v1.9.9",
+      "release_refs": [
+        {
+          "channel": "stable",
+          "tag": "v1.9.9",
+          "updated_at": "2026-05-12T10:21:12.353344+00:00"
+        }
+      ],
+      "source_commit": "53a7adbc8917640c2be697fe032c6cc7f07cc811",
+      "updated_at": "2026-05-12T10:21:12.353344+00:00"
+    },
     "55b2f4d3600949e8b9855512a39538a8d58b078a": {
       "configs": [
         {
@@ -43810,5 +44119,5 @@
   "generated_by": "compile_all.yml",
   "repository": "GhostESP-Revival/GhostESP",
   "schema_version": 2,
-  "updated_at": "2026-05-12T03:23:47.413583+00:00"
+  "updated_at": "2026-05-12T10:21:12.353344+00:00"
 }
