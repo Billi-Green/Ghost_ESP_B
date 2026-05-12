@@ -427,23 +427,26 @@ static void update_menu_item(bool slide_left) {
     lv_img_set_src(icon, menu_items[menu_index].icon);
     carousel_cache.icon = icon;
     carousel_cache.icon_src = menu_items[menu_index].icon;
-    int icon_size = btn_size * 0.38f;
-    if (icon_size < 28) icon_size = 28;
-    if (icon_size > 56) icon_size = 56;
-    lv_obj_set_size(icon, icon_size, icon_size);
-    lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
+    int icon_target = btn_size * 0.38f;
+    if (icon_target < 20) icon_target = 20;
+    if (icon_target > 56) icon_target = 56;
     lv_img_set_antialias(icon, false);
+    lv_coord_t img_w = menu_items[menu_index].icon->header.w;
+    lv_coord_t img_h = menu_items[menu_index].icon->header.h;
+    int zoom_w = (img_w > 0) ? (icon_target * 256) / img_w : 256;
+    int zoom_h = (img_h > 0) ? (icon_target * 256) / img_h : 256;
+    int zoom = LV_MIN(zoom_w, zoom_h);
+    if (zoom > 256) zoom = 256;
+    if (zoom < 64) zoom = 64;
+    lv_img_set_zoom(icon, zoom);
+    lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
     bool recolor_enabled = true;
     if (recolor_enabled) {
         lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
         lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
     }
     carousel_cache.icon_recolor_enabled = recolor_enabled;
-    int icon_x_offset = -3;
-    int icon_y_offset = -5;
-    int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
-    int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
-    lv_obj_set_pos(icon, x_pos, y_pos);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, 0);
 
     if (LV_HOR_RES > 150) {
         lv_obj_t *label = lv_label_create(current_item_obj);

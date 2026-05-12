@@ -77,7 +77,7 @@
 - Fixed TOCTOU race on nmea_hdl during CSV close by snapshotting handle
   before dereference
 - Fixed hop counter retaining stale state across start/stop cycles
-- Fixed WiFi raw capture (and other capture modes) always sniffing channel 1 instead of the selected AP's channel — wifi_manager_select_ap() now syncs the multi-AP selection array from ap_scan so apply_selected_ap_capture_channel_plan() can lock to the correct channel
+- Fixed WiFi raw capture (and other capture modes) always sniffing channel 1 instead of the selected AP's channel
 - Fixed CSV line truncation going undetected by validating line ends
   with newline after incremental build
 - Fixed count functions racing with close by guarding against csv_closing
