@@ -101,6 +101,7 @@ static const char *NVS_REDUCED_MOTION_KEY = "reduce_motion";
 static const char *NVS_INPUT_REPEAT_SPEED_KEY = "repeat_spd";
 static const char *NVS_HIGH_CONTRAST_KEY = "high_contrast";
 static const char *NVS_BOLD_TEXT_KEY = "bold_text";
+static const char *NVS_MENU_ITEM_BORDERS_KEY = "menu_itm_brd";
 
 static const char *TAG = "SettingsManager";
 
@@ -224,6 +225,7 @@ settings->epilepsy_warning_enabled = true;
   settings->input_repeat_speed = 1; // Normal (0=Slow, 1=Normal, 2=Fast)
   settings->high_contrast = false;
   settings->bold_text = false;
+  settings->menu_item_borders = false;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
   settings->status_idle_timeout_ms = 5000; // default 5s
@@ -715,7 +717,6 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->menu_rounded = (bool)value_u8;
   }
-  
   err = nvs_get_u8(nvsHandle, NVS_EPILEPSY_WARNING_KEY, &value_u8);
   if (err == ESP_OK) {
     settings->epilepsy_warning_enabled = (bool)value_u8;
@@ -742,6 +743,11 @@ void settings_load(FSettings *settings) {
   err = nvs_get_u8(nvsHandle, NVS_BOLD_TEXT_KEY, &value_u8);
   if (err == ESP_OK) {
     settings->bold_text = (bool)value_u8;
+  }
+
+  err = nvs_get_u8(nvsHandle, NVS_MENU_ITEM_BORDERS_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->menu_item_borders = (bool)value_u8;
   }
 }
 
@@ -1032,6 +1038,10 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_u8(nvsHandle, NVS_BOLD_TEXT_KEY, G_Settings.bold_text ? 1 : 0);
             key = NVS_BOLD_TEXT_KEY;
             break;
+        case SETTING_MENU_ITEM_BORDERS:
+            err = nvs_set_u8(nvsHandle, NVS_MENU_ITEM_BORDERS_KEY, G_Settings.menu_item_borders ? 1 : 0);
+            key = NVS_MENU_ITEM_BORDERS_KEY;
+            break;
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -1209,6 +1219,7 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_INPUT_REPEAT_SPEED_KEY, settings->input_repeat_speed);
     nvs_set_u8(nvsHandle, NVS_HIGH_CONTRAST_KEY, settings->high_contrast ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_BOLD_TEXT_KEY, settings->bold_text ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_MENU_ITEM_BORDERS_KEY, settings->menu_item_borders ? 1 : 0);
 
     esp_err_t err = nvs_commit(nvsHandle);
     if (err != ESP_OK) {
@@ -1917,4 +1928,14 @@ void settings_set_bold_text(FSettings *settings, bool enabled) {
 
 bool settings_get_bold_text(const FSettings *settings) {
   return settings ? settings->bold_text : false;
+}
+
+void settings_set_menu_item_borders(FSettings *settings, bool enabled) {
+  if (settings) {
+    settings->menu_item_borders = enabled;
+  }
+}
+
+bool settings_get_menu_item_borders(const FSettings *settings) {
+  return settings ? settings->menu_item_borders : true;
 }
