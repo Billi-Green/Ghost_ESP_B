@@ -782,7 +782,7 @@ static void load_current_settings_values(void);
 typedef struct {
     const char *label;
     int16_t setting_type;
-    const char **value_options;
+    const char * const *value_options;
     uint8_t value_count;
     int16_t current_value;
     uint8_t category_id;
