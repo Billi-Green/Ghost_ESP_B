@@ -1251,14 +1251,6 @@ menu "Ghost ESP Options"
             Enable Flipper-style native apps loaded from /mnt/ghostesp/apps.
             Apps are trusted native code loaded with Espressif's ELF loader.
 
-    config NATIVE_SD_APPS_UNSAFE_MODE
-        bool "Allow unsafe native app mode"
-        default y
-        depends on ENABLE_NATIVE_SD_APPS
-        help
-            Allow apps whose manifest requests unsafe mode to receive the unsafe
-            API extension. Unsafe apps are not sandboxed and can crash the device.
-
     config NATIVE_SD_APPS_REQUIRE_TARGET_MATCH
         bool "Require native app target match"
         default y

@@ -4,9 +4,11 @@
 #include "gui/screen_layout.h"
 #include "managers/plugin_api.h"
 #include "managers/plugin_loader.h"
+#include "managers/sd_card_manager.h"
 #include "managers/views/app_gallery_screen.h"
 #include "managers/views/error_popup.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +19,10 @@ static char s_pending_app_id[PLUGIN_APP_ID_MAX];
 static lv_obj_t *s_root = NULL;
 static lv_obj_t *s_title = NULL;
 static lv_obj_t *s_output = NULL;
+static lv_timer_t *s_tick_timer = NULL;
 static char s_output_buf[2048];
+
+#define PLUGIN_RUNNER_TICK_MS 100
 
 typedef enum {
     RUNNER_UI_SET_TITLE,
@@ -101,6 +106,28 @@ static void runner_api_toast(const char *message) {
     runner_post_ui(RUNNER_UI_TOAST, message);
 }
 
+static bool s_sd_eject_detected = false;
+
+static void plugin_runner_tick_cb(lv_timer_t *timer) {
+    (void)timer;
+    if (s_sd_eject_detected) return;
+    plugin_loaded_app_t *loaded = plugin_loader_current();
+    if (!loaded || !loaded->running || loaded->state != PLUGIN_APP_STATE_RUNNING) return;
+    if (!sd_card_manager.is_initialized) {
+        ESP_LOGW(TAG, "SD card removed while app running, stopping");
+        s_sd_eject_detected = true;
+        if (loaded->app && loaded->app->on_stop) loaded->app->on_stop();
+        loaded->running = false;
+        loaded->state = PLUGIN_APP_STATE_LOADED;
+        display_manager_switch_view(&apps_menu_view);
+        return;
+    }
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    uint32_t elapsed_ms = loaded->last_tick_ms ? now_ms - loaded->last_tick_ms : PLUGIN_RUNNER_TICK_MS;
+    loaded->last_tick_ms = now_ms;
+    plugin_loader_tick(loaded, elapsed_ms);
+}
+
 void plugin_runner_set_app(const char *app_id) {
     s_pending_app_id[0] = '\0';
     if (app_id) {
@@ -160,6 +187,11 @@ static void plugin_runner_event_handler(InputEvent *event) {
 }
 
 void plugin_runner_view_create(void) {
+    if (s_tick_timer) {
+        lv_timer_del(s_tick_timer);
+        s_tick_timer = NULL;
+    }
+    s_sd_eject_detected = false;
     s_output_buf[0] = '\0';
     s_root = gui_screen_create_root(NULL, "SD App", lv_color_hex(0x121212), LV_OPA_COVER);
     plugin_runner_view.root = s_root;
@@ -201,14 +233,22 @@ void plugin_runner_view_create(void) {
 
     const plugin_app_manifest_t *manifest = loaded->manifest;
     runner_set_title_now(manifest ? manifest->name : "SD App");
-    if (manifest && manifest->unsafe) {
-        runner_print_now("Unsafe native app loaded. This app can crash the device.\n\n");
-    }
     ESP_LOGI(TAG, "Starting app %s", s_pending_app_id);
     plugin_loader_start(loaded);
+    if (loaded->app && loaded->app->on_tick && !s_tick_timer) {
+        s_tick_timer = lv_timer_create(plugin_runner_tick_cb, PLUGIN_RUNNER_TICK_MS, NULL);
+    }
+}
+
+void plugin_runner_stop_tick(void) {
+    if (s_tick_timer) {
+        lv_timer_del(s_tick_timer);
+        s_tick_timer = NULL;
+    }
 }
 
 void plugin_runner_view_destroy(void) {
+    plugin_runner_stop_tick();
     plugin_loader_unload(plugin_loader_current());
     plugin_api_set_ui_hooks(NULL, NULL, NULL, NULL);
     lvgl_obj_del_safe(&s_root);

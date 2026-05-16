@@ -62,13 +62,16 @@ file(GLOB m5gfx_sources
     "${CMAKE_SOURCE_DIR}/components/M5GFX/src/lgfx/v1/platforms/esp32/*.cpp"
     "${CMAKE_SOURCE_DIR}/components/M5GFX/src/lgfx/v1/touch/*.cpp"
 )
-list(APPEND app_sources ${axs15231b_sources} ${image_sources})
+set(lgfx_miniz_source "${CMAKE_SOURCE_DIR}/components/M5GFX/src/lgfx/utility/lgfx_miniz.c")
+list(REMOVE_ITEM m5gfx_sources "${lgfx_miniz_source}")
+list(APPEND app_sources ${axs15231b_sources} ${image_sources} "${lgfx_miniz_source}")
 
 
-set(required_components bt nvs_flash driver esp_driver_gpio esp_driver_i2c esp_driver_uart esp_driver_rmt esp_driver_i2s esp_driver_usb_serial_jtag esp_http_server mdns cjson esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp_timer io_manager esp_eth espcoredump esp-tls)
+set(required_components bt nvs_flash driver esp_driver_gpio esp_driver_i2c esp_driver_uart esp_driver_rmt esp_driver_i2s esp_driver_usb_serial_jtag esp_http_server mdns cjson esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_adc esp_timer esp_app_format io_manager esp_eth espcoredump esp-tls)
 
 # Optionally add extra include directories
 set(extra_includes "")
+list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/M5GFX/src")
 if(CONFIG_USE_IO_EXPANDER)
     list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/io_manager")
 endif()

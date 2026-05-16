@@ -1,11 +1,20 @@
 {
   "id": "device_inspector",
   "name": "Device Inspector",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "GhostESP",
+  "description": "Comprehensive hardware and API test suite with responsive native UI. Tests WiFi, BLE, GPS, RGB, storage, canvas drawing, input events, and theme inspection.",
+  "category": "System",
   "entry": "ghostesp_device_inspector.so",
   "target": "esp32s3",
   "api_version": 1,
-  "permissions": ["ui", "storage", "commands", "wifi", "tasks", "lvgl"],
-  "unsafe": true
+  "manifest_version": 1,
+  "package_version": 1,
+  "data_version": 1,
+  "storage_scope": "app",
+  "accent_color": "#56B6F7",
+  "permissions": ["ui", "storage", "commands", "wifi", "ble", "rgb", "tasks", "lvgl"],
+  "memory_limit": 65536,
+  "stack_size": 8192,
+  "requires_psram": false
 }

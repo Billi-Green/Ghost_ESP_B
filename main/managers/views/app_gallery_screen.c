@@ -37,6 +37,8 @@ typedef struct {
     lv_color_t border_color;
     View *view;
     char plugin_id[PLUGIN_APP_ID_MAX];
+    char accent_color[PLUGIN_APP_ACCENT_COLOR_MAX];
+    bool disabled;
 } app_item_t;
 
 static const app_item_t builtin_app_items[] = {
@@ -92,6 +94,17 @@ static void refresh_apps_surface_colors(void) {
     apps_text_color = lv_color_hex(theme_palette_get_text(theme));
 }
 
+static bool parse_accent_color(const char *text, lv_color_t *out) {
+    if (!text || !out) return false;
+    if (text[0] == '#') text++;
+    if (strlen(text) != 6) return false;
+    char *end = NULL;
+    unsigned long value = strtoul(text, &end, 16);
+    if (!end || *end != '\0' || value > 0xFFFFFFUL) return false;
+    *out = lv_color_hex((uint32_t)value);
+    return true;
+}
+
 static void rebuild_app_items(void) {
     num_apps = 0;
     if (!ensure_app_items()) return;
@@ -107,10 +120,12 @@ static void rebuild_app_items(void) {
         const plugin_app_manifest_t *app = plugin_manager_get(i);
         if (!app) continue;
         app_items[num_apps].name = app->name;
-        app_items[num_apps].icon = &GESPAppGallery;
+        app_items[num_apps].icon = app->icon_dsc ? app->icon_dsc : &GESPAppGallery;
         app_items[num_apps].palette_index = 3;
         app_items[num_apps].view = &plugin_runner_view;
+        app_items[num_apps].disabled = app->quarantined;
         strncpy(app_items[num_apps].plugin_id, app->id, sizeof(app_items[num_apps].plugin_id) - 1);
+        strncpy(app_items[num_apps].accent_color, app->accent_color, sizeof(app_items[num_apps].accent_color) - 1);
         num_apps++;
     }
 
@@ -127,7 +142,9 @@ static void init_app_colors(void) {
     refresh_apps_surface_colors();
     for (int i = 0; i < num_apps; ++i) {
         int slot = i % THEME_PALETTE_SLOT_COUNT;
-        app_items[i].border_color = lv_color_hex(theme_palette_get(theme, slot));
+        if (!parse_accent_color(app_items[i].accent_color, &app_items[i].border_color)) {
+            app_items[i].border_color = lv_color_hex(theme_palette_get(theme, slot));
+        }
     }
 }
 
@@ -750,6 +767,11 @@ static void handle_app_item_selection(int item_index) {
     }
 
     ESP_LOGI(TAG, "Launching app: %s (index %d)\n", app_items[item_index].name, item_index);
+
+    if (app_items[item_index].disabled) {
+        ESP_LOGW(TAG, "App %s is quarantined and will not launch", app_items[item_index].name);
+        return;
+    }
 
     if (app_items[item_index].plugin_id[0] != '\0') {
         plugin_runner_set_app(app_items[item_index].plugin_id);

@@ -1,6 +1,8 @@
 #include "managers/plugin_manager.h"
 
 #include "managers/plugin_api.h"
+#include "managers/plugin_installer.h"
+#include "managers/plugin_icon.h"
 #include "managers/sd_card_manager.h"
 #include "cJSON.h"
 #include "esp_log.h"
@@ -10,16 +12,48 @@
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define PLUGIN_APPS_DIR "/mnt/ghostesp/apps"
+#define PLUGIN_PACKAGES_DIR "/mnt/ghostesp/packages"
+#define PLUGIN_APP_CACHE_DIR "/mnt/ghostesp/app_cache"
+#define PLUGIN_APPDATA_DIR "/mnt/ghostesp/appdata"
+#define PLUGIN_CACHE_META_FILE ".source"
 #define PLUGIN_MANIFEST_MAX_BYTES 8192
 
 static const char *TAG = "PluginManager";
 static plugin_app_manifest_t *s_apps = NULL;
 static int s_app_count = 0;
 static char s_last_error[128];
+
+static bool read_file_to_buffer(const char *path, char **out_buf);
+
+static bool write_app_state_by_id(const char *id, uint32_t failure_count, bool quarantined, bool launch_pending, const char *last_error) {
+    if (!id || id[0] == '\0') return false;
+    char state_path[PLUGIN_APP_PATH_MAX];
+    int n = snprintf(state_path, sizeof(state_path), "/mnt/ghostesp/appdata/%s/.state.json", id);
+    if (n <= 0 || (size_t)n >= sizeof(state_path)) return false;
+    FILE *f = fopen(state_path, "wb");
+    if (!f) return false;
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { fclose(f); return false; }
+    cJSON_AddNumberToObject(root, "launch_failure_count", failure_count);
+    cJSON_AddBoolToObject(root, "quarantined", quarantined);
+    cJSON_AddBoolToObject(root, "launch_pending", launch_pending);
+    cJSON_AddStringToObject(root, "last_error", last_error ? last_error : "");
+    char *json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+    if (json_str) {
+        fputs(json_str, f);
+        free(json_str);
+    }
+    fclose(f);
+    return true;
+}
 
 static void set_error(const char *fmt, const char *arg) {
     snprintf(s_last_error, sizeof(s_last_error), fmt, arg ? arg : "");
@@ -67,7 +101,163 @@ static uint32_t permission_from_string(const char *value) {
     if (strcmp(value, "badusb") == 0) return PLUGIN_PERMISSION_BADUSB;
     if (strcmp(value, "raw_gpio") == 0) return PLUGIN_PERMISSION_RAW_GPIO;
     if (strcmp(value, "lvgl") == 0) return PLUGIN_PERMISSION_LVGL;
+    if (strcmp(value, "rgb") == 0 || strcmp(value, "led") == 0 || strcmp(value, "leds") == 0) return PLUGIN_PERMISSION_RGB;
     return 0;
+}
+
+static bool has_gapp_extension(const char *name) {
+    if (!name) return false;
+    const char *dot = strrchr(name, '.');
+    return dot && strcasecmp(dot, ".gapp") == 0;
+}
+
+static uint32_t fnv1a32(const char *value) {
+    uint32_t hash = 2166136261u;
+    for (const unsigned char *p = (const unsigned char *)value; p && *p; ++p) {
+        hash ^= *p;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static void package_cache_name(char *dst, size_t dst_len, const char *source_path, const char *file_name) {
+    size_t out = 0;
+    if (!dst || dst_len == 0) return;
+    size_t suffix_len = 9;
+    size_t limit = dst_len > suffix_len ? dst_len - suffix_len : 1;
+    size_t stem_len = strlen(file_name);
+    const char *dot = strrchr(file_name, '.');
+    if (dot && strcasecmp(dot, ".gapp") == 0) stem_len = (size_t)(dot - file_name);
+    for (size_t i = 0; i < stem_len && out + 1 < limit; ++i) {
+        char c = file_name[i];
+        dst[out++] = (isalnum((unsigned char)c) || c == '_' || c == '-') ? c : '_';
+    }
+    if (out == 0 && out + 1 < limit) dst[out++] = '_';
+    if (dst_len >= suffix_len) {
+        snprintf(dst + out, dst_len - out, "-%08lx", (unsigned long)fnv1a32(source_path));
+    } else {
+        dst[out] = '\0';
+    }
+}
+
+static bool write_cache_source(const char *cache_path, const char *source_path, const struct stat *source_st) {
+    char meta_path[PLUGIN_APP_PATH_MAX];
+    if (!join_path(meta_path, sizeof(meta_path), cache_path, PLUGIN_CACHE_META_FILE)) return false;
+    FILE *f = fopen(meta_path, "wb");
+    if (!f) return false;
+    bool ok = fprintf(f, "%s\n%ld\n%ld\n", source_path, (long)source_st->st_size, (long)source_st->st_mtime) > 0;
+    fclose(f);
+    return ok;
+}
+
+static bool cache_source_current(const char *cache_path) {
+    char meta_path[PLUGIN_APP_PATH_MAX];
+    if (!join_path(meta_path, sizeof(meta_path), cache_path, PLUGIN_CACHE_META_FILE)) return false;
+    FILE *f = fopen(meta_path, "rb");
+    if (!f) return false;
+
+    char source_path[PLUGIN_APP_PATH_MAX];
+    long recorded_size = -1;
+    long recorded_mtime = -1;
+    bool ok = fgets(source_path, sizeof(source_path), f) != NULL &&
+              fscanf(f, "%ld\n%ld", &recorded_size, &recorded_mtime) == 2;
+    fclose(f);
+    if (!ok) return false;
+
+    source_path[strcspn(source_path, "\r\n")] = '\0';
+    struct stat st;
+    if (stat(source_path, &st) != 0 || S_ISDIR(st.st_mode)) return false;
+    return recorded_size == (long)st.st_size && recorded_mtime == (long)st.st_mtime;
+}
+
+static bool package_cache_current(const char *cache_path) {
+    if (!cache_source_current(cache_path)) return false;
+    char manifest_path[PLUGIN_APP_PATH_MAX];
+    struct stat st;
+    return join_path(manifest_path, sizeof(manifest_path), cache_path, "manifest.json") && stat(manifest_path, &st) == 0;
+}
+
+static void materialize_gapp_dir(const char *dir_path) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.' || !has_gapp_extension(entry->d_name)) continue;
+        char package_path[PLUGIN_APP_PATH_MAX];
+        if (!join_path(package_path, sizeof(package_path), dir_path, entry->d_name)) {
+            ESP_LOGW(TAG, "Skipping package with too-long path: %s", entry->d_name);
+            continue;
+        }
+        struct stat st;
+        if (stat(package_path, &st) != 0 || S_ISDIR(st.st_mode)) continue;
+
+        char cache_name[PLUGIN_APP_ID_MAX];
+        char cache_path[PLUGIN_APP_PATH_MAX];
+        package_cache_name(cache_name, sizeof(cache_name), package_path, entry->d_name);
+        if (!join_path(cache_path, sizeof(cache_path), PLUGIN_APP_CACHE_DIR, cache_name)) continue;
+
+        if (package_cache_current(cache_path)) continue;
+
+        esp_err_t err = plugin_installer_extract_gapp_to_dir(package_path, cache_path);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Package cache extraction failed for %s: %s", entry->d_name, plugin_installer_last_error());
+        } else if (!write_cache_source(cache_path, package_path, &st)) {
+            ESP_LOGW(TAG, "Failed to write package cache metadata for %s", entry->d_name);
+        }
+    }
+
+    closedir(dir);
+}
+
+static void plugin_manager_materialize_packages(void) {
+    sd_card_create_directory(PLUGIN_APPS_DIR);
+    sd_card_create_directory(PLUGIN_PACKAGES_DIR);
+    sd_card_create_directory(PLUGIN_APP_CACHE_DIR);
+    materialize_gapp_dir(PLUGIN_PACKAGES_DIR);
+    materialize_gapp_dir(PLUGIN_APPS_DIR);
+}
+
+static void ensure_appdata_dir(const char *app_id) {
+    if (!app_id || app_id[0] == '\0') return;
+    sd_card_create_directory(PLUGIN_APPDATA_DIR);
+    char appdata_path[PLUGIN_APP_PATH_MAX];
+    if (join_path(appdata_path, sizeof(appdata_path), PLUGIN_APPDATA_DIR, app_id)) {
+        sd_card_create_directory(appdata_path);
+    }
+}
+
+static uint32_t copy_json_u32(cJSON *root, const char *key, uint32_t fallback) {
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (!cJSON_IsNumber(item) || item->valueint < 0) return fallback;
+    return (uint32_t)item->valueint;
+}
+
+static bool copy_json_bool(cJSON *root, const char *key, bool fallback) {
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
+    return cJSON_IsBool(item) ? cJSON_IsTrue(item) : fallback;
+}
+
+static void load_app_state(plugin_app_manifest_t *out) {
+    if (!out || out->id[0] == '\0') return;
+    char state_path[PLUGIN_APP_PATH_MAX];
+    int n = snprintf(state_path, sizeof(state_path), "/mnt/ghostesp/appdata/%s/.state.json", out->id);
+    if (n <= 0 || (size_t)n >= sizeof(state_path)) return;
+
+    char *buf = NULL;
+    if (!read_file_to_buffer(state_path, &buf)) return;
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return;
+    out->launch_failure_count = copy_json_u32(root, "launch_failure_count", 0);
+    out->quarantined = copy_json_bool(root, "quarantined", false);
+    bool launch_pending = copy_json_bool(root, "launch_pending", false);
+    cJSON_Delete(root);
+    if (launch_pending) {
+        out->launch_failure_count++;
+        if (out->launch_failure_count >= PLUGIN_APP_QUARANTINE_THRESHOLD) out->quarantined = true;
+        write_app_state_by_id(out->id, out->launch_failure_count, out->quarantined, false, "app did not exit cleanly");
+    }
 }
 
 static bool read_file_to_buffer(const char *path, char **out_buf) {
@@ -113,11 +303,25 @@ static bool parse_manifest(const char *base_path, plugin_app_manifest_t *out) {
     copy_json_string(root, "author", out->author, sizeof(out->author));
     copy_json_string(root, "target", out->target, sizeof(out->target));
     copy_json_string(root, "entry", out->entry, sizeof(out->entry));
+    copy_json_string(root, "description", out->description, sizeof(out->description));
+    copy_json_string(root, "category", out->category, sizeof(out->category));
+    copy_json_string(root, "icon", out->icon, sizeof(out->icon));
+    copy_json_string(root, "icon_format", out->icon_format, sizeof(out->icon_format));
+    copy_json_string(root, "accent_color", out->accent_color, sizeof(out->accent_color));
+    copy_json_string(root, "storage_scope", out->storage_scope, sizeof(out->storage_scope));
+    copy_json_string(root, "firmware_min", out->firmware_min, sizeof(out->firmware_min));
+    copy_json_string(root, "firmware_max", out->firmware_max, sizeof(out->firmware_max));
+    copy_json_string(root, "checksum", out->checksum, sizeof(out->checksum));
 
-    cJSON *api_version = cJSON_GetObjectItemCaseSensitive(root, "api_version");
-    out->api_version = cJSON_IsNumber(api_version) ? (uint32_t)api_version->valueint : 0;
-    cJSON *unsafe = cJSON_GetObjectItemCaseSensitive(root, "unsafe");
-    out->unsafe = cJSON_IsBool(unsafe) && cJSON_IsTrue(unsafe);
+    out->api_version = copy_json_u32(root, "api_version", 0);
+    out->manifest_version = copy_json_u32(root, "manifest_version", PLUGIN_APP_MANIFEST_VERSION);
+    out->package_version = copy_json_u32(root, "package_version", 1);
+    out->data_version = copy_json_u32(root, "data_version", PLUGIN_APP_DATA_VERSION_DEFAULT);
+    out->memory_limit = copy_json_u32(root, "memory_limit", 0);
+    out->stack_size = copy_json_u32(root, "stack_size", 0);
+    out->icon_width = (uint16_t)copy_json_u32(root, "icon_width", 0);
+    out->icon_height = (uint16_t)copy_json_u32(root, "icon_height", 0);
+    out->requires_psram = copy_json_bool(root, "requires_psram", false);
 
     cJSON *permissions = cJSON_GetObjectItemCaseSensitive(root, "permissions");
     if (cJSON_IsArray(permissions)) {
@@ -130,16 +334,17 @@ static bool parse_manifest(const char *base_path, plugin_app_manifest_t *out) {
     cJSON_Delete(root);
 
     strncpy(out->base_path, base_path, sizeof(out->base_path) - 1);
-    if (!join_path(out->entry_path, sizeof(out->entry_path), base_path, out->entry)) {
-        snprintf(out->error, sizeof(out->error), "entry path too long");
-        return false;
+    if (out->storage_scope[0] == '\0') {
+        strncpy(out->storage_scope, PLUGIN_APP_STORAGE_SCOPE_APP, sizeof(out->storage_scope) - 1);
     }
-
+    out->allow_absolute_storage = true;
     if (!is_safe_id(out->id)) {
         snprintf(out->error, sizeof(out->error), "invalid id");
         return false;
     }
+    ensure_appdata_dir(out->id);
     if (out->name[0] == '\0') strncpy(out->name, out->id, sizeof(out->name) - 1);
+    load_app_state(out);
     if (out->entry[0] == '\0') {
         snprintf(out->error, sizeof(out->error), "missing entry");
         return false;
@@ -148,9 +353,35 @@ static bool parse_manifest(const char *base_path, plugin_app_manifest_t *out) {
         snprintf(out->error, sizeof(out->error), "invalid entry path");
         return false;
     }
+    if (!join_path(out->entry_path, sizeof(out->entry_path), base_path, out->entry)) {
+        snprintf(out->error, sizeof(out->error), "entry path too long");
+        return false;
+    }
     if (out->api_version != GHOSTESP_APP_API_VERSION) {
         snprintf(out->error, sizeof(out->error), "api version mismatch");
         return false;
+    }
+    if (out->manifest_version != PLUGIN_APP_MANIFEST_VERSION) {
+        snprintf(out->error, sizeof(out->error), "manifest version mismatch");
+        return false;
+    }
+    if (strcmp(out->storage_scope, PLUGIN_APP_STORAGE_SCOPE_APP) != 0 &&
+        strcmp(out->storage_scope, PLUGIN_APP_STORAGE_SCOPE_GHOSTESP) != 0) {
+        snprintf(out->error, sizeof(out->error), "invalid storage scope");
+        return false;
+    }
+    if (out->icon[0] != '\0') {
+        if (out->icon[0] == '/' || strstr(out->icon, "..") || strchr(out->icon, '\\')) {
+            snprintf(out->error, sizeof(out->error), "invalid icon path");
+            return false;
+        }
+        if (out->icon_format[0] == '\0') strncpy(out->icon_format, "rgb565", sizeof(out->icon_format) - 1);
+        if (strcmp(out->icon_format, "rgb565") == 0 && out->icon_width > 0 && out->icon_height > 0) {
+            char icon_path[PLUGIN_APP_PATH_MAX];
+            if (join_path(icon_path, sizeof(icon_path), base_path, out->icon)) {
+                out->icon_dsc = plugin_icon_load_rgb565(icon_path, out->icon_width, out->icon_height);
+            }
+        }
     }
     if (!sd_card_exists(out->entry_path)) {
         snprintf(out->error, sizeof(out->error), "entry missing");
@@ -189,6 +420,9 @@ bool plugin_manager_target_matches(const plugin_app_manifest_t *app) {
 int plugin_manager_reload(void) {
     plugin_manager_init();
     if (!s_apps) return -1;
+    for (int i = 0; i < s_app_count; ++i) {
+        plugin_icon_free(s_apps[i].icon_dsc);
+    }
     s_app_count = 0;
     memset(s_apps, 0, sizeof(*s_apps) * PLUGIN_APP_MAX_COUNT);
     s_last_error[0] = '\0';
@@ -203,34 +437,39 @@ int plugin_manager_reload(void) {
         mounted_here = true;
     }
 
-    DIR *dir = opendir(PLUGIN_APPS_DIR);
-    if (!dir) {
-        set_error("failed to open %s", PLUGIN_APPS_DIR);
-        if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
-        return -1;
-    }
+    plugin_manager_materialize_packages();
 
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && s_app_count < PLUGIN_APP_MAX_COUNT) {
-        if (entry->d_name[0] == '.') continue;
-        char base_path[PLUGIN_APP_PATH_MAX];
-        if (!join_path(base_path, sizeof(base_path), PLUGIN_APPS_DIR, entry->d_name)) {
-            ESP_LOGW(TAG, "Skipping app with too-long path: %s", entry->d_name);
+    const char *scan_dirs[] = { PLUGIN_APPS_DIR, PLUGIN_APP_CACHE_DIR };
+    for (size_t scan_i = 0; scan_i < sizeof(scan_dirs) / sizeof(scan_dirs[0]) && s_app_count < PLUGIN_APP_MAX_COUNT; ++scan_i) {
+        DIR *dir = opendir(scan_dirs[scan_i]);
+        if (!dir) {
+            if (scan_i == 0) set_error("failed to open %s", scan_dirs[scan_i]);
             continue;
         }
 
-        struct stat st;
-        if (stat(base_path, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL && s_app_count < PLUGIN_APP_MAX_COUNT) {
+            if (entry->d_name[0] == '.') continue;
+            char base_path[PLUGIN_APP_PATH_MAX];
+            if (!join_path(base_path, sizeof(base_path), scan_dirs[scan_i], entry->d_name)) {
+                ESP_LOGW(TAG, "Skipping app with too-long path: %s", entry->d_name);
+                continue;
+            }
 
-        plugin_app_manifest_t app = {0};
-        if (!parse_manifest(base_path, &app)) {
-            ESP_LOGW(TAG, "Skipping app at %s: %s", base_path, app.error);
-            continue;
+            struct stat st;
+            if (stat(base_path, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+            if (scan_i == 1 && !cache_source_current(base_path)) continue;
+
+            plugin_app_manifest_t app = {0};
+            if (!parse_manifest(base_path, &app)) {
+                ESP_LOGW(TAG, "Skipping app at %s: %s", base_path, app.error);
+                continue;
+            }
+            s_apps[s_app_count++] = app;
         }
-        s_apps[s_app_count++] = app;
-    }
 
-    closedir(dir);
+        closedir(dir);
+    }
     if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
     ESP_LOGI(TAG, "Loaded %d SD app manifests", s_app_count);
     return s_app_count;
