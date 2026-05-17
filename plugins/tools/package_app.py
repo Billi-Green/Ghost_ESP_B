@@ -39,20 +39,24 @@ def deflate_raw(data: bytes) -> bytes:
     return comp.compress(data) + comp.flush()
 
 
-def write_gapp(package_dir: pathlib.Path, out_path: pathlib.Path) -> None:
+def write_gapp(package_dir: pathlib.Path, out_path: pathlib.Path, no_compress: bool = False) -> None:
     files = sorted(path for path in package_dir.rglob("*") if path.is_file())
     with out_path.open("wb") as out:
         out.write(struct.pack("<4sHHI", b"GAPP", 1, 0, len(files)))
         for path in files:
             rel = path.relative_to(package_dir).as_posix().encode("utf-8")
             data = path.read_bytes()
-            compressed = deflate_raw(data)
-            if len(compressed) < len(data):
-                method = 1
-                payload = compressed
-            else:
+            if no_compress:
                 method = 0
                 payload = data
+            else:
+                compressed = deflate_raw(data)
+                if len(compressed) < len(data):
+                    method = 1
+                    payload = compressed
+                else:
+                    method = 0
+                    payload = data
             if len(rel) > 65535:
                 raise ValueError(f"archive path too long: {path}")
             out.write(struct.pack("<4sHHIIQ", b"FILE", method, len(rel), len(data), len(payload), checksum_bytes(data)))
@@ -66,6 +70,7 @@ def main() -> int:
     parser.add_argument("--out", default=None, help="Output dist directory")
     parser.add_argument("--gapp", action="store_true", help="Also create a compressed native .gapp archive")
     parser.add_argument("--zip", action="store_true", help="Deprecated alias for --gapp")
+    parser.add_argument("--no-compress", action="store_true", help="Disable compression (store all files raw)")
     args = parser.parse_args()
 
     app_dir = pathlib.Path(args.app_dir).resolve()
@@ -115,7 +120,7 @@ def main() -> int:
         gapp_path = dist_root / f"{app_id}-{version}-{target}.gapp"
         if gapp_path.exists():
             gapp_path.unlink()
-        write_gapp(package_dir, gapp_path)
+        write_gapp(package_dir, gapp_path, no_compress=args.no_compress)
         print(gapp_path)
     else:
         print(package_dir)

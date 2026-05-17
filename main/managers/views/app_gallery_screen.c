@@ -12,6 +12,8 @@
 #include "gui/screen_layout.h"
 #include "gui/design_tokens.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -25,6 +27,7 @@ static const char *TAG = "AppGalleryScreen";
 #define ANIM_DURATION 60 // ms, use the same value in both files
 
 static void select_app_item(int index, bool slide_left);
+static void apps_plugin_reload_done(void *arg);
 
 lv_obj_t *apps_container;
 static lv_obj_t *current_app_obj = NULL;
@@ -42,9 +45,24 @@ typedef struct {
 } app_item_t;
 
 static const app_item_t builtin_app_items[] = {
-    {"Visualizer", &rave, 4, {{0}}, &music_visualizer_view, ""},
-    {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view, ""},
-    {"Ghostchi", &ghost, 2, {{0}}, &ghostchi_view, ""},
+    {
+        .name = "Visualizer",
+        .icon = &rave,
+        .palette_index = 4,
+        .view = &music_visualizer_view,
+    },
+    {
+        .name = "Terminal",
+        .icon = &terminal_icon,
+        .palette_index = 5,
+        .view = &terminal_view,
+    },
+    {
+        .name = "Ghostchi",
+        .icon = &ghost,
+        .palette_index = 2,
+        .view = &ghostchi_view,
+    },
 };
 
 #define MAX_APP_GALLERY_ITEMS (PLUGIN_APP_MAX_COUNT + 4)
@@ -76,6 +94,7 @@ static lv_obj_t *grid_cards_container = NULL;
 static lv_color_t apps_bg_color;
 static lv_color_t apps_surface_color;
 static lv_color_t apps_text_color;
+static bool apps_plugin_reload_in_progress = false;
 
 static bool ensure_app_items(void) {
     if (app_items) return true;
@@ -105,16 +124,16 @@ static bool parse_accent_color(const char *text, lv_color_t *out) {
     return true;
 }
 
-static void rebuild_app_items(void) {
-    num_apps = 0;
-    if (!ensure_app_items()) return;
-    memset(app_items, 0, sizeof(*app_items) * MAX_APP_GALLERY_ITEMS);
+static void add_back_app_item(void) {
+    if (!app_items || num_apps >= MAX_APP_GALLERY_ITEMS) return;
+    app_items[num_apps].name = "Back";
+    app_items[num_apps].icon = NULL;
+    app_items[num_apps].palette_index = 0;
+    app_items[num_apps].view = NULL;
+    num_apps++;
+}
 
-    for (int i = 0; i < (int)(sizeof(builtin_app_items) / sizeof(builtin_app_items[0])) && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
-        app_items[num_apps++] = builtin_app_items[i];
-    }
-
-    plugin_manager_reload();
+static void add_loaded_plugin_app_items(void) {
     int plugin_count = plugin_manager_count();
     for (int i = 0; i < plugin_count && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
         const plugin_app_manifest_t *app = plugin_manager_get(i);
@@ -128,12 +147,35 @@ static void rebuild_app_items(void) {
         strncpy(app_items[num_apps].accent_color, app->accent_color, sizeof(app_items[num_apps].accent_color) - 1);
         num_apps++;
     }
+}
 
-    app_items[num_apps].name = "Back";
-    app_items[num_apps].icon = NULL;
-    app_items[num_apps].palette_index = 0;
-    app_items[num_apps].view = NULL;
-    num_apps++;
+static void rebuild_app_items(bool include_loaded_plugins) {
+    num_apps = 0;
+    if (!ensure_app_items()) return;
+    memset(app_items, 0, sizeof(*app_items) * MAX_APP_GALLERY_ITEMS);
+
+    for (int i = 0; i < (int)(sizeof(builtin_app_items) / sizeof(builtin_app_items[0])) && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
+        app_items[num_apps++] = builtin_app_items[i];
+    }
+
+    if (include_loaded_plugins) add_loaded_plugin_app_items();
+    add_back_app_item();
+}
+
+static void plugin_reload_task_fn(void *arg) {
+    (void)arg;
+    plugin_manager_reload();
+    display_manager_run_on_lvgl(apps_plugin_reload_done, NULL);
+    vTaskDelete(NULL);
+}
+
+static void start_plugin_reload_async(void) {
+    if (apps_plugin_reload_in_progress) return;
+    apps_plugin_reload_in_progress = true;
+    if (xTaskCreate(plugin_reload_task_fn, "plugin_reload", 16384, NULL, 5, NULL) != pdPASS) {
+        apps_plugin_reload_in_progress = false;
+        ESP_LOGE(TAG, "Failed to create plugin reload task");
+    }
 }
 
 // Use the same theme palettes as the main menu to color app borders
@@ -549,12 +591,60 @@ static void create_apps_list_menu(void) {
     }
 }
 
+static void move_app_nav_buttons_foreground(void) {
+    if (left_nav_btn) lv_obj_move_foreground(left_nav_btn);
+    if (right_nav_btn) lv_obj_move_foreground(right_nav_btn);
+}
+
+static void render_app_items(void) {
+    if (!apps_container || !lv_obj_is_valid(apps_container)) return;
+
+    lv_obj_clean(apps_container);
+    apps_cleanup_layout();
+    current_app_obj = NULL;
+    apps_carousel_cache = (apps_carousel_cache_t){0};
+    apps_is_animating = false;
+
+    if (selected_app_index < 0) selected_app_index = 0;
+    if (selected_app_index >= num_apps) selected_app_index = num_apps > 0 ? num_apps - 1 : 0;
+
+    if (apps_layout == APPS_LAYOUT_GRID_CARDS) {
+        create_apps_grid_menu();
+        select_app_item(selected_app_index, false);
+    } else if (apps_layout == APPS_LAYOUT_LIST) {
+        create_apps_list_menu();
+        select_app_item(selected_app_index, false);
+    } else {
+        update_app_item(false);
+    }
+
+    move_app_nav_buttons_foreground();
+}
+
+static void apps_plugin_reload_done(void *arg) {
+    (void)arg;
+    apps_plugin_reload_in_progress = false;
+
+    if (display_manager_get_current_view() != &apps_menu_view) return;
+    if (!apps_container || !lv_obj_is_valid(apps_container)) return;
+
+    bool selected_back = false;
+    if (app_items && selected_app_index >= 0 && selected_app_index < num_apps) {
+        selected_back = app_items[selected_app_index].view == NULL;
+    }
+
+    rebuild_app_items(true);
+    init_app_colors();
+    if (selected_back) selected_app_index = num_apps > 0 ? num_apps - 1 : 0;
+    render_app_items();
+}
+
 /**
  * @brief Creates the apps menu screen view
  */
  void apps_menu_create(void) {
     plugin_manager_init();
-    rebuild_app_items();
+    rebuild_app_items(false);
     refresh_apps_surface_colors();
     display_manager_fill_screen(apps_bg_color);
 
@@ -660,21 +750,7 @@ static void create_apps_list_menu(void) {
     }
 
     selected_app_index = 0;
-    if (apps_layout == APPS_LAYOUT_GRID_CARDS) {
-        create_apps_grid_menu();
-        select_app_item(selected_app_index, false);
-    } else if (apps_layout == APPS_LAYOUT_LIST) {
-        create_apps_list_menu();
-        select_app_item(selected_app_index, false);
-    } else {
-        update_app_item(false);
-    }
-    if (left_nav_btn) {
-        lv_obj_move_foreground(left_nav_btn);
-    }
-    if (right_nav_btn) {
-        lv_obj_move_foreground(right_nav_btn);
-    }
+    render_app_items();
 
     if (left_nav_btn) {
         lv_coord_t old_y = lv_obj_get_y(left_nav_btn);
@@ -686,6 +762,8 @@ static void create_apps_list_menu(void) {
         lv_obj_set_y(right_nav_btn, old_y + status_bar_height / 2);
         lv_obj_move_foreground(right_nav_btn);
     }
+
+    start_plugin_reload_async();
 }
 
 /**

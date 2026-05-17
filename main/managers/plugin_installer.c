@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <strings.h>
+#include <stdarg.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -28,8 +29,15 @@
 static const char *TAG = "PluginInstaller";
 static char s_last_error[PLUGIN_INSTALLER_ERROR_MAX];
 
-static esp_err_t set_error(esp_err_t err, const char *message) {
-    snprintf(s_last_error, sizeof(s_last_error), "%s", message ? message : "plugin install error");
+static esp_err_t set_error(esp_err_t err, const char *fmt, ...) {
+    if (fmt) {
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(s_last_error, sizeof(s_last_error), fmt, ap);
+        va_end(ap);
+    } else {
+        snprintf(s_last_error, sizeof(s_last_error), "plugin install error");
+    }
     ESP_LOGE(TAG, "%s", s_last_error);
     return err;
 }
@@ -105,7 +113,7 @@ static uint64_t rd64(const uint8_t *p) {
 }
 
 static uint64_t checksum_bytes(const uint8_t *data, size_t len) {
-    uint64_t hash = 1469598103934665603ULL;
+    uint64_t hash = 14695981039346656037ULL;
     for (size_t i = 0; i < len; ++i) {
         hash ^= data[i];
         hash *= 1099511628211ULL;
@@ -134,12 +142,13 @@ static bool read_exact(FILE *f, void *buf, size_t len) {
 
 static esp_err_t extract_gapp_to_dir(const char *gapp_path, const char *dst_dir) {
     FILE *f = fopen(gapp_path, "rb");
-    if (!f) return ESP_FAIL;
-    if (mkdir_recursive_for_dir(dst_dir) == false) { fclose(f); return ESP_FAIL; }
+    if (!f) { ESP_LOGE(TAG, "extract: cannot open %s", gapp_path); return ESP_FAIL; }
+    if (mkdir_recursive_for_dir(dst_dir) == false) { fclose(f); ESP_LOGE(TAG, "extract: cannot create dir %s", dst_dir); return ESP_FAIL; }
 
     uint8_t file_hdr[24];
     if (!read_exact(f, file_hdr, 12) || memcmp(file_hdr, "GAPP", 4) != 0 || rd16(file_hdr + 4) != 1) {
         fclose(f);
+        ESP_LOGE(TAG, "extract: invalid GAPP header in %s", gapp_path);
         return ESP_ERR_INVALID_VERSION;
     }
     uint32_t file_count = rd32(file_hdr + 8);
@@ -148,6 +157,7 @@ static esp_err_t extract_gapp_to_dir(const char *gapp_path, const char *dst_dir)
     for (uint32_t i = 0; i < file_count; ++i) {
         if (!read_exact(f, file_hdr, sizeof(file_hdr)) || memcmp(file_hdr, "FILE", 4) != 0) {
             fclose(f);
+            ESP_LOGE(TAG, "extract: bad FILE header at entry %u in %s", i, gapp_path);
             return ESP_FAIL;
         }
         uint16_t method = rd16(file_hdr + 4);
@@ -157,6 +167,7 @@ static esp_err_t extract_gapp_to_dir(const char *gapp_path, const char *dst_dir)
         uint64_t expected_checksum = rd64(file_hdr + 16);
         if (name_len == 0 || name_len >= PATH_MAX_LOCAL || uncomp_size > GAPP_MAX_FILE_BYTES || comp_size > GAPP_MAX_FILE_BYTES) {
             fclose(f);
+            ESP_LOGE(TAG, "extract: invalid sizes at entry %u (name=%u uncomp=%u comp=%u)", i, name_len, uncomp_size, comp_size);
             return ESP_ERR_INVALID_SIZE;
         }
 
@@ -172,19 +183,44 @@ static esp_err_t extract_gapp_to_dir(const char *gapp_path, const char *dst_dir)
         if (!comp) { fclose(f); return ESP_ERR_NO_MEM; }
         if (!read_exact(f, comp, comp_size)) { free(comp); fclose(f); return ESP_FAIL; }
 
+        uint64_t payload_hash = checksum_bytes(comp, comp_size);
+
         bool ok = false;
         if (method == GAPP_METHOD_STORE) {
-            ok = comp_size == uncomp_size && checksum_bytes(comp, comp_size) == expected_checksum && write_bytes_to_file(out_path, comp, comp_size);
+            uint64_t actual = checksum_bytes(comp, comp_size);
+            if (actual != expected_checksum) {
+                ESP_LOGE(TAG, "extract: checksum mismatch for %s (entry %u) expected=0x%016llx actual=0x%016llx", name, i, (unsigned long long)expected_checksum, (unsigned long long)actual);
+            } else if (comp_size != uncomp_size) {
+                ESP_LOGE(TAG, "extract: size mismatch for %s (entry %u)", name, i);
+            } else {
+                ok = write_bytes_to_file(out_path, comp, comp_size);
+                if (!ok) ESP_LOGE(TAG, "extract: write failed for %s", out_path);
+            }
         } else if (method == GAPP_METHOD_DEFLATE) {
             uint8_t *out = malloc(uncomp_size ? uncomp_size : 1);
             if (out) {
                 size_t out_len = lgfx_tinfl_decompress_mem_to_mem(out, uncomp_size, comp, comp_size, 0);
-                ok = out_len == uncomp_size && checksum_bytes(out, uncomp_size) == expected_checksum && write_bytes_to_file(out_path, out, uncomp_size);
+                if (out_len == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) {
+                    ESP_LOGE(TAG, "extract: decompression failed for %s (entry %u) comp_size=%u uncomp_size=%u payload_hash=0x%016llx", name, i, comp_size, uncomp_size, (unsigned long long)payload_hash);
+                } else if (out_len != uncomp_size) {
+                    ESP_LOGE(TAG, "extract: decompress size mismatch for %s (%u vs %u)", name, (unsigned)out_len, uncomp_size);
+                } else {
+                    uint64_t actual = checksum_bytes(out, uncomp_size);
+                    if (actual != expected_checksum) {
+                        ESP_LOGE(TAG, "extract: checksum mismatch (deflate) for %s (entry %u) expected=0x%016llx actual=0x%016llx payload_hash=0x%016llx", name, i, (unsigned long long)expected_checksum, (unsigned long long)actual, (unsigned long long)payload_hash);
+                    } else {
+                        ok = write_bytes_to_file(out_path, out, uncomp_size);
+                        if (!ok) ESP_LOGE(TAG, "extract: write failed for %s", out_path);
+                    }
+                }
                 free(out);
+            } else {
+                ESP_LOGE(TAG, "extract: malloc(%u) failed for decompression of %s", uncomp_size, name);
             }
         } else {
             free(comp);
             fclose(f);
+            ESP_LOGE(TAG, "extract: unknown method %u for %s (entry %u)", method, name, i);
             return ESP_ERR_NOT_SUPPORTED;
         }
         free(comp);
@@ -216,7 +252,7 @@ static bool checksum_file_hex(const char *path, char out_hex[17]) {
     FILE *f = fopen(path, "rb");
     if (!f) return false;
     unsigned char buf[512];
-    uint64_t hash = 1469598103934665603ULL;
+    uint64_t hash = 14695981039346656037ULL;
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
         for (size_t i = 0; i < n; ++i) {
@@ -409,7 +445,8 @@ esp_err_t plugin_installer_extract_gapp_to_dir(const char *gapp_path, const char
     esp_err_t err = extract_gapp_to_dir(gapp_path, dst_dir);
     if (err != ESP_OK) {
         remove_recursive(dst_dir);
-        return set_error(err, "failed to extract .gapp package");
+        const char *reason = esp_err_to_name(err);
+        return set_error(err, "failed to extract .gapp package: %s", reason);
     }
     return ESP_OK;
 }

@@ -389,7 +389,7 @@ static void plugin_api_ui_set_status(const char *text) {
 
 static void plugin_api_ui_show_popup_now(void *arg) {
     plugin_ui_popup_ctx_t *ctx = (plugin_ui_popup_ctx_t *)arg;
-    lv_obj_t *overlay = lv_obj_create(lv_scr_act());
+    lv_obj_t *overlay = lv_obj_create(plugin_ui_parent_or_current(NULL));
     if (!overlay) return;
     lv_obj_set_size(overlay, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), LV_PART_MAIN);

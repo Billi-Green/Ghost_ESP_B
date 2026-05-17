@@ -7,10 +7,10 @@ import sys
 
 
 def idf_command(*args: str) -> list[str]:
-    idf = shutil.which("idf.py") or "idf.py"
-    if pathlib.Path(idf).suffix.lower() == ".py":
+    idf = shutil.which("idf.py")
+    if idf and pathlib.Path(idf).suffix.lower() == ".py":
         return [sys.executable, idf, *args]
-    return [idf, *args]
+    return [idf or "idf.py", *args]
 
 
 def main() -> int:

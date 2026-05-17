@@ -119,7 +119,7 @@ static void pmenu_next_bridge(void *user_data) {
 
 static void opts_create_sync(void *arg) {
     wgt_str_res_t *ctx = (wgt_str_res_t *)arg;
-    ctx->result = options_view_create(lv_scr_act(), ctx->str1);
+    ctx->result = options_view_create(plugin_api_internal_parent_or_current(NULL), ctx->str1);
 }
 
 ghostesp_options_t plugin_api_ui_options_create(const char *title) {
@@ -220,7 +220,7 @@ void plugin_api_ui_options_destroy(ghostesp_options_t opts) {
 
 static void dv_create_sync(void *arg) {
     wgt_str_res_t *ctx = (wgt_str_res_t *)arg;
-    ctx->result = detail_view_create(lv_scr_act(), ctx->str1);
+    ctx->result = detail_view_create(plugin_api_internal_parent_or_current(NULL), ctx->str1);
 }
 
 ghostesp_detail_t plugin_api_ui_detail_create(const char *title) {
@@ -367,7 +367,7 @@ void plugin_api_ui_detail_destroy(ghostesp_detail_t dv) {
 
 static void popup_create_sync(void *arg) {
     wgt_wh_t *ctx = (wgt_wh_t *)arg;
-    ctx->handle = popup_create(lv_scr_act(), (int)ctx->w, (int)ctx->h);
+    ctx->handle = popup_create(plugin_api_internal_parent_or_current(NULL), (int)ctx->w, (int)ctx->h);
 }
 
 ghostesp_popup_t plugin_api_ui_popup_create(int32_t width, int32_t height) {

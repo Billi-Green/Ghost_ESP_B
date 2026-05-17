@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <math.h>
 
 #include "rom/ets_sys.h"
 
@@ -33,6 +34,8 @@ extern unsigned int __fixunsdfsi(double a);
 extern int __gtdf2(double a, double b);
 extern double __floatunsidf(unsigned int i);
 extern double __divdf3(double a, double b);
+extern float __divsf3(float a, float b);
+extern double __extendsfdf2(float a);
 
 static const char *TAG = "ELF_SYMBOL";
 
@@ -51,6 +54,7 @@ static const struct esp_elfsym g_esp_libc_elfsyms[] = {
     ESP_ELFSYM_EXPORT(strrchr),
     ESP_ELFSYM_EXPORT(strchr),
     ESP_ELFSYM_EXPORT(strcmp),
+    ESP_ELFSYM_EXPORT(strncmp),
     ESP_ELFSYM_EXPORT(strtol),
     ESP_ELFSYM_EXPORT(strcspn),
     ESP_ELFSYM_EXPORT(strncat),
@@ -114,6 +118,10 @@ static const struct esp_elfsym g_esp_libc_elfsyms[] = {
     ESP_ELFSYM_EXPORT(__gtdf2),
     ESP_ELFSYM_EXPORT(__floatunsidf),
     ESP_ELFSYM_EXPORT(__divdf3),
+    ESP_ELFSYM_EXPORT(__divsf3),
+    ESP_ELFSYM_EXPORT(__extendsfdf2),
+    ESP_ELFSYM_EXPORT(sinf),
+    ESP_ELFSYM_EXPORT(cosf),
 
     /* getopt.h */
 

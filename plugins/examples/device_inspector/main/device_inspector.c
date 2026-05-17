@@ -80,6 +80,10 @@ static void menu_select(void *user) {
 static void show_menu(void) {
     current_page = PAGE_MENU;
     if (!api->ui_options_create) return;
+    if (main_menu && api->ui_options_destroy) {
+        api->ui_options_destroy(main_menu);
+        main_menu = NULL;
+    }
     main_menu = api->ui_options_create("Device Inspector");
     if (!main_menu) return;
 
@@ -594,6 +598,10 @@ static void open_unsafe(void) {
 }
 
 static void open_page(page_id_t page) {
+    if (main_menu && api->ui_options_destroy) {
+        api->ui_options_destroy(main_menu);
+        main_menu = NULL;
+    }
     switch (page) {
         case PAGE_SYSTEM: open_system(); break;
         case PAGE_WIFI: open_wifi(); break;
@@ -625,6 +633,10 @@ static void inspector_stop(void) {
     if (detail_view && api->ui_detail_destroy) {
         api->ui_detail_destroy(detail_view);
         detail_view = NULL;
+    }
+    if (main_menu && api->ui_options_destroy) {
+        api->ui_options_destroy(main_menu);
+        main_menu = NULL;
     }
     if (popup && api->ui_popup_destroy) {
         api->ui_popup_destroy(popup);
@@ -678,6 +690,45 @@ static void inspector_input(const ghostesp_input_event_t *event) {
             return;
         }
         return;
+    }
+
+    if (current_page == PAGE_MENU && main_menu) {
+        if (event->type == GHOSTESP_INPUT_LEFT || event->type == GHOSTESP_INPUT_UP) {
+            if (api->ui_options_move_selection) api->ui_options_move_selection(main_menu, -1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_RIGHT || event->type == GHOSTESP_INPUT_DOWN) {
+            if (api->ui_options_move_selection) api->ui_options_move_selection(main_menu, 1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_SELECT) {
+            int idx = api->ui_options_get_selected ? api->ui_options_get_selected(main_menu) : -1;
+            menu_select((void *)(intptr_t)idx);
+            return;
+        }
+    }
+
+    if (detail_view) {
+        if (event->type == GHOSTESP_INPUT_LEFT || event->type == GHOSTESP_INPUT_UP) {
+            if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, -1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_RIGHT || event->type == GHOSTESP_INPUT_DOWN) {
+            if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, 1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_SELECT) {
+            int selected = api->ui_detail_get_selected ? api->ui_detail_get_selected(detail_view) : -1;
+            int count = api->ui_detail_get_count ? api->ui_detail_get_count(detail_view) : 0;
+            if (current_page == PAGE_RGB && selected == count - 2) {
+                rgb_stop(NULL);
+            } else if (current_page == PAGE_CANVAS && selected == count - 2) {
+                canvas_stop(NULL);
+            } else {
+                detail_back(NULL);
+            }
+            return;
+        }
     }
 
     if (event->type == GHOSTESP_INPUT_BACK) {

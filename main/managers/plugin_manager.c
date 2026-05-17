@@ -460,12 +460,15 @@ int plugin_manager_reload(void) {
             if (stat(base_path, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
             if (scan_i == 1 && !cache_source_current(base_path)) continue;
 
-            plugin_app_manifest_t app = {0};
-            if (!parse_manifest(base_path, &app)) {
-                ESP_LOGW(TAG, "Skipping app at %s: %s", base_path, app.error);
+            plugin_app_manifest_t *app = calloc(1, sizeof(*app));
+            if (!app) continue;
+            if (!parse_manifest(base_path, app)) {
+                ESP_LOGW(TAG, "Skipping app at %s: %s", base_path, app->error);
+                free(app);
                 continue;
             }
-            s_apps[s_app_count++] = app;
+            s_apps[s_app_count++] = *app;
+            free(app);
         }
 
         closedir(dir);
