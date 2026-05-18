@@ -1,5 +1,9 @@
 # Ghost ESP Changelog
 
+## Revival v2.0
+
+- Added toast notification system
+
 ## Revival v1.9.10
 
 - Fixed Settings submenus on Cardputer ADV showing shifted content from Network onward when Status Display is not compiled in
