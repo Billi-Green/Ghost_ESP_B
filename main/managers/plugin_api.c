@@ -12,7 +12,9 @@
 #include "managers/rgb_manager.h"
 #include "managers/sd_card_manager.h"
 #include "managers/subghz_remote_manager.h"
+#include "managers/views/app_gallery_screen.h"
 #include "managers/wifi_manager.h"
+#include "scans/ble/device_detect_scan.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -180,7 +182,7 @@ static void plugin_ui_delete_user_obj_event_cb(lv_event_t *event) {
 }
 
 static bool plugin_api_path_is_ghostesp_absolute(const char *path) {
-    return path && strncmp(path, "/mnt/ghostesp/", 14) == 0;
+    return path && (strcmp(path, "/mnt/ghostesp") == 0 || strncmp(path, "/mnt/ghostesp/", 14) == 0);
 }
 
 static bool plugin_api_absolute_storage_allowed(const char *path) {
@@ -801,6 +803,60 @@ static bool plugin_api_wifi_scan_get_ap(uint16_t index, ghostesp_wifi_ap_info_t 
     return true;
 }
 
+static void plugin_api_app_exit(void) {
+    if (!s_api_active) return;
+    display_manager_switch_view(&apps_menu_view);
+}
+
+static void plugin_api_ble_detect_start(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE)) return;
+    ble_device_detect_start();
+}
+
+static void plugin_api_ble_detect_stop(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE)) return;
+    ble_device_detect_stop();
+}
+
+static bool plugin_api_ble_detect_is_active(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE)) return false;
+    return ble_device_detect_is_active();
+}
+
+static int plugin_api_ble_detect_count(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE)) return 0;
+    return ble_device_detect_get_count();
+}
+
+static bool plugin_api_ble_detect_get_device(int index, ghostesp_ble_detect_info_t *out) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE) || !out) return false;
+    BLEDetectDeviceInfo info;
+    if (ble_device_detect_get_device(index, &info) != 0) return false;
+    memset(out, 0, sizeof(*out));
+    out->type = (uint8_t)info.type;
+    memcpy(out->mac, info.mac, sizeof(out->mac));
+    out->rssi = info.rssi;
+    strncpy(out->name, info.name, sizeof(out->name) - 1);
+    strncpy(out->subtype, info.subtype, sizeof(out->subtype) - 1);
+    out->tracking = info.tracking;
+    return true;
+}
+
+static const char *plugin_api_ble_detect_type_name(uint8_t type) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE)) return "Unknown";
+    return ble_device_detect_type_to_string((BLEDetectDeviceType)type);
+}
+
+static bool plugin_api_ble_detect_start_tracking(int index) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE)) return false;
+    return ble_device_detect_start_tracking(index);
+}
+
+static bool plugin_api_ble_detect_start_airtag_spoof(int index) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_BLE)) return false;
+    return ble_device_detect_start_airtag_spoof(index);
+}
+
 static bool plugin_api_rgb_set_all(uint8_t red, uint8_t green, uint8_t blue) {
     if (!plugin_api_has_permission(PLUGIN_PERMISSION_RGB)) return false;
     return rgb_manager_set_color(&rgb_manager, -1, red, green, blue, false) == ESP_OK;
@@ -891,6 +947,9 @@ extern void plugin_api_ui_detail_set_selected(ghostesp_detail_t dv, int index);
 extern void plugin_api_ui_detail_move_selection(ghostesp_detail_t dv, int delta);
 extern int plugin_api_ui_detail_get_selected(ghostesp_detail_t dv);
 extern int plugin_api_ui_detail_get_count(ghostesp_detail_t dv);
+extern bool plugin_api_ui_detail_step_up(ghostesp_detail_t dv);
+extern bool plugin_api_ui_detail_step_down(ghostesp_detail_t dv);
+extern void plugin_api_ui_detail_activate_selected(ghostesp_detail_t dv);
 extern void plugin_api_ui_detail_clear(ghostesp_detail_t dv);
 extern void plugin_api_ui_detail_destroy(ghostesp_detail_t dv);
 
@@ -956,6 +1015,7 @@ static ghostesp_api_t s_api = {
     .toast = plugin_api_toast,
     .ui_show_text = plugin_api_ui_show_text,
     .command_exec = plugin_api_command_exec,
+    .app_exit = plugin_api_app_exit,
     .storage_exists = plugin_api_storage_exists,
     .storage_read = plugin_api_storage_read,
     .storage_write = plugin_api_storage_write,
@@ -1004,6 +1064,14 @@ static ghostesp_api_t s_api = {
     .ble_stop_scan = plugin_api_ble_stop_scan,
     .ble_device_count = plugin_api_ble_device_count,
     .ble_get_device = plugin_api_ble_get_device,
+    .ble_detect_start = plugin_api_ble_detect_start,
+    .ble_detect_stop = plugin_api_ble_detect_stop,
+    .ble_detect_is_active = plugin_api_ble_detect_is_active,
+    .ble_detect_count = plugin_api_ble_detect_count,
+    .ble_detect_get_device = plugin_api_ble_detect_get_device,
+    .ble_detect_type_name = plugin_api_ble_detect_type_name,
+    .ble_detect_start_tracking = plugin_api_ble_detect_start_tracking,
+    .ble_detect_start_airtag_spoof = plugin_api_ble_detect_start_airtag_spoof,
     .subghz_is_available = plugin_api_subghz_is_available,
     .subghz_load_snapshot = plugin_api_subghz_load_snapshot,
     .subghz_transmit_loaded = plugin_api_subghz_transmit_loaded,
@@ -1068,6 +1136,9 @@ static ghostesp_api_t s_api = {
     .ui_detail_move_selection = plugin_api_ui_detail_move_selection,
     .ui_detail_get_selected = plugin_api_ui_detail_get_selected,
     .ui_detail_get_count = plugin_api_ui_detail_get_count,
+    .ui_detail_step_up = plugin_api_ui_detail_step_up,
+    .ui_detail_step_down = plugin_api_ui_detail_step_down,
+    .ui_detail_activate_selected = plugin_api_ui_detail_activate_selected,
     .ui_detail_clear = plugin_api_ui_detail_clear,
     .ui_detail_destroy = plugin_api_ui_detail_destroy,
     .ui_popup_create = plugin_api_ui_popup_create,

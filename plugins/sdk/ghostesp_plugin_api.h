@@ -49,6 +49,15 @@ typedef struct {
     char name[32];
 } ghostesp_ble_device_info_t;
 
+typedef struct {
+    uint8_t type;
+    uint8_t mac[6];
+    int8_t rssi;
+    char name[32];
+    char subtype[20];
+    bool tracking;
+} ghostesp_ble_detect_info_t;
+
 typedef void *ghostesp_ui_obj_t;
 typedef void (*ghostesp_ui_button_cb_t)(void *user);
 
@@ -301,6 +310,19 @@ typedef struct ghostesp_api {
     void (*ui_input_dialog)(const char *title, const char *default_text, ghostesp_input_submit_cb_t on_submit, void *user);
     int32_t (*ui_screen_get_width)(void);
     int32_t (*ui_screen_get_height)(void);
+
+    void (*ble_detect_start)(void);
+    void (*ble_detect_stop)(void);
+    bool (*ble_detect_is_active)(void);
+    int (*ble_detect_count)(void);
+    bool (*ble_detect_get_device)(int index, ghostesp_ble_detect_info_t *out);
+    const char *(*ble_detect_type_name)(uint8_t type);
+    bool (*ble_detect_start_tracking)(int index);
+    bool (*ble_detect_start_airtag_spoof)(int index);
+    bool (*ui_detail_step_up)(ghostesp_detail_t dv);
+    bool (*ui_detail_step_down)(ghostesp_detail_t dv);
+    void (*ui_detail_activate_selected)(ghostesp_detail_t dv);
+    void (*app_exit)(void);
 } ghostesp_api_t;
 
 #define GHOSTESP_API_STRUCT_SIZE_V1 sizeof(ghostesp_api_t)

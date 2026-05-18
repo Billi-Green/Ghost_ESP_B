@@ -250,13 +250,13 @@ static void load_app_state(plugin_app_manifest_t *out) {
     free(buf);
     if (!root) return;
     out->launch_failure_count = copy_json_u32(root, "launch_failure_count", 0);
-    out->quarantined = copy_json_bool(root, "quarantined", false);
     bool launch_pending = copy_json_bool(root, "launch_pending", false);
+    bool was_quarantined = copy_json_bool(root, "quarantined", false);
     cJSON_Delete(root);
-    if (launch_pending) {
-        out->launch_failure_count++;
-        if (out->launch_failure_count >= PLUGIN_APP_QUARANTINE_THRESHOLD) out->quarantined = true;
-        write_app_state_by_id(out->id, out->launch_failure_count, out->quarantined, false, "app did not exit cleanly");
+
+    out->quarantined = false;
+    if (launch_pending || was_quarantined) {
+        write_app_state_by_id(out->id, out->launch_failure_count, false, false, "");
     }
 }
 
@@ -375,11 +375,15 @@ static bool parse_manifest(const char *base_path, plugin_app_manifest_t *out) {
             snprintf(out->error, sizeof(out->error), "invalid icon path");
             return false;
         }
-        if (out->icon_format[0] == '\0') strncpy(out->icon_format, "rgb565", sizeof(out->icon_format) - 1);
-        if (strcmp(out->icon_format, "rgb565") == 0 && out->icon_width > 0 && out->icon_height > 0) {
+        if (out->icon_format[0] == '\0') strncpy(out->icon_format, "rgb565a8", sizeof(out->icon_format) - 1);
+        if (out->icon_width > 0 && out->icon_height > 0) {
             char icon_path[PLUGIN_APP_PATH_MAX];
             if (join_path(icon_path, sizeof(icon_path), base_path, out->icon)) {
-                out->icon_dsc = plugin_icon_load_rgb565(icon_path, out->icon_width, out->icon_height);
+                if (strcmp(out->icon_format, "rgb565a8") == 0) {
+                    out->icon_dsc = plugin_icon_load_rgb565a8(icon_path, out->icon_width, out->icon_height);
+                } else {
+                    out->icon_dsc = plugin_icon_load_rgb565(icon_path, out->icon_width, out->icon_height);
+                }
             }
         }
     }
@@ -494,6 +498,31 @@ const plugin_app_manifest_t *plugin_manager_find(const char *id) {
         if (strcmp(s_apps[i].id, id) == 0) return &s_apps[i];
     }
     return NULL;
+}
+
+bool plugin_manager_reset_app_state(const char *id) {
+    if (!is_safe_id(id)) {
+        set_error("invalid app id: %s", id);
+        return false;
+    }
+
+    if (!write_app_state_by_id(id, 0, false, false, "")) {
+        set_error("failed to reset app state: %s", id);
+        return false;
+    }
+
+    if (s_apps) {
+        for (int i = 0; i < s_app_count; ++i) {
+            if (strcmp(s_apps[i].id, id) == 0) {
+                s_apps[i].launch_failure_count = 0;
+                s_apps[i].quarantined = false;
+                break;
+            }
+        }
+    }
+
+    s_last_error[0] = '\0';
+    return true;
 }
 
 const char *plugin_manager_last_error(void) {

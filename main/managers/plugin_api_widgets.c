@@ -345,6 +345,42 @@ int plugin_api_ui_detail_get_count(ghostesp_detail_t dv) {
     return plugin_api_internal_run_sync(dv_get_count_sync, &ctx) ? ctx.result : 0;
 }
 
+static void dv_step_up_sync(void *arg) {
+    wgt_int_t *ctx = (wgt_int_t *)arg;
+    ctx->result = detail_view_step_up((detail_view_t *)ctx->handle) ? 1 : 0;
+}
+
+bool plugin_api_ui_detail_step_up(ghostesp_detail_t dv) {
+    if (!plugin_api_internal_has_ui_permission()) return false;
+    if (!dv) return false;
+    wgt_int_t ctx = { .handle = dv };
+    return plugin_api_internal_run_sync(dv_step_up_sync, &ctx) && ctx.result != 0;
+}
+
+static void dv_step_down_sync(void *arg) {
+    wgt_int_t *ctx = (wgt_int_t *)arg;
+    ctx->result = detail_view_step_down((detail_view_t *)ctx->handle) ? 1 : 0;
+}
+
+bool plugin_api_ui_detail_step_down(ghostesp_detail_t dv) {
+    if (!plugin_api_internal_has_ui_permission()) return false;
+    if (!dv) return false;
+    wgt_int_t ctx = { .handle = dv };
+    return plugin_api_internal_run_sync(dv_step_down_sync, &ctx) && ctx.result != 0;
+}
+
+static void dv_activate_selected_sync(void *arg) {
+    detail_view_t *dv = (detail_view_t *)arg;
+    lv_obj_t *obj = detail_view_get_selected_obj(dv);
+    if (obj && lv_obj_is_valid(obj)) lv_event_send(obj, LV_EVENT_CLICKED, NULL);
+}
+
+void plugin_api_ui_detail_activate_selected(ghostesp_detail_t dv) {
+    if (!plugin_api_internal_has_ui_permission()) return;
+    if (!dv) return;
+    plugin_api_internal_run_sync(dv_activate_selected_sync, dv);
+}
+
 static void dv_clear_sync(void *arg) {
     detail_view_clear((detail_view_t *)arg);
 }

@@ -76,11 +76,11 @@ static void write_app_state(const plugin_app_manifest_t *manifest, uint32_t fail
 static void record_app_failure(const plugin_app_manifest_t *manifest, const char *error) {
     if (!manifest) return;
     uint32_t count = read_state_failure_count(manifest) + 1;
-    write_app_state(manifest, count, count >= PLUGIN_APP_QUARANTINE_THRESHOLD, false, error);
+    write_app_state(manifest, count, false, false, error);
 }
 
 static void record_app_running(const plugin_app_manifest_t *manifest) {
-    if (manifest) write_app_state(manifest, read_state_failure_count(manifest), false, true, "");
+    if (manifest) write_app_state(manifest, read_state_failure_count(manifest), false, false, "");
 }
 
 static void record_app_clean_exit(const plugin_app_manifest_t *manifest) {
@@ -130,7 +130,6 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
 
     const plugin_app_manifest_t *manifest = plugin_manager_find(id);
     if (!manifest) return fail_err(ESP_ERR_NOT_FOUND, "app not found");
-    if (manifest->quarantined) return fail_err(ESP_ERR_INVALID_STATE, "app quarantined after repeated failures");
     if (!plugin_manager_target_supported()) return fail_err(ESP_ERR_NOT_SUPPORTED, "native SD apps disabled or unsupported target");
 #if CONFIG_NATIVE_SD_APPS_REQUIRE_TARGET_MATCH
     if (!plugin_manager_target_matches(manifest)) return fail_err(ESP_ERR_NOT_SUPPORTED, "app target does not match firmware target");

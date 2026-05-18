@@ -9504,6 +9504,7 @@ static void handle_apps_cmd(int argc, char **argv) {
         glog("apps reload\n");
         glog("apps info <id>\n");
         glog("apps run <id>\n");
+        glog("apps reset <id>\n");
         glog("apps stop\n");
         return;
     }
@@ -9525,8 +9526,10 @@ static void handle_apps_cmd(int argc, char **argv) {
         for (int i = 0; i < count; ++i) {
             const plugin_app_manifest_t *app = plugin_manager_get(i);
             if (!app) continue;
-            glog("  %s - %s v%s [%s]%s\n", app->id, app->name, app->version[0] ? app->version : "?",
-                 app->target[0] ? app->target : "any");
+            glog("  %s - %s v%s [%s]%s%s\n", app->id, app->name, app->version[0] ? app->version : "?",
+                 app->target[0] ? app->target : "any",
+                 app->quarantined ? " [quarantined]" : "",
+                 app->launch_failure_count > 0 ? " [failures]" : "");
         }
         return;
     }
@@ -9542,9 +9545,25 @@ static void handle_apps_cmd(int argc, char **argv) {
             glog("app not found: %s\n", argv[2]);
             return;
         }
-        glog("id: %s\nname: %s\nversion: %s\nauthor: %s\ntarget: %s\nentry: %s\napi: %u\n",
+        glog("id: %s\nname: %s\nversion: %s\nauthor: %s\ntarget: %s\nentry: %s\napi: %u\nfailures: %lu\nquarantined: %s\n",
              app->id, app->name, app->version, app->author, app->target, app->entry,
-             (unsigned)app->api_version);
+              (unsigned)app->api_version,
+              (unsigned long)app->launch_failure_count,
+              app->quarantined ? "yes" : "no");
+        return;
+    }
+
+    if (strcmp(argv[1], "reset") == 0 || strcmp(argv[1], "unquarantine") == 0) {
+        if (argc < 3) {
+            glog("Usage: apps reset <id>\n");
+            return;
+        }
+        if (!plugin_manager_reset_app_state(argv[2])) {
+            glog("apps reset failed: %s\n", plugin_manager_last_error());
+            return;
+        }
+        plugin_manager_reload();
+        glog("app state reset: %s\n", argv[2]);
         return;
     }
 

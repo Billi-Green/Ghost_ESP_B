@@ -4,7 +4,40 @@ import shutil
 import sys
 
 from .config import load_manifest
-from .utils import checksum_file, copy_if_exists, write_gapp
+from .icon import png_to_rgb565, png_to_rgb565a8
+from .utils import checksum_bytes, checksum_file, copy_if_exists, write_gapp
+
+
+def _write_icon_from_source(app_path: pathlib.Path, package_dir: pathlib.Path, manifest: dict, checksums: dict) -> bool:
+    icon_source = manifest.get("icon_source")
+    icon = manifest.get("icon")
+    if not icon_source:
+        return False
+    if not icon:
+        raise ValueError("manifest icon_source requires icon output path")
+    width = int(manifest.get("icon_width", 0))
+    height = int(manifest.get("icon_height", 0))
+    if width <= 0 or height <= 0:
+        raise ValueError("manifest icon_source requires icon_width and icon_height")
+    fmt = manifest.get("icon_format", "rgb565a8")
+    src = app_path / icon_source
+    if not src.exists():
+        return False
+    if src.suffix.lower() != ".png":
+        raise ValueError(f"unsupported icon_source format: {src}")
+
+    if fmt == "rgb565a8":
+        data = png_to_rgb565a8(src, width, height)
+    elif fmt == "rgb565":
+        data = png_to_rgb565(src, width, height)
+    else:
+        raise ValueError(f"unsupported icon_format for packing: {fmt}")
+
+    dst = package_dir / icon
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(data)
+    checksums[icon.replace("\\", "/")] = f"{checksum_bytes(data):016x}"
+    return True
 
 
 def package_app(
@@ -34,10 +67,12 @@ def package_app(
     copy_if_exists(app_path / "manifest.json", package_dir / "manifest.json", checksums, "manifest.json")
     copy_if_exists(so_path, package_dir / entry, checksums, entry)
 
-    for key in ("icon",):
-        rel = manifest.get(key)
-        if rel:
-            copy_if_exists(app_path / rel, package_dir / rel, checksums, rel)
+    packed_icon = _write_icon_from_source(app_path, package_dir, manifest, checksums)
+    if not packed_icon:
+        for key in ("icon",):
+            rel = manifest.get(key)
+            if rel:
+                copy_if_exists(app_path / rel, package_dir / rel, checksums, rel)
 
     for rel in manifest.get("assets", []):
         src = app_path / rel

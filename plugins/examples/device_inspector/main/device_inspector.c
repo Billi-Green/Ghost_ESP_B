@@ -26,6 +26,8 @@ typedef enum {
 
 static page_id_t current_page;
 static ghostesp_options_t main_menu;
+static ghostesp_options_t storage_menu;
+static ghostesp_options_t ble_menu;
 static ghostesp_detail_t detail_view;
 static ghostesp_popup_t popup;
 static ghostesp_scan_t scan_status;
@@ -33,9 +35,17 @@ static ghostesp_ui_timer_t rgb_timer;
 static int rgb_step;
 static ghostesp_ui_obj_t canvas_obj;
 static int canvas_tick;
+static char storage_path[256] = "/mnt/ghostesp";
+static ghostesp_storage_entry_t storage_entries[32];
+static int storage_count;
+static ghostesp_ble_detect_info_t ble_entries[32];
+static int ble_count;
+static int ble_detail_index = -1;
 
 static void show_menu(void);
 static void open_page(page_id_t page);
+static void open_storage(void);
+static void open_ble(void);
 
 #define ARRAY_COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
@@ -45,6 +55,29 @@ static void detail_back(void *user) {
         detail_view = NULL;
     }
     show_menu();
+}
+
+static void storage_detail_back(void *user) {
+    if (detail_view && api->ui_detail_destroy) {
+        api->ui_detail_destroy(detail_view);
+        detail_view = NULL;
+    }
+    open_storage();
+}
+
+static void destroy_subviews(void) {
+    if (detail_view && api->ui_detail_destroy) {
+        api->ui_detail_destroy(detail_view);
+        detail_view = NULL;
+    }
+    if (storage_menu && api->ui_options_destroy) {
+        api->ui_options_destroy(storage_menu);
+        storage_menu = NULL;
+    }
+    if (ble_menu && api->ui_options_destroy) {
+        api->ui_options_destroy(ble_menu);
+        ble_menu = NULL;
+    }
 }
 
 static void popup_close(void *user) {
@@ -65,6 +98,19 @@ static void show_popup(const char *title, const char *body) {
     api->ui_popup_show(popup);
 }
 
+static void detail_add_section(const char *text) {
+    if (api->ui_detail_add_info) api->ui_detail_add_info(detail_view, text, "");
+}
+
+static void detail_add_summary(const char *text) {
+    if (api->ui_detail_add_info) api->ui_detail_add_info(detail_view, "Summary", text);
+}
+
+static void exit_app(void *user) {
+    (void)user;
+    if (api->app_exit) api->app_exit();
+}
+
 static void menu_select(void *user) {
     int idx = (int)(intptr_t)user;
     page_id_t pages[] = {
@@ -74,12 +120,15 @@ static void menu_select(void *user) {
     };
     if (idx >= 0 && idx < ARRAY_COUNT(pages)) {
         open_page(pages[idx]);
+    } else if (idx == ARRAY_COUNT(pages)) {
+        exit_app(NULL);
     }
 }
 
 static void show_menu(void) {
     current_page = PAGE_MENU;
     if (!api->ui_options_create) return;
+    destroy_subviews();
     if (main_menu && api->ui_options_destroy) {
         api->ui_options_destroy(main_menu);
         main_menu = NULL;
@@ -99,7 +148,7 @@ static void show_menu(void) {
     api->ui_options_add_item(main_menu, "Input Tester", menu_select, (void *)(intptr_t)9);
     api->ui_options_add_item(main_menu, "Theme Colors", menu_select, (void *)(intptr_t)10);
     api->ui_options_add_item(main_menu, "Unsafe Probe", menu_select, (void *)(intptr_t)11);
-    api->ui_options_add_back(main_menu, NULL, NULL);
+    api->ui_options_add_back(main_menu, exit_app, NULL);
 }
 
 static void open_system(void) {
@@ -165,8 +214,7 @@ static void wifi_scan_done(void *user) {
     char buf[96];
     uint16_t count = api->wifi_ap_count ? api->wifi_ap_count() : 0;
     snprintf(buf, sizeof(buf), "%u APs found", (unsigned)count);
-    api->ui_detail_add_header(detail_view, buf);
-    api->ui_detail_add_divider(detail_view);
+    detail_add_summary(buf);
 
     int show = count > 20 ? 20 : (int)count;
     for (int i = 0; i < show; i++) {
@@ -195,50 +243,100 @@ static void open_wifi(void) {
     wifi_scan_done(NULL);
 }
 
-static void ble_scan_done(void *user) {
-    if (scan_status && api->ui_scan_status_close) {
-        api->ui_scan_status_close(scan_status);
-        scan_status = NULL;
+static void ble_track_selected(void *user) {
+    if (ble_detail_index >= 0 && api->ble_detect_start_tracking) {
+        bool ok = api->ble_detect_start_tracking(ble_detail_index);
+        if (!ok) show_popup("BLE Detect", "Unable to start tracking");
+    }
+}
+
+static void ble_spoof_selected(void *user) {
+    if (ble_detail_index >= 0 && api->ble_detect_start_airtag_spoof) {
+        bool ok = api->ble_detect_start_airtag_spoof(ble_detail_index);
+        if (!ok) show_popup("BLE Detect", "Unable to start AirTag spoof");
+    }
+}
+
+static void ble_select(void *user) {
+    int idx = (int)(intptr_t)user;
+    if (idx < 0 || idx >= ble_count) return;
+    if (ble_menu && api->ui_options_destroy) {
+        api->ui_options_destroy(ble_menu);
+        ble_menu = NULL;
     }
     if (!api->ui_detail_create) return;
-    detail_view = api->ui_detail_create("BLE Scan Results");
+
+    ble_detail_index = idx;
+    ghostesp_ble_detect_info_t *dev = &ble_entries[idx];
+    const char *type = api->ble_detect_type_name ? api->ble_detect_type_name(dev->type) : "BLE Device";
+    detail_view = api->ui_detail_create(type);
     if (!detail_view) return;
 
     char buf[96];
-    int count = api->ble_device_count ? api->ble_device_count() : 0;
-    snprintf(buf, sizeof(buf), "%d devices found", count);
-    api->ui_detail_add_header(detail_view, buf);
-    api->ui_detail_add_divider(detail_view);
+    char mac[24];
+    snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+             dev->mac[0], dev->mac[1], dev->mac[2], dev->mac[3], dev->mac[4], dev->mac[5]);
 
-    int show = count > 15 ? 15 : count;
-    for (int i = 0; i < show; i++) {
-        ghostesp_ble_device_info_t dev;
-        if (!api->ble_get_device(i, &dev)) continue;
-        snprintf(buf, sizeof(buf), "%s %ddBm", dev.name[0] ? dev.name : "Unknown", dev.rssi);
-        char mac[24];
-        snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 dev.mac[0], dev.mac[1], dev.mac[2], dev.mac[3], dev.mac[4], dev.mac[5]);
-        api->ui_detail_add_info(detail_view, mac, buf);
-    }
-    if (count > show) {
-        snprintf(buf, sizeof(buf), "... and %d more", count - show);
-        api->ui_detail_add_info(detail_view, "", buf);
-    }
+    api->ui_detail_add_info(detail_view, "Type", type);
+    api->ui_detail_add_info(detail_view, "MAC", mac);
+    api->ui_detail_add_info(detail_view, "Name", dev->name[0] ? dev->name : "Unknown");
+    if (dev->subtype[0]) api->ui_detail_add_info(detail_view, "Variant", dev->subtype);
+    snprintf(buf, sizeof(buf), "%d dBm", dev->rssi);
+    api->ui_detail_add_info(detail_view, "RSSI", buf);
+    api->ui_detail_add_info(detail_view, "Tracking", dev->tracking ? "YES" : "NO");
 
     api->ui_detail_add_divider(detail_view);
+    api->ui_detail_add_action(detail_view, "Track Signal", ble_track_selected, NULL);
+    if (dev->type == 1) api->ui_detail_add_action(detail_view, "Spoof AirTag", ble_spoof_selected, NULL);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+}
+
+static void ble_activate_selected(void) {
+    if (!ble_menu || !api->ui_options_get_selected) return;
+    int selected = api->ui_options_get_selected(ble_menu);
+    if (selected >= 0 && selected < ble_count) {
+        ble_select((void *)(intptr_t)selected);
+    } else {
+        show_menu();
+    }
 }
 
 static void open_ble(void) {
     current_page = PAGE_BLE;
+    destroy_subviews();
+    if (!api->ui_options_create) return;
+
     if (api->ui_scan_status_create) {
-        scan_status = api->ui_scan_status_create("Scanning BLE...");
+        scan_status = api->ui_scan_status_create("Detecting BLE Devices...");
         if (scan_status) api->ui_scan_status_set_progress(scan_status, 0, 1);
     }
-    if (api->ble_start_scan) api->ble_start_scan();
+    if (api->ble_detect_start) api->ble_detect_start();
+    else if (api->ble_start_scan) api->ble_start_scan();
     if (api->delay_ms) api->delay_ms(4000);
-    if (api->ble_stop_scan) api->ble_stop_scan();
-    ble_scan_done(NULL);
+    if (api->ble_detect_stop) api->ble_detect_stop();
+    else if (api->ble_stop_scan) api->ble_stop_scan();
+    if (scan_status && api->ui_scan_status_close) {
+        api->ui_scan_status_close(scan_status);
+        scan_status = NULL;
+    }
+
+    ble_menu = api->ui_options_create("BLE Detect Devices");
+    if (!ble_menu) return;
+
+    ble_count = 0;
+    int count = api->ble_detect_count ? api->ble_detect_count() : 0;
+    int show = count > ARRAY_COUNT(ble_entries) ? ARRAY_COUNT(ble_entries) : count;
+    for (int i = 0; i < show; i++) {
+        if (!api->ble_detect_get_device || !api->ble_detect_get_device(i, &ble_entries[ble_count])) continue;
+        ghostesp_ble_detect_info_t *dev = &ble_entries[ble_count];
+        const char *type = api->ble_detect_type_name ? api->ble_detect_type_name(dev->type) : "BLE";
+        char label[128];
+        snprintf(label, sizeof(label), "%s: %s %ddBm", type, dev->name[0] ? dev->name : "Unknown", dev->rssi);
+        api->ui_options_add_item(ble_menu, label, ble_select, (void *)(intptr_t)ble_count);
+        ble_count++;
+    }
+    if (ble_count == 0) api->ui_options_add_item(ble_menu, "No Flipper/AirTag/Skimmer devices", NULL, NULL);
+    api->ui_options_add_back(ble_menu, NULL, NULL);
 }
 
 static void rgb_timer_cb(void *user) {
@@ -278,8 +376,7 @@ static void open_rgb(void) {
     detail_view = api->ui_detail_create("RGB Test");
     if (!detail_view) return;
 
-    api->ui_detail_add_header(detail_view, "Cycles through 8 colors automatically");
-    api->ui_detail_add_divider(detail_view);
+    detail_add_summary("Cycles through 8 colors automatically");
 
     char hex[16];
     uint32_t colors[] = {0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0x00FFFF, 0xFF00FF, 0xFFFFFF, 0x000000};
@@ -298,37 +395,114 @@ static void open_rgb(void) {
     }
 }
 
-static void open_storage(void) {
-    current_page = PAGE_STORAGE;
+static bool storage_is_root(void) {
+    return strcmp(storage_path, "/mnt/ghostesp") == 0;
+}
+
+static void storage_go_parent(void) {
+    if (storage_is_root()) {
+        show_menu();
+        return;
+    }
+    char *slash = strrchr(storage_path, '/');
+    if (!slash || slash <= storage_path + strlen("/mnt/ghostesp")) {
+        strcpy(storage_path, "/mnt/ghostesp");
+    } else {
+        *slash = '\0';
+    }
+    open_storage();
+}
+
+static void storage_open_file(int idx) {
+    if (idx < 0 || idx >= storage_count) return;
+    if (storage_menu && api->ui_options_destroy) {
+        api->ui_options_destroy(storage_menu);
+        storage_menu = NULL;
+    }
     if (!api->ui_detail_create) return;
-    detail_view = api->ui_detail_create("Storage Browser");
+
+    detail_view = api->ui_detail_create(storage_entries[idx].name);
     if (!detail_view) return;
 
-    ghostesp_storage_entry_t entries[32];
-    int count = api->app_storage_list ? api->app_storage_list("", entries, 32) : -1;
-    char buf[80];
-
-    if (count < 0) {
-        api->ui_detail_add_info(detail_view, "Status", "Failed to list");
-    } else if (count == 0) {
-        api->ui_detail_add_info(detail_view, "Status", "Empty directory");
-    } else {
-        snprintf(buf, sizeof(buf), "%d items in app dir", count);
-        api->ui_detail_add_header(detail_view, buf);
-        api->ui_detail_add_divider(detail_view);
-        int show = count > 15 ? 15 : count;
-        for (int i = 0; i < show; i++) {
-            snprintf(buf, sizeof(buf), "%s%s", entries[i].is_directory ? "[D] " : "    ", entries[i].name);
-            api->ui_detail_add_info(detail_view, "", buf);
-        }
-        if (count > show) {
-            snprintf(buf, sizeof(buf), "... and %d more", count - show);
-            api->ui_detail_add_info(detail_view, "", buf);
+    char full_path[320];
+    snprintf(full_path, sizeof(full_path), "%s/%s", storage_path, storage_entries[idx].name);
+    api->ui_detail_add_info(detail_view, "Type", storage_entries[idx].is_directory ? "Directory" : "File");
+    api->ui_detail_add_info(detail_view, "Path", full_path);
+    if (!storage_entries[idx].is_directory && api->storage_read) {
+        char preview[129] = {0};
+        int n = api->storage_read(full_path, preview, sizeof(preview) - 1);
+        if (n >= 0) {
+            for (int i = 0; i < n; i++) {
+                if ((unsigned char)preview[i] < 32 && preview[i] != '\n' && preview[i] != '\r' && preview[i] != '\t') preview[i] = '.';
+            }
+            api->ui_detail_add_info(detail_view, "Preview", n > 0 ? preview : "Empty file");
         }
     }
 
     api->ui_detail_add_divider(detail_view);
-    api->ui_detail_add_back(detail_view, detail_back, NULL);
+    api->ui_detail_add_back(detail_view, storage_detail_back, NULL);
+}
+
+static void storage_select(void *user) {
+    int encoded = (int)(intptr_t)user;
+    if (encoded == 0) {
+        storage_go_parent();
+        return;
+    }
+    int idx = encoded - 1;
+    if (idx < 0 || idx >= storage_count) return;
+    if (storage_entries[idx].is_directory) {
+        size_t len = strlen(storage_path);
+        size_t name_len = strlen(storage_entries[idx].name);
+        if (len + 1 + name_len < sizeof(storage_path)) {
+            storage_path[len] = '/';
+            memcpy(storage_path + len + 1, storage_entries[idx].name, name_len + 1);
+        }
+        open_storage();
+    } else {
+        storage_open_file(idx);
+    }
+}
+
+static void storage_activate_selected(void) {
+    if (!storage_menu || !api->ui_options_get_selected) return;
+    int selected = api->ui_options_get_selected(storage_menu);
+    int entry_start = storage_is_root() ? 0 : 1;
+    if (!storage_is_root() && selected == 0) {
+        storage_go_parent();
+    } else if (selected >= entry_start && selected < entry_start + storage_count) {
+        storage_select((void *)(intptr_t)(selected - entry_start + 1));
+    } else {
+        show_menu();
+    }
+}
+
+static void open_storage(void) {
+    current_page = PAGE_STORAGE;
+    destroy_subviews();
+    if (!api->ui_options_create) return;
+
+    char title[80];
+    snprintf(title, sizeof(title), "Storage: %s", storage_is_root() ? "/" : strrchr(storage_path, '/') + 1);
+    storage_menu = api->ui_options_create(title);
+    if (!storage_menu) return;
+
+    if (!storage_is_root()) api->ui_options_add_item(storage_menu, "..", storage_select, (void *)(intptr_t)0);
+
+    storage_count = api->storage_list ? api->storage_list(storage_path, storage_entries, ARRAY_COUNT(storage_entries)) : -1;
+    if (storage_count < 0) {
+        storage_count = 0;
+        api->ui_options_add_item(storage_menu, "Unable to list SD card", NULL, NULL);
+    } else if (storage_count == 0) {
+        api->ui_options_add_item(storage_menu, "Empty directory", NULL, NULL);
+    } else {
+        for (int i = 0; i < storage_count; i++) {
+            char label[96];
+            snprintf(label, sizeof(label), "%s %s", storage_entries[i].is_directory ? "[D]" : "[F]", storage_entries[i].name);
+            api->ui_options_add_item(storage_menu, label, storage_select, (void *)(intptr_t)(i + 1));
+        }
+    }
+    api->ui_options_add_back(storage_menu, NULL, NULL);
 }
 
 static void open_storage_test(void) {
@@ -342,8 +516,7 @@ static void open_storage_test(void) {
     const char *path = "test_rw.txt";
     const char *payload = "GhostESP storage test OK";
 
-    api->ui_detail_add_header(detail_view, "Write / Read / Delete cycle");
-    api->ui_detail_add_divider(detail_view);
+    detail_add_summary("Write / Read / Delete cycle");
 
     bool ok = api->app_storage_write && api->app_storage_write(path, payload, strlen(payload));
     snprintf(buf, sizeof(buf), "Write: %s", ok ? "OK" : "FAIL");
@@ -422,7 +595,7 @@ static void open_hardware(void) {
 
     char buf[64];
 
-    api->ui_detail_add_header(detail_view, "Radio Hardware");
+    detail_add_section("Radio Hardware");
     api->ui_detail_add_info(detail_view, "WiFi", api->wifi_start_scan ? "Present" : "N/A");
     api->ui_detail_add_info(detail_view, "BLE", api->ble_start_scan ? "Present" : "N/A");
     api->ui_detail_add_info(detail_view, "NFC", api->nfc_is_available && api->nfc_is_available() ? "Present" : "N/A");
@@ -432,8 +605,7 @@ static void open_hardware(void) {
     api->ui_detail_add_info(detail_view, "RGB LED", api->rgb_set_all ? "Present" : "N/A");
     api->ui_detail_add_info(detail_view, "GPS", api->gps_is_available && api->gps_is_available() ? "Present" : "N/A");
 
-    api->ui_detail_add_divider(detail_view);
-    api->ui_detail_add_header(detail_view, "Display");
+    detail_add_section("Display");
     int32_t w = api->ui_screen_get_width ? api->ui_screen_get_width() : 0;
     int32_t h = api->ui_screen_get_height ? api->ui_screen_get_height() : 0;
     snprintf(buf, sizeof(buf), "%ld x %ld px", (long)w, (long)h);
@@ -443,8 +615,7 @@ static void open_hardware(void) {
         api->ui_detail_add_info(detail_view, "Theme Mode", api->ui_theme_is_bright() ? "Bright" : "Dark");
     }
 
-    api->ui_detail_add_divider(detail_view);
-    api->ui_detail_add_header(detail_view, "Memory");
+    detail_add_section("Memory");
     snprintf(buf, sizeof(buf), "%lu bytes free", (unsigned long)(api->system_free_heap ? api->system_free_heap() : 0));
     api->ui_detail_add_info(detail_view, "Heap", buf);
     snprintf(buf, sizeof(buf), "%lu bytes free", (unsigned long)(api->system_free_internal_heap ? api->system_free_internal_heap() : 0));
@@ -508,8 +679,7 @@ static void open_canvas(void) {
     detail_view = api->ui_detail_create("Canvas Demo");
     if (!detail_view) return;
 
-    api->ui_detail_add_header(detail_view, "Animated drawing on canvas widget");
-    api->ui_detail_add_divider(detail_view);
+    detail_add_summary("Animated drawing on canvas widget");
 
     if (api->ui_canvas_create) {
         int32_t sw = api->ui_screen_get_width ? api->ui_screen_get_width() : 240;
@@ -532,8 +702,7 @@ static void open_input(void) {
     detail_view = api->ui_detail_create("Input Tester");
     if (!detail_view) return;
 
-    api->ui_detail_add_header(detail_view, "Press any button to see events");
-    api->ui_detail_add_divider(detail_view);
+    detail_add_summary("Press any button to see events");
     api->ui_detail_add_info(detail_view, "", "Waiting for input...");
     api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
@@ -556,8 +725,7 @@ static void open_theme(void) {
     };
     const char *names[] = {"Background", "Surface", "Surface Alt", "Text", "Text Muted", "Accent"};
 
-    api->ui_detail_add_header(detail_view, "Current theme palette");
-    api->ui_detail_add_divider(detail_view);
+    detail_add_section("Current theme palette");
     for (int i = 0; i < 6; i++) {
         snprintf(buf, sizeof(buf), "#%06lX", (unsigned long)colors[i]);
         api->ui_detail_add_info(detail_view, names[i], buf);
@@ -578,8 +746,7 @@ static void open_unsafe(void) {
     if (!detail_view) return;
 
     char buf[64];
-    api->ui_detail_add_header(detail_view, "Raw LVGL pointers");
-    api->ui_detail_add_divider(detail_view);
+    detail_add_section("Raw LVGL pointers");
 
     void *scr = api->lv_scr_act ? api->lv_scr_act() : NULL;
     snprintf(buf, sizeof(buf), "%p", scr);
@@ -630,10 +797,9 @@ static void inspector_stop(void) {
         rgb_timer = NULL;
     }
     if (api->rgb_set_all) api->rgb_set_all(0, 0, 0);
-    if (detail_view && api->ui_detail_destroy) {
-        api->ui_detail_destroy(detail_view);
-        detail_view = NULL;
-    }
+    if (api->ble_detect_stop) api->ble_detect_stop();
+    else if (api->ble_stop_scan) api->ble_stop_scan();
+    destroy_subviews();
     if (main_menu && api->ui_options_destroy) {
         api->ui_options_destroy(main_menu);
         main_menu = NULL;
@@ -668,8 +834,7 @@ static void inspector_input(const ghostesp_input_event_t *event) {
         }
 
         api->ui_detail_clear(detail_view);
-        api->ui_detail_add_header(detail_view, "Input Event Received");
-        api->ui_detail_add_divider(detail_view);
+        detail_add_summary("Input Event Received");
 
         char buf[64];
         api->ui_detail_add_info(detail_view, "Type", type_name);
@@ -708,24 +873,64 @@ static void inspector_input(const ghostesp_input_event_t *event) {
         }
     }
 
-    if (detail_view) {
+    if (current_page == PAGE_STORAGE && storage_menu) {
         if (event->type == GHOSTESP_INPUT_LEFT || event->type == GHOSTESP_INPUT_UP) {
-            if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, -1);
+            if (api->ui_options_move_selection) api->ui_options_move_selection(storage_menu, -1);
             return;
         }
         if (event->type == GHOSTESP_INPUT_RIGHT || event->type == GHOSTESP_INPUT_DOWN) {
-            if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, 1);
+            if (api->ui_options_move_selection) api->ui_options_move_selection(storage_menu, 1);
             return;
         }
         if (event->type == GHOSTESP_INPUT_SELECT) {
-            int selected = api->ui_detail_get_selected ? api->ui_detail_get_selected(detail_view) : -1;
-            int count = api->ui_detail_get_count ? api->ui_detail_get_count(detail_view) : 0;
-            if (current_page == PAGE_RGB && selected == count - 2) {
-                rgb_stop(NULL);
-            } else if (current_page == PAGE_CANVAS && selected == count - 2) {
-                canvas_stop(NULL);
+            storage_activate_selected();
+            return;
+        }
+    }
+
+    if (current_page == PAGE_BLE && ble_menu) {
+        if (event->type == GHOSTESP_INPUT_LEFT || event->type == GHOSTESP_INPUT_UP) {
+            if (api->ui_options_move_selection) api->ui_options_move_selection(ble_menu, -1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_RIGHT || event->type == GHOSTESP_INPUT_DOWN) {
+            if (api->ui_options_move_selection) api->ui_options_move_selection(ble_menu, 1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_SELECT) {
+            ble_activate_selected();
+            return;
+        }
+    }
+
+    if (detail_view) {
+        if (event->type == GHOSTESP_INPUT_LEFT || event->type == GHOSTESP_INPUT_UP) {
+            if (api->ui_detail_step_up) api->ui_detail_step_up(detail_view);
+            else if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, -1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_RIGHT || event->type == GHOSTESP_INPUT_DOWN) {
+            if (api->ui_detail_step_down) api->ui_detail_step_down(detail_view);
+            else if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, 1);
+            return;
+        }
+        if (event->type == GHOSTESP_INPUT_SELECT) {
+            if (api->ui_detail_activate_selected) {
+                api->ui_detail_activate_selected(detail_view);
             } else {
-                detail_back(NULL);
+                int selected = api->ui_detail_get_selected ? api->ui_detail_get_selected(detail_view) : -1;
+                int count = api->ui_detail_get_count ? api->ui_detail_get_count(detail_view) : 0;
+                if (current_page == PAGE_RGB && selected == count - 2) {
+                    rgb_stop(NULL);
+                } else if (current_page == PAGE_CANVAS && selected == count - 2) {
+                    canvas_stop(NULL);
+                } else if (current_page == PAGE_STORAGE) {
+                    storage_detail_back(NULL);
+                } else if (current_page == PAGE_BLE) {
+                    detail_back(NULL);
+                } else {
+                    detail_back(NULL);
+                }
             }
             return;
         }
