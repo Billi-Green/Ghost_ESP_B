@@ -431,7 +431,9 @@ static void plugin_api_ui_image_set_src_now(void *arg) {
 bool plugin_api_ui_image_set_src(ghostesp_ui_obj_t img, const char *app_relative_path) {
     if (!plugin_api_internal_has_ui_permission()) return false;
     if (!img || !app_relative_path) return false;
-    image_src_ctx_t ctx = { .obj = img, .path = app_relative_path, .result = false };
+    char full_path[PLUGIN_APP_PATH_MAX];
+    if (!plugin_api_internal_build_app_path(app_relative_path, full_path, sizeof(full_path))) return false;
+    image_src_ctx_t ctx = { .obj = img, .path = full_path, .result = false };
     plugin_api_internal_run_sync(plugin_api_ui_image_set_src_now, &ctx);
     return ctx.result;
 }

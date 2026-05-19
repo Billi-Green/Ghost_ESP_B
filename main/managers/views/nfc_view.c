@@ -677,6 +677,13 @@ static const char* nfc_get_detected_title(void) {
     return (nfc_detected_title[0] != '\0') ? nfc_detected_title : "NFC Tag";
 }
 
+bool nfc_api_get_last_uid(uint8_t *uid_out, uint8_t *uid_len_out) {
+    if (!uid_out || !uid_len_out || g_uid_len == 0) return false;
+    memcpy(uid_out, g_uid, g_uid_len);
+    *uid_len_out = g_uid_len;
+    return true;
+}
+
 static void nfc_update_title_from_details(const char *details) {
     if (!details) return;
     const char *card = strstr(details, "Card:");

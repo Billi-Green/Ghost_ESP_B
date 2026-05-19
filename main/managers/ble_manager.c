@@ -634,6 +634,26 @@ void ble_stop_spoofing(void) {
     airtag_scan_stop_spoofing();
 }
 
+bool ble_start_custom_adv(const uint8_t *data, size_t len) {
+    if (!data || len == 0 || len > 31) return false;
+    if (!ble_initialized) ble_init();
+    if (!wait_for_ble_ready()) return false;
+    if (ble_gap_adv_active()) ble_gap_adv_stop();
+    if (ble_gap_adv_set_data(data, len) != 0) return false;
+    uint8_t own_addr_type;
+    if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) return false;
+    struct ble_gap_adv_params params = {0};
+    params.conn_mode = BLE_GAP_CONN_MODE_NON;
+    params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    return ble_gap_adv_start(own_addr_type, NULL, BLE_HS_FOREVER, &params, ble_gap_event_general, NULL) == 0;
+}
+
+bool ble_stop_custom_adv(void) {
+    if (!ble_initialized || !ble_hs_synced()) return false;
+    if (!ble_gap_adv_active()) return true;
+    return ble_gap_adv_stop() == 0;
+}
+
 static bool wait_for_ble_ready(void) {
     int rc;
     int retry_count = 0;

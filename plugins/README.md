@@ -1,18 +1,40 @@
 # GhostESP Native SD Apps v1
 
-Native SD apps are trusted ESP-IDF shared objects loaded from SD with Espressif `elf_loader`.
+Native SD apps are trusted ESP-IDF shared objects loaded from SD with Espressif `elf_loader`. They run inside the GhostESP firmware with access to the full hardware & UI API surface.
 
-This v1 ABI is the baseline for the unmerged native-app PR. Rebuild apps against `plugins/sdk/ghostesp_plugin_api.h`; binaries built against earlier draft headers are not supported.
+The SDK header is at `plugins/sdk/ghostesp_plugin_api.h`. Always rebuild apps against the SDK that ships with your firmware version; binaries built against earlier draft headers are not supported.
 
-App layout on SD:
+## Directory Layout
 
-```text
-/mnt/ghostesp/apps/<app_id>/
-  manifest.json
-  <entry-from-manifest>.so
+```
+plugins/
+  sdk/                      SDK header for app developers
+  examples/                 Example apps
+    device_inspector/       Full example exercising the API
+  templates/basic_app/      Template for gbt create / new_app.py
+  tools/                    Build tooling
+    ghostbt/                GBT Python package
+    new_app.py              Standalone scaffold script
+    build_app.py            Standalone build script
+    package_app.py          Standalone packaging script
+  package.schema.json       manifest.json JSON Schema
+  README.md                 This file
 ```
 
-Manifest v1 example:
+## SD Card Layout
+
+```
+/mnt/ghostesp/
+  apps/<app_id>/            Extracted app folders
+    manifest.json
+    <entry>.so
+  packages/                 .gapp archive discovery
+  app_cache/                Auto-extracted .gapp content
+  appdata/<app_id>/         Per-app persistent storage
+    .state.json             Quarantine / failure state
+```
+
+## Manifest Format
 
 ```json
 {
@@ -25,9 +47,6 @@ Manifest v1 example:
   "entry": "ghostesp_device_inspector.so",
   "target": "esp32s3",
   "api_version": 1,
-  "manifest_version": 1,
-  "package_version": 1,
-  "data_version": 1,
   "storage_scope": "app",
   "icon": "assets/icon.rgb565",
   "icon_width": 50,
@@ -35,17 +54,73 @@ Manifest v1 example:
   "icon_format": "rgb565",
   "accent_color": "#56B6F7",
   "permissions": ["ui", "storage", "wifi", "rgb"],
-  "memory_limit": 32768,
-  "stack_size": 4096,
-  "requires_psram": false
+  "memory_limit": 32768
 }
 ```
 
-Required fields are `id`, `name`, `entry`, and `api_version`. `target` is strongly recommended and is required when firmware is built with target matching enabled.
+Required fields: `id`, `name`, `entry`, `api_version`. `target` is strongly recommended and required when `NATIVE_SD_APPS_REQUIRE_TARGET_MATCH` is enabled (default).
 
-Permissions are enforced by the host API. Apps must request the APIs they use: `ui`, `storage`, `commands`, `tasks`, `wifi`, `ble`, `nfc`, `ir`, `subghz`, `badusb`, `raw_gpio`, `lvgl`, and `rgb`.
+### Permissions
 
-For native-looking app screens, prefer the stable UI helper API over direct LVGL or internal GhostESP view calls. Apps with `ui` permission can create GhostESP-styled screens, cards, labels, buttons, status text, and popups using opaque `ghostesp_ui_obj_t` handles:
+| Permission | Unlocks |
+|------------|---------|
+| `ui` | Screen creation, widgets, popups, detail views, canvas, animations |
+| `storage` | Absolute and app-scoped file I/O |
+| `commands` | CLI command execution |
+| `tasks` | Reserved for future task APIs |
+| `wifi` | WiFi scan, AP enumeration, monitor receive |
+| `ble` | BLE scan, device enumeration, BLE detection, reserved GATT hooks |
+| `nfc` | NFC read/stop |
+| `ir` | IR send file/stop |
+| `subghz` | SubGHz snapshot load, transmit, stop |
+| `badusb` | BadUSB run script/stop |
+| `raw_gpio` | GPIO mode/read/write/pulls/drive/interrupts |
+| `lvgl` | Raw `lv_scr_act()`, `display_get_current_view()` |
+| `rgb` | `rgb_set_all`, LED control |
+| `uart` | UART open/read/write/close; UART0 is blocked |
+| `i2c` | Board I2C probe/read/write/write-read |
+| `spi` | App-owned SPI device handles and transfers |
+| `adc` | ADC raw/millivolt reads |
+| `pwm` | LEDC/PWM attach/write/detach |
+| `network` | HTTP GET/POST |
+| `wifi_control` | WiFi connect/disconnect, channel control, raw TX helpers |
+| `power` | Battery percentage/voltage/charging state |
+| `input` | Button-state snapshot |
+| `display` | Backlight brightness get/set |
+| `time` | Microsecond uptime and delay helpers |
+| `random` | Hardware random helpers |
+| `system` | Reboot and privileged system controls |
+| `camera` | Reserved for camera APIs |
+| `usb` | Reserved for USB APIs |
+| `ethernet` | Reserved for Ethernet APIs |
+| `audio` | Reserved for microphone/audio APIs |
+| `settings` | Limited settings read/write/save APIs |
+| `zigbee` | Reserved for IEEE 802.15.4/Zigbee APIs |
+
+## Entry Point
+
+Every app exports one function:
+
+```c
+const ghostesp_app_t *ghostesp_app_init(const ghostesp_api_t *api);
+```
+
+Use the convenience macro:
+
+```c
+#include "ghostesp_plugin_api.h"
+
+static void my_start(void) { /* setup */ }
+static void my_stop(void)  { /* cleanup */ }
+
+GHOSTESP_APP_DEFINE("my_app", "My App", my_start, my_stop, NULL, NULL)
+```
+
+Set `api_version = GHOSTESP_APP_API_VERSION` and `struct_size = GHOSTESP_APP_STRUCT_SIZE_V1`. Future v1-compatible additions are append-only; the host reads `struct_size` to detect available fields.
+
+## UI API
+
+Apps with `ui` permission can build GhostESP-styled screens using opaque handles:
 
 ```c
 ghostesp_ui_obj_t root = api->ui_screen_create("My App");
@@ -54,46 +129,108 @@ api->ui_button_create(root, "Run", on_run_clicked, NULL);
 api->ui_show_popup("My App", "Done");
 ```
 
-The stable UI layer intentionally does not expose existing firmware view internals. That keeps apps source-compatible while allowing GhostESP's internal views to change.
+The UI layer provides screens, cards, labels, buttons, popups, detail views, options menus, scan status overlays, canvas drawing, arc/line widgets, animations, paged menus, input dialogs, flex layout, and theme color access. See the SDK header for the full surface.
 
-Storage defaults to `storage_scope: "app"`, which maps app-relative storage calls to `/mnt/ghostesp/appdata/<app_id>/`. Use `api->app_storage_read/write/list/...` for migratable app data. `storage_scope: "ghostesp"` allows legacy absolute `/mnt/ghostesp/...` storage calls.
+The stable UI layer is intentionally decoupled from GhostESP's internal view code — apps stay source-compatible as firmware views change.
 
-Memory limits are advisory for app allocations made through `api->app_malloc`, `api->app_calloc`, and `api->app_free`. Apps can inspect `api->app_memory_used()` and `api->app_memory_limit()`. Raw `malloc/free` remain available for C compatibility, but they are not tracked.
+## Storage
 
-App failure state is stored in `/mnt/ghostesp/appdata/<app_id>/.state.json`. Apps that repeatedly fail to load or do not exit cleanly can be quarantined by firmware and refused by the loader.
+| Scope | Path | Functions |
+|-------|------|-----------|
+| `"app"` (default) | `/mnt/ghostesp/appdata/<app_id>/` | `app_storage_*` |
+| `"ghostesp"` | `/mnt/ghostesp/...` | `storage_*` |
 
-Apps export one init function:
+App-scoped storage uses `api->app_storage_read/write/list/...`. The firmware auto-creates the appdata directory on discovery.
 
-```c
-const ghostesp_app_t *ghostesp_app_init(const ghostesp_api_t *api);
+## Memory & Limits
+
+`api->app_malloc` / `api->app_calloc` / `api->app_free` are tracked against the `memory_limit` in the manifest. Query usage with `api->app_memory_used()` and `api->app_memory_limit()`. Raw `malloc`/`free` remain available for C compatibility but are not tracked.
+
+## App State & Quarantine
+
+State is persisted to `/mnt/ghostesp/appdata/<app_id>/.state.json`:
+
+```json
+{
+  "launch_failure_count": 0,
+  "quarantined": false,
+  "launch_pending": false,
+  "last_error": ""
+}
 ```
 
-Every app descriptor must set `api_version = GHOSTESP_APP_API_VERSION` and `struct_size = GHOSTESP_APP_STRUCT_SIZE_V1`. Host API structs also include `struct_size`; future v1-compatible additions must be append-only.
+Apps that crash or fail to load 3+ times are quarantined and won't load until reset: `apps reset <id>`. Clean exits (normal `on_stop` → `dlclose`) reset the count to zero.
 
-Build the example app:
+## Build Targets
+
+Xtensa and RISC-V app binaries are not interchangeable. Build one `.so` per target:
+
+| Target | Architecture |
+|--------|-------------|
+| `esp32` | Xtensa LX6 |
+| `esp32s2` | Xtensa LX7 |
+| `esp32s3` | Xtensa LX7 |
+| `esp32c3` | RISC-V |
+| `esp32c5` | RISC-V |
+| `esp32c6` | RISC-V |
+| `esp32c61` | RISC-V |
+| `esp32p4` | RISC-V |
+
+## .gapp Archive Format
+
+Custom streaming archive (not ZIP). Header: 4-byte magic `GAPP`, version, flags, file count. Each file entry: `FILE` magic, compression method (0=store, 1=raw-deflate), path, sizes, FNV-1a 64-bit checksum, then payload. Firmware extracts `.gapp` files into `/mnt/ghostesp/app_cache/` because `elf_loader` needs a real `.so` file path for `dlopen()`.
+
+Drop `.gapp` files into `/mnt/ghostesp/packages/` or `/mnt/ghostesp/apps/` for automatic discovery. The gallery reload path detects new/changed packages, extracts them to cache, and registers the app. Removing the source `.gapp` unregisters it on the next reload.
+
+## Quick Start
 
 ```powershell
-cd plugins/examples/device_inspector
-idf.py set-target esp32s3
-idf.py build
-```
-
-Create a new app from the template:
-
-```powershell
+# Scaffold
 python plugins/tools/new_app.py my_tool --name "My Tool"
+
+# Build
 python plugins/tools/build_app.py plugins/examples/my_tool --target esp32s3
+
+# Package (folder)
+python plugins/tools/package_app.py plugins/examples/my_tool
+
+# Package (.gapp archive)
 python plugins/tools/package_app.py plugins/examples/my_tool --gapp
 ```
 
-For raw-folder development, copy `manifest.json` and `build/ghostesp_device_inspector.so` to `/mnt/ghostesp/apps/device_inspector/` on the SD card.
+Copy `manifest.json` and the `.so` to `/mnt/ghostesp/apps/<id>/` on the SD card, or drop the `.gapp` into `/mnt/ghostesp/packages/`.
 
-`package_app.py` creates a package folder under `dist/<app_id>/` and can also create a compressed native `.gapp` archive with `--gapp`. Raw folders are still supported for development.
+## GBT (Ghost Build Tool)
 
-The native `.gapp` format is a simple GhostESP streaming archive, not ZIP: each entry has a safe relative path, compression method, uncompressed checksum, and stored or raw-deflate data. Firmware extracts `.gapp` files into `/mnt/ghostesp/app_cache/<package>/` because Espressif `elf_loader` needs a real `.so` file path for `dlopen()`. The original `.gapp` file stays where the user placed it.
+A full CLI toolchain is available at `plugins/tools/ghostbt/`:
 
-For automatic discovery, copy a `.gapp` file to either `/mnt/ghostesp/packages/` or `/mnt/ghostesp/apps/` on the SD card. The app gallery reload path scans those folders, refreshes the cache when the package size or timestamp changes, creates `/mnt/ghostesp/appdata/<app_id>/`, and loads the app from cache. Removing the source `.gapp` prevents its generated cache from being registered on the next reload.
+```powershell
+cd plugins/tools/ghostbt
+pip install -e .
+```
 
-Dynamic icons use raw RGB565 files for predictable memory use. Set `icon`, `icon_width`, `icon_height`, and `icon_format: "rgb565"`; invalid icons fall back to the default SD app icon.
+| Command | Description |
+|---------|-------------|
+| `gbt create <id>` | Scaffold a new app |
+| `gbt build <dir>` | Build with ESP-IDF |
+| `gbt package <dir> --gapp` | Package folder or .gapp |
+| `gbt dist <dir> --gapp` | Build + package in one step |
+| `gbt setup` | Install ESP-IDF toolchain |
+| `gbt boards` | List board configs |
+| `gbt firmware <board>` | Build firmware |
+| `gbt flash firmware --board <board>` | Flash to device |
+| `gbt monitor` | Serial monitor |
+| `gbt ports` | List serial ports |
 
-Build one binary per ESP target. Xtensa and RISC-V app binaries are not interchangeable. Supported by the upstream loader today: `esp32`, `esp32s2`, `esp32s3`, `esp32c6`, `esp32c61`, and `esp32p4`.
+Full docs: `docs/hugo docs/content/latest/development/gbt.md`
+
+## CLI Commands (on-device)
+
+| Command | Description |
+|---------|-------------|
+| `apps list` | List discovered SD apps |
+| `apps reload` | Rescan SD for new/removed apps |
+| `apps info <id>` | Show manifest details and state |
+| `apps run <id>` | Launch an app |
+| `apps stop` | Stop the running app |
+| `apps reset <id>` | Clear failure/quarantine state |

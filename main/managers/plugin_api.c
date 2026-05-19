@@ -98,6 +98,9 @@ static void plugin_api_unlock(void) {
     if (s_api_mutex) xSemaphoreGive(s_api_mutex);
 }
 
+static bool plugin_api_build_app_path(const char *path, char *out, size_t out_len);
+static bool plugin_api_absolute_storage_allowed(const char *path);
+
 static bool plugin_api_has_permission(uint32_t permission) {
     return (s_permissions & permission) != 0;
 }
@@ -136,6 +139,22 @@ static lv_obj_t *plugin_ui_parent_or_current(ghostesp_ui_obj_t parent) {
 
 bool plugin_api_internal_has_ui_permission(void) {
     return plugin_api_has_ui_permission();
+}
+
+bool plugin_api_internal_has_permission(uint32_t permission) {
+    return plugin_api_has_permission(permission);
+}
+
+bool plugin_api_internal_build_app_path(const char *path, char *out, size_t out_len) {
+    return plugin_api_build_app_path(path, out, out_len);
+}
+
+bool plugin_api_internal_absolute_storage_allowed(const char *path) {
+    return plugin_api_absolute_storage_allowed(path);
+}
+
+const char *plugin_api_internal_app_id(void) {
+    return s_app_id;
 }
 
 bool plugin_api_internal_run_sync(void (*fn)(void *ctx), void *ctx) {
@@ -867,14 +886,17 @@ const char *plugin_api_current_target(void) {
 }
 
 static void *plugin_unsafe_lv_scr_act(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_LVGL)) return NULL;
     return lv_scr_act();
 }
 
 static void *plugin_unsafe_display_get_current_view(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_LVGL)) return NULL;
     return display_manager_get_current_view();
 }
 
 static void *plugin_unsafe_raw_symbol(const char *name) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_LVGL)) return NULL;
     if (!name) return NULL;
 #if CONFIG_ENABLE_NATIVE_SD_APPS
     return (void *)esp_elf_find_symbol(name);
@@ -1003,6 +1025,127 @@ extern void plugin_api_ui_paged_menu_reset(ghostesp_paged_menu_t pm);
 extern void plugin_api_ui_paged_menu_destroy(ghostesp_paged_menu_t pm);
 extern bool plugin_api_ui_paged_menu_has_prev(ghostesp_paged_menu_t pm);
 extern bool plugin_api_ui_paged_menu_has_next(ghostesp_paged_menu_t pm);
+
+extern bool plugin_api_gpio_set_mode(int pin, uint32_t mode);
+extern bool plugin_api_gpio_write(int pin, int level);
+extern int plugin_api_gpio_read(int pin);
+extern bool plugin_api_gpio_set_pull(int pin, bool pullup, bool pulldown);
+extern bool plugin_api_gpio_set_drive_strength(int pin, int strength);
+extern bool plugin_api_gpio_set_intr(int pin, int edge, ghostesp_gpio_intr_cb_t cb, void *user);
+extern bool plugin_api_gpio_clear_intr(int pin);
+extern bool plugin_api_uart_open(int uart_num, int tx_pin, int rx_pin, uint32_t baud);
+extern int plugin_api_uart_write(int uart_num, const void *data, size_t len);
+extern int plugin_api_uart_read(int uart_num, void *buffer, size_t len, uint32_t timeout_ms);
+extern bool plugin_api_uart_close(int uart_num);
+extern bool plugin_api_i2c_probe(uint8_t addr, uint32_t timeout_ms);
+extern bool plugin_api_i2c_write(uint8_t addr, const void *data, size_t len, uint32_t timeout_ms);
+extern int plugin_api_i2c_read(uint8_t addr, void *buffer, size_t len, uint32_t timeout_ms);
+extern bool plugin_api_i2c_write_read(uint8_t addr, const void *tx, size_t tx_len, void *rx, size_t rx_len, uint32_t timeout_ms);
+extern int plugin_api_spi_open(int host, int sclk, int miso, int mosi, int cs, uint32_t hz, int mode);
+extern int plugin_api_spi_transfer(int handle, const void *tx, void *rx, size_t len);
+extern bool plugin_api_spi_close(int handle);
+extern int plugin_api_adc_read_raw(int channel);
+extern int plugin_api_adc_read_mv(int channel);
+extern bool plugin_api_pwm_attach(int pin, uint32_t freq_hz, uint8_t resolution_bits);
+extern bool plugin_api_pwm_write(int pin, uint32_t duty);
+extern bool plugin_api_pwm_detach(int pin);
+extern uint64_t plugin_api_system_uptime_us(void);
+extern void plugin_api_delay_us(uint32_t us);
+extern uint32_t plugin_api_random_u32(void);
+extern bool plugin_api_random_bytes(void *buffer, size_t len);
+extern bool plugin_api_storage_stat(const char *path, ghostesp_storage_stat_t *out);
+extern int64_t plugin_api_storage_size(const char *path);
+extern bool plugin_api_storage_rename(const char *from, const char *to);
+extern bool plugin_api_storage_mkdir_recursive(const char *path);
+extern bool plugin_api_app_storage_stat(const char *path, ghostesp_storage_stat_t *out);
+extern int64_t plugin_api_app_storage_size(const char *path);
+extern bool plugin_api_app_storage_rename(const char *from, const char *to);
+extern bool plugin_api_app_storage_mkdir_recursive(const char *path);
+extern int plugin_api_battery_percent(void);
+extern int plugin_api_battery_voltage_mv(void);
+extern bool plugin_api_battery_is_charging(void);
+extern uint8_t plugin_api_display_get_brightness(void);
+extern bool plugin_api_display_set_brightness(uint8_t percent);
+extern uint32_t plugin_api_input_buttons_state(void);
+extern bool plugin_api_wifi_connect(const char *ssid, const char *password, uint32_t timeout_ms);
+extern bool plugin_api_wifi_disconnect(void);
+extern bool plugin_api_wifi_is_connected(void);
+extern int plugin_api_wifi_rssi(void);
+extern bool plugin_api_wifi_ip(char *out, size_t out_len);
+extern int plugin_api_http_get(const char *url, void *buffer, size_t buffer_len, uint32_t timeout_ms);
+extern int plugin_api_http_post(const char *url, const void *body, size_t body_len, void *buffer, size_t buffer_len, uint32_t timeout_ms);
+extern ghostesp_task_t plugin_api_task_create(const char *name, ghostesp_task_fn_t fn, void *user, uint32_t stack_size, int priority);
+extern bool plugin_api_task_delete(ghostesp_task_t task);
+extern void plugin_api_task_yield(void);
+extern int plugin_api_tcp_connect(const char *host, uint16_t port, uint32_t timeout_ms);
+extern int plugin_api_socket_send(int sock, const void *data, size_t len);
+extern int plugin_api_socket_recv(int sock, void *buffer, size_t len, uint32_t timeout_ms);
+extern bool plugin_api_socket_close(int sock);
+extern int plugin_api_udp_open(uint16_t local_port);
+extern int plugin_api_udp_send_to(int sock, const char *host, uint16_t port, const void *data, size_t len);
+extern int plugin_api_udp_recv_from(int sock, void *buffer, size_t len, char *host_out, size_t host_out_len, uint16_t *port_out, uint32_t timeout_ms);
+extern int64_t plugin_api_time_unix(void);
+extern bool plugin_api_time_set_unix(int64_t unix_time);
+extern void plugin_api_system_reboot(void);
+extern bool plugin_api_wifi_set_channel(uint8_t channel);
+extern uint8_t plugin_api_wifi_get_channel(void);
+extern bool plugin_api_wifi_monitor_start(ghostesp_wifi_packet_cb_t cb, void *user);
+extern bool plugin_api_wifi_monitor_stop(void);
+extern bool plugin_api_wifi_raw_tx(const void *data, size_t len);
+extern bool plugin_api_nfc_get_last_uid(uint8_t *uid, size_t *uid_len);
+extern bool plugin_api_nfc_write_file(const char *app_relative_path);
+extern bool plugin_api_ir_send_raw(uint32_t carrier_hz, const uint16_t *durations, size_t count);
+extern bool plugin_api_ir_receive_start(void);
+extern bool plugin_api_ir_receive_stop(void);
+extern int plugin_api_ir_receive_read(uint16_t *durations, size_t max_count);
+extern bool plugin_api_subghz_transmit_raw(uint32_t frequency_hz, const uint16_t *durations, size_t count);
+extern bool plugin_api_ble_adv_start(const uint8_t *data, size_t len);
+extern bool plugin_api_ble_adv_stop(void);
+extern bool plugin_api_ble_gatt_connect(const uint8_t mac[6]);
+extern bool plugin_api_ble_gatt_disconnect(void);
+extern int plugin_api_ble_gatt_read(uint16_t service_uuid, uint16_t char_uuid, void *buffer, size_t buffer_len);
+extern bool plugin_api_ble_gatt_write(uint16_t service_uuid, uint16_t char_uuid, const void *data, size_t len);
+extern bool plugin_api_ble_gatt_server_start(const char *name);
+extern bool plugin_api_ble_gatt_server_stop(void);
+extern bool plugin_api_nrf24_start(bool stream_to_peer);
+extern void plugin_api_nrf24_stop(void);
+extern bool plugin_api_nrf24_is_running(void);
+extern bool plugin_api_nrf24_is_paused(void);
+extern void plugin_api_nrf24_set_paused(bool paused);
+extern bool plugin_api_wifi_deauth(const uint8_t bssid[6], const uint8_t sta[6], uint8_t reason);
+extern bool plugin_api_wifi_send_beacon(const char *ssid, const uint8_t bssid[6], uint8_t channel);
+extern bool plugin_api_wifi_pcap_start(const char *app_relative_path);
+extern bool plugin_api_wifi_pcap_stop(void);
+extern bool plugin_api_ethernet_is_connected(void);
+extern bool plugin_api_ethernet_ip(char *out, size_t out_len);
+extern int plugin_api_camera_capture_jpeg(void *buffer, size_t buffer_len);
+extern bool plugin_api_camera_capture_jpeg_file(const char *app_relative_path);
+extern bool plugin_api_usb_hid_keyboard_send(const char *text);
+extern bool plugin_api_usb_hid_mouse_move(int dx, int dy, uint8_t buttons);
+extern bool plugin_api_audio_mic_is_available(void);
+extern int plugin_api_audio_mic_read(int32_t *samples, size_t max_samples, uint32_t timeout_ms);
+extern float plugin_api_audio_mic_rms(const int32_t *samples, size_t count);
+extern bool plugin_api_zigbee_capture_start(uint8_t channel);
+extern bool plugin_api_zigbee_capture_stop(void);
+extern bool plugin_api_zigbee_is_capturing(void);
+extern int plugin_api_zigbee_device_count(void);
+extern bool plugin_api_settings_get_u8(const char *key, uint8_t *out);
+extern bool plugin_api_settings_set_u8(const char *key, uint8_t value);
+extern bool plugin_api_settings_get_string(const char *key, char *out, size_t out_len);
+extern bool plugin_api_settings_set_string(const char *key, const char *value);
+extern bool plugin_api_settings_save(void);
+extern bool plugin_api_nvs_get_u32(const char *key, uint32_t *out);
+extern bool plugin_api_nvs_set_u32(const char *key, uint32_t value);
+extern int plugin_api_nvs_get_blob(const char *key, void *buffer, size_t buffer_len);
+extern bool plugin_api_nvs_set_blob(const char *key, const void *data, size_t len);
+extern bool plugin_api_nvs_delete(const char *key);
+extern ghostesp_event_sub_t plugin_api_event_subscribe(const char *topic, ghostesp_event_cb_t cb, void *user);
+extern bool plugin_api_event_unsubscribe(ghostesp_event_sub_t sub);
+extern bool plugin_api_event_publish(const char *topic, const void *data, size_t len);
+extern bool plugin_api_parser_nfc_summary(const char *app_relative_path, char *out, size_t out_len);
+extern bool plugin_api_parser_ir_summary(const char *app_relative_path, char *out, size_t out_len);
+extern bool plugin_api_parser_subghz_summary(const char *app_relative_path, char *out, size_t out_len);
+extern void plugin_api_lowlevel_release(void);
 
 static ghostesp_api_t s_api = {
     .api_version = GHOSTESP_APP_API_VERSION,
@@ -1193,6 +1336,125 @@ static ghostesp_api_t s_api = {
     .ui_input_dialog = plugin_api_ui_input_dialog,
     .ui_screen_get_width = plugin_api_ui_screen_get_width,
     .ui_screen_get_height = plugin_api_ui_screen_get_height,
+    .gpio_set_mode = plugin_api_gpio_set_mode,
+    .gpio_write = plugin_api_gpio_write,
+    .gpio_read = plugin_api_gpio_read,
+    .gpio_set_pull = plugin_api_gpio_set_pull,
+    .gpio_set_drive_strength = plugin_api_gpio_set_drive_strength,
+    .gpio_set_intr = plugin_api_gpio_set_intr,
+    .gpio_clear_intr = plugin_api_gpio_clear_intr,
+    .uart_open = plugin_api_uart_open,
+    .uart_write = plugin_api_uart_write,
+    .uart_read = plugin_api_uart_read,
+    .uart_close = plugin_api_uart_close,
+    .i2c_probe = plugin_api_i2c_probe,
+    .i2c_write = plugin_api_i2c_write,
+    .i2c_read = plugin_api_i2c_read,
+    .i2c_write_read = plugin_api_i2c_write_read,
+    .spi_open = plugin_api_spi_open,
+    .spi_transfer = plugin_api_spi_transfer,
+    .spi_close = plugin_api_spi_close,
+    .adc_read_raw = plugin_api_adc_read_raw,
+    .adc_read_mv = plugin_api_adc_read_mv,
+    .pwm_attach = plugin_api_pwm_attach,
+    .pwm_write = plugin_api_pwm_write,
+    .pwm_detach = plugin_api_pwm_detach,
+    .system_uptime_us = plugin_api_system_uptime_us,
+    .delay_us = plugin_api_delay_us,
+    .random_u32 = plugin_api_random_u32,
+    .random_bytes = plugin_api_random_bytes,
+    .storage_stat = plugin_api_storage_stat,
+    .storage_size = plugin_api_storage_size,
+    .storage_rename = plugin_api_storage_rename,
+    .storage_mkdir_recursive = plugin_api_storage_mkdir_recursive,
+    .app_storage_stat = plugin_api_app_storage_stat,
+    .app_storage_size = plugin_api_app_storage_size,
+    .app_storage_rename = plugin_api_app_storage_rename,
+    .app_storage_mkdir_recursive = plugin_api_app_storage_mkdir_recursive,
+    .battery_percent = plugin_api_battery_percent,
+    .battery_voltage_mv = plugin_api_battery_voltage_mv,
+    .battery_is_charging = plugin_api_battery_is_charging,
+    .display_get_brightness = plugin_api_display_get_brightness,
+    .display_set_brightness = plugin_api_display_set_brightness,
+    .input_buttons_state = plugin_api_input_buttons_state,
+    .wifi_connect = plugin_api_wifi_connect,
+    .wifi_disconnect = plugin_api_wifi_disconnect,
+    .wifi_is_connected = plugin_api_wifi_is_connected,
+    .wifi_rssi = plugin_api_wifi_rssi,
+    .wifi_ip = plugin_api_wifi_ip,
+    .http_get = plugin_api_http_get,
+    .http_post = plugin_api_http_post,
+    .task_create = plugin_api_task_create,
+    .task_delete = plugin_api_task_delete,
+    .task_yield = plugin_api_task_yield,
+    .tcp_connect = plugin_api_tcp_connect,
+    .socket_send = plugin_api_socket_send,
+    .socket_recv = plugin_api_socket_recv,
+    .socket_close = plugin_api_socket_close,
+    .udp_open = plugin_api_udp_open,
+    .udp_send_to = plugin_api_udp_send_to,
+    .udp_recv_from = plugin_api_udp_recv_from,
+    .time_unix = plugin_api_time_unix,
+    .time_set_unix = plugin_api_time_set_unix,
+    .system_reboot = plugin_api_system_reboot,
+    .wifi_set_channel = plugin_api_wifi_set_channel,
+    .wifi_get_channel = plugin_api_wifi_get_channel,
+    .wifi_monitor_start = plugin_api_wifi_monitor_start,
+    .wifi_monitor_stop = plugin_api_wifi_monitor_stop,
+    .wifi_raw_tx = plugin_api_wifi_raw_tx,
+    .nfc_get_last_uid = plugin_api_nfc_get_last_uid,
+    .nfc_write_file = plugin_api_nfc_write_file,
+    .ir_send_raw = plugin_api_ir_send_raw,
+    .ir_receive_start = plugin_api_ir_receive_start,
+    .ir_receive_stop = plugin_api_ir_receive_stop,
+    .ir_receive_read = plugin_api_ir_receive_read,
+    .subghz_transmit_raw = plugin_api_subghz_transmit_raw,
+    .ble_adv_start = plugin_api_ble_adv_start,
+    .ble_adv_stop = plugin_api_ble_adv_stop,
+    .ble_gatt_connect = plugin_api_ble_gatt_connect,
+    .ble_gatt_disconnect = plugin_api_ble_gatt_disconnect,
+    .ble_gatt_read = plugin_api_ble_gatt_read,
+    .ble_gatt_write = plugin_api_ble_gatt_write,
+    .ble_gatt_server_start = plugin_api_ble_gatt_server_start,
+    .ble_gatt_server_stop = plugin_api_ble_gatt_server_stop,
+    .nrf24_start = plugin_api_nrf24_start,
+    .nrf24_stop = plugin_api_nrf24_stop,
+    .nrf24_is_running = plugin_api_nrf24_is_running,
+    .nrf24_is_paused = plugin_api_nrf24_is_paused,
+    .nrf24_set_paused = plugin_api_nrf24_set_paused,
+    .wifi_deauth = plugin_api_wifi_deauth,
+    .wifi_send_beacon = plugin_api_wifi_send_beacon,
+    .wifi_pcap_start = plugin_api_wifi_pcap_start,
+    .wifi_pcap_stop = plugin_api_wifi_pcap_stop,
+    .ethernet_is_connected = plugin_api_ethernet_is_connected,
+    .ethernet_ip = plugin_api_ethernet_ip,
+    .camera_capture_jpeg = plugin_api_camera_capture_jpeg,
+    .camera_capture_jpeg_file = plugin_api_camera_capture_jpeg_file,
+    .usb_hid_keyboard_send = plugin_api_usb_hid_keyboard_send,
+    .usb_hid_mouse_move = plugin_api_usb_hid_mouse_move,
+    .audio_mic_is_available = plugin_api_audio_mic_is_available,
+    .audio_mic_read = plugin_api_audio_mic_read,
+    .audio_mic_rms = plugin_api_audio_mic_rms,
+    .zigbee_capture_start = plugin_api_zigbee_capture_start,
+    .zigbee_capture_stop = plugin_api_zigbee_capture_stop,
+    .zigbee_is_capturing = plugin_api_zigbee_is_capturing,
+    .zigbee_device_count = plugin_api_zigbee_device_count,
+    .settings_get_u8 = plugin_api_settings_get_u8,
+    .settings_set_u8 = plugin_api_settings_set_u8,
+    .settings_get_string = plugin_api_settings_get_string,
+    .settings_set_string = plugin_api_settings_set_string,
+    .settings_save = plugin_api_settings_save,
+    .nvs_get_u32 = plugin_api_nvs_get_u32,
+    .nvs_set_u32 = plugin_api_nvs_set_u32,
+    .nvs_get_blob = plugin_api_nvs_get_blob,
+    .nvs_set_blob = plugin_api_nvs_set_blob,
+    .nvs_delete = plugin_api_nvs_delete,
+    .event_subscribe = plugin_api_event_subscribe,
+    .event_unsubscribe = plugin_api_event_unsubscribe,
+    .event_publish = plugin_api_event_publish,
+    .parser_nfc_summary = plugin_api_parser_nfc_summary,
+    .parser_ir_summary = plugin_api_parser_ir_summary,
+    .parser_subghz_summary = plugin_api_parser_subghz_summary,
 };
 
 const ghostesp_api_t *plugin_api_get(const char *app_id,
@@ -1249,6 +1511,7 @@ bool plugin_api_is_active(void) {
 
 void plugin_api_release(void) {
     plugin_api_lock();
+    plugin_api_lowlevel_release();
     s_api_active = false;
     s_permissions = 0;
     s_allow_absolute_storage = false;

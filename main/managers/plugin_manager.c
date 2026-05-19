@@ -102,6 +102,25 @@ static uint32_t permission_from_string(const char *value) {
     if (strcmp(value, "raw_gpio") == 0) return PLUGIN_PERMISSION_RAW_GPIO;
     if (strcmp(value, "lvgl") == 0) return PLUGIN_PERMISSION_LVGL;
     if (strcmp(value, "rgb") == 0 || strcmp(value, "led") == 0 || strcmp(value, "leds") == 0) return PLUGIN_PERMISSION_RGB;
+    if (strcmp(value, "uart") == 0 || strcmp(value, "serial") == 0) return PLUGIN_PERMISSION_UART;
+    if (strcmp(value, "i2c") == 0) return PLUGIN_PERMISSION_I2C;
+    if (strcmp(value, "spi") == 0) return PLUGIN_PERMISSION_SPI;
+    if (strcmp(value, "adc") == 0) return PLUGIN_PERMISSION_ADC;
+    if (strcmp(value, "pwm") == 0 || strcmp(value, "ledc") == 0) return PLUGIN_PERMISSION_PWM;
+    if (strcmp(value, "network") == 0 || strcmp(value, "http") == 0) return PLUGIN_PERMISSION_NETWORK;
+    if (strcmp(value, "wifi_control") == 0) return PLUGIN_PERMISSION_WIFI_CONTROL;
+    if (strcmp(value, "power") == 0 || strcmp(value, "battery") == 0) return PLUGIN_PERMISSION_POWER;
+    if (strcmp(value, "input") == 0 || strcmp(value, "buttons") == 0) return PLUGIN_PERMISSION_INPUT;
+    if (strcmp(value, "display") == 0 || strcmp(value, "backlight") == 0) return PLUGIN_PERMISSION_DISPLAY;
+    if (strcmp(value, "time") == 0) return PLUGIN_PERMISSION_TIME;
+    if (strcmp(value, "random") == 0) return PLUGIN_PERMISSION_RANDOM;
+    if (strcmp(value, "system") == 0) return PLUGIN_PERMISSION_SYSTEM;
+    if (strcmp(value, "camera") == 0) return PLUGIN_PERMISSION_CAMERA;
+    if (strcmp(value, "usb") == 0) return PLUGIN_PERMISSION_USB;
+    if (strcmp(value, "ethernet") == 0 || strcmp(value, "eth") == 0) return PLUGIN_PERMISSION_ETHERNET;
+    if (strcmp(value, "audio") == 0 || strcmp(value, "mic") == 0 || strcmp(value, "microphone") == 0) return PLUGIN_PERMISSION_AUDIO;
+    if (strcmp(value, "settings") == 0) return PLUGIN_PERMISSION_SETTINGS;
+    if (strcmp(value, "zigbee") == 0 || strcmp(value, "ieee802154") == 0) return PLUGIN_PERMISSION_ZIGBEE;
     return 0;
 }
 

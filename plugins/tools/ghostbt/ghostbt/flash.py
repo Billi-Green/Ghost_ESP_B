@@ -3,6 +3,7 @@ import pathlib
 import subprocess
 import sys
 
+from .config import load_manifest
 from .esp_idf import get_idf_env, _find_idf_python, get_idf_path
 
 
@@ -320,10 +321,17 @@ def monitor(
                 sys.stdout.buffer.write(data)
                 sys.stdout.buffer.flush()
             try:
-                if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-                    line = sys.stdin.readline()
-                    if line:
-                        ser.write(line.encode())
+                if os.name == "nt":
+                    import msvcrt
+                    if msvcrt.kbhit():
+                        ch = msvcrt.getch()
+                        ser.write(ch)
+                else:
+                    import select
+                    if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+                        line = sys.stdin.readline()
+                        if line:
+                            ser.write(line.encode())
             except (EOFError, KeyboardInterrupt):
                 break
     except KeyboardInterrupt:

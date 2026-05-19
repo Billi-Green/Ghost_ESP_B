@@ -136,6 +136,17 @@ typedef void (*ghostesp_paged_menu_select_fn)(const char *name, void *user);
 typedef void (*ghostesp_paged_menu_nav_fn)(void *user);
 typedef void (*ghostesp_anim_done_cb_t)(void *user);
 typedef void (*ghostesp_input_submit_cb_t)(const char *text, void *user);
+typedef void (*ghostesp_gpio_intr_cb_t)(int pin, int level, void *user);
+typedef void (*ghostesp_task_fn_t)(void *user);
+typedef void (*ghostesp_wifi_packet_cb_t)(const uint8_t *data, size_t len, int8_t rssi, uint8_t channel, void *user);
+typedef void (*ghostesp_event_cb_t)(const char *topic, const void *data, size_t len, void *user);
+typedef void *ghostesp_task_t;
+typedef void *ghostesp_event_sub_t;
+
+typedef struct {
+    uint64_t size;
+    bool is_directory;
+} ghostesp_storage_stat_t;
 
 typedef struct ghostesp_api {
     uint32_t api_version;
@@ -362,6 +373,152 @@ typedef struct ghostesp_api {
     bool (*ui_detail_step_down)(ghostesp_detail_t dv);
     void (*ui_detail_activate_selected)(ghostesp_detail_t dv);
     void (*app_exit)(void);
+
+    bool (*gpio_set_mode)(int pin, uint32_t mode);
+    bool (*gpio_write)(int pin, int level);
+    int (*gpio_read)(int pin);
+    bool (*gpio_set_pull)(int pin, bool pullup, bool pulldown);
+    bool (*gpio_set_drive_strength)(int pin, int strength);
+    bool (*gpio_set_intr)(int pin, int edge, ghostesp_gpio_intr_cb_t cb, void *user);
+    bool (*gpio_clear_intr)(int pin);
+
+    bool (*uart_open)(int uart_num, int tx_pin, int rx_pin, uint32_t baud);
+    int (*uart_write)(int uart_num, const void *data, size_t len);
+    int (*uart_read)(int uart_num, void *buffer, size_t len, uint32_t timeout_ms);
+    bool (*uart_close)(int uart_num);
+
+    bool (*i2c_probe)(uint8_t addr, uint32_t timeout_ms);
+    bool (*i2c_write)(uint8_t addr, const void *data, size_t len, uint32_t timeout_ms);
+    int (*i2c_read)(uint8_t addr, void *buffer, size_t len, uint32_t timeout_ms);
+    bool (*i2c_write_read)(uint8_t addr, const void *tx, size_t tx_len, void *rx, size_t rx_len, uint32_t timeout_ms);
+
+    int (*spi_open)(int host, int sclk, int miso, int mosi, int cs, uint32_t hz, int mode);
+    int (*spi_transfer)(int handle, const void *tx, void *rx, size_t len);
+    bool (*spi_close)(int handle);
+
+    int (*adc_read_raw)(int channel);
+    int (*adc_read_mv)(int channel);
+
+    bool (*pwm_attach)(int pin, uint32_t freq_hz, uint8_t resolution_bits);
+    bool (*pwm_write)(int pin, uint32_t duty);
+    bool (*pwm_detach)(int pin);
+
+    uint64_t (*system_uptime_us)(void);
+    void (*delay_us)(uint32_t us);
+    uint32_t (*random_u32)(void);
+    bool (*random_bytes)(void *buffer, size_t len);
+
+    bool (*storage_stat)(const char *path, ghostesp_storage_stat_t *out);
+    int64_t (*storage_size)(const char *path);
+    bool (*storage_rename)(const char *from, const char *to);
+    bool (*storage_mkdir_recursive)(const char *path);
+    bool (*app_storage_stat)(const char *path, ghostesp_storage_stat_t *out);
+    int64_t (*app_storage_size)(const char *path);
+    bool (*app_storage_rename)(const char *from, const char *to);
+    bool (*app_storage_mkdir_recursive)(const char *path);
+
+    int (*battery_percent)(void);
+    int (*battery_voltage_mv)(void);
+    bool (*battery_is_charging)(void);
+    uint8_t (*display_get_brightness)(void);
+    bool (*display_set_brightness)(uint8_t percent);
+    uint32_t (*input_buttons_state)(void);
+
+    bool (*wifi_connect)(const char *ssid, const char *password, uint32_t timeout_ms);
+    bool (*wifi_disconnect)(void);
+    bool (*wifi_is_connected)(void);
+    int (*wifi_rssi)(void);
+    bool (*wifi_ip)(char *out, size_t out_len);
+    int (*http_get)(const char *url, void *buffer, size_t buffer_len, uint32_t timeout_ms);
+    int (*http_post)(const char *url, const void *body, size_t body_len, void *buffer, size_t buffer_len, uint32_t timeout_ms);
+
+    ghostesp_task_t (*task_create)(const char *name, ghostesp_task_fn_t fn, void *user, uint32_t stack_size, int priority);
+    bool (*task_delete)(ghostesp_task_t task);
+    void (*task_yield)(void);
+
+    int (*tcp_connect)(const char *host, uint16_t port, uint32_t timeout_ms);
+    int (*socket_send)(int sock, const void *data, size_t len);
+    int (*socket_recv)(int sock, void *buffer, size_t len, uint32_t timeout_ms);
+    bool (*socket_close)(int sock);
+    int (*udp_open)(uint16_t local_port);
+    int (*udp_send_to)(int sock, const char *host, uint16_t port, const void *data, size_t len);
+    int (*udp_recv_from)(int sock, void *buffer, size_t len, char *host_out, size_t host_out_len, uint16_t *port_out, uint32_t timeout_ms);
+
+    int64_t (*time_unix)(void);
+    bool (*time_set_unix)(int64_t unix_time);
+    void (*system_reboot)(void);
+
+    bool (*wifi_set_channel)(uint8_t channel);
+    uint8_t (*wifi_get_channel)(void);
+    bool (*wifi_monitor_start)(ghostesp_wifi_packet_cb_t cb, void *user);
+    bool (*wifi_monitor_stop)(void);
+    bool (*wifi_raw_tx)(const void *data, size_t len);
+
+    bool (*nfc_get_last_uid)(uint8_t *uid, size_t *uid_len);
+    bool (*nfc_write_file)(const char *app_relative_path);
+    bool (*ir_send_raw)(uint32_t carrier_hz, const uint16_t *durations, size_t count);
+    bool (*ir_receive_start)(void);
+    bool (*ir_receive_stop)(void);
+    int (*ir_receive_read)(uint16_t *durations, size_t max_count);
+    bool (*subghz_transmit_raw)(uint32_t frequency_hz, const uint16_t *durations, size_t count);
+    bool (*ble_adv_start)(const uint8_t *data, size_t len);
+    bool (*ble_adv_stop)(void);
+
+    bool (*nrf24_start)(bool stream_to_peer);
+    void (*nrf24_stop)(void);
+    bool (*nrf24_is_running)(void);
+    bool (*nrf24_is_paused)(void);
+    void (*nrf24_set_paused)(bool paused);
+
+    bool (*ble_gatt_connect)(const uint8_t mac[6]);
+    bool (*ble_gatt_disconnect)(void);
+    int (*ble_gatt_read)(uint16_t service_uuid, uint16_t char_uuid, void *buffer, size_t buffer_len);
+    bool (*ble_gatt_write)(uint16_t service_uuid, uint16_t char_uuid, const void *data, size_t len);
+    bool (*ble_gatt_server_start)(const char *name);
+    bool (*ble_gatt_server_stop)(void);
+
+    bool (*wifi_deauth)(const uint8_t bssid[6], const uint8_t sta[6], uint8_t reason);
+    bool (*wifi_send_beacon)(const char *ssid, const uint8_t bssid[6], uint8_t channel);
+    bool (*wifi_pcap_start)(const char *app_relative_path);
+    bool (*wifi_pcap_stop)(void);
+
+    bool (*ethernet_is_connected)(void);
+    bool (*ethernet_ip)(char *out, size_t out_len);
+
+    int (*camera_capture_jpeg)(void *buffer, size_t buffer_len);
+    bool (*camera_capture_jpeg_file)(const char *app_relative_path);
+
+    bool (*usb_hid_keyboard_send)(const char *text);
+    bool (*usb_hid_mouse_move)(int dx, int dy, uint8_t buttons);
+
+    bool (*audio_mic_is_available)(void);
+    int (*audio_mic_read)(int32_t *samples, size_t max_samples, uint32_t timeout_ms);
+    float (*audio_mic_rms)(const int32_t *samples, size_t count);
+
+    bool (*zigbee_capture_start)(uint8_t channel);
+    bool (*zigbee_capture_stop)(void);
+    bool (*zigbee_is_capturing)(void);
+    int (*zigbee_device_count)(void);
+
+    bool (*settings_get_u8)(const char *key, uint8_t *out);
+    bool (*settings_set_u8)(const char *key, uint8_t value);
+    bool (*settings_get_string)(const char *key, char *out, size_t out_len);
+    bool (*settings_set_string)(const char *key, const char *value);
+    bool (*settings_save)(void);
+
+    bool (*nvs_get_u32)(const char *key, uint32_t *out);
+    bool (*nvs_set_u32)(const char *key, uint32_t value);
+    int (*nvs_get_blob)(const char *key, void *buffer, size_t buffer_len);
+    bool (*nvs_set_blob)(const char *key, const void *data, size_t len);
+    bool (*nvs_delete)(const char *key);
+
+    ghostesp_event_sub_t (*event_subscribe)(const char *topic, ghostesp_event_cb_t cb, void *user);
+    bool (*event_unsubscribe)(ghostesp_event_sub_t sub);
+    bool (*event_publish)(const char *topic, const void *data, size_t len);
+
+    bool (*parser_nfc_summary)(const char *app_relative_path, char *out, size_t out_len);
+    bool (*parser_ir_summary)(const char *app_relative_path, char *out, size_t out_len);
+    bool (*parser_subghz_summary)(const char *app_relative_path, char *out, size_t out_len);
 } ghostesp_api_t;
 
 #define GHOSTESP_API_STRUCT_SIZE_V1 sizeof(ghostesp_api_t)

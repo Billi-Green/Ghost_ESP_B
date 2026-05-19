@@ -26,7 +26,8 @@
     "icon": { "type": "string" },
     "icon_width": { "type": "integer", "minimum": 1 },
     "icon_height": { "type": "integer", "minimum": 1 },
-    "icon_format": { "type": "string", "enum": ["rgb565"] },
+    "icon_format": { "type": "string", "enum": ["rgb565", "rgb565a8"] },
+    "icon_source": { "type": "string" },
     "accent_color": { "type": "string", "pattern": "^#?[0-9A-Fa-f]{6}$" },
     "assets": {
       "type": "array",
