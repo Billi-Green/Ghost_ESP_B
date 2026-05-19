@@ -57,8 +57,7 @@ const lv_font_t *accessibility_get_font_display(void) {
     return get_display_font_for_size(size);
 }
 
-const lv_font_t *accessibility_get_font_for_size(uint8_t base_size, bool bold) {
-    (void)bold;
+const lv_font_t *accessibility_get_font_for_size(uint8_t base_size) {
     uint8_t fs = settings_get_font_size(&G_Settings);
     if (base_size <= 10) {
         return fs == 0 ? &lv_font_montserrat_8 : (fs == 1 ? &lv_font_montserrat_10 : &lv_font_montserrat_12);

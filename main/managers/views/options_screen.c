@@ -913,7 +913,6 @@ static SettingsItem settings_items[] = {
 #endif
     {"Split Terminal", SETTING_GHOSTLINK_SPLIT_VIEW, bool_options, 2, 1, SETTINGS_CAT_GHOSTLINK, false, NULL},
     {"Font Size", SETTING_FONT_SIZE, font_size_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
-    {"Bold Text", SETTING_BOLD_TEXT, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"High Contrast", SETTING_HIGH_CONTRAST, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"Reduced Motion", SETTING_REDUCED_MOTION, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"Epilepsy Warning", SETTING_EPILEPSY_WARNING, bool_options, 2, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
@@ -1888,9 +1887,6 @@ static void load_current_settings_values(void) {
             case SETTING_FONT_SIZE:
                 settings_items[i].current_value = settings_get_font_size(&G_Settings);
                 break;
-            case SETTING_BOLD_TEXT:
-                settings_items[i].current_value = settings_get_bold_text(&G_Settings) ? 1 : 0;
-                break;
             case SETTING_HIGH_CONTRAST:
                 settings_items[i].current_value = settings_get_high_contrast(&G_Settings) ? 1 : 0;
                 break;
@@ -2280,12 +2276,6 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_FONT_SIZE:
             settings_set_font_size(&G_Settings, (uint8_t)new_value);
-            break;
-        case SETTING_BOLD_TEXT:
-            settings_set_bold_text(&G_Settings, new_value == 1);
-            break;
-        case SETTING_HIGH_CONTRAST:
-            settings_set_high_contrast(&G_Settings, new_value == 1);
             break;
         case SETTING_REDUCED_MOTION:
             settings_set_reduced_motion(&G_Settings, new_value == 1);

@@ -137,7 +137,6 @@ typedef enum {
     SETTING_REDUCED_MOTION,
     SETTING_INPUT_REPEAT_SPEED,
     SETTING_HIGH_CONTRAST,
-    SETTING_BOLD_TEXT,
     SETTING_MENU_ITEM_BORDERS,
     SETTING_EXPORT_SETTINGS_SD,
     SETTING_IMPORT_SETTINGS_SD,
@@ -278,7 +277,6 @@ typedef struct {
     bool reduced_motion;            // Disable animations
     uint8_t input_repeat_speed;     // 0=Slow, 1=Normal, 2=Fast
     bool high_contrast;             // High contrast color overrides
-    bool bold_text;                 // Use larger font weight
     bool menu_item_borders;          // Borders around main menu items
 } FSettings;
 
@@ -523,9 +521,6 @@ void settings_set_input_repeat_speed(FSettings *settings, uint8_t speed);
 uint8_t settings_get_input_repeat_speed(const FSettings *settings);
 void settings_set_high_contrast(FSettings *settings, bool enabled);
 bool settings_get_high_contrast(const FSettings *settings);
-void settings_set_bold_text(FSettings *settings, bool enabled);
-bool settings_get_bold_text(const FSettings *settings);
-
 void settings_set_menu_item_borders(FSettings *settings, bool enabled);
 bool settings_get_menu_item_borders(const FSettings *settings);
 

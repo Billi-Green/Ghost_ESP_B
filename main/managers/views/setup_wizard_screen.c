@@ -76,7 +76,6 @@ static uint8_t temp_display_timeout = 0;
 static uint8_t temp_epilepsy_warning = 1;
 static uint8_t temp_font_size = 1;
 static uint8_t temp_reduced_motion = 0;
-static uint8_t temp_bold_text = 0;
 static uint8_t temp_high_contrast = 0;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
 static uint8_t temp_idle_animation = 0;
@@ -585,7 +584,6 @@ static void finish_setup(void) {
     settings_set_terminal_text_color(&G_Settings, terminal_color_values[temp_terminal_color]);
     settings_set_epilepsy_warning_enabled(&G_Settings, temp_epilepsy_warning == 1);
     settings_set_font_size(&G_Settings, temp_font_size);
-    settings_set_bold_text(&G_Settings, temp_bold_text == 1);
     settings_set_high_contrast(&G_Settings, temp_high_contrast == 1);
     settings_set_reduced_motion(&G_Settings, temp_reduced_motion == 1);
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -701,7 +699,6 @@ static void setup_wizard_create(void) {
             break;
         case SETUP_STEP_ACCESSIBILITY:
             temp_font_size = settings_get_font_size(&G_Settings);
-            temp_bold_text = settings_get_bold_text(&G_Settings);
             temp_high_contrast = settings_get_high_contrast(&G_Settings);
             temp_reduced_motion = settings_get_reduced_motion(&G_Settings);
             show_option_screen("Accessibility", font_size_options, FONT_SIZE_COUNT, temp_font_size);
@@ -1157,7 +1154,6 @@ void setup_wizard_reset_and_open(void) {
     temp_epilepsy_warning = 1;
     temp_font_size = 1;
     temp_reduced_motion = 0;
-    temp_bold_text = 0;
     temp_high_contrast = 0;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
     temp_idle_animation = 0;
