@@ -135,6 +135,12 @@ typedef enum {
     SETTING_MENU_ITEM_BORDERS,
     SETTING_EXPORT_SETTINGS_SD,
     SETTING_IMPORT_SETTINGS_SD,
+    // Lockscreen settings
+    SETTING_LOCKSCREEN_ENABLED,
+    SETTING_LOCKSCREEN_WAKE,
+    SETTING_LOCKSCREEN_TYPE,
+    SETTING_LOCKSCREEN_TIMEOUT,
+    SETTING_LOCKSCREEN_CHANGE_PIN,
 } SettingsType;
 
 
@@ -268,6 +274,13 @@ typedef struct {
     uint8_t menu_bg_shade;          // 0=Darkest, 1=Darker, 2=Dark, 3=Medium
     bool menu_rounded;              // Rounded corners on menu items
     bool menu_item_borders;          // Borders around main menu items
+
+    // Lockscreen settings
+    bool lockscreen_enabled;
+    uint8_t lockscreen_type;        // 1=PIN; kept for persisted settings compatibility
+    char lockscreen_obfuscated[32]; // Length-prefixed obfuscated PIN blob
+    uint8_t lockscreen_timeout_sec;   // Auto-lock after inactivity (0=off)
+    bool lockscreen_wake_lock;        // Lock on wake-from-sleep
 } FSettings;
 
 // Function declarations
@@ -503,6 +516,18 @@ bool settings_get_menu_rounded(const FSettings *settings);
 
 void settings_set_menu_item_borders(FSettings *settings, bool enabled);
 bool settings_get_menu_item_borders(const FSettings *settings);
+
+// Lockscreen getters and setters
+void settings_set_lockscreen_enabled(FSettings *settings, bool enabled);
+bool settings_get_lockscreen_enabled(const FSettings *settings);
+void settings_set_lockscreen_type(FSettings *settings, uint8_t type);
+uint8_t settings_get_lockscreen_type(const FSettings *settings);
+void settings_set_lockscreen_obfuscated(FSettings *settings, const char *obf);
+const char *settings_get_lockscreen_obfuscated(const FSettings *settings);
+void settings_set_lockscreen_timeout_sec(FSettings *settings, uint8_t sec);
+uint8_t settings_get_lockscreen_timeout_sec(const FSettings *settings);
+void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled);
+bool settings_get_lockscreen_wake_lock(const FSettings *settings);
 
 extern FSettings G_Settings;
 

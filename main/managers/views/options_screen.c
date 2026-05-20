@@ -1,4 +1,5 @@
 #include "managers/views/options_screen.h"
+#include "managers/views/lockscreen.h"
 #include "core/serial_manager.h"
 #include "core/commandline.h"
 #include "core/ouis.h"
@@ -443,6 +444,7 @@ typedef enum {
     SETTINGS_CAT_MIC_RGB,
 #endif
     SETTINGS_CAT_GHOSTLINK,
+    SETTINGS_CAT_LOCKSCREEN,
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -471,6 +473,7 @@ static SettingsCategory settings_categories[] = {
     {"MIC Visualizer", SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
 #endif
     {"GhostLink", SETTINGS_CAT_GHOSTLINK, false, NULL},
+    {"Lockscreen", SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
 
 static int current_settings_category = -1;
@@ -824,6 +827,7 @@ static const char * const idle_animation_options[] = {"Game of Life", "Ghost", "
 static const char * const idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
 static const char * const action_options[] = {"Press OK"};
+static const char * const lockscreen_timeout_options[] = {"Off", "30s", "1m", "5m"};
 
 static const char * const brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
@@ -924,6 +928,11 @@ static SettingsItem settings_items[] = {
     {"Calibrate", SETTING_MIC_CALIBRATE, action_options, 1, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
 #endif
     {"Split Terminal", SETTING_GHOSTLINK_SPLIT_VIEW, bool_options, 2, 1, SETTINGS_CAT_GHOSTLINK, false, NULL},
+
+    {"Lockscreen", SETTING_LOCKSCREEN_ENABLED, bool_options, 2, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Lock on Wake", SETTING_LOCKSCREEN_WAKE, bool_options, 2, 1, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Auto-Lock", SETTING_LOCKSCREEN_TIMEOUT, lockscreen_timeout_options, 4, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
 
 #define IO_BTN_EDIT_P10 0x1000
@@ -1886,6 +1895,23 @@ static void load_current_settings_values(void) {
             case SETTING_GHOSTLINK_SPLIT_VIEW:
                 settings_items[i].current_value = settings_get_ghostlink_split_view(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_LOCKSCREEN_ENABLED:
+                settings_items[i].current_value = settings_get_lockscreen_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_LOCKSCREEN_WAKE:
+                settings_items[i].current_value = settings_get_lockscreen_wake_lock(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_LOCKSCREEN_TIMEOUT: {
+                uint8_t tout = settings_get_lockscreen_timeout_sec(&G_Settings);
+                if (tout == 0) settings_items[i].current_value = 0;
+                else if (tout <= 30) settings_items[i].current_value = 1;
+                else if (tout <= 60) settings_items[i].current_value = 2;
+                else settings_items[i].current_value = 3;
+                break;
+            }
+            case SETTING_LOCKSCREEN_CHANGE_PIN:
+                settings_items[i].current_value = 0;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -2261,6 +2287,39 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_GHOSTLINK_SPLIT_VIEW:
             settings_set_ghostlink_split_view(&G_Settings, new_value == 1);
             break;
+        case SETTING_LOCKSCREEN_ENABLED:
+            settings_set_lockscreen_enabled(&G_Settings, new_value == 1);
+            if (new_value == 1) {
+                settings_set_lockscreen_type(&G_Settings, 1);
+                settings_persist_setting(SETTING_LOCKSCREEN_TYPE);
+                if (!lockscreen_is_configured()) {
+                    settings_persist_setting(SETTING_LOCKSCREEN_ENABLED);
+                    lockscreen_enter_setup();
+                    display_manager_switch_view(&lockscreen_view);
+                    return;
+                }
+            }
+            break;
+        case SETTING_LOCKSCREEN_WAKE:
+            settings_set_lockscreen_wake_lock(&G_Settings, new_value == 1);
+            break;
+        case SETTING_LOCKSCREEN_TIMEOUT: {
+            uint8_t tout_sec = 0;
+            switch (new_value) {
+                case 0: tout_sec = 0; break;
+                case 1: tout_sec = 30; break;
+                case 2: tout_sec = 60; break;
+                case 3: tout_sec = 300; break;
+                default: tout_sec = 0; break;
+            }
+            settings_set_lockscreen_timeout_sec(&G_Settings, tout_sec);
+            break;
+        }
+        case SETTING_LOCKSCREEN_CHANGE_PIN: {
+            lockscreen_enter_setup();
+            display_manager_switch_view(&lockscreen_view);
+            return;
+        }
     }
     
     // Save only the changed setting to NVS (Granular Save)

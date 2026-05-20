@@ -26,6 +26,8 @@
 #include "managers/views/subghz_view.h"
 #endif
 #include "managers/views/app_gallery_screen.h"
+#include "managers/views/lockscreen.h"
+#include "managers/views/splash_screen.h"
 #include "managers/encoder_manager.h"
 #include <stdlib.h>
 #include <string.h>
@@ -1745,7 +1747,18 @@ void set_backlight_brightness(uint8_t percentage) {
 
         return;
     } else {
+        bool was_off = is_backlight_off;
         is_backlight_dimmed = false;      // <— also clear whenever we restore brightness
+        is_backlight_off = false;
+
+        // Lockscreen on wake
+        if (was_off && settings_get_lockscreen_enabled(&G_Settings) &&
+            settings_get_lockscreen_wake_lock(&G_Settings) &&
+            dm.current_view != &lockscreen_view && dm.current_view != &splash_view) {
+            lockscreen_reset_input();
+            display_manager_switch_view(&lockscreen_view);
+        }
+
         if (status_update_timer)   lv_timer_resume(status_update_timer);
         if (status_update_timer)   lv_timer_set_period(status_update_timer, 1000);
         if (lvgl_task_handle)      vTaskResume(lvgl_task_handle);
@@ -1929,9 +1942,10 @@ void hardware_input_task(void *pvParameters) {
               ESP_LOGD(TAG, "T-Deck key pressed: '%c'", current_char);
               
               touch_active = true;
-              if (is_backlight_dimmed) {
+              if (is_backlight_dimmed || is_backlight_off) {
                 set_backlight_brightness(100);
                 is_backlight_dimmed = false;
+                is_backlight_off = false;
                 vTaskDelay(pdMS_TO_TICKS(20));
               }
               
@@ -2009,10 +2023,10 @@ void hardware_input_task(void *pvParameters) {
     if (encoder_peek_direction(&g_encoder) != ENCODER_DIR_NONE) {
         // treat an encoder turn as "touch"
         last_touch_time = xTaskGetTickCount();
-        if (is_backlight_dimmed) {
+        if (is_backlight_dimmed || is_backlight_off) {
           set_backlight_brightness(100);
           is_backlight_dimmed = false;
-          // Don't send input event when waking from dimmed state
+          is_backlight_off = false;
         } else {
           const int max_encoder_events_per_tick = 4;
           for (int i = 0; i < max_encoder_events_per_tick; i++) {
@@ -2041,10 +2055,10 @@ void hardware_input_task(void *pvParameters) {
     if (joystick_just_pressed(&enc_button)) {
         // treat an encoder click as "touch"
         last_touch_time = xTaskGetTickCount();
-        if (is_backlight_dimmed) {
+        if (is_backlight_dimmed || is_backlight_off) {
           set_backlight_brightness(100);
           is_backlight_dimmed = false;
-          // Don't send input event when waking from dimmed state
+          is_backlight_off = false;
         } else {
           // Only send input event if display was already active
           InputEvent ev = {
@@ -2061,9 +2075,10 @@ void hardware_input_task(void *pvParameters) {
         // check IO6 exit button (TEmbed C1101 only)
         if (joystick_just_pressed(&exit_button)) {
             last_touch_time = xTaskGetTickCount();
-            if (is_backlight_dimmed) {
+            if (is_backlight_dimmed || is_backlight_off) {
               set_backlight_brightness(100);
               is_backlight_dimmed = false;
+              is_backlight_off = false;
             } else {
               InputEvent ev = {
                   .type = INPUT_TYPE_EXIT_BUTTON,
@@ -2173,11 +2188,10 @@ void hardware_input_task(void *pvParameters) {
         if (key_value != 0) {
           bool skip_event = false;
           last_touch_time = xTaskGetTickCount();
-          if (is_backlight_dimmed) {
-            // CARDPUTER wake logic is keypress-to-wake, which is desired.
-            // No changes needed here as it's separate from S3T-Watch touch logic.
+          if (is_backlight_dimmed || is_backlight_off) {
             set_backlight_brightness(100);
             is_backlight_dimmed = false;
+            is_backlight_off = false;
             skip_event = true;
             vTaskDelay(pdMS_TO_TICKS(20));
           }
@@ -2253,9 +2267,10 @@ void hardware_input_task(void *pvParameters) {
           trackball_last_event_ms = now_ms;
           last_touch_time = xTaskGetTickCount();
           
-          if (is_backlight_dimmed) {
+          if (is_backlight_dimmed || is_backlight_off) {
             set_backlight_brightness(100);
             is_backlight_dimmed = false;
+            is_backlight_off = false;
           } else {
             InputEvent event;
             event.type = INPUT_TYPE_JOYSTICK;
@@ -2380,7 +2395,7 @@ void hardware_input_task(void *pvParameters) {
         if (io_manager_get_cached_button_states(&states) == ESP_OK) {
             if (states.b1 && !prev_b1) {
                 last_touch_time = xTaskGetTickCount();
-                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                if (is_backlight_dimmed || is_backlight_off) { set_backlight_brightness(100); is_backlight_dimmed = false; is_backlight_off = false; }
                 const char *cmd = settings_get_io_btn_p10_cmd(&G_Settings);
                 if (cmd && cmd[0] != '\0') {
                     if (strncmp(cmd, "view:", 5) == 0) {
@@ -2430,7 +2445,7 @@ void hardware_input_task(void *pvParameters) {
             }
             if (states.b2 && !prev_b2) {
                 last_touch_time = xTaskGetTickCount();
-                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                if (is_backlight_dimmed || is_backlight_off) { set_backlight_brightness(100); is_backlight_dimmed = false; is_backlight_off = false; }
                 const char *cmd = settings_get_io_btn_p11_cmd(&G_Settings);
                 if (cmd && cmd[0] != '\0') {
                     if (strncmp(cmd, "view:", 5) == 0) {
@@ -2480,7 +2495,7 @@ void hardware_input_task(void *pvParameters) {
             }
             if (states.b3 && !prev_b3) {
                 last_touch_time = xTaskGetTickCount();
-                if (is_backlight_dimmed) { set_backlight_brightness(100); is_backlight_dimmed = false; }
+                if (is_backlight_dimmed || is_backlight_off) { set_backlight_brightness(100); is_backlight_dimmed = false; is_backlight_off = false; }
                 const char *cmd = settings_get_io_btn_p12_cmd(&G_Settings);
                 if (cmd && cmd[0] != '\0') {
                     if (strncmp(cmd, "view:", 5) == 0) {
@@ -2743,6 +2758,20 @@ void lvgl_tick_task(void *arg) {
           }
           last_mon = now;
       }
+
+      // Auto-lock timeout check
+      if (settings_get_lockscreen_enabled(&G_Settings)) {
+          uint8_t auto_lock_sec = settings_get_lockscreen_timeout_sec(&G_Settings);
+          if (auto_lock_sec > 0) {
+              if (now - last_touch_time > pdMS_TO_TICKS(auto_lock_sec * 1000u)) {
+                  if (dm.current_view && dm.current_view != &lockscreen_view && dm.current_view != &splash_view) {
+                      lockscreen_reset_input();
+                      display_manager_switch_view(&lockscreen_view);
+                  }
+              }
+          }
+      }
+
       vTaskDelay(tick_interval);
   }
   vTaskDelete(NULL);
