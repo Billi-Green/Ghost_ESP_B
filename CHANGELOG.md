@@ -3,6 +3,7 @@
 ## Revival v2.0
 
 - Added toast notification system
+- Polished status bar: cleaner accent border, brighter title with truncation, softer semantic status colors
 
 ## Revival v1.9.10
 

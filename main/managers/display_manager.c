@@ -920,7 +920,6 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   // set status bar icon colors based on power save mode and AP state
   uint8_t theme = settings_get_menu_theme(&G_Settings);
   lv_color_t default_color = lv_color_hex(theme_palette_get_text_muted(theme));
-  lv_color_t gray_color = lv_color_hex(0x808080); // Gray for inactive state
   
   // WiFi icon color logic
   if (wifi_label && lv_obj_is_valid(wifi_label)) {
@@ -928,21 +927,20 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       bool ap_should_be_active = settings_get_ap_enabled(&G_Settings) && !power_save_enabled;
       
       if (!ap_should_be_active) {
-          // AP is disabled or power saving is on - show gray
-          lv_obj_set_style_text_color(wifi_label, gray_color, 0);
+          lv_obj_set_style_text_color(wifi_label, default_color, 0);
       } else if (wifi_manager_is_evil_portal_active()) {
-          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x60A5FA), 0);
       } else if (is_ap_active) {
-          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x34D399), 0);
       } else {
           lv_obj_set_style_text_color(wifi_label, default_color, 0);
       }
   }
   
   if (power_save_enabled) {
-    lv_color_t orange_color = lv_color_hex(0xFFA500); // orange like apple uses
+    lv_color_t amber_color = lv_color_hex(0xF59E0B);
     if (battery_label && lv_obj_is_valid(battery_label)) {
-      lv_obj_set_style_text_color(battery_label, orange_color, 0);
+      lv_obj_set_style_text_color(battery_label, amber_color, 0);
     }
   } else {
     if (bt_label && lv_obj_is_valid(bt_label)) {
@@ -971,9 +969,9 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       }
 
       if (is_charging) {
-        battery_color = lv_color_hex(0x00FF00); // Green if charging
+        battery_color = lv_color_hex(0x34D399);
       } else if (batteryPercentage <= 20) {
-        battery_color = lv_color_hex(0xFF0000); // Red if 20% or below
+        battery_color = lv_color_hex(0xEF4444);
       }
       lv_obj_set_style_text_color(battery_label, battery_color, 0);
     }
@@ -1019,13 +1017,14 @@ void display_manager_update_status_bar_color(void) {
   lv_color_t accent_color = lv_color_hex(theme_palette_get_accent(theme));
   lv_color_t status_bg_color = lv_color_hex(theme_palette_get_surface_alt(theme));
   lv_color_t text_color = lv_color_hex(theme_palette_get_text_muted(theme));
+  lv_color_t primary_text = lv_color_hex(theme_palette_get_text(theme));
   
   lv_obj_set_style_bg_color(status_bar, status_bg_color, LV_PART_MAIN);
   lv_obj_set_style_border_color(status_bar, accent_color, LV_PART_MAIN);
 
   // Reset all status bar label colors when leaving rainbow mode
   if (mainlabel && lv_obj_is_valid(mainlabel)) {
-    lv_obj_set_style_text_color(mainlabel, text_color, 0);
+    lv_obj_set_style_text_color(mainlabel, primary_text, 0);
   }
   if (wifi_label && lv_obj_is_valid(wifi_label)) {
     lv_obj_set_style_text_color(wifi_label, text_color, 0);
@@ -1071,7 +1070,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_set_style_bg_color(status_bar, status_bg_color, LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(status_bar, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_border_side(status_bar, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
-  lv_obj_set_style_border_width(status_bar, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_width(status_bar, 2, LV_PART_MAIN);
   lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
   lv_obj_set_style_border_opa(status_bar, LV_OPA_40, LV_PART_MAIN);
   lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
@@ -1084,8 +1083,10 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_align(left_container, LV_ALIGN_LEFT_MID, GUI_SAFEAREA_HOR, 0);
   mainlabel = lv_label_create(left_container);
   lv_label_set_text(mainlabel, label_text);
-  lv_obj_set_style_text_color(mainlabel, status_text_color, 0);
-  lv_obj_set_style_text_font(mainlabel, gui_font_title(), 0);
+  lv_label_set_long_mode(mainlabel, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(mainlabel, LV_HOR_RES / 2 - GUI_SAFEAREA_HOR * 2);
+  lv_obj_set_style_text_color(mainlabel, lv_color_hex(theme_palette_get_text(theme)), 0);
+  lv_obj_set_style_text_font(mainlabel, gui_font_body(), 0);
 
   lv_obj_t *right_container = lv_obj_create(status_bar);
   lv_obj_remove_style_all(right_container);
