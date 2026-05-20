@@ -931,7 +931,7 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       } else if (wifi_manager_is_evil_portal_active()) {
           lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x60A5FA), 0);
       } else if (is_ap_active) {
-          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x34D399), 0);
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x22C55E), 0);
       } else {
           lv_obj_set_style_text_color(wifi_label, default_color, 0);
       }
@@ -969,7 +969,7 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       }
 
       if (is_charging) {
-        battery_color = lv_color_hex(0x34D399);
+        battery_color = lv_color_hex(0x22C55E);
       } else if (batteryPercentage <= 20) {
         battery_color = lv_color_hex(0xEF4444);
       }

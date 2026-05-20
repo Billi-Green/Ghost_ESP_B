@@ -5,6 +5,8 @@
 - Added toast notification system
 - Polished status bar: cleaner accent border, brighter title with truncation, softer semantic status colors
 - Changed startup logo to new ghostesplogo and removed "GhostESP: Revival" text from splash screen
+- Removed border from popups
+- Polished detail view to match main menu styling
 
 ## Revival v1.9.10
 
