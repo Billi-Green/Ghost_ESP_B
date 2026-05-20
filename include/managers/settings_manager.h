@@ -279,7 +279,7 @@ typedef struct {
     bool lockscreen_enabled;
     uint8_t lockscreen_type;        // 1=PIN; kept for persisted settings compatibility
     char lockscreen_obfuscated[32]; // Length-prefixed obfuscated PIN blob
-    uint8_t lockscreen_timeout_sec;   // Auto-lock after inactivity (0=off)
+    uint16_t lockscreen_timeout_sec;   // Auto-lock after inactivity (0=off)
     bool lockscreen_wake_lock;        // Lock on wake-from-sleep
 } FSettings;
 
@@ -524,8 +524,8 @@ void settings_set_lockscreen_type(FSettings *settings, uint8_t type);
 uint8_t settings_get_lockscreen_type(const FSettings *settings);
 void settings_set_lockscreen_obfuscated(FSettings *settings, const char *obf);
 const char *settings_get_lockscreen_obfuscated(const FSettings *settings);
-void settings_set_lockscreen_timeout_sec(FSettings *settings, uint8_t sec);
-uint8_t settings_get_lockscreen_timeout_sec(const FSettings *settings);
+void settings_set_lockscreen_timeout_sec(FSettings *settings, uint16_t sec);
+uint16_t settings_get_lockscreen_timeout_sec(const FSettings *settings);
 void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled);
 bool settings_get_lockscreen_wake_lock(const FSettings *settings);
 

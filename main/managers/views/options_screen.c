@@ -1902,7 +1902,7 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = settings_get_lockscreen_wake_lock(&G_Settings) ? 1 : 0;
                 break;
             case SETTING_LOCKSCREEN_TIMEOUT: {
-                uint8_t tout = settings_get_lockscreen_timeout_sec(&G_Settings);
+                uint16_t tout = settings_get_lockscreen_timeout_sec(&G_Settings);
                 if (tout == 0) settings_items[i].current_value = 0;
                 else if (tout <= 30) settings_items[i].current_value = 1;
                 else if (tout <= 60) settings_items[i].current_value = 2;
@@ -2304,7 +2304,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             settings_set_lockscreen_wake_lock(&G_Settings, new_value == 1);
             break;
         case SETTING_LOCKSCREEN_TIMEOUT: {
-            uint8_t tout_sec = 0;
+            uint16_t tout_sec = 0;
             switch (new_value) {
                 case 0: tout_sec = 0; break;
                 case 1: tout_sec = 30; break;

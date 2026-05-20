@@ -2761,7 +2761,7 @@ void lvgl_tick_task(void *arg) {
 
       // Auto-lock timeout check
       if (settings_get_lockscreen_enabled(&G_Settings)) {
-          uint8_t auto_lock_sec = settings_get_lockscreen_timeout_sec(&G_Settings);
+          uint16_t auto_lock_sec = settings_get_lockscreen_timeout_sec(&G_Settings);
           if (auto_lock_sec > 0) {
               if (now - last_touch_time > pdMS_TO_TICKS(auto_lock_sec * 1000u)) {
                   if (dm.current_view && dm.current_view != &lockscreen_view && dm.current_view != &splash_view) {

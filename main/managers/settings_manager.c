@@ -748,9 +748,10 @@ void settings_load(FSettings *settings) {
   if (settings->lockscreen_enabled && !lockscreen_configured) {
     settings->lockscreen_enabled = false;
   }
-  err = nvs_get_u8(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, &value_u8);
+  value_u16 = 0;
+  err = nvs_get_u16(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, &value_u16);
   if (err == ESP_OK) {
-    settings->lockscreen_timeout_sec = value_u8;
+    settings->lockscreen_timeout_sec = value_u16;
   }
   err = nvs_get_u8(nvsHandle, NVS_LOCKSCREEN_WAKE_KEY, &value_u8);
   if (err == ESP_OK) {
@@ -1038,7 +1039,7 @@ void settings_persist_setting(SettingsType setting) {
             key = NVS_LOCKSCREEN_TYPE_KEY;
             break;
         case SETTING_LOCKSCREEN_TIMEOUT:
-            err = nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, G_Settings.lockscreen_timeout_sec);
+            err = nvs_set_u16(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, G_Settings.lockscreen_timeout_sec);
             key = NVS_LOCKSCREEN_TIMEOUT_KEY;
             break;
         case SETTING_LOCKSCREEN_CHANGE_PIN:
@@ -1222,7 +1223,7 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_ENABLED_KEY, settings->lockscreen_enabled ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_TYPE_KEY, settings->lockscreen_type);
     nvs_set_blob(nvsHandle, NVS_LOCKSCREEN_OBF_KEY, settings->lockscreen_obfuscated, sizeof(settings->lockscreen_obfuscated));
-    nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, settings->lockscreen_timeout_sec);
+    nvs_set_u16(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, settings->lockscreen_timeout_sec);
     nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_WAKE_KEY, settings->lockscreen_wake_lock ? 1 : 0);
 
     esp_err_t err = nvs_commit(nvsHandle);
@@ -1904,10 +1905,10 @@ void settings_set_lockscreen_obfuscated(FSettings *settings, const char *obf) {
 const char *settings_get_lockscreen_obfuscated(const FSettings *settings) {
   return settings ? settings->lockscreen_obfuscated : "";
 }
-void settings_set_lockscreen_timeout_sec(FSettings *settings, uint8_t sec) {
+void settings_set_lockscreen_timeout_sec(FSettings *settings, uint16_t sec) {
   if (settings) settings->lockscreen_timeout_sec = sec;
 }
-uint8_t settings_get_lockscreen_timeout_sec(const FSettings *settings) {
+uint16_t settings_get_lockscreen_timeout_sec(const FSettings *settings) {
   return settings ? settings->lockscreen_timeout_sec : 0;
 }
 void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled) {
