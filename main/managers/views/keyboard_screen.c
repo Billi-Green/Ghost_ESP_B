@@ -4,6 +4,7 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "gui/screen_layout.h"
+#include "gui/accessibility_fonts.h"
 #include "gui/design_tokens.h"
 #include "gui/theme_palette_api.h"
 #include "freertos/FreeRTOS.h"
@@ -130,7 +131,7 @@ static void init_keyboard_styles(void) {
 
     lv_style_init(&style_key_label);
     lv_style_set_text_color(&style_key_label, text);
-    lv_style_set_text_font(&style_key_label, &lv_font_montserrat_14);
+    lv_style_set_text_font(&style_key_label, accessibility_get_font_body());
 
     saved_key_radius = radius;
     styles_inited = true;
@@ -786,10 +787,10 @@ static void keyboard_create() {
         }
         if(i == encoder_sel_idx) {
             lv_obj_set_style_text_color(encoder_labels[i], kb_text(), 0);
-            lv_obj_set_style_text_font(encoder_labels[i], &lv_font_montserrat_24, 0);
+            lv_obj_set_style_text_font(encoder_labels[i], accessibility_get_font_title(), 0);
         } else {
             lv_obj_set_style_text_color(encoder_labels[i], lv_color_hex(theme_palette_get_text_muted(settings_get_menu_theme(&G_Settings))), 0);
-            lv_obj_set_style_text_font(encoder_labels[i], &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(encoder_labels[i], accessibility_get_font_body(), 0);
         }
         int lbl_w = lv_obj_get_width(encoder_labels[i]);
         int lbl_h = 24; // font height
@@ -891,10 +892,10 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
         lv_obj_scroll_to_x(encoder_cont, scroll_x, LV_ANIM_OFF);
         if (prev >= 0 && prev < encoder_item_count) {
             lv_obj_set_style_text_color(encoder_labels[prev], lv_color_hex(theme_palette_get_text_muted(settings_get_menu_theme(&G_Settings))), 0);
-            lv_obj_set_style_text_font(encoder_labels[prev], &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(encoder_labels[prev], accessibility_get_font_body(), 0);
         }
         lv_obj_set_style_text_color(encoder_labels[encoder_sel_idx], kb_text(), 0);
-        lv_obj_set_style_text_font(encoder_labels[encoder_sel_idx], &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_font(encoder_labels[encoder_sel_idx], accessibility_get_font_title(), 0);
         if (event->data.encoder.button) {
             const char *sel = encoder_items[encoder_sel_idx];
             if(strcmp(sel, "Aa") == 0) {
@@ -923,7 +924,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                     lv_label_set_text(encoder_labels[i], encoder_items[i]);
                     bool sel_i = (i == encoder_sel_idx);
                     lv_obj_set_style_text_color(encoder_labels[i], sel_i ? kb_text() : lv_color_hex(theme_palette_get_text_muted(settings_get_menu_theme(&G_Settings))), 0);
-                    lv_obj_set_style_text_font(encoder_labels[i], sel_i ? &lv_font_montserrat_24 : &lv_font_montserrat_14, 0);
+                    lv_obj_set_style_text_font(encoder_labels[i], sel_i ? accessibility_get_font_title() : accessibility_get_font_body(), 0);
                     int lbl_w = lv_obj_get_width(encoder_labels[i]);
                     int enc_h = lv_obj_get_height(encoder_cont);
                     lv_obj_set_pos(encoder_labels[i], encoder_offset_x + i * encoder_item_spacing + (encoder_item_spacing - lbl_w) / 2, (enc_h - 24) / 2);
@@ -941,7 +942,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
                     lv_label_set_text(encoder_labels[i], encoder_items[i]);
                     bool sel_i = (i == encoder_sel_idx);
                     lv_obj_set_style_text_color(encoder_labels[i], sel_i ? kb_text() : lv_color_hex(theme_palette_get_text_muted(settings_get_menu_theme(&G_Settings))), 0);
-                    lv_obj_set_style_text_font(encoder_labels[i], sel_i ? &lv_font_montserrat_24 : &lv_font_montserrat_14, 0);
+                    lv_obj_set_style_text_font(encoder_labels[i], sel_i ? accessibility_get_font_title() : accessibility_get_font_body(), 0);
                     int lbl_w = lv_obj_get_width(encoder_labels[i]);
                     int enc_h = lv_obj_get_height(encoder_cont);
                     lv_obj_set_pos(encoder_labels[i], encoder_offset_x + i * encoder_item_spacing + (encoder_item_spacing - lbl_w) / 2, (enc_h - 24) / 2);

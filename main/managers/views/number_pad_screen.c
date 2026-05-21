@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "managers/views/terminal_screen.h"
+#include "gui/accessibility_fonts.h"
 #include "managers/views/options_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/settings_manager.h"

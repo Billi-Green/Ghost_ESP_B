@@ -3,6 +3,8 @@
 #include "esp_wifi.h"
 #include "lvgl.h"
 #include "managers/views/app_gallery_screen.h"
+#include "managers/settings_manager.h"
+#include "gui/accessibility_fonts.h"
 #include "gui/theme_palette_api.h"
 #include "gui/design_tokens.h"
 #include "gui/gui_anim.h"
@@ -48,7 +50,11 @@ LV_IMG_DECLARE(lock);
 
 static const char *TAG = "MainMenu";
 
-#define ANIM_DURATION 60
+static inline int get_anim_duration(void) {
+    return settings_get_reduced_motion(&G_Settings) ? 0 : 40;
+}
+
+#define ANIM_DURATION get_anim_duration()
 
 // Menu layout types
 typedef enum {
@@ -476,7 +482,7 @@ static void update_menu_item(bool slide_left) {
     if (LV_HOR_RES > 150) {
         lv_obj_t *label = lv_label_create(current_item_obj);
         lv_label_set_text(label, menu_items[menu_index].name);
-        lv_obj_set_style_text_font(label, gui_font_caption(), 0);
+        lv_obj_set_style_text_font(label, accessibility_get_font_body(), 0);
         lv_obj_set_style_text_color(label, menu_text_color, 0);
         lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
         carousel_cache.label = label;
@@ -1107,7 +1113,8 @@ static void create_grid_menu(void) {
         // Add label
         lv_obj_t *label = lv_label_create(grid_cards[i]);
         lv_label_set_text(label, menu_items[menu_index].name);
-        const lv_font_t *lbl_font = (grid_card_height <= 50 ? &lv_font_montserrat_10 : &lv_font_montserrat_12);
+        // smaller font on small tiles
+        const lv_font_t *lbl_font = accessibility_get_font_small();
         lv_obj_set_style_text_font(label, lbl_font, 0);
         lv_obj_set_style_text_color(label, menu_text_color, 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
@@ -1193,7 +1200,7 @@ static void create_list_menu(void) {
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, menu_items[menu_index].name);
         lv_obj_set_style_text_color(label, menu_text_color, 0);
-        const lv_font_t *lbl_font = (button_height <= 38) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+        const lv_font_t *lbl_font = accessibility_get_font_body();
         lv_obj_set_style_text_font(label, lbl_font, 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
         lv_obj_set_flex_grow(label, 1);
@@ -1344,9 +1351,9 @@ void main_menu_create(void) {
         lv_obj_t *left_label = lv_label_create(left_nav_btn);
         lv_label_set_text(left_label, LV_SYMBOL_LEFT);
         // increase arrow size for better visibility
-        lv_obj_set_style_text_font(left_label, &lv_font_montserrat_18, 0);
+        lv_obj_set_style_text_font(left_label, accessibility_get_font_display(), 0);
         if (btn_size < 40) {
-            lv_obj_set_style_text_font(left_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(left_label, accessibility_get_font_title(), 0);
         }
         lv_obj_set_style_text_color(left_label, menu_text_color, 0);
         lv_obj_align(left_label, LV_ALIGN_CENTER, 0, 0);
@@ -1367,9 +1374,9 @@ void main_menu_create(void) {
         lv_obj_t *right_label = lv_label_create(right_nav_btn);
         lv_label_set_text(right_label, LV_SYMBOL_RIGHT);
         // increase arrow size for better visibility
-        lv_obj_set_style_text_font(right_label, &lv_font_montserrat_18, 0);
+        lv_obj_set_style_text_font(right_label, accessibility_get_font_display(), 0);
         if (btn_size < 40) {
-            lv_obj_set_style_text_font(right_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(right_label, accessibility_get_font_title(), 0);
         }
         lv_obj_set_style_text_color(right_label, menu_text_color, 0);
         lv_obj_align(right_label, LV_ALIGN_CENTER, 0, 0);

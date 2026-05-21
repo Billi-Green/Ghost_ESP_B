@@ -1,6 +1,7 @@
 #include "gui/detail_view.h"
 #include "managers/display_manager.h"
 #include "managers/settings_manager.h"
+#include "gui/accessibility_fonts.h"
 #include "gui/theme_palette_api.h"
 #include "gui/design_tokens.h"
 #include "gui/gui_anim.h"
@@ -118,13 +119,13 @@ static inline lv_style_t *get_zebra_style(detail_view_t *dv, int idx) {
 }
 
 static inline const lv_font_t *get_item_font(const detail_view_t *dv) {
-    if (dv->compact_layout) return &lv_font_montserrat_10;
-    return (dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+    if (dv->compact_layout) return accessibility_get_font_small();
+    return (dv->btn_h <= 40) ? accessibility_get_font_body() : accessibility_get_font_title();
 }
 
 static inline const lv_font_t *get_value_font(const detail_view_t *dv) {
-    if (dv->compact_layout) return &lv_font_montserrat_10;
-    return (dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+    if (dv->compact_layout) return accessibility_get_font_small();
+    return (dv->btn_h <= 40) ? accessibility_get_font_body() : accessibility_get_font_title();
 }
 
 static inline lv_coord_t get_info_row_height(const detail_view_t *dv) {
@@ -641,7 +642,7 @@ void detail_view_add_header(detail_view_t *dv, const char *text) {
     lv_obj_t *lbl = lv_label_create(btn);
     if (lbl) {
         lv_label_set_text(lbl, text ? text : "");
-        const lv_font_t *font = dv->compact_layout ? &lv_font_montserrat_10 : ((dv->btn_h <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
+        const lv_font_t *font = dv->compact_layout ? accessibility_get_font_small() : ((dv->btn_h <= 40) ? accessibility_get_font_body() : accessibility_get_font_title());
         lv_obj_set_style_text_font(lbl, font, 0);
         lv_color_t txt;
         get_theme_colors(NULL, NULL, NULL, &txt, NULL);

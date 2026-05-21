@@ -95,6 +95,11 @@ static const char *NVS_MIC_MIRROR_MODE_KEY = "mic_mirror";
 static const char *NVS_GHOSTLINK_SPLIT_VIEW_KEY = "glink_split";
 static const char *NVS_MENU_BG_SHADE_KEY = "menu_bg_shd";
 static const char *NVS_MENU_ROUNDED_KEY = "menu_rounded";
+static const char *NVS_EPILEPSY_WARNING_KEY = "epil_warn";
+static const char *NVS_FONT_SIZE_KEY = "font_size";
+static const char *NVS_REDUCED_MOTION_KEY = "reduce_motion";
+static const char *NVS_INPUT_REPEAT_SPEED_KEY = "repeat_spd";
+static const char *NVS_HIGH_CONTRAST_KEY = "high_contrast";
 static const char *NVS_MENU_ITEM_BORDERS_KEY = "menu_itm_brd";
 
 // Lockscreen NVS keys
@@ -220,6 +225,11 @@ void settings_set_defaults(FSettings *settings) {
   settings->ghostlink_split_view = true; // Default to split view
   settings->menu_bg_shade = 2;
   settings->menu_rounded = true;
+  settings->epilepsy_warning_enabled = true;
+  settings->font_size = 1; // Normal (0=Small, 1=Normal, 2=Large)
+  settings->reduced_motion = false;
+  settings->input_repeat_speed = 1; // Normal (0=Slow, 1=Normal, 2=Fast)
+  settings->high_contrast = false;
   settings->menu_item_borders = false;
 
   // Lockscreen defaults (disabled by default)
@@ -720,7 +730,29 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->menu_rounded = (bool)value_u8;
   }
+  err = nvs_get_u8(nvsHandle, NVS_EPILEPSY_WARNING_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->epilepsy_warning_enabled = (bool)value_u8;
+  } else {
+    settings->epilepsy_warning_enabled = true; // Default to enabled
+  }
 
+  err = nvs_get_u8(nvsHandle, NVS_FONT_SIZE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->font_size = value_u8;
+  }
+  err = nvs_get_u8(nvsHandle, NVS_REDUCED_MOTION_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->reduced_motion = (bool)value_u8;
+  }
+  err = nvs_get_u8(nvsHandle, NVS_INPUT_REPEAT_SPEED_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->input_repeat_speed = value_u8;
+  }
+  err = nvs_get_u8(nvsHandle, NVS_HIGH_CONTRAST_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->high_contrast = (bool)value_u8;
+  }
   err = nvs_get_u8(nvsHandle, NVS_MENU_ITEM_BORDERS_KEY, &value_u8);
   if (err == ESP_OK) {
     settings->menu_item_borders = (bool)value_u8;
@@ -1022,6 +1054,26 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_u8(nvsHandle, NVS_MENU_ROUNDED_KEY, G_Settings.menu_rounded ? 1 : 0);
             key = NVS_MENU_ROUNDED_KEY;
             break;
+        case SETTING_EPILEPSY_WARNING:
+            err = nvs_set_u8(nvsHandle, NVS_EPILEPSY_WARNING_KEY, G_Settings.epilepsy_warning_enabled ? 1 : 0);
+            key = NVS_EPILEPSY_WARNING_KEY;
+            break;
+        case SETTING_FONT_SIZE:
+            err = nvs_set_u8(nvsHandle, NVS_FONT_SIZE_KEY, G_Settings.font_size);
+            key = NVS_FONT_SIZE_KEY;
+            break;
+        case SETTING_REDUCED_MOTION:
+            err = nvs_set_u8(nvsHandle, NVS_REDUCED_MOTION_KEY, G_Settings.reduced_motion ? 1 : 0);
+            key = NVS_REDUCED_MOTION_KEY;
+            break;
+        case SETTING_INPUT_REPEAT_SPEED:
+            err = nvs_set_u8(nvsHandle, NVS_INPUT_REPEAT_SPEED_KEY, G_Settings.input_repeat_speed);
+            key = NVS_INPUT_REPEAT_SPEED_KEY;
+            break;
+        case SETTING_HIGH_CONTRAST:
+            err = nvs_set_u8(nvsHandle, NVS_HIGH_CONTRAST_KEY, G_Settings.high_contrast ? 1 : 0);
+            key = NVS_HIGH_CONTRAST_KEY;
+            break;
         case SETTING_MENU_ITEM_BORDERS:
             err = nvs_set_u8(nvsHandle, NVS_MENU_ITEM_BORDERS_KEY, G_Settings.menu_item_borders ? 1 : 0);
             key = NVS_MENU_ITEM_BORDERS_KEY;
@@ -1217,6 +1269,11 @@ void settings_save(const FSettings *settings) {
     nvs_set_u8(nvsHandle, NVS_GHOSTLINK_SPLIT_VIEW_KEY, settings->ghostlink_split_view ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_MENU_BG_SHADE_KEY, settings->menu_bg_shade);
     nvs_set_u8(nvsHandle, NVS_MENU_ROUNDED_KEY, settings->menu_rounded ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_EPILEPSY_WARNING_KEY, settings->epilepsy_warning_enabled ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_FONT_SIZE_KEY, settings->font_size);
+    nvs_set_u8(nvsHandle, NVS_REDUCED_MOTION_KEY, settings->reduced_motion ? 1 : 0);
+    nvs_set_u8(nvsHandle, NVS_INPUT_REPEAT_SPEED_KEY, settings->input_repeat_speed);
+    nvs_set_u8(nvsHandle, NVS_HIGH_CONTRAST_KEY, settings->high_contrast ? 1 : 0);
     nvs_set_u8(nvsHandle, NVS_MENU_ITEM_BORDERS_KEY, settings->menu_item_borders ? 1 : 0);
 
     // Save lockscreen settings
@@ -1873,6 +1930,56 @@ void settings_set_menu_rounded(FSettings *settings, bool enabled) {
 
 bool settings_get_menu_rounded(const FSettings *settings) {
   return settings ? settings->menu_rounded : false;
+}
+
+void settings_set_epilepsy_warning_enabled(FSettings *settings, bool enabled) {
+  if (settings) {
+    settings->epilepsy_warning_enabled = enabled;
+  }
+}
+
+bool settings_get_epilepsy_warning_enabled(const FSettings *settings) {
+  return settings ? settings->epilepsy_warning_enabled : true;
+}
+
+void settings_set_font_size(FSettings *settings, uint8_t size) {
+  if (settings) {
+    settings->font_size = size;
+  }
+}
+
+uint8_t settings_get_font_size(const FSettings *settings) {
+  return settings ? settings->font_size : 1;
+}
+
+void settings_set_reduced_motion(FSettings *settings, bool enabled) {
+  if (settings) {
+    settings->reduced_motion = enabled;
+  }
+}
+
+bool settings_get_reduced_motion(const FSettings *settings) {
+  return settings ? settings->reduced_motion : false;
+}
+
+void settings_set_input_repeat_speed(FSettings *settings, uint8_t speed) {
+  if (settings) {
+    settings->input_repeat_speed = speed;
+  }
+}
+
+uint8_t settings_get_input_repeat_speed(const FSettings *settings) {
+  return settings ? settings->input_repeat_speed : 1;
+}
+
+void settings_set_high_contrast(FSettings *settings, bool enabled) {
+  if (settings) {
+    settings->high_contrast = enabled;
+  }
+}
+
+bool settings_get_high_contrast(const FSettings *settings) {
+  return settings ? settings->high_contrast : false;
 }
 
 void settings_set_menu_item_borders(FSettings *settings, bool enabled) {

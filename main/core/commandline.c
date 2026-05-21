@@ -17,6 +17,7 @@
 #include "managers/dial_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
+#include "managers/views/error_popup.h"
 #include "managers/settings_sd_backup.h"
 #include "managers/wifi_manager.h"
 #include "scans/wifi/port_scan.h"
@@ -418,7 +419,10 @@ static const SettingDescriptor k_settings_desc[] = {
     {"invert_colors", ST_BOOL, OFF(invert_colors), "Display", 0, 0, 0},
     {"terminal_color", ST_COLOR_HEX, OFF(terminal_text_color), "Display", 0, 0, 0},
     {"menu_theme", ST_U8, OFF(menu_theme), "Display", 0, 0, 255},
-
+    {"font_size", ST_U8, OFF(font_size), "Display", 0, 0, 2},
+    {"reduce_motion", ST_BOOL, OFF(reduced_motion), "Display", 0, 0, 0},
+    {"repeat_speed", ST_U8, OFF(input_repeat_speed), "Display", 0, 0, 2},
+    {"high_contrast", ST_BOOL, OFF(high_contrast), "Display", 0, 0, 0},
     {"channel_delay", ST_FLOAT, OFF(channel_delay), "System", 0, 0, 0},
     {"broadcast_speed", ST_U16, OFF(broadcast_speed), "System", 0, 0, 65535},
     {"gps_rx_pin", ST_I32, OFF(gps_rx_pin), "System", 0, 0, 0},
@@ -5191,6 +5195,10 @@ void handle_rgb_mode(int argc, char **argv) {
         glog("Rainbow mode activated\n");
         status_display_show_status("RGB Rainbow");
     } else if (strcasecmp(argv[1], "police") == 0) {
+        if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
+            error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
             status_display_show_status("RGB Not Ready");
@@ -5201,8 +5209,10 @@ void handle_rgb_mode(int argc, char **argv) {
         glog("Police mode activated\n");
         status_display_show_status("RGB Police");
     } else if (strcasecmp(argv[1], "strobe") == 0) {
-        glog("SEIZURE WARNING\nPLEASE EXIT NOW IF\nYOU ARE SENSITIVE\n");
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
+            error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
             status_display_show_status("RGB Not Ready");
@@ -8857,6 +8867,9 @@ void handle_ir_cmd(int argc, char **argv) {
                 resolve_ir_universal_path(arg, args->path, sizeof(args->path));
             }
             g_ir_universal_send_cancel = false;
+            if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
+                error_popup_create("EPILEPSY WARNING\nRGB LED will flash\nduring IR transmission");
+            }
             if (xTaskCreate(ir_universal_send_task, "ir_uni_sendall", 4096, args, 5, &g_ir_universal_send_task) != pdPASS) {
                 glog("IR: failed to start universal sendall task.\n");
                 free(args);
