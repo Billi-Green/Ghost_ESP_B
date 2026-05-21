@@ -283,6 +283,7 @@ jobs:
             echo "Manifest unchanged; no commit needed."
           else
             git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Update firmware manifest for ${GITHUB_SHA::7} [skip ci]"
+            git pull --rebase origin "${BRANCH}" || echo "Rebase done or not needed"
             git push origin "HEAD:${BRANCH}"
           fi
 
@@ -409,6 +410,7 @@ jobs:
             echo "Manifest unchanged; no commit needed."
           else
             git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Update firmware manifest for ${TAG} [skip ci]"
+            git pull --rebase origin "${BRANCH}" || echo "Rebase done or not needed"
             git push origin "HEAD:${BRANCH}"
           fi
 
@@ -571,6 +573,7 @@ jobs:
             echo "Manifest unchanged; no commit needed."
           else
             git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Update firmware manifest for ${TAG} [skip ci]"
+            git pull --rebase origin "${BRANCH}" || echo "Rebase done or not needed"
             git push origin "HEAD:${BRANCH}"
           fi
 
