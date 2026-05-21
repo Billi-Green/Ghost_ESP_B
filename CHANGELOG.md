@@ -2,7 +2,7 @@
 
 ## Revival v2.0
 
-- Added PIN lockscreen with lock-on-wake and auto-lock settings
+- Added PIN lock screen with lock on wake and auto-lock settings
 - Added toast notification system
 - Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
 - Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
@@ -14,6 +14,13 @@
 - Fixed apps gallery not respecting the "Item Borders" setting
 - Skipping the setup wizard now defaults the main menu layout to List instead of Carousel
 - Increased LVGL display refresh target from 30 FPS to 60 FPS
+- Added accessibility settings:
+  - Font size (Small/Normal/Large)
+  - High contrast mode
+  - Reduced motion
+  - Input repeat speed (Slow/Normal/Fast)
+- Added epilepsy warning toggle to disable flashing LED effect popups
+- Updated all UI screens to use accessibility-aware fonts and theme overrides
 
 ## Revival v1.9.10
 

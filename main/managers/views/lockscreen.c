@@ -55,6 +55,10 @@ static lv_timer_t *s_bob_timer;
 static lv_timer_t *s_unlock_timer;
 
 static int s_focus_idx;
+static bool s_touch_started;
+static int s_touch_pressed_idx;
+static int s_suppress_click_idx;
+static int64_t s_suppress_click_until_ms;
 static char s_input[MAX_INPUT_LEN + 1];
 static uint8_t s_input_len;
 static bool s_setup_mode;
@@ -148,6 +152,10 @@ void lockscreen_reset_input(void) {
     s_setup_first[0] = '\0';
     s_ghost_state = GHOST_SLEEPING;
     s_focus_idx = 0;
+    s_touch_started = false;
+    s_touch_pressed_idx = -1;
+    s_suppress_click_idx = -1;
+    s_suppress_click_until_ms = 0;
 }
 
 void lockscreen_enter_setup(void) {
@@ -305,6 +313,18 @@ static void lockscreen_submit(void) {
     }
 }
 
+static int lockscreen_hit_test(int x, int y) {
+    for (int i = 0; i < NUMPAD_BTNS; i++) {
+        if (!s_numpad_btns[i] || !lv_obj_is_valid(s_numpad_btns[i])) continue;
+        lv_area_t area;
+        lv_obj_get_coords(s_numpad_btns[i], &area);
+        if (x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static void lockscreen_focus_btn(int idx) {
     if (idx < 0 || idx >= NUMPAD_BTNS) return;
     if (!s_numpad_cont || !lv_obj_is_valid(s_numpad_cont)) return;
@@ -312,8 +332,14 @@ static void lockscreen_focus_btn(int idx) {
     lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
     for (int i = 0; i < NUMPAD_BTNS; i++) {
         if (!s_numpad_btns[i] || !lv_obj_is_valid(s_numpad_btns[i])) continue;
-        lv_obj_set_style_border_width(s_numpad_btns[i], (i == idx) ? 3 : 1, 0);
-        lv_obj_set_style_border_color(s_numpad_btns[i], (i == idx) ? accent : lv_color_hex(0x444444), 0);
+        bool focused = (i == idx);
+        lv_obj_set_style_border_width(s_numpad_btns[i], focused ? 3 : 1, 0);
+        lv_obj_set_style_border_color(s_numpad_btns[i], focused ? accent : lv_color_hex(0x444444), 0);
+        lv_obj_set_style_bg_opa(s_numpad_btns[i], focused ? LV_OPA_40 : LV_OPA_20, 0);
+        lv_obj_t *lbl = lv_obj_get_child(s_numpad_btns[i], 0);
+        if (lbl) {
+            lv_obj_set_style_text_color(lbl, focused ? lv_color_hex(theme_palette_get_accent(theme)) : lv_color_hex(0xFFFFFF), 0);
+        }
     }
 }
 
@@ -332,7 +358,14 @@ static void lockscreen_move_focus(int dx, int dy) {
 
 static void lockscreen_numpad_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    if (idx == s_suppress_click_idx && now_ms < s_suppress_click_until_ms) {
+        s_suppress_click_idx = -1;
+        return;
+    }
     if (idx < 0 || idx >= NUMPAD_BTNS) return;
+    s_focus_idx = idx;
+    lockscreen_focus_btn(s_focus_idx);
     char c = k_numpad_chars[idx];
     if (c == '\b') {
         lockscreen_delete_last();
@@ -472,7 +505,28 @@ static void lockscreen_normalize_input(InputEvent *event, bool *up, bool *down, 
 
 static void lockscreen_input_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
-        // Touch events are handled by button callbacks
+        lv_indev_data_t *data = &event->data.touch_data;
+        if (data->state == LV_INDEV_STATE_PR) {
+            int idx = lockscreen_hit_test(data->point.x, data->point.y);
+            s_touch_started = (idx >= 0);
+            s_touch_pressed_idx = idx;
+            if (idx >= 0) {
+                s_focus_idx = idx;
+                lockscreen_focus_btn(s_focus_idx);
+            }
+        } else if (data->state == LV_INDEV_STATE_REL && s_touch_started) {
+            int idx = lockscreen_hit_test(data->point.x, data->point.y);
+            if (idx >= 0 && idx == s_touch_pressed_idx) {
+                s_suppress_click_idx = idx;
+                s_suppress_click_until_ms = (esp_timer_get_time() / 1000) + 250;
+                char c = k_numpad_chars[idx];
+                if (c == '\b') lockscreen_delete_last();
+                else if (c == '\r') lockscreen_submit();
+                else lockscreen_add_char(c);
+            }
+            s_touch_started = false;
+            s_touch_pressed_idx = -1;
+        }
         return;
     }
 
@@ -645,6 +699,10 @@ void lockscreen_destroy(void) {
         s_unlock_timer = NULL;
     }
     lockscreen_destroy_numpad();
+    s_touch_started = false;
+    s_touch_pressed_idx = -1;
+    s_suppress_click_idx = -1;
+    s_suppress_click_until_ms = 0;
     lvgl_obj_del_safe(&s_root);
     lockscreen_view.root = NULL;
     s_content = NULL;
