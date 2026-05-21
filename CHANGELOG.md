@@ -2,6 +2,7 @@
 
 ## Revival v2.0
 
+- Added PIN lockscreen with lock-on-wake and auto-lock settings
 - Added toast notification system
 - Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
 - Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
