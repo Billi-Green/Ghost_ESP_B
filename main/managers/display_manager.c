@@ -1315,9 +1315,14 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
 #elif defined(CONFIG_IDF_TARGET_ESP32C5)
-  /* Use a single buffer on ESP32-C5 sized to provide a responsive feel on 240x320 displays */
-  /* width * 8 gives ~8 lines of buffer which balances responsiveness and RAM use */
+#if defined(CONFIG_SPIRAM)
+  /* PSRAM available: dual buffer for smoother 60Hz rendering */
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
+  static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
+#else
+  /* No PSRAM: small single buffer to save internal RAM */
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
+#endif
 #elif defined(CONFIG_IDF_TARGET_ESP32)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 10] __attribute__((aligned(4)));
 #else
@@ -1344,8 +1349,15 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   /* single buffer mode: small buffer for low-memory cardputer */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 2);
-#elif defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32S2)
-  /* single buffer mode: use width * 5 for responsive drawing without excessive RAM */
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+#if defined(CONFIG_SPIRAM)
+  /* dual buffer with PSRAM for smooth 60Hz */
+  lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);
+#else
+  /* single buffer, no PSRAM */
+  lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
+#endif
+#elif defined(CONFIG_IDF_TARGET_ESP32S2)
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
 #elif defined(CONFIG_IDF_TARGET_ESP32)
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 10);
