@@ -11,6 +11,7 @@
 - Fixed number pad touchscreen input and replaced the DEL label with the LVGL backspace symbol
 - Polished keyboard screen with theme-aware key styling and accent highlights
 - Fixed apps gallery not respecting the "Item Borders" setting
+- Skipping the setup wizard now defaults the main menu layout to List instead of Carousel
 - Increased LVGL display refresh target from 30 FPS to 60 FPS
 
 ## Revival v1.9.10
