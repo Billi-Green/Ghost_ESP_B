@@ -3,6 +3,16 @@
 ## Revival v2.0
 
 - Added toast notification system
+- Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
+- Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
+- Removed border from popups
+- Polished detail view to match main menu styling
+- Polished number pad screen with theme-aware lockscreen-style numpad grid
+- Fixed number pad touchscreen input and replaced the DEL label with the LVGL backspace symbol
+- Polished keyboard screen with theme-aware key styling and accent highlights
+- Fixed apps gallery not respecting the "Item Borders" setting
+- Skipping the setup wizard now defaults the main menu layout to List instead of Carousel
+- Increased LVGL display refresh target from 30 FPS to 60 FPS
 
 ## Revival v1.9.10
 

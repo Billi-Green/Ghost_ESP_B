@@ -12,7 +12,7 @@ extern "C" {
 #define TOAST_WARN    2
 #define TOAST_ERROR   3
 
-#define TOAST_DEFAULT_DURATION_MS 2500
+#define TOAST_DEFAULT_DURATION_MS 1500
 #define TOAST_MAX_TEXT_LEN        63
 
 void toast_show(const char *text, uint8_t type);
