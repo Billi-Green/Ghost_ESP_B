@@ -602,6 +602,7 @@ static void skip_setup(void) {
     
     ESP_LOGI(TAG, "Skipping setup wizard");
     settings_set_setup_complete(&G_Settings, true);
+    settings_set_menu_layout(&G_Settings, 2);
     settings_save(&G_Settings);
     display_manager_switch_view(&main_menu_view);
 }

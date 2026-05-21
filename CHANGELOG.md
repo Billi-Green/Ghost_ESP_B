@@ -1,5 +1,28 @@
 # Ghost ESP Changelog
 
+## Revival v2.0
+
+- Added toast notification system
+- Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
+- Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
+- Removed border from popups
+- Polished detail view to match main menu styling
+- Polished number pad screen with theme-aware lockscreen-style numpad grid
+- Fixed number pad touchscreen input and replaced the DEL label with the LVGL backspace symbol
+- Polished keyboard screen with theme-aware key styling and accent highlights
+- Fixed apps gallery not respecting the "Item Borders" setting
+- Skipping the setup wizard now defaults the main menu layout to List instead of Carousel
+- Increased LVGL display refresh target from 30 FPS to 60 FPS
+
+## Revival v1.9.10
+
+- Fixed Settings submenus on Cardputer ADV showing shifted content from Network onward when Status Display is not compiled in
+- Fixed Cardputer grid card navigation not scrolling down when keyboard/encoder selection moves below the visible rows
+- Fixed the darkest menu background shade appearing green on RGB565 displays by using true black for that shade
+- Fixed NULL pointer crash in LVGL display refresh during WiFi scan by disabling pop-in zoom animation
+- Fixed potential boot hang on splash screen with no SD card inserted on shared-SPI boards
+- Removed compile-time GPS menu gate. GPS menu is now always visible since the RX pin can be set at runtime via `gpspin` command
+
 ## Revival v1.9.9
 
 ### Added

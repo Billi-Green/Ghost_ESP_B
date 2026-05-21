@@ -968,7 +968,6 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
   // set status bar icon colors based on power save mode and AP state
   uint8_t theme = settings_get_menu_theme(&G_Settings);
   lv_color_t default_color = lv_color_hex(theme_palette_get_text_muted(theme));
-  lv_color_t gray_color = lv_color_hex(0x808080); // Gray for inactive state
   
   // WiFi icon color logic
   if (wifi_label && lv_obj_is_valid(wifi_label)) {
@@ -976,21 +975,20 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       bool ap_should_be_active = settings_get_ap_enabled(&G_Settings) && !power_save_enabled;
       
       if (!ap_should_be_active) {
-          // AP is disabled or power saving is on - show gray
-          lv_obj_set_style_text_color(wifi_label, gray_color, 0);
+          lv_obj_set_style_text_color(wifi_label, default_color, 0);
       } else if (wifi_manager_is_evil_portal_active()) {
-          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x0000FF), 0);
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x60A5FA), 0);
       } else if (is_ap_active) {
-          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x00FF00), 0);
+          lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x22C55E), 0);
       } else {
           lv_obj_set_style_text_color(wifi_label, default_color, 0);
       }
   }
   
   if (power_save_enabled) {
-    lv_color_t orange_color = lv_color_hex(0xFFA500); // orange like apple uses
+    lv_color_t amber_color = lv_color_hex(0xF59E0B);
     if (battery_label && lv_obj_is_valid(battery_label)) {
-      lv_obj_set_style_text_color(battery_label, orange_color, 0);
+      lv_obj_set_style_text_color(battery_label, amber_color, 0);
     }
   } else {
     if (bt_label && lv_obj_is_valid(bt_label)) {
@@ -1019,9 +1017,9 @@ void update_status_bar(bool wifi_enabled, bool bt_enabled, bool sd_card_mounted,
       }
 
       if (is_charging) {
-        battery_color = lv_color_hex(0x00FF00); // Green if charging
+        battery_color = lv_color_hex(0x22C55E);
       } else if (batteryPercentage <= 20) {
-        battery_color = lv_color_hex(0xFF0000); // Red if 20% or below
+        battery_color = lv_color_hex(0xEF4444);
       }
       lv_obj_set_style_text_color(battery_label, battery_color, 0);
     }
@@ -1067,13 +1065,14 @@ void display_manager_update_status_bar_color(void) {
   lv_color_t accent_color = lv_color_hex(theme_palette_get_accent(theme));
   lv_color_t status_bg_color = lv_color_hex(theme_palette_get_surface_alt(theme));
   lv_color_t text_color = lv_color_hex(theme_palette_get_text_muted(theme));
+  lv_color_t primary_text = lv_color_hex(theme_palette_get_text(theme));
   
   lv_obj_set_style_bg_color(status_bar, status_bg_color, LV_PART_MAIN);
   lv_obj_set_style_border_color(status_bar, accent_color, LV_PART_MAIN);
 
   // Reset all status bar label colors when leaving rainbow mode
   if (mainlabel && lv_obj_is_valid(mainlabel)) {
-    lv_obj_set_style_text_color(mainlabel, text_color, 0);
+    lv_obj_set_style_text_color(mainlabel, primary_text, 0);
   }
   if (wifi_label && lv_obj_is_valid(wifi_label)) {
     lv_obj_set_style_text_color(wifi_label, text_color, 0);
@@ -1119,7 +1118,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_set_style_bg_color(status_bar, status_bg_color, LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(status_bar, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_border_side(status_bar, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
-  lv_obj_set_style_border_width(status_bar, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_width(status_bar, 2, LV_PART_MAIN);
   lv_obj_set_style_border_color(status_bar, lv_color_hex(theme_palette_get_accent(theme)), LV_PART_MAIN);
   lv_obj_set_style_border_opa(status_bar, LV_OPA_40, LV_PART_MAIN);
   lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
@@ -1132,7 +1131,9 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_align(left_container, LV_ALIGN_LEFT_MID, GUI_SAFEAREA_HOR, 0);
   mainlabel = lv_label_create(left_container);
   lv_label_set_text(mainlabel, label_text);
-  lv_obj_set_style_text_color(mainlabel, status_text_color, 0);
+  lv_obj_set_style_text_color(mainlabel, lv_color_hex(theme_palette_get_text(theme)), 0);
+  lv_label_set_long_mode(mainlabel, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(mainlabel, LV_HOR_RES / 2 - GUI_SAFEAREA_HOR * 2);
   lv_obj_set_style_text_font(mainlabel, accessibility_get_font_title(), 0);
 
   lv_obj_t *right_container = lv_obj_create(status_bar);
@@ -1362,9 +1363,14 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
 #elif defined(CONFIG_IDF_TARGET_ESP32C5)
-  /* Use a single buffer on ESP32-C5 sized to provide a responsive feel on 240x320 displays */
-  /* width * 8 gives ~8 lines of buffer which balances responsiveness and RAM use */
+#if defined(CONFIG_SPIRAM)
+  /* PSRAM available: dual buffer for smoother 60Hz rendering */
+  static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
+  static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
+#else
+  /* No PSRAM: small single buffer to save internal RAM */
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
+#endif
 #elif defined(CONFIG_IDF_TARGET_ESP32)
   static lv_color_t buf1[CONFIG_TFT_WIDTH * 10] __attribute__((aligned(4)));
 #else
@@ -1391,8 +1397,15 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
   /* single buffer mode: small buffer for low-memory cardputer */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 2);
-#elif defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32S2)
-  /* single buffer mode: use width * 5 for responsive drawing without excessive RAM */
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+#if defined(CONFIG_SPIRAM)
+  /* dual buffer with PSRAM for smooth 60Hz */
+  lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);
+#else
+  /* single buffer, no PSRAM */
+  lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
+#endif
+#elif defined(CONFIG_IDF_TARGET_ESP32S2)
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
 #elif defined(CONFIG_IDF_TARGET_ESP32)
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 10);
