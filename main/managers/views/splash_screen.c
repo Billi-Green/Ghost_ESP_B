@@ -2,6 +2,7 @@
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/setup_wizard_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/views/lockscreen.h"
 #include "managers/settings_manager.h"
 #include "core/ghostesp_version.h"
 #include "gui/screen_layout.h"
@@ -75,8 +76,12 @@ static void fade_anim_cb(void *var, int32_t opacity) {
 }
 
 static void fade_out_cb(void *var) {
+  (void)var;
   if (!settings_get_setup_complete(&G_Settings)) {
     display_manager_switch_view(&setup_wizard_view);
+  } else if (settings_get_lockscreen_enabled(&G_Settings)) {
+    lockscreen_reset_input();
+    display_manager_switch_view(&lockscreen_view);
   } else {
     display_manager_switch_view(&main_menu_view);
   }

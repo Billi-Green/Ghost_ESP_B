@@ -832,7 +832,7 @@ static void setup_wizard_input_callback(InputEvent *event) {
                                 else if (current_step == SETUP_STEP_THEME) temp_theme = option_cursor;
                                 else if (current_step == SETUP_STEP_MENU_LAYOUT) temp_menu_layout = option_cursor;
                                 else if (current_step == SETUP_STEP_TERMINAL_COLOR) temp_terminal_color = option_cursor;
-else if (current_step == SETUP_STEP_EPILEPSY_WARNING) temp_epilepsy_warning = option_cursor;
+                                else if (current_step == SETUP_STEP_EPILEPSY_WARNING) temp_epilepsy_warning = option_cursor;
                                 else if (current_step == SETUP_STEP_ACCESSIBILITY) temp_font_size = option_cursor;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
                                 else if (current_step == SETUP_STEP_IDLE_ANIMATION) temp_idle_animation = option_cursor;
@@ -857,11 +857,7 @@ else if (current_step == SETUP_STEP_EPILEPSY_WARNING) temp_epilepsy_warning = op
                                     next_step = SETUP_STEP_EPILEPSY_WARNING;
                                     prev_step = SETUP_STEP_MENU_LAYOUT;
                                 } else if (current_step == SETUP_STEP_EPILEPSY_WARNING) {
-#ifdef CONFIG_WITH_STATUS_DISPLAY
                                     next_step = SETUP_STEP_ACCESSIBILITY;
-#else
-                                    next_step = SETUP_STEP_COMPLETE;
-#endif
                                     prev_step = SETUP_STEP_TERMINAL_COLOR;
                                 } else if (current_step == SETUP_STEP_ACCESSIBILITY) {
 #ifdef CONFIG_WITH_STATUS_DISPLAY
@@ -1000,7 +996,7 @@ else if (current_step == SETUP_STEP_EPILEPSY_WARNING) temp_epilepsy_warning = op
         }
 #endif
     } else if ((current_step == SETUP_STEP_TIMEZONE || current_step == SETUP_STEP_DISPLAY_TIMEOUT || current_step == SETUP_STEP_THEME || current_step == SETUP_STEP_MENU_LAYOUT ||
-                current_step == SETUP_STEP_TERMINAL_COLOR || current_step == SETUP_STEP_EPILEPSY_WARNING
+                current_step == SETUP_STEP_TERMINAL_COLOR || current_step == SETUP_STEP_EPILEPSY_WARNING || current_step == SETUP_STEP_ACCESSIBILITY
 #ifdef CONFIG_WITH_STATUS_DISPLAY
                 || current_step == SETUP_STEP_IDLE_ANIMATION
 #endif
@@ -1031,18 +1027,22 @@ else if (current_step == SETUP_STEP_EPILEPSY_WARNING) temp_epilepsy_warning = op
             prev_step = SETUP_STEP_MENU_LAYOUT;
         } else if (current_step == SETUP_STEP_EPILEPSY_WARNING) {
             count = EPILEPSY_WARNING_COUNT;
+            next_step = SETUP_STEP_ACCESSIBILITY;
+            prev_step = SETUP_STEP_TERMINAL_COLOR;
+        } else if (current_step == SETUP_STEP_ACCESSIBILITY) {
+            count = FONT_SIZE_COUNT;
 #ifdef CONFIG_WITH_STATUS_DISPLAY
             next_step = SETUP_STEP_IDLE_ANIMATION;
 #else
             next_step = SETUP_STEP_COMPLETE;
 #endif
-            prev_step = SETUP_STEP_TERMINAL_COLOR;
+            prev_step = SETUP_STEP_EPILEPSY_WARNING;
         }
 #ifdef CONFIG_WITH_STATUS_DISPLAY
         else if (current_step == SETUP_STEP_IDLE_ANIMATION) {
             count = IDLE_ANIMATION_COUNT;
             next_step = SETUP_STEP_COMPLETE;
-            prev_step = SETUP_STEP_EPILEPSY_WARNING;
+            prev_step = SETUP_STEP_ACCESSIBILITY;
         }
 #endif
 

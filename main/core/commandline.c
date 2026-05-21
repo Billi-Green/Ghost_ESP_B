@@ -5197,6 +5197,7 @@ void handle_rgb_mode(int argc, char **argv) {
     } else if (strcasecmp(argv[1], "police") == 0) {
         if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
             error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
+            vTaskDelay(pdMS_TO_TICKS(2000));
         }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
@@ -5210,6 +5211,7 @@ void handle_rgb_mode(int argc, char **argv) {
     } else if (strcasecmp(argv[1], "strobe") == 0) {
         if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
             error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
+            vTaskDelay(pdMS_TO_TICKS(2000));
         }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");

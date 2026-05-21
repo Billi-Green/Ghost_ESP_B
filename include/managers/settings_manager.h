@@ -140,6 +140,12 @@ typedef enum {
     SETTING_MENU_ITEM_BORDERS,
     SETTING_EXPORT_SETTINGS_SD,
     SETTING_IMPORT_SETTINGS_SD,
+    // Lockscreen settings
+    SETTING_LOCKSCREEN_ENABLED,
+    SETTING_LOCKSCREEN_WAKE,
+    SETTING_LOCKSCREEN_TYPE,
+    SETTING_LOCKSCREEN_TIMEOUT,
+    SETTING_LOCKSCREEN_CHANGE_PIN,
 } SettingsType;
 
 
@@ -278,6 +284,13 @@ typedef struct {
     uint8_t input_repeat_speed;     // 0=Slow, 1=Normal, 2=Fast
     bool high_contrast;             // High contrast color overrides
     bool menu_item_borders;          // Borders around main menu items
+
+    // Lockscreen settings
+    bool lockscreen_enabled;
+    uint8_t lockscreen_type;        // 1=PIN; kept for persisted settings compatibility
+    char lockscreen_obfuscated[32]; // Length-prefixed obfuscated PIN blob
+    uint16_t lockscreen_timeout_sec;   // Auto-lock after inactivity (0=off)
+    bool lockscreen_wake_lock;        // Lock on wake-from-sleep
 } FSettings;
 
 // Function declarations
@@ -523,6 +536,18 @@ void settings_set_high_contrast(FSettings *settings, bool enabled);
 bool settings_get_high_contrast(const FSettings *settings);
 void settings_set_menu_item_borders(FSettings *settings, bool enabled);
 bool settings_get_menu_item_borders(const FSettings *settings);
+
+// Lockscreen getters and setters
+void settings_set_lockscreen_enabled(FSettings *settings, bool enabled);
+bool settings_get_lockscreen_enabled(const FSettings *settings);
+void settings_set_lockscreen_type(FSettings *settings, uint8_t type);
+uint8_t settings_get_lockscreen_type(const FSettings *settings);
+void settings_set_lockscreen_obfuscated(FSettings *settings, const char *obf);
+const char *settings_get_lockscreen_obfuscated(const FSettings *settings);
+void settings_set_lockscreen_timeout_sec(FSettings *settings, uint16_t sec);
+uint16_t settings_get_lockscreen_timeout_sec(const FSettings *settings);
+void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled);
+bool settings_get_lockscreen_wake_lock(const FSettings *settings);
 
 extern FSettings G_Settings;
 

@@ -1,4 +1,5 @@
 #include "managers/views/options_screen.h"
+#include "managers/views/lockscreen.h"
 #include "core/serial_manager.h"
 #include "core/commandline.h"
 #include "core/ouis.h"
@@ -446,6 +447,7 @@ typedef enum {
 #endif
     SETTINGS_CAT_GHOSTLINK,
     SETTINGS_CAT_ACCESSIBILITY,
+    SETTINGS_CAT_LOCKSCREEN,
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -475,6 +477,7 @@ static SettingsCategory settings_categories[] = {
 #endif
     {"GhostLink", SETTINGS_CAT_GHOSTLINK, false, NULL},
     {"Accessibility", SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"Lockscreen", SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
 
 static int current_settings_category = -1;
@@ -827,9 +830,10 @@ static const char * const bg_shade_options[] = {"Darkest", "Darker", "Dark", "Me
 static const char * const idle_animation_options[] = {"Game of Life", "Ghost", "Starfield", "HUD", "Matrix", "Flying Ghosts", "Spiral", "Falling Leaves", "Bouncing Text"};
 static const char * const idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
-static const char *action_options[] = {"Press OK"};
-static const char *font_size_options[] = {"Small", "Normal", "Large"};
-static const char *repeat_speed_options[] = {"Slow", "Normal", "Fast"};
+static const char * const action_options[] = {"Press OK"};
+static const char * const font_size_options[] = {"Small", "Normal", "Large"};
+static const char * const repeat_speed_options[] = {"Slow", "Normal", "Fast"};
+static const char * const lockscreen_timeout_options[] = {"Off", "30s", "1m", "5m"};
 
 static const char * const brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
@@ -935,6 +939,11 @@ static SettingsItem settings_items[] = {
     {"Reduced Motion", SETTING_REDUCED_MOTION, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"Epilepsy Warning", SETTING_EPILEPSY_WARNING, bool_options, 2, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"Input Repeat Speed", SETTING_INPUT_REPEAT_SPEED, repeat_speed_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+
+    {"Lockscreen", SETTING_LOCKSCREEN_ENABLED, bool_options, 2, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Lock on Wake", SETTING_LOCKSCREEN_WAKE, bool_options, 2, 1, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Auto-Lock", SETTING_LOCKSCREEN_TIMEOUT, lockscreen_timeout_options, 4, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
 
 #define IO_BTN_EDIT_P10 0x1000
@@ -1912,6 +1921,23 @@ static void load_current_settings_values(void) {
             case SETTING_INPUT_REPEAT_SPEED:
                 settings_items[i].current_value = settings_get_input_repeat_speed(&G_Settings);
                 break;
+            case SETTING_LOCKSCREEN_ENABLED:
+                settings_items[i].current_value = settings_get_lockscreen_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_LOCKSCREEN_WAKE:
+                settings_items[i].current_value = settings_get_lockscreen_wake_lock(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_LOCKSCREEN_TIMEOUT: {
+                uint16_t tout = settings_get_lockscreen_timeout_sec(&G_Settings);
+                if (tout == 0) settings_items[i].current_value = 0;
+                else if (tout <= 30) settings_items[i].current_value = 1;
+                else if (tout <= 60) settings_items[i].current_value = 2;
+                else settings_items[i].current_value = 3;
+                break;
+            }
+            case SETTING_LOCKSCREEN_CHANGE_PIN:
+                settings_items[i].current_value = 0;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -2293,12 +2319,53 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_FONT_SIZE:
             settings_set_font_size(&G_Settings, (uint8_t)new_value);
             break;
+        case SETTING_HIGH_CONTRAST:
+            settings_set_high_contrast(&G_Settings, new_value == 1);
+            display_manager_update_status_bar_color();
+            if (g_options_view) {
+                options_view_refresh_styles(g_options_view);
+                update_settings_arrows_visibility();
+            }
+            break;
         case SETTING_REDUCED_MOTION:
             settings_set_reduced_motion(&G_Settings, new_value == 1);
             break;
         case SETTING_INPUT_REPEAT_SPEED:
             settings_set_input_repeat_speed(&G_Settings, (uint8_t)new_value);
             break;
+        case SETTING_LOCKSCREEN_ENABLED:
+            settings_set_lockscreen_enabled(&G_Settings, new_value == 1);
+            if (new_value == 1) {
+                settings_set_lockscreen_type(&G_Settings, 1);
+                settings_persist_setting(SETTING_LOCKSCREEN_TYPE);
+                if (!lockscreen_is_configured()) {
+                    settings_persist_setting(SETTING_LOCKSCREEN_ENABLED);
+                    lockscreen_enter_setup();
+                    display_manager_switch_view(&lockscreen_view);
+                    return;
+                }
+            }
+            break;
+        case SETTING_LOCKSCREEN_WAKE:
+            settings_set_lockscreen_wake_lock(&G_Settings, new_value == 1);
+            break;
+        case SETTING_LOCKSCREEN_TIMEOUT: {
+            uint16_t tout_sec = 0;
+            switch (new_value) {
+                case 0: tout_sec = 0; break;
+                case 1: tout_sec = 30; break;
+                case 2: tout_sec = 60; break;
+                case 3: tout_sec = 300; break;
+                default: tout_sec = 0; break;
+            }
+            settings_set_lockscreen_timeout_sec(&G_Settings, tout_sec);
+            break;
+        }
+        case SETTING_LOCKSCREEN_CHANGE_PIN: {
+            lockscreen_enter_setup();
+            display_manager_switch_view(&lockscreen_view);
+            return;
+        }
     }
     
     // Save only the changed setting to NVS (Granular Save)
@@ -8057,7 +8124,7 @@ static void switch_to_settings_category(int cat_idx) {
         return;
     }
 
-    current_settings_category = settings_categories[cat_idx].id;
+    current_settings_category = cat_idx;
     settings_submenu_depth = 1;
     rebuild_current_menu();
 }
