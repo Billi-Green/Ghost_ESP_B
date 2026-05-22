@@ -34,6 +34,9 @@
 #ifdef CONFIG_HAS_ACCELEROMETER
 #include "managers/views/accelerometer_screen.h"
 #endif
+#ifdef CONFIG_HAS_ENVIII
+#include "managers/views/enviii_screen.h"
+#endif
 
 static void handle_menu_item_selection(int item_index);
 static void scroll_grid_card_to_view(int item_index);
@@ -44,6 +47,7 @@ uint32_t theme_palette_get_text(uint8_t theme);
 
 LV_IMG_DECLARE(dualcomm);
 LV_IMG_DECLARE(accelerometer_icon);
+LV_IMG_DECLARE(enviii);
 LV_IMG_DECLARE(nrf24);
 LV_IMG_DECLARE(subghz);
 LV_IMG_DECLARE(lock);
@@ -128,6 +132,9 @@ menu_item_t menu_items[] = {
     {"Clock", &clock_icon, 4, {{0}}},
 #ifdef CONFIG_HAS_COMPASS
     {"Compass", &compass, 2, {{0}}},
+#endif
+#ifdef CONFIG_HAS_ENVIII
+    {"ENV-III", &enviii, 2, {{0}}},
 #endif
 #ifdef CONFIG_HAS_ACCELEROMETER
     {"Accelerometer", &accelerometer_icon, 4, {{0}}},
@@ -907,6 +914,9 @@ static void handle_menu_item_selection(int item_index) {
 #ifdef CONFIG_HAS_COMPASS
         {"Compass", 0, &compass_view},
 #endif
+#ifdef CONFIG_HAS_ENVIII
+        {"ENV-III", 0, &enviii_view},
+#endif
 #ifdef CONFIG_HAS_ACCELEROMETER
         {"Accelerometer", 0, &accelerometer_view},
 #endif
@@ -951,6 +961,8 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("GPS Menu");
             } else if (strcmp(menu_actions[i].name, "Compass") == 0) {
                 status_display_show_status("Compass");
+            } else if (strcmp(menu_actions[i].name, "ENV-III") == 0) {
+                status_display_show_status("ENV-III");
             } else if (strcmp(menu_actions[i].name, "Infrared") == 0) {
                 status_display_show_status("Infrared Menu");
             } else if (strcmp(menu_actions[i].name, "NFC") == 0) {

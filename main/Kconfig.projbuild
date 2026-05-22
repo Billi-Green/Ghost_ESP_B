@@ -1214,6 +1214,38 @@ menu "Ghost ESP Options"
 
     endmenu
 
+    menu "ENV-III Sensor Configuration"
+
+    config HAS_ENVIII
+        bool "Enable ENV-III App"
+        default n
+        help
+            Enable ENV-III application using SHT30 and QMP6988 sensors.
+
+    config ENVIII_SHT30_I2C_ADDR
+        hex "SHT30 I2C Address"
+        default 0x44
+        depends on HAS_ENVIII
+        help
+            I2C address of the SHT30 temperature/humidity sensor.
+
+    config ENVIII_QMP6988_I2C_ADDR
+        hex "QMP6988 I2C Address"
+        default 0x70
+        depends on HAS_ENVIII
+        help
+            I2C address of the QMP6988 pressure sensor.
+
+    config ENVIII_I2C_PORT
+        int "ENV-III I2C Port"
+        range 0 1
+        default 0
+        depends on HAS_ENVIII
+        help
+            Select the I2C controller port used for ENV-III sensors.
+
+    endmenu
+
     menu "Accelerometer Configuration"
 
     config HAS_ACCELEROMETER

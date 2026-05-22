@@ -411,6 +411,7 @@ static void ble_detect_set_subtext(int found_count) {
 #include "managers/views/infrared_view.h"
 #include "managers/views/nfc_view.h"
 #include "managers/views/compass_screen.h"
+#include "managers/views/enviii_screen.h"
 #include "managers/views/accelerometer_screen.h"
 #include "managers/views/clock_screen.h"
 #include "managers/views/app_gallery_screen.h"
@@ -973,6 +974,9 @@ static const io_btn_preset_t io_btn_presets[] = {
     {"GPS", "view:gps", &options_menu_view},
 #ifdef CONFIG_HAS_COMPASS
     {"Compass", "view:compass", &compass_view},
+#endif
+#ifdef CONFIG_HAS_ENVIII
+    {"ENV-III", "view:enviii", &enviii_view},
 #endif
 #ifdef CONFIG_HAS_ACCELEROMETER
     {"Accelerometer", "view:accel", &accelerometer_view},
