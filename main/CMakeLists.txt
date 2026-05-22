@@ -137,6 +137,19 @@ if(CONFIG_HAS_CAMERA)
     list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/esp32-camera/conversions/include")
 endif()
 
+# Audio streaming sources are already included by the GLOB above.
+# We keep them explicitly listed here for clarity, guarded by target so
+# the object files compile empty (via #ifdef CONFIG_HAS_AUDIO in the .c
+# files) when audio is disabled, avoiding linker errors.
+if(idf_target STREQUAL "esp32c5")
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/audio_manager.c")
+    message(STATUS "Audio manager source present for ESP32-C5")
+endif()
+if(idf_target STREQUAL "esp32s3")
+    list(APPEND sources "${CMAKE_SOURCE_DIR}/main/managers/audio_receiver.c")
+    message(STATUS "Audio receiver source present for ESP32-S3")
+endif()
+
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}

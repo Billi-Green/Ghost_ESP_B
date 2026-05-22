@@ -28,6 +28,12 @@
 #include "esp_heap_caps.h"
 #include "managers/usb_keyboard_manager.h"
 #include "managers/subghz_remote_manager.h"
+#ifdef CONFIG_IDF_TARGET_ESP32C5
+#include "managers/audio_manager.h"
+#endif
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+#include "managers/audio_receiver.h"
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -69,6 +75,8 @@
 #ifdef CONFIG_HAS_MIC
 #include "managers/microphone/mic_visualizer.h"
 #endif
+
+
 
 // Helper macro for measuring RAM usage
 #define MEASURE_INIT_RAM(name, init_call) do { \
@@ -513,14 +521,67 @@ void app_main(void) {
 #ifdef CONFIG_WITH_ETHERNET
     eth_comm_handler_init();
 #endif
+/*
 #ifdef CONFIG_HAS_MIC
     // Initialize MIC visualizer (will start sending amplitude over GhostLink when connected)
     mic_visualizer_init();
     mic_visualizer_start();
 #endif
+*/
+#ifdef CONFIG_HAS_AUDIO
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    ESP_LOGI(TAG, "Initializing audio receiver for ESP32-S3");
+    audio_receiver_config_t audio_rx_config = {
+        .uart_tx_pin = CONFIG_AUDIO_UART_TX_PIN,
+        .uart_rx_pin = CONFIG_AUDIO_UART_RX_PIN,
+        .uart_baud = CONFIG_AUDIO_UART_BAUD,
+        .i2s_bclk_pin = CONFIG_AUDIO_I2S_BCLK_PIN,
+        .i2s_lrclk_pin = CONFIG_AUDIO_I2S_LRCLK_PIN,
+        .i2s_dout_pin = CONFIG_AUDIO_I2S_DOUT_PIN,
+        .i2s_mclk_pin = -1,      // No MCLK routed on S3; DAC uses BCLK PLL
+        .dac_i2c_sda_pin = -1,  // DAC controlled by C5
+        .dac_i2c_scl_pin = -1,
+        .dac_i2c_addr = CONFIG_AUDIO_DAC_I2C_ADDR,
+        .dac_i2c_port = 0,
+        .i2s_gain = CONFIG_AUDIO_I2S_GAIN,
+    };
+    esp_err_t audio_rx_ret = audio_receiver_init(&audio_rx_config);
+    if (audio_rx_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Audio receiver init failed: %s", esp_err_to_name(audio_rx_ret));
+    } else {
+        ESP_LOGI(TAG, "Audio receiver ready for MP3 playback");
+    }
+#endif
+#endif
 #ifdef CONFIG_HAS_CAMERA
     motion_detector_init();
     camera_stream_init();
+#endif
+
+// Audio initialization — only when HAS_AUDIO is enabled
+#ifdef CONFIG_HAS_AUDIO
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    ESP_LOGI(TAG, "Initializing audio manager for ESP32-C5");
+    audio_manager_config_t audio_config = {
+        .uart_tx_pin = CONFIG_AUDIO_UART_TX_PIN,
+        .uart_rx_pin = CONFIG_AUDIO_UART_RX_PIN,
+        .uart_baud = CONFIG_AUDIO_UART_BAUD,
+        .sd_cs_pin = CONFIG_SD_SPI_CS_PIN,
+        .sd_clk_pin = CONFIG_SD_SPI_CLK_PIN,
+        .sd_miso_pin = CONFIG_SD_SPI_MISO_PIN,
+        .sd_mosi_pin = CONFIG_SD_SPI_MOSI_PIN,
+        .dac_i2c_addr = CONFIG_AUDIO_DAC_I2C_ADDR,
+        .dac_reset_io_expander_port = CONFIG_AUDIO_DAC_RESET_IO_PORT,
+        .dac_reset_io_expander_bit = CONFIG_AUDIO_DAC_RESET_IO_BIT,
+        .dac_reset_duration_ms = CONFIG_AUDIO_DAC_RESET_DURATION_MS,
+    };
+    esp_err_t audio_ret = audio_manager_init(&audio_config);
+    if (audio_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Audio manager init failed: %s", esp_err_to_name(audio_ret));
+    } else {
+        ESP_LOGI(TAG, "Audio manager ready for MP3 streaming");
+    }
+#endif
 #endif
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
     nrf24_analyzer_register_stream_handler();

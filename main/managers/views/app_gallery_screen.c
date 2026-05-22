@@ -1,8 +1,11 @@
 #include "managers/views/app_gallery_screen.h"
 #include "managers/views/ghostchi_screen.h"
+#include "managers/views/flappy_ghost_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/terminal_screen.h"
+#include "managers/views/test_app_screen.h"
+#include "managers/views/audio_screen.h"
 
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
@@ -38,6 +41,7 @@ static app_item_t app_items[] = {
     {"Visualizer", &rave, 4, {{0}}, &music_visualizer_view},
     {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view},
     {"Ghostchi", &ghost, 2, {{0}}, &ghostchi_view},
+    {"Audio", &usb, 7, {{0}}, &audio_view},
     {"Back", NULL, 0, {{0}}, NULL},
 };
 

@@ -25,7 +25,7 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/ap_manager.h"
 
-#define COMM_BUFFER_SIZE 256
+#define COMM_BUFFER_SIZE 512
 #define UART_RX_BUFFER_SIZE (COMM_BUFFER_SIZE * 2)
 #define COMM_PACKET_SIZE 64
 #define DISCOVERY_INTERVAL_MS 3000
@@ -667,7 +667,7 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                         xTimerStart(comm->ping_timer, 0);
                     }
                     if (!comm->tx_queue) {
-                        comm->tx_queue = xQueueCreate(16, sizeof(comm_packet_t));
+                        comm->tx_queue = xQueueCreate(64, sizeof(comm_packet_t));
                     }
                     if (!comm->tx_task_handle && comm->tx_queue) {
                         TaskHandle_t t = create_task_static(&comm->tx_task_res, tx_task,
@@ -735,7 +735,7 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                     xTimerStart(comm->ping_timer, 0);
                 }
                 if (!comm->tx_queue) {
-                    comm->tx_queue = xQueueCreate(16, sizeof(comm_packet_t));
+                    comm->tx_queue = xQueueCreate(64, sizeof(comm_packet_t));
                 }
                 if (!comm->tx_task_handle && comm->tx_queue) {
                     TaskHandle_t t = create_task_static(&comm->tx_task_res, tx_task,
@@ -801,15 +801,25 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
             break;
 
         case PACKET_TYPE_STREAM:
-            if (comm->state != COMM_STATE_CONNECTED) {
-                printf("STREAM packet ignored: not connected\n");
-                break;
-            }
-            if (packet->length < 1) {
-                printf("STREAM packet ignored: empty payload\n");
-                break;
-            }
             {
+                static bool logged_not_connected = false;
+                static bool logged_empty = false;
+                if (comm->state != COMM_STATE_CONNECTED) {
+                    if (!logged_not_connected) {
+                        printf("STREAM packet ignored: not connected\n");
+                        logged_not_connected = true;
+                    }
+                    break;
+                }
+                logged_not_connected = false;
+                if (packet->length < 1) {
+                    if (!logged_empty) {
+                        printf("STREAM packet ignored: empty payload\n");
+                        logged_empty = true;
+                    }
+                    break;
+                }
+                logged_empty = false;
                 uint8_t channel = packet->data[0];
                 if (channel >= COMM_MAX_STREAM_CHANNELS) {
                     printf("STREAM packet ignored: invalid channel %d\n", channel);
@@ -817,7 +827,11 @@ static void handle_received_packet(esp_comm_manager_t* comm, const comm_packet_t
                 }
                 comm_stream_callback_t cb = comm->stream_handlers[channel];
                 if (!cb) {
-                    printf("STREAM packet ignored: no handler for channel %d\n", channel);
+                    static bool logged_no_handler[COMM_MAX_STREAM_CHANNELS] = {false};
+                    if (!logged_no_handler[channel]) {
+                        printf("STREAM packet ignored: no handler for channel %d\n", channel);
+                        logged_no_handler[channel] = true;
+                    }
                     break;
                 }
                 const uint8_t* payload = packet->data + 1;
@@ -1061,14 +1075,14 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
             resolved_tx = GPIO_NUM_13;
             resolved_rx = GPIO_NUM_14;
         }
-        resolved_baud = 460800;
+        resolved_baud = 921600;  // Boosted for audio streaming
     } else if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0) {
         desired_uart = UART_NUM_1;
         if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
             resolved_tx = GPIO_NUM_9;
             resolved_rx = GPIO_NUM_10;
         }
-        resolved_baud = 460800;
+        resolved_baud = 921600;  // Boosted for audio streaming
     } else if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "Ace_S3") == 0) {
         desired_uart = UART_NUM_1;
         if ((int)tx_pin == (int)DEFAULT_TX_PIN && (int)rx_pin == (int)DEFAULT_RX_PIN) {
@@ -1168,7 +1182,7 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
     }
 #endif
 
-    if (uart_share_ensure_installed(s_uart_num, COMM_BUFFER_SIZE * 2, 0, 0) == ESP_OK) {
+    if (uart_share_ensure_installed(s_uart_num, COMM_BUFFER_SIZE * 2, COMM_BUFFER_SIZE, 0) == ESP_OK) {
         if (uart_share_acquire(s_uart_num, UART_SHARE_OWNER_DUALCOMM, pdMS_TO_TICKS(2000)) == ESP_OK) {
             s_comm_manager->uart_driver_installed = true;
         }

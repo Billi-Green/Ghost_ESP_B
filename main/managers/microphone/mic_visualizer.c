@@ -15,6 +15,7 @@
 #include "managers/microphone/mic_driver.h"
 #include "managers/microphone/mic_goertzel.h"
 #include "core/esp_comm_manager.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -38,11 +39,14 @@ static void mic_visualizer_task(void *arg) {
     int32_t *samples = NULL;
     
     size_t buffer_size = (CONFIG_MIC_BUFFER_SAMPLES * 2) * sizeof(int32_t);
-    samples = (int32_t *)malloc(buffer_size);
+    samples = (int32_t *)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM);
     if (samples == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate sample buffer");
-        vTaskDelete(NULL);
-        return;
+        samples = (int32_t *)malloc(buffer_size);
+        if (samples == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate sample buffer");
+            vTaskDelete(NULL);
+            return;
+        }
     }
 
     uint32_t loop_counter = 0;
@@ -106,9 +110,9 @@ static void mic_visualizer_task(void *arg) {
             }
         }
         
-        // Send via GhostLink if connected
+        // Send via GhostLink if connected (rate limited to ~10Hz to prevent UART queue overflow)
         bool is_connected = esp_comm_manager_is_connected();
-        if (is_connected) {
+        if (is_connected && (loop_counter % 3 == 0)) {
             bool send_ok = esp_comm_manager_send_stream(COMM_STREAM_CHANNEL_MIC_AMPLITUDE, 
                                          payload, MIC_WIRE_PAYLOAD_LEN);
             if (!send_ok) {
@@ -121,7 +125,7 @@ static void mic_visualizer_task(void *arg) {
                 ESP_LOGD(TAG, "Sending B=%d L=%d H=%d T=%d A=%d (ok=%d)",
                          payload[0], payload[1], payload[2], payload[3], payload[4], send_ok);
             }
-        } else if (was_connected) {
+        } else if (!is_connected && was_connected) {
             ESP_LOGW(TAG, "GhostLink disconnected - MIC data not sending");
         }
         was_connected = is_connected;

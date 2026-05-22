@@ -1317,6 +1317,94 @@ menu "Ghost ESP Options"
             Define the MOSI pin for SD Card SPI.
     
     endmenu
+
+    menu "Audio Configuration"
+
+        config HAS_AUDIO
+            bool "Enable Audio Support"
+            default n
+            help
+                Enable audio support. On ESP32-C5 this streams MP3 from SD over UART to S3.
+                On ESP32-S3 this receives MP3 over UART and plays via I2S to DAC.
+
+        config AUDIO_UART_TX_PIN
+            int "Audio UART TX Pin"
+            default 13
+            depends on HAS_AUDIO
+            help
+                UART TX pin for audio streaming. C5: 13 (to S3 RX), S3: 9 (to C5 RX).
+
+        config AUDIO_UART_RX_PIN
+            int "Audio UART RX Pin"
+            default 14
+            depends on HAS_AUDIO
+            help
+                UART RX pin for audio streaming. C5: 14 (from S3 TX), S3: 10 (from C5 TX).
+
+        config AUDIO_UART_BAUD
+            int "Audio UART Baud Rate"
+            default 460800
+            depends on HAS_AUDIO
+            help
+                Baud rate for audio UART streaming.
+
+        config AUDIO_DAC_I2C_ADDR
+            hex "DAC I2C Address"
+            default 0x18
+            depends on HAS_AUDIO
+            help
+                I2C address of the TLV320DAC3100 DAC.
+
+        config AUDIO_DAC_RESET_IO_PORT
+            int "DAC Reset IO Expander Port"
+            default 1
+            depends on HAS_AUDIO && IDF_TARGET_ESP32C5
+            help
+                IO expander port for DAC reset pin (1 = P1x).
+
+        config AUDIO_DAC_RESET_IO_BIT
+            int "DAC Reset IO Expander Bit"
+            default 3
+            depends on HAS_AUDIO && IDF_TARGET_ESP32C5
+            help
+                IO expander bit for DAC reset pin (3 = Px3, so P13).
+
+        config AUDIO_DAC_RESET_DURATION_MS
+            int "DAC Reset Duration (ms)"
+            default 50
+            depends on HAS_AUDIO && IDF_TARGET_ESP32C5
+            help
+                Duration in ms to hold DAC reset low.
+
+        config AUDIO_I2S_BCLK_PIN
+            int "I2S BCLK Pin"
+            default 46
+            depends on HAS_AUDIO && IDF_TARGET_ESP32S3
+            help
+                I2S Bit Clock pin for DAC.
+
+        config AUDIO_I2S_LRCLK_PIN
+            int "I2S LRCLK/WCLK Pin"
+            default 45
+            depends on HAS_AUDIO && IDF_TARGET_ESP32S3
+            help
+                I2S Left/Right Clock (Word Clock) pin for DAC.
+
+        config AUDIO_I2S_DOUT_PIN
+            int "I2S DOUT Pin"
+            default 1
+            depends on HAS_AUDIO && IDF_TARGET_ESP32S3
+            help
+                I2S Data Out pin to DAC DIN.
+
+        config AUDIO_I2S_GAIN
+            float "I2S Output Gain"
+            default 0.5
+            depends on HAS_AUDIO && IDF_TARGET_ESP32S3
+            help
+                Output gain for I2S (0.0 to 1.0).
+
+    endmenu
     
-endmenu
+    endmenu
 

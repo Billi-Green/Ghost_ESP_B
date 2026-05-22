@@ -46,7 +46,7 @@ esp_err_t uart_share_ensure_installed(uart_port_t uart_num, int rx_buffer_size, 
 
     if (!st->installed) {
         if (event_queue_size <= 0) {
-            event_queue_size = 16;
+            event_queue_size = 32;
         }
 
         st->event_queue_size = event_queue_size;
