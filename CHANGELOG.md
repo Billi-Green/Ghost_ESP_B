@@ -2,8 +2,11 @@
 
 ## Revival v2.0
 
-- Added PIN lock screen with lock on wake and auto-lock settings
-- Added toast notification system
+ - Added PIN lock screen with lock on wake and auto-lock settings
+ - Added WiFi Airspace Monitor with realtime packet/threat insights, fast channel hopping, and suspect device cards
+ - Changed lockscreen unlock behavior to return to the view that was active before auto-lock or wake-lock
+ - Reduced status bar title font size to body font for a cleaner compact look
+ - Added toast notification system
 - Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
 - Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
 - Removed border from popups
@@ -21,6 +24,8 @@
   - Input repeat speed (Slow/Normal/Fast)
 - Added epilepsy warning toggle to disable flashing LED effect popups
 - Updated all UI screens to use accessibility-aware fonts and theme overrides
+- Fixed LoadProhibited crash after deferred SD card init failure — added NULL check for `sd_card_init()` return in deferred init task and nulled `sd_card_manager.card` on mount failure to prevent dangling pointer dereference
+- Fixed STA not reconnecting after BLE/Chameleon suspend when AP was running, added bounded auto-reconnect (5 retries with backoff) on involuntary WiFi disconnects, and fixed stale `manual_disconnect` flag in cancel/disconnect paths
 
 ## Revival v1.9.10
 
