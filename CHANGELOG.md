@@ -21,6 +21,8 @@
   - Input repeat speed (Slow/Normal/Fast)
 - Added epilepsy warning toggle to disable flashing LED effect popups
 - Updated all UI screens to use accessibility-aware fonts and theme overrides
+- Fixed LoadProhibited crash after deferred SD card init failure — added NULL check for `sd_card_init()` return in deferred init task and nulled `sd_card_manager.card` on mount failure to prevent dangling pointer dereference
+- Fixed STA not reconnecting after BLE/Chameleon suspend when AP was running, added bounded auto-reconnect (5 retries with backoff) on involuntary WiFi disconnects, and fixed stale `manual_disconnect` flag in cancel/disconnect paths
 
 ## Revival v1.9.10
 

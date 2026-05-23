@@ -128,8 +128,10 @@ const char *TAG = "WiFiManager";
 
 // Station scan variables moved to station_scan.c module
 bool manual_disconnect = false;
-static bool boot_connection_attempted = false;
 static volatile bool wifi_connect_cancel_requested = false;
+static esp_timer_handle_t wifi_reconnect_timer = NULL;
+static int wifi_reconnect_count = 0;
+#define WIFI_MAX_RECONNECT_ATTEMPTS  5
 static volatile bool visualizer_stop_requested = false;
 static volatile int visualizer_socket = -1;
 
@@ -467,17 +469,61 @@ struct DeviceInfo {
     struct eth_addr mac;
 };
 
+static void wifi_reconnect_timer_stop(void) {
+    if (wifi_reconnect_timer) {
+        esp_timer_stop(wifi_reconnect_timer);
+        esp_timer_delete(wifi_reconnect_timer);
+        wifi_reconnect_timer = NULL;
+    }
+}
+
+static void wifi_reconnect_reset(void) {
+    wifi_reconnect_timer_stop();
+    wifi_reconnect_count = 0;
+}
+
+static void wifi_reconnect_timer_cb(void *arg) {
+    const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+    if (saved_ssid && strlen(saved_ssid) > 0) {
+        int saved_count = wifi_reconnect_count;
+        glog("Auto-reconnect attempt %d/%d to %s\n", saved_count, WIFI_MAX_RECONNECT_ATTEMPTS, saved_ssid);
+        wifi_manager_configure_sta_from_settings();
+        wifi_reconnect_count = saved_count;
+    }
+}
+
+static void wifi_reconnect_schedule(void) {
+    wifi_reconnect_timer_stop();
+    if (wifi_reconnect_count > 0 && wifi_reconnect_count <= WIFI_MAX_RECONNECT_ATTEMPTS) {
+        static const int backoff_ms[] = {3000, 5000, 10000, 20000, 30000};
+        int delay_ms = backoff_ms[wifi_reconnect_count - 1];
+        esp_timer_create_args_t args = {
+            .callback = wifi_reconnect_timer_cb,
+            .name = "wifi_reconnect"
+        };
+        if (esp_timer_create(&args, &wifi_reconnect_timer) == ESP_OK) {
+            esp_timer_start_once(wifi_reconnect_timer, delay_ms * 1000);
+        }
+    }
+}
+
 void wifi_manager_set_manual_disconnect(bool disconnect) {
     manual_disconnect = disconnect;
 }
 
 void wifi_manager_cancel_connect(void) {
     wifi_connect_cancel_requested = true;
-    manual_disconnect = true;
+    wifi_ap_record_t ap_info;
+    manual_disconnect = (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK);
+    wifi_reconnect_reset();
     esp_err_t err = esp_wifi_disconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED && err != ESP_ERR_WIFI_NOT_CONNECT) {
         ESP_LOGW(TAG, "cancel_connect: esp_wifi_disconnect returned %s", esp_err_to_name(err));
     }
+}
+
+void wifi_manager_stop_reconnect(void) {
+    wifi_reconnect_reset();
 }
 
 void wifi_manager_stop_visualizer(void) {
@@ -575,15 +621,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
                                void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        // Only auto-connect on boot if we have saved credentials
-        if (!boot_connection_attempted) {
-            boot_connection_attempted = true;
-            
-            const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
-            if (saved_ssid && strlen(saved_ssid) > 0) {
-                glog("Attempting boot-time connection to saved network: %s\n", saved_ssid);
-                esp_wifi_connect();
-            }
+        const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+        if (saved_ssid && strlen(saved_ssid) > 0) {
+            glog("Attempting connection to saved network: %s\n", saved_ssid);
+            esp_wifi_connect();
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
@@ -611,11 +652,21 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             glog("WiFi disconnected manually\n");
             status_display_show_status("WiFi Disconnected");
             toast_show("WiFi disconnected", TOAST_WARN);
-            manual_disconnect = false; // Reset the flag
+            manual_disconnect = false;
+            wifi_reconnect_reset();
         } else {
             glog("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
             status_display_show_status("WiFi Lost");
             toast_show("WiFi lost", TOAST_WARN);
+
+            wifi_reconnect_count++;
+            if (wifi_reconnect_count <= WIFI_MAX_RECONNECT_ATTEMPTS) {
+                glog("Scheduling reconnect %d/%d\n", wifi_reconnect_count, WIFI_MAX_RECONNECT_ATTEMPTS);
+                wifi_reconnect_schedule();
+            } else {
+                glog("Max reconnect attempts (%d) reached\n", WIFI_MAX_RECONNECT_ATTEMPTS);
+                wifi_reconnect_timer_stop();
+            }
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
@@ -641,6 +692,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         esp_netif_set_dns_info(wifiSTA, ESP_NETIF_DNS_FALLBACK, &dns);
 
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+        wifi_reconnect_reset();
         if (settings_get_wigle_auto_upload(&G_Settings)) {
             wigle_upload_all_async();
         }
@@ -1954,6 +2006,8 @@ void wifi_manager_init(void) {
 }
 
 void wifi_manager_configure_sta_from_settings(void) {
+    wifi_reconnect_reset();
+
     // Configure STA with saved credentials for boot-time connection
     const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
     const char *saved_password = settings_get_sta_password(&G_Settings);
@@ -1974,8 +2028,6 @@ void wifi_manager_configure_sta_from_settings(void) {
         if (err == ESP_OK) {
             printf("STA configured with saved credentials: %s\n", saved_ssid);
             
-            // Mark that we've attempted boot connection and try to connect
-            boot_connection_attempted = true;
             printf("Attempting boot-time connection to: %s\n", saved_ssid);
             TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
             
@@ -3125,6 +3177,8 @@ void wifi_manager_connect_wifi(const char *ssid, const char *password) {
         status_display_show_status("WiFi No SSID");
         return;
     }
+
+    wifi_reconnect_reset();
 
     if (!wifi_ctrl_lock(pdMS_TO_TICKS(2000))) {
         ESP_LOGE(TAG, "connect: wifi ctrl mutex lock failed");

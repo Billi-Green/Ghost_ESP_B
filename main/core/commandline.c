@@ -1196,12 +1196,17 @@ void handle_wifi_connection(int argc, char **argv) {
 
 void handle_wifi_disconnect(int argc, char **argv)
 {
-    wifi_manager_set_manual_disconnect(true);
-    esp_err_t err = esp_wifi_disconnect();
-    if (err == ESP_OK) {
-        glog("WiFi disconnect command sent successfully\n");
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        wifi_manager_set_manual_disconnect(true);
+        esp_err_t err = esp_wifi_disconnect();
+        if (err == ESP_OK) {
+            glog("WiFi disconnect command sent successfully\n");
+        } else {
+            glog("Failed to send disconnect command: %s\n", esp_err_to_name(err));
+        }
     } else {
-        glog("Failed to send disconnect command: %s\n", esp_err_to_name(err));
+        glog("WiFi is not connected\n");
     }
 
     // kill any lingering visualizer task started on connect
