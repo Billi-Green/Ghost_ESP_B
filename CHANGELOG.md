@@ -2,10 +2,11 @@
 
 ## Revival v2.0
 
-- Added PIN lock screen with lock on wake and auto-lock settings
-- Added WiFi Airspace Monitor with realtime packet/threat insights, fast channel hopping, and suspect device cards
-- Changed lockscreen unlock behavior to return to the view that was active before auto-lock or wake-lock
-- Added toast notification system
+ - Added PIN lock screen with lock on wake and auto-lock settings
+ - Added WiFi Airspace Monitor with realtime packet/threat insights, fast channel hopping, and suspect device cards
+ - Changed lockscreen unlock behavior to return to the view that was active before auto-lock or wake-lock
+ - Reduced status bar title font size to body font for a cleaner compact look
+ - Added toast notification system
 - Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
 - Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
 - Removed border from popups

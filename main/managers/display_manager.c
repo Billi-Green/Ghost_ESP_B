@@ -1141,7 +1141,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_set_style_text_color(mainlabel, lv_color_hex(theme_palette_get_text(theme)), 0);
   lv_label_set_long_mode(mainlabel, LV_LABEL_LONG_DOT);
   lv_obj_set_width(mainlabel, LV_HOR_RES / 2 - GUI_SAFEAREA_HOR * 2);
-  lv_obj_set_style_text_font(mainlabel, accessibility_get_font_title(), 0);
+  lv_obj_set_style_text_font(mainlabel, accessibility_get_font_body(), 0);
 
   lv_obj_t *right_container = lv_obj_create(status_bar);
   lv_obj_remove_style_all(right_container);
