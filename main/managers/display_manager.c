@@ -192,6 +192,7 @@ lv_obj_t *battery_label = NULL;
 lv_obj_t *mainlabel = NULL;
 
 View *display_manager_previous_view = NULL;
+static View *s_lockscreen_return_view = NULL;
 
 bool display_manager_init_success = false;
 static bool status_timer_initialized = false;
@@ -1683,6 +1684,24 @@ void display_manager_switch_view(View *view) {
   lv_async_call(dm_run_on_lvgl_async_cb, call);
 }
 
+void display_manager_show_lockscreen(void) {
+  if (dm.current_view && dm.current_view != &lockscreen_view && dm.current_view != &splash_view) {
+    s_lockscreen_return_view = dm.current_view;
+  } else {
+    s_lockscreen_return_view = NULL;
+  }
+  lockscreen_reset_input();
+  display_manager_switch_view(&lockscreen_view);
+}
+
+View *display_manager_get_lockscreen_return_view(void) {
+  return s_lockscreen_return_view;
+}
+
+void display_manager_clear_lockscreen_return_view(void) {
+  s_lockscreen_return_view = NULL;
+}
+
 void display_manager_destroy_current_view(void) {
   if (dm.current_view) {
     if (dm.current_view->destroy) {
@@ -1820,8 +1839,7 @@ void set_backlight_brightness(uint8_t percentage) {
         if (was_off && settings_get_lockscreen_enabled(&G_Settings) &&
             settings_get_lockscreen_wake_lock(&G_Settings) &&
             dm.current_view != &lockscreen_view && dm.current_view != &splash_view) {
-            lockscreen_reset_input();
-            display_manager_switch_view(&lockscreen_view);
+            display_manager_show_lockscreen();
         }
 
         if (status_update_timer)   lv_timer_resume(status_update_timer);
@@ -2828,8 +2846,7 @@ void lvgl_tick_task(void *arg) {
           if (auto_lock_sec > 0) {
               if (now - last_touch_time > pdMS_TO_TICKS(auto_lock_sec * 1000u)) {
                   if (dm.current_view && dm.current_view != &lockscreen_view && dm.current_view != &splash_view) {
-                      lockscreen_reset_input();
-                      display_manager_switch_view(&lockscreen_view);
+                      display_manager_show_lockscreen();
                   }
               }
           }

@@ -252,7 +252,12 @@ static void lockscreen_bob_cb(lv_timer_t *timer) {
 static void lockscreen_unlock_cb(lv_timer_t *timer) {
     s_unlock_timer = NULL;
     lv_timer_del(timer);
-    display_manager_switch_view(&main_menu_view);
+    View *return_view = display_manager_get_lockscreen_return_view();
+    if (return_view == NULL || return_view == &lockscreen_view) {
+        return_view = &main_menu_view;
+    }
+    display_manager_clear_lockscreen_return_view();
+    display_manager_switch_view(return_view);
 }
 
 static void lockscreen_on_wrong(void) {

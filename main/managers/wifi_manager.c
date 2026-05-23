@@ -69,6 +69,7 @@
 #include "attacks/wifi/channel_switch_attack.h"
 #include "attacks/wifi/gtk_abuse.h"
 #include "scans/wifi/ap_scan.h"
+#include "scans/wifi/airspace_monitor.h"
 #include "scans/wifi/station_scan.h"
 #include "scans/wifi/wifi_channels.h"
 
@@ -131,6 +132,7 @@ bool manual_disconnect = false;
 static volatile bool wifi_connect_cancel_requested = false;
 static esp_timer_handle_t wifi_reconnect_timer = NULL;
 static int wifi_reconnect_count = 0;
+static volatile bool wifi_monitor_capture_active = false;
 #define WIFI_MAX_RECONNECT_ATTEMPTS  5
 static volatile bool visualizer_stop_requested = false;
 static volatile int visualizer_socket = -1;
@@ -483,6 +485,11 @@ static void wifi_reconnect_reset(void) {
 }
 
 static void wifi_reconnect_timer_cb(void *arg) {
+    if (wifi_monitor_capture_active) {
+        ESP_LOGI(TAG, "Skipping auto-reconnect while monitor mode is active");
+        return;
+    }
+
     const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
     if (saved_ssid && strlen(saved_ssid) > 0) {
         int saved_count = wifi_reconnect_count;
@@ -494,6 +501,11 @@ static void wifi_reconnect_timer_cb(void *arg) {
 
 static void wifi_reconnect_schedule(void) {
     wifi_reconnect_timer_stop();
+    if (wifi_monitor_capture_active) {
+        wifi_reconnect_count = 0;
+        return;
+    }
+
     if (wifi_reconnect_count > 0 && wifi_reconnect_count <= WIFI_MAX_RECONNECT_ATTEMPTS) {
         static const int backoff_ms[] = {3000, 5000, 10000, 20000, 30000};
         int delay_ms = backoff_ms[wifi_reconnect_count - 1];
@@ -621,6 +633,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
                                void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        if (wifi_monitor_capture_active) {
+            ESP_LOGI(TAG, "Skipping saved-network auto-connect while monitor mode is active");
+            return;
+        }
+
         const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
         if (saved_ssid && strlen(saved_ssid) > 0) {
             glog("Attempting connection to saved network: %s\n", saved_ssid);
@@ -648,7 +665,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         }
         
         // Clean, single-line disconnect logging
-        if (manual_disconnect) {
+        if (wifi_monitor_capture_active) {
+            glog("WiFi disconnected for monitor mode\n");
+            manual_disconnect = false;
+            wifi_reconnect_reset();
+        } else if (manual_disconnect) {
             glog("WiFi disconnected manually\n");
             status_display_show_status("WiFi Disconnected");
             toast_show("WiFi disconnected", TOAST_WARN);
@@ -1746,12 +1767,16 @@ void wifi_manager_clear_scan_results(void) {
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
+    wifi_monitor_capture_active = true;
+    wifi_reconnect_reset();
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     // Disconnect STA if connected — an associated STA locks the radio to the
     // AP's channel, causing esp_wifi_set_channel() to fail (ESP_FAIL) and
     // preventing channel hopping (e.g. wardriving only sees one channel).
+    manual_disconnect = true;
     esp_wifi_disconnect();
 
     apply_selected_ap_capture_channel_plan(callback);
@@ -1805,6 +1830,7 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     else if (callback == wifi_deauth_scan_callback) cap_desc = "deauth";
     else if (callback == wifi_wps_detection_callback) cap_desc = "wps";
     else if (callback == wifi_raw_scan_callback) cap_desc = "raw";
+    else if (callback == wifi_airspace_monitor_callback) cap_desc = "airspace";
 
     uint8_t ch_primary = 0; wifi_second_chan_t ch_second = WIFI_SECOND_CHAN_NONE;
     (void)esp_wifi_get_channel(&ch_primary, &ch_second);
@@ -1827,6 +1853,8 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     status_display_show_status("Monitor Started");
 }
 void wifi_manager_stop_monitor_mode() {
+    wifi_monitor_capture_active = false;
+
     wifi_mode_t mode = WIFI_MODE_NULL;
     esp_err_t wifi_status = esp_wifi_get_mode(&mode);
     if (wifi_status == ESP_ERR_WIFI_NOT_INIT || mode == WIFI_MODE_NULL) {
@@ -1850,6 +1878,9 @@ void wifi_manager_stop_monitor_mode() {
     }
     if (wireshark_hopping_active) {
         wifi_manager_stop_wireshark_channel_hop();
+    }
+    if (airspace_monitor_is_active()) {
+        airspace_monitor_stop();
     }
 
     // NOTE: Stopping the PineAP timer (channel_hop_timer) is handled by stop_pineap_detection() in callbacks.c

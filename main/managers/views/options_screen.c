@@ -12,6 +12,7 @@
 #include "gui/theme_palette_api.h"
 #include "gui/design_tokens.h"
 #include "io_manager.h"
+#include "managers/views/airspace_monitor_screen.h"
 #include "managers/views/wardriving_screen.h"
 #include "managers/views/ethernet_screen.h"
 #include "managers/wigle_manager.h"
@@ -591,7 +592,7 @@ static const char * const wifi_scan_select_options[] = {
 };
 
 static const char * const wifi_environment_options[] = {
-    "Sweep", "PineAP Detection", "Flock Detection", "Channel Congestion", NULL
+    "Sweep", "Airspace Monitor", "PineAP Detection", "Flock Detection", "Channel Congestion", NULL
 };
 
 static const char * const wifi_network_options[] = {
@@ -5481,6 +5482,11 @@ display_manager_switch_view(&terminal_view);
         error_popup_create("Device Does not Support Bluetooth...");
 
 #endif
+    }
+
+    else if (strcmp(Selected_Option, "Airspace Monitor") == 0) {
+        display_manager_switch_view(&airspace_monitor_view);
+        view_switched = true;
     }
 
     else if (strcmp(Selected_Option, "PineAP Detection") == 0) {
