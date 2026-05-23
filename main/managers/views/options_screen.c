@@ -1,4 +1,5 @@
 #include "managers/views/options_screen.h"
+#include "managers/views/lockscreen.h"
 #include "core/serial_manager.h"
 #include "core/commandline.h"
 #include "core/ouis.h"
@@ -7,9 +8,11 @@
 #include "core/screen_mirror.h"
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
+#include "gui/accessibility_fonts.h"
 #include "gui/theme_palette_api.h"
 #include "gui/design_tokens.h"
 #include "io_manager.h"
+#include "managers/views/airspace_monitor_screen.h"
 #include "managers/views/wardriving_screen.h"
 #include "managers/views/ethernet_screen.h"
 #include "managers/wigle_manager.h"
@@ -28,6 +31,7 @@
 #include "scans/ble/device_detect_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "esp_timer.h"
+#include <stdint.h>
 #include "core/dns_server.h"
 #include "esp_heap_caps.h"
 
@@ -443,12 +447,14 @@ typedef enum {
     SETTINGS_CAT_MIC_RGB,
 #endif
     SETTINGS_CAT_GHOSTLINK,
+    SETTINGS_CAT_ACCESSIBILITY,
+    SETTINGS_CAT_LOCKSCREEN,
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
 typedef struct {
     const char *name;
-    SettingsCategoryId id;
+    uint8_t id;
     bool conditional;
     const char *condition_config;
 } SettingsCategory;
@@ -471,6 +477,8 @@ static SettingsCategory settings_categories[] = {
     {"MIC Visualizer", SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
 #endif
     {"GhostLink", SETTINGS_CAT_GHOSTLINK, false, NULL},
+    {"Accessibility", SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"Lockscreen", SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
 
 static int current_settings_category = -1;
@@ -584,7 +592,7 @@ static const char * const wifi_scan_select_options[] = {
 };
 
 static const char * const wifi_environment_options[] = {
-    "Sweep", "PineAP Detection", "Flock Detection", "Channel Congestion", NULL
+    "Sweep", "Airspace Monitor", "PineAP Detection", "Flock Detection", "Channel Congestion", NULL
 };
 
 static const char * const wifi_network_options[] = {
@@ -795,11 +803,11 @@ static void load_current_settings_values(void);
 
 typedef struct {
     const char *label;
-    int setting_type;
+    int16_t setting_type;
     const char * const *value_options;
-    int value_count;
-    int current_value;
-    SettingsCategoryId category_id;
+    uint8_t value_count;
+    int16_t current_value;
+    uint8_t category_id;
     bool conditional;
     const char *condition_config;
 } SettingsItem;
@@ -824,6 +832,9 @@ static const char * const idle_animation_options[] = {"Game of Life", "Ghost", "
 static const char * const idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
 static const char * const action_options[] = {"Press OK"};
+static const char * const font_size_options[] = {"Small", "Normal", "Large"};
+static const char * const repeat_speed_options[] = {"Slow", "Normal", "Fast"};
+static const char * const lockscreen_timeout_options[] = {"Off", "30s", "1m", "5m"};
 
 static const char * const brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
@@ -924,6 +935,16 @@ static SettingsItem settings_items[] = {
     {"Calibrate", SETTING_MIC_CALIBRATE, action_options, 1, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
 #endif
     {"Split Terminal", SETTING_GHOSTLINK_SPLIT_VIEW, bool_options, 2, 1, SETTINGS_CAT_GHOSTLINK, false, NULL},
+    {"Font Size", SETTING_FONT_SIZE, font_size_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"High Contrast", SETTING_HIGH_CONTRAST, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"Reduced Motion", SETTING_REDUCED_MOTION, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"Epilepsy Warning", SETTING_EPILEPSY_WARNING, bool_options, 2, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"Input Repeat Speed", SETTING_INPUT_REPEAT_SPEED, repeat_speed_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+
+    {"Lockscreen", SETTING_LOCKSCREEN_ENABLED, bool_options, 2, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Lock on Wake", SETTING_LOCKSCREEN_WAKE, bool_options, 2, 1, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Auto-Lock", SETTING_LOCKSCREEN_TIMEOUT, lockscreen_timeout_options, 4, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
 
 #define IO_BTN_EDIT_P10 0x1000
@@ -1205,7 +1226,7 @@ static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
     lv_obj_set_style_pad_left(btn, 8, 0);
     lv_obj_set_style_pad_right(btn, 8, 0);
 
-    const lv_font_t *font = (button_height_global <= 40) ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+    const lv_font_t *font = (button_height_global <= 40) ? accessibility_get_font_body() : accessibility_get_font_title();
     lv_obj_set_style_text_font(left, font, 0);
     lv_obj_set_style_text_font(right, font, 0);
     
@@ -1828,6 +1849,9 @@ static void load_current_settings_values(void) {
                 { int nv = (settings_get_neopixel_max_brightness(&G_Settings) / 10) - 1;
                   settings_items[i].current_value = (nv < 0) ? 0 : nv; }
                 break;
+            case SETTING_EPILEPSY_WARNING:
+                settings_items[i].current_value = settings_get_epilepsy_warning_enabled(&G_Settings) ? 1 : 0;
+                break;
 #ifdef CONFIG_USE_ENCODER
             case SETTING_ENCODER_INVERT:
                 settings_items[i].current_value = settings_get_encoder_invert_direction(&G_Settings) ? 1 : 0;
@@ -1885,6 +1909,35 @@ static void load_current_settings_values(void) {
 #endif
             case SETTING_GHOSTLINK_SPLIT_VIEW:
                 settings_items[i].current_value = settings_get_ghostlink_split_view(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_FONT_SIZE:
+                settings_items[i].current_value = settings_get_font_size(&G_Settings);
+                break;
+            case SETTING_HIGH_CONTRAST:
+                settings_items[i].current_value = settings_get_high_contrast(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_REDUCED_MOTION:
+                settings_items[i].current_value = settings_get_reduced_motion(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_INPUT_REPEAT_SPEED:
+                settings_items[i].current_value = settings_get_input_repeat_speed(&G_Settings);
+                break;
+            case SETTING_LOCKSCREEN_ENABLED:
+                settings_items[i].current_value = settings_get_lockscreen_enabled(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_LOCKSCREEN_WAKE:
+                settings_items[i].current_value = settings_get_lockscreen_wake_lock(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_LOCKSCREEN_TIMEOUT: {
+                uint16_t tout = settings_get_lockscreen_timeout_sec(&G_Settings);
+                if (tout == 0) settings_items[i].current_value = 0;
+                else if (tout <= 30) settings_items[i].current_value = 1;
+                else if (tout <= 60) settings_items[i].current_value = 2;
+                else settings_items[i].current_value = 3;
+                break;
+            }
+            case SETTING_LOCKSCREEN_CHANGE_PIN:
+                settings_items[i].current_value = 0;
                 break;
             default:
                 settings_items[i].current_value = 0;
@@ -2005,6 +2058,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             } 
             // Restarting the effect applies the new brightness
             settings_restart_rgb_effect(); 
+            break;
+        case SETTING_EPILEPSY_WARNING:
+            settings_set_epilepsy_warning_enabled(&G_Settings, new_value == 1);
             break;
         #ifdef CONFIG_USE_ENCODER
         case SETTING_ENCODER_INVERT:
@@ -2152,7 +2208,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             lv_obj_t *title = lv_label_create(wigle_help_popup);
             lv_label_set_text(title, "WiGLE Setup Help");
             lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-            lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(title, accessibility_get_font_body(), 0);
             lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
             
             lv_obj_t *help_scroll = popup_create_scroll_area(wigle_help_popup, popup_w - 16, popup_h - 50, LV_ALIGN_TOP_MID, 0, 25);
@@ -2175,7 +2231,7 @@ static void apply_setting_change(int setting_index, int new_value) {
                 "Needs: GPS, SD card, WiFi, CSV files in /mnt/ghostesp/gps/";
             
             lv_label_set_text(help_label, help_text);
-            lv_obj_set_style_text_font(help_label, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(help_label, accessibility_get_font_small(), 0);
             
             lv_obj_t *close_btn = lv_btn_create(wigle_help_popup);
             wigle_help_close_btn = close_btn;
@@ -2261,6 +2317,56 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_GHOSTLINK_SPLIT_VIEW:
             settings_set_ghostlink_split_view(&G_Settings, new_value == 1);
             break;
+        case SETTING_FONT_SIZE:
+            settings_set_font_size(&G_Settings, (uint8_t)new_value);
+            break;
+        case SETTING_HIGH_CONTRAST:
+            settings_set_high_contrast(&G_Settings, new_value == 1);
+            display_manager_update_status_bar_color();
+            if (g_options_view) {
+                options_view_refresh_styles(g_options_view);
+                update_settings_arrows_visibility();
+            }
+            break;
+        case SETTING_REDUCED_MOTION:
+            settings_set_reduced_motion(&G_Settings, new_value == 1);
+            break;
+        case SETTING_INPUT_REPEAT_SPEED:
+            settings_set_input_repeat_speed(&G_Settings, (uint8_t)new_value);
+            break;
+        case SETTING_LOCKSCREEN_ENABLED:
+            settings_set_lockscreen_enabled(&G_Settings, new_value == 1);
+            if (new_value == 1) {
+                settings_set_lockscreen_type(&G_Settings, 1);
+                settings_persist_setting(SETTING_LOCKSCREEN_TYPE);
+                if (!lockscreen_is_configured()) {
+                    settings_persist_setting(SETTING_LOCKSCREEN_ENABLED);
+                    lockscreen_enter_setup();
+                    display_manager_switch_view(&lockscreen_view);
+                    return;
+                }
+            }
+            break;
+        case SETTING_LOCKSCREEN_WAKE:
+            settings_set_lockscreen_wake_lock(&G_Settings, new_value == 1);
+            break;
+        case SETTING_LOCKSCREEN_TIMEOUT: {
+            uint16_t tout_sec = 0;
+            switch (new_value) {
+                case 0: tout_sec = 0; break;
+                case 1: tout_sec = 30; break;
+                case 2: tout_sec = 60; break;
+                case 3: tout_sec = 300; break;
+                default: tout_sec = 0; break;
+            }
+            settings_set_lockscreen_timeout_sec(&G_Settings, tout_sec);
+            break;
+        }
+        case SETTING_LOCKSCREEN_CHANGE_PIN: {
+            lockscreen_enter_setup();
+            display_manager_switch_view(&lockscreen_view);
+            return;
+        }
     }
     
     // Save only the changed setting to NVS (Granular Save)
@@ -5378,6 +5484,11 @@ display_manager_switch_view(&terminal_view);
 #endif
     }
 
+    else if (strcmp(Selected_Option, "Airspace Monitor") == 0) {
+        display_manager_switch_view(&airspace_monitor_view);
+        view_switched = true;
+    }
+
     else if (strcmp(Selected_Option, "PineAP Detection") == 0) {
         terminal_set_return_view(&options_menu_view);
         display_manager_switch_view(&terminal_view);
@@ -7458,7 +7569,7 @@ static void wigle_stats_popup_open(void) {
     lv_obj_set_style_bg_color(wigle_stats_popup, lv_color_hex(0x1E1E1E), 0);
     lv_obj_add_flag(wigle_stats_popup, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *title = popup_create_title_label(wigle_stats_popup, "WiGLE Stats", &lv_font_montserrat_12, 5);
+    lv_obj_t *title = popup_create_title_label(wigle_stats_popup, "WiGLE Stats", accessibility_get_font_body(), 5);
     (void)title;
 
     int scroll_h = popup_h - 76;
@@ -7470,7 +7581,7 @@ static void wigle_stats_popup_open(void) {
     lv_obj_set_width(wigle_stats_body_label, popup_w - 24);
     lv_obj_set_style_text_color(wigle_stats_body_label, lv_color_hex(0xCCCCCC), 0);
     lv_obj_set_style_text_font(wigle_stats_body_label,
-                               (LV_VER_RES <= 200) ? &lv_font_montserrat_10 : &lv_font_montserrat_12,
+                               (LV_VER_RES <= 200) ? accessibility_get_font_small() : accessibility_get_font_body(),
                                0);
     lv_obj_set_style_text_line_space(wigle_stats_body_label, 3, 0);
     lv_label_set_text(wigle_stats_body_label, "Loading WiGLE stats...");
@@ -7478,12 +7589,12 @@ static void wigle_stats_popup_open(void) {
     wigle_stats_down_btn = popup_add_styled_button(
         wigle_stats_popup, "Down", 88, 32,
         LV_ALIGN_BOTTOM_LEFT, 10, -8,
-        &lv_font_montserrat_12,
+        accessibility_get_font_body(),
         wigle_stats_popup_scroll_down_cb, NULL);
     wigle_stats_close_btn = popup_add_styled_button(
         wigle_stats_popup, "Close", 96, 32,
         LV_ALIGN_BOTTOM_RIGHT, -10, -8,
-        &lv_font_montserrat_12,
+        accessibility_get_font_body(),
         wigle_stats_popup_close_cb, NULL);
 
     lv_obj_t *btns[2] = { wigle_stats_down_btn, wigle_stats_close_btn };
@@ -7553,7 +7664,7 @@ static void wigle_show_csv_details_popup(const char *filename) {
     lv_obj_set_style_bg_color(wigle_manual_popup, lv_color_hex(0x1E1E1E), 0);
     lv_obj_add_flag(wigle_manual_popup, LV_OBJ_FLAG_CLICKABLE);
 
-    popup_create_title_label(wigle_manual_popup, "WiGLE Manual Upload", &lv_font_montserrat_12, 5);
+    popup_create_title_label(wigle_manual_popup, "WiGLE Manual Upload", accessibility_get_font_body(), 5);
 
     int info_scroll_h = popup_h - 76;
     if (info_scroll_h < 58) info_scroll_h = 58;
@@ -7564,7 +7675,7 @@ static void wigle_show_csv_details_popup(const char *filename) {
     lv_obj_set_width(wigle_manual_info_label, popup_w - 24);
     lv_obj_set_style_text_color(wigle_manual_info_label, lv_color_hex(0xCCCCCC), 0);
     lv_obj_set_style_text_font(wigle_manual_info_label,
-                               (LV_VER_RES <= 200) ? &lv_font_montserrat_10 : &lv_font_montserrat_12,
+                               (LV_VER_RES <= 200) ? accessibility_get_font_small() : accessibility_get_font_body(),
                                0);
     lv_obj_set_style_text_line_space(wigle_manual_info_label, 2, 0);
 
@@ -7577,12 +7688,12 @@ static void wigle_show_csv_details_popup(const char *filename) {
     wigle_manual_upload_btn = popup_add_styled_button(
         wigle_manual_popup, "Upload", 90, 32,
         LV_ALIGN_BOTTOM_LEFT, 10, -8,
-        &lv_font_montserrat_12,
+        accessibility_get_font_body(),
         wigle_manual_popup_upload_cb, NULL);
     wigle_manual_close_btn = popup_add_styled_button(
         wigle_manual_popup, "Cancel", 90, 32,
         LV_ALIGN_BOTTOM_RIGHT, -10, -8,
-        &lv_font_montserrat_12,
+        accessibility_get_font_body(),
         wigle_manual_popup_close_cb, NULL);
 
     lv_obj_t *btns[2] = { wigle_manual_upload_btn, wigle_manual_close_btn };

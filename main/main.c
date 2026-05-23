@@ -336,7 +336,11 @@ cleanup:
 static void deferred_sd_init_task(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(2000));
     ESP_LOGI(TAG, "Deferred SD Card init starting");
-    sd_card_init();
+    if (sd_card_init() != ESP_OK) {
+        ESP_LOGW(TAG, "Deferred SD Card init failed, skipping coredump autosave");
+        vTaskDelete(NULL);
+        return;
+    }
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredump_autosave_on_boot();
 #endif

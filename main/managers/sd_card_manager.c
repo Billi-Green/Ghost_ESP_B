@@ -488,7 +488,7 @@ esp_err_t sd_card_init(void) {
 
   ret = esp_vfs_fat_sdmmc_mount("/mnt", &host, &slot_config, &mount_config,
                                 &sd_card_manager.card);
-  if (ret != ESP_OK) {
+    if (ret != ESP_OK) {
     if (ret == ESP_FAIL) {
       printf("Failed to mount filesystem. If you want the card to be "
              "formatted, set format_if_mount_failed = true.\n");
@@ -497,6 +497,7 @@ esp_err_t sd_card_init(void) {
              "pull-up resistors in place.\n",
              esp_err_to_name(ret));
     }
+    sd_card_manager.card = NULL;
     toast_show("SD mount failed", TOAST_ERROR);
     return ret;
   }
@@ -553,6 +554,7 @@ esp_err_t sd_card_init(void) {
              "pull-up resistors in place.\n",
              esp_err_to_name(ret));
     }
+    sd_card_manager.card = NULL;
     toast_show("SD mount failed", TOAST_ERROR);
     return ret;
   }
@@ -854,6 +856,7 @@ esp_err_t sd_card_init(void) {
       ESP_LOGI(TAG, "Calling display_spi_resume_after_sd()");
       display_spi_resume_after_sd();
     }
+    sd_card_manager.card = NULL;
     toast_show("SD mount failed", TOAST_ERROR);
     return ret;
   }

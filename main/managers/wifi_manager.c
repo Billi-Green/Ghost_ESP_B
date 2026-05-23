@@ -69,6 +69,7 @@
 #include "attacks/wifi/channel_switch_attack.h"
 #include "attacks/wifi/gtk_abuse.h"
 #include "scans/wifi/ap_scan.h"
+#include "scans/wifi/airspace_monitor.h"
 #include "scans/wifi/station_scan.h"
 #include "scans/wifi/wifi_channels.h"
 
@@ -128,8 +129,11 @@ const char *TAG = "WiFiManager";
 
 // Station scan variables moved to station_scan.c module
 bool manual_disconnect = false;
-static bool boot_connection_attempted = false;
 static volatile bool wifi_connect_cancel_requested = false;
+static esp_timer_handle_t wifi_reconnect_timer = NULL;
+static int wifi_reconnect_count = 0;
+static volatile bool wifi_monitor_capture_active = false;
+#define WIFI_MAX_RECONNECT_ATTEMPTS  5
 static volatile bool visualizer_stop_requested = false;
 static volatile int visualizer_socket = -1;
 
@@ -467,17 +471,71 @@ struct DeviceInfo {
     struct eth_addr mac;
 };
 
+static void wifi_reconnect_timer_stop(void) {
+    if (wifi_reconnect_timer) {
+        esp_timer_stop(wifi_reconnect_timer);
+        esp_timer_delete(wifi_reconnect_timer);
+        wifi_reconnect_timer = NULL;
+    }
+}
+
+static void wifi_reconnect_reset(void) {
+    wifi_reconnect_timer_stop();
+    wifi_reconnect_count = 0;
+}
+
+static void wifi_reconnect_timer_cb(void *arg) {
+    if (wifi_monitor_capture_active) {
+        ESP_LOGI(TAG, "Skipping auto-reconnect while monitor mode is active");
+        return;
+    }
+
+    const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+    if (saved_ssid && strlen(saved_ssid) > 0) {
+        int saved_count = wifi_reconnect_count;
+        glog("Auto-reconnect attempt %d/%d to %s\n", saved_count, WIFI_MAX_RECONNECT_ATTEMPTS, saved_ssid);
+        wifi_manager_configure_sta_from_settings();
+        wifi_reconnect_count = saved_count;
+    }
+}
+
+static void wifi_reconnect_schedule(void) {
+    wifi_reconnect_timer_stop();
+    if (wifi_monitor_capture_active) {
+        wifi_reconnect_count = 0;
+        return;
+    }
+
+    if (wifi_reconnect_count > 0 && wifi_reconnect_count <= WIFI_MAX_RECONNECT_ATTEMPTS) {
+        static const int backoff_ms[] = {3000, 5000, 10000, 20000, 30000};
+        int delay_ms = backoff_ms[wifi_reconnect_count - 1];
+        esp_timer_create_args_t args = {
+            .callback = wifi_reconnect_timer_cb,
+            .name = "wifi_reconnect"
+        };
+        if (esp_timer_create(&args, &wifi_reconnect_timer) == ESP_OK) {
+            esp_timer_start_once(wifi_reconnect_timer, delay_ms * 1000);
+        }
+    }
+}
+
 void wifi_manager_set_manual_disconnect(bool disconnect) {
     manual_disconnect = disconnect;
 }
 
 void wifi_manager_cancel_connect(void) {
     wifi_connect_cancel_requested = true;
-    manual_disconnect = true;
+    wifi_ap_record_t ap_info;
+    manual_disconnect = (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK);
+    wifi_reconnect_reset();
     esp_err_t err = esp_wifi_disconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED && err != ESP_ERR_WIFI_NOT_CONNECT) {
         ESP_LOGW(TAG, "cancel_connect: esp_wifi_disconnect returned %s", esp_err_to_name(err));
     }
+}
+
+void wifi_manager_stop_reconnect(void) {
+    wifi_reconnect_reset();
 }
 
 void wifi_manager_stop_visualizer(void) {
@@ -575,15 +633,15 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
                                void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        // Only auto-connect on boot if we have saved credentials
-        if (!boot_connection_attempted) {
-            boot_connection_attempted = true;
-            
-            const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
-            if (saved_ssid && strlen(saved_ssid) > 0) {
-                glog("Attempting boot-time connection to saved network: %s\n", saved_ssid);
-                esp_wifi_connect();
-            }
+        if (wifi_monitor_capture_active) {
+            ESP_LOGI(TAG, "Skipping saved-network auto-connect while monitor mode is active");
+            return;
+        }
+
+        const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+        if (saved_ssid && strlen(saved_ssid) > 0) {
+            glog("Attempting connection to saved network: %s\n", saved_ssid);
+            esp_wifi_connect();
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
@@ -607,15 +665,29 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         }
         
         // Clean, single-line disconnect logging
-        if (manual_disconnect) {
+        if (wifi_monitor_capture_active) {
+            glog("WiFi disconnected for monitor mode\n");
+            manual_disconnect = false;
+            wifi_reconnect_reset();
+        } else if (manual_disconnect) {
             glog("WiFi disconnected manually\n");
             status_display_show_status("WiFi Disconnected");
             toast_show("WiFi disconnected", TOAST_WARN);
-            manual_disconnect = false; // Reset the flag
+            manual_disconnect = false;
+            wifi_reconnect_reset();
         } else {
             glog("WiFi disconnected: %s (reason %d)\n", reason_str, disconnected->reason);
             status_display_show_status("WiFi Lost");
             toast_show("WiFi lost", TOAST_WARN);
+
+            wifi_reconnect_count++;
+            if (wifi_reconnect_count <= WIFI_MAX_RECONNECT_ATTEMPTS) {
+                glog("Scheduling reconnect %d/%d\n", wifi_reconnect_count, WIFI_MAX_RECONNECT_ATTEMPTS);
+                wifi_reconnect_schedule();
+            } else {
+                glog("Max reconnect attempts (%d) reached\n", WIFI_MAX_RECONNECT_ATTEMPTS);
+                wifi_reconnect_timer_stop();
+            }
         }
         
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
@@ -641,6 +713,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         esp_netif_set_dns_info(wifiSTA, ESP_NETIF_DNS_FALLBACK, &dns);
 
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+        wifi_reconnect_reset();
         if (settings_get_wigle_auto_upload(&G_Settings)) {
             wigle_upload_all_async();
         }
@@ -1694,12 +1767,16 @@ void wifi_manager_clear_scan_results(void) {
 }
 
 void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
+    wifi_monitor_capture_active = true;
+    wifi_reconnect_reset();
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     // Disconnect STA if connected — an associated STA locks the radio to the
     // AP's channel, causing esp_wifi_set_channel() to fail (ESP_FAIL) and
     // preventing channel hopping (e.g. wardriving only sees one channel).
+    manual_disconnect = true;
     esp_wifi_disconnect();
 
     apply_selected_ap_capture_channel_plan(callback);
@@ -1753,6 +1830,7 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     else if (callback == wifi_deauth_scan_callback) cap_desc = "deauth";
     else if (callback == wifi_wps_detection_callback) cap_desc = "wps";
     else if (callback == wifi_raw_scan_callback) cap_desc = "raw";
+    else if (callback == wifi_airspace_monitor_callback) cap_desc = "airspace";
 
     uint8_t ch_primary = 0; wifi_second_chan_t ch_second = WIFI_SECOND_CHAN_NONE;
     (void)esp_wifi_get_channel(&ch_primary, &ch_second);
@@ -1775,6 +1853,8 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     status_display_show_status("Monitor Started");
 }
 void wifi_manager_stop_monitor_mode() {
+    wifi_monitor_capture_active = false;
+
     wifi_mode_t mode = WIFI_MODE_NULL;
     esp_err_t wifi_status = esp_wifi_get_mode(&mode);
     if (wifi_status == ESP_ERR_WIFI_NOT_INIT || mode == WIFI_MODE_NULL) {
@@ -1798,6 +1878,9 @@ void wifi_manager_stop_monitor_mode() {
     }
     if (wireshark_hopping_active) {
         wifi_manager_stop_wireshark_channel_hop();
+    }
+    if (airspace_monitor_is_active()) {
+        airspace_monitor_stop();
     }
 
     // NOTE: Stopping the PineAP timer (channel_hop_timer) is handled by stop_pineap_detection() in callbacks.c
@@ -1954,6 +2037,8 @@ void wifi_manager_init(void) {
 }
 
 void wifi_manager_configure_sta_from_settings(void) {
+    wifi_reconnect_reset();
+
     // Configure STA with saved credentials for boot-time connection
     const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
     const char *saved_password = settings_get_sta_password(&G_Settings);
@@ -1974,8 +2059,6 @@ void wifi_manager_configure_sta_from_settings(void) {
         if (err == ESP_OK) {
             printf("STA configured with saved credentials: %s\n", saved_ssid);
             
-            // Mark that we've attempted boot connection and try to connect
-            boot_connection_attempted = true;
             printf("Attempting boot-time connection to: %s\n", saved_ssid);
             TERMINAL_VIEW_ADD_TEXT("Connecting to saved network: %s\n", saved_ssid);
             
@@ -3125,6 +3208,8 @@ void wifi_manager_connect_wifi(const char *ssid, const char *password) {
         status_display_show_status("WiFi No SSID");
         return;
     }
+
+    wifi_reconnect_reset();
 
     if (!wifi_ctrl_lock(pdMS_TO_TICKS(2000))) {
         ESP_LOGE(TAG, "connect: wifi ctrl mutex lock failed");
