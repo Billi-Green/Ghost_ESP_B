@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
-#include <math.h>
 
 static const ghostesp_api_t *api;
 
@@ -32,6 +31,7 @@ static ghostesp_detail_t detail_view;
 static ghostesp_popup_t popup;
 static ghostesp_scan_t scan_status;
 static ghostesp_ui_timer_t rgb_timer;
+static ghostesp_ui_timer_t canvas_timer;
 static int rgb_step;
 static ghostesp_ui_obj_t canvas_obj;
 static int canvas_tick;
@@ -100,6 +100,14 @@ static void destroy_subviews(void) {
         api->ui_options_destroy(ble_menu);
         ble_menu = NULL;
     }
+}
+
+static void stop_canvas_timer(void) {
+    if (canvas_timer && api->ui_timer_delete) {
+        api->ui_timer_delete(canvas_timer);
+        canvas_timer = NULL;
+    }
+    canvas_obj = NULL;
 }
 
 static void popup_close(void *user) {
@@ -639,10 +647,15 @@ static void open_hardware(void) {
 }
 
 static void canvas_tick_cb(void *user) {
+    (void)user;
     if (current_page != PAGE_CANVAS || !canvas_obj) return;
+    if (!api->ui_canvas_fill || !api->ui_canvas_draw_rect) return;
+
     canvas_tick++;
     int32_t w = api->ui_obj_get_width ? api->ui_obj_get_width(canvas_obj) : 200;
     int32_t h = api->ui_obj_get_height ? api->ui_obj_get_height(canvas_obj) : 100;
+    if (w < 40) w = 40;
+    if (h < 40) h = 40;
 
     api->ui_canvas_fill(canvas_obj, api->ui_theme_get_background ? api->ui_theme_get_background() : 0x000000);
 
@@ -656,7 +669,9 @@ static void canvas_tick_cb(void *user) {
     if (max_r < 10) max_r = 10;
     int radius = max_r * ((canvas_tick % 60) + 1) / 60;
 
-    api->ui_canvas_draw_arc(canvas_obj, cx, cy, radius > 5 ? radius : 5, 0, 360, accent, 2);
+    if (api->ui_canvas_draw_arc) {
+        api->ui_canvas_draw_arc(canvas_obj, cx, cy, radius > 5 ? radius : 5, 0, 360, accent, 2);
+    }
 
     int bars = 8;
     int bar_w = (w - 20) / bars;
@@ -667,25 +682,26 @@ static void canvas_tick_cb(void *user) {
     }
 
     int dots = 6;
+    static const int8_t orbit_x[6] = {100, 50, -50, -100, -50, 50};
+    static const int8_t orbit_y[6] = {0, 87, 87, 0, -87, -87};
+    int orbit = max_r * 7 / 10;
+    int phase = (canvas_tick / 4) % dots;
     for (int i = 0; i < dots; i++) {
-        int angle = (canvas_tick * 5 + i * 60) % 360;
-        float a = angle * 3.14159f / 180.0f;
-        int px = (int)(cx + (float)max_r * 0.7f * cosf(a));
-        int py = (int)(cy + (float)max_r * 0.7f * sinf(a));
+        int p = (i + phase) % dots;
+        int px = cx + orbit * orbit_x[p] / 100;
+        int py = cy + orbit * orbit_y[p] / 100;
         api->ui_canvas_draw_rect(canvas_obj, px - 2, py - 2, 5, 5, text);
     }
 }
 
 static void canvas_stop(void *user) {
-    if (rgb_timer && api->ui_timer_delete) {
-        api->ui_timer_delete(rgb_timer);
-        rgb_timer = NULL;
-    }
-    canvas_obj = NULL;
+    (void)user;
+    stop_canvas_timer();
     detail_back(NULL);
 }
 
 static void open_canvas(void) {
+    stop_canvas_timer();
     current_page = PAGE_CANVAS;
     canvas_tick = 0;
     if (!api->ui_detail_create) return;
@@ -694,18 +710,24 @@ static void open_canvas(void) {
 
     detail_add_summary("Animated drawing on canvas widget");
 
-    if (api->ui_canvas_create) {
+    if (!api->ui_canvas_create || !api->ui_canvas_fill || !api->ui_canvas_draw_rect) {
+        api->ui_detail_add_info(detail_view, "Canvas", "API unavailable");
+    } else {
         int32_t sw = api->ui_screen_get_width ? api->ui_screen_get_width() : 240;
+        if (sw < 40) sw = 240;
         int32_t ch = 100;
         canvas_obj = api->ui_canvas_create(NULL, sw - 20, ch);
+        if (!canvas_obj) {
+            api->ui_detail_add_info(detail_view, "Canvas", "Create failed");
+        }
     }
 
     api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_action(detail_view, "Stop", canvas_stop, NULL);
-    api->ui_detail_add_back(detail_view, detail_back, NULL);
+    api->ui_detail_add_back(detail_view, canvas_stop, NULL);
 
-    if (api->ui_timer_create) {
-        rgb_timer = api->ui_timer_create(canvas_tick_cb, 50, NULL);
+    if (canvas_obj && api->ui_timer_create) {
+        canvas_timer = api->ui_timer_create(canvas_tick_cb, 50, NULL);
     }
 }
 
@@ -809,6 +831,7 @@ static void inspector_stop(void) {
         api->ui_timer_delete(rgb_timer);
         rgb_timer = NULL;
     }
+    stop_canvas_timer();
     if (api->rgb_set_all) api->rgb_set_all(0, 0, 0);
     if (api->ble_detect_stop) api->ble_detect_stop();
     else if (api->ble_stop_scan) api->ble_stop_scan();
@@ -825,7 +848,6 @@ static void inspector_stop(void) {
         api->ui_scan_status_close(scan_status);
         scan_status = NULL;
     }
-    canvas_obj = NULL;
     api->log("device_inspector stopped");
 }
 
@@ -954,8 +976,8 @@ static void inspector_input(const ghostesp_input_event_t *event) {
             api->ui_timer_delete(rgb_timer);
             rgb_timer = NULL;
         }
+        stop_canvas_timer();
         if (api->rgb_set_all) api->rgb_set_all(0, 0, 0);
-        canvas_obj = NULL;
         if (detail_view && api->ui_detail_destroy) {
             api->ui_detail_destroy(detail_view);
             detail_view = NULL;
