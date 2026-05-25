@@ -345,7 +345,6 @@ static void dv_finish_sync(void *arg) {
     if (!bctx) return;
     bctx->cb = ctx->cb;
     bctx->user = ctx->user;
-    detail_view_add_divider(d);
     ctx->result = detail_view_add_back(d, widget_btn_bridge, bctx);
     if (ctx->result) {
         lv_obj_add_event_cb((lv_obj_t *)ctx->result, widget_btn_bridge, LV_EVENT_DELETE, bctx);

@@ -40,21 +40,26 @@ plugins/
 {
   "id": "device_inspector",
   "name": "Device Inspector",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "GhostESP",
-  "description": "Inspect firmware status from a native SD app.",
+  "description": "Comprehensive hardware and API test suite with responsive native UI.",
   "category": "System",
   "entry": "ghostesp_device_inspector.so",
-  "target": "esp32s3",
+  "target": "esp32c5",
   "api_version": 1,
-  "storage_scope": "app",
-  "icon": "assets/icon.rgb565",
+  "manifest_version": 1,
+  "package_version": 1,
+  "data_version": 1,
+  "storage_scope": "ghostesp",
+  "icon": "icon.rgb565",
+  "icon_format": "rgb565a8",
   "icon_width": 50,
   "icon_height": 50,
-  "icon_format": "rgb565",
   "accent_color": "#56B6F7",
-  "permissions": ["ui", "storage", "wifi", "rgb"],
-  "memory_limit": 32768
+  "permissions": ["ui", "storage", "commands", "wifi", "ble", "rgb", "tasks", "lvgl", "power", "display", "input", "network", "wifi_control", "ethernet", "raw_gpio", "i2c", "spi", "uart", "adc", "pwm", "time", "random", "system", "settings", "nfc", "ir", "subghz", "badusb", "camera", "usb", "audio", "zigbee"],
+  "memory_limit": 65536,
+  "stack_size": 8192,
+  "requires_psram": false
 }
 ```
 
@@ -96,6 +101,7 @@ Required fields: `id`, `name`, `entry`, `api_version`. `target` is strongly reco
 | `audio` | Reserved for microphone/audio APIs |
 | `settings` | Limited settings read/write/save APIs |
 | `zigbee` | Reserved for IEEE 802.15.4/Zigbee APIs |
+| `nrf24` | NRF24 start/stop/pause and state queries |
 
 ## Entry Point
 

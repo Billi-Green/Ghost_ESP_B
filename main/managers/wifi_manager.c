@@ -654,17 +654,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
                                void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        const char *reason = NULL;
-        if (wifi_reconnect_blocked(&reason)) {
-            ESP_LOGI(TAG, "Skipping saved-network auto-connect while %s", reason ? reason : "busy");
-            return;
-        }
-
-        const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
-        if (saved_ssid && strlen(saved_ssid) > 0) {
-            glog("Attempting connection to saved network: %s\n", saved_ssid);
-            esp_wifi_connect();
-        }
+        ESP_LOGD(TAG, "STA started; saved-network connect is explicit/reconnect-only");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
         

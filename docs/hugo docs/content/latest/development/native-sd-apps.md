@@ -43,25 +43,26 @@ Every app needs a `manifest.json` at its root. Required fields: `id`, `name`, `e
 {
   "id": "device_inspector",
   "name": "Device Inspector",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "GhostESP",
-  "description": "Inspect firmware status from a native SD app.",
+  "description": "Comprehensive hardware and API test suite with responsive native UI. Tests WiFi, BLE, GPS, RGB, storage, canvas drawing, input events, and theme inspection.",
   "category": "System",
   "entry": "ghostesp_device_inspector.so",
-  "target": "esp32s3",
+  "target": "esp32c5",
   "api_version": 1,
   "manifest_version": 1,
   "package_version": 1,
   "data_version": 1,
-  "storage_scope": "app",
-  "icon": "assets/icon.rgb565",
+  "storage_scope": "ghostesp",
+  "icon": "icon.rgb565",
+  "icon_source": "device-tablet-svgrepo-com (2).png",
+  "icon_format": "rgb565a8",
   "icon_width": 50,
   "icon_height": 50,
-  "icon_format": "rgb565",
   "accent_color": "#56B6F7",
-  "permissions": ["ui", "storage", "wifi", "rgb"],
-  "memory_limit": 32768,
-  "stack_size": 4096,
+  "permissions": ["ui", "storage", "commands", "wifi", "ble", "rgb", "tasks", "lvgl", "power", "display", "input", "network", "wifi_control", "ethernet", "raw_gpio", "i2c", "spi", "uart", "adc", "pwm", "time", "random", "system", "settings", "nfc", "ir", "subghz", "badusb", "camera", "usb", "audio", "zigbee"],
+  "memory_limit": 65536,
+  "stack_size": 8192,
   "requires_psram": false
 }
 ```
@@ -114,6 +115,7 @@ Apps request permissions in `manifest.json`. The host API gates every subsystem 
 | `raw_gpio` | Direct GPIO access |
 | `lvgl` | Raw `lv_scr_act()` and `display_get_current_view()` |
 | `rgb` | `rgb_set_all` and any LED APIs |
+| `nrf24` | `nrf24_start`, `nrf24_stop`, pause/state queries |
 
 ## Entry Point
 
@@ -273,7 +275,7 @@ Returns 24-bit hex colors (`0xRRGGBB`).
 
 ```c
 ghostesp_options_t (*ui_options_create)(const char *title);
-ghostesp_ui_obj_t  (*ui_options_add_item)(ghostesp_options_t opts, const char *label, ghosp_ui_button_cb_t cb, void *user);
+ghostesp_ui_obj_t  (*ui_options_add_item)(ghostesp_options_t opts, const char *label, ghostesp_ui_button_cb_t cb, void *user);
 ghostesp_ui_obj_t  (*ui_options_add_back)(ghostesp_options_t opts, ghostesp_ui_button_cb_t cb, void *user);
 void (*ui_options_set_selected)(ghostesp_options_t opts, int index);
 void (*ui_options_move_selection)(ghostesp_options_t opts, int delta);
@@ -300,7 +302,10 @@ bool (*ui_detail_step_down)(ghostesp_detail_t dv);
 void (*ui_detail_activate_selected)(ghostesp_detail_t dv);
 void (*ui_detail_clear)(ghostesp_detail_t dv);
 void (*ui_detail_destroy)(ghostesp_detail_t dv);
+ghostesp_ui_obj_t (*ui_detail_finish)(ghostesp_detail_t dv, ghostesp_ui_button_cb_t on_back, void *user);
 ```
+
+`ui_detail_finish` adds a back button — a convenient shorthand. Add a divider first if desired via `ui_detail_add_divider`.
 
 ### Popup Dialog
 
@@ -634,9 +639,6 @@ bool (*zigbee_capture_stop)(void);
 bool (*zigbee_is_capturing)(void);
 int  (*zigbee_device_count)(void);
 ```
-
-Currently implemented: WiFi deauth/beacon helpers, microphone read/RMS where the mic driver is initialized, Zigbee capture state/count on C5/C6 builds, BLE GATT client connect/read/write/disconnect, USB HID keyboard/mouse when BadUSB is compiled, and NRF24 start/stop/pause when available. Camera JPEG capture is functional when CONFIG_HAS_CAMERA is enabled. BLE GATT server and WiFi PCAP are fully functional where the hardware supports them.
-
 ### Settings, NVS, Events, Parsers
 
 ```c
@@ -680,6 +682,18 @@ const char *(*ble_detect_type_name)(uint8_t type);
 bool (*ble_detect_start_tracking)(int index);
 bool (*ble_detect_start_airtag_spoof)(int index);
 ```
+
+### NRF24
+
+```c
+bool (*nrf24_start)(bool stream_to_peer);
+void (*nrf24_stop)(void);
+bool (*nrf24_is_running)(void);
+bool (*nrf24_is_paused)(void);
+void (*nrf24_set_paused)(bool paused);
+```
+
+Requires `nrf24` permission. Available on targets with NRF24 radio module support.
 
 ### NFC
 
@@ -830,6 +844,42 @@ apps reset <id>
 ```
 
 A clean exit (normal `on_stop` → `dlclose`) resets the failure count to 0.
+
+## Memory & Load Constraints
+
+### Executable Sections Must Use Internal RAM
+
+The ELF loader requires **internal RAM for executable sections** (`.text`, `.rodata` mapped as executable). This is enforced on **ESP32-C5** (and any future target where `MALLOC_CAP_EXEC` only exists in internal memory). PSRAM **cannot** hold executable code.
+
+The load will fail with `ELC: exec alloc N -> 0x0 internal=0 exec=0` if the app's executable segment cannot fit in the available internal pool.
+
+**Practical limits** for executable data on C5 vary by firmware build, but a rough guideline is ~20-30 KB of internal heap available for ELF loading after firmware init. Apps with large `.text` sections or many translation units may need to:
+- Use `memory_limit` in `manifest.json` conservatively (the tracked limit covers `app_malloc`/`app_calloc` usage, but the .so's executable sections consume separate internal heap).
+- Reduce code size (link-time optimization, strip unused functions, enable `-Os`).
+
+### Non-Executable Data PSRAM Preference
+
+The loader allocates non-executable sections (`.data`, `.bss`) with **PSRAM-first** on targets that have PSRAM, falling back to internal RAM. The firmware itself also prefers PSRAM for its internal structures:
+- Plugin manager app registry
+- Gallery card data and task stacks
+- `.gapp` extraction buffers
+
+This conserves internal RAM for executable allocations.
+
+### Stack
+
+The app's stack is allocated from internal RAM (or PSRAM where the board supports it and PSRAM stacks are stable). The `stack_size` field in `manifest.json` is advisory — the firmware allocates a fixed runner task stack. Deep call chains or large stack locals may exhaust it.
+
+### Firmware-Side Internal RAM Budget
+
+The firmware's ELF loading infrastructure does not reserve a dedicated pool; it shares internal heap with other subsystems. Free internal RAM at load time depends on which features are active (WiFi, BLE, LVGL buffers, etc.). Use `api->system_free_internal_heap()` from your app to see the remaining budget at runtime.
+
+A boot-time message in the monitor log shows free internal RAM after init:
+```
+Free INTERNAL RAM after init: 27160 / 118204 bytes (23.0% free)
+```
+
+If your app fails to load with an exec-memory error, check this value. Disabling non-essential firmware features in `menuconfig` can free internal heap for app loading.
 
 ## CLI Commands
 

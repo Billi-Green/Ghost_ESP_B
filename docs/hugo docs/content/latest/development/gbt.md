@@ -147,7 +147,7 @@ gbt setup
 # Runs install.bat/install.sh with requested targets
 ```
 
-Supported targets: `esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`.
+Supported targets: `esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c5`, `esp32c6`, `esp32c61`, `esp32p4`.
 
 ---
 
