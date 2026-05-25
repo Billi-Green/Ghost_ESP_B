@@ -20,6 +20,26 @@ static const char *TAG = "PluginLoader";
 static plugin_loaded_app_t s_loaded;
 static char s_last_error[160];
 
+static bool plugin_loader_sd_jit_allowed(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    return strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ||
+           strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0;
+#else
+    return false;
+#endif
+}
+
+static bool plugin_loader_sd_begin(bool *display_was_suspended) {
+    if (display_was_suspended) *display_was_suspended = false;
+    if (sd_card_manager.is_initialized) return false;
+    if (!plugin_loader_sd_jit_allowed()) return false;
+    return sd_card_mount_for_flush(display_was_suspended) == ESP_OK;
+}
+
+static void plugin_loader_sd_end(bool mounted_here, bool display_was_suspended) {
+    if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
+}
+
 static bool state_path_for_manifest(const plugin_app_manifest_t *manifest, char *out, size_t out_len) {
     if (!manifest || !out || out_len == 0) return false;
     int n = snprintf(out, out_len, "/mnt/ghostesp/appdata/%s/.state.json", manifest->id);
@@ -141,6 +161,12 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
         return fail_err(ESP_ERR_NOT_SUPPORTED, "app requires PSRAM");
     }
 
+    bool display_was_suspended = false;
+    bool mounted_here = plugin_loader_sd_begin(&display_was_suspended);
+    if (!sd_card_manager.is_initialized) {
+        return fail_err(ESP_ERR_INVALID_STATE, "storage is not mounted");
+    }
+
 #if CONFIG_ENABLE_NATIVE_SD_APPS
     void *handle = dlopen(manifest->entry_path, RTLD_NOW);
     if (!handle) {
@@ -148,6 +174,7 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
         snprintf(s_last_error, sizeof(s_last_error), "dlopen failed: %s", err ? err : "unknown");
         record_app_failure(manifest, s_last_error);
         ESP_LOGE(TAG, "%s", s_last_error);
+        plugin_loader_sd_end(mounted_here, display_was_suspended);
         return ESP_FAIL;
     }
 
@@ -158,6 +185,7 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
         dlclose(handle);
         record_app_failure(manifest, s_last_error);
         ESP_LOGE(TAG, "%s", s_last_error);
+        plugin_loader_sd_end(mounted_here, display_was_suspended);
         return ESP_FAIL;
     }
 
@@ -169,6 +197,7 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
     if (validate_err != ESP_OK) {
         dlclose(handle);
         record_app_failure(manifest, s_last_error);
+        plugin_loader_sd_end(mounted_here, display_was_suspended);
         return validate_err;
     }
 
@@ -182,16 +211,21 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
     if (out_app) *out_app = &s_loaded;
     s_last_error[0] = '\0';
     ESP_LOGI(TAG, "Loaded SD app %s", manifest->id);
+    plugin_loader_sd_end(mounted_here, display_was_suspended);
     return ESP_OK;
 #else
+    plugin_loader_sd_end(mounted_here, display_was_suspended);
     return fail_err(ESP_ERR_NOT_SUPPORTED, "native SD apps are not compiled in");
 #endif
 }
 
 esp_err_t plugin_loader_start(plugin_loaded_app_t *loaded) {
     if (!loaded || !loaded->app) return ESP_ERR_INVALID_ARG;
+    bool display_was_suspended = false;
+    bool mounted_here = plugin_loader_sd_begin(&display_was_suspended);
     record_app_running(loaded->manifest);
     if (!loaded->running && loaded->app->on_start) loaded->app->on_start();
+    plugin_loader_sd_end(mounted_here, display_was_suspended);
     loaded->running = true;
     loaded->state = PLUGIN_APP_STATE_RUNNING;
     loaded->last_tick_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
@@ -221,10 +255,13 @@ esp_err_t plugin_loader_resume(plugin_loaded_app_t *loaded) {
 
 esp_err_t plugin_loader_stop(plugin_loaded_app_t *loaded) {
     if (!loaded || !loaded->app) return ESP_ERR_INVALID_ARG;
+    bool display_was_suspended = false;
+    bool mounted_here = plugin_loader_sd_begin(&display_was_suspended);
     if (loaded->running && loaded->app->on_stop) loaded->app->on_stop();
     loaded->running = false;
     loaded->state = PLUGIN_APP_STATE_LOADED;
     record_app_clean_exit(loaded->manifest);
+    plugin_loader_sd_end(mounted_here, display_was_suspended);
     return ESP_OK;
 }
 

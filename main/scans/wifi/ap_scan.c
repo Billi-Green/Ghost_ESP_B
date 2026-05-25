@@ -23,6 +23,8 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -371,6 +373,12 @@ esp_err_t ap_scan_start_async(void) {
 #endif
 
     err = esp_wifi_scan_start(&scan_config, false);
+    if (err == ESP_ERR_WIFI_STATE) {
+        ESP_LOGW(TAG, "STA busy, forcing disconnect before scan retry");
+        esp_wifi_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(250));
+        err = esp_wifi_scan_start(&scan_config, false);
+    }
     if (err != ESP_OK) {
         printf("WiFi scan failed to start: %s", esp_err_to_name(err));
         TERMINAL_VIEW_ADD_TEXT("WiFi scan failed to start\n");

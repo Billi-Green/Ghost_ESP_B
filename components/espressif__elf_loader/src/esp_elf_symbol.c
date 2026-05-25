@@ -56,6 +56,7 @@ static const struct esp_elfsym g_esp_libc_elfsyms[] = {
     ESP_ELFSYM_EXPORT(strcmp),
     ESP_ELFSYM_EXPORT(strncmp),
     ESP_ELFSYM_EXPORT(strtol),
+    ESP_ELFSYM_EXPORT(strcpy),
     ESP_ELFSYM_EXPORT(strcspn),
     ESP_ELFSYM_EXPORT(strncat),
 

@@ -666,9 +666,9 @@ void detail_view_add_infof(detail_view_t *dv, const char *label, const char *fmt
     detail_view_add_info(dv, label, buf);
 }
 
-void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t on_click, void *user_data) {
-    if (!dv || !dv->action_list) return;
-    if (!ensure_capacity(dv, dv->count + 1)) return;
+lv_obj_t *detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t on_click, void *user_data) {
+    if (!dv || !dv->action_list) return NULL;
+    if (!ensure_capacity(dv, dv->count + 1)) return NULL;
     
     int zebra_idx = 0;
     for (int i = dv->info_count; i < dv->count; i++) {
@@ -676,7 +676,7 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
     }
     
     lv_obj_t *btn = lv_obj_create(dv->action_list);
-    if (!btn) return;
+    if (!btn) return NULL;
     
     lv_obj_set_width(btn, LV_PCT(100));
     lv_obj_set_height(btn, get_action_row_height(dv));
@@ -739,6 +739,7 @@ void detail_view_add_action(detail_view_t *dv, const char *label, lv_event_cb_t 
             apply_selected_style(dv, btn, true);
         }
     }
+    return btn;
 }
 
 void detail_view_add_header(detail_view_t *dv, const char *text) {

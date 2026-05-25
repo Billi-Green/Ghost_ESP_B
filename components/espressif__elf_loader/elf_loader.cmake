@@ -100,26 +100,35 @@ macro(project_so project_name)
     if(CONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT)
         # Compile flags for building component sources into position-independent .o files
         set(so_compile_flags -c
+                             -Oz
                              -fPIC
+                             -fmerge-all-constants
+                             -fno-ident
                              -DCONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT)
 
         # Link flags for producing a shared object from the collected .o files.
         # This setup favors size reduction (gc-sections, hidden visibility) and
         # passes strip flags to the linker to remove unneeded content.
         set(so_link_flags -shared
-                          -fPIC
-                          -static-libgcc
+                           -fPIC
+                           -Oz
+                           -static-libgcc
                           -nostdlib
                           -nostartfiles
-                          #-Wl,-E
-                          #-Wl,--export-dynamic
+                          -Wl,-z,max-page-size=4
+
                           -fdata-sections
                           -ffunction-sections
-                          -Wl,--gc-sections
-                          -fvisibility=hidden)
+                           -Wl,--gc-sections
+                           -fvisibility=hidden)
 
-        list(APPEND so_link_flags -Wl,--strip-all
-                                  -Wl,--strip-debug
+        if(CONFIG_IDF_TARGET_ESP32C5)
+            list(APPEND so_link_flags -Wl,--emit-relocs)
+        else()
+            list(APPEND so_link_flags -Wl,--strip-all)
+        endif()
+
+        list(APPEND so_link_flags -Wl,--strip-debug
                                   -Wl,--strip-discarded)
         # Output file name for shared object
         set(so_output "${CMAKE_PROJECT_NAME}.so")
@@ -131,6 +140,13 @@ macro(project_so project_name)
                            --remove-section=.comment
                            --remove-section=.got.loc
                            --remove-section=.dynamic)
+
+        if(CONFIG_IDF_TARGET_ESP32C5)
+            set(so_strip_flags --strip-debug
+                               --remove-section=.comment
+                               --remove-section=.got.loc
+                               --remove-section=.dynamic)
+        endif()
 
         if(CONFIG_IDF_TARGET_ARCH_XTENSA)
             list(APPEND so_strip_flags --remove-section=.xt.lit
@@ -144,6 +160,7 @@ macro(project_so project_name)
         idf_build_get_property(build_dir BUILD_DIR)
         idf_build_get_property(idf_path IDF_PATH)
         idf_build_get_property(target IDF_TARGET)
+        string(TOUPPER "${target}" target_upper)
 
         # Collect all C source files from components
         list(PREPEND ELF_COMPONENTS "main")
@@ -217,6 +234,7 @@ macro(project_so project_name)
         foreach(def ${compile_defs})
             list(APPEND def_flags "-D${def}")
         endforeach()
+        list(APPEND def_flags "-DCONFIG_IDF_TARGET_${target_upper}=1")
 
         # Compile each C file to .o file
         set(so_obj_dir "${CMAKE_BINARY_DIR}/so_objs")

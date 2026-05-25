@@ -519,6 +519,7 @@ typedef struct ghostesp_api {
     bool (*parser_nfc_summary)(const char *app_relative_path, char *out, size_t out_len);
     bool (*parser_ir_summary)(const char *app_relative_path, char *out, size_t out_len);
     bool (*parser_subghz_summary)(const char *app_relative_path, char *out, size_t out_len);
+    ghostesp_ui_obj_t (*ui_detail_finish)(ghostesp_detail_t dv, ghostesp_ui_button_cb_t on_back, void *user);
 } ghostesp_api_t;
 
 #define GHOSTESP_API_STRUCT_SIZE_V1 sizeof(ghostesp_api_t)

@@ -930,7 +930,10 @@ static bool pcap_pool_init(void) {
 
     size_t slots = PCAP_POOL_SLOTS_DEFAULT;
     while (slots >= PCAP_POOL_SLOTS_MIN) {
-        pcap_pool_slot_t *pool = (pcap_pool_slot_t *)heap_caps_calloc(slots, sizeof(pcap_pool_slot_t), MALLOC_CAP_8BIT);
+        pcap_pool_slot_t *pool = (pcap_pool_slot_t *)heap_caps_calloc(slots, sizeof(pcap_pool_slot_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!pool) {
+            pool = (pcap_pool_slot_t *)heap_caps_calloc(slots, sizeof(pcap_pool_slot_t), MALLOC_CAP_8BIT);
+        }
         if (pool != NULL) {
             s_pcap_pool = pool;
             s_pcap_pool_slots = slots;

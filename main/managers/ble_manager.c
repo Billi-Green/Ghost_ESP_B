@@ -5,6 +5,8 @@
 #include <string.h>
 #include <esp_wifi.h>
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "core/callbacks.h"
 #include "esp_random.h"
@@ -55,6 +57,8 @@ static volatile bool airtag_scanner_active = false;
 
 static esp_timer_handle_t flush_timer = NULL;
 static TaskHandle_t nimble_host_task_handle = NULL;
+static StackType_t *nimble_host_task_stack = NULL;
+static StaticTask_t *nimble_host_task_buffer = NULL;
 static SemaphoreHandle_t nimble_host_exit_sem = NULL;
 static SemaphoreHandle_t ble_disc_complete_sem = NULL;
 static volatile bool ble_pending_clear = false;
@@ -190,6 +194,36 @@ void nimble_host_task(void *param) {
         xSemaphoreGive(nimble_host_exit_sem);
     }
     vTaskDelete(NULL);
+}
+
+static BaseType_t ble_create_host_task(void) {
+#if defined(CONFIG_SPIRAM)
+    if (!nimble_host_task_stack) {
+        nimble_host_task_stack = heap_caps_malloc(NIMBLE_HOST_TASK_STACK_SIZE * sizeof(StackType_t),
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (!nimble_host_task_buffer) {
+        nimble_host_task_buffer = heap_caps_malloc(sizeof(StaticTask_t),
+                                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (nimble_host_task_stack && nimble_host_task_buffer) {
+        nimble_host_task_handle = xTaskCreateStatic(nimble_host_task, "nimble_host",
+                                                   NIMBLE_HOST_TASK_STACK_SIZE, NULL, 5,
+                                                   nimble_host_task_stack,
+                                                   nimble_host_task_buffer);
+        if (nimble_host_task_handle) {
+            ESP_LOGI(TAG_BLE, "nimble_host stack allocated from PSRAM: %d bytes",
+                     (int)(NIMBLE_HOST_TASK_STACK_SIZE * sizeof(StackType_t)));
+            return pdPASS;
+        }
+    }
+    free(nimble_host_task_stack);
+    free(nimble_host_task_buffer);
+    nimble_host_task_stack = NULL;
+    nimble_host_task_buffer = NULL;
+#endif
+    return xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE,
+                       NULL, 5, &nimble_host_task_handle);
 }
 
 // Function to prepare BLE host config
@@ -375,7 +409,11 @@ static void restart_ble_stack(void) {
     }
 
     // Restart the NimBLE host task (larger stack)
-    xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE, NULL, 5, &nimble_host_task_handle);
+    if (ble_create_host_task() != pdPASS) {
+        ESP_LOGE(TAG_BLE, "Failed to restart nimble_host task");
+        ble_pending_clear = false;
+        return;
+    }
 
     ble_pending_clear = false;
     
@@ -837,7 +875,11 @@ void ble_init(void) {
         }
 
         // Configure and start the NimBLE host task (larger stack to avoid overflow on S3)
-        xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE, NULL, 5, &nimble_host_task_handle);
+        if (ble_create_host_task() != pdPASS) {
+            ESP_LOGE(TAG_BLE, "Failed to create nimble_host task");
+            ble_resume_networking();
+            return;
+        }
         
         // Wait for NimBLE stack to be ready
         vTaskDelay(pdMS_TO_TICKS(100));

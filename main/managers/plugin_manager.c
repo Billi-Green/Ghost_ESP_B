@@ -5,6 +5,7 @@
 #include "managers/plugin_icon.h"
 #include "managers/sd_card_manager.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "sdkconfig.h"
@@ -31,6 +32,15 @@ static int s_app_count = 0;
 static char s_last_error[128];
 
 static bool read_file_to_buffer(const char *path, char **out_buf);
+
+static bool plugin_manager_sd_jit_allowed(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    return strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ||
+           strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0;
+#else
+    return false;
+#endif
+}
 
 static bool write_app_state_by_id(const char *id, uint32_t failure_count, bool quarantined, bool launch_pending, const char *last_error) {
     if (!id || id[0] == '\0') return false;
@@ -417,7 +427,10 @@ static bool parse_manifest(const char *base_path, plugin_app_manifest_t *out) {
 
 void plugin_manager_init(void) {
     if (!s_apps) {
-        s_apps = calloc(PLUGIN_APP_MAX_COUNT, sizeof(*s_apps));
+        s_apps = heap_caps_calloc(PLUGIN_APP_MAX_COUNT, sizeof(*s_apps), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_apps) {
+            s_apps = calloc(PLUGIN_APP_MAX_COUNT, sizeof(*s_apps));
+        }
         if (!s_apps) {
             snprintf(s_last_error, sizeof(s_last_error), "failed to allocate app registry");
             return;
@@ -453,6 +466,10 @@ int plugin_manager_reload(void) {
     bool display_was_suspended = false;
     bool mounted_here = false;
     if (!sd_card_manager.is_initialized) {
+        if (!plugin_manager_sd_jit_allowed()) {
+            set_error("SD not mounted for %s", "apps");
+            return -1;
+        }
         if (sd_card_mount_for_flush(&display_was_suspended) != ESP_OK) {
             set_error("failed to mount SD for %s", "apps");
             return -1;
@@ -483,15 +500,14 @@ int plugin_manager_reload(void) {
             if (stat(base_path, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
             if (scan_i == 1 && !cache_source_current(base_path)) continue;
 
-            plugin_app_manifest_t *app = calloc(1, sizeof(*app));
-            if (!app) continue;
+            plugin_app_manifest_t *app = &s_apps[s_app_count];
+            memset(app, 0, sizeof(*app));
             if (!parse_manifest(base_path, app)) {
                 ESP_LOGW(TAG, "Skipping app at %s: %s", base_path, app->error);
-                free(app);
+                memset(app, 0, sizeof(*app));
                 continue;
             }
-            s_apps[s_app_count++] = *app;
-            free(app);
+            s_app_count++;
         }
 
         closedir(dir);

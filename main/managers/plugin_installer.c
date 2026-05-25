@@ -1,6 +1,7 @@
 #include "managers/plugin_installer.h"
 
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "lgfx/utility/lgfx_miniz.h"
 #include <ctype.h>
@@ -179,7 +180,8 @@ static esp_err_t extract_gapp_to_dir(const char *gapp_path, const char *dst_dir)
         char out_path[PATH_MAX_LOCAL];
         if (!join_path(out_path, sizeof(out_path), dst_dir, name)) { fclose(f); return ESP_ERR_INVALID_SIZE; }
 
-        uint8_t *comp = malloc(comp_size ? comp_size : 1);
+        uint8_t *comp = heap_caps_malloc(comp_size ? comp_size : 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!comp) comp = malloc(comp_size ? comp_size : 1);
         if (!comp) { fclose(f); return ESP_ERR_NO_MEM; }
         if (!read_exact(f, comp, comp_size)) { free(comp); fclose(f); return ESP_FAIL; }
 
@@ -197,7 +199,8 @@ static esp_err_t extract_gapp_to_dir(const char *gapp_path, const char *dst_dir)
                 if (!ok) ESP_LOGE(TAG, "extract: write failed for %s", out_path);
             }
         } else if (method == GAPP_METHOD_DEFLATE) {
-            uint8_t *out = malloc(uncomp_size ? uncomp_size : 1);
+            uint8_t *out = heap_caps_malloc(uncomp_size ? uncomp_size : 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!out) out = malloc(uncomp_size ? uncomp_size : 1);
             if (out) {
                 size_t out_len = lgfx_tinfl_decompress_mem_to_mem(out, uncomp_size, comp, comp_size, 0);
                 if (out_len == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED) {

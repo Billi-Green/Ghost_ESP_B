@@ -24,6 +24,7 @@
 #endif
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -2637,9 +2638,12 @@ static void subghz_open_waterfall_popup(void) {
     free(s_wf_fb);
     free(s_wf_line);
     free(s_wf_prev_row);
-    s_wf_fb = calloc((size_t)s_wf_fb_w * (size_t)s_wf_fb_h, sizeof(lv_color_t));
-    s_wf_line = calloc((size_t)s_wf_fb_w, sizeof(uint8_t));
-    s_wf_prev_row = calloc((size_t)s_wf_fb_w, sizeof(lv_color_t));
+    s_wf_fb = heap_caps_calloc((size_t)s_wf_fb_w * (size_t)s_wf_fb_h, sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_wf_line = heap_caps_calloc((size_t)s_wf_fb_w, sizeof(uint8_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_wf_prev_row = heap_caps_calloc((size_t)s_wf_fb_w, sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_wf_fb) s_wf_fb = calloc((size_t)s_wf_fb_w * (size_t)s_wf_fb_h, sizeof(lv_color_t));
+    if (!s_wf_line) s_wf_line = calloc((size_t)s_wf_fb_w, sizeof(uint8_t));
+    if (!s_wf_prev_row) s_wf_prev_row = calloc((size_t)s_wf_fb_w, sizeof(lv_color_t));
     if (s_wf_fb && s_wf_line) {
         lv_color_t black = lv_color_black();
         for (int i = 0; i < s_wf_fb_w * s_wf_fb_h; i++) {

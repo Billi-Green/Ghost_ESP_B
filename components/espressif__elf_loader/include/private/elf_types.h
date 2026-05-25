@@ -126,7 +126,10 @@ extern "C" {
 #define ELF_SEC_DATA            2
 #define ELF_SEC_RODATA          3
 #define ELF_SEC_DRLRO           4
-#define ELF_SECS                5
+#define ELF_SEC_PLT             5
+#define ELF_SEC_GOT             6
+#define ELF_SEC_GOT_PLT         7
+#define ELF_SECS                8
 
 #define ELF_ST_BIND(_i)         ((_i) >> 4)
 #define ELF_ST_TYPE(_i)         ((_i) & 0xf)
@@ -243,7 +246,9 @@ typedef struct esp_elf {
     unsigned char   *pdata;             /*!< data buffer pointer */
 #else
     unsigned char   *psegment;          /*!< segment buffer pointer */
+    unsigned char   *pdata;             /*!< writable segment buffer pointer */
     uint32_t         svaddr;            /*!< start virtual address of segment */
+    uint32_t         ssize;             /*!< segment buffer size */
 #endif
 
     esp_elf_sec_t   sec[ELF_SECS];      /*!< ".bss", "data", "rodata", ".text" */

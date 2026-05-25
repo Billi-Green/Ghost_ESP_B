@@ -13,6 +13,7 @@
 #include "gui/screen_layout.h"
 #include "gui/design_tokens.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdio.h>
@@ -100,10 +101,17 @@ static lv_color_t apps_bg_color;
 static lv_color_t apps_surface_color;
 static lv_color_t apps_text_color;
 static bool apps_plugin_reload_in_progress = false;
+static StackType_t *apps_plugin_reload_stack = NULL;
+static StaticTask_t *apps_plugin_reload_tcb = NULL;
+
+#define PLUGIN_RELOAD_STACK_BYTES 16384
 
 static bool ensure_app_items(void) {
     if (app_items) return true;
-    app_items = calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items));
+    app_items = heap_caps_calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!app_items) {
+        app_items = calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items));
+    }
     if (!app_items) {
         ESP_LOGE(TAG, "Failed to allocate app gallery items");
         return false;
@@ -177,7 +185,27 @@ static void plugin_reload_task_fn(void *arg) {
 static void start_plugin_reload_async(void) {
     if (apps_plugin_reload_in_progress) return;
     apps_plugin_reload_in_progress = true;
-    if (xTaskCreate(plugin_reload_task_fn, "plugin_reload", 16384, NULL, 5, NULL) != pdPASS) {
+    if (!apps_plugin_reload_stack) {
+        apps_plugin_reload_stack = heap_caps_malloc(PLUGIN_RELOAD_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!apps_plugin_reload_stack) {
+            apps_plugin_reload_stack = heap_caps_malloc(PLUGIN_RELOAD_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+    }
+    if (!apps_plugin_reload_stack) {
+        apps_plugin_reload_in_progress = false;
+        ESP_LOGE(TAG, "Failed to allocate plugin reload task stack");
+        return;
+    }
+    if (!apps_plugin_reload_tcb) {
+        apps_plugin_reload_tcb = heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!apps_plugin_reload_tcb) {
+        apps_plugin_reload_in_progress = false;
+        ESP_LOGE(TAG, "Failed to allocate plugin reload TCB");
+        return;
+    }
+    if (xTaskCreateStatic(plugin_reload_task_fn, "plugin_reload", PLUGIN_RELOAD_STACK_BYTES, NULL, 5,
+                          apps_plugin_reload_stack, apps_plugin_reload_tcb) == NULL) {
         apps_plugin_reload_in_progress = false;
         ESP_LOGE(TAG, "Failed to create plugin reload task");
     }

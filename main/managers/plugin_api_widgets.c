@@ -7,6 +7,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define WGT_BUTTON_CTX_POOL_SIZE 16
+static plugin_ui_button_ctx_t wgt_button_ctx_pool[WGT_BUTTON_CTX_POOL_SIZE];
+static uint32_t wgt_button_ctx_pool_mask = 0;
+static plugin_ui_button_ctx_t* wgt_button_ctx_alloc(void) {
+    for (int i = 0; i < WGT_BUTTON_CTX_POOL_SIZE; i++) {
+        if (!(wgt_button_ctx_pool_mask & (1U << i))) {
+            wgt_button_ctx_pool_mask |= (1U << i);
+            memset(&wgt_button_ctx_pool[i], 0, sizeof(wgt_button_ctx_pool[i]));
+            return &wgt_button_ctx_pool[i];
+        }
+    }
+    return NULL;
+}
+static void wgt_button_ctx_free(plugin_ui_button_ctx_t *ptr) {
+    if (!ptr) return;
+    int idx = ptr - wgt_button_ctx_pool;
+    if (idx >= 0 && idx < WGT_BUTTON_CTX_POOL_SIZE) {
+        wgt_button_ctx_pool_mask &= ~(1U << idx);
+    }
+}
+
 typedef struct {
     void *result;
     const char *str1;
@@ -89,8 +110,8 @@ static void widget_btn_bridge(lv_event_t *event) {
     lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_CLICKED) {
         if (ctx->cb) ctx->cb(ctx->user);
-    } else if (code == LV_EVENT_DELETE) {
-        free(ctx);
+    } else     if (code == LV_EVENT_DELETE) {
+        wgt_button_ctx_free(ctx);
     }
 }
 
@@ -131,11 +152,16 @@ ghostesp_options_t plugin_api_ui_options_create(const char *title) {
 static void opts_add_item_sync(void *arg) {
     wgt_add_t *ctx = (wgt_add_t *)arg;
     options_view_t *ov = (options_view_t *)ctx->handle;
-    plugin_ui_button_ctx_t *bctx = calloc(1, sizeof(*bctx));
+    plugin_ui_button_ctx_t *bctx = wgt_button_ctx_alloc();
     if (!bctx) return;
     bctx->cb = ctx->cb;
     bctx->user = ctx->user;
     ctx->result = options_view_add_item(ov, ctx->label, widget_btn_bridge, bctx);
+    if (ctx->result) {
+        lv_obj_add_event_cb((lv_obj_t *)ctx->result, widget_btn_bridge, LV_EVENT_DELETE, bctx);
+    } else {
+        wgt_button_ctx_free(bctx);
+    }
 }
 
 ghostesp_ui_obj_t plugin_api_ui_options_add_item(ghostesp_options_t opts, const char *label, ghostesp_ui_button_cb_t on_click, void *user) {
@@ -148,11 +174,16 @@ ghostesp_ui_obj_t plugin_api_ui_options_add_item(ghostesp_options_t opts, const 
 static void opts_add_back_sync(void *arg) {
     wgt_add_t *ctx = (wgt_add_t *)arg;
     options_view_t *ov = (options_view_t *)ctx->handle;
-    plugin_ui_button_ctx_t *bctx = calloc(1, sizeof(*bctx));
+    plugin_ui_button_ctx_t *bctx = wgt_button_ctx_alloc();
     if (!bctx) return;
     bctx->cb = ctx->cb;
     bctx->user = ctx->user;
     ctx->result = options_view_add_back_row(ov, widget_btn_bridge, bctx);
+    if (ctx->result) {
+        lv_obj_add_event_cb((lv_obj_t *)ctx->result, widget_btn_bridge, LV_EVENT_DELETE, bctx);
+    } else {
+        wgt_button_ctx_free(bctx);
+    }
 }
 
 ghostesp_ui_obj_t plugin_api_ui_options_add_back(ghostesp_options_t opts, ghostesp_ui_button_cb_t on_click, void *user) {
@@ -244,11 +275,16 @@ void plugin_api_ui_detail_add_info(ghostesp_detail_t dv, const char *label, cons
 static void dv_add_action_sync(void *arg) {
     wgt_add_t *ctx = (wgt_add_t *)arg;
     detail_view_t *d = (detail_view_t *)ctx->handle;
-    plugin_ui_button_ctx_t *bctx = calloc(1, sizeof(*bctx));
+    plugin_ui_button_ctx_t *bctx = wgt_button_ctx_alloc();
     if (!bctx) return;
     bctx->cb = ctx->cb;
     bctx->user = ctx->user;
-    detail_view_add_action(d, ctx->label, widget_btn_bridge, bctx);
+    lv_obj_t *btn = detail_view_add_action(d, ctx->label, widget_btn_bridge, bctx);
+    if (btn) {
+        lv_obj_add_event_cb(btn, widget_btn_bridge, LV_EVENT_DELETE, bctx);
+    } else {
+        wgt_button_ctx_free(bctx);
+    }
 }
 
 void plugin_api_ui_detail_add_action(ghostesp_detail_t dv, const char *label, ghostesp_ui_button_cb_t on_click, void *user) {
@@ -283,11 +319,16 @@ void plugin_api_ui_detail_add_divider(ghostesp_detail_t dv) {
 static void dv_add_back_sync(void *arg) {
     wgt_add_t *ctx = (wgt_add_t *)arg;
     detail_view_t *d = (detail_view_t *)ctx->handle;
-    plugin_ui_button_ctx_t *bctx = calloc(1, sizeof(*bctx));
+    plugin_ui_button_ctx_t *bctx = wgt_button_ctx_alloc();
     if (!bctx) return;
     bctx->cb = ctx->cb;
     bctx->user = ctx->user;
     ctx->result = detail_view_add_back(d, widget_btn_bridge, bctx);
+    if (ctx->result) {
+        lv_obj_add_event_cb((lv_obj_t *)ctx->result, widget_btn_bridge, LV_EVENT_DELETE, bctx);
+    } else {
+        wgt_button_ctx_free(bctx);
+    }
 }
 
 ghostesp_ui_obj_t plugin_api_ui_detail_add_back(ghostesp_detail_t dv, ghostesp_ui_button_cb_t on_click, void *user) {
@@ -295,6 +336,29 @@ ghostesp_ui_obj_t plugin_api_ui_detail_add_back(ghostesp_detail_t dv, ghostesp_u
     if (!dv) return NULL;
     wgt_add_t ctx = { .handle = dv, .cb = on_click, .user = user };
     return plugin_api_internal_run_sync(dv_add_back_sync, &ctx) ? ctx.result : NULL;
+}
+
+static void dv_finish_sync(void *arg) {
+    wgt_add_t *ctx = (wgt_add_t *)arg;
+    detail_view_t *d = (detail_view_t *)ctx->handle;
+    plugin_ui_button_ctx_t *bctx = wgt_button_ctx_alloc();
+    if (!bctx) return;
+    bctx->cb = ctx->cb;
+    bctx->user = ctx->user;
+    detail_view_add_divider(d);
+    ctx->result = detail_view_add_back(d, widget_btn_bridge, bctx);
+    if (ctx->result) {
+        lv_obj_add_event_cb((lv_obj_t *)ctx->result, widget_btn_bridge, LV_EVENT_DELETE, bctx);
+    } else {
+        wgt_button_ctx_free(bctx);
+    }
+}
+
+ghostesp_ui_obj_t plugin_api_ui_detail_finish(ghostesp_detail_t dv, ghostesp_ui_button_cb_t on_back, void *user) {
+    if (!plugin_api_internal_has_ui_permission()) return NULL;
+    if (!dv) return NULL;
+    wgt_add_t ctx = { .handle = dv, .cb = on_back, .user = user };
+    return plugin_api_internal_run_sync(dv_finish_sync, &ctx) ? ctx.result : NULL;
 }
 
 static void dv_set_sel_sync(void *arg) {
@@ -439,11 +503,16 @@ void plugin_api_ui_popup_set_body(ghostesp_popup_t p, const char *body) {
 static void popup_add_btn_sync(void *arg) {
     wgt_add_t *ctx = (wgt_add_t *)arg;
     popup_t *pop = (popup_t *)ctx->handle;
-    plugin_ui_button_ctx_t *bctx = calloc(1, sizeof(*bctx));
+    plugin_ui_button_ctx_t *bctx = wgt_button_ctx_alloc();
     if (!bctx) return;
     bctx->cb = ctx->cb;
     bctx->user = ctx->user;
     ctx->result = popup_add_button(pop, ctx->label, widget_btn_bridge, bctx);
+    if (ctx->result) {
+        lv_obj_add_event_cb((lv_obj_t *)ctx->result, widget_btn_bridge, LV_EVENT_DELETE, bctx);
+    } else {
+        wgt_button_ctx_free(bctx);
+    }
 }
 
 ghostesp_ui_obj_t plugin_api_ui_popup_add_button(ghostesp_popup_t p, const char *label, ghostesp_ui_button_cb_t on_click, void *user) {

@@ -736,7 +736,10 @@ static void plugin_api_delay_ms(uint32_t ms) {
 static void *plugin_api_app_malloc(size_t size) {
     if (size == 0) return NULL;
     if (s_memory_limit > 0 && s_memory_used + size > s_memory_limit) return NULL;
-    plugin_alloc_header_t *header = malloc(sizeof(*header) + size);
+    plugin_alloc_header_t *header = heap_caps_malloc(sizeof(*header) + size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!header) {
+        header = malloc(sizeof(*header) + size);
+    }
     if (!header) return NULL;
     header->magic = PLUGIN_ALLOC_MAGIC;
     header->size = size;
@@ -965,6 +968,7 @@ extern void plugin_api_ui_detail_add_action(ghostesp_detail_t dv, const char *la
 extern void plugin_api_ui_detail_add_header(ghostesp_detail_t dv, const char *text);
 extern void plugin_api_ui_detail_add_divider(ghostesp_detail_t dv);
 extern ghostesp_ui_obj_t plugin_api_ui_detail_add_back(ghostesp_detail_t dv, ghostesp_ui_button_cb_t on_click, void *user);
+extern ghostesp_ui_obj_t plugin_api_ui_detail_finish(ghostesp_detail_t dv, ghostesp_ui_button_cb_t on_back, void *user);
 extern void plugin_api_ui_detail_set_selected(ghostesp_detail_t dv, int index);
 extern void plugin_api_ui_detail_move_selection(ghostesp_detail_t dv, int delta);
 extern int plugin_api_ui_detail_get_selected(ghostesp_detail_t dv);
@@ -1455,6 +1459,7 @@ static ghostesp_api_t s_api = {
     .parser_nfc_summary = plugin_api_parser_nfc_summary,
     .parser_ir_summary = plugin_api_parser_ir_summary,
     .parser_subghz_summary = plugin_api_parser_subghz_summary,
+    .ui_detail_finish = plugin_api_ui_detail_finish,
 };
 
 const ghostesp_api_t *plugin_api_get(const char *app_id,

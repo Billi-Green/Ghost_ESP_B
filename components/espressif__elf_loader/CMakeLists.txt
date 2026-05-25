@@ -28,11 +28,7 @@ if(CONFIG_ELF_LOADER)
     set(ldfragments "linker.lf")
 endif()
 
-set(priv_req spi_flash)
-
-if(CONFIG_IDF_TARGET_ESP32P4)
-    list(APPEND priv_req esp_mm)
-endif()
+set(priv_req spi_flash esp_mm)
 
 idf_component_register(SRCS ${srcs}
                        INCLUDE_DIRS ${include_dirs}

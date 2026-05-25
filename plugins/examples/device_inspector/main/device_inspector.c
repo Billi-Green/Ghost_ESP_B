@@ -49,7 +49,28 @@ static void open_ble(void);
 
 #define ARRAY_COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
+typedef struct {
+    const char *label;
+    page_id_t page;
+} menu_page_t;
+
+static const menu_page_t s_menu_pages[] = {
+    { "System Info", PAGE_SYSTEM },
+    { "WiFi Scan", PAGE_WIFI },
+    { "BLE Scan", PAGE_BLE },
+    { "RGB Test", PAGE_RGB },
+    { "Storage Browser", PAGE_STORAGE },
+    { "Storage R/W Test", PAGE_STORAGE_TEST },
+    { "GPS Status", PAGE_GPS },
+    { "Hardware Info", PAGE_HARDWARE },
+    { "Canvas Demo", PAGE_CANVAS },
+    { "Input Tester", PAGE_INPUT },
+    { "Theme Colors", PAGE_THEME },
+    { "Unsafe Probe", PAGE_UNSAFE },
+};
+
 static void detail_back(void *user) {
+    (void)user;
     if (detail_view && api->ui_detail_destroy) {
         api->ui_detail_destroy(detail_view);
         detail_view = NULL;
@@ -58,6 +79,7 @@ static void detail_back(void *user) {
 }
 
 static void storage_detail_back(void *user) {
+    (void)user;
     if (detail_view && api->ui_detail_destroy) {
         api->ui_detail_destroy(detail_view);
         detail_view = NULL;
@@ -81,6 +103,7 @@ static void destroy_subviews(void) {
 }
 
 static void popup_close(void *user) {
+    (void)user;
     if (popup && api->ui_popup_hide) api->ui_popup_hide(popup);
     if (popup && api->ui_popup_destroy) {
         api->ui_popup_destroy(popup);
@@ -113,14 +136,13 @@ static void exit_app(void *user) {
 
 static void menu_select(void *user) {
     int idx = (int)(intptr_t)user;
-    page_id_t pages[] = {
-        PAGE_SYSTEM, PAGE_WIFI, PAGE_BLE, PAGE_RGB,
-        PAGE_STORAGE, PAGE_STORAGE_TEST, PAGE_GPS,
-        PAGE_HARDWARE, PAGE_CANVAS, PAGE_INPUT, PAGE_THEME, PAGE_UNSAFE,
-    };
-    if (idx >= 0 && idx < ARRAY_COUNT(pages)) {
-        open_page(pages[idx]);
-    } else if (idx == ARRAY_COUNT(pages)) {
+    if (idx >= 0 && idx < ARRAY_COUNT(s_menu_pages)) {
+        if (main_menu && api->ui_options_destroy) {
+            api->ui_options_destroy(main_menu);
+            main_menu = NULL;
+        }
+        open_page(s_menu_pages[idx].page);
+    } else if (idx == ARRAY_COUNT(s_menu_pages)) {
         exit_app(NULL);
     }
 }
@@ -136,18 +158,9 @@ static void show_menu(void) {
     main_menu = api->ui_options_create("Device Inspector");
     if (!main_menu) return;
 
-    api->ui_options_add_item(main_menu, "System Info", menu_select, (void *)(intptr_t)0);
-    api->ui_options_add_item(main_menu, "WiFi Scan", menu_select, (void *)(intptr_t)1);
-    api->ui_options_add_item(main_menu, "BLE Scan", menu_select, (void *)(intptr_t)2);
-    api->ui_options_add_item(main_menu, "RGB Test", menu_select, (void *)(intptr_t)3);
-    api->ui_options_add_item(main_menu, "Storage Browser", menu_select, (void *)(intptr_t)4);
-    api->ui_options_add_item(main_menu, "Storage R/W Test", menu_select, (void *)(intptr_t)5);
-    api->ui_options_add_item(main_menu, "GPS Status", menu_select, (void *)(intptr_t)6);
-    api->ui_options_add_item(main_menu, "Hardware Info", menu_select, (void *)(intptr_t)7);
-    api->ui_options_add_item(main_menu, "Canvas Demo", menu_select, (void *)(intptr_t)8);
-    api->ui_options_add_item(main_menu, "Input Tester", menu_select, (void *)(intptr_t)9);
-    api->ui_options_add_item(main_menu, "Theme Colors", menu_select, (void *)(intptr_t)10);
-    api->ui_options_add_item(main_menu, "Unsafe Probe", menu_select, (void *)(intptr_t)11);
+    for (int i = 0; i < ARRAY_COUNT(s_menu_pages); i++) {
+        api->ui_options_add_item(main_menu, s_menu_pages[i].label, menu_select, (void *)(intptr_t)i);
+    }
     api->ui_options_add_back(main_menu, exit_app, NULL);
 }
 

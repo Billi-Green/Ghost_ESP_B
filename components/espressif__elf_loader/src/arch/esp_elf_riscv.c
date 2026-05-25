@@ -5,9 +5,11 @@
  */
 
 #include <assert.h>
+#include <string.h>
 #include <sys/errno.h>
 #include "esp_elf.h"
 #include "esp_log.h"
+#include "esp_memory_utils.h"
 #include "private/elf_platform.h"
 
 /** @brief RISC-V relocations defined by the ABIs */
@@ -68,6 +70,146 @@
 
 static const char *TAG = "elf_arch";
 
+#define RISCV_HI20_CACHE_ENTRIES 16
+
+typedef struct {
+    Elf32_Addr offset;
+    int32_t value;
+} riscv_hi20_cache_t;
+
+static riscv_hi20_cache_t s_hi20_cache[RISCV_HI20_CACHE_ENTRIES];
+static uint8_t s_hi20_cache_pos;
+
+static uint32_t read_u32_unaligned(const void *ptr)
+{
+#if CONFIG_IDF_TARGET_ESP32C5
+    if (esp_ptr_executable(ptr)) {
+        uintptr_t addr = (uintptr_t)ptr;
+        const volatile uint32_t *base = (const volatile uint32_t *)(addr & ~3U);
+        uint32_t shift = (addr & 3U) * 8U;
+        uint32_t lo = base[0] >> shift;
+
+        if (shift) {
+            lo |= base[1] << (32U - shift);
+        }
+
+        return lo;
+    }
+#endif
+
+    uint32_t value;
+    memcpy(&value, ptr, sizeof(value));
+    return value;
+}
+
+static void write_u32_unaligned(void *ptr, uint32_t value)
+{
+#if CONFIG_IDF_TARGET_ESP32C5
+    if (esp_ptr_executable(ptr)) {
+        uintptr_t addr = (uintptr_t)ptr;
+        volatile uint32_t *base = (volatile uint32_t *)(addr & ~3U);
+        uint32_t shift = (addr & 3U) * 8U;
+
+        if (!shift) {
+            base[0] = value;
+        } else {
+            uint32_t lo_mask = 0xffffffffU << shift;
+            uint32_t hi_mask = 0xffffffffU >> (32U - shift);
+
+            base[0] = (base[0] & ~lo_mask) | (value << shift);
+            base[1] = (base[1] & ~hi_mask) | (value >> (32U - shift));
+        }
+
+        return;
+    }
+#endif
+
+    memcpy(ptr, &value, sizeof(value));
+}
+
+static void remember_hi20(Elf32_Addr offset, int32_t value)
+{
+    s_hi20_cache[s_hi20_cache_pos].offset = offset;
+    s_hi20_cache[s_hi20_cache_pos].value = value;
+    s_hi20_cache_pos = (s_hi20_cache_pos + 1) % RISCV_HI20_CACHE_ENTRIES;
+}
+
+static bool find_hi20(Elf32_Addr offset, int32_t *value)
+{
+    for (int i = 0; i < RISCV_HI20_CACHE_ENTRIES; i++) {
+        if (s_hi20_cache[i].offset == offset) {
+            *value = s_hi20_cache[i].value;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static uint32_t set_u_type_imm(uint32_t insn, int32_t value)
+{
+    uint32_t imm = ((uint32_t)(value + 0x800) & 0xfffff000U);
+    return (insn & 0x00000fffU) | imm;
+}
+
+static uint32_t set_i_type_imm(uint32_t insn, int32_t value)
+{
+    uint32_t imm = (uint32_t)value & 0xfffU;
+    return (insn & 0x000fffffU) | (imm << 20);
+}
+
+static uint32_t set_s_type_imm(uint32_t insn, int32_t value)
+{
+    uint32_t imm = (uint32_t)value & 0xfffU;
+    return (insn & 0x01fff07fU) | ((imm & 0x1fU) << 7) | ((imm & 0xfe0U) << 20);
+}
+
+static int get_mapped_delta(esp_elf_t *elf, const elf32_rela_t *rela,
+                            const elf32_sym_t *sym, int32_t *delta)
+{
+    if (!sym || sym->shndx == SHN_UNDEF) {
+        return -EINVAL;
+    }
+
+    uintptr_t original = (uintptr_t)sym->value + rela->addend;
+    uintptr_t mapped = esp_elf_map_sym(elf, original);
+    if (!mapped) {
+        ESP_LOGE(TAG, "failed to map relocation symbol 0x%x", (unsigned int)original);
+        return -EINVAL;
+    }
+
+    *delta = (int32_t)(mapped - original);
+    return 0;
+}
+
+static void patch_plt_slot(esp_elf_t *elf, const elf32_rela_t *rela, void *got_slot)
+{
+    esp_elf_sec_t *plt = &elf->sec[ELF_SEC_PLT];
+    esp_elf_sec_t *got_plt = &elf->sec[ELF_SEC_GOT_PLT];
+
+    if (!plt->addr || !got_plt->addr || rela->offset < got_plt->v_addr) {
+        return;
+    }
+
+    uint32_t got_offset = rela->offset - got_plt->v_addr;
+    if (got_offset < 8 || got_offset >= got_plt->size) {
+        return;
+    }
+
+    uint32_t plt_offset = 0x20 + ((got_offset - 8) / sizeof(uint32_t)) * 0x10;
+    if (plt_offset + 8 > plt->size) {
+        return;
+    }
+
+    void *plt_entry = (void *)(plt->addr + plt_offset);
+    int32_t value = (int32_t)((uintptr_t)got_slot - (uintptr_t)plt_entry);
+
+    write_u32_unaligned(plt_entry, set_u_type_imm(read_u32_unaligned(plt_entry), value));
+    write_u32_unaligned((uint8_t *)plt_entry + 4,
+                        set_i_type_imm(read_u32_unaligned((uint8_t *)plt_entry + 4),
+                                       value - ((value + 0x800) & ~0xfff)));
+}
+
 /**
  * @brief Relocates target architecture symbol of ELF
  *
@@ -81,13 +223,17 @@ static const char *TAG = "elf_arch";
 int esp_elf_arch_relocate(esp_elf_t *elf, const elf32_rela_t *rela,
                           const elf32_sym_t *sym, uint32_t addr)
 {
-    uint32_t *where;
+    void *where;
 
     assert(elf && rela);
 
-    where = (uint32_t *)((uint8_t *)elf->psegment + rela->offset + elf->svaddr);
-    ESP_LOGD(TAG, "type: %d, where=%p addr=0x%x offset=0x%x",
-             ELF_R_TYPE(rela->info), where, (int)elf->psegment, (int)rela->offset);
+    where = (void *)esp_elf_map_sym(elf, rela->offset);
+    if (!where) {
+        ESP_LOGE(TAG, "failed to map relocation offset 0x%x", rela->offset);
+        return -EINVAL;
+    }
+    ESP_LOGD(TAG, "type: %d, where=%p offset=0x%x",
+             ELF_R_TYPE(rela->info), where, (int)rela->offset);
 
     /* Do relocation based on relocation type */
 
@@ -95,13 +241,76 @@ int esp_elf_arch_relocate(esp_elf_t *elf, const elf32_rela_t *rela,
     case R_RISCV_NONE:
         break;
     case R_RISCV_32:
-        *where = addr + rela->addend;
+        write_u32_unaligned(where, addr + rela->addend);
         break;
     case R_RISCV_RELATIVE:
-        *where = (Elf32_Addr)((uint8_t *)elf->psegment - elf->svaddr + rela->addend);
+    {
+        uintptr_t mapped = esp_elf_map_sym(elf, rela->addend);
+        if (!mapped) {
+            ESP_LOGE(TAG, "failed to map relative addend 0x%x", rela->addend);
+            return -EINVAL;
+        }
+        write_u32_unaligned(where, (Elf32_Addr)mapped);
         break;
+    }
     case R_RISCV_JUMP_SLOT:
-        *where = addr;
+        write_u32_unaligned(where, addr);
+        patch_plt_slot(elf, rela, where);
+        break;
+    case R_RISCV_PCREL_HI20:
+    {
+        int32_t value = (int32_t)(addr + rela->addend - (uintptr_t)where);
+        uint32_t insn = read_u32_unaligned(where);
+
+        write_u32_unaligned(where, set_u_type_imm(insn, value));
+        remember_hi20(rela->offset, value);
+        break;
+    }
+    case R_RISCV_PCREL_LO12_I:
+    case R_RISCV_PCREL_LO12_S:
+    {
+        int32_t value;
+
+        if (!sym || !find_hi20(sym->value + rela->addend, &value)) {
+            ESP_LOGE(TAG, "failed to find HI20 pair for LO12 offset 0x%x", rela->offset);
+            return -EINVAL;
+        }
+
+        uint32_t insn = read_u32_unaligned(where);
+        int32_t low = value - ((value + 0x800) & ~0xfff);
+
+        if (ELF_R_TYPE(rela->info) == R_RISCV_PCREL_LO12_I) {
+            write_u32_unaligned(where, set_i_type_imm(insn, low));
+        } else {
+            write_u32_unaligned(where, set_s_type_imm(insn, low));
+        }
+        break;
+    }
+    case R_RISCV_CALL:
+    case R_RISCV_CALL_PLT:
+    case R_RISCV_BRANCH:
+    case R_RISCV_JAL:
+    case R_RISCV_RVC_BRANCH:
+    case R_RISCV_RVC_JUMP:
+        break;
+    case R_RISCV_ADD32:
+    case R_RISCV_SUB32:
+    {
+        int32_t delta;
+        if (get_mapped_delta(elf, rela, sym, &delta)) {
+            return -EINVAL;
+        }
+
+        uint32_t value = read_u32_unaligned(where);
+        if (ELF_R_TYPE(rela->info) == R_RISCV_ADD32) {
+            value += (uint32_t)delta;
+        } else {
+            value -= (uint32_t)delta;
+        }
+        write_u32_unaligned(where, value);
+        break;
+    }
+    case R_RISCV_RELAX:
         break;
     default:
         ESP_LOGE(TAG, "info=%d is not supported\n", ELF_R_TYPE(rela->info));

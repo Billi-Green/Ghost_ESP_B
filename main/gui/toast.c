@@ -92,7 +92,9 @@ static void toast_set_y_anim_cb(void *obj, int32_t v) {
 static void toast_ensure_objects(void) {
     if (s_container) return;
 
+    if (!display_manager_is_available()) return;
     lv_obj_t *parent = lv_layer_top();
+    if (!parent) return;
 
     s_container = lv_obj_create(parent);
     lv_obj_remove_style_all(s_container);
@@ -180,6 +182,7 @@ static void toast_present_next(void) {
     if (!q_pop(&slot)) return;
 
     toast_ensure_objects();
+    if (!s_container) return;
     s_showing = true;
     s_current_duration_ms = slot.duration_ms;
 

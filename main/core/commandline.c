@@ -102,13 +102,13 @@ extern dns_server_handle_t dns_handle;
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
 #include "core/ghostesp_version.h"
+#include "core/memory_debug.h"
 #include "managers/chameleon_manager.h"
 #include <stddef.h>
 #include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
-#include "esp_heap_trace.h"
 #include "esp_memory_utils.h"
 #include <dirent.h>
 #include "managers/infrared_manager.h"
@@ -161,6 +161,10 @@ static const char *TAG = "Commandline";
 #endif
 
 static Command *command_list_head = NULL;
+static Command *command_pool = NULL;
+static Command *command_free_list = NULL;
+
+#define COMMAND_REGISTRY_MAX 192
 TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 
@@ -240,7 +244,28 @@ static void chameleon_cli_progress_cb(int current, int total, void *user) {
     }
 }
 
-void command_init() { command_list_head = NULL; }
+void command_init() {
+    free(command_pool);
+    command_pool = NULL;
+    command_list_head = NULL;
+    command_free_list = NULL;
+
+#if defined(CONFIG_SPIRAM)
+    command_pool = heap_caps_calloc(COMMAND_REGISTRY_MAX, sizeof(*command_pool), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!command_pool) {
+        command_pool = calloc(COMMAND_REGISTRY_MAX, sizeof(*command_pool));
+    }
+    if (!command_pool) {
+        glog("Failed to allocate command registry (%u entries)\n", (unsigned)COMMAND_REGISTRY_MAX);
+        return;
+    }
+
+    for (int i = 0; i < COMMAND_REGISTRY_MAX; i++) {
+        command_pool[i].next = command_free_list;
+        command_free_list = &command_pool[i];
+    }
+}
 
 void register_command(const char *name, CommandFunction function) {
     // Check if the command already exists
@@ -253,19 +278,17 @@ void register_command(const char *name, CommandFunction function) {
         current = current->next;
     }
 
-    // Create a new command
-    Command *new_command = (Command *)malloc(sizeof(Command));
+    if (!command_pool) {
+        command_init();
+    }
+
+    Command *new_command = command_free_list;
     if (new_command == NULL) {
-        // Handle memory allocation failure
-        glog("Failed to register command '%s': out of memory\n", name);
+        glog("Failed to register command '%s': command registry full\n", name);
         return;
     }
-    new_command->name = strdup(name);
-    if (new_command->name == NULL) {
-        glog("Failed to register command '%s': out of memory\n", name);
-        free(new_command);
-        return;
-    }
+    command_free_list = new_command->next;
+    new_command->name = name;
     new_command->function = function;
     new_command->next = command_list_head;
     command_list_head = new_command;
@@ -283,8 +306,10 @@ void unregister_command(const char *name) {
             } else {
                 previous->next = current->next;
             }
-            free(current->name);
-            free(current);
+            current->name = NULL;
+            current->function = NULL;
+            current->next = command_free_list;
+            command_free_list = current;
             return;
         }
         previous = current;
@@ -1014,7 +1039,11 @@ static void dump_task_stacks(void) {
     if (!list) return;
     UBaseType_t out = uxTaskGetSystemState(list, num, NULL);
     for (UBaseType_t i = 0; i < out; i++) {
-        printf("task=%s min_free_stack=%u words\n", list[i].pcTaskName, (unsigned)list[i].usStackHighWaterMark);
+        printf("task=%s state=%u prio=%u min_free_stack=%u bytes\n",
+               list[i].pcTaskName,
+               (unsigned)list[i].eCurrentState,
+               (unsigned)list[i].uxCurrentPriority,
+               (unsigned)list[i].usStackHighWaterMark);
     }
     vPortFree(list);
 #else
@@ -1022,46 +1051,85 @@ static void dump_task_stacks(void) {
 #endif
 }
 
+static void print_mem_usage(void) {
+    glog("usage: mem [heaps|tasks|regions|check|dump|trace]\n");
+    glog("  mem              heap summary + task stack high-water marks\n");
+    glog("  mem heaps        heap summary only\n");
+    glog("  mem tasks        task stack high-water marks only\n");
+    glog("  mem regions      ESP-IDF heap region breakdown\n");
+    glog("  mem check        heap integrity check\n");
+    glog("  mem dump         verbose internal/PSRAM heap block dump\n");
+    glog("  mem trace <start|leaks|all|stop|dump>\n");
+}
+
 void handle_mem_cmd(int argc, char **argv) {
+    if (argc > 1 && (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "?") == 0)) {
+        print_mem_usage();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "heaps") == 0) {
+        memory_debug_print_heap_summary();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "tasks") == 0) {
+        dump_task_stacks();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "regions") == 0) {
+        memory_debug_print_heap_regions();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "check") == 0) {
+        bool ok = memory_debug_check_heap_integrity();
+        glog("heap integrity: %s\n", ok ? "ok" : "FAILED");
+        return;
+    }
+
     if (argc > 1 && strcmp(argv[1], "dump") == 0) {
-        ESP_LOGI(TAG, "heap(8bit) free=%u, largest=%u, min_free=%u",
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-        heap_caps_dump(MALLOC_CAP_8BIT);
+        memory_debug_print_heap_summary();
+        ESP_LOGI(TAG, "heap internal dump");
+        heap_caps_dump(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) > 0) {
+            ESP_LOGI(TAG, "heap psram dump");
+            heap_caps_dump(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "trace") == 0) {
-#if defined(CONFIG_HEAP_TRACING) || defined(CONFIG_HEAP_TRACING_STANDALONE)
-        static heap_trace_record_t recs[256];
-        if (argc > 2 && strcmp(argv[2], "start") == 0) {
-            esp_err_t e = heap_trace_init_standalone(recs, 256);
-            if (e == ESP_OK) heap_trace_start(HEAP_TRACE_ALL);
-            glog("heap trace start: %s\n", e == ESP_OK ? "ok" : "err");
+        if (argc > 2 && (strcmp(argv[2], "start") == 0 || strcmp(argv[2], "leaks") == 0)) {
+            esp_err_t e = memory_debug_trace_start(true);
+            glog("heap leak trace start: %s\n", e == ESP_OK ? "ok" : esp_err_to_name(e));
+            return;
+        }
+        if (argc > 2 && strcmp(argv[2], "all") == 0) {
+            esp_err_t e = memory_debug_trace_start(false);
+            glog("heap all trace start: %s\n", e == ESP_OK ? "ok" : esp_err_to_name(e));
             return;
         }
         if (argc > 2 && strcmp(argv[2], "stop") == 0) {
-            heap_trace_stop();
-            glog("heap trace stop\n");
+            esp_err_t e = memory_debug_trace_stop();
+            glog("heap trace stop: %s\n", e == ESP_OK ? "ok" : esp_err_to_name(e));
             return;
         }
         if (argc > 2 && strcmp(argv[2], "dump") == 0) {
-            heap_trace_dump();
+            memory_debug_trace_dump();
             return;
         }
-        glog("usage: mem trace <start|stop|dump>\n");
+        glog("usage: mem trace <start|leaks|all|stop|dump>\n");
         return;
-#else
-        glog("heap tracing not enabled\n");
-        return;
-#endif
     }
 
-    ESP_LOGI(TAG, "heap(8bit) free=%u, largest=%u, min_free=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+    if (argc > 1) {
+        print_mem_usage();
+        return;
+    }
+
+    memory_debug_print_heap_summary();
     dump_task_stacks();
 }
 
@@ -6036,7 +6104,10 @@ void handle_sd_cmd(int argc, char **argv) {
         glog("SD:TREE:%s\n", path);
         
         typedef struct { char p[256]; int lvl; } stack_item_t;
-        stack_item_t *stack = malloc(sizeof(stack_item_t) * 64);
+        stack_item_t *stack = heap_caps_malloc(sizeof(stack_item_t) * 64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!stack) {
+            stack = malloc(sizeof(stack_item_t) * 64);
+        }
         if (!stack) {
             glog("SD:ERR:oom\n");
             return;
@@ -6111,8 +6182,10 @@ void handle_congestion_cmd(int argc, char **argv) {
     }
 
     int unique_count = 0;
-    int *channels = malloc(ap_count * sizeof(int));
-    int *counts = malloc(ap_count * sizeof(int));
+    int *channels = heap_caps_malloc((size_t)ap_count * sizeof(int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    int *counts = heap_caps_malloc((size_t)ap_count * sizeof(int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!channels) channels = malloc((size_t)ap_count * sizeof(int));
+    if (!counts) counts = malloc((size_t)ap_count * sizeof(int));
     if (!channels || !counts) {
         free(channels);
         free(counts);
