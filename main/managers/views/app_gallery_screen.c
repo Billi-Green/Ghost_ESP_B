@@ -695,7 +695,7 @@ static void apps_plugin_reload_done(void *arg) {
  */
  void apps_menu_create(void) {
     plugin_manager_init();
-    rebuild_app_items(false);
+    rebuild_app_items(plugin_manager_count() > 0);
     refresh_apps_surface_colors();
     display_manager_fill_screen(apps_bg_color);
 

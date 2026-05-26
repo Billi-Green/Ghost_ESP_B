@@ -22,6 +22,7 @@ def _write_icon_from_source(app_path: pathlib.Path, package_dir: pathlib.Path, m
     fmt = manifest.get("icon_format", "rgb565a8")
     src = app_path / icon_source
     if not src.exists():
+        print(f"warning: icon_source not found, icon will not be generated: {src}", file=sys.stderr)
         return False
     if src.suffix.lower() != ".png":
         raise ValueError(f"unsupported icon_source format: {src}")
@@ -72,7 +73,11 @@ def package_app(
         for key in ("icon",):
             rel = manifest.get(key)
             if rel:
-                copy_if_exists(app_path / rel, package_dir / rel, checksums, rel)
+                src = app_path / rel
+                if not src.exists():
+                    print(f"warning: icon file not found, package will use firmware fallback icon: {src}", file=sys.stderr)
+                    continue
+                copy_if_exists(src, package_dir / rel, checksums, rel)
 
     for rel in manifest.get("assets", []):
         src = app_path / rel
