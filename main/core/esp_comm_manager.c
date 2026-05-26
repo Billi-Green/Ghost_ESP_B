@@ -501,7 +501,9 @@ static void rx_task(void* arg) {
 
                             if (valid) {
                                 comm->last_rx_tick = now;
-                                if (comm->rx_packet_queue) {
+                                if (comm->partial_packet.type == PACKET_TYPE_STREAM) {
+                                    handle_received_packet(comm, &comm->partial_packet);
+                                } else if (comm->rx_packet_queue) {
                                     if (xQueueSend(comm->rx_packet_queue, &comm->partial_packet, pdMS_TO_TICKS(2)) != pdPASS) {
                                         comm->rx_queue_dropped_packets++;
                                         if ((comm->rx_queue_dropped_packets & 0x0F) == 1) {
@@ -1233,7 +1235,7 @@ void esp_comm_manager_init(gpio_num_t tx_pin, gpio_num_t rx_pin, uint32_t baud_r
            s_comm_manager->chip_name, resolved_tx, resolved_rx, (unsigned long)resolved_baud);
 }
 
-bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t length) {
+bool esp_comm_manager_send_stream_wait(uint8_t channel, const uint8_t* data, size_t length, uint32_t wait_ms) {
     if (!s_comm_manager || !s_comm_manager->initialized || !data || length == 0) {
         return false;
     }
@@ -1263,7 +1265,7 @@ bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t l
         memcpy(packet.data + 1, p, chunk);
         packet.length = (uint8_t)(chunk + 1);
 
-        if (!send_packet_internal(&packet, 0)) {
+        if (!send_packet_internal(&packet, pdMS_TO_TICKS(wait_ms))) {
             ok = false;
             break;
         }
@@ -1273,6 +1275,10 @@ bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t l
     }
 
     return ok;
+}
+
+bool esp_comm_manager_send_stream(uint8_t channel, const uint8_t* data, size_t length) {
+    return esp_comm_manager_send_stream_wait(channel, data, length, 0);
 }
 
 bool esp_comm_manager_register_stream_handler(uint8_t channel, comm_stream_callback_t callback, void* user_data) {

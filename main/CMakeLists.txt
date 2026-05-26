@@ -139,6 +139,14 @@ if(CONFIG_HAS_CAMERA)
     list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/esp32-camera/conversions/include")
 endif()
 
+# Add TLV320DAC3100 driver component (code guarded by CONFIG_HAS_TLV320DAC_I2C)
+list(APPEND required_components tlv320dac3100)
+
+# Add audio codec and I2S output components when enabled (S3)
+if(CONFIG_HAS_TLV320DAC_I2S)
+    list(APPEND required_components esp_audio_codec)
+endif()
+
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}

@@ -18,4 +18,6 @@ dependencies:
     version: ^2.1.0
     rules:
     - if: target in ["esp32s3"]
+  espressif/esp_audio_codec:
+    version: ^2.5.0
 

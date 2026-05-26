@@ -49,6 +49,9 @@
 #include "managers/motion_detector_manager.h"
 #include "managers/camera_stream_manager.h"
 #endif
+#ifdef CONFIG_HAS_TLV320DAC_I2S
+#include "managers/audio_receiver_manager.h"
+#endif
 
 #ifdef CONFIG_WITH_SCREEN
 #include "managers/views/splash_screen.h"
@@ -522,6 +525,10 @@ void app_main(void) {
     mic_visualizer_init();
     mic_visualizer_start();
 #endif
+#ifdef CONFIG_HAS_TLV320DAC_I2S
+    ESP_LOGI(TAG, "Initializing audio receiver for TLV320DAC3100 I2S");
+    MEASURE_INIT_RAM("Audio Receiver", audio_receiver_manager_init());
+#endif
 #ifdef CONFIG_HAS_CAMERA
     motion_detector_init();
     camera_stream_init();
@@ -590,8 +597,11 @@ void app_main(void) {
     // Deferred SD card init: run in a background task so the shared-SPI
     // suspend/resume does not freeze the splash-screen animation.  The task
     // sleeps long enough for the splash transition (900 ms hold + margin).
-    xTaskCreate(deferred_sd_init_task, "SD Init", 6144, NULL,
+    // Disabled on somethingsomething2 — no working SD card, avoids LoadProhibited crash.
+#ifndef CONFIG_HAS_TLV320DAC_I2S
+    xTaskCreate(deferred_sd_init_task, "SD Init", 4096, NULL,
                 tskIDLE_PRIORITY + 1, NULL);
+#endif
 
     // Initialize RGB Manager based on persisted settings or compile-time defaults
     {

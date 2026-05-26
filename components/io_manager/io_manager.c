@@ -142,6 +142,15 @@ esp_err_t io_manager_init(const io_manager_config_t *config)
 
     io_manager_reset_events();
 
+#ifdef CONFIG_HAS_TLV320DAC_I2C
+    /* Pulse DAC RESET line via IO expander P13. */
+    ESP_LOGI(TAG, "Pulsing DAC RESET (P13)...");
+    esp_err_t reset_ret = io_manager_dac_reset_pulse();
+    if (reset_ret != ESP_OK) {
+        ESP_LOGW(TAG, "DAC reset pulse failed: %s", esp_err_to_name(reset_ret));
+    }
+#endif
+
     if (g_io_task_handle == NULL) {
         BaseType_t task_ret = xTaskCreate(
             io_manager_task,
@@ -688,6 +697,98 @@ void io_manager_scan_i2c(void)
 
     xSemaphoreGive(g_i2c_mutex);
 }
+esp_err_t io_manager_dac_reset_pulse(void)
+{
+#ifndef CONFIG_TLV320DAC_RESET_IO_EXPANDER_PIN
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    if (!g_tca9535_dev || !g_i2c_mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const uint8_t reset_pin = CONFIG_TLV320DAC_RESET_IO_EXPANDER_PIN; /* bit on port 1 */
+    if (reset_pin > 7) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const uint8_t reset_mask = (uint8_t)(1U << reset_pin);
+
+    if (xSemaphoreTake(g_i2c_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    bool global_locked = i2c_bus_lock(g_config.i2c_port, 100);
+    if (!global_locked) {
+        xSemaphoreGive(g_i2c_mutex);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t ret = ESP_OK;
+
+    /* Step 1: read current port 1 config and output latch */
+    uint8_t config1 = 0xFF;
+    uint8_t reg = TCA9535_CONFIG_PORT1;
+    ret = i2c_master_transmit_receive(g_tca9535_dev, &reg, sizeof(reg), &config1, 1, 50);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read config port1: %s", esp_err_to_name(ret));
+        i2c_bus_unlock(g_config.i2c_port);
+        xSemaphoreGive(g_i2c_mutex);
+        return ret;
+    }
+
+    uint8_t output1 = 0xFF;
+    reg = TCA9535_OUTPUT_PORT1;
+    ret = i2c_master_transmit_receive(g_tca9535_dev, &reg, sizeof(reg), &output1, 1, 50);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read output port1: %s", esp_err_to_name(ret));
+        i2c_bus_unlock(g_config.i2c_port);
+        xSemaphoreGive(g_i2c_mutex);
+        return ret;
+    }
+
+    /* Step 2: preload output low, then configure reset pin as output */
+    uint8_t payload_low[2] = {TCA9535_OUTPUT_PORT1, (uint8_t)(output1 & ~reset_mask)};
+    ret = i2c_master_transmit(g_tca9535_dev, payload_low, sizeof(payload_low), 50);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to drive reset low: %s", esp_err_to_name(ret));
+        i2c_bus_unlock(g_config.i2c_port);
+        xSemaphoreGive(g_i2c_mutex);
+        return ret;
+    }
+
+    uint8_t new_config = config1 & ~reset_mask;
+    uint8_t payload_cfg[2] = {TCA9535_CONFIG_PORT1, new_config};
+    ret = i2c_master_transmit(g_tca9535_dev, payload_cfg, sizeof(payload_cfg), 50);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set reset pin as output: %s", esp_err_to_name(ret));
+        i2c_bus_unlock(g_config.i2c_port);
+        xSemaphoreGive(g_i2c_mutex);
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "DAC reset held low on P13 (port1 bit %d) for 200ms", reset_pin);
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    /* Step 3: drive reset pin HIGH and keep it as an output */
+    uint8_t payload_high[2] = {TCA9535_OUTPUT_PORT1, (uint8_t)(output1 | reset_mask)};
+    ret = i2c_master_transmit(g_tca9535_dev, payload_high, sizeof(payload_high), 50);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to drive reset high: %s", esp_err_to_name(ret));
+        i2c_bus_unlock(g_config.i2c_port);
+        xSemaphoreGive(g_i2c_mutex);
+        return ret;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    i2c_bus_unlock(g_config.i2c_port);
+    xSemaphoreGive(g_i2c_mutex);
+
+    ESP_LOGI(TAG, "DAC reset pulse complete (200ms low, held high)");
+    return ESP_OK;
+#endif
+}
+
 static esp_err_t io_manager_get_or_create_bus(void)
 {
     return i2c_shared_get_or_create_bus(g_config.i2c_port,

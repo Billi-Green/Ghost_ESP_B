@@ -3,6 +3,11 @@
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/terminal_screen.h"
+#ifdef CONFIG_HAS_AUDIO_PLAYER
+#include "managers/views/audio_player_screen.h"
+#endif
+
+LV_IMG_DECLARE(speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48);
 
 #include "managers/settings_manager.h"
 #include "gui/accessibility_fonts.h"
@@ -41,6 +46,9 @@ typedef struct {
 
 static app_item_t app_items[] = {
     {"Visualizer", &rave, 4, {{0}}, &music_visualizer_view},
+#ifdef CONFIG_HAS_AUDIO_PLAYER
+    {"Audio", &speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48, 3, {{0}}, &audio_player_view},
+#endif
     {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view},
     {"Ghostchi", &ghost, 2, {{0}}, &ghostchi_view},
     {"Back", NULL, 0, {{0}}, NULL},
@@ -73,6 +81,8 @@ static lv_obj_t *grid_cards_container = NULL;
 static lv_color_t apps_bg_color;
 static lv_color_t apps_surface_color;
 static lv_color_t apps_text_color;
+
+static void select_app_item(int index, bool slide_left);
 
 static void refresh_apps_surface_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
@@ -320,7 +330,6 @@ static void create_apps_grid_menu(void) {
 
     int cols = num_apps < 3 ? num_apps : 3;
     if (cols <= 0) cols = 1;
-    int rows = (num_apps + cols - 1) / cols;
     int margin = 6;
     if (screen_width <= 240 || avail_height <= 120) {
         margin = 0;
