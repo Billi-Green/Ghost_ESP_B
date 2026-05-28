@@ -38,6 +38,10 @@ static int s_visible_count = 0;
 static uint8_t s_volume_percent = 100;
 static lv_timer_t *s_update_timer = NULL;
 
+static bool s_touch_started = false;
+static int s_touch_start_x = 0;
+static int s_touch_start_y = 0;
+
 static lv_color_t s_bg_color;
 static lv_color_t s_surface_color;
 static lv_color_t s_text_color;
@@ -84,6 +88,17 @@ static void audio_player_update_status(void)
     audio_stream_state_t state = audio_stream_manager_get_state();
     int current = audio_stream_manager_get_current_index();
     int total = audio_stream_manager_get_file_count();
+
+    /* Sync play/pause buttons with current playback state */
+    bool is_playing = (state == AUDIO_STREAM_STATE_PLAYING);
+    if (s_play_btn) {
+        if (is_playing) lv_obj_add_flag(s_play_btn, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_clear_flag(s_play_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_pause_btn) {
+        if (is_playing) lv_obj_clear_flag(s_pause_btn, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(s_pause_btn, LV_OBJ_FLAG_HIDDEN);
+    }
 
     const char *state_str = "Stopped";
     switch (state) {
@@ -411,6 +426,7 @@ void audio_player_destroy(void)
     s_next_btn = NULL;
     s_selected_index = 0;
     s_visible_count = 0;
+    s_touch_started = false;
 }
 
 static void audio_player_input_handler(InputEvent *event)
@@ -418,6 +434,101 @@ static void audio_player_input_handler(InputEvent *event)
     if (!event) return;
 
     if (event->type == INPUT_TYPE_TOUCH) {
+        lv_indev_data_t *d = &event->data.touch_data;
+        if (d->state == LV_INDEV_STATE_PR && !s_touch_started) {
+            s_touch_started = true;
+            s_touch_start_x = d->point.x;
+            s_touch_start_y = d->point.y;
+            return;
+        }
+        if (d->state == LV_INDEV_STATE_REL && s_touch_started) {
+            s_touch_started = false;
+            int dx = (int)d->point.x - s_touch_start_x;
+            int dy = (int)d->point.y - s_touch_start_y;
+
+            /* Check control button hit areas first (bottom bar) */
+            int status_bar_h = GUI_STATUS_BAR_H;
+            int screen_h = LV_VER_RES - status_bar_h;
+            int controls_h = (screen_h > 200) ? 60 : 48;
+            int controls_bottom = LV_VER_RES;
+            int controls_top = controls_bottom - controls_h;
+            bool in_controls = (d->point.y >= controls_top && d->point.y <= controls_bottom);
+
+            if (in_controls && abs(dx) < 15 && abs(dy) < 15) {
+                /* Tap on control buttons */
+                int cx = d->point.x;
+                int btn_w = 48;
+                int btn_spacing = 8;
+                int center_x = LV_HOR_RES / 2;
+
+                /* Prev button: left side */
+                int prev_left = btn_spacing;
+                int prev_right = prev_left + btn_w;
+                if (cx >= prev_left && cx <= prev_right) {
+                    audio_stream_manager_prev();
+                    s_selected_index = audio_stream_manager_get_current_index();
+                    update_file_list_selection();
+                    audio_player_update_status();
+                    return;
+                }
+
+                /* Play/Pause button: center */
+                int play_left = center_x - btn_w / 2;
+                int play_right = center_x + btn_w / 2;
+                if (cx >= play_left && cx <= play_right) {
+                    audio_stream_state_t st = audio_stream_manager_get_state();
+                    if (st == AUDIO_STREAM_STATE_PLAYING) {
+                        audio_stream_manager_pause();
+                    } else {
+                        if (s_selected_index >= 0 && s_selected_index < s_visible_count) {
+                            audio_stream_manager_play(s_selected_index);
+                        }
+                    }
+                    audio_player_update_status();
+                    return;
+                }
+
+                /* Next button: right side */
+                int next_right = LV_HOR_RES - btn_spacing;
+                int next_left = next_right - btn_w;
+                if (cx >= next_left && cx <= next_right) {
+                    audio_stream_manager_next();
+                    s_selected_index = audio_stream_manager_get_current_index();
+                    update_file_list_selection();
+                    audio_player_update_status();
+                    return;
+                }
+                return;
+            }
+
+            if (abs(dx) < 10 && abs(dy) < 10) {
+                /* Tap on list item */
+                uint32_t child_cnt = lv_obj_get_child_cnt(s_file_list);
+                for (uint32_t i = 0; i < child_cnt; i++) {
+                    lv_obj_t *child = lv_obj_get_child(s_file_list, i);
+                    if (!child) continue;
+                    lv_area_t a;
+                    lv_obj_get_coords(child, &a);
+                    if (d->point.x >= a.x1 && d->point.x <= a.x2 &&
+                        d->point.y >= a.y1 && d->point.y <= a.y2) {
+                        s_selected_index = (int)i;
+                        update_file_list_selection();
+                        audio_stream_manager_play((int)i);
+                        audio_player_update_status();
+                        break;
+                    }
+                }
+            } else if (abs(dx) < 40 && abs(dy) > 20) {
+                /* Vertical swipe: move selection */
+                if (dy < 0 && s_selected_index > 0) {
+                    s_selected_index--;
+                    update_file_list_selection();
+                } else if (dy > 0 && s_selected_index < s_visible_count - 1) {
+                    s_selected_index++;
+                    update_file_list_selection();
+                }
+            }
+        }
         return;
     }
 
