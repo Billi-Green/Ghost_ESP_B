@@ -15,6 +15,7 @@ extern "C" {
 /* Register page numbers */
 #define TLV320DAC3100_PAGE_0 0x00
 #define TLV320DAC3100_PAGE_1 0x01
+#define TLV320DAC3100_PAGE_3 0x03
 
 /* Page 0 registers */
 #define TLV320DAC3100_REG_PAGE_CTRL     0x00
@@ -35,7 +36,15 @@ extern "C" {
 #define TLV320DAC3100_REG_DAC_VOL_CTRL  0x40
 #define TLV320DAC3100_REG_DAC_VOL_L     0x41
 #define TLV320DAC3100_REG_DAC_VOL_R     0x42
+#define TLV320DAC3100_REG_HEADSET_DETECT 0x43
+#define TLV320DAC3100_REG_DAC_STICKY_FLAGS 0x2C
+#define TLV320DAC3100_REG_DAC_INT_FLAGS  0x2E
 #define TLV320DAC3100_REG_GPIO1         0x33
+#define TLV320DAC3100_REG_VOL_MICDET_ADC_CTRL 0x74
+#define TLV320DAC3100_REG_VOL_MICDET_ADC_VALUE 0x75
+
+/* Page 3 timer/oscillator registers */
+#define TLV320DAC3100_REG_TIMER_CLOCK_MCLK 0x10
 
 /* Page 1 analog output registers used by DAC3100/AIC31xx family */
 #define TLV320DAC3100_REG_HP_DRV        0x1F
@@ -49,6 +58,7 @@ extern "C" {
 #define TLV320DAC3100_REG_HPR_GAIN      0x29
 #define TLV320DAC3100_REG_SPL_GAIN      0x2A
 #define TLV320DAC3100_REG_SPR_GAIN      0x2B
+#define TLV320DAC3100_REG_MICBIAS       0x2E
 
 /* Clock source mux values */
 #define CLK_MUX_MCLK      0x00
@@ -146,6 +156,16 @@ esp_err_t tlv320dac3100_set_mute(bool mute);
  * @return ESP_OK on success
  */
 esp_err_t tlv320dac3100_set_output_route(uint8_t route);
+
+/**
+ * @brief Read the TLV320DAC3100 headset insertion state.
+ *
+ * This uses the internal VOL/MICDET headset-detection block, not an ESP GPIO.
+ *
+ * @param inserted Output flag, true when a headset/jack insertion is detected
+ * @return ESP_OK on success
+ */
+esp_err_t tlv320dac3100_is_headphone_inserted(bool *inserted);
 
 /**
  * @brief Power down the DAC (low power mode).

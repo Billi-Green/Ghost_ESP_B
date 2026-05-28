@@ -28,7 +28,7 @@ static const char *TAG = "AudioStream";
 #define STREAM_EXTRA_DELAY_EVERY_PACKETS 32
 
 typedef struct {
-    char filenames[MAX_MP3_FILES][MAX_FILENAME_LEN];
+    char (*filenames)[MAX_FILENAME_LEN];
     int file_count;
     int current_index;
     audio_stream_state_t state;
@@ -209,6 +209,21 @@ esp_err_t audio_stream_manager_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    s_ctx.filenames = (char (*)[MAX_FILENAME_LEN])heap_caps_calloc(MAX_MP3_FILES, MAX_FILENAME_LEN,
+                                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_ctx.filenames) {
+        s_ctx.filenames = (char (*)[MAX_FILENAME_LEN])calloc(MAX_MP3_FILES, MAX_FILENAME_LEN);
+        if (!s_ctx.filenames) {
+            vSemaphoreDelete(s_ctx.mutex);
+            s_ctx.mutex = NULL;
+            return ESP_ERR_NO_MEM;
+        }
+        ESP_LOGW(TAG, "Audio filename table using internal RAM fallback");
+    } else {
+        ESP_LOGI(TAG, "Audio filename table allocated from PSRAM: %d bytes",
+                 MAX_MP3_FILES * MAX_FILENAME_LEN);
+    }
+
     scan_mp3_files();
 
     s_ctx.initialized = true;
@@ -231,9 +246,14 @@ void audio_stream_manager_deinit(void)
     }
 
     xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+    char (*filenames)[MAX_FILENAME_LEN] = s_ctx.filenames;
+    s_ctx.filenames = NULL;
     if (s_ctx.mutex) {
         vSemaphoreDelete(s_ctx.mutex);
         s_ctx.mutex = NULL;
+    }
+    if (filenames) {
+        free(filenames);
     }
     memset(&s_ctx, 0, sizeof(s_ctx));
 }

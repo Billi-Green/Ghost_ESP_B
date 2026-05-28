@@ -49,6 +49,9 @@ static struct {
     uint32_t rx_bytes_total;
 } s_recv = {0};
 
+static StackType_t *s_decode_task_stack = NULL;
+static StaticTask_t *s_decode_task_tcb = NULL;
+
 static inline size_t ringbuf_count(ringbuf_t *rb)
 {
     uint32_t head = rb->head;
@@ -161,15 +164,37 @@ esp_err_t audio_receiver_manager_init(void)
     esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_AUDIO,
                                               stream_handler, NULL);
 
-    /* Start decoder task */
-    BaseType_t ok = xTaskCreate(audio_decode_task, "audio_dec",
-                                AUDIO_DEC_TASK_STACK, NULL,
-                                AUDIO_DEC_TASK_PRIO, &s_recv.decode_task);
-    if (ok != pdPASS) {
+    /* Start decoder task; keep the large task stack in PSRAM when available. */
+    if (!s_decode_task_stack) {
+        s_decode_task_stack = (StackType_t *)heap_caps_malloc(AUDIO_DEC_TASK_STACK * sizeof(StackType_t),
+                                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (!s_decode_task_tcb) {
+        s_decode_task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t),
+                                                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+
+    if (s_decode_task_stack && s_decode_task_tcb) {
+        s_recv.decode_task = xTaskCreateStatic(audio_decode_task, "audio_dec",
+                                              AUDIO_DEC_TASK_STACK, NULL,
+                                              AUDIO_DEC_TASK_PRIO,
+                                              s_decode_task_stack,
+                                              s_decode_task_tcb);
+        if (s_recv.decode_task) {
+            ESP_LOGI(TAG, "Audio decode task stack allocated from PSRAM: %d bytes",
+                     (int)(AUDIO_DEC_TASK_STACK * sizeof(StackType_t)));
+        }
+    }
+
+    if (!s_recv.decode_task &&
+        xTaskCreate(audio_decode_task, "audio_dec", AUDIO_DEC_TASK_STACK, NULL,
+                    AUDIO_DEC_TASK_PRIO, &s_recv.decode_task) != pdPASS) {
         free(s_recv.rx_ringbuf.buf);
         s_recv.rx_ringbuf.buf = NULL;
         esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_AUDIO, NULL, NULL);
         return ESP_ERR_NO_MEM;
+    } else if (!s_decode_task_stack || !s_decode_task_tcb) {
+        ESP_LOGW(TAG, "Audio decode task using internal stack fallback");
     }
 
     s_recv.initialized = true;

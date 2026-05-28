@@ -35,6 +35,7 @@ static lv_obj_t *s_next_btn = NULL;
 /* State */
 static int s_selected_index = 0;
 static int s_visible_count = 0;
+static uint8_t s_volume_percent = 100;
 static lv_timer_t *s_update_timer = NULL;
 
 static lv_color_t s_bg_color;
@@ -53,6 +54,7 @@ static void on_prev_clicked(lv_event_t *e);
 static void on_next_clicked(lv_event_t *e);
 static void update_timer_cb(lv_timer_t *timer);
 static void return_to_apps(void);
+static void adjust_volume(int delta);
 
 static void refresh_theme_colors(void)
 {
@@ -94,8 +96,8 @@ static void audio_player_update_status(void)
     char buf[64];
     if (total > 0 && current >= 0 && current < total) {
         const char *fname = audio_stream_manager_get_filename(current);
-        snprintf(buf, sizeof(buf), "%s: %d/%d  %s",
-                 state_str, current + 1, total,
+        snprintf(buf, sizeof(buf), "%s: %d/%d Vol:%u%% %s",
+                 state_str, current + 1, total, (unsigned)s_volume_percent,
                  fname ? fname : "");
     } else {
         snprintf(buf, sizeof(buf), "%s: No files", state_str);
@@ -234,6 +236,27 @@ static void return_to_apps(void)
     display_manager_switch_view(&apps_menu_view);
 }
 
+static void adjust_volume(int delta)
+{
+#ifdef CONFIG_HAS_TLV320DAC_I2C
+    int volume = (int)s_volume_percent + delta;
+    if (volume < 0) volume = 0;
+    if (volume > 100) volume = 100;
+    if (volume == (int)s_volume_percent) return;
+
+    esp_err_t ret = tlv320dac3100_set_volume((uint8_t)volume);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Volume set failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    s_volume_percent = (uint8_t)volume;
+    ESP_LOGI(TAG, "Audio volume: %u%%", (unsigned)s_volume_percent);
+    audio_player_update_status();
+#else
+    (void)delta;
+#endif
+}
+
 void audio_player_create(void)
 {
     refresh_theme_colors();
@@ -256,6 +279,8 @@ void audio_player_create(void)
     esp_err_t dac_ret = tlv320dac3100_init(&dac_cfg);
     if (dac_ret != ESP_OK) {
         ESP_LOGW(TAG, "TLV320DAC init failed: %s", esp_err_to_name(dac_ret));
+    } else {
+        s_volume_percent = 100;
     }
 #endif
 
@@ -433,18 +458,7 @@ static void audio_player_input_handler(InputEvent *event)
                 audio_player_update_status();
             }
         } else {
-            /* Encoder rotation = scroll list */
-            if (event->data.encoder.direction > 0) {
-                if (s_selected_index < s_visible_count - 1) {
-                    s_selected_index++;
-                    update_file_list_selection();
-                }
-            } else {
-                if (s_selected_index > 0) {
-                    s_selected_index--;
-                    update_file_list_selection();
-                }
-            }
+            adjust_volume(event->data.encoder.direction > 0 ? 5 : -5);
         }
         return;
     }

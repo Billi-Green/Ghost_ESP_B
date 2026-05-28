@@ -3,6 +3,7 @@
 #ifdef CONFIG_HAS_TLV320DAC_I2S
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -18,6 +19,8 @@ static bool s_first_write_logged = false;
 static SemaphoreHandle_t s_i2s_mutex = NULL;
 static TaskHandle_t s_silence_task = NULL;
 static volatile TickType_t s_last_pcm_write_tick = 0;
+static StackType_t *s_silence_task_stack = NULL;
+static StaticTask_t *s_silence_task_tcb = NULL;
 
 #define AUDIO_I2S_SILENCE_TASK_STACK 2048
 #define AUDIO_I2S_SILENCE_TASK_PRIO  10
@@ -111,10 +114,32 @@ esp_err_t audio_i2s_output_init(void)
              CONFIG_TLV320DAC_I2S_DIN_PIN,
              (unsigned long)s_current_sample_rate);
 
-    if (xTaskCreate(audio_i2s_silence_task, "audio_i2s_sil", AUDIO_I2S_SILENCE_TASK_STACK,
+    if (!s_silence_task_stack) {
+        s_silence_task_stack = (StackType_t *)heap_caps_malloc(AUDIO_I2S_SILENCE_TASK_STACK * sizeof(StackType_t),
+                                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (!s_silence_task_tcb) {
+        s_silence_task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t),
+                                                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+
+    if (s_silence_task_stack && s_silence_task_tcb) {
+        s_silence_task = xTaskCreateStatic(audio_i2s_silence_task, "audio_i2s_sil",
+                                          AUDIO_I2S_SILENCE_TASK_STACK, NULL,
+                                          AUDIO_I2S_SILENCE_TASK_PRIO,
+                                          s_silence_task_stack,
+                                          s_silence_task_tcb);
+        if (s_silence_task) {
+            ESP_LOGI(TAG, "I2S silence task stack allocated from PSRAM: %d bytes",
+                     (int)(AUDIO_I2S_SILENCE_TASK_STACK * sizeof(StackType_t)));
+        }
+    }
+    if (!s_silence_task &&
+        xTaskCreate(audio_i2s_silence_task, "audio_i2s_sil", AUDIO_I2S_SILENCE_TASK_STACK,
                     NULL, AUDIO_I2S_SILENCE_TASK_PRIO, &s_silence_task) != pdPASS) {
         ESP_LOGW(TAG, "Failed to create I2S silence clock task");
-        s_silence_task = NULL;
+    } else if (!s_silence_task_stack || !s_silence_task_tcb) {
+        ESP_LOGW(TAG, "I2S silence task using internal stack fallback");
     }
     return ESP_OK;
 }
