@@ -29,6 +29,16 @@ void audio_receiver_manager_deinit(void);
 bool audio_receiver_manager_is_initialized(void);
 
 /**
+ * @brief Start the audio receiver - enables stream handler to process packets.
+ */
+esp_err_t audio_receiver_manager_start(void);
+
+/**
+ * @brief Stop the audio receiver - disables stream handler and flushes state.
+ */
+void audio_receiver_manager_stop(void);
+
+/**
  * @brief Set the DAC sample rate based on decoded MP3 info.
  *
  * @param sample_rate Detected sample rate in Hz

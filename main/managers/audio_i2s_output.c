@@ -178,7 +178,15 @@ esp_err_t audio_i2s_output_set_sample_rate(uint32_t sample_rate)
         return ESP_OK;
     }
 
-    /* Reconfigure I2S clock for new sample rate */
+    return audio_i2s_output_update_sample_rate(sample_rate);
+}
+
+esp_err_t audio_i2s_output_update_sample_rate(uint32_t sample_rate)
+{
+    if (!s_initialized || !s_i2s_tx_chan) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
 
     esp_err_t ret = i2s_channel_disable(s_i2s_tx_chan);
@@ -205,6 +213,15 @@ esp_err_t audio_i2s_output_set_sample_rate(uint32_t sample_rate)
     return ESP_OK;
 }
 
+esp_err_t audio_i2s_output_flush(void)
+{
+    if (!s_initialized || !s_i2s_tx_chan) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    uint32_t rate = s_current_sample_rate ? s_current_sample_rate : 44100;
+    return audio_i2s_output_update_sample_rate(rate);
+}
+
 bool audio_i2s_output_is_initialized(void)
 {
     return s_initialized;
@@ -216,6 +233,8 @@ esp_err_t audio_i2s_output_init(void) { return ESP_ERR_NOT_SUPPORTED; }
 void audio_i2s_output_deinit(void) {}
 esp_err_t audio_i2s_output_write(const int16_t *data, size_t len) { (void)data; (void)len; return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t audio_i2s_output_set_sample_rate(uint32_t sample_rate) { (void)sample_rate; return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t audio_i2s_output_update_sample_rate(uint32_t sample_rate) { (void)sample_rate; return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t audio_i2s_output_flush(void) { return ESP_ERR_NOT_SUPPORTED; }
 bool audio_i2s_output_is_initialized(void) { return false; }
 
 #endif /* CONFIG_HAS_TLV320DAC_I2S */

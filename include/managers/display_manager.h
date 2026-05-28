@@ -40,7 +40,7 @@ typedef struct {
 #define INPUT_ITEM_SIZE sizeof(InputEvent)
 extern QueueHandle_tt input_queue;
 
-#define MUTEX_TIMEOUT_MS 100
+#define MUTEX_TIMEOUT_MS 10
 
 #define HARDWARE_INPUT_TASK_PRIORITY (14)
 #define RENDERING_TASK_PRIORITY (15)

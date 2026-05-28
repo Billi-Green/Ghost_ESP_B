@@ -27,6 +27,7 @@ static const char *TAG = "AudioRecv";
 #define AUDIO_PCM_BUF_SIZE     (8192)
 #define AUDIO_DEC_IN_BUF_SIZE  (8192)
 #define AUDIO_DEC_MIN_INPUT    (1024)
+#define AUDIO_DEC_START_THRESHOLD (48 * 1024)  /* Wait until buffer is 50% full before decoding */
 
 typedef struct {
     uint8_t *buf;
@@ -36,6 +37,9 @@ typedef struct {
 
 static struct {
     bool initialized;
+    bool active;
+    bool flush_requested;
+    bool waiting_for_buffer;
     esp_audio_simple_dec_handle_t simple_dec;
     TaskHandle_t decode_task;
     ringbuf_t rx_ringbuf;
@@ -96,6 +100,34 @@ static size_t ringbuf_peek(ringbuf_t *rb, uint8_t *data, size_t len)
         tail = (tail + 1) % AUDIO_RX_RINGBUF_SIZE;
     }
     return to_peek;
+}
+
+esp_err_t audio_receiver_manager_start(void)
+{
+    if (!s_recv.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_recv.active = true;
+    s_recv.flush_requested = true;
+    s_recv.waiting_for_buffer = true;
+    s_recv.first_stream_packet_logged = false;
+    s_recv.first_pcm_logged = false;
+    s_recv.detected_sample_rate = 0;
+    s_recv.rx_bytes_total = 0;
+    s_recv.rx_ringbuf.head = 0;
+    s_recv.rx_ringbuf.tail = 0;
+    ESP_LOGI(TAG, "Audio receiver started");
+    return ESP_OK;
+}
+
+void audio_receiver_manager_stop(void)
+{
+    if (!s_recv.initialized) return;
+    s_recv.active = false;
+    s_recv.waiting_for_buffer = false;
+    s_recv.rx_ringbuf.head = 0;
+    s_recv.rx_ringbuf.tail = 0;
+    ESP_LOGI(TAG, "Audio receiver stopped");
 }
 
 static void stream_handler(uint8_t channel, const uint8_t *data, size_t length, void *user_data);
@@ -183,7 +215,7 @@ static void stream_handler(uint8_t channel, const uint8_t *data, size_t length, 
 {
     (void)user_data;
 
-    if (!s_recv.initialized) return;
+    if (!s_recv.initialized || !s_recv.active) return;
 
     if (!s_recv.first_stream_packet_logged) {
         ESP_LOGI(TAG, "Audio stream packets received on channel %d", channel);
@@ -242,6 +274,47 @@ static void audio_decode_task(void *arg)
     size_t buffered = 0;
     uint32_t last_stats_log = 0;
     while (1) {
+        /* If not active, just wait for data to arrive */
+        if (!s_recv.active) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        /* Check if flush is requested - reset decoder state */
+        if (s_recv.flush_requested) {
+            ESP_LOGI(TAG, "Flushing decoder and I2S buffers");
+            buffered = 0;
+            audio_i2s_output_flush();
+            if (s_recv.simple_dec) {
+                esp_audio_simple_dec_close(s_recv.simple_dec);
+                esp_audio_simple_dec_cfg_t dec_cfg = {
+                    .dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3,
+                };
+                esp_audio_err_t aerr = esp_audio_simple_dec_open(&dec_cfg, &s_recv.simple_dec);
+                if (aerr != ESP_AUDIO_ERR_OK) {
+                    ESP_LOGE(TAG, "Failed to reopen decoder: %d", (int)aerr);
+                    s_recv.simple_dec = NULL;
+                } else {
+                    ESP_LOGI(TAG, "Decoder reopened");
+                }
+            }
+            s_recv.flush_requested = false;
+        }
+
+        /* Wait for buffer to fill to threshold before starting decode */
+        if (s_recv.waiting_for_buffer) {
+            size_t buf_count = ringbuf_count(&s_recv.rx_ringbuf);
+            if (buf_count < AUDIO_DEC_START_THRESHOLD) {
+                ESP_LOGI(TAG, "Waiting for buffer to fill: %lu / %lu bytes",
+                         (unsigned long)buf_count,
+                         (unsigned long)AUDIO_DEC_START_THRESHOLD);
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            ESP_LOGI(TAG, "Buffer threshold reached, starting decode");
+            s_recv.waiting_for_buffer = false;
+        }
+
         /* Always try to fill the input buffer as much as possible */
         if (buffered < AUDIO_DEC_IN_BUF_SIZE) {
             size_t avail = ringbuf_count(&s_recv.rx_ringbuf);
@@ -372,6 +445,8 @@ cleanup:
 esp_err_t audio_receiver_manager_init(void) { return ESP_ERR_NOT_SUPPORTED; }
 void audio_receiver_manager_deinit(void) {}
 bool audio_receiver_manager_is_initialized(void) { return false; }
+esp_err_t audio_receiver_manager_start(void) { return ESP_ERR_NOT_SUPPORTED; }
+void audio_receiver_manager_stop(void) {}
 esp_err_t audio_receiver_manager_set_sample_rate(uint32_t sample_rate) { (void)sample_rate; return ESP_ERR_NOT_SUPPORTED; }
 
 #endif /* CONFIG_HAS_TLV320DAC_I2S */

@@ -239,12 +239,18 @@ void audio_player_create(void)
     refresh_theme_colors();
 
 #ifdef CONFIG_HAS_TLV320DAC_I2C
-    /* Lazy-init TLV320DAC3100 I2C control when entering the audio app */
-    ESP_LOGI(TAG, "Initializing TLV320DAC3100 I2C control");
+    /* Force full reset of TLV320DAC3100 on each app entry */
+    ESP_LOGI(TAG, "Resetting TLV320DAC3100 DAC");
+    if (tlv320dac3100_is_initialized()) {
+        tlv320dac3100_deinit();
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
     esp_err_t reset_ret = io_manager_dac_reset_pulse();
     if (reset_ret != ESP_OK) {
-        ESP_LOGW(TAG, "DAC reset pulse failed before init: %s", esp_err_to_name(reset_ret));
+        ESP_LOGW(TAG, "DAC reset pulse failed: %s", esp_err_to_name(reset_ret));
     }
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     tlv320dac3100_config_t dac_cfg = TLV320DAC3100_DEFAULT_CONFIG();
     esp_err_t dac_ret = tlv320dac3100_init(&dac_cfg);
@@ -387,14 +393,15 @@ static void audio_player_input_handler(InputEvent *event)
     if (!event) return;
 
     if (event->type == INPUT_TYPE_TOUCH) {
-        /* Touch events handled by LVGL buttons */
         return;
     }
 
     if (event->type == INPUT_TYPE_JOYSTICK) {
         int btn = event->data.joystick_index;
         /* Map joystick: 0=left, 1=select, 2=up, 3=right, 4=down */
-        if (btn == 2) { /* Up */
+        if (btn == 0) { /* Left -> exit */
+            return_to_apps();
+        } else if (btn == 2) { /* Up */
             if (s_selected_index > 0) {
                 s_selected_index--;
                 update_file_list_selection();
@@ -409,11 +416,6 @@ static void audio_player_input_handler(InputEvent *event)
                 audio_stream_manager_play(s_selected_index);
                 audio_player_update_status();
             }
-        } else if (btn == 0) { /* Left -> previous track */
-            audio_stream_manager_prev();
-            s_selected_index = audio_stream_manager_get_current_index();
-            update_file_list_selection();
-            audio_player_update_status();
         } else if (btn == 3) { /* Right -> next track */
             audio_stream_manager_next();
             s_selected_index = audio_stream_manager_get_current_index();

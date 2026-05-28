@@ -42,6 +42,21 @@ esp_err_t audio_i2s_output_write(const int16_t *data, size_t len);
 esp_err_t audio_i2s_output_set_sample_rate(uint32_t sample_rate);
 
 /**
+ * @brief Force update I2S sample rate (even if same value - useful for reset).
+ *
+ * @param sample_rate Sample rate in Hz
+ * @return ESP_OK on success
+ */
+esp_err_t audio_i2s_output_update_sample_rate(uint32_t sample_rate);
+
+/**
+ * @brief Flush and reset I2S output state.
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t audio_i2s_output_flush(void);
+
+/**
  * @brief Check if I2S output is initialized.
  */
 bool audio_i2s_output_is_initialized(void);

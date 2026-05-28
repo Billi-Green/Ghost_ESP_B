@@ -20,11 +20,12 @@ static const char *TAG = "AudioStream";
 #define MAX_MP3_FILES     64
 #define MAX_FILENAME_LEN  64
 #define STREAM_CHUNK_SIZE 512
-#define STREAM_READ_BURST_SIZE (32 * 1024)
-#define STREAM_SEND_WAIT_MS 50
+#define STREAM_READ_BURST_SIZE (8 * 1024)
+#define STREAM_SEND_WAIT_MS 100
 #define STREAM_TASK_STACK 4096
 #define STREAM_TASK_PRIO  18
-#define STREAM_INTER_PACKET_DELAY_MS 1
+#define STREAM_INTER_PACKET_DELAY_MS 3
+#define STREAM_EXTRA_DELAY_EVERY_PACKETS 32
 
 typedef struct {
     char filenames[MAX_MP3_FILES][MAX_FILENAME_LEN];
@@ -221,11 +222,19 @@ void audio_stream_manager_deinit(void)
 
     audio_stream_manager_stop();
 
+    for (int i = 0; i < 10; i++) {
+        xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+        bool task_gone = (s_ctx.stream_task == NULL);
+        xSemaphoreGive(s_ctx.mutex);
+        if (task_gone) break;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
     if (s_ctx.mutex) {
         vSemaphoreDelete(s_ctx.mutex);
         s_ctx.mutex = NULL;
     }
-
     memset(&s_ctx, 0, sizeof(s_ctx));
 }
 
@@ -267,15 +276,14 @@ esp_err_t audio_stream_manager_play(int index)
         }
         xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
         if (s_ctx.stream_task) {
-            ESP_LOGW(TAG, "Previous audio stream task did not stop in time");
-            xSemaphoreGive(s_ctx.mutex);
-            return ESP_ERR_TIMEOUT;
+            ESP_LOGW(TAG, "Previous audio stream task still running, clearing reference");
+            s_ctx.stream_task = NULL;
         }
     }
 
     s_ctx.current_index = index;
     s_ctx.stream_offset = 0;
-    uint32_t stream_id = ++s_ctx.stream_id;
+    uint32_t stream_id = s_ctx.stream_id;
 
     /* Build full path */
     char path[128];
@@ -299,6 +307,8 @@ esp_err_t audio_stream_manager_play(int index)
     audio_sd_end(display_was_suspended, did_mount);
 
     ESP_LOGI(TAG, "Playing: %s", s_ctx.filenames[index]);
+
+    (void)esp_comm_manager_send_command("audio", "start");
 
     s_ctx.state = AUDIO_STREAM_STATE_PLAYING;
 
@@ -344,6 +354,8 @@ esp_err_t audio_stream_manager_stop(void)
 
     s_ctx.state = AUDIO_STREAM_STATE_STOPPED;
     s_ctx.stream_id++;
+
+    (void)esp_comm_manager_send_command("audio", "stop");
 
     xSemaphoreGive(s_ctx.mutex);
 
@@ -408,6 +420,7 @@ static void audio_stream_task(void *arg)
     ESP_LOGI(TAG, "Stream task started");
     bool waiting_logged = false;
     bool first_chunk_logged = false;
+    uint32_t packet_count = 0;
 
     while (1) {
         xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
@@ -486,20 +499,23 @@ static void audio_stream_task(void *arg)
         }
 
         if (bytes_read == 0) {
-            /* End of file */
+            /* End of file - signal stop and exit cleanly */
             ESP_LOGI(TAG, "End of file reached");
             s_ctx.state = AUDIO_STREAM_STATE_STOPPED;
-            if (s_ctx.stream_id == stream_id && s_ctx.stream_task == self) {
+            s_ctx.stream_id++;
+            bool is_self = (s_ctx.stream_task == self);
+            if (is_self) {
                 s_ctx.stream_task = NULL;
             }
             xSemaphoreGive(s_ctx.mutex);
 
-            /* Auto-advance to next track */
-            vTaskDelay(pdMS_TO_TICKS(500));
-            if (s_ctx.file_count > 1) {
-                audio_stream_manager_next();
-            }
-            break;
+            (void)esp_comm_manager_send_command("audio", "stop");
+
+            free(stream_buf);
+            stream_buf = NULL;
+
+            vTaskDelete(NULL);
+            return;
         }
 
         /* Send buffered chunks after unmounting so LVGL/display SPI gets time between SD bursts. */
@@ -540,9 +556,13 @@ static void audio_stream_task(void *arg)
                 }
 
                 sent_total += send_len;
+                packet_count++;
 
-                /* Small delay to prevent overwhelming the UART */
+                /* Pace near the observed decoder consumption rate. */
                 vTaskDelay(pdMS_TO_TICKS(STREAM_INTER_PACKET_DELAY_MS));
+                if ((packet_count % STREAM_EXTRA_DELAY_EVERY_PACKETS) == 0) {
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
             }
 
             xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
