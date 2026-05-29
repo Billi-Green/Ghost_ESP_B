@@ -53,6 +53,8 @@ typedef enum {
     ETH_STATE_POISON_MONITOR,
 } eth_screen_state_t;
 
+static View *s_return_view = &options_menu_view;
+
 // ============================================================
 // Theme colors
 // ============================================================
@@ -734,7 +736,11 @@ static void on_poison_monitor(lv_event_t *e) {
 
 static void on_back(lv_event_t *e) {
     (void)e;
-    display_manager_switch_view(&options_menu_view);
+    display_manager_switch_view(s_return_view ? s_return_view : &options_menu_view);
+}
+
+void ethernet_screen_set_return_view(View *view) {
+    s_return_view = view ? view : &options_menu_view;
 }
 
 static void on_back_to_dashboard(lv_event_t *e) {
@@ -1352,7 +1358,7 @@ static void ethernet_screen_input_cb(InputEvent *event) {
                             lv_event_send(btn, LV_EVENT_CLICKED, NULL);
                     }
                 }
-                if (back) display_manager_switch_view(&options_menu_view);
+                if (back) display_manager_switch_view(s_return_view ? s_return_view : &options_menu_view);
             }
             break;
 

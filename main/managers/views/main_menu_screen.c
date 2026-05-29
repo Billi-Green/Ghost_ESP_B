@@ -34,6 +34,7 @@
 #ifdef CONFIG_HAS_ACCELEROMETER
 #include "managers/views/accelerometer_screen.h"
 #endif
+#include "managers/views/ethernet_screen.h"
 
 static void handle_menu_item_selection(int item_index);
 static void scroll_grid_card_to_view(int item_index);
@@ -44,11 +45,20 @@ uint32_t theme_palette_get_text(uint8_t theme);
 
 LV_IMG_DECLARE(dualcomm);
 LV_IMG_DECLARE(accelerometer_icon);
+LV_IMG_DECLARE(lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48);
 LV_IMG_DECLARE(nrf24);
 LV_IMG_DECLARE(subghz);
 LV_IMG_DECLARE(lock);
 
 static const char *TAG = "MainMenu";
+
+static bool is_somethingsomething_template(void) {
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    return strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0;
+#else
+    return false;
+#endif
+}
 
 static inline int get_anim_duration(void) {
     return settings_get_reduced_motion(&G_Settings) ? 0 : 40;
@@ -125,6 +135,7 @@ menu_item_t menu_items[] = {
     {"BadUSB", &usb, 3, {{0}}},
 #endif
     {"GhostLink", &dualcomm, 1, {{0}}},
+    {"Ethernet", &lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48, 1, {{0}}},
     {"Clock", &clock_icon, 4, {{0}}},
 #ifdef CONFIG_HAS_COMPASS
     {"Compass", &compass, 2, {{0}}},
@@ -179,6 +190,13 @@ static bool is_menu_index_visible(int menu_index, bool dual_comm_connected) {
     if (menu_index < 0 || menu_index >= get_total_menu_items()) return false;
     if (strcmp(menu_items[menu_index].name, "GhostLink") == 0) {
         return dual_comm_connected;
+    }
+    if (strcmp(menu_items[menu_index].name, "Ethernet") == 0) {
+#ifdef CONFIG_WITH_ETHERNET
+        return true;
+#else
+        return is_somethingsomething_template();
+#endif
     }
     if (strcmp(menu_items[menu_index].name, "Lock") == 0) {
         return settings_get_lockscreen_enabled(&G_Settings);
@@ -927,6 +945,7 @@ static void handle_menu_item_selection(int item_index) {
         {"Lock", 0, &lockscreen_view},
         {"Settings", OT_Settings, &options_menu_view},
         {"GhostLink", OT_DualComm, &options_menu_view},
+        {"Ethernet", 0, &ethernet_screen_view},
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
         {"BadUSB", 0, &badusb_view},
 #endif
@@ -967,6 +986,8 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("Settings");
             } else if (strcmp(menu_actions[i].name, "GhostLink") == 0) {
                 status_display_show_status("GhostLink");
+            } else if (strcmp(menu_actions[i].name, "Ethernet") == 0) {
+                status_display_show_status("Ethernet");
             } else if (strcmp(menu_actions[i].name, "BadUSB") == 0) {
                 status_display_show_status("BadUSB");
             } else if (strcmp(menu_actions[i].name, "Accelerometer") == 0) {
@@ -991,6 +1012,8 @@ static void handle_menu_item_selection(int item_index) {
     if (target_view == &options_menu_view) {
         SelectedMenuType = target_type;
         ESP_LOGI(TAG, "handle_menu_item_selection: Set SelectedMenuType=%d for options menu", SelectedMenuType);
+    } else if (target_view == &ethernet_screen_view) {
+        ethernet_screen_set_return_view(&main_menu_view);
     }
     display_manager_switch_view((View *)target_view);
 }

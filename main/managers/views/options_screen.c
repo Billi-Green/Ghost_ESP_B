@@ -3811,6 +3811,7 @@ void option_event_cb(lv_event_t *e) {
                 option_invoked = false;
                 return;
             } else if (strcmp(Selected_Option, "Ethernet") == 0) {
+                ethernet_screen_set_return_view(&options_menu_view);
                 display_manager_switch_view(&ethernet_screen_view);
                 option_invoked = false;
                 return;
