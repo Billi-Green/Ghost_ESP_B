@@ -105,13 +105,13 @@ extern dns_server_handle_t dns_handle;
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
 #include "core/ghostesp_version.h"
+#include "core/memory_debug.h"
 #include "managers/chameleon_manager.h"
 #include <stddef.h>
 #include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
-#include "esp_heap_trace.h"
 #include "esp_memory_utils.h"
 #include <dirent.h>
 #include "managers/infrared_manager.h"
@@ -131,6 +131,11 @@ extern dns_server_handle_t dns_handle;
 #include "managers/subghz_remote_manager.h"
 #include "managers/views/music_visualizer.h"
 #include "managers/views/app_gallery_screen.h"
+#include "managers/plugin_manager.h"
+#include "managers/plugin_loader.h"
+#ifdef CONFIG_WITH_SCREEN
+#include "managers/views/plugin_runner_view.h"
+#endif
 
 #if defined(CONFIG_WITH_SCREEN) && (defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE))
 #include "managers/views/nrf24_analyzer_view.h"
@@ -159,6 +164,10 @@ static const char *TAG = "Commandline";
 #endif
 
 static Command *command_list_head = NULL;
+static Command *command_pool = NULL;
+static Command *command_free_list = NULL;
+
+#define COMMAND_REGISTRY_MAX 192
 TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 
@@ -239,7 +248,28 @@ static void chameleon_cli_progress_cb(int current, int total, void *user) {
     }
 }
 
-void command_init() { command_list_head = NULL; }
+void command_init() {
+    free(command_pool);
+    command_pool = NULL;
+    command_list_head = NULL;
+    command_free_list = NULL;
+
+#if defined(CONFIG_SPIRAM)
+    command_pool = heap_caps_calloc(COMMAND_REGISTRY_MAX, sizeof(*command_pool), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!command_pool) {
+        command_pool = calloc(COMMAND_REGISTRY_MAX, sizeof(*command_pool));
+    }
+    if (!command_pool) {
+        glog("Failed to allocate command registry (%u entries)\n", (unsigned)COMMAND_REGISTRY_MAX);
+        return;
+    }
+
+    for (int i = 0; i < COMMAND_REGISTRY_MAX; i++) {
+        command_pool[i].next = command_free_list;
+        command_free_list = &command_pool[i];
+    }
+}
 
 void register_command(const char *name, CommandFunction function) {
     // Check if the command already exists
@@ -252,19 +282,17 @@ void register_command(const char *name, CommandFunction function) {
         current = current->next;
     }
 
-    // Create a new command
-    Command *new_command = (Command *)malloc(sizeof(Command));
+    if (!command_pool) {
+        command_init();
+    }
+
+    Command *new_command = command_free_list;
     if (new_command == NULL) {
-        // Handle memory allocation failure
-        glog("Failed to register command '%s': out of memory\n", name);
+        glog("Failed to register command '%s': command registry full\n", name);
         return;
     }
-    new_command->name = strdup(name);
-    if (new_command->name == NULL) {
-        glog("Failed to register command '%s': out of memory\n", name);
-        free(new_command);
-        return;
-    }
+    command_free_list = new_command->next;
+    new_command->name = name;
     new_command->function = function;
     new_command->next = command_list_head;
     command_list_head = new_command;
@@ -282,8 +310,10 @@ void unregister_command(const char *name) {
             } else {
                 previous->next = current->next;
             }
-            free(current->name);
-            free(current);
+            current->name = NULL;
+            current->function = NULL;
+            current->next = command_free_list;
+            command_free_list = current;
             return;
         }
         previous = current;
@@ -1013,7 +1043,11 @@ static void dump_task_stacks(void) {
     if (!list) return;
     UBaseType_t out = uxTaskGetSystemState(list, num, NULL);
     for (UBaseType_t i = 0; i < out; i++) {
-        printf("task=%s min_free_stack=%u words\n", list[i].pcTaskName, (unsigned)list[i].usStackHighWaterMark);
+        printf("task=%s state=%u prio=%u min_free_stack=%u bytes\n",
+               list[i].pcTaskName,
+               (unsigned)list[i].eCurrentState,
+               (unsigned)list[i].uxCurrentPriority,
+               (unsigned)list[i].usStackHighWaterMark);
     }
     vPortFree(list);
 #else
@@ -1021,46 +1055,85 @@ static void dump_task_stacks(void) {
 #endif
 }
 
+static void print_mem_usage(void) {
+    glog("usage: mem [heaps|tasks|regions|check|dump|trace]\n");
+    glog("  mem              heap summary + task stack high-water marks\n");
+    glog("  mem heaps        heap summary only\n");
+    glog("  mem tasks        task stack high-water marks only\n");
+    glog("  mem regions      ESP-IDF heap region breakdown\n");
+    glog("  mem check        heap integrity check\n");
+    glog("  mem dump         verbose internal/PSRAM heap block dump\n");
+    glog("  mem trace <start|leaks|all|stop|dump>\n");
+}
+
 void handle_mem_cmd(int argc, char **argv) {
+    if (argc > 1 && (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "?") == 0)) {
+        print_mem_usage();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "heaps") == 0) {
+        memory_debug_print_heap_summary();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "tasks") == 0) {
+        dump_task_stacks();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "regions") == 0) {
+        memory_debug_print_heap_regions();
+        return;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "check") == 0) {
+        bool ok = memory_debug_check_heap_integrity();
+        glog("heap integrity: %s\n", ok ? "ok" : "FAILED");
+        return;
+    }
+
     if (argc > 1 && strcmp(argv[1], "dump") == 0) {
-        ESP_LOGI(TAG, "heap(8bit) free=%u, largest=%u, min_free=%u",
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
-        heap_caps_dump(MALLOC_CAP_8BIT);
+        memory_debug_print_heap_summary();
+        ESP_LOGI(TAG, "heap internal dump");
+        heap_caps_dump(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) > 0) {
+            ESP_LOGI(TAG, "heap psram dump");
+            heap_caps_dump(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
         return;
     }
 
     if (argc > 1 && strcmp(argv[1], "trace") == 0) {
-#if defined(CONFIG_HEAP_TRACING) || defined(CONFIG_HEAP_TRACING_STANDALONE)
-        static heap_trace_record_t recs[256];
-        if (argc > 2 && strcmp(argv[2], "start") == 0) {
-            esp_err_t e = heap_trace_init_standalone(recs, 256);
-            if (e == ESP_OK) heap_trace_start(HEAP_TRACE_ALL);
-            glog("heap trace start: %s\n", e == ESP_OK ? "ok" : "err");
+        if (argc > 2 && (strcmp(argv[2], "start") == 0 || strcmp(argv[2], "leaks") == 0)) {
+            esp_err_t e = memory_debug_trace_start(true);
+            glog("heap leak trace start: %s\n", e == ESP_OK ? "ok" : esp_err_to_name(e));
+            return;
+        }
+        if (argc > 2 && strcmp(argv[2], "all") == 0) {
+            esp_err_t e = memory_debug_trace_start(false);
+            glog("heap all trace start: %s\n", e == ESP_OK ? "ok" : esp_err_to_name(e));
             return;
         }
         if (argc > 2 && strcmp(argv[2], "stop") == 0) {
-            heap_trace_stop();
-            glog("heap trace stop\n");
+            esp_err_t e = memory_debug_trace_stop();
+            glog("heap trace stop: %s\n", e == ESP_OK ? "ok" : esp_err_to_name(e));
             return;
         }
         if (argc > 2 && strcmp(argv[2], "dump") == 0) {
-            heap_trace_dump();
+            memory_debug_trace_dump();
             return;
         }
-        glog("usage: mem trace <start|stop|dump>\n");
+        glog("usage: mem trace <start|leaks|all|stop|dump>\n");
         return;
-#else
-        glog("heap tracing not enabled\n");
-        return;
-#endif
     }
 
-    ESP_LOGI(TAG, "heap(8bit) free=%u, largest=%u, min_free=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+    if (argc > 1) {
+        print_mem_usage();
+        return;
+    }
+
+    memory_debug_print_heap_summary();
     dump_task_stacks();
 }
 
@@ -6035,7 +6108,7 @@ void handle_sd_cmd(int argc, char **argv) {
         glog("SD:TREE:%s\n", path);
         
         typedef struct { char p[256]; int lvl; } stack_item_t;
-        stack_item_t *stack = malloc(sizeof(stack_item_t) * 64);
+        stack_item_t *stack = spiram_malloc(sizeof(stack_item_t) * 64);
         if (!stack) {
             glog("SD:ERR:oom\n");
             return;
@@ -6110,8 +6183,8 @@ void handle_congestion_cmd(int argc, char **argv) {
     }
 
     int unique_count = 0;
-    int *channels = malloc(ap_count * sizeof(int));
-    int *counts = malloc(ap_count * sizeof(int));
+    int *channels = spiram_malloc((size_t)ap_count * sizeof(int));
+    int *counts = spiram_malloc((size_t)ap_count * sizeof(int));
     if (!channels || !counts) {
         free(channels);
         free(counts);
@@ -7115,6 +7188,11 @@ void handle_chip_info_cmd(int argc, char **argv) {
         strcat(features_str, "Embedded PSRAM");
         first = false;
     }
+#ifdef CONFIG_USE_TOUCHSCREEN
+    if (!first) strcat(features_str, "/");
+    strcat(features_str, "Touchscreen");
+    first = false;
+#endif
     if (first) {
         strcat(features_str, "None");
     }
@@ -9547,6 +9625,107 @@ static void handle_mic_cal_cmd(int argc, char **argv) {
 }
 #endif
 
+static void handle_apps_cmd(int argc, char **argv) {
+    if (argc < 2 || strcmp(argv[1], "help") == 0) {
+        glog("apps list\n");
+        glog("apps reload\n");
+        glog("apps info <id>\n");
+        glog("apps run <id>\n");
+        glog("apps reset <id>\n");
+        glog("apps stop\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "reload") == 0) {
+        int count = plugin_manager_reload();
+        if (count < 0) {
+            glog("apps reload failed: %s\n", plugin_manager_last_error());
+            return;
+        }
+        glog("apps reloaded: %d found\n", count);
+        return;
+    }
+
+    if (strcmp(argv[1], "list") == 0) {
+        if (plugin_manager_count() == 0) plugin_manager_reload();
+        int count = plugin_manager_count();
+        glog("SD apps: %d\n", count);
+        for (int i = 0; i < count; ++i) {
+            const plugin_app_manifest_t *app = plugin_manager_get(i);
+            if (!app) continue;
+            glog("  %s - %s v%s [%s]%s%s\n", app->id, app->name, app->version[0] ? app->version : "?",
+                 app->target[0] ? app->target : "any",
+                 app->quarantined ? " [quarantined]" : "",
+                 app->launch_failure_count > 0 ? " [failures]" : "");
+        }
+        return;
+    }
+
+    if (strcmp(argv[1], "info") == 0) {
+        if (argc < 3) {
+            glog("Usage: apps info <id>\n");
+            return;
+        }
+        if (plugin_manager_count() == 0) plugin_manager_reload();
+        const plugin_app_manifest_t *app = plugin_manager_find(argv[2]);
+        if (!app) {
+            glog("app not found: %s\n", argv[2]);
+            return;
+        }
+        glog("id: %s\nname: %s\nversion: %s\nauthor: %s\ntarget: %s\nentry: %s\napi: %u\nfailures: %lu\nquarantined: %s\n",
+             app->id, app->name, app->version, app->author, app->target, app->entry,
+              (unsigned)app->api_version,
+              (unsigned long)app->launch_failure_count,
+              app->quarantined ? "yes" : "no");
+        return;
+    }
+
+    if (strcmp(argv[1], "reset") == 0 || strcmp(argv[1], "unquarantine") == 0) {
+        if (argc < 3) {
+            glog("Usage: apps reset <id>\n");
+            return;
+        }
+        if (!plugin_manager_reset_app_state(argv[2])) {
+            glog("apps reset failed: %s\n", plugin_manager_last_error());
+            return;
+        }
+        plugin_manager_reload();
+        glog("app state reset: %s\n", argv[2]);
+        return;
+    }
+
+    if (strcmp(argv[1], "run") == 0) {
+        if (argc < 3) {
+            glog("Usage: apps run <id>\n");
+            return;
+        }
+        if (plugin_manager_count() == 0) plugin_manager_reload();
+#ifdef CONFIG_WITH_SCREEN
+        plugin_runner_set_app(argv[2]);
+        display_manager_switch_view(&plugin_runner_view);
+        glog("launching app in UI: %s\n", argv[2]);
+#else
+        plugin_loaded_app_t *loaded = NULL;
+        esp_err_t err = plugin_loader_load(argv[2], &loaded);
+        if (err != ESP_OK) {
+            glog("apps run failed: %s\n", plugin_loader_last_error());
+            return;
+        }
+        plugin_loader_start(loaded);
+        glog("app started: %s\n", argv[2]);
+#endif
+        return;
+    }
+
+    if (strcmp(argv[1], "stop") == 0) {
+        plugin_loader_unload(plugin_loader_current());
+        glog("app stopped\n");
+        return;
+    }
+
+    glog("unknown apps command: %s\n", argv[1]);
+}
+
 static const struct {
     const char *name;
     const char *url;
@@ -10321,6 +10500,7 @@ void register_commands() {
     register_command("camerastream", handle_camerastream_cmd);
 #endif
     register_command("loadconfig", handle_loadconfig_cmd);
+    register_command("apps", handle_apps_cmd);
 
     esp_comm_manager_set_command_callback(comm_command_callback, NULL);
 

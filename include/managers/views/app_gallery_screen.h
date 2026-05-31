@@ -6,7 +6,6 @@
 
 void apps_menu_create(void);
 void apps_menu_destroy(void);
-void apps_menu_event_handler(InputEvent *event);
 void get_apps_menu_callback(void **callback);
 void update_app_item_styles(void);
 

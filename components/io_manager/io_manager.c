@@ -2,6 +2,7 @@
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -9,6 +10,7 @@
 #include "i2c_bus_lock.h"
 #include "i2c_shared.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 static const char *TAG = "IO_MANAGER";
 static i2c_master_bus_handle_t g_i2c_bus = NULL;
@@ -58,6 +60,8 @@ static uint8_t g_stable_state_port1 = 0xFF;
 static uint8_t g_cached_state_port1 = 0xFF;
 static int64_t g_last_change_time = 0;
 static TaskHandle_t g_io_task_handle = NULL;
+static StackType_t *g_io_task_stack = NULL;
+static StaticTask_t *g_io_task_buffer = NULL;
 
 // Forward declarations
 static esp_err_t tca9535_read_port(uint8_t reg, uint8_t *data);
@@ -152,13 +156,47 @@ esp_err_t io_manager_init(const io_manager_config_t *config)
 #endif
 
     if (g_io_task_handle == NULL) {
-        BaseType_t task_ret = xTaskCreate(
+        BaseType_t task_ret = pdFAIL;
+#if defined(CONFIG_SPIRAM)
+        if (!g_io_task_stack) {
+            g_io_task_stack = heap_caps_malloc(IO_MANAGER_TASK_STACK * sizeof(StackType_t),
+                                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
+        if (!g_io_task_buffer) {
+            g_io_task_buffer = heap_caps_malloc(sizeof(StaticTask_t),
+                                                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+        if (g_io_task_stack && g_io_task_buffer) {
+            g_io_task_handle = xTaskCreateStatic(
+                io_manager_task,
+                "io_mgr",
+                IO_MANAGER_TASK_STACK,
+                NULL,
+                IO_MANAGER_TASK_PRIO,
+                g_io_task_stack,
+                g_io_task_buffer);
+            task_ret = g_io_task_handle ? pdPASS : pdFAIL;
+            if (task_ret == pdPASS) {
+                ESP_LOGI(TAG, "IO manager task stack allocated from PSRAM: %d bytes",
+                         (int)(IO_MANAGER_TASK_STACK * sizeof(StackType_t)));
+            }
+        }
+        if (task_ret != pdPASS) {
+            free(g_io_task_stack);
+            free(g_io_task_buffer);
+            g_io_task_stack = NULL;
+            g_io_task_buffer = NULL;
+#endif
+        task_ret = xTaskCreate(
             io_manager_task,
             "io_mgr",
             IO_MANAGER_TASK_STACK,
             NULL,
             IO_MANAGER_TASK_PRIO,
             &g_io_task_handle);
+#if defined(CONFIG_SPIRAM)
+        }
+#endif
         if (task_ret != pdPASS) {
             ESP_LOGE(TAG, "Failed to create IO manager task");
             g_initialized = false;

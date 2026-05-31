@@ -2,6 +2,7 @@
 #include "managers/views/ghostchi_screen.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/music_visualizer.h"
+#include "managers/views/plugin_runner_view.h"
 #include "managers/views/terminal_screen.h"
 #ifdef CONFIG_HAS_AUDIO_PLAYER
 #include "managers/views/audio_player_screen.h"
@@ -9,13 +10,19 @@
 
 LV_IMG_DECLARE(speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48);
 
+#include "managers/plugin_manager.h"
 #include "managers/settings_manager.h"
 #include "gui/accessibility_fonts.h"
 #include "gui/theme_palette_api.h"
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
 #include "gui/design_tokens.h"
+#include "gui/toast.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "core/memory_debug.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -32,6 +39,9 @@ static inline int get_app_anim_duration(void) {
 
 #define ANIM_DURATION get_app_anim_duration()
 
+static void select_app_item(int index, bool slide_left);
+static void apps_plugin_reload_done(void *arg);
+
 lv_obj_t *apps_container;
 static lv_obj_t *current_app_obj = NULL;
 static int selected_app_index = 0;
@@ -42,19 +52,43 @@ typedef struct {
     int palette_index;
     lv_color_t border_color;
     View *view;
+    char plugin_id[PLUGIN_APP_ID_MAX];
+    char accent_color[PLUGIN_APP_ACCENT_COLOR_MAX];
+    bool disabled;
 } app_item_t;
 
-static app_item_t app_items[] = {
-    {"Visualizer", &rave, 4, {{0}}, &music_visualizer_view},
+static const app_item_t builtin_app_items[] = {
+    {
+        .name = "Visualizer",
+        .icon = &rave,
+        .palette_index = 4,
+        .view = &music_visualizer_view,
+    },
 #ifdef CONFIG_HAS_AUDIO_PLAYER
-    {"Audio", &speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48, 3, {{0}}, &audio_player_view},
+    {
+        .name = "Audio",
+        .icon = &speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48,
+        .palette_index = 3,
+        .view = &audio_player_view,
+    },
 #endif
-    {"Terminal", &terminal_icon, 5, {{0}}, &terminal_view},
-    {"Ghostchi", &ghost, 2, {{0}}, &ghostchi_view},
-    {"Back", NULL, 0, {{0}}, NULL},
+    {
+        .name = "Terminal",
+        .icon = &terminal_icon,
+        .palette_index = 5,
+        .view = &terminal_view,
+    },
+    {
+        .name = "Ghostchi",
+        .icon = &ghost,
+        .palette_index = 2,
+        .view = &ghostchi_view,
+    },
 };
 
-static int num_apps = sizeof(app_items) / sizeof(app_items[0]);
+#define MAX_APP_GALLERY_ITEMS (PLUGIN_APP_MAX_COUNT + 4)
+static app_item_t *app_items = NULL;
+static int num_apps = 0;
 lv_obj_t *back_button = NULL;
 
 // Add navigation button objects
@@ -81,6 +115,21 @@ static lv_obj_t *grid_cards_container = NULL;
 static lv_color_t apps_bg_color;
 static lv_color_t apps_surface_color;
 static lv_color_t apps_text_color;
+static volatile bool apps_plugin_reload_in_progress = false;
+static StackType_t *apps_plugin_reload_stack = NULL;
+static StaticTask_t *apps_plugin_reload_tcb = NULL;
+
+#define PLUGIN_RELOAD_STACK_BYTES 32768
+
+static bool ensure_app_items(void) {
+    if (app_items) return true;
+    app_items = spiram_calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items));
+    if (!app_items) {
+        ESP_LOGE(TAG, "Failed to allocate app gallery items");
+        return false;
+    }
+    return true;
+}
 
 static void select_app_item(int index, bool slide_left);
 
@@ -91,13 +140,106 @@ static void refresh_apps_surface_colors(void) {
     apps_text_color = lv_color_hex(theme_palette_get_text(theme));
 }
 
+static bool parse_accent_color(const char *text, lv_color_t *out) {
+    if (!text || !out) return false;
+    if (text[0] == '#') text++;
+    if (strlen(text) != 6) return false;
+    char *end = NULL;
+    unsigned long value = strtoul(text, &end, 16);
+    if (!end || *end != '\0' || value > 0xFFFFFFUL) return false;
+    *out = lv_color_hex((uint32_t)value);
+    return true;
+}
+
+static void add_back_app_item(void) {
+    if (!app_items || num_apps >= MAX_APP_GALLERY_ITEMS) return;
+    app_items[num_apps].name = "Back";
+    app_items[num_apps].icon = NULL;
+    app_items[num_apps].palette_index = 0;
+    app_items[num_apps].view = NULL;
+    num_apps++;
+}
+
+static void add_loaded_plugin_app_items(void) {
+    bool has_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) > 0;
+    int plugin_count = plugin_manager_count();
+    for (int i = 0; i < plugin_count && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
+        const plugin_app_manifest_t *app = plugin_manager_get(i);
+        if (!app) continue;
+        if (app->requires_psram && !has_psram) continue;
+        app_items[num_apps].name = app->name;
+        app_items[num_apps].icon = app->icon_dsc ? app->icon_dsc : &GESPAppGallery;
+        app_items[num_apps].palette_index = 3;
+        app_items[num_apps].view = &plugin_runner_view;
+        app_items[num_apps].disabled = app->quarantined;
+        strncpy(app_items[num_apps].plugin_id, app->id, sizeof(app_items[num_apps].plugin_id) - 1);
+        strncpy(app_items[num_apps].accent_color, app->accent_color, sizeof(app_items[num_apps].accent_color) - 1);
+        num_apps++;
+    }
+}
+
+static void rebuild_app_items(bool include_loaded_plugins) {
+    num_apps = 0;
+    if (!ensure_app_items()) return;
+    memset(app_items, 0, sizeof(*app_items) * MAX_APP_GALLERY_ITEMS);
+
+    for (int i = 0; i < (int)(sizeof(builtin_app_items) / sizeof(builtin_app_items[0])) && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
+        app_items[num_apps++] = builtin_app_items[i];
+    }
+
+    if (include_loaded_plugins) add_loaded_plugin_app_items();
+    add_back_app_item();
+}
+
+static void plugin_reload_task_fn(void *arg) {
+    (void)arg;
+    plugin_manager_reload();
+    display_manager_run_on_lvgl(apps_plugin_reload_done, NULL);
+    vTaskDelete(NULL);
+}
+
+static void start_plugin_reload_async(void) {
+    if (apps_plugin_reload_in_progress) {
+        toast_show_duration("Still scanning SD apps...", TOAST_INFO, 900);
+        return;
+    }
+    apps_plugin_reload_in_progress = true;
+    toast_show_duration("Scanning SD apps...", TOAST_INFO, 1200);
+    if (!apps_plugin_reload_stack) {
+        apps_plugin_reload_stack = spiram_malloc(PLUGIN_RELOAD_STACK_BYTES);
+    }
+    if (!apps_plugin_reload_stack) {
+        apps_plugin_reload_in_progress = false;
+        ESP_LOGE(TAG, "Failed to allocate plugin reload task stack");
+        toast_show_duration("App scan failed: no task memory", TOAST_ERROR, 2200);
+        return;
+    }
+    if (!apps_plugin_reload_tcb) {
+        apps_plugin_reload_tcb = heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!apps_plugin_reload_tcb) {
+        apps_plugin_reload_in_progress = false;
+        ESP_LOGE(TAG, "Failed to allocate plugin reload TCB");
+        toast_show_duration("App scan failed: no task memory", TOAST_ERROR, 2200);
+        return;
+    }
+    if (xTaskCreateStatic(plugin_reload_task_fn, "plugin_reload", PLUGIN_RELOAD_STACK_BYTES, NULL, 5,
+                          apps_plugin_reload_stack, apps_plugin_reload_tcb) == NULL) {
+        apps_plugin_reload_in_progress = false;
+        ESP_LOGE(TAG, "Failed to create plugin reload task");
+        toast_show_duration("App scan failed: task start", TOAST_ERROR, 2200);
+    }
+}
+
 // Use the same theme palettes as the main menu to color app borders
 static void init_app_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     refresh_apps_surface_colors();
     for (int i = 0; i < num_apps; ++i) {
         int slot = i % THEME_PALETTE_SLOT_COUNT;
-        app_items[i].border_color = lv_color_hex(theme_palette_get(theme, slot));
+        if (!parse_accent_color(app_items[i].accent_color, &app_items[i].border_color)) {
+            app_items[i].border_color = lv_color_hex(theme_palette_get(theme, slot));
+        }
     }
 }
 
@@ -138,8 +280,23 @@ static apps_carousel_cache_t apps_carousel_cache = {0};
 
 static void apps_carousel_fade_in_ready_cb(lv_anim_t *a);
 
+static void apps_cancel_carousel_anims(void) {
+    if (current_app_obj) lv_anim_del(current_app_obj, NULL);
+    if (apps_carousel_cache.card && apps_carousel_cache.card != current_app_obj) {
+        lv_anim_del(apps_carousel_cache.card, NULL);
+    }
+}
+
 static void apps_carousel_fade_out_ready_cb(lv_anim_t *a) {
     lv_obj_t *obj = (lv_obj_t *)a->var;
+    if (!obj || !lv_obj_is_valid(obj) || !app_items || num_apps <= 0) {
+        apps_is_animating = false;
+        return;
+    }
+    if (selected_app_index < 0 || selected_app_index >= num_apps) {
+        apps_is_animating = false;
+        return;
+    }
     int start_x = apps_carousel_next_slide_left ? LV_HOR_RES : -LV_HOR_RES;
 
     apps_carousel_cache.card = obj;
@@ -153,8 +310,9 @@ static void apps_carousel_fade_out_ready_cb(lv_anim_t *a) {
     }
 
     lv_obj_t *icon = apps_carousel_cache.icon;
-    if (!icon) {
-        icon = lv_obj_get_child(obj, 0);
+    if (!icon || !lv_obj_is_valid(icon) || !lv_obj_check_type(icon, &lv_img_class)) {
+        icon = (lv_obj_is_valid(obj) && lv_obj_get_child_cnt(obj) > 0) ? lv_obj_get_child(obj, 0) : NULL;
+        if (icon && (!lv_obj_is_valid(icon) || !lv_obj_check_type(icon, &lv_img_class))) icon = NULL;
         apps_carousel_cache.icon = icon;
     }
     if (icon) {
@@ -163,6 +321,24 @@ static void apps_carousel_fade_out_ready_cb(lv_anim_t *a) {
             if (new_icon) {
                 lv_img_set_src(icon, new_icon);
                 lv_obj_clear_flag(icon, LV_OBJ_FLAG_HIDDEN);
+
+                int btn_size = lv_obj_get_width(obj);
+                const int icon_size = 50;
+                lv_coord_t img_w = new_icon->header.w;
+                lv_coord_t img_h = new_icon->header.h;
+                if (img_w > 0 && img_h > 0) {
+                    int zoom_w = (icon_size * 256) / img_w;
+                    int zoom_h = (icon_size * 256) / img_h;
+                    int zoom = LV_MIN(zoom_w, zoom_h);
+                    if (zoom > 512) zoom = 512;
+                    lv_img_set_zoom(icon, zoom);
+                }
+                int icon_x_offset = -3;
+                int icon_y_offset = -5;
+                if (app_items[app_idx].view == &ghostchi_view) icon_x_offset = 9;
+                int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
+                int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
+                lv_obj_align(icon, LV_ALIGN_TOP_LEFT, x_pos, y_pos);
             } else {
                 lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
             }
@@ -179,8 +355,9 @@ static void apps_carousel_fade_out_ready_cb(lv_anim_t *a) {
     }
 
     lv_obj_t *label = apps_carousel_cache.label;
-    if (!label) {
-        label = lv_obj_get_child(obj, 1);
+    if (!label || !lv_obj_is_valid(label) || !lv_obj_check_type(label, &lv_label_class)) {
+        label = (lv_obj_is_valid(obj) && lv_obj_get_child_cnt(obj) > 1) ? lv_obj_get_child(obj, 1) : NULL;
+        if (label && (!lv_obj_is_valid(label) || !lv_obj_check_type(label, &lv_label_class))) label = NULL;
         apps_carousel_cache.label = label;
     }
     const char *new_label = app_items[app_idx].name;
@@ -231,6 +408,7 @@ static void apps_cleanup_layout(void) {
 }
 
 static void update_app_item(bool slide_left) {
+    if (!app_items || num_apps <= 0) return;
     apps_carousel_next_slide_left = slide_left;
     apps_is_animating = true;
 
@@ -500,12 +678,80 @@ static void create_apps_list_menu(void) {
     }
 }
 
+static void move_app_nav_buttons_foreground(void) {
+    if (left_nav_btn) lv_obj_move_foreground(left_nav_btn);
+    if (right_nav_btn) lv_obj_move_foreground(right_nav_btn);
+}
+
+static void render_app_items(void) {
+    if (!apps_container || !lv_obj_is_valid(apps_container)) return;
+
+    apps_cancel_carousel_anims();
+    lv_obj_clean(apps_container);
+    apps_cleanup_layout();
+    current_app_obj = NULL;
+    apps_carousel_cache = (apps_carousel_cache_t){0};
+    apps_is_animating = false;
+
+    if (selected_app_index < 0) selected_app_index = 0;
+    if (selected_app_index >= num_apps) selected_app_index = num_apps > 0 ? num_apps - 1 : 0;
+
+    if (apps_layout == APPS_LAYOUT_GRID_CARDS) {
+        create_apps_grid_menu();
+        select_app_item(selected_app_index, false);
+    } else if (apps_layout == APPS_LAYOUT_LIST) {
+        create_apps_list_menu();
+        select_app_item(selected_app_index, false);
+    } else {
+        update_app_item(false);
+    }
+
+    move_app_nav_buttons_foreground();
+}
+
+static void apps_plugin_reload_done(void *arg) {
+    (void)arg;
+    apps_plugin_reload_in_progress = false;
+
+    if (display_manager_get_current_view() != &apps_menu_view) return;
+    if (!apps_container || !lv_obj_is_valid(apps_container)) return;
+
+    bool selected_back = false;
+    if (app_items && selected_app_index >= 0 && selected_app_index < num_apps) {
+        selected_back = app_items[selected_app_index].view == NULL;
+    }
+
+    rebuild_app_items(true);
+    init_app_colors();
+    if (selected_back) selected_app_index = num_apps > 0 ? num_apps - 1 : 0;
+    render_app_items();
+
+    int plugin_count = plugin_manager_count();
+    if (plugin_count > 0) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "%d SD app%s ready", plugin_count, plugin_count == 1 ? "" : "s");
+        toast_show_duration(msg, TOAST_SUCCESS, 1000);
+    } else if (plugin_manager_last_error()[0] != '\0') {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "App scan failed: %.45s", plugin_manager_last_error());
+        toast_show_duration(msg, TOAST_WARN, 2200);
+    }
+}
+
 /**
  * @brief Creates the apps menu screen view
  */
  void apps_menu_create(void) {
+    plugin_manager_init();
+    rebuild_app_items(plugin_manager_count() > 0);
     refresh_apps_surface_colors();
     display_manager_fill_screen(apps_bg_color);
+
+#if CONFIG_ENABLE_NATIVE_SD_APPS
+    if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) == 0) {
+        toast_show_duration("Native SD apps require PSRAM", TOAST_WARN, 3500);
+    }
+#endif
 
     const char *title = (LV_VER_RES > 320 ? "Apps Menu" : "Apps");
 
@@ -609,21 +855,7 @@ static void create_apps_list_menu(void) {
     }
 
     selected_app_index = 0;
-    if (apps_layout == APPS_LAYOUT_GRID_CARDS) {
-        create_apps_grid_menu();
-        select_app_item(selected_app_index, false);
-    } else if (apps_layout == APPS_LAYOUT_LIST) {
-        create_apps_list_menu();
-        select_app_item(selected_app_index, false);
-    } else {
-        update_app_item(false);
-    }
-    if (left_nav_btn) {
-        lv_obj_move_foreground(left_nav_btn);
-    }
-    if (right_nav_btn) {
-        lv_obj_move_foreground(right_nav_btn);
-    }
+    render_app_items();
 
     if (left_nav_btn) {
         lv_coord_t old_y = lv_obj_get_y(left_nav_btn);
@@ -635,12 +867,15 @@ static void create_apps_list_menu(void) {
         lv_obj_set_y(right_nav_btn, old_y + status_bar_height / 2);
         lv_obj_move_foreground(right_nav_btn);
     }
+
+    start_plugin_reload_async();
 }
 
 /**
  * @brief Destroys the apps menu screen view
  */
 void apps_menu_destroy(void) {
+    apps_cancel_carousel_anims();
     if (apps_container) {
         lvgl_obj_del_safe(&apps_container);
         apps_menu_view.root = NULL;
@@ -652,18 +887,25 @@ void apps_menu_destroy(void) {
     apps_is_animating = false;
     lvgl_obj_del_safe(&left_nav_btn);
     lvgl_obj_del_safe(&right_nav_btn);
-    // Reset state variables for a clean re-create
+
+    if (!apps_plugin_reload_in_progress) {
+        free(apps_plugin_reload_stack);
+        apps_plugin_reload_stack = NULL;
+        free(apps_plugin_reload_tcb);
+        apps_plugin_reload_tcb = NULL;
+    }
+
     selected_app_index = 0;
     touch_started = false;
     touch_start_x = 0;
     touch_start_y = 0;
-    // If you add timers or other resources, clean them up here!
 }
 
 /**
  * @brief Selects an app item and updates the display
  */
 static void select_app_item(int index, bool slide_left) {
+    if (!app_items || num_apps <= 0) return;
     if (index < 0) index = num_apps - 1;
     if (index >= num_apps) index = 0;
 
@@ -715,6 +957,21 @@ static void handle_app_item_selection(int item_index) {
     }
 
     ESP_LOGI(TAG, "Launching app: %s (index %d)\n", app_items[item_index].name, item_index);
+
+    if (app_items[item_index].disabled) {
+        ESP_LOGW(TAG, "App %s is quarantined and will not launch", app_items[item_index].name);
+        toast_show_duration("App disabled after launch failures", TOAST_WARN, 2200);
+        return;
+    }
+
+    if (app_items[item_index].plugin_id[0] != '\0') {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Opening %.52s...", app_items[item_index].name);
+        toast_show_duration(msg, TOAST_INFO, 1200);
+        plugin_runner_set_app(app_items[item_index].plugin_id);
+        display_manager_switch_view(&plugin_runner_view);
+        return;
+    }
 
     if (app_items[item_index].view == &terminal_view) {
         terminal_set_return_view(&apps_menu_view);

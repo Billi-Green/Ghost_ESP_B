@@ -834,11 +834,67 @@ html[data-theme="dark"] .icon-theme__moon path {
   border: 1px solid var(--border);
 }
 
+.content__body .highlight pre {
+  margin: 0;
+  background-color: var(--code-bg);
+}
+
+.content__body .highlight {
+  margin: 1.5rem 0;
+  border-radius: 0.9rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+}
+
+.content__body .highlight code {
+  background: none;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
 .content__body code {
   background-color: var(--code-bg);
   padding: 0.15rem 0.35rem;
   border-radius: 0.4rem;
   font-size: 0.9rem;
+}
+
+.content__body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  background-color: var(--surface);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.content__body thead th {
+  background-color: var(--code-bg);
+  padding: 0.85rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.content__body tbody td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.content__body tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.content__body tbody tr:hover {
+  background-color: var(--code-bg);
+}
+
+.content__body td code {
+  white-space: nowrap;
 }
 
 blockquote {
@@ -930,4 +986,180 @@ html[data-theme="dark"] .content__body iframe {
   .doc__nav-link--next {
     grid-column: auto;
   }
+}
+
+.content__body .chroma,
+.content__body .bg {
+  background-color: var(--code-bg) !important;
+  color: var(--fg);
+}
+
+.content__body .chroma .line {
+  color: var(--fg);
+}
+
+.content__body .chroma .c,
+.content__body .chroma .ch,
+.content__body .chroma .cm,
+.content__body .chroma .c1,
+.content__body .chroma .cs,
+.content__body .chroma .cp,
+.content__body .chroma .cpf {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.content__body .chroma .k,
+.content__body .chroma .kd,
+.content__body .chroma .kn,
+.content__body .chroma .kr,
+.content__body .chroma .kt,
+.content__body .chroma .nn,
+.content__body .chroma .o,
+.content__body .chroma .ow {
+  color: #ff7b72;
+}
+
+.content__body .chroma .s,
+.content__body .chroma .sa,
+.content__body .chroma .sb,
+.content__body .chroma .sc,
+.content__body .chroma .dl,
+.content__body .chroma .sd,
+.content__body .chroma .s2,
+.content__body .chroma .se,
+.content__body .chroma .sh,
+.content__body .chroma .si,
+.content__body .chroma .sx,
+.content__body .chroma .sr,
+.content__body .chroma .s1,
+.content__body .chroma .ss,
+.content__body .chroma .l,
+.content__body .chroma .ld,
+.content__body .chroma .m,
+.content__body .chroma .mb,
+.content__body .chroma .mf,
+.content__body .chroma .mh,
+.content__body .chroma .mi,
+.content__body .chroma .il,
+.content__body .chroma .mo {
+  color: #a5d6ff;
+}
+
+.content__body .chroma .nf,
+.content__body .chroma .fm,
+.content__body .chroma .nd,
+.content__body .chroma .nc {
+  color: #d2a8ff;
+  font-weight: bold;
+}
+
+.content__body .chroma .nt {
+  color: #7ee787;
+}
+
+.content__body .chroma .nv,
+.content__body .chroma .vc,
+.content__body .chroma .vg,
+.content__body .chroma .vi,
+.content__body .chroma .vm,
+.content__body .chroma .kc,
+.content__body .chroma .kp,
+.content__body .chroma .no,
+.content__body .chroma .ne,
+.content__body .chroma .nl,
+.content__body .chroma .py,
+.content__body .chroma .ld {
+  color: #79c0ff;
+}
+
+.content__body .chroma .ni,
+.content__body .chroma .err {
+  color: #ffa657;
+}
+
+.content__body .chroma .gp,
+.content__body .chroma .go,
+.content__body .chroma .w {
+  color: var(--fg-muted);
+}
+
+.content__body .chroma .ln,
+.content__body .chroma .lnt {
+  color: var(--fg-muted);
+  margin-right: 0.4em;
+  padding: 0 0.4em;
+}
+
+html[data-theme="light"] .content__body .chroma .k,
+html[data-theme="light"] .content__body .chroma .kd,
+html[data-theme="light"] .content__body .chroma .kn,
+html[data-theme="light"] .content__body .chroma .kr,
+html[data-theme="light"] .content__body .chroma .kt,
+html[data-theme="light"] .content__body .chroma .nn,
+html[data-theme="light"] .content__body .chroma .o,
+html[data-theme="light"] .content__body .chroma .ow {
+  color: #d73a49;
+}
+
+html[data-theme="light"] .content__body .chroma .s,
+html[data-theme="light"] .content__body .chroma .sa,
+html[data-theme="light"] .content__body .chroma .sb,
+html[data-theme="light"] .content__body .chroma .sc,
+html[data-theme="light"] .content__body .chroma .dl,
+html[data-theme="light"] .content__body .chroma .sd,
+html[data-theme="light"] .content__body .chroma .s2,
+html[data-theme="light"] .content__body .chroma .se,
+html[data-theme="light"] .content__body .chroma .sh,
+html[data-theme="light"] .content__body .chroma .si,
+html[data-theme="light"] .content__body .chroma .sx,
+html[data-theme="light"] .content__body .chroma .sr,
+html[data-theme="light"] .content__body .chroma .s1,
+html[data-theme="light"] .content__body .chroma .ss,
+html[data-theme="light"] .content__body .chroma .l,
+html[data-theme="light"] .content__body .chroma .ld,
+html[data-theme="light"] .content__body .chroma .m,
+html[data-theme="light"] .content__body .chroma .mb,
+html[data-theme="light"] .content__body .chroma .mf,
+html[data-theme="light"] .content__body .chroma .mh,
+html[data-theme="light"] .content__body .chroma .mi,
+html[data-theme="light"] .content__body .chroma .il,
+html[data-theme="light"] .content__body .chroma .mo {
+  color: #032f62;
+}
+
+html[data-theme="light"] .content__body .chroma .nf,
+html[data-theme="light"] .content__body .chroma .fm,
+html[data-theme="light"] .content__body .chroma .nd {
+  color: #6f42c1;
+  font-weight: bold;
+}
+
+html[data-theme="light"] .content__body .chroma .nc {
+  color: #e36209;
+  font-weight: bold;
+}
+
+html[data-theme="light"] .content__body .chroma .nt {
+  color: #22863a;
+}
+
+html[data-theme="light"] .content__body .chroma .nv,
+html[data-theme="light"] .content__body .chroma .vc,
+html[data-theme="light"] .content__body .chroma .vg,
+html[data-theme="light"] .content__body .chroma .vi,
+html[data-theme="light"] .content__body .chroma .vm,
+html[data-theme="light"] .content__body .chroma .kc,
+html[data-theme="light"] .content__body .chroma .kp,
+html[data-theme="light"] .content__body .chroma .no,
+html[data-theme="light"] .content__body .chroma .ne,
+html[data-theme="light"] .content__body .chroma .nl,
+html[data-theme="light"] .content__body .chroma .py,
+html[data-theme="light"] .content__body .chroma .ld {
+  color: #005cc5;
+}
+
+html[data-theme="light"] .content__body .chroma .ni,
+html[data-theme="light"] .content__body .chroma .err {
+  color: #e36209;
 }

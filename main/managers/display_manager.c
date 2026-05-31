@@ -55,7 +55,11 @@
 uint32_t theme_palette_get_surface_alt(uint8_t theme);
 uint32_t theme_palette_get_text_muted(uint8_t theme);
 
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define LVGL_TICK_TASK_STACK_SIZE 5120
+#else
 #define LVGL_TICK_TASK_STACK_SIZE 8192
+#endif
 
 #ifndef CONFIG_JC3248W535EN_LCD
 static TaskHandle_t hardware_input_task_handle = NULL;
@@ -1368,23 +1372,62 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #if !defined(CONFIG_USE_7_INCHER) && !defined(CONFIG_JC3248W535EN_LCD)
 /* For cardputer (no PSRAM) use a single smaller buffer to save internal RAM.
    Single buffer increases flush frequency but greatly reduces RAM usage. */
+  static lv_color_t *buf1 = NULL;
+  static lv_color_t *buf2 = NULL;
+  size_t buf1_pixels;
+  size_t buf2_pixels = 0;
+
 #if defined(CONFIG_USE_CARDPUTER) || defined(CONFIG_USE_CARDPUTER_ADV)
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 3] __attribute__((aligned(4)));
+  buf1_pixels = CONFIG_TFT_WIDTH * 3;
 #elif defined(CONFIG_IDF_TARGET_ESP32C5)
-#if defined(CONFIG_SPIRAM)
-  /* PSRAM available: dual buffer for smoother 60Hz rendering */
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
-  static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
-#else
-  /* No PSRAM: small single buffer to save internal RAM */
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 5] __attribute__((aligned(4)));
-#endif
+  /* Keep the C5 SPI flush buffer in DMA-capable internal RAM. PSRAM draw
+     buffers force the SPI driver to allocate internal bounce buffers at flush
+     time, which is fragile once WiFi/LVGL have fragmented internal RAM. */
+  buf1_pixels = CONFIG_TFT_WIDTH * 5;
 #elif defined(CONFIG_IDF_TARGET_ESP32)
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 10] __attribute__((aligned(4)));
+  buf1_pixels = CONFIG_TFT_WIDTH * 10;
 #else
-  static lv_color_t buf1[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
-  static lv_color_t buf2[CONFIG_TFT_WIDTH * 20] __attribute__((aligned(4)));
+  buf1_pixels = CONFIG_TFT_WIDTH * 20;
+  buf2_pixels = CONFIG_TFT_WIDTH * 20;
 #endif
+  size_t buf1_bytes = buf1_pixels * sizeof(*buf1);
+  size_t buf2_bytes = buf2_pixels * sizeof(*buf2);
+
+  if (!buf1) {
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    buf1 = heap_caps_malloc(buf1_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    if (buf1) ESP_LOGI(TAG, "display_manager: buf1 allocated in internal DMA RAM (%d bytes)", (int)buf1_bytes);
+#elif defined(CONFIG_SPIRAM)
+    buf1 = heap_caps_malloc(buf1_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    if (buf1) ESP_LOGI(TAG, "display_manager: buf1 allocated in PSRAM (%d bytes)", (int)buf1_bytes);
+#endif
+    if (!buf1) {
+      buf1 = heap_caps_malloc(buf1_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+      if (buf1) ESP_LOGI(TAG, "display_manager: buf1 allocated in internal DMA RAM (%d bytes)", (int)buf1_bytes);
+    }
+  }
+  if (buf2_pixels > 0 && !buf2) {
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    buf2 = heap_caps_malloc(buf2_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    if (buf2) ESP_LOGI(TAG, "display_manager: buf2 allocated in internal DMA RAM (%d bytes)", (int)buf2_bytes);
+#elif defined(CONFIG_SPIRAM)
+    buf2 = heap_caps_malloc(buf2_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    if (buf2) ESP_LOGI(TAG, "display_manager: buf2 allocated in PSRAM (%d bytes)", (int)buf2_bytes);
+#endif
+    if (!buf2) {
+      buf2 = heap_caps_malloc(buf2_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+      if (buf2) ESP_LOGI(TAG, "display_manager: buf2 allocated in internal DMA RAM (%d bytes)", (int)buf2_bytes);
+    }
+  }
+
+  if (!buf1 || (buf2_pixels > 0 && !buf2)) {
+    ESP_LOGE(TAG, "display_manager: failed to allocate LVGL draw buffers");
+    free(buf1);
+    free(buf2);
+    buf1 = NULL;
+    buf2 = NULL;
+    return;
+  }
   ESP_LOGI(TAG, "display_manager: draw buffers allocated, free internal RAM: %d bytes", 
            (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
@@ -1406,13 +1449,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   /* single buffer mode: small buffer for low-memory cardputer */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 2);
 #elif defined(CONFIG_IDF_TARGET_ESP32C5)
-#if defined(CONFIG_SPIRAM)
-  /* dual buffer with PSRAM for smooth 60Hz */
-  lv_disp_draw_buf_init(&disp_buf, buf1, buf2, width * 5);
-#else
-  /* single buffer, no PSRAM */
+  /* single small internal-DMA buffer avoids SPI bounce-buffer allocations */
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
-#endif
 #elif defined(CONFIG_IDF_TARGET_ESP32S2)
   lv_disp_draw_buf_init(&disp_buf, buf1, NULL, width * 5);
 #elif defined(CONFIG_IDF_TARGET_ESP32)
@@ -1566,7 +1604,7 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 
 
 #ifndef CONFIG_JC3248W535EN_LCD
-    // LVGL tick task - use internal RAM for stability
+    // LVGL refresh must stay on an internal stack on C5; PSRAM stack can starve the idle WDT.
     xTaskCreate(lvgl_tick_task, "LVGL Tick Task", LVGL_TICK_TASK_STACK_SIZE, NULL,
                 RENDERING_TASK_PRIORITY, &lvgl_task_handle);
     ESP_LOGI(TAG, "LVGL tick task stack allocated from internal RAM");

@@ -5,6 +5,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_task_wdt.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -36,6 +37,10 @@
 #endif
 #define BUF_SIZE (512)
 #define SERIAL_BUFFER_SIZE 512
+#define SERIAL_TASK_STACK_SIZE 5120
+
+static StackType_t *s_serial_task_stack = NULL;
+static StaticTask_t *s_serial_task_buffer = NULL;
 
 #ifndef CONFIG_CONSOLE_UART_BAUDRATE
 #ifdef CONFIG_MONITOR_BAUD
@@ -913,7 +918,37 @@ void serial_manager_init() {
   }
   ESP_LOGI("SerialManager", "Command queue created: depth=6, item_size=%u bytes", sizeof(SerialCommand));
 
-  BaseType_t task_rc = xTaskCreate(serial_task, "SerialTask",  5120, NULL, 2, &s_serial_task_handle);
+  BaseType_t task_rc = pdFAIL;
+#if defined(CONFIG_SPIRAM)
+  if (!s_serial_task_stack) {
+    s_serial_task_stack = heap_caps_malloc(SERIAL_TASK_STACK_SIZE * sizeof(StackType_t),
+                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  }
+  if (!s_serial_task_buffer) {
+    s_serial_task_buffer = heap_caps_malloc(sizeof(StaticTask_t),
+                                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  if (s_serial_task_stack && s_serial_task_buffer) {
+    s_serial_task_handle = xTaskCreateStatic(serial_task, "SerialTask",
+                                            SERIAL_TASK_STACK_SIZE, NULL, 2,
+                                            s_serial_task_stack,
+                                            s_serial_task_buffer);
+    task_rc = s_serial_task_handle ? pdPASS : pdFAIL;
+    if (task_rc == pdPASS) {
+      ESP_LOGI("SerialManager", "Serial task stack allocated from PSRAM: %d bytes",
+               (int)(SERIAL_TASK_STACK_SIZE * sizeof(StackType_t)));
+    }
+  }
+  if (task_rc != pdPASS) {
+    free(s_serial_task_stack);
+    free(s_serial_task_buffer);
+    s_serial_task_stack = NULL;
+    s_serial_task_buffer = NULL;
+#endif
+  task_rc = xTaskCreate(serial_task, "SerialTask", SERIAL_TASK_STACK_SIZE, NULL, 2, &s_serial_task_handle);
+#if defined(CONFIG_SPIRAM)
+  }
+#endif
   if (task_rc != pdPASS) {
     ESP_LOGE("SerialManager", "Failed to create serial task (%ld)", (long)task_rc);
     vQueueDelete(commandQueue);

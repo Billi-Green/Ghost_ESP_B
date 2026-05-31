@@ -674,8 +674,35 @@ typedef struct {
     uint32_t session; // scan session
 } ndef_details_result_t;
 
+#define NFC_NDEF_POOL_SIZE 4
+static ndef_details_result_t nfc_ndef_pool[NFC_NDEF_POOL_SIZE];
+static uint32_t nfc_ndef_pool_mask = 0;
+static ndef_details_result_t* nfc_ndef_pool_alloc(void) {
+    for (int i = 0; i < NFC_NDEF_POOL_SIZE; i++) {
+        if (!(nfc_ndef_pool_mask & (1U << i))) {
+            nfc_ndef_pool_mask |= (1U << i);
+            return &nfc_ndef_pool[i];
+        }
+    }
+    return NULL;
+}
+static void nfc_ndef_pool_free(ndef_details_result_t *ptr) {
+    if (!ptr) return;
+    int idx = ptr - nfc_ndef_pool;
+    if (idx >= 0 && idx < NFC_NDEF_POOL_SIZE) {
+        nfc_ndef_pool_mask &= ~(1U << idx);
+    }
+}
+
 static const char* nfc_get_detected_title(void) {
     return (nfc_detected_title[0] != '\0') ? nfc_detected_title : "NFC Tag";
+}
+
+bool nfc_api_get_last_uid(uint8_t *uid_out, uint8_t *uid_len_out) {
+    if (!uid_out || !uid_len_out || g_uid_len == 0) return false;
+    memcpy(uid_out, g_uid, g_uid_len);
+    *uid_len_out = g_uid_len;
+    return true;
 }
 
 static void nfc_update_title_from_details(const char *details) {
@@ -696,8 +723,8 @@ static void nfc_update_title_from_details(const char *details) {
 static void nfc_set_details_async(void *ptr) {
     if (!ptr) return;
     ndef_details_result_t *res = (ndef_details_result_t *)ptr;
-    if (res->session != nfc_scan_session) { if (res->text) free(res->text); free(res); return; }
-    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { if (res->text) free(res->text); free(res); return; }
+    if (res->session != nfc_scan_session) { if (res->text) free(res->text); nfc_ndef_pool_free(res); return; }
+    if (!nfc_scan_popup || !lv_obj_is_valid(nfc_scan_popup)) { if (res->text) free(res->text); nfc_ndef_pool_free(res); return; }
     // Replace old details if any
     if (nfc_details_text) { free(nfc_details_text); nfc_details_text = NULL; }
     nfc_details_text = res->text;
@@ -803,11 +830,11 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
             mfc_set_progress_callback(NULL, NULL);
             return;
         }
-        ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+        ndef_details_result_t *res = nfc_ndef_pool_alloc();
         if (!res) { free(text); return; }
         res->text = text; res->text_len = strlen(text); res->session = nfc_scan_session;
         if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
-        else { free(text); free(res); }
+        else { free(text); nfc_ndef_pool_free(res); }
         mfc_set_progress_callback(NULL, NULL);
         return;
     }
@@ -821,7 +848,7 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
         if (!text) {
             return;
         }
-        ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+        ndef_details_result_t *res = nfc_ndef_pool_alloc();
         if (!res) {
             free(text);
             return;
@@ -832,7 +859,7 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
         if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
         else {
             free(text);
-            free(res);
+            nfc_ndef_pool_free(res);
         }
         return;
     }
@@ -841,16 +868,16 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
     uint8_t *mem = NULL; size_t mem_len = 0; NTAG2XX_MODEL model = NTAG2XX_UNKNOWN;
     if (!ntag_t2_read_user_memory(io, &mem, &mem_len, &model)) {
         size_t cap = 256;
-        ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+        ndef_details_result_t *res = nfc_ndef_pool_alloc();
         if (!res) return;
         res->text = (char*)malloc(cap);
         res->text_len = cap; res->session = nfc_scan_session;
-        if (!res->text) { free(res); return; }
+        if (!res->text) { nfc_ndef_pool_free(res); return; }
         char *w = res->text; snprintf(w, cap, "UID:"); size_t used = strlen(w); w += used; cap -= used;
         for (uint8_t i = 0; i < uid_len && cap > 3; ++i) { int n = snprintf(w, cap, " %02X", uid[i]); if (n > 0) { w += n; cap -= n; } }
         snprintf(w, cap, "\nNo NDEF data\n");
         if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
-        else { free(res->text); free(res); }
+        else { free(res->text); nfc_ndef_pool_free(res); }
         return;
     }
     char *text = ntag_t2_build_details_from_mem(mem, mem_len, uid, uid_len, model);
@@ -858,11 +885,11 @@ static void nfc_build_and_set_details(pn532_io_handle_t io, const uint8_t *uid, 
     if (!text) return;
     g_model = model;
     snprintf(nfc_detected_title, sizeof(nfc_detected_title), "%s", ntag_t2_model_str(model));
-    ndef_details_result_t *res = (ndef_details_result_t*)malloc(sizeof(*res));
+    ndef_details_result_t *res = nfc_ndef_pool_alloc();
     if (!res) { free(text); return; }
     res->text = text; res->text_len = strlen(text); res->session = nfc_scan_session;
     if (display_manager_is_available()) lv_async_call(nfc_set_details_async, res);
-    else { if (res->text) free(res->text); free(res); }
+    else { if (res->text) free(res->text); nfc_ndef_pool_free(res); }
     return;
 }
 #endif
