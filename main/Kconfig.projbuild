@@ -1388,7 +1388,7 @@ menu "Ghost ESP Options"
             config HAS_AUDIO_PLAYER
                 bool "Enable Audio Player App"
                 default n
-                depends on WITH_SCREEN && USING_SPI
+                depends on WITH_SCREEN && USING_SPI && HAS_TLV320DAC_I2C
                 help
                     Enable MP3 audio player UI and SD card streaming over GhostLink.
 

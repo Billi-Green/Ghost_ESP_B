@@ -146,9 +146,11 @@ static bool sht30_read(float *out_temp, float *out_hum) {
 
     if (sht30_crc8(&data[0], 2) != data[2]) {
         ESP_LOGW(TAG, "SHT30 temp CRC mismatch");
+        return false;
     }
     if (sht30_crc8(&data[3], 2) != data[5]) {
         ESP_LOGW(TAG, "SHT30 hum CRC mismatch");
+        return false;
     }
 
     uint16_t raw_temp = (data[0] << 8) | data[1];

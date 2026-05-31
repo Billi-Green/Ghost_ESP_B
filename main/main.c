@@ -603,8 +603,6 @@ void app_main(void) {
     // Deferred SD card init: run in a background task so the shared-SPI
     // suspend/resume does not freeze the splash-screen animation.  The task
     // sleeps long enough for the splash transition (900 ms hold + margin).
-    // Disabled on somethingsomething2 — no working SD card, avoids LoadProhibited crash.
-#ifndef CONFIG_HAS_TLV320DAC_I2S
     {
         BaseType_t sd_task_rc = xTaskCreate(deferred_sd_init_task, "SD Init", 6144, NULL,
                                             tskIDLE_PRIORITY + 1, NULL);
@@ -612,7 +610,6 @@ void app_main(void) {
             ESP_LOGE(TAG, "Failed to create SD Init task");
         }
     }
-#endif
 
     // Initialize RGB Manager based on persisted settings or compile-time defaults
     {

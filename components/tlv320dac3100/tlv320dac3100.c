@@ -319,6 +319,7 @@ esp_err_t tlv320dac3100_deinit(void)
 {
     if (!s_initialized) return ESP_OK;
 
+    s_initialized = false;
     tlv320dac3100_stop_headphone_detect_task();
     tlv320dac3100_power_down();
 
