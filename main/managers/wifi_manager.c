@@ -11,6 +11,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h" // Add include for heap stats
+#include "core/memory_debug.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -479,14 +480,39 @@ static void wifi_reconnect_timer_stop(void) {
     }
 }
 
+static bool wifi_reconnect_blocked(const char **reason_out) {
+    if (wifi_monitor_capture_active) {
+        if (reason_out) *reason_out = "monitor mode";
+        return true;
+    }
+
+    if (ap_scan_is_running()) {
+        if (reason_out) *reason_out = "AP scan active";
+        return true;
+    }
+
+    bool promiscuous_enabled = false;
+    esp_err_t promisc_err = esp_wifi_get_promiscuous(&promiscuous_enabled);
+    if (promisc_err == ESP_OK && promiscuous_enabled) {
+        if (reason_out) *reason_out = "promiscuous mode";
+        return true;
+    }
+
+    return false;
+}
+
 static void wifi_reconnect_reset(void) {
     wifi_reconnect_timer_stop();
     wifi_reconnect_count = 0;
 }
 
 static void wifi_reconnect_timer_cb(void *arg) {
-    if (wifi_monitor_capture_active) {
-        ESP_LOGI(TAG, "Skipping auto-reconnect while monitor mode is active");
+    const char *reason = NULL;
+    if (wifi_reconnect_blocked(&reason)) {
+        ESP_LOGI(TAG, "Skipping auto-reconnect while %s", reason ? reason : "busy");
+        if (wifi_reconnect_timer) {
+            esp_timer_start_once(wifi_reconnect_timer, 3000 * 1000);
+        }
         return;
     }
 
@@ -501,10 +527,6 @@ static void wifi_reconnect_timer_cb(void *arg) {
 
 static void wifi_reconnect_schedule(void) {
     wifi_reconnect_timer_stop();
-    if (wifi_monitor_capture_active) {
-        wifi_reconnect_count = 0;
-        return;
-    }
 
     if (wifi_reconnect_count > 0 && wifi_reconnect_count <= WIFI_MAX_RECONNECT_ATTEMPTS) {
         static const int backoff_ms[] = {3000, 5000, 10000, 20000, 30000};
@@ -633,16 +655,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
                                void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        if (wifi_monitor_capture_active) {
-            ESP_LOGI(TAG, "Skipping saved-network auto-connect while monitor mode is active");
-            return;
-        }
-
-        const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
-        if (saved_ssid && strlen(saved_ssid) > 0) {
-            glog("Attempting connection to saved network: %s\n", saved_ssid);
-            esp_wifi_connect();
-        }
+        ESP_LOGD(TAG, "STA started; saved-network connect is explicit/reconnect-only");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
         
@@ -665,10 +678,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         }
         
         // Clean, single-line disconnect logging
-        if (wifi_monitor_capture_active) {
-            glog("WiFi disconnected for monitor mode\n");
+        const char *reason = NULL;
+        if (wifi_reconnect_blocked(&reason)) {
+            glog("WiFi disconnected while %s\n", reason ? reason : "busy");
             manual_disconnect = false;
-            wifi_reconnect_reset();
+            if (wifi_reconnect_count == 0) {
+                wifi_reconnect_count = 1;
+            }
+            wifi_reconnect_schedule();
         } else if (manual_disconnect) {
             glog("WiFi disconnected manually\n");
             status_display_show_status("WiFi Disconnected");
@@ -2134,7 +2151,7 @@ void wifi_manager_stop_scan() {
             selected_ap_count = 0;
         }
 
-        scanned_aps = calloc(initial_ap_count, sizeof(wifi_ap_record_t));
+        scanned_aps = spiram_calloc(initial_ap_count, sizeof(wifi_ap_record_t));
         if (scanned_aps == NULL) {
             printf("Failed to allocate memory for AP info\n");
             ap_count = 0;
@@ -2183,7 +2200,7 @@ void wifi_manager_select_ap(int index) {
         int scan_count = 0;
         ap_scan_get_selected(&scan_aps, &scan_count);
         if (scan_count > 0 && scan_aps != NULL) {
-            selected_aps = malloc((size_t)scan_count * sizeof(wifi_ap_record_t));
+            selected_aps = spiram_malloc((size_t)scan_count * sizeof(wifi_ap_record_t));
             if (selected_aps != NULL) {
                 memcpy(selected_aps, scan_aps, (size_t)scan_count * sizeof(wifi_ap_record_t));
                 selected_ap_count = scan_count;
@@ -2228,7 +2245,7 @@ void wifi_manager_select_multiple_aps(int *indices, int count) {
         selected_aps = NULL;
     }
 
-    selected_aps = malloc(count * sizeof(wifi_ap_record_t));
+    selected_aps = spiram_malloc((size_t)count * sizeof(wifi_ap_record_t));
     if (selected_aps == NULL) {
         printf("Failed to allocate memory for selected APs\n");
         TERMINAL_VIEW_ADD_TEXT("Failed to allocate memory for selected APs\n");

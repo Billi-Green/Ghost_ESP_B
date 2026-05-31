@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TOAST_QUEUE_SIZE   4
+#define TOAST_QUEUE_SIZE   1
 #define TOAST_SLIDE_IN_MS  250
 #define TOAST_SLIDE_OUT_MS 200
 #define TOAST_MIN_HEIGHT   32
@@ -61,8 +61,14 @@ static const char *toast_icon_for_type(uint8_t type) {
 static bool q_empty(void) { return s_count == 0; }
 static bool q_full(void) { return s_count >= TOAST_QUEUE_SIZE; }
 
+static void q_clear(void) {
+    s_head = 0;
+    s_tail = 0;
+    s_count = 0;
+}
+
 static bool q_push(const char *text, uint8_t type, uint16_t dur) {
-    if (q_full()) return false;
+    if (q_full()) q_clear();
     toast_slot_t *s = &s_queue[s_tail];
     strncpy(s->text, text ? text : "", TOAST_MAX_TEXT_LEN);
     s->text[TOAST_MAX_TEXT_LEN] = '\0';
@@ -92,7 +98,9 @@ static void toast_set_y_anim_cb(void *obj, int32_t v) {
 static void toast_ensure_objects(void) {
     if (s_container) return;
 
+    if (!display_manager_is_available()) return;
     lv_obj_t *parent = lv_layer_top();
+    if (!parent) return;
 
     s_container = lv_obj_create(parent);
     lv_obj_remove_style_all(s_container);
@@ -180,6 +188,7 @@ static void toast_present_next(void) {
     if (!q_pop(&slot)) return;
 
     toast_ensure_objects();
+    if (!s_container) return;
     s_showing = true;
     s_current_duration_ms = slot.duration_ms;
 

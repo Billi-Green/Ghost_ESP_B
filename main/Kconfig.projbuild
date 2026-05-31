@@ -1238,7 +1238,39 @@ menu "Ghost ESP Options"
             Select the I2C controller port used for the accelerometer.
 
     endmenu
-    
+
+    menu "Native SD Apps"
+
+    config ENABLE_NATIVE_SD_APPS
+        bool "Enable native apps loaded from SD"
+        default y
+        depends on IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32C61 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32C5
+        select ELF_LOADER
+        select ELF_DYNAMIC_LOAD_SHARED_OBJECT
+        help
+            Enable Flipper-style native apps loaded from /mnt/ghostesp/apps.
+            Apps are trusted native code loaded with Espressif's ELF loader.
+
+    config NATIVE_SD_APPS_REQUIRE_TARGET_MATCH
+        bool "Require native app target match"
+        default y
+        depends on ENABLE_NATIVE_SD_APPS
+        help
+            Reject apps built for a different ESP chip target.
+
+    config NATIVE_SD_APP_MAX_COUNT
+        int "Maximum number of SD apps to scan"
+        default 4 if !SPIRAM
+        default 32
+        range 1 32
+        depends on ENABLE_NATIVE_SD_APPS
+        help
+            Maximum number of native SD apps that can be registered.
+            Lower values save RAM on devices without PSRAM.
+            Default is 8 for no-PSRAM builds, 32 for PSRAM builds.
+
+    endmenu
+
     menu "SPI and MMC Configuration"
     
     config USING_SPI

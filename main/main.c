@@ -4,6 +4,7 @@
 #include "core/serial_manager.h"
 #include "core/system_manager.h"
 #include "core/ghostesp_version.h"
+#include "core/memory_debug.h"
 #include "managers/ap_manager.h"
 #include "managers/display_manager.h"
 #include "managers/rgb_manager.h"
@@ -16,6 +17,7 @@
 #include "vendor/drivers/pcf8563.h"
 #include <sys/time.h>
 #include <time.h>
+#include <stdlib.h>
 #ifndef CONFIG_IDF_TARGET_ESP32S2
 #include "managers/ble_manager.h"
 #endif
@@ -83,6 +85,8 @@ RGBManager_t rgb_manager;  // Global instance for entire project
 
 int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) { return 0; }
 static const char *TAG = "Main.c";
+
+
 
 static void print_boot_banner(void) {
     static const char *const banners[] = {
@@ -348,6 +352,8 @@ static void deferred_sd_init_task(void *arg) {
 }
 
 void app_main(void) {
+    memory_debug_start_boot_trace();
+
     // Reduce NimBLE log verbosity (keep warnings/errors only)
     esp_log_level_set("NimBLE", ESP_LOG_WARN);
 
@@ -590,8 +596,11 @@ void app_main(void) {
     // Deferred SD card init: run in a background task so the shared-SPI
     // suspend/resume does not freeze the splash-screen animation.  The task
     // sleeps long enough for the splash transition (900 ms hold + margin).
-    xTaskCreate(deferred_sd_init_task, "SD Init", 6144, NULL,
-                tskIDLE_PRIORITY + 1, NULL);
+    BaseType_t sd_task_rc = xTaskCreate(deferred_sd_init_task, "SD Init", 6144, NULL,
+                                        tskIDLE_PRIORITY + 1, NULL);
+    if (sd_task_rc != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create SD Init task");
+    }
 
     // Initialize RGB Manager based on persisted settings or compile-time defaults
     {

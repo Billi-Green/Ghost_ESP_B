@@ -4,6 +4,11 @@
 
  - Added PIN lock screen with lock on wake and auto-lock settings
  - Added WiFi Airspace Monitor with realtime packet/threat insights, fast channel hopping, and suspect device cards
+ - Added native SD apps using ESP-IDF shared objects loaded from SD via Espressif's ELF loader, with manifest validation, permissions, target checks, scoped storage, and launch-failure quarantine
+ - Added App Gallery support for discovering and launching SD apps, including `.gapp` package extraction/cache, app icons, accent colors, async reload, and quarantined app handling
+ - Added `apps` CLI for listing, reloading, inspecting, launching, stopping, and resetting native SD apps
+ - Added Ghost Build Tool (`gbt`) plus app templates and package schema for scaffolding, building, packaging `.gapp` archives, firmware builds/flashing, and serial monitoring
+ - Added native app SDK/docs and example apps for Device Inspector and ESP32 Finder
  - Changed lockscreen unlock behavior to return to the view that was active before auto-lock or wake-lock
  - Reduced status bar title font size to body font for a cleaner compact look
  - Added toast notification system

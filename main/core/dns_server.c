@@ -394,7 +394,10 @@ static bool sd_blocklist_check(FILE *fp, long file_size, const char *domain) {
 }
 
 static bool load_blocklist_sd_bloom(dns_server_handle_t h, FILE *f) {
-    h->bloom = heap_caps_malloc(SINKHOLE_SD_BLOOM_BYTES, MALLOC_CAP_8BIT);
+    h->bloom = heap_caps_malloc(SINKHOLE_SD_BLOOM_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!h->bloom) {
+        h->bloom = heap_caps_malloc(SINKHOLE_SD_BLOOM_BYTES, MALLOC_CAP_8BIT);
+    }
     if (!h->bloom) return false;
 
     memset(h->bloom, 0, SINKHOLE_SD_BLOOM_BYTES);
@@ -1202,7 +1205,12 @@ dns_server_handle_t start_dns_sinkhole(dns_sinkhole_config_t *config) {
 
     h->cache = heap_caps_calloc(SINKHOLE_CACHE_SIZE,
                                 sizeof(struct sinkhole_cache_entry),
-                                MALLOC_CAP_8BIT);
+                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!h->cache) {
+        h->cache = heap_caps_calloc(SINKHOLE_CACHE_SIZE,
+                                    sizeof(struct sinkhole_cache_entry),
+                                    MALLOC_CAP_8BIT);
+    }
     if (!h->cache) {
         ESP_LOGW(TAG, "Sinkhole cache allocation failed");
     }
