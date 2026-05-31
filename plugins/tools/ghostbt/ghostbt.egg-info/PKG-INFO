@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: ghostbt
-Version: 0.1.0
+Version: 0.1.1
 Summary: Ghost Build Tool - build and package GhostESP native SD apps
 License-Expression: GPL-3.0
 Project-URL: Homepage, https://github.com/GhostESP-Revival/GhostESP

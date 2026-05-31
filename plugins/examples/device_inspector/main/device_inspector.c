@@ -32,9 +32,16 @@ static ghostesp_popup_t popup;
 static ghostesp_scan_t scan_status;
 static ghostesp_ui_timer_t rgb_timer;
 static ghostesp_ui_timer_t canvas_timer;
+static ghostesp_ui_obj_t touch_bar;
+static ghostesp_ui_obj_t scroll_up_btn;
+static ghostesp_ui_obj_t scroll_down_btn;
+static ghostesp_ui_obj_t back_btn;
 static int rgb_step;
 static ghostesp_ui_obj_t canvas_obj;
 static int canvas_tick;
+static int touch_start_x;
+static int touch_start_y;
+static bool touch_started;
 static char storage_path[256] = "/mnt/ghostesp";
 static ghostesp_storage_entry_t storage_entries[32];
 static int storage_count;
@@ -46,6 +53,11 @@ static void show_menu(void);
 static void open_page(page_id_t page);
 static void open_storage(void);
 static void open_ble(void);
+static void storage_go_parent(void);
+static void rgb_stop(void *user);
+static void canvas_stop(void *user);
+
+#define TOUCH_SWIPE_THRESHOLD 24
 
 #define ARRAY_COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
@@ -69,6 +81,54 @@ static const menu_page_t s_menu_pages[] = {
     { "Unsafe Probe", PAGE_UNSAFE },
 };
 
+static void navigate_up(void);
+static void navigate_down(void);
+static void navigate_back(void);
+
+static void touch_up_clicked(void *user) {
+    (void)user;
+    navigate_up();
+}
+
+static void touch_down_clicked(void *user) {
+    (void)user;
+    navigate_down();
+}
+
+static void touch_back_clicked(void *user) {
+    (void)user;
+    navigate_back();
+}
+
+static void destroy_touch_controls(void) {
+    if (touch_bar && api->ui_obj_delete) api->ui_obj_delete(touch_bar);
+    touch_bar = NULL;
+    scroll_up_btn = NULL;
+    scroll_down_btn = NULL;
+    back_btn = NULL;
+}
+
+static bool has_touchscreen(void) {
+    return api->ui_has_touchscreen ? api->ui_has_touchscreen() : api->ui_touch_bar_create != NULL;
+}
+
+static void create_touch_controls(bool show_scroll) {
+    destroy_touch_controls();
+    if (!has_touchscreen()) return;
+    if (!api->ui_touch_bar_create) return;
+
+    touch_bar = api->ui_touch_bar_create(NULL);
+    if (!touch_bar) return;
+    if (api->ui_touch_bar_add_up) scroll_up_btn = api->ui_touch_bar_add_up(touch_bar, touch_up_clicked, NULL);
+    if (api->ui_touch_bar_add_back) back_btn = api->ui_touch_bar_add_back(touch_bar, touch_back_clicked, NULL);
+    if (api->ui_touch_bar_add_down) scroll_down_btn = api->ui_touch_bar_add_down(touch_bar, touch_down_clicked, NULL);
+    if (back_btn && api->ui_button_set_selected) api->ui_button_set_selected(back_btn, true);
+    if (api->ui_obj_set_visible) {
+        if (scroll_up_btn) api->ui_obj_set_visible(scroll_up_btn, show_scroll);
+        if (scroll_down_btn) api->ui_obj_set_visible(scroll_down_btn, show_scroll);
+    }
+}
+
 static void detail_back(void *user) {
     (void)user;
     if (detail_view && api->ui_detail_destroy) {
@@ -88,6 +148,7 @@ static void storage_detail_back(void *user) {
 }
 
 static void destroy_subviews(void) {
+    destroy_touch_controls();
     if (detail_view && api->ui_detail_destroy) {
         api->ui_detail_destroy(detail_view);
         detail_view = NULL;
@@ -170,6 +231,7 @@ static void show_menu(void) {
         api->ui_options_add_item(main_menu, s_menu_pages[i].label, menu_select, (void *)(intptr_t)i);
     }
     api->ui_options_add_back(main_menu, exit_app, NULL);
+    create_touch_controls(true);
 }
 
 static void open_system(void) {
@@ -219,8 +281,8 @@ static void open_system(void) {
     snprintf(buf, sizeof(buf), "%u", (unsigned)theme);
     api->ui_detail_add_info(detail_view, "Theme", buf);
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void wifi_scan_done(void *user) {
@@ -249,8 +311,8 @@ static void wifi_scan_done(void *user) {
         api->ui_detail_add_info(detail_view, "", buf);
     }
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void open_wifi(void) {
@@ -306,10 +368,15 @@ static void ble_select(void *user) {
     api->ui_detail_add_info(detail_view, "RSSI", buf);
     api->ui_detail_add_info(detail_view, "Tracking", dev->tracking ? "YES" : "NO");
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_action(detail_view, "Track Signal", ble_track_selected, NULL);
     if (dev->type == 1) api->ui_detail_add_action(detail_view, "Spoof AirTag", ble_spoof_selected, NULL);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
+}
+
+static void ble_back(void *user) {
+    (void)user;
+    show_menu();
 }
 
 static void ble_activate_selected(void) {
@@ -357,7 +424,8 @@ static void open_ble(void) {
         ble_count++;
     }
     if (ble_count == 0) api->ui_options_add_item(ble_menu, "No Flipper/AirTag/Skimmer devices", NULL, NULL);
-    api->ui_options_add_back(ble_menu, NULL, NULL);
+    api->ui_options_add_back(ble_menu, ble_back, NULL);
+    create_touch_controls(true);
 }
 
 static void rgb_timer_cb(void *user) {
@@ -407,9 +475,9 @@ static void open_rgb(void) {
         api->ui_detail_add_info(detail_view, "", hex);
     }
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_action(detail_view, "Stop Test", rgb_stop, NULL);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 
     if (api->ui_timer_create) {
         rgb_timer = api->ui_timer_create(rgb_timer_cb, 500, NULL);
@@ -432,6 +500,11 @@ static void storage_go_parent(void) {
         *slash = '\0';
     }
     open_storage();
+}
+
+static void storage_back(void *user) {
+    (void)user;
+    storage_go_parent();
 }
 
 static void storage_open_file(int idx) {
@@ -460,8 +533,8 @@ static void storage_open_file(int idx) {
         }
     }
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, storage_detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void storage_select(void *user) {
@@ -494,7 +567,7 @@ static void storage_activate_selected(void) {
     } else if (selected >= entry_start && selected < entry_start + storage_count) {
         storage_select((void *)(intptr_t)(selected - entry_start + 1));
     } else {
-        show_menu();
+        storage_go_parent();
     }
 }
 
@@ -519,11 +592,12 @@ static void open_storage(void) {
     } else {
         for (int i = 0; i < storage_count; i++) {
             char label[96];
-            snprintf(label, sizeof(label), "%s %s", storage_entries[i].is_directory ? "[D]" : "[F]", storage_entries[i].name);
+            snprintf(label, sizeof(label), "%s %.88s", storage_entries[i].is_directory ? "[D]" : "[F]", storage_entries[i].name);
             api->ui_options_add_item(storage_menu, label, storage_select, (void *)(intptr_t)(i + 1));
         }
     }
-    api->ui_options_add_back(storage_menu, NULL, NULL);
+    api->ui_options_add_back(storage_menu, storage_back, NULL);
+    create_touch_controls(true);
 }
 
 static void open_storage_test(void) {
@@ -565,8 +639,8 @@ static void open_storage_test(void) {
     bool gone = api->app_storage_exists && !api->app_storage_exists(path);
     api->ui_detail_add_info(detail_view, "7. Gone", gone ? "YES" : "NO - still there!");
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void open_gps(void) {
@@ -604,8 +678,8 @@ static void open_gps(void) {
         api->ui_detail_add_info(detail_view, "", "No GPS hardware detected");
     }
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void open_hardware(void) {
@@ -642,8 +716,8 @@ static void open_hardware(void) {
     snprintf(buf, sizeof(buf), "%lu bytes free", (unsigned long)(api->system_free_internal_heap ? api->system_free_internal_heap() : 0));
     api->ui_detail_add_info(detail_view, "Internal", buf);
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void canvas_tick_cb(void *user) {
@@ -722,9 +796,9 @@ static void open_canvas(void) {
         }
     }
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_action(detail_view, "Stop", canvas_stop, NULL);
     api->ui_detail_add_back(detail_view, canvas_stop, NULL);
+    create_touch_controls(true);
 
     if (canvas_obj && api->ui_timer_create) {
         canvas_timer = api->ui_timer_create(canvas_tick_cb, 50, NULL);
@@ -739,8 +813,8 @@ static void open_input(void) {
 
     detail_add_summary("Press any button to see events");
     api->ui_detail_add_info(detail_view, "", "Waiting for input...");
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void open_theme(void) {
@@ -770,8 +844,8 @@ static void open_theme(void) {
         api->ui_detail_add_info(detail_view, "Mode", api->ui_theme_is_bright() ? "Bright" : "Dark");
     }
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
 }
 
 static void open_unsafe(void) {
@@ -795,8 +869,109 @@ static void open_unsafe(void) {
     snprintf(buf, sizeof(buf), "%p", sym);
     api->ui_detail_add_info(detail_view, "raw_symbol test", buf);
 
-    api->ui_detail_add_divider(detail_view);
     api->ui_detail_add_back(detail_view, detail_back, NULL);
+    create_touch_controls(true);
+}
+
+static void navigate_up(void) {
+    if (current_page == PAGE_MENU && main_menu) {
+        if (api->ui_options_move_selection) api->ui_options_move_selection(main_menu, -1);
+        return;
+    }
+    if (current_page == PAGE_STORAGE && storage_menu) {
+        if (api->ui_options_move_selection) api->ui_options_move_selection(storage_menu, -1);
+        return;
+    }
+    if (current_page == PAGE_BLE && ble_menu) {
+        if (api->ui_options_move_selection) api->ui_options_move_selection(ble_menu, -1);
+        return;
+    }
+    if (detail_view) {
+        if (api->ui_detail_step_up) api->ui_detail_step_up(detail_view);
+        else if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, -1);
+    }
+}
+
+static void navigate_down(void) {
+    if (current_page == PAGE_MENU && main_menu) {
+        if (api->ui_options_move_selection) api->ui_options_move_selection(main_menu, 1);
+        return;
+    }
+    if (current_page == PAGE_STORAGE && storage_menu) {
+        if (api->ui_options_move_selection) api->ui_options_move_selection(storage_menu, 1);
+        return;
+    }
+    if (current_page == PAGE_BLE && ble_menu) {
+        if (api->ui_options_move_selection) api->ui_options_move_selection(ble_menu, 1);
+        return;
+    }
+    if (detail_view) {
+        if (api->ui_detail_step_down) api->ui_detail_step_down(detail_view);
+        else if (api->ui_detail_move_selection) api->ui_detail_move_selection(detail_view, 1);
+    }
+}
+
+static void navigate_back(void) {
+    if (popup) {
+        popup_close(NULL);
+        return;
+    }
+    if (current_page == PAGE_MENU) {
+        exit_app(NULL);
+        return;
+    }
+    if (current_page == PAGE_RGB && detail_view) {
+        rgb_stop(NULL);
+        return;
+    }
+    if (current_page == PAGE_CANVAS && detail_view) {
+        canvas_stop(NULL);
+        return;
+    }
+    if (current_page == PAGE_STORAGE) {
+        if (detail_view) storage_detail_back(NULL);
+        else storage_go_parent();
+        return;
+    }
+    if (current_page == PAGE_BLE) {
+        if (detail_view) detail_back(NULL);
+        else show_menu();
+        return;
+    }
+    if (detail_view) {
+        detail_back(NULL);
+        return;
+    }
+    show_menu();
+}
+
+static bool handle_touch_navigation(const ghostesp_input_event_t *event) {
+    if (!event || event->type != GHOSTESP_INPUT_TOUCH) return false;
+
+    if (event->pressed) {
+        touch_started = true;
+        touch_start_x = event->x;
+        touch_start_y = event->y;
+        return true;
+    }
+    if (!touch_started) return true;
+
+    touch_started = false;
+    int dx = event->x - touch_start_x;
+    int dy = event->y - touch_start_y;
+    int abs_dx = dx < 0 ? -dx : dx;
+    int abs_dy = dy < 0 ? -dy : dy;
+
+    if (abs_dy >= TOUCH_SWIPE_THRESHOLD && abs_dy >= abs_dx) {
+        if (dy < 0) navigate_down();
+        else navigate_up();
+        return true;
+    }
+    if (abs_dx >= TOUCH_SWIPE_THRESHOLD && abs_dx > abs_dy && dx > 0) {
+        navigate_back();
+        return true;
+    }
+    return true;
 }
 
 static void open_page(page_id_t page) {
@@ -804,6 +979,7 @@ static void open_page(page_id_t page) {
         api->ui_options_destroy(main_menu);
         main_menu = NULL;
     }
+    destroy_touch_controls();
     switch (page) {
         case PAGE_SYSTEM: open_system(); break;
         case PAGE_WIFI: open_wifi(); break;
@@ -823,6 +999,7 @@ static void open_page(page_id_t page) {
 
 static void inspector_start(void) {
     api->log("device_inspector started");
+    touch_started = false;
     show_menu();
 }
 
@@ -848,6 +1025,7 @@ static void inspector_stop(void) {
         api->ui_scan_status_close(scan_status);
         scan_status = NULL;
     }
+    touch_started = false;
     api->log("device_inspector stopped");
 }
 
@@ -882,7 +1060,6 @@ static void inspector_input(const ghostesp_input_event_t *event) {
 
         api->ui_detail_add_info(detail_view, "Pressed", event->pressed ? "YES" : "NO");
 
-        api->ui_detail_add_divider(detail_view);
         api->ui_detail_add_back(detail_view, detail_back, NULL);
 
         if (event->type == GHOSTESP_INPUT_BACK) {
@@ -891,6 +1068,8 @@ static void inspector_input(const ghostesp_input_event_t *event) {
         }
         return;
     }
+
+    if (handle_touch_navigation(event)) return;
 
     if (current_page == PAGE_MENU && main_menu) {
         if (event->type == GHOSTESP_INPUT_LEFT || event->type == GHOSTESP_INPUT_UP) {
@@ -972,21 +1151,7 @@ static void inspector_input(const ghostesp_input_event_t *event) {
     }
 
     if (event->type == GHOSTESP_INPUT_BACK) {
-        if (rgb_timer && api->ui_timer_delete) {
-            api->ui_timer_delete(rgb_timer);
-            rgb_timer = NULL;
-        }
-        stop_canvas_timer();
-        if (api->rgb_set_all) api->rgb_set_all(0, 0, 0);
-        if (detail_view && api->ui_detail_destroy) {
-            api->ui_detail_destroy(detail_view);
-            detail_view = NULL;
-        }
-        if (scan_status && api->ui_scan_status_close) {
-            api->ui_scan_status_close(scan_status);
-            scan_status = NULL;
-        }
-        show_menu();
+        navigate_back();
     }
 }
 

@@ -7189,6 +7189,11 @@ void handle_chip_info_cmd(int argc, char **argv) {
         strcat(features_str, "Embedded PSRAM");
         first = false;
     }
+#ifdef CONFIG_USE_TOUCHSCREEN
+    if (!first) strcat(features_str, "/");
+    strcat(features_str, "Touchscreen");
+    first = false;
+#endif
     if (first) {
         strcat(features_str, "None");
     }

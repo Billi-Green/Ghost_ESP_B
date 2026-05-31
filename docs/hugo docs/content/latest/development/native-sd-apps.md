@@ -7,6 +7,8 @@ toc: true
 
 Native SD apps are ESP-IDF shared objects (`.so`) loaded from the SD card at runtime with Espressif's ELF loader. Apps get a stable API surface with access to the UI system, storage, WiFi, BLE, GPS, NFC, IR, SubGHz, BadUSB, RGB LEDs, and more.
 
+> **PSRAM required**: Native SD apps require a board with PSRAM. Boards without PSRAM (e.g. stock ESP32-S3 without octal PSRAM) cannot load or run native SD apps. The Apps menu will show a warning toast on no-PSRAM boards. The `requires_psram` per-app manifest field is checked separately for apps that need extra PSRAM beyond the baseline.
+
 Enable the system via `CONFIG_ENABLE_NATIVE_SD_APPS=y` in `menuconfig` (on by default for supported targets).
 
 ## Quick Start
@@ -87,7 +89,7 @@ Every app needs a `manifest.json` at its root. Required fields: `id`, `name`, `e
 | `permissions` | No | Array of permission strings (see below). |
 | `memory_limit` | No | Advisory limit in bytes for `app_malloc`/`app_calloc` tracked allocations. |
 | `stack_size` | No | Advisory stack size hint in bytes. |
-| `requires_psram` | No | If `true`, loader warns when PSRAM is absent. |
+| `requires_psram` | No | If `true`, loader additionally checks that PSRAM is available (all native SD apps already require PSRAM at a baseline). |
 | `icon` | No | Path relative to app folder (raw RGB565 binary). |
 | `icon_width` | No | Icon pixel width. |
 | `icon_height` | No | Icon pixel height. |

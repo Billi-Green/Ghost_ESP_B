@@ -25,6 +25,10 @@ macro(project_elf project_name)
                -Wl,--gc-sections
                -fvisibility=hidden)
 
+    if(CONFIG_IDF_TARGET_ARCH_XTENSA)
+        list(APPEND cflags -mno-text-section-literals)
+    endif()
+
     # Enable this options to remove unnecessary sections in
     list(APPEND cflags -Wl,--strip-all
                        -Wl,--strip-debug
@@ -105,6 +109,10 @@ macro(project_so project_name)
                              -fmerge-all-constants
                              -fno-ident
                              -DCONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT)
+
+        if(CONFIG_IDF_TARGET_ARCH_XTENSA)
+            list(APPEND so_compile_flags -mno-text-section-literals)
+        endif()
 
         # Link flags for producing a shared object from the collected .o files.
         # This setup favors size reduction (gc-sections, hidden visibility) and

@@ -48,6 +48,7 @@ bool plugin_api_internal_absolute_storage_allowed(const char *path);
 const char *plugin_api_internal_app_id(void);
 bool plugin_api_internal_run_sync(void (*fn)(void *ctx), void *ctx);
 lv_obj_t *plugin_api_internal_parent_or_current(ghostesp_ui_obj_t parent);
+void plugin_api_canvas_cleanup_timers(void);
 
 static inline lv_align_t ghostesp_align_to_lvgl(ghostesp_align_t a) {
     switch (a) {

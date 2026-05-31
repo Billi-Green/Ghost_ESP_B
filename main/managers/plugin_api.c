@@ -1,4 +1,5 @@
 #include "managers/plugin_api.h"
+#include "managers/plugin_api_internal.h"
 
 #include "core/serial_manager.h"
 #include "core/glog.h"
@@ -14,11 +15,14 @@
 #include "managers/subghz_remote_manager.h"
 #include "managers/views/app_gallery_screen.h"
 #include "managers/wifi_manager.h"
+#include "managers/ap_manager.h"
 #include "scans/ble/device_detect_scan.h"
+#include "scans/wifi/ap_scan.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
+#include "esp_wifi.h"
 #include "esp_app_desc.h"
 #include "esp_timer.h"
 #include "lvgl.h"
@@ -51,38 +55,94 @@ static size_t s_memory_used = 0;
 static bool s_api_active = false;
 static SemaphoreHandle_t s_api_mutex = NULL;
 
+static uint16_t plugin_ap_count = 0;
+static wifi_ap_record_t *plugin_scanned_aps = NULL;
+static volatile bool s_plugin_live_scan_active = false;
+
+static void plugin_wifi_snapshot_scan_results(void) {
+    extern uint16_t ap_count;
+    extern wifi_ap_record_t *scanned_aps;
+    if (plugin_scanned_aps) {
+        free(plugin_scanned_aps);
+        plugin_scanned_aps = NULL;
+    }
+    plugin_ap_count = 0;
+    if (ap_count > 0 && scanned_aps) {
+        plugin_scanned_aps = heap_caps_malloc(ap_count * sizeof(wifi_ap_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!plugin_scanned_aps) {
+            plugin_scanned_aps = malloc(ap_count * sizeof(wifi_ap_record_t));
+        }
+        if (plugin_scanned_aps) {
+            memcpy(plugin_scanned_aps, scanned_aps, ap_count * sizeof(wifi_ap_record_t));
+            plugin_ap_count = ap_count;
+        }
+    }
+}
+
+static void plugin_wifi_clear_scan_results(void) {
+    if (plugin_scanned_aps) {
+        free(plugin_scanned_aps);
+        plugin_scanned_aps = NULL;
+    }
+    plugin_ap_count = 0;
+}
+
+static SemaphoreHandle_t s_scan_done_sem = NULL;
+
+static void plugin_scan_task(void *arg) {
+    wifi_manager_start_scan();
+    if (s_scan_done_sem) xSemaphoreGive(s_scan_done_sem);
+    vTaskDelete(NULL);
+}
+
+static SemaphoreHandle_t s_async_scan_sem = NULL;
+static bool s_async_scan_result = false;
+
+static void plugin_async_scan_start_task(void *arg) {
+    display_manager_suspend_lvgl_task();
+    esp_err_t err = ap_scan_start_async();
+    s_async_scan_result = (err == ESP_OK);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    display_manager_resume_lvgl_task();
+    if (s_async_scan_sem) xSemaphoreGive(s_async_scan_sem);
+    vTaskDelete(NULL);
+}
+
+static SemaphoreHandle_t s_async_finish_sem = NULL;
+
+static void plugin_async_scan_finish_task(void *arg) {
+    display_manager_suspend_lvgl_task();
+    ap_scan_finish_async();
+    plugin_wifi_snapshot_scan_results();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    display_manager_resume_lvgl_task();
+    if (s_async_finish_sem) xSemaphoreGive(s_async_finish_sem);
+    vTaskDelete(NULL);
+}
+
+static void plugin_wifi_run_scan(void) {
+    if (!s_scan_done_sem) s_scan_done_sem = xSemaphoreCreateBinary();
+    if (!s_scan_done_sem) {
+        wifi_manager_start_scan();
+        plugin_wifi_snapshot_scan_results();
+        return;
+    }
+    BaseType_t ok = xTaskCreate(plugin_scan_task, "plugin_scan", 8192, NULL, 4, NULL);
+    if (ok != pdPASS) {
+        wifi_manager_start_scan();
+        plugin_wifi_snapshot_scan_results();
+        return;
+    }
+    xSemaphoreTake(s_scan_done_sem, portMAX_DELAY);
+    plugin_wifi_snapshot_scan_results();
+}
+
 #define PLUGIN_ALLOC_MAGIC 0x47415050u
 
 typedef struct {
     uint32_t magic;
     size_t size;
 } plugin_alloc_header_t;
-
-typedef struct {
-    void (*fn)(void *ctx);
-    void *ctx;
-    SemaphoreHandle_t done;
-} plugin_ui_sync_call_t;
-
-typedef struct {
-    ghostesp_ui_button_cb_t cb;
-    void *user;
-} plugin_ui_button_ctx_t;
-
-typedef struct {
-    const char *title;
-    const char *text;
-    ghostesp_ui_button_cb_t cb;
-    void *user;
-    ghostesp_ui_obj_t parent;
-    ghostesp_ui_obj_t result;
-} plugin_ui_create_ctx_t;
-
-typedef struct {
-    ghostesp_ui_obj_t obj;
-    const char *text;
-    bool visible;
-} plugin_ui_obj_ctx_t;
 
 typedef struct {
     const char *title;
@@ -797,25 +857,31 @@ static const char *plugin_api_system_target(void) {
 
 static bool plugin_api_wifi_start_scan(void) {
     if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return false;
-    wifi_manager_start_scan();
+    plugin_wifi_run_scan();
     return true;
 }
 
 static bool plugin_api_wifi_stop_scan(void) {
     if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return false;
-    wifi_manager_stop_scan();
+    // wifi_manager_start_scan() is blocking and already collects results.
+    // Calling wifi_manager_stop_scan() here would attempt a second stop,
+    // find 0 APs (scan already consumed), and clobber ap_count to 0,
+    // destroying the snapshot taken after start_scan.
     return true;
 }
 
 static uint16_t plugin_api_wifi_ap_count(void) {
     if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return 0;
-    return ap_count;
+    if (s_plugin_live_scan_active) {
+        plugin_wifi_snapshot_scan_results();
+    }
+    return plugin_ap_count;
 }
 
 static bool plugin_api_wifi_scan_get_ap(uint16_t index, ghostesp_wifi_ap_info_t *out) {
     if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return false;
-    if (!out || index >= ap_count || !scanned_aps) return false;
-    wifi_ap_record_t *ap = &scanned_aps[index];
+    if (!out || index >= plugin_ap_count || !plugin_scanned_aps) return false;
+    wifi_ap_record_t *ap = &plugin_scanned_aps[index];
     memcpy(out->bssid, ap->bssid, 6);
     memcpy(out->ssid, ap->ssid, 32);
     out->ssid[32] = '\0';
@@ -823,6 +889,72 @@ static bool plugin_api_wifi_scan_get_ap(uint16_t index, ghostesp_wifi_ap_info_t 
     out->rssi = ap->rssi;
     out->auth_mode = (uint8_t)ap->authmode;
     return true;
+}
+
+static bool plugin_api_wifi_start_scan_async(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return false;
+    plugin_wifi_clear_scan_results();
+    if (!s_async_scan_sem) s_async_scan_sem = xSemaphoreCreateBinary();
+    if (!s_async_scan_sem) return false;
+    xSemaphoreTake(s_async_scan_sem, 0);
+    BaseType_t ok = xTaskCreate(plugin_async_scan_start_task, "async_scan", 8192, NULL, 5, NULL);
+    if (ok != pdPASS) return false;
+    xSemaphoreTake(s_async_scan_sem, portMAX_DELAY);
+    return s_async_scan_result;
+}
+
+static bool plugin_api_wifi_scan_check_done(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return true;
+    return ap_scan_check_done();
+}
+
+static void plugin_api_wifi_finish_scan(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return;
+    if (!s_async_finish_sem) s_async_finish_sem = xSemaphoreCreateBinary();
+    if (!s_async_finish_sem) {
+        ap_scan_finish_async();
+        plugin_wifi_snapshot_scan_results();
+        return;
+    }
+    xSemaphoreTake(s_async_finish_sem, 0);
+    BaseType_t ok = xTaskCreate(plugin_async_scan_finish_task, "async_finish", 8192, NULL, 5, NULL);
+    if (ok != pdPASS) {
+        ap_scan_finish_async();
+        plugin_wifi_snapshot_scan_results();
+        return;
+    }
+    xSemaphoreTake(s_async_finish_sem, portMAX_DELAY);
+}
+
+static uint16_t plugin_api_wifi_scan_quick(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return 0;
+    plugin_wifi_run_scan();
+    return plugin_ap_count;
+}
+
+static bool plugin_api_wifi_live_scan_start(void) {
+    if (!plugin_api_has_permission(PLUGIN_PERMISSION_WIFI)) return false;
+    if (s_plugin_live_scan_active) return true;
+    plugin_wifi_clear_scan_results();
+    wifi_manager_start_live_ap_scan();
+    s_plugin_live_scan_active = true;
+    return true;
+}
+
+static void plugin_api_wifi_live_scan_stop(void) {
+    if (!s_plugin_live_scan_active) return;
+    s_plugin_live_scan_active = false;
+    wifi_manager_stop_monitor_mode();
+    esp_err_t stop_err = esp_wifi_stop();
+    if (stop_err != ESP_OK) {
+        ESP_LOGW(TAG, "wifi stop after live scan: %s", esp_err_to_name(stop_err));
+    }
+    ap_manager_start_services();
+    plugin_wifi_snapshot_scan_results();
+}
+
+static bool plugin_api_wifi_live_scan_active(void) {
+    return s_plugin_live_scan_active;
 }
 
 static void plugin_api_app_exit(void) {
@@ -952,6 +1084,18 @@ extern void plugin_api_ui_obj_set_pad_row(ghostesp_ui_obj_t obj, int32_t pad);
 extern void plugin_api_ui_obj_set_pad_column(ghostesp_ui_obj_t obj, int32_t pad);
 extern int32_t plugin_api_ui_screen_get_width(void);
 extern int32_t plugin_api_ui_screen_get_height(void);
+extern ghostesp_ui_obj_t plugin_api_ui_touch_bar_create(ghostesp_ui_obj_t parent);
+extern ghostesp_ui_obj_t plugin_api_ui_touch_bar_add_back(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+extern ghostesp_ui_obj_t plugin_api_ui_touch_bar_add_up(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+extern ghostesp_ui_obj_t plugin_api_ui_touch_bar_add_down(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+extern void plugin_api_ui_obj_set_scrollable(ghostesp_ui_obj_t obj, bool scrollable);
+extern void plugin_api_ui_obj_scroll_by(ghostesp_ui_obj_t obj, int32_t dx, int32_t dy, bool animated);
+extern void plugin_api_ui_obj_set_scrollbar(ghostesp_ui_obj_t obj, bool enabled);
+extern void plugin_api_ui_button_set_selected(ghostesp_ui_obj_t button, bool selected);
+extern int32_t plugin_api_ui_screen_get_content_width(void);
+extern int32_t plugin_api_ui_screen_get_content_height(void);
+extern bool plugin_api_ui_screen_is_compact(void);
+extern bool plugin_api_ui_has_touchscreen(void);
 
 extern ghostesp_options_t plugin_api_ui_options_create(const char *title);
 extern ghostesp_ui_obj_t plugin_api_ui_options_add_item(ghostesp_options_t opts, const char *label, ghostesp_ui_button_cb_t on_click, void *user);
@@ -1187,6 +1331,9 @@ static ghostesp_api_t s_api = {
     .wifi_stop_scan = plugin_api_wifi_stop_scan,
     .wifi_ap_count = plugin_api_wifi_ap_count,
     .wifi_scan_get_ap = plugin_api_wifi_scan_get_ap,
+    .wifi_start_scan_async = plugin_api_wifi_start_scan_async,
+    .wifi_scan_check_done = plugin_api_wifi_scan_check_done,
+    .wifi_finish_scan = plugin_api_wifi_finish_scan,
     .rgb_set_all = plugin_api_rgb_set_all,
     .lv_scr_act = plugin_unsafe_lv_scr_act,
     .display_get_current_view = plugin_unsafe_display_get_current_view,
@@ -1460,6 +1607,21 @@ static ghostesp_api_t s_api = {
     .parser_ir_summary = plugin_api_parser_ir_summary,
     .parser_subghz_summary = plugin_api_parser_subghz_summary,
     .ui_detail_finish = plugin_api_ui_detail_finish,
+    .ui_touch_bar_create = plugin_api_ui_touch_bar_create,
+    .ui_touch_bar_add_back = plugin_api_ui_touch_bar_add_back,
+    .ui_touch_bar_add_up = plugin_api_ui_touch_bar_add_up,
+    .ui_touch_bar_add_down = plugin_api_ui_touch_bar_add_down,
+    .ui_obj_set_scrollable = plugin_api_ui_obj_set_scrollable,
+    .ui_obj_scroll_by = plugin_api_ui_obj_scroll_by,
+    .ui_obj_set_scrollbar = plugin_api_ui_obj_set_scrollbar,
+    .ui_button_set_selected = plugin_api_ui_button_set_selected,
+    .ui_screen_get_content_width = plugin_api_ui_screen_get_content_width,
+    .ui_screen_get_content_height = plugin_api_ui_screen_get_content_height,
+    .ui_screen_is_compact = plugin_api_ui_screen_is_compact,
+    .ui_has_touchscreen = plugin_api_ui_has_touchscreen,
+    .wifi_live_scan_start = plugin_api_wifi_live_scan_start,
+    .wifi_live_scan_stop = plugin_api_wifi_live_scan_stop,
+    .wifi_live_scan_active = plugin_api_wifi_live_scan_active,
 };
 
 const ghostesp_api_t *plugin_api_get(const char *app_id,
@@ -1525,4 +1687,5 @@ void plugin_api_release(void) {
     s_app_id[0] = '\0';
     s_app_data_path[0] = '\0';
     plugin_api_unlock();
+    plugin_api_canvas_cleanup_timers();
 }

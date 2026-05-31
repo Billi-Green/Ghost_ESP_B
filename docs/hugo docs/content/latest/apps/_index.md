@@ -9,4 +9,6 @@ aliases:
 
 GhostESP includes app-style views that are meant to run interactively from the on-device menu. This section covers setup and usage for those apps.
 
+> **Native SD apps require PSRAM.** Boards without PSRAM can still use built-in apps (Rave Mode, GhostCHI, etc.) but cannot load third-party `.so` apps from the SD card. The Apps menu will display a warning on no-PSRAM boards.
+
 For building your own native SD apps, see [Native SD Apps]({{< relref "../development/native-sd-apps" >}}) and [GBT]({{< relref "../development/gbt" >}}) in the Development section.

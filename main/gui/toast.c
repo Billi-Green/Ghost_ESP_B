@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TOAST_QUEUE_SIZE   4
+#define TOAST_QUEUE_SIZE   1
 #define TOAST_SLIDE_IN_MS  250
 #define TOAST_SLIDE_OUT_MS 200
 #define TOAST_MIN_HEIGHT   32
@@ -61,8 +61,14 @@ static const char *toast_icon_for_type(uint8_t type) {
 static bool q_empty(void) { return s_count == 0; }
 static bool q_full(void) { return s_count >= TOAST_QUEUE_SIZE; }
 
+static void q_clear(void) {
+    s_head = 0;
+    s_tail = 0;
+    s_count = 0;
+}
+
 static bool q_push(const char *text, uint8_t type, uint16_t dur) {
-    if (q_full()) return false;
+    if (q_full()) q_clear();
     toast_slot_t *s = &s_queue[s_tail];
     strncpy(s->text, text ? text : "", TOAST_MAX_TEXT_LEN);
     s->text[TOAST_MAX_TEXT_LEN] = '\0';

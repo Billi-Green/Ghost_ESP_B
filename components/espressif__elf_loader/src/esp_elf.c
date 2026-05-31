@@ -243,7 +243,8 @@ static int esp_elf_load_section(esp_elf_t *elf, const uint8_t *pbuf)
     uint32_t entry;
     uint32_t size;
     uint32_t exec_size;
-    uint32_t text_file_size = 0;
+    uint32_t text_alloc_size = 0;
+    uint32_t plt_alloc_size = 0;
 
     const elf32_hdr_t *ehdr = (const elf32_hdr_t *)pbuf;
     const elf32_shdr_t *shdr = (const elf32_shdr_t *)(pbuf + ehdr->shoff);
@@ -260,9 +261,9 @@ static int esp_elf_load_section(esp_elf_t *elf, const uint8_t *pbuf)
                          shdr[i].addr, shdr[i].size, shdr[i].offset);
 
                 elf->sec[ELF_SEC_TEXT].v_addr  = shdr[i].addr;
-                text_file_size                 = shdr[i].size;
-                elf->sec[ELF_SEC_TEXT].size    = ELF_ALIGN(shdr[i].size, 4);
+                elf->sec[ELF_SEC_TEXT].size    = shdr[i].size;
                 elf->sec[ELF_SEC_TEXT].offset  = shdr[i].offset;
+                text_alloc_size                = ELF_ALIGN(shdr[i].size, 4);
 
                 ESP_LOGD(TAG, ".text   offset is 0x%lx size is 0x%x",
                          elf->sec[ELF_SEC_TEXT].offset,
@@ -272,8 +273,9 @@ static int esp_elf_load_section(esp_elf_t *elf, const uint8_t *pbuf)
                          shdr[i].addr, shdr[i].size, shdr[i].offset);
 
                 elf->sec[ELF_SEC_PLT].v_addr  = shdr[i].addr;
-                elf->sec[ELF_SEC_PLT].size    = ELF_ALIGN(shdr[i].size, 4);
+                elf->sec[ELF_SEC_PLT].size    = shdr[i].size;
                 elf->sec[ELF_SEC_PLT].offset  = shdr[i].offset;
+                plt_alloc_size                = ELF_ALIGN(shdr[i].size, 4);
             } else if (sflags(&shdr[i], SHF_WRITE) && !strcmp(ELF_DATA, name)) {
                 ESP_LOGD(TAG, ".data   sec addr=0x%08x size=0x%08x offset=0x%08x",
                          shdr[i].addr, shdr[i].size, shdr[i].offset);
@@ -344,7 +346,7 @@ static int esp_elf_load_section(esp_elf_t *elf, const uint8_t *pbuf)
         return -EINVAL;
     }
 
-    exec_size = elf->sec[ELF_SEC_PLT].size + elf->sec[ELF_SEC_TEXT].size;
+    exec_size = plt_alloc_size + text_alloc_size;
     elf->ptext = esp_elf_malloc(exec_size, true);
     if (!elf->ptext) {
         ESP_LOGE(TAG, "Failed to malloc %"PRIu32" bytes for executable sections", exec_size);
@@ -384,14 +386,14 @@ static int esp_elf_load_section(esp_elf_t *elf, const uint8_t *pbuf)
 #else
         memcpy(ptext, pbuf + elf->sec[ELF_SEC_PLT].offset, elf->sec[ELF_SEC_PLT].size);
 #endif
-        ptext += elf->sec[ELF_SEC_PLT].size;
+        ptext += plt_alloc_size;
     }
 
     elf->sec[ELF_SEC_TEXT].addr = (Elf32_Addr)ptext;
 #if CONFIG_IDF_TARGET_ESP32C5
     esp_elf_write_exec_region(elf->ptext, ptext - elf->ptext,
                               pbuf + elf->sec[ELF_SEC_TEXT].offset,
-                              text_file_size);
+                              elf->sec[ELF_SEC_TEXT].size);
 #else
     memcpy(ptext, pbuf + elf->sec[ELF_SEC_TEXT].offset, elf->sec[ELF_SEC_TEXT].size);
 #endif

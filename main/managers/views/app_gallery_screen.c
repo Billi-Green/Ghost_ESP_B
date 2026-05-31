@@ -12,6 +12,7 @@
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
 #include "gui/design_tokens.h"
+#include "gui/toast.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -104,12 +105,15 @@ static bool apps_plugin_reload_in_progress = false;
 static StackType_t *apps_plugin_reload_stack = NULL;
 static StaticTask_t *apps_plugin_reload_tcb = NULL;
 
-#define PLUGIN_RELOAD_STACK_BYTES 16384
+#define PLUGIN_RELOAD_STACK_BYTES 32768
 
 static bool ensure_app_items(void) {
     if (app_items) return true;
+#if CONFIG_SPIRAM
     app_items = heap_caps_calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!app_items) {
+    if (!app_items)
+#endif
+    {
         app_items = calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items));
     }
     if (!app_items) {
@@ -183,17 +187,25 @@ static void plugin_reload_task_fn(void *arg) {
 }
 
 static void start_plugin_reload_async(void) {
-    if (apps_plugin_reload_in_progress) return;
+    if (apps_plugin_reload_in_progress) {
+        toast_show_duration("Still scanning SD apps...", TOAST_INFO, 900);
+        return;
+    }
     apps_plugin_reload_in_progress = true;
+    toast_show_duration("Scanning SD apps...", TOAST_INFO, 1200);
     if (!apps_plugin_reload_stack) {
+#if CONFIG_SPIRAM
         apps_plugin_reload_stack = heap_caps_malloc(PLUGIN_RELOAD_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!apps_plugin_reload_stack) {
+        if (!apps_plugin_reload_stack)
+#endif
+        {
             apps_plugin_reload_stack = heap_caps_malloc(PLUGIN_RELOAD_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         }
     }
     if (!apps_plugin_reload_stack) {
         apps_plugin_reload_in_progress = false;
         ESP_LOGE(TAG, "Failed to allocate plugin reload task stack");
+        toast_show_duration("App scan failed: no task memory", TOAST_ERROR, 2200);
         return;
     }
     if (!apps_plugin_reload_tcb) {
@@ -202,12 +214,14 @@ static void start_plugin_reload_async(void) {
     if (!apps_plugin_reload_tcb) {
         apps_plugin_reload_in_progress = false;
         ESP_LOGE(TAG, "Failed to allocate plugin reload TCB");
+        toast_show_duration("App scan failed: no task memory", TOAST_ERROR, 2200);
         return;
     }
     if (xTaskCreateStatic(plugin_reload_task_fn, "plugin_reload", PLUGIN_RELOAD_STACK_BYTES, NULL, 5,
                           apps_plugin_reload_stack, apps_plugin_reload_tcb) == NULL) {
         apps_plugin_reload_in_progress = false;
         ESP_LOGE(TAG, "Failed to create plugin reload task");
+        toast_show_duration("App scan failed: task start", TOAST_ERROR, 2200);
     }
 }
 
@@ -688,6 +702,17 @@ static void apps_plugin_reload_done(void *arg) {
     init_app_colors();
     if (selected_back) selected_app_index = num_apps > 0 ? num_apps - 1 : 0;
     render_app_items();
+
+    int plugin_count = plugin_manager_count();
+    if (plugin_count > 0) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "%d SD app%s ready", plugin_count, plugin_count == 1 ? "" : "s");
+        toast_show_duration(msg, TOAST_SUCCESS, 1000);
+    } else if (plugin_manager_last_error()[0] != '\0') {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "App scan failed: %.45s", plugin_manager_last_error());
+        toast_show_duration(msg, TOAST_WARN, 2200);
+    }
 }
 
 /**
@@ -698,6 +723,12 @@ static void apps_plugin_reload_done(void *arg) {
     rebuild_app_items(plugin_manager_count() > 0);
     refresh_apps_surface_colors();
     display_manager_fill_screen(apps_bg_color);
+
+#if CONFIG_ENABLE_NATIVE_SD_APPS
+    if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) == 0) {
+        toast_show_duration("Native SD apps require PSRAM", TOAST_WARN, 3500);
+    }
+#endif
 
     const char *title = (LV_VER_RES > 320 ? "Apps Menu" : "Apps");
 
@@ -900,10 +931,14 @@ static void handle_app_item_selection(int item_index) {
 
     if (app_items[item_index].disabled) {
         ESP_LOGW(TAG, "App %s is quarantined and will not launch", app_items[item_index].name);
+        toast_show_duration("App disabled after launch failures", TOAST_WARN, 2200);
         return;
     }
 
     if (app_items[item_index].plugin_id[0] != '\0') {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Opening %.52s...", app_items[item_index].name);
+        toast_show_duration(msg, TOAST_INFO, 1200);
         plugin_runner_set_app(app_items[item_index].plugin_id);
         display_manager_switch_view(&plugin_runner_view);
         return;

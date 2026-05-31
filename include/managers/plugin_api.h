@@ -190,6 +190,9 @@ typedef struct ghostesp_api {
     bool (*wifi_stop_scan)(void);
     uint16_t (*wifi_ap_count)(void);
     bool (*wifi_scan_get_ap)(uint16_t index, ghostesp_wifi_ap_info_t *out);
+    bool (*wifi_start_scan_async)(void);
+    bool (*wifi_scan_check_done)(void);
+    void (*wifi_finish_scan)(void);
 
     bool (*rgb_set_all)(uint8_t red, uint8_t green, uint8_t blue);
 
@@ -520,6 +523,22 @@ typedef struct ghostesp_api {
     bool (*parser_ir_summary)(const char *app_relative_path, char *out, size_t out_len);
     bool (*parser_subghz_summary)(const char *app_relative_path, char *out, size_t out_len);
     ghostesp_ui_obj_t (*ui_detail_finish)(ghostesp_detail_t dv, ghostesp_ui_button_cb_t on_back, void *user);
+    ghostesp_ui_obj_t (*ui_touch_bar_create)(ghostesp_ui_obj_t parent);
+    ghostesp_ui_obj_t (*ui_touch_bar_add_back)(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+    ghostesp_ui_obj_t (*ui_touch_bar_add_up)(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+    ghostesp_ui_obj_t (*ui_touch_bar_add_down)(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+    void (*ui_obj_set_scrollable)(ghostesp_ui_obj_t obj, bool scrollable);
+    void (*ui_obj_scroll_by)(ghostesp_ui_obj_t obj, int32_t dx, int32_t dy, bool animated);
+    void (*ui_obj_set_scrollbar)(ghostesp_ui_obj_t obj, bool enabled);
+    void (*ui_button_set_selected)(ghostesp_ui_obj_t button, bool selected);
+    int32_t (*ui_screen_get_content_width)(void);
+    int32_t (*ui_screen_get_content_height)(void);
+    bool (*ui_screen_is_compact)(void);
+    bool (*ui_has_touchscreen)(void);
+
+    bool (*wifi_live_scan_start)(void);
+    void (*wifi_live_scan_stop)(void);
+    bool (*wifi_live_scan_active)(void);
 } ghostesp_api_t;
 
 #define GHOSTESP_API_STRUCT_SIZE_V1 sizeof(ghostesp_api_t)

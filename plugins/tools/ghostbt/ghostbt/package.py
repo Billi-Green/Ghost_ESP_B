@@ -45,12 +45,13 @@ def package_app(
     app_dir: str = ".",
     out: str = None,
     make_gapp: bool = False,
+    target: str = None,
 ) -> pathlib.Path:
     app_path = pathlib.Path(app_dir).resolve()
     manifest = load_manifest(app_path)
     app_id = manifest["id"]
     version = manifest.get("version", "0.0.0")
-    target = manifest.get("target", "unknown")
+    target = target or manifest.get("target", "unknown")
     entry = manifest["entry"]
 
     so_path = app_path / "build" / entry
@@ -65,7 +66,12 @@ def package_app(
     package_dir.mkdir(parents=True, exist_ok=True)
 
     checksums: dict = {}
-    copy_if_exists(app_path / "manifest.json", package_dir / "manifest.json", checksums, "manifest.json")
+    packaged_manifest = dict(manifest)
+    if target:
+        packaged_manifest["target"] = target
+    manifest_data = json.dumps(packaged_manifest, indent=2) + "\n"
+    (package_dir / "manifest.json").write_text(manifest_data, encoding="utf-8")
+    checksums["manifest.json"] = f"{checksum_bytes(manifest_data.encode('utf-8')):016x}"
     copy_if_exists(so_path, package_dir / entry, checksums, entry)
 
     packed_icon = _write_icon_from_source(app_path, package_dir, manifest, checksums)

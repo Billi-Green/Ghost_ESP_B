@@ -72,10 +72,14 @@ typedef struct {
     bool result;
 } image_src_ctx_t;
 
-typedef struct {
+typedef struct timer_bridge_s {
     ghostesp_ui_timer_cb_t cb;
     void *user;
+    lv_timer_t *timer;
+    struct timer_bridge_s *next;
 } timer_bridge_t;
+
+static timer_bridge_t *s_timer_bridge_head;
 
 typedef struct {
     ghostesp_ui_timer_cb_t cb;
@@ -444,11 +448,15 @@ static void plugin_api_ui_timer_create_now(void *arg) {
     if (!bridge) return;
     bridge->cb = ctx->cb;
     bridge->user = ctx->user;
+    bridge->next = s_timer_bridge_head;
+    s_timer_bridge_head = bridge;
     lv_timer_t *timer = lv_timer_create(timer_bridge_cb, ctx->interval_ms, bridge);
     if (!timer) {
+        s_timer_bridge_head = bridge->next;
         free(bridge);
         return;
     }
+    bridge->timer = timer;
     ctx->result = (ghostesp_ui_timer_t)timer;
 }
 
@@ -464,7 +472,12 @@ static void plugin_api_ui_timer_delete_now(void *arg) {
     if (!timer) return;
     timer_bridge_t *bridge = (timer_bridge_t *)timer->user_data;
     lv_timer_del(timer);
-    free(bridge);
+    if (bridge) {
+        timer_bridge_t **pp = &s_timer_bridge_head;
+        while (*pp && *pp != bridge) pp = &(*pp)->next;
+        if (*pp) *pp = bridge->next;
+        free(bridge);
+    }
 }
 
 void plugin_api_ui_timer_delete(ghostesp_ui_timer_t timer) {
@@ -549,4 +562,20 @@ void plugin_api_ui_anim_press_pulse(ghostesp_ui_obj_t obj) {
     if (!plugin_api_internal_has_ui_permission()) return;
     obj_color_ctx_t ctx = { .obj = obj };
     plugin_api_internal_run_sync(plugin_api_ui_anim_press_pulse_now, &ctx);
+}
+
+static void plugin_api_canvas_cleanup_timers_now(void *arg) {
+    (void)arg;
+    timer_bridge_t *bridge = s_timer_bridge_head;
+    s_timer_bridge_head = NULL;
+    while (bridge) {
+        timer_bridge_t *next = bridge->next;
+        if (bridge->timer) lv_timer_del(bridge->timer);
+        free(bridge);
+        bridge = next;
+    }
+}
+
+void plugin_api_canvas_cleanup_timers(void) {
+    plugin_api_internal_run_sync(plugin_api_canvas_cleanup_timers_now, NULL);
 }

@@ -303,7 +303,7 @@ static void detail_view_sync_info_canvas(detail_view_t *dv) {
         lv_obj_set_style_border_color(dv->info_panel, accent, 0);
         lv_obj_set_style_border_opa(dv->info_panel, LV_OPA_40, 0);
         if (h > panel_h) {
-            lv_obj_add_flag(dv->info_panel, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(dv->info_panel, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
             lv_obj_set_scrollbar_mode(dv->info_panel, LV_SCROLLBAR_MODE_AUTO);
         } else {
             lv_obj_scroll_to_y(dv->info_panel, 0, LV_ANIM_OFF);
