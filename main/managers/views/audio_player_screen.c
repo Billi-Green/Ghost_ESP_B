@@ -44,7 +44,9 @@ static int s_touch_start_y = 0;
 
 static lv_color_t s_bg_color;
 static lv_color_t s_surface_color;
+static lv_color_t s_surface_alt_color;
 static lv_color_t s_text_color;
+static lv_color_t s_dim_color;
 static lv_color_t s_accent_color;
 
 /* Forward declarations */
@@ -65,8 +67,30 @@ static void refresh_theme_colors(void)
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     s_bg_color = lv_color_hex(theme_palette_get_background(theme));
     s_surface_color = lv_color_hex(theme_palette_get_surface(theme));
+    s_surface_alt_color = lv_color_hex(theme_palette_get_surface_alt(theme));
     s_text_color = lv_color_hex(theme_palette_get_text(theme));
+    s_dim_color = lv_color_hex(theme_palette_get_text_muted(theme));
     s_accent_color = lv_color_hex(theme_palette_get_accent(theme));
+}
+
+static void style_card(lv_obj_t *obj, bool selected)
+{
+    lv_obj_set_style_bg_color(obj, selected ? s_surface_alt_color : s_surface_color, 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(obj, selected ? s_accent_color : s_surface_alt_color, 0);
+    lv_obj_set_style_border_width(obj, 1, 0);
+    lv_obj_set_style_border_side(obj, selected ? LV_BORDER_SIDE_LEFT : LV_BORDER_SIDE_NONE, 0);
+    lv_obj_set_style_radius(obj, 0, 0);
+    lv_obj_set_style_pad_all(obj, LV_VER_RES <= 100 ? 3 : 6, 0);
+}
+
+static lv_obj_t *create_label(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_style_text_color(label, color, 0);
+    return label;
 }
 
 static void check_sd_and_show_toast(void)
@@ -108,14 +132,14 @@ static void audio_player_update_status(void)
         default: break;
     }
 
-    char buf[64];
+    char buf[96];
     if (total > 0 && current >= 0 && current < total) {
         const char *fname = audio_stream_manager_get_filename(current);
-        snprintf(buf, sizeof(buf), "%s: %d/%d Vol:%u%% %s",
+        snprintf(buf, sizeof(buf), "%s  %d/%d  Vol %u%%  %s",
                  state_str, current + 1, total, (unsigned)s_volume_percent,
                  fname ? fname : "");
     } else {
-        snprintf(buf, sizeof(buf), "%s: No files", state_str);
+        snprintf(buf, sizeof(buf), "%s  No files", state_str);
     }
 
     lv_label_set_text(s_status_label, buf);
@@ -134,7 +158,7 @@ static void create_file_list(void)
     if (file_count == 0) {
         lv_obj_t *lbl = lv_label_create(s_file_list);
         lv_label_set_text(lbl, "No MP3 files found");
-        lv_obj_set_style_text_color(lbl, s_text_color, 0);
+        lv_obj_set_style_text_color(lbl, s_dim_color, 0);
         lv_obj_set_style_text_font(lbl, accessibility_get_font_body(), 0);
         lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
         return;
@@ -147,11 +171,7 @@ static void create_file_list(void)
         lv_obj_t *btn = lv_btn_create(s_file_list);
         lv_obj_set_width(btn, LV_PCT(100));
         lv_obj_set_height(btn, 36);
-        lv_obj_set_style_bg_color(btn, s_surface_color, 0);
-        lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_style_border_color(btn, (i == s_selected_index) ? s_accent_color : s_surface_color, 0);
-        lv_obj_set_style_pad_all(btn, 4, 0);
-        lv_obj_set_style_radius(btn, 6, 0);
+        style_card(btn, i == s_selected_index);
         lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLL_ON_FOCUS);
 
         /* Pass index as event user data */
@@ -159,10 +179,10 @@ static void create_file_list(void)
 
         lv_obj_t *lbl = lv_label_create(btn);
         lv_label_set_text(lbl, fname);
-        lv_obj_set_style_text_color(lbl, s_text_color, 0);
+        lv_obj_set_style_text_color(lbl, (i == s_selected_index) ? s_accent_color : s_text_color, 0);
         lv_obj_set_style_text_font(lbl, accessibility_get_font_small(), 0);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(lbl, LV_PCT(90));
+        lv_obj_set_width(lbl, LV_PCT(96));
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
     }
 }
@@ -175,8 +195,12 @@ static void update_file_list_selection(void)
     for (uint32_t i = 0; i < child_cnt; i++) {
         lv_obj_t *btn = lv_obj_get_child(s_file_list, i);
         if (!btn) continue;
-        lv_obj_set_style_border_color(btn,
-            ((int)i == s_selected_index) ? s_accent_color : s_surface_color, 0);
+        bool selected = ((int)i == s_selected_index);
+        style_card(btn, selected);
+        lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+        if (lbl) {
+            lv_obj_set_style_text_color(lbl, selected ? s_accent_color : s_text_color, 0);
+        }
     }
 
     /* Scroll selected into view */
@@ -317,13 +341,15 @@ void audio_player_create(void)
     int controls_h = (screen_h > 200) ? 60 : 48;
     int list_h = screen_h - controls_h - 8;
 
+    display_manager_add_status_bar("Audio Player");
+
     /* File list container */
     s_file_list = lv_obj_create(s_root);
-    lv_obj_set_size(s_file_list, LV_HOR_RES - 8, list_h);
-    lv_obj_align(s_file_list, LV_ALIGN_TOP_MID, 0, status_bar_h + 2);
+    lv_obj_set_size(s_file_list, LV_HOR_RES - 8, list_h - 18);
+    lv_obj_align(s_file_list, LV_ALIGN_TOP_MID, 0, status_bar_h + 4);
     lv_obj_set_style_bg_opa(s_file_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_file_list, 0, 0);
-    lv_obj_set_style_pad_all(s_file_list, 2, 0);
+    lv_obj_set_style_pad_all(s_file_list, 4, 0);
     lv_obj_set_flex_flow(s_file_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_file_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollbar_mode(s_file_list, LV_SCROLLBAR_MODE_AUTO);
@@ -335,62 +361,68 @@ void audio_player_create(void)
 
     /* Controls container */
     lv_obj_t *controls = lv_obj_create(s_root);
-    lv_obj_set_size(controls, LV_HOR_RES, controls_h);
-    lv_obj_align(controls, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(controls, s_surface_color, 0);
+    lv_obj_set_size(controls, LV_HOR_RES - 8, controls_h);
+    lv_obj_align(controls, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_obj_set_style_bg_opa(controls, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(controls, 0, 0);
     lv_obj_set_style_pad_all(controls, 4, 0);
     lv_obj_clear_flag(controls, LV_OBJ_FLAG_SCROLLABLE);
 
     /* Previous button */
     s_prev_btn = lv_btn_create(controls);
-    lv_obj_set_size(s_prev_btn, 48, 36);
+    lv_obj_set_size(s_prev_btn, 48, 34);
     lv_obj_align(s_prev_btn, LV_ALIGN_LEFT_MID, 8, 0);
-    lv_obj_set_style_bg_color(s_prev_btn, s_accent_color, 0);
+    lv_obj_set_style_bg_color(s_prev_btn, s_surface_alt_color, 0);
+    lv_obj_set_style_radius(s_prev_btn, 10, 0);
+    lv_obj_set_style_border_width(s_prev_btn, 0, 0);
+    lv_obj_set_style_shadow_width(s_prev_btn, 0, 0);
     lv_obj_add_event_cb(s_prev_btn, on_prev_clicked, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *prev_lbl = lv_label_create(s_prev_btn);
-    lv_label_set_text(prev_lbl, "<<");
-    lv_obj_set_style_text_color(prev_lbl, lv_color_white(), 0);
+    lv_obj_t *prev_lbl = create_label(s_prev_btn, LV_SYMBOL_LEFT, accessibility_get_font_body(), s_accent_color);
     lv_obj_center(prev_lbl);
 
     /* Play button */
     s_play_btn = lv_btn_create(controls);
-    lv_obj_set_size(s_play_btn, 48, 36);
+    lv_obj_set_size(s_play_btn, 52, 34);
     lv_obj_align(s_play_btn, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_play_btn, s_accent_color, 0);
+    lv_obj_set_style_bg_color(s_play_btn, s_surface_alt_color, 0);
+    lv_obj_set_style_radius(s_play_btn, 10, 0);
+    lv_obj_set_style_border_width(s_play_btn, 0, 0);
+    lv_obj_set_style_shadow_width(s_play_btn, 0, 0);
     lv_obj_add_event_cb(s_play_btn, on_play_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
-    lv_obj_t *play_lbl = lv_label_create(s_play_btn);
-    lv_label_set_text(play_lbl, ">");
-    lv_obj_set_style_text_color(play_lbl, lv_color_white(), 0);
+    lv_obj_t *play_lbl = create_label(s_play_btn, LV_SYMBOL_PLAY, accessibility_get_font_body(), s_accent_color);
     lv_obj_center(play_lbl);
 
     /* Pause button (initially hidden) */
     s_pause_btn = lv_btn_create(controls);
-    lv_obj_set_size(s_pause_btn, 48, 36);
+    lv_obj_set_size(s_pause_btn, 52, 34);
     lv_obj_align(s_pause_btn, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_pause_btn, s_accent_color, 0);
+    lv_obj_set_style_bg_color(s_pause_btn, s_surface_alt_color, 0);
+    lv_obj_set_style_radius(s_pause_btn, 10, 0);
+    lv_obj_set_style_border_width(s_pause_btn, 0, 0);
+    lv_obj_set_style_shadow_width(s_pause_btn, 0, 0);
     lv_obj_add_event_cb(s_pause_btn, on_pause_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_pause_btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t *pause_lbl = lv_label_create(s_pause_btn);
-    lv_label_set_text(pause_lbl, "||");
-    lv_obj_set_style_text_color(pause_lbl, lv_color_white(), 0);
+    lv_obj_t *pause_lbl = create_label(s_pause_btn, "II", accessibility_get_font_body(), s_accent_color);
     lv_obj_center(pause_lbl);
 
     /* Next button */
     s_next_btn = lv_btn_create(controls);
-    lv_obj_set_size(s_next_btn, 48, 36);
+    lv_obj_set_size(s_next_btn, 48, 34);
     lv_obj_align(s_next_btn, LV_ALIGN_RIGHT_MID, -8, 0);
-    lv_obj_set_style_bg_color(s_next_btn, s_accent_color, 0);
+    lv_obj_set_style_bg_color(s_next_btn, s_surface_alt_color, 0);
+    lv_obj_set_style_radius(s_next_btn, 10, 0);
+    lv_obj_set_style_border_width(s_next_btn, 0, 0);
+    lv_obj_set_style_shadow_width(s_next_btn, 0, 0);
     lv_obj_add_event_cb(s_next_btn, on_next_clicked, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *next_lbl = lv_label_create(s_next_btn);
-    lv_label_set_text(next_lbl, ">>");
-    lv_obj_set_style_text_color(next_lbl, lv_color_white(), 0);
+    lv_obj_t *next_lbl = create_label(s_next_btn, LV_SYMBOL_RIGHT, accessibility_get_font_body(), s_accent_color);
     lv_obj_center(next_lbl);
 
     /* Status label */
     s_status_label = lv_label_create(s_root);
-    lv_obj_set_style_text_color(s_status_label, s_text_color, 0);
+    lv_obj_set_style_text_color(s_status_label, s_dim_color, 0);
     lv_obj_set_style_text_font(s_status_label, accessibility_get_font_small(), 0);
+    lv_obj_set_width(s_status_label, LV_HOR_RES - 12);
+    lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_align(s_status_label, LV_ALIGN_BOTTOM_MID, 0, -controls_h - 2);
     lv_label_set_text(s_status_label, "Ready");
 

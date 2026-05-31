@@ -149,10 +149,8 @@ endif()
 # Add TLV320DAC3100 driver component (code guarded by CONFIG_HAS_TLV320DAC_I2C)
 list(APPEND required_components tlv320dac3100)
 
-# Add audio codec component for audio receiver headers/libraries (only when I2S DAC is enabled).
-if(CONFIG_HAS_TLV320DAC_I2S)
-    list(APPEND required_components esp_audio_codec)
-endif()
+# Add audio codec component for audio receiver headers/libraries.
+list(APPEND required_components esp_audio_codec)
 
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
@@ -181,4 +179,3 @@ target_include_directories(${COMPONENT_LIB} PRIVATE
     "${idf_path}/components/wpa_supplicant/src"
     "${idf_path}/components/wpa_supplicant/esp_supplicant/src"
 )
-
