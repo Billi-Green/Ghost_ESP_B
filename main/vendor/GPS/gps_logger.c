@@ -628,11 +628,13 @@ esp_err_t csv_file_open(const char *base_file_name) {
     char file_name[GPS_MAX_FILE_NAME_LENGTH];
 
     if (!csv_buffer) {
-        csv_buffer = (char *)calloc(1, GPS_BUFFER_SIZE);
+        csv_buffer = (char *)heap_caps_calloc(1, GPS_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!csv_buffer) csv_buffer = (char *)calloc(1, GPS_BUFFER_SIZE);
         if (!csv_buffer) return ESP_ERR_NO_MEM;
     }
     if (!csv_pre_header) {
-        csv_pre_header = (char *)calloc(1, CSV_PRE_HEADER_SIZE);
+        csv_pre_header = (char *)heap_caps_calloc(1, CSV_PRE_HEADER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!csv_pre_header) csv_pre_header = (char *)calloc(1, CSV_PRE_HEADER_SIZE);
         if (!csv_pre_header) { free(csv_buffer); csv_buffer = NULL; return ESP_ERR_NO_MEM; }
     }
     buffer_offset = 0;

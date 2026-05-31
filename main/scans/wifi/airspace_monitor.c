@@ -79,10 +79,16 @@ static bool allocate_buffers(void) {
     }
 
     if (s_devices == NULL) {
-        s_devices = heap_caps_calloc(AIRSPACE_MAX_DEVICES, sizeof(*s_devices), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        s_devices = heap_caps_calloc(AIRSPACE_MAX_DEVICES, sizeof(*s_devices), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_devices) {
+            s_devices = heap_caps_calloc(AIRSPACE_MAX_DEVICES, sizeof(*s_devices), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
     }
     if (s_channels == NULL) {
-        s_channels = heap_caps_calloc(WIFI_CHANNELS_MAX, sizeof(*s_channels), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        s_channels = heap_caps_calloc(WIFI_CHANNELS_MAX, sizeof(*s_channels), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_channels) {
+            s_channels = heap_caps_calloc(WIFI_CHANNELS_MAX, sizeof(*s_channels), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
     }
 
     if (s_devices == NULL || s_channels == NULL) {
