@@ -151,10 +151,12 @@ static void add_back_app_item(void) {
 }
 
 static void add_loaded_plugin_app_items(void) {
+    bool has_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) > 0;
     int plugin_count = plugin_manager_count();
     for (int i = 0; i < plugin_count && num_apps < MAX_APP_GALLERY_ITEMS - 1; ++i) {
         const plugin_app_manifest_t *app = plugin_manager_get(i);
         if (!app) continue;
+        if (app->requires_psram && !has_psram) continue;
         app_items[num_apps].name = app->name;
         app_items[num_apps].icon = app->icon_dsc ? app->icon_dsc : &GESPAppGallery;
         app_items[num_apps].palette_index = 3;
@@ -315,6 +317,24 @@ static void apps_carousel_fade_out_ready_cb(lv_anim_t *a) {
             if (new_icon) {
                 lv_img_set_src(icon, new_icon);
                 lv_obj_clear_flag(icon, LV_OBJ_FLAG_HIDDEN);
+
+                int btn_size = lv_obj_get_width(obj);
+                const int icon_size = 50;
+                lv_coord_t img_w = new_icon->header.w;
+                lv_coord_t img_h = new_icon->header.h;
+                if (img_w > 0 && img_h > 0) {
+                    int zoom_w = (icon_size * 256) / img_w;
+                    int zoom_h = (icon_size * 256) / img_h;
+                    int zoom = LV_MIN(zoom_w, zoom_h);
+                    if (zoom > 512) zoom = 512;
+                    lv_img_set_zoom(icon, zoom);
+                }
+                int icon_x_offset = -3;
+                int icon_y_offset = -5;
+                if (app_items[app_idx].view == &ghostchi_view) icon_x_offset = 9;
+                int x_pos = (btn_size - icon_size) / 2 + icon_x_offset;
+                int y_pos = (btn_size - icon_size) / 2 + icon_y_offset;
+                lv_obj_align(icon, LV_ALIGN_TOP_LEFT, x_pos, y_pos);
             } else {
                 lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
             }

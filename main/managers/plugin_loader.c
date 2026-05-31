@@ -151,9 +151,7 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
     const plugin_app_manifest_t *manifest = plugin_manager_find(id);
     if (!manifest) return fail_err(ESP_ERR_NOT_FOUND, "app not found");
     if (!plugin_manager_target_supported()) return fail_err(ESP_ERR_NOT_SUPPORTED, "native SD apps disabled or unsupported target");
-#if CONFIG_NATIVE_SD_APPS_REQUIRE_TARGET_MATCH
     if (!plugin_manager_target_matches(manifest)) return fail_err(ESP_ERR_NOT_SUPPORTED, "app target does not match firmware target");
-#endif
     if (manifest->memory_limit > 0 && heap_caps_get_free_size(MALLOC_CAP_8BIT) < manifest->memory_limit) {
         return fail_err(ESP_ERR_NO_MEM, "not enough free heap for app memory limit");
     }

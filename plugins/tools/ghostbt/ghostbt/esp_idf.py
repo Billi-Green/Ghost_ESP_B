@@ -270,15 +270,12 @@ def idf_command(*args: str) -> tuple:
         raise SystemExit(1)
 
     idf_path = get_idf_path()
-    if idf_path:
-        env = _build_idf_env(idf_path)
-        idf_python, _ = _find_idf_python(idf_path)
+    env = _build_idf_env(idf_path) if idf_path else os.environ.copy()
+
+    if pathlib.Path(idf_py).suffix.lower() in (".py",):
+        idf_python, _ = _find_idf_python(idf_path) if idf_path else (None, None)
         if idf_python:
             return [idf_python, idf_py, *args], env
-    else:
-        env = os.environ.copy()
-
-    if pathlib.Path(idf_py).suffix.lower() == ".py":
         return [sys.executable, idf_py, *args], env
     return [idf_py, *args], env
 

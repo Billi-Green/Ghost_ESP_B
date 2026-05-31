@@ -7,7 +7,7 @@ toc: true
 
 Native SD apps are ESP-IDF shared objects (`.so`) loaded from the SD card at runtime with Espressif's ELF loader. Apps get a stable API surface with access to the UI system, storage, WiFi, BLE, GPS, NFC, IR, SubGHz, BadUSB, RGB LEDs, and more.
 
-> **PSRAM required**: Native SD apps require a board with PSRAM. Boards without PSRAM (e.g. stock ESP32-S3 without octal PSRAM) cannot load or run native SD apps. The Apps menu will show a warning toast on no-PSRAM boards. The `requires_psram` per-app manifest field is checked separately for apps that need extra PSRAM beyond the baseline.
+> **PSRAM required**: Native SD apps require a board with PSRAM. Boards without PSRAM (e.g. stock ESP32-S3 without octal PSRAM) cannot load or run native SD apps. Native SD apps are hidden from the Apps menu on no-PSRAM boards; a warning toast is shown on entry. The `requires_psram` per-app manifest field is checked separately for apps that need extra PSRAM beyond the baseline — these apps are also hidden from the gallery on no-PSRAM boards.
 
 Enable the system via `CONFIG_ENABLE_NATIVE_SD_APPS=y` in `menuconfig` (on by default for supported targets).
 
@@ -77,7 +77,7 @@ Every app needs a `manifest.json` at its root. Required fields: `id`, `name`, `e
 | `name` | Yes | Human-readable display name. |
 | `version` | Yes | Semver string (shown in gallery). |
 | `entry` | Yes | `.so` filename relative to the app folder. |
-| `target` | Strongly recommended | ESP chip target (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32c61`, `esp32p4`, `esp32c5`). Required when `NATIVE_SD_APPS_REQUIRE_TARGET_MATCH` is enabled. |
+| `target` | Strongly recommended | Native SD app target (`esp32`, `esp32s2`, `esp32s3`, `esp32c5`, `esp32c6`, `esp32c61`, `esp32p4`). Required when `NATIVE_SD_APPS_REQUIRE_TARGET_MATCH` is enabled. `esp32c3` firmware builds exist, but native SD `.gapp` apps are not currently supported for C3. |
 | `api_version` | Yes | Must be `1`. |
 | `author` | No | Attribution string. |
 | `description` | No | Short description. |
@@ -89,7 +89,7 @@ Every app needs a `manifest.json` at its root. Required fields: `id`, `name`, `e
 | `permissions` | No | Array of permission strings (see below). |
 | `memory_limit` | No | Advisory limit in bytes for `app_malloc`/`app_calloc` tracked allocations. |
 | `stack_size` | No | Advisory stack size hint in bytes. |
-| `requires_psram` | No | If `true`, loader additionally checks that PSRAM is available (all native SD apps already require PSRAM at a baseline). |
+| `requires_psram` | No | If `true`, loader additionally checks that PSRAM is available (all native SD apps already require PSRAM at a baseline). Apps with this flag are hidden from the gallery on no-PSRAM boards. |
 | `icon` | No | Path relative to app folder (raw RGB565 binary). |
 | `icon_width` | No | Icon pixel width. |
 | `icon_height` | No | Icon pixel height. |
@@ -805,18 +805,19 @@ set(EXTRA_COMPONENT_DIRS
 
 ## Build Targets
 
-Build one `.so` per ESP chip target. Xtensa (esp32/s2/s3) and RISC-V (c3/c5/c6/c61/p4) binaries are not interchangeable.
+Build one `.so` per supported native SD app target. Xtensa (esp32/s2/s3) and RISC-V (c5/c6/c61/p4) binaries are not interchangeable.
 
 | Target | Architecture |
 |--------|-------------|
 | `esp32` | Xtensa LX6 |
 | `esp32s2` | Xtensa LX7 |
 | `esp32s3` | Xtensa LX7 |
-| `esp32c3` | RISC-V |
 | `esp32c5` | RISC-V |
 | `esp32c6` | RISC-V |
 | `esp32c61` | RISC-V |
 | `esp32p4` | RISC-V |
+
+`esp32c3` is not listed because the current ELF loader configuration does not enable native SD `.gapp` shared-object loading for C3.
 
 ## .gapp Archive Format
 
