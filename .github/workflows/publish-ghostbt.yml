@@ -29,8 +29,12 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Clean dist
+        run: rm -rf dist/
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: plugins/tools/ghostbt/dist/
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
