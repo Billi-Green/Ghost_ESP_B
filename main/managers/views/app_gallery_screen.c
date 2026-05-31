@@ -15,6 +15,7 @@
 #include "gui/toast.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "core/memory_debug.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdio.h>
@@ -101,7 +102,7 @@ static lv_obj_t *grid_cards_container = NULL;
 static lv_color_t apps_bg_color;
 static lv_color_t apps_surface_color;
 static lv_color_t apps_text_color;
-static bool apps_plugin_reload_in_progress = false;
+static volatile bool apps_plugin_reload_in_progress = false;
 static StackType_t *apps_plugin_reload_stack = NULL;
 static StaticTask_t *apps_plugin_reload_tcb = NULL;
 
@@ -109,13 +110,7 @@ static StaticTask_t *apps_plugin_reload_tcb = NULL;
 
 static bool ensure_app_items(void) {
     if (app_items) return true;
-#if CONFIG_SPIRAM
-    app_items = heap_caps_calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!app_items)
-#endif
-    {
-        app_items = calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items));
-    }
+    app_items = spiram_calloc(MAX_APP_GALLERY_ITEMS, sizeof(*app_items));
     if (!app_items) {
         ESP_LOGE(TAG, "Failed to allocate app gallery items");
         return false;
@@ -196,13 +191,7 @@ static void start_plugin_reload_async(void) {
     apps_plugin_reload_in_progress = true;
     toast_show_duration("Scanning SD apps...", TOAST_INFO, 1200);
     if (!apps_plugin_reload_stack) {
-#if CONFIG_SPIRAM
-        apps_plugin_reload_stack = heap_caps_malloc(PLUGIN_RELOAD_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!apps_plugin_reload_stack)
-#endif
-        {
-            apps_plugin_reload_stack = heap_caps_malloc(PLUGIN_RELOAD_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        }
+        apps_plugin_reload_stack = spiram_malloc(PLUGIN_RELOAD_STACK_BYTES);
     }
     if (!apps_plugin_reload_stack) {
         apps_plugin_reload_in_progress = false;
@@ -307,8 +296,8 @@ static void apps_carousel_fade_out_ready_cb(lv_anim_t *a) {
 
     lv_obj_t *icon = apps_carousel_cache.icon;
     if (!icon || !lv_obj_is_valid(icon) || !lv_obj_check_type(icon, &lv_img_class)) {
-        icon = lv_obj_get_child(obj, 0);
-        if (!icon || !lv_obj_is_valid(icon) || !lv_obj_check_type(icon, &lv_img_class)) icon = NULL;
+        icon = (lv_obj_is_valid(obj) && lv_obj_get_child_cnt(obj) > 0) ? lv_obj_get_child(obj, 0) : NULL;
+        if (icon && (!lv_obj_is_valid(icon) || !lv_obj_check_type(icon, &lv_img_class))) icon = NULL;
         apps_carousel_cache.icon = icon;
     }
     if (icon) {
@@ -352,8 +341,8 @@ static void apps_carousel_fade_out_ready_cb(lv_anim_t *a) {
 
     lv_obj_t *label = apps_carousel_cache.label;
     if (!label || !lv_obj_is_valid(label) || !lv_obj_check_type(label, &lv_label_class)) {
-        label = lv_obj_get_child(obj, 1);
-        if (!label || !lv_obj_is_valid(label) || !lv_obj_check_type(label, &lv_label_class)) label = NULL;
+        label = (lv_obj_is_valid(obj) && lv_obj_get_child_cnt(obj) > 1) ? lv_obj_get_child(obj, 1) : NULL;
+        if (label && (!lv_obj_is_valid(label) || !lv_obj_check_type(label, &lv_label_class))) label = NULL;
         apps_carousel_cache.label = label;
     }
     const char *new_label = app_items[app_idx].name;
@@ -884,12 +873,18 @@ void apps_menu_destroy(void) {
     apps_is_animating = false;
     lvgl_obj_del_safe(&left_nav_btn);
     lvgl_obj_del_safe(&right_nav_btn);
-    // Reset state variables for a clean re-create
+
+    if (!apps_plugin_reload_in_progress) {
+        free(apps_plugin_reload_stack);
+        apps_plugin_reload_stack = NULL;
+        free(apps_plugin_reload_tcb);
+        apps_plugin_reload_tcb = NULL;
+    }
+
     selected_app_index = 0;
     touch_started = false;
     touch_start_x = 0;
     touch_start_y = 0;
-    // If you add timers or other resources, clean them up here!
 }
 
 /**

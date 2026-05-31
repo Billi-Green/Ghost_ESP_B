@@ -6,6 +6,7 @@
 #include "managers/sd_card_manager.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
+#include "core/memory_debug.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "sdkconfig.h"
@@ -427,10 +428,7 @@ static bool parse_manifest(const char *base_path, plugin_app_manifest_t *out) {
 
 void plugin_manager_init(void) {
     if (!s_apps) {
-        s_apps = heap_caps_calloc(PLUGIN_APP_MAX_COUNT, sizeof(*s_apps), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!s_apps) {
-            s_apps = calloc(PLUGIN_APP_MAX_COUNT, sizeof(*s_apps));
-        }
+        s_apps = spiram_calloc(PLUGIN_APP_MAX_COUNT, sizeof(*s_apps));
         if (!s_apps) {
             snprintf(s_last_error, sizeof(s_last_error), "failed to allocate app registry");
             return;

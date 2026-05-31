@@ -3,6 +3,7 @@
 
 #include "core/serial_manager.h"
 #include "core/glog.h"
+#include "core/memory_debug.h"
 #include "gui/design_tokens.h"
 #include "gui/screen_layout.h"
 #include "managers/badusb_manager.h"
@@ -68,10 +69,7 @@ static void plugin_wifi_snapshot_scan_results(void) {
     }
     plugin_ap_count = 0;
     if (ap_count > 0 && scanned_aps) {
-        plugin_scanned_aps = heap_caps_malloc(ap_count * sizeof(wifi_ap_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!plugin_scanned_aps) {
-            plugin_scanned_aps = malloc(ap_count * sizeof(wifi_ap_record_t));
-        }
+        plugin_scanned_aps = spiram_malloc(ap_count * sizeof(wifi_ap_record_t));
         if (plugin_scanned_aps) {
             memcpy(plugin_scanned_aps, scanned_aps, ap_count * sizeof(wifi_ap_record_t));
             plugin_ap_count = ap_count;
@@ -1295,6 +1293,20 @@ extern bool plugin_api_parser_ir_summary(const char *app_relative_path, char *ou
 extern bool plugin_api_parser_subghz_summary(const char *app_relative_path, char *out, size_t out_len);
 extern void plugin_api_lowlevel_release(void);
 
+static void plugin_api_dead_log(const char *msg) {
+    (void)msg;
+    ESP_LOGW(TAG, "plugin API call after release - app was not unloaded cleanly");
+}
+
+static const ghostesp_api_t s_dead_api = {
+    .api_version = 0,
+    .struct_size = 0,
+    .log = plugin_api_dead_log,
+};
+
+static ghostesp_api_t s_api_live_backup;
+static bool s_api_swapped = false;
+
 static ghostesp_api_t s_api = {
     .api_version = GHOSTESP_APP_API_VERSION,
     .struct_size = GHOSTESP_API_STRUCT_SIZE_V1,
@@ -1655,6 +1667,10 @@ const ghostesp_api_t *plugin_api_get(const char *app_id,
         sd_card_create_directory(s_app_data_path);
     }
 
+    if (s_api_swapped) {
+        memcpy(&s_api, &s_api_live_backup, sizeof(s_api));
+        s_api_swapped = false;
+    }
     s_api.flags = GHOSTESP_APP_FLAG_PERMISSIONS_ENFORCED;
     if (allow_absolute_storage) s_api.flags |= GHOSTESP_APP_FLAG_ABSOLUTE_STORAGE_ALLOWED;
     s_api_active = true;
@@ -1686,6 +1702,13 @@ void plugin_api_release(void) {
     s_memory_used = 0;
     s_app_id[0] = '\0';
     s_app_data_path[0] = '\0';
+
+    if (!s_api_swapped) {
+        memcpy(&s_api_live_backup, &s_api, sizeof(s_api));
+        memcpy(&s_api, &s_dead_api, sizeof(s_dead_api));
+        s_api_swapped = true;
+    }
+
     plugin_api_unlock();
     plugin_api_canvas_cleanup_timers();
 }

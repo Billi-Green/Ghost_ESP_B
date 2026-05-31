@@ -11,6 +11,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h" // Add include for heap stats
+#include "core/memory_debug.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -2150,10 +2151,7 @@ void wifi_manager_stop_scan() {
             selected_ap_count = 0;
         }
 
-        scanned_aps = heap_caps_calloc(initial_ap_count, sizeof(wifi_ap_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!scanned_aps) {
-            scanned_aps = calloc(initial_ap_count, sizeof(wifi_ap_record_t));
-        }
+        scanned_aps = spiram_calloc(initial_ap_count, sizeof(wifi_ap_record_t));
         if (scanned_aps == NULL) {
             printf("Failed to allocate memory for AP info\n");
             ap_count = 0;
@@ -2202,10 +2200,7 @@ void wifi_manager_select_ap(int index) {
         int scan_count = 0;
         ap_scan_get_selected(&scan_aps, &scan_count);
         if (scan_count > 0 && scan_aps != NULL) {
-            selected_aps = heap_caps_malloc((size_t)scan_count * sizeof(wifi_ap_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (!selected_aps) {
-                selected_aps = malloc((size_t)scan_count * sizeof(wifi_ap_record_t));
-            }
+            selected_aps = spiram_malloc((size_t)scan_count * sizeof(wifi_ap_record_t));
             if (selected_aps != NULL) {
                 memcpy(selected_aps, scan_aps, (size_t)scan_count * sizeof(wifi_ap_record_t));
                 selected_ap_count = scan_count;
@@ -2250,10 +2245,7 @@ void wifi_manager_select_multiple_aps(int *indices, int count) {
         selected_aps = NULL;
     }
 
-    selected_aps = heap_caps_malloc((size_t)count * sizeof(wifi_ap_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!selected_aps) {
-        selected_aps = malloc((size_t)count * sizeof(wifi_ap_record_t));
-    }
+    selected_aps = spiram_malloc((size_t)count * sizeof(wifi_ap_record_t));
     if (selected_aps == NULL) {
         printf("Failed to allocate memory for selected APs\n");
         TERMINAL_VIEW_ADD_TEXT("Failed to allocate memory for selected APs\n");

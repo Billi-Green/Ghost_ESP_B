@@ -6104,10 +6104,7 @@ void handle_sd_cmd(int argc, char **argv) {
         glog("SD:TREE:%s\n", path);
         
         typedef struct { char p[256]; int lvl; } stack_item_t;
-        stack_item_t *stack = heap_caps_malloc(sizeof(stack_item_t) * 64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!stack) {
-            stack = malloc(sizeof(stack_item_t) * 64);
-        }
+        stack_item_t *stack = spiram_malloc(sizeof(stack_item_t) * 64);
         if (!stack) {
             glog("SD:ERR:oom\n");
             return;
@@ -6182,10 +6179,8 @@ void handle_congestion_cmd(int argc, char **argv) {
     }
 
     int unique_count = 0;
-    int *channels = heap_caps_malloc((size_t)ap_count * sizeof(int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    int *counts = heap_caps_malloc((size_t)ap_count * sizeof(int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!channels) channels = malloc((size_t)ap_count * sizeof(int));
-    if (!counts) counts = malloc((size_t)ap_count * sizeof(int));
+    int *channels = spiram_malloc((size_t)ap_count * sizeof(int));
+    int *counts = spiram_malloc((size_t)ap_count * sizeof(int));
     if (!channels || !counts) {
         free(channels);
         free(counts);
