@@ -19,6 +19,7 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/views/clock_screen.h"
 #include "managers/views/compass_screen.h"
+#include "managers/views/enviii_screen.h"
 #include "managers/views/accelerometer_screen.h"
 #include "managers/views/infrared_view.h"
 #include "managers/views/nfc_view.h"
@@ -55,7 +56,15 @@ uint32_t theme_palette_get_surface_alt(uint8_t theme);
 uint32_t theme_palette_get_text_muted(uint8_t theme);
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+#if defined(CONFIG_BUILD_CONFIG_TEMPLATE_SOMETHINGSOMETHING) || defined(CONFIG_BUILD_CONFIG_TEMPLATE_SOMETHINGSOMETHING2)
+#define LVGL_TICK_TASK_STACK_SIZE 8192
+#else
 #define LVGL_TICK_TASK_STACK_SIZE 5120
+#endif
+#else
+#define LVGL_TICK_TASK_STACK_SIZE 5120
+#endif
 #else
 #define LVGL_TICK_TASK_STACK_SIZE 8192
 #endif
@@ -2535,6 +2544,8 @@ void hardware_input_task(void *pvParameters) {
                             display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:compass") == 0) {
                             display_manager_switch_view(&compass_view);
+                        } else if (strcmp(cmd, "view:enviii") == 0) {
+                            display_manager_switch_view(&enviii_view);
                         } else if (strcmp(cmd, "view:accel") == 0) {
                             display_manager_switch_view(&accelerometer_view);
                         } else if (strcmp(cmd, "view:clock") == 0) {
@@ -2585,6 +2596,8 @@ void hardware_input_task(void *pvParameters) {
                             display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:compass") == 0) {
                             display_manager_switch_view(&compass_view);
+                        } else if (strcmp(cmd, "view:enviii") == 0) {
+                            display_manager_switch_view(&enviii_view);
                         } else if (strcmp(cmd, "view:accel") == 0) {
                             display_manager_switch_view(&accelerometer_view);
                         } else if (strcmp(cmd, "view:clock") == 0) {
@@ -2635,6 +2648,8 @@ void hardware_input_task(void *pvParameters) {
                             display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:compass") == 0) {
                             display_manager_switch_view(&compass_view);
+                        } else if (strcmp(cmd, "view:enviii") == 0) {
+                            display_manager_switch_view(&enviii_view);
                         } else if (strcmp(cmd, "view:accel") == 0) {
                             display_manager_switch_view(&accelerometer_view);
                         } else if (strcmp(cmd, "view:clock") == 0) {

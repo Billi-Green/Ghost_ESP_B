@@ -40,7 +40,7 @@ typedef struct {
 #define INPUT_ITEM_SIZE sizeof(InputEvent)
 extern QueueHandle_tt input_queue;
 
-#define MUTEX_TIMEOUT_MS 100
+#define MUTEX_TIMEOUT_MS 10
 
 #define HARDWARE_INPUT_TASK_PRIORITY (14)
 #define RENDERING_TASK_PRIORITY (15)
@@ -66,6 +66,7 @@ extern View number_pad_view;
 extern View keyboard_view;
 extern View compass_view;
 extern View accelerometer_view;
+extern View enviii_view;
 extern View wardriving_view;
 extern View ethernet_screen_view;
 extern View lockscreen_view;

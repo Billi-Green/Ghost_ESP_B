@@ -254,10 +254,10 @@ static int choose_free_s3_sd_spi_host(const spi_bus_config_t *bus_config, int dm
 #endif
 
 static void sd_spi_bus_release_if_tracked(void) {
-  ESP_LOGI(TAG, "sd_spi_bus_release_if_tracked: s_spi_bus_initialized=%d, s_spi_host_id=%d",
+  ESP_LOGD(TAG, "sd_spi_bus_release_if_tracked: s_spi_bus_initialized=%d, s_spi_host_id=%d",
            s_spi_bus_initialized, s_spi_host_id);
   if (s_spi_bus_initialized && s_spi_host_id >= 0) {
-    ESP_LOGI(TAG, "Freeing SPI bus host %d", s_spi_host_id);
+    ESP_LOGD(TAG, "Freeing SPI bus host %d", s_spi_host_id);
     spi_bus_free(s_spi_host_id);
     s_spi_bus_initialized = false;
     s_spi_host_id = -1;
@@ -906,6 +906,11 @@ esp_err_t sd_card_init(void) {
 esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   SemaphoreHandle_t jit_mutex = sd_card_get_jit_mutex();
 
+  if (!s_sd_log_levels_tuned) {
+    esp_log_level_set("sdspi_transaction", ESP_LOG_WARN);
+    s_sd_log_levels_tuned = true;
+  }
+
   if (display_was_suspended) *display_was_suspended = false;
   if (jit_mutex == NULL) {
     return ESP_ERR_NO_MEM;
@@ -1071,7 +1076,9 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     if (s_mount_type == MOUNT_SPI) {
       sd_spi_bus_release_if_tracked();
     }
-    printf("SD card unmounted\n");
+    if (context != SD_UNMOUNT_CONTEXT_JIT) {
+      printf("SD card unmounted\n");
+    }
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
@@ -1101,7 +1108,9 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
   if (sd_card_manager.is_initialized) {
     esp_vfs_fat_sdcard_unmount("/mnt", sd_card_manager.card);
     sd_spi_bus_release_if_tracked();
-    printf("SD card unmounted\n");
+    if (context != SD_UNMOUNT_CONTEXT_JIT) {
+      printf("SD card unmounted\n");
+    }
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
@@ -1365,6 +1374,12 @@ esp_err_t sd_card_setup_directory_structure() {
 #if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
   const char *subghz_dir = "/mnt/ghostesp/subghz";
   ret = ensure_sd_dir_exists(subghz_dir);
+  if (ret != ESP_OK) return ret;
+#endif
+
+#ifdef CONFIG_HAS_AUDIO_PLAYER
+  const char *audio_dir = "/mnt/ghostesp/audio";
+  ret = ensure_sd_dir_exists(audio_dir);
   if (ret != ESP_OK) return ret;
 #endif
 
