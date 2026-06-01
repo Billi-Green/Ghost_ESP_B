@@ -18,6 +18,8 @@ typedef enum {
     SETUP_STEP_WELCOME = 0,
     SETUP_STEP_AP_SSID,
     SETUP_STEP_AP_PASSWORD,
+    SETUP_STEP_STA_SSID,
+    SETUP_STEP_STA_PASSWORD,
     SETUP_STEP_COUNTRY,
     SETUP_STEP_TIMEZONE,
     SETUP_STEP_DISPLAY_TIMEOUT,
@@ -55,6 +57,8 @@ static SetupStep current_step = SETUP_STEP_WELCOME;
 static int selected_country_index = 0;
 static char temp_ap_ssid[33] = {0};
 static char temp_ap_password[65] = {0};
+static char temp_sta_ssid[65] = {0};
+static char temp_sta_password[65] = {0};
 
 static lv_obj_t *country_list = NULL;
 static int country_cursor = 0;
@@ -133,6 +137,25 @@ static void show_complete_screen(void);
 static void finish_setup(void);
 static void skip_setup(void);
 
+#define STATUS_BAR_H 18
+#define USABLE_H (LV_VER_RES - STATUS_BAR_H)
+#define USABLE_W LV_HOR_RES
+
+static void style_wizard_btn(lv_obj_t *btn, lv_color_t bg, lv_coord_t radius) {
+    lv_obj_set_style_bg_color(btn, bg, LV_PART_MAIN);
+    lv_obj_set_style_radius(btn, radius, LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(btn, 0, LV_PART_MAIN);
+}
+
+static int get_card_width(int list_pad) {
+    int item_w = USABLE_W - list_pad * 4 - 10;
+    int max_w = USABLE_W * 86 / 100;
+    if (item_w > max_w) item_w = max_w;
+    if (item_w < 70) item_w = USABLE_W - list_pad * 2;
+    return item_w;
+}
+
 static void ap_ssid_callback(const char *text) {
     if (text && strlen(text) > 0) {
         strncpy(temp_ap_ssid, text, sizeof(temp_ap_ssid) - 1);
@@ -164,6 +187,32 @@ static void ap_password_callback(const char *text) {
             strncpy(temp_ap_password, "GhostESP", sizeof(temp_ap_password) - 1);
         }
     }
+    current_step = SETUP_STEP_STA_SSID;
+    keyboard_view_set_submit_callback(NULL);
+    display_manager_switch_view(&setup_wizard_view);
+}
+
+static void sta_ssid_callback(const char *text) {
+    if (text && strlen(text) > 0) {
+        strncpy(temp_sta_ssid, text, sizeof(temp_sta_ssid) - 1);
+        temp_sta_ssid[sizeof(temp_sta_ssid) - 1] = '\0';
+        current_step = SETUP_STEP_STA_PASSWORD;
+    } else {
+        temp_sta_ssid[0] = '\0';
+        temp_sta_password[0] = '\0';
+        current_step = SETUP_STEP_COUNTRY;
+    }
+    keyboard_view_set_submit_callback(NULL);
+    display_manager_switch_view(&setup_wizard_view);
+}
+
+static void sta_password_callback(const char *text) {
+    if (text && strlen(text) > 0) {
+        strncpy(temp_sta_password, text, sizeof(temp_sta_password) - 1);
+        temp_sta_password[sizeof(temp_sta_password) - 1] = '\0';
+    } else {
+        temp_sta_password[0] = '\0';
+    }
     current_step = SETUP_STEP_COUNTRY;
     keyboard_view_set_submit_callback(NULL);
     display_manager_switch_view(&setup_wizard_view);
@@ -179,7 +228,8 @@ static void start_btn_event_cb(lv_event_t *e) {
     } else {
         temp_ap_ssid[0] = '\0';
     }
-    keyboard_view_set_placeholder("AP SSID");
+    keyboard_view_set_placeholder("Device AP SSID");
+    keyboard_view_set_initial_text(temp_ap_ssid);
     keyboard_view_set_submit_callback(ap_ssid_callback);
     keyboard_view_set_return_view(&setup_wizard_view);
     display_manager_switch_view(&keyboard_view);
@@ -207,10 +257,6 @@ static void update_welcome_btn_focus(void) {
         }
     }
 }
-
-#define STATUS_BAR_H 18
-#define USABLE_H (LV_VER_RES - STATUS_BAR_H)
-#define USABLE_W LV_HOR_RES
 
 static const lv_font_t *get_title_font(void) {
     uint8_t fs = settings_get_font_size(&G_Settings);
@@ -246,7 +292,8 @@ static void show_welcome_screen(void) {
     lv_obj_t *desc = lv_label_create(root);
     lv_label_set_text(desc, 
         "In this setup you can:\n"
-        "Configure AP credentials\n"
+        "Configure device AP credentials\n"
+        "Save your home WiFi\n"
         "Set your region\n"
         "Customize device appearance");
     lv_obj_set_style_text_color(desc, lv_color_hex(0xAAAAAA), 0);
@@ -269,6 +316,7 @@ static void show_welcome_screen(void) {
     welcome_start_btn = lv_btn_create(root);
     lv_obj_set_size(welcome_start_btn, btn_w, btn_h);
     lv_obj_align(welcome_start_btn, LV_ALIGN_TOP_MID, -btn_offset, btn_y);
+    style_wizard_btn(welcome_start_btn, lv_color_hex(0x333333), 5);
     lv_obj_t *start_label = lv_label_create(welcome_start_btn);
     lv_label_set_text(start_label, "Start");
     lv_obj_center(start_label);
@@ -277,6 +325,7 @@ static void show_welcome_screen(void) {
     welcome_skip_btn = lv_btn_create(root);
     lv_obj_set_size(welcome_skip_btn, btn_w, btn_h);
     lv_obj_align(welcome_skip_btn, LV_ALIGN_TOP_MID, btn_offset, btn_y);
+    style_wizard_btn(welcome_skip_btn, lv_color_hex(0x333333), 5);
     lv_obj_t *skip_label = lv_label_create(welcome_skip_btn);
     lv_label_set_text(skip_label, "Skip");
     lv_obj_center(skip_label);
@@ -344,17 +393,17 @@ static void show_option_screen(const char *title_text, const char **options, int
     lv_obj_align(option_list, LV_ALIGN_TOP_MID, 0, list_top);
     lv_obj_set_style_bg_opa(option_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(option_list, 0, 0);
+    lv_obj_set_style_shadow_width(option_list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(option_list, list_pad, 0);
     lv_obj_set_flex_flow(option_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(option_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    int item_w = USABLE_W - list_pad * 4 - 10;
+    int item_w = get_card_width(list_pad);
     
     for (int i = 0; i < count; i++) {
         lv_obj_t *btn = lv_btn_create(option_list);
         lv_obj_set_size(btn, item_w, btn_h);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x333333), 0);
-        lv_obj_set_style_radius(btn, 4, 0);
+        style_wizard_btn(btn, lv_color_hex(0x333333), 4);
         
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, options[i]);
@@ -427,17 +476,17 @@ static void show_country_screen(void) {
     lv_obj_align(country_list, LV_ALIGN_TOP_MID, 0, list_top);
     lv_obj_set_style_bg_opa(country_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(country_list, 0, 0);
+    lv_obj_set_style_shadow_width(country_list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(country_list, list_pad, 0);
     lv_obj_set_flex_flow(country_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(country_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    int item_w = USABLE_W - list_pad * 4 - 10;
+    int item_w = get_card_width(list_pad);
     
     for (int i = 0; i < (int)COUNTRY_COUNT; i++) {
         lv_obj_t *btn = lv_btn_create(country_list);
         lv_obj_set_size(btn, item_w, btn_h);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x333333), 0);
-        lv_obj_set_style_radius(btn, 4, 0);
+        style_wizard_btn(btn, lv_color_hex(0x333333), 4);
 
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, wifi_countries[i].name);
@@ -481,15 +530,17 @@ static void show_complete_screen(void) {
     lv_obj_set_style_text_font(title, title_font, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, title_y);
 
-    char summary[256];
+    char summary[320];
 #ifdef CONFIG_WITH_STATUS_DISPLAY
     snprintf(summary, sizeof(summary),
-             "AP: %s | Region: %s\n"
+             "Device AP: %s\n"
+             "Home WiFi: %s | Region: %s\n"
              "Theme: %s | Menu: %s\n"
              "Terminal: %s\n"
              "Animation: %s\n"
              "Epilepsy Warn: %s",
              temp_ap_ssid[0] ? temp_ap_ssid : "(default)",
+             temp_sta_ssid[0] ? temp_sta_ssid : "Skipped",
              wifi_countries[selected_country_index].name,
              theme_options[temp_theme],
              menu_layout_options[temp_menu_layout],
@@ -498,11 +549,13 @@ static void show_complete_screen(void) {
              temp_epilepsy_warning ? "On" : "Off");
 #else
     snprintf(summary, sizeof(summary),
-             "AP: %s | Region: %s\n"
+             "Device AP: %s\n"
+             "Home WiFi: %s | Region: %s\n"
              "Theme: %s | Menu: %s\n"
              "Terminal: %s\n"
              "Epilepsy Warn: %s",
              temp_ap_ssid[0] ? temp_ap_ssid : "(default)",
+             temp_sta_ssid[0] ? temp_sta_ssid : "Skipped",
              wifi_countries[selected_country_index].name,
              theme_options[temp_theme],
              menu_layout_options[temp_menu_layout],
@@ -529,7 +582,7 @@ static void show_complete_screen(void) {
     lv_obj_t *finish_btn = lv_btn_create(root);
     lv_obj_set_size(finish_btn, btn_w, btn_h);
     lv_obj_align(finish_btn, LV_ALIGN_BOTTOM_MID, 0, -btn_bottom);
-    lv_obj_set_style_bg_color(finish_btn, lv_color_hex(0xFFFFFF), 0);
+    style_wizard_btn(finish_btn, lv_color_hex(0xFFFFFF), 5);
     lv_obj_t *finish_label = lv_label_create(finish_btn);
     lv_label_set_text(finish_label, "Finish");
     lv_obj_set_style_text_color(finish_label, lv_color_hex(0x000000), 0);
@@ -571,6 +624,10 @@ static void finish_setup(void) {
     }
     if (temp_ap_password[0]) {
         settings_set_ap_password(&G_Settings, temp_ap_password);
+    }
+    if (temp_sta_ssid[0]) {
+        settings_set_sta_ssid(&G_Settings, temp_sta_ssid);
+        settings_set_sta_password(&G_Settings, temp_sta_password);
     }
     settings_set_wifi_country(&G_Settings, (uint8_t)selected_country_index);
     apply_wifi_country(selected_country_index);
@@ -620,29 +677,63 @@ static void setup_wizard_create(void) {
             show_welcome_screen();
             break;
         case SETUP_STEP_AP_SSID: {
-            const char *cur_ssid = settings_get_ap_ssid(&G_Settings);
-            if (cur_ssid && cur_ssid[0]) {
-                strncpy(temp_ap_ssid, cur_ssid, sizeof(temp_ap_ssid) - 1);
-                temp_ap_ssid[sizeof(temp_ap_ssid) - 1] = '\0';
-            } else {
-                temp_ap_ssid[0] = '\0';
+            if (temp_ap_ssid[0] == '\0') {
+                const char *cur_ssid = settings_get_ap_ssid(&G_Settings);
+                if (cur_ssid && cur_ssid[0]) {
+                    strncpy(temp_ap_ssid, cur_ssid, sizeof(temp_ap_ssid) - 1);
+                    temp_ap_ssid[sizeof(temp_ap_ssid) - 1] = '\0';
+                }
             }
-            keyboard_view_set_placeholder("AP SSID");
+            keyboard_view_set_placeholder("Device AP SSID");
+            keyboard_view_set_initial_text(temp_ap_ssid);
             keyboard_view_set_submit_callback(ap_ssid_callback);
             keyboard_view_set_return_view(&setup_wizard_view);
             display_manager_switch_view(&keyboard_view);
             return;
         }
         case SETUP_STEP_AP_PASSWORD: {
-            const char *cur_pass = settings_get_ap_password(&G_Settings);
-            if (cur_pass && cur_pass[0]) {
-                strncpy(temp_ap_password, cur_pass, sizeof(temp_ap_password) - 1);
-                temp_ap_password[sizeof(temp_ap_password) - 1] = '\0';
-            } else {
-                temp_ap_password[0] = '\0';
+            if (temp_ap_password[0] == '\0') {
+                const char *cur_pass = settings_get_ap_password(&G_Settings);
+                if (cur_pass && cur_pass[0]) {
+                    strncpy(temp_ap_password, cur_pass, sizeof(temp_ap_password) - 1);
+                    temp_ap_password[sizeof(temp_ap_password) - 1] = '\0';
+                }
             }
-            keyboard_view_set_placeholder("AP Password");
+            keyboard_view_set_start_caps(false);
+            keyboard_view_set_placeholder("Device AP Password");
+            keyboard_view_set_initial_text(temp_ap_password);
             keyboard_view_set_submit_callback(ap_password_callback);
+            keyboard_view_set_return_view(&setup_wizard_view);
+            display_manager_switch_view(&keyboard_view);
+            return;
+        }
+        case SETUP_STEP_STA_SSID: {
+            if (temp_sta_ssid[0] == '\0') {
+                const char *cur_ssid = settings_get_sta_ssid(&G_Settings);
+                if (cur_ssid && cur_ssid[0]) {
+                    strncpy(temp_sta_ssid, cur_ssid, sizeof(temp_sta_ssid) - 1);
+                    temp_sta_ssid[sizeof(temp_sta_ssid) - 1] = '\0';
+                }
+            }
+            keyboard_view_set_placeholder("Home WiFi SSID (blank skips)");
+            keyboard_view_set_initial_text(temp_sta_ssid);
+            keyboard_view_set_submit_callback(sta_ssid_callback);
+            keyboard_view_set_return_view(&setup_wizard_view);
+            display_manager_switch_view(&keyboard_view);
+            return;
+        }
+        case SETUP_STEP_STA_PASSWORD: {
+            if (temp_sta_password[0] == '\0') {
+                const char *cur_pass = settings_get_sta_password(&G_Settings);
+                if (cur_pass && cur_pass[0]) {
+                    strncpy(temp_sta_password, cur_pass, sizeof(temp_sta_password) - 1);
+                    temp_sta_password[sizeof(temp_sta_password) - 1] = '\0';
+                }
+            }
+            keyboard_view_set_start_caps(false);
+            keyboard_view_set_placeholder("Home WiFi Password");
+            keyboard_view_set_initial_text(temp_sta_password);
+            keyboard_view_set_submit_callback(sta_password_callback);
             keyboard_view_set_return_view(&setup_wizard_view);
             display_manager_switch_view(&keyboard_view);
             return;
@@ -957,7 +1048,7 @@ static void setup_wizard_input_callback(InputEvent *event) {
                 current_step = SETUP_STEP_TIMEZONE;
                 display_manager_switch_view(&setup_wizard_view);
             } else if (idx == 0) { // Left/Back
-                current_step = SETUP_STEP_WELCOME;
+                current_step = SETUP_STEP_STA_SSID;
                 display_manager_switch_view(&setup_wizard_view);
             }
         } else if (event->type == INPUT_TYPE_KEYBOARD) {
@@ -977,7 +1068,7 @@ static void setup_wizard_input_callback(InputEvent *event) {
                 current_step = SETUP_STEP_TIMEZONE;
                 display_manager_switch_view(&setup_wizard_view);
             } else if (kv == LV_KEY_ESC || kv == 29 || kv == '`') { // esc
-                current_step = SETUP_STEP_WELCOME;
+                current_step = SETUP_STEP_STA_SSID;
                 display_manager_switch_view(&setup_wizard_view);
             }
         }
@@ -1147,6 +1238,8 @@ void setup_wizard_reset_and_open(void) {
     selected_country_index = 0;
     temp_ap_ssid[0] = '\0';
     temp_ap_password[0] = '\0';
+    temp_sta_ssid[0] = '\0';
+    temp_sta_password[0] = '\0';
     temp_timezone = 0;
     temp_display_timeout = 0;
     temp_theme = 0;

@@ -19,6 +19,7 @@
 - Polished number pad screen with theme-aware lockscreen-style numpad grid
 - Fixed number pad touchscreen input and replaced the DEL label with the LVGL backspace symbol
 - Polished keyboard screen with theme-aware key styling and accent highlights
+- Polished setup wizard styling, removed default LVGL shadows from wizard buttons and region cards, clarified Device AP vs Home WiFi credential prompts, and added Home WiFi credential setup
 - Fixed apps gallery not respecting the "Item Borders" setting
 - Fixed apps gallery list view icon misalignment and tiling artifact
 - Skipping the setup wizard now defaults the main menu layout to List instead of Carousel
