@@ -948,6 +948,20 @@ static SettingsItem settings_items[] = {
     {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
 
+static int settings_item_clamped_value(SettingsItem *item) {
+    if (!item || item->value_count <= 0) return 0;
+    if (item->current_value < 0 || item->current_value >= item->value_count) {
+        item->current_value = 0;
+    }
+    return item->current_value;
+}
+
+static const char *settings_item_value_text(SettingsItem *item) {
+    int value = settings_item_clamped_value(item);
+    if (!item || !item->value_options || !item->value_options[value]) return "";
+    return item->value_options[value];
+}
+
 #define IO_BTN_EDIT_P10 0x1000
 #define IO_BTN_EDIT_P11 0x1001
 #define IO_BTN_EDIT_P12 0x1002
@@ -1843,7 +1857,7 @@ static void load_current_settings_values(void) {
                 settings_items[i].current_value = settings_get_auto_save_scans(&G_Settings) ? 1 : 0;
                 break;
             case SETTING_MENU_LAYOUT:
-            settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
+                settings_items[i].current_value = settings_get_menu_layout(&G_Settings);
                 break;
             case SETTING_MAX_BRIGHTNESS:
                 { int bv = (settings_get_max_screen_brightness(&G_Settings) / 10) - 1;
@@ -2045,7 +2059,7 @@ static void apply_setting_change(int setting_index, int new_value) {
             settings_set_auto_save_scans(&G_Settings, new_value == 1);
             break;
         case SETTING_MENU_LAYOUT:
-            settings_set_menu_layout(&G_Settings, new_value);
+            settings_set_menu_layout(&G_Settings, (uint8_t)new_value);
             // The layout change will take effect on next menu creation
             break;
         #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
@@ -2443,7 +2457,7 @@ static void change_setting_value(int setting_index, bool increment) {
         }
         if (label) {
             char buf[128];
-            snprintf(buf, sizeof(buf), "%s: %s", item->label, item->value_options[new_value]);
+            snprintf(buf, sizeof(buf), "%s: %s", item->label, settings_item_value_text(item));
             lv_label_set_text(label, buf);
         }
     }
@@ -8485,7 +8499,7 @@ static void menu_builder_cb(lv_timer_t *t)
                         if (current_item_in_category >= build_item_index) {
                             SettingsItem *item = &settings_items[i];
                             char buf[128];
-                            snprintf(buf, sizeof(buf), "%s: %s", item->label, item->value_options[item->current_value]);
+                            snprintf(buf, sizeof(buf), "%s: %s", item->label, settings_item_value_text(item));
                             lv_obj_t *btn = options_view_add_item(g_options_view, buf, option_event_cb, (void *)(intptr_t)i);
                             if (!btn) break;
                             lv_obj_set_user_data(btn, (void *)(intptr_t)i);

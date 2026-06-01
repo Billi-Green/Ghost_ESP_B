@@ -1673,11 +1673,12 @@ bool settings_get_auto_save_scans(const FSettings *settings) {
 
 // Menu layout settings
 void settings_set_menu_layout(FSettings *settings, uint8_t layout) {
+    if (layout > 2) layout = 0;
     settings->menu_layout = layout;
 }
 
 uint8_t settings_get_menu_layout(const FSettings *settings) {
-    return settings->menu_layout;
+    return settings->menu_layout <= 2 ? settings->menu_layout : 0;
 }
 
 // Neopixel brightness settings
