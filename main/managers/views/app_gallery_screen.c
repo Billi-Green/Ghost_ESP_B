@@ -660,6 +660,8 @@ static void create_apps_list_menu(void) {
             if (zoom > 256) zoom = 256;
             if (zoom < 64) zoom = 64;
             lv_img_set_zoom(icon, zoom);
+            lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
+            lv_obj_refresh_self_size(icon);
         }
 
         lv_obj_t *label = lv_label_create(btn);
