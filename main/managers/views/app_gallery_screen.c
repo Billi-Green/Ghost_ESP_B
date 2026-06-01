@@ -4,6 +4,11 @@
 #include "managers/views/music_visualizer.h"
 #include "managers/views/plugin_runner_view.h"
 #include "managers/views/terminal_screen.h"
+#ifdef CONFIG_HAS_AUDIO_PLAYER
+#include "managers/views/audio_player_screen.h"
+#endif
+
+LV_IMG_DECLARE(speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48);
 
 #include "managers/plugin_manager.h"
 #include "managers/settings_manager.h"
@@ -59,6 +64,14 @@ static const app_item_t builtin_app_items[] = {
         .palette_index = 4,
         .view = &music_visualizer_view,
     },
+#ifdef CONFIG_HAS_AUDIO_PLAYER
+    {
+        .name = "Audio",
+        .icon = &speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48,
+        .palette_index = 3,
+        .view = &audio_player_view,
+    },
+#endif
     {
         .name = "Terminal",
         .icon = &terminal_icon,
@@ -117,6 +130,8 @@ static bool ensure_app_items(void) {
     }
     return true;
 }
+
+static void select_app_item(int index, bool slide_left);
 
 static void refresh_apps_surface_colors(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
@@ -493,7 +508,6 @@ static void create_apps_grid_menu(void) {
 
     int cols = num_apps < 3 ? num_apps : 3;
     if (cols <= 0) cols = 1;
-    int rows = (num_apps + cols - 1) / cols;
     int margin = 6;
     if (screen_width <= 240 || avail_height <= 120) {
         margin = 0;

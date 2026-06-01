@@ -30,7 +30,9 @@
 - Added epilepsy warning toggle to disable flashing LED effect popups
 - Updated all UI screens to use accessibility-aware fonts and theme overrides
 - Fixed LoadProhibited crash after deferred SD card init failure — added NULL check for `sd_card_init()` return in deferred init task and nulled `sd_card_manager.card` on mount failure to prevent dangling pointer dereference
-- Fixed STA not reconnecting after BLE/Chameleon suspend when AP was running, added bounded auto-reconnect (5 retries with backoff) on involuntary WiFi disconnects, and fixed stale `manual_disconnect` flag in cancel/disconnect paths
+ - Fixed STA not reconnecting after BLE/Chameleon suspend when AP was running, added bounded auto-reconnect (5 retries with backoff) on involuntary WiFi disconnects, and fixed stale `manual_disconnect` flag in cancel/disconnect paths
+ - Added ENV-III sensor module support (SHT30 temp/humidity + QMP6988 pressure) with LVGL UI, touch-to-calibrate altitude, and periodic I2C sampling — @Billi-Green
+ - Added TLV320DAC3100 audio driver with headphone detection, volume control, I2S output, and audio player UI with touch gestures and encoder volume — @Billi-Green
 
 ## Revival v1.9.10
 
