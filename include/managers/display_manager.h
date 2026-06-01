@@ -24,6 +24,7 @@ typedef enum {
 
 typedef struct {
   InputType type;
+  bool is_touch_move;
   union {
     struct {
       int joystick_index;

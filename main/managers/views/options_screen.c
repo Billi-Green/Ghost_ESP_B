@@ -1085,7 +1085,11 @@ int num_items = 0;
 unsigned long createdTimeInMs = 0;
 static int opt_touch_start_x;
 static int opt_touch_start_y;
+static int opt_touch_last_x;
+static int opt_touch_last_y;
 static bool opt_touch_started = false;
+static bool opt_touch_dragged = false;
+static int opt_touch_drag_axis = 0;
 static WifiMenuState opt_touch_wifi_state = WIFI_MENU_MAIN;
 static int opt_touch_bluetooth_state = 0;
 #if CONFIG_LV_TOUCH_CONTROLLER_XPT2046
@@ -1157,6 +1161,45 @@ typedef enum {
 } BluetoothMenuState;
 
 static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
+
+#define OPT_DRAG_AXIS_THRESHOLD 10
+#define OPT_DRAG_AXIS_BIAS 4
+#define OPT_DRAG_DELTA_DEADZONE 1
+#define OPT_DRAG_MAX_STEP 36
+
+static void opt_touch_reset(void) {
+    opt_touch_started = false;
+    opt_touch_dragged = false;
+    opt_touch_drag_axis = 0;
+}
+
+static void opt_touch_begin(lv_indev_data_t *data) {
+    opt_touch_started = true;
+    opt_touch_dragged = false;
+    opt_touch_drag_axis = 0;
+    opt_touch_start_x = data->point.x;
+    opt_touch_start_y = data->point.y;
+    opt_touch_last_x = data->point.x;
+    opt_touch_last_y = data->point.y;
+    opt_touch_wifi_state = current_wifi_menu_state;
+    opt_touch_bluetooth_state = current_bluetooth_menu_state;
+}
+
+static int opt_clamp_drag_delta(int delta) {
+    if (abs(delta) <= OPT_DRAG_DELTA_DEADZONE) return 0;
+    if (delta > OPT_DRAG_MAX_STEP) return OPT_DRAG_MAX_STEP;
+    if (delta < -OPT_DRAG_MAX_STEP) return -OPT_DRAG_MAX_STEP;
+    return delta;
+}
+
+static int opt_resolve_drag_axis(int total_dx, int total_dy) {
+    int abs_dx = abs(total_dx);
+    int abs_dy = abs(total_dy);
+    if (abs_dx < OPT_DRAG_AXIS_THRESHOLD && abs_dy < OPT_DRAG_AXIS_THRESHOLD) return 0;
+    if (abs_dy >= abs_dx + OPT_DRAG_AXIS_BIAS) return 1;
+    if (abs_dx >= abs_dy + OPT_DRAG_AXIS_BIAS) return 2;
+    return 0;
+}
 
 // forward declaration for incremental builder callback
 static void menu_builder_cb(lv_timer_t *t);
@@ -2582,6 +2625,52 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 opt_touch_started = false;
                 return;
             }
+
+            if (opt_touch_started) {
+                int dy = data->point.y - opt_touch_last_y;
+                opt_touch_last_x = data->point.x;
+                opt_touch_last_y = data->point.y;
+
+                if (!opt_touch_dragged) {
+                    opt_touch_drag_axis = opt_resolve_drag_axis(data->point.x - opt_touch_start_x,
+                                                               data->point.y - opt_touch_start_y);
+                    opt_touch_dragged = opt_touch_drag_axis != 0;
+                }
+
+                if (opt_touch_dragged && opt_touch_drag_axis == 1) {
+                    lv_obj_t *scroll_target = NULL;
+                    detail_view_t *active_detail_view = NULL;
+                    if (ap_detail_view && opt_touch_wifi_state == WIFI_MENU_AP_DETAILS) {
+                        active_detail_view = ap_detail_view;
+                    } else if (sinkhole_detail_view && opt_touch_wifi_state == WIFI_MENU_DNS_SINKHOLE_DETAILS) {
+                        active_detail_view = sinkhole_detail_view;
+                    } else if (gtk_abuse_detail_view) {
+                        active_detail_view = gtk_abuse_detail_view;
+                    } else if (sta_detail_view && opt_touch_wifi_state == WIFI_MENU_STA_DETAILS) {
+                        active_detail_view = sta_detail_view;
+                    } else if (ble_detect_detail_view &&
+                               opt_touch_bluetooth_state == BLUETOOTH_MENU_DETECT_DETAILS) {
+                        active_detail_view = ble_detect_detail_view;
+                    }
+
+                    if (active_detail_view) {
+                        scroll_target = detail_view_get_list(active_detail_view);
+                    } else if (menu_container && lv_obj_is_valid(menu_container)) {
+                        lv_area_t cont_area;
+                        lv_obj_get_coords(menu_container, &cont_area);
+                        bool started_in_container = (opt_touch_start_x >= cont_area.x1 && opt_touch_start_x <= cont_area.x2 &&
+                                                     opt_touch_start_y >= cont_area.y1 && opt_touch_start_y <= cont_area.y2);
+                        if (started_in_container) scroll_target = menu_container;
+                    }
+
+                    if (scroll_target && lv_obj_is_valid(scroll_target)) {
+                        dy = opt_clamp_drag_delta(dy);
+                        if (dy) lv_obj_scroll_by_bounded(scroll_target, 0, dy, LV_ANIM_OFF);
+                    }
+                }
+                return;
+            }
+
             // existing "press" logic unchanged...
             if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn)) {
                 lv_area_t area; lv_obj_get_coords(scroll_up_btn, &area);
@@ -2618,27 +2707,21 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 (ble_detect_detail_view &&
                  current_bluetooth_menu_state == BLUETOOTH_MENU_DETECT_DETAILS)) {
                 if (!opt_touch_started) {
-                    opt_touch_started = true;
-                    opt_touch_start_x = data->point.x;
-                    opt_touch_start_y = data->point.y;
-                    opt_touch_wifi_state = current_wifi_menu_state;
-                    opt_touch_bluetooth_state = current_bluetooth_menu_state;
+                    opt_touch_begin(data);
                 }
                 return;
             }
             if (!opt_touch_started) {
-                opt_touch_started = true;
-                opt_touch_start_x = data->point.x;
-                opt_touch_start_y = data->point.y;
-                opt_touch_wifi_state = current_wifi_menu_state;
-                opt_touch_bluetooth_state = current_bluetooth_menu_state;
+                opt_touch_begin(data);
             }
             return;
         }
 
         if (data->state == LV_INDEV_STATE_REL) {
             if (!opt_touch_started) return;
-            opt_touch_started = false;
+            bool was_dragged = opt_touch_dragged;
+            opt_touch_reset();
+            if (was_dragged) return;
 
             // Handle touch for detail_view (use saved state from touch start)
             detail_view_t *active_detail_view = NULL;

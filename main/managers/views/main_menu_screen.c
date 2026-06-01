@@ -86,10 +86,15 @@ static int touch_last_x;
 static int touch_last_y;
 static bool touch_started = false;
 static bool touch_dragged = false;
+static int touch_drag_axis = 0;
 static bool is_animating = false;
 // touch gesture thresholds
 #define SWIPE_THRESHOLD 50
-#define TAP_THRESHOLD 10 // Add a threshold for tap detection
+#define TAP_THRESHOLD 14
+#define DRAG_AXIS_THRESHOLD 14
+#define DRAG_AXIS_BIAS 4
+#define DRAG_DELTA_DEADZONE 1
+#define DRAG_MAX_STEP 36
 static main_menu_layout_kind_t current_layout = MAIN_MENU_LAYOUT_CAROUSEL;
 static lv_color_t menu_bg_color;
 static lv_color_t menu_surface_color;
@@ -174,6 +179,22 @@ typedef struct {
 } carousel_card_cache_t;
 
 static carousel_card_cache_t carousel_cache = {0};
+
+static int clamp_drag_delta(int delta) {
+    if (abs(delta) <= DRAG_DELTA_DEADZONE) return 0;
+    if (delta > DRAG_MAX_STEP) return DRAG_MAX_STEP;
+    if (delta < -DRAG_MAX_STEP) return -DRAG_MAX_STEP;
+    return delta;
+}
+
+static int resolve_drag_axis(int total_dx, int total_dy) {
+    int abs_dx = abs(total_dx);
+    int abs_dy = abs(total_dy);
+    if (abs_dx < DRAG_AXIS_THRESHOLD && abs_dy < DRAG_AXIS_THRESHOLD) return 0;
+    if (abs_dy >= abs_dx + DRAG_AXIS_BIAS) return 1;
+    if (abs_dx >= abs_dy + DRAG_AXIS_BIAS) return 2;
+    return 0;
+}
 
 static int get_total_menu_items(void) {
     return (int)(sizeof(menu_items) / sizeof(menu_items[0]));
@@ -594,6 +615,7 @@ static void menu_item_event_handler(InputEvent *event) {
             if (!touch_started) {
                 touch_started = true;
                 touch_dragged = false;
+                touch_drag_axis = 0;
                 touch_start_x = data->point.x;
                 touch_start_y = data->point.y;
                 touch_last_x = data->point.x;
@@ -604,18 +626,21 @@ static void menu_item_event_handler(InputEvent *event) {
                 touch_last_x = data->point.x;
                 touch_last_y = data->point.y;
 
-                if (!touch_dragged && (abs(data->point.x - touch_start_x) > TAP_THRESHOLD || abs(data->point.y - touch_start_y) > TAP_THRESHOLD)) {
-                    touch_dragged = true;
+                if (!touch_dragged) {
+                    touch_drag_axis = resolve_drag_axis(data->point.x - touch_start_x, data->point.y - touch_start_y);
+                    touch_dragged = touch_drag_axis != 0;
                 }
 
                 if (touch_dragged) {
                     if (current_layout == MAIN_MENU_LAYOUT_CARD_GRID) {
-                        if (grid_cards_container) {
-                            lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
+                        if (grid_cards_container && touch_drag_axis == 1) {
+                            dy = clamp_drag_delta(dy);
+                            if (dy) lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
                         }
                     } else if (current_layout == MAIN_MENU_LAYOUT_LIST) {
-                        if (menu_container) {
-                            lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
+                        if (menu_container && touch_drag_axis == 1) {
+                            dy = clamp_drag_delta(dy);
+                            if (dy) lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                         }
                     }
                 }
@@ -627,9 +652,11 @@ static void menu_item_event_handler(InputEvent *event) {
 
             if (touch_dragged && current_layout != MAIN_MENU_LAYOUT_CAROUSEL) {
                 touch_dragged = false;
+                touch_drag_axis = 0;
                 return;
             }
             touch_dragged = false;
+            touch_drag_axis = 0;
 
             // NOTE: nav button hit-tests were here previously, but that caused
             // accidental taps when a swipe ended over the nav button. We now
@@ -693,7 +720,8 @@ static void menu_item_event_handler(InputEvent *event) {
                 // Handle vertical swipe for grid cards scrolling
                 if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                     if (grid_cards_container) {
-                        lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
+                        dy = clamp_drag_delta(dy);
+                        if (dy) lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
                     }
                     return;
                 }
@@ -718,7 +746,8 @@ static void menu_item_event_handler(InputEvent *event) {
                 // Handle vertical swipe for list scrolling
                 if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                     if (menu_container) {
-                        lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
+                        dy = clamp_drag_delta(dy);
+                        if (dy) lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
                     }
                     return;
                 }

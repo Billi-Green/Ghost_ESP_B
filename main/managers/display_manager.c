@@ -1761,6 +1761,18 @@ void display_manager_destroy_current_view(void) {
 
 View *display_manager_get_current_view(void) { return dm.current_view; }
 
+static bool touch_move_events_enabled_for_current_view(void) {
+  if (!dm.mutex) return false;
+
+  bool enabled = false;
+  if (xSemaphoreTake(dm.mutex, 0) == pdTRUE) {
+    View *current = dm.current_view;
+    enabled = current && current->name && strcmp(current->name, "Options Screen") == 0;
+    xSemaphoreGive(dm.mutex);
+  }
+  return enabled;
+}
+
 bool display_manager_is_available(void) { return display_manager_init_success; }
 
 void display_manager_fill_screen(lv_color_t color) {
@@ -1985,12 +1997,15 @@ static char tdeck_raw_to_char(int col, int row, bool shift, bool symbol) {
 
 void hardware_input_task(void *pvParameters) {
   const TickType_t tick_interval = pdMS_TO_TICKS(10);
+  const int touch_move_min_delta = 1;
 
   lv_indev_drv_t touch_driver;
   lv_indev_data_t touch_data;
   uint16_t calData[5] = {339, 3470, 237, 3438, 2};
   bool touch_active = false;
   bool skip_next_release = false;
+  int last_touch_x = 0;
+  int last_touch_y = 0;
   int screen_width = LV_HOR_RES;
 #ifdef CONFIG_IS_S3TWATCH
   bool was_woken_by_interrupt = false; // New flag for S3T-Watch
@@ -2707,6 +2722,8 @@ void hardware_input_task(void *pvParameters) {
     if (touch_data.state == LV_INDEV_STATE_PR && !touch_active) {
       bool skip_event = false;
       last_touch_time = xTaskGetTickCount();
+      last_touch_x = touch_data.point.x;
+      last_touch_y = touch_data.point.y;
 #ifdef CONFIG_IS_S3TWATCH
       if (was_woken_by_interrupt) {
         was_woken_by_interrupt = false; // Consume the flag
@@ -2730,11 +2747,30 @@ void hardware_input_task(void *pvParameters) {
         touch_active = true;
         InputEvent event;
         event.type = INPUT_TYPE_TOUCH;
+        event.is_touch_move = false;
         event.data.touch_data.point.x = touch_data.point.x;
         event.data.touch_data.point.y = touch_data.point.y;
         event.data.touch_data.state = touch_data.state;
         if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
           ESP_LOGE(TAG, "Failed to send touch input to queue\n");
+        }
+      }
+    } else if (touch_data.state == LV_INDEV_STATE_PR && touch_active && !skip_next_release) {
+      if (abs(touch_data.point.x - last_touch_x) >= touch_move_min_delta ||
+          abs(touch_data.point.y - last_touch_y) >= touch_move_min_delta) {
+        last_touch_time = xTaskGetTickCount();
+        if (touch_move_events_enabled_for_current_view()) {
+          InputEvent event;
+          event.type = INPUT_TYPE_TOUCH;
+          event.is_touch_move = true;
+          event.data.touch_data = touch_data;
+          if (xQueueSend(input_queue, &event, 0) == pdTRUE) {
+            last_touch_x = touch_data.point.x;
+            last_touch_y = touch_data.point.y;
+          }
+        } else {
+          last_touch_x = touch_data.point.x;
+          last_touch_y = touch_data.point.y;
         }
       }
     } else if (touch_data.state == LV_INDEV_STATE_REL && touch_active) {
@@ -2745,6 +2781,7 @@ void hardware_input_task(void *pvParameters) {
       } else {
         InputEvent event;
         event.type = INPUT_TYPE_TOUCH;
+        event.is_touch_move = false;
         event.data.touch_data = touch_data;
         if (xQueueSend(input_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
           ESP_LOGE(TAG, "Failed to send touch input to queue\n");
@@ -2830,6 +2867,11 @@ void processEvent() {
       xSemaphoreGive(dm.mutex);
 
       ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
+      if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move &&
+          strcmp(view_name, "Options Screen") != 0) {
+        processed++;
+        continue;
+      }
       // Joystick release events are only meaningful in the keyboard view.
       // All other views only check joystick_index and would double-fire on release.
       if (event.type == INPUT_TYPE_JOYSTICK && !event.data.joystick_pressed &&
@@ -2865,7 +2907,10 @@ void processEvent() {
         xSemaphoreGive(dm.mutex);
 
         ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
-        if (event.type == INPUT_TYPE_JOYSTICK && !event.data.joystick_pressed &&
+        if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move &&
+            strcmp(view_name, "Options Screen") != 0) {
+          // drop live move samples for views that still treat pressed touches as clicks
+        } else if (event.type == INPUT_TYPE_JOYSTICK && !event.data.joystick_pressed &&
             strcmp(view_name, "Keyboard Screen") != 0) {
           // drop release event for non-keyboard views
         } else if (input_callback) {
