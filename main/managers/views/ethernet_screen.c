@@ -1,4 +1,4 @@
-// ethernet_screen.c — Multi-state Ethernet dashboard view for GhostESP2
+// ethernet_screen.c - Multi-state Ethernet dashboard view for GhostESP2
 // Supports both local mode (CONFIG_WITH_ETHERNET) and remote GhostLink peer mode.
 
 #include "managers/views/ethernet_screen.h"
@@ -78,7 +78,7 @@ static void load_theme_colors(void) {
 // Display-only structs (always defined, no CONFIG dependency).
 // These are populated either from local scan APIs (ETH_HAS_LOCAL)
 // or from parsed GhostLink stream records (remote mode).
-// All UI build functions read from these — no conditional code in build functions.
+// All UI build functions read from these - no conditional code in build functions.
 // ============================================================
 
 typedef struct {
@@ -171,6 +171,9 @@ static bool                s_fp_active    = false;
 static options_view_t     *s_action_ov    = NULL;
 static int                 s_selected_fp_host  = -1;
 static int                 s_selected_arp_host = -1;
+static bool                s_touch_started = false;
+static lv_point_t          s_touch_start   = {0};
+static eth_screen_state_t  s_touch_state   = ETH_STATE_DASHBOARD;
 
 // Dashboard status labels
 static lv_obj_t *s_lbl_status = NULL;
@@ -537,7 +540,7 @@ static lv_obj_t *create_card(lv_obj_t *parent, int width_pct) {
 }
 
 // ============================================================
-// Stat row helper — returns the value label
+// Stat row helper - returns the value label
 // ============================================================
 
 static lv_obj_t *add_stat_row(lv_obj_t *parent, const char *key) {
@@ -613,7 +616,7 @@ static void refresh_dashboard_labels(void) {
 }
 
 // ============================================================
-// populate_poison_content — rebuild the single content list for `sec`
+// populate_poison_content - rebuild the single content list for `sec`
 // ============================================================
 
 static void populate_poison_content(int sec) {
@@ -621,7 +624,7 @@ static void populate_poison_content(int sec) {
     lv_obj_clean(s_poison_content_list);
 
     if (sec == 3) {
-        // Stop tab — single destructive action item
+        // Stop tab - single destructive action item
         lv_obj_t *item = lv_list_add_btn(s_poison_content_list, NULL,
                                          "Press SELECT to stop ARP poison");
         lv_obj_set_style_text_color(item, lv_color_hex(0xFF4444), 0);
@@ -658,7 +661,7 @@ static void populate_poison_content(int sec) {
 }
 
 // ============================================================
-// switch_poison_tab — update tab highlights and repopulate content
+// switch_poison_tab - update tab highlights and repopulate content
 // ============================================================
 
 static void switch_poison_tab(int new_sec) {
@@ -769,7 +772,7 @@ static void on_arp_host_selected(lv_event_t *e) {
 }
 
 // ============================================================
-// scan_poll_cb — handles both local and remote modes
+// scan_poll_cb - handles both local and remote modes
 // ============================================================
 
 static void scan_poll_cb(lv_timer_t *t) {
@@ -882,7 +885,7 @@ static void scan_poll_cb(lv_timer_t *t) {
 }
 
 // ============================================================
-// poison_monitor_cb — handles both local and remote modes
+// poison_monitor_cb - handles both local and remote modes
 // ============================================================
 
 static void poison_monitor_cb(lv_timer_t *t) {
@@ -958,7 +961,7 @@ static void build_dashboard(void) {
     s_lbl_link   = add_stat_row(status_card, "Link");
     refresh_dashboard_labels();
 
-    // Actions list — fills all remaining vertical space via flex-grow
+    // Actions list - fills all remaining vertical space via flex-grow
     s_action_ov = options_view_create(s_content, NULL);
     lv_obj_t *list = options_view_get_list(s_action_ov);
     if (list && lv_obj_is_valid(list)) {
@@ -966,6 +969,9 @@ static void build_dashboard(void) {
         // the parent flex-column drive position; flex-grow fills leftover height
         lv_obj_set_align(list, LV_ALIGN_DEFAULT);
         lv_obj_set_flex_grow(list, 1);
+        lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(list, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
     }
 
 #ifdef ETH_HAS_LOCAL
@@ -1056,7 +1062,7 @@ static void build_arp_list(void) {
 }
 
 // ============================================================
-// build_fp_results — reads from s_fp display struct
+// build_fp_results - reads from s_fp display struct
 // ============================================================
 
 static void build_fp_results(void) {
@@ -1082,7 +1088,7 @@ static void build_fp_results(void) {
 }
 
 // ============================================================
-// build_arp_results — reads from s_scan display struct
+// build_arp_results - reads from s_scan display struct
 // ============================================================
 
 static void build_arp_results(void) {
@@ -1107,7 +1113,7 @@ static void build_arp_results(void) {
 }
 
 // ============================================================
-// build_port_results — reads from s_scan display struct
+// build_port_results - reads from s_scan display struct
 // ============================================================
 
 static void build_port_results(void) {
@@ -1142,7 +1148,7 @@ static void build_ping_results(void) {
 }
 
 // ============================================================
-// build_poison_monitor — reads from s_poison display struct
+// build_poison_monitor - reads from s_poison display struct
 // ============================================================
 
 static void build_poison_monitor(void) {
@@ -1193,7 +1199,7 @@ static void build_poison_monitor(void) {
         s_poison_tab_labels[i] = lbl;
     }
 
-    // ── Content list — fills all remaining vertical space ────────────────────
+    // ── Content list - fills all remaining vertical space ────────────────────
     s_poison_content_list = lv_list_create(s_content);
     lv_obj_set_size(s_poison_content_list, LV_PCT(100), 0);
     lv_obj_set_flex_grow(s_poison_content_list, 1);
@@ -1212,7 +1218,7 @@ static void build_poison_monitor(void) {
 }
 
 // ============================================================
-// rebuild_content — core state machine transition
+// rebuild_content - core state machine transition
 // ============================================================
 
 static void rebuild_content(eth_screen_state_t new_state) {
@@ -1255,6 +1261,7 @@ static void rebuild_content(eth_screen_state_t new_state) {
 
     // 7. Update state
     s_state = new_state;
+    s_touch_started = false;
 
     // 8. States that anchor directly to s_root need no s_content wrapper.
     //    options_view_create(s_root) and detail_view_create(s_root) both
@@ -1301,6 +1308,150 @@ static void rebuild_content(eth_screen_state_t new_state) {
 }
 
 // ============================================================
+// Touch helpers
+// ============================================================
+
+static bool point_in_obj(lv_obj_t *obj, const lv_point_t *p) {
+    if (!obj || !p || !lv_obj_is_valid(obj)) return false;
+    lv_area_t area;
+    lv_obj_get_coords(obj, &area);
+    return p->x >= area.x1 && p->x <= area.x2 && p->y >= area.y1 && p->y <= area.y2;
+}
+
+static bool handle_options_touch(options_view_t *ov, const lv_indev_data_t *data) {
+    if (!ov || !data) return false;
+    lv_obj_t *list = options_view_get_list(ov);
+    if (!list || !lv_obj_is_valid(list)) return false;
+
+    if (!point_in_obj(list, &s_touch_start)) return false;
+
+    int dx = data->point.x - s_touch_start.x;
+    int dy = data->point.y - s_touch_start.y;
+    int thr_y = LV_VER_RES / 20;
+    int thr_x = LV_HOR_RES / 20;
+    if (thr_y < 6) thr_y = 6;
+    if (thr_x < 6) thr_x = 6;
+
+    if (abs(dy) > thr_y) {
+        lv_obj_scroll_by_bounded(list, 0, dy, LV_ANIM_OFF);
+        return true;
+    }
+    if (abs(dx) > thr_x || !point_in_obj(list, &data->point)) return true;
+
+    uint32_t child_cnt = lv_obj_get_child_cnt(list);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t *btn = lv_obj_get_child(list, (int32_t)i);
+        if (!btn || !lv_obj_is_valid(btn)) continue;
+        if (point_in_obj(btn, &data->point)) {
+            options_view_set_selected(ov, (int)i);
+            lv_event_send(btn, LV_EVENT_CLICKED, NULL);
+            return true;
+        }
+    }
+    return true;
+}
+
+static bool handle_detail_touch(detail_view_t *dv, const lv_indev_data_t *data) {
+    if (!dv || !data) return false;
+    lv_obj_t *list = detail_view_get_list(dv);
+    if (!list || !lv_obj_is_valid(list)) return false;
+
+    if (!point_in_obj(list, &s_touch_start)) return false;
+
+    int dx = data->point.x - s_touch_start.x;
+    int dy = data->point.y - s_touch_start.y;
+    int thr_y = LV_VER_RES / 20;
+    if (thr_y < 6) thr_y = 6;
+
+    if (abs(dy) > thr_y) {
+        lv_obj_scroll_by_bounded(list, 0, dy, LV_ANIM_OFF);
+        return true;
+    }
+    if (abs(dx) > thr_y || !point_in_obj(list, &data->point)) return true;
+
+    uint32_t child_cnt = lv_obj_get_child_cnt(list);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t *child = lv_obj_get_child(list, (int32_t)i);
+        if (!child || !lv_obj_is_valid(child)) continue;
+        if (point_in_obj(child, &data->point)) {
+            lv_event_send(child, LV_EVENT_CLICKED, NULL);
+            return true;
+        }
+    }
+    return true;
+}
+
+static bool handle_poison_touch(const lv_indev_data_t *data) {
+    if (!data) return false;
+
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *tab = s_poison_tab_labels[i];
+        if (tab && lv_obj_is_valid(tab) &&
+            point_in_obj(tab, &s_touch_start) && point_in_obj(tab, &data->point)) {
+            switch_poison_tab(i);
+            return true;
+        }
+    }
+
+    lv_obj_t *list = s_poison_content_list;
+    if (!list || !lv_obj_is_valid(list) || !point_in_obj(list, &s_touch_start)) return false;
+
+    int dx = data->point.x - s_touch_start.x;
+    int dy = data->point.y - s_touch_start.y;
+    int thr_y = LV_VER_RES / 20;
+    int thr_x = LV_HOR_RES / 20;
+    if (thr_y < 6) thr_y = 6;
+    if (thr_x < 6) thr_x = 6;
+
+    if (abs(dy) > thr_y) {
+        lv_obj_scroll_by_bounded(list, 0, dy, LV_ANIM_OFF);
+        return true;
+    }
+    if (abs(dx) > thr_x || !point_in_obj(list, &data->point)) return true;
+
+    uint32_t child_cnt = lv_obj_get_child_cnt(list);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t *child = lv_obj_get_child(list, (int32_t)i);
+        if (!child || !lv_obj_is_valid(child)) continue;
+        if (point_in_obj(child, &data->point)) {
+            lv_event_send(child, LV_EVENT_CLICKED, NULL);
+            return true;
+        }
+    }
+    return true;
+}
+
+static bool handle_ethernet_touch(const lv_indev_data_t *data) {
+    if (!data) return false;
+
+    if (data->state == LV_INDEV_STATE_PR) {
+        s_touch_started = true;
+        s_touch_start = data->point;
+        s_touch_state = s_state;
+        return true;
+    }
+
+    if (data->state != LV_INDEV_STATE_REL || !s_touch_started) return true;
+    s_touch_started = false;
+
+    switch (s_touch_state) {
+        case ETH_STATE_DASHBOARD:
+        case ETH_STATE_FP_LIST:
+        case ETH_STATE_ARP_LIST:
+            return handle_options_touch(s_action_ov, data);
+        case ETH_STATE_FP_RESULTS:
+        case ETH_STATE_ARP_RESULTS:
+        case ETH_STATE_PORT_RESULTS:
+        case ETH_STATE_PING_RESULTS:
+            return handle_detail_touch(s_result_dv, data);
+        case ETH_STATE_POISON_MONITOR:
+            return handle_poison_touch(data);
+        default:
+            return true;
+    }
+}
+
+// ============================================================
 // Input callback
 // ============================================================
 
@@ -1338,6 +1489,7 @@ static void ethernet_screen_input_cb(InputEvent *event) {
             back = true;
             break;
         case INPUT_TYPE_TOUCH:
+            handle_ethernet_touch(&event->data.touch_data);
             return;
         default:
             return;
