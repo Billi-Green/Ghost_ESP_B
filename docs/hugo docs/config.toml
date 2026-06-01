@@ -96,3 +96,8 @@ enableRobotsTXT = true
   name = "SubGHz"
   url = "/latest/subghz/"
   weight = 7
+
+[[menu.sidebar]]
+  name = "Audio"
+  url = "/latest/audio/"
+  weight = 8

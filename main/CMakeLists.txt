@@ -152,19 +152,20 @@ list(APPEND required_components tlv320dac3100)
 # Add audio codec component for audio receiver headers/libraries.
 list(APPEND required_components esp_audio_codec)
 
+set(embed_files_list "core/ouis.json")
+
 if(CONFIG_HAS_NFC)
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
                            REQUIRES ${required_components}
                            EMBED_TXTFILES "mf_classic_dict.nfc"
-                           EMBED_FILES "core/ouis.json")
-    # Signal to C code that the dictionary is embedded so it can reference linker symbols safely
+                           EMBED_FILES ${embed_files_list})
     target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_MFC_DICT_EMBEDDED=1)
 else()
     idf_component_register(SRCS ${sources}
                            INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/include" ${extra_includes}
                            REQUIRES ${required_components}
-                           EMBED_FILES "core/ouis.json")
+                           EMBED_FILES ${embed_files_list})
 endif()
 
 # add compile definition for esp32s2 target to maintain legacy guards (needs COMPONENT_LIB)

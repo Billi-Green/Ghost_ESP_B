@@ -39,6 +39,19 @@ esp_err_t audio_receiver_manager_start(void);
 void audio_receiver_manager_stop(void);
 
 /**
+ * @brief Pause receiver output immediately and discard buffered stream data.
+ */
+void audio_receiver_manager_pause(void);
+
+/**
+ * @brief Flush the decoder state and ring buffer without stopping.
+ *
+ * Resets the MP3 decoder and clears the ring buffer to recover from
+ * corruption or large jumps. The receiver remains active.
+ */
+void audio_receiver_manager_flush(void);
+
+/**
  * @brief Set the DAC sample rate based on decoded MP3 info.
  *
  * @param sample_rate Detected sample rate in Hz

@@ -286,8 +286,8 @@ esp_err_t tlv320dac3100_init(const tlv320dac3100_config_t *config)
         return ret;
     }
 
-    /* Step 3: Set volume to 0 dB (100%) */
-    ret = tlv320dac3100_set_volume(100);
+    /* Step 3: Leave digital headroom; small speakers distort easily at 0 dBFS. */
+    ret = tlv320dac3100_set_volume(85);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Volume set failed: %s", esp_err_to_name(ret));
         tlv320dac3100_cleanup_handles();
@@ -302,11 +302,9 @@ esp_err_t tlv320dac3100_init(const tlv320dac3100_config_t *config)
         return ret;
     }
 
-    ret = tlv320dac3100_enable_headphone_detect();
-    if (ret == ESP_OK) {
-        tlv320dac3100_start_headphone_detect_task();
-    } else {
-        ESP_LOGW(TAG, "Headphone detection init failed: %s", esp_err_to_name(ret));
+    ret = tlv320dac3100_detect_headphone_once();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "One-shot headphone detection failed: %s", esp_err_to_name(ret));
     }
 
     tlv320dac3100_log_key_registers();
@@ -426,7 +424,7 @@ static uint8_t tlv320dac3100_volume_to_reg(uint8_t volume)
         return 0x80; /* mute-level attenuation */
     }
 
-    const int max_gain_half_db = 8; /* +4 dB at 100%, louder but still controlled. */
+    const int max_gain_half_db = 0; /* 100% = 0 dB; avoid digital boost/clipping. */
     int level_half_db = max_gain_half_db - (((100 - volume) * (127 + max_gain_half_db)) / 100);
     return (uint8_t)level_half_db;
 }
@@ -615,6 +613,71 @@ esp_err_t tlv320dac3100_is_headphone_inserted(bool *inserted)
     return ESP_OK;
 }
 
+esp_err_t tlv320dac3100_set_headphone_detection_enabled(bool enabled)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+
+    if (!enabled) {
+        tlv320dac3100_stop_headphone_detect_task();
+
+        uint8_t detect_cfg = 0;
+        esp_err_t ret = tlv320dac3100_read_reg(TLV320DAC3100_PAGE_0,
+                                               TLV320DAC3100_REG_HEADSET_DETECT,
+                                               &detect_cfg);
+        if (ret != ESP_OK) return ret;
+        detect_cfg &= ~TLV320DAC3100_HEADSET_DETECT_ENABLE;
+        ret = tlv320dac3100_write_reg(TLV320DAC3100_PAGE_0,
+                                      TLV320DAC3100_REG_HEADSET_DETECT,
+                                      detect_cfg);
+        if (ret != ESP_OK) return ret;
+
+        s_headphone_detect_enabled = false;
+        ESP_LOGI(TAG, "Headphone detection suspended");
+        return ESP_OK;
+    }
+
+    esp_err_t ret = tlv320dac3100_enable_headphone_detect();
+    if (ret != ESP_OK) return ret;
+    tlv320dac3100_start_headphone_detect_task();
+    ESP_LOGI(TAG, "Headphone detection resumed");
+    return ESP_OK;
+}
+
+esp_err_t tlv320dac3100_detect_headphone_once(void)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+
+    tlv320dac3100_stop_headphone_detect_task();
+
+    esp_err_t ret = tlv320dac3100_enable_headphone_detect();
+    if (ret != ESP_OK) return ret;
+
+    bool inserted = false;
+    ret = tlv320dac3100_is_headphone_inserted(&inserted);
+    if (ret != ESP_OK) return ret;
+
+    s_headphone_inserted = inserted;
+    uint8_t route = inserted ? DAC_ROUTE_HP : s_requested_route;
+    ret = tlv320dac3100_apply_output_route(route);
+    if (ret != ESP_OK) return ret;
+
+    uint8_t detect_cfg = 0;
+    ret = tlv320dac3100_read_reg(TLV320DAC3100_PAGE_0,
+                                 TLV320DAC3100_REG_HEADSET_DETECT,
+                                 &detect_cfg);
+    if (ret != ESP_OK) return ret;
+    detect_cfg &= ~TLV320DAC3100_HEADSET_DETECT_ENABLE;
+    ret = tlv320dac3100_write_reg(TLV320DAC3100_PAGE_0,
+                                  TLV320DAC3100_REG_HEADSET_DETECT,
+                                  detect_cfg);
+    if (ret != ESP_OK) return ret;
+
+    s_headphone_detect_enabled = false;
+    ESP_LOGI(TAG, "One-shot headphone detect: inserted=%s, route=%d; detection suspended",
+             inserted ? "yes" : "no", s_applied_route);
+    return ESP_OK;
+}
+
 static esp_err_t tlv320dac3100_enable_headphone_detect(void)
 {
     uint8_t timer_clk = 0;
@@ -739,12 +802,6 @@ static void tlv320dac3100_headphone_detect_task(void *arg)
         bool inserted = false;
         esp_err_t ret = tlv320dac3100_is_headphone_inserted(&inserted);
         bool log_poll = ret == ESP_OK && (++poll_count % 20) == 0;
-        if (log_poll) {
-            esp_err_t adc_ret = tlv320dac3100_sample_vol_micdet_adc();
-            if (adc_ret != ESP_OK) {
-                ESP_LOGW(TAG, "VOL/MICDET ADC read failed: %s", esp_err_to_name(adc_ret));
-            }
-        }
 
         if (ret == ESP_OK &&
             (s_headphone_sticky_flags != last_sticky ||
@@ -792,7 +849,7 @@ static void tlv320dac3100_headphone_detect_task(void *arg)
             ESP_LOGW(TAG, "Headphone detect read failed: %s", esp_err_to_name(ret));
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
     s_headphone_detect_task = NULL;

@@ -172,7 +172,7 @@ esp_err_t audio_i2s_output_write(const int16_t *data, size_t len)
     if (s_i2s_mutex && xSemaphoreTake(s_i2s_mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
-    esp_err_t ret = i2s_channel_write(s_i2s_tx_chan, data, len, &bytes_written, pdMS_TO_TICKS(20));
+    esp_err_t ret = i2s_channel_write(s_i2s_tx_chan, data, len, &bytes_written, pdMS_TO_TICKS(40));
     if (s_i2s_mutex) {
         xSemaphoreGive(s_i2s_mutex);
     }

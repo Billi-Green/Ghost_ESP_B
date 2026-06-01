@@ -12,6 +12,7 @@
 #include "freertos/semphr.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 /* esp_audio_codec headers */
 #include "esp_audio_dec.h"
@@ -28,6 +29,7 @@ static const char *TAG = "AudioRecv";
 #define AUDIO_DEC_IN_BUF_SIZE  (8192)
 #define AUDIO_DEC_MIN_INPUT    (1024)
 #define AUDIO_DEC_START_THRESHOLD (48 * 1024)  /* Wait until buffer is 50% full before decoding */
+#define AUDIO_STATUS_INTERVAL_MS 250
 
 typedef struct {
     uint8_t *buf;
@@ -47,6 +49,10 @@ static struct {
     bool first_stream_packet_logged;
     bool first_pcm_logged;
     uint32_t rx_bytes_total;
+    TickType_t last_status_tick;
+    uint32_t played_ms;
+    uint64_t played_pcm_bytes;
+    uint32_t output_channels;
 } s_recv = {0};
 
 static StackType_t *s_decode_task_stack = NULL;
@@ -63,7 +69,8 @@ static inline size_t ringbuf_count(ringbuf_t *rb)
 static size_t ringbuf_write(ringbuf_t *rb, const uint8_t *data, size_t len)
 {
     size_t count = ringbuf_count(rb);
-    size_t free = AUDIO_RX_RINGBUF_SIZE - count;
+    /* Keep one byte empty so head == tail always means empty, never full. */
+    size_t free = (count < AUDIO_RX_RINGBUF_SIZE - 1) ? (AUDIO_RX_RINGBUF_SIZE - count - 1) : 0;
     size_t to_write = (len < free) ? len : free;
     if (to_write == 0 || !rb->buf) return 0;
 
@@ -117,6 +124,10 @@ esp_err_t audio_receiver_manager_start(void)
     s_recv.first_pcm_logged = false;
     s_recv.detected_sample_rate = 0;
     s_recv.rx_bytes_total = 0;
+    s_recv.last_status_tick = 0;
+    s_recv.played_ms = 0;
+    s_recv.played_pcm_bytes = 0;
+    s_recv.output_channels = 2;
     s_recv.rx_ringbuf.head = 0;
     s_recv.rx_ringbuf.tail = 0;
     ESP_LOGI(TAG, "Audio receiver started");
@@ -133,8 +144,61 @@ void audio_receiver_manager_stop(void)
     ESP_LOGI(TAG, "Audio receiver stopped");
 }
 
+void audio_receiver_manager_pause(void)
+{
+    if (!s_recv.initialized) return;
+    s_recv.active = false;
+    s_recv.flush_requested = true;
+    s_recv.rx_ringbuf.head = 0;
+    s_recv.rx_ringbuf.tail = 0;
+    s_recv.waiting_for_buffer = true;
+    s_recv.played_ms = 0;
+    s_recv.played_pcm_bytes = 0;
+    audio_i2s_output_flush();
+    ESP_LOGI(TAG, "Audio receiver paused");
+}
+
+void audio_receiver_manager_flush(void)
+{
+    if (!s_recv.initialized) return;
+    s_recv.flush_requested = true;
+    s_recv.rx_ringbuf.head = 0;
+    s_recv.rx_ringbuf.tail = 0;
+    s_recv.waiting_for_buffer = true;
+    ESP_LOGI(TAG, "Audio receiver flush requested");
+}
+
 static void stream_handler(uint8_t channel, const uint8_t *data, size_t length, void *user_data);
 static void audio_decode_task(void *arg);
+
+static uint32_t audio_receiver_get_played_ms(void)
+{
+    uint32_t sample_rate = s_recv.detected_sample_rate ? s_recv.detected_sample_rate : 44100;
+    uint32_t channels = s_recv.output_channels ? s_recv.output_channels : 2;
+    uint32_t bytes_per_sec = sample_rate * channels * sizeof(int16_t);
+    if (bytes_per_sec == 0) return 0;
+    return (uint32_t)((s_recv.played_pcm_bytes * 1000) / bytes_per_sec);
+}
+
+static void audio_receiver_send_status(bool force)
+{
+    if (!esp_comm_manager_is_connected()) return;
+
+    TickType_t now = xTaskGetTickCount();
+    if (!force && s_recv.last_status_tick != 0 &&
+        now - s_recv.last_status_tick < pdMS_TO_TICKS(AUDIO_STATUS_INTERVAL_MS)) {
+        return;
+    }
+
+    char status[48];
+    snprintf(status, sizeof(status), "state %lu %lu %lu",
+             (unsigned long)ringbuf_count(&s_recv.rx_ringbuf),
+             (unsigned long)AUDIO_RX_RINGBUF_SIZE,
+             (unsigned long)audio_receiver_get_played_ms());
+    if (esp_comm_manager_send_command("audio", status)) {
+        s_recv.last_status_tick = now;
+    }
+}
 
 esp_err_t audio_receiver_manager_init(void)
 {
@@ -250,6 +314,9 @@ static void stream_handler(uint8_t channel, const uint8_t *data, size_t length, 
     size_t written = ringbuf_write(&s_recv.rx_ringbuf, data, length);
     if (written < length) {
         ESP_LOGW(TAG, "Ring buffer overflow, dropped %d bytes", (int)(length - written));
+        audio_receiver_send_status(true);
+    } else {
+        audio_receiver_send_status(false);
     }
 }
 
@@ -298,6 +365,7 @@ static void audio_decode_task(void *arg)
 
     size_t buffered = 0;
     uint32_t last_stats_log = 0;
+    uint32_t last_wait_log = 0;
     while (1) {
         /* If not active, just wait for data to arrive */
         if (!s_recv.active) {
@@ -309,6 +377,8 @@ static void audio_decode_task(void *arg)
         if (s_recv.flush_requested) {
             ESP_LOGI(TAG, "Flushing decoder and I2S buffers");
             buffered = 0;
+            s_recv.played_ms = 0;
+            s_recv.played_pcm_bytes = 0;
             audio_i2s_output_flush();
             if (s_recv.simple_dec) {
                 esp_audio_simple_dec_close(s_recv.simple_dec);
@@ -330,9 +400,13 @@ static void audio_decode_task(void *arg)
         if (s_recv.waiting_for_buffer) {
             size_t buf_count = ringbuf_count(&s_recv.rx_ringbuf);
             if (buf_count < AUDIO_DEC_START_THRESHOLD) {
-                ESP_LOGI(TAG, "Waiting for buffer to fill: %lu / %lu bytes",
-                         (unsigned long)buf_count,
-                         (unsigned long)AUDIO_DEC_START_THRESHOLD);
+                uint32_t now = xTaskGetTickCount();
+                if (now - last_wait_log >= pdMS_TO_TICKS(500)) {
+                    ESP_LOGI(TAG, "Waiting for buffer to fill: %lu / %lu bytes",
+                             (unsigned long)buf_count,
+                             (unsigned long)AUDIO_DEC_START_THRESHOLD);
+                    last_wait_log = now;
+                }
                 vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
@@ -361,6 +435,7 @@ static void audio_decode_task(void *arg)
                      (unsigned long)s_recv.rx_bytes_total);
             last_stats_log = now;
         }
+        audio_receiver_send_status(false);
 
         if (buffered < AUDIO_DEC_MIN_INPUT) {
             /* Not enough for decode; just keep feeding */
@@ -402,13 +477,26 @@ static void audio_decode_task(void *arg)
                 }
             }
             if (aerr == ESP_AUDIO_ERR_OK && out.decoded_size > 0) {
+                /* Light PCM attenuation (-6 dB) applied in-place in the
+                 * heap-allocated decode buffer. This avoids clipping on a
+                 * tiny speaker/headphone while keeping the I2S write path
+                 * allocation-free. */
+                size_t pcm_samples = out.decoded_size / sizeof(int16_t);
+                for (size_t i = 0; i < pcm_samples; ++i) {
+                    pcm_buf[i] = (int16_t)(pcm_buf[i] >> 1);
+                }
+
                 /* Write decoded PCM to I2S */
                 esp_err_t write_ret = audio_i2s_output_write(pcm_buf, out.decoded_size);
                 if (write_ret != ESP_OK) {
                     ESP_LOGW(TAG, "PCM write failed: %s", esp_err_to_name(write_ret));
-                } else if (!s_recv.first_pcm_logged) {
-                    ESP_LOGI(TAG, "First decoded PCM frame written: %lu bytes", (unsigned long)out.decoded_size);
-                    s_recv.first_pcm_logged = true;
+                } else {
+                    s_recv.played_pcm_bytes += out.decoded_size;
+                    s_recv.played_ms = audio_receiver_get_played_ms();
+                    if (!s_recv.first_pcm_logged) {
+                        ESP_LOGI(TAG, "First decoded PCM frame written: %lu bytes", (unsigned long)out.decoded_size);
+                        s_recv.first_pcm_logged = true;
+                    }
                 }
 
                 /* Auto-detect sample rate on first successful decode */
@@ -417,6 +505,9 @@ static void audio_decode_task(void *arg)
                     if (esp_audio_simple_dec_get_info(s_recv.simple_dec, &info) == ESP_AUDIO_ERR_OK) {
                         if (info.sample_rate > 0) {
                             audio_receiver_manager_set_sample_rate(info.sample_rate);
+                        }
+                        if (info.channel > 0) {
+                            s_recv.output_channels = info.channel;
                         }
                     }
                 }
@@ -472,6 +563,8 @@ void audio_receiver_manager_deinit(void) {}
 bool audio_receiver_manager_is_initialized(void) { return false; }
 esp_err_t audio_receiver_manager_start(void) { return ESP_ERR_NOT_SUPPORTED; }
 void audio_receiver_manager_stop(void) {}
+void audio_receiver_manager_pause(void) {}
+void audio_receiver_manager_flush(void) {}
 esp_err_t audio_receiver_manager_set_sample_rate(uint32_t sample_rate) { (void)sample_rate; return ESP_ERR_NOT_SUPPORTED; }
 
 #endif /* CONFIG_HAS_TLV320DAC_I2S */

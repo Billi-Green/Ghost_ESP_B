@@ -397,6 +397,13 @@ static void tx_task(void* arg) {
             uart_write_bytes(s_uart_num, (uint8_t*)&packet, PACKET_HEADER_SIZE + packet.length);
             uint8_t checksum = compute_packet_checksum(&packet, comm->use_crc);
             uart_write_bytes(s_uart_num, &checksum, 1);
+            if (packet.type == PACKET_TYPE_STREAM) {
+                /* Stream pacing needs physical UART backpressure, not just TX
+                 * queue acceptance. Without this the TX task can build a UART
+                 * backlog and the receiver sees large bursts despite sender
+                 * media-clock pacing. */
+                uart_wait_tx_done(s_uart_num, pdMS_TO_TICKS(20));
+            }
             if (packet.type == PACKET_TYPE_RESPONSE) {
                 bool ends_with_newline = false;
                 if (packet.length > 2) {
@@ -1466,7 +1473,8 @@ bool esp_comm_manager_send_command(const char* command, const char* data) {
     }
 
     bool result = send_packet(&packet);
-    if (result) {
+    bool quiet_audio_status = (strcmp(command, "audio") == 0 && data && strncmp(data, "state ", 6) == 0);
+    if (result && !quiet_audio_status) {
         printf("Sent command: %s %s\n", command, data ? data : "");
         char log_msg[64];
         snprintf(log_msg, sizeof(log_msg), "I: Sent command: %s %s\n", command, data ? data : "");

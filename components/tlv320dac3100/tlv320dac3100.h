@@ -168,6 +168,27 @@ esp_err_t tlv320dac3100_set_output_route(uint8_t route);
 esp_err_t tlv320dac3100_is_headphone_inserted(bool *inserted);
 
 /**
+ * @brief Enable or suspend the TLV headset detection block and poll task.
+ *
+ * Suspending detection is useful during active headphone playback because the
+ * detect block can disturb the analog headphone path on some boards.
+ *
+ * @param enabled true to enable detection, false to suspend it
+ * @return ESP_OK on success
+ */
+esp_err_t tlv320dac3100_set_headphone_detection_enabled(bool enabled);
+
+/**
+ * @brief Detect headphone state once, apply the matching output route, then
+ * suspend the headset-detect block.
+ *
+ * This avoids periodic detect polling during playback.
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t tlv320dac3100_detect_headphone_once(void);
+
+/**
  * @brief Power down the DAC (low power mode).
  */
 esp_err_t tlv320dac3100_power_down(void);
