@@ -79,6 +79,14 @@ static char s_pack_dir[ASSET_PACK_PATH_MAX] = ACTIVE_PACK_DIR;
 static char s_active_name[ASSET_PACK_NAME_MAX] = "active";
 static lv_img_dsc_t s_bg_tile_dsc;
 static uint8_t *s_bg_tile_data = NULL;
+static lv_img_dsc_t s_bg_fullscreen_dsc;
+static uint8_t *s_bg_fullscreen_data = NULL;
+
+/* Last-resolved icon short-circuit cache. Avoids walking s_icon_cache on
+ * every call when the same menu item is repeatedly queried (carousel/grid). */
+static const lv_img_dsc_t *s_last_icon = NULL;
+static const char *s_last_icon_key = NULL;
+static uint32_t s_last_icon_version = 0;
 
 static char s_installed_names[ASSET_PACK_INSTALLED_MAX][ASSET_PACK_NAME_MAX];
 static int s_installed_count = 0;
@@ -503,6 +511,10 @@ static void clear_runtime(void) {
         s_icon_cache[i].last_used = 0;
     }
     free_img_dsc(&s_bg_tile_dsc, &s_bg_tile_data);
+    free_img_dsc(&s_bg_fullscreen_dsc, &s_bg_fullscreen_data);
+    s_last_icon = NULL;
+    s_last_icon_key = NULL;
+    s_last_icon_version = 0;
     memset(s_has_color, 0, sizeof(s_has_color));
     memset(s_colors, 0, sizeof(s_colors));
     memset(s_icons, 0, sizeof(s_icons));
@@ -1070,9 +1082,20 @@ bool asset_pack_get_color(int slot, uint32_t *out_color) {
 const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fallback) {
     if (!s_loaded || !name) return fallback;
 
+    /* Fast path: same key string pointer + same pack version -> return the
+     * previously resolved desc without walking the cache. The name argument
+     * is always a compile-time string literal from the menu/app item tables,
+     * so pointer identity is sufficient and stable. */
+    if (s_last_icon && s_last_icon_key == name && s_last_icon_version == s_version) {
+        return s_last_icon;
+    }
+
     for (int i = 0; i < s_icon_cache_size; ++i) {
         if (s_icon_cache[i].key[0] && strcmp(s_icon_cache[i].key, name) == 0 && s_icon_cache[i].data) {
             s_icon_cache[i].last_used = ++s_cache_tick;
+            s_last_icon = &s_icon_cache[i].dsc;
+            s_last_icon_key = name;
+            s_last_icon_version = s_version;
             return &s_icon_cache[i].dsc;
         }
     }
@@ -1080,7 +1103,12 @@ const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fa
     asset_icon_entry_t *entry = find_icon(name);
     const char *rel = pick_icon_rel(entry);
     char path[192];
-    if (!join_pack_path(path, sizeof(path), rel)) return fallback;
+    if (!join_pack_path(path, sizeof(path), rel)) {
+        s_last_icon = fallback;
+        s_last_icon_key = name;
+        s_last_icon_version = s_version;
+        return fallback;
+    }
 
     asset_icon_cache_entry_t *slot = cache_slot_for(name);
     bool mounted_here = false;
@@ -1095,6 +1123,9 @@ const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fa
     }
     copy_cache_key(slot->key, name);
     slot->last_used = ++s_cache_tick;
+    s_last_icon = &slot->dsc;
+    s_last_icon_key = name;
+    s_last_icon_version = s_version;
     return &slot->dsc;
 }
 
@@ -1121,6 +1152,61 @@ const lv_img_dsc_t *asset_pack_get_background_tile(void) {
         return NULL;
     }
     return &s_bg_tile_dsc;
+}
+
+/* One-time bake of the small tile into a fullscreen RGB565 PSRAM buffer.
+ * Result: a single LV_IMG_CF_TRUE_COLOR desc sized to LV_HOR_RES x LV_VER_RES
+ * that LVGL can blit with no per-frame tiling math. */
+static esp_err_t bake_background_fullscreen(void) {
+    if (s_bg_fullscreen_data) return ESP_OK;
+    if (!s_bg_tile_data) return ESP_ERR_INVALID_STATE;
+
+    int sw = s_bg_tile_dsc.header.w;
+    int sh = s_bg_tile_dsc.header.h;
+    int dw = LV_HOR_RES;
+    int dh = LV_VER_RES;
+    if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return ESP_ERR_INVALID_SIZE;
+
+    size_t size = (size_t)dw * (size_t)dh * 2;
+    if (size > ASSET_PACK_BG_FULLSCREEN_MAX_RAW) return ESP_ERR_INVALID_SIZE;
+
+    uint8_t *buf = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) return ESP_ERR_NO_MEM;
+
+    const uint8_t *src = s_bg_tile_data;
+    for (int y = 0; y < dh; y++) {
+        int src_y = y % sh;
+        uint8_t *dst_row = buf + (size_t)y * dw * 2;
+        const uint8_t *src_row = src + (size_t)src_y * sw * 2;
+        int x = 0;
+        while (x + sw <= dw) {
+            memcpy(dst_row + x * 2, src_row, (size_t)sw * 2);
+            x += sw;
+        }
+        int rem = dw - x;
+        if (rem > 0) memcpy(dst_row + x * 2, src_row, (size_t)rem * 2);
+    }
+
+    s_bg_fullscreen_dsc = s_bg_tile_dsc;
+    s_bg_fullscreen_dsc.header.w = (uint16_t)dw;
+    s_bg_fullscreen_dsc.header.h = (uint16_t)dh;
+    s_bg_fullscreen_dsc.data_size = (uint32_t)size;
+    s_bg_fullscreen_dsc.data = buf;
+    s_bg_fullscreen_data = buf;
+    ESP_LOGI(TAG, "baked fullscreen bg: %dx%d (%u bytes) from %dx%d tile",
+             dw, dh, (unsigned)size, sw, sh);
+    return ESP_OK;
+}
+
+const lv_img_dsc_t *asset_pack_get_background_fullscreen(void) {
+    if (!s_loaded || !s_has_psram) return NULL;
+    if (s_bg_fullscreen_data) return &s_bg_fullscreen_dsc;
+    if (!asset_pack_get_background_tile()) return NULL;
+    if (bake_background_fullscreen() != ESP_OK) {
+        ESP_LOGW(TAG, "fullscreen bg bake failed; callers will fall back to tile");
+        return NULL;
+    }
+    return &s_bg_fullscreen_dsc;
 }
 
 typedef struct {

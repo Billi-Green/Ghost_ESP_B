@@ -651,12 +651,12 @@ static void menu_item_event_handler(InputEvent *event) {
                     if (current_layout == MAIN_MENU_LAYOUT_CARD_GRID) {
                         if (grid_cards_container && touch_drag_axis == 1) {
                             dy = clamp_drag_delta(dy);
-                            if (dy) lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
+                            if (dy) display_manager_queue_scroll(grid_cards_container, dy);
                         }
                     } else if (current_layout == MAIN_MENU_LAYOUT_LIST) {
                         if (menu_container && touch_drag_axis == 1) {
                             dy = clamp_drag_delta(dy);
-                            if (dy) lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
+                            if (dy) display_manager_queue_scroll(menu_container, dy);
                         }
                     }
                 }
@@ -737,7 +737,7 @@ static void menu_item_event_handler(InputEvent *event) {
                 if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                     if (grid_cards_container) {
                         dy = clamp_drag_delta(dy);
-                        if (dy) lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
+                        if (dy) display_manager_queue_scroll(grid_cards_container, dy);
                     }
                     return;
                 }
@@ -763,7 +763,7 @@ static void menu_item_event_handler(InputEvent *event) {
                 if (abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                     if (menu_container) {
                         dy = clamp_drag_delta(dy);
-                        if (dy) lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
+                        if (dy) display_manager_queue_scroll(menu_container, dy);
                     }
                     return;
                 }
@@ -1264,23 +1264,24 @@ static void menu_refresh_timer_cb(lv_timer_t *t) {
     if (connected != was_dual_comm_connected || pack_version != was_asset_pack_version) {
         was_dual_comm_connected = connected;
         was_asset_pack_version = pack_version;
-        
+
         cleanup_layout_arrays();
         if (menu_container && lv_obj_is_valid(menu_container)) {
+            gui_screen_invalidate_bg_cache();
             lv_obj_clean(menu_container);
         }
         current_item_obj = NULL;
         carousel_cache = (carousel_card_cache_t){0};
-        
+
         num_items = get_visible_menu_count(connected);
         if (selected_item_index >= num_items) selected_item_index = num_items - 1;
-        
+
         init_menu_colors();
-        
+
         if (current_layout == MAIN_MENU_LAYOUT_CARD_GRID) create_grid_menu();
         else if (current_layout == MAIN_MENU_LAYOUT_LIST) create_list_menu();
         else select_menu_item(selected_item_index, false);
-        
+
         gui_screen_apply_background(menu_container);
     }
 }

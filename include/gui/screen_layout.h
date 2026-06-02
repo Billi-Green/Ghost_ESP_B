@@ -16,6 +16,9 @@ lv_obj_t *gui_screen_create_root(lv_obj_t *parent, const char *title, lv_color_t
 
 lv_obj_t *gui_screen_create_content(lv_obj_t *root, lv_coord_t status_bar_h);
 
+/* Drop the cached bg-widget state. Call after lv_obj_clean on a root. */
+void gui_screen_invalidate_bg_cache(void);
+
 #ifdef __cplusplus
 }
 #endif

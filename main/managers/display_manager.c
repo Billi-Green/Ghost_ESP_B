@@ -2919,6 +2919,41 @@ void processEvent() {
       }
     }
   }
+
+  /* Apply any scroll deltas queued by the touch handlers in this tick. */
+  display_manager_flush_pending_scroll();
+}
+
+/* ---- scroll coalescing ------------------------------------------------- */
+
+#define SCROLL_COALESCE_MAX_STEP 36
+
+typedef struct {
+  lv_obj_t *target;
+  int32_t dy;
+} pending_scroll_t;
+
+static pending_scroll_t s_pending_scroll = { NULL, 0 };
+
+void display_manager_queue_scroll(lv_obj_t *target, int32_t dy) {
+  if (!target || dy == 0) return;
+  if (s_pending_scroll.target && s_pending_scroll.target != target) {
+    /* Different target - flush the previous one so we never lose it. */
+    display_manager_flush_pending_scroll();
+  }
+  s_pending_scroll.target = target;
+  int32_t new_dy = s_pending_scroll.dy + dy;
+  if (new_dy >  SCROLL_COALESCE_MAX_STEP) new_dy =  SCROLL_COALESCE_MAX_STEP;
+  if (new_dy < -SCROLL_COALESCE_MAX_STEP) new_dy = -SCROLL_COALESCE_MAX_STEP;
+  s_pending_scroll.dy = new_dy;
+}
+
+void display_manager_flush_pending_scroll(void) {
+  if (s_pending_scroll.target && s_pending_scroll.dy != 0) {
+    lv_obj_scroll_by_bounded(s_pending_scroll.target, 0, s_pending_scroll.dy, LV_ANIM_OFF);
+  }
+  s_pending_scroll.target = NULL;
+  s_pending_scroll.dy = 0;
 }
 
 void lvgl_tick_task(void *arg) {

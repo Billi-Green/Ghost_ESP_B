@@ -32,3 +32,8 @@ const lv_img_dsc_t *asset_pack_get_app_icon(const lv_img_dsc_t *fallback);
 
 /* Returns a PSRAM-backed tiled background image, or NULL if unavailable. */
 const lv_img_dsc_t *asset_pack_get_background_tile(void);
+
+/* Returns a PSRAM-backed fullscreen RGB565 image (LV_HOR_RES x LV_VER_RES)
+ * with the tile pre-blitted into it, or NULL if no PSRAM / no tile / unsupported.
+ * Drawing this is a single LV_IMG_CF_TRUE_COLOR blit with no per-frame tiling. */
+const lv_img_dsc_t *asset_pack_get_background_fullscreen(void);

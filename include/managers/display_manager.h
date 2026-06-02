@@ -155,6 +155,15 @@ void display_manager_resume_lvgl_task(void);
 
 void display_manager_run_on_lvgl(void (*fn)(void *), void *arg);
 
+/* Coalesce scroll deltas: queue a scroll_by_bounded into a small accumulator
+ * instead of running it on every touch sample. The accumulator is flushed
+ * once per LVGL tick (10ms) inside processEvent, which collapses up to
+ * ~100 touch samples/sec into a handful of scroll+repaint operations. */
+void display_manager_queue_scroll(lv_obj_t *target, int32_t dy);
+
+/* Apply any pending scroll immediately. Safe to call repeatedly. */
+void display_manager_flush_pending_scroll(void);
+
 LV_IMG_DECLARE(Ghost_ESP);
 LV_IMG_DECLARE(Map);
 LV_IMG_DECLARE(bluetooth);

@@ -1186,9 +1186,9 @@ void apps_menu_event_handler(InputEvent *event) {
                     dy = clamp_drag_delta(dy);
                     if (dy) {
                         if (apps_layout == APPS_LAYOUT_GRID_CARDS && grid_cards_container) {
-                            lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
+                            display_manager_queue_scroll(grid_cards_container, dy);
                         } else if (apps_layout == APPS_LAYOUT_LIST && apps_container) {
-                            lv_obj_scroll_by_bounded(apps_container, 0, dy, LV_ANIM_OFF);
+                            display_manager_queue_scroll(apps_container, dy);
                         }
                     }
                 }
@@ -1246,7 +1246,7 @@ void apps_menu_event_handler(InputEvent *event) {
             if (apps_layout == APPS_LAYOUT_GRID_CARDS && abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                 if (grid_cards_container) {
                     dy = clamp_drag_delta(dy);
-                    if (dy) lv_obj_scroll_by_bounded(grid_cards_container, 0, dy, LV_ANIM_OFF);
+                    if (dy) display_manager_queue_scroll(grid_cards_container, dy);
                 }
                 return;
             }
@@ -1254,7 +1254,7 @@ void apps_menu_event_handler(InputEvent *event) {
             if (apps_layout == APPS_LAYOUT_LIST && abs(dy) > SWIPE_THRESHOLD && abs(dy) > abs(dx)) {
                 if (apps_container) {
                     dy = clamp_drag_delta(dy);
-                    if (dy) lv_obj_scroll_by_bounded(apps_container, 0, dy, LV_ANIM_OFF);
+                    if (dy) display_manager_queue_scroll(apps_container, dy);
                 }
                 return;
             }
