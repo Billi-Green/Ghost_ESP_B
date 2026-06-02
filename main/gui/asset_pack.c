@@ -56,7 +56,11 @@ typedef struct {
 } asset_icon_entry_t;
 
 typedef struct {
-    char key[32];
+    /* FNV-1a 64-bit hash of the resolved file path within the active pack
+     * (e.g. "icons/wifi.gimg"). Keyed by path rather than icon name so
+     * multiple icon entries pointing at the same file share a single
+     * decoded image in the cache. */
+    uint64_t key_hash;
     lv_img_dsc_t dsc;
     uint8_t *data;
     uint32_t last_used;
@@ -507,7 +511,7 @@ static void free_img_dsc(lv_img_dsc_t *dsc, uint8_t **data) {
 static void clear_runtime(void) {
     for (int i = 0; i < s_icon_cache_size; ++i) {
         free_img_dsc(&s_icon_cache[i].dsc, &s_icon_cache[i].data);
-        s_icon_cache[i].key[0] = '\0';
+        s_icon_cache[i].key_hash = 0;
         s_icon_cache[i].last_used = 0;
     }
     free_img_dsc(&s_bg_tile_dsc, &s_bg_tile_data);
@@ -796,26 +800,32 @@ static const char *pick_icon_rel(const asset_icon_entry_t *entry) {
     return NULL;
 }
 
-static asset_icon_cache_entry_t *cache_slot_for(const char *name) {
+static uint64_t hash_path(const char *path) {
+    if (!path) return 0;
+    return checksum_bytes((const uint8_t *)path, strlen(path));
+}
+
+static asset_icon_cache_entry_t *cache_find_path(const char *path) {
+    if (!path) return NULL;
+    uint64_t h = hash_path(path);
+    for (int i = 0; i < s_icon_cache_size; ++i) {
+        if (s_icon_cache[i].key_hash && s_icon_cache[i].data && s_icon_cache[i].key_hash == h) {
+            return &s_icon_cache[i];
+        }
+    }
+    return NULL;
+}
+
+static asset_icon_cache_entry_t *cache_slot_for_evict(void) {
     if (s_icon_cache_size <= 0) return NULL;
     asset_icon_cache_entry_t *oldest = &s_icon_cache[0];
     for (int i = 0; i < s_icon_cache_size; ++i) {
-        if (s_icon_cache[i].key[0] == '\0') return &s_icon_cache[i];
+        if (s_icon_cache[i].key_hash == 0) return &s_icon_cache[i];
         if (s_icon_cache[i].last_used < oldest->last_used) oldest = &s_icon_cache[i];
     }
     free_img_dsc(&oldest->dsc, &oldest->data);
-    oldest->key[0] = '\0';
+    oldest->key_hash = 0;
     return oldest;
-}
-
-static void copy_cache_key(char dst[32], const char *src) {
-    if (!src) {
-        dst[0] = '\0';
-        return;
-    }
-    size_t len = strnlen(src, 31);
-    memcpy(dst, src, len);
-    dst[len] = '\0';
 }
 
 static void preload_loaded_assets(void) {
@@ -835,12 +845,20 @@ static void preload_loaded_assets(void) {
     }
 
     int loaded = 0;
+    int deduped = 0;
     for (int i = 0; i < s_icon_count; ++i) {
         const char *rel = pick_icon_rel(&s_icons[i]);
         char path[192];
         if (!join_pack_path(path, sizeof(path), rel)) continue;
 
-        asset_icon_cache_entry_t *slot = cache_slot_for(s_icons[i].name);
+        /* Skip paths already loaded; multiple icon names can resolve to the
+         * same file and we want a single decoded image in the cache. */
+        if (cache_find_path(path)) {
+            deduped++;
+            continue;
+        }
+
+        asset_icon_cache_entry_t *slot = cache_slot_for_evict();
         if (!slot) continue;
 
         esp_err_t err = load_gimg(path, false, ASSET_PACK_ICON_MAX_RAW, &slot->dsc, &slot->data);
@@ -848,13 +866,19 @@ static void preload_loaded_assets(void) {
             ESP_LOGW(TAG, "icon preload failed for %s (%s): %s", s_icons[i].name, path, esp_err_to_name(err));
             continue;
         }
-        copy_cache_key(slot->key, s_icons[i].name);
+        slot->key_hash = hash_path(path);
         slot->last_used = ++s_cache_tick;
         loaded++;
     }
 
-    ESP_LOGI(TAG, "preloaded asset pack '%s': bg=%s icons=%d/%d", s_active_name,
-             s_bg_tile_data ? "yes" : "no", loaded, s_icon_count);
+    if (deduped > 0) {
+        ESP_LOGI(TAG, "preloaded asset pack '%s': bg=%s unique_icons=%d entries=%d deduped=%d",
+                 s_active_name,
+                 s_bg_tile_data ? "yes" : "no", loaded, s_icon_count, deduped);
+    } else {
+        ESP_LOGI(TAG, "preloaded asset pack '%s': bg=%s icons=%d/%d", s_active_name,
+                 s_bg_tile_data ? "yes" : "no", loaded, s_icon_count);
+    }
 }
 
 static esp_err_t asset_pack_load_active_impl(void) {
@@ -1082,22 +1106,12 @@ bool asset_pack_get_color(int slot, uint32_t *out_color) {
 const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fallback) {
     if (!s_loaded || !name) return fallback;
 
-    /* Fast path: same key string pointer + same pack version -> return the
-     * previously resolved desc without walking the cache. The name argument
-     * is always a compile-time string literal from the menu/app item tables,
+    /* Fast path: same name pointer + same pack version -> return the
+     * previously resolved desc without any work. The name argument is
+     * always a compile-time string literal from the menu/app item tables,
      * so pointer identity is sufficient and stable. */
     if (s_last_icon && s_last_icon_key == name && s_last_icon_version == s_version) {
         return s_last_icon;
-    }
-
-    for (int i = 0; i < s_icon_cache_size; ++i) {
-        if (s_icon_cache[i].key[0] && strcmp(s_icon_cache[i].key, name) == 0 && s_icon_cache[i].data) {
-            s_icon_cache[i].last_used = ++s_cache_tick;
-            s_last_icon = &s_icon_cache[i].dsc;
-            s_last_icon_key = name;
-            s_last_icon_version = s_version;
-            return &s_icon_cache[i].dsc;
-        }
     }
 
     asset_icon_entry_t *entry = find_icon(name);
@@ -1110,7 +1124,19 @@ const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fa
         return fallback;
     }
 
-    asset_icon_cache_entry_t *slot = cache_slot_for(name);
+    /* Cache lookup by resolved path. Multiple icon names that resolve to
+     * the same file share a single decoded image in the cache. */
+    asset_icon_cache_entry_t *cached = cache_find_path(path);
+    if (cached) {
+        cached->last_used = ++s_cache_tick;
+        s_last_icon = &cached->dsc;
+        s_last_icon_key = name;
+        s_last_icon_version = s_version;
+        return &cached->dsc;
+    }
+
+    asset_icon_cache_entry_t *slot = cache_slot_for_evict();
+    if (!slot) return fallback;
     bool mounted_here = false;
     bool display_suspended = false;
     esp_err_t mount_err = asset_sd_begin(&mounted_here, &display_suspended);
@@ -1121,7 +1147,7 @@ const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fa
         ESP_LOGW(TAG, "icon load failed for %s (%s): %s", name, path, esp_err_to_name(err));
         return fallback;
     }
-    copy_cache_key(slot->key, name);
+    slot->key_hash = hash_path(path);
     slot->last_used = ++s_cache_tick;
     s_last_icon = &slot->dsc;
     s_last_icon_key = name;
