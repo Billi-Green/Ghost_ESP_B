@@ -66,6 +66,24 @@ def main(argv=None) -> int:
 
     p_ports = sub.add_parser("ports", help="List available serial ports")
 
+    p_asset = sub.add_parser("asset", help="Create GhostESP asset pack images and bundles")
+    asset_sub = p_asset.add_subparsers(dest="asset_command")
+
+    p_asset_image = asset_sub.add_parser("image", help="Convert a PNG into a GhostESP .gimg image")
+    p_asset_image.add_argument("png", help="Source PNG")
+    p_asset_image.add_argument("--out", required=True, help="Output .gimg path")
+    p_asset_image.add_argument("--width", type=int, required=True, help="Output width in pixels")
+    p_asset_image.add_argument("--height", type=int, required=True, help="Output height in pixels")
+    p_asset_image.add_argument("--format", choices=["rgb565", "rgb565a8"], default="rgb565a8",
+                               help="Pixel format (default: rgb565a8)")
+    p_asset_image.add_argument("--no-compress", action="store_true", help="Store raw payload without deflate compression")
+
+    p_asset_pack = asset_sub.add_parser("pack", help="Build an SD-ready asset pack from a source manifest")
+    p_asset_pack.add_argument("pack_dir", nargs="?", default=".", help="Asset pack source directory (default: .)")
+    p_asset_pack.add_argument("--out", default=None, help="Output dist directory")
+    p_asset_pack.add_argument("--archive", action="store_true", help="Also create a .gtheme zip archive")
+    p_asset_pack.add_argument("--compress", action="store_true", help="Deflate .gimg payloads (not recommended for firmware runtime themes)")
+
     args = parser.parse_args(argv)
 
     if not args.command:
@@ -163,6 +181,27 @@ def main(argv=None) -> int:
         for p in ports:
             print(f"{p['device']:<20} {p['description']}")
         print(f"\n{len(ports)} port(s) available")
+    elif args.command == "asset":
+        if not args.asset_command:
+            p_asset.print_help()
+            return 0
+        from .asset import make_asset_image, make_asset_pack
+        if args.asset_command == "image":
+            make_asset_image(
+                src=args.png,
+                out=args.out,
+                width=args.width,
+                height=args.height,
+                fmt=args.format,
+                compress=not args.no_compress,
+            )
+        elif args.asset_command == "pack":
+            make_asset_pack(
+                pack_dir=args.pack_dir,
+                out=args.out,
+                archive=args.archive,
+                compress=args.compress,
+            )
 
     return 0
 

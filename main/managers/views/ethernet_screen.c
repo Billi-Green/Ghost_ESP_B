@@ -1629,16 +1629,9 @@ void ethernet_screen_create(void) {
         esp_comm_manager_send_command("ethernet", "status");
     }
 
-    s_root = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(s_root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_pos(s_root, 0, 0);
-    lv_obj_set_style_bg_color(s_root, lv_color_hex(bg_color), 0);
-    lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_root, 0, 0);
-    lv_obj_set_style_pad_all(s_root, 0, 0);
+    s_root = gui_screen_create_root(NULL, "Ethernet", lv_color_hex(bg_color), LV_OPA_TRANSP);
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
 
-    display_manager_add_status_bar("Ethernet");
     ethernet_screen_view.root = s_root;
 
     s_status_timer = lv_timer_create(status_timer_cb, 1000, NULL);

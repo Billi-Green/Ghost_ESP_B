@@ -2,6 +2,7 @@
 #include "managers/display_manager.h"
 #include "managers/settings_manager.h"
 #include "gui/theme_palette_api.h"
+#include "gui/asset_pack.h"
 #include "gui/design_tokens.h"
 #include "gui/gui_anim.h"
 #include "lvgl.h"
@@ -138,6 +139,7 @@ options_view_t *options_view_create(lv_obj_t *parent, const char *title) {
     lv_obj_set_size(ov->list, w, h - status_bar_h);
     lv_obj_align(ov->list, LV_ALIGN_TOP_MID, 0, status_bar_h);
     lv_obj_set_style_bg_color(ov->list, bg, 0);
+    lv_obj_set_style_bg_opa(ov->list, asset_pack_get_background_tile() ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_pad_left(ov->list, GUI_SAFEAREA_HOR, 0);
     lv_obj_set_style_pad_right(ov->list, GUI_SAFEAREA_HOR, 0);
     lv_obj_set_style_pad_top(ov->list, GUI_SAFEAREA_VER, 0);
@@ -294,6 +296,7 @@ void options_view_refresh_styles(options_view_t *ov) {
 
     if (ov->list && lv_obj_is_valid(ov->list)) {
         lv_obj_set_style_bg_color(ov->list, bg, 0);
+        lv_obj_set_style_bg_opa(ov->list, asset_pack_get_background_tile() ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
         lv_obj_set_style_pad_row(ov->list, GUI_GRID, 0);
         lv_obj_set_style_pad_left(ov->list, GUI_SAFEAREA_HOR, 0);
         lv_obj_set_style_pad_right(ov->list, GUI_SAFEAREA_HOR, 0);

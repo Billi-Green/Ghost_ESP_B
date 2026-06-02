@@ -7,12 +7,11 @@
 #include <time.h>
 #include "managers/settings_manager.h"
 #include "gui/lvgl_safe.h"
+#include "gui/asset_pack.h"
 #include "gui/theme_palette_api.h"
 #include "esp_log.h"
 
 uint32_t theme_palette_get_background(uint8_t theme);
-
-static const char *TAG = "ClockScreens";
 
 static lv_obj_t *clock_container;
 static lv_obj_t *time_label;
@@ -142,6 +141,24 @@ static void clock_event_handler(InputEvent *event) {
     }
 }
 
+static lv_obj_t *create_clock_label(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color, bool asset_bg) {
+    if (asset_bg) {
+        lv_obj_t *shadow = lv_label_create(parent);
+        lv_label_set_text(shadow, text);
+        lv_obj_set_style_text_font(shadow, font, 0);
+        lv_obj_set_style_text_color(shadow, lv_color_black(), 0);
+        lv_obj_set_style_opa(shadow, LV_OPA_70, 0);
+        lv_obj_set_style_translate_x(shadow, 1, 0);
+        lv_obj_set_style_translate_y(shadow, 1, 0);
+    }
+
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_style_text_color(label, color, 0);
+    return label;
+}
+
 void clock_create(void) {
     // Apply user's timezone for localtime
     const char *tz = settings_get_timezone_str(&G_Settings);
@@ -152,11 +169,12 @@ void clock_create(void) {
     
     // Get current theme colors for text only
     uint8_t theme = settings_get_menu_theme(&G_Settings);
-    uint32_t accent_color = theme_palette_get_accent(theme);
-    
+    bool asset_bg = asset_pack_get_background_tile() != NULL;
+    lv_color_t text_color = asset_bg ? lv_color_black() : lv_color_hex(theme_palette_get_accent(theme));
+
     lv_color_t bg_color = lv_color_hex(theme_palette_get_background(theme));
     display_manager_fill_screen(bg_color);
-    clock_container = gui_screen_create_root(NULL, "Clock", bg_color, LV_OPA_COVER);
+    clock_container = gui_screen_create_root(NULL, "Clock", bg_color, asset_bg ? LV_OPA_TRANSP : LV_OPA_COVER);
     clock_view.root = clock_container;
     lv_obj_t *content = gui_screen_create_content(clock_container, GUI_STATUS_BAR_HEIGHT);
 
@@ -200,29 +218,17 @@ void clock_create(void) {
     lv_obj_set_flex_align(label_stack, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(label_stack, row_gap, 0);
 
-    time_label = lv_label_create(label_stack);
-    lv_label_set_text(time_label, "12:00:00 AM");
-    lv_obj_set_style_text_font(time_label, time_font, 0);
-    lv_obj_set_style_text_color(time_label, lv_color_hex(accent_color), 0);
+    time_label = create_clock_label(label_stack, "12:00:00 AM", time_font, text_color, asset_bg);
 
-    date_label = lv_label_create(label_stack);
-    lv_label_set_text(date_label, "Wednesday, January 01");
+    date_label = create_clock_label(label_stack, "Wednesday, January 01", secondary_font, text_color, asset_bg);
     lv_label_set_long_mode(date_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(date_label, LV_PCT(95));
     lv_obj_set_style_text_align(date_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(date_label, secondary_font, 0);
-    lv_obj_set_style_text_color(date_label, lv_color_hex(accent_color), 0);
 
-    year_label = lv_label_create(label_stack);
-    lv_label_set_text(year_label, "2025");
-    lv_obj_set_style_text_font(year_label, secondary_font, 0);
-    lv_obj_set_style_text_color(year_label, lv_color_hex(accent_color), 0);
+    year_label = create_clock_label(label_stack, "2025", secondary_font, text_color, asset_bg);
     if (!show_year_tz) lv_obj_add_flag(year_label, LV_OBJ_FLAG_HIDDEN);
 
-    tz_label = lv_label_create(label_stack);
-    lv_label_set_text(tz_label, "TZ: UTC");
-    lv_obj_set_style_text_font(tz_label, small_font, 0);
-    lv_obj_set_style_text_color(tz_label, lv_color_hex(accent_color), 0);
+    tz_label = create_clock_label(label_stack, "TZ: UTC", small_font, text_color, asset_bg);
     if (!show_year_tz) lv_obj_add_flag(tz_label, LV_OBJ_FLAG_HIDDEN);
 
     clock_timer = lv_timer_create(digital_clock_cb, 1000, NULL);

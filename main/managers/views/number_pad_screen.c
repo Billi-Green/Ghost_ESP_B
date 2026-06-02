@@ -194,16 +194,9 @@ static void number_pad_create(void) {
 
     display_manager_fill_screen(bg);
 
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, NULL, bg, LV_OPA_TRANSP);
     number_pad_view.root = root;
-    lv_obj_set_size(root, screen_width, screen_height);
-    lv_obj_set_style_bg_color(root, bg, 0);
-    lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_align(root, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_scrollbar_mode(root, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_border_width(root, 0, 0);
-    lv_obj_set_style_radius(root, 0, 0);
 
     content = lv_obj_create(root);
     lv_obj_set_size(content, screen_width, content_h);

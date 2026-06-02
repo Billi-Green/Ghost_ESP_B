@@ -135,13 +135,18 @@ def _resize_nearest(width: int, height: int, rgba: bytes, out_w: int, out_h: int
 def png_to_rgb565a8(src: pathlib.Path, width: int, height: int) -> bytes:
     in_w, in_h, rgba = _read_png_rgba(src)
     rgba = _resize_nearest(in_w, in_h, rgba, width, height)
-    out = bytearray(width * height * 3)
-    for i in range(width * height):
+    pixel_count = width * height
+    out = bytearray(pixel_count * 3)
+    rgb_off = 0
+    a_off = pixel_count * 2
+    for i in range(pixel_count):
         r, g, b, a = rgba[i * 4:i * 4 + 4]
         rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        out[i * 3] = rgb565 & 0xFF
-        out[i * 3 + 1] = (rgb565 >> 8) & 0xFF
-        out[i * 3 + 2] = a
+        out[rgb_off] = rgb565 & 0xFF
+        out[rgb_off + 1] = (rgb565 >> 8) & 0xFF
+        out[a_off] = a
+        rgb_off += 2
+        a_off += 1
     return bytes(out)
 
 

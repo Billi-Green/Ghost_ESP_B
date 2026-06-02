@@ -4255,14 +4255,9 @@ static void nfc_write_go_cb(lv_event_t *e) {
 
 void nfc_view_create(void) {
     lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
-    root = lv_obj_create(lv_scr_act());
+    root = gui_screen_create_root(NULL, NULL, lv_color_hex(0x121212), LV_OPA_TRANSP);
     nfc_view.root = root;
-    lv_obj_set_size(root, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x121212), 0);
-    lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_align(root, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_scrollbar_mode(root, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_border_width(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
 
     g_nfc_ov = options_view_create(root, "NFC");

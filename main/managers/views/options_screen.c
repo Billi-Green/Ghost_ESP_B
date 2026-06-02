@@ -9,6 +9,7 @@
 #include "gui/lvgl_safe.h"
 #include "gui/screen_layout.h"
 #include "gui/accessibility_fonts.h"
+#include "gui/asset_pack.h"
 #include "gui/theme_palette_api.h"
 #include "gui/design_tokens.h"
 #include "io_manager.h"
@@ -22,6 +23,7 @@
 #include "gui/popup.h"
 #include "core/utils.h"
 #include "managers/sd_card_manager.h"  /* MAX_PORTAL_NAME, sd_card_list_dir_paged */
+#include "esp_err.h"
 #include "gui/paged_menu.h"
 #include "gui/scan_status.h"
 #include "gui/detail_view.h"
@@ -833,6 +835,8 @@ static const char * const idle_animation_options[] = {"Game of Life", "Ghost", "
 static const char * const idle_delay_options[] = {"Never", "5s", "10s", "30s"};
 #endif
 static const char * const action_options[] = {"Press OK"};
+static const char *asset_pack_options[ASSET_PACK_INSTALLED_MAX + 1];
+static int asset_pack_option_count = 1;
 static const char * const font_size_options[] = {"Small", "Normal", "Large"};
 static const char * const repeat_speed_options[] = {"Slow", "Normal", "Fast"};
 static const char * const lockscreen_timeout_options[] = {"Off", "30s", "1m", "5m"};
@@ -887,6 +891,7 @@ static SettingsItem settings_items[] = {
     {"BG Shade", SETTING_MENU_BG_SHADE, bg_shade_options, 4, 1, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Rounded Menus", SETTING_MENU_ROUNDED, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Item Borders", SETTING_MENU_ITEM_BORDERS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Asset Pack", SETTING_RELOAD_ASSET_PACK, (const char * const *)asset_pack_options, 1, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     
     {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, RGB_MODE_COUNT, 0, SETTINGS_CAT_LED_RGB, false, NULL},
@@ -947,6 +952,8 @@ static SettingsItem settings_items[] = {
     {"Auto-Lock", SETTING_LOCKSCREEN_TIMEOUT, lockscreen_timeout_options, 4, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
     {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
 };
+
+static const int settings_items_count = sizeof(settings_items) / sizeof(settings_items[0]);
 
 static int settings_item_clamped_value(SettingsItem *item) {
     if (!item || item->value_count <= 0) return 0;
@@ -1743,6 +1750,28 @@ void options_menu_create() {
         is_settings_mode = true;
         current_settings_category = -1;
         settings_submenu_depth = 0;
+        {
+            int count = asset_pack_get_installed_count();
+            if (count <= 0) {
+                asset_pack_options[0] = "None";
+                asset_pack_option_count = 1;
+            } else {
+                for (int i = 0; i < count && i < ASSET_PACK_INSTALLED_MAX; ++i) {
+                    asset_pack_options[i] = asset_pack_get_installed_name(i);
+                }
+                asset_pack_option_count = count;
+            }
+            for (int i = 0; i < settings_items_count; ++i) {
+                if (settings_items[i].setting_type == SETTING_RELOAD_ASSET_PACK) {
+                    settings_items[i].value_count = asset_pack_option_count;
+                    settings_items[i].value_options = (const char * const *)asset_pack_options;
+                    settings_items[i].current_value = asset_pack_get_current_index();
+                    if (settings_items[i].current_value >= asset_pack_option_count)
+                        settings_items[i].current_value = 0;
+                    break;
+                }
+            }
+        }
         load_current_settings_values();
         break;
     case OT_IOButtonPresets:
@@ -1892,6 +1921,9 @@ static void load_current_settings_values(void) {
                 break;
             case SETTING_MENU_ITEM_BORDERS:
                 settings_items[i].current_value = settings_get_menu_item_borders(&G_Settings) ? 1 : 0;
+                break;
+            case SETTING_RELOAD_ASSET_PACK:
+                settings_items[i].current_value = asset_pack_get_current_index();
                 break;
             case SETTING_NAV_BUTTONS:
                 settings_items[i].current_value = settings_get_nav_buttons_enabled(&G_Settings) ? 1 : 0;
@@ -2095,6 +2127,14 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_MENU_ITEM_BORDERS:
             settings_set_menu_item_borders(&G_Settings, new_value == 1);
             break;
+        case SETTING_RELOAD_ASSET_PACK: {
+            ESP_LOGI(TAG, "asset pack setting changed to %d", new_value);
+            settings_items[setting_index].current_value = new_value;
+            esp_err_t err = asset_pack_select_by_index(new_value);
+            ESP_LOGI(TAG, "asset pack switch result: %s", esp_err_to_name(err));
+            display_manager_update_status_bar_color();
+            return;
+        }
         case SETTING_NAV_BUTTONS:
             settings_set_nav_buttons_enabled(&G_Settings, new_value == 1);
             break;

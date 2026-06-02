@@ -11,6 +11,7 @@
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
+#include "gui/asset_pack.h"
 #include "esp_wifi.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
@@ -57,6 +58,8 @@
 
 #ifdef CONFIG_WITH_SCREEN
 #include "managers/views/splash_screen.h"
+#include "managers/views/main_menu_screen.h"
+#include "gui/screen_layout.h"
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
 #include "managers/views/nrf24_analyzer_view.h"
 #endif
@@ -350,6 +353,15 @@ static void deferred_sd_init_task(void *arg) {
     }
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     coredump_autosave_on_boot();
+#endif
+#ifdef CONFIG_WITH_SCREEN
+    esp_err_t asset_err = asset_pack_load_active();
+    if (asset_err != ESP_OK && asset_err != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "Active asset pack load failed: %s", esp_err_to_name(asset_err));
+    }
+    if (asset_err == ESP_OK) {
+        gui_screen_apply_background(main_menu_view.root);
+    }
 #endif
     vTaskDelete(NULL);
 }

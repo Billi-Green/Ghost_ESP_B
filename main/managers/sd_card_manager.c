@@ -1300,6 +1300,8 @@ esp_err_t sd_card_setup_directory_structure() {
   const char *gps_dir = "/mnt/ghostesp/gps";
   const char *games_dir = "/mnt/ghostesp/games";
   const char *apps_dir = "/mnt/ghostesp/apps";
+  const char *themes_dir = "/mnt/ghostesp/themes";
+  const char *active_theme_dir = "/mnt/ghostesp/themes/active";
   const char *evil_portal_dir = "/mnt/ghostesp/evil_portal";
   const char *evil_portal_portals_dir = "/mnt/ghostesp/evil_portal/portals"; 
   const char *universals_dir = "/mnt/ghostesp/infrared/universals";
@@ -1314,6 +1316,12 @@ esp_err_t sd_card_setup_directory_structure() {
   if (ret != ESP_OK) return ret;
 
   ret = ensure_sd_dir_exists(apps_dir);
+  if (ret != ESP_OK) return ret;
+
+  ret = ensure_sd_dir_exists(themes_dir);
+  if (ret != ESP_OK) return ret;
+
+  ret = ensure_sd_dir_exists(active_theme_dir);
   if (ret != ESP_OK) return ret;
 
   ret = ensure_sd_dir_exists(gps_dir);

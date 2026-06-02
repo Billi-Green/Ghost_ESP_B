@@ -4539,13 +4539,7 @@ void subghz_view_create(void) {
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     lv_color_t bg = lv_color_hex(theme_palette_get_background(theme));
 
-    s_root = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(s_root, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_root, bg, 0);
-    lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_root, 0, 0);
-    lv_obj_set_style_radius(s_root, 0, 0);
-    lv_obj_set_style_pad_all(s_root, 0, 0);
+    s_root = gui_screen_create_root(NULL, NULL, bg, LV_OPA_TRANSP);
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
 
     subghz_view.root = s_root;

@@ -40,8 +40,82 @@ gbt flash firmware --board cardputer --monitor
 | `gbt firmware <board>` | Build GhostESP firmware |
 | `gbt flash firmware` | Flash firmware to device |
 | `gbt flash app` | Instructions for loading app via SD card |
+| `gbt asset image` | Convert a PNG into a GhostESP `.gimg` asset image |
+| `gbt asset pack` | Build an SD-ready asset pack folder or `.gtheme` bundle |
 | `gbt monitor` | Serial monitor |
 | `gbt ports` | List serial ports |
+
+## Asset Packs
+
+Create a source folder with a `manifest.json` and PNG artwork. `gbt asset pack` converts source images into compact `.gimg` files and writes a runtime manifest for `/mnt/ghostesp/themes/<pack id>/`.
+
+```json
+{
+  "id": "cyberpack",
+  "name": "Cyber Pack",
+  "version": 1,
+  "colors": {
+    "accent": "0xFF00FF",
+    "background": "0x0A0A0A",
+    "surface": "0x1A0A1A",
+    "surface_alt": "0x2A1A2A",
+    "text": "0xFFFFFF",
+    "text_muted": "0xAA88CC"
+  },
+  "icon_variants": [32, 64],
+  "icon_sources": {
+    "wifi": "art/icons/wifi.png",
+    "bluetooth": "art/icons/bluetooth.png",
+    "settings_icon": "art/icons/settings.png"
+  },
+  "background_sources": {
+    "bg_tile": {
+      "source": "art/bg_tile.png",
+      "width": 64,
+      "height": 64,
+      "format": "rgb565"
+    }
+  }
+}
+```
+
+Build it:
+
+```bash
+gbt asset pack ./cyberpack --out ./dist
+gbt asset pack ./cyberpack --out ./dist --archive
+```
+
+Install a generated pack folder by copying it to SD as:
+
+```text
+/mnt/ghostesp/themes/cyberpack/manifest.json
+/mnt/ghostesp/themes/cyberpack/icons/...
+```
+
+Or install an archive by copying the `.gtheme` to SD as:
+
+```text
+/mnt/ghostesp/themes/cyberpack.gtheme
+```
+
+Then use `Settings > Appearance > Asset Pack` and press left/right to cycle installed packs. Firmware scans `/mnt/ghostesp/themes/` for pack folders with `manifest.json` and for `.gtheme` archives. The selected pack is saved in NVS.
+
+When loading a `.gtheme`, firmware streams entries into `/mnt/ghostesp/themes/active/` before loading. New `.gtheme` archives store raw `.gimg` payloads without deflate compression for safe runtime decoding. Theme SD access uses the same short mount/unmount flow as other SD operations; decoded icons and background tiles stay cached in RAM/PSRAM after each read.
+
+### PSRAM vs internal RAM
+
+**PSRAM devices:** Up to 32 icons cached in PSRAM, tiled or scaled backgrounds supported. Background images smaller than the screen tile automatically; larger images scale to fill using LVGL zoom. A 128x128 background will scale up to fill any screen. Background images are always loaded into PSRAM.
+
+**Internal-only devices:** 2 icons cached in internal RAM, no background images. Icons fall back to compiled-in artwork when cache is full. The pack still loads colors and icon mappings; only the image cache is limited.
+
+Convert one image directly:
+
+```bash
+gbt asset image ./wifi.png --out ./wifi_l.gimg --width 64 --height 64 --format rgb565a8
+```
+
+The generated pack folder contains `manifest.json`, `checksums.json`, and generated `.gimg` files. Asset packs store raw `.gimg` payloads by default so firmware does not run deflate decompression from small UI task stacks. Missing icons are fine; firmware falls back to built-in artwork for any icon not present in the selected pack. Background tiles are loaded from PSRAM only.
 
 ## Requirements
 

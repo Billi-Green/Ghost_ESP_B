@@ -1,4 +1,5 @@
 #include "gui/theme_palette_api.h"
+#include "gui/asset_pack.h"
 #include "managers/settings_manager.h"
 
 static const uint32_t s_theme_accents[THEME_PALETTE_THEME_COUNT] = {
@@ -70,10 +71,14 @@ static uint32_t mix_rgb(uint32_t from, uint32_t to, uint8_t amount) {
 }
 
 uint32_t theme_palette_get(uint8_t theme, int slot) {
+    uint32_t override = 0;
+    if (slot == 0 && asset_pack_get_color(ASSET_PACK_COLOR_ACCENT, &override)) {
+        return override;
+    }
     theme = theme_palette_clamp(theme);
     if (slot < 0 || slot >= THEME_PALETTE_SLOT_COUNT) slot = 0;
 
-    uint32_t accent = s_theme_accents[theme];
+    uint32_t accent = theme_palette_get_accent(theme);
     if (slot == 0) {
         return accent;
     }
@@ -116,6 +121,10 @@ uint32_t theme_palette_get_accent(uint8_t theme) {
     if (settings_get_high_contrast(&G_Settings)) {
         return 0xFFFF00; // Bright yellow for maximum contrast
     }
+    uint32_t override = 0;
+    if (asset_pack_get_color(ASSET_PACK_COLOR_ACCENT, &override)) {
+        return override;
+    }
     return s_theme_accents[theme_palette_clamp(theme)];
 }
 
@@ -132,6 +141,20 @@ static uint32_t theme_surface_get(uint8_t theme, theme_surface_slot_t slot) {
             0xCCCCCC   // TextMuted: light gray
         };
         return high_contrast_surfaces[slot];
+    }
+
+    uint32_t override = 0;
+    int override_slot = -1;
+    switch (slot) {
+        case THEME_SURFACE_BG: override_slot = ASSET_PACK_COLOR_BACKGROUND; break;
+        case THEME_SURFACE_CARD: override_slot = ASSET_PACK_COLOR_SURFACE; break;
+        case THEME_SURFACE_CARD_ALT: override_slot = ASSET_PACK_COLOR_SURFACE_ALT; break;
+        case THEME_SURFACE_TEXT: override_slot = ASSET_PACK_COLOR_TEXT; break;
+        case THEME_SURFACE_TEXT_MUTED: override_slot = ASSET_PACK_COLOR_TEXT_MUTED; break;
+        default: break;
+    }
+    if (override_slot >= 0 && asset_pack_get_color(override_slot, &override)) {
+        return override;
     }
 
     uint8_t shade = settings_get_menu_bg_shade(&G_Settings);

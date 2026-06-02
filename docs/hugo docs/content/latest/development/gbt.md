@@ -32,6 +32,7 @@ This installs `gbt` (and `ghostbt`) as a command on your PATH. Both names invoke
 | `gbt build` | Build an app `.so` with ESP-IDF |
 | `gbt package` | Package a built app (folder or `.gapp`) |
 | `gbt dist` | Build + package in one step |
+| `gbt asset` | Convert images and build SD-ready asset packs (`.gtheme`) |
 | `gbt setup` | Install/configure ESP-IDF toolchain |
 | `gbt boards` | List available firmware board configs |
 | `gbt firmware` | Build GhostESP firmware for a board |
@@ -130,6 +131,17 @@ Runs `build` then `package` in sequence. Equivalent to:
 gbt build ./my_scanner --target esp32s3
 gbt package ./my_scanner --gapp
 ```
+
+---
+
+## `gbt asset` — Build Asset Images and Packs
+
+```powershell
+gbt asset image ./icon.png --out ./icon.gimg --width 64 --height 64 --format rgb565a8
+gbt asset pack ./my_pack --out ./dist --archive
+```
+
+`gbt asset image` converts a single PNG to GhostESP's `.gimg` runtime format. `gbt asset pack` reads an asset-pack manifest, converts icon/background sources, writes an SD-ready folder, and optionally creates a `.gtheme` archive.
 
 ---
 

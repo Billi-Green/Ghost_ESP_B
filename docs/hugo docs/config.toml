@@ -101,3 +101,8 @@ enableRobotsTXT = true
   name = "Audio"
   url = "/latest/audio/"
   weight = 8
+
+[[menu.sidebar]]
+  name = "Customization"
+  url = "/latest/customization/"
+  weight = 9

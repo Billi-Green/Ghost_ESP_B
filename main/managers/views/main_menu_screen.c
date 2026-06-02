@@ -5,6 +5,7 @@
 #include "managers/views/app_gallery_screen.h"
 #include "managers/settings_manager.h"
 #include "gui/accessibility_fonts.h"
+#include "gui/asset_pack.h"
 #include "gui/theme_palette_api.h"
 #include "gui/design_tokens.h"
 #include "gui/gui_anim.h"
@@ -114,6 +115,7 @@ static lv_obj_t **list_buttons = NULL;
 
 typedef struct {
   const char *name;
+  const char *asset_key;
   const lv_img_dsc_t *icon;
   const int palette_index; // kept for compatibility; runtime assigns slots by visible order
   lv_color_t border_color;
@@ -121,41 +123,41 @@ typedef struct {
 
 // Define colors as compile-time constants
 menu_item_t menu_items[] = {
-    {"WiFi", &wifi, 1, {{0}}}, // applies to all boards
+    {"WiFi", "wifi", &wifi, 1, {{0}}}, // applies to all boards
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    {"BLE", &bluetooth, 0, {{0}}},
+    {"BLE", "bluetooth", &bluetooth, 0, {{0}}},
 #endif
-    {"GPS", &Map, 2, {{0}}},
+    {"GPS", "Map", &Map, 2, {{0}}},
 #if CONFIG_HAS_INFRARED
-    {"Infrared", &infrared, 0, {{0}}}, // main infrared icon
+    {"Infrared", "infrared", &infrared, 0, {{0}}}, // main infrared icon
 #endif
 #ifdef CONFIG_HAS_NFC
-    {"NFC", &nfc_icon, 2, {{0}}},
+    {"NFC", "nfc_icon", &nfc_icon, 2, {{0}}},
 #endif
 #if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
-    {"NRF24", &nrf24, 4, {{0}}},
+    {"NRF24", "nrf24", &nrf24, 4, {{0}}},
 #endif
 #if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
-    {"SubGHz", &subghz, 4, {{0}}},
+    {"SubGHz", "subghz", &subghz, 4, {{0}}},
 #endif
 #if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
-    {"BadUSB", &usb, 3, {{0}}},
+    {"BadUSB", "usb", &usb, 3, {{0}}},
 #endif
-    {"GhostLink", &dualcomm, 1, {{0}}},
-    {"Ethernet", &lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48, 1, {{0}}},
-    {"Clock", &clock_icon, 4, {{0}}},
+    {"GhostLink", "dualcomm", &dualcomm, 1, {{0}}},
+    {"Ethernet", "lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48", &lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48, 1, {{0}}},
+    {"Clock", "clock_icon", &clock_icon, 4, {{0}}},
 #ifdef CONFIG_HAS_COMPASS
-    {"Compass", &compass, 2, {{0}}},
+    {"Compass", "compass", &compass, 2, {{0}}},
 #endif
 #ifdef CONFIG_HAS_ENVIII
-    {"ENV-III", &enviii, 2, {{0}}},
+    {"ENV-III", "enviii", &enviii, 2, {{0}}},
 #endif
 #ifdef CONFIG_HAS_ACCELEROMETER
-    {"Accelerometer", &accelerometer_icon, 4, {{0}}},
+    {"Accelerometer", "accelerometer_icon", &accelerometer_icon, 4, {{0}}},
 #endif
-    {"Apps", &GESPAppGallery, 3, {{0}}}, // applies to all boards
-    {"Lock", &lock, 5, {{0}}}, // Lock Device
-    {"Settings", &settings_icon, 5, {{0}}}, // applies to all boards
+    {"Apps", "GESPAppGallery", &GESPAppGallery, 3, {{0}}}, // applies to all boards
+    {"Lock", "lock", &lock, 5, {{0}}}, // Lock Device
+    {"Settings", "settings_icon", &settings_icon, 5, {{0}}}, // applies to all boards
 };
 
 static int num_items = sizeof(menu_items) / sizeof(menu_items[0]);
@@ -198,6 +200,15 @@ static int resolve_drag_axis(int total_dx, int total_dy) {
 
 static int get_total_menu_items(void) {
     return (int)(sizeof(menu_items) / sizeof(menu_items[0]));
+}
+
+static const lv_img_dsc_t *menu_item_icon(int menu_index) {
+    if (menu_index < 0 || menu_index >= get_total_menu_items()) return NULL;
+    return asset_pack_get_icon(menu_items[menu_index].asset_key, menu_items[menu_index].icon);
+}
+
+static bool menu_item_icon_should_recolor(int menu_index, const lv_img_dsc_t *icon) {
+    return menu_index >= 0 && menu_index < get_total_menu_items() && icon == menu_items[menu_index].icon;
 }
 
 static void scroll_grid_card_to_view(int item_index) {
@@ -321,13 +332,13 @@ static void carousel_fade_out_ready_cb(lv_anim_t *a) {
         carousel_cache.icon = icon;
     }
     if (icon) {
-        const lv_img_dsc_t *new_icon = menu_items[menu_index].icon;
+        const lv_img_dsc_t *new_icon = menu_item_icon(menu_index);
         if (carousel_cache.icon_src != new_icon) {
             lv_img_set_src(icon, new_icon);
         }
         carousel_cache.icon_src = new_icon;
 
-        bool wants_recolor = true;
+        bool wants_recolor = menu_item_icon_should_recolor(menu_index, new_icon);
         if (wants_recolor) {
             if (!carousel_cache.icon_recolor_enabled || border_changed) {
                 lv_obj_set_style_img_recolor(icon, new_border, 0);
@@ -499,15 +510,16 @@ static void update_menu_item(bool slide_left) {
 
     // icon
     lv_obj_t *icon = lv_img_create(current_item_obj);
-    lv_img_set_src(icon, menu_items[menu_index].icon);
+    const lv_img_dsc_t *item_icon = menu_item_icon(menu_index);
+    lv_img_set_src(icon, item_icon);
     carousel_cache.icon = icon;
-    carousel_cache.icon_src = menu_items[menu_index].icon;
+    carousel_cache.icon_src = item_icon;
     int icon_target = btn_size * 0.38f;
     if (icon_target < 20) icon_target = 20;
     if (icon_target > 56) icon_target = 56;
     lv_img_set_antialias(icon, false);
-    lv_coord_t img_w = menu_items[menu_index].icon->header.w;
-    lv_coord_t img_h = menu_items[menu_index].icon->header.h;
+    lv_coord_t img_w = item_icon ? item_icon->header.w : 0;
+    lv_coord_t img_h = item_icon ? item_icon->header.h : 0;
     int zoom_w = (img_w > 0) ? (icon_target * 256) / img_w : 256;
     int zoom_h = (img_h > 0) ? (icon_target * 256) / img_h : 256;
     int zoom = LV_MIN(zoom_w, zoom_h);
@@ -515,10 +527,14 @@ static void update_menu_item(bool slide_left) {
     if (zoom < 64) zoom = 64;
     lv_img_set_zoom(icon, zoom);
     lv_img_set_size_mode(icon, LV_IMG_SIZE_MODE_REAL);
-    bool recolor_enabled = true;
+    bool recolor_enabled = menu_item_icon_should_recolor(menu_index, item_icon);
     if (recolor_enabled) {
-        lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
-        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        if (menu_item_icon_should_recolor(menu_index, item_icon)) {
+            lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        } else {
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_TRANSP, 0);
+        }
     }
     carousel_cache.icon_recolor_enabled = recolor_enabled;
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, 0);
@@ -1084,19 +1100,24 @@ static void create_grid_menu(void) {
 
         // Add icon
         lv_obj_t *icon = lv_img_create(grid_cards[i]);
-        lv_img_set_src(icon, menu_items[menu_index].icon);
+        const lv_img_dsc_t *item_icon = menu_item_icon(menu_index);
+        lv_img_set_src(icon, item_icon);
         int reserved_for_label = (grid_card_height <= 50 ? 14 : 20);
         int avail_w = (int)(grid_card_width * 0.78f);
         int avail_h = (int)((grid_card_height - reserved_for_label) * 0.78f);
         if (avail_h < 10) avail_h = grid_card_height - reserved_for_label;
         lv_img_set_antialias(icon, false);
 
-        lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
-        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        if (menu_item_icon_should_recolor(menu_index, item_icon)) {
+            lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        } else {
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_TRANSP, 0);
+        }
         lv_obj_set_style_clip_corner(icon, false, 0);
 
-        lv_coord_t img_w = menu_items[menu_index].icon->header.w;
-        lv_coord_t img_h = menu_items[menu_index].icon->header.h;
+        lv_coord_t img_w = item_icon ? item_icon->header.w : 0;
+        lv_coord_t img_h = item_icon ? item_icon->header.h : 0;
         int zoom_w = (img_w > 0) ? (avail_w * 256) / img_w : 256;
         int zoom_h = (img_h > 0) ? (avail_h * 256) / img_h : 256;
         int zoom = LV_MIN(zoom_w, zoom_h);
@@ -1186,12 +1207,17 @@ static void create_list_menu(void) {
         lv_obj_add_flag(btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
 
         lv_obj_t *icon = lv_img_create(btn);
-        lv_img_set_src(icon, menu_items[menu_index].icon);
+        const lv_img_dsc_t *item_icon = menu_item_icon(menu_index);
+        lv_img_set_src(icon, item_icon);
         lv_img_set_antialias(icon, false);
-        lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
-        lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
-        lv_coord_t img_w = menu_items[menu_index].icon->header.w;
-        lv_coord_t img_h = menu_items[menu_index].icon->header.h;
+        if (menu_item_icon_should_recolor(menu_index, item_icon)) {
+            lv_obj_set_style_img_recolor(icon, menu_items[menu_index].border_color, 0);
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_COVER, 0);
+        } else {
+            lv_obj_set_style_img_recolor_opa(icon, LV_OPA_TRANSP, 0);
+        }
+        lv_coord_t img_w = item_icon ? item_icon->header.w : 0;
+        lv_coord_t img_h = item_icon ? item_icon->header.h : 0;
         int zoom_w = (img_w > 0) ? (icon_target * 256) / img_w : 256;
         int zoom_h = (img_h > 0) ? (icon_target * 256) / img_h : 256;
         int zoom = LV_MIN(zoom_w, zoom_h);
@@ -1230,16 +1256,21 @@ static void cleanup_layout_arrays(void) {
 
 static lv_timer_t *menu_refresh_timer = NULL;
 static bool was_dual_comm_connected = false;
+static uint32_t was_asset_pack_version = 0;
 
 static void menu_refresh_timer_cb(lv_timer_t *t) {
     bool connected = esp_comm_manager_is_connected();
-    if (connected != was_dual_comm_connected) {
+    uint32_t pack_version = asset_pack_get_version();
+    if (connected != was_dual_comm_connected || pack_version != was_asset_pack_version) {
         was_dual_comm_connected = connected;
+        was_asset_pack_version = pack_version;
         
         cleanup_layout_arrays();
         if (menu_container && lv_obj_is_valid(menu_container)) {
             lv_obj_clean(menu_container);
         }
+        current_item_obj = NULL;
+        carousel_cache = (carousel_card_cache_t){0};
         
         num_items = get_visible_menu_count(connected);
         if (selected_item_index >= num_items) selected_item_index = num_items - 1;
@@ -1248,7 +1279,9 @@ static void menu_refresh_timer_cb(lv_timer_t *t) {
         
         if (current_layout == MAIN_MENU_LAYOUT_CARD_GRID) create_grid_menu();
         else if (current_layout == MAIN_MENU_LAYOUT_LIST) create_list_menu();
-        else update_menu_item(false);
+        else select_menu_item(selected_item_index, false);
+        
+        gui_screen_apply_background(menu_container);
     }
 }
 
@@ -1260,6 +1293,7 @@ void main_menu_create(void) {
     display_manager_fill_screen(menu_bg_color);
     bool dual_comm_connected = esp_comm_manager_is_connected();
     was_dual_comm_connected = dual_comm_connected;
+    was_asset_pack_version = asset_pack_get_version();
     
     if (!menu_refresh_timer) {
         menu_refresh_timer = lv_timer_create(menu_refresh_timer_cb, 1000, NULL);
