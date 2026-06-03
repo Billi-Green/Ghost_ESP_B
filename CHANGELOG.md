@@ -15,6 +15,7 @@
  - Fixed mic visualizer mode state not resetting on first frame when starting in default mode
  - Moved NRF24, SubGHz, and MIC visualizer task stacks to PSRAM to fix internal RAM exhaustion
  - Moved Goertzel ring buffers and MIC sample buffer to PSRAM to free up internal RAM
+ - Bumped GhostBT to v0.2.2
 
 ## Revival v2.0-pre2
 
