@@ -141,7 +141,9 @@ gbt asset image ./icon.png --out ./icon.gimg --width 64 --height 64 --format rgb
 gbt asset pack ./my_pack --out ./dist --archive
 ```
 
-`gbt asset image` converts a single PNG to GhostESP's `.gimg` runtime format. `--format` accepts `rgb565`, `rgb565a8` (default), or `indexed_4bpp` — the last quantizes the source to a 16-color palette and packs 4-bit pixels, ideal for internal-only devices where icon RAM is tight. `gbt asset pack` reads an asset-pack manifest, converts icon/background sources, writes an SD-ready folder, and optionally creates a `.gtheme` archive. Set the pack-wide icon format with the `icon_format` field in the source manifest, or override per-background via the `format` field on each `background_sources` entry.
+`gbt asset image` converts a single PNG to GhostESP's `.gimg` runtime format. `--format` accepts `rgb565`, `rgb565a8` (default), or `indexed_4bpp` — the last quantizes the source to a 16-color palette and packs 4-bit pixels, ideal for internal-only devices where RAM is tight. `gbt asset pack` reads an asset-pack manifest, converts icon/background sources, writes an SD-ready folder, and optionally creates a `.gtheme` archive. Set the pack-wide icon format with the `icon_format` field in the source manifest, or override per-background via the `format` field on each `background_sources` entry.
+
+For backgrounds, a source named `background` with `"variants": true` generates the default runtime set: `full` (`240x320 rgb565`), `half` (`120x160 indexed_4bpp`), `tiny` (`80x107 indexed_4bpp`), and `tile` (`32x32 indexed_4bpp`). Firmware prefers `full` on PSRAM boards and scaled `half`/`tiny` variants on internal-only boards before falling back to the tile.
 
 ---
 

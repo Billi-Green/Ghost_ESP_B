@@ -12,7 +12,7 @@ Asset packs let you customize the GhostESP UI: colors, icons, and background ima
 |---------|--------------|----------------------|
 | Colors (accent, background, surface, text) | Yes | Yes |
 | Icons (up to 32 cached) | Yes | 2 cached |
-| Background images (tiled or full-screen) | Yes | Tiled (≤32x32) |
+| Background images (tiled or scaled) | Yes | Yes, with low-RAM variants |
 | Custom icon sizes per resolution | Yes | Yes |
 
 ## Creating a Pack
@@ -28,7 +28,7 @@ my_pack/
     icons/
       wifi.png
       bluetooth.png
-    bg_tile.png
+    background.png
 ```
 
 ### 2. Manifest Format
@@ -60,11 +60,9 @@ my_pack/
     "GESPAppGallery": "art/icons/gallery.png"
   },
   "background_sources": {
-    "bg_tile": {
-      "source": "art/bg_tile.png",
-      "width": 64,
-      "height": 64,
-      "format": "rgb565"
+    "background": {
+      "source": "art/background.png",
+      "variants": true
     }
   }
 }
@@ -96,7 +94,18 @@ my_pack/
 | `rave` | App gallery |
 | `speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48` | Audio app |
 
-**Background images** use `rgb565` format. Images smaller than the screen tile automatically. Images equal to or larger than the screen scale to fill using LVGL zoom. A 128x128 tile will scale up to fill any screen size. On internal-only devices the tile is capped at 32x32; tile your artwork accordingly or accept a smaller repeating background. The main menu, app gallery, settings-style screens, and other shared-layout views all use the same background.
+**Background images** can be generated as a variant set from one source PNG by using `"variants": true` on the `background` source. GBT writes these runtime manifest entries:
+
+| Variant | Default size | Default format | Use |
+|---------|--------------|----------------|-----|
+| `full` | 240x320 | `rgb565` | PSRAM boards |
+| `half` | 120x160 | `indexed_4bpp` | Internal-only boards, scaled to fill |
+| `tiny` | 80x107 | `indexed_4bpp` | Low-memory fallback, scaled to fill |
+| `tile` | 32x32 | `indexed_4bpp` | Last-resort tiled fallback |
+
+The firmware picks `full -> tiny -> tile` on PSRAM boards and `half -> tiny -> tile` on internal-only boards. Scaled `indexed_4bpp` backgrounds are rendered by a custom line scaler, so the 120x160 half variant stays around 9.5 KB in RAM instead of expanding to a full RGB565 copy. The main menu, app gallery, settings-style screens, and other shared-layout views all use the same background.
+
+Legacy packs can still provide `bg_tile`; newer packs should prefer the `background` variant source above.
 
 ### 3. Building
 
@@ -123,7 +132,11 @@ Copy the generated folder to your SD card:
     wifi_l.gimg
     wifi_s.gimg
     ...
-  bg_tile.gimg
+  bg/
+    bg_full.gimg
+    bg_half.gimg
+    bg_tiny.gimg
+    bg_tile.gimg
 ```
 
 ### Option B: .gtheme Archive
@@ -157,17 +170,17 @@ Missing icons fall back to the compiled-in defaults. You don't need to include e
 |--------|------|-------------|
 | `rgb565` | 1 | 16-bit color, no alpha. Used for backgrounds. |
 | `rgb565a8` | 2 | 16-bit color + 8-bit alpha plane. Used for icons. |
-| `indexed_4bpp` | 3 | 16-color indexed (4 bits/pixel + 64-byte palette). Smallest icon format. |
+| `indexed_4bpp` | 3 | 16-color indexed (4 bits/pixel + 64-byte palette). Smallest icon and low-RAM background format. |
 
 The `rgb565a8` format stores RGB565 and alpha as separate planes (not interleaved). The `gbt asset pack` tool handles this automatically. GIMG files store standard RGB565; firmware adapts the in-memory byte order for boards built with `LV_COLOR_16_SWAP`.
 
-The `indexed_4bpp` format quantizes source PNGs to a 16-color palette at build time and packs two pixels per byte in the payload. A 32x32 indexed icon uses ~576 bytes (64-byte palette + 512 bytes of packed indices) — roughly 1/5 the size of the equivalent `rgb565a8` image and ideal for internal-only devices where every kilobyte of icon cache counts. The 16-color limit is enough for most line-art and flat-color menu icons; smooth gradients show visible banding. The firmware renders indexed images natively via LVGL's `LV_IMG_CF_INDEXED_4BIT`; no expansion into a larger format happens at load time. Packs can mix formats per image source via the manifest's `icon_format` and per-background `format` fields.
+The `indexed_4bpp` format quantizes source PNGs to a 16-color palette at build time and packs two pixels per byte in the payload. A 32x32 indexed icon uses ~576 bytes (64-byte palette + 512 bytes of packed indices) — roughly 1/5 the size of the equivalent `rgb565a8` image and ideal for internal-only devices where every kilobyte of icon cache counts. A 120x160 indexed background uses ~9.5 KB. The 16-color limit is enough for most line-art and flat-color menu icons; smooth gradients show visible banding. The firmware renders indexed icons natively through LVGL and renders scaled indexed backgrounds with a custom line scaler, avoiding full-image RGB expansion. Packs can mix formats per image source via the manifest's `icon_format` and per-background `format` fields.
 
 ## PSRAM vs Internal RAM
 
 **PSRAM devices** (most ESP32-S3 boards):
 - Up to 32 icons cached in PSRAM
-- Background images supported (tiled or full-screen)
+- Background images supported (full, scaled, or tiled)
 - Each 64x64 icon uses ~12 KB PSRAM
 - Full-screen 240x320 background uses ~150 KB PSRAM
 - Any image format works; deflate-compressed payloads decode into PSRAM
@@ -175,10 +188,10 @@ The `indexed_4bpp` format quantizes source PNGs to a 16-color palette at build t
 
 **Internal-only devices** (ESP32-C5, some S2):
 - 2 icons cached in internal RAM
-- Tiled background supported at ≤32x32; the full-screen bake is skipped and LVGL tiles the small image
+- Scaled `half`/`tiny` indexed backgrounds are supported without full RGB expansion; 32x32 tiled background remains the last fallback
 - Icon size is capped at 32x32 RGB565A8 (3 KB) per slot — anything bigger is rejected
 - Deflate-compressed payloads are rejected; only uncompressed `.gimg` files load
-- Use `indexed_4bpp` for icons and the background tile to stay well under the internal-RAM budget. A 32x32 indexed icon is 576 bytes vs 3,072 bytes for RGB565A8
+- Use `indexed_4bpp` for icons and low-RAM background variants. A 32x32 indexed icon is 576 bytes vs 3,072 bytes for RGB565A8
 - Colors and icon mappings still work; icons fall back to compiled-in artwork when the cache is full
 
 ## Converting a Single Image
