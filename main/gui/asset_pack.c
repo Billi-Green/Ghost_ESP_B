@@ -81,7 +81,7 @@ static uint32_t s_version = 0;
 static bool s_has_psram = false;
 static bool s_has_color[6];
 static uint32_t s_colors[6];
-static asset_icon_entry_t s_icons[ASSET_PACK_MAX_ICONS];
+static asset_icon_entry_t *s_icons = NULL;
 static int s_icon_count = 0;
 /* Icon cache slot array is heap-allocated in detect_psram_and_configure() and
  * sized to s_icon_cache_size, so internal-RAM builds only pay for the slots
@@ -557,13 +557,25 @@ static void clear_runtime(void) {
     s_last_icon_version = 0;
     memset(s_has_color, 0, sizeof(s_has_color));
     memset(s_colors, 0, sizeof(s_colors));
-    memset(s_icons, 0, sizeof(s_icons));
+    free(s_icons);
+    s_icons = NULL;
     memset(s_bg_tile, 0, sizeof(s_bg_tile));
     memset(s_app_icon_key, 0, sizeof(s_app_icon_key));
     s_icon_count = 0;
     s_defer_icon_loads = false;
     s_loaded = false;
     s_version++;
+}
+
+static bool alloc_icon_table(void) {
+    size_t bytes = ASSET_PACK_MAX_ICONS * sizeof(asset_icon_entry_t);
+    s_icons = heap_caps_calloc(ASSET_PACK_MAX_ICONS, sizeof(asset_icon_entry_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_icons) s_icons = calloc(ASSET_PACK_MAX_ICONS, sizeof(asset_icon_entry_t));
+    if (!s_icons) {
+        ESP_LOGE(TAG, "no memory for icon metadata (%u bytes)", (unsigned)bytes);
+        return false;
+    }
+    return true;
 }
 
 static lv_img_cf_t gimg_cf(uint8_t fmt) {
@@ -1078,6 +1090,11 @@ static esp_err_t asset_pack_load_active_impl(void) {
 
     const cJSON *icons = cJSON_GetObjectItemCaseSensitive(root, "icons");
     if (cJSON_IsObject(icons)) {
+        if (!alloc_icon_table()) {
+            cJSON_Delete(root);
+            clear_runtime();
+            return ESP_ERR_NO_MEM;
+        }
         const cJSON *icon = NULL;
         cJSON_ArrayForEach(icon, icons) {
             if (!icon->string || !cJSON_IsObject(icon) || s_icon_count >= ASSET_PACK_MAX_ICONS) continue;
