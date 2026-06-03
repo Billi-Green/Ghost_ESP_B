@@ -694,7 +694,7 @@ esp_err_t sd_card_init(void) {
     .sclk_io_num = sd_card_manager.spi_clk_pin,
     .quadwp_io_num = -1,
     .quadhd_io_num = -1,
-    .max_transfer_sz = 8192,
+    .max_transfer_sz = 4096,
   };
   gpio_set_direction(sd_card_manager.spi_cs_pin, GPIO_MODE_OUTPUT);
   gpio_set_level(sd_card_manager.spi_cs_pin, 1);
@@ -941,7 +941,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
     .mosi_io_num = sd_card_manager.spi_mosi_pin,
     .miso_io_num = sd_card_manager.spi_miso_pin,
     .sclk_io_num = sd_card_manager.spi_clk_pin,
-    .max_transfer_sz = 8192,
+    .max_transfer_sz = 4096,
   };
 
   gpio_set_direction(sd_card_manager.spi_cs_pin, GPIO_MODE_OUTPUT);

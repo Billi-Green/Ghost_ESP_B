@@ -1352,18 +1352,22 @@ esp_err_t asset_pack_select_by_index(int index) {
         return ESP_OK;
     }
 
+    const char *name = s_installed_names[index];
+    save_active_name(name);
+
     bool mounted_here = false;
     bool display_suspended = false;
     esp_err_t mount_err = asset_sd_begin(&mounted_here, &display_suspended);
     if (mount_err != ESP_OK) return ESP_ERR_INVALID_STATE;
 
-    const char *name = s_installed_names[index];
-    save_active_name(name);
     bool archive = false;
     if (!pack_exists(name, &archive)) {
         asset_sd_end(mounted_here, display_suspended);
         return ESP_ERR_NOT_FOUND;
     }
+
+    clear_runtime();
+
     set_pack_dir_for_name(name, archive);
     s_skip_icon_preload_once = true;
     esp_err_t err = asset_pack_load_active_impl();
