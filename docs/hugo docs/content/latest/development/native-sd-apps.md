@@ -143,6 +143,16 @@ The host calls `ghostesp_app_init(api)`, validates the returned descriptor, then
 Always set:
 - `api_version = GHOSTESP_APP_API_VERSION` (currently `1`)
 - `struct_size = GHOSTESP_APP_STRUCT_SIZE_V1`
+- `flags` to `0` unless the host has advertised a capability you need
+
+The host advertises its capabilities through the `flags` field of `ghostesp_api_t`. Recognized bits:
+
+| Macro | Meaning |
+|-------|---------|
+| `GHOSTESP_APP_FLAG_PERMISSIONS_ENFORCED` | Host enforces the `permissions` array in the manifest. Calls to gated APIs without the matching permission return false / -1. |
+| `GHOSTESP_APP_FLAG_ABSOLUTE_STORAGE_ALLOWED` | Host allows the `storage_*` (non-`app_storage_*`) calls to operate on paths outside `/mnt/ghostesp/appdata/<id>/`. Required for any app that writes to `/mnt/ghostesp/...` directly. |
+
+The `GHOSTESP_API_STRUCT_SIZE_V1` macro is the host-side equivalent of the app-side `GHOSTESP_APP_STRUCT_SIZE_V1`; both expand to `sizeof(ghostesp_api_t)` / `sizeof(ghostesp_app_t)`. Apps rarely need it — only when comparing against a `struct_size` field the host itself publishes.
 
 Future v1-compatible additions to the API struct are append-only; the host uses `struct_size` to detect which fields are valid.
 
@@ -162,6 +172,41 @@ Load → on_start() → [on_tick() / on_input()] → on_pause() / on_resume() �
 | `on_stop()` | App is being unloaded. Free resources, save state. Callback runs before `dlclose`. |
 
 Call `api->app_exit()` from your app to request a clean shutdown.
+
+## Input Events
+
+`on_input` receives a `ghostesp_input_event_t`:
+
+```c
+typedef struct {
+    ghostesp_input_type_t type;
+    int32_t value;
+    int32_t x;
+    int32_t y;
+    bool pressed;
+} ghostesp_input_event_t;
+```
+
+| Field | Meaning |
+|-------|---------|
+| `type` | One of the `GHOSTESP_INPUT_*` values below. |
+| `value` | For `GHOSTESP_INPUT_KEY`, the keycode; otherwise 0. |
+| `x`, `y` | For `GHOSTESP_INPUT_TOUCH`, the touch coordinates in screen space (origin top-left); otherwise 0. |
+| `pressed` | `true` on press, `false` on release. For `GHOSTESP_INPUT_TOUCH`, also `true` while a finger is held. |
+
+Input types:
+
+| Value | Description |
+|-------|-------------|
+| `GHOSTESP_INPUT_NONE` | Reserved / placeholder. |
+| `GHOSTESP_INPUT_LEFT` | D-pad left. |
+| `GHOSTESP_INPUT_RIGHT` | D-pad right. |
+| `GHOSTESP_INPUT_UP` | D-pad up. |
+| `GHOSTESP_INPUT_DOWN` | D-pad down. |
+| `GHOSTESP_INPUT_SELECT` | Primary action (center / OK / Enter). |
+| `GHOSTESP_INPUT_BACK` | Cancel / back. |
+| `GHOSTESP_INPUT_KEY` | Keyboard event; check `value` for the keycode. |
+| `GHOSTESP_INPUT_TOUCH` | Touch event; check `x` and `y` for screen coordinates. |
 
 ## API Reference
 
@@ -218,11 +263,14 @@ ghostesp_ui_obj_t (*ui_label_create)(ghostesp_ui_obj_t parent, const char *text)
 ghostesp_ui_obj_t (*ui_button_create)(ghostesp_ui_obj_t parent, const char *text, ghostesp_ui_button_cb_t on_click, void *user);
 void (*ui_label_set_text)(ghostesp_ui_obj_t label, const char *text);
 void (*ui_button_set_text)(ghostesp_ui_obj_t button, const char *text);
+void (*ui_button_set_selected)(ghostesp_ui_obj_t button, bool selected);
 void (*ui_obj_set_visible)(ghostesp_ui_obj_t obj, bool visible);
 void (*ui_obj_delete)(ghostesp_ui_obj_t obj);
 void (*ui_show_popup)(const char *title, const char *text);
 int32_t (*ui_screen_get_width)(void);
 int32_t (*ui_screen_get_height)(void);
+int32_t (*ui_screen_get_content_width)(void);
+int32_t (*ui_screen_get_content_height)(void);
 ```
 
 ### Widget Styling
@@ -258,6 +306,16 @@ void (*ui_obj_set_pad_column)(ghostesp_ui_obj_t obj, int32_t pad);
 ```
 
 Flex flow values: `COLUMN`, `ROW`, `COLUMN_WRAP`, `ROW_WRAP`, `COLUMN_REVERSE`, `ROW_REVERSE`, and their `_WRAP_REVERSE` variants.
+
+### Scrolling
+
+```c
+void (*ui_obj_set_scrollable)(ghostesp_ui_obj_t obj, bool scrollable);
+void (*ui_obj_set_scrollbar)(ghostesp_ui_obj_t obj, bool enabled);
+void (*ui_obj_scroll_by)(ghostesp_ui_obj_t obj, int32_t dx, int32_t dy, bool animated);
+```
+
+`ui_obj_set_scrollable` enables scroll gestures (drag / wheel) on any container. `ui_obj_set_scrollbar` toggles the scrollbar indicator (visible by default once the content overflows). `ui_obj_scroll_by` programmatically nudges the viewport — pass `animated = true` for a tween, `false` for an instant jump (useful when resetting to the top of a list).
 
 ### Theme Colors
 
@@ -384,6 +442,19 @@ bool (*ui_paged_menu_has_prev)(ghostesp_paged_menu_t pm);
 bool (*ui_paged_menu_has_next)(ghostesp_paged_menu_t pm);
 ```
 
+### Touch Bar
+
+Touch-optimized action bar with built-in back/up/down buttons. Use on devices with a touchscreen for primary navigation:
+
+```c
+ghostesp_ui_obj_t (*ui_touch_bar_create)(ghostesp_ui_obj_t parent);
+ghostesp_ui_obj_t (*ui_touch_bar_add_back)(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+ghostesp_ui_obj_t (*ui_touch_bar_add_up)(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+ghostesp_ui_obj_t (*ui_touch_bar_add_down)(ghostesp_ui_obj_t bar, ghostesp_ui_button_cb_t on_click, void *user);
+```
+
+`ui_touch_bar_create` returns a bar widget; add up to three buttons with the `add_*` helpers, in any order. The bar lays out as a horizontal flex row.
+
 ### Timers
 
 ```c
@@ -397,6 +468,17 @@ void (*ui_timer_set_interval)(ghostesp_ui_timer_t timer, uint32_t interval_ms);
 ```c
 void (*ui_input_dialog)(const char *title, const char *default_text, ghostesp_input_submit_cb_t on_submit, void *user);
 ```
+
+### Screen Queries
+
+Capability queries for adapting UI to the host device:
+
+```c
+bool (*ui_screen_is_compact)(void);
+bool (*ui_has_touchscreen)(void);
+```
+
+`ui_screen_is_compact` reports whether the host considers the current screen a "compact" layout (narrow, single-column — e.g. cardputer, M5StickC) versus a wide layout (gallery / grid). Use it to swap list views for grids, hide labels, or pick a denser font. `ui_has_touchscreen` reports whether the device has a touch panel; combine with `GHOSTESP_INPUT_TOUCH` events in `on_input` to add touch-only affordances.
 
 ### Storage (Absolute, `storage` Permission)
 
@@ -591,6 +673,28 @@ bool    (*wifi_raw_tx)(const void *data, size_t len);
 ```
 
 Monitor receive requires `wifi`. Channel changes and raw TX require `wifi_control`. Monitor mode is stopped automatically when the app exits.
+
+### WiFi Async and Live Scan
+
+The basic `wifi_start_scan` blocks the calling task until the scan completes. For non-blocking or continuous scans:
+
+```c
+bool (*wifi_start_scan_async)(void);
+bool (*wifi_scan_check_done)(void);
+void (*wifi_finish_scan)(void);
+```
+
+`wifi_start_scan_async` kicks off a scan and returns immediately. Poll `wifi_scan_check_done` from `on_tick`; when it returns `true`, read results with `wifi_scan_get_ap` (same as the blocking variant), then call `wifi_finish_scan` to release the scan buffer. Calling `wifi_start_scan_async` while a scan is already in progress returns `false`.
+
+For continuous monitoring (a UI that updates as new APs appear without explicit rescan calls):
+
+```c
+bool (*wifi_live_scan_start)(void);
+void (*wifi_live_scan_stop)(void);
+bool (*wifi_live_scan_active)(void);
+```
+
+`wifi_live_scan_start` begins a repeating scan loop in the background; the AP list refreshes automatically between calls to `wifi_ap_count` and `wifi_scan_get_ap`. `wifi_live_scan_active` reports whether the background loop is currently running. Always call `wifi_live_scan_stop` from `on_stop` to release the worker task — it is not auto-stopped on app exit.
 
 ### Protocol Native Hooks
 

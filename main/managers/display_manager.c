@@ -1761,13 +1761,26 @@ void display_manager_destroy_current_view(void) {
 
 View *display_manager_get_current_view(void) { return dm.current_view; }
 
+static bool touch_move_events_enabled_for_view_name(const char *view_name) {
+  return view_name &&
+         (strcmp(view_name, "Options Screen") == 0 ||
+          strcmp(view_name, "NFC") == 0 ||
+          strcmp(view_name, "Infrared View") == 0 ||
+          strcmp(view_name, "SubGHz") == 0 ||
+          strcmp(view_name, "Ethernet") == 0 ||
+          strcmp(view_name, "AirspaceMonitorView") == 0 ||
+          strcmp(view_name, "Audio Player") == 0 ||
+          strcmp(view_name, "Main Menu") == 0 ||
+          strcmp(view_name, "Apps Menu") == 0);
+}
+
 static bool touch_move_events_enabled_for_current_view(void) {
   if (!dm.mutex) return false;
 
   bool enabled = false;
   if (xSemaphoreTake(dm.mutex, 0) == pdTRUE) {
     View *current = dm.current_view;
-    enabled = current && current->name && strcmp(current->name, "Options Screen") == 0;
+    enabled = current && touch_move_events_enabled_for_view_name(current->name);
     xSemaphoreGive(dm.mutex);
   }
   return enabled;
@@ -2867,8 +2880,8 @@ void processEvent() {
       xSemaphoreGive(dm.mutex);
 
       ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
-      if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move &&
-          strcmp(view_name, "Options Screen") != 0) {
+      bool accepts_touch_move = touch_move_events_enabled_for_view_name(view_name);
+      if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move && !accepts_touch_move) {
         processed++;
         continue;
       }
@@ -2907,8 +2920,8 @@ void processEvent() {
         xSemaphoreGive(dm.mutex);
 
         ESP_LOGD(TAG, "Input event type: %d, Current view: %s\n", event.type, view_name);
-        if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move &&
-            strcmp(view_name, "Options Screen") != 0) {
+        bool accepts_touch_move = touch_move_events_enabled_for_view_name(view_name);
+        if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move && !accepts_touch_move) {
           // drop live move samples for views that still treat pressed touches as clicks
         } else if (event.type == INPUT_TYPE_JOYSTICK && !event.data.joystick_pressed &&
             strcmp(view_name, "Keyboard Screen") != 0) {
@@ -2926,7 +2939,7 @@ void processEvent() {
 
 /* ---- scroll coalescing ------------------------------------------------- */
 
-#define SCROLL_COALESCE_MAX_STEP 36
+#define SCROLL_COALESCE_MAX_STEP 64
 
 typedef struct {
   lv_obj_t *target;
@@ -2956,8 +2969,92 @@ void display_manager_flush_pending_scroll(void) {
   s_pending_scroll.dy = 0;
 }
 
+/* ---- touch drag state machine ---------------------------------------- */
+
+#define TOUCH_DRAG_AXIS_THRESHOLD 10
+#define TOUCH_DRAG_AXIS_BIAS 4
+#define TOUCH_DRAG_DEADZONE 1
+#define TOUCH_DRAG_MAX_STEP 64
+
+void touch_drag_reset(touch_drag_t *d) {
+    d->started = false;
+    d->dragged = false;
+    d->drag_axis = 0;
+    d->start_x = d->start_y = 0;
+    d->last_x = d->last_y = 0;
+    d->release_target = NULL;
+}
+
+void touch_drag_begin(touch_drag_t *d, lv_indev_data_t *data) {
+    d->started = true;
+    d->dragged = false;
+    d->drag_axis = 0;
+    d->start_x = data->point.x;
+    d->start_y = data->point.y;
+    d->last_x = data->point.x;
+    d->last_y = data->point.y;
+    d->release_target = NULL;
+}
+
+static int32_t _touch_drag_clamp(int32_t dy) {
+    if (abs(dy) <= TOUCH_DRAG_DEADZONE) return 0;
+    if (dy >  TOUCH_DRAG_MAX_STEP) return  TOUCH_DRAG_MAX_STEP;
+    if (dy < -TOUCH_DRAG_MAX_STEP) return -TOUCH_DRAG_MAX_STEP;
+    return dy;
+}
+
+static int _touch_drag_resolve_axis(int total_dx, int total_dy) {
+    int abs_dx = abs(total_dx);
+    int abs_dy = abs(total_dy);
+    if (abs_dx < TOUCH_DRAG_AXIS_THRESHOLD && abs_dy < TOUCH_DRAG_AXIS_THRESHOLD) return 0;
+    if (abs_dy >= abs_dx + TOUCH_DRAG_AXIS_BIAS) return 1;
+    if (abs_dx >= abs_dy + TOUCH_DRAG_AXIS_BIAS) return 2;
+    return 0;
+}
+
+lv_obj_t *touch_drag_update(touch_drag_t *d, lv_indev_data_t *data, lv_obj_t *scroll_target) {
+    if (!d->started) return NULL;
+
+    int32_t dy = data->point.y - d->last_y;
+    d->last_x = data->point.x;
+    d->last_y = data->point.y;
+
+    if (!d->dragged) {
+        d->drag_axis = _touch_drag_resolve_axis(data->point.x - d->start_x,
+                                                data->point.y - d->start_y);
+        d->dragged = d->drag_axis != 0;
+    }
+
+    if (d->dragged && d->drag_axis == 1 && scroll_target) {
+        bool live = settings_get_touch_drag_scroll(&G_Settings);
+        if (live) {
+            int32_t clamped = _touch_drag_clamp(dy);
+            if (clamped) display_manager_queue_scroll(scroll_target, clamped);
+        } else {
+            // Remember the target; the scroll is applied on release
+            // using the total drag distance.
+            d->release_target = scroll_target;
+        }
+    }
+    return d->dragged ? scroll_target : NULL;
+}
+
+bool touch_drag_release(touch_drag_t *d, lv_indev_data_t *data) {
+    if (!d->started) return false;
+    bool was_dragged = d->dragged;
+    int32_t total_dy = data->point.y - d->start_y;
+    lv_obj_t *target = d->release_target;
+    bool live = settings_get_touch_drag_scroll(&G_Settings);
+    touch_drag_reset(d);
+    if (was_dragged && target && !live && total_dy) {
+        display_manager_queue_scroll(target, total_dy);
+        return true;
+    }
+    return was_dragged;
+}
+
 void lvgl_tick_task(void *arg) {
-  const TickType_t tick_interval = pdMS_TO_TICKS(10);
+  const TickType_t tick_interval = pdMS_TO_TICKS(5);
   TickType_t last_mon = 0;
   while (1) {
       processEvent();

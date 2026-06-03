@@ -114,9 +114,7 @@ static char **saved_file_paths = NULL;
 static size_t saved_file_count = 0;
 
 #ifdef CONFIG_USE_TOUCHSCREEN
-static bool nfc_touch_started = false;
-static int nfc_touch_start_x = 0;
-static int nfc_touch_start_y = 0;
+static touch_drag_t nfc_touch_drag = {0};
 #if CONFIG_LV_TOUCH_CONTROLLER_XPT2046
 static const int NFC_SWIPE_THRESHOLD_RATIO = 1;
 #else
@@ -1582,11 +1580,11 @@ void nfc_view_input_cb(InputEvent *event) {
 #ifdef CONFIG_USE_TOUCHSCREEN
         if (d->state == LV_INDEV_STATE_PR) {
             if (nfc_scan_popup && lv_obj_is_valid(nfc_scan_popup)) {
-                nfc_touch_started = false;
+                touch_drag_reset(&nfc_touch_drag);
                 return;
             }
             if (nfc_write_popup && lv_obj_is_valid(nfc_write_popup)) {
-                nfc_touch_started = false;
+                touch_drag_reset(&nfc_touch_drag);
                 return;
             }
             if (scroll_up_btn && lv_obj_is_valid(scroll_up_btn) && !lv_obj_has_flag(scroll_up_btn, LV_OBJ_FLAG_HIDDEN)) {
@@ -1595,7 +1593,7 @@ void nfc_view_input_cb(InputEvent *event) {
                 if (d->point.x >= a.x1 && d->point.x <= a.x2 &&
                     d->point.y >= a.y1 && d->point.y <= a.y2) {
                     scroll_nfc_up(NULL);
-                    nfc_touch_started = false;
+                    touch_drag_reset(&nfc_touch_drag);
                     return;
                 }
             }
@@ -1605,7 +1603,7 @@ void nfc_view_input_cb(InputEvent *event) {
                 if (d->point.x >= a.x1 && d->point.x <= a.x2 &&
                     d->point.y >= a.y1 && d->point.y <= a.y2) {
                     scroll_nfc_down(NULL);
-                    nfc_touch_started = false;
+                    touch_drag_reset(&nfc_touch_drag);
                     return;
                 }
             }
@@ -1615,41 +1613,50 @@ void nfc_view_input_cb(InputEvent *event) {
                 if (d->point.x >= a.x1 && d->point.x <= a.x2 &&
                     d->point.y >= a.y1 && d->point.y <= a.y2) {
                     back_event_cb(NULL);
-                    nfc_touch_started = false;
+                    touch_drag_reset(&nfc_touch_drag);
                     return;
                 }
             }
-            if (!nfc_touch_started) {
-                nfc_touch_started = true;
-                nfc_touch_start_x = d->point.x;
-                nfc_touch_start_y = d->point.y;
+            if (!nfc_touch_drag.started) {
+                touch_drag_begin(&nfc_touch_drag, d);
+            } else {
+                // Move event - apply live drag or remember target for release
+                lv_area_t cont_area;
+                if (menu_container && lv_obj_is_valid(menu_container)) {
+                    lv_obj_get_coords(menu_container, &cont_area);
+                    bool started_in_container = (nfc_touch_drag.start_x >= cont_area.x1 && nfc_touch_drag.start_x <= cont_area.x2 &&
+                                                 nfc_touch_drag.start_y >= cont_area.y1 && nfc_touch_drag.start_y <= cont_area.y2);
+                    if (started_in_container) {
+                        touch_drag_update(&nfc_touch_drag, d, menu_container);
+                    }
+                }
             }
             return;
         }
         if (d->state == LV_INDEV_STATE_REL) {
-            if (!nfc_touch_started) return;
-            nfc_touch_started = false;
+            if (!nfc_touch_drag.started) return;
 
-            if (!menu_container || !lv_obj_is_valid(menu_container)) return;
+            if (!menu_container || !lv_obj_is_valid(menu_container)) {
+                touch_drag_reset(&nfc_touch_drag);
+                return;
+            }
 
-            int dx = d->point.x - nfc_touch_start_x;
-            int dy = d->point.y - nfc_touch_start_y;
-            int thr_y = LV_VER_RES / NFC_SWIPE_THRESHOLD_RATIO;
             int thr_x = LV_HOR_RES / NFC_SWIPE_THRESHOLD_RATIO;
+            int dx = d->point.x - nfc_touch_drag.start_x;
 
-            lv_area_t cont_area;
-            lv_obj_get_coords(menu_container, &cont_area);
-            bool started_in_container = (nfc_touch_start_x >= cont_area.x1 && nfc_touch_start_x <= cont_area.x2 &&
-                                         nfc_touch_start_y >= cont_area.y1 && nfc_touch_start_y <= cont_area.y2);
-            if (!started_in_container) return;
-
-            if (abs(dy) > thr_y) {
-                lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
+            // Let the shared touch_drag helper handle release-on-release
+            // (it applies a single scroll when the live setting is off) and
+            // tell us if a drag was in progress so we can skip tap handling.
+            bool was_dragged = touch_drag_release(&nfc_touch_drag, d);
+            if (was_dragged) {
+                display_manager_flush_pending_scroll();
                 update_nfc_scroll_buttons_visibility();
                 return;
             }
             if (abs(dx) > thr_x) return;
 
+            lv_area_t cont_area;
+            lv_obj_get_coords(menu_container, &cont_area);
             if (d->point.x < cont_area.x1 || d->point.x > cont_area.x2 ||
                 d->point.y < cont_area.y1 || d->point.y > cont_area.y2) {
                 return;
@@ -2805,7 +2812,7 @@ static void nfc_enter_write_list(void) {
 
     const char *dir = "/mnt/ghostesp/nfc";
     bool susp = false; bool did = nfc_sd_begin(&susp);
-    DIR *d = opendir(dir);
+    DIR *d = did ? opendir(dir) : NULL;
     if (d) {
         struct dirent *de;
         size_t count = 0;
@@ -2868,7 +2875,7 @@ static void saved_enter_list(void) {
 
     const char *dir = "/mnt/ghostesp/nfc";
     bool susp = false; bool did = nfc_sd_begin(&susp);
-    DIR *d = opendir(dir);
+    DIR *d = did ? opendir(dir) : NULL;
     if (d) {
         struct dirent *de; size_t count = 0;
         while ((de = readdir(d)) != NULL) {
@@ -2893,6 +2900,7 @@ static void saved_enter_list(void) {
         ESP_LOGI(TAG, "saved_enter_list: %u .nfc files", (unsigned)saved_file_count);
         closedir(d);
     }
+    if (did) nfc_sd_end(susp);
 
     if (saved_file_count == 0) {
         options_view_add_item(g_nfc_ov, "No .nfc files", NULL, NULL);
@@ -4344,7 +4352,7 @@ void nfc_view_create(void) {
     nfc_created_time_ms = (unsigned long)(esp_timer_get_time() / 1000ULL);
     nfc_option_invoked = false;
 #ifdef CONFIG_USE_TOUCHSCREEN
-    nfc_touch_started = false;
+    touch_drag_reset(&nfc_touch_drag);
 #endif
 
 #ifdef CONFIG_USE_TOUCHSCREEN
@@ -4368,7 +4376,7 @@ void nfc_view_destroy(void) {
     in_saved_list = false;
     nfc_option_invoked = false;
 #ifdef CONFIG_USE_TOUCHSCREEN
-    nfc_touch_started = false;
+    touch_drag_reset(&nfc_touch_drag);
 #endif
 
     if (g_nfc_ov) { options_view_destroy(g_nfc_ov); g_nfc_ov = NULL; }

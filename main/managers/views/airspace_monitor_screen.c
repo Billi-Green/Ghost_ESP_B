@@ -51,6 +51,7 @@ static char advice_text[96] = "Monitor for 30 seconds to build context";
 static bool touch_active = false;
 static bool touch_moved = false;
 static int16_t touch_last_y = 0;
+static touch_drag_t s_touch_drag = {0};
 
 static bool compact_layout(void) {
     return LV_VER_RES <= 320;
@@ -291,25 +292,25 @@ static void update_display_cb(lv_timer_t *timer) {
 static void airspace_input_callback(InputEvent *event) {
     if (!event) return;
     if (event->type == INPUT_TYPE_TOUCH) {
-        int16_t y = event->data.touch_data.point.y;
-        if (event->data.touch_data.state == LV_INDEV_STATE_PR) {
-            if (!touch_active) {
+        lv_indev_data_t *data = &event->data.touch_data;
+        int16_t y = data->point.y;
+        if (data->state == LV_INDEV_STATE_PR) {
+            if (!s_touch_drag.started) {
+                touch_drag_begin(&s_touch_drag, data);
                 touch_active = true;
                 touch_moved = false;
                 touch_last_y = y;
-                return;
-            }
-
-            int16_t dy = y - touch_last_y;
-            if (dy > 3 || dy < -3) {
-                if (content_scroller) {
-                    lv_obj_scroll_by_bounded(content_scroller, 0, dy, LV_ANIM_OFF);
-                }
+            } else if (content_scroller) {
+                // Move event - apply live drag (or remember for release) via helper
+                touch_drag_update(&s_touch_drag, data, content_scroller);
                 touch_last_y = y;
                 touch_moved = true;
             }
-        } else if (event->data.touch_data.state == LV_INDEV_STATE_REL) {
+        } else if (data->state == LV_INDEV_STATE_REL) {
             touch_active = false;
+            if (touch_drag_release(&s_touch_drag, data)) {
+                return;  // drag was in progress or release-on-release was applied
+            }
             if (!touch_moved) {
                 display_manager_switch_view(&main_menu_view);
             }

@@ -127,9 +127,7 @@ static lv_obj_t *s_back_row = NULL;
 static lv_obj_t *s_scroll_up_btn = NULL;
 static lv_obj_t *s_scroll_down_btn = NULL;
 static lv_obj_t *s_back_btn = NULL;
-static bool s_touch_started = false;
-static int s_touch_start_x = 0;
-static int s_touch_start_y = 0;
+static touch_drag_t s_touch_drag = {0};
 #endif
 
 static lv_obj_t *s_popup = NULL;
@@ -4361,64 +4359,74 @@ static void subghz_input_handler(InputEvent *event) {
                 if (d->point.x >= area.x1 && d->point.x <= area.x2 &&
                     d->point.y >= area.y1 && d->point.y <= area.y2) {
                     options_view_move_selection(s_ov, -1);
-                    s_touch_started = false;
+                    touch_drag_reset(&s_touch_drag);
                     return;
                 }
             }
-            
+
             if (s_scroll_down_btn && lv_obj_is_valid(s_scroll_down_btn)) {
                 lv_area_t area;
                 lv_obj_get_coords(s_scroll_down_btn, &area);
                 if (d->point.x >= area.x1 && d->point.x <= area.x2 &&
                     d->point.y >= area.y1 && d->point.y <= area.y2) {
                     options_view_move_selection(s_ov, 1);
-                    s_touch_started = false;
+                    touch_drag_reset(&s_touch_drag);
                     return;
                 }
             }
-            
+
             if (s_back_btn && lv_obj_is_valid(s_back_btn)) {
                 lv_area_t area;
                 lv_obj_get_coords(s_back_btn, &area);
                 if (d->point.x >= area.x1 && d->point.x <= area.x2 &&
                     d->point.y >= area.y1 && d->point.y <= area.y2) {
                     subghz_back_btn_cb(NULL);
-                    s_touch_started = false;
+                    touch_drag_reset(&s_touch_drag);
                     return;
                 }
             }
 
-            if (!s_touch_started) {
-                s_touch_started = true;
-                s_touch_start_x = (int)d->point.x;
-                s_touch_start_y = (int)d->point.y;
+            if (!s_touch_drag.started) {
+                touch_drag_begin(&s_touch_drag, d);
+            } else {
+                // Move event - apply live drag or remember target for release
+                lv_obj_t *list = options_view_get_list(s_ov);
+                if (list && lv_obj_is_valid(list)) {
+                    lv_area_t list_area;
+                    lv_obj_get_coords(list, &list_area);
+                    bool started_in_list = (s_touch_drag.start_x >= list_area.x1 && s_touch_drag.start_x <= list_area.x2 &&
+                                                 s_touch_drag.start_y >= list_area.y1 && s_touch_drag.start_y <= list_area.y2);
+                    if (started_in_list) {
+                        touch_drag_update(&s_touch_drag, d, list);
+                    }
+                }
             }
             return;
         }
 
         if (d->state == LV_INDEV_STATE_REL) {
-            if (!s_touch_started) return;
-            s_touch_started = false;
+            if (!s_touch_drag.started) return;
 
-            int dx = (int)d->point.x - s_touch_start_x;
-            int dy = (int)d->point.y - s_touch_start_y;
+            int start_x = s_touch_drag.start_x;
+            int start_y = s_touch_drag.start_y;
+            int dx = (int)d->point.x - start_x;
 
-            int thr_y = LV_VER_RES / SUBGHZ_SWIPE_THRESHOLD_RATIO;
             int thr_x = LV_HOR_RES / SUBGHZ_SWIPE_THRESHOLD_RATIO;
+
+            // Let the shared touch_drag helper handle release-on-release
+            // (it applies a single scroll when the live setting is off) and
+            // tell us if a drag was in progress so we can skip tap handling.
+            bool was_dragged = touch_drag_release(&s_touch_drag, d);
+            if (was_dragged) return;
 
             lv_obj_t *list = options_view_get_list(s_ov);
             if (list && lv_obj_is_valid(list)) {
                 lv_area_t list_area;
                 lv_obj_get_coords(list, &list_area);
-                bool started_in_list = (s_touch_start_x >= list_area.x1 && s_touch_start_x <= list_area.x2 &&
-                                         s_touch_start_y >= list_area.y1 && s_touch_start_y <= list_area.y2);
-                
-                if (started_in_list) {
-                    if (abs(dy) > thr_y) {
-                        lv_obj_scroll_by_bounded(list, 0, dy, LV_ANIM_OFF);
-                        return;
-                    }
+                bool started_in_list = (start_x >= list_area.x1 && start_x <= list_area.x2 &&
+                                             start_y >= list_area.y1 && start_y <= list_area.y2);
 
+                if (started_in_list) {
                     if (abs(dx) > thr_x) return;
 
                     if (settings_get_thirds_control_enabled(&G_Settings)) {
@@ -4434,8 +4442,6 @@ static void subghz_input_handler(InputEvent *event) {
                             }
                         }
                     }
-                } else {
-                    if (abs(dy) > thr_y || abs(dx) > thr_x) return;
                 }
             }
         }
@@ -4660,7 +4666,7 @@ void subghz_view_destroy(void) {
     s_scroll_up_btn = NULL;
     s_scroll_down_btn = NULL;
     s_back_btn = NULL;
-    s_touch_started = false;
+    touch_drag_reset(&s_touch_drag);
 #endif
 
     lvgl_obj_del_safe(&s_root);

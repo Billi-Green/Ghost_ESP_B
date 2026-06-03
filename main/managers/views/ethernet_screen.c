@@ -173,6 +173,7 @@ static int                 s_selected_fp_host  = -1;
 static int                 s_selected_arp_host = -1;
 static bool                s_touch_started = false;
 static lv_point_t          s_touch_start   = {0};
+static touch_drag_t        s_eth_touch_drag = {0};
 static eth_screen_state_t  s_touch_state   = ETH_STATE_DASHBOARD;
 
 // Dashboard status labels
@@ -1262,6 +1263,7 @@ static void rebuild_content(eth_screen_state_t new_state) {
     // 7. Update state
     s_state = new_state;
     s_touch_started = false;
+    touch_drag_reset(&s_eth_touch_drag);
 
     // 8. States that anchor directly to s_root need no s_content wrapper.
     //    options_view_create(s_root) and detail_view_create(s_root) both
@@ -1425,14 +1427,45 @@ static bool handle_ethernet_touch(const lv_indev_data_t *data) {
     if (!data) return false;
 
     if (data->state == LV_INDEV_STATE_PR) {
-        s_touch_started = true;
+        if (!s_eth_touch_drag.started) {
+            touch_drag_begin(&s_eth_touch_drag, data);
+            s_touch_state = s_state;
+            s_touch_started = true;
+            s_touch_start = data->point;
+            return true;
+        }
+        // Move event - apply live drag (or remember target) for the current state
+        lv_obj_t *scroll_target = NULL;
+        switch (s_touch_state) {
+            case ETH_STATE_DASHBOARD:
+            case ETH_STATE_FP_LIST:
+            case ETH_STATE_ARP_LIST:
+                if (s_action_ov) scroll_target = options_view_get_list(s_action_ov);
+                break;
+            case ETH_STATE_FP_RESULTS:
+            case ETH_STATE_ARP_RESULTS:
+            case ETH_STATE_PORT_RESULTS:
+            case ETH_STATE_PING_RESULTS:
+                if (s_result_dv) scroll_target = detail_view_get_list(s_result_dv);
+                break;
+            case ETH_STATE_POISON_MONITOR:
+                scroll_target = s_poison_content_list;
+                break;
+            default:
+                break;
+        }
+        if (scroll_target && lv_obj_is_valid(scroll_target)) {
+            touch_drag_update(&s_eth_touch_drag, data, scroll_target);
+        }
         s_touch_start = data->point;
-        s_touch_state = s_state;
         return true;
     }
 
     if (data->state != LV_INDEV_STATE_REL || !s_touch_started) return true;
     s_touch_started = false;
+
+    // Let the shared helper handle release-on-release
+    if (touch_drag_release(&s_eth_touch_drag, data)) return true;
 
     switch (s_touch_state) {
         case ETH_STATE_DASHBOARD:

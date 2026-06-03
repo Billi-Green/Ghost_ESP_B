@@ -43,9 +43,7 @@ static int s_visible_count = 0;
 static uint8_t s_volume_percent = 85;
 static lv_timer_t *s_update_timer = NULL;
 
-static bool s_touch_started = false;
-static int s_touch_start_x = 0;
-static int s_touch_start_y = 0;
+static touch_drag_t s_touch_drag = {0};
 
 static lv_color_t s_bg_color;
 static lv_color_t s_surface_color;
@@ -730,7 +728,7 @@ void audio_player_destroy(void)
     s_next_btn = NULL;
     s_selected_index = 0;
     s_visible_count = 0;
-    s_touch_started = false;
+    touch_drag_reset(&s_touch_drag);
 }
 
 static void audio_player_input_handler(InputEvent *event)
@@ -739,16 +737,31 @@ static void audio_player_input_handler(InputEvent *event)
 
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *d = &event->data.touch_data;
-        if (d->state == LV_INDEV_STATE_PR && !s_touch_started) {
-            s_touch_started = true;
-            s_touch_start_x = d->point.x;
-            s_touch_start_y = d->point.y;
+        if (d->state == LV_INDEV_STATE_PR) {
+            if (!s_touch_drag.started) {
+                touch_drag_begin(&s_touch_drag, d);
+            } else if (s_file_list && lv_obj_is_valid(s_file_list)) {
+                // Move event - apply live drag or remember target for release
+                lv_area_t list_area;
+                lv_obj_get_coords(s_file_list, &list_area);
+                bool started_in_list = (s_touch_drag.start_x >= list_area.x1 && s_touch_drag.start_x <= list_area.x2 &&
+                                                s_touch_drag.start_y >= list_area.y1 && s_touch_drag.start_y <= list_area.y2);
+                if (started_in_list) {
+                    touch_drag_update(&s_touch_drag, d, s_file_list);
+                }
+            }
             return;
         }
-        if (d->state == LV_INDEV_STATE_REL && s_touch_started) {
-            s_touch_started = false;
-            int dx = (int)d->point.x - s_touch_start_x;
-            int dy = (int)d->point.y - s_touch_start_y;
+        if (d->state == LV_INDEV_STATE_REL) {
+            if (!s_touch_drag.started) return;
+            int dx = (int)d->point.x - s_touch_drag.start_x;
+            int dy = (int)d->point.y - s_touch_drag.start_y;
+
+            // Let the shared touch_drag helper handle release-on-release
+            // (it applies a single scroll when the live setting is off) and
+            // tell us if a drag was in progress so we can skip tap handling.
+            bool was_dragged = touch_drag_release(&s_touch_drag, d);
+            if (was_dragged) return;
 
             /* Check control button hit areas first (bottom bar) */
             int status_bar_h = GUI_STATUS_BAR_H;
@@ -803,17 +816,6 @@ static void audio_player_input_handler(InputEvent *event)
                     return;
                 }
                 return;
-            }
-
-            if (s_file_list && lv_obj_is_valid(s_file_list)) {
-                lv_area_t list_area;
-                lv_obj_get_coords(s_file_list, &list_area);
-                bool started_in_list = (s_touch_start_x >= list_area.x1 && s_touch_start_x <= list_area.x2 &&
-                                        s_touch_start_y >= list_area.y1 && s_touch_start_y <= list_area.y2);
-                if (started_in_list && abs(dy) > 10) {
-                    lv_obj_scroll_by_bounded(s_file_list, 0, dy, LV_ANIM_OFF);
-                    return;
-                }
             }
 
             if (abs(dx) < 10 && abs(dy) < 10) {

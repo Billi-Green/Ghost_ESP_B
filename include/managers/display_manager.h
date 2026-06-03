@@ -164,6 +164,31 @@ void display_manager_queue_scroll(lv_obj_t *target, int32_t dy);
 /* Apply any pending scroll immediately. Safe to call repeatedly. */
 void display_manager_flush_pending_scroll(void);
 
+/* Touch drag state machine for live-drag scrolling. Each view maintains
+ * a `touch_drag_t` (typically file-static), supplies the scroll target on
+ * each call, and reads `was_dragged` from the release return to suppress
+ * its own tap handling. The global `touch_drag_scroll` setting gates
+ * behavior: ON = per-sample live updates, OFF = single scroll on release
+ * using the total drag distance (release-on-release). */
+typedef struct {
+    bool started;
+    bool dragged;
+    int drag_axis;
+    int start_x, start_y;
+    int last_x, last_y;
+    lv_obj_t *release_target;
+} touch_drag_t;
+
+void touch_drag_reset(touch_drag_t *d);
+void touch_drag_begin(touch_drag_t *d, lv_indev_data_t *data);
+/* On touch move. Resolves drag axis, applies live drag (or remembers the
+ * target for release). Returns the scroll target that was used, or NULL. */
+lv_obj_t *touch_drag_update(touch_drag_t *d, lv_indev_data_t *data, lv_obj_t *scroll_target);
+/* On touch release. Applies release-on-release if appropriate. Returns
+ * true if a drag was in progress (caller should suppress its tap/click
+ * handling) OR if a release-on-release scroll was applied. */
+bool touch_drag_release(touch_drag_t *d, lv_indev_data_t *data);
+
 LV_IMG_DECLARE(Ghost_ESP);
 LV_IMG_DECLARE(Map);
 LV_IMG_DECLARE(bluetooth);

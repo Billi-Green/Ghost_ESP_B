@@ -88,6 +88,7 @@ static int touch_last_y;
 static bool touch_started = false;
 static bool touch_dragged = false;
 static int touch_drag_axis = 0;
+static lv_obj_t *touch_scroll_target = NULL;
 static bool is_animating = false;
 // touch gesture thresholds
 #define SWIPE_THRESHOLD 50
@@ -636,6 +637,7 @@ static void menu_item_event_handler(InputEvent *event) {
                 touch_start_y = data->point.y;
                 touch_last_x = data->point.x;
                 touch_last_y = data->point.y;
+                touch_scroll_target = NULL;
             } else {
                 int dx = data->point.x - touch_last_x;
                 int dy = data->point.y - touch_last_y;
@@ -648,15 +650,18 @@ static void menu_item_event_handler(InputEvent *event) {
                 }
 
                 if (touch_dragged) {
-                    if (current_layout == MAIN_MENU_LAYOUT_CARD_GRID) {
-                        if (grid_cards_container && touch_drag_axis == 1) {
+                    lv_obj_t *target = NULL;
+                    if (current_layout == MAIN_MENU_LAYOUT_CARD_GRID && grid_cards_container && touch_drag_axis == 1) {
+                        target = grid_cards_container;
+                    } else if (current_layout == MAIN_MENU_LAYOUT_LIST && menu_container && touch_drag_axis == 1) {
+                        target = menu_container;
+                    }
+                    if (target) {
+                        if (settings_get_touch_drag_scroll(&G_Settings)) {
                             dy = clamp_drag_delta(dy);
-                            if (dy) display_manager_queue_scroll(grid_cards_container, dy);
-                        }
-                    } else if (current_layout == MAIN_MENU_LAYOUT_LIST) {
-                        if (menu_container && touch_drag_axis == 1) {
-                            dy = clamp_drag_delta(dy);
-                            if (dy) display_manager_queue_scroll(menu_container, dy);
+                            if (dy) display_manager_queue_scroll(target, dy);
+                        } else {
+                            touch_scroll_target = target;
                         }
                     }
                 }
@@ -666,7 +671,13 @@ static void menu_item_event_handler(InputEvent *event) {
             int dy = data->point.y - touch_start_y;
             touch_started = false;
 
+            lv_obj_t *release_target = touch_scroll_target;
+            touch_scroll_target = NULL;
+
             if (touch_dragged && current_layout != MAIN_MENU_LAYOUT_CAROUSEL) {
+                if (release_target && !settings_get_touch_drag_scroll(&G_Settings) && dy) {
+                    display_manager_queue_scroll(release_target, dy);
+                }
                 touch_dragged = false;
                 touch_drag_axis = 0;
                 return;

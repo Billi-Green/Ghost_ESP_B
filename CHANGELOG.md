@@ -1,45 +1,53 @@
 # Ghost ESP Changelog
 
-## Revival v2.0
+## Revival v2.0-pre3
+
+ - Added asset packs: custom icons, colors, and backgrounds; App Gallery can opt in to share app icons
+ - Refactored main menu layout sizing and made portrait grid screens more compact
+ - Added live drag scrolling for the options screen, infrared, NFC, SubGHz, ethernet, audio player, and airspace monitor views (gated by the new "Touch Drag Scroll" setting; falls back to release-on-release when off)
+ - Added "Touch Drag Scroll" toggle in Settings > Appearance (default ON; when off, scrolling still works but updates only on release)
+
+## Revival v2.0-pre2
+
+ - Added WiFi Airspace Monitor with realtime packet/threat insights, fast channel hopping, and suspect device cards
+ - Added native SD apps loaded from the SD card with permissions, scoped storage, and launch-failure quarantine
+ - Added App Gallery for discovering and launching SD apps with custom icons and accent colors
+ - Added `apps` CLI to list, reload, inspect, launch, stop, and reset native SD apps
+ - Added Ghost Build Tool (`gbt`) for scaffolding, building, and packaging apps and firmware
+ - Added native app SDK/docs and example apps for Device Inspector and ESP32 Finder
+ - Lockscreen unlock now returns to the view that was active before auto-lock or wake-lock
+ - Reduced status bar title font size to body font for a cleaner look
+ - Fixed apps gallery list view icon misalignment and tiling artifact
+ - Polished setup wizard styling and removed default button/card shadows
+ - Added Home WiFi credential setup and clarified Device AP vs Home WiFi prompts
+ - Fixed LoadProhibited crash on deferred SD card init failure
+ - WiFi now auto-reconnects after BLE/Chameleon suspend, with bounded retry on involuntary disconnects
+ - Added ENV-III sensor support (temperature, humidity, pressure) with on-screen UI - @Billi-Green
+ - Added TLV320DAC3100 audio driver and Audio Player app with headphone detection and volume control - @Billi-Green
+ - Moved Ethernet to a standalone main menu item - @Billi-Green
+ - Added touch handling to ethernet view
+
+## Revival v2.0-pre1
 
  - Added PIN lock screen with lock on wake and auto-lock settings
- - Added WiFi Airspace Monitor with realtime packet/threat insights, fast channel hopping, and suspect device cards
- - Added native SD apps using ESP-IDF shared objects loaded from SD via Espressif's ELF loader, with manifest validation, permissions, target checks, scoped storage, and launch-failure quarantine
- - Added App Gallery support for discovering and launching SD apps, including `.gapp` package extraction/cache, app icons, accent colors, async reload, and quarantined app handling
- - Added `apps` CLI for listing, reloading, inspecting, launching, stopping, and resetting native SD apps
- - Added Ghost Build Tool (`gbt`) plus app templates and package schema for scaffolding, building, packaging `.gapp` archives, firmware builds/flashing, and serial monitoring
- - Added asset-pack icons, colors, and backgrounds with app-gallery opt-in shared app icons and expanded screen background support
- - Added native app SDK/docs and example apps for Device Inspector and ESP32 Finder
- - Changed lockscreen unlock behavior to return to the view that was active before auto-lock or wake-lock
- - Reduced status bar title font size to body font for a cleaner compact look
  - Added toast notification system
-- Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
-- Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
-- Removed border from popups
-- Polished detail view to match main menu styling
-- Polished number pad screen with theme-aware lockscreen-style numpad grid
-- Fixed number pad touchscreen input and replaced the DEL label with the LVGL backspace symbol
-- Polished keyboard screen with theme-aware key styling and accent highlights
-- Polished setup wizard styling, removed default LVGL shadows from wizard buttons and region cards, clarified Device AP vs Home WiFi credential prompts, and added Home WiFi credential setup
-- Fixed apps gallery not respecting the "Item Borders" setting
-- Fixed apps gallery list view icon misalignment and tiling artifact
-- Skipping the setup wizard now defaults the main menu layout to List instead of Carousel
-- Refactored main menu layout sizing and made portrait grid screens more compact
-- Added live drag scrolling for the options screen
-- Increased LVGL display refresh target from 30 FPS to 60 FPS
-- Added accessibility settings:
-  - Font size (Small/Normal/Large)
-  - High contrast mode
-  - Reduced motion
-  - Input repeat speed (Slow/Normal/Fast)
-- Added epilepsy warning toggle to disable flashing LED effect popups
-- Updated all UI screens to use accessibility-aware fonts and theme overrides
-- Fixed LoadProhibited crash after deferred SD card init failure - added NULL check for `sd_card_init()` return in deferred init task and nulled `sd_card_manager.card` on mount failure to prevent dangling pointer dereference
- - Fixed STA not reconnecting after BLE/Chameleon suspend when AP was running, added bounded auto-reconnect (5 retries with backoff) on involuntary WiFi disconnects, and fixed stale `manual_disconnect` flag in cancel/disconnect paths
- - Added ENV-III sensor module support (SHT30 temp/humidity + QMP6988 pressure) with LVGL UI, touch-to-calibrate altitude, and periodic I2C sampling - @Billi-Green
- - Added TLV320DAC3100 audio driver with headphone detection, volume control, I2S output, and audio player UI with touch gestures and encoder volume - @Billi-Green
-- Move Ethernet to standalone main menu item - @Billi-Green
-- Added touch handling to ethernet view
+ - Polished status bar with cleaner accent border, brighter title with truncation, softer semantic status colors
+ - Changed startup logo to new logo and removed "GhostESP: Revival" text from splash screen
+ - Removed border from popups
+ - Polished detail view to match main menu styling
+ - Polished number pad screen with theme-aware lockscreen-style numpad grid
+ - Fixed number pad touchscreen input
+ - Replaced DEL label with the backspace symbol
+ - Polished keyboard screen with theme-aware key styling and accent highlights
+ - Fixed apps gallery not respecting the "Item Borders" setting
+ - Skipping the setup wizard now defaults the main menu to List layout
+ - Increased LVGL display refresh target from 30 FPS to 60 FPS
+ - Added accessibility settings:
+   - Font size (Small/Normal/Large)
+   - High contrast mode
+   - Reduced motion
+   - Input repeat speed (Slow/Normal/Fast)
+ - Added epilepsy warning toggle (disables flashing LED effect popups)
 
 ## Revival v1.9.10
 

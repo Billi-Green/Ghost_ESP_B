@@ -494,9 +494,7 @@ static lv_obj_t *ir_scroll_down_btn = NULL;
 static lv_obj_t *ir_back_btn = NULL;
 #endif
 
-static bool ir_touch_started = false;
-static int ir_touch_start_x = 0;
-static int ir_touch_start_y = 0;
+static touch_drag_t ir_touch_drag = {0};
 #define IR_SWIPE_THRESHOLD_RATIO 10
 
 #ifdef CONFIG_USE_TOUCHSCREEN
@@ -1790,64 +1788,72 @@ void infrared_view_input_cb(InputEvent *event) {
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     ir_select_item(selected_ir_index - 1);
-                    ir_touch_started = false;
+                    touch_drag_reset(&ir_touch_drag);
                     return;
                 }
             }
-            
+
             if (ir_scroll_down_btn && lv_obj_is_valid(ir_scroll_down_btn)) {
                 lv_area_t area;
                 lv_obj_get_coords(ir_scroll_down_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     ir_select_item(selected_ir_index + 1);
-                    ir_touch_started = false;
+                    touch_drag_reset(&ir_touch_drag);
                     return;
                 }
             }
-            
+
             if (ir_back_btn && lv_obj_is_valid(ir_back_btn)) {
                 lv_area_t area;
                 lv_obj_get_coords(ir_back_btn, &area);
                 if (data->point.x >= area.x1 && data->point.x <= area.x2 &&
                     data->point.y >= area.y1 && data->point.y <= area.y2) {
                     back_event_cb(NULL);
-                    ir_touch_started = false;
+                    touch_drag_reset(&ir_touch_drag);
                     return;
                 }
             }
 #endif
 
-            if (!ir_touch_started) {
-                ir_touch_started = true;
-                ir_touch_start_x = (int)data->point.x;
-                ir_touch_start_y = (int)data->point.y;
+            if (!ir_touch_drag.started) {
+                touch_drag_begin(&ir_touch_drag, data);
+            } else {
+                // Move event - apply live drag or remember target for release
+                lv_area_t list_area;
+                lv_obj_get_coords(list, &list_area);
+                bool started_in_list = (ir_touch_drag.start_x >= list_area.x1 && ir_touch_drag.start_x <= list_area.x2 &&
+                                         ir_touch_drag.start_y >= list_area.y1 && ir_touch_drag.start_y <= list_area.y2);
+                if (started_in_list) {
+                    touch_drag_update(&ir_touch_drag, data, list);
+                }
             }
             return;
         }
 
         if (data->state == LV_INDEV_STATE_REL) {
-            if (!ir_touch_started) return;
-            ir_touch_started = false;
+            if (!ir_touch_drag.started) return;
 
-            int dx = (int)data->point.x - ir_touch_start_x;
-            int dy = (int)data->point.y - ir_touch_start_y;
+            int start_x = ir_touch_drag.start_x;
+            int start_y = ir_touch_drag.start_y;
+            int dx = (int)data->point.x - start_x;
+            int dy = (int)data->point.y - start_y;
+
+            // Let the shared touch_drag helper handle release-on-release
+            // (it applies a single scroll when the live setting is off) and
+            // tell us if a drag was in progress so we can skip tap handling.
+            bool was_dragged = touch_drag_release(&ir_touch_drag, data);
+            if (was_dragged) return;
 
             int thr_y = LV_VER_RES / IR_SWIPE_THRESHOLD_RATIO;
             int thr_x = LV_HOR_RES / IR_SWIPE_THRESHOLD_RATIO;
 
             lv_area_t list_area;
             lv_obj_get_coords(list, &list_area);
-            bool started_in_list = (ir_touch_start_x >= list_area.x1 && ir_touch_start_x <= list_area.x2 &&
-                                     ir_touch_start_y >= list_area.y1 && ir_touch_start_y <= list_area.y2);
-            
-            if (started_in_list) {
-                // vertical swipe = scroll
-                if (abs(dy) > thr_y) {
-                    lv_obj_scroll_by_bounded(list, 0, dy, LV_ANIM_OFF);
-                    return;
-                }
+            bool started_in_list = (start_x >= list_area.x1 && start_x <= list_area.x2 &&
+                                     start_y >= list_area.y1 && start_y <= list_area.y2);
 
+            if (started_in_list) {
                 if (abs(dx) > thr_x) return;
 
                 // thirds-control special behavior

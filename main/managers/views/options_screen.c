@@ -891,6 +891,7 @@ static SettingsItem settings_items[] = {
     {"BG Shade", SETTING_MENU_BG_SHADE, bg_shade_options, 4, 1, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Rounded Menus", SETTING_MENU_ROUNDED, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Item Borders", SETTING_MENU_ITEM_BORDERS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
+    {"Touch Drag Scroll", SETTING_TOUCH_DRAG_SCROLL, bool_options, 2, 1, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Asset Pack", SETTING_RELOAD_ASSET_PACK, (const char * const *)asset_pack_options, 1, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
     
@@ -1097,6 +1098,7 @@ static int opt_touch_last_y;
 static bool opt_touch_started = false;
 static bool opt_touch_dragged = false;
 static int opt_touch_drag_axis = 0;
+static lv_obj_t *opt_touch_scroll_target = NULL;  // remembered for release-on-release scroll
 static WifiMenuState opt_touch_wifi_state = WIFI_MENU_MAIN;
 static int opt_touch_bluetooth_state = 0;
 #if CONFIG_LV_TOUCH_CONTROLLER_XPT2046
@@ -1172,12 +1174,13 @@ static BluetoothMenuState current_bluetooth_menu_state = BLUETOOTH_MENU_MAIN;
 #define OPT_DRAG_AXIS_THRESHOLD 10
 #define OPT_DRAG_AXIS_BIAS 4
 #define OPT_DRAG_DELTA_DEADZONE 1
-#define OPT_DRAG_MAX_STEP 36
+#define OPT_DRAG_MAX_STEP 64
 
 static void opt_touch_reset(void) {
     opt_touch_started = false;
     opt_touch_dragged = false;
     opt_touch_drag_axis = 0;
+    opt_touch_scroll_target = NULL;
 }
 
 static void opt_touch_begin(lv_indev_data_t *data) {
@@ -1922,6 +1925,9 @@ static void load_current_settings_values(void) {
             case SETTING_MENU_ITEM_BORDERS:
                 settings_items[i].current_value = settings_get_menu_item_borders(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_TOUCH_DRAG_SCROLL:
+                settings_items[i].current_value = settings_get_touch_drag_scroll(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_RELOAD_ASSET_PACK:
                 settings_items[i].current_value = asset_pack_get_current_index();
                 break;
@@ -2126,6 +2132,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_MENU_ITEM_BORDERS:
             settings_set_menu_item_borders(&G_Settings, new_value == 1);
+            break;
+        case SETTING_TOUCH_DRAG_SCROLL:
+            settings_set_touch_drag_scroll(&G_Settings, new_value == 1);
             break;
         case SETTING_RELOAD_ASSET_PACK: {
             ESP_LOGI(TAG, "asset pack setting changed to %d", new_value);
@@ -2676,6 +2685,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 }
 
                 if (opt_touch_dragged && opt_touch_drag_axis == 1) {
+                    bool live = settings_get_touch_drag_scroll(&G_Settings);
                     lv_obj_t *scroll_target = NULL;
                     detail_view_t *active_detail_view = NULL;
                     if (ap_detail_view && opt_touch_wifi_state == WIFI_MENU_AP_DETAILS) {
@@ -2702,8 +2712,14 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     }
 
                     if (scroll_target && lv_obj_is_valid(scroll_target)) {
-                        dy = opt_clamp_drag_delta(dy);
-                        if (dy) display_manager_queue_scroll(scroll_target, dy);
+                        if (live) {
+                            dy = opt_clamp_drag_delta(dy);
+                            if (dy) display_manager_queue_scroll(scroll_target, dy);
+                        } else {
+                            // Remember the target; the scroll is applied on release
+                            // using the total drag distance (release-on-release).
+                            opt_touch_scroll_target = scroll_target;
+                        }
                     }
                 }
                 return;
@@ -2758,8 +2774,19 @@ void handle_hardware_button_press_options(InputEvent *event) {
         if (data->state == LV_INDEV_STATE_REL) {
             if (!opt_touch_started) return;
             bool was_dragged = opt_touch_dragged;
+            int release_dy = data->point.y - opt_touch_start_y;
+            lv_obj_t *release_target = opt_touch_scroll_target;
             opt_touch_reset();
-            if (was_dragged) return;
+            opt_touch_scroll_target = NULL;
+            if (was_dragged) {
+                // Release-on-release: when live drag is off, apply the total
+                // drag distance to the remembered target on release.
+                if (release_target && lv_obj_is_valid(release_target) &&
+                    !settings_get_touch_drag_scroll(&G_Settings) && release_dy) {
+                    display_manager_queue_scroll(release_target, release_dy);
+                }
+                return;
+            }
 
             // Handle touch for detail_view (use saved state from touch start)
             detail_view_t *active_detail_view = NULL;
