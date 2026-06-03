@@ -13,6 +13,8 @@
  - Fixed mic visualizer spectrum distance fade underflow on strips longer than ~60 LEDs
  - Wired up mic smoothing setting to band release rate so it affects all visualizer modes
  - Fixed mic visualizer mode state not resetting on first frame when starting in default mode
+ - Moved NRF24, SubGHz, and MIC visualizer task stacks to PSRAM to fix internal RAM exhaustion
+ - Moved Goertzel ring buffers and MIC sample buffer to PSRAM to free up internal RAM
 
 ## Revival v2.0-pre2
 
