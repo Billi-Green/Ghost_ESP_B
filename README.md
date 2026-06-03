@@ -15,8 +15,6 @@ An open-source wireless platform for ESP32 devices. Built on ESP-IDF.
 
 1. **Learn more:** [Documentation](https://docs.ghostesp.net) • [Official Website](https://ghostesp.net)
 
-> **Making content about GhostESP?** Check out the [Press Kit](https://github.com/jaylikesbunda/Ghost_ESP/blob/Development-deki/presskit.zip) for resources.
-
 ---
 
 ## Features
