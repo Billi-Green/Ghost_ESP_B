@@ -7,6 +7,12 @@
  - Added live drag scrolling (gated by the new "Touch Drag Scroll" setting. falls back to release on release when off)
  - Added "Touch Drag Scroll" toggle in Settings > Appearance (default ON, when off scrolling still works but updates only on release)
  - Reorganized docs sidebar into Wireless/Sensors/Apps & I/O/Developer categories and polished sidebar UI
+ - Fixed integer overflow in mic visualizer reactive color calculation causing incorrect colors at high volumes
+ - Fixed mic visualizer bloom and peak meter decay being inverted (higher smoothing = faster decay)
+ - Fixed mic visualizer waveform trail rendering backwards (oldest samples were brightest)
+ - Fixed mic visualizer spectrum distance fade underflow on strips longer than ~60 LEDs
+ - Wired up mic smoothing setting to band release rate so it affects all visualizer modes
+ - Fixed mic visualizer mode state not resetting on first frame when starting in default mode
 
 ## Revival v2.0-pre2
 
