@@ -24,10 +24,6 @@ enableRobotsTXT = true
   name = "v1.9.8"
 
 [[params.versioning.options]]
-  id = "v1.9.4"
-  name = "v1.9.4"
-
-[[params.versioning.options]]
   id = "v1.9.3"
   name = "v1.9.3"
 
@@ -62,47 +58,4 @@ enableRobotsTXT = true
     noClasses = false
     style = "github-dark"
 
-[[menu.sidebar]]
-  name = "Overview"
-  url = "/latest/"
-  weight = 1
 
-[[menu.sidebar]]
-  name = "Getting Started"
-  url = "/latest/getting-started/"
-  weight = 2
-
-[[menu.sidebar]]
-  name = "Hardware Setup"
-  url = "/latest/hardware/"
-  weight = 3
-
-[[menu.sidebar]]
-  name = "Firmware"
-  url = "/latest/firmware/"
-  weight = 4
-
-[[menu.sidebar]]
-  name = "GPS & Wardriving"
-  url = "/latest/gps/"
-  weight = 5
-
-[[menu.sidebar]]
-  name = "Flipper Zero App"
-  url = "/latest/flipper-app/"
-  weight = 6
-
-[[menu.sidebar]]
-  name = "SubGHz"
-  url = "/latest/subghz/"
-  weight = 7
-
-[[menu.sidebar]]
-  name = "Audio"
-  url = "/latest/audio/"
-  weight = 8
-
-[[menu.sidebar]]
-  name = "Customization"
-  url = "/latest/customization/"
-  weight = 9

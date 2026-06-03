@@ -2,7 +2,7 @@
 title: "Apps"
 description: "Standalone apps and interactive tools available on GhostESP"
 keywords: ["apps", "rave mode", "visualizer", "tools", "sd apps", "plugins"]
-weight: 50
+weight: 400
 aliases:
   - "/apps/"
 ---

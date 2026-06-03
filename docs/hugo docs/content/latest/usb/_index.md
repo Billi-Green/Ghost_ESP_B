@@ -1,7 +1,7 @@
 ---
 title: "USB"
 description: "USB Host features for ESP32-S3 devices"
-weight: 60
+weight: 500
 aliases:
   - "/usb/"
 ---

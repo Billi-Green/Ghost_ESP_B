@@ -6,6 +6,7 @@
  - Refactored main menu layout sizing and made portrait grid screens more compact
  - Added live drag scrolling (gated by the new "Touch Drag Scroll" setting. falls back to release on release when off)
  - Added "Touch Drag Scroll" toggle in Settings > Appearance (default ON, when off scrolling still works but updates only on release)
+ - Reorganized docs sidebar into Wireless/Sensors/Apps & I/O/Developer categories and polished sidebar UI
 
 ## Revival v2.0-pre2
 

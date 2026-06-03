@@ -1,7 +1,7 @@
 ---
 title: "Customization"
 description: "Themes, asset packs, and visual customization for GhostESP"
-weight: 75
+weight: 600
 aliases:
   - "/customization/"
 ---

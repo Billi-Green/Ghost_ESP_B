@@ -2,7 +2,7 @@
 title: "Audio"
 description: "MP3 playback over GhostLink for Banshee audio builds"
 keywords: ["audio", "MP3", "GhostLink", "Banshee", "TLV320DAC3100", "somethingsomething", "somethingsomething2"]
-weight: 45
+weight: 340
 aliases:
   - "/audio/"
 ---
