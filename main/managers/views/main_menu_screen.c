@@ -1269,6 +1269,18 @@ static lv_timer_t *menu_refresh_timer = NULL;
 static bool was_dual_comm_connected = false;
 static uint32_t was_asset_pack_version = 0;
 
+static lv_obj_t *create_menu_container(lv_obj_t *root) {
+    lv_obj_t *container = lv_obj_create(root);
+    lv_obj_set_size(container, LV_HOR_RES, LV_VER_RES);
+    lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(container, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(container, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(container, 0, LV_PART_MAIN);
+    return container;
+}
+
 static void menu_refresh_timer_cb(lv_timer_t *t) {
     bool connected = esp_comm_manager_is_connected();
     uint32_t pack_version = asset_pack_get_version();
@@ -1293,7 +1305,7 @@ static void menu_refresh_timer_cb(lv_timer_t *t) {
         else if (current_layout == MAIN_MENU_LAYOUT_LIST) create_list_menu();
         else select_menu_item(selected_item_index, false);
 
-        gui_screen_apply_background(menu_container);
+        gui_screen_apply_background(main_menu_view.root);
     }
 }
 
@@ -1319,8 +1331,8 @@ void main_menu_create(void) {
     main_menu_layout_metrics_t layout;
     main_menu_layout_get_metrics(current_layout, num_items, &layout);
 
-    menu_container = gui_screen_create_root(NULL, NULL, menu_bg_color, LV_OPA_TRANSP);
-    main_menu_view.root = menu_container;
+    main_menu_view.root = gui_screen_create_root(NULL, NULL, menu_bg_color, LV_OPA_TRANSP);
+    menu_container = create_menu_container(main_menu_view.root);
 
     // Create menu based on layout
     if (current_layout == MAIN_MENU_LAYOUT_CARD_GRID) {
@@ -1442,11 +1454,11 @@ void main_menu_create(void) {
 void main_menu_destroy(void) {
     lvgl_timer_del_safe(&menu_refresh_timer);
 
-    if (menu_container) {
-        lv_obj_clean(menu_container);
-        lvgl_obj_del_safe(&menu_container);
+    if (main_menu_view.root) {
+        lv_obj_clean(main_menu_view.root);
+        lvgl_obj_del_safe(&main_menu_view.root);
+        menu_container = NULL;
         main_menu_view.root = NULL;
-        // arrays cleaned up below via helper
     }
 
     cleanup_layout_arrays();

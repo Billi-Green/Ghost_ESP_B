@@ -3054,7 +3054,7 @@ bool touch_drag_release(touch_drag_t *d, const lv_indev_data_t *data) {
 }
 
 void lvgl_tick_task(void *arg) {
-  const TickType_t tick_interval = pdMS_TO_TICKS(5);
+  const TickType_t tick_interval = pdMS_TO_TICKS(10);
   TickType_t last_mon = 0;
   while (1) {
       processEvent();

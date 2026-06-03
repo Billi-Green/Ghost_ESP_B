@@ -24,6 +24,12 @@ COMPRESSION_NONE = 0
 COMPRESSION_DEFLATE_RAW = 1
 
 DEFAULT_ICON_VARIANTS = (32, 64)
+DEFAULT_BACKGROUND_VARIANTS = {
+    "full": {"width": 240, "height": 320, "format": "rgb565", "output": "bg/bg_full.gimg"},
+    "half": {"width": 120, "height": 160, "format": "indexed_4bpp", "output": "bg/bg_half.gimg"},
+    "tiny": {"width": 80, "height": 107, "format": "indexed_4bpp", "output": "bg/bg_tiny.gimg"},
+    "tile": {"width": 32, "height": 32, "format": "indexed_4bpp", "output": "bg/bg_tile.gimg"},
+}
 VARIANT_LABELS = {
     32: "s",
     64: "l",
@@ -116,6 +122,28 @@ def _parse_variant_sizes(values) -> tuple[int, ...]:
         if size <= 0:
             raise ValueError("icon variant sizes must be positive")
     return sizes
+
+
+def _background_variant_specs(spec: dict) -> dict:
+    variants = spec.get("variants", DEFAULT_BACKGROUND_VARIANTS)
+    if variants is True:
+        variants = DEFAULT_BACKGROUND_VARIANTS
+    if not isinstance(variants, dict):
+        raise ValueError("background variants must be an object or true")
+
+    out = {}
+    for name, defaults in DEFAULT_BACKGROUND_VARIANTS.items():
+        value = variants.get(name)
+        if value is False or value is None:
+            continue
+        if value is True:
+            value = {}
+        if not isinstance(value, dict):
+            raise ValueError(f"background variant {name!r} must be an object, true, or false")
+        merged = dict(defaults)
+        merged.update(value)
+        out[name] = merged
+    return out
 
 
 def _copy_runtime_manifest(manifest: dict) -> dict:
@@ -213,6 +241,24 @@ def make_asset_pack(
         if not src.is_file():
             print(f"warning: background source not found: {src}", file=sys.stderr)
             continue
+
+        if spec.get("variants") is not None or key == "background":
+            backgrounds = dict(runtime_manifest.get("backgrounds", {}))
+            for variant_name, variant in _background_variant_specs(spec).items():
+                rel_out = variant.get("output", f"bg/bg_{variant_name}.gimg")
+                write_asset_image(
+                    src,
+                    package_dir / rel_out,
+                    int(variant["width"]),
+                    int(variant["height"]),
+                    variant.get("format", "indexed_4bpp"),
+                    compress=compress,
+                )
+                backgrounds[variant_name] = rel_out
+            if backgrounds:
+                runtime_manifest["backgrounds"] = backgrounds
+            continue
+
         width = int(spec.get("width", 64 if key == "bg_tile" else 240))
         height = int(spec.get("height", 64 if key == "bg_tile" else 320))
         fmt = spec.get("format", "rgb565")

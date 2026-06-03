@@ -30,8 +30,9 @@ bool asset_pack_get_color(int slot, uint32_t *out_color);
 const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fallback);
 const lv_img_dsc_t *asset_pack_get_app_icon(const lv_img_dsc_t *fallback);
 
-/* Returns a PSRAM-backed tiled background image, or NULL if unavailable. */
+/* Returns the selected background candidate, or NULL if unavailable. */
 const lv_img_dsc_t *asset_pack_get_background_tile(void);
+bool asset_pack_background_should_scale(void);
 
 /* Returns a PSRAM-backed fullscreen RGB565 image (LV_HOR_RES x LV_VER_RES)
  * with the tile pre-blitted into it, or NULL if no PSRAM / no tile / unsupported.

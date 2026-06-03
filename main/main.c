@@ -74,6 +74,13 @@
 #include "managers/status_display_manager.h"
 #endif
 
+#ifdef CONFIG_WITH_SCREEN
+static void apply_main_menu_background_cb(void *arg) {
+    (void)arg;
+    gui_screen_apply_background(main_menu_view.root);
+}
+#endif
+
 #ifdef CONFIG_HAS_MIC
 #include "managers/microphone/mic_visualizer.h"
 #endif
@@ -360,7 +367,7 @@ static void deferred_sd_init_task(void *arg) {
         ESP_LOGW(TAG, "Active asset pack load failed: %s", esp_err_to_name(asset_err));
     }
     if (asset_err == ESP_OK) {
-        gui_screen_apply_background(main_menu_view.root);
+        display_manager_run_on_lvgl(apply_main_menu_background_cb, NULL);
     }
 #endif
     vTaskDelete(NULL);
