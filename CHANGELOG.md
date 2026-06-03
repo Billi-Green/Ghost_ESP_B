@@ -2,10 +2,10 @@
 
 ## Revival v2.0-pre3
 
- - Added asset packs: custom icons, colors, and backgrounds; App Gallery can opt in to share app icons
+ - Added custom asset packs loaded from SD with custom icons, colors, and backgrounds.
  - Refactored main menu layout sizing and made portrait grid screens more compact
- - Added live drag scrolling for the options screen, infrared, NFC, SubGHz, ethernet, audio player, and airspace monitor views (gated by the new "Touch Drag Scroll" setting; falls back to release-on-release when off)
- - Added "Touch Drag Scroll" toggle in Settings > Appearance (default ON; when off, scrolling still works but updates only on release)
+ - Added live drag scrolling (gated by the new "Touch Drag Scroll" setting. falls back to release on release when off)
+ - Added "Touch Drag Scroll" toggle in Settings > Appearance (default ON, when off scrolling still works but updates only on release)
 
 ## Revival v2.0-pre2
 
