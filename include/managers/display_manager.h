@@ -180,14 +180,14 @@ typedef struct {
 } touch_drag_t;
 
 void touch_drag_reset(touch_drag_t *d);
-void touch_drag_begin(touch_drag_t *d, lv_indev_data_t *data);
+void touch_drag_begin(touch_drag_t *d, const lv_indev_data_t *data);
 /* On touch move. Resolves drag axis, applies live drag (or remembers the
  * target for release). Returns the scroll target that was used, or NULL. */
-lv_obj_t *touch_drag_update(touch_drag_t *d, lv_indev_data_t *data, lv_obj_t *scroll_target);
+lv_obj_t *touch_drag_update(touch_drag_t *d, const lv_indev_data_t *data, lv_obj_t *scroll_target);
 /* On touch release. Applies release-on-release if appropriate. Returns
  * true if a drag was in progress (caller should suppress its tap/click
  * handling) OR if a release-on-release scroll was applied. */
-bool touch_drag_release(touch_drag_t *d, lv_indev_data_t *data);
+bool touch_drag_release(touch_drag_t *d, const lv_indev_data_t *data);
 
 LV_IMG_DECLARE(Ghost_ESP);
 LV_IMG_DECLARE(Map);

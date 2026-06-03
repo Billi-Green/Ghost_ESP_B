@@ -2985,7 +2985,7 @@ void touch_drag_reset(touch_drag_t *d) {
     d->release_target = NULL;
 }
 
-void touch_drag_begin(touch_drag_t *d, lv_indev_data_t *data) {
+void touch_drag_begin(touch_drag_t *d, const lv_indev_data_t *data) {
     d->started = true;
     d->dragged = false;
     d->drag_axis = 0;
@@ -3012,7 +3012,7 @@ static int _touch_drag_resolve_axis(int total_dx, int total_dy) {
     return 0;
 }
 
-lv_obj_t *touch_drag_update(touch_drag_t *d, lv_indev_data_t *data, lv_obj_t *scroll_target) {
+lv_obj_t *touch_drag_update(touch_drag_t *d, const lv_indev_data_t *data, lv_obj_t *scroll_target) {
     if (!d->started) return NULL;
 
     int32_t dy = data->point.y - d->last_y;
@@ -3039,7 +3039,7 @@ lv_obj_t *touch_drag_update(touch_drag_t *d, lv_indev_data_t *data, lv_obj_t *sc
     return d->dragged ? scroll_target : NULL;
 }
 
-bool touch_drag_release(touch_drag_t *d, lv_indev_data_t *data) {
+bool touch_drag_release(touch_drag_t *d, const lv_indev_data_t *data) {
     if (!d->started) return false;
     bool was_dragged = d->dragged;
     int32_t total_dy = data->point.y - d->start_y;
