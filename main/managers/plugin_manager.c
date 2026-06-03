@@ -9,6 +9,7 @@
 #include "core/memory_debug.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_timer.h"
 #include "sdkconfig.h"
 #include <ctype.h>
 #include <dirent.h>
@@ -18,6 +19,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define PLUGIN_APPS_DIR "/mnt/ghostesp/apps"
@@ -31,6 +33,16 @@ static const char *TAG = "PluginManager";
 static plugin_app_manifest_t *s_apps = NULL;
 static int s_app_count = 0;
 static char s_last_error[128];
+
+typedef struct {
+    bool valid;
+    uint32_t count;
+    uint64_t total_size;
+    time_t newest_mtime;
+} plugin_package_sig_t;
+
+static plugin_package_sig_t s_package_sigs[2];
+static bool s_packages_materialized = false;
 
 static bool read_file_to_buffer(const char *path, char **out_buf);
 
@@ -207,9 +219,37 @@ static bool package_cache_current(const char *cache_path) {
     return join_path(manifest_path, sizeof(manifest_path), cache_path, "manifest.json") && stat(manifest_path, &st) == 0;
 }
 
-static void materialize_gapp_dir(const char *dir_path) {
+static plugin_package_sig_t package_dir_signature(const char *dir_path) {
+    plugin_package_sig_t sig = { .valid = true };
     DIR *dir = opendir(dir_path);
-    if (!dir) return;
+    if (!dir) {
+        sig.valid = false;
+        return sig;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.' || !has_gapp_extension(entry->d_name)) continue;
+        char package_path[PLUGIN_APP_PATH_MAX];
+        if (!join_path(package_path, sizeof(package_path), dir_path, entry->d_name)) continue;
+        struct stat st;
+        if (stat(package_path, &st) != 0 || S_ISDIR(st.st_mode)) continue;
+        sig.count++;
+        sig.total_size += (uint64_t)st.st_size;
+        if (st.st_mtime > sig.newest_mtime) sig.newest_mtime = st.st_mtime;
+    }
+    closedir(dir);
+    return sig;
+}
+
+static bool package_sig_equal(plugin_package_sig_t a, plugin_package_sig_t b) {
+    return a.valid == b.valid && a.count == b.count && a.total_size == b.total_size && a.newest_mtime == b.newest_mtime;
+}
+
+static bool materialize_gapp_dir(const char *dir_path) {
+    bool all_ok = true;
+    DIR *dir = opendir(dir_path);
+    if (!dir) return true;
 
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
@@ -231,21 +271,38 @@ static void materialize_gapp_dir(const char *dir_path) {
 
         esp_err_t err = plugin_installer_extract_gapp_to_dir(package_path, cache_path);
         if (err != ESP_OK) {
+            all_ok = false;
             ESP_LOGW(TAG, "Package cache extraction failed for %s: %s", entry->d_name, plugin_installer_last_error());
         } else if (!write_cache_source(cache_path, package_path, &st)) {
+            all_ok = false;
             ESP_LOGW(TAG, "Failed to write package cache metadata for %s", entry->d_name);
         }
     }
 
     closedir(dir);
+    return all_ok;
 }
 
 static void plugin_manager_materialize_packages(void) {
     sd_card_create_directory(PLUGIN_APPS_DIR);
     sd_card_create_directory(PLUGIN_PACKAGES_DIR);
     sd_card_create_directory(PLUGIN_APP_CACHE_DIR);
-    materialize_gapp_dir(PLUGIN_PACKAGES_DIR);
-    materialize_gapp_dir(PLUGIN_APPS_DIR);
+
+    const char *package_dirs[] = { PLUGIN_PACKAGES_DIR, PLUGIN_APPS_DIR };
+    plugin_package_sig_t current[2];
+    bool changed = !s_packages_materialized;
+    for (size_t i = 0; i < sizeof(package_dirs) / sizeof(package_dirs[0]); ++i) {
+        current[i] = package_dir_signature(package_dirs[i]);
+        if (!package_sig_equal(current[i], s_package_sigs[i])) changed = true;
+    }
+    if (!changed) return;
+
+    bool ok = materialize_gapp_dir(PLUGIN_PACKAGES_DIR);
+    ok = materialize_gapp_dir(PLUGIN_APPS_DIR) && ok;
+    if (ok) {
+        memcpy(s_package_sigs, current, sizeof(s_package_sigs));
+        s_packages_materialized = true;
+    }
 }
 
 static void ensure_appdata_dir(const char *app_id) {
@@ -284,9 +341,13 @@ static void load_app_state(plugin_app_manifest_t *out) {
     bool was_quarantined = copy_json_bool(root, "quarantined", false);
     cJSON_Delete(root);
 
-    out->quarantined = false;
-    if (launch_pending || was_quarantined) {
-        write_app_state_by_id(out->id, out->launch_failure_count, false, false, "");
+    if (launch_pending) {
+        out->launch_failure_count++;
+        out->quarantined = out->launch_failure_count >= PLUGIN_APP_QUARANTINE_THRESHOLD;
+        write_app_state_by_id(out->id, out->launch_failure_count, out->quarantined, false,
+                              out->quarantined ? "app did not exit cleanly" : "app launch interrupted");
+    } else {
+        out->quarantined = was_quarantined || out->launch_failure_count >= PLUGIN_APP_QUARANTINE_THRESHOLD;
     }
 }
 
@@ -406,16 +467,6 @@ static bool parse_manifest(const char *base_path, plugin_app_manifest_t *out) {
             return false;
         }
         if (out->icon_format[0] == '\0') strncpy(out->icon_format, "rgb565a8", sizeof(out->icon_format) - 1);
-        if (out->icon_width > 0 && out->icon_height > 0) {
-            char icon_path[PLUGIN_APP_PATH_MAX];
-            if (join_path(icon_path, sizeof(icon_path), base_path, out->icon)) {
-                if (strcmp(out->icon_format, "rgb565a8") == 0) {
-                    out->icon_dsc = plugin_icon_load_rgb565a8(icon_path, out->icon_width, out->icon_height);
-                } else {
-                    out->icon_dsc = plugin_icon_load_rgb565(icon_path, out->icon_width, out->icon_height);
-                }
-            }
-        }
     }
     if (!sd_card_exists(out->entry_path)) {
         snprintf(out->error, sizeof(out->error), "entry missing");
@@ -452,6 +503,7 @@ bool plugin_manager_target_matches(const plugin_app_manifest_t *app) {
 }
 
 int plugin_manager_reload(void) {
+    int64_t start_us = esp_timer_get_time();
     plugin_manager_init();
     if (!s_apps) return -1;
     for (int i = 0; i < s_app_count; ++i) {
@@ -475,7 +527,9 @@ int plugin_manager_reload(void) {
         mounted_here = true;
     }
 
+    int64_t materialize_start_us = esp_timer_get_time();
     plugin_manager_materialize_packages();
+    ESP_LOGI(TAG, "Package materialize check took %lld ms", (long long)((esp_timer_get_time() - materialize_start_us) / 1000));
 
     const char *scan_dirs[] = { PLUGIN_APPS_DIR, PLUGIN_APP_CACHE_DIR };
     for (size_t scan_i = 0; scan_i < sizeof(scan_dirs) / sizeof(scan_dirs[0]) && s_app_count < PLUGIN_APP_MAX_COUNT; ++scan_i) {
@@ -511,7 +565,7 @@ int plugin_manager_reload(void) {
         closedir(dir);
     }
     if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
-    ESP_LOGI(TAG, "Loaded %d SD app manifests", s_app_count);
+    ESP_LOGI(TAG, "Loaded %d SD app manifests in %lld ms", s_app_count, (long long)((esp_timer_get_time() - start_us) / 1000));
     return s_app_count;
 }
 
@@ -531,6 +585,28 @@ const plugin_app_manifest_t *plugin_manager_find(const char *id) {
         if (strcmp(s_apps[i].id, id) == 0) return &s_apps[i];
     }
     return NULL;
+}
+
+const lv_img_dsc_t *plugin_manager_get_icon(const plugin_app_manifest_t *app) {
+    if (!app || app->icon[0] == '\0' || app->icon_width == 0 || app->icon_height == 0) return NULL;
+    plugin_app_manifest_t *mutable_app = NULL;
+    for (int i = 0; i < s_app_count; ++i) {
+        if (&s_apps[i] == app || strcmp(s_apps[i].id, app->id) == 0) {
+            mutable_app = &s_apps[i];
+            break;
+        }
+    }
+    if (!mutable_app) return NULL;
+    if (mutable_app->icon_dsc) return mutable_app->icon_dsc;
+
+    char icon_path[PLUGIN_APP_PATH_MAX];
+    if (!join_path(icon_path, sizeof(icon_path), mutable_app->base_path, mutable_app->icon)) return NULL;
+    if (strcmp(mutable_app->icon_format, "rgb565a8") == 0) {
+        mutable_app->icon_dsc = plugin_icon_load_rgb565a8(icon_path, mutable_app->icon_width, mutable_app->icon_height);
+    } else {
+        mutable_app->icon_dsc = plugin_icon_load_rgb565(icon_path, mutable_app->icon_width, mutable_app->icon_height);
+    }
+    return mutable_app->icon_dsc;
 }
 
 bool plugin_manager_reset_app_state(const char *id) {

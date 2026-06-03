@@ -4,7 +4,7 @@ import shutil
 import struct
 import sys
 
-from .icon import png_to_rgb565, png_to_rgb565a8
+from .icon import png_to_indexed_4bpp, png_to_rgb565, png_to_rgb565a8
 from .utils import checksum_bytes, checksum_file, deflate_raw
 
 
@@ -13,9 +13,11 @@ IMAGE_VERSION = 1
 
 FORMAT_RGB565 = 1
 FORMAT_RGB565A8 = 2
+FORMAT_INDEXED_4BPP = 3
 FORMAT_BY_NAME = {
     "rgb565": FORMAT_RGB565,
     "rgb565a8": FORMAT_RGB565A8,
+    "indexed_4bpp": FORMAT_INDEXED_4BPP,
 }
 
 COMPRESSION_NONE = 0
@@ -50,6 +52,8 @@ def _image_payload(src: pathlib.Path, width: int, height: int, fmt: str) -> byte
         return png_to_rgb565a8(src, width, height)
     if fmt == "rgb565":
         return png_to_rgb565(src, width, height)
+    if fmt == "indexed_4bpp":
+        return png_to_indexed_4bpp(src, width, height)
     raise ValueError(f"unsupported image format: {fmt}")
 
 
@@ -69,7 +73,9 @@ def write_asset_image(
     raw = _image_payload(src, width, height, fmt)
     payload = raw
     compression = COMPRESSION_NONE
-    if compress:
+    if compress and fmt != "indexed_4bpp":
+        # Indexed 4bpp is always stored uncompressed — the firmware rejects
+        # deflated indexed payloads, and 4-bit data doesn't deflate well.
         compressed = deflate_raw(raw)
         if len(compressed) < len(raw):
             payload = compressed

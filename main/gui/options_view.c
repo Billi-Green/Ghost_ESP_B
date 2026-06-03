@@ -206,6 +206,7 @@ lv_obj_t *options_view_add_item(options_view_t *ov, const char *label, lv_event_
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_LEFT, 0);
         lv_obj_set_style_text_color(lbl, text_color, 0);
         lv_label_set_recolor(lbl, true);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(lbl, LV_PCT(100));
         lv_obj_set_user_data(lbl, (void *)1);
     }

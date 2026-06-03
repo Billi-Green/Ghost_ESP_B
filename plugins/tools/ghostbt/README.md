@@ -105,17 +105,31 @@ When loading a `.gtheme`, firmware streams entries into `/mnt/ghostesp/themes/ac
 
 ### PSRAM vs internal RAM
 
-**PSRAM devices:** Up to 32 icons cached in PSRAM, tiled or scaled backgrounds supported. Background images smaller than the screen tile automatically; larger images scale to fill using LVGL zoom. A 128x128 background will scale up to fill any screen. Background images are always loaded into PSRAM.
+**PSRAM devices:** Up to 32 icons cached in PSRAM, tiled or scaled backgrounds supported. Background images smaller than the screen tile automatically; larger images scale to fill using LVGL zoom. A 128x128 background will scale up to fill any screen. Background images are always loaded into PSRAM. Any image format works; deflate-compressed payloads decode into PSRAM.
 
-**Internal-only devices:** 2 icons cached in internal RAM, no background images. Icons fall back to compiled-in artwork when cache is full. The pack still loads colors and icon mappings; only the image cache is limited.
+**Internal-only devices:** 2 icons cached in internal RAM. Background tile (≤32x32) supported — LVGL tiles the small image across the screen. Icon size capped at 32x32 RGB565A8; deflate-compressed payloads rejected. Use the `indexed_4bpp` format for icons and the background tile to fit in internal RAM: a 32x32 indexed icon is 576 bytes vs 3,072 bytes for RGB565A8 (~5x smaller). Icons fall back to compiled-in artwork when the cache is full. The pack still loads colors and icon mappings; only the image cache is limited.
+
+### Image formats
+
+| Format | Code | Size at 32x32 | Notes |
+|--------|------|---------------|-------|
+| `rgb565` | 1 | 2,048 B | No alpha. Best for opaque backgrounds. |
+| `rgb565a8` | 2 | 3,072 B | RGB565 + separate alpha plane. Default for icons. |
+| `indexed_4bpp` | 3 | 576 B | 16-color palette, packed 4-bit pixels. Ideal for internal-RAM devices; the `gbt` tool quantizes the source PNG at build time. |
+
+Set the pack-wide icon format with `icon_format` in the source manifest, or override per-background via the `format` field on each `background_sources` entry. Indexed payloads are always stored uncompressed.
 
 Convert one image directly:
 
 ```bash
+# Default — RGB565A8, 3 KB for 32x32
 gbt asset image ./wifi.png --out ./wifi_l.gimg --width 64 --height 64 --format rgb565a8
+
+# Internal-RAM friendly — indexed 4bpp, 576 B for 32x32
+gbt asset image ./wifi.png --out ./wifi_l.gimg --width 64 --height 64 --format indexed_4bpp
 ```
 
-The generated pack folder contains `manifest.json`, `checksums.json`, and generated `.gimg` files. Asset packs store raw `.gimg` payloads by default so firmware does not run deflate decompression from small UI task stacks. Missing icons are fine; firmware falls back to built-in artwork for any icon not present in the selected pack. Background tiles are loaded from PSRAM only.
+The generated pack folder contains `manifest.json`, `checksums.json`, and generated `.gimg` files. Asset packs store raw `.gimg` payloads by default so firmware does not run deflate decompression from small UI task stacks. Missing icons are fine; firmware falls back to built-in artwork for any icon not present in the selected pack. Full-screen background images are loaded into PSRAM only; the smaller tiled background path works on internal-RAM devices at ≤32x32.
 
 ## Requirements
 

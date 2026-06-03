@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #if CONFIG_ENABLE_NATIVE_SD_APPS
 #include "esp_dlfcn.h"
@@ -96,11 +97,12 @@ static void write_app_state(const plugin_app_manifest_t *manifest, uint32_t fail
 static void record_app_failure(const plugin_app_manifest_t *manifest, const char *error) {
     if (!manifest) return;
     uint32_t count = read_state_failure_count(manifest) + 1;
-    write_app_state(manifest, count, false, false, error);
+    bool quarantined = count >= PLUGIN_APP_QUARANTINE_THRESHOLD;
+    write_app_state(manifest, count, quarantined, false, error);
 }
 
 static void record_app_running(const plugin_app_manifest_t *manifest) {
-    if (manifest) write_app_state(manifest, read_state_failure_count(manifest), false, false, "");
+    if (manifest) write_app_state(manifest, read_state_failure_count(manifest), false, true, "");
 }
 
 static void record_app_clean_exit(const plugin_app_manifest_t *manifest) {
@@ -141,6 +143,7 @@ plugin_loaded_app_t *plugin_loader_current(void) {
 }
 
 esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
+    int64_t load_start_us = esp_timer_get_time();
     if (out_app) *out_app = NULL;
     if (!id) return fail_err(ESP_ERR_INVALID_ARG, "missing app id");
 
@@ -166,6 +169,21 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
     }
 
 #if CONFIG_ENABLE_NATIVE_SD_APPS
+    struct stat entry_st;
+    if (stat(manifest->entry_path, &entry_st) == 0) {
+        size_t largest_8bit = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        size_t largest_psram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        ESP_LOGI(TAG, "Loading %s size=%ld free8=%u largest8=%u freepsram=%u largestpsram=%u",
+                 manifest->id,
+                 (long)entry_st.st_size,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)largest_8bit,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                 (unsigned)largest_psram);
+        if (entry_st.st_size > 0 && largest_8bit < (size_t)entry_st.st_size && largest_psram < (size_t)entry_st.st_size) {
+            ESP_LOGW(TAG, "Largest heap block is smaller than ELF file; dlopen may fail");
+        }
+    }
     void *handle = dlopen(manifest->entry_path, RTLD_NOW);
     if (!handle) {
         const char *err = dlerror();
@@ -208,7 +226,13 @@ esp_err_t plugin_loader_load(const char *id, plugin_loaded_app_t **out_app) {
     snprintf(s_loaded.app_data_path, sizeof(s_loaded.app_data_path), "/mnt/ghostesp/appdata/%s", manifest->id);
     if (out_app) *out_app = &s_loaded;
     s_last_error[0] = '\0';
-    ESP_LOGI(TAG, "Loaded SD app %s", manifest->id);
+    ESP_LOGI(TAG, "Loaded SD app %s in %lld ms free8=%u largest8=%u freepsram=%u largestpsram=%u",
+             manifest->id,
+             (long long)((esp_timer_get_time() - load_start_us) / 1000),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     plugin_loader_sd_end(mounted_here, display_was_suspended);
     return ESP_OK;
 #else

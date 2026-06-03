@@ -2130,9 +2130,7 @@ static void apply_setting_change(int setting_index, int new_value) {
         case SETTING_RELOAD_ASSET_PACK: {
             ESP_LOGI(TAG, "asset pack setting changed to %d", new_value);
             settings_items[setting_index].current_value = new_value;
-            esp_err_t err = asset_pack_select_by_index(new_value);
-            ESP_LOGI(TAG, "asset pack switch result: %s", esp_err_to_name(err));
-            display_manager_update_status_bar_color();
+            asset_pack_switch_task(new_value);
             return;
         }
         case SETTING_NAV_BUTTONS:
@@ -2705,7 +2703,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
 
                     if (scroll_target && lv_obj_is_valid(scroll_target)) {
                         dy = opt_clamp_drag_delta(dy);
-                        if (dy) lv_obj_scroll_by_bounded(scroll_target, 0, dy, LV_ANIM_OFF);
+                        if (dy) display_manager_queue_scroll(scroll_target, dy);
                     }
                 }
                 return;
@@ -2790,7 +2788,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     
                     // Scroll handling
                     if (abs(dy) > thr_y) {
-                        lv_obj_scroll_by_bounded(action_list, 0, dy, LV_ANIM_OFF);
+                        display_manager_queue_scroll(action_list, dy);
                         return;
                     }
                     
@@ -2895,7 +2893,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
 
             // vertical swipe = scroll
             if (abs(dy) > thr_y) {
-                lv_obj_scroll_by_bounded(menu_container, 0, dy, LV_ANIM_OFF);
+                display_manager_queue_scroll(menu_container, dy);
                 return;
             }
             // horizontal swipe = ignore
@@ -5851,6 +5849,42 @@ void options_menu_destroy() {
     wigle_csv_free_cache();
     wigle_manual_popup_close_cb(NULL);
     wigle_stats_popup_close_cb(NULL);
+}
+
+static void refresh_touch_control_theme(lv_obj_t *btn, lv_color_t bg, lv_color_t text) {
+    if (!btn || !lv_obj_is_valid(btn)) return;
+    lv_obj_set_style_bg_color(btn, bg, LV_PART_MAIN);
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    if (label && lv_obj_is_valid(label)) {
+        lv_obj_set_style_text_color(label, text, 0);
+    }
+}
+
+void options_menu_refresh_theme(void) {
+    if (!options_menu_view.root || !lv_obj_is_valid(options_menu_view.root)) return;
+
+    uint8_t theme = settings_get_menu_theme(&G_Settings);
+    lv_color_t bg = lv_color_hex(theme_palette_get_background(theme));
+    lv_color_t control_bg = lv_color_hex(theme_palette_get_surface_alt(theme));
+    lv_color_t control_text = lv_color_hex(theme_palette_get_text(theme));
+
+    lv_obj_set_style_bg_color(options_menu_view.root, bg, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(options_menu_view.root,
+                            asset_pack_get_background_tile() ? LV_OPA_TRANSP : LV_OPA_COVER,
+                            LV_PART_MAIN);
+    gui_screen_apply_background(options_menu_view.root);
+
+    if (g_options_view) {
+        options_view_refresh_styles(g_options_view);
+        update_settings_arrows_visibility();
+    }
+
+    if (touch_bar && lv_obj_is_valid(touch_bar)) {
+        lv_obj_set_style_bg_color(touch_bar, bg, 0);
+    }
+    refresh_touch_control_theme(scroll_up_btn, control_bg, control_text);
+    refresh_touch_control_theme(scroll_down_btn, control_bg, control_text);
+    refresh_touch_control_theme(back_btn, control_bg, control_text);
 }
 
 void get_options_menu_callback(void **callback) { *callback = options_menu_view.input_callback; }

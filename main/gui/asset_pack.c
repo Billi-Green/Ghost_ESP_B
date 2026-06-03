@@ -8,7 +8,7 @@
 #include "gui/screen_layout.h"
 #include "managers/display_manager.h"
 #include "managers/sd_card_manager.h"
-#include "managers/views/main_menu_screen.h"
+#include "managers/views/options_screen.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "lgfx/utility/lgfx_miniz.h"
@@ -26,23 +26,32 @@
 #define ACTIVE_MANIFEST ACTIVE_PACK_DIR "/manifest.json"
 #define ACTIVE_GTHEME "/mnt/ghostesp/themes/active.gtheme"
 #define THEMES_DIR "/mnt/ghostesp/themes"
+#define THEME_CACHE_DIR THEMES_DIR "/.cache"
 #define ASSET_PACK_NVS_NS "asset_pack"
 #define ASSET_PACK_NVS_ACTIVE "active"
-#define ASSET_PACK_MAX_ICONS 40
+#define ASSET_PACK_MAX_ICONS 20
 #define ASSET_PACK_ICON_CACHE_MAX 32
 #define ASSET_PACK_ICON_CACHE_INTERNAL 2
 #define ASSET_PACK_PATH_MAX 128
 #define ASSET_PACK_MANIFEST_MAX (16 * 1024)
 #define ASSET_PACK_ICON_MAX_RAW (128 * 128 * 3)
-#define ASSET_PACK_BG_MAX_RAW (128 * 128 * 2)
+/* Internal-RAM-only icon cap: 32x32 RGB565A8 = 3 KB. Keeps the worst-case
+ * icon cache footprint to 2 * 3 KB = 6 KB on devices without PSRAM. */
+#define ASSET_PACK_ICON_MAX_RAW_INTERNAL (32 * 32 * 3)
+/* Internal-RAM-only bg tile cap: 32x32 RGB565A8 = 3 KB (matches icon cap). */
+#define ASSET_PACK_BG_MAX_RAW_INTERNAL (32 * 32 * 3)
 #define ASSET_PACK_BG_FULLSCREEN_MAX_RAW (320 * 240 * 2)
 #define ASSET_PACK_GTHEME_MAX_FILE (256 * 1024)
-#define ASSET_PACK_EXTRACT_BUF_SIZE 1024
+#define ASSET_PACK_EXTRACT_BUF_SIZE 4096
 #define ASSET_PACK_GTHEME_MAX_FILES 128
 #define ASSET_PACK_NAME_MAX 32
 
 #define GIMG_FORMAT_RGB565 1
 #define GIMG_FORMAT_RGB565A8 2
+/* 16-color indexed. Payload layout: [16 * lv_color32_t palette = 64 B]
+ * followed by packed 4-bit pixel indices (low nibble = even pixel).
+ * LVGL renders natively via LV_IMG_CF_INDEXED_4BIT. */
+#define GIMG_FORMAT_INDEXED_4BPP 3
 #define GIMG_COMP_NONE 0
 #define GIMG_COMP_DEFLATE_RAW 1
 
@@ -74,7 +83,10 @@ static bool s_has_color[6];
 static uint32_t s_colors[6];
 static asset_icon_entry_t s_icons[ASSET_PACK_MAX_ICONS];
 static int s_icon_count = 0;
-static asset_icon_cache_entry_t s_icon_cache[ASSET_PACK_ICON_CACHE_MAX];
+/* Icon cache slot array is heap-allocated in detect_psram_and_configure() and
+ * sized to s_icon_cache_size, so internal-RAM builds only pay for the slots
+ * they actually use (2 instead of 32). */
+static asset_icon_cache_entry_t *s_icon_cache = NULL;
 static int s_icon_cache_size = ASSET_PACK_ICON_CACHE_INTERNAL;
 static uint32_t s_cache_tick = 0;
 static char s_bg_tile[ASSET_PACK_PATH_MAX];
@@ -92,26 +104,42 @@ static const lv_img_dsc_t *s_last_icon = NULL;
 static const char *s_last_icon_key = NULL;
 static uint32_t s_last_icon_version = 0;
 
-static char s_installed_names[ASSET_PACK_INSTALLED_MAX][ASSET_PACK_NAME_MAX];
+/* Installed-packs name list is heap-allocated in scan_installed_packs(). */
+static char (*s_installed_names)[ASSET_PACK_NAME_MAX] = NULL;
 static int s_installed_count = 0;
-static bool s_force_extract = false;
+static bool s_skip_icon_preload_once = false;
+static volatile bool s_defer_icon_loads = false;
+static volatile bool s_deferred_icon_preload_running = false;
 
-static esp_err_t extract_gtheme_to_active(const char *archive_path);
+static esp_err_t extract_gtheme_to_dir(const char *archive_path, const char *out_dir);
 static void scan_installed_packs(void);
+static bool mkdir_parent_dirs(const char *path);
+static void start_deferred_icon_preload(void);
 
 static void detect_psram_and_configure(void) {
-    if (s_icon_cache_size != ASSET_PACK_ICON_CACHE_INTERNAL) return;
+    if (s_icon_cache != NULL) return;
     size_t psram_size = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    int target_size;
     if (psram_size > 0) {
         s_has_psram = true;
-        s_icon_cache_size = ASSET_PACK_ICON_CACHE_MAX;
-        ESP_LOGI(TAG, "PSRAM detected (%u bytes), icon cache=%d, background=full",
-                 (unsigned)psram_size, s_icon_cache_size);
+        target_size = ASSET_PACK_ICON_CACHE_MAX;
     } else {
         s_has_psram = false;
-        s_icon_cache_size = ASSET_PACK_ICON_CACHE_INTERNAL;
-        ESP_LOGI(TAG, "no PSRAM, icon cache=%d, background=disabled", s_icon_cache_size);
+        target_size = ASSET_PACK_ICON_CACHE_INTERNAL;
     }
+    size_t bytes = (size_t)target_size * sizeof(asset_icon_cache_entry_t);
+    s_icon_cache = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_icon_cache) s_icon_cache = malloc(bytes);
+    if (!s_icon_cache) {
+        ESP_LOGE(TAG, "no memory for icon cache (%u bytes); caching disabled", (unsigned)bytes);
+        s_icon_cache_size = 0;
+        return;
+    }
+    memset(s_icon_cache, 0, bytes);
+    s_icon_cache_size = target_size;
+    ESP_LOGI(TAG, "%s, icon cache=%d slots (%u bytes), bg=tile",
+             s_has_psram ? "PSRAM detected" : "no PSRAM",
+             s_icon_cache_size, (unsigned)bytes);
 }
 
 static uint16_t rd16(const uint8_t *p) {
@@ -154,9 +182,9 @@ static bool join_pack_path(char *dst, size_t dst_len, const char *rel) {
     return n > 0 && (size_t)n < dst_len;
 }
 
-static bool join_active_path(char *dst, size_t dst_len, const char *rel) {
-    if (!dst || !rel || rel[0] == '\0' || rel[0] == '/' || strchr(rel, '\\') || strstr(rel, "..")) return false;
-    int n = snprintf(dst, dst_len, "%s/%s", ACTIVE_PACK_DIR, rel);
+static bool join_base_path(char *dst, size_t dst_len, const char *base, const char *rel) {
+    if (!base || !dst || !rel || rel[0] == '\0' || rel[0] == '/' || strchr(rel, '\\') || strstr(rel, "..")) return false;
+    int n = snprintf(dst, dst_len, "%s/%s", base, rel);
     return n > 0 && (size_t)n < dst_len;
 }
 
@@ -168,10 +196,24 @@ static bool safe_pack_id(const char *id) {
     return true;
 }
 
+static bool pack_cache_dir(const char *name, char *path, size_t path_len) {
+    if (!safe_pack_id(name)) return false;
+    int n = snprintf(path, path_len, "%s/%s", THEME_CACHE_DIR, name);
+    return n > 0 && (size_t)n < path_len;
+}
+
+static bool pack_cache_meta_path(const char *name, char *path, size_t path_len) {
+    if (!safe_pack_id(name)) return false;
+    int n = snprintf(path, path_len, "%s/%s/.extract", THEME_CACHE_DIR, name);
+    return n > 0 && (size_t)n < path_len;
+}
+
 static void set_pack_dir_for_name(const char *name, bool archive) {
     snprintf(s_active_name, sizeof(s_active_name), "%s", name && name[0] ? name : "active");
     if (archive) {
-        snprintf(s_pack_dir, sizeof(s_pack_dir), "%s", ACTIVE_PACK_DIR);
+        if (!pack_cache_dir(s_active_name, s_pack_dir, sizeof(s_pack_dir))) {
+            snprintf(s_pack_dir, sizeof(s_pack_dir), "%s", ACTIVE_PACK_DIR);
+        }
     } else {
         snprintf(s_pack_dir, sizeof(s_pack_dir), "%s/%s", THEMES_DIR, s_active_name);
     }
@@ -229,6 +271,39 @@ static bool pack_archive_path(const char *name, char *path, size_t path_len) {
     if (!safe_pack_id(name)) return false;
     int n = snprintf(path, path_len, "%s/%s.gtheme", THEMES_DIR, name);
     return n > 0 && (size_t)n < path_len;
+}
+
+static bool archive_cache_matches(const char *name, const struct stat *archive_st) {
+    if (!name || !archive_st) return false;
+
+    char manifest_path[192];
+    if (!join_base_path(manifest_path, sizeof(manifest_path), s_pack_dir, "manifest.json") ||
+        !path_is_file(manifest_path)) {
+        return false;
+    }
+
+    char meta_path[192];
+    if (!pack_cache_meta_path(name, meta_path, sizeof(meta_path))) return false;
+    FILE *f = fopen(meta_path, "r");
+    if (!f) return false;
+    unsigned long cached_size = 0;
+    unsigned long cached_mtime = 0;
+    int matched = fscanf(f, "%lu %lu", &cached_size, &cached_mtime);
+    fclose(f);
+    return matched == 2 &&
+           cached_size == (unsigned long)archive_st->st_size &&
+           cached_mtime == (unsigned long)archive_st->st_mtime;
+}
+
+static void write_archive_cache_meta(const char *name, const struct stat *archive_st) {
+    if (!name || !archive_st) return;
+    char meta_path[192];
+    if (!pack_cache_meta_path(name, meta_path, sizeof(meta_path))) return;
+    if (!mkdir_parent_dirs(meta_path)) return;
+    FILE *f = fopen(meta_path, "w");
+    if (!f) return;
+    fprintf(f, "%lu %lu\n", (unsigned long)archive_st->st_size, (unsigned long)archive_st->st_mtime);
+    fclose(f);
 }
 
 static bool pack_exists(const char *name, bool *archive) {
@@ -338,53 +413,17 @@ static esp_err_t select_pack_for_load(void) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    char manifest_check[192];
-    snprintf(manifest_check, sizeof(manifest_check), "%s/manifest.json", ACTIVE_PACK_DIR);
-    if (!s_force_extract && path_is_file(manifest_check)) {
-        struct stat archive_st;
-        if (stat(archive_path_buf, &archive_st) == 0) {
-            nvs_handle_t nvs;
-            uint32_t cached_size = 0;
-            uint32_t cached_mtime = 0;
-            uint32_t extraction_id = 0;
-            if (nvs_open(ASSET_PACK_NVS_NS, NVS_READONLY, &nvs) == ESP_OK) {
-                nvs_get_u32(nvs, "archive_size", &cached_size);
-                nvs_get_u32(nvs, "archive_mtime", &cached_mtime);
-                nvs_get_u32(nvs, "extract_ok", &extraction_id);
-                nvs_close(nvs);
-            }
-            if (cached_size == (uint32_t)archive_st.st_size &&
-                cached_mtime == (uint32_t)archive_st.st_mtime &&
-                extraction_id != 0) {
-                ESP_LOGI(TAG, "archive unchanged (size=%u mtime=%u), skipping extraction",
-                         (unsigned)archive_st.st_size, (unsigned)archive_st.st_mtime);
-                return ESP_OK;
-            }
-        }
+    struct stat archive_st;
+    if (stat(archive_path_buf, &archive_st) != 0) return ESP_ERR_NOT_FOUND;
+    if (archive_cache_matches(name, &archive_st)) {
+        ESP_LOGI(TAG, "archive cache hit for '%s' (size=%lu mtime=%lu), skipping extraction",
+                 name, (unsigned long)archive_st.st_size, (unsigned long)archive_st.st_mtime);
+        return ESP_OK;
     }
 
-    {
-        nvs_handle_t nvs;
-        if (nvs_open(ASSET_PACK_NVS_NS, NVS_READWRITE, &nvs) == ESP_OK) {
-            nvs_set_u32(nvs, "extract_ok", 0);
-            nvs_commit(nvs);
-            nvs_close(nvs);
-        }
-    }
-
-    esp_err_t err = extract_gtheme_to_active(archive_path_buf);
+    esp_err_t err = extract_gtheme_to_dir(archive_path_buf, s_pack_dir);
     if (err == ESP_OK) {
-        struct stat archive_st;
-        if (stat(archive_path_buf, &archive_st) == 0) {
-            nvs_handle_t nvs;
-            if (nvs_open(ASSET_PACK_NVS_NS, NVS_READWRITE, &nvs) == ESP_OK) {
-                nvs_set_u32(nvs, "archive_size", (uint32_t)archive_st.st_size);
-                nvs_set_u32(nvs, "archive_mtime", (uint32_t)archive_st.st_mtime);
-                nvs_set_u32(nvs, "extract_ok", 1);
-                nvs_commit(nvs);
-                nvs_close(nvs);
-            }
-        }
+        write_archive_cache_meta(name, &archive_st);
     } else {
         ESP_LOGE(TAG, "failed to extract %s: %s", archive_path_buf, esp_err_to_name(err));
     }
@@ -444,12 +483,17 @@ static bool stream_archive_file(FILE *in, const char *out_path, uint32_t size, u
     FILE *out = fopen(out_path, "wb");
     if (!out) return false;
 
-    uint8_t buf[ASSET_PACK_EXTRACT_BUF_SIZE];
+    uint8_t *buf = heap_caps_malloc(ASSET_PACK_EXTRACT_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) buf = malloc(ASSET_PACK_EXTRACT_BUF_SIZE);
+    if (!buf) {
+        fclose(out);
+        return false;
+    }
     uint64_t hash = 14695981039346656037ULL;
     uint32_t remaining = size;
     bool ok = true;
     while (remaining > 0) {
-        size_t want = remaining > sizeof(buf) ? sizeof(buf) : remaining;
+        size_t want = remaining > ASSET_PACK_EXTRACT_BUF_SIZE ? ASSET_PACK_EXTRACT_BUF_SIZE : remaining;
         if (fread(buf, 1, want, in) != want) {
             ok = false;
             break;
@@ -465,22 +509,12 @@ static bool stream_archive_file(FILE *in, const char *out_path, uint32_t size, u
         remaining -= (uint32_t)want;
     }
     fclose(out);
+    free(buf);
     if (!ok || hash != expected_hash) {
         unlink(out_path);
         return false;
     }
     return true;
-}
-
-static void remove_active_file(const char *rel) {
-    char path[192];
-    if (join_active_path(path, sizeof(path), rel)) unlink(path);
-}
-
-static void clear_active_pack_files(void) {
-    remove_active_file("manifest.json");
-    remove_active_file("checksums.json");
-    remove_active_file("bg_tile.gimg");
 }
 
 static bool read_file_text(const char *path, char **out, size_t max_bytes) {
@@ -509,10 +543,12 @@ static void free_img_dsc(lv_img_dsc_t *dsc, uint8_t **data) {
 }
 
 static void clear_runtime(void) {
-    for (int i = 0; i < s_icon_cache_size; ++i) {
-        free_img_dsc(&s_icon_cache[i].dsc, &s_icon_cache[i].data);
-        s_icon_cache[i].key_hash = 0;
-        s_icon_cache[i].last_used = 0;
+    if (s_icon_cache) {
+        for (int i = 0; i < s_icon_cache_size; ++i) {
+            free_img_dsc(&s_icon_cache[i].dsc, &s_icon_cache[i].data);
+            s_icon_cache[i].key_hash = 0;
+            s_icon_cache[i].last_used = 0;
+        }
     }
     free_img_dsc(&s_bg_tile_dsc, &s_bg_tile_data);
     free_img_dsc(&s_bg_fullscreen_dsc, &s_bg_fullscreen_data);
@@ -525,12 +561,14 @@ static void clear_runtime(void) {
     memset(s_bg_tile, 0, sizeof(s_bg_tile));
     memset(s_app_icon_key, 0, sizeof(s_app_icon_key));
     s_icon_count = 0;
+    s_defer_icon_loads = false;
     s_loaded = false;
     s_version++;
 }
 
 static lv_img_cf_t gimg_cf(uint8_t fmt) {
     if (fmt == GIMG_FORMAT_RGB565A8) return LV_IMG_CF_RGB565A8;
+    if (fmt == GIMG_FORMAT_INDEXED_4BPP) return LV_IMG_CF_INDEXED_4BIT;
     return LV_IMG_CF_TRUE_COLOR;
 }
 
@@ -557,11 +595,19 @@ static esp_err_t load_gimg(const char *path, bool psram_only, uint32_t max_raw, 
     uint32_t payload_size = rd32(hdr + 20);
     uint64_t expected_hash = rd64(hdr + 24);
 
-    if (version != 1 || header_size < sizeof(hdr) || width == 0 || height == 0 || raw_size == 0 || raw_size > max_raw || payload_size > max_raw) {
+    /* Internal-RAM builds use a smaller per-image cap. Picks the tighter of
+     * the caller's cap and the internal-only cap so bg vs icon paths can
+     * supply different limits. */
+    uint32_t effective_max = max_raw;
+    if (!s_has_psram && max_raw > ASSET_PACK_ICON_MAX_RAW_INTERNAL) {
+        effective_max = ASSET_PACK_ICON_MAX_RAW_INTERNAL;
+    }
+
+    if (version != 1 || header_size < sizeof(hdr) || width == 0 || height == 0 || raw_size == 0 || raw_size > effective_max || payload_size > effective_max) {
         fclose(f);
         return ESP_ERR_INVALID_SIZE;
     }
-    if (fmt != GIMG_FORMAT_RGB565 && fmt != GIMG_FORMAT_RGB565A8) {
+    if (fmt != GIMG_FORMAT_RGB565 && fmt != GIMG_FORMAT_RGB565A8 && fmt != GIMG_FORMAT_INDEXED_4BPP) {
         fclose(f);
         return ESP_ERR_NOT_SUPPORTED;
     }
@@ -569,46 +615,97 @@ static esp_err_t load_gimg(const char *path, bool psram_only, uint32_t max_raw, 
         fclose(f);
         return ESP_ERR_NOT_SUPPORTED;
     }
+    /* Internal RAM cannot afford the payload+raw double-buffer during inflate. */
+    if (!s_has_psram && comp == GIMG_COMP_DEFLATE_RAW) {
+        fclose(f);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    /* Indexed 4bpp deflate isn't supported — 4bpp data doesn't compress well
+     * and keeping the codec simple means one consistent uncompressed path. */
+    if (fmt == GIMG_FORMAT_INDEXED_4BPP && comp != GIMG_COMP_NONE) {
+        fclose(f);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    /* Indexed 4bpp payload is always [64 B palette][W*H/2 B pixels]. */
+    size_t indexed_pixel_bytes = 0;
+    if (fmt == GIMG_FORMAT_INDEXED_4BPP) {
+        indexed_pixel_bytes = ((size_t)width * (size_t)height + 1) / 2;
+        size_t expected_raw = 64 + indexed_pixel_bytes;
+        if (raw_size != expected_raw || payload_size != expected_raw) {
+            fclose(f);
+            return ESP_ERR_INVALID_SIZE;
+        }
+    }
     if (header_size > sizeof(hdr) && fseek(f, header_size, SEEK_SET) != 0) {
         fclose(f);
         return ESP_FAIL;
     }
 
-    uint8_t *payload = heap_caps_malloc(payload_size ? payload_size : 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!payload) payload = malloc(payload_size ? payload_size : 1);
-    if (!payload) { fclose(f); return ESP_ERR_NO_MEM; }
-
-    bool read_ok = fread(payload, 1, payload_size, f) == payload_size;
-    fclose(f);
-    if (!read_ok) {
-        free(payload);
-        return ESP_FAIL;
-    }
-
     uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-    uint8_t *raw = heap_caps_malloc(raw_size, caps);
-    if (!raw && !psram_only) raw = malloc(raw_size);
-    if (!raw) {
+    uint8_t *raw = NULL;
+
+    if (comp == GIMG_COMP_NONE) {
+        /* Read directly into the raw buffer — no separate payload alloc.
+         * Peak RAM during decode is just the raw buffer (not 2x). */
+        raw = heap_caps_malloc(raw_size, caps);
+        if (!raw && !psram_only) raw = malloc(raw_size);
+        if (!raw) { fclose(f); return ESP_ERR_NO_MEM; }
+        if (fread(raw, 1, raw_size, f) != raw_size) {
+            fclose(f);
+            free(raw);
+            return ESP_FAIL;
+        }
+        fclose(f);
+    } else {
+        /* Deflate path: load compressed payload, then decompress into raw. */
+        size_t psize = payload_size ? payload_size : 1;
+        uint8_t *payload = heap_caps_malloc(psize, caps);
+        if (!payload && !psram_only) payload = malloc(psize);
+        if (!payload) { fclose(f); return ESP_ERR_NO_MEM; }
+
+        bool read_ok = fread(payload, 1, payload_size, f) == payload_size;
+        fclose(f);
+        if (!read_ok) {
+            free(payload);
+            return ESP_FAIL;
+        }
+
+        raw = heap_caps_malloc(raw_size, caps);
+        if (!raw && !psram_only) raw = malloc(raw_size);
+        if (!raw) {
+            free(payload);
+            return ESP_ERR_NO_MEM;
+        }
+
+        size_t out_len = lgfx_tinfl_decompress_mem_to_mem(raw, raw_size, payload, payload_size, 0);
         free(payload);
-        return ESP_ERR_NO_MEM;
+        if (out_len == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED || out_len != raw_size) {
+            free(raw);
+            return ESP_FAIL;
+        }
     }
 
-    esp_err_t ret = ESP_OK;
-    if (comp == GIMG_COMP_NONE) {
-        if (payload_size != raw_size) ret = ESP_ERR_INVALID_SIZE;
-        else memcpy(raw, payload, raw_size);
-    } else {
-        size_t out_len = lgfx_tinfl_decompress_mem_to_mem(raw, raw_size, payload, payload_size, 0);
-        if (out_len == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED || out_len != raw_size) ret = ESP_FAIL;
-    }
-    free(payload);
-    if (ret != ESP_OK) {
-        free(raw);
-        return ret;
-    }
     if (checksum_bytes(raw, raw_size) != expected_hash) {
         free(raw);
         return ESP_ERR_INVALID_CRC;
+    }
+
+    if (fmt == GIMG_FORMAT_INDEXED_4BPP) {
+        /* Layout: [16 * lv_color32_t palette (64 B)][W*H/2 packed pixels].
+         * The cache's data pointer owns the single combined buffer; palette
+         * and pixel data both live inside it. */
+        out_dsc->header.cf = gimg_cf(fmt);
+        out_dsc->header.always_zero = 0;
+        out_dsc->header.reserved = 0;
+        out_dsc->header.w = width;
+        out_dsc->header.h = height;
+        out_dsc->data_size = raw_size;
+        out_dsc->data = raw;
+        *out_data = raw;
+        ESP_LOGD(TAG, "load_gimg OK: %s %ux%u fmt=indexed4 raw=%lu data=%p",
+                 path, width, height, (unsigned long)raw_size,
+                 (void *)out_dsc->data);
+        return ESP_OK;
     }
 
 #if LV_COLOR_DEPTH == 16 && LV_COLOR_16_SWAP
@@ -641,14 +738,15 @@ static esp_err_t load_gimg(const char *path, bool psram_only, uint32_t max_raw, 
     return ESP_OK;
 }
 
-static esp_err_t extract_gtheme_to_active(const char *archive_path) {
+static esp_err_t extract_gtheme_to_dir(const char *archive_path, const char *out_dir) {
+    if (!out_dir || out_dir[0] == '\0') return ESP_ERR_INVALID_ARG;
     struct stat st;
     if (stat(archive_path, &st) != 0) {
         ESP_LOGE(TAG, "gtheme not found: %s (errno=%d)", archive_path, errno);
         return ESP_ERR_NOT_FOUND;
     }
-    if (!mkdir_recursive_for_dir(ACTIVE_PACK_DIR)) {
-        ESP_LOGE(TAG, "failed to create active theme directory: %s (errno=%d)", ACTIVE_PACK_DIR, errno);
+    if (!mkdir_recursive_for_dir(out_dir)) {
+        ESP_LOGE(TAG, "failed to create theme extraction directory: %s (errno=%d)", out_dir, errno);
         return ESP_FAIL;
     }
 
@@ -676,8 +774,6 @@ static esp_err_t extract_gtheme_to_active(const char *archive_path) {
         return ESP_ERR_INVALID_SIZE;
     }
     ESP_LOGI(TAG, "extracting gtheme %s (%lu files)", archive_path, (unsigned long)file_count);
-
-    clear_active_pack_files();
 
     for (uint32_t i = 0; i < file_count; ++i) {
         if (!read_exact(f, hdr, sizeof(hdr)) || memcmp(hdr, "FILE", 4) != 0) {
@@ -712,9 +808,9 @@ static esp_err_t extract_gtheme_to_active(const char *archive_path) {
         }
 
         char out_path[192];
-        if (!join_active_path(out_path, sizeof(out_path), name)) {
+        if (!join_base_path(out_path, sizeof(out_path), out_dir, name)) {
             fclose(f);
-            ESP_LOGE(TAG, "active output path too long/invalid: %s", name);
+            ESP_LOGE(TAG, "archive output path too long/invalid: %s", name);
             return ESP_ERR_INVALID_ARG;
         }
         ESP_LOGD(TAG, "extracting gtheme entry %s method=%u raw=%lu payload=%lu",
@@ -773,12 +869,12 @@ static esp_err_t extract_gtheme_to_active(const char *archive_path) {
     }
 
     fclose(f);
-    ESP_LOGI(TAG, "extracted %s to active asset pack directory", archive_path);
+    ESP_LOGI(TAG, "extracted %s to %s", archive_path, out_dir);
     return ESP_OK;
 }
 
 esp_err_t asset_pack_extract_active_gtheme(void) {
-    return extract_gtheme_to_active(ACTIVE_GTHEME);
+    return extract_gtheme_to_dir(ACTIVE_GTHEME, ACTIVE_PACK_DIR);
 }
 
 static asset_icon_entry_t *find_icon(const char *name) {
@@ -806,7 +902,7 @@ static uint64_t hash_path(const char *path) {
 }
 
 static asset_icon_cache_entry_t *cache_find_path(const char *path) {
-    if (!path) return NULL;
+    if (!path || !s_icon_cache) return NULL;
     uint64_t h = hash_path(path);
     for (int i = 0; i < s_icon_cache_size; ++i) {
         if (s_icon_cache[i].key_hash && s_icon_cache[i].data && s_icon_cache[i].key_hash == h) {
@@ -817,7 +913,7 @@ static asset_icon_cache_entry_t *cache_find_path(const char *path) {
 }
 
 static asset_icon_cache_entry_t *cache_slot_for_evict(void) {
-    if (s_icon_cache_size <= 0) return NULL;
+    if (!s_icon_cache || s_icon_cache_size <= 0) return NULL;
     asset_icon_cache_entry_t *oldest = &s_icon_cache[0];
     for (int i = 0; i < s_icon_cache_size; ++i) {
         if (s_icon_cache[i].key_hash == 0) return &s_icon_cache[i];
@@ -842,6 +938,15 @@ static void preload_loaded_assets(void) {
                 ESP_LOGW(TAG, "background preload failed (%s): %s", path, esp_err_to_name(err));
             }
         }
+    }
+
+    if (s_skip_icon_preload_once) {
+        s_skip_icon_preload_once = false;
+        s_defer_icon_loads = true;
+        ESP_LOGI(TAG, "preloaded asset pack '%s': bg=%s icons=deferred", s_active_name,
+                 s_bg_tile_data ? "yes" : "no");
+        start_deferred_icon_preload();
+        return;
     }
 
     int loaded = 0;
@@ -878,6 +983,49 @@ static void preload_loaded_assets(void) {
     } else {
         ESP_LOGI(TAG, "preloaded asset pack '%s': bg=%s icons=%d/%d", s_active_name,
                  s_bg_tile_data ? "yes" : "no", loaded, s_icon_count);
+    }
+}
+
+static void deferred_icon_preload_task(void *arg) {
+    uint32_t version = (uint32_t)(uintptr_t)arg;
+    vTaskDelay(pdMS_TO_TICKS(750));
+
+    bool loaded_icons = false;
+    bool mounted_here = false;
+    bool display_suspended = false;
+    esp_err_t mount_err = asset_sd_begin(&mounted_here, &display_suspended);
+    if (mount_err == ESP_OK) {
+        if (version == s_version && s_loaded) {
+            preload_loaded_assets();
+            loaded_icons = true;
+        }
+        asset_sd_end(mounted_here, display_suspended);
+    }
+
+    bool stale = version != s_version;
+    s_deferred_icon_preload_running = false;
+    if (!stale && loaded_icons) {
+        s_defer_icon_loads = false;
+        s_version++;
+        ESP_LOGI(TAG, "deferred icon preload complete for '%s' (v%lu)",
+                 s_active_name, (unsigned long)s_version);
+    } else if (!stale && s_defer_icon_loads) {
+        start_deferred_icon_preload();
+    } else if (stale && s_defer_icon_loads) {
+        start_deferred_icon_preload();
+    }
+    vTaskDelete(NULL);
+}
+
+static void start_deferred_icon_preload(void) {
+    if (s_deferred_icon_preload_running) return;
+    s_deferred_icon_preload_running = true;
+    BaseType_t ok = xTaskCreate(deferred_icon_preload_task, "icon_preload", 4096,
+                                (void *)(uintptr_t)s_version, 4, NULL);
+    if (ok != pdPASS) {
+        s_deferred_icon_preload_running = false;
+        s_defer_icon_loads = false;
+        ESP_LOGW(TAG, "failed to create deferred icon preload task");
     }
 }
 
@@ -968,7 +1116,12 @@ esp_err_t asset_pack_load_active(void) {
     bool display_suspended = false;
     esp_err_t mount_err = asset_sd_begin(&mounted_here, &display_suspended);
     if (mount_err != ESP_OK) return ESP_ERR_INVALID_STATE;
+    s_skip_icon_preload_once = true;
     esp_err_t err = asset_pack_load_active_impl();
+    s_skip_icon_preload_once = false;
+    if (err == ESP_OK) {
+        (void)asset_pack_get_background_fullscreen();
+    }
     asset_sd_end(mounted_here, display_suspended);
     return err;
 }
@@ -1008,7 +1161,16 @@ int asset_pack_get_current_index(void) {
 
 static void scan_installed_packs(void) {
     s_installed_count = 0;
-    memset(s_installed_names, 0, sizeof(s_installed_names));
+    if (!s_installed_names) {
+        size_t bytes = (size_t)ASSET_PACK_INSTALLED_MAX * ASSET_PACK_NAME_MAX;
+        s_installed_names = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_installed_names) s_installed_names = malloc(bytes);
+        if (!s_installed_names) {
+            ESP_LOGE(TAG, "no memory for installed pack names; pack list unavailable");
+            return;
+        }
+    }
+    memset(s_installed_names, 0, (size_t)ASSET_PACK_INSTALLED_MAX * ASSET_PACK_NAME_MAX);
 
     snprintf(s_installed_names[0], ASSET_PACK_NAME_MAX, "None");
     s_installed_count = 1;
@@ -1090,9 +1252,9 @@ esp_err_t asset_pack_select_by_index(int index) {
         return ESP_ERR_NOT_FOUND;
     }
     set_pack_dir_for_name(name, archive);
-    s_force_extract = true;
+    s_skip_icon_preload_once = true;
     esp_err_t err = asset_pack_load_active_impl();
-    s_force_extract = false;
+    s_skip_icon_preload_once = false;
     asset_sd_end(mounted_here, display_suspended);
     return err;
 }
@@ -1105,6 +1267,7 @@ bool asset_pack_get_color(int slot, uint32_t *out_color) {
 
 const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fallback) {
     if (!s_loaded || !name) return fallback;
+    if (s_defer_icon_loads) return fallback;
 
     /* Fast path: same name pointer + same pack version -> return the
      * previously resolved desc without any work. The name argument is
@@ -1162,19 +1325,27 @@ const lv_img_dsc_t *asset_pack_get_app_icon(const lv_img_dsc_t *fallback) {
 
 const lv_img_dsc_t *asset_pack_get_background_tile(void) {
     if (!s_loaded || !s_bg_tile[0]) return NULL;
-    if (!s_has_psram) return NULL;
     if (s_bg_tile_data) return &s_bg_tile_dsc;
 
     char path[192];
     if (!join_pack_path(path, sizeof(path), s_bg_tile)) return NULL;
+
+    /* PSRAM: cap is fullscreen, psram_only=true.
+     * Internal: cap is 32x32 RGB565 (~2 KB), psram_only=false so the loader
+     *           falls back to internal heap. The fullscreen bake is skipped
+     *           downstream on internal (see asset_pack_get_background_fullscreen). */
+    uint32_t bg_max = s_has_psram ? ASSET_PACK_BG_FULLSCREEN_MAX_RAW
+                                  : ASSET_PACK_BG_MAX_RAW_INTERNAL;
+    bool psram_only = s_has_psram;
+
     bool mounted_here = false;
     bool display_suspended = false;
     esp_err_t mount_err = asset_sd_begin(&mounted_here, &display_suspended);
     if (mount_err != ESP_OK) return NULL;
-    esp_err_t err = load_gimg(path, true, ASSET_PACK_BG_FULLSCREEN_MAX_RAW, &s_bg_tile_dsc, &s_bg_tile_data);
+    esp_err_t err = load_gimg(path, psram_only, bg_max, &s_bg_tile_dsc, &s_bg_tile_data);
     asset_sd_end(mounted_here, display_suspended);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "background tile load failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "background tile load failed (%s): %s", path, esp_err_to_name(err));
         return NULL;
     }
     return &s_bg_tile_dsc;
@@ -1239,6 +1410,17 @@ typedef struct {
     int index;
 } switch_task_args_t;
 
+static void switch_pack_ui_refresh(void *arg) {
+    (void)arg;
+    display_manager_update_status_bar_color();
+    View *current = display_manager_get_current_view();
+    if (current == &options_menu_view) {
+        options_menu_refresh_theme();
+    } else if (current && current->root && lv_obj_is_valid(current->root)) {
+        gui_screen_apply_background(current->root);
+    }
+}
+
 static void switch_pack_task(void *arg) {
     switch_task_args_t *args = (switch_task_args_t *)arg;
     int index = args->index;
@@ -1249,8 +1431,8 @@ static void switch_pack_task(void *arg) {
     ESP_LOGI(TAG, "switch_pack_task: result=%s", esp_err_to_name(err));
 
     if (err == ESP_OK) {
-        display_manager_update_status_bar_color();
-        gui_screen_apply_background(main_menu_view.root);
+        (void)asset_pack_get_background_fullscreen();
+        display_manager_run_on_lvgl(switch_pack_ui_refresh, NULL);
         ESP_LOGI(TAG, "switch_pack_task: UI refresh scheduled via version counter");
     } else if (err != ESP_ERR_NOT_FOUND) {
         ESP_LOGW(TAG, "asset pack switch failed: %s", esp_err_to_name(err));
@@ -1260,8 +1442,16 @@ static void switch_pack_task(void *arg) {
 }
 
 void asset_pack_switch_task(int index) {
+    ESP_LOGI(TAG, "asset_pack_switch_task: queue pack index %d", index);
     switch_task_args_t *args = malloc(sizeof(switch_task_args_t));
-    if (!args) return;
+    if (!args) {
+        ESP_LOGE(TAG, "asset_pack_switch_task: no memory for args");
+        return;
+    }
     args->index = index;
-    xTaskCreate(switch_pack_task, "pack_switch", 12288, args, 6, NULL);
+    BaseType_t ok = xTaskCreate(switch_pack_task, "pack_switch", 6144, args, 6, NULL);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "asset_pack_switch_task: failed to create worker task");
+        free(args);
+    }
 }

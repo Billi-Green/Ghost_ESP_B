@@ -107,6 +107,7 @@ int plugin_manager_reload(void);
 int plugin_manager_count(void);
 const plugin_app_manifest_t *plugin_manager_get(int index);
 const plugin_app_manifest_t *plugin_manager_find(const char *id);
+const lv_img_dsc_t *plugin_manager_get_icon(const plugin_app_manifest_t *app);
 bool plugin_manager_target_supported(void);
 bool plugin_manager_target_matches(const plugin_app_manifest_t *app);
 bool plugin_manager_reset_app_state(const char *id);

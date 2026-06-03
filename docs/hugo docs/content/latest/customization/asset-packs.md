@@ -12,7 +12,7 @@ Asset packs let you customize the GhostESP UI: colors, icons, and background ima
 |---------|--------------|----------------------|
 | Colors (accent, background, surface, text) | Yes | Yes |
 | Icons (up to 32 cached) | Yes | 2 cached |
-| Background images (tiled or full-screen) | Yes | No |
+| Background images (tiled or full-screen) | Yes | Tiled (≤32x32) |
 | Custom icon sizes per resolution | Yes | Yes |
 
 ## Creating a Pack
@@ -96,7 +96,7 @@ my_pack/
 | `rave` | App gallery |
 | `speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48` | Audio app |
 
-**Background images** use `rgb565` format. Images smaller than the screen tile automatically. Images equal to or larger than the screen scale to fill using LVGL zoom. A 128x128 tile will scale up to fill any screen size. Background images require PSRAM and are used by the main menu, app gallery, settings-style screens, and other shared-layout views.
+**Background images** use `rgb565` format. Images smaller than the screen tile automatically. Images equal to or larger than the screen scale to fill using LVGL zoom. A 128x128 tile will scale up to fill any screen size. On internal-only devices the tile is capped at 32x32; tile your artwork accordingly or accept a smaller repeating background. The main menu, app gallery, settings-style screens, and other shared-layout views all use the same background.
 
 ### 3. Building
 
@@ -134,7 +134,13 @@ Copy the archive to:
 /mnt/ghostesp/themes/my_pack.gtheme
 ```
 
-The firmware extracts it on first load. Subsequent boots reuse the extracted files if the archive hasn't changed.
+The firmware extracts it on first load to:
+
+```
+/mnt/ghostesp/themes/.cache/my_pack/
+```
+
+Subsequent boots and pack switches reuse that cached extraction if the archive size and modified time haven't changed. Updating `my_pack.gtheme` automatically invalidates the cached copy and extracts it again.
 
 ## Selecting a Pack
 
@@ -151,8 +157,11 @@ Missing icons fall back to the compiled-in defaults. You don't need to include e
 |--------|------|-------------|
 | `rgb565` | 1 | 16-bit color, no alpha. Used for backgrounds. |
 | `rgb565a8` | 2 | 16-bit color + 8-bit alpha plane. Used for icons. |
+| `indexed_4bpp` | 3 | 16-color indexed (4 bits/pixel + 64-byte palette). Smallest icon format. |
 
 The `rgb565a8` format stores RGB565 and alpha as separate planes (not interleaved). The `gbt asset pack` tool handles this automatically. GIMG files store standard RGB565; firmware adapts the in-memory byte order for boards built with `LV_COLOR_16_SWAP`.
+
+The `indexed_4bpp` format quantizes source PNGs to a 16-color palette at build time and packs two pixels per byte in the payload. A 32x32 indexed icon uses ~576 bytes (64-byte palette + 512 bytes of packed indices) — roughly 1/5 the size of the equivalent `rgb565a8` image and ideal for internal-only devices where every kilobyte of icon cache counts. The 16-color limit is enough for most line-art and flat-color menu icons; smooth gradients show visible banding. The firmware renders indexed images natively via LVGL's `LV_IMG_CF_INDEXED_4BIT`; no expansion into a larger format happens at load time. Packs can mix formats per image source via the manifest's `icon_format` and per-background `format` fields.
 
 ## PSRAM vs Internal RAM
 
@@ -161,12 +170,16 @@ The `rgb565a8` format stores RGB565 and alpha as separate planes (not interleave
 - Background images supported (tiled or full-screen)
 - Each 64x64 icon uses ~12 KB PSRAM
 - Full-screen 240x320 background uses ~150 KB PSRAM
+- Any image format works; deflate-compressed payloads decode into PSRAM
+- On boot and runtime pack switches, the background is loaded first and icon preload can be deferred so the UI becomes responsive sooner. Missing or not-yet-warmed icons temporarily fall back to compiled-in artwork.
 
 **Internal-only devices** (ESP32-C5, some S2):
 - 2 icons cached in internal RAM
-- No background images
-- Colors and icon mappings still work
-- Icons fall back to compiled-in artwork when cache is full
+- Tiled background supported at ≤32x32; the full-screen bake is skipped and LVGL tiles the small image
+- Icon size is capped at 32x32 RGB565A8 (3 KB) per slot — anything bigger is rejected
+- Deflate-compressed payloads are rejected; only uncompressed `.gimg` files load
+- Use `indexed_4bpp` for icons and the background tile to stay well under the internal-RAM budget. A 32x32 indexed icon is 576 bytes vs 3,072 bytes for RGB565A8
+- Colors and icon mappings still work; icons fall back to compiled-in artwork when the cache is full
 
 ## Converting a Single Image
 

@@ -163,3 +163,71 @@ def png_to_rgb565(src: pathlib.Path, width: int, height: int) -> bytes:
         out[i * 2] = rgb565 & 0xFF
         out[i * 2 + 1] = (rgb565 >> 8) & 0xFF
     return bytes(out)
+
+
+def png_to_indexed_4bpp(src: pathlib.Path, width: int, height: int) -> bytes:
+    """Quantize an RGBA PNG to a 16-color palette and emit [palette][pixels].
+
+    Output layout (matches the firmware's GIMG_FORMAT_INDEXED_4BPP):
+      - 64 bytes: 16 x lv_color32_t palette in (B, G, R, A) memory order
+      - ceil(W*H/2) bytes: packed 4-bit indices, low nibble = even pixel
+    """
+    in_w, in_h, rgba = _read_png_rgba(src)
+    rgba = _resize_nearest(in_w, in_h, rgba, width, height)
+    pixel_count = width * height
+
+    # Coarse-quantize each pixel to a 4-4-4-1 key and tally occurrences.
+    # 4-4-4 RGB gives 4096 buckets; we keep the 16 most populated.
+    coarse_counts: dict[tuple[int, int, int, int], int] = {}
+    pixel_keys: list[tuple[int, int, int, int]] = [None] * pixel_count
+    for i in range(pixel_count):
+        r, g, b, a = rgba[i * 4:i * 4 + 4]
+        key = (r >> 4, g >> 4, b >> 4, 1 if a >= 128 else 0)
+        pixel_keys[i] = key
+        coarse_counts[key] = coarse_counts.get(key, 0) + 1
+
+    sorted_keys = sorted(coarse_counts.items(), key=lambda kv: -kv[1])
+    palette_keys = [k for k, _ in sorted_keys[:16]]
+    while len(palette_keys) < 16:
+        palette_keys.append((0, 0, 0, 1))
+
+    # Map each pixel to a palette slot. In-gamut pixels hit the dict; the
+    # remainder fall back to nearest-neighbour in 4-4-4-1 space.
+    key_to_pal = {k: i for i, k in enumerate(palette_keys)}
+    pixel_indices = bytearray(pixel_count)
+    for i, key in enumerate(pixel_keys):
+        idx = key_to_pal.get(key)
+        if idx is not None:
+            pixel_indices[i] = idx
+            continue
+        best = 0
+        best_d = 0x7FFFFFFF
+        for j, pk in enumerate(palette_keys):
+            d = (
+                (key[0] - pk[0]) ** 2
+                + (key[1] - pk[1]) ** 2
+                + (key[2] - pk[2]) ** 2
+                + (key[3] - pk[3]) ** 2
+            )
+            if d < best_d:
+                best_d = d
+                best = j
+        pixel_indices[i] = best
+
+    palette_bytes = bytearray()
+    for qr, qg, qb, qa in palette_keys:
+        r = (qr << 4) | 0x0F
+        g = (qg << 4) | 0x0F
+        b = (qb << 4) | 0x0F
+        a = 255 if qa else 0
+        palette_bytes.extend(struct.pack("<BBBB", b, g, r, a))
+
+    packed_count = (pixel_count + 1) // 2
+    pixel_bytes = bytearray(packed_count)
+    for i in range(pixel_count):
+        if i & 1:
+            pixel_bytes[i >> 1] |= pixel_indices[i] << 4
+        else:
+            pixel_bytes[i >> 1] |= pixel_indices[i]
+
+    return bytes(palette_bytes) + bytes(pixel_bytes)

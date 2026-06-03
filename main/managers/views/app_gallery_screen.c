@@ -132,6 +132,7 @@ static lv_color_t apps_bg_color;
 static lv_color_t apps_surface_color;
 static lv_color_t apps_text_color;
 static volatile bool apps_plugin_reload_in_progress = false;
+static bool apps_allow_plugin_icon_load = false;
 static StackType_t *apps_plugin_reload_stack = NULL;
 static StaticTask_t *apps_plugin_reload_tcb = NULL;
 
@@ -152,6 +153,11 @@ static void select_app_item(int index, bool slide_left);
 static const lv_img_dsc_t *app_item_icon(int index) {
     if (!app_items || index < 0 || index >= num_apps) return NULL;
     const lv_img_dsc_t *fallback = app_items[index].icon;
+    if (apps_allow_plugin_icon_load && app_items[index].plugin_id[0] != '\0') {
+        const plugin_app_manifest_t *app = plugin_manager_find(app_items[index].plugin_id);
+        const lv_img_dsc_t *plugin_icon = plugin_manager_get_icon(app);
+        if (plugin_icon) fallback = plugin_icon;
+    }
     const lv_img_dsc_t *icon = asset_pack_get_icon(app_items[index].asset_key, fallback);
     if (icon == fallback && fallback) {
         icon = asset_pack_get_app_icon(fallback);
@@ -215,7 +221,7 @@ static void add_loaded_plugin_app_items(void) {
         if (app->requires_psram && !has_psram) continue;
         app_items[num_apps].name = app->name;
         app_items[num_apps].asset_key = NULL;
-        app_items[num_apps].icon = app->icon_dsc ? app->icon_dsc : &GESPAppGallery;
+        app_items[num_apps].icon = &GESPAppGallery;
         app_items[num_apps].palette_index = 3;
         app_items[num_apps].view = &plugin_runner_view;
         app_items[num_apps].disabled = app->quarantined;
@@ -806,6 +812,7 @@ static void apps_plugin_reload_done(void *arg) {
 
     rebuild_app_items(true);
     init_app_colors();
+    apps_allow_plugin_icon_load = true;
     if (selected_back) selected_app_index = num_apps > 0 ? num_apps - 1 : 0;
     render_app_items();
 
@@ -826,6 +833,7 @@ static void apps_plugin_reload_done(void *arg) {
  */
  void apps_menu_create(void) {
     plugin_manager_init();
+    apps_allow_plugin_icon_load = false;
     rebuild_app_items(plugin_manager_count() > 0);
     refresh_apps_surface_colors();
     display_manager_fill_screen(apps_bg_color);
