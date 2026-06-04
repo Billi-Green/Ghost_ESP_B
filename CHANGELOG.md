@@ -7,7 +7,7 @@
  - Expanded Ghostchi levels from 10 to 50 with a smooth quadratic curve
  - Added persistent level badge in the status bar visible on every screen
  - Added level-up toast notification
- - Added Ghostchi activity counters to state file (BLE scans, wardriving, GPS fixes, deauths, aerial detections, PCAP saves, etc.)
+ - Added Ghostchi activity counters to state file
  - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
  - Replaced on/off settings rows with iOS-style toggles for a slightly nicer feel
  - Fixed Invert Colors setting not refreshing the screen until something else triggered a redraw
@@ -15,6 +15,7 @@
  - Slimmed and rounded the terminal's bottom touch controls to match the rest of the UI
  - Themed the terminal's input bar and back button via the palette instead of hardcoded colors
  - Cached the DualComm line check per row to keep the split-view terminal smooth
+ - Added 5 new Ghostchi moods. "Banshee" by @pr3
  - Fixed `help` (no args) printing the category list twice
  - Fixed duplicate `powerprinter` entry in `help printer`
  - Fixed `chameleon` (no args) double-printing its help on the on-screen terminal
@@ -23,6 +24,7 @@
  - Added per-subsystem progress logging to the `stop` command
  - Made command lookup case-insensitive (`SCANAP` now works)
  - Reduced `sd tree` walker memory from ~16 KB to ~600 B (no BSS) and made it work on devices without PSRAM
+ - Made Ghostchi passive by default, added a passive/aggressive mode toggle on pages 1 & 2 of the Ghostchi view
 
 ## Revival v2.0-pre3
 

@@ -119,6 +119,11 @@ extern const lv_img_dsc_t love_50x50;
 extern const lv_img_dsc_t tired_50x50;
 extern const lv_img_dsc_t what2_50x50;
 extern const lv_img_dsc_t speech;
+extern const lv_img_dsc_t banshee_50x50;
+extern const lv_img_dsc_t cake_50x50;
+extern const lv_img_dsc_t sleep_50x50;
+extern const lv_img_dsc_t subghz_50x50;
+extern const lv_img_dsc_t surpised_50x50;
 
 #define GHOST_W 50
 #define GHOST_H 50
@@ -524,23 +529,92 @@ static const char *state_label_text(ghostchi_state_t state) {
     }
 }
 
+/* How long the post-level-up celebratory mood lasts (ms).
+ * Mirrors GHOSTCHI_LEVELUP_CELEBRATION_MS in ghostchi_manager.c so the
+ * UI stays in sync even if the manager isn't ticking (e.g. session stopped).
+ * Keep these two constants equal — see the matching comment in
+ * ghostchi_manager.c. */
+#define GHOSTCHI_UI_LEVELUP_WINDOW_MS 8000u
+
+/* Pool of icons the ghost may use while in GHOSTCHI_STATE_STIM (a deauth
+ * burst). One is picked at random when the burst starts and locked for
+ * the whole burst — no per-tick flicker, so the attack feels like a
+ * single mood. Next burst re-rolls. */
+static const lv_img_dsc_t *const k_attack_choices[3] = {
+    &evil_50x50,      /* classic "forcing movement" */
+    &banshee_50x50,   /* hardware-flavored alternative */
+    &subghz_50x50,    /* SubGHz-flavored alternative */
+};
+
 static const lv_img_dsc_t *pick_ghost_sprite(const ghostchi_snapshot_t *snap) {
+    /* Per-burst attack icon. Locked for the duration of one STIM phase
+     * (re-rolled when the phase starts again) so the ghost doesn't
+     * flicker between icons at the UI refresh rate. */
+    static const lv_img_dsc_t *s_attack_icon = &evil_50x50;
+    static ghostchi_state_t s_attack_locked_state = GHOSTCHI_STATE_BLOCKED;
+    static bool s_attack_locked_running = false;
+
     if (!snap) return &happy_50x50;
+
+    /* Level-up celebration: takes priority over everything else for a few
+     * seconds after a level change so the user actually notices the
+     * promotion. */
+    if (snap->level_up_at_ms != 0) {
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        if ((now - snap->level_up_at_ms) < GHOSTCHI_UI_LEVELUP_WINDOW_MS) {
+            return &cake_50x50;
+        }
+    }
+
+    /* Aerial targets in range → "surprised" mood. Cheap to fetch and
+     * called only on the ~500ms UI timer, so no need to cache. */
+    ghostchi_activity_snapshot_t act = {0};
+    ghostchi_activity_get_snapshot(&act);
+    if (act.aerial_devices > 0) {
+        return &surpised_50x50;
+    }
+
+    /* Resolve the base mood for current run state / idle age. */
+    const lv_img_dsc_t *base = &happy_50x50;
     if (!snap->running) {
         uint32_t hours = idle_hours(snap);
-        if (!snap->sd_ready) return &what2_50x50;
-        if (hours >= 8) return &tired_50x50;
-        if (ghostchi_is_thriving(snap)) return &love_50x50;
-        return &happy_50x50;
+        if (!snap->sd_ready)               base = &what2_50x50;
+        else if (hours >= 24)              base = &sleep_50x50;  /* deep "Zzz" mood */
+        else if (hours >= 8)               base = &tired_50x50;
+        else if (ghostchi_is_thriving(snap)) base = &love_50x50;
+        /* else happy_50x50 */
+    } else {
+        switch (snap->state) {
+            case GHOSTCHI_STATE_STIM:    base = &evil_50x50; break;
+            case GHOSTCHI_STATE_LOCK:    base = &angry_50x50; break;
+            case GHOSTCHI_STATE_COOLDOWN:base = &tired_50x50; break;
+            case GHOSTCHI_STATE_SWEEP:   base = &what2_50x50; break;
+            case GHOSTCHI_STATE_IDLE:    base = ghostchi_is_thriving(snap) ? &love_50x50 : &happy_50x50; break;
+            default:                     base = &happy_50x50; break;
+        }
     }
-    switch (snap->state) {
-        case GHOSTCHI_STATE_STIM:    return &evil_50x50;
-        case GHOSTCHI_STATE_LOCK:    return &angry_50x50;
-        case GHOSTCHI_STATE_COOLDOWN:return &tired_50x50;
-        case GHOSTCHI_STATE_SWEEP:   return &what2_50x50;
-        case GHOSTCHI_STATE_IDLE:    return ghostchi_is_thriving(snap) ? &love_50x50 : &happy_50x50;
-        default:                     return &happy_50x50;
+
+    /* STIM (attack): pick one of {evil, banshee, subghz} when a new
+     * burst starts, then keep it for the whole burst. Each icon
+     * represents a flavor of the same event, not a separate event. */
+    if (base == &evil_50x50) {
+        bool is_new_burst =
+            (s_attack_locked_state != snap->state) ||
+            (s_attack_locked_running != snap->running);
+        if (is_new_burst) {
+            uint32_t roll = (uint32_t)(esp_timer_get_time() / 1000ULL);
+            s_attack_icon = k_attack_choices[roll % 3u];
+            s_attack_locked_state  = snap->state;
+            s_attack_locked_running = snap->running;
+        }
+        return s_attack_icon;
     }
+
+    /* Not in STIM anymore — drop the lock so the next entry re-rolls. */
+    s_attack_locked_state  = snap->state;
+    s_attack_locked_running = snap->running;
+
+    return base;
 }
 
 static void load_colors(void) {
@@ -698,6 +772,16 @@ static void layout_stats(void) {
     }
 }
 
+static void handle_mode_toggle(void) {
+    /* Flip between passive (default, no deauth) and aggressive (legacy
+     * behaviour with a deauth burst per target). Takes effect on the
+     * next sweep — pick_ghost_sprite will also start showing the matching
+     * attack-pool icon. */
+    bool next = !ghostchi_manager_is_aggressive();
+    ghostchi_manager_set_aggressive(next);
+    update_ui(NULL);
+}
+
 static void handle_footer_action(int zone) {
     ghostchi_snapshot_t snap;
     ghostchi_manager_get_snapshot(&snap);
@@ -708,7 +792,13 @@ static void handle_footer_action(int zone) {
             display_manager_switch_view(&apps_menu_view);
         }
     } else if (zone == 1) {
-        handle_select();
+        /* Page 0 keeps the start/stop semantics. On pages 1 and 2 the
+         * middle button becomes a mode toggle. */
+        if (s_page == 0) {
+            handle_select();
+        } else {
+            handle_mode_toggle();
+        }
     } else {
         switch_page(1);
     }
@@ -918,7 +1008,12 @@ static void update_ui(lv_timer_t *timer) {
         lv_obj_set_size(s_touch_btn_mid, btn_w, btn_h);
         lv_obj_set_size(s_touch_btn_right, btn_w, btn_h);
         lv_label_set_text(s_touch_btn_left_label, snap.running ? "STOP" : "EXIT");
-        lv_label_set_text(s_touch_btn_mid_label, snap.running ? "STOP" : "START");
+        if (s_page == 0) {
+            lv_label_set_text(s_touch_btn_mid_label, snap.running ? "STOP" : "START");
+        } else {
+            lv_label_set_text(s_touch_btn_mid_label,
+                              ghostchi_manager_is_aggressive() ? "AGGRESSIVE" : "PASSIVE");
+        }
         lv_label_set_text(s_touch_btn_right_label, "PAGE");
         lv_obj_center(s_touch_btn_left_label);
         lv_obj_center(s_touch_btn_mid_label);
@@ -937,7 +1032,12 @@ static void update_ui(lv_timer_t *timer) {
             lv_obj_set_size(s_encoder_btns[i], enc_btn_w, enc_btn_h);
         }
         lv_label_set_text(s_encoder_btn_labels[0], snap.running ? "STOP" : "EXIT");
-        lv_label_set_text(s_encoder_btn_labels[1], snap.running ? "STOP" : "START");
+        if (s_page == 0) {
+            lv_label_set_text(s_encoder_btn_labels[1], snap.running ? "STOP" : "START");
+        } else {
+            lv_label_set_text(s_encoder_btn_labels[1],
+                              ghostchi_manager_is_aggressive() ? "AGGRESSIVE" : "PASSIVE");
+        }
         lv_label_set_text(s_encoder_btn_labels[2], "PAGE");
         lv_obj_center(s_encoder_btn_labels[0]);
         lv_obj_center(s_encoder_btn_labels[1]);
@@ -955,7 +1055,20 @@ static void update_ui(lv_timer_t *timer) {
     }
 
     if (s_page == 0) {
-        set_stat(0, "MODE", snap.running ? "Active" : (snap.sd_ready ? "Standby" : "Blocked"));
+        /* MODE combines the run state (Active/Standby/Blocked) with the
+         * current operating mode (Aggr/Passive) so the user can see
+         * what kind of attack will run on the next sweep without
+         * leaving the main page. */
+        const char *mode_str = ghostchi_manager_is_aggressive() ? "Aggr" : "Passive";
+        char mode_buf[24];
+        if (snap.running) {
+            snprintf(mode_buf, sizeof(mode_buf), "Active %s", mode_str);
+        } else if (!snap.sd_ready) {
+            snprintf(mode_buf, sizeof(mode_buf), "Blocked");
+        } else {
+            snprintf(mode_buf, sizeof(mode_buf), "Standby %s", mode_str);
+        }
+        set_stat(0, "MODE", mode_buf);
         snprintf(buf, sizeof(buf), "%u", (unsigned)snap.current_channel);
         set_stat(1, "CH", snap.current_channel ? buf : "--");
         snprintf(buf, sizeof(buf), "%u", (unsigned)snap.aps_visible);
@@ -994,7 +1107,7 @@ static void update_ui(lv_timer_t *timer) {
         if (!snap.sd_ready) mood = "blocked";
         else if (snap.running) mood = "hunting";
         else if (ghostchi_is_thriving(&snap)) mood = "thriving";
-        else if (idle_hours(&snap) >= 24) mood = "restless";
+        else if (idle_hours(&snap) >= 24) mood = "asleep";
         else if (idle_hours(&snap) >= 8) mood = "drowsy";
         else if (total_captures > 0) mood = "proud";
         else if (snap.total_sessions > 0) mood = "hopeful";

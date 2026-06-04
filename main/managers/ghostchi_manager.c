@@ -32,7 +32,7 @@
 #define GHOSTCHI_LEARN_MAGIC 0x314C4847u
 #define GHOSTCHI_STATE_MAGIC 0x31435447u
 #define GHOSTCHI_LEARN_VERSION 1u
-#define GHOSTCHI_STATE_VERSION 2u
+#define GHOSTCHI_STATE_VERSION 3u
 #define GHOSTCHI_COOLDOWN_IDLE_MS 1500u
 #define GHOSTCHI_COOLDOWN_SUCCESS_MS 1800u
 
@@ -79,6 +79,11 @@ typedef struct __attribute__((packed)) {
     uint32_t total_gps_fixes;
     uint32_t total_pcaps_saved;
     uint32_t total_new_aps_learned;
+    /* v3+: 0 = passive (default, no deauth), 1 = aggressive (legacy behaviour).
+     * v2 files leave this zero-initialised by memset, so existing users
+     * silently get the new passive default. */
+    uint8_t aggressive_mode;
+    uint8_t reserved3[3];
 } ghostchi_state_file_t;
 
 typedef struct {
@@ -131,6 +136,10 @@ static uint32_t s_total_pcaps_saved = 0;
 static uint32_t s_total_new_aps_learned = 0;
 static uint32_t s_xp_save_deadline_ms = 0;
 static ghostchi_strategy_t s_active_strategy;
+/* Default is passive — Ghostchi now only does passive listening unless the
+ * user explicitly opts into aggressive (deauth-burst) mode. The flag is
+ * read by choose_strategy() and persisted in the state file as of v3. */
+static bool s_aggressive_mode = false;
 static ghostchi_target_t s_current_target;
 static bool s_pcap_capture_enabled = false;
 
@@ -526,6 +535,7 @@ static void load_state(void) {
         s_last_session_end_s = state.last_session_end_s;
         s_last_session_end_valid = state.last_session_end_valid != 0;
         s_total_xp = state.total_xp;
+        s_aggressive_mode = state.aggressive_mode != 0;
         s_total_ble_scans = state.total_ble_scans;
         s_total_ble_devices = state.total_ble_devices;
         s_total_wardrive_aps = state.total_wardrive_aps;
@@ -586,6 +596,7 @@ static void save_state(void) {
     state.total_gps_fixes = s_total_gps_fixes;
     state.total_pcaps_saved = s_total_pcaps_saved;
     state.total_new_aps_learned = s_total_new_aps_learned;
+    state.aggressive_mode = s_aggressive_mode ? 1u : 0u;
     (void)fwrite(&state, 1, sizeof(state), f);
     fclose(f);
     ghostchi_sd_end(display_was_suspended, mounted_here);
@@ -649,19 +660,17 @@ static void open_session_log(void) {
 static ghostchi_strategy_t choose_strategy(uint16_t ap_visible) {
     ghostchi_strategy_t cfg;
     if (ap_visible >= 18) {
-        cfg.passive_ms = 2200;
-        cfg.settle_ms = 850;
-        cfg.deauth_ms = 450;
+        cfg.passive_ms = 2200; cfg.settle_ms = 850;  cfg.deauth_ms = 450;
     } else if (ap_visible <= 5) {
-        cfg.passive_ms = 5000;
-        cfg.settle_ms = 1500;
-        cfg.deauth_ms = 850;
+        cfg.passive_ms = 5000; cfg.settle_ms = 1500; cfg.deauth_ms = 850;
     } else {
-        cfg.passive_ms = 3400;
-        cfg.settle_ms = 1200;
-        cfg.deauth_ms = 650;
+        cfg.passive_ms = 3400; cfg.settle_ms = 1200; cfg.deauth_ms = 650;
     }
-    cfg.allow_deauth = true;
+    /* Deauth bursts are gated behind aggressive mode. In passive mode the
+     * ghost still sweeps + listens, but the LOCK → STIM transition is
+     * never taken — the existing "else" branch in tick() logs a miss and
+     * enters cooldown, so the loop stays safe. */
+    cfg.allow_deauth = s_aggressive_mode;
     return cfg;
 }
 
@@ -994,6 +1003,18 @@ static unsigned int ghostchi_level_from_xp(uint32_t xp) {
     return (unsigned int)(sizeof(tbl) / sizeof(tbl[0]) - 1);
 }
 
+/* How long the post-level-up "celebration" mood lasts (ms). Kept long
+ * enough that a user looking away (e.g. mid-attack, eyes on the LCD
+ * target list) still catches it when they glance back. The UI screen
+ * has its own mirror of this constant — keep them in sync. */
+#define GHOSTCHI_LEVELUP_CELEBRATION_MS 8000u
+
+/* Timestamp of the most recent level-up; consumed by the screen to render
+ * a celebratory sprite. Auto-clears once GHOSTCHI_LEVELUP_CELEBRATION_MS
+ * has elapsed (cleared in get_snapshot so the timer ticks even when the
+ * screen isn't polling). */
+static uint32_t s_level_up_at_ms = 0;
+
 void ghostchi_manager_add_xp(uint32_t amount) {
     if (amount == 0) return;
     unsigned int old_level = ghostchi_level_from_xp(s_total_xp);
@@ -1003,6 +1024,7 @@ void ghostchi_manager_add_xp(uint32_t amount) {
         char buf[32];
         snprintf(buf, sizeof(buf), "Level %u!", new_level);
         toast_show(buf, TOAST_SUCCESS);
+        s_level_up_at_ms = now_ms();
     }
     if (s_storage_ready && s_xp_save_deadline_ms == 0) {
         s_xp_save_deadline_ms = now_ms() + 30000u;
@@ -1016,6 +1038,11 @@ void ghostchi_manager_add_xp(uint32_t amount) {
 void ghostchi_manager_get_snapshot(ghostchi_snapshot_t *out) {
     bool idle_valid = false;
     if (!out) return;
+    /* Age out the level-up celebration once it's been visible long enough. */
+    if (s_level_up_at_ms != 0 &&
+        (now_ms() - s_level_up_at_ms) > GHOSTCHI_LEVELUP_CELEBRATION_MS) {
+        s_level_up_at_ms = 0;
+    }
     if (!s_lock) {
         memset(out, 0, sizeof(*out));
         out->state = s_storage_ready ? GHOSTCHI_STATE_IDLE : GHOSTCHI_STATE_BLOCKED;
@@ -1027,6 +1054,7 @@ void ghostchi_manager_get_snapshot(ghostchi_snapshot_t *out) {
         out->attempts = s_total_attempts;
         out->failures = s_total_failures;
         out->total_xp = s_total_xp;
+        out->level_up_at_ms = s_level_up_at_ms;
         strncpy(out->status_line, out->sd_ready ? "ready" : "sd required", sizeof(out->status_line) - 1);
         return;
     }
@@ -1038,6 +1066,7 @@ void ghostchi_manager_get_snapshot(ghostchi_snapshot_t *out) {
         out->failures = s_total_failures + s_snapshot.failures;
         out->total_sessions = s_total_sessions;
         out->total_xp = s_total_xp;
+        out->level_up_at_ms = s_level_up_at_ms;
         xSemaphoreGive(s_lock);
     } else {
         memset(out, 0, sizeof(*out));
@@ -1120,4 +1149,19 @@ bool ghostchi_manager_probe_storage(void) {
 void ghostchi_manager_stop(void) {
     if (!s_running) return;
     s_stop_requested = true;
+}
+
+void ghostchi_manager_set_aggressive(bool on) {
+    if (s_aggressive_mode == on) return;
+    s_aggressive_mode = on;
+    /* Persist immediately so the choice survives across reboots and
+     * also across sessions. save_state() is SD-gated; if storage isn't
+     * ready the flag still applies for the current session. */
+    if (s_storage_ready) {
+        save_state();
+    }
+}
+
+bool ghostchi_manager_is_aggressive(void) {
+    return s_aggressive_mode;
 }
